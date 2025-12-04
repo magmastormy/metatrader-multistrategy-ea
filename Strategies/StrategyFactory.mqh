@@ -1,0 +1,1 @@
+// Intentionally left empty; use Core/StrategyFactory.mqh instead.
