@@ -39,6 +39,19 @@ input bool InpEnableOrderBlock = false;     // Enable Order Block Strategy
 input bool InpEnableBollinger = false;      // Enable Bollinger Strategy
 input bool InpEnableBollingerBreakout = false; // Enable Bollinger Breakout Strategy
 input bool InpEnableSMC = true;               // Enable Advanced SMC Strategy
+input bool InpEnableBreakout = false;         // Enable Breakout Strategy
+input bool InpEnableFibonacci = false;        // Enable Fibonacci Strategy
+input bool InpEnableElliottWave = false;      // Enable Elliott Wave Strategy
+input bool InpEnableIchimoku = false;         // Enable Ichimoku Strategy
+input bool InpEnableFairValueGap = false;     // Enable Fair Value Gap Strategy
+input bool InpEnableHarmonicPatterns = false; // Enable Harmonic Patterns Strategy
+input bool InpEnableElliott = false;          // Enable Elliott Advanced Strategy
+
+//--- AI Mode Settings (NEW)
+input group "AI Engine Settings"
+input bool InpEnableAIMode = true;             // Enable AI Mode
+input double InpAIConfidenceThreshold = 0.65;  // AI Confidence Threshold
+input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 
 //--- Include files
 #include <Object.mqh>
@@ -77,6 +90,8 @@ input bool InpEnableSMC = true;               // Enable Advanced SMC Strategy
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\TransformerBrain.mqh"
 #include "AIModules\EnsembleMetaLearner.mqh"
+#include "Core\AIEngine.mqh"
+#include "MultiStrategySelection.mqh"
 
 //+------------------------------------------------------------------+
 //| Forward declarations
@@ -486,6 +501,25 @@ int OnInit()
     
     Print("[AI] All AI subsystems initialized successfully");
     
+    // Initialize AIEngine with orchestrator
+    if(g_AIEngine == NULL)
+        g_AIEngine = new CAIEngine();
+    
+    SAIAdaptiveConfig aiConfig;
+    aiConfig.enabled = true;
+    aiConfig.learningRate = 0.1;
+    aiConfig.adaptationInterval = 5;
+    aiConfig.minConfidenceThreshold = 0.6;
+    
+    if(!g_AIEngine.Initialize(&aiOrchestrator, aiConfig))
+    {
+        Print("[WARNING] Failed to initialize AIEngine - continuing without AI hooks");
+    }
+    else
+    {
+        Print("[AI] AIEngine initialized with adaptive mode");
+    }
+    
     // Validate and process trading symbols
     string symbols[];
     StringSplit(InpSymbolsToTrade, ',', symbols);
@@ -521,6 +555,13 @@ int OnInit()
         Print("  - Contract Size: ", SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE));
     }
 
+    // Enable AI Mode if configured
+    if(InpEnableAIMode)
+    {
+        EnableAIMode(true, InpAIConfidenceThreshold, InpAIWeightMultiplier);
+        Print("[AI-MODE] AI Mode enabled with threshold: ", InpAIConfidenceThreshold);
+    }
+    
     // Initialize Trading Engine
     if(!tradingEngine.Initialize(&tradeManager, &positionSizer, &aiOrchestrator, &instrumentRegistry, 
                                 &spikeDetector, levelBreaker, &integrationHub, 
@@ -714,6 +755,14 @@ void OnDeinit(const int reason)
         ensembleLearner.Shutdown();
         integrationHub.Deinit();
         DeinitializeAISystems();
+        
+        // Cleanup AIEngine
+        if(g_AIEngine != NULL)
+        {
+            delete g_AIEngine;
+            g_AIEngine = NULL;
+            Print("[AI] AIEngine cleaned up");
+        }
     }
 
 

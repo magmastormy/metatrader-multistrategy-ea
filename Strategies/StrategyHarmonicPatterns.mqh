@@ -4,6 +4,8 @@
 #ifndef __STRATEGY_HARMONIC_PATTERNS_MQH__
 #define __STRATEGY_HARMONIC_PATTERNS_MQH__
 
+#include "../Core/StrategyBase.mqh"
+
 // Harmonic Patterns Strategy - Identifies and trades Fibonacci-based harmonic price patterns
 // including Gartley, Butterfly, Bat, Crab, and Shark patterns
 
@@ -37,6 +39,29 @@ struct HarmonicPattern {
     double strength;          // Pattern strength/quality 0.0-1.0
     bool isValid;
     bool isComplete;
+    
+    // Default constructor
+    HarmonicPattern() : type(PATTERN_NONE), direction(PATTERN_BULLISH), time(0),
+                        xPoint(0), aPoint(0), bPoint(0), cPoint(0), dPoint(0),
+                        potentialReversal(0), strength(0), isValid(false), isComplete(false) {}
+    
+    // Set method to initialize all values
+    void Set(ENUM_HARMONIC_PATTERN _type, ENUM_PATTERN_DIRECTION _direction, datetime _time,
+             double _xPoint, double _aPoint, double _bPoint, double _cPoint, double _dPoint,
+             double _prz, double _strength, bool _isValid, bool _isComplete) {
+        type = _type;
+        direction = _direction;
+        time = _time;
+        xPoint = _xPoint;
+        aPoint = _aPoint;
+        bPoint = _bPoint;
+        cPoint = _cPoint;
+        dPoint = _dPoint;
+        potentialReversal = _prz;
+        strength = _strength;
+        isValid = _isValid;
+        isComplete = _isComplete;
+    }
 };
 
 //+------------------------------------------------------------------+
@@ -72,7 +97,7 @@ public:
         
         if(m_patternCount == 0) return TRADE_SIGNAL_NONE;
         
-        double close = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        double closePrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         if(point == 0) point = 0.0001;
         
@@ -82,7 +107,7 @@ public:
             double prz = m_patterns[i].potentialReversal;
             double pips = 20 * point;
             
-            if(MathAbs(close - prz) <= pips) {
+            if(MathAbs(closePrice - prz) <= pips) {
                 confidence = m_patterns[i].strength;
                 return (m_patterns[i].direction == PATTERN_BULLISH) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
             }
@@ -108,14 +133,14 @@ bool CStrategyHarmonicPatterns::IsRatioValid(double ratio, double target, double
 void CStrategyHarmonicPatterns::IdentifyHarmonicPatterns() {
     double high[];
     double low[];
-    double close[];
+    double closeArr[];
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
-    ArraySetAsSeries(close, true);
+    ArraySetAsSeries(closeArr, true);
     
     if(CopyHigh(m_symbol, m_timeframe, 0, 200, high) <= 0 ||
        CopyLow(m_symbol, m_timeframe, 0, 200, low) <= 0 ||
-       CopyClose(m_symbol, m_timeframe, 0, 200, close) <= 0) {
+       CopyClose(m_symbol, m_timeframe, 0, 200, closeArr) <= 0) {
         return;
     }
     
@@ -135,6 +160,7 @@ void CStrategyHarmonicPatterns::IdentifyHarmonicPatterns() {
     
     m_patternCount = 0;
     double tolerance = 0.05;
+    datetime currentTimeValue = TimeCurrent();
     
     // Check for bullish patterns
     for(int x = 0; x < swingLowCount; x++) {
@@ -171,17 +197,24 @@ void CStrategyHarmonicPatterns::IdentifyHarmonicPatterns() {
                         
                         if(m_patternCount >= m_maxPatterns) return;
 
+                        // Gartley pattern
                         if(IsRatioValid(abRatio, 0.618, tolerance) && IsRatioValid(bcRatio, 0.382, tolerance) && IsRatioValid(cdRatio, 1.272, tolerance)) {
-                            m_patterns[m_patternCount] = {PATTERN_GARTLEY, PATTERN_BULLISH, TimeCurrent(), xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.8, true, true};
+                            m_patterns[m_patternCount].Set(PATTERN_GARTLEY, PATTERN_BULLISH, currentTimeValue, xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.8, true, true);
                             m_patternCount++;
-                        } else if(IsRatioValid(abRatio, 0.786, tolerance) && IsRatioValid(bcRatio, 0.382, tolerance) && IsRatioValid(cdRatio, 1.618, tolerance)) {
-                            m_patterns[m_patternCount] = {PATTERN_BUTTERFLY, PATTERN_BULLISH, TimeCurrent(), xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.9, true, true};
+                        } 
+                        // Butterfly pattern
+                        else if(IsRatioValid(abRatio, 0.786, tolerance) && IsRatioValid(bcRatio, 0.382, tolerance) && IsRatioValid(cdRatio, 1.618, tolerance)) {
+                            m_patterns[m_patternCount].Set(PATTERN_BUTTERFLY, PATTERN_BULLISH, currentTimeValue, xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.9, true, true);
                             m_patternCount++;
-                        } else if(IsRatioValid(abRatio, 0.5, tolerance) && IsRatioValid(bcRatio, 0.382, tolerance) && IsRatioValid(cdRatio, 1.618, tolerance) && IsRatioValid(xdRatio, 0.886, tolerance)) {
-                            m_patterns[m_patternCount] = {PATTERN_BAT, PATTERN_BULLISH, TimeCurrent(), xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.85, true, true};
+                        } 
+                        // Bat pattern
+                        else if(IsRatioValid(abRatio, 0.5, tolerance) && IsRatioValid(bcRatio, 0.382, tolerance) && IsRatioValid(cdRatio, 1.618, tolerance) && IsRatioValid(xdRatio, 0.886, tolerance)) {
+                            m_patterns[m_patternCount].Set(PATTERN_BAT, PATTERN_BULLISH, currentTimeValue, xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.85, true, true);
                             m_patternCount++;
-                        } else if(IsRatioValid(abRatio, 0.382, tolerance) && IsRatioValid(bcRatio, 0.382, tolerance) && IsRatioValid(cdRatio, 2.618, tolerance)) {
-                            m_patterns[m_patternCount] = {PATTERN_CRAB, PATTERN_BULLISH, TimeCurrent(), xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.95, true, true};
+                        } 
+                        // Crab pattern
+                        else if(IsRatioValid(abRatio, 0.382, tolerance) && IsRatioValid(bcRatio, 0.382, tolerance) && IsRatioValid(cdRatio, 2.618, tolerance)) {
+                            m_patterns[m_patternCount].Set(PATTERN_CRAB, PATTERN_BULLISH, currentTimeValue, xPoint, aPoint, bPoint, cPoint, dPoint, dPoint, 0.95, true, true);
                             m_patternCount++;
                         }
                     }

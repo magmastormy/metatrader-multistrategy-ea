@@ -3,9 +3,7 @@ REM 🛡️ BEAST MODE: Fixed path handling for MetaEditor
 
 REM --- 1. Auto-detect MetaEditor location on D: drive ---
 set "METAEDITOR="
-if exist "D:\Program Files\MetaTrader 5 Terminal\metaeditor64.exe" set "METAEDITOR=D:\Program Files\MetaTrader 5 Terminal\metaeditor64.exe"
-if exist "D:\Program Files\MetaTrader 5\metaeditor64.exe" set "METAEDITOR=D:\Program Files\MetaTrader 5\metaeditor64.exe"
-if exist "D:\Program Files (x86)\MetaTrader 5\metaeditor64.exe" set "METAEDITOR=D:\Program Files (x86)\MetaTrader 5\metaeditor64.exe"
+if exist "c:\Program Files\MetaTrader 5\MetaEditor64.exe" set "METAEDITOR=c:\Program Files\MetaTrader 5\MetaEditor64.exe"
 
 if "%METAEDITOR%"=="" (
     echo 🚨 ERROR: MetaEditor not found in standard D: locations

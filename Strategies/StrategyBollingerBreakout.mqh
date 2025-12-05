@@ -28,7 +28,7 @@ private:
     double m_lower_band[];
 
     // --- State ---
-    datetime m_lastSignalTime;
+    // m_lastSignalTime inherited from CStrategyBase
 
 public:
     // --- Constructor / Destructor ---
@@ -53,8 +53,7 @@ CStrategyBollingerBreakout::CStrategyBollingerBreakout(const string name, int ma
       m_bb_deviation(2.0),
       m_min_volatility(0.0005),
       m_bb_handle(INVALID_HANDLE),
-      m_atr_handle(INVALID_HANDLE),
-      m_lastSignalTime(0)
+      m_atr_handle(INVALID_HANDLE)
 {
     ArraySetAsSeries(m_upper_band, true);
     ArraySetAsSeries(m_middle_band, true);
@@ -72,9 +71,9 @@ CStrategyBollingerBreakout::~CStrategyBollingerBreakout()
 //+------------------------------------------------------------------+
 //| Initialize Strategy                                              |
 //+------------------------------------------------------------------+
-bool CStrategyBollingerBreakout::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManager, void* positionSizer)
+bool CStrategyBollingerBreakout::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer)
 {
-    if(!CStrategyBase::Init(symbol, timeframe, tradeManager, positionSizer))
+    if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
         return false;
 
     if(m_bb_handle != INVALID_HANDLE) IndicatorRelease(m_bb_handle);
@@ -184,9 +183,9 @@ void CStrategyBollingerBreakout::OnTick()
 {
     // Check for new bar
     static datetime lastBarTime = 0;
-    datetime currentTime = iTime(m_symbol, m_timeframe, 0);
-    if(currentTime != lastBarTime) {
-        lastBarTime = currentTime;
+    datetime barTime = iTime(m_symbol, m_timeframe, 0);
+    if(barTime != lastBarTime) {
+        lastBarTime = barTime;
         OnNewBar(m_symbol, m_timeframe);
     }
 }

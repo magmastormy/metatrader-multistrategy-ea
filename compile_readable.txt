@@ -1,0 +1,137 @@
+
+
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: compiling D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Object.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Object.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\StdLibErr.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Trade\Trade.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Trade\Trade.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Trade\OrderInfo.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Trade\Trade.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Trade\HistoryOrderInfo.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Trade\Trade.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Trade\PositionInfo.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Trade\Trade.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Trade\DealInfo.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Trade\SymbolInfo.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Trade\AccountInfo.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\ArrayObj.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\ArrayObj.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\Array.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\ArrayDouble.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\Enums.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Interfaces\IStrategy.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\ErrorHandling.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\Instruments.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\SafetyLayer.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\RiskValidationGate.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\RiskValidationGate.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\PortfolioRiskManager.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\PortfolioRiskManager.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\PositionSizer.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\PerformanceAnalytics.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\AdaptiveRiskManager.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\AIPerformanceFeedback.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\PerformanceBasedStrategyAdapter.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\PerformanceBasedStrategyAdapter.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\AIStrategyOrchestrator.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\PerformanceBasedStrategyAdapter.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\StrategyManager.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\TradeManager.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradeManager.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\MarketAnalysis.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\MarketAnalysis.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicator.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicator.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Series.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\IntegrationHub.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\IntegrationHub.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\HTTPClient.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\HTTPClient.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\ArrayString.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\IntegrationHub.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\AIModules\NextGenStrategyBrain.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\AIModules\NextGenStrategyBrain.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Math\Stat\Math.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\AIModules\NextGenStrategyBrain.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\AIModules\TransformerBrain.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\AIModules\TransformerBrain.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Files\FileTxt.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Files\FileTxt.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Files\File.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\AIModules\TransformerBrain.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Utilities\Utilities.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\AIModules\NextGenStrategyBrain.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\AIModules\EnsembleMetaLearner.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\AIModules\EnsembleMetaLearner.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\MarketRegimeDetector.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\AIModules\NextGenStrategyBrain.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\AIModules\UncertaintyQuantifier.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\CrashBoomSpikeDetector.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\StepIndexLevelBreaker.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\EnhancedRiskManager.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\ProgressiveTakeProfit.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\StrategyBase.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyStepIndex.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\SimpleMomentumStrategy.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\SymbolContext.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\ModeManager.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyRSI.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyRSI.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicators.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicators.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Trend.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicators.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Oscilators.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicators.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Volumes.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicators.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\BillWilliams.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicators.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Custom.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\Indicators.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\TimeSeries.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\TimeSeries.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\ArrayInt.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\TimeSeries.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\ArrayLong.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\Indicators\TimeSeries.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Arrays\ArrayDatetime.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyTrend.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyMeanReversion.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyMeanReversion.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Include\Indicators\Oscillators.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySupplyDemand.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySupplyDemand.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\Charts\Chart.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySupplyDemand.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\ChartObjects\ChartObjectsShapes.mqh
+c:\Program Files\MetaTrader 5\MQL5\Include\ChartObjects\ChartObjectsShapes.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\ChartObjects\ChartObject.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySupplyDemand.mqh : information: including c:\Program Files\MetaTrader 5\MQL5\Include\ChartObjects\ChartObjectsTxtControls.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySwing.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySwing.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\OrderInfo.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySwing.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\HistoryOrderInfo.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySwing.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\PositionInfo.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySwing.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\DealInfo.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySwing.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\Trade.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyVolatility.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyOrderBlockFVG.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyOrderBlockFVG.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\StrategyFactory.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\StrategyFactory.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyFibonacci.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyFibonacci.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\RSI.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\StrategyFactory.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyElliott.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyMACD.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyOrderBlock.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyBollinger.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyBollingerBreakout.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySMC.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategySMC.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\ConfluenceEngine.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyBreakout.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyIchimoku.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyElliottWave.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyFairValueGap.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Strategies\StrategyHarmonicPatterns.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\Core\TradingEngine.mqh : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\StrategyWrapper.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\TPManagerEntry.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\Core\AIEngine.mqh
+D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : information: including D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategySelection.mqh
+ : information: generating code
+ : information: generating code 3%
+ : information: generating code 6%
+ : information: generating code 9%
+ : information: generating code 12%
+ : information: generating code 15%
+ : information: generating code 18%
+ : information: generating code 21%
+ : information: generating code 24%
+ : information: generating code 27%
+ : information: generating code 30%
+ : information: generating code 33%
+ : information: generating code 36%
+ : information: generating code 39%
+ : information: generating code 42%
+ : information: generating code 45%
+ : information: generating code 48%
+ : information: generating code 51%
+ : information: generating code 54%
+ : information: generating code 57%
+ : information: generating code 60%
+ : information: generating code 63%
+ : information: generating code 66%
+ : information: generating code 69%
+ : information: generating code 72%
+ : information: generating code 75%
+ : information: generating code 78%
+ : information: generating code 81%
+ : information: generating code 84%
+ : information: generating code 87%
+ : information: generating code 90%
+ : information: generating code 93%
+ : information: generating code 95%
+ : information: generating code 100%
+ : information: code generated
+Result: 0 errors, 0 warnings, 7728 msec elapsed, cpu='X64 Regular'

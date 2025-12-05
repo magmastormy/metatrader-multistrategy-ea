@@ -131,8 +131,8 @@ double CModeManager::CalculateVolatilityIndex(const string symbol)
         return 0.0;
     }
     
-    double currentPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
-    double volIndex = (currentPrice > 0) ? (atrVal[0] / currentPrice) * 100.0 : 0.0; // Percentage
+    double bidPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+    double volIndex = (bidPrice > 0) ? (atrVal[0] / bidPrice) * 100.0 : 0.0; // Percentage
     
     IndicatorRelease(atrHandle);
     return volIndex;

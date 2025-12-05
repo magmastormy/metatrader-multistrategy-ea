@@ -1,17 +1,67 @@
 //+------------------------------------------------------------------+
 //| Multi-Strategy Selection and Rotation System                     |
-//| Enables all strategies beyond just S/D and OB/FVG               |
+//| Enhanced with AI mode, weighted signals, and orchestration       |
 //+------------------------------------------------------------------+
 
 #include "Core/Enums.mqh"
 #include "Core/StrategyBase.mqh"
 #include "Core/StrategyManager.mqh"
+#include "Core/AIEngine.mqh"
 
 class CStrategyManager;
 class CTradeManager;
 class CPortfolioRiskManager;
 class CAdaptiveRiskManager;
 class CEnhancedRiskManager;
+
+//+------------------------------------------------------------------+
+//| Enhanced Signal Result Structure                                  |
+//| Returns comprehensive signal data including contributions         |
+//+------------------------------------------------------------------+
+struct SEnhancedSignalResult {
+    ENUM_TRADE_SIGNAL finalSignal;      // The final trading signal
+    double confidence;                   // Overall confidence (0-1)
+    double riskFactor;                   // Risk adjustment factor
+    double buyScore;                     // Aggregate buy score
+    double sellScore;                    // Aggregate sell score
+    int activeStrategies;                // Number of contributing strategies
+    
+    // Strategy contributions
+    double contributions[7];             // Individual strategy contributions
+    string topContributor;               // Name of top contributing strategy
+    double topContributorWeight;         // Weight of top contributor
+    
+    // AI mode overrides
+    bool aiModeActive;                   // Whether AI mode is active
+    double aiConfidenceModifier;         // AI confidence adjustment
+    string aiReason;                     // AI override reason
+    
+    // Market context
+    ENUM_MARKET_REGIME regime;           // Current market regime
+    datetime timestamp;                  // Signal generation time
+    
+    SEnhancedSignalResult() {
+        finalSignal = TRADE_SIGNAL_NONE;
+        confidence = 0.0;
+        riskFactor = 1.0;
+        buyScore = 0.0;
+        sellScore = 0.0;
+        activeStrategies = 0;
+        ArrayInitialize(contributions, 0.0);
+        topContributor = "";
+        topContributorWeight = 0.0;
+        aiModeActive = false;
+        aiConfidenceModifier = 1.0;
+        aiReason = "";
+        regime = MARKET_REGIME_UNKNOWN;
+        timestamp = 0;
+    }
+};
+
+// AI Mode state tracking
+static bool g_aiModeEnabled = false;
+static double g_aiConfidenceThreshold = 0.65;
+static double g_aiWeightMultiplier = 1.0;
 
 // Note: These are globals defined in MultiStrategyAutonomousEA.mq5
 
@@ -41,10 +91,30 @@ static string g_strategyNames[7] = {
 };
 
 //+------------------------------------------------------------------+
-//| Get signal from multiple strategies with intelligent selection   |
+//| AI Mode Control Functions                                         |
 //+------------------------------------------------------------------+
-ENUM_TRADE_SIGNAL GetMultiStrategySignal(string symbol, ENUM_MARKET_REGIME regime)
+void EnableAIMode(bool enable, double confidenceThreshold = 0.65, double weightMultiplier = 1.0) {
+    g_aiModeEnabled = enable;
+    g_aiConfidenceThreshold = confidenceThreshold;
+    g_aiWeightMultiplier = weightMultiplier;
+    Print("[AI-MODE] ", enable ? "ENABLED" : "DISABLED", 
+          " - Threshold: ", DoubleToString(confidenceThreshold, 2),
+          " - Multiplier: ", DoubleToString(weightMultiplier, 2));
+}
+
+bool IsAIModeEnabled() { return g_aiModeEnabled; }
+double GetAIConfidenceThreshold() { return g_aiConfidenceThreshold; }
+
+//+------------------------------------------------------------------+
+//| Get Enhanced Signal Result with full data                         |
+//+------------------------------------------------------------------+
+SEnhancedSignalResult GetEnhancedMultiStrategySignal(string symbol, ENUM_MARKET_REGIME regime)
 {
+    SEnhancedSignalResult result;
+    result.regime = regime;
+    result.timestamp = TimeCurrent();
+    result.aiModeActive = g_aiModeEnabled;
+    
     Print("[MULTI-STRATEGY] Evaluating ", ArraySize(g_strategyNames), " strategies for ", symbol);
     
     // Strategy signals array
@@ -62,7 +132,7 @@ ENUM_TRADE_SIGNAL GetMultiStrategySignal(string symbol, ENUM_MARKET_REGIME regim
     // 1. SUPPLY/DEMAND STRATEGY
     signals[0] = GetSupplyDemandSignal(symbol, regime);
     confidences[0] = CalculateSupplyDemandConfidence(symbol, regime);
-    weights[0] = (regime == MARKET_REGIME_RANGING) ? 1.5 : 0.7; // Better in ranging markets
+    weights[0] = (regime == MARKET_REGIME_RANGING) ? 1.5 : 0.7;
     
     // 2. ORDERBLOCK/FVG STRATEGY  
     signals[1] = GetOrderBlockFVGSignal(symbol, regime);
@@ -87,26 +157,49 @@ ENUM_TRADE_SIGNAL GetMultiStrategySignal(string symbol, ENUM_MARKET_REGIME regim
     // 6. SWING TRADING STRATEGY
     signals[5] = GetSwingTradingSignal(symbol, regime);
     confidences[5] = CalculateSwingTradingConfidence(symbol, regime);
-    weights[5] = 1.1; // Generally good across all regimes
+    weights[5] = 1.1;
     
     // 7. CORRELATION MATRIX STRATEGY
     signals[6] = GetCorrelationMatrixSignal(symbol, regime);
     confidences[6] = CalculateCorrelationMatrixConfidence(symbol, regime);
-    weights[6] = 1.0; // Neutral weight
+    weights[6] = 1.0;
     
-    // INTELLIGENT STRATEGY FUSION
-    return FuseMultipleStrategies(signals, confidences, weights, symbol, regime);
+    // Apply AI mode weight multiplier if enabled
+    if(g_aiModeEnabled && g_AIEngine != NULL) {
+        for(int i = 0; i < 7; i++) {
+            weights[i] *= g_aiWeightMultiplier;
+        }
+    }
+    
+    // Perform enhanced fusion with contribution tracking
+    result = FuseWithContributions(signals, confidences, weights, symbol, regime, result);
+    
+    // Apply AI confidence modifier if active
+    if(g_aiModeEnabled && result.confidence > 0.0) {
+        ApplyAIModifiers(result);
+    }
+    
+    return result;
 }
 
 //+------------------------------------------------------------------+
-//| Fuse multiple strategy signals intelligently                     |
+//| Original function for backward compatibility                      |
 //+------------------------------------------------------------------+
-ENUM_TRADE_SIGNAL FuseMultipleStrategies(ENUM_TRADE_SIGNAL &signals[], double &confidences[], double &weights[], string symbol, ENUM_MARKET_REGIME regime)
+ENUM_TRADE_SIGNAL GetMultiStrategySignal(string symbol, ENUM_MARKET_REGIME regime)
 {
-    double buyScore = 0.0;
-    double sellScore = 0.0;
+    SEnhancedSignalResult enhanced = GetEnhancedMultiStrategySignal(symbol, regime);
+    return enhanced.finalSignal;
+}
+
+//+------------------------------------------------------------------+
+//| Enhanced Fusion with Contribution Tracking                        |
+//+------------------------------------------------------------------+
+SEnhancedSignalResult FuseWithContributions(ENUM_TRADE_SIGNAL &signals[], double &confidences[], 
+    double &weights[], string symbol, ENUM_MARKET_REGIME regime, SEnhancedSignalResult &result)
+{
     double totalWeight = 0.0;
-    int activeStrategies = 0;
+    double maxContribution = 0.0;
+    int topContributorIdx = -1;
     
     Print("[STRATEGY-FUSION] Analyzing signals for ", symbol, " in regime: ", EnumToString(regime));
     
@@ -114,47 +207,133 @@ ENUM_TRADE_SIGNAL FuseMultipleStrategies(ENUM_TRADE_SIGNAL &signals[], double &c
         if(signals[i] == TRADE_SIGNAL_NONE) continue;
         
         double strategyScore = confidences[i] * weights[i];
+        result.contributions[i] = strategyScore;
         totalWeight += weights[i];
-        activeStrategies++;
+        result.activeStrategies++;
+        
+        // Track top contributor
+        if(strategyScore > maxContribution) {
+            maxContribution = strategyScore;
+            topContributorIdx = i;
+        }
         
         if(signals[i] == TRADE_SIGNAL_BUY) {
-            buyScore += strategyScore;
+            result.buyScore += strategyScore;
             Print("  [", g_strategyNames[i], "] BUY signal - Confidence: ", DoubleToString(confidences[i], 3), 
                   " Weight: ", DoubleToString(weights[i], 2), " Score: ", DoubleToString(strategyScore, 3));
         } else if(signals[i] == TRADE_SIGNAL_SELL) {
-            sellScore += strategyScore;
+            result.sellScore += strategyScore;
             Print("  [", g_strategyNames[i], "] SELL signal - Confidence: ", DoubleToString(confidences[i], 3), 
                   " Weight: ", DoubleToString(weights[i], 2), " Score: ", DoubleToString(strategyScore, 3));
         }
     }
     
+    // Record top contributor
+    if(topContributorIdx >= 0) {
+        result.topContributor = g_strategyNames[topContributorIdx];
+        result.topContributorWeight = weights[topContributorIdx];
+    }
+    
     // Require at least 2 strategies to agree
-    if(activeStrategies < 2) {
-        Print("[STRATEGY-FUSION] Insufficient strategy consensus (", activeStrategies, " active)");
-        return TRADE_SIGNAL_NONE;
+    if(result.activeStrategies < 2) {
+        Print("[STRATEGY-FUSION] Insufficient strategy consensus (", result.activeStrategies, " active)");
+        result.finalSignal = TRADE_SIGNAL_NONE;
+        result.confidence = 0.0;
+        return result;
     }
     
     // Calculate final scores
-    double finalBuyScore = buyScore / totalWeight;
-    double finalSellScore = sellScore / totalWeight;
+    double finalBuyScore = result.buyScore / totalWeight;
+    double finalSellScore = result.sellScore / totalWeight;
     double scoreDifference = MathAbs(finalBuyScore - finalSellScore);
     
-    // Require minimum confidence threshold
-    double minConfidenceThreshold = 0.6;
+    // Use AI threshold if AI mode is enabled, otherwise default
+    double minConfidenceThreshold = g_aiModeEnabled ? g_aiConfidenceThreshold : 0.6;
+    
+    // Calculate risk factor based on consensus strength
+    result.riskFactor = CalculateRiskFactor(result.activeStrategies, scoreDifference, regime);
     
     if(finalBuyScore > finalSellScore && finalBuyScore > minConfidenceThreshold && scoreDifference > 0.2) {
         Print("[STRATEGY-FUSION] CONSENSUS BUY - Score: ", DoubleToString(finalBuyScore, 3), 
-              " (", activeStrategies, " strategies)");
-        return TRADE_SIGNAL_BUY;
+              " (", result.activeStrategies, " strategies)");
+        result.finalSignal = TRADE_SIGNAL_BUY;
+        result.confidence = finalBuyScore;
     } else if(finalSellScore > finalBuyScore && finalSellScore > minConfidenceThreshold && scoreDifference > 0.2) {
         Print("[STRATEGY-FUSION] CONSENSUS SELL - Score: ", DoubleToString(finalSellScore, 3), 
-              " (", activeStrategies, " strategies)");
-        return TRADE_SIGNAL_SELL;
+              " (", result.activeStrategies, " strategies)");
+        result.finalSignal = TRADE_SIGNAL_SELL;
+        result.confidence = finalSellScore;
+    } else {
+        Print("[STRATEGY-FUSION] NO CONSENSUS - Buy: ", DoubleToString(finalBuyScore, 3), 
+              " Sell: ", DoubleToString(finalSellScore, 3), " (", result.activeStrategies, " strategies)");
+        result.finalSignal = TRADE_SIGNAL_NONE;
+        result.confidence = MathMax(finalBuyScore, finalSellScore);
     }
     
-    Print("[STRATEGY-FUSION] NO CONSENSUS - Buy: ", DoubleToString(finalBuyScore, 3), 
-          " Sell: ", DoubleToString(finalSellScore, 3), " (", activeStrategies, " strategies)");
-    return TRADE_SIGNAL_NONE;
+    return result;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Risk Factor based on consensus and market conditions    |
+//+------------------------------------------------------------------+
+double CalculateRiskFactor(int activeStrategies, double scoreDifference, ENUM_MARKET_REGIME regime)
+{
+    double baseFactor = 1.0;
+    
+    // More strategies agreeing = lower risk
+    if(activeStrategies >= 5) baseFactor *= 0.8;
+    else if(activeStrategies >= 3) baseFactor *= 0.9;
+    else baseFactor *= 1.1;
+    
+    // Stronger consensus = lower risk
+    if(scoreDifference > 0.5) baseFactor *= 0.85;
+    else if(scoreDifference > 0.3) baseFactor *= 0.95;
+    else baseFactor *= 1.05;
+    
+    // Market regime adjustment
+    if(regime == MARKET_REGIME_VOLATILE) baseFactor *= 1.3;
+    else if(regime == MARKET_REGIME_RANGING) baseFactor *= 0.95;
+    
+    return MathMax(0.5, MathMin(2.0, baseFactor));
+}
+
+//+------------------------------------------------------------------+
+//| Apply AI Modifiers to the signal result                           |
+//+------------------------------------------------------------------+
+void ApplyAIModifiers(SEnhancedSignalResult &result)
+{
+    if(g_AIEngine == NULL) return;
+    
+    // Check if AI engine has adaptive mode recommendations
+    if(g_AIEngine.IsAdaptiveModeActive()) {
+        double accuracy = g_AIEngine.GetPredictionAccuracy();
+        
+        // Adjust confidence based on AI performance
+        if(accuracy > 0.6) {
+            result.aiConfidenceModifier = 1.0 + (accuracy - 0.6) * 0.5;
+            result.confidence *= result.aiConfidenceModifier;
+            result.aiReason = "AI confidence boost (accuracy: " + DoubleToString(accuracy * 100, 1) + "%)";
+        } else if(accuracy < 0.4) {
+            result.aiConfidenceModifier = 0.7;
+            result.confidence *= result.aiConfidenceModifier;
+            result.riskFactor *= 1.3; // Increase risk factor
+            result.aiReason = "AI caution (low accuracy)";
+        }
+    }
+    
+    // Cap confidence at 1.0
+    result.confidence = MathMin(1.0, result.confidence);
+}
+
+//+------------------------------------------------------------------+
+//| Legacy Fuse function for backward compatibility                   |
+//+------------------------------------------------------------------+
+ENUM_TRADE_SIGNAL FuseMultipleStrategies(ENUM_TRADE_SIGNAL &signals[], double &confidences[], double &weights[], string symbol, ENUM_MARKET_REGIME regime)
+{
+    SEnhancedSignalResult result;
+    result.regime = regime;
+    result = FuseWithContributions(signals, confidences, weights, symbol, regime, result);
+    return result.finalSignal;
 }
 
 //+------------------------------------------------------------------+

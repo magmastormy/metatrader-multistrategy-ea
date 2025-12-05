@@ -24,7 +24,7 @@ class CUtilities;
 class CStrategyStepIndex : public CStrategyBase {
 private:
     CStepIndexLevelBreaker* m_levelBreaker;
-    CEnhancedErrorHandler* m_errorHandler;
+    // m_errorHandler inherited from CStrategyBase
     CUtilities* m_utilities;
     
     // Strategy parameters
@@ -71,7 +71,7 @@ public:
     CStrategyStepIndex(CStepIndexLevelBreaker* levelBreakerParam, CEnhancedErrorHandler* errHandler, CUtilities* utils) :
         CStrategyBase("StepIndex", 0),
         m_levelBreaker(levelBreakerParam),
-        m_errorHandler(errHandler),
+        // m_errorHandler = errHandler; // Assigned in body
         m_utilities(utils),
         m_minConfidence(0.65),
         m_riskPerTrade(0.02),

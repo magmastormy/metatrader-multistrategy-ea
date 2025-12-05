@@ -22,9 +22,9 @@ public:
     ~CStrategyBreakout() {}
     
     //--- Initialization
-    bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManager, void* positionSizer) override
+    bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
     {
-        return CStrategyBase::Init(symbol, timeframe, tradeManager, positionSizer);
+        return CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer);
     }
     
     //--- Override method from base class

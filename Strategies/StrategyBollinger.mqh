@@ -93,12 +93,12 @@ CStrategyBollinger::~CStrategyBollinger()
 //+------------------------------------------------------------------+
 //| Initialize indicator handles and resources                       |
 //+------------------------------------------------------------------+
-bool CStrategyBollinger::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManager, void* positionSizer)
+bool CStrategyBollinger::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer)
 {
     // Clean up any existing handles
     CleanupIndicators();
     
-    if(!CStrategyBase::Init(symbol, timeframe, tradeManager, positionSizer))
+    if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
         return false;
 
     // Initialize indicators
@@ -172,9 +172,9 @@ void CStrategyBollinger::OnTick()
 {
     // Check for new bar
     static datetime lastBarTime = 0;
-    datetime currentTime = iTime(m_symbol, m_timeframe, 0);
-    if(currentTime != lastBarTime) {
-        lastBarTime = currentTime;
+    datetime barTime = iTime(m_symbol, m_timeframe, 0);
+    if(barTime != lastBarTime) {
+        lastBarTime = barTime;
         OnNewBar(m_symbol, m_timeframe);
     }
 }
@@ -226,14 +226,14 @@ ENUM_TRADE_SIGNAL CStrategyBollinger::GetSignal(double &confidence)
         return TRADE_SIGNAL_NONE;
     }
     
-    double currentPrice = rates[0].close;
+    double closePrice = rates[0].close;
     ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
     confidence = 0.0;
     
     // Check for Bollinger Bands signals
     // 1. Price breaks above upper band - Potential Reversal Sell or Breakout Buy?
     // Standard BB strategy: Reversal at bands
-    if(currentPrice > m_upperBand[0] && m_upperBand[0] > m_upperBand[1]) {
+    if(closePrice > m_upperBand[0] && m_upperBand[0] > m_upperBand[1]) {
         // Price is pushing upper band
         // Check if it's a reversal candle (e.g., close < open)
         if(rates[0].close < rates[0].open) {
@@ -241,7 +241,7 @@ ENUM_TRADE_SIGNAL CStrategyBollinger::GetSignal(double &confidence)
              confidence = 0.6;
         }
     }
-    else if(currentPrice < m_lowerBand[0] && m_lowerBand[0] < m_lowerBand[1]) {
+    else if(closePrice < m_lowerBand[0] && m_lowerBand[0] < m_lowerBand[1]) {
         // Price is pushing lower band
         // Check if it's a reversal candle
         if(rates[0].close > rates[0].open) {
@@ -252,8 +252,8 @@ ENUM_TRADE_SIGNAL CStrategyBollinger::GetSignal(double &confidence)
     
     // Check trend confirmation with 200 MA
     if(signal != TRADE_SIGNAL_NONE) {
-        if((signal == TRADE_SIGNAL_BUY && currentPrice > m_maBuffer[0]) || 
-           (signal == TRADE_SIGNAL_SELL && currentPrice < m_maBuffer[0])) {
+        if((signal == TRADE_SIGNAL_BUY && closePrice > m_maBuffer[0]) || 
+           (signal == TRADE_SIGNAL_SELL && closePrice < m_maBuffer[0])) {
             // Signal aligns with trend - increase confidence
             confidence = MathMin(1.0, confidence + 0.2);
         } else {

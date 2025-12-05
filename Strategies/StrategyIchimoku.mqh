@@ -92,12 +92,21 @@ ENUM_TRADE_SIGNAL CStrategyIchimoku::GetSignal(double &confidence) {
 
     confidence = 0.0;
     
-    // Define buffers for Ichimoku values
-    double tenkanBuffer[2];     // Conversion Line (Tenkan-sen)
-    double kijunBuffer[2];      // Base Line (Kijun-sen)
-    double spanABuffer[2];      // Leading Span A (Senkou Span A)
-    double spanBBuffer[2];      // Leading Span B (Senkou Span B)
-    double chikouBuffer[27];    // Lagging Span (Chikou Span) - need history
+    // Define dynamic buffers for Ichimoku values
+    double tenkanBuffer[];     // Conversion Line (Tenkan-sen)
+    double kijunBuffer[];      // Base Line (Kijun-sen)
+    double spanABuffer[];      // Leading Span A (Senkou Span A)
+    double spanBBuffer[];      // Leading Span B (Senkou Span B)
+    double chikouBuffer[];     // Lagging Span (Chikou Span) - need history
+    double close[];            // Close prices
+    
+    // Set arrays as series before CopyBuffer (most recent data at index 0)
+    ArraySetAsSeries(tenkanBuffer, true);
+    ArraySetAsSeries(kijunBuffer, true);
+    ArraySetAsSeries(spanABuffer, true);
+    ArraySetAsSeries(spanBBuffer, true);
+    ArraySetAsSeries(chikouBuffer, true);
+    ArraySetAsSeries(close, true);
     
     // Copy Ichimoku data to buffers
     if(CopyBuffer(m_handle, 0, 0, 2, tenkanBuffer) <= 0 ||
@@ -109,19 +118,9 @@ ENUM_TRADE_SIGNAL CStrategyIchimoku::GetSignal(double &confidence) {
     }
     
     // Get price data
-    double close[27];
     if(CopyClose(m_symbol, m_timeframe, 0, 27, close) <= 0) {
         return TRADE_SIGNAL_NONE;
     }
-    
-    // Current values (index 0 is oldest in CopyBuffer default, but we want newest at 0 if we use ArraySetAsSeries)
-    // Let's use ArraySetAsSeries to match the logic
-    ArraySetAsSeries(tenkanBuffer, true);
-    ArraySetAsSeries(kijunBuffer, true);
-    ArraySetAsSeries(spanABuffer, true);
-    ArraySetAsSeries(spanBBuffer, true);
-    ArraySetAsSeries(chikouBuffer, true);
-    ArraySetAsSeries(close, true);
     
     // Signal components
     bool priceAboveCloud = close[0] > spanABuffer[0] && close[0] > spanBBuffer[0];
@@ -175,7 +174,5 @@ ENUM_TRADE_SIGNAL CStrategyIchimoku::GetSignal(double &confidence) {
     
     return TRADE_SIGNAL_NONE;
 }
-
-#endif // __STRATEGY_ICHIMOKU_MQH__
 
 #endif // __STRATEGY_ICHIMOKU_MQH__

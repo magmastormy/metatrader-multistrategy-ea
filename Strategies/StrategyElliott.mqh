@@ -119,9 +119,11 @@ public:
     // Constructor/Destructor
     CStrategyElliott(const string name = "Elliott Wave Strategy", int magic = 0);
     ~CStrategyElliott();
-    
     // Initialization/Deinitialization
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, CTradeManager* tradeMgr, CPositionSizer* posSizer);
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
+    {
+        return CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer);
+    }
     virtual void Deinit() override;
     
     // Signal generation
