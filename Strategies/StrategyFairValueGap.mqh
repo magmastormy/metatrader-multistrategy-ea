@@ -7,33 +7,31 @@
 #include "../Core/StrategyBase.mqh"
 #include <Arrays/ArrayObj.mqh>
 
-// Forward declarations
-double NormalizeSignal(double value, double min_val, double max_val);
-
 //+------------------------------------------------------------------+
-//| Fair Value Gap Structure                                        |
+//| Fair Value Gap Class (extends CObject for use with CArrayObj)   |
 //+------------------------------------------------------------------+
-struct SFairValueGap
+class CFairValueGap : public CObject
 {
-    datetime time1;         // Start time of the gap
-    datetime time2;         // End time of the gap
-    double   high;          // High of the gap
-    double   low;           // Low of the gap
-    bool     isBullish;     // True for bullish FVG, false for bearish
-    int      timeframe;     // Timeframe where the FVG was identified
-    int      strength;      // Strength of the FVG (1-5)
-    bool     isFilled;     // Whether the gap has been filled
+public:
+    datetime m_time1;         // Start time of the gap
+    datetime m_time2;         // End time of the gap
+    double   m_high;          // High of the gap
+    double   m_low;           // Low of the gap
+    bool     m_isBullish;     // True for bullish FVG, false for bearish
+    int      m_timeframe;     // Timeframe where the FVG was identified
+    int      m_strength;      // Strength of the FVG (1-5)
+    bool     m_isFilled;      // Whether the gap has been filled
     
     // Default constructor
-    SFairValueGap() : time1(0), time2(0), high(0), low(0), isBullish(false), 
-                     timeframe(0), strength(3), isFilled(false) {}
+    CFairValueGap() : m_time1(0), m_time2(0), m_high(0), m_low(0), m_isBullish(false), 
+                     m_timeframe(0), m_strength(3), m_isFilled(false) {}
     
     // Parameterized constructor
-    SFairValueGap(datetime _time1, datetime _time2, double _high, double _low, 
+    CFairValueGap(datetime _time1, datetime _time2, double _high, double _low, 
                  bool _isBullish, int _timeframe, int _strength = 3) :
-        time1(_time1), time2(_time2), high(_high), low(_low), 
-        isBullish(_isBullish), timeframe(_timeframe), 
-        strength(_strength), isFilled(false) {}
+        m_time1(_time1), m_time2(_time2), m_high(_high), m_low(_low), 
+        m_isBullish(_isBullish), m_timeframe(_timeframe), 
+        m_strength(_strength), m_isFilled(false) {}
 };
 
 //+------------------------------------------------------------------+
@@ -42,16 +40,17 @@ struct SFairValueGap
 class CStrategyFairValueGap : public CStrategyBase
 {
 private:
-    CArrayObj* m_fvgs;         // Array of fair value gaps
+    CArrayObj  m_fvgs;         // Array of fair value gaps
     int        m_lookback;     // Number of bars to look back for FVGs
     double     m_minGapSize;   // Minimum size of a gap to consider (in points)
-    int        m_maxBarsToFill; // Maximum number of bars to wait for gap to fill
+    int        m_maxBarsToFill; // Maximum number of bars to wait for gap fill
     
     // Helper methods
     bool FindFairValueGaps(const string symbol, const ENUM_TIMEFRAMES timeframe);
-    void DrawFVG(const SFairValueGap &fvg, const string symbol, int index);
+    void DrawFVG(CFairValueGap* fvg, const string symbol, int index);
     bool IsValidFVG(const MqlRates &curr, const MqlRates &prev1, const MqlRates &prev2);
     void CheckAndMarkFilledGaps(const string symbol);
+    double NormalizeSignalFVG(double value, double min_val, double max_val);
     
 public:
     CStrategyFairValueGap(const string name = "Fair Value Gap Strategy", int magic = 0);
@@ -70,13 +69,6 @@ public:
     void SetLookback(int lookback) { m_lookback = lookback; }
     void SetMinGapSize(double points) { m_minGapSize = points; }
     void SetMaxBarsToFill(int bars) { m_maxBarsToFill = bars; }
-    
-private:
-    double NormalizeSignal(double value, double min_val, double max_val) {
-        if (max_val <= min_val) return 0.0;
-        double normalized = (value - min_val) / (max_val - min_val);
-        return MathMin(1.0, MathMax(0.0, normalized));
-    }
 };
 
 //+------------------------------------------------------------------+
@@ -88,7 +80,7 @@ CStrategyFairValueGap::CStrategyFairValueGap(const string name, int magic) :
     m_minGapSize(5.0),  // 5 pips minimum gap size
     m_maxBarsToFill(20)  // 20 bars maximum to wait for gap fill
 {
-    m_fvgs = new CArrayObj();
+    m_fvgs.FreeMode(true);
 }
 
 //+------------------------------------------------------------------+
@@ -97,7 +89,16 @@ CStrategyFairValueGap::CStrategyFairValueGap(const string name, int magic) :
 CStrategyFairValueGap::~CStrategyFairValueGap()
 {
     Deinit();
-    delete m_fvgs;
+}
+
+//+------------------------------------------------------------------+
+//| Normalize signal helper                                          |
+//+------------------------------------------------------------------+
+double CStrategyFairValueGap::NormalizeSignalFVG(double value, double min_val, double max_val)
+{
+    if (max_val <= min_val) return 0.0;
+    double normalized = (value - min_val) / (max_val - min_val);
+    return MathMin(1.0, MathMax(0.0, normalized));
 }
 
 //+------------------------------------------------------------------+
@@ -106,7 +107,7 @@ CStrategyFairValueGap::~CStrategyFairValueGap()
 bool CStrategyFairValueGap::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer)
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer)) return false;
-    if(CheckPointer(m_fvgs) != POINTER_INVALID) m_fvgs.Clear();
+    m_fvgs.Clear();
     return true;
 }
 
@@ -117,16 +118,16 @@ void CStrategyFairValueGap::Deinit()
 {
     // Clean up any chart objects
     ObjectsDeleteAll(0, "FVG_");
-    if(CheckPointer(m_fvgs) != POINTER_INVALID) m_fvgs.Clear();
+    m_fvgs.Clear();
     CStrategyBase::Deinit();
 }
 
 void CStrategyFairValueGap::OnTick()
 {
     static datetime lastBarTime = 0;
-    datetime currentTime = iTime(m_symbol, m_timeframe, 0);
-    if(currentTime != lastBarTime) {
-        lastBarTime = currentTime;
+    datetime barTime = iTime(m_symbol, m_timeframe, 0);
+    if(barTime != lastBarTime) {
+        lastBarTime = barTime;
         OnNewBar(m_symbol, m_timeframe);
     }
 }
@@ -141,18 +142,21 @@ void CStrategyFairValueGap::OnNewBar(const string symbol, const ENUM_TIMEFRAMES 
 //+------------------------------------------------------------------+
 bool CStrategyFairValueGap::IsValidFVG(const MqlRates &curr, const MqlRates &prev1, const MqlRates &prev2)
 {
+    double pointValue = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(pointValue <= 0) pointValue = 0.00001;
+    
     // Check for bullish FVG (gap up)
     if (curr.low > prev1.high && prev1.low > prev2.high)
     {
         // The gap between prev1 high and current low is the FVG
-        double gapSize = (curr.low - prev1.high) / Point();
+        double gapSize = (curr.low - prev1.high) / pointValue;
         return (gapSize >= m_minGapSize);
     }
     // Check for bearish FVG (gap down)
     else if (curr.high < prev1.low && prev1.high < prev2.low)
     {
         // The gap between prev1 low and current high is the FVG
-        double gapSize = (prev1.low - curr.high) / Point();
+        double gapSize = (prev1.low - curr.high) / pointValue;
         return (gapSize >= m_minGapSize);
     }
     
@@ -167,8 +171,8 @@ bool CStrategyFairValueGap::FindFairValueGaps(const string symbol, const ENUM_TI
     // Clear previous FVGs for this symbol/timeframe
     for (int i = m_fvgs.Total() - 1; i >= 0; i--)
     {
-        SFairValueGap *fvg = (SFairValueGap*)m_fvgs.At(i);
-        if (fvg && fvg.timeframe == timeframe)
+        CFairValueGap *fvg = (CFairValueGap*)m_fvgs.At(i);
+        if (fvg != NULL && fvg.m_timeframe == (int)timeframe)
             m_fvgs.Delete(i);
     }
     
@@ -177,9 +181,7 @@ bool CStrategyFairValueGap::FindFairValueGaps(const string symbol, const ENUM_TI
     ArraySetAsSeries(rates, true);
     int copied = CopyRates(symbol, timeframe, 0, m_lookback + 3, rates);
     if (copied <= 3)  // Need at least 3 bars to identify an FVG
-    {
         return false;
-    }
     
     // Find Fair Value Gaps
     for (int i = 2; i < copied - 1; i++)
@@ -191,17 +193,17 @@ bool CStrategyFairValueGap::FindFairValueGaps(const string symbol, const ENUM_TI
             double fvgLow = isBullish ? rates[i].low : rates[i].high;
             
             // Create new FVG
-            SFairValueGap *fvg = new SFairValueGap(
+            CFairValueGap *fvg = new CFairValueGap(
                 rates[i-1].time,   // Start time (time of candle before the gap)
                 rates[i].time,     // End time (time of candle after the gap)
                 fvgHigh,           // High of the gap
-                fvgLow,             // Low of the gap
-                isBullish,          // Direction of the gap
-                timeframe,          // Timeframe
-                3                   // Default strength
+                fvgLow,            // Low of the gap
+                isBullish,         // Direction of the gap
+                (int)timeframe,    // Timeframe
+                3                  // Default strength
             );
             
-            m_fvgs.Add(fvg);
+            if(fvg != NULL) m_fvgs.Add(fvg);
         }
     }
     
@@ -211,28 +213,26 @@ bool CStrategyFairValueGap::FindFairValueGaps(const string symbol, const ENUM_TI
 //+------------------------------------------------------------------+
 //| Draw FVG on the chart                                           |
 //+------------------------------------------------------------------+
-void CStrategyFairValueGap::DrawFVG(const SFairValueGap &fvg, const string symbol, int index)
+void CStrategyFairValueGap::DrawFVG(CFairValueGap* fvg, const string symbol, int index)
 {
-    if (symbol != _Symbol)
+    if (fvg == NULL || symbol != _Symbol)
         return;
     
-    string prefix = fvg.isBullish ? "FVG_Bull_" : "FVG_Bear_";
-    string name = prefix + IntegerToString(fvg.timeframe) + "_" + IntegerToString(index);
+    string prefix = fvg.m_isBullish ? "FVG_Bull_" : "FVG_Bear_";
+    string name = prefix + IntegerToString(fvg.m_timeframe) + "_" + IntegerToString(index);
     
     // Create a rectangle for the FVG
-    datetime time1 = fvg.time1;
-    datetime time2 = iTime(symbol, fvg.timeframe, 0); // Extend to current bar
+    datetime time1 = fvg.m_time1;
+    datetime time2 = iTime(symbol, (ENUM_TIMEFRAMES)fvg.m_timeframe, 0); // Extend to current bar
     
     if (ObjectFind(0, name) >= 0)
         ObjectDelete(0, name);
     
-    if (!ObjectCreate(0, name, OBJ_RECTANGLE, 0, time1, fvg.high, time2, fvg.low))
-    {
+    if (!ObjectCreate(0, name, OBJ_RECTANGLE, 0, time1, fvg.m_high, time2, fvg.m_low))
         return;
-    }
     
     // Set object properties
-    color clr = fvg.isBullish ? clrDodgerBlue : clrOrangeRed;
+    color clr = fvg.m_isBullish ? clrDodgerBlue : clrOrangeRed;
     
     ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
     ObjectSetInteger(0, name, OBJPROP_BACK, true);
@@ -243,7 +243,7 @@ void CStrategyFairValueGap::DrawFVG(const SFairValueGap &fvg, const string symbo
     ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);
     
     // Adjust opacity based on whether the gap has been filled
-    if (fvg.isFilled)
+    if (fvg.m_isFilled)
         ObjectSetInteger(0, name, OBJPROP_COLOR, clrNONE);
 }
 
@@ -261,19 +261,19 @@ void CStrategyFairValueGap::CheckAndMarkFilledGaps(const string symbol)
     
     for (int i = 0; i < m_fvgs.Total(); i++)
     {
-        SFairValueGap *fvg = (SFairValueGap*)m_fvgs.At(i);
-        if (!fvg || fvg.isFilled)
+        CFairValueGap *fvg = (CFairValueGap*)m_fvgs.At(i);
+        if (fvg == NULL || fvg.m_isFilled)
             continue;
             
         // Check if the gap has been filled
-        if ((fvg.isBullish && bid <= fvg.low) ||  // Price came down to fill a bullish FVG
-            (!fvg.isBullish && ask >= fvg.high))  // Price went up to fill a bearish FVG
+        if ((fvg.m_isBullish && bid <= fvg.m_low) ||  // Price came down to fill a bullish FVG
+            (!fvg.m_isBullish && ask >= fvg.m_high))  // Price went up to fill a bearish FVG
         {
-            fvg.isFilled = true;
+            fvg.m_isFilled = true;
             
             // Redraw the FVG to show it's been filled
             if (symbol == _Symbol)
-                DrawFVG(*fvg, symbol, i);
+                DrawFVG(fvg, symbol, i);
         }
     }
 }
@@ -300,35 +300,35 @@ ENUM_TRADE_SIGNAL CStrategyFairValueGap::GetSignal(double &confidence)
     // Get current price data
     double ask = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     
     // Check for trading opportunities based on FVGs
     for (int i = 0; i < m_fvgs.Total(); i++)
     {
-        SFairValueGap *fvg = (SFairValueGap*)m_fvgs.At(i);
-        if (!fvg || fvg.isFilled || fvg.timeframe != m_timeframe)
+        CFairValueGap *fvg = (CFairValueGap*)m_fvgs.At(i);
+        if (fvg == NULL || fvg.m_isFilled || fvg.m_timeframe != (int)m_timeframe)
             continue;
             
         // Draw all FVGs on the chart
         if (m_symbol == _Symbol && m_timeframe == _Period)
-            DrawFVG(*fvg, m_symbol, i);
+            DrawFVG(fvg, m_symbol, i);
         
         // Check for entry signals based on FVG interaction
-        if (fvg.isBullish)
+        if (fvg.m_isBullish)
         {
             // For bullish FVG, look for price to pull back to the gap
-            if (bid >= fvg.low && bid <= fvg.high)
+            if (bid >= fvg.m_low && bid <= fvg.m_high)
             {
                 // The closer to the bottom of the gap, the better the entry
-                double gapRange = fvg.high - fvg.low;
-                double distanceFromBottom = bid - fvg.low;
+                double gapRange = fvg.m_high - fvg.m_low;
+                double distanceFromBottom = bid - fvg.m_low;
                 double fillRatio = (gapRange > 0) ? (distanceFromBottom / gapRange) : 0.5;
                 
                 // Higher confidence if price is near the bottom of the gap
-                confidence = NormalizeSignal(1.0 - fillRatio, 0.3, 0.9);
+                confidence = NormalizeSignalFVG(1.0 - fillRatio, 0.3, 0.9);
                 
                 // Look for bullish reversal patterns or other confirmation
-                MqlRates rates[3];
+                MqlRates rates[];
+                ArraySetAsSeries(rates, true);
                 if (CopyRates(m_symbol, m_timeframe, 0, 3, rates) == 3)
                 {
                     // Check for bullish pin bar or engulfing pattern
@@ -346,18 +346,19 @@ ENUM_TRADE_SIGNAL CStrategyFairValueGap::GetSignal(double &confidence)
         else // Bearish FVG
         {
             // For bearish FVG, look for price to rally back to the gap
-            if (ask <= fvg.high && ask >= fvg.low)
+            if (ask <= fvg.m_high && ask >= fvg.m_low)
             {
                 // The closer to the top of the gap, the better the entry
-                double gapRange = fvg.high - fvg.low;
-                double distanceFromTop = fvg.high - ask;
+                double gapRange = fvg.m_high - fvg.m_low;
+                double distanceFromTop = fvg.m_high - ask;
                 double fillRatio = (gapRange > 0) ? (distanceFromTop / gapRange) : 0.5;
                 
                 // Higher confidence if price is near the top of the gap
-                confidence = NormalizeSignal(1.0 - fillRatio, 0.3, 0.9);
+                confidence = NormalizeSignalFVG(1.0 - fillRatio, 0.3, 0.9);
                 
                 // Look for bearish reversal patterns or other confirmation
-                MqlRates rates[3];
+                MqlRates rates[];
+                ArraySetAsSeries(rates, true);
                 if (CopyRates(m_symbol, m_timeframe, 0, 3, rates) == 3)
                 {
                     // Check for bearish pin bar or engulfing pattern

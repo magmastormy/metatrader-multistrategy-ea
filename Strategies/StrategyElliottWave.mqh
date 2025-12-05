@@ -8,56 +8,63 @@
 #include <Arrays/ArrayObj.mqh>
 #include <Math/Stat/Math.mqh>
 
-// Forward declarations
-double NormalizeSignal(double value, double min_val, double max_val);
+// Helper function for normalizing signal (defined before use)
+double NormalizeSignalEW(double value, double min_val, double max_val)
+{
+    if(value < min_val) return min_val;
+    if(value > max_val) return max_val;
+    return value;
+}
 
 //+------------------------------------------------------------------+
-//| Elliott Wave Structure                                          |
+//| Wave Point Class (extends CObject for use with CArrayObj)       |
 //+------------------------------------------------------------------+
-class CElliottWave
+enum ENUM_WAVE_TYPE
+{
+    WAVE_TYPE_UNKNOWN = 0,
+    WAVE_TYPE_1 = 1,     // Impulse wave 1
+    WAVE_TYPE_2 = 2,     // Corrective wave 2
+    WAVE_TYPE_3 = 3,     // Impulse wave 3 (typically the strongest)
+    WAVE_TYPE_4 = 4,     // Corrective wave 4
+    WAVE_TYPE_5 = 5,     // Final impulse wave 5
+    WAVE_TYPE_A = 6,     // Corrective wave A
+    WAVE_TYPE_B = 7,     // Corrective wave B
+    WAVE_TYPE_C = 8      // Corrective wave C
+};
+
+class CWavePoint : public CObject
 {
 public:
-    enum EWaveType
-    {
-        WAVE_UNKNOWN = 0,
-        WAVE_1 = 1,     // Impulse wave 1
-        WAVE_2 = 2,     // Corrective wave 2
-        WAVE_3 = 3,     // Impulse wave 3 (typically the strongest)
-        WAVE_4 = 4,     // Corrective wave 4
-        WAVE_5 = 5,     // Final impulse wave 5
-        WAVE_A = 6,     // Corrective wave A
-        WAVE_B = 7,     // Corrective wave B
-        WAVE_C = 8      // Corrective wave C
-    };
+    datetime      m_time;        // Time of the wave point
+    double        m_price;       // Price level of the wave point
+    ENUM_WAVE_TYPE m_waveType;   // Type of wave
+    int           m_degree;      // Degree of the wave
     
-    struct SWavePoint
-    {
-        datetime time;        // Time of the wave point
-        double   price;        // Price level of the wave point
-        EWaveType waveType;    // Type of wave
-        int       degree;      // Degree of the wave (1 = Grand Supercycle, 2 = Supercycle, etc.)
-        
-        SWavePoint() : time(0), price(0), waveType(WAVE_UNKNOWN), degree(5) {}
-        SWavePoint(datetime _time, double _price, EWaveType _type, int _degree) :
-            time(_time), price(_price), waveType(_type), degree(_degree) {}
-    };
-    
+    CWavePoint() : m_time(0), m_price(0), m_waveType(WAVE_TYPE_UNKNOWN), m_degree(5) {}
+    CWavePoint(datetime _time, double _price, ENUM_WAVE_TYPE _type, int _degree) :
+        m_time(_time), m_price(_price), m_waveType(_type), m_degree(_degree) {}
+};
+
+//+------------------------------------------------------------------+
+//| Elliott Wave Analyzer Class                                     |
+//+------------------------------------------------------------------+
+class CElliottWaveAnalyzer
+{
 private:
-    CArrayObj* m_wavePoints;   // Array of wave points
-    int        m_degree;       // Current wave degree
+    CArrayObj     m_wavePoints;   // Array of wave points
+    int           m_degree;       // Current wave degree
     
 public:
-    CElliottWave();
-    ~CElliottWave();
+    CElliottWaveAnalyzer() : m_degree(5) { m_wavePoints.FreeMode(true); }
+    ~CElliottWaveAnalyzer() { m_wavePoints.Clear(); }
     
     // Wave identification methods
     bool IdentifyWaves(const MqlRates &rates[], int count);
-    bool IsImpulseWave(const MqlRates &waves[], int start, int end);
-    bool IsCorrectiveWave(const MqlRates &waves[], int start, int end);
     
     // Getters
     int GetWaveCount() const { return m_wavePoints.Total(); }
-    SWavePoint* GetWavePoint(int index) { return (SWavePoint*)m_wavePoints.At(index); }
+    CWavePoint* GetWavePoint(int index) { return (CWavePoint*)m_wavePoints.At(index); }
+    void Clear() { m_wavePoints.Clear(); }
 };
 
 //+------------------------------------------------------------------+
@@ -66,24 +73,22 @@ public:
 class CStrategyElliottWave : public CStrategyBase
 {
 private:
-    CElliottWave*  m_ewave;           // Elliott Wave analyzer
-    int            m_lookback;        // Number of bars to analyze
-    double         m_minWaveSize;     // Minimum wave size in points
-    int            m_minWaveBars;     // Minimum number of bars in a wave
+    CElliottWaveAnalyzer  m_analyzer;      // Elliott Wave analyzer
+    int                   m_lookback;       // Number of bars to analyze
+    double                m_minWaveSize;    // Minimum wave size in points
+    int                   m_minWaveBars;    // Minimum number of bars in a wave
     
     // Helper methods
     bool AnalyzeWaves(const string symbol, const ENUM_TIMEFRAMES timeframe);
     void DrawWaveLabels(const string symbol);
-    double CalculateWaveProjection(const CElliottWave::SWavePoint &wave1, 
-                                  const CElliottWave::SWavePoint &wave2,
-                                  double ratio);
+    double CalculateWaveProjection(CWavePoint* wave1, CWavePoint* wave2, double ratio);
     
 public:
     CStrategyElliottWave();
-    virtual ~CStrategyElliottWave();
+    virtual ~CStrategyElliottWave() {}
     
     // IStrategy implementation
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManager, void* positionSizer) override;
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override;
     virtual void Deinit() override;
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override;
     virtual string GetName() const override { return "Elliott Wave Strategy"; }
@@ -96,19 +101,9 @@ public:
 };
 
 //+------------------------------------------------------------------+
-//| CElliottWave Implementation                                     |
+//| CElliottWaveAnalyzer Implementation                             |
 //+------------------------------------------------------------------+
-CElliottWave::CElliottWave() : m_degree(5) // Default to Primary degree
-{
-    m_wavePoints = new CArrayObj();
-}
-
-CElliottWave::~CElliottWave()
-{
-    delete m_wavePoints;
-}
-
-bool CElliottWave::IdentifyWaves(const MqlRates &rates[], int count)
+bool CElliottWaveAnalyzer::IdentifyWaves(const MqlRates &rates[], int count)
 {
     if (count < 10) // Need at least 10 bars for any meaningful wave analysis
         return false;
@@ -123,15 +118,15 @@ bool CElliottWave::IdentifyWaves(const MqlRates &rates[], int count)
         if (rates[i].high > rates[i-1].high && rates[i].high > rates[i+1].high &&
             rates[i].high > rates[i-2].high && rates[i].high > rates[i+2].high)
         {
-            SWavePoint *point = new SWavePoint(rates[i].time, rates[i].high, WAVE_UNKNOWN, m_degree);
-            m_wavePoints.Add(point);
+            CWavePoint *point = new CWavePoint(rates[i].time, rates[i].high, WAVE_TYPE_UNKNOWN, m_degree);
+            if(point != NULL) m_wavePoints.Add(point);
         }
         // Check for swing low
         else if (rates[i].low < rates[i-1].low && rates[i].low < rates[i+1].low &&
                  rates[i].low < rates[i-2].low && rates[i].low < rates[i+2].low)
         {
-            SWavePoint *point = new SWavePoint(rates[i].time, rates[i].low, WAVE_UNKNOWN, m_degree);
-            m_wavePoints.Add(point);
+            CWavePoint *point = new CWavePoint(rates[i].time, rates[i].low, WAVE_TYPE_UNKNOWN, m_degree);
+            if(point != NULL) m_wavePoints.Add(point);
         }
     }
     
@@ -140,14 +135,14 @@ bool CElliottWave::IdentifyWaves(const MqlRates &rates[], int count)
     {
         for (int i = 0; i < m_wavePoints.Total(); i++)
         {
-            SWavePoint *point = (SWavePoint*)m_wavePoints.At(i);
-            if (!point) continue;
+            CWavePoint *point = (CWavePoint*)m_wavePoints.At(i);
+            if (point == NULL) continue;
             
             // Simple alternating pattern (in reality, Elliott Wave is much more complex)
             if (i % 2 == 0)
-                point.waveType = (EWaveType)((i % 5) + 1); // Waves 1-5
+                point.m_waveType = (ENUM_WAVE_TYPE)((i % 5) + 1); // Waves 1-5
             else
-                point.waveType = (EWaveType)((i % 3) + 6);  // Waves A-C
+                point.m_waveType = (ENUM_WAVE_TYPE)((i % 3) + 6);  // Waves A-C
         }
     }
     
@@ -158,32 +153,26 @@ bool CElliottWave::IdentifyWaves(const MqlRates &rates[], int count)
 //| CStrategyElliottWave Implementation                             |
 //+------------------------------------------------------------------+
 CStrategyElliottWave::CStrategyElliottWave() :
+    CStrategyBase("Elliott Wave Strategy", 0),
     m_lookback(100),
     m_minWaveSize(50.0),
     m_minWaveBars(5)
 {
-    m_ewave = new CElliottWave();
 }
 
-CStrategyElliottWave::~CStrategyElliottWave()
+bool CStrategyElliottWave::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer)
 {
-    delete m_ewave;
-}
-
-bool CStrategyElliottWave::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManager, void* positionSizer)
-{
-    if(!CStrategyBase::Init(symbol, timeframe, tradeManager, positionSizer))
+    if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
         return false;
         
-    Print("Initializing Elliott Wave Strategy");
     return true;
 }
 
 void CStrategyElliottWave::Deinit()
 {
-    Print("Deinitializing Elliott Wave Strategy");
     // Clean up any chart objects
     ObjectsDeleteAll(0, "EW_");
+    m_analyzer.Clear();
     CStrategyBase::Deinit();
 }
 
@@ -194,12 +183,10 @@ bool CStrategyElliottWave::AnalyzeWaves(const string symbol, const ENUM_TIMEFRAM
     ArraySetAsSeries(rates, true);
     int copied = CopyRates(symbol, timeframe, 0, m_lookback, rates);
     if (copied <= 0)
-    {
         return false;
-    }
     
     // Identify waves
-    if (!m_ewave.IdentifyWaves(rates, copied))
+    if (!m_analyzer.IdentifyWaves(rates, copied))
         return false;
         
     return true;
@@ -214,30 +201,30 @@ void CStrategyElliottWave::DrawWaveLabels(const string symbol)
     ObjectsDeleteAll(0, "EW_");
     
     // Draw wave labels
-    for (int i = 0; i < m_ewave.GetWaveCount(); i++)
+    for (int i = 0; i < m_analyzer.GetWaveCount(); i++)
     {
-        CElliottWave::SWavePoint *point = m_ewave.GetWavePoint(i);
-        if (!point) continue;
+        CWavePoint *point = m_analyzer.GetWavePoint(i);
+        if (point == NULL) continue;
         
         string name = StringFormat("EW_%d", i);
-        string text;
+        string text = "?";
         color clr = clrWhite;
         
-        switch (point.waveType)
+        switch (point.m_waveType)
         {
-            case CElliottWave::WAVE_1: text = "1"; clr = clrLime; break;
-            case CElliottWave::WAVE_2: text = "2"; clr = clrRed; break;
-            case CElliottWave::WAVE_3: text = "3"; clr = clrLime; break;
-            case CElliottWave::WAVE_4: text = "4"; clr = clrRed; break;
-            case CElliottWave::WAVE_5: text = "5"; clr = clrLime; break;
-            case CElliottWave::WAVE_A: text = "A"; clr = clrRed; break;
-            case CElliottWave::WAVE_B: text = "B"; clr = clrLime; break;
-            case CElliottWave::WAVE_C: text = "C"; clr = clrRed; break;
-            default: text = "?";
+            case WAVE_TYPE_1: text = "1"; clr = clrLime; break;
+            case WAVE_TYPE_2: text = "2"; clr = clrRed; break;
+            case WAVE_TYPE_3: text = "3"; clr = clrLime; break;
+            case WAVE_TYPE_4: text = "4"; clr = clrRed; break;
+            case WAVE_TYPE_5: text = "5"; clr = clrLime; break;
+            case WAVE_TYPE_A: text = "A"; clr = clrRed; break;
+            case WAVE_TYPE_B: text = "B"; clr = clrLime; break;
+            case WAVE_TYPE_C: text = "C"; clr = clrRed; break;
+            default: text = "?"; break;
         }
         
         // Create a label for the wave
-        if (!ObjectCreate(0, name, OBJ_TEXT, 0, point.time, point.price))
+        if (!ObjectCreate(0, name, OBJ_TEXT, 0, point.m_time, point.m_price))
             continue;
             
         ObjectSetString(0, name, OBJPROP_TEXT, text);
@@ -247,12 +234,11 @@ void CStrategyElliottWave::DrawWaveLabels(const string symbol)
     }
 }
 
-double CStrategyElliottWave::CalculateWaveProjection(const CElliottWave::SWavePoint &wave1, 
-                                                     const CElliottWave::SWavePoint &wave2,
-                                                     double ratio)
+double CStrategyElliottWave::CalculateWaveProjection(CWavePoint* wave1, CWavePoint* wave2, double ratio)
 {
-    double priceDiff = wave2.price - wave1.price;
-    return wave2.price + (priceDiff * ratio);
+    if(wave1 == NULL || wave2 == NULL) return 0.0;
+    double priceDiff = wave2.m_price - wave1.m_price;
+    return wave2.m_price + (priceDiff * ratio);
 }
 
 ENUM_TRADE_SIGNAL CStrategyElliottWave::GetSignal(double &confidence)
@@ -273,29 +259,28 @@ ENUM_TRADE_SIGNAL CStrategyElliottWave::GetSignal(double &confidence)
         DrawWaveLabels(m_symbol);
     
     // Get current price
-    double ask = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
     double bid = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
     
     // Simple trading logic (in a real implementation, this would be more sophisticated)
-    if (m_ewave.GetWaveCount() >= 5)
+    if (m_analyzer.GetWaveCount() >= 5)
     {
-        CElliottWave::SWavePoint *wave3 = m_ewave.GetWavePoint(2); // Wave 3
-        CElliottWave::SWavePoint *wave4 = m_ewave.GetWavePoint(3); // Wave 4
-        CElliottWave::SWavePoint *wave5 = m_ewave.GetWavePoint(4); // Wave 5
+        CWavePoint *wave3 = m_analyzer.GetWavePoint(2); // Wave 3
+        CWavePoint *wave4 = m_analyzer.GetWavePoint(3); // Wave 4
+        CWavePoint *wave5 = m_analyzer.GetWavePoint(4); // Wave 5
         
-        if (wave3 && wave4 && wave5 && wave3.waveType == CElliottWave::WAVE_3)
+        if (wave3 != NULL && wave4 != NULL && wave5 != NULL && wave3.m_waveType == WAVE_TYPE_3)
         {
             // Check for completion of wave 5 (end of impulse)
-            if (wave5.waveType == CElliottWave::WAVE_5)
+            if (wave5.m_waveType == WAVE_TYPE_5)
             {
                 // If price is near the end of wave 5, look for a reversal
-                if (MathAbs(bid - wave5.price) < (10 * point))
+                if (MathAbs(bid - wave5.m_price) < (10 * point))
                 {
                     // Check if wave 5 is extended (common in wave 3 or 5)
-                    double wave1to3 = MathAbs(wave3.price - wave5.price);
-                    double wave3to5 = MathAbs(wave5.price - wave3.price);
+                    double wave1to3 = MathAbs(wave3.m_price - wave5.m_price);
+                    double wave3to5 = MathAbs(wave5.m_price - wave3.m_price);
                     
                     if (wave3to5 > (0.618 * wave1to3)) // Wave 5 is extended
                     {
@@ -305,19 +290,22 @@ ENUM_TRADE_SIGNAL CStrategyElliottWave::GetSignal(double &confidence)
                 }
             }
             // Check for wave 4 pullback in an uptrend
-            else if (wave4.waveType == CElliottWave::WAVE_4 &&
-                     wave3.price > wave4.price && // Uptrend
-                     bid > wave4.price && bid < wave3.price) // Price is in wave 4
+            else if (wave4.m_waveType == WAVE_TYPE_4 &&
+                     wave3.m_price > wave4.m_price && // Uptrend
+                     bid > wave4.m_price && bid < wave3.m_price) // Price is in wave 4
             {
                 // Look for buying opportunities in wave 4 pullback (38.2% - 50% retracement)
-                double wave3to4 = MathAbs(wave4.price - wave3.price);
-                double wave2to3 = MathAbs(wave3.price - wave4.price);
-                double retracement = (wave3to4 / wave2to3) * 100.0;
+                double wave3to4 = MathAbs(wave4.m_price - wave3.m_price);
+                double wave2to3 = MathAbs(wave3.m_price - wave4.m_price);
                 
-                if (retracement >= 38.2 && retracement <= 61.8)
-                {
-                    confidence = NormalizeSignal(1.0 - ((retracement - 38.2) / 23.6), 0.5, 0.9);
-                    return TRADE_SIGNAL_BUY; // Buy signal
+                if(wave2to3 > 0) {
+                    double retracement = (wave3to4 / wave2to3) * 100.0;
+                    
+                    if (retracement >= 38.2 && retracement <= 61.8)
+                    {
+                        confidence = NormalizeSignalEW(1.0 - ((retracement - 38.2) / 23.6), 0.5, 0.9);
+                        return TRADE_SIGNAL_BUY; // Buy signal
+                    }
                 }
             }
         }

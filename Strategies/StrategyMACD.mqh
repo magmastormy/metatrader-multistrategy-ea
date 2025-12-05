@@ -60,7 +60,7 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override;
     virtual string GetName() const override { return m_name; }
     virtual bool IsEnabled() const override { return m_is_enabled; }
-    virtual void SetEnabled(bool enabled) override { m_is_enabled = enabled; }
+    virtual void SetEnabled(const bool enabled) override { m_is_enabled = enabled; }
     virtual void OnTick() override;
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override;
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_MACD; }
@@ -108,7 +108,7 @@ CStrategyMACD::~CStrategyMACD()
 //+------------------------------------------------------------------+
 //| Initialize indicator handles and resources                       |
 //+------------------------------------------------------------------+
-bool CStrategyMACD::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManager, void* positionSizer)
+bool CStrategyMACD::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer)
 {
     Print("Initializing MACD Strategy");
     
@@ -120,7 +120,7 @@ bool CStrategyMACD::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, v
         m_macdEvents.Clear();
     }
     
-    return CStrategyBase::Init(symbol, timeframe, tradeManager, positionSizer);
+    return CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer);
 }
 
 //+------------------------------------------------------------------+
@@ -277,9 +277,9 @@ void CStrategyMACD::OnTick()
 {
     // Check for new bar
     static datetime lastBarTime = 0;
-    datetime currentTime = iTime(m_symbol, m_timeframe, 0);
-    if(currentTime != lastBarTime) {
-        lastBarTime = currentTime;
+    datetime barTime = iTime(m_symbol, m_timeframe, 0);
+    if(barTime != lastBarTime) {
+        lastBarTime = barTime;
         OnNewBar(m_symbol, m_timeframe);
     }
 }

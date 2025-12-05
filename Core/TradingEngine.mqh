@@ -11,8 +11,6 @@
 #include "CrashBoomSpikeDetector.mqh"
 #include "StepIndexLevelBreaker.mqh"
 #include "IntegrationHub.mqh"
-#include "IntegrationHub.mqh"
-#include "IntegrationHub.mqh"
 #include "SymbolContext.mqh"
 #include "ModeManager.mqh"
 #include "EnhancedRiskManager.mqh"
@@ -33,6 +31,11 @@
 #include "../Strategies/StrategyBollinger.mqh"
 #include "../Strategies/StrategyBollingerBreakout.mqh"
 #include "../Strategies/StrategySMC.mqh"
+#include "../Strategies/StrategyBreakout.mqh"
+#include "../Strategies/StrategyIchimoku.mqh"
+#include "../Strategies/StrategyElliottWave.mqh"
+#include "../Strategies/StrategyFairValueGap.mqh"
+#include "../Strategies/StrategyHarmonicPatterns.mqh"
 #include "StrategyWrapper.mqh"
 #include "PerformanceAnalytics.mqh"
 
@@ -48,9 +51,6 @@ private:
     CAIStrategyOrchestrator* m_aiOrchestrator;
     CInstrumentRegistry*    m_instrumentRegistry;
     CCrashBoomSpikeDetector* m_spikeDetector;
-    CStepIndexLevelBreaker* m_levelBreaker;
-    CStepIndexLevelBreaker* m_levelBreaker;
-    CAIIntegrationHub*      m_integrationHub;
     CStepIndexLevelBreaker* m_levelBreaker;
     CAIIntegrationHub*      m_integrationHub;
     CModeManager*           m_modeManager;
@@ -144,10 +144,7 @@ CTradingEngine::CTradingEngine() :
     m_ensembleLearner(NULL),
     m_symbolContexts(NULL),
     m_lastStrategyDebugTime(0),
-    m_defaultRiskPerTrade(0.02),
-    m_lastStrategyDebugTime(0),
-    m_defaultRiskPerTrade(0.02),
-    m_recoveryMultiplier(1.0),
+    m_lastHistoryCheck(0),
     m_defaultRiskPerTrade(0.02),
     m_recoveryMultiplier(1.0),
     m_modeManager(NULL),
@@ -162,7 +159,6 @@ CTradingEngine::~CTradingEngine()
 {
     if(m_symbolContexts != NULL)
     {
-        delete m_symbolContexts;
         delete m_symbolContexts;
         m_symbolContexts = NULL;
     }
@@ -205,7 +201,6 @@ bool CTradingEngine::Initialize(CTradeManager* p_tradeManager,
     m_aiNextGenBrain = p_aiNextGenBrain;
     m_transformerBrain = p_transformerBrain;
     m_ensembleLearner = p_ensembleLearner;
-    m_ensembleLearner = p_ensembleLearner;
     m_performanceAnalytics = p_performanceAnalytics;
     
     // Initialize Mode Manager
@@ -226,7 +221,7 @@ bool CTradingEngine::Initialize(CTradeManager* p_tradeManager,
         riskConfig.max_risk_per_trade = 0.05;
         riskConfig.max_drawdown_threshold = 0.03; // 3% max daily drawdown
         riskConfig.consecutive_losses_limit = 3;
-        riskConfig.pause_duration_minutes = 60;
+        // riskConfig.pause_duration_minutes = 60; // Removed: Property not found in SEnhancedRiskConfig
         m_riskManager.Initialize(riskConfig, AccountInfoDouble(ACCOUNT_EQUITY));
     }
     
@@ -619,6 +614,97 @@ bool CTradingEngine::InitializeStrategies()
             else if(smc != NULL) delete smc;
         }
         
+        // 15. Breakout Strategy
+        if(InpEnableBreakout)
+        {
+            CStrategyBreakout *breakout = new CStrategyBreakout(StringFormat("Breakout_%s", context.symbol));
+            if(breakout != NULL && breakout.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
+            {
+                CStrategyWrapper *wrapper = new CStrategyWrapper(breakout);
+                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
+                else delete breakout;
+            }
+            else if(breakout != NULL) delete breakout;
+        }
+        
+        // 16. Fibonacci Strategy (Already included via StrategyFactory - uses existing class)
+        if(InpEnableFibonacci)
+        {
+            CStrategyFibonacci *fib = new CStrategyFibonacci(StringFormat("Fibonacci_%s", context.symbol), 0);
+            if(fib != NULL && fib.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
+            {
+                CStrategyWrapper *wrapper = new CStrategyWrapper(fib);
+                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
+                else delete fib;
+            }
+            else if(fib != NULL) delete fib;
+        }
+        
+        // 17. Elliott Wave Strategy
+        if(InpEnableElliottWave)
+        {
+            CStrategyElliottWave *elliottWave = new CStrategyElliottWave();
+            if(elliottWave != NULL && elliottWave.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
+            {
+                CStrategyWrapper *wrapper = new CStrategyWrapper(elliottWave);
+                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
+                else delete elliottWave;
+            }
+            else if(elliottWave != NULL) delete elliottWave;
+        }
+        
+        // 18. Ichimoku Strategy
+        if(InpEnableIchimoku)
+        {
+            CStrategyIchimoku *ichimoku = new CStrategyIchimoku(StringFormat("Ichimoku_%s", context.symbol));
+            if(ichimoku != NULL && ichimoku.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
+            {
+                CStrategyWrapper *wrapper = new CStrategyWrapper(ichimoku);
+                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
+                else delete ichimoku;
+            }
+            else if(ichimoku != NULL) delete ichimoku;
+        }
+        
+        // 19. Fair Value Gap Strategy
+        if(InpEnableFairValueGap)
+        {
+            CStrategyFairValueGap *fvg = new CStrategyFairValueGap(StringFormat("FVG_%s", context.symbol));
+            if(fvg != NULL && fvg.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
+            {
+                CStrategyWrapper *wrapper = new CStrategyWrapper(fvg);
+                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
+                else delete fvg;
+            }
+            else if(fvg != NULL) delete fvg;
+        }
+        
+        // 20. Harmonic Patterns Strategy
+        if(InpEnableHarmonicPatterns)
+        {
+            CStrategyHarmonicPatterns *harmonic = new CStrategyHarmonicPatterns(StringFormat("Harmonic_%s", context.symbol));
+            if(harmonic != NULL && harmonic.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
+            {
+                CStrategyWrapper *wrapper = new CStrategyWrapper(harmonic);
+                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
+                else delete harmonic;
+            }
+            else if(harmonic != NULL) delete harmonic;
+        }
+        
+        // 21. Elliott Advanced Strategy (Already included via StrategyFactory - uses existing class)
+        if(InpEnableElliott)
+        {
+            CStrategyElliott *elliott = new CStrategyElliott(StringFormat("Elliott_%s", context.symbol));
+            if(elliott != NULL && elliott.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
+            {
+                CStrategyWrapper *wrapper = new CStrategyWrapper(elliott);
+                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
+                else delete elliott;
+            }
+            else if(elliott != NULL) delete elliott;
+        }
+        
         if(strategiesInitialized > 0)
         {
             PrintFormat("[TRADING-ENGINE] Initialized %d strategies for %s", strategiesInitialized, context.symbol);
@@ -830,13 +916,13 @@ void CTradingEngine::ProcessClosedTrades()
                 double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
                 double swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
                 double commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
-                double totalProfit = profit + swap + commission;
+                double dealProfit = profit + swap + commission;
                 
                 // Estimate risk taken (simplified, ideally we track this per trade)
                 // For now, we assume standard risk was used
                 double riskTaken = 0.0; // TODO: Retrieve actual risk from comment or magic
                 
-                m_riskManager.UpdateTradeResult(totalProfit, riskTaken, (datetime)HistoryDealGetInteger(ticket, DEAL_TIME), totalProfit > 0);
+                m_riskManager.UpdateTradeResult(dealProfit, riskTaken, (datetime)HistoryDealGetInteger(ticket, DEAL_TIME), dealProfit > 0);
             }
         }
     }
@@ -886,8 +972,7 @@ bool CTradingEngine::ExecuteTradeForSymbol(CSymbolContext* ctx, ENUM_TRADE_SIGNA
                 50.0, // Placeholder SL pips, will be refined
                 ctx.regime,
                 ctx.volatility,
-                TimeCurrent(),
-                currentMode
+                TimeCurrent()
             );
             
             // If risk manager returns 0 (e.g. paused), abort trade

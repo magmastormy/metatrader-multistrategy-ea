@@ -7,9 +7,6 @@
 #include "../Core/StrategyBase.mqh"
 #include <Arrays/ArrayObj.mqh>
 
-// Forward declarations
-double NormalizeSignal(double value, double min_val, double max_val);
-
 //+------------------------------------------------------------------+
 //| Order Block Class                                                |
 //+------------------------------------------------------------------+
@@ -116,9 +113,9 @@ void CStrategyOrderBlock::Deinit()
 void CStrategyOrderBlock::OnTick()
 {
     static datetime lastBarTime = 0;
-    datetime currentTime = iTime(m_symbol, m_timeframe, 0);
-    if(currentTime != lastBarTime) {
-        lastBarTime = currentTime;
+    datetime barTime = iTime(m_symbol, m_timeframe, 0);
+    if(barTime != lastBarTime) {
+        lastBarTime = barTime;
         OnNewBar(m_symbol, m_timeframe);
     }
 }

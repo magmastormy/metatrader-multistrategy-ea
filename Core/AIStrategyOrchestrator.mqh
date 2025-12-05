@@ -252,6 +252,7 @@ public:
     
     // Dynamic weight adjustment
     void UpdateStrategyWeights(void);
+    bool UpdateStrategyWeight(const string strategyName, const double newWeight);
     double CalculatePerformanceAdjustedWeight(const int strategyIndex);
     void ApplyRegimeBasedAdjustments(ENUM_MARKET_REGIME regime, double regimeConfidence);
     
@@ -293,11 +294,15 @@ public:
     int GetActiveStrategyCount(void);
     double GetAverageWinRate(void);
     string GetPerformanceSummary(void);
+    string GetStrategyWeightsJSON(void);
+    double GetEnsembleConfidence(void);
     
     // Configuration
     void SetMinWinRateThreshold(const double threshold) { m_minWinRateThreshold = threshold; }
     void SetMaxConsecutiveLosses(const int maxLosses) { m_maxConsecutiveLosses = maxLosses; }
     void SetCurrentRegime(ENUM_MARKET_REGIME regime, double confidence);
+    ENUM_MARKET_REGIME GetCurrentMarketRegime(void) const { return m_currentRegime; }
+    void SetMinConfidenceThreshold(double threshold) { m_minVotingConfidence = threshold; }
     
     // Task 3.4 configuration methods
     void SetAgreementBonus(const double bonus) { m_agreementBonus = MathMax(0.0, MathMin(0.5, bonus)); }
@@ -1815,6 +1820,56 @@ void CAIStrategyOrchestrator::LogVotingDecisionReasoning(SEnsembleVote &votes[],
                                          votes[i].strategyName, voteSignal, votes[i].confidence, 
                                          votes[i].weight, votes[i].adjustedWeight));
     }
+    // }
+}
+
+//+------------------------------------------------------------------+
+//| Get Current Ensemble Confidence                                 |
+//+------------------------------------------------------------------+
+double CAIStrategyOrchestrator::GetEnsembleConfidence(void)
+{
+    if(m_decisionCount > 0)
+    {
+        int lastIdx = (m_decisionIndex - 1 + 50) % 50;
+        return m_recentDecisions[lastIdx].confidence;
+    }
+    return 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Get Strategy Weights as JSON                                    |
+//+------------------------------------------------------------------+
+string CAIStrategyOrchestrator::GetStrategyWeightsJSON(void)
+{
+    string json = "{";
+    json += "\"strategies\":[";
+    
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(i > 0) json += ",";
+        json += StringFormat("{\"name\":\"%s\",\"weight\":%.2f,\"enabled\":%s}",
+                            m_strategies[i].name,
+                            m_strategies[i].weight,
+                            m_strategies[i].enabled ? "true" : "false");
+    }
+    
+    json += "]}";
+    return json;
+}
+
+//+------------------------------------------------------------------+
+//| Update Single Strategy Weight                                   |
+//+------------------------------------------------------------------+
+bool CAIStrategyOrchestrator::UpdateStrategyWeight(const string strategyName, const double newWeight)
+{
+    int index = FindStrategyIndex(strategyName);
+    if(index < 0) return false;
+    
+    if(!ValidateWeight(newWeight)) return false;
+    
+    m_strategies[index].weight = newWeight;
+    LogOrchestrationEvent(ERROR_INFO, StringFormat("Strategy weight manually updated: %s -> %.2f", strategyName, newWeight));
+    return true;
 }
 
 #endif // CORE_AI_STRATEGY_ORCHESTRATOR_MQH
