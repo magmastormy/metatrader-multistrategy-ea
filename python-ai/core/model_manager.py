@@ -32,47 +32,52 @@ except ImportError:
     logger.warning("ONNX Runtime not available")
 
 
-class LightweightTransformer(nn.Module):
-    """Lightweight transformer for trading"""
-    
-    def __init__(self, input_dim=20, d_model=64, nhead=4, num_layers=3):
-        super().__init__()
-        self.input_dim = input_dim
-        self.d_model = d_model
+
+if TORCH_AVAILABLE:
+    class LightweightTransformer(nn.Module):
+        """Lightweight transformer for trading"""
         
-        self.input_projection = nn.Linear(input_dim, d_model)
-        self.positional_encoding = nn.Parameter(torch.randn(500, d_model) * 0.02)
-        
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=d_model * 2,
-            dropout=0.1,
-            batch_first=True
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        
-        # Output heads
-        self.signal_head = nn.Linear(d_model, 1)
-        self.confidence_head = nn.Linear(d_model, 1)
-        
-    def forward(self, x):
-        # x shape: (batch, seq_len, input_dim) or (batch, input_dim)
-        if len(x.shape) == 2:
-            x = x.unsqueeze(1)  # Add sequence dimension
-        
-        batch_size, seq_len, _ = x.shape
-        
-        x = self.input_projection(x)
-        x = x + self.positional_encoding[:seq_len, :].unsqueeze(0)
-        
-        x = self.transformer(x)
-        x = x[:, -1, :]  # Take last token
-        
-        signal = torch.tanh(self.signal_head(x))
-        confidence = torch.sigmoid(self.confidence_head(x))
-        
-        return signal, confidence
+        def __init__(self, input_dim=20, d_model=64, nhead=4, num_layers=3):
+            super().__init__()
+            self.input_dim = input_dim
+            self.d_model = d_model
+            
+            self.input_projection = nn.Linear(input_dim, d_model)
+            self.positional_encoding = nn.Parameter(torch.randn(500, d_model) * 0.02)
+            
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=d_model * 2,
+                dropout=0.1,
+                batch_first=True
+            )
+            self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+            
+            # Output heads
+            self.signal_head = nn.Linear(d_model, 1)
+            self.confidence_head = nn.Linear(d_model, 1)
+            
+        def forward(self, x):
+            # x shape: (batch, seq_len, input_dim) or (batch, input_dim)
+            if len(x.shape) == 2:
+                x = x.unsqueeze(1)  # Add sequence dimension
+            
+            batch_size, seq_len, _ = x.shape
+            
+            x = self.input_projection(x)
+            x = x + self.positional_encoding[:seq_len, :].unsqueeze(0)
+            
+            x = self.transformer(x)
+            x = x[:, -1, :]  # Take last token
+            
+            signal = torch.tanh(self.signal_head(x))
+            confidence = torch.sigmoid(self.confidence_head(x))
+            
+            return signal, confidence
+else:
+    class LightweightTransformer:
+        pass
 
 
 class ModelManager:
@@ -85,6 +90,10 @@ class ModelManager:
         self.models = {}
         self.model_weights = {}
         self.registry = self._load_registry()
+        
+        # Simple cache
+        self.cache = {}
+        self.cache_size = 1000
         
         self._load_models()
     
@@ -153,8 +162,15 @@ class ModelManager:
     def predict(self, features: np.ndarray) -> Dict[str, float]:
         """Generate ensemble prediction"""
         try:
+            # Check cache
+            features_hash = hash(features.tobytes())
+            if features_hash in self.cache:
+                return self.cache[features_hash]
+            
             if len(self.models) == 0:
-                return self._fallback_prediction(features)
+                result = self._fallback_prediction(features)
+                self._update_cache(features_hash, result)
+                return result
             
             predictions = []
             weights = []
@@ -193,23 +209,36 @@ class ModelManager:
             # Ensemble prediction
             if predictions:
                 weights = np.array(weights)
-                weights = weights / weights.sum()  # Normalize weights
+                weights_sum = weights.sum()
+                if weights_sum > 0:
+                    weights = weights / weights_sum  # Normalize weights
+                
                 signal = np.sum(np.array(predictions) * weights)
                 confidence = 1.0 - np.std(predictions) if len(predictions) > 1 else 0.7
                 
-                return {
+                result = {
                     'signal': float(signal),
                     'confidence': float(np.clip(confidence, 0.0, 1.0)),
                     'uncertainty': float(1.0 - confidence),
                     'model_count': len(predictions)
                 }
             else:
-                return self._fallback_prediction(features)
+                result = self._fallback_prediction(features)
+            
+            self._update_cache(features_hash, result)
+            return result
                 
         except Exception as e:
             logger.error(f"Prediction error: {e}")
             return self._fallback_prediction(features)
     
+    def _update_cache(self, key, value):
+        """Update cache with LRU-like behavior"""
+        if len(self.cache) >= self.cache_size:
+            # Remove a random item (simplified LRU)
+            self.cache.pop(next(iter(self.cache)))
+        self.cache[key] = value
+
     def _fallback_prediction(self, features: np.ndarray) -> Dict[str, float]:
         """Fallback prediction using simple logic"""
         # Use momentum and trend features

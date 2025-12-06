@@ -71,7 +71,7 @@ class MessageProtocol:
             if field not in message:
                 return False, f"Missing required field: {field}"
         
-        if message['type'] not in ['signal_request', 'train_request', 'status_request']:
+        if message['type'] not in ['signal_request', 'train_request', 'status_request', 'handshake', 'heartbeat']:
             return False, f"Unknown message type: {message['type']}"
         
         return True, "Valid"
