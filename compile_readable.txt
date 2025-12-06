@@ -134,4 +134,4 @@ D:\TraeProjects\metatrader-multistrategy-ea\MultiStrategyAutonomousEA.mq5 : info
  : information: generating code 95%
  : information: generating code 100%
  : information: code generated
-Result: 0 errors, 0 warnings, 7728 msec elapsed, cpu='X64 Regular'
+Result: 0 errors, 0 warnings, 25259 msec elapsed, cpu='X64 Regular'

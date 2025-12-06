@@ -75,101 +75,21 @@ bool LoadModelWeights(double &weights[])
     return true;
 }
 
-double GetModelBias()
-{
-    // Load model bias from configuration
-    string filename = "models/brain_trainer_config.json";
-    int handle = FileOpen(filename, FILE_READ|FILE_TXT);
-    
-    if(handle == INVALID_HANDLE) {
-        return 0.0; // Default bias
-    }
-    
-    string content;
-    while(!FileIsEnding(handle)) {
-        content += FileReadString(handle);
-    }
-    FileClose(handle);
-    
-    // Simple JSON parsing for bias value
-    int biasPos = StringFind(content, "\"bias\":");
-    if(biasPos >= 0) {
-        string biasStr = StringSubstr(content, biasPos + 7);
-        int commaPos = StringFind(biasStr, ",");
-        if(commaPos > 0) {
-            biasStr = StringSubstr(biasStr, 0, commaPos);
-        }
-        return StringToDouble(biasStr);
-    }
-    
-    return 0.0;
-}
-
-double GetRegimeAdjustment(ENUM_MARKET_REGIME regime)
-{
-    // Load regime-specific adjustments from trained model
-    double regimeCoeffs[7] = {0.0, 0.15, -0.15, 0.25, -0.25, 0.1, -0.1};
-    
-    if(regime >= 0 && regime < 7) {
-        return regimeCoeffs[regime];
-    }
-    
-    return 0.0;
-}
-
-double CalculateMarketImpact(CArrayDouble &features, double confidence)
-{
-    // Calculate market impact based on order size and market conditions
-    double volume = features.At(1); // Volume feature
-    double volatility = MathAbs(features.At(2)); // Volatility feature
-    
-    // Market impact increases with confidence and decreases with volume
-    double impact = confidence * 0.01 * (1.0 + volatility) / (1.0 + volume);
-    
-    return MathMin(impact, 0.005); // Cap at 0.5%
-}
-
-double CalculateSlippage(datetime timestamp, ENUM_MARKET_REGIME regime)
-{
-    // Calculate slippage based on market regime and time
-    double baseSlippage = 0.001; // 0.1% base slippage
-    
-    // Increase slippage during volatile regimes
-    switch(regime) {
-        case MARKET_REGIME_VOLATILE:
-            baseSlippage *= 2.0;
-            break;
-        case MARKET_REGIME_TRENDING:
-            baseSlippage *= 1.5;
-            break;
-    }
-    
-    // Time-based adjustments (higher slippage during low liquidity periods)
-    MqlDateTime dt;
-    TimeToStruct(timestamp, dt);
-    
-    // Higher slippage during market open/close hours
-    if(dt.hour < 2 || dt.hour > 22) {
-        baseSlippage *= 1.3;
-    }
-    
-    return baseSlippage;
-}
-
 //+------------------------------------------------------------------+
 //| Feature Engineering - Convert Market Data to AI Features        |
 //+------------------------------------------------------------------+
-bool ExtractFeatures(const MqlRates &rates[], int index, CArrayDouble &features)
+bool ExtractFeatures(const MqlRates &rates[], int index, double &features[])
 {
     if(index < 10 || index >= ArraySize(rates)) return false;
     
-    features.Clear();
+    ArrayResize(features, 0);
     
     // Price features (normalized returns)
     double basePrice = rates[index].close;
     for(int i = 0; i < 10; i++) {
         double normReturn = (rates[index - i].close - basePrice) / basePrice;
-        features.Add(normReturn);
+        ArrayResize(features, ArraySize(features) + 1);
+        features[ArraySize(features) - 1] = normReturn;
     }
     
     // Volume features
@@ -180,7 +100,8 @@ bool ExtractFeatures(const MqlRates &rates[], int index, CArrayDouble &features)
     avgVolume /= 10;
     
     double volumeNorm = avgVolume > 0 ? (double)rates[index].tick_volume / (double)avgVolume : 1.0;
-    features.Add(volumeNorm);
+    ArrayResize(features, ArraySize(features) + 1);
+    features[ArraySize(features) - 1] = volumeNorm;
     
     // High-Low range (volatility proxy)
     double avgRange = 0.0;
@@ -190,7 +111,8 @@ bool ExtractFeatures(const MqlRates &rates[], int index, CArrayDouble &features)
     avgRange /= 10.0;
     double currentRange = rates[index].high - rates[index].low;
     double rangeNorm = avgRange > 0 ? currentRange / avgRange : 1.0;
-    features.Add(rangeNorm);
+    ArrayResize(features, ArraySize(features) + 1);
+    features[ArraySize(features) - 1] = rangeNorm;
     
     // Moving average crossover feature
     double ma5 = 0.0, ma20 = 0.0;
@@ -205,16 +127,19 @@ bool ExtractFeatures(const MqlRates &rates[], int index, CArrayDouble &features)
     ma20 /= 20.0;
     
     double maCrossover = (ma5 - ma20) / basePrice;
-    features.Add(maCrossover);
+    ArrayResize(features, ArraySize(features) + 1);
+    features[ArraySize(features) - 1] = maCrossover;
     
     // Momentum (rate of change)
     double momentum = (rates[index].close - rates[index - 5].close) / rates[index - 5].close;
-    features.Add(momentum);
+    ArrayResize(features, ArraySize(features) + 1);
+    features[ArraySize(features) - 1] = momentum;
     
     // Candle pattern features (body size)
     double bodySize = MathAbs(rates[index].close - rates[index].open) / 
                      (rates[index].high - rates[index].low + 0.0001);
-    features.Add(bodySize);
+    ArrayResize(features, ArraySize(features) + 1);
+    features[ArraySize(features) - 1] = bodySize;
     
     return true;
 }
@@ -561,7 +486,8 @@ void TrainSingleSymbol(string symbol)
     Print("========================================");
     
     // Initialize the Next-Gen AI System for this symbol
-    if(!NextGenBrainInit(symbol, InpTimeframe)) {
+    CNextGenStrategyBrain brain;
+    if(!brain.Initialize(symbol, InpTimeframe)) {
         Print("[ERROR] Failed to initialize Next-Gen AI Brain for ", symbol);
         return;
     }
@@ -584,7 +510,6 @@ void TrainSingleSymbol(string symbol)
     if(copiedBars <= 0) {
         Print("[ERROR] Failed to copy historical data for ", symbol);
         Print("[ERROR] Error code: ", GetLastError());
-        NextGenBrainDeinit();
         return;
     }
     
@@ -595,7 +520,7 @@ void TrainSingleSymbol(string symbol)
     int validationSamplesCreated = 0;
     
     for(int i = 20; i < copiedBars - 10; i++) { // Need 20 for history, 10 for lookahead
-        CArrayDouble features;
+        double features[];
         
         // Extract features from market data
         if(!ExtractFeatures(rates, i, features)) {
@@ -612,8 +537,8 @@ void TrainSingleSymbol(string symbol)
         CArrayDouble* sample = new CArrayDouble();
         
         // Copy features
-        for(int j = 0; j < features.Total(); j++) {
-            sample.Add(features.At(j));
+        for(int j = 0; j < ArraySize(features); j++) {
+            sample.Add(features[j]);
         }
         
         // Add target as last element
@@ -635,13 +560,8 @@ void TrainSingleSymbol(string symbol)
     if(samplesCreated < 100) {
         Print("[ERROR] Insufficient training samples (minimum 100 required)");
         // Cleanup
-        for(int i = 0; i < trainingData.Total(); i++) {
-            delete trainingData.At(i);
-        }
-        for(int i = 0; i < validationData.Total(); i++) {
-            delete validationData.At(i);
-        }
-        NextGenBrainDeinit();
+        trainingData.Clear();
+        validationData.Clear();
         return;
     }
     
@@ -652,14 +572,12 @@ void TrainSingleSymbol(string symbol)
     STrainingMetrics metrics;
     if(!TrainNextGenBrain(trainingData, InpEpochs, InpLearningRate, InpUseRegimeAdaptation, metrics)) {
         Print("[ERROR] Training failed");
-        NextGenBrainDeinit();
         return;
     }
     
     // Validate the model
     if(!ValidateModel(validationData, metrics)) {
         Print("[ERROR] Validation failed");
-        NextGenBrainDeinit();
         return;
     }
     
@@ -670,7 +588,7 @@ void TrainSingleSymbol(string symbol)
     StringReplace(cleanSymbol, ".", "_");
     string modelFile = StringFormat("NextGenBrain_%s_%s_%s", cleanSymbol, EnumToString(InpTimeframe), timestamp);
     
-    if(NextGenSaveState(modelFile)) {
+    if(brain.SaveAIState(modelFile)) {
         Print("[SUCCESS] Trained model saved to: ", modelFile);
     }
     
@@ -717,7 +635,7 @@ void TrainSingleSymbol(string symbol)
                           InpUseUncertaintyFiltering ? "ON" : "OFF");
     
     // Add AI system report
-    report += ::NextGenGetReport();
+    report += brain.GenerateAIReport();
     
     Print(report);
     
@@ -731,12 +649,8 @@ void TrainSingleSymbol(string symbol)
     }
     
     // Cleanup
-    for(int i = 0; i < trainingData.Total(); i++) {
-        CObject* obj = trainingData.At(i);
-        if(obj != NULL) delete obj;
-    }
-    
-    NextGenBrainDeinit();
+    trainingData.Clear();
+    validationData.Clear();
     
     Print("=== NEXT-GENERATION AI TRAINING COMPLETED ===");
     Print("");
@@ -749,8 +663,6 @@ void TrainSingleSymbol(string symbol)
     Print("");
     Print("✅ Ready to use in your EA! Load this model to start AI-powered trading.");
     Print("");
-    
-    NextGenBrainDeinit();
 }
 
 //+------------------------------------------------------------------+
@@ -764,7 +676,8 @@ void TrainMultiSymbolModel(string &symbols[], int symbolCount)
     Print("========================================");
     
     // Initialize with first symbol
-    if(!NextGenBrainInit(symbols[0], InpTimeframe)) {
+    CNextGenStrategyBrain brain;
+    if(!brain.Initialize(symbols[0], InpTimeframe)) {
         Print("[ERROR] Failed to initialize Next-Gen AI Brain");
         return;
     }
@@ -798,7 +711,7 @@ void TrainMultiSymbolModel(string &symbols[], int symbolCount)
         int validationFromSymbol = 0;
         
         for(int i = 20; i < copiedBars - 10; i++) {
-            CArrayDouble features;
+            double features[];
             
             if(!ExtractFeatures(rates, i, features)) {
                 continue;
@@ -808,14 +721,12 @@ void TrainMultiSymbolModel(string &symbols[], int symbolCount)
             if(target == 0) continue;
             
             CArrayDouble* sample = new CArrayDouble();
-            for(int j = 0; j < features.Total(); j++) {
-                sample.Add(features.At(j));
+            for(int j = 0; j < ArraySize(features); j++) {
+                sample.Add(features[j]);
             }
             sample.Add((double)target);
             
-            // Distribute samples across symbols
-            int samplesPerSymbol = validationStart / symbolCount;
-            if(samplesFromSymbol < samplesPerSymbol) {
+            if(samplesFromSymbol < validationStart) {
                 trainingData.Add(sample);
                 samplesFromSymbol++;
                 totalSamplesCreated++;
@@ -825,106 +736,40 @@ void TrainMultiSymbolModel(string &symbols[], int symbolCount)
                 totalValidationCreated++;
             }
         }
-        
-        Print("[DATA] ", symbol, ": Created ", samplesFromSymbol, " training + ", validationFromSymbol, " validation samples");
+        Print("   -> Added ", samplesFromSymbol, " training samples");
     }
     
-    Print("[DATA] TOTAL: ", totalSamplesCreated, " training samples from ", symbolCount, " symbols");
-    Print("[DATA] TOTAL: ", totalValidationCreated, " validation samples");
+    Print("[TRAINING] Total Training Set: ", trainingData.Total(), " samples");
+    Print("[TRAINING] Total Validation Set: ", validationData.Total(), " samples");
     
-    if(totalSamplesCreated < 100) {
-        Print("[ERROR] Insufficient training samples (minimum 100 required)");
-        for(int i = 0; i < trainingData.Total(); i++) {
-            delete trainingData.At(i);
-        }
-        for(int i = 0; i < validationData.Total(); i++) {
-            delete validationData.At(i);
-        }
-        NextGenBrainDeinit();
+    if(trainingData.Total() < 100) {
+        Print("[ERROR] Insufficient training data");
         return;
     }
     
-    Print("[TRAINING] Training set: ", trainingData.Total(), " samples");
-    Print("[TRAINING] Validation set: ", validationData.Total(), " samples");
-    
-    // Train the model
+    // Train
     STrainingMetrics metrics;
     if(!TrainNextGenBrain(trainingData, InpEpochs, InpLearningRate, InpUseRegimeAdaptation, metrics)) {
         Print("[ERROR] Training failed");
-        NextGenBrainDeinit();
         return;
     }
     
-    // Validate the model
+    // Validate
     if(!ValidateModel(validationData, metrics)) {
         Print("[ERROR] Validation failed");
-        NextGenBrainDeinit();
         return;
     }
     
-    // Save trained model
+    // Save
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE);
     StringReplace(timestamp, ".", "-");
-    string sourceLabel = InpUseInstrumentsFile ? "AllInstruments" : "Custom";
-    string modelFile = StringFormat("NextGenBrain_%s_%dSymbols_%s_%s", 
-                                   sourceLabel, symbolCount, EnumToString(InpTimeframe), timestamp);
+    string modelFile = StringFormat("NextGenBrain_MULTI_%s_%s", EnumToString(InpTimeframe), timestamp);
     
-    if(NextGenSaveState(modelFile)) {
-        Print("[SUCCESS] Multi-symbol model saved to: ", modelFile);
+    if(brain.SaveAIState(modelFile)) {
+        Print("[SUCCESS] Trained multi-symbol model saved to: ", modelFile);
     }
-    
-    // Save metrics
-    string metricsFile = modelFile + "_metrics.txt";
-    int metricsHandle = FileOpen(metricsFile, FILE_WRITE | FILE_TXT);
-    if(metricsHandle != INVALID_HANDLE) {
-        FileWriteString(metricsHandle, "=== MULTI-SYMBOL TRAINING METRICS ===\n");
-        FileWriteString(metricsHandle, StringFormat("Symbol Source: %s\n", InpUseInstrumentsFile ? "Instruments.mqh (All Trading Symbols)" : "Custom Input"));
-        FileWriteString(metricsHandle, StringFormat("Symbol Count: %d\n", symbolCount));
-        
-        // List symbols
-        FileWriteString(metricsHandle, "Symbols Trained:\n");
-        for(int i = 0; i < symbolCount; i++) {
-            FileWriteString(metricsHandle, StringFormat("  %d. %s\n", i+1, symbols[i]));
-        }
-        FileWriteString(metricsHandle, "\n");
-        FileWriteString(metricsHandle, StringFormat("Epochs Completed: %d/%d\n", metrics.epochsCompleted, InpEpochs));
-        FileWriteString(metricsHandle, StringFormat("Final Loss: %.6f\n", metrics.avgLoss));
-        FileWriteString(metricsHandle, StringFormat("Accuracy: %.4f\n", metrics.accuracy));
-        FileWriteString(metricsHandle, StringFormat("Precision: %.4f\n", metrics.precision));
-        FileWriteString(metricsHandle, StringFormat("Recall: %.4f\n", metrics.recall));
-        FileWriteString(metricsHandle, StringFormat("F1-Score: %.4f\n", metrics.f1Score));
-        FileWriteString(metricsHandle, StringFormat("Sharpe Ratio: %.4f\n", metrics.sharpeRatio));
-        FileWriteString(metricsHandle, StringFormat("Max Drawdown: %.4f\n", metrics.maxDrawdown));
-        FileWriteString(metricsHandle, "\n=== CONFIGURATION ===\n");
-        FileWriteString(metricsHandle, StringFormat("Timeframe: %s\n", EnumToString(InpTimeframe)));
-        FileWriteString(metricsHandle, StringFormat("Training Samples: %d\n", trainingData.Total()));
-        FileWriteString(metricsHandle, StringFormat("Validation Samples: %d\n", validationData.Total()));
-        FileWriteString(metricsHandle, StringFormat("Learning Rate: %.6f\n", InpLearningRate));
-        FileWriteString(metricsHandle, StringFormat("Regime Adaptation: %s\n", InpUseRegimeAdaptation ? "ON" : "OFF"));
-        FileClose(metricsHandle);
-        Print("[SUCCESS] Training metrics saved to: ", metricsFile);
-    }
-    
-    Print("");
-    Print("📊 MULTI-SYMBOL MODEL SUMMARY:");
-    Print("   Model File: ", modelFile);
-    Print("   Symbols Trained: ", symbolCount);
-    Print("   Total Samples: ", trainingData.Total() + validationData.Total());
-    Print("   Training Accuracy: ", DoubleToString(metrics.accuracy * 100, 2), "%");
-    Print("   F1-Score: ", DoubleToString(metrics.f1Score, 3));
-    Print("   Sharpe Ratio: ", DoubleToString(metrics.sharpeRatio, 2));
-    Print("   Max Drawdown: ", DoubleToString(metrics.maxDrawdown * 100, 2), "%");
-    Print("");
-    Print("✅ Multi-symbol model ready for all ", symbolCount, " pairs!");
-    Print("");
     
     // Cleanup
-    for(int i = 0; i < trainingData.Total(); i++) {
-        delete trainingData.At(i);
-    }
-    for(int i = 0; i < validationData.Total(); i++) {
-        delete validationData.At(i);
-    }
-    
-    NextGenBrainDeinit();
+    trainingData.Clear();
+    validationData.Clear();
 }

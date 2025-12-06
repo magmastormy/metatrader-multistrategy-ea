@@ -8,14 +8,6 @@
 #include <Arrays/ArrayObj.mqh>
 #include <Math/Stat/Math.mqh>
 
-// Helper function for normalizing signal (defined before use)
-double NormalizeSignalEW(double value, double min_val, double max_val)
-{
-    if(value < min_val) return min_val;
-    if(value > max_val) return max_val;
-    return value;
-}
-
 //+------------------------------------------------------------------+
 //| Wave Point Class (extends CObject for use with CArrayObj)       |
 //+------------------------------------------------------------------+
@@ -32,7 +24,7 @@ enum ENUM_WAVE_TYPE
     WAVE_TYPE_C = 8      // Corrective wave C
 };
 
-class CWavePoint : public CObject
+class CElliottWavePoint : public CObject
 {
 public:
     datetime      m_time;        // Time of the wave point
@@ -40,8 +32,8 @@ public:
     ENUM_WAVE_TYPE m_waveType;   // Type of wave
     int           m_degree;      // Degree of the wave
     
-    CWavePoint() : m_time(0), m_price(0), m_waveType(WAVE_TYPE_UNKNOWN), m_degree(5) {}
-    CWavePoint(datetime _time, double _price, ENUM_WAVE_TYPE _type, int _degree) :
+    CElliottWavePoint() : m_time(0), m_price(0), m_waveType(WAVE_TYPE_UNKNOWN), m_degree(5) {}
+    CElliottWavePoint(datetime _time, double _price, ENUM_WAVE_TYPE _type, int _degree) :
         m_time(_time), m_price(_price), m_waveType(_type), m_degree(_degree) {}
 };
 
@@ -63,7 +55,7 @@ public:
     
     // Getters
     int GetWaveCount() const { return m_wavePoints.Total(); }
-    CWavePoint* GetWavePoint(int index) { return (CWavePoint*)m_wavePoints.At(index); }
+    CElliottWavePoint* GetWavePoint(int index) { return (CElliottWavePoint*)m_wavePoints.At(index); }
     void Clear() { m_wavePoints.Clear(); }
 };
 
@@ -81,7 +73,7 @@ private:
     // Helper methods
     bool AnalyzeWaves(const string symbol, const ENUM_TIMEFRAMES timeframe);
     void DrawWaveLabels(const string symbol);
-    double CalculateWaveProjection(CWavePoint* wave1, CWavePoint* wave2, double ratio);
+    double CalculateWaveProjection(CElliottWavePoint* wave1, CElliottWavePoint* wave2, double ratio);
     
 public:
     CStrategyElliottWave();
@@ -111,38 +103,54 @@ bool CElliottWaveAnalyzer::IdentifyWaves(const MqlRates &rates[], int count)
     // Clear previous wave points
     m_wavePoints.Clear();
     
-    // Simple swing point detection (in a real implementation, this would be more sophisticated)
+    // Simple swing point detection (Fractals approach)
+    // We need at least 5 bars to detect a fractal (2 left, 1 middle, 2 right)
     for (int i = 2; i < count - 2; i++)
     {
-        // Check for swing high
-        if (rates[i].high > rates[i-1].high && rates[i].high > rates[i+1].high &&
-            rates[i].high > rates[i-2].high && rates[i].high > rates[i+2].high)
+        bool isHigh = rates[i].high > rates[i-1].high && rates[i].high > rates[i-2].high &&
+                      rates[i].high > rates[i+1].high && rates[i].high > rates[i+2].high;
+                      
+        bool isLow = rates[i].low < rates[i-1].low && rates[i].low < rates[i-2].low &&
+                     rates[i].low < rates[i+1].low && rates[i].low < rates[i+2].low;
+                     
+        if (isHigh)
         {
-            CWavePoint *point = new CWavePoint(rates[i].time, rates[i].high, WAVE_TYPE_UNKNOWN, m_degree);
+            CElliottWavePoint *point = new CElliottWavePoint(rates[i].time, rates[i].high, WAVE_TYPE_UNKNOWN, m_degree);
             if(point != NULL) m_wavePoints.Add(point);
         }
-        // Check for swing low
-        else if (rates[i].low < rates[i-1].low && rates[i].low < rates[i+1].low &&
-                 rates[i].low < rates[i-2].low && rates[i].low < rates[i+2].low)
+        else if (isLow)
         {
-            CWavePoint *point = new CWavePoint(rates[i].time, rates[i].low, WAVE_TYPE_UNKNOWN, m_degree);
+            CElliottWavePoint *point = new CElliottWavePoint(rates[i].time, rates[i].low, WAVE_TYPE_UNKNOWN, m_degree);
             if(point != NULL) m_wavePoints.Add(point);
         }
     }
     
-    // Simple wave labeling (in a real implementation, this would be much more sophisticated)
+    // Simple wave labeling logic
     if (m_wavePoints.Total() >= 5)
     {
         for (int i = 0; i < m_wavePoints.Total(); i++)
         {
-            CWavePoint *point = (CWavePoint*)m_wavePoints.At(i);
+            CElliottWavePoint *point = (CElliottWavePoint*)m_wavePoints.At(i);
             if (point == NULL) continue;
             
-            // Simple alternating pattern (in reality, Elliott Wave is much more complex)
-            if (i % 2 == 0)
-                point.m_waveType = (ENUM_WAVE_TYPE)((i % 5) + 1); // Waves 1-5
-            else
-                point.m_waveType = (ENUM_WAVE_TYPE)((i % 3) + 6);  // Waves A-C
+            // Assign wave types cyclically for demonstration
+            // In a real implementation, this would involve complex pattern matching rules
+            // (e.g., Wave 3 cannot be the shortest, Wave 4 cannot overlap Wave 1, etc.)
+            
+            // Reset to unknown first
+            point.m_waveType = WAVE_TYPE_UNKNOWN;
+            
+            // Simple labeling based on recent points
+            int recentIdx = m_wavePoints.Total() - 1 - i;
+            if(recentIdx >= 0 && recentIdx < 8) {
+                // Label the last few points as a potential sequence
+                // This is a placeholder for actual Elliott Wave logic
+                if(recentIdx == 0) point.m_waveType = WAVE_TYPE_5; // Most recent
+                else if(recentIdx == 1) point.m_waveType = WAVE_TYPE_4;
+                else if(recentIdx == 2) point.m_waveType = WAVE_TYPE_3;
+                else if(recentIdx == 3) point.m_waveType = WAVE_TYPE_2;
+                else if(recentIdx == 4) point.m_waveType = WAVE_TYPE_1;
+            }
         }
     }
     
@@ -182,7 +190,7 @@ bool CStrategyElliottWave::AnalyzeWaves(const string symbol, const ENUM_TIMEFRAM
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
     int copied = CopyRates(symbol, timeframe, 0, m_lookback, rates);
-    if (copied <= 0)
+    if (copied < 10) // Need minimum data
         return false;
     
     // Identify waves
@@ -203,10 +211,12 @@ void CStrategyElliottWave::DrawWaveLabels(const string symbol)
     // Draw wave labels
     for (int i = 0; i < m_analyzer.GetWaveCount(); i++)
     {
-        CWavePoint *point = m_analyzer.GetWavePoint(i);
+        CElliottWavePoint *point = m_analyzer.GetWavePoint(i);
         if (point == NULL) continue;
         
-        string name = StringFormat("EW_%d", i);
+        if(point.m_waveType == WAVE_TYPE_UNKNOWN) continue;
+        
+        string name = StringFormat("EW_%d_%d", i, (int)point.m_time);
         string text = "?";
         color clr = clrWhite;
         
@@ -224,17 +234,19 @@ void CStrategyElliottWave::DrawWaveLabels(const string symbol)
         }
         
         // Create a label for the wave
-        if (!ObjectCreate(0, name, OBJ_TEXT, 0, point.m_time, point.m_price))
-            continue;
+        if (ObjectFind(0, name) < 0) {
+            ObjectCreate(0, name, OBJ_TEXT, 0, point.m_time, point.m_price);
+        }
             
         ObjectSetString(0, name, OBJPROP_TEXT, text);
         ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
         ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 10);
         ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_CENTER);
     }
 }
 
-double CStrategyElliottWave::CalculateWaveProjection(CWavePoint* wave1, CWavePoint* wave2, double ratio)
+double CStrategyElliottWave::CalculateWaveProjection(CElliottWavePoint* wave1, CElliottWavePoint* wave2, double ratio)
 {
     if(wave1 == NULL || wave2 == NULL) return 0.0;
     double priceDiff = wave2.m_price - wave1.m_price;
@@ -263,51 +275,56 @@ ENUM_TRADE_SIGNAL CStrategyElliottWave::GetSignal(double &confidence)
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
     
-    // Simple trading logic (in a real implementation, this would be more sophisticated)
-    if (m_analyzer.GetWaveCount() >= 5)
+    // Trading Logic
+    // We look for the end of Wave 4 to trade Wave 5 (Trend Following)
+    // Or end of Wave 5 to trade reversal (Counter Trend)
+    
+    int totalWaves = m_analyzer.GetWaveCount();
+    if (totalWaves >= 5)
     {
-        CWavePoint *wave3 = m_analyzer.GetWavePoint(2); // Wave 3
-        CWavePoint *wave4 = m_analyzer.GetWavePoint(3); // Wave 4
-        CWavePoint *wave5 = m_analyzer.GetWavePoint(4); // Wave 5
+        // Find the most recent labeled waves
+        CElliottWavePoint *wave3 = NULL;
+        CElliottWavePoint *wave4 = NULL;
+        CElliottWavePoint *wave5 = NULL;
         
-        if (wave3 != NULL && wave4 != NULL && wave5 != NULL && wave3.m_waveType == WAVE_TYPE_3)
+        for(int i = totalWaves - 1; i >= 0; i--) {
+            CElliottWavePoint *p = m_analyzer.GetWavePoint(i);
+            if(p == NULL) continue;
+            if(p.m_waveType == WAVE_TYPE_5) wave5 = p;
+            if(p.m_waveType == WAVE_TYPE_4) wave4 = p;
+            if(p.m_waveType == WAVE_TYPE_3) wave3 = p;
+            if(wave3 != NULL && wave4 != NULL && wave5 != NULL) break;
+        }
+        
+        // Scenario 1: Reversal at end of Wave 5
+        if (wave5 != NULL && wave3 != NULL)
         {
-            // Check for completion of wave 5 (end of impulse)
-            if (wave5.m_waveType == WAVE_TYPE_5)
+            // Check if price is near Wave 5 peak
+            if (MathAbs(bid - wave5.m_price) < (20 * point))
             {
-                // If price is near the end of wave 5, look for a reversal
-                if (MathAbs(bid - wave5.m_price) < (10 * point))
-                {
-                    // Check if wave 5 is extended (common in wave 3 or 5)
-                    double wave1to3 = MathAbs(wave3.m_price - wave5.m_price);
-                    double wave3to5 = MathAbs(wave5.m_price - wave3.m_price);
-                    
-                    if (wave3to5 > (0.618 * wave1to3)) // Wave 5 is extended
-                    {
-                        confidence = 0.8;
-                        return TRADE_SIGNAL_SELL; // Look for short opportunities after extended wave 5
-                    }
-                }
-            }
-            // Check for wave 4 pullback in an uptrend
-            else if (wave4.m_waveType == WAVE_TYPE_4 &&
-                     wave3.m_price > wave4.m_price && // Uptrend
-                     bid > wave4.m_price && bid < wave3.m_price) // Price is in wave 4
-            {
-                // Look for buying opportunities in wave 4 pullback (38.2% - 50% retracement)
-                double wave3to4 = MathAbs(wave4.m_price - wave3.m_price);
-                double wave2to3 = MathAbs(wave3.m_price - wave4.m_price);
+                // Divergence check or simple reversal check could be added here
+                confidence = 0.7;
+                // If Wave 5 was up, we sell. If down, we buy.
+                // Assuming standard impulse: 1 up, 2 down, 3 up, 4 down, 5 up
+                bool isBullishImpulse = wave3.m_price > wave4.m_price; // Wave 3 peak > Wave 4 trough
                 
-                if(wave2to3 > 0) {
-                    double retracement = (wave3to4 / wave2to3) * 100.0;
-                    
-                    if (retracement >= 38.2 && retracement <= 61.8)
-                    {
-                        confidence = NormalizeSignalEW(1.0 - ((retracement - 38.2) / 23.6), 0.5, 0.9);
-                        return TRADE_SIGNAL_BUY; // Buy signal
-                    }
-                }
+                return isBullishImpulse ? TRADE_SIGNAL_SELL : TRADE_SIGNAL_BUY;
             }
+        }
+        
+        // Scenario 2: Trading Wave 5 (Catching the move from 4 to 5)
+        // We need to be at Wave 4
+        if (wave4 != NULL && wave3 != NULL && wave5 == NULL) // Wave 5 not formed yet
+        {
+             bool isBullishImpulse = wave3.m_price > wave4.m_price;
+             
+             // If we are at Wave 4, we expect a move towards Wave 5
+             // Check if price is bouncing off Wave 4 level
+             if (MathAbs(bid - wave4.m_price) < (20 * point))
+             {
+                 confidence = 0.65;
+                 return isBullishImpulse ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+             }
         }
     }
     
