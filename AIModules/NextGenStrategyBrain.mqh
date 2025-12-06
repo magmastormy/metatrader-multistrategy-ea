@@ -410,6 +410,43 @@ public:
         return m_totalTrades; // Using total trades as a proxy for "experience" or epochs
     }
 
+    // Save AI state to file
+    bool SaveAIState(string filename) {
+        int handle = FileOpen(filename, FILE_WRITE|FILE_BIN);
+        if(handle == INVALID_HANDLE) return false;
+        
+        // Save metadata
+        FileWriteString(handle, m_symbol);
+        FileWriteInteger(handle, (int)m_timeframe);
+        FileWriteDouble(handle, m_totalReturn);
+        FileWriteInteger(handle, m_totalTrades);
+        FileWriteInteger(handle, m_winningTrades);
+        FileWriteLong(handle, (long)m_lastUpdate);
+        
+        // Note: Full transformer weight saving would require recursive serialization
+        // For now we save the performance state which is critical for the EA
+        
+        FileClose(handle);
+        return true;
+    }
+
+    // Generate detailed AI report
+    string GenerateAIReport() {
+        string report = "=== NextGen AI Strategy Brain Report ===\n";
+        report += StringFormat("Symbol: %s\n", m_symbol);
+        report += StringFormat("Timeframe: %s\n", EnumToString(m_timeframe));
+        report += StringFormat("Total Trades: %d\n", m_totalTrades);
+        report += StringFormat("Win Rate: %.2f%%\n", GetAccuracy() * 100.0);
+        report += StringFormat("Total Return: %.2f\n", m_totalReturn);
+        
+        if(m_transformerBrain != NULL) {
+            report += "\n--- Transformer Model ---\n";
+            report += m_transformerBrain.GetModelInfo();
+        }
+        
+        return report;
+    }
+
     // Shutdown alias
     void Shutdown() {
         // Cleanup handled by destructor
