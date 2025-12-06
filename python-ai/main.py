@@ -205,7 +205,11 @@ class AITradingSystem:
             msg_type = message.get('type')
             data = message.get('data', {})
             
-            if msg_type == 'signal_request':
+            if msg_type == 'handshake':
+                return self._handle_handshake_request(data)
+            elif msg_type == 'heartbeat':
+                return self._handle_heartbeat_request()
+            elif msg_type == 'signal_request':
                 return self._handle_signal_request(data)
             elif msg_type == 'train_request':
                 return self._handle_train_request(data)
@@ -217,7 +221,28 @@ class AITradingSystem:
         except Exception as e:
             logger.error(f"Error handling message: {e}")
             return MessageProtocol.create_error_response(str(e))
-    
+
+    def _handle_handshake_request(self, data: dict) -> str:
+        """Handle handshake request"""
+        try:
+            client_version = data.get('version', 'unknown')
+            logger.info(f"Handshake request from client version: {client_version}")
+            
+            response_data = {
+                'status': 'ready',
+                'version': '2.0.0',
+                'models_loaded': list(self.model_manager.models.keys()),
+                'bridge_type': self.bridge_type
+            }
+            return MessageProtocol.create_response('handshake_response', response_data)
+        except Exception as e:
+            logger.error(f"Handshake failed: {e}")
+            return MessageProtocol.create_error_response(str(e))
+
+    def _handle_heartbeat_request(self) -> str:
+        """Handle heartbeat request"""
+        return MessageProtocol.create_response('heartbeat_response', {'status': 'alive'})
+
     def _handle_signal_request(self, data: dict) -> str:
         """Handle signal generation request"""
         try:

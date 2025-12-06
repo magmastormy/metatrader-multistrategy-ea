@@ -1,0 +1,58 @@
+2025-12-06 14:45:56,050 [WARNING] core.model_manager: PyTorch not available
+2025-12-06 14:45:56,101 [WARNING] core.model_manager: ONNX Runtime not available
+2025-12-06 14:45:56,863 [INFO] __main__: ============================================================
+2025-12-06 14:45:56,870 [INFO] __main__: ============================================================
+2025-12-06 14:45:56,871 [WARNING] __main__: Failed to load config: 'gbk' codec can't decode byte 0x94 in position 34: illegal multibyte sequence, using defaults
+2025-12-06 14:45:56,872 [INFO] __main__: Initializing core components...
+2025-12-06 14:45:56,872 [INFO] core.model_manager: Loading models...
+2025-12-06 14:45:56,876 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-06 14:45:56,879 [INFO] __main__: Starting AI Trading System...
+2025-12-06 14:45:56,922 [INFO] bridge.zmq_server: ZMQ Server listening for messages...
+2025-12-06 14:45:56,924 [INFO] __main__: ============================================================
+2025-12-06 14:45:56,927 [INFO] __main__: Bridge Mode: ZMQ
+2025-12-06 14:45:56,927 [INFO] __main__: Models Loaded: 0
+2025-12-06 14:45:56,928 [INFO] __main__: ============================================================
+2025-12-06 14:46:09,119 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-06 14:46:09,123 [INFO] __main__: Signal request for EURUSD
+2025-12-06 14:46:09,163 [INFO] core.signal_generator: Signal generated: NONE for EURUSD, confidence: 0.50
+2025-12-06 14:46:09,164 [INFO] __main__: Signal generated: NONE (confidence: 0.50)
+2025-12-06 14:46:38,615 [INFO] __main__: Interrupt received
+2025-12-06 14:46:38,622 [INFO] __main__: Stopping AI Trading System...
+2025-12-06 14:46:38,628 [ERROR] bridge.zmq_server: Error in server loop: not a socket
+2025-12-06 14:46:38,630 [INFO] bridge.zmq_server: ZMQ Server stopped
+2025-12-06 14:46:38,644 [INFO] __main__: 
+============================================================
+AI TRADING SYSTEM - ANALYTICS REPORT
+============================================================
+Generated: 2025-12-06T14:46:38.643855
+
+PERFORMANCE METRICS:
+  total_trades: 0
+  status: No trades executed
+
+PREDICTION ACCURACY:
+  status: Insufficient data
+
+SIGNAL STATISTICS:
+  total_signals: 1
+  buy_signals: 0
+  sell_signals: 0
+  neutral_signals: 1
+  avg_confidence: 0.5
+  signal_rate: 0.0
+
+============================================================
+2025-12-06 16:47:01,834 [WARNING] core.model_manager: PyTorch not available
+2025-12-06 16:47:01,836 [WARNING] core.model_manager: ONNX Runtime not available
+2025-12-06 16:47:01,967 [INFO] __main__: ============================================================
+2025-12-06 16:47:01,972 [INFO] __main__: ============================================================
+2025-12-06 16:47:01,973 [WARNING] __main__: Failed to load config: 'gbk' codec can't decode byte 0x94 in position 34: illegal multibyte sequence, using defaults
+2025-12-06 16:47:01,973 [INFO] __main__: Initializing core components...
+2025-12-06 16:47:01,974 [INFO] core.model_manager: Loading models...
+2025-12-06 16:47:01,986 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-06 16:47:01,989 [INFO] __main__: Starting AI Trading System...
+2025-12-06 16:47:02,009 [INFO] bridge.socket_server: Socket Server listening for connections...
+2025-12-06 16:47:02,013 [INFO] __main__: ============================================================
+2025-12-06 16:47:02,015 [INFO] __main__: Bridge Mode: SOCKET
+2025-12-06 16:47:02,015 [INFO] __main__: Models Loaded: 0
+2025-12-06 16:47:02,016 [INFO] __main__: ============================================================
