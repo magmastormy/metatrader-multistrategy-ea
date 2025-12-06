@@ -216,12 +216,45 @@ bool CTradingEngine::Initialize(CTradeManager* p_tradeManager,
     {
         m_riskManager = new CEnhancedRiskManager();
         SEnhancedRiskConfig riskConfig;
+        // Enable enhanced risk management
         riskConfig.enabled = true;
-        riskConfig.base_risk_per_trade = 0.02;
-        riskConfig.max_risk_per_trade = 0.05;
-        riskConfig.max_drawdown_threshold = 0.03; // 3% max daily drawdown
-        riskConfig.consecutive_losses_limit = 3;
-        // riskConfig.pause_duration_minutes = 60; // Removed: Property not found in SEnhancedRiskConfig
+        // Core risk parameters
+        riskConfig.base_risk_per_trade = 0.02;      // 2% base risk
+        riskConfig.max_risk_per_trade = 0.05;       // 5% max per trade
+        riskConfig.min_risk_per_trade = 0.005;      // 0.5% min per trade
+        // CRITICAL: Daily/Weekly/Monthly limits must be set!
+        riskConfig.max_daily_risk = 0.10;           // 10% max daily risk  
+        riskConfig.max_weekly_risk = 0.25;          // 25% max weekly risk
+        riskConfig.max_monthly_risk = 0.50;         // 50% max monthly risk
+        riskConfig.max_drawdown_threshold = 0.15;   // 15% max drawdown
+        riskConfig.recovery_mode_multiplier = 0.5;
+        // Adaptive features
+        riskConfig.adaptive_risk_adjustment = true;
+        riskConfig.anti_martingale = true;
+        riskConfig.kelly_criterion = false;
+        riskConfig.volatility_adjustment = true;
+        riskConfig.regime_aware = true;
+        riskConfig.correlation_adjustment = false;
+        riskConfig.news_filter = false;
+        // Limits
+        riskConfig.consecutive_losses_limit = 5;
+        riskConfig.win_rate_threshold = 0.4;
+        riskConfig.profit_factor_threshold = 1.2;
+        riskConfig.sharpe_ratio_threshold = 0.5;
+        // Additional features
+        riskConfig.trailing_stop_loss = true;
+        riskConfig.trailing_step = 10.0;
+        riskConfig.partial_close_on_drawdown = false;
+        riskConfig.partial_close_threshold = 0.1;
+        riskConfig.hedge_mode = false;
+        riskConfig.hedge_ratio = 0.5;
+        riskConfig.martingale_recovery = false;
+        riskConfig.martingale_multiplier = 2.0;
+        riskConfig.martingale_max_levels = 3;
+        riskConfig.grid_recovery = false;
+        riskConfig.grid_spacing = 50.0;
+        riskConfig.grid_max_levels = 5;
+        
         m_riskManager.Initialize(riskConfig, AccountInfoDouble(ACCOUNT_EQUITY));
     }
     
@@ -1042,6 +1075,35 @@ bool CTradingEngine::ExecuteTradeWithRetry(string symbol, ENUM_ORDER_TYPE order_
     ZeroMemory(request);
     ZeroMemory(result);
     
+    // Get symbol specifications for volume normalization
+    double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+    double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    
+    // Check if this is a Deriv synthetic symbol
+    bool isSynthetic = (StringFind(symbol, "Volatility") >= 0 || 
+                        StringFind(symbol, "Boom") >= 0 ||
+                        StringFind(symbol, "Crash") >= 0 ||
+                        StringFind(symbol, "Step Index") >= 0 ||
+                        StringFind(symbol, "Jump") >= 0 ||
+                        StringFind(symbol, "Range Break") >= 0);
+    
+    // Normalize volume to valid lot size
+    if(lotStep > 0) {
+        volume = MathFloor(volume / lotStep) * lotStep;
+    }
+    
+    // Ensure volume is at least minLot, at most maxLot
+    if(volume < minLot) {
+        volume = minLot;
+        if(isSynthetic) {
+            PrintFormat("[SYNTHETIC] Volume normalized to min lot: %.3f for %s", volume, symbol);
+        }
+    }
+    if(volume > maxLot) {
+        volume = maxLot;
+    }
+    
     // Fill trade request
     request.action = TRADE_ACTION_DEAL;
     request.symbol = symbol;
@@ -1055,12 +1117,37 @@ bool CTradingEngine::ExecuteTradeWithRetry(string symbol, ENUM_ORDER_TYPE order_
     request.deviation = 10;
     request.type_filling = ORDER_FILLING_FOK;
     
-    // First check order
-    MqlTradeCheckResult checkResult = {0};
-    if(!OrderCheck(request, checkResult)) {
-        int error = GetLastError();
-        Print("[ORDER CHECK FAILED] ", symbol, " Error: ", error, " Retcode: ", checkResult.retcode, " Comment: ", checkResult.comment);
-        return false;
+    // For Deriv synthetics, skip strict OrderCheck and proceed directly
+    if(!isSynthetic) {
+        // First check order for non-synthetic symbols
+        MqlTradeCheckResult checkResult = {0};
+        if(!OrderCheck(request, checkResult)) {
+            int error = GetLastError();
+            Print("[ORDER CHECK FAILED] ", symbol, " Error: ", error, " Retcode: ", checkResult.retcode, " Comment: ", checkResult.comment);
+            return false;
+        }
+    } else {
+        // For synthetics, do a soft validation and auto-adjust
+        MqlTradeCheckResult checkResult = {0};
+        if(!OrderCheck(request, checkResult)) {
+            // If volume is invalid, try with adjusted volume
+            if(checkResult.retcode == TRADE_RETCODE_INVALID_VOLUME) {
+                // Try with minimum lot size
+                request.volume = minLot;
+                PrintFormat("[SYNTHETIC-FIX] Retrying %s with min lot: %.3f", symbol, minLot);
+                
+                if(!OrderCheck(request, checkResult)) {
+                    // Still failing - print detailed info and skip
+                    PrintFormat("[SYNTHETIC-SKIP] %s still failing after volume fix. MinLot=%.3f, MaxLot=%.3f, Step=%.3f", 
+                                symbol, minLot, maxLot, lotStep);
+                    return false;
+                }
+            } else {
+                // Non-volume error - log and continue anyway for synthetics
+                PrintFormat("[SYNTHETIC-WARN] %s OrderCheck warning (retcode=%d), attempting trade anyway...", 
+                            symbol, checkResult.retcode);
+            }
+        }
     }
     
     // Send order with retry logic

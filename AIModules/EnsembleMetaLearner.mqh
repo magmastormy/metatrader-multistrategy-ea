@@ -24,18 +24,18 @@ public:
     // Core methods
     bool AddModel(CTransformerBrain* model, double initialWeight = 1.0);
     bool RemoveModel(int index);
-    bool ProcessMarketData(const CArrayDouble &marketData, double &ensembleBuySignal, double &ensembleSellSignal, double &confidence);
-    bool TrainEnsemble(const CArrayDouble &marketData, int seqLen, int targetClass);
+    bool ProcessMarketData(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence);
+    bool TrainEnsemble(const double &marketData[], int seqLen, int targetClass);
     
     // Model management
     void UpdateModelWeights(ENUM_MARKET_REGIME regime);
     double CalculateModelWeight(int modelIndex, ENUM_MARKET_REGIME regime);
-    double EvaluateModelPerformance(CTransformerBrain* model, const CArrayDouble &testData);
+    double EvaluateModelPerformance(CTransformerBrain* model, const double &testData[]);
     int GetActiveModelCount() const;
     void DeactivateUnderperformingModels(double threshold = 0.3);
     
     // Training helpers
-    bool TrainModel(CTransformerBrain* model, const CArrayDouble &data, int seqLen, int targetClass, double &loss);
+    bool TrainModel(CTransformerBrain* model, const double &data[], int seqLen, int targetClass, double &loss);
     
     // Lifecycle methods
     bool Initialize() { return true; }
@@ -100,7 +100,7 @@ bool CEnsembleMetaLearner::RemoveModel(int index)
 //+------------------------------------------------------------------+
 //| Process market data through ensemble                           |
 //+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::ProcessMarketData(const CArrayDouble &marketData, double &ensembleBuySignal, double &ensembleSellSignal, double &confidence)
+bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence)
 {
     ensembleBuySignal = 0.0;
     ensembleSellSignal = 0.0;
@@ -131,15 +131,15 @@ bool CEnsembleMetaLearner::ProcessMarketData(const CArrayDouble &marketData, dou
         double modelBuySignal = 0.0, modelSellSignal = 0.0, modelConfidence = 0.0;
         
         // Process market data through the transformer model
-        CArrayDouble modelOutput;
+        double modelOutput[];
         if(model.Forward(marketData, modelOutput))
         {
             // Extract signals from model output
-            if(modelOutput.Total() >= 3)
+            if(ArraySize(modelOutput) >= 3)
             {
-                modelBuySignal = modelOutput.At(0);
-                modelSellSignal = modelOutput.At(1);
-                modelConfidence = modelOutput.At(2);
+                modelBuySignal = modelOutput[0];
+                modelSellSignal = modelOutput[1];
+                modelConfidence = modelOutput[2];
                 
                 weightedBuySignal = weightedBuySignal + (modelBuySignal * modelWeight);
                 weightedSellSignal = weightedSellSignal + (modelSellSignal * modelWeight);
@@ -228,7 +228,7 @@ double CEnsembleMetaLearner::CalculateModelWeight(int modelIndex, ENUM_MARKET_RE
 //+------------------------------------------------------------------+
 //| Train ensemble on market data                                   |
 //+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::TrainEnsemble(const CArrayDouble &marketData, int seqLen, int targetClass)
+bool CEnsembleMetaLearner::TrainEnsemble(const double &marketData[], int seqLen, int targetClass)
 {
     if(m_models.Total() == 0) return false;
     
@@ -255,17 +255,17 @@ bool CEnsembleMetaLearner::TrainEnsemble(const CArrayDouble &marketData, int seq
 //+------------------------------------------------------------------+
 //| Evaluate model performance                                       |
 //+------------------------------------------------------------------+
-double CEnsembleMetaLearner::EvaluateModelPerformance(CTransformerBrain* model, const CArrayDouble &testData)
+double CEnsembleMetaLearner::EvaluateModelPerformance(CTransformerBrain* model, const double &testData[])
 {
-    if(model == NULL || testData.Total() == 0) return 0.0;
+    if(model == NULL || ArraySize(testData) == 0) return 0.0;
     
     // Simple performance evaluation - in a real implementation,
     // this would involve backtesting and statistical analysis
-    CArrayDouble output;
-    if(model.Forward(testData, output) && output.Total() > 0)
+    double output[];
+    if(model.Forward(testData, output) && ArraySize(output) > 0)
     {
         // Return a simple performance metric
-        return MathAbs(output.At(0));
+        return MathAbs(output[0]);
     }
     
     return 0.0;
@@ -313,17 +313,17 @@ void CEnsembleMetaLearner::DeactivateUnderperformingModels(double threshold)
 //+------------------------------------------------------------------+
 //| Train individual model                                          |
 //+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::TrainModel(CTransformerBrain* model, const CArrayDouble &data, int seqLen, int targetClass, double &loss)
+bool CEnsembleMetaLearner::TrainModel(CTransformerBrain* model, const double &data[], int seqLen, int targetClass, double &loss)
 {
-    if(model == NULL || data.Total() == 0 || seqLen <= 0) return false;
+    if(model == NULL || ArraySize(data) == 0 || seqLen <= 0) return false;
     
     // Simple training simulation - in a real implementation, this would involve
     // backpropagation and weight updates
-    CArrayDouble output;
+    double output[];
     if(model.Forward(data, output))
     {
         // Calculate simple loss based on target class
-        double predicted = output.Total() > 0 ? output.At(0) : 0.0;
+        double predicted = ArraySize(output) > 0 ? output[0] : 0.0;
         double target = (targetClass == 1) ? 1.0 : 0.0; // Buy signal
         loss = MathAbs(predicted - target);
         return true;
