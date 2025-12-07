@@ -314,19 +314,23 @@ ENUM_TRADE_SIGNAL CHedgingProtection::FilterSignal(const string symbol,
         return signal;
     }
     
+    // 🔥 FIX: Only check for hedging on the SAME symbol (not across different symbols)
+    // This allows EURUSD BUY + GBPUSD SELL (different symbols = valid diversification)
+    // But prevents EURUSD BUY + EURUSD SELL (same symbol = hedging)
     if(WouldCauseHedge(symbol, signal))
     {
         if(m_mode == HEDGING_MODE_PREVENT)
         {
             m_hedgesPrevented++;
-            reason = "Signal would cause hedging - neutralized";
+            reason = StringFormat("Signal would cause hedging on %s - neutralized", symbol);
             
             if(m_diagnostics != NULL)
             {
                 m_diagnostics.LogHedgingPrevented(symbol, signal, 
-                                                 "Opposite position exists");
+                                                 StringFormat("Opposite position exists on %s", symbol));
             }
             
+            Print("[HedgingProtection] BLOCKED: ", symbol, " already has opposite position");
             return TRADE_SIGNAL_NONE;
         }
         else if(m_mode == HEDGING_MODE_SMART)

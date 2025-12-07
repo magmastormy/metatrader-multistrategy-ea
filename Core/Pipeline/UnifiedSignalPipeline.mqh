@@ -50,7 +50,7 @@ struct SignalFilterSettings
         enableLiquidityFilter(true),
         enableStructureFilter(true),
         enableTimeFilter(false),
-        minConfidence(0.6),
+        minConfidence(0.45),  // 🔥 FIX: Lowered from 0.6 to 0.45 (45%) - more realistic threshold
         maxVolatility(3.0),
         minTrendStrength(50) {}
 };
@@ -259,13 +259,32 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     if(m_filters.enableTimeFilter)
         passed = passed && ApplyTimeFilter(signal);
     
+    // 🔥 FIX: Dynamic confidence threshold based on market conditions
+    double effectiveMinConfidence = m_filters.minConfidence;
+    
+    // Lower threshold for ranging markets (more opportunities needed)
+    if(m_trendEngine != NULL)
+    {
+        ENUM_TREND_TYPE trend = m_trendEngine.GetCurrentTrend();
+        if(trend == TREND_RANGING || trend == TREND_NONE)
+        {
+            effectiveMinConfidence = m_filters.minConfidence * 0.85;  // 15% reduction for ranging markets
+        }
+    }
+    
     // Check confidence threshold
-    if(confidence < m_filters.minConfidence)
+    if(confidence < effectiveMinConfidence)
     {
         LogFilterResult("ConfidenceFilter", false, 
-                       StringFormat("Confidence %.2f below minimum %.2f", 
-                                  confidence, m_filters.minConfidence));
+                       StringFormat("Confidence %.2f below minimum %.2f (effective: %.2f)", 
+                                  confidence, m_filters.minConfidence, effectiveMinConfidence));
         passed = false;
+    }
+    else if(confidence >= effectiveMinConfidence && confidence < m_filters.minConfidence)
+    {
+        LogFilterResult("ConfidenceFilter", true, 
+                       StringFormat("PASSED with adjusted threshold - Confidence: %.2f (min: %.2f, effective: %.2f)", 
+                                  confidence, m_filters.minConfidence, effectiveMinConfidence));
     }
     
     // Apply hedging protection
@@ -405,16 +424,42 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     ENUM_TREND_TYPE trend = m_trendEngine.GetCurrentTrend();
     double trendStrength = m_trendEngine.GetTrendStrength();
     
-    // Check minimum trend strength
-    if(trendStrength < m_filters.minTrendStrength)
+    // 🔥 FIX: Bypass filter for very high confidence signals (>75%)
+    if(confidence > 0.75)
+    {
+        LogFilterResult("TrendFilter", true, 
+                       StringFormat("BYPASSED - High confidence signal (%.2f) | Trend: %s", 
+                                  confidence, EnumToString(trend)));
+        return true;
+    }
+    
+    // 🔥 FIX: Allow ranging markets - check if trend is actively AGAINST the signal
+    // Only reject if there's a STRONG opposing trend
+    bool strongOpposingTrend = false;
+    
+    if(signal == TRADE_SIGNAL_BUY && m_trendEngine.IsTrendBearish() && trendStrength > 70)
+        strongOpposingTrend = true;
+    else if(signal == TRADE_SIGNAL_SELL && m_trendEngine.IsTrendBullish() && trendStrength > 70)
+        strongOpposingTrend = true;
+    
+    if(strongOpposingTrend)
     {
         LogFilterResult("TrendFilter", false, 
-                       StringFormat("Trend strength %.1f below minimum %d", 
-                                  trendStrength, m_filters.minTrendStrength));
+                       StringFormat("Strong opposing trend: %s (%.1f)", 
+                                  EnumToString(trend), trendStrength));
         return false;
     }
     
-    // Check signal alignment with trend
+    // 🔥 FIX: ALLOW signals in ranging markets (TREND_RANGING, TREND_NONE)
+    // These are valid trading opportunities
+    if(trend == TREND_RANGING || trend == TREND_NONE)
+    {
+        LogFilterResult("TrendFilter", true, 
+                       StringFormat("PASSED - Ranging market | Strength: %.1f", trendStrength));
+        return true;
+    }
+    
+    // Check signal alignment with trend (only for trending markets)
     bool aligned = false;
     if(signal == TRADE_SIGNAL_BUY && m_trendEngine.IsTrendBullish())
         aligned = true;
@@ -423,13 +468,23 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     
     if(!aligned)
     {
-        LogFilterResult("TrendFilter", false, "Signal not aligned with trend");
+        // 🔥 FIX: Don't reject weak misalignments - only log as warning
+        if(trendStrength < 60)
+        {
+            LogFilterResult("TrendFilter", true, 
+                           StringFormat("Weak trend misalignment (%.1f) - ALLOWING signal", trendStrength));
+            return true;
+        }
+        
+        LogFilterResult("TrendFilter", false, 
+                       StringFormat("Strong trend misalignment: %s (%.1f)", 
+                                  EnumToString(trend), trendStrength));
         return false;
     }
     
-    // Boost confidence for strong trends
+    // Boost confidence for strong aligned trends
     if(m_trendEngine.IsStrongTrend())
-        confidence *= 1.2;
+        confidence *= 1.15;
     
     LogFilterResult("TrendFilter", true, 
                    StringFormat("Trend: %s, Strength: %.1f", 

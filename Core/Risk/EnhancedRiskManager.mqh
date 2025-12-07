@@ -449,7 +449,12 @@ bool CEnhancedRiskManager::IsTradeAllowed(const double proposed_risk,
     // Check daily risk limit
     if(!CheckDailyRiskLimit(proposed_risk))
     {
-        Print("[ENHANCED-RISK] Daily risk limit exceeded");
+        Print("[ENHANCED-RISK] ❌ DAILY RISK LIMIT EXCEEDED!");
+        PrintFormat("[ENHANCED-RISK] Daily risk used: %.2f%% | Proposed: %.2f%% | Max allowed: %.2f%%",
+                    m_daily_risk_used * 100, proposed_risk * 100, m_config.max_daily_risk * 100);
+        PrintFormat("[ENHANCED-RISK] Total would be: %.2f%% > %.2f%% (limit)",
+                    (m_daily_risk_used + proposed_risk) * 100, m_config.max_daily_risk * 100);
+        Print("[ENHANCED-RISK] ℹ️ Risk resets at midnight. Close losing positions or wait until tomorrow.");
         return false;
     }
     
