@@ -50,7 +50,7 @@ input bool InpEnableElliott = false;          // Enable Elliott Advanced Strateg
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
 input bool InpEnableAIMode = true;             // Enable AI Mode
-input double InpAIConfidenceThreshold = 0.65;  // AI Confidence Threshold
+input double InpAIConfidenceThreshold = 0.45;  // AI Confidence Threshold (🔥 Lowered from 0.65 to 0.45)
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 
 //--- Enterprise Mode Settings
@@ -412,6 +412,24 @@ string GetLastErrorMessage()
 //+------------------------------------------------------------------+
 int g_processedSymbolCount = 0;
 int GetProcessedSymbolCount() { return g_processedSymbolCount; }
+
+//+------------------------------------------------------------------+
+//| Helper: Count EA Positions (by magic number)                     |
+//+------------------------------------------------------------------+
+int GetEAPositionCount()
+{
+    int count = 0;
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        if(PositionSelectByTicket(PositionGetTicket(i)))
+        {
+            // Check if position belongs to this EA (by magic number)
+            if(PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+                count++;
+        }
+    }
+    return count;
+}
 
 //+------------------------------------------------------------------+
 //| Robust Symbol Iteration                                          |
@@ -928,12 +946,25 @@ void OnTick()
         firstTick = false;
     }
     
-    // Log every 100 ticks to show activity
-    if(tickCount % 100 == 0)
+    // 🔥 FIX: Enhanced logging every 50 ticks to show pipeline activity
+    if(tickCount % 50 == 0)
     {
         PrintFormat("[DEBUG-ONTICK] Tick #%d - EA is processing ticks normally", tickCount);
         Print("[DEBUG-TICK] Tick #", tickCount, " Time: ", TimeCurrent());
         Print("[DEBUG-STATUS] Current symbol: ", _Symbol, " Symbols processed: ", GetProcessedSymbolCount());
+        
+        // Show Enterprise Manager status
+        if(InpEnableEnterpriseMode && g_enterpriseManager != NULL)
+        {
+            int activeStrats = g_enterpriseManager.GetActiveStrategyCount();
+            int eaPositions = GetEAPositionCount();  // 🔥 FIX: Count only THIS EA's positions
+            int cooldownSecs = g_lastTradeTime > 0 ? (int)(TimeCurrent() - g_lastTradeTime) : 0;
+            Print("[ENTERPRISE-STATUS] Active strategies: ", activeStrats, " | Cooldown: ", 
+                  cooldownSecs, "s / ", InpMinSecondsBetweenTrades, "s");
+            Print("[ENTERPRISE-STATUS] EA Positions: ", eaPositions, " / ", InpMaxPositionsTotal,
+                  " | Account Total: ", PositionsTotal(),
+                  " | Last trade: ", g_lastTradeTime > 0 ? TimeToString(g_lastTradeTime) : "Never");
+        }
     }
     
     if(!systemInitialized || !tradingEnabled)
@@ -977,9 +1008,12 @@ void OnTick()
             return;
         }
         
-        // Check position limit
-        if(PositionsTotal() >= InpMaxPositionsTotal)
+        // 🔥 FIX: Check position limit - count only THIS EA's positions by magic number
+        int eaPositions = GetEAPositionCount();
+        if(eaPositions >= InpMaxPositionsTotal)
         {
+            if(tickCount % 100 == 0)  // Log occasionally to avoid spam
+                Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", InpMaxPositionsTotal);
             return;
         }
         
