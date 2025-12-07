@@ -4,7 +4,6 @@
 //|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
 #include <Object.mqh>
-#include "../Core/MarketRegimeDetector.mqh"
 #include "TransformerBrain.mqh"
 
 //+------------------------------------------------------------------+
@@ -15,7 +14,6 @@ class CEnsembleMetaLearner
 private:
     CArrayObj m_models;
     CArrayDouble m_modelWeights;
-    CMarketRegimeClassifier m_regimeDetector;
     
 public:
     CEnsembleMetaLearner();
@@ -113,8 +111,8 @@ bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double 
     double weightedConfidenceScore = 0.0;
     double totalWeight = 0.0;
     
-    // Get current market regime
-    ENUM_MARKET_REGIME activeRegime = m_regimeDetector.ClassifyMarketRegime(_Symbol, _Period);
+    // Get current market regime (simplified - using default)
+    ENUM_MARKET_REGIME activeRegime = MARKET_REGIME_RANGING;
     
     // Update model weights based on current regime
     UpdateModelWeights(activeRegime);
@@ -245,8 +243,8 @@ bool CEnsembleMetaLearner::TrainEnsemble(const double &marketData[], int seqLen,
         }
     }
     
-    // Update market regime and adjust weights
-    ENUM_MARKET_REGIME localCurrentRegime = m_regimeDetector.ClassifyMarketRegime(_Symbol, _Period);
+    // Update market regime and adjust weights (simplified - using default)
+    ENUM_MARKET_REGIME localCurrentRegime = MARKET_REGIME_RANGING;
     UpdateModelWeights(localCurrentRegime);
     
     return success;

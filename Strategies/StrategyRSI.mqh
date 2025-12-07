@@ -5,7 +5,7 @@
 #ifndef __STRATEGY_RSI_MQH__
 #define __STRATEGY_RSI_MQH__
 
-#include "../Core/StrategyBase.mqh" // FIXED: Inherit from CStrategyBase
+#include "../Core/Strategy/StrategyBase.mqh" // FIXED: Inherit from CStrategyBase
 #include <Indicators/Indicators.mqh> // For CiRSI
 
 //+------------------------------------------------------------------+

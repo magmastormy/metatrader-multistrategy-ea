@@ -60,21 +60,34 @@ class SocketClient:
         self.sock.close()
 
 def run_tests(client_type="zmq"):
+    """Run integration tests"""
+    
+    def send_test_message(client_class, host, port, message, test_name):
+        """Helper to send a message and handle reconnection for socket clients"""
+        client = client_class(host, port) if client_type == "socket" else client_class()
+        try:
+            client.connect()
+            response = client.send(message)
+            return response
+        finally:
+            client.close()
+    
+    # Determine client parameters
     if client_type == "zmq":
-        client = ZMQClient()
+        client_class = ZMQClient
+        host, port = "127.0.0.1", 5555
     else:
-        client = SocketClient()
-        
+        client_class = SocketClient
+        host, port = "127.0.0.1", 8888
+    
     try:
-        client.connect()
-        
         # Test 1: Handshake
         logger.info("\n--- Testing Handshake ---")
         handshake_msg = {
             "type": "handshake",
             "data": {"version": "MQL5-1.0"}
         }
-        response = client.send(handshake_msg)
+        response = send_test_message(client_class, host, port, handshake_msg, "Handshake")
         logger.info(f"Response: {json.dumps(response, indent=2)}")
         
         if response.get("success"):
@@ -88,7 +101,7 @@ def run_tests(client_type="zmq"):
             "type": "heartbeat",
             "data": {}
         }
-        response = client.send(heartbeat_msg)
+        response = send_test_message(client_class, host, port, heartbeat_msg, "Heartbeat")
         logger.info(f"Response: {json.dumps(response, indent=2)}")
         
         if response.get("success"):
@@ -111,14 +124,14 @@ def run_tests(client_type="zmq"):
         signal_msg = {
             "type": "signal_request",
             "data": {
-                "symbol": "EURUSD",
+                "symbol": "Step Index.0",
                 "timeframe": "H1",
                 "market_data": market_data
             }
         }
         
         start_time = time.time()
-        response = client.send(signal_msg)
+        response = send_test_message(client_class, host, port, signal_msg, "Signal Request")
         duration = (time.time() - start_time) * 1000
         
         logger.info(f"Response: {json.dumps(response, indent=2)}")
@@ -128,11 +141,25 @@ def run_tests(client_type="zmq"):
             logger.info("✅ Signal request successful")
         else:
             logger.error("❌ Signal request failed")
+        
+        # Test 4: Status Request
+        logger.info("\n--- Testing Status Request ---")
+        status_msg = {
+            "type": "status_request",
+            "data": {}
+        }
+        response = send_test_message(client_class, host, port, status_msg, "Status")
+        logger.info(f"Response: {json.dumps(response, indent=2)}")
+        
+        if response.get("success"):
+            logger.info("✅ Status request successful")
+        else:
+            logger.error("❌ Status request failed")
             
     except Exception as e:
         logger.error(f"Test failed: {e}")
-    finally:
-        client.close()
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

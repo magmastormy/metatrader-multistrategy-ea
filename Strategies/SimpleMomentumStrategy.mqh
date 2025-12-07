@@ -5,7 +5,7 @@
 #ifndef __SIMPLE_MOMENTUM_STRATEGY_MQH__
 #define __SIMPLE_MOMENTUM_STRATEGY_MQH__
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 
 //+------------------------------------------------------------------+
 //| Momentum strategy for multi-instrument orchestration             |

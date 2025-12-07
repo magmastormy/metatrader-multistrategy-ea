@@ -3,10 +3,10 @@
 //| Enhanced with AI mode, weighted signals, and orchestration       |
 //+------------------------------------------------------------------+
 
-#include "Core/Enums.mqh"
-#include "Core/StrategyBase.mqh"
-#include "Core/StrategyManager.mqh"
-#include "Core/AIEngine.mqh"
+#include "Core/Utils/Enums.mqh"
+#include "Core/Strategy/StrategyBase.mqh"
+#include "Core/Strategy/StrategyManager.mqh"
+#include "Core/Engines/AIEngine.mqh"
 
 class CStrategyManager;
 class CTradeManager;

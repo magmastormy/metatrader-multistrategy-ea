@@ -4,9 +4,9 @@
 #ifndef __STRATEGY_BOLLINGER_BREAKOUT_MQH__
 #define __STRATEGY_BOLLINGER_BREAKOUT_MQH__
 
-#include "../Core/StrategyBase.mqh"
-#include "../Core/TradeManager.mqh"
-#include "../Core/PositionSizer.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Trading/TradeManager.mqh"
+#include "../Core/Risk/PositionSizer.mqh"
 #include <Trade/Trade.mqh>
 
 //+------------------------------------------------------------------+

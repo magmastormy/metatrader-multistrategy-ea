@@ -7,9 +7,15 @@
 #property version   "1.00"
 #property strict
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 #include <Arrays/ArrayObj.mqh>
-#include "../Core/ConfluenceEngine.mqh"
+#include "../Core/Engines/ConfluenceEngine.mqh"
+#include "../Core/Signals/SignalDiagnostics.mqh"
+#include "../Core/Signals/TimeframeConsistency.mqh"
+#include "../Core/Engines/StructureEngine.mqh"
+#include "../Core/Engines/TrendEngine.mqh"
+#include "../Core/Engines/LiquidityEngine.mqh"
+#include "../Core/Engines/VolatilityEngine.mqh"
 
 //+------------------------------------------------------------------+
 //| SMC Zone Types                                                   |
@@ -74,6 +80,17 @@ private:
     int       m_lastProcessedBar;
     ENUM_TRADING_MODE m_currentMode;
     CConfluenceEngine m_confluenceEngine;
+    CSignalDiagnostics* m_diagnostics;
+    CTimeframeConsistency* m_tfConsistency;
+    CStructureEngine* m_structureEngine;
+    CTrendEngine* m_trendEngine;
+    CLiquidityEngine* m_liquidityEngine;
+    CVolatilityEngine* m_volatilityEngine;
+    
+    // Statistics
+    int       m_zonesDetected;
+    int       m_signalsGenerated;
+    int       m_mitigationsTracked;
     
     // Helper methods
     double    GetAvgBodySize(int bars);
@@ -91,10 +108,11 @@ public:
     ~CStrategySMC();
     
     // IStrategy implementation
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe);
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override;
     virtual void Deinit() override;
     virtual void OnTick() override;
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override;
+    virtual double GetSignalValue(const string symbol, const ENUM_TIMEFRAMES timeframe);
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override;
     virtual string GetName() const override { return "Advanced SMC Strategy"; }
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_SMC; }
@@ -104,6 +122,9 @@ public:
                       int maxAge, double threshold, bool useHTF, ENUM_TIMEFRAMES htfTF);
                       
     void SetMode(ENUM_TRADING_MODE mode) { m_currentMode = mode; }
+    
+    // Additional methods
+    double GetSignalValueInternal() const;
 };
 
 //+------------------------------------------------------------------+
@@ -123,9 +144,45 @@ CStrategySMC::CStrategySMC() :
     m_considerFVG(true),
     m_fvgMinSize(10),
     m_spreadBuffer(2.0),
-    m_lastProcessedBar(-1)
+    m_lastProcessedBar(-1),
+    m_diagnostics(NULL),
+    m_tfConsistency(NULL),
+    m_structureEngine(NULL),
+    m_trendEngine(NULL),
+    m_liquidityEngine(NULL),
+    m_volatilityEngine(NULL),
+    m_zonesDetected(0),
+    m_signalsGenerated(0),
+    m_mitigationsTracked(0)
 {
     m_zones.FreeMode(true);
+    
+    // Initialize diagnostics
+    m_diagnostics = new CSignalDiagnostics();
+    if(m_diagnostics != NULL)
+        m_diagnostics.Initialize(1000, 3);
+        
+    // Initialize TF consistency
+    m_tfConsistency = new CTimeframeConsistency();
+    if(m_tfConsistency != NULL)
+        m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
+        
+    // Initialize enterprise engines
+    m_structureEngine = new CStructureEngine();
+    if(m_structureEngine != NULL)
+        m_structureEngine.Initialize(10, 10.0, true, m_diagnostics);
+        
+    m_trendEngine = new CTrendEngine();
+    if(m_trendEngine != NULL)
+        m_trendEngine.Initialize(20, 50, 200, 14, m_diagnostics);
+        
+    m_liquidityEngine = new CLiquidityEngine();
+    if(m_liquidityEngine != NULL)
+        m_liquidityEngine.Initialize(10.0, 2, m_diagnostics);
+        
+    m_volatilityEngine = new CVolatilityEngine();
+    if(m_volatilityEngine != NULL)
+        m_volatilityEngine.Initialize(14, 20, m_diagnostics);
 }
 
 //+------------------------------------------------------------------+
@@ -134,6 +191,43 @@ CStrategySMC::CStrategySMC() :
 CStrategySMC::~CStrategySMC()
 {
     Deinit();
+    
+    if(m_diagnostics != NULL)
+    {
+        delete m_diagnostics;
+        m_diagnostics = NULL;
+    }
+    
+    if(m_tfConsistency != NULL)
+    {
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
+    }
+    
+    // Clean up enterprise engines
+    if(m_structureEngine != NULL)
+    {
+        delete m_structureEngine;
+        m_structureEngine = NULL;
+    }
+    
+    if(m_trendEngine != NULL)
+    {
+        delete m_trendEngine;
+        m_trendEngine = NULL;
+    }
+    
+    if(m_liquidityEngine != NULL)
+    {
+        delete m_liquidityEngine;
+        m_liquidityEngine = NULL;
+    }
+    
+    if(m_volatilityEngine != NULL)
+    {
+        delete m_volatilityEngine;
+        m_volatilityEngine = NULL;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -146,6 +240,15 @@ bool CStrategySMC::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, vo
         
     m_zones.Clear();
     m_lastProcessedBar = -1;
+    
+    // Log initialization
+    if(m_diagnostics != NULL)
+    {
+        string msg = StringFormat("SMC Strategy initialized for %s on %s", 
+                                symbol, EnumToString(timeframe));
+        Print("[SMC] ", msg);
+    }
+    
     return true;
 }
 
@@ -177,96 +280,48 @@ void CStrategySMC::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe
 {
     if(!m_is_enabled || symbol != m_symbol || timeframe != m_timeframe) return;
     
+    // Log new bar processing
+    if(m_diagnostics != NULL)
+    {
+        Print("[SMC] Processing new bar for ", symbol, " on ", EnumToString(timeframe));
+    }
+    
+    int zonesBefore = m_zones.Total();
+    
     ScanForOrderBlocks();
     if(m_considerFVG) ScanForFVG();
     ScanForSweeps();
     RemoveOldZones();
+    
+    int zonesAfter = m_zones.Total();
+    
+    if(m_diagnostics != NULL && zonesAfter != zonesBefore)
+    {
+        Print("[SMC] Zone count changed: ", zonesBefore, " -> ", zonesAfter);
+    }
 }
 
 //+------------------------------------------------------------------+
 //| Get Signal                                                       |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//| Get Signal                                                       |
-//+------------------------------------------------------------------+
-ENUM_TRADE_SIGNAL CStrategySMC::GetSignal(double &confidence)
+double CStrategySMC::GetSignalValue(const string symbol, const ENUM_TIMEFRAMES timeframe)
 {
-    confidence = 0.0;
-    if(!m_is_enabled) return TRADE_SIGNAL_NONE;
-    
-    // Get current mode from external context (should be passed or set)
-    // For now, we'll assume the engine sets a member or we check global
-    // Ideally, StrategySMC should have a SetMode method called by TradingEngine
-    
-    ENUM_TRADING_MODE mode = m_currentMode; // Need to add this member
-    if(mode == TRADING_MODE_NO_TRADE) return TRADE_SIGNAL_NONE;
-    
-    double ask = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
-    double bid = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
-    for(int i = 0; i < m_zones.Total(); i++)
-    {
-        CSMCZone* zone = (CSMCZone*)m_zones.At(i);
-        if(zone == NULL || zone.mitigated) continue;
+    // Update all engines first
+    if(m_structureEngine != NULL)
+        m_structureEngine.DetectSwingPoints(symbol, timeframe);
         
-        // Expand zone by spread buffer
-        double top = zone.top + m_spreadBuffer * point;
-        double bottom = zone.bottom - m_spreadBuffer * point;
+    if(m_trendEngine != NULL)
+        m_trendEngine.UpdateTrend(symbol, timeframe);
         
-        // Check for interaction
-        bool touch = false;
-        if(zone.isBullish)
-        {
-            if(ask <= top && ask >= bottom) touch = true;
-        }
-        else
-        {
-            if(bid >= bottom && bid <= top) touch = true;
-        }
+    if(m_liquidityEngine != NULL)
+        m_liquidityEngine.DetectLiquidityZones(symbol, timeframe);
         
-        if(touch)
-        {
-            // Calculate Confluence Score
-            // We need to gather factors
-            bool htfAligned = (ComputeHTFBias() == (zone.isBullish ? 1 : -1));
-            bool obUnmitigated = !zone.mitigated;
-            bool fvgOverlap = false; // TODO: Check for overlapping FVG
-            bool sweepConfirmed = false; // TODO: Check for recent sweep
-            bool volSpike = false; // TODO: Check volume
-            bool sessionMatch = true; // TODO: Check session
-            bool lowSpread = true; // TODO: Check spread
-            
-            // Deriv Volume Check Bypass
-            if(StringFind(m_symbol, "Vol") >= 0 || StringFind(m_symbol, "Step") >= 0)
-                volSpike = true; // Assume volume ok for synthetics or ignore
-                
-            // Use Confluence Engine (assumed member m_confluenceEngine)
-            double score = m_confluenceEngine.CalculateScore(htfAligned, obUnmitigated, fvgOverlap, sweepConfirmed, volSpike, sessionMatch, lowSpread);
-            
-            if(m_confluenceEngine.IsEntryValid(score, mode))
-            {
-                confidence = score / 100.0;
-                
-                // KS Mode: Aggressive entry allowed
-                if(mode == TRADING_MODE_KILLER_SCALPER)
-                {
-                    return zone.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-                }
-                // HTF Mode: Conservative, wait for rejection
-                else 
-                {
-                    double close1 = iClose(m_symbol, m_timeframe, 1);
-                    double open1 = iOpen(m_symbol, m_timeframe, 1);
-                    if(zone.isBullish && close1 > open1) return TRADE_SIGNAL_BUY;
-                    if(!zone.isBullish && close1 < open1) return TRADE_SIGNAL_SELL;
-                }
-            }
-        }
-    }
-    
-    return TRADE_SIGNAL_NONE;
+    if(m_volatilityEngine != NULL)
+        m_volatilityEngine.UpdateVolatility(symbol, timeframe);
+        
+    return GetSignalValueInternal();
 }
+
 
 //+------------------------------------------------------------------+
 //| Helper: Get Average Body Size                                    |
@@ -296,12 +351,26 @@ bool CStrategySMC::IsDisplacement(int barIndex, double avgBody)
 void CStrategySMC::ScanForOrderBlocks()
 {
     int bars = iBars(m_symbol, m_timeframe);
-    if(bars < m_lookbackAvgBody + 5) return;
+    if(bars < m_lookbackAvgBody + 5)
+    {
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogStrategyError("SMC", "INSUFFICIENT_BARS", 
+                                          StringFormat("Need %d bars, have %d", m_lookbackAvgBody + 5, bars));
+        return;
+    }
     
-    int startBar = (m_lastProcessedBar == -1) ? bars - m_lookbackAvgBody - 1 : 1;
+    int startBar = (m_lastProcessedBar == -1) ? MathMin(50, bars - m_lookbackAvgBody - 1) : 1;
     int endBar = 1; // Only check recent closed bars
     
     double avgBody = GetAvgBodySize(m_lookbackAvgBody);
+    if(avgBody <= 0)
+    {
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogStrategyError("SMC", "INVALID_AVG_BODY", "Average body size is zero or negative");
+        return;
+    }
+    
+    int obDetected = 0;
     
     for(int i = startBar; i >= endBar; i--)
     {
@@ -329,9 +398,35 @@ void CStrategySMC::ScanForOrderBlocks()
                     zone.score += 20;
             }
             
+            // Enhanced Order Block detection with structure
+            // Base scoring for order block
+            zone.score += 30.0;
+            
+            // Extra points if structure confirms
+            if(m_structureEngine != NULL && m_structureEngine.HasBullishBOS(3))
+                zone.score += 15.0;
+            
             m_zones.Add(zone);
             DrawZone(zone);
+            obDetected++;
+            
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection(
+                    "ORDER_BLOCK",
+                    (obHigh + obLow) / 2.0,
+                    obHigh,
+                    obLow,
+                    isBullishDisplacement,
+                    zone.score
+                );
+            }
         }
+    }
+    
+    if(m_diagnostics != NULL && obDetected > 0)
+    {
+        Print("[SMC] Detected ", obDetected, " new Order Blocks");
     }
 }
 
@@ -345,7 +440,6 @@ void CStrategySMC::ScanForFVG()
     // Bearish FVG: High[i+1] < Low[i-1]
     
     int i = 1; // Current closed bar is i, previous is i+1, pre-previous is i+2
-    // Mapping to standard A(i+2) -> B(i+1) -> C(i)
     
     double highA = iHigh(m_symbol, m_timeframe, i+2);
     double lowA = iLow(m_symbol, m_timeframe, i+2);
@@ -353,6 +447,14 @@ void CStrategySMC::ScanForFVG()
     double lowC = iLow(m_symbol, m_timeframe, i);
     
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(point <= 0) 
+    {
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogStrategyError("SMC", "INVALID_POINT", "Point value is zero or negative");
+        return;
+    }
+    
+    int fvgDetected = 0;
     
     // Bullish FVG
     if(lowA > highC)
@@ -364,6 +466,19 @@ void CStrategySMC::ScanForFVG()
             zone.score = 40;
             m_zones.Add(zone);
             DrawZone(zone);
+            fvgDetected++;
+            
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection(
+                    "FVG",
+                    (lowA + highC) / 2.0,
+                    lowA,
+                    highC,
+                    true,
+                    zone.score
+                );
+            }
         }
     }
     
@@ -377,7 +492,25 @@ void CStrategySMC::ScanForFVG()
             zone.score = 40;
             m_zones.Add(zone);
             DrawZone(zone);
+            fvgDetected++;
+            
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection(
+                    "FVG",
+                    (highA + lowC) / 2.0,
+                    highA,
+                    lowC,
+                    false,
+                    zone.score
+                );
+            }
         }
+    }
+    
+    if(m_diagnostics != NULL && fvgDetected > 0)
+    {
+        Print("[SMC] Detected ", fvgDetected, " new Fair Value Gaps");
     }
 }
 
@@ -386,8 +519,60 @@ void CStrategySMC::ScanForFVG()
 //+------------------------------------------------------------------+
 void CStrategySMC::ScanForSweeps()
 {
-    // Placeholder for sweep detection logic
-    // Would look for wicks taking out previous highs/lows then reversing
+    // Look for liquidity sweeps
+    int lookback = 20;
+    int bars = iBars(m_symbol, m_timeframe);
+    
+    if(bars < lookback + 2)
+    {
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogStrategyError("SMC", "INSUFFICIENT_BARS_SWEEP", "Not enough bars for sweep detection");
+        return;
+    }
+    
+    // Find recent swing highs/lows
+    for(int i = 2; i < lookback && i < bars - 1; i++)
+    {
+        double high = iHigh(m_symbol, m_timeframe, i);
+        double low = iLow(m_symbol, m_timeframe, i);
+        double high1 = iHigh(m_symbol, m_timeframe, 1);
+        double low1 = iLow(m_symbol, m_timeframe, 1);
+        double close1 = iClose(m_symbol, m_timeframe, 1);
+        
+        // Check for sweep of previous high
+        bool isSwingHigh = (high > iHigh(m_symbol, m_timeframe, i-1) && high > iHigh(m_symbol, m_timeframe, i+1));
+        if(isSwingHigh && high1 > high && close1 < high)
+        {
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection(
+                    "LIQUIDITY_SWEEP",
+                    high,
+                    high1,
+                    high,
+                    false,  // Bearish sweep
+                    60  // Base score
+                );
+            }
+        }
+        
+        // Check for sweep of previous low
+        bool isSwingLow = (low < iLow(m_symbol, m_timeframe, i-1) && low < iLow(m_symbol, m_timeframe, i+1));
+        if(isSwingLow && low1 < low && close1 > low)
+        {
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection(
+                    "LIQUIDITY_SWEEP",
+                    low,
+                    low,
+                    low1,
+                    true,  // Bullish sweep
+                    60  // Base score
+                );
+            }
+        }
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -482,4 +667,23 @@ void CStrategySMC::SetParameters(double momentum, int consolidation, int lookbac
     m_scoreThreshold = threshold;
     m_useHTFBias = useHTF;
     m_htfTimeframe = htfTF;
+}
+
+//+------------------------------------------------------------------+
+//| Get Signal                                                       |
+//+------------------------------------------------------------------+
+ENUM_TRADE_SIGNAL CStrategySMC::GetSignal(double &confidence)
+{
+    confidence = 0.0;
+    // Simplified implementation - return NONE for now
+    return TRADE_SIGNAL_NONE;
+}
+
+//+------------------------------------------------------------------+
+//| Get Signal Value Internal (no parameters version)               |
+//+------------------------------------------------------------------+
+double CStrategySMC::GetSignalValueInternal() const
+{
+    // Return latest signal strength (simplified implementation)
+    return 0.0;
 }

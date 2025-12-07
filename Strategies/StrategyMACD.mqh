@@ -4,7 +4,7 @@
 #ifndef __STRATEGY_MACD_MQH__
 #define __STRATEGY_MACD_MQH__
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 #include <Arrays/ArrayObj.mqh>
 
 // MACD Strategy - Uses MACD (Moving Average Convergence Divergence) for trend detection

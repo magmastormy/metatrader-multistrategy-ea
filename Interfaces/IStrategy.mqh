@@ -10,7 +10,7 @@
 #ifndef INTERFACES_ISTRATEGY_MQH
 #define INTERFACES_ISTRATEGY_MQH
 
-#include "../Core/Enums.mqh"
+#include "../Core/Utils/Enums.mqh"
 
 //+------------------------------------------------------------------+
 //| Strategy Interface                                             |

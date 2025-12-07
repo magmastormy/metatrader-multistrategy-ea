@@ -5,7 +5,7 @@
 #define __UTILITIES_MQH__
 
 // Include error handling utilities at global scope to avoid nesting within classes
-#include "../Core/ErrorHandling.mqh"
+#include "../Core/Utils/ErrorHandling.mqh"
 
 // Pointer validation macros
 #ifndef POINTER_VALID

@@ -9,9 +9,8 @@
 #include <Trade\SymbolInfo.mqh>
 #include <Trade\AccountInfo.mqh>
 #include "NextGenStrategyBrain.mqh"
-#include "../Core/StrategyFunctions.mqh"
-#include "../Core/MarketRegimeDetector.mqh"
-#include "../Core/Instruments.mqh"
+#include "../Core/Strategy/StrategyFunctions.mqh"
+#include "../Core/Utils/Instruments.mqh"
 
 //+------------------------------------------------------------------+
 //| Training Input Parameters                                         |

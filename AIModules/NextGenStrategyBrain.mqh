@@ -11,8 +11,7 @@
 #include "TransformerBrain.mqh"
 #include "EnsembleMetaLearner.mqh"
 #include "UncertaintyQuantifier.mqh"
-#include "../Core/MarketRegimeDetector.mqh"
-#include "../Core/Enums.mqh"
+#include "../Core/Utils/Enums.mqh"
 
 //+------------------------------------------------------------------+
 //| Market Data Processor for AI Models                            |

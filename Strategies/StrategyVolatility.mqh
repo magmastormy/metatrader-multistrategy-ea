@@ -1,7 +1,7 @@
 #ifndef __STRATEGY_VOLATILITY_MQH__
 #define __STRATEGY_VOLATILITY_MQH__
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 #include <Indicators/Trend.mqh>
 
 //+------------------------------------------------------------------+

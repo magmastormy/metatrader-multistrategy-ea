@@ -9,8 +9,9 @@
 #include <Math\Stat\Math.mqh>
 
 //+------------------------------------------------------------------+
-//| Prediction with Uncertainty                                    |
+//| Prediction with Uncertainty (Extended version)                 |
 //+------------------------------------------------------------------+
+// Extended struct with additional fields beyond CommonTypes.mqh
 struct SPredictionWithUncertainty {
     double prediction;         // Main prediction
     double lowerBound;        // Lower confidence bound
@@ -18,6 +19,8 @@ struct SPredictionWithUncertainty {
     double uncertainty;       // Uncertainty measure (0-1)
     double confidence;        // Confidence level (0-1)
     double entropy;           // Prediction entropy
+    datetime timestamp;       // From base struct
+    bool isValid;             // From base struct
     
     SPredictionWithUncertainty() {
         prediction = 0.0;
@@ -26,6 +29,8 @@ struct SPredictionWithUncertainty {
         uncertainty = 1.0;
         confidence = 0.0;
         entropy = 0.0;
+        timestamp = 0;
+        isValid = false;
     }
 };
 

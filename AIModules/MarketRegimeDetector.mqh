@@ -6,7 +6,7 @@
 #define MARKET_REGIME_DETECTOR_MQH
 
 // Include enums first to ensure types are available
-#include "../Core/Enums.mqh"
+#include "../Core/Utils/Enums.mqh"
 #include <Arrays/ArrayDouble.mqh>
 #include <Math/Stat/Math.mqh>
 

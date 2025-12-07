@@ -4,8 +4,10 @@
 #ifndef __STRATEGY_FAIRVALUEGAP_MQH__
 #define __STRATEGY_FAIRVALUEGAP_MQH__
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 #include <Arrays/ArrayObj.mqh>
+#include "../Core/Signals/SignalDiagnostics.mqh"
+#include "../Core/Signals/TimeframeConsistency.mqh"
 
 //+------------------------------------------------------------------+
 //| Fair Value Gap Data Structure                                   |
@@ -54,6 +56,15 @@ private:
     double     m_minGapSize;   // Minimum size of a gap to consider (in points)
     int        m_maxBarsToFill; // Maximum number of bars to wait for gap fill
     
+    // Diagnostic systems
+    CSignalDiagnostics* m_diagnostics;
+    CTimeframeConsistency* m_tfConsistency;
+    
+    // Statistics
+    int        m_gapsDetected;
+    int        m_gapsFilled;
+    int        m_signalsGenerated;
+    
     // Helper methods
     bool FindFairValueGaps(const string symbol, const ENUM_TIMEFRAMES timeframe);
     void DrawFVG(const SFairValueGap& fvg, const string symbol, int index);
@@ -87,9 +98,24 @@ CStrategyFairValueGap::CStrategyFairValueGap(const string name, int magic) :
     CStrategyBase(name, magic),
     m_lookback(50),
     m_minGapSize(5.0),  // 5 pips minimum gap size
-    m_maxBarsToFill(20)  // 20 bars maximum to wait for gap fill
+    m_maxBarsToFill(20),  // 20 bars maximum to wait for gap fill
+    m_diagnostics(NULL),
+    m_tfConsistency(NULL),
+    m_gapsDetected(0),
+    m_gapsFilled(0),
+    m_signalsGenerated(0)
 {
     m_fvgs.FreeMode(true);
+    
+    // Initialize diagnostics
+    m_diagnostics = new CSignalDiagnostics();
+    if(m_diagnostics != NULL)
+        m_diagnostics.Initialize(500, 3);
+        
+    // Initialize TF consistency
+    m_tfConsistency = new CTimeframeConsistency();
+    if(m_tfConsistency != NULL)
+        m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
 }
 
 //+------------------------------------------------------------------+
@@ -98,6 +124,18 @@ CStrategyFairValueGap::CStrategyFairValueGap(const string name, int magic) :
 CStrategyFairValueGap::~CStrategyFairValueGap()
 {
     Deinit();
+    
+    if(m_diagnostics != NULL)
+    {
+        delete m_diagnostics;
+        m_diagnostics = NULL;
+    }
+    
+    if(m_tfConsistency != NULL)
+    {
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -117,6 +155,15 @@ bool CStrategyFairValueGap::Init(const string symbol, const ENUM_TIMEFRAMES time
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer)) return false;
     m_fvgs.Clear();
+    
+    // Log initialization
+    if(m_diagnostics != NULL)
+    {
+        string msg = StringFormat("FVG Strategy initialized for %s on %s", 
+                                symbol, EnumToString(timeframe));
+        Print("[FVG] ", msg);
+    }
+    
     return true;
 }
 
@@ -210,7 +257,24 @@ bool CStrategyFairValueGap::FindFairValueGaps(const string symbol, const ENUM_TI
             );
             
             CFVGObject *fvgObj = new CFVGObject(fvgData);
-            if(fvgObj != NULL) m_fvgs.Add(fvgObj);
+            if(fvgObj != NULL)
+            {
+                m_fvgs.Add(fvgObj);
+                m_gapsDetected++;
+                
+                // Log FVG detection
+                if(m_diagnostics != NULL)
+                {
+                    m_diagnostics.LogSMCDetection(
+                        "FVG_DETECTED",
+                        (fvgHigh + fvgLow) / 2.0,
+                        fvgHigh,
+                        fvgLow,
+                        isBullish,
+                        50.0  // Base score for FVG
+                    );
+                }
+            }
         }
     }
     
@@ -277,6 +341,16 @@ void CStrategyFairValueGap::CheckAndMarkFilledGaps(const string symbol)
             (!fvgObj.data.isBullish && ask >= fvgObj.data.high))  // Price went up to fill a bearish FVG
         {
             fvgObj.data.isFilled = true;
+            m_gapsFilled++;
+            
+            // Log gap fill
+            if(m_diagnostics != NULL)
+            {
+                string msg = StringFormat("FVG filled | %s | Level: %.5f",
+                                        fvgObj.data.isBullish ? "Bullish" : "Bearish",
+                                        fvgObj.data.isBullish ? fvgObj.data.low : fvgObj.data.high);
+                Print("[FVG] ", msg);
+            }
             
             // Redraw the FVG to show it's been filled
             if (symbol == _Symbol)
@@ -292,6 +366,8 @@ ENUM_TRADE_SIGNAL CStrategyFairValueGap::GetSignal(double &confidence)
 {
     if (!IsEnabled() || !m_is_initialized) {
         confidence = 0.0;
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogNoSignal("FVG", m_symbol, m_timeframe, "Strategy disabled or not initialized");
         return TRADE_SIGNAL_NONE;
     }
         
@@ -299,7 +375,11 @@ ENUM_TRADE_SIGNAL CStrategyFairValueGap::GetSignal(double &confidence)
     
     // Find Fair Value Gaps
     if (!FindFairValueGaps(m_symbol, m_timeframe))
+    {
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogNoSignal("FVG", m_symbol, m_timeframe, "No FVGs found");
         return TRADE_SIGNAL_NONE;
+    }
     
     // Check for filled gaps
     CheckAndMarkFilledGaps(m_symbol);
@@ -348,7 +428,19 @@ ENUM_TRADE_SIGNAL CStrategyFairValueGap::GetSignal(double &confidence)
                          (rates[1].close - rates[1].open) > 2 * (rates[1].open - rates[1].low));
                     
                     if (isBullishReversal)
+                    {
+                        m_signalsGenerated++;
+                        
+                        if(m_diagnostics != NULL)
+                        {
+                            string reason = StringFormat("Bullish FVG touch | Gap: %.5f-%.5f | Price: %.5f | Confidence: %.2f",
+                                                       fvg.low, fvg.high, bid, confidence);
+                            m_diagnostics.LogSignalGeneration("FVG", m_symbol, m_timeframe, 
+                                                            TRADE_SIGNAL_BUY, confidence, reason);
+                        }
+                        
                         return TRADE_SIGNAL_BUY;  // Buy signal
+                    }
                 }
             }
         }
@@ -378,10 +470,29 @@ ENUM_TRADE_SIGNAL CStrategyFairValueGap::GetSignal(double &confidence)
                          (rates[1].open - rates[1].close) > 2 * (rates[1].high - rates[1].open));
                     
                     if (isBearishReversal)
+                    {
+                        m_signalsGenerated++;
+                        
+                        if(m_diagnostics != NULL)
+                        {
+                            string reason = StringFormat("Bearish FVG touch | Gap: %.5f-%.5f | Price: %.5f | Confidence: %.2f",
+                                                       fvg.low, fvg.high, ask, confidence);
+                            m_diagnostics.LogSignalGeneration("FVG", m_symbol, m_timeframe, 
+                                                            TRADE_SIGNAL_SELL, confidence, reason);
+                        }
+                        
                         return TRADE_SIGNAL_SELL;  // Sell signal
+                    }
                 }
             }
         }
+    }
+    
+    if(m_diagnostics != NULL)
+    {
+        string reason = StringFormat("No valid FVG entry | Total gaps: %d | Filled: %d",
+                                   m_fvgs.Total(), m_gapsFilled);
+        m_diagnostics.LogNoSignal("FVG", m_symbol, m_timeframe, reason);
     }
     
     return TRADE_SIGNAL_NONE; // No signal

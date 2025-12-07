@@ -4,8 +4,10 @@
 #ifndef __STRATEGY_ORDERBLOCK_MQH__
 #define __STRATEGY_ORDERBLOCK_MQH__
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 #include <Arrays/ArrayObj.mqh>
+#include "../Core/Signals/SignalDiagnostics.mqh"
+#include "../Core/Signals/TimeframeConsistency.mqh"
 
 //+------------------------------------------------------------------+
 //| Order Block Class                                                |
@@ -39,6 +41,13 @@ private:
     int        m_lookback;        // Number of bars to look back for order blocks
     int        m_minStrength;     // Minimum strength required for a valid order block
     double     m_deviation;       // Price deviation for order block activation
+    CSignalDiagnostics* m_diagnostics;  // Diagnostics system
+    CTimeframeConsistency* m_tfConsistency;  // TF consistency checker
+    
+    // Statistics
+    int        m_blocksDetected;
+    int        m_signalsGenerated;
+    int        m_falseSignals;
     
     // Helper methods
     bool FindOrderBlocks(const string symbol, const ENUM_TIMEFRAMES timeframe);
@@ -71,12 +80,27 @@ CStrategyOrderBlock::CStrategyOrderBlock(const string name, int magic) :
     CStrategyBase(name, magic),
     m_lookback(50),
     m_minStrength(2),
-    m_deviation(10 * Point())
+    m_deviation(10 * Point()),
+    m_diagnostics(NULL),
+    m_tfConsistency(NULL),
+    m_blocksDetected(0),
+    m_signalsGenerated(0),
+    m_falseSignals(0)
 {
     m_orderBlocks = new CArrayObj();
     if(m_orderBlocks != NULL) {
         m_orderBlocks.FreeMode(true);
     }
+    
+    // Initialize diagnostics
+    m_diagnostics = new CSignalDiagnostics();
+    if(m_diagnostics != NULL)
+        m_diagnostics.Initialize(500, 3);
+        
+    // Initialize TF consistency
+    m_tfConsistency = new CTimeframeConsistency();
+    if(m_tfConsistency != NULL)
+        m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
 }
 
 //+------------------------------------------------------------------+
@@ -89,6 +113,16 @@ CStrategyOrderBlock::~CStrategyOrderBlock()
         delete m_orderBlocks;
         m_orderBlocks = NULL;
     }
+    
+    if(m_diagnostics != NULL) {
+        delete m_diagnostics;
+        m_diagnostics = NULL;
+    }
+    
+    if(m_tfConsistency != NULL) {
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -98,6 +132,14 @@ bool CStrategyOrderBlock::Init(const string symbol, const ENUM_TIMEFRAMES timefr
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer)) return false;
     if(CheckPointer(m_orderBlocks) != POINTER_INVALID) m_orderBlocks.Clear();
+    
+    // Log initialization
+    if(m_diagnostics != NULL) {
+        string msg = StringFormat("Order Block Strategy initialized for %s on %s", 
+                                symbol, EnumToString(timeframe));
+        Print("[OrderBlock] ", msg);
+    }
+    
     return true;
 }
 
@@ -122,7 +164,10 @@ void CStrategyOrderBlock::OnTick()
 
 void CStrategyOrderBlock::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe)
 {
-    // No periodic work beyond GetSignal; placeholder for future per-bar updates
+    // Log new bar processing
+    if(m_diagnostics != NULL) {
+        Print("[OrderBlock] Processing new bar for ", symbol, " on ", EnumToString(timeframe));
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -178,6 +223,8 @@ bool CStrategyOrderBlock::FindOrderBlocks(const string symbol, const ENUM_TIMEFR
         return false;
     }
     
+    int blocksFound = 0;
+    
     // Find order blocks
     for (int i = 1; i < copied - 1; i++)
     {
@@ -198,7 +245,25 @@ bool CStrategyOrderBlock::FindOrderBlocks(const string symbol, const ENUM_TIMEFR
             );
             
             m_orderBlocks.Add(block);
+            blocksFound++;
+            m_blocksDetected++;
+            
+            // Log detection
+            if(m_diagnostics != NULL) {
+                m_diagnostics.LogSMCDetection(
+                    "ORDER_BLOCK_FOUND",
+                    price,
+                    rates[i].high,
+                    rates[i].low,
+                    isBullish,
+                    60.0  // Base score
+                );
+            }
         }
+    }
+    
+    if(m_diagnostics != NULL && blocksFound > 0) {
+        Print("[OrderBlock] Found ", blocksFound, " new order blocks");
     }
     
     return true;
@@ -245,14 +310,19 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
 {
     if (!IsEnabled() || !m_is_initialized) {
         confidence = 0.0;
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogNoSignal("OrderBlock", m_symbol, m_timeframe, "Strategy disabled or not initialized");
         return TRADE_SIGNAL_NONE;
     }
         
     confidence = 0.0;
     
     // Find order blocks for this symbol/timeframe
-    if (!FindOrderBlocks(m_symbol, m_timeframe))
+    if (!FindOrderBlocks(m_symbol, m_timeframe)) {
+        if(m_diagnostics != NULL)
+            m_diagnostics.LogStrategyError("OrderBlock", "FIND_BLOCKS_FAILED", "Failed to find order blocks");
         return TRADE_SIGNAL_NONE;
+    }
     
     // Get current price
     double ask = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
@@ -260,12 +330,19 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point == 0) point = 0.0001;
     
+    int activeBlocks = 0;
+    int checkedBlocks = 0;
+    
     // Check for order block activations
     for (int i = 0; i < m_orderBlocks.Total(); i++)
     {
         SOrderBlock *block = (SOrderBlock*)m_orderBlocks.At(i);
-        if (!block)
+        if (!block) {
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("OrderBlock", "NULL_BLOCK", "Block at index " + IntegerToString(i) + " is NULL");
             continue;
+        }
+        activeBlocks++;
             
         // Create local variables to simplify pointer access and debug errors
         int blockTimeframe = block.timeframe;
@@ -287,11 +364,35 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
             bid >= (blockLow - m_deviation) && 
             bid <= (blockHigh + m_deviation))
         {
+            checkedBlocks++;
+            
+            // Log detection
+            if(m_diagnostics != NULL) {
+                m_diagnostics.LogSMCDetection(
+                    "ORDER_BLOCK_TOUCH",
+                    bid,
+                    blockHigh,
+                    blockLow,
+                    true,
+                    block.strength * 20.0  // Convert strength to score
+                );
+            }
+            
             // The closer to the order block, the higher the confidence
             double dist = MathAbs(bid - blockPrice) / point;
             confidence = (50.0 - dist) / 50.0;
             if(confidence < 0) confidence = 0;
             if(confidence > 1) confidence = 1;
+            
+            m_signalsGenerated++;
+            
+            if(m_diagnostics != NULL) {
+                string reason = StringFormat("Bullish OB activation | Price: %.5f | Zone: %.5f-%.5f | Distance: %.1f points",
+                                           bid, blockLow, blockHigh, dist);
+                m_diagnostics.LogSignalGeneration("OrderBlock", m_symbol, m_timeframe, 
+                                                TRADE_SIGNAL_BUY, confidence, reason);
+            }
+            
             return TRADE_SIGNAL_BUY;
         }
         // Check for activation of bearish order block (price retests from below)
@@ -299,13 +400,43 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
                  ask <= (blockHigh + m_deviation) && 
                  ask >= (blockLow - m_deviation))
         {
+            checkedBlocks++;
+            
+            // Log detection
+            if(m_diagnostics != NULL) {
+                m_diagnostics.LogSMCDetection(
+                    "ORDER_BLOCK_TOUCH",
+                    ask,
+                    blockHigh,
+                    blockLow,
+                    false,
+                    block.strength * 20.0  // Convert strength to score
+                );
+            }
+            
             // The closer to the order block, the higher the confidence
             double dist = MathAbs(ask - blockPrice) / point;
             confidence = (50.0 - dist) / 50.0;
             if(confidence < 0) confidence = 0;
             if(confidence > 1) confidence = 1;
+            
+            m_signalsGenerated++;
+            
+            if(m_diagnostics != NULL) {
+                string reason = StringFormat("Bearish OB activation | Price: %.5f | Zone: %.5f-%.5f | Distance: %.1f points",
+                                           ask, blockLow, blockHigh, dist);
+                m_diagnostics.LogSignalGeneration("OrderBlock", m_symbol, m_timeframe, 
+                                                TRADE_SIGNAL_SELL, confidence, reason);
+            }
+            
             return TRADE_SIGNAL_SELL;
         }
+    }
+    
+    if(m_diagnostics != NULL) {
+        string reason = StringFormat("No valid OB triggered | Active blocks: %d | Checked: %d",
+                                   activeBlocks, checkedBlocks);
+        m_diagnostics.LogNoSignal("OrderBlock", m_symbol, m_timeframe, reason);
     }
     
     return TRADE_SIGNAL_NONE;
