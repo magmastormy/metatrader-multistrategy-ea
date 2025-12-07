@@ -25,13 +25,13 @@
 #include <Math\Stat\Math.mqh>
 
 // Include project headers
-#include "../Core/StrategyBase.mqh"
-#include "../Core/Enums.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/Enums.mqh"
 #include "../Interfaces/IStrategy.mqh"
-#include "../Core/TradeManager.mqh"
-#include "../Core/PositionSizer.mqh"
-#include "../Core/ErrorHandling.mqh"
-#include "../Core/StrategyFactory.mqh"
+#include "../Core/Trading/TradeManager.mqh"
+#include "../Core/Risk/PositionSizer.mqh"
+#include "../Core/Utils/ErrorHandling.mqh"
+#include "../Core/Strategy/StrategyFactory.mqh"
 
 
 

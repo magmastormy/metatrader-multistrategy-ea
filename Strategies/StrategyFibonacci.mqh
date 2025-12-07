@@ -24,8 +24,8 @@
 #include "RSI.mqh"  // Local RSI implementation
 
 // Include project headers
-#include "../Core/StrategyBase.mqh"
-#include "../Core/Enums.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/Enums.mqh"
 #include "../Interfaces/IStrategy.mqh"
 #include "../Utilities/Utilities.mqh"
 

@@ -1,0 +1,172 @@
+2025.12.07 22:57:53.829	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 32.3 | ADX: 19.0
+2025.12.07 22:57:53.829	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+2025.12.07 22:57:53.829	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:53.829	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.30000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:53.829	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 50.00% | Reason: Bullish OB activation | Price: 8050.30000 | Zone: 8047.80000-8051.90000 | Distance: 25.0 points
+2025.12.07 22:57:53.933	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.1 | Angle: 0.0 | ADX: 18.3
+2025.12.07 22:57:53.933	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 1.16719 | Zone: 1.16602-1.16719 | BULLISH | Score: 57.1
+2025.12.07 22:57:53.933	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.07 22:57:54.037	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00033 (0.03%) | BB Width: 0.00083
+2025.12.07 22:57:54.037	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Signal not aligned with trend
+2025.12.07 22:57:54.037	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.50 below minimum 0.60
+2025.12.07 22:57:54.037	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:54.037	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:54.037	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:54.159	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 32.3 | ADX: 19.0
+2025.12.07 22:57:54.159	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+2025.12.07 22:57:54.160	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:54.160	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.30000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:54.160	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 50.00% | Reason: Bullish OB activation | Price: 8050.30000 | Zone: 8047.80000-8051.90000 | Distance: 25.0 points
+2025.12.07 22:57:54.264	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 50.0 | Angle: 0.0 | ADX: 17.7
+2025.12.07 22:57:54.264	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 1.33625 | Zone: 1.33620-1.33625 | BULLISH | Score: 60.0
+2025.12.07 22:57:54.264	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_LOW] Price: 1.33174 | Zone: 1.33174-1.33282 | BEARISH | Score: 69.1
+2025.12.07 22:57:54.264	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.07 22:57:54.365	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00052 (0.04%) | BB Width: 0.00130
+2025.12.07 22:57:54.365	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Signal not aligned with trend
+2025.12.07 22:57:54.365	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.50 below minimum 0.60
+2025.12.07 22:57:54.365	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:54.365	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:54.365	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:54.476	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 32.3 | ADX: 19.0
+2025.12.07 22:57:54.476	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+2025.12.07 22:57:54.476	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:54.476	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.30000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:54.476	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 50.00% | Reason: Bullish OB activation | Price: 8050.30000 | Zone: 8047.80000-8051.90000 | Distance: 25.0 points
+2025.12.07 22:57:54.596	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_NONE | Strength: 80.1 | Angle: -2.4 | ADX: 37.9
+2025.12.07 22:57:54.596	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.07 22:57:54.697	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.04021 (0.03%) | BB Width: 0.08985
+2025.12.07 22:57:54.697	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Signal not aligned with trend
+2025.12.07 22:57:54.697	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.50 below minimum 0.60
+2025.12.07 22:57:54.697	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:54.697	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:54.697	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:54.809	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 32.3 | ADX: 19.0
+2025.12.07 22:57:54.809	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+2025.12.07 22:57:54.809	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:54.809	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.30000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:54.809	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 50.00% | Reason: Bullish OB activation | Price: 8050.30000 | Zone: 8047.80000-8051.90000 | Distance: 25.0 points
+2025.12.07 22:57:54.920	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 70.0 | Angle: 80.1 | ADX: 70.0
+2025.12.07 22:57:54.920	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_LOW] Price: 4194.83000 | Zone: 4194.83000-4215.96000 | BEARISH | Score: 69.3
+2025.12.07 22:57:54.920	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=63, Sell=0
+2025.12.07 22:57:55.029	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 5.64714 (0.13%) | BB Width: 27.09920
+2025.12.07 22:57:55.029	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: PASSED - Trend: TREND_BULLISH_WEAK, Strength: 70.0
+2025.12.07 22:57:55.029	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.13%)
+2025.12.07 22:57:55.029	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.07 22:57:55.029	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] StructureFilter: PASSED - Structure break confirmed
+2025.12.07 22:57:55.029	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] HedgingProtection: FAILED - Signal would cause hedging - neutralized
+2025.12.07 22:57:55.029	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:55.030	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:55.030	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:55.133	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 32.7 | ADX: 19.0
+2025.12.07 22:57:55.133	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+2025.12.07 22:57:55.134	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:55.134	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.20000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:55.134	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 52.00% | Reason: Bullish OB activation | Price: 8050.20000 | Zone: 8047.80000-8051.90000 | Distance: 24.0 points
+2025.12.07 22:57:55.242	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 80.7 | Angle: 89.8 | ADX: 27.2
+2025.12.07 22:57:55.242	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 89750.01900 | Zone: 89698.17000-89750.01900 | BULLISH | Score: 69.2
+2025.12.07 22:57:55.242	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 90246.66800 | Zone: 89750.01900-90246.66800 | BULLISH | Score: 71.9
+2025.12.07 22:57:55.242	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=7, Sell=0
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 306.25007 (0.35%) | BB Width: 1641.35760
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: PASSED - Trend: TREND_BULLISH_WEAK, Strength: 80.7
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.35%)
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.56 below minimum 0.60
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:55.357	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:55.467	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 32.7 | ADX: 19.0
+2025.12.07 22:57:55.467	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+2025.12.0
+2025.12.07 22:57:55.467	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:55.467	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.20000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:55.467	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 52.00% | Reason: Bullish OB activation | Price: 8050.20000 | Zone: 8047.80000-8051.90000 | Distance: 24.0 points
+2025.12.07 22:57:55.568	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_NONE | Strength: 80.2 | Angle: -0.0 | ADX: 33.7
+2025.12.07 22:57:55.568	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 1.14824 | Zone: 1.14816-1.14841 | BEARISH | Score: 50.0
+2025.12.07 22:57:55.568	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_LOW] Price: 1.14421 | Zone: 1.14421-1.14817 | BEARISH | Score: 76.6
+2025.12.07 22:57:55.568	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.07 22:57:55.689	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00027 (0.02%) | BB Width: 0.00066
+2025.12.07 22:57:55.689	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Signal not aligned with trend
+2025.12.07 22:57:55.689	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.52 below minimum 0.60
+2025.12.07 22:57:55.689	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:55.689	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:55.689	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:55.801	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 32.7 | ADX: 19.0
+2025.12.07 22:57:55.801	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+
+2025.12.07 22:57:55.802	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:55.802	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.20000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:55.802	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 52.00% | Reason: Bullish OB activation | Price: 8050.20000 | Zone: 8047.80000-8051.90000 | Distance: 24.0 points
+2025.12.07 22:57:55.922	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.1 | Angle: 0.0 | ADX: 16.1
+2025.12.07 22:57:55.922	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 0.57676 | Zone: 0.57662-0.57680 | BULLISH | Score: 50.0
+2025.12.07 22:57:55.922	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_LOW] Price: 0.57570 | Zone: 0.57570-0.57675 | BEARISH | Score: 69.3
+2025.12.07 22:57:55.922	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.07 22:57:56.026	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00027 (0.05%) | BB Width: 0.00056
+2025.12.07 22:57:56.026	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Signal not aligned with trend
+2025.12.07 22:57:56.026	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.52 below minimum 0.60
+2025.12.07 22:57:56.026	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:56.026	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:56.026	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:56.139	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 33.0 | ADX: 19.0
+2025.12.07 22:57:56.139	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+
+2025.12.07 22:57:56.139	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:56.140	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.10000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:56.140	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 54.00% | Reason: Bullish OB activation | Price: 8050.10000 | Zone: 8047.80000-8051.90000 | Distance: 23.0 points
+2025.12.07 22:57:56.251	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 70.0 | Angle: 89.8 | ADX: 40.8
+2025.12.07 22:57:56.251	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=0, Sell=0
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_NORMAL | ATR: 290.34429 (0.66%) | BB Width: 1740.67922
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: PASSED - Trend: TREND_BULLISH_WEAK, Strength: 70.0
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_NORMAL (0.66%)
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.46 below minimum 0.60
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:56.352	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:56.469	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 33.0 | ADX: 19.0
+2025.12.07 22:57:56.469	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+2025.12.07 22:57:56.469	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 20 new order blocks
+2025.12.07 22:57:56.470	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8050.10000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:57:56.470	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 54.00% | Reason: Bullish OB activation | Price: 8050.10000 | Zone: 8047.80000-8051.90000 | Distance: 23.0 points
+2025.12.07 22:57:56.576	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 50.0 | Angle: 28.1 | ADX: 18.6
+2025.12.07 22:57:56.576	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 673.21000 | Zone: 672.87000-678.49000 | BEARISH | Score: 50.0
+2025.12.07 22:57:56.576	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 674.85000 | Zone: 672.11000-676.66000 | BULLISH | Score: 50.0
+2025.12.07 22:57:56.576	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=65, Sell=0
+2025.12.07 22:57:56.678	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_NORMAL | ATR: 5.24500 (0.79%) | BB Width: 16.22819
+2025.12.07 22:57:56.678	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Signal not aligned with trend
+2025.12.07 22:57:56.678	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] ConfidenceFilter: FAILED - Confidence 0.54 below minimum 0.60
+2025.12.07 22:57:56.678	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:57:56.678	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:57:56.678	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:57:56.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 60.2 | Angle: 33.0 | ADX: 19.0
+2025.12.07 22:57:56.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+
+2025.12.07 22:59:20.491	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 19 new order blocks
+2025.12.07 22:59:20.493	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8049.10000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
+2025.12.07 22:59:20.493	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: BUY | Confidence: 74.00% | Reason: Bullish OB activation | Price: 8049.10000 | Zone: 8047.80000-8051.90000 | Distance: 13.0 points
+2025.12.07 22:59:20.601	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_NONE | Strength: 50.0 | Angle: 41.8 | ADX: 20.3
+2025.12.07 22:59:20.601	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 673.21000 | Zone: 672.87000-678.49000 | BEARISH | Score: 50.0
+2025.12.07 22:59:20.601	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 674.85000 | Zone: 672.11000-676.66000 | BULLISH | Score: 50.0
+2025.12.07 22:59:20.601	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=65, Sell=0
+2025.12.07 22:59:20.712	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_NORMAL | ATR: 4.92500 (0.74%) | BB Width: 16.42893
+2025.12.07 22:59:20.712	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Signal not aligned with trend
+2025.12.07 22:59:20.712	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
+2025.12.07 22:59:20.712	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8061.20000 | Zone: 8060.30000-8066.90000 | BEARISH | Score: 50.0
+2025.12.07 22:59:20.712	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 8062.20000 | Zone: 8060.80000-8065.00000 | BEARISH | Score: 50.0
+2025.12.07 22:59:20.823	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 70.2 | Angle: 39.9 | ADX: 18.0
+2025.12.07 22:59:20.823	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
+
+
+# User Observations
+- it executed trades without SL nor TP (yet the function is in the codebase)
+- 

@@ -35,15 +35,15 @@ input bool InpEnableVolatility = false;     // Enable Volatility Strategy
 input bool InpEnableOrderBlockFVG = false;  // Enable Order Block FVG Strategy
 input bool InpEnableStepIndex = false;      // Enable Step Index Strategy
 input bool InpEnableMACD = false;           // Enable MACD Strategy
-input bool InpEnableOrderBlock = false;     // Enable Order Block Strategy
+input bool InpEnableOrderBlock = true;      // Enable Order Block Strategy
 input bool InpEnableBollinger = false;      // Enable Bollinger Strategy
 input bool InpEnableBollingerBreakout = false; // Enable Bollinger Breakout Strategy
 input bool InpEnableSMC = true;               // Enable Advanced SMC Strategy
 input bool InpEnableBreakout = false;         // Enable Breakout Strategy
 input bool InpEnableFibonacci = false;        // Enable Fibonacci Strategy
-input bool InpEnableElliottWave = false;      // Enable Elliott Wave Strategy
+input bool InpEnableElliottWave = true;       // Enable Elliott Wave Strategy
 input bool InpEnableIchimoku = false;         // Enable Ichimoku Strategy
-input bool InpEnableFairValueGap = false;     // Enable Fair Value Gap Strategy
+input bool InpEnableFairValueGap = true;      // Enable Fair Value Gap Strategy
 input bool InpEnableHarmonicPatterns = false; // Enable Harmonic Patterns Strategy
 input bool InpEnableElliott = false;          // Enable Elliott Advanced Strategy
 
@@ -53,6 +53,16 @@ input bool InpEnableAIMode = true;             // Enable AI Mode
 input double InpAIConfidenceThreshold = 0.65;  // AI Confidence Threshold
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 
+//--- Enterprise Mode Settings
+input group "Enterprise Mode"
+input bool InpEnableEnterpriseMode = true;     // Enable Enterprise Mode
+input bool InpUseSignalPipeline = true;        // Use Signal Pipeline
+input bool InpUseOrchestrator = true;          // Use AI Orchestrator
+input double InpMinTrendStrength = 50.0;       // Minimum Trend Strength
+input double InpMaxVolatility = 3.0;           // Maximum Volatility %
+input bool InpEnableStructureFilter = true;    // Enable Structure Filter
+input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
+
 //--- Include files
 #include <Object.mqh>
 #include <Trade\Trade.mqh>
@@ -60,38 +70,50 @@ input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 #include <Trade\AccountInfo.mqh>
 #include <Arrays\ArrayObj.mqh>
 #include <Arrays\ArrayDouble.mqh>
-#include "Core\Enums.mqh"
-#include "Interfaces\IStrategy.mqh"  // MOVED TO TOP
-#include "Core\ErrorHandling.mqh"
-#include "Core\Instruments.mqh"
-#include "Core\SafetyLayer.mqh"
-#include "Core\RiskValidationGate.mqh"
-#include "Core\PortfolioRiskManager.mqh"
-#include "Core\PositionSizer.mqh"
-#include "Core\PerformanceAnalytics.mqh"
-#include "Core\AdaptiveRiskManager.mqh"
-#include "Core\AIPerformanceFeedback.mqh"
-#include "Core\PerformanceBasedStrategyAdapter.mqh"
-#include "Core\AIStrategyOrchestrator.mqh"
-#include "Core\TradeManager.mqh"
-#include "Core\MarketAnalysis.mqh"
-#include "Core\IntegrationHub.mqh"
-#include "Core\CrashBoomSpikeDetector.mqh"
-#include "Core\StepIndexLevelBreaker.mqh"
-#include "Core\EnhancedRiskManager.mqh"
-#include "Core\ProgressiveTakeProfit.mqh"
-#include "Core\StrategyBase.mqh"
+#include "Core\Utils\Enums.mqh"
+#include "Core\Utils\CommonTypes.mqh"
+#include "Interfaces\IStrategy.mqh"
+#include "Core\Utils\ErrorHandling.mqh"
+#include "Core\Utils\Instruments.mqh"
+#include "Core\Risk\SafetyLayer.mqh"
+#include "Core\Risk\RiskValidationGate.mqh"
+#include "Core\Risk\PortfolioRiskManager.mqh"
+#include "Core\Risk\PositionSizer.mqh"
+#include "Core\Monitoring\PerformanceAnalytics.mqh"
+#include "Core\Risk\AdaptiveRiskManager.mqh"
+#include "Core\AI\AIPerformanceFeedback.mqh"
+#include "Core\Strategy\PerformanceBasedStrategyAdapter.mqh"
+#include "Core\AI\AIStrategyOrchestrator.mqh"
+#include "Core\Trading\TradeManager.mqh"
+#include "Core\Engines\MarketAnalysis.mqh"
+#include "Core\Connectivity\IntegrationHub.mqh"
+#include "Core\Market\CrashBoomSpikeDetector.mqh"
+#include "Core\Market\StepIndexLevelBreaker.mqh"
+#include "Core\Risk\EnhancedRiskManager.mqh"
+#include "Core\Trading\ProgressiveTakeProfit.mqh"
+#include "Core\Strategy\StrategyBase.mqh"
 #include "Strategies\StrategyStepIndex.mqh"
 #include "Strategies\SimpleMomentumStrategy.mqh"
-#include "Core\TradingEngine.mqh"
-#include "Core\SymbolContext.mqh"
-#include "Core\StrategyWrapper.mqh"
-#include "Core\TPManagerEntry.mqh"
+#include "Core\Engines\TradingEngine.mqh"
+#include "Core\Utils\SymbolContext.mqh"
+#include "Core\Strategy\StrategyWrapper.mqh"
+#include "Core\Trading\TPManagerEntry.mqh"
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\TransformerBrain.mqh"
 #include "AIModules\EnsembleMetaLearner.mqh"
-#include "Core\AIEngine.mqh"
+#include "Core\Engines\AIEngine.mqh"
 #include "MultiStrategySelection.mqh"
+
+// Enterprise Components
+#include "Core\Management\EnterpriseStrategyManager.mqh"
+#include "Core\Pipeline\UnifiedSignalPipeline.mqh"
+#include "Core\Engines\StructureEngine.mqh"
+#include "Core\Engines\TrendEngine.mqh"
+#include "Core\Engines\LiquidityEngine.mqh"
+#include "Core\Engines\VolatilityEngine.mqh"
+
+// Enhanced Strategies
+#include "Strategies\StrategyElliottWaveEnhanced.mqh"
 
 //+------------------------------------------------------------------+
 //| Forward declarations
@@ -147,6 +169,7 @@ CStepIndexLevelBreaker* levelBreaker = NULL;  // Needs to be initialized with pa
 CEnhancedRiskManager enhancedRiskManager;
 CInstrumentRegistry instrumentRegistry;
 CTradingEngine tradingEngine; // New Trading Engine
+CEnterpriseStrategyManager* g_enterpriseManager = NULL; // Enterprise Strategy Manager
 
 
 
@@ -520,10 +543,62 @@ int OnInit()
         Print("[AI] AIEngine initialized with adaptive mode");
     }
     
+    // Initialize Enterprise Strategy Manager if enabled
+    if(InpEnableEnterpriseMode)
+    {
+        Print("[ENTERPRISE] Initializing Enterprise Strategy Manager...");
+
+        g_enterpriseManager = new CEnterpriseStrategyManager();
+        if(g_enterpriseManager != NULL)
+        {
+            // Initialize manager with CRITICAL components
+            g_enterpriseManager.Initialize(Symbol(), Period(), InpUseOrchestrator, InpUseSignalPipeline,
+                                          &tradeManager, &positionSizer);
+            
+            // Configure pipeline filters
+            if(InpUseSignalPipeline)
+            {
+                SignalFilterSettings filters;
+                filters.enableTrendFilter = true;
+                filters.enableVolatilityFilter = true;
+                filters.enableLiquidityFilter = InpEnableLiquidityFilter;
+                filters.enableStructureFilter = InpEnableStructureFilter;
+                filters.minConfidence = InpAIConfidenceThreshold;
+                filters.maxVolatility = InpMaxVolatility;
+                filters.minTrendStrength = (int)InpMinTrendStrength;
+                g_enterpriseManager.SetPipelineFilters(filters);
+            }
+
+            // Auto-register strategies
+            bool strategyFlags[];
+            ArrayResize(strategyFlags, 9);
+            strategyFlags[0] = InpEnableSMC;
+            strategyFlags[1] = InpEnableElliottWave;
+            strategyFlags[2] = InpEnableOrderBlock;
+            strategyFlags[3] = InpEnableFairValueGap;
+            strategyFlags[4] = InpEnableSupplyDemand;
+            strategyFlags[5] = InpEnableSwing;
+            strategyFlags[6] = InpEnableTrend;
+            strategyFlags[7] = InpEnableRSI;
+            strategyFlags[8] = InpEnableMACD;
+
+            g_enterpriseManager.AutoRegisterStrategies(strategyFlags);
+
+            Print("[ENTERPRISE] Manager initialized with ", g_enterpriseManager.GetActiveStrategyCount(), " active strategies");
+        }
+        else
+        {
+            Print("[ERROR] Failed to create Enterprise Strategy Manager");
+        }
+    }
+
     // Validate and process trading symbols
     string symbols[];
     StringSplit(InpSymbolsToTrade, ',', symbols);
     Print("[SYMBOLS] Processing ", ArraySize(symbols), " trading symbols");
+    
+    // Clear and populate active pairs array
+    ArrayResize(g_activePairs, 0);
     
     for(int i = 0; i < ArraySize(symbols); i++)
     {
@@ -546,6 +621,11 @@ int OnInit()
             continue;
         }
         
+        // Add to active pairs array
+        int size = ArraySize(g_activePairs);
+        ArrayResize(g_activePairs, size + 1);
+        g_activePairs[size] = sym;
+        
         // Display symbol specifications
         Print("[SYMBOL] ", sym, " - Configured for trading");
         Print("  - Spread: ", SymbolInfoInteger(sym, SYMBOL_SPREAD), " points");
@@ -554,6 +634,9 @@ int OnInit()
         Print("  - Lot Step: ", SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP));
         Print("  - Contract Size: ", SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE));
     }
+    
+    Print("[SYMBOLS] ", ArraySize(g_activePairs), " symbols validated and ready for trading");
+    g_symbolsToTrade = InpSymbolsToTrade;
 
     // Enable AI Mode if configured
     if(InpEnableAIMode)
@@ -707,6 +790,14 @@ void OnDeinit(const int reason)
 {
     Print("[MULTI-STRATEGY-EA] ========================================");
     Print("[MULTI-STRATEGY-EA] Shutting down AI Trading System");
+
+    // Clean up Enterprise Manager
+    if(g_enterpriseManager != NULL)
+    {
+        Print("[ENTERPRISE] Cleaning up Enterprise Strategy Manager...");
+        delete g_enterpriseManager;
+        g_enterpriseManager = NULL;
+    }
     Print("[MULTI-STRATEGY-EA] Reason: ", GetDeInitReasonText(reason));
     Print("[MULTI-STRATEGY-EA] ========================================");
 
@@ -872,6 +963,151 @@ void OnTick()
 
     if(peakEquity > 0)
         currentDrawdown = (peakEquity - currentEquity) / peakEquity;
+
+    // Enterprise Mode Multi-Symbol Signal Generation
+    if(InpEnableEnterpriseMode && g_enterpriseManager != NULL)
+    {
+        // CRITICAL: Check cooldown to prevent chain trading
+        datetime tickTime = TimeCurrent();
+        int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
+        
+        if(secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0)
+        {
+            // Cooldown active - skip trading this tick
+            return;
+        }
+        
+        // Check position limit
+        if(PositionsTotal() >= InpMaxPositionsTotal)
+        {
+            return;
+        }
+        
+        // Loop through all configured trading symbols
+        for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
+        {
+            string currentSymbol = g_activePairs[symIdx];
+
+            // Get signal for this specific symbol (per-symbol analysis)
+            double confidence = 0;
+            ENUM_TRADE_SIGNAL enterpriseSignal = g_enterpriseManager.GetConsensusSignalForSymbol(currentSymbol, confidence);
+
+            if(enterpriseSignal != TRADE_SIGNAL_NONE && confidence >= InpAIConfidenceThreshold)
+            {
+                // Log the signal
+                string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+                Print("[ENTERPRISE] ", currentSymbol, " | Signal: ", signalType, " | Confidence: ", confidence);
+        
+                // Execute trade if risk checks pass  
+                ENUM_ORDER_TYPE orderType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+                
+                // Get current price
+                double entryPrice = (enterpriseSignal == TRADE_SIGNAL_BUY) ? 
+                                   SymbolInfoDouble(currentSymbol, SYMBOL_ASK) : 
+                                   SymbolInfoDouble(currentSymbol, SYMBOL_BID);
+                
+                // Calculate ATR for adaptive SL/TP
+                int atrHandle = iATR(currentSymbol, PERIOD_CURRENT, 14);
+                double atr[];
+                ArraySetAsSeries(atr, true);
+                if(CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
+                {
+                    // Use ATR-based SL/TP calculation (adaptive)
+                    double atrValue = atr[0];
+                    double pointValue = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
+                    double stopLossPips = (atrValue / pointValue) * 2.0;  // 2x ATR for SL
+                    double takeProfitPips = stopLossPips * 2.0;  // 2:1 RR ratio
+                    
+                    // Clamp SL/TP to reasonable bounds
+                    stopLossPips = MathMax(20, MathMin(150, stopLossPips));
+                    takeProfitPips = stopLossPips * 2.0;
+                    
+                    double proposedRisk = accountEquity * InpMaxRiskPerTrade;
+                    
+                    if(enhancedRiskManager.IsTradeAllowed(proposedRisk, orderType, tickTime))
+                    {
+                        // Calculate optimal lot size
+                        double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, confidence);
+                        
+                        // Validate the lot size
+                        if(lotSize > 0)
+                        {
+                            // Calculate SL/TP prices
+                            double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
+                            double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
+                            
+                            // Execute trade with SL/TP protection
+                            bool tradeSuccess = false;
+                            
+                            if(enterpriseSignal == TRADE_SIGNAL_BUY)
+                            {
+                                tradeSuccess = trade.Buy(lotSize, currentSymbol, 0, slPrice, tpPrice, "Enterprise AI Signal");
+                            }
+                            else if(enterpriseSignal == TRADE_SIGNAL_SELL)
+                            {
+                                tradeSuccess = trade.Sell(lotSize, currentSymbol, 0, slPrice, tpPrice, "Enterprise AI Signal");
+                            }
+                            
+                            // Check trade result
+                            if(!tradeSuccess)
+                            {
+                                int errorCode = GetLastError();
+                                Print("[TRADE-ERROR] Failed to execute ", signalType, " order on ", currentSymbol, 
+                                      " | Lot Size: ", lotSize, " | Error Code: ", errorCode);
+                                Print("[TRADE-ERROR] ResultRetcode: ", trade.ResultRetcode(), 
+                                      " | ResultRetcodeDescription: ", trade.ResultRetcodeDescription());
+                            }
+                            else
+                            {
+                                ulong ticket = trade.ResultOrder();
+                                
+                                // Update last trade time for cooldown
+                                g_lastTradeTime = tickTime;
+                                
+                                Print("[TRADE-SUCCESS] ", signalType, " order executed on ", currentSymbol, 
+                                      " | Lot Size: ", lotSize, 
+                                      " | SL: ", slPrice, " (", (int)stopLossPips, " pips)",
+                                      " | TP: ", tpPrice, " (", (int)takeProfitPips, " pips)",
+                                      " | Ticket: ", ticket);
+                                
+                                // Initialize Progressive TP Manager if enabled
+                                if(progressiveTPEnabled && activeTPManagers != NULL)
+                                {
+                                    CProgressiveTakeProfit* tpManager = new CProgressiveTakeProfit();
+                                    if(tpManager != NULL)
+                                    {
+                                        double riskAmount = lotSize * stopLossPips * pointValue;
+                                        if(tpManager.Initialize(tpConfig, entryPrice, orderType, riskAmount, tickTime))
+                                        {
+                                            CTPManagerEntry* entry = new CTPManagerEntry(currentSymbol, ticket, orderType, entryPrice, tpManager);
+                                            if(entry != NULL)
+                                            {
+                                                activeTPManagers.Add(entry);
+                                                tpManagerCounter++;
+                                                Print("[PROGRESSIVE-TP] Initialized for ticket ", ticket, " on ", currentSymbol);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            delete tpManager;
+                                        }
+                                    }
+                                }
+                                
+                                // CRITICAL: Stop after first successful trade to enforce cooldown
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            Print("[AI-GLOBAL] Invalid lot size calculated for ", currentSymbol, " - trade skipped");
+                        }
+                    }
+                }
+                IndicatorRelease(atrHandle);
+            }
+        }
+    }
         
     // Emergency stop on excessive drawdown
     if(currentDrawdown > InpMaxDrawdown)

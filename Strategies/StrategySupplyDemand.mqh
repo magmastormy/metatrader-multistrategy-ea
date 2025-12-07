@@ -25,13 +25,15 @@
 // #include "../Include/Indicators/Indicators.mqh"
 
 // Include project headers
-#include "../Core/StrategyBase.mqh"
-#include "../Core/Enums.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/Enums.mqh"
 #include "../Interfaces/IStrategy.mqh"
 #include "../Utilities/Utilities.mqh"
-#include "../Core/PositionSizer.mqh"
-#include "../Core/ErrorHandling.mqh"
-#include "../Core/TradeManager.mqh"
+#include "../Core/Risk/PositionSizer.mqh"
+#include "../Core/Utils/ErrorHandling.mqh"
+#include "../Core/Trading/TradeManager.mqh"
+#include "../Core/Signals/SignalDiagnostics.mqh"
+#include "../Core/Signals/TimeframeConsistency.mqh"
 
 // Include standard library
 // #include <stdlib.mqh>
@@ -81,6 +83,15 @@ private:
     double           m_lastSignalValue;
     double           m_lastConfidence;
     SPositionSizingParams m_sizing_params; // Strategy-specific sizing parameters
+    
+    // Diagnostic systems
+    CSignalDiagnostics* m_diagnostics;
+    CTimeframeConsistency* m_tfConsistency;
+    
+    // Statistics
+    int              m_zonesDetected;
+    int              m_zonesTriggered;
+    int              m_signalsGenerated;
 
     // Zone tracking
     struct ZoneTracking {
@@ -123,7 +134,8 @@ private:
         ArraySetAsSeries(rates, true);
         int copied = CopyRates(symbol, timeframe, 0, 100, rates);
         if(copied <= 0) {
-            Print("Failed to get price data for zone detection");
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("SupplyDemand", "RATES_COPY_FAILED", "Failed to get price data for zone detection");
             return;
         }
         for(int i = 2; i < copied - 1; i++) {
@@ -132,12 +144,36 @@ private:
                 double zoneTop = rates[i].high;
                 double zoneBottom = rates[i].high * 0.995;
                 RememberZone(zoneTop, zoneBottom, timeframe, true);
+                
+                if(m_diagnostics != NULL) {
+                    m_diagnostics.LogSMCDetection(
+                        "SUPPLY_ZONE",
+                        (zoneTop + zoneBottom) / 2.0,
+                        zoneTop,
+                        zoneBottom,
+                        false,  // Supply zone is bearish
+                        70.0    // Base score
+                    );
+                }
+                m_zonesDetected++;
             }
             if(m_zoneCount >= MAX_ZONES) break;
             if(rates[i].low < rates[i-1].low && rates[i].low < rates[i+1].low) {
                 double zoneBottom = rates[i].low;
                 double zoneTop = rates[i].low * 1.005;
                 RememberZone(zoneTop, zoneBottom, timeframe, false);
+                
+                if(m_diagnostics != NULL) {
+                    m_diagnostics.LogSMCDetection(
+                        "DEMAND_ZONE",
+                        (zoneTop + zoneBottom) / 2.0,
+                        zoneTop,
+                        zoneBottom,
+                        true,   // Demand zone is bullish
+                        70.0    // Base score
+                    );
+                }
+                m_zonesDetected++;
             }
         }
     }

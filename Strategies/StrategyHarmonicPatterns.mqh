@@ -4,7 +4,7 @@
 #ifndef __STRATEGY_HARMONIC_PATTERNS_MQH__
 #define __STRATEGY_HARMONIC_PATTERNS_MQH__
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 
 // Harmonic Patterns Strategy - Identifies and trades Fibonacci-based harmonic price patterns
 // including Gartley, Butterfly, Bat, Crab, and Shark patterns

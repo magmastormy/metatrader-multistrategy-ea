@@ -4,7 +4,7 @@
 #ifndef __STRATEGY_ELLIOTTWAVE_MQH__
 #define __STRATEGY_ELLIOTTWAVE_MQH__
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 #include <Arrays/ArrayObj.mqh>
 #include <Math/Stat/Math.mqh>
 

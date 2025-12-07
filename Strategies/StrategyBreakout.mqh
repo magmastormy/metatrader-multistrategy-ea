@@ -5,7 +5,7 @@
 #ifndef _STRATEGY_BREAKOUT_MQH_
 #define _STRATEGY_BREAKOUT_MQH_
 
-#include "../Core/StrategyBase.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
 #include <Trade/Trade.mqh>
 
 class CStrategyBreakout : public CStrategyBase

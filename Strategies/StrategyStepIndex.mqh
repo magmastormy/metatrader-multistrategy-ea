@@ -7,9 +7,9 @@
 #ifndef __STRATEGY_STEP_INDEX_MQH__
 #define __STRATEGY_STEP_INDEX_MQH__
 
-#include "../Core/StrategyBase.mqh"
-#include "../Core/StepIndexLevelBreaker.mqh"
-#include "../Core/ErrorHandling.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Market/StepIndexLevelBreaker.mqh"
+#include "../Core/Utils/ErrorHandling.mqh"
 #include "../Utilities/Utilities.mqh"
 
 // Forward declarations

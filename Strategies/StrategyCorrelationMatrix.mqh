@@ -9,12 +9,12 @@
 #endif
 
 // Include project headers
-#include "../Core/StrategyBase.mqh"
-#include "../Core/Enums.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/Enums.mqh"
 #include "../Interfaces/IStrategy.mqh"
-#include "../Core/TradeManager.mqh"
-#include "../Core/PositionSizer.mqh"
-#include "../Core/StrategyFactory.mqh"
+#include "../Core/Trading/TradeManager.mqh"
+#include "../Core/Risk/PositionSizer.mqh"
+#include "../Core/Strategy/StrategyFactory.mqh"
 
 // This file originally contained a manager class. It has been renamed to CCorrelationManager
 // to preserve the logic, while a proper strategy stub (CStrategyCorrelationMatrix) has been

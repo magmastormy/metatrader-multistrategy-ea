@@ -3,7 +3,7 @@
 //| Emergency fixes for catastrophic EA performance                  |
 //+------------------------------------------------------------------+
 
-#include "Core/Enums.mqh"
+#include "Core/Utils/Enums.mqh"
 #include "Core/StrategyManager.mqh"
 
 // Note: These globals are defined in MultiStrategyAutonomousEA.mq5
@@ -45,7 +45,7 @@ void UpdateDrawdownStatus()
 //+------------------------------------------------------------------+
 void UpdateMarketRegime()
 {
-    // 🛡️ SURGICAL FIX: Use static handles to prevent indicator handle leaks
+    // 🛡�?SURGICAL FIX: Use static handles to prevent indicator handle leaks
     static int atrHandle = INVALID_HANDLE;
     static int ma20Handle = INVALID_HANDLE;
     static int ma50Handle = INVALID_HANDLE;
@@ -387,7 +387,7 @@ double CalculateIntelligentLotSize(const string symbol, const double stopLossPip
         return 0;
     }
     
-    // 🛡️ SURGICAL FIX: Prevent division by zero
+    // 🛡�?SURGICAL FIX: Prevent division by zero
     if(stopLossPips <= 0) {
         Print("🚨 [SURGICAL-ERROR] Invalid stopLossPips: ", stopLossPips, " for ", symbol);
         return 0.0;
@@ -438,7 +438,7 @@ double CalculateIntelligentLotSize(const string symbol, const double stopLossPip
         lotSize = MathMin(lotSize, 0.01); // Still cap at 0.01
     }
     
-    Print("🛡️ [BEAST-MODE-SIZING] ", symbol, " FINAL LOT: ", DoubleToString(lotSize, 3), 
+    Print("🛡�?[BEAST-MODE-SIZING] ", symbol, " FINAL LOT: ", DoubleToString(lotSize, 3), 
           " | Balance: $", DoubleToString(localAccountBalance, 0),
           " | Emergency Cap: ", DoubleToString(emergencyMaxLot, 3),
           " | Actual Risk: ", DoubleToString(actualRisk, 2), "%",

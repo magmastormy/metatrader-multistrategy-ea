@@ -6,12 +6,14 @@
 #ifndef __STRATEGY_SWING_MQH__
 #define __STRATEGY_SWING_MQH__
 
-#include "../Core/StrategyBase.mqh"
-#include "../Core/OrderInfo.mqh"
-#include "../Core/HistoryOrderInfo.mqh"
-#include "../Core/PositionInfo.mqh"
-#include "../Core/DealInfo.mqh"
-#include "../Core/Trade.mqh"
+#include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Trading/OrderInfo.mqh"
+#include "../Core/Trading/HistoryOrderInfo.mqh"
+#include "../Core/Trading/PositionInfo.mqh"
+#include "../Core/Trading/DealInfo.mqh"
+#include "../Core/Trading/Trade.mqh"
+#include "../Core/Signals/SignalDiagnostics.mqh"
+#include "../Core/Signals/TimeframeConsistency.mqh"
 
 
 
@@ -27,8 +29,22 @@ private:
     double m_lastSignal;    // Last signal value
     double m_lastConfidence; // Last confidence value
     
+    // Diagnostic systems
+    CSignalDiagnostics* m_diagnostics;
+    CTimeframeConsistency* m_tfConsistency;
+    
+    // Statistics
+    int m_signalsGenerated;
+    int m_crossoversDetected;
+    
+    // Swing point detection
+    double m_lastSwingHigh;
+    double m_lastSwingLow;
+    int m_swingHighBar;
+    int m_swingLowBar;
+    
     // Helper method to calculate the signal
-    int CalculateSignal(const string &symbol, const ENUM_TIMEFRAMES timeframe, double &outConfidence) const
+    int CalculateSignal(const string &symbol, const ENUM_TIMEFRAMES timeframe, double &outConfidence)
     {
         outConfidence = 0.0;
         
@@ -57,7 +73,7 @@ private:
         bool dataReady = false;
         while(attempts < 10 && !dataReady)
         {
-            // 🛡️ BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
+            // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
             if(CopyBuffer(maFastHandle, 0, 0, 2, maFast) == 2 &&
                CopyBuffer(maSlowHandle, 0, 0, 2, maSlow) == 2)
             {
@@ -68,7 +84,9 @@ private:
         
         if(!dataReady)
         {
-            Print("[ERROR] Failed to copy MA buffer data after ", attempts, " attempts for ", symbol);
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("Swing", "MA_BUFFER_FAILED", 
+                                              StringFormat("Failed to copy MA buffer data after %d attempts for %s", attempts, symbol));
             IndicatorRelease(maFastHandle);
             IndicatorRelease(maSlowHandle);
             return 0;
@@ -91,7 +109,7 @@ private:
         dataReady = false;
         while(attempts < 10 && !dataReady)
         {
-            // 🛡️ BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
+            // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
             if(CopyBuffer(rsiHandle, 0, 0, 1, rsi) == 1)
             {
                 dataReady = true;
@@ -101,7 +119,9 @@ private:
         
         if(!dataReady)
         {
-            Print("[ERROR] Failed to copy RSI buffer data after ", attempts, " attempts for ", symbol);
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("Swing", "RSI_BUFFER_FAILED", 
+                                              StringFormat("Failed to copy RSI buffer data after %d attempts for %s", attempts, symbol));
             IndicatorRelease(rsiHandle);
             return 0;
         }
@@ -114,15 +134,43 @@ private:
         if(point <= 0) // Prevent division by zero
             point = 0.00001;
             
+        // Check for MA crossover and RSI confirmation
+        bool bullishCross = maFast[0] > maSlow[0] && maFast[1] <= maSlow[1];
+        bool bearishCross = maFast[0] < maSlow[0] && maFast[1] >= maSlow[1];
+        
+        if(bullishCross || bearishCross)
+        {
+            // Note: crossover detected but not incrementing counter in this const method
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection(
+                    bullishCross ? "BULLISH_CROSS" : "BEARISH_CROSS",
+                    maFast[0],
+                    maFast[0],
+                    maSlow[0],
+                    bullishCross,
+                    60.0
+                );
+            }
+        }
+        
         if(maFast[0] > maSlow[0] && rsi[0] > 50)
         {
             signal = 1;  // Buy signal
             outConfidence = MathMin(1.0, (maFast[0] - maSlow[0]) / (point * 10)); // Normalize confidence
+            
+            // Enhance confidence with RSI strength
+            double rsiStrength = (rsi[0] - 50) / 50.0;  // 0 to 1 for RSI 50-100
+            outConfidence = (outConfidence + rsiStrength) / 2.0;
         }
         else if(maFast[0] < maSlow[0] && rsi[0] < 50)
         {
             signal = -1; // Sell signal
             outConfidence = MathMin(1.0, (maSlow[0] - maFast[0]) / (point * 10)); // Normalize confidence
+            
+            // Enhance confidence with RSI strength
+            double rsiStrength = (50 - rsi[0]) / 50.0;  // 0 to 1 for RSI 0-50
+            outConfidence = (outConfidence + rsiStrength) / 2.0;
         }
         
         return signal;
@@ -135,20 +183,56 @@ public:
         m_maSlowPeriod(50),
         m_rsiPeriod(14),
         m_lastSignal(0),
-        m_lastConfidence(0)
+        m_lastConfidence(0),
+        m_diagnostics(NULL),
+        m_tfConsistency(NULL),
+        m_signalsGenerated(0),
+        m_crossoversDetected(0),
+        m_lastSwingHigh(0),
+        m_lastSwingLow(0),
+        m_swingHighBar(0),
+        m_swingLowBar(0)
     {
+        // Initialize diagnostics
+        m_diagnostics = new CSignalDiagnostics();
+        if(m_diagnostics != NULL)
+            m_diagnostics.Initialize(500, 3);
+            
+        // Initialize TF consistency
+        m_tfConsistency = new CTimeframeConsistency();
+        if(m_tfConsistency != NULL)
+            m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
     }
     
     virtual ~CStrategySwing()
     {
         Deinit();
+        
+        if(m_diagnostics != NULL)
+        {
+            delete m_diagnostics;
+            m_diagnostics = NULL;
+        }
+        
+        if(m_tfConsistency != NULL)
+        {
+            delete m_tfConsistency;
+            m_tfConsistency = NULL;
+        }
     }
     
     // IStrategy implementation
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer)) return false;
-        Print("Initializing ", m_name);
+        
+        if(m_diagnostics != NULL)
+        {
+            string msg = StringFormat("Swing Strategy initialized for %s on %s", 
+                                    symbol, EnumToString(timeframe));
+            Print("[Swing] ", msg);
+        }
+        
         return true;
     }
     
@@ -165,17 +249,47 @@ public:
     {
         if(!IsEnabled()) {
             confidence = 0.0;
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogNoSignal("Swing", m_symbol, m_timeframe, "Strategy disabled");
             return TRADE_SIGNAL_NONE;
         }
         
         double signalValue = GetSignalValue(m_symbol, m_timeframe, confidence);
+        ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         
         if(signalValue > 0.5)
-            return TRADE_SIGNAL_BUY;
+        {
+            signal = TRADE_SIGNAL_BUY;
+            m_signalsGenerated++;
+            
+            if(m_diagnostics != NULL)
+            {
+                string reason = StringFormat("MA crossover bullish | RSI: %.2f | Confidence: %.2f",
+                                           50 + signalValue * 50, confidence);
+                m_diagnostics.LogSignalGeneration("Swing", m_symbol, m_timeframe, 
+                                                signal, confidence, reason);
+            }
+        }
         else if(signalValue < -0.5)
-            return TRADE_SIGNAL_SELL;
+        {
+            signal = TRADE_SIGNAL_SELL;
+            m_signalsGenerated++;
+            
+            if(m_diagnostics != NULL)
+            {
+                string reason = StringFormat("MA crossover bearish | RSI: %.2f | Confidence: %.2f",
+                                           50 + signalValue * 50, confidence);
+                m_diagnostics.LogSignalGeneration("Swing", m_symbol, m_timeframe, 
+                                                signal, confidence, reason);
+            }
+        }
         else
-            return TRADE_SIGNAL_NONE;
+        {
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogNoSignal("Swing", m_symbol, m_timeframe, "No crossover or RSI confirmation");
+        }
+        
+        return signal;
     }
     
     virtual string GetName() const override { return m_name; }

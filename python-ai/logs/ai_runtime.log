@@ -56,3 +56,35 @@ SIGNAL STATISTICS:
 2025-12-06 16:47:02,015 [INFO] __main__: Bridge Mode: SOCKET
 2025-12-06 16:47:02,015 [INFO] __main__: Models Loaded: 0
 2025-12-06 16:47:02,016 [INFO] __main__: ============================================================
+2025-12-06 18:39:20,470 [WARNING] core.model_manager: PyTorch not available
+2025-12-06 18:39:20,471 [WARNING] core.model_manager: ONNX Runtime not available
+2025-12-06 18:39:20,542 [INFO] __main__: ============================================================
+2025-12-06 18:39:20,547 [INFO] __main__: ============================================================
+2025-12-06 18:39:20,549 [WARNING] __main__: Failed to load config: 'gbk' codec can't decode byte 0x94 in position 34: illegal multibyte sequence, using defaults
+2025-12-06 18:39:20,549 [INFO] __main__: Initializing core components...
+2025-12-06 18:39:20,550 [INFO] core.model_manager: Loading models...
+2025-12-06 18:39:20,559 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-06 18:39:20,563 [INFO] __main__: Starting AI Trading System...
+2025-12-06 18:39:20,574 [INFO] bridge.socket_server: Socket Server listening for connections...
+2025-12-06 18:39:20,577 [INFO] __main__: ============================================================
+2025-12-06 18:39:20,581 [INFO] __main__: Bridge Mode: SOCKET
+2025-12-06 18:39:20,581 [INFO] __main__: Models Loaded: 0
+2025-12-06 18:39:20,582 [INFO] __main__: ============================================================
+2025-12-06 18:39:34,909 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 64620)
+2025-12-06 18:39:34,911 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-06 18:40:20,495 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55617)
+2025-12-06 18:40:20,501 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-06 18:40:20,507 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55618)
+2025-12-06 18:40:20,530 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55619)
+2025-12-06 18:40:20,535 [INFO] __main__: Signal request for EURUSD
+2025-12-06 18:40:20,602 [INFO] core.signal_generator: Signal generated: NONE for EURUSD, confidence: 0.50
+2025-12-06 18:40:20,604 [INFO] __main__: Signal generated: NONE (confidence: 0.50)
+2025-12-06 18:40:20,608 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55620)
+2025-12-06 18:44:50,854 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55056)
+2025-12-06 18:44:50,855 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-06 18:44:50,858 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55057)
+2025-12-06 18:44:50,862 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55058)
+2025-12-06 18:44:50,863 [INFO] __main__: Signal request for Step Index.0
+2025-12-06 18:44:50,867 [INFO] core.signal_generator: Signal generated: NONE for Step Index.0, confidence: 0.50
+2025-12-06 18:44:50,868 [INFO] __main__: Signal generated: NONE (confidence: 0.50)
+2025-12-06 18:44:50,871 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55059)
