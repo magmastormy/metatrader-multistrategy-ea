@@ -50,7 +50,7 @@ struct SignalFilterSettings
         enableLiquidityFilter(true),
         enableStructureFilter(true),
         enableTimeFilter(false),
-        minConfidence(0.45),  // 🔥 FIX: Lowered from 0.6 to 0.45 (45%) - more realistic threshold
+        minConfidence(0.40),
         maxVolatility(3.0),
         minTrendStrength(50) {}
 };
@@ -268,7 +268,15 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         ENUM_TREND_TYPE trend = m_trendEngine.GetCurrentTrend();
         if(trend == TREND_RANGING || trend == TREND_NONE)
         {
-            effectiveMinConfidence = m_filters.minConfidence * 0.85;  // 15% reduction for ranging markets
+            effectiveMinConfidence = MathMax(0.20, m_filters.minConfidence * 0.75);  // Up to 25% reduction
+        }
+        else if(trend == TREND_NONE)
+        {
+            effectiveMinConfidence = m_filters.minConfidence * 0.90;
+        }
+        else if(m_trendEngine.IsStrongTrend())
+        {
+            effectiveMinConfidence = MathMin(1.0, m_filters.minConfidence * 0.95); // Allow slight relaxation
         }
     }
     
