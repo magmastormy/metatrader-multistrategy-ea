@@ -44,6 +44,11 @@ private:
     CSignalDiagnostics* m_diagnostics;  // Diagnostics system
     CTimeframeConsistency* m_tfConsistency;  // TF consistency checker
     
+    // Caching and throttling
+    datetime   m_lastScan;        // Timestamp of last order block scan
+    int        m_scanCooldown;    // Minimum seconds between full scans
+    int        m_lastBlockCount;  // Previous block count for deduplication
+    
     // Statistics
     int        m_blocksDetected;
     int        m_signalsGenerated;
@@ -83,6 +88,9 @@ CStrategyOrderBlock::CStrategyOrderBlock(const string name, int magic) :
     m_deviation(10 * Point()),
     m_diagnostics(NULL),
     m_tfConsistency(NULL),
+    m_lastScan(0),
+    m_scanCooldown(60),
+    m_lastBlockCount(0),
     m_blocksDetected(0),
     m_signalsGenerated(0),
     m_falseSignals(0)
@@ -262,8 +270,12 @@ bool CStrategyOrderBlock::FindOrderBlocks(const string symbol, const ENUM_TIMEFR
         }
     }
     
-    if(m_diagnostics != NULL && blocksFound > 0) {
-        Print("[OrderBlock] Found ", blocksFound, " new order blocks");
+    // Only log if block count changed significantly
+    if(m_diagnostics != NULL && blocksFound > 0 && MathAbs(blocksFound - m_lastBlockCount) > 5) {
+        Print("[OrderBlock] Found ", blocksFound, " new order blocks (was ", m_lastBlockCount, ")");
+        m_lastBlockCount = blocksFound;
+    } else if(blocksFound > 0) {
+        m_lastBlockCount = blocksFound;
     }
     
     return true;
@@ -317,10 +329,24 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
         
     confidence = 0.0;
     
-    // Find order blocks for this symbol/timeframe
-    if (!FindOrderBlocks(m_symbol, m_timeframe)) {
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogStrategyError("OrderBlock", "FIND_BLOCKS_FAILED", "Failed to find order blocks");
+    // Find order blocks for this symbol/timeframe (with throttling)
+    datetime currentTime = TimeCurrent();
+    bool needsRescan = (currentTime - m_lastScan) >= m_scanCooldown;
+    
+    if (needsRescan) {
+        if (!FindOrderBlocks(m_symbol, m_timeframe)) {
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("OrderBlock", "FIND_BLOCKS_FAILED", "Failed to find order blocks");
+            return TRADE_SIGNAL_NONE;
+        }
+        m_lastScan = currentTime;
+    }
+    
+    // Early exit if no blocks cached
+    if (m_orderBlocks.Total() == 0) {
+        if(m_diagnostics != NULL && m_lastBlockCount > 0)
+            m_diagnostics.LogNoSignal("OrderBlock", m_symbol, m_timeframe, "No valid OB triggered | Active blocks: 0 | Checked: 0");
+        m_lastBlockCount = 0;
         return TRADE_SIGNAL_NONE;
     }
     
@@ -384,6 +410,12 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
             if(confidence < 0) confidence = 0;
             if(confidence > 1) confidence = 1;
             
+            // Early filter: skip low-confidence signals (below 30%)
+            if(confidence < m_minConfidence) {
+                m_lowConfidenceFiltered++;
+                continue;  // Keep checking other blocks
+            }
+            
             m_signalsGenerated++;
             
             if(m_diagnostics != NULL) {
@@ -419,6 +451,12 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
             confidence = (50.0 - dist) / 50.0;
             if(confidence < 0) confidence = 0;
             if(confidence > 1) confidence = 1;
+            
+            // Early filter: skip low-confidence signals (below 30%)
+            if(confidence < m_minConfidence) {
+                m_lowConfidenceFiltered++;
+                continue;  // Keep checking other blocks
+            }
             
             m_signalsGenerated++;
             

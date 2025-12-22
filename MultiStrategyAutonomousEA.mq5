@@ -984,6 +984,13 @@ void OnTick()
     }
 
     currentTime = TimeCurrent();
+    
+    // Check and reset daily risk limits at midnight
+    if(InpUseEnhancedRisk)
+    {
+        enhancedRiskManager.CheckAndResetDailyLimits();
+    }
+    
     currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
     accountEquity = currentEquity;
@@ -1056,7 +1063,7 @@ void OnTick()
                     stopLossPips = MathMax(20, MathMin(150, stopLossPips));
                     takeProfitPips = stopLossPips * 2.0;
                     
-                    double proposedRisk = accountEquity * InpMaxRiskPerTrade;
+                    double proposedRisk = InpMaxRiskPerTrade; // Pass decimal (0.02), not dollar amount
                     
                     if(enhancedRiskManager.IsTradeAllowed(proposedRisk, orderType, tickTime))
                     {

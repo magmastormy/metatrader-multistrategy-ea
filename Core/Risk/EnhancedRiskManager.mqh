@@ -134,6 +134,7 @@ private:
     int m_trades_today;                    // Trades today
     int m_trades_this_week;                // Trades this week
     int m_trades_this_month;               // Trades this month
+    datetime m_last_reset_date;            // Last daily reset date
     
     // Risk adjustment factors
     double m_volatility_factor;            // Volatility adjustment factor
@@ -229,6 +230,9 @@ public:
     bool CheckMonthlyRiskLimit(const double proposed_risk);
     bool CheckDrawdownLimit(const double proposed_risk);
     bool CheckConsecutiveLossLimit();
+    
+    // Daily reset management
+    void CheckAndResetDailyLimits();
     
     // Get configuration
     SEnhancedRiskConfig GetConfig() const { return m_config; }
@@ -337,6 +341,7 @@ CEnhancedRiskManager::CEnhancedRiskManager()
     m_correlation_factor = 1.0;
     m_performance_factor = 1.0;
     m_kelly_fraction = 0.25;
+    m_last_reset_date = 0;
     
     InitializeStatistics();
 }
@@ -686,6 +691,52 @@ bool CEnhancedRiskManager::CheckDrawdownLimit(const double proposed_risk)
 bool CEnhancedRiskManager::CheckConsecutiveLossLimit()
 {
     return m_consecutive_losses < m_config.consecutive_losses_limit;
+}
+
+//| Check and reset daily limits at midnight                         |
+//+------------------------------------------------------------------+
+void CEnhancedRiskManager::CheckAndResetDailyLimits()
+{
+    datetime localCurrentTime = TimeCurrent();
+    MqlDateTime currentStruct;
+    TimeToStruct(localCurrentTime, currentStruct);
+    
+    // Create datetime for start of current day (midnight)
+    MqlDateTime dayStruct;
+    ZeroMemory(dayStruct);
+    dayStruct.year = currentStruct.year;
+    dayStruct.mon = currentStruct.mon;
+    dayStruct.day = currentStruct.day;
+    datetime currentDay = StructToTime(dayStruct);
+    
+    // Check if we've crossed into a new day
+    if(currentDay > m_last_reset_date)
+    {
+        // Reset daily counters
+        m_daily_risk_used = 0.0;
+        m_trades_today = 0;
+        m_last_reset_date = currentDay;
+        
+        // Check for weekly reset (Monday)
+        if(currentStruct.day_of_week == 1)
+        {
+            m_weekly_risk_used = 0.0;
+            m_trades_this_week = 0;
+            Print("[ENHANCED-RISK] Weekly risk counters reset (new week)");
+        }
+        
+        // Check for monthly reset (1st of month)
+        if(currentStruct.day == 1)
+        {
+            m_monthly_risk_used = 0.0;
+            m_trades_this_month = 0;
+            Print("[ENHANCED-RISK] Monthly risk counters reset (new month)");
+        }
+        
+        Print("[ENHANCED-RISK] Daily risk counters reset for new trading day");
+        PrintFormat("[ENHANCED-RISK] Daily risk: 0.00%% | Max allowed: %.2f%%", 
+                   m_config.max_daily_risk * 100);
+    }
 }
 
 //+------------------------------------------------------------------+

@@ -1,0 +1,285 @@
+Folder PATH listing
+Volume serial number is DA30-A597
+D:.
+|   AGENTS.md
+|   AGENTS_tree.txt
+|   DirectTradeExecution.mqh
+|   DynamicExitManager.mqh
+|   IndicatorManager.mqh
+|   IntelligentRiskFunctions.mqh
+|   MultiStrategyAutonomousEA.mq5
+|   MultiStrategySelection.mqh
+|   PreTradeValidator.mqh
+|   ProcessIntelligentTrading.mqh
+|   RiskManager.mqh
+|   sync_and_compile.ps1
+|   TestSocket.mq5
+|   WalkForwardOptimizer.mqh
+|   
++---.trunk
++---AIModules
+|       EnsembleMetaLearner.mqh
+|       MarketRegimeDetector.mqh
+|       NextGenBrainTrainer.ex5
+|       NextGenBrainTrainer.mq5
+|       NextGenStrategyBrain.mqh
+|       PythonBridge.mqh
+|       TransformerBrain.mqh
+|       UncertaintyQuantifier.mqh
+|       
++---Config
+|       StrategyConfig.mqh
+|       
++---Core
+|   |   CBaseStrategy.mqh
+|   |   MultiSymbolRiskAllocator.mqh
+|   |   MultiTimeframeAnalyzer.mqh
+|   |   
+|   +---AI
+|   |       AIPerformanceFeedback.mqh
+|   |       AIStrategyOrchestrator.mqh
+|   |       EnhancedEnsembleVotingSystem.mqh
+|   |       
+|   +---Connectivity
+|   |       BrokerConnectionManager.mqh
+|   |       DerivManager.mqh
+|   |       HTTPClient.mqh
+|   |       IntegrationHub.mqh
+|   |       
+|   +---Engines
+|   |       AIEngine.mqh
+|   |       ConfluenceEngine.mqh
+|   |       LiquidityEngine.mqh
+|   |       MarketAnalysis.mqh
+|   |       StructureEngine.mqh
+|   |       TradingEngine.mqh
+|   |       TrendEngine.mqh
+|   |       VolatilityEngine.mqh
+|   |       
+|   +---Management
+|   |       EnterpriseStrategyManager.mqh
+|   |       
+|   +---Market
+|   |       CrashBoomSpikeDetector.mqh
+|   |       MarketRegimeDetector.mqh
+|   |       StepIndexLevelBreaker.mqh
+|   |       SymbolDiversificationOptimizer.mqh
+|   |       SyntheticIndexHealthMonitor.mqh
+|   |       VolatilityIndexOptimizer.mqh
+|   |       
+|   +---Monitoring
+|   |       PerformanceAnalytics.mqh
+|   |       SystemHealthMonitor.mqh
+|   |       
+|   +---Pipeline
+|   |       UnifiedSignalPipeline.mqh
+|   |       
+|   +---Risk
+|   |       AdaptiveRiskManager.mqh
+|   |       EnhancedRiskManager.mqh
+|   |       PortfolioRiskManager.mqh
+|   |       PositionSizer.mqh
+|   |       RiskValidationGate.mqh
+|   |       SafetyLayer.mqh
+|   |       
+|   +---Signals
+|   |       HedgingProtection.mqh
+|   |       SignalDiagnostics.mqh
+|   |       TimeframeConsistency.mqh
+|   |       
+|   +---Strategy
+|   |       MarketConditionStrategySelector.mqh
+|   |       PerformanceBasedStrategyAdapter.mqh
+|   |       StrategyBase.mqh
+|   |       StrategyFactory.mqh
+|   |       StrategyFunctions.mqh
+|   |       StrategyManager.mqh
+|   |       StrategyWrapper.mqh
+|   |       
+|   +---Trading
+|   |       DealInfo.mqh
+|   |       HistoryOrderInfo.mqh
+|   |       OrderInfo.mqh
+|   |       PositionInfo.mqh
+|   |       ProgressiveTakeProfit.mqh
+|   |       TPManagerEntry.mqh
+|   |       Trade.mqh
+|   |       TradeManager.mqh
+|   |       
+|   +---Utils
+|   |       CommonTypes.mqh
+|   |       DataTypes.mqh
+|   |       Enums.mqh
+|   |       ErrorHandling.mqh
+|   |       File.mqh
+|   |       FileTxt.mqh
+|   |       Instruments.mqh
+|   |       ModeManager.mqh
+|   |       ResourceManager.mqh
+|   |       SessionManager.mqh
+|   |       SymbolContext.mqh
+|   |       
+|   \---Visualization
+|           ChartDrawingManager.mqh
+|           OrderBlockVisualizer.mqh
+|           SMCStructureVisualizer.mqh
+|           
++---Documentation
+|       ARCHITECTURE.md
+|       CONDA_QUICKSTART.md
+|       ENTERPRISE_UPGRADE_COMPLETE.md
+|       FILE_REORGANIZATION_MAP.md
+|       FIX_SUMMARY_SILENCE_RESTORED.md
+|       INSTALLATION.md
+|       INTEGRATION_UPDATE_SUMMARY.md
+|       MIGRATION_GUIDE.md
+|       OBSOLETE_FILES.md
+|       PROJECT_SUMMARY.md
+|       PYTHON_AI_INTEGRATION.md
+|       QUICKSTART.md
+|       RETRAINING_GUIDE.md
+|       RETRAINING_SUMMARY.md
+|       SIGNAL_REPAIR_REPORT.md
+|       STRATEGY_REFINEMENT_REPORT.md
+|       TEST_RESULTS.md
+|       test_system.py
+|       
++---Include
+|   \---Indicators
+|           Oscillators.mqh
+|           RSI.mqh
+|           
++---Interfaces
+|       CBaseStrategy.mqh
+|       IStrategy.mqh
+|       
++---python-ai
+|   |   activate_ai_nexus.bat
+|   |   INSTALL_WITH_CONDA.bat
+|   |   main.py
+|   |   MQL5_INTEGRATION.md
+|   |   QUICKSTART.md
+|   |   README.md
+|   |   requirements.txt
+|   |   run_retraining.bat
+|   |   setup_ai_nexus.bat
+|   |   start_ai_system.bat
+|   |   start_scheduler.bat
+|   |   test_harness.py
+|   |   
+|   +---bridge
+|   |   |   file_pipe.py
+|   |   |   message_protocol.py
+|   |   |   socket_server.py
+|   |   |   zmq_server.py
+|   |   |   __init__.py
+|   |   |   
+|   |   \---__pycache__
+|   |           file_pipe.cpython-314.pyc
+|   |           message_protocol.cpython-314.pyc
+|   |           socket_server.cpython-314.pyc
+|   |           zmq_server.cpython-314.pyc
+|   |           __init__.cpython-314.pyc
+|   |           
+|   +---config
+|   |       bridge.yaml
+|   |       features.yaml
+|   |       model_config.yaml
+|   |       
+|   +---core
+|   |   |   analytics.py
+|   |   |   data_loader.py
+|   |   |   feature_engineer.py
+|   |   |   model_manager.py
+|   |   |   risk_engine.py
+|   |   |   signal_generator.py
+|   |   |   __init__.py
+|   |   |   
+|   |   \---__pycache__
+|   |           analytics.cpython-314.pyc
+|   |           data_loader.cpython-314.pyc
+|   |           feature_engineer.cpython-314.pyc
+|   |           model_manager.cpython-314.pyc
+|   |           risk_engine.cpython-314.pyc
+|   |           signal_generator.cpython-314.pyc
+|   |           __init__.cpython-314.pyc
+|   |           
+|   +---logs
+|   |       ai_runtime.log
+|   |       
+|   +---models
+|   |   |   trading_model.onnx
+|   |   |   transformer_model.onnx
+|   |   |   
+|   |   \---training_scripts
+|   |           train_lgbm.py
+|   |           train_transformer.py
+|   |           __init__.py
+|   |           
+|   +---retraining
+|   |       auto_scheduler.py
+|   |       data_ingestion.py
+|   |       feature_engineering.py
+|   |       model_evaluation.py
+|   |       model_registry.py
+|   |       model_training.py
+|   |       retrain_loop.py
+|   |       __init__.py
+|   |       
+|   +---utils
+|   |   |   data_utils.py
+|   |   |   math_utils.py
+|   |   |   time_utils.py
+|   |   |   validation.py
+|   |   |   __init__.py
+|   |   |   
+|   |   \---__pycache__
+|   |           math_utils.cpython-314.pyc
+|   |           time_utils.cpython-314.pyc
+|   |           __init__.cpython-314.pyc
+|   |           
+|   \---__pycache__
+|           test_system.cpython-314.pyc
+|           
++---Scripts
+|       cleanup_old_files.bat
+|       live_mt5_to_ai_automation.py
+|       
++---Strategies
+|       Core.mqh
+|       RSI.mqh
+|       SimpleMomentumStrategy.mqh
+|       StrategyBollinger.mqh
+|       StrategyBollingerBreakout.mqh
+|       StrategyBreakout.mqh
+|       StrategyCorrelationMatrix.mqh
+|       StrategyElliott.mqh
+|       StrategyElliottWave.mqh
+|       StrategyElliottWaveEnhanced.mqh
+|       StrategyFactory.mqh
+|       StrategyFairValueGap.mqh
+|       StrategyFibonacci.mqh
+|       StrategyHarmonicPatterns.mqh
+|       StrategyIchimoku.mqh
+|       StrategyMACD.mqh
+|       StrategyMeanReversion.mqh
+|       StrategyOrderBlock.mqh
+|       StrategyOrderBlockFVG.mqh
+|       StrategyRSI.mqh
+|       StrategySMC.mqh
+|       StrategyStepIndex.mqh
+|       StrategySupplyDemand.mqh
+|       StrategySwing.mqh
+|       StrategyTrend.mqh
+|       StrategyVolatility.mqh
+|       
++---userReports
+|       ea_logs.log
+|       userWritten_modeltrainingloop.md
+|       userWritten_ProjectUpgrade.md
+|       
+\---Utilities
+        File.mqh
+        FileTxt.mqh
+        Utilities.mqh
+        

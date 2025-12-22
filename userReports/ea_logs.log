@@ -1,154 +1,69 @@
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENHANCED-RISK] Initialized with base risk: 2.00%
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENHANCED-RISK] Max risk per trade: 3.00%
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENHANCED-RISK] Max drawdown: 15.00%
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[RISK] Enhanced risk management activated with adaptive features
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[TP] Progressive take-profit system activated
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[RISK-INIT] Max daily risk set to 997.41 (10% of equity 9974.14)
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[PORTFOLIO-RISK] Portfolio risk manager initialized with max risk: 6.00%
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[RISK-GATE] Risk validation gate initialized successfully (MaxRisk: 2.0%, MaxDaily: 6.0%)
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[MULTI-STRATEGY-EA] ========================================
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[MULTI-STRATEGY-EA] System initialization SUCCESSFUL
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[MULTI-STRATEGY-EA] Live trading is ACTIVE
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[MULTI-STRATEGY-EA] ========================================
-2025.12.08 00:49:28.529	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-ONTICK] First tick received! System initialized: YES, Trading enabled: YES
-2025.12.08 00:50:16.963	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-ONTICK] Tick #50 - EA is processing ticks normally
-2025.12.08 00:50:16.963	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-TICK] Tick #50 Time: 2025.12.07 16:52:18
-2025.12.08 00:50:16.963	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0
-2025.12.08 00:50:16.963	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] Active strategies: 6 | Cooldown: 0s / 120s
-2025.12.08 00:50:16.963	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] EA Positions: 27 / 10 | Account Total: 27 | Last trade: Never
-2025.12.08 00:51:06.927	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-ONTICK] Tick #100 - EA is processing ticks normally
-2025.12.08 00:51:06.927	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-TICK] Tick #100 Time: 2025.12.07 16:53:08
-2025.12.08 00:51:06.927	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0
-2025.12.08 00:51:06.927	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] Active strategies: 6 | Cooldown: 0s / 120s
-2025.12.08 00:51:06.927	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] EA Positions: 27 / 10 | Account Total: 27 | Last trade: Never
-2025.12.08 00:51:06.927	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-BLOCKED] Position limit reached: 27 / 10
-2025.12.08 00:51:56.878	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-ONTICK] Tick #150 - EA is processing ticks normally
-2025.12.08 00:51:56.878	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-TICK] Tick #150 Time: 2025.12.07 16:53:58
-2025.12.08 00:51:56.878	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0
-2025.12.08 00:51:56.878	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] Active strategies: 6 | Cooldown: 0s / 120s
-2025.12.08 00:51:56.878	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] EA Positions: 27 / 10 | Account Total: 27 | Last trade: Never
-2025.12.08 00:52:46.746	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-ONTICK] Tick #200 - EA is processing ticks normally
-2025.12.08 00:52:46.746	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-TICK] Tick #200 Time: 2025.12.07 16:54:48
-2025.12.08 00:52:46.746	MultiStrategyAutonomousEA (Step Index.0,M15)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0
-2025.12.08 00:52:46.746	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] Active strategies: 6 | Cooldown: 0s / 120s
-2025.12.08 00:52:46.746	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-STATUS] EA Positions: 27 / 10 | Account Total: 27 | Last trade: Never
-2025.12.08 00:52:46.746	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE-BLOCKED] Position limit reached: 27 / 10
-
-2025.12.08 00:55:52.583	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8042.70000 | Zone: 8041.70000-8044.70000 | BEARISH | Score: 60.0
-2025.12.08 00:55:52.583	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: SELL | Confidence: 60.00% | Reason: Bearish OB activation | Price: 8042.70000 | Zone: 8041.70000-8044.70000 | Distance: 20.0 points
-2025.12.08 00:55:52.692	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 80.9 | Angle: -89.3 | ADX: 26.8
-2025.12.08 00:55:52.692	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 89750.01900 | Zone: 89698.17000-89750.01900 | BULLISH | Score: 69.2
-2025.12.08 00:55:52.692	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 90246.66800 | Zone: 89750.01900-90246.66800 | BULLISH | Score: 71.9
-2025.12.08 00:55:52.692	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=6, Sell=0
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_NORMAL | ATR: 488.05821 (0.54%) | BB Width: 1811.16074
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: PASSED - Trend: TREND_BEARISH_WEAK, Strength: 80.9
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_NORMAL (0.54%)
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] StructureFilter: PASSED - No recent structure break
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] Order Block Strategy | BTCUSD.0 | M15 | Signal: SELL | Confidence: 51.00% | Reason: Signal passed all filters | Confidence: 0.51
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE] BTCUSD.0 | Signal: SELL | Confidence: 0.765
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENHANCED-RISK] Daily risk limit exceeded
-2025.12.08 00:55:52.804	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 8070.10000 | Zone: 8053.90000-8070.10000 | BULLISH | Score: 61.6
-2025.12.08 00:55:52.912	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 80.2 | Angle: 70.7 | ADX: 32.1
-2025.12.08 00:55:52.912	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
-
-2025.12.08 00:55:52.913	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 16 new order blocks
-2025.12.08 00:55:52.915	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8042.60000 | Zone: 8041.70000-8044.70000 | BEARISH | Score: 60.0
-2025.12.08 00:55:52.915	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: SELL | Confidence: 58.00% | Reason: Bearish OB activation | Price: 8042.60000 | Zone: 8041.70000-8044.70000 | Distance: 21.0 points
-2025.12.08 00:55:53.023	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_NONE | Strength: 80.2 | Angle: -0.0 | ADX: 33.7
-2025.12.08 00:55:53.023	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 1.14824 | Zone: 1.14816-1.14841 | BEARISH | Score: 50.0
-2025.12.08 00:55:53.023	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_LOW] Price: 1.14421 | Zone: 1.14421-1.14817 | BEARISH | Score: 76.6
-2025.12.08 00:55:53.023	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00027 (0.02%) | BB Width: 0.00066
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: PASSED - PASSED - Ranging market | Strength: 80.2
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.02%)
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] StructureFilter: PASSED - Structure break confirmed
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[HedgingProtection] BLOCKED: AUDNZD.0 already has opposite position
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] HedgingProtection: FAILED - Signal would cause hedging on AUDNZD.0 - neutralized
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
-2025.12.08 00:55:53.132	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 8070.10000 | Zone: 8053.90000-8070.10000 | BULLISH | Score: 61.6
-2025.12.08 00:55:53.243	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 80.2 | Angle: 70.7 | ADX: 32.1
-2025.12.08 00:55:53.243	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
-2025.12.08 00:55:53.243	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_FOUND] Price: 8047.80000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
-
-2025.12.08 00:55:53.574	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_FOUND] Price: 8052.30000 | Zone: 8048.20000-8052.30000 | BEARISH | Score: 60.0
-2025.12.08 00:55:53.574	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 16 new order blocks
-2025.12.08 00:55:53.575	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8042.60000 | Zone: 8041.70000-8044.70000 | BEARISH | Score: 60.0
-2025.12.08 00:55:53.575	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: SELL | Confidence: 58.00% | Reason: Bearish OB activation | Price: 8042.60000 | Zone: 8041.70000-8044.70000 | Distance: 21.0 points
-2025.12.08 00:55:53.683	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_RANGING | Strength: 50.0 | Angle: 89.6 | ADX: 19.9
-2025.12.08 00:55:53.683	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=1, Sell=0
-2025.12.08 00:55:53.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_NORMAL | ATR: 285.75429 (0.65%) | BB Width: 583.28080
-2025.12.08 00:55:53.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: PASSED - PASSED - Ranging market | Strength: 50.0
-2025.12.08 00:55:53.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_NORMAL (0.65%)
-2025.12.08 00:55:53.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] StructureFilter: PASSED - No recent structure break
-2025.12.08 00:55:53.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] Order Block Strategy | Volatility 75 Index.0 | M15 | Signal: SELL | Confidence: 49.30% | Reason: Signal passed all filters | Confidence: 0.49
-2025.12.08 00:55:53.794	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
-2025.12.08 00:55:53.795	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENTERPRISE] Volatility 75 Index.0 | Signal: SELL | Confidence: 0.739500000000139
-2025.12.08 00:55:53.795	MultiStrategyAutonomousEA (Step Index.0,M15)	[ENHANCED-RISK] Daily risk limit exceeded
-2025.12.08 00:55:53.795	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 8070.10000 | Zone: 8053.90000-8070.10000 | BULLISH | Score: 61.6
-2025.12.08 00:55:53.902	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 80.2 | Angle: 70.7 | ADX: 32.1
-2025.12.08 00:55:53.902	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
-2025.12.08 00:55:53.902	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_FOUND] Price: 8047.80000 | Zone: 8047.80000-8051.90000 | BULLISH | Score: 60.0
-
-2025.12.08 00:55:53.903	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_FOUND] Price: 8052.30000 | Zone: 8048.20000-8052.30000 | BEARISH | Score: 60.0
-2025.12.08 00:55:53.903	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 16 new order blocks
-2025.12.08 00:55:53.904	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8042.70000 | Zone: 8041.70000-8044.70000 | BEARISH | Score: 60.0
-2025.12.08 00:55:53.904	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: SELL | Confidence: 60.00% | Reason: Bearish OB activation | Price: 8042.70000 | Zone: 8041.70000-8044.70000 | Distance: 20.0 points
-2025.12.08 00:55:54.015	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 81.6 | Angle: 65.2 | ADX: 37.3
-2025.12.08 00:55:54.015	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 673.21000 | Zone: 672.87000-678.49000 | BEARISH | Score: 50.0
-2025.12.08 00:55:54.015	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_LIQUIDITY_SWEEP] Price: 674.85000 | Zone: 672.11000-676.66000 | BULLISH | Score: 50.0
-2025.12.08 00:55:54.015	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=67, Sell=0
-2025.12.08 00:55:54.128	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_NORMAL | ATR: 4.60786 (0.70%) | BB Width: 22.20658
-2025.12.08 00:55:54.128	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Strong opposing trend: TREND_BULLISH_WEAK (81.6)
-2025.12.08 00:55:54.128	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
-2025.12.08 00:55:54.128	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 8070.10000 | Zone: 8053.90000-8070.10000 | BULLISH | Score: 61.6
-2025.12.08 00:55:54.241	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 80.2 | Angle: 70.7 | ADX: 32.1
-2025.12.08 00:55:54.241	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] ElliottWave | Step Index.0 | M15 | Reason: No valid wave pattern
-
-2025.12.08 00:55:54.241	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_FOUND] Price: 8052.30000 | Zone: 8048.20000-8052.30000 | BEARISH | Score: 60.0
-2025.12.08 00:55:54.241	MultiStrategyAutonomousEA (Step Index.0,M15)	[OrderBlock] Found 16 new order blocks
-2025.12.08 00:55:54.242	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_ORDER_BLOCK_TOUCH] Price: 8042.70000 | Zone: 8041.70000-8044.70000 | BEARISH | Score: 60.0
-2025.12.08 00:55:54.242	MultiStrategyAutonomousEA (Step Index.0,M15)	[SIGNAL] OrderBlock | Step Index.0 | M15 | Signal: SELL | Confidence: 60.00% | Reason: Bearish OB activation | Price: 8042.70000 | Zone: 8041.70000-8044.70000 | Distance: 20.0 points
-2025.12.08 00:55:54.350	MultiStrategyAutonomousEA (Step Index.0,M15)	[TrendEngine] Trend: TREND_BULLISH_WEAK | Strength: 80.2 | Angle: 70.7 | ADX: 32.1
-2025.12.08 00:55:54.350	MultiStrategyAutonomousEA (Step Index.0,M15)	[SMC_BOS_HIGH] Price: 8070.10000 | Zone: 8053.90000-8070.10000 | BULLISH | Score: 61.6
-2025.12.08 00:55:54.350	MultiStrategyAutonomousEA (Step Index.0,M15)	[LiquidityEngine] Liquidity zones: Buy=73, Sell=0
-2025.12.08 00:55:54.460	MultiStrategyAutonomousEA (Step Index.0,M15)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 3.66429 (0.05%) | BB Width: 15.71873
-2025.12.08 00:55:54.460	MultiStrategyAutonomousEA (Step Index.0,M15)	[Pipeline] TrendFilter: FAILED - Strong opposing trend: TREND_BULLISH_WEAK (80.2)
-2025.12.08 00:55:54.460	MultiStrategyAutonomousEA (Step Index.0,M15)	[NO_SIGNAL] FVG | Step Index.0 | M15 | Reason: No FVGs found
-2025.12.08 00:55:54.742	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for GBPUSD.0.
-2025.12.08 00:55:54.742	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for GBPUSD.0.
-2025.12.08 00:55:54.742	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for GBPUSD.0.
-2025.12.08 00:55:54.742	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for GBPUSD.0.
-2025.12.08 00:55:54.962	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for USDJPY.0.
-2025.12.08 00:55:54.962	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for USDJPY.0.
-2025.12.08 00:55:54.962	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for USDJPY.0.
-2025.12.08 00:55:54.962	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for USDJPY.0.
-2025.12.08 00:55:55.180	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for XAUUSD.0.
-2025.12.08 00:55:55.180	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for XAUUSD.0.
-2025.12.08 00:55:55.180	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for XAUUSD.0.
-2025.12.08 00:55:55.180	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for XAUUSD.0.
-2025.12.08 00:55:55.290	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for BTCUSD.0.
-2025.12.08 00:55:55.290	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for BTCUSD.0.
-2025.12.08 00:55:55.290	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for BTCUSD.0.
-2025.12.08 00:55:55.290	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for BTCUSD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for AUDNZD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for AUDNZD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for AUDNZD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for AUDNZD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for NZDUSD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for NZDUSD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for NZDUSD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for NZDUSD.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for Volatility 75 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for Volatility 75 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for Volatility 75 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for Volatility 75 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for Volatility 100 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for Volatility 100 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for Volatility 100 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for Volatility 100 Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for Step Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for Step Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for Step Index.0.
-2025.12.08 00:55:55.509	MultiStrategyAutonomousEA (Step Index.0,M15)	[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for Step Index.0.
+2025.12.22 23:27:48.296	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_ORDER_BLOCK_FOUND] Price: 1.17188 | Zone: 1.17085-1.17188 | BEARISH | Score: 60.0
+2025.12.22 23:27:48.296	MultiStrategyAutonomousEA (EURUSD.0,M30)	[OrderBlock] Found 21 new order blocks
+2025.12.22 23:27:48.299	MultiStrategyAutonomousEA (EURUSD.0,M30)	[NO_SIGNAL] OrderBlock | EURUSD.0 | M30 | Reason: No valid OB triggered | Active blocks: 21 | Checked: 0
+2025.12.22 23:27:48.299	MultiStrategyAutonomousEA (EURUSD.0,M30)	[NO_SIGNAL] FVG | EURUSD.0 | M30 | Reason: No FVGs found
+2025.12.22 23:27:48.299	MultiStrategyAutonomousEA (EURUSD.0,M30)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 81.5 | Angle: -90.0 | ADX: 27.5
+2025.12.22 23:27:48.299	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4309.35000 | Zone: 4309.35000-4319.84000 | BEARISH | Score: 78.6
+2025.12.22 23:27:48.299	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4308.75000 | Zone: 4308.75000-4309.35000 | BEARISH | Score: 77.6
+2025.12.22 23:27:48.299	MultiStrategyAutonomousEA (EURUSD.0,M30)	[LiquidityEngine] Liquidity zones: Buy=2, Sell=0
+2025.12.22 23:27:48.409	MultiStrategyAutonomousEA (EURUSD.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 7.27357 (0.16%) | BB Width: 26.11024
+2025.12.22 23:27:48.409	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (0.80) | Trend: TREND_BEARISH_WEAK
+2025.12.22 23:27:48.410	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.16%)
+2025.12.22 23:27:48.410	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.22 23:27:48.410	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SIGNAL] Supply Demand | XAUUSD.0 | M30 | Signal: BUY | Confidence: 74.80% | Reason: Signal passed all filters | Confidence: 0.75
+2025.12.22 23:27:48.528	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SIGNAL] Swing | EURUSD.0 | M30 | Signal: BUY | Confidence: 79.69% | Reason: MA crossover bullish | RSI: 100.00 | Confidence: 0.80
+2025.12.22 23:27:48.644	MultiStrategyAutonomousEA (EURUSD.0,M30)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 81.5 | Angle: -90.0 | ADX: 27.5
+2025.12.22 23:27:48.644	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4309.35000 | Zone: 4309.35000-4319.84000 | BEARISH | Score: 78.6
+2025.12.22 23:27:48.644	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4308.75000 | Zone: 4308.75000-4309.35000 | BEARISH | Score: 77.6
+2025.12.22 23:27:48.644	MultiStrategyAutonomousEA (EURUSD.0,M30)	[LiquidityEngine] Liquidity zones: Buy=2, Sell=0
+2025.12.22 23:27:48.760	MultiStrategyAutonomousEA (EURUSD.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 7.27357 (0.16%) | BB Width: 26.11024
+2025.12.22 23:27:48.760	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (0.80) | Trend: TREND_BEARISH_WEAK
+2025.12.22 23:27:48.760	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.16%)
+2025.12.22 23:27:48.760	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.22 23:27:48.760	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SIGNAL] Swing Trading Strategy | XAUUSD.0 | M30 | Signal: BUY | Confidence: 74.51% | Reason: Signal passed all filters | Confidence: 0.75
+2025.12.22 23:27:48.760	MultiStrategyAutonomousEA (EURUSD.0,M30)	[ENTERPRISE] XAUUSD.0 | Signal: BUY | Confidence: 0.9332763258597798
+2025.12.22 23:27:48.760	MultiStrategyAutonomousEA (EURUSD.0,M30)	[VOLUME-DEBUG] XAUUSD.0 | Input: 0.01 | Min: 0.01 | Max: 2.0 | Step: 0.01
+2025.12.22 23:27:49.423	MultiStrategyAutonomousEA (EURUSD.0,M30)	[TRADE-SUCCESS] BUY order executed on XAUUSD.0 | Lot Size: 0.01 | SL: 4416.88 (150 pips) | TP: 4421.38 (300 pips) | Ticket: 4467424947
+2025.12.22 23:27:49.423	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Initialized with base multiplier: 0.00
+2025.12.22 23:27:49.423	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Entry price: 4418.38000
+2025.12.22 23:27:49.423	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Risk amount: 0.02
+2025.12.22 23:27:49.423	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Initialized for ticket 4467424947 on XAUUSD.0
+2025.12.22 23:29:47.845	MultiStrategyAutonomousEA (EURUSD.0,M30)	[OrderBlock] Found 21 new order blocks
+2025.12.22 23:29:47.847	MultiStrategyAutonomousEA (EURUSD.0,M30)	[NO_SIGNAL] OrderBlock | EURUSD.0 | M30 | Reason: No valid OB triggered | Active blocks: 21 | Checked: 0
+2025.12.22 23:29:47.847	MultiStrategyAutonomousEA (EURUSD.0,M30)	[NO_SIGNAL] FVG | EURUSD.0 | M30 | Reason: No FVGs found
+2025.12.22 23:29:47.968	MultiStrategyAutonomousEA (EURUSD.0,M30)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 81.5 | Angle: -90.0 | ADX: 27.5
+2025.12.22 23:29:47.968	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4309.35000 | Zone: 4309.35000-4319.84000 | BEARISH | Score: 78.6
+2025.12.22 23:29:47.968	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4308.75000 | Zone: 4308.75000-4309.35000 | BEARISH | Score: 77.6
+2025.12.22 23:29:47.968	MultiStrategyAutonomousEA (EURUSD.0,M30)	[LiquidityEngine] Liquidity zones: Buy=2, Sell=0
+2025.12.22 23:29:48.079	MultiStrategyAutonomousEA (EURUSD.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 7.27357 (0.16%) | BB Width: 26.06646
+2025.12.22 23:29:48.079	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (0.80) | Trend: TREND_BEARISH_WEAK
+2025.12.22 23:29:48.079	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.16%)
+2025.12.22 23:29:48.079	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.22 23:29:48.079	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SIGNAL] Supply Demand | XAUUSD.0 | M30 | Signal: BUY | Confidence: 74.80% | Reason: Signal passed all filters | Confidence: 0.75
+2025.12.22 23:29:48.295	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SIGNAL] Swing | EURUSD.0 | M30 | Signal: BUY | Confidence: 79.48% | Reason: MA crossover bullish | RSI: 100.00 | Confidence: 0.79
+2025.12.22 23:29:48.406	MultiStrategyAutonomousEA (EURUSD.0,M30)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 81.5 | Angle: -90.0 | ADX: 27.5
+2025.12.22 23:29:48.406	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4309.35000 | Zone: 4309.35000-4319.84000 | BEARISH | Score: 78.6
+2025.12.22 23:29:48.406	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SMC_BOS_LOW] Price: 4308.75000 | Zone: 4308.75000-4309.35000 | BEARISH | Score: 77.6
+2025.12.22 23:29:48.406	MultiStrategyAutonomousEA (EURUSD.0,M30)	[LiquidityEngine] Liquidity zones: Buy=2, Sell=0
+2025.12.22 23:29:48.518	MultiStrategyAutonomousEA (EURUSD.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 7.27357 (0.16%) | BB Width: 26.08367
+2025.12.22 23:29:48.518	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (0.79) | Trend: TREND_BEARISH_WEAK
+2025.12.22 23:29:48.518	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.16%)
+2025.12.22 23:29:48.518	MultiStrategyAutonomousEA (EURUSD.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.22 23:29:48.518	MultiStrategyAutonomousEA (EURUSD.0,M30)	[SIGNAL] Swing Trading Strategy | XAUUSD.0 | M30 | Signal: BUY | Confidence: 74.32% | Reason: Signal passed all filters | Confidence: 0.74
+2025.12.22 23:29:48.518	MultiStrategyAutonomousEA (EURUSD.0,M30)	[ENTERPRISE] XAUUSD.0 | Signal: BUY | Confidence: 0.9320942876796366
+2025.12.22 23:29:48.518	MultiStrategyAutonomousEA (EURUSD.0,M30)	[VOLUME-DEBUG] XAUUSD.0 | Input: 0.01 | Min: 0.01 | Max: 2.0 | Step: 0.01
+2025.12.22 23:29:49.132	MultiStrategyAutonomousEA (EURUSD.0,M30)	[TRADE-SUCCESS] BUY order executed on XAUUSD.0 | Lot Size: 0.01 | SL: 4416.7 (150 pips) | TP: 4421.2 (300 pips) | Ticket: 4467426360
+2025.12.22 23:29:49.132	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Initialized with base multiplier: 0.00
+2025.12.22 23:29:49.132	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Entry price: 4418.20000
+2025.12.22 23:29:49.132	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Risk amount: 0.02
+2025.12.22 23:29:49.132	MultiStrategyAutonomousEA (EURUSD.0,M30)	[PROGRESSIVE-TP] Initialized for ticket 4467426360 on XAUUSD.0
+2025.12.22 23:30:21.598	MultiStrategyAutonomousEA (EURUSD.0,M30)	[DEBUG-ONTICK] Tick #250 - EA is processing ticks normally
+2025.12.22 23:30:21.598	MultiStrategyAutonomousEA (EURUSD.0,M30)	[DEBUG-TICK] Tick #250 Time: 2025.12.22 15:30:21
+2025.12.22 23:30:21.598	MultiStrategyAutonomousEA (EURUSD.0,M30)	[DEBUG-STATUS] Current symbol: EURUSD.0 Symbols processed: 10
+2025.12.22 23:30:21.598	MultiStrategyAutonomousEA (EURUSD.0,M30)	[ENTERPRISE-STATUS] Active strategies: 9 | Cooldown: 34s / 120s
+2025.12.22 23:30:21.598	MultiStrategyAutonomousEA (EURUSD.0,M30)	[ENTERPRISE-STATUS] EA Positions: 2 / 10 | Account Total: 2 | Last trade: 2025.12.22 15:29
+2025.12.22 23:31:22.067	MultiStrategyAutonomousEA (EURUSD.0,M30)	[DEBUG-ONTICK] Tick #300 - EA is processing ticks normally
+2025.12.22 23:31:22.067	MultiStrategyAutonomousEA (EURUSD.0,M30)	[DEBUG-TICK] Tick #300 Time: 2025.12.22 15:31:21
+2025.12.22 23:31:22.067	MultiStrategyAutonomousEA (EURUSD.0,M30)	[DEBUG-STATUS] Current symbol: EURUSD.0 Symbols processed: 10
+2025.12.22 23:31:22.067	MultiStrategyAutonomousEA (EURUSD.0,M30)	[ENTERPRISE-STATUS] Active strategies: 9 | Cooldown: 94s / 120s
+2025.12.22 23:31:22.067	MultiStrategyAutonomousEA (EURUSD.0,M30)	[ENTERPRISE-STATUS] EA Positions: 1 / 10 | Account Total: 1 | Last trade: 2025.12.22 15:29
