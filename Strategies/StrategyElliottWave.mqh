@@ -97,14 +97,18 @@ public:
 //+------------------------------------------------------------------+
 bool CElliottWaveAnalyzer::IdentifyWaves(const MqlRates &rates[], int count)
 {
-    if (count < 10) // Need at least 10 bars for any meaningful wave analysis
+    if (count < 20) // Need at least 20 bars for meaningful wave analysis
         return false;
         
     // Clear previous wave points
     m_wavePoints.Clear();
     
-    // Simple swing point detection (Fractals approach)
+    // Improved swing point detection with filtering
     // We need at least 5 bars to detect a fractal (2 left, 1 middle, 2 right)
+    CArrayDouble swingPrices;
+    CArrayObj swingPoints;
+    swingPoints.FreeMode(true);
+    
     for (int i = 2; i < count - 2; i++)
     {
         bool isHigh = rates[i].high > rates[i-1].high && rates[i].high > rates[i-2].high &&
@@ -116,46 +120,105 @@ bool CElliottWaveAnalyzer::IdentifyWaves(const MqlRates &rates[], int count)
         if (isHigh)
         {
             CElliottWavePoint *point = new CElliottWavePoint(rates[i].time, rates[i].high, WAVE_TYPE_UNKNOWN, m_degree);
-            if(point != NULL) m_wavePoints.Add(point);
+            if(point != NULL) swingPoints.Add(point);
         }
         else if (isLow)
         {
             CElliottWavePoint *point = new CElliottWavePoint(rates[i].time, rates[i].low, WAVE_TYPE_UNKNOWN, m_degree);
-            if(point != NULL) m_wavePoints.Add(point);
+            if(point != NULL) swingPoints.Add(point);
         }
     }
     
-    // Simple wave labeling logic
-    if (m_wavePoints.Total() >= 5)
+    // Need at least 6 swing points for a 5-wave structure (0-1-2-3-4-5)
+    if(swingPoints.Total() < 6)
+        return false;
+    
+    // Try to identify valid 5-wave impulse pattern from recent swings
+    // Work backwards from most recent swings
+    int total = swingPoints.Total();
+    
+    for(int startIdx = total - 6; startIdx >= 0; startIdx--)
     {
-        for (int i = 0; i < m_wavePoints.Total(); i++)
+        // Get 6 consecutive swing points (Wave 0 start, then 1-5)
+        CElliottWavePoint *w0 = (CElliottWavePoint*)swingPoints.At(startIdx);
+        CElliottWavePoint *w1 = (CElliottWavePoint*)swingPoints.At(startIdx + 1);
+        CElliottWavePoint *w2 = (CElliottWavePoint*)swingPoints.At(startIdx + 2);
+        CElliottWavePoint *w3 = (CElliottWavePoint*)swingPoints.At(startIdx + 3);
+        CElliottWavePoint *w4 = (CElliottWavePoint*)swingPoints.At(startIdx + 4);
+        CElliottWavePoint *w5 = (CElliottWavePoint*)swingPoints.At(startIdx + 5);
+        
+        if(w0 == NULL || w1 == NULL || w2 == NULL || w3 == NULL || w4 == NULL || w5 == NULL)
+            continue;
+        
+        // Determine if bullish or bearish impulse
+        bool isBullish = w1.m_price > w0.m_price;
+        
+        // Elliott Wave Validation Rules:
+        // 1. Wave 2 retraces 38.2% - 78.6% of Wave 1 (commonly 50-61.8%)
+        // 2. Wave 3 is typically 161.8% of Wave 1, must not be shortest
+        // 3. Wave 4 retraces 23.6% - 50% of Wave 3
+        // 4. Wave 4 cannot overlap Wave 1 price territory
+        
+        double wave1Length = MathAbs(w1.m_price - w0.m_price);
+        double wave2Retrace = MathAbs(w2.m_price - w1.m_price);
+        double wave3Length = MathAbs(w3.m_price - w2.m_price);
+        double wave4Retrace = MathAbs(w4.m_price - w3.m_price);
+        double wave5Length = MathAbs(w5.m_price - w4.m_price);
+        
+        // Avoid division by zero
+        if(wave1Length == 0 || wave3Length == 0)
+            continue;
+        
+        // Rule 1: Wave 2 retracement (38.2% - 78.6% of Wave 1)
+        double w2RetraceRatio = wave2Retrace / wave1Length;
+        if(w2RetraceRatio < 0.382 || w2RetraceRatio > 0.786)
+            continue;
+        
+        // Rule 2: Wave 3 cannot be the shortest of 1, 3, 5
+        if(wave3Length < wave1Length && wave3Length < wave5Length)
+            continue;
+        
+        // Rule 3: Wave 4 retracement (23.6% - 61.8% of Wave 3)
+        double w4RetraceRatio = wave4Retrace / wave3Length;
+        if(w4RetraceRatio < 0.236 || w4RetraceRatio > 0.618)
+            continue;
+        
+        // Rule 4: Wave 4 cannot overlap Wave 1 territory
+        if(isBullish)
         {
-            CElliottWavePoint *point = (CElliottWavePoint*)m_wavePoints.At(i);
-            if (point == NULL) continue;
-            
-            // Assign wave types cyclically for demonstration
-            // In a real implementation, this would involve complex pattern matching rules
-            // (e.g., Wave 3 cannot be the shortest, Wave 4 cannot overlap Wave 1, etc.)
-            
-            // Reset to unknown first
-            point.m_waveType = WAVE_TYPE_UNKNOWN;
-            
-            // Simple labeling based on recent points
-            int recentIdx = m_wavePoints.Total() - 1 - i;
-            if(recentIdx >= 0 && recentIdx < 8) {
-                // Label the last few points as a potential sequence
-                // This is a placeholder for actual Elliott Wave logic
-                if(recentIdx == 0) point.m_waveType = WAVE_TYPE_5; // Most recent
-                else if(recentIdx == 1) point.m_waveType = WAVE_TYPE_4;
-                else if(recentIdx == 2) point.m_waveType = WAVE_TYPE_3;
-                else if(recentIdx == 3) point.m_waveType = WAVE_TYPE_2;
-                else if(recentIdx == 4) point.m_waveType = WAVE_TYPE_1;
-            }
+            if(w4.m_price < w1.m_price) continue; // Wave 4 low below Wave 1 high = overlap
         }
+        else
+        {
+            if(w4.m_price > w1.m_price) continue; // Wave 4 high above Wave 1 low = overlap
+        }
+        
+        // Valid wave pattern found! Label the waves
+        w1.m_waveType = WAVE_TYPE_1;
+        w2.m_waveType = WAVE_TYPE_2;
+        w3.m_waveType = WAVE_TYPE_3;
+        w4.m_waveType = WAVE_TYPE_4;
+        w5.m_waveType = WAVE_TYPE_5;
+        
+        // Copy valid waves to our main array
+        CElliottWavePoint *p1 = new CElliottWavePoint(w1.m_time, w1.m_price, WAVE_TYPE_1, m_degree);
+        CElliottWavePoint *p2 = new CElliottWavePoint(w2.m_time, w2.m_price, WAVE_TYPE_2, m_degree);
+        CElliottWavePoint *p3 = new CElliottWavePoint(w3.m_time, w3.m_price, WAVE_TYPE_3, m_degree);
+        CElliottWavePoint *p4 = new CElliottWavePoint(w4.m_time, w4.m_price, WAVE_TYPE_4, m_degree);
+        CElliottWavePoint *p5 = new CElliottWavePoint(w5.m_time, w5.m_price, WAVE_TYPE_5, m_degree);
+        
+        if(p1) m_wavePoints.Add(p1);
+        if(p2) m_wavePoints.Add(p2);
+        if(p3) m_wavePoints.Add(p3);
+        if(p4) m_wavePoints.Add(p4);
+        if(p5) m_wavePoints.Add(p5);
+        
+        break; // Found valid pattern, stop searching
     }
     
     return (m_wavePoints.Total() >= 5);
 }
+
 
 //+------------------------------------------------------------------+
 //| CStrategyElliottWave Implementation                             |
@@ -270,61 +333,83 @@ ENUM_TRADE_SIGNAL CStrategyElliottWave::GetSignal(double &confidence)
     if (m_symbol == _Symbol && m_timeframe == _Period)
         DrawWaveLabels(m_symbol);
     
-    // Get current price
+    // Get current price and ATR for dynamic zone calculation
     double bid = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
     
-    // Trading Logic
-    // We look for the end of Wave 4 to trade Wave 5 (Trend Following)
-    // Or end of Wave 5 to trade reversal (Counter Trend)
+    // Calculate ATR for dynamic zone sizing
+    int atrHandle = iATR(m_symbol, m_timeframe, 14);
+    double atrValue = 0.0;
+    if(atrHandle != INVALID_HANDLE)
+    {
+        double atrBuffer[];
+        ArraySetAsSeries(atrBuffer, true);
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0)
+            atrValue = atrBuffer[0];
+        IndicatorRelease(atrHandle);
+    }
+    
+    // Use ATR-based zone, fallback to fixed points if ATR unavailable
+    double zoneThreshold = (atrValue > 0) ? atrValue * 0.5 : (50 * point);
     
     int totalWaves = m_analyzer.GetWaveCount();
     if (totalWaves >= 5)
     {
-        // Find the most recent labeled waves
+        // Find all labeled waves
+        CElliottWavePoint *wave1 = NULL;
+        CElliottWavePoint *wave2 = NULL;
         CElliottWavePoint *wave3 = NULL;
         CElliottWavePoint *wave4 = NULL;
         CElliottWavePoint *wave5 = NULL;
         
-        for(int i = totalWaves - 1; i >= 0; i--) {
+        for(int i = 0; i < totalWaves; i++) {
             CElliottWavePoint *p = m_analyzer.GetWavePoint(i);
             if(p == NULL) continue;
-            if(p.m_waveType == WAVE_TYPE_5) wave5 = p;
-            if(p.m_waveType == WAVE_TYPE_4) wave4 = p;
+            if(p.m_waveType == WAVE_TYPE_1) wave1 = p;
+            if(p.m_waveType == WAVE_TYPE_2) wave2 = p;
             if(p.m_waveType == WAVE_TYPE_3) wave3 = p;
-            if(wave3 != NULL && wave4 != NULL && wave5 != NULL) break;
+            if(p.m_waveType == WAVE_TYPE_4) wave4 = p;
+            if(p.m_waveType == WAVE_TYPE_5) wave5 = p;
         }
         
-        // Scenario 1: Reversal at end of Wave 5
+        // Determine impulse direction
+        bool isBullishImpulse = (wave1 != NULL && wave2 != NULL) ? (wave1.m_price > wave2.m_price ? false : true) : false;
+        if(wave3 != NULL && wave4 != NULL)
+            isBullishImpulse = wave3.m_price > wave4.m_price;
+        
+        // Scenario 1: Reversal at end of Wave 5 (Counter-trend)
         if (wave5 != NULL && wave3 != NULL)
         {
-            // Check if price is near Wave 5 peak
-            if (MathAbs(bid - wave5.m_price) < (20 * point))
+            // Check if price is near Wave 5 completion zone (ATR-based)
+            if (MathAbs(bid - wave5.m_price) < zoneThreshold)
             {
-                // Divergence check or simple reversal check could be added here
-                confidence = 0.7;
-                // If Wave 5 was up, we sell. If down, we buy.
-                // Assuming standard impulse: 1 up, 2 down, 3 up, 4 down, 5 up
-                bool isBullishImpulse = wave3.m_price > wave4.m_price; // Wave 3 peak > Wave 4 trough
-                
+                // Higher confidence if we have clear W3>W1 structure
+                confidence = 0.72;
                 return isBullishImpulse ? TRADE_SIGNAL_SELL : TRADE_SIGNAL_BUY;
             }
         }
         
-        // Scenario 2: Trading Wave 5 (Catching the move from 4 to 5)
-        // We need to be at Wave 4
-        if (wave4 != NULL && wave3 != NULL && wave5 == NULL) // Wave 5 not formed yet
+        // Scenario 2: Trading Wave 5 start (at Wave 4 completion)
+        if (wave4 != NULL && wave3 != NULL && wave5 == NULL)
         {
-             bool isBullishImpulse = wave3.m_price > wave4.m_price;
-             
-             // If we are at Wave 4, we expect a move towards Wave 5
-             // Check if price is bouncing off Wave 4 level
-             if (MathAbs(bid - wave4.m_price) < (20 * point))
-             {
-                 confidence = 0.65;
-                 return isBullishImpulse ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-             }
+            // Check if price is bouncing off Wave 4 level (ATR-based zone)
+            if (MathAbs(bid - wave4.m_price) < zoneThreshold)
+            {
+                confidence = 0.68;
+                return isBullishImpulse ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+            }
+        }
+        
+        // Scenario 3: Trading Wave 3 start (at Wave 2 completion) - Strongest wave
+        if (wave2 != NULL && wave1 != NULL && wave3 == NULL)
+        {
+            // Wave 3 is typically the strongest - higher confidence entry
+            if (MathAbs(bid - wave2.m_price) < zoneThreshold)
+            {
+                confidence = 0.75; // Higher confidence for W3 entry
+                return isBullishImpulse ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+            }
         }
     }
     

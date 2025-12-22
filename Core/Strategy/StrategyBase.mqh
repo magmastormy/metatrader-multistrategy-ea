@@ -41,9 +41,11 @@ protected:
     bool              m_is_enabled;
     bool              m_is_shutting_down;
     double            m_weight;
+    double            m_minConfidence;    // Minimum confidence threshold
     datetime          m_lastSignalTime;
     int               m_totalSignals;
     int               m_successfulSignals;
+    int               m_lowConfidenceFiltered;  // Count of filtered low-conf signals
     int               m_errorCount;
     datetime          m_lastErrorTime;
 
@@ -109,9 +111,11 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_is_enabled(true),
     m_is_shutting_down(false),
     m_weight(1.0),
+    m_minConfidence(0.30),
     m_lastSignalTime(0),
     m_totalSignals(0),
     m_successfulSignals(0),
+    m_lowConfidenceFiltered(0),
     m_errorCount(0),
     m_lastErrorTime(0),
     m_tradeManager(NULL),

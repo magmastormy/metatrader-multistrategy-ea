@@ -39,6 +39,14 @@ private:
     // Regime detection thresholds
     double m_trendThreshold;
     double m_volatilityThreshold;
+    
+    // Warmup tracking
+    datetime m_initTime;              // Time when indicators were initialized
+    bool m_indicatorsReady;           // Flag indicating if indicators are fully initialized
+    int m_initAttempts;               // Count of initialization attempts
+    datetime m_lastInitAttempt;       // Last time initialization was attempted
+    static const int WARMUP_SECONDS;  // Suppress warnings for this many seconds
+    static const int INIT_RETRY_SECONDS; // Wait this long between init retries
 
     // Initialize indicator handles and settings
     string m_symbol;
@@ -108,6 +116,21 @@ private:
         m_ma50Handle = handles[8];
         m_ma200Handle = handles[9];
     }
+    
+    // Check if we're still in warmup period (suppress warnings)
+    bool IsInWarmup() const {
+        // If indicators not ready and we haven't exhausted retries, stay in warmup
+        if(!m_indicatorsReady && m_initAttempts < 3) return true;
+        
+        // If initialization failed recently, stay quiet
+        if(m_lastInitAttempt > 0 && (TimeCurrent() - m_lastInitAttempt) < INIT_RETRY_SECONDS) {
+            return true;
+        }
+        
+        // Normal warmup period after successful init
+        if(m_initTime == 0) return true; // Not yet initialized
+        return (TimeCurrent() - m_initTime) < WARMUP_SECONDS;
+    }
 
     double CalculateTrendStrength() {
         double trendStrength = 0.0;
@@ -140,8 +163,8 @@ private:
             // For Jump/Volatility indices without ADX, use increased weight on other indicators
             // This is expected and not an error
         } else {
-            // Only warn if ADX should be available but isn't ready
-            PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for %s.", m_symbol);
+            // Only warn if ADX should be available but isn't ready (and not in warmup)
+            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for %s.", m_symbol);
         }
         
         // Use Moving Average alignment for trend confirmation
@@ -165,7 +188,7 @@ private:
                 }
             }
         } else {
-            PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for %s.", m_symbol);
+            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for %s.", m_symbol);
         }
         
         // Use price action analysis (higher highs/lows or lower highs/lows)
@@ -212,7 +235,7 @@ private:
                 }
             }
         } else {
-            PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for %s.", m_symbol);
+            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for %s.", m_symbol);
         }
         
         // Use Bollinger Bands width for volatility confirmation
@@ -233,7 +256,7 @@ private:
                 }
             }
         } else {
-            PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for %s.", m_symbol);
+            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for %s.", m_symbol);
         }
         
         // Use recent price range as additional volatility metric
@@ -253,7 +276,7 @@ private:
                 volatility += (rangePercent / 2.0) * 0.2; // 20% weight to price range, normalized to 2% as high
             }
         } else {
-            PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - Price range data not available for %s.", m_symbol);
+            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - Price range data not available for %s.", m_symbol);
         }
         
         // Cap volatility at 1.0
@@ -281,7 +304,7 @@ private:
             // RSI handle exists but data not ready yet - this is normal during startup
             // Don't spam warnings during initialization
         } else {
-            PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - RSI handle invalid for %s.", m_symbol);
+            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - RSI handle invalid for %s.", m_symbol);
         }
         
         // Use MACD for momentum confirmation
@@ -304,7 +327,7 @@ private:
                 }
             }
         } else {
-            PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - MACD data not ready or handle invalid for %s.", m_symbol);
+            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - MACD data not ready or handle invalid for %s.", m_symbol);
         }
         
         // Use price momentum (rate of change)
@@ -329,7 +352,24 @@ private:
     
 public:
     
-    CMarketAnalysis() {
+    // Check if symbol is available for trading/analysis
+    bool IsSymbolAvailable(const string symbolName) const {
+        // Check if symbol exists in Market Watch
+        if(!SymbolInfoInteger(symbolName, SYMBOL_SELECT)) {
+            return false;
+        }
+        
+        // Check if we have price data
+        double bid = SymbolInfoDouble(symbolName, SYMBOL_BID);
+        double ask = SymbolInfoDouble(symbolName, SYMBOL_ASK);
+        if(bid <= 0 || ask <= 0) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    CMarketAnalysis() :{
         m_currentRegime = MARKET_REGIME_RANGING; // Default to ranging market
         m_previousRegime = MARKET_REGIME_RANGING;
         m_lastRegimeChange = 0;
@@ -341,9 +381,12 @@ public:
         m_regimeHistoryCount = 0;
 
         // Initialize indicator settings and handles
-        m_symbol = "";
-        m_period = PERIOD_CURRENT;
-        
+        m_symbol(""),
+        m_period(PERIOD_CURRENT),
+        m_initTime(0),
+        m_indicatorsReady(false),
+        m_initAttempts(0),
+        m_lastInitAttempt(0),
         // Initialize indicator handles
         m_adxHandle = INVALID_HANDLE;
         m_atrHandle = INVALID_HANDLE;
@@ -368,6 +411,7 @@ public:
         // Initialize thresholds based on typical values
         m_trendThreshold = 0.6;     // 60% trend strength needed to confirm trend regime
         m_volatilityThreshold = 0.7; // 70% volatility needed to confirm volatile regime
+        m_initTime = 0;             // Will be set on successful indicator initialization
     }
 
     // Destructor to release indicator handles
@@ -485,9 +529,23 @@ public:
 
     // Initialize all required indicators for the given symbol and period
     bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period) {
+        // Track initialization attempt
+        m_initAttempts++;
+        m_lastInitAttempt = TimeCurrent();
+        
         // Skip Boom/Crash indices - completely incompatible
         if(StringFind(symbolName, "Boom") >= 0 || StringFind(symbolName, "Crash") >= 0) {
             PrintFormat("[INFO] Skipping indicator initialization for incompatible symbol: %s", symbolName);
+            m_indicatorsReady = false;
+            return false;
+        }
+        
+        // Check if symbol is available
+        if(!IsSymbolAvailable(symbolName)) {
+            if(m_initAttempts == 1) {
+                PrintFormat("[INFO] Symbol %s not available in Market Watch or has no price data", symbolName);
+            }
+            m_indicatorsReady = false;
             return false;
         }
         
@@ -558,7 +616,7 @@ public:
         }
         
         // Wait for indicators to calculate with retry logic
-        int maxRetries = 5;
+        int maxRetries = 10;  // Increased from 5 for slower symbols
         int retryCount = 0;
         bool indicatorsReady = false;
         
@@ -593,6 +651,8 @@ public:
         string adxStatus = (m_adxHandle == INVALID_HANDLE) ? " (ADX skipped)" : "";
         PrintFormat("[SUCCESS] Initialized indicators for %s on %s%s", 
                    symbolName, EnumToString(period), adxStatus);
+        m_initTime = TimeCurrent(); // Track warmup start time
+        m_indicatorsReady = true;
         return true;
     }
     
@@ -701,5 +761,8 @@ public:
         return 0.0;
     }
 };
+
+const int CMarketAnalysis::WARMUP_SECONDS = 60;
+const int CMarketAnalysis::INIT_RETRY_SECONDS = 300;
 
 #endif
