@@ -53,6 +53,11 @@ protected:
     CPositionSizer*   m_positionSizer;
     CEnhancedErrorHandler* m_errorHandler;
 
+    static double     s_defaultMinConfidence;
+
+    static void SetDefaultMinConfidence(const double value);
+    static double GetDefaultMinConfidence(void);
+
 public:
     CStrategyBase(const string name, const int magic = 0);
     virtual ~CStrategyBase();
@@ -74,6 +79,9 @@ public:
     virtual void GetStatistics(int &signals, int &successful, double &accuracy);
 
     virtual void Update(void);
+
+    void OverrideMinConfidence(const double value);
+    double GetMinConfidence(void) const;
 
 protected:
     virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence);
@@ -111,7 +119,7 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_is_enabled(true),
     m_is_shutting_down(false),
     m_weight(1.0),
-    m_minConfidence(0.30),
+    m_minConfidence(GetDefaultMinConfidence()),
     m_lastSignalTime(0),
     m_totalSignals(0),
     m_successfulSignals(0),
@@ -126,6 +134,33 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_timeframe = (ENUM_TIMEFRAMES)Period();
     m_errorHandler = new CEnhancedErrorHandler();
 }
+
+//+------------------------------------------------------------------+
+//| Static confidence configuration                                  |
+//+------------------------------------------------------------------+
+void CStrategyBase::SetDefaultMinConfidence(const double value)
+{
+    double bounded = MathMax(0.0, MathMin(1.0, value));
+    s_defaultMinConfidence = bounded;
+}
+
+double CStrategyBase::GetDefaultMinConfidence(void)
+{
+    return s_defaultMinConfidence;
+}
+
+void CStrategyBase::OverrideMinConfidence(const double value)
+{
+    double bounded = MathMax(0.0, MathMin(1.0, value));
+    m_minConfidence = bounded;
+}
+
+double CStrategyBase::GetMinConfidence(void) const
+{
+    return m_minConfidence;
+}
+
+double CStrategyBase::s_defaultMinConfidence = 0.30;
 
 CStrategyBase::~CStrategyBase()
 {
