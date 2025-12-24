@@ -118,6 +118,20 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     // Calculate minimum viable lot size
     double CalculateMinViableSize(const string symbol);
     
+    bool IsHealthy(void) const { return m_initialized && m_lastCalculatedSize >= MIN_LOT_SIZE; }
+    
+    double GetSafePositionSize(const string symbol, const ENUM_ORDER_TYPE orderType,
+                               const double stopLossPips, const double confidence = 1.0)
+    {
+        if(!IsHealthy())
+        {
+            Print("[POSITION-SIZER] Fallback to min lot for ", symbol);
+            double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+            return (minLot > 0) ? minLot : MIN_LOT_SIZE;
+        }
+        return CalculateOptimalPositionSize(symbol, orderType, stopLossPips, confidence);
+    }
+    
     // Calculate maximum safe lot size based on margin
     double CalculateMaxSafeSize(const string symbol);
     

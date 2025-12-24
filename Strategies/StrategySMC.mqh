@@ -414,6 +414,7 @@ void CStrategySMC::ScanForOrderBlocks()
             {
                 m_diagnostics.LogSMCDetection(
                     "ORDER_BLOCK",
+                    m_symbol,
                     (obHigh + obLow) / 2.0,
                     obHigh,
                     obLow,
@@ -472,6 +473,7 @@ void CStrategySMC::ScanForFVG()
             {
                 m_diagnostics.LogSMCDetection(
                     "FVG",
+                    m_symbol,
                     (lowA + highC) / 2.0,
                     lowA,
                     highC,
@@ -498,6 +500,7 @@ void CStrategySMC::ScanForFVG()
             {
                 m_diagnostics.LogSMCDetection(
                     "FVG",
+                    m_symbol,
                     (highA + lowC) / 2.0,
                     highA,
                     lowC,
@@ -547,11 +550,12 @@ void CStrategySMC::ScanForSweeps()
             {
                 m_diagnostics.LogSMCDetection(
                     "LIQUIDITY_SWEEP",
+                    m_symbol,
                     high,
                     high1,
                     high,
-                    false,  // Bearish sweep
-                    60  // Base score
+                    false,
+                    60
                 );
             }
         }
@@ -564,11 +568,12 @@ void CStrategySMC::ScanForSweeps()
             {
                 m_diagnostics.LogSMCDetection(
                     "LIQUIDITY_SWEEP",
+                    m_symbol,
                     low,
                     low,
                     low1,
-                    true,  // Bullish sweep
-                    60  // Base score
+                    true,
+                    60
                 );
             }
         }

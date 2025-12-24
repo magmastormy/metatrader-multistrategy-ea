@@ -88,3 +88,168 @@ SIGNAL STATISTICS:
 2025-12-06 18:44:50,867 [INFO] core.signal_generator: Signal generated: NONE for Step Index.0, confidence: 0.50
 2025-12-06 18:44:50,868 [INFO] __main__: Signal generated: NONE (confidence: 0.50)
 2025-12-06 18:44:50,871 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55059)
+2025-12-24 17:53:47,657 [WARNING] core.model_manager: PyTorch not available
+2025-12-24 17:53:47,771 [WARNING] core.model_manager: ONNX Runtime not available
+2025-12-24 17:53:47,974 [INFO] __main__: ============================================================
+2025-12-24 17:53:47,989 [INFO] __main__: ============================================================
+2025-12-24 17:53:48,012 [WARNING] __main__: Failed to load config: 'gbk' codec can't decode byte 0x94 in position 34: illegal multibyte sequence, using defaults
+2025-12-24 17:53:48,020 [INFO] __main__: Initializing core components...
+2025-12-24 17:53:48,023 [INFO] core.model_manager: Loading models...
+2025-12-24 17:53:48,037 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-24 17:53:48,103 [INFO] __main__: Starting AI Trading System...
+2025-12-24 17:53:48,157 [INFO] bridge.socket_server: Socket Server listening for connections...
+2025-12-24 17:53:48,191 [INFO] __main__: ============================================================
+2025-12-24 17:53:48,341 [INFO] __main__: Bridge Mode: SOCKET
+2025-12-24 17:53:48,341 [INFO] __main__: Models Loaded: 0
+2025-12-24 17:53:48,358 [INFO] __main__: ============================================================
+2025-12-24 17:58:46,257 [INFO] __main__: ============================================================
+2025-12-24 17:58:46,262 [INFO] __main__: ============================================================
+2025-12-24 17:58:46,264 [WARNING] __main__: Failed to load config: 'gbk' codec can't decode byte 0x94 in position 34: illegal multibyte sequence, using defaults
+2025-12-24 17:58:46,265 [INFO] __main__: Initializing core components...
+2025-12-24 17:58:46,266 [INFO] core.model_manager: Loading models...
+2025-12-24 17:58:46,310 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-24 17:58:46,313 [INFO] __main__: Starting AI Trading System...
+2025-12-24 17:58:46,323 [INFO] bridge.socket_server: Socket Server listening for connections...
+2025-12-24 17:58:46,327 [INFO] __main__: ============================================================
+2025-12-24 17:58:46,331 [INFO] __main__: Bridge Mode: SOCKET
+2025-12-24 17:58:46,331 [INFO] __main__: Models Loaded: 1
+2025-12-24 17:58:46,332 [INFO] __main__:   - onnx: READY
+2025-12-24 17:58:46,333 [INFO] __main__: ============================================================
+2025-12-24 17:59:54,150 [INFO] __main__: Interrupt received
+2025-12-24 17:59:54,151 [INFO] __main__: Stopping AI Trading System...
+2025-12-24 17:59:54,151 [ERROR] bridge.socket_server: Error in server loop: [WinError 10038] An operation was attempted on something that is not a socket
+2025-12-24 17:59:54,151 [INFO] bridge.socket_server: Socket Server stopped
+2025-12-24 17:59:54,152 [INFO] __main__: 
+============================================================
+AI TRADING SYSTEM - ANALYTICS REPORT
+============================================================
+Generated: 2025-12-24T17:59:54.152938
+
+PERFORMANCE METRICS:
+  total_trades: 0
+  status: No trades executed
+
+PREDICTION ACCURACY:
+  status: Insufficient data
+
+SIGNAL STATISTICS:
+  total_signals: 0
+
+============================================================
+2025-12-24 18:00:27,030 [INFO] __main__: ============================================================
+2025-12-24 18:00:27,032 [INFO] __main__: ============================================================
+2025-12-24 18:00:27,034 [WARNING] __main__: Failed to load config: 'gbk' codec can't decode byte 0x94 in position 34: illegal multibyte sequence, using defaults
+2025-12-24 18:00:27,035 [INFO] __main__: Initializing core components...
+2025-12-24 18:00:27,035 [INFO] core.model_manager: Loading models...
+2025-12-24 18:00:27,051 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-24 18:00:27,052 [INFO] __main__: Starting AI Trading System...
+2025-12-24 18:00:27,058 [INFO] bridge.socket_server: Socket Server listening for connections...
+2025-12-24 18:00:27,060 [INFO] __main__: ============================================================
+2025-12-24 18:00:27,063 [INFO] __main__: Bridge Mode: SOCKET
+2025-12-24 18:00:27,063 [INFO] __main__: Models Loaded: 1
+2025-12-24 18:00:27,063 [INFO] __main__:   - onnx: READY
+2025-12-24 18:00:27,063 [INFO] __main__: ============================================================
+2025-12-24 18:00:32,646 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 53746)
+2025-12-24 18:00:32,647 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-24 18:00:32,649 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 53746)
+2025-12-24 18:00:32,654 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 53747)
+2025-12-24 18:00:32,655 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 53747)
+2025-12-24 18:00:32,658 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 53748)
+2025-12-24 18:00:32,660 [INFO] __main__: Signal request for Step Index.0
+2025-12-24 18:00:32,716 [INFO] core.signal_generator: Signal generated: NONE for Step Index.0, confidence: 0.50
+2025-12-24 18:00:32,720 [INFO] __main__: Signal generated: NONE (confidence: 0.50)
+2025-12-24 18:00:32,722 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 53748)
+2025-12-24 18:00:32,725 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 53749)
+2025-12-24 18:00:32,727 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 53749)
+2025-12-24 18:04:05,474 [INFO] __main__: ============================================================
+2025-12-24 18:04:05,476 [INFO] __main__: AI TRADING SYSTEM INITIALIZING
+2025-12-24 18:04:05,476 [INFO] __main__: ============================================================
+2025-12-24 18:04:05,483 [INFO] __main__: Configuration loaded from config/bridge.yaml
+2025-12-24 18:04:05,484 [INFO] __main__: Initializing core components...
+2025-12-24 18:04:05,486 [INFO] core.model_manager: Loading models...
+2025-12-24 18:04:05,510 [INFO] core.model_manager: ONNX model loaded
+2025-12-24 18:04:05,511 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-24 18:04:05,512 [INFO] __main__: Core components initialized
+2025-12-24 18:04:05,512 [INFO] __main__: Starting AI Trading System...
+2025-12-24 18:04:05,513 [INFO] bridge.socket_server: Socket Server started on 127.0.0.1:8888
+2025-12-24 18:04:05,515 [INFO] bridge.socket_server: Socket Server listening for connections...
+2025-12-24 18:04:05,515 [INFO] __main__: Socket bridge started
+2025-12-24 18:04:05,516 [INFO] __main__: ============================================================
+2025-12-24 18:04:05,516 [INFO] __main__: AI TRADING SYSTEM ONLINE
+2025-12-24 18:04:05,516 [INFO] __main__: Bridge Mode: SOCKET
+2025-12-24 18:04:05,522 [INFO] __main__: Models Loaded: 1
+2025-12-24 18:04:05,522 [INFO] __main__:   - onnx: READY
+2025-12-24 18:04:05,523 [INFO] __main__: ============================================================
+2025-12-24 18:04:16,052 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 61375)
+2025-12-24 18:04:16,053 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-24 18:04:16,053 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 61375)
+2025-12-24 18:04:16,055 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 61376)
+2025-12-24 18:04:16,056 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 61376)
+2025-12-24 18:04:16,059 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 61377)
+2025-12-24 18:04:16,060 [INFO] __main__: Signal request for Step Index.0
+2025-12-24 18:04:16,064 [INFO] core.signal_generator: Signal generated: NONE for Step Index.0, confidence: 0.50
+2025-12-24 18:04:16,065 [INFO] __main__: Signal generated: NONE (confidence: 0.50)
+2025-12-24 18:04:16,066 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 61377)
+2025-12-24 18:04:16,068 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 61378)
+2025-12-24 18:04:16,069 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 61378)
+2025-12-24 18:06:24,379 [INFO] __main__: ============================================================
+2025-12-24 18:06:24,379 [INFO] __main__: AI TRADING SYSTEM INITIALIZING
+2025-12-24 18:06:24,380 [INFO] __main__: ============================================================
+2025-12-24 18:06:24,387 [INFO] __main__: Configuration loaded from config/bridge.yaml
+2025-12-24 18:06:24,389 [INFO] __main__: Initializing core components...
+2025-12-24 18:06:24,390 [INFO] core.model_manager: Loading models...
+2025-12-24 18:06:24,423 [INFO] core.model_manager: ONNX model loaded
+2025-12-24 18:06:24,426 [WARNING] bridge.file_pipe: MT5 log directory not found: D:\Program Files\MetaTrader 5\logs
+2025-12-24 18:06:24,426 [INFO] __main__: Core components initialized
+2025-12-24 18:06:24,427 [INFO] __main__: Starting AI Trading System...
+2025-12-24 18:06:24,495 [INFO] bridge.zmq_server: ✅ ZMQ Server started on tcp://127.0.0.1:5555
+2025-12-24 18:06:24,498 [INFO] bridge.zmq_server: ZMQ Server listening for messages...
+2025-12-24 18:06:24,498 [INFO] __main__: ZeroMQ bridge started
+2025-12-24 18:06:24,499 [INFO] __main__: ============================================================
+2025-12-24 18:06:24,499 [INFO] __main__: AI TRADING SYSTEM ONLINE
+2025-12-24 18:06:24,499 [INFO] __main__: Bridge Mode: ZMQ
+2025-12-24 18:06:24,501 [INFO] __main__: Models Loaded: 1
+2025-12-24 18:06:24,501 [INFO] __main__:   - onnx: READY
+2025-12-24 18:06:24,503 [INFO] __main__: ============================================================
+2025-12-24 18:06:25,400 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-24 18:06:25,449 [INFO] __main__: Signal request for Step Index.0
+2025-12-24 18:06:25,501 [INFO] core.signal_generator: Signal generated: NONE for Step Index.0, confidence: 0.70
+2025-12-24 18:06:25,503 [INFO] __main__: Signal generated: NONE (confidence: 0.70)
+2025-12-24 18:09:28,511 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55259)
+2025-12-24 18:09:28,513 [INFO] __main__: Handshake request from client version: MQL5-1.0
+2025-12-24 18:09:28,513 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 55259)
+2025-12-24 18:09:28,518 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55260)
+2025-12-24 18:09:28,520 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 55260)
+2025-12-24 18:09:28,523 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55261)
+2025-12-24 18:09:28,525 [INFO] __main__: Signal request for Step Index.0
+2025-12-24 18:09:28,529 [INFO] core.signal_generator: Signal generated: NONE for Step Index.0, confidence: 0.50
+2025-12-24 18:09:28,530 [INFO] __main__: Signal generated: NONE (confidence: 0.50)
+2025-12-24 18:09:28,531 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 55261)
+2025-12-24 18:09:28,536 [INFO] bridge.socket_server: Client connected: ('127.0.0.1', 55262)
+2025-12-24 18:09:28,538 [INFO] bridge.socket_server: Client disconnected: ('127.0.0.1', 55262)
+2025-12-24 18:35:07,572 [INFO] __main__: Interrupt received
+2025-12-24 18:35:07,586 [INFO] __main__: Stopping AI Trading System...
+2025-12-24 18:35:07,595 [ERROR] bridge.socket_server: Error in server loop: [WinError 10038] An operation was attempted on something that is not a socket
+2025-12-24 18:35:07,597 [INFO] bridge.socket_server: Socket Server stopped
+2025-12-24 18:35:07,619 [INFO] __main__: 
+============================================================
+AI TRADING SYSTEM - ANALYTICS REPORT
+============================================================
+Generated: 2025-12-24T18:35:07.613951
+
+PERFORMANCE METRICS:
+  total_trades: 0
+  status: No trades executed
+
+PREDICTION ACCURACY:
+  status: Insufficient data
+
+SIGNAL STATISTICS:
+  total_signals: 3
+  buy_signals: 0
+  sell_signals: 0
+  neutral_signals: 3
+  avg_confidence: 0.5
+  signal_rate: 0.0
+
+============================================================

@@ -270,6 +270,8 @@ SEnhancedSignalResult FuseWithContributions(ENUM_TRADE_SIGNAL &signals[], double
         result.confidence = MathMax(finalBuyScore, finalSellScore);
     }
     
+    result.confidence = MathMin(1.0, MathMax(0.0, result.confidence));
+    
     return result;
 }
 
@@ -389,6 +391,12 @@ ENUM_TRADE_SIGNAL GetRSISignal(string symbol, ENUM_MARKET_REGIME regime)
     if(CopyBuffer(rsiHandle, 0, 0, 1, rsiBuf) <= 0) return TRADE_SIGNAL_NONE;
     double rsi = rsiBuf[0];
     
+    if(rsi <= 0.0 || rsi >= 100.0)
+    {
+        Print("[WARNING] RSI invalid: ", DoubleToString(rsi, 2), " for ", symbol);
+        return TRADE_SIGNAL_NONE;
+    }
+    
     if(rsi < 30) return TRADE_SIGNAL_BUY;   // Oversold
     if(rsi > 70) return TRADE_SIGNAL_SELL;  // Overbought
     
@@ -489,6 +497,8 @@ double CalculateRSIConfidence(string symbol, ENUM_MARKET_REGIME regime)
     double rsiBuf[1];
     if(CopyBuffer(rsiHandle, 0, 0, 1, rsiBuf) <= 0) return 0.5;
     double rsi = rsiBuf[0];
+    
+    if(rsi <= 0.0 || rsi >= 100.0) return 0.0;
     
     // Higher confidence at extreme levels
     if(rsi < 20 || rsi > 80) return 0.9;

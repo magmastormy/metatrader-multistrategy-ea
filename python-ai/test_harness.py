@@ -91,9 +91,9 @@ def run_tests(client_type="zmq"):
         logger.info(f"Response: {json.dumps(response, indent=2)}")
         
         if response.get("success"):
-            logger.info("✅ Handshake successful")
+            logger.info("Handshake successful")
         else:
-            logger.error("❌ Handshake failed")
+            logger.error("Handshake failed")
             
         # Test 2: Heartbeat
         logger.info("\n--- Testing Heartbeat ---")
@@ -105,9 +105,9 @@ def run_tests(client_type="zmq"):
         logger.info(f"Response: {json.dumps(response, indent=2)}")
         
         if response.get("success"):
-            logger.info("✅ Heartbeat successful")
+            logger.info("Heartbeat successful")
         else:
-            logger.error("❌ Heartbeat failed")
+            logger.error("Heartbeat failed")
             
         # Test 3: Signal Request
         logger.info("\n--- Testing Signal Request ---")
@@ -138,9 +138,9 @@ def run_tests(client_type="zmq"):
         logger.info(f"Inference time: {duration:.2f}ms")
         
         if response.get("success"):
-            logger.info("✅ Signal request successful")
+            logger.info("Signal request successful")
         else:
-            logger.error("❌ Signal request failed")
+            logger.error("Signal request failed")
         
         # Test 4: Status Request
         logger.info("\n--- Testing Status Request ---")
@@ -152,9 +152,9 @@ def run_tests(client_type="zmq"):
         logger.info(f"Response: {json.dumps(response, indent=2)}")
         
         if response.get("success"):
-            logger.info("✅ Status request successful")
+            logger.info("Status request successful")
         else:
-            logger.error("❌ Status request failed")
+            logger.error("Status request failed")
             
     except Exception as e:
         logger.error(f"Test failed: {e}")

@@ -135,10 +135,6 @@ if (-not $metaEditor) {
 }
 
 $targetDir = Join-Path $MetaTraderRoot "MQL5\\Experts\\metatrader-multistrategy-ea"
-$mainEa = Join-Path $targetDir "MultiStrategyAutonomousEA.mq5"
-$trainerEa = Join-Path $targetDir "AIModules\\NextGenBrainTrainer.mq5"
-$mainLog = Join-Path $ProjectRoot "compile_full.log"
-$trainerLog = Join-Path $ProjectRoot "compile_trainer.log"
 
 if (-not $SkipSync) {
     Sync-Project -Source $ProjectRoot -Destination $targetDir
@@ -150,28 +146,88 @@ Write-Host """""`n====================================================="""""
 Write-Host "   COMPILATION STARTED" -ForegroundColor Cyan
 Write-Host "====================================================="
 
-Write-Host "Compiling MultiStrategyAutonomousEA.mq5" -ForegroundColor White
-$null = & $metaEditor "/compile:$mainEa" "/log:$mainLog"
-$mainExit = $LASTEXITCODE
+# Find all .mq5 files in the target directory
+Write-Host "Searching for .mq5 files in: $targetDir" -ForegroundColor Cyan
+$mq5Files = Get-ChildItem -Path $targetDir -Filter "*.mq5" -Recurse
 
-Write-Host "Compiling AIModules\\NextGenBrainTrainer.mq5" -ForegroundColor White
-$null = & $metaEditor "/compile:$trainerEa" "/log:$trainerLog"
-$trainerExit = $LASTEXITCODE
+if ($mq5Files.Count -eq 0) {
+    Write-Host "No .mq5 files found in target directory!" -ForegroundColor Red
+    exit 1
+}
 
-Show-Log -Title "compile_full.log" -Path $mainLog
-Show-Log -Title "compile_trainer.log" -Path $trainerLog
+Write-Host "Found $($mq5Files.Count) files:" -ForegroundColor Cyan
+$mq5Files | ForEach-Object { Write-Host " - $($_.FullName)" -ForegroundColor Gray }
 
-$mainErrors = Get-CompileErrors -LogPath $mainLog
-$trainerErrors = Get-CompileErrors -LogPath $trainerLog
-$totalErrors = $mainErrors + $trainerErrors
+$totalErrors = 0
+$compilationResults = @()
+
+# Create unified log file with UTF-8 encoding
+$unifiedLogPath = Join-Path $ProjectRoot "compile_all.log"
+"Compilation started at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $unifiedLogPath -Encoding UTF8
+"" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+
+foreach ($file in $mq5Files) {
+    $relPath = $file.FullName.Substring($targetDir.Length + 1)
+    Write-Host "Compiling $relPath" -ForegroundColor White
+    
+    $logName = "compile_" + $file.BaseName + ".log"
+    $logPath = Join-Path $ProjectRoot $logName
+    Write-Host "Log path: $logPath" -ForegroundColor Gray
+    
+    # MetaEditor requires absolute paths
+    $compileCmd = "/compile:`"$($file.FullName)`""
+    $logCmd = "/log:`"$logPath`""
+    
+    Write-Host "Executing: $metaEditor $compileCmd $logCmd" -ForegroundColor DarkGray
+    
+    $process = Start-Process -FilePath $metaEditor -ArgumentList "$compileCmd", "$logCmd" -Wait -PassThru
+    $exitCode = $process.ExitCode
+    
+    Show-Log -Title $logName -Path $logPath
+    
+    # Append to unified log with UTF-8 encoding
+    "=============================================================" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+    "File: $relPath" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+    "Exit Code: $exitCode" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+    "" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+    if (Test-Path -LiteralPath $logPath) {
+        Get-Content -Path $logPath -Encoding UTF8 | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+    }
+    "" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+    
+    $errors = Get-CompileErrors -LogPath $logPath
+    $totalErrors += $errors
+    
+    $compilationResults += [PSCustomObject]@{
+        File = $relPath
+        ExitCode = $exitCode
+        Errors = $errors
+    }
+}
 
 Write-Host """""`n====================================================="""""
 Write-Host "   COMPILATION SUMMARY" -ForegroundColor Cyan
 Write-Host "====================================================="
-Write-Host "MetaEditor exit codes -> Main: $mainExit, Trainer: $trainerExit" -ForegroundColor Gray
-Write-Host "Main EA Errors: $mainErrors" -ForegroundColor Gray
-Write-Host "Trainer Errors: $trainerErrors" -ForegroundColor Gray
+
+foreach ($result in $compilationResults) {
+    $color = if ($result.Errors -eq 0) { "Gray" } else { "Red" }
+    Write-Host "$($result.File): Exit Code $($result.ExitCode), Errors: $($result.Errors)" -ForegroundColor $color
+}
+
 Write-Host "Total Errors: $totalErrors" -ForegroundColor Gray
+
+# Write summary to unified log
+"=============================================================" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+"COMPILATION SUMMARY" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+"=============================================================" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+foreach ($result in $compilationResults) {
+    "$($result.File): Exit Code $($result.ExitCode), Errors: $($result.Errors)" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+}
+"" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+"Total Errors: $totalErrors" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+"Compilation finished at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
+
+Write-Host "`nUnified compilation log saved to: $unifiedLogPath" -ForegroundColor Cyan
 
 if ($totalErrors -eq 0) {
     Write-Host "✅ SUCCESS: All files compiled with 0 errors!" -ForegroundColor Green

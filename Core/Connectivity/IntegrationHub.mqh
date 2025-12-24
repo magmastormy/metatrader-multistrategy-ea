@@ -10,6 +10,7 @@
 #include "HTTPClient.mqh"
 #include "../../AIModules/NextGenStrategyBrain.mqh"
 #include "../../AIModules/UncertaintyQuantifier.mqh"
+#include "../../AIModules/PythonBridge.mqh"
 #include <Arrays/ArrayDouble.mqh>
 
 // Forward declarations
@@ -143,11 +144,16 @@ private:
 
     bool CallPythonAI(const double &marketData[], double &signal, double &confidence, string &reasoning);
     bool CallCppAI(const double &marketData[], double &signal, double &confidence);
-    
+
     // HTTP Client for Python AI Server
     CHTTPClient* m_httpClient;
     string m_pythonServerUrl;
     bool m_pythonServerHealthy;
+
+    // Python bridge (socket/ZMQ)
+    CPythonBridge* m_pythonBridge;
+    string m_pythonHost;
+    int    m_pythonPort;
 
     // Cached market series
     CArrayDouble m_priceHistory;
@@ -180,6 +186,13 @@ private:
 
     // Error handling
     CEnhancedErrorHandler m_errorHandler;
+
+    // Helpers
+    bool   BuildMarketDataJson(string &marketDataJson) const;
+    bool   ExtractJsonString(const string &json, const string key, string &value) const;
+    bool   ExtractJsonNumber(const string &json, const string key, double &value) const;
+    bool   ExtractDataBlock(const string &json, string &dataBlock) const;
+    string TimeframeToString(ENUM_TIMEFRAMES timeframe) const;
 };
 
 // Global AI Integration Hub instance
@@ -284,321 +297,114 @@ ENUM_MARKET_REGIME AIHubGetCurrentRegime() {
 //+------------------------------------------------------------------+
 bool CAIIntegrationHub::CallPythonAI(const double &marketData[], double &signal, double &confidence, string &reasoning)
 {
-    // ?? PRODUCTION-READY HTTP REST API IMPLEMENTATION ??
-    
     if(!m_pythonAIEnabled)
     {
         reasoning = "Python AI disabled";
         return false;
     }
-    
+
     // Validate input data
-    if(ArraySize(marketData) == 0)
+    int dataSize = ArraySize(marketData);
+    if(dataSize == 0)
     {
         reasoning = "No market data provided";
         return false;
     }
-    
-    if(m_httpClient == NULL)
-    {
-        reasoning = "HTTP client not initialized";
-        return false;
-    }
-    
-    // Build JSON request payload
-    string jsonRequest = "{\"market_data\":[";
-    for(int i = 0; i < ArraySize(marketData); i++)
-    {
-        jsonRequest += DoubleToString(marketData[i], 5);
-        if(i < ArraySize(marketData) - 1) jsonRequest += ",";
-    }
-    jsonRequest += StringFormat("],\"symbol\":\"%s\",\"timeframe\":%d}", m_symbol, (int)m_timeframe);
-    
-    // Execute HTTP POST request to Python AI server
-    SHTTPResponse response;
-    bool success = m_httpClient.POST("/predict", jsonRequest, response);
-    
-    if(!success)
-    {
-        // HTTP request failed - Python AI unavailable
-        m_pythonServerHealthy = false;
-        reasoning = "Python AI server unavailable: " + response.error;
-        Print("[PYTHON-AI] ??Server unavailable - falling back to MQL5 AI");
-        return false;
-    }
-    
-    // Parse JSON response
-    string responseBody = response.body;
-    
-    // Extract signal
-    int signalPos = StringFind(responseBody, "\"signal\":");
-    if(signalPos >= 0)
-    {
-        string signalStr = StringSubstr(responseBody, signalPos + 9);
-        int commaPos = StringFind(signalStr, ",");
-        if(commaPos > 0)
-        {
-            signalStr = StringSubstr(signalStr, 0, commaPos);
-            signal = StringToDouble(signalStr);
-        }
-    }
-    
-    // Extract confidence
-    int confPos = StringFind(responseBody, "\"confidence\":");
-    if(confPos >= 0)
-    {
-        string confStr = StringSubstr(responseBody, confPos + 13);
-        int commaPos = StringFind(confStr, ",");
-        if(commaPos > 0)
-        {
-            confStr = StringSubstr(confStr, 0, commaPos);
-            confidence = StringToDouble(confStr);
-        }
-    }
-    
-    // Extract reasoning
-    int reasonPos = StringFind(responseBody, "\"reasoning\":\"");
-    if(reasonPos >= 0)
-    {
-        string reasonStr = StringSubstr(responseBody, reasonPos + 13);
-        int quoteEnd = StringFind(reasonStr, "\"");
-        if(quoteEnd > 0)
-        {
-            reasoning = StringSubstr(reasonStr, 0, quoteEnd);
-        }
-    }
-    
-    m_pythonServerHealthy = true;
-    
-    Print(StringFormat("[PYTHON-AI] ??Prediction: signal=%.3f, conf=%.3f, time=%.1fms", 
-          signal, confidence, response.responseTimeMs));
-    
-    return true;
-    
-    // Production-ready C++ AI fallback implementation
-    // Advanced technical analysis with multiple indicators
-    
-    reasoning = "Python AI unavailable - using advanced C++ technical analysis";
-    
-    int dataSize = ArraySize(marketData);
-    if(dataSize < 20)
-    {
-        signal = 0.0;
-        confidence = 0.1;
-        reasoning += " | Insufficient data for analysis";
-        return true;
-    }
-    
-    // Calculate multiple technical indicators
-    double sma20 = 0.0, sma50 = 0.0, ema12 = 0.0, ema26 = 0.0;
-    double highest20 = marketData[dataSize-1], lowest20 = marketData[dataSize-1];
-    double aiCurrentPrice = marketData[dataSize-1];
-    
-    // SMA calculations
-    for(int i = MathMax(0, dataSize-20); i < dataSize; i++)
-    {
-        sma20 += marketData[i];
-        if(i >= dataSize-50) sma50 += marketData[i];
-        if(i >= dataSize-20)
-        {
-            highest20 = MathMax(highest20, marketData[i]);
-            lowest20 = MathMin(lowest20, marketData[i]);
-        }
-    }
-    sma20 /= MathMin(20, dataSize);
-    sma50 /= MathMin(50, dataSize);
-    
-    // EMA calculations (simplified)
-    double multiplier12 = 2.0 / (12.0 + 1.0);
-    double multiplier26 = 2.0 / (26.0 + 1.0);
-    
-    ema12 = marketData[MathMax(0, dataSize-12)];
-    ema26 = marketData[MathMax(0, dataSize-26)];
-    
-    for(int i = MathMax(0, dataSize-12) + 1; i < dataSize; i++)
-    {
-        ema12 = (marketData[i] - ema12) * multiplier12 + ema12;
-    }
-    
-    for(int i = MathMax(0, dataSize-26) + 1; i < dataSize; i++)
-    {
-        ema26 = (marketData[i] - ema26) * multiplier26 + ema26;
-    }
-    
-    // MACD calculation
-    double macdLine = ema12 - ema26;
-    double macdSignal = 0.0;
-    
-    // RSI calculation (simplified)
-    double gains = 0.0, losses = 0.0;
-    for(int i = MathMax(1, dataSize-14); i < dataSize; i++)
-    {
-        double change = marketData[i] - marketData[i-1];
-        if(change > 0) gains += change;
-        else losses -= change;
-    }
-    double rsi = 100.0 - (100.0 / (1.0 + (gains / MathMax(losses, 0.001))));
-    
-    // Stochastic calculation
-    double stochK = ((aiCurrentPrice - lowest20) / MathMax(highest20 - lowest20, 0.001)) * 100.0;
-    
-    // Multi-factor scoring system
-    double score = 0.0;
-    double maxScore = 0.0;
-    
-    // Trend factors
-    if(aiCurrentPrice > sma20) { score += 2.0; maxScore += 2.0; }
-    if(sma20 > sma50) { score += 2.0; maxScore += 2.0; }
-    if(ema12 > ema26) { score += 1.5; maxScore += 1.5; }
-    
-    // Momentum factors
-    if(rsi < 30) { score += 2.0; maxScore += 2.0; } // Oversold
-    else if(rsi > 70) { score -= 2.0; maxScore += 2.0; } // Overbought
-    
-    if(stochK < 20) { score += 1.5; maxScore += 1.5; } // Oversold
-    else if(stochK > 80) { score -= 1.5; maxScore += 1.5; } // Overbought
-    
-    // MACD signal
-    if(macdLine > 0) { score += 1.0; maxScore += 1.0; }
-    
-    // Price action factors
-    double priceChange = ((aiCurrentPrice - marketData[dataSize-2]) / marketData[dataSize-2]) * 100.0;
-    if(priceChange > 0.5) { score += 1.0; maxScore += 1.0; }
-    else if(priceChange < -0.5) { score -= 1.0; maxScore += 1.0; }
-    
-    // Volatility factor (simplified ATR-like)
-    double avgRange = 0.0;
-    for(int i = MathMax(1, dataSize-14); i < dataSize; i++)
-    {
-        avgRange += MathAbs(marketData[i] - marketData[i-1]);
-    }
-    avgRange /= MathMin(14, dataSize-1);
-    double volatility = (avgRange / aiCurrentPrice) * 100.0;
-    
-    // Adjust confidence based on volatility
-    double volatilityFactor = 1.0;
-    if(volatility > 2.0) volatilityFactor = 0.8; // High volatility
-    else if(volatility < 0.5) volatilityFactor = 1.2; // Low volatility
-    
-    // Calculate final signal and confidence
-    double normalizedScore = maxScore > 0 ? score / maxScore : 0.0;
-    signal = normalizedScore * 2.0 - 1.0; // Convert to [-1, 1] range
-    
-    // Confidence calculation based on signal strength and market conditions
-    double signalStrength = MathAbs(normalizedScore);
-    double marketQuality = 1.0 - (volatility / 5.0); // Lower confidence in high volatility
-    marketQuality = MathMax(0.3, MathMin(1.0, marketQuality));
-    
-    confidence = signalStrength * marketQuality * volatilityFactor * 0.8; // Max 80% confidence for C++ AI
-    
-    // Additional confidence adjustments
-    if(dataSize < 50) confidence *= 0.7; // Less confidence with limited data
-    if(signalStrength < 0.3) confidence *= 0.6; // Weak signals get lower confidence
-    
-    confidence = MathMax(0.1, MathMin(0.8, confidence)); // Clamp to valid range
-    
-    // Enhanced reasoning
-    if(signal > 0.7) reasoning += " | Strong bullish signals";
-    else if(signal > 0.3) reasoning += " | Moderate bullish signals";
-    else if(signal < -0.7) reasoning += " | Strong bearish signals";
-    else if(signal < -0.3) reasoning += " | Moderate bearish signals";
-    else reasoning += " | Neutral market conditions";
-    
-    reasoning += StringFormat(" | RSI: %.1f, Stoch: %.1f, Volatility: %.2f%%", rsi, stochK, volatility);
-    
-    // Cleanup temp files if they exist
-    FileDelete("temp_market_data.json");
-    FileDelete("ai_prediction_result.json");
-    
-    Print("[PYTHON-AI] Fallback analysis - Signal: ", signal, ", Confidence: ", confidence);
-    return true;
-    
-    return true;
-}
 
-//+------------------------------------------------------------------+
-//| Call C++ AI Implementation                                       |
-//+------------------------------------------------------------------+
-bool CAIIntegrationHub::CallCppAI(const double &marketData[], double &signal, double &confidence)
-{
-    if(!m_cppAIEnabled)
+    // Initialize bridge if needed
+    if(m_pythonBridge == NULL)
     {
-        return false;
+        m_pythonBridge = new CPythonBridge(m_pythonHost, m_pythonPort);
+        if(!m_pythonBridge.Handshake())
+        {
+            reasoning = "Python AI handshake failed";
+            delete m_pythonBridge;
+            m_pythonBridge = NULL;
+            m_pythonHealthy = false;
+            return false;
+        }
+        m_pythonHealthy = true;
     }
-    
-    // Validate input data
-    if(ArraySize(marketData) == 0)
-    {
-        return false;
-    }
-    
-    // Simple mock implementation for C++ AI call
-    // Calculate basic technical indicators from market data
-    double sma = 0.0;
-    for(int i = 0; i < ArraySize(marketData); i++)
-    {
-        sma += marketData[i];
-    }
-    sma /= ArraySize(marketData);
-    
-    // Simple signal generation logic (similar to Python AI but faster)
-    double lastPrice = marketData[ArraySize(marketData) - 1];
-    if(lastPrice > sma * 1.01) // Price above SMA by 1%
-    {
-        signal = 1.0; // Buy signal
-        confidence = 0.6; // Slightly lower confidence than Python AI
-    }
-    else if(lastPrice < sma * 0.99) // Price below SMA by 1%
-    {
-        signal = -1.0; // Sell signal
-        confidence = 0.6;
-    }
-    else
-    {
-        signal = 0.0; // Neutral
-        confidence = 0.2;
-    }
-    
-    return true;
-}
 
-//+------------------------------------------------------------------+
-//| Enable Hybrid AI Configuration                                   |
-//+------------------------------------------------------------------+
-void CAIIntegrationHub::EnableHybridAI(bool enablePython, bool enableCpp, string pythonPath, string cppPath)
-{
-    m_pythonAIEnabled = enablePython;
-    m_cppAIEnabled = enableCpp;
-    
-    if(enablePython && pythonPath != "")
+    // Periodic heartbeat to ensure connection remains alive
+    if(!m_pythonBridge.Heartbeat())
     {
-        m_pythonScriptPath = pythonPath;
-        Print("[AI-HUB] Python AI enabled with path: ", pythonPath);
+        delete m_pythonBridge;
+        m_pythonBridge = new CPythonBridge(m_pythonHost, m_pythonPort);
+        if(!m_pythonBridge.Handshake())
+        {
+            reasoning = "Python AI heartbeat failed";
+            delete m_pythonBridge;
+            m_pythonBridge = NULL;
+            m_pythonHealthy = false;
+            return false;
+        }
     }
-    
-    if(enableCpp && cppPath != "")
+
+    string jsonPayload = "{";
+    jsonPayload += StringFormat("\"symbol\":\"%s\",", m_symbol);
+    jsonPayload += StringFormat("\"timeframe\":\"%s\",", TimeframeToString(m_timeframe));
+
+    string marketJson = "";
+    if(!BuildMarketDataJson(marketJson))
     {
-        m_cppBridgePath = cppPath;
-        Print("[AI-HUB] C++ AI enabled with path: ", cppPath);
+        reasoning = "Failed to build market data payload";
+        return false;
     }
-    
-    Print("[AI-HUB] Hybrid AI configuration updated - Python: ", enablePython, " C++: ", enableCpp);
+    jsonPayload += StringFormat("\"market_data\":%s", marketJson);
+    jsonPayload += "}";
+
+    string rawResponse = m_pythonBridge.SendRequest("signal_request", jsonPayload);
+    if(StringLen(rawResponse) == 0)
+    {
+        reasoning = "Empty response from Python AI";
+        m_pythonHealthy = false;
+        return false;
+    }
+
+    m_pythonHealthy = true;
+
+    string dataBlock;
+    if(!ExtractDataBlock(rawResponse, dataBlock))
+    {
+        reasoning = "Invalid response format";
+        return false;
+    }
+
+    double signalValue = 0.0;
+    double confidenceValue = 0.0;
+    string action = "";
+    string responseReason = "";
+
+    ExtractJsonNumber(dataBlock, "signal_value", signalValue);
+    ExtractJsonNumber(dataBlock, "confidence", confidenceValue);
+    ExtractJsonString(dataBlock, "action", action);
+    ExtractJsonString(dataBlock, "reason", responseReason);
+
+    signal = signalValue;
+    confidence = confidenceValue;
+    reasoning = responseReason;
+
+    Print(StringFormat("[PYTHON-AI] Prediction: action=%s, signal=%.3f, conf=%.3f", action, signal, confidence));
+
+    return true;
 }
 
 //+------------------------------------------------------------------+
 //| Get AI Prediction (Simplified Interface)                         |
 //+------------------------------------------------------------------+
-double CAIIntegrationHub::GetAIPrediction(const double &marketData[], int dataSize)
+double CAIIntegrationHub::GetAIPrediction(const double &marketData[], int dataSize, string &reasoning)
 {
     double signal = 0.0;
     double confidence = 0.0;
-    string reasoning = "";
-    
+
     // Try Python AI first
     if(m_pythonAIEnabled && CallPythonAI(marketData, signal, confidence, reasoning))
     {
         return signal;
     }
+
+    // If Python AI fails, try C++ AI
     
     // Fallback to C++ AI
     if(m_cppAIEnabled && CallCppAI(marketData, signal, confidence))
@@ -649,7 +455,10 @@ CAIIntegrationHub::CAIIntegrationHub() :
     m_lastDataUpdate(0),
     m_httpClient(NULL),
     m_pythonServerUrl("http://localhost:8000"),
-    m_pythonServerHealthy(false)
+    m_pythonServerHealthy(false),
+    m_pythonBridge(NULL),
+    m_pythonHost("127.0.0.1"),
+    m_pythonPort(8888)
 {
     // Initialize HTTP client
     m_httpClient = new CHTTPClient(m_pythonServerUrl, 5000);
@@ -667,6 +476,12 @@ CAIIntegrationHub::~CAIIntegrationHub()
     {
         delete m_httpClient;
         m_httpClient = NULL;
+    }
+
+    if(m_pythonBridge != NULL)
+    {
+        delete m_pythonBridge;
+        m_pythonBridge = NULL;
     }
 }
 

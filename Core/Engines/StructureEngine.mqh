@@ -98,6 +98,7 @@ private:
     double m_structureThreshold;    // BOS/CHOCH threshold
     double m_sweepThreshold;        // Liquidity sweep threshold
     bool m_useATR;                  // Use ATR for adaptive thresholds
+    string m_symbol;                // Current symbol for logging
     
     // State tracking
     SwingPoint m_swingHighs[];     // Array of swing highs
@@ -213,6 +214,8 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
         return false;
     }
     
+    m_symbol = symbol;
+    
     // Clear old swings
     ArrayResize(m_swingHighs, 0);
     ArrayResize(m_swingLows, 0);
@@ -244,13 +247,13 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
                 // Check for BOS/CHOCH
                 if(DetectBOS(point, m_swingHighs[size-1]))
                 {
-                    m_diagnostics.LogSMCDetection("BOS_HIGH", point.price, 
+                    m_diagnostics.LogSMCDetection("BOS_HIGH", m_symbol, point.price, 
                                                  point.price, m_swingHighs[size-1].price,
                                                  true, point.strength);
                 }
                 if(DetectCHOCH(point, m_swingHighs[size-1]))
                 {
-                    m_diagnostics.LogSMCDetection("CHOCH_HIGH", point.price,
+                    m_diagnostics.LogSMCDetection("CHOCH_HIGH", m_symbol, point.price,
                                                  point.price, m_swingHighs[size-1].price,
                                                  false, point.strength);
                 }
@@ -281,13 +284,13 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
                 // Check for BOS/CHOCH
                 if(DetectBOS(point, m_swingLows[size-1]))
                 {
-                    m_diagnostics.LogSMCDetection("BOS_LOW", point.price,
+                    m_diagnostics.LogSMCDetection("BOS_LOW", m_symbol, point.price,
                                                  m_swingLows[size-1].price, point.price,
                                                  false, point.strength);
                 }
                 if(DetectCHOCH(point, m_swingLows[size-1]))
                 {
-                    m_diagnostics.LogSMCDetection("CHOCH_LOW", point.price,
+                    m_diagnostics.LogSMCDetection("CHOCH_LOW", m_symbol, point.price,
                                                  m_swingLows[size-1].price, point.price,
                                                  true, point.strength);
                 }
@@ -299,7 +302,7 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
         {
             if(m_diagnostics != NULL)
             {
-                m_diagnostics.LogSMCDetection("LIQUIDITY_SWEEP", rates[i].close,
+                m_diagnostics.LogSMCDetection("LIQUIDITY_SWEEP", m_symbol, rates[i].close,
                                              rates[i].high, rates[i].low,
                                              rates[i].close > rates[i].open, 50.0);
             }

@@ -24,6 +24,11 @@
 #include "../Risk/PortfolioRiskManager.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
 #include "../Engines/MarketAnalysis.mqh"
+#include "../../IndicatorManager.mqh"
+
+
+
+
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -312,7 +317,15 @@ private:
     double CalculateATR(const string symbolParam, ENUM_TIMEFRAMES timeframe, int period)
     {
         double atrValues[];
-        if(CopyBuffer(iATR(symbolParam, timeframe, period), 0, 0, 1, atrValues) > 0)
+        CIndicatorManager* manager = CIndicatorManager::Instance();
+        if(manager == NULL)
+            return 0.0;
+            
+        int atrHandle = manager.GetATRHandle(symbolParam, timeframe, period);
+        if(atrHandle == INVALID_HANDLE)
+            return 0.0;
+            
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrValues) > 0)
         {
             return atrValues[0];
         }
@@ -704,21 +717,50 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     }
     
     bool result = false;
-    if(orderType == ORDER_TYPE_BUY)
+    int retryCount = 0;
+    int delayMs = TRADE_RETRY_DELAY;
+    
+    while(retryCount < MAX_TRADE_RETRIES && !result)
     {
-        result = m_trade.Buy(volume, symbolName, 0, stopLoss, takeProfit, comment);
-    }
-    else if(orderType == ORDER_TYPE_SELL)
-    {
-        result = m_trade.Sell(volume, symbolName, 0, stopLoss, takeProfit, comment);
+        if(orderType == ORDER_TYPE_BUY)
+        {
+            result = m_trade.Buy(volume, symbolName, 0, stopLoss, takeProfit, comment);
+        }
+        else if(orderType == ORDER_TYPE_SELL)
+        {
+            result = m_trade.Sell(volume, symbolName, 0, stopLoss, takeProfit, comment);
+        }
+        
+        if(!result)
+        {
+            MqlTradeResult tradeResult;
+            m_trade.Result(tradeResult);
+            LogTradeError(tradeResult, "ExecuteMarketOrder");
+            
+            uint retcode = tradeResult.retcode;
+            if(retcode != TRADE_RETCODE_REQUOTE && retcode != TRADE_RETCODE_PRICE_CHANGED)
+                break;
+            
+            retryCount++;
+            if(retryCount < MAX_TRADE_RETRIES)
+            {
+                Print("[TRADE-RETRY] ", symbolName);
+                Sleep(delayMs);
+                delayMs *= 2;
+                m_symbolInfo.Refresh();
+            }
+        }
+        else
+        {
+            MqlTradeResult prResult;
+            m_trade.Result(prResult);
+            if(prResult.volume > 0 && prResult.volume < volume)
+                Print("[PARTIAL-FILL] ", symbolName);
+        }
     }
     
-    if(!result)
-    {
-        MqlTradeResult tradeResult;
-        m_trade.Result(tradeResult);
-        LogTradeError(tradeResult, "ExecuteMarketOrder");
-    }
+    if(!result && retryCount >= MAX_TRADE_RETRIES)
+        Print("[TRADE-FAILED] max retries exceeded");
     
     return result;
 }

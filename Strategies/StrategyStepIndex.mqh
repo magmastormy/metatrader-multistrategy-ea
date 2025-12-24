@@ -28,7 +28,6 @@ private:
     CUtilities* m_utilities;
     
     // Strategy parameters
-    double m_minConfidence;
     double m_riskPerTrade;
     bool m_useAdvancedEntry;
     bool m_useDynamicManagement;
@@ -71,13 +70,13 @@ public:
     CStrategyStepIndex(CStepIndexLevelBreaker* levelBreakerParam, CEnhancedErrorHandler* errHandler, CUtilities* utils) :
         CStrategyBase("StepIndex", 0),
         m_levelBreaker(levelBreakerParam),
-        // m_errorHandler = errHandler; // Assigned in body
         m_utilities(utils),
-        m_minConfidence(0.65),
         m_riskPerTrade(0.02),
         m_useAdvancedEntry(true),
         m_useDynamicManagement(true)
     {
+        // Set parent member in body (cannot initialize parent members in child initialization list)
+        m_minConfidence = 0.65;
     }
     
     // Destructor - cleanup resources

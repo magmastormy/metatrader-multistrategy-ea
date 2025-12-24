@@ -22,7 +22,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     handlers=[
-        logging.FileHandler('logs/ai_runtime.log'),
+        logging.FileHandler('logs/ai_runtime.log', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -58,7 +58,7 @@ class AITradingSystem:
     
     def __init__(self, config_path: str = "config/bridge.yaml"):
         logger.info("="*60)
-        logger.info("🔥 AI TRADING SYSTEM INITIALIZING 🔥")
+        logger.info("AI TRADING SYSTEM INITIALIZING")
         logger.info("="*60)
         
         # Load configuration
@@ -85,12 +85,12 @@ class AITradingSystem:
         # MT5 log parser
         self.log_parser = MT5LogParser()
         
-        logger.info("✅ Core components initialized")
+        logger.info("Core components initialized")
     
     def _load_config(self, config_path: str) -> dict:
         """Load configuration from YAML"""
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             logger.info(f"Configuration loaded from {config_path}")
             return config
@@ -125,9 +125,19 @@ class AITradingSystem:
             self._start_file_bridge()
         
         logger.info("="*60)
-        logger.info("✅ AI TRADING SYSTEM ONLINE")
+        logger.info("AI TRADING SYSTEM ONLINE")
         logger.info(f"Bridge Mode: {self.bridge_type.upper()}")
-        logger.info(f"Models Loaded: {len(self.model_manager.models)}")
+        
+        # Log model status
+        model_count = len(self.model_manager.models)
+        logger.info(f"Models Loaded: {model_count}")
+        
+        if model_count == 0:
+            logger.warning("NO MODELS LOADED - System using fallback logic")
+        else:
+            for model_name, model in self.model_manager.models.items():
+                logger.info(f"  - {model_name}: READY")
+                
         logger.info("="*60)
     
     def _auto_select_bridge(self) -> str:
@@ -153,7 +163,7 @@ class AITradingSystem:
             self.bridge_thread = threading.Thread(target=self.bridge.run, daemon=True)
             self.bridge_thread.start()
             
-            logger.info("✅ ZeroMQ bridge started")
+            logger.info("ZeroMQ bridge started")
         except Exception as e:
             logger.error(f"Failed to start ZMQ bridge: {e}")
             logger.info("Falling back to socket bridge...")
@@ -173,7 +183,7 @@ class AITradingSystem:
             self.bridge_thread = threading.Thread(target=self.bridge.run, daemon=True)
             self.bridge_thread.start()
             
-            logger.info("✅ Socket bridge started")
+            logger.info("Socket bridge started")
         except Exception as e:
             logger.error(f"Failed to start socket bridge: {e}")
             logger.info("Falling back to file bridge...")
@@ -194,7 +204,7 @@ class AITradingSystem:
             self.bridge_thread = threading.Thread(target=self.bridge.run, daemon=True)
             self.bridge_thread.start()
             
-            logger.info("✅ File bridge started")
+            logger.info("File bridge started")
         except Exception as e:
             logger.error(f"Failed to start file bridge: {e}")
             raise
@@ -363,7 +373,7 @@ class AITradingSystem:
         report = self.analytics.generate_report()
         logger.info("\n" + report)
         
-        logger.info("✅ System stopped gracefully")
+        logger.info("System stopped gracefully")
 
 
 def main():

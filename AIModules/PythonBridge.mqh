@@ -91,20 +91,30 @@ void CPythonBridge::Disconnect()
 //+------------------------------------------------------------------+
 string CPythonBridge::SendRequest(string type, string data_json)
 {
-   // Note: The current Python SocketServer implementation closes connection after each request.
-   // So we need to reconnect for each request if using that bridge.
-   
-   if(!Connect()) return "";
+   // Ensure connection
+   if(!IsConnected())
+   {
+      if(!Connect()) return "";
+   }
 
    string request = StringFormat("{\"type\":\"%s\",\"data\":%s}", type, data_json);
    uchar req_data[];
    StringToCharArray(request, req_data);
    
+   // Try to send
    if(SocketSend(m_socket, req_data, ArraySize(req_data)-1) < 0)
    {
-      Print("Failed to send data. Error: ", GetLastError());
+      // If send fails, try to reconnect once
+      Print("Socket send failed, attempting to reconnect...");
       Disconnect();
-      return "";
+      if(!Connect()) return "";
+      
+      if(SocketSend(m_socket, req_data, ArraySize(req_data)-1) < 0)
+      {
+         Print("Failed to send data after reconnect. Error: ", GetLastError());
+         Disconnect();
+         return "";
+      }
    }
 
    uchar rsp_data[];
@@ -125,13 +135,20 @@ string CPythonBridge::SendRequest(string type, string data_json)
          }
          else
          {
+            // Connection might be closed by peer
+            if(!SocketIsConnected(m_socket))
+            {
+                Print("Connection closed by peer during read");
+                Disconnect();
+                return "";
+            }
             break; 
          }
       }
       Sleep(10);
    }
 
-   Disconnect(); // Close after request as per current server implementation
+   // Do NOT disconnect - keep connection alive
    return response;
 }
 
