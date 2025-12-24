@@ -1,4 +1,4 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //| Fair Value Gap Strategy Module                                  |
 //+------------------------------------------------------------------+
 #ifndef __STRATEGY_FAIRVALUEGAP_MQH__
@@ -267,6 +267,7 @@ bool CStrategyFairValueGap::FindFairValueGaps(const string symbol, const ENUM_TI
                 {
                     m_diagnostics.LogSMCDetection(
                         "FVG_DETECTED",
+                        m_symbol,
                         (fvgHigh + fvgLow) / 2.0,
                         fvgHigh,
                         fvgLow,

@@ -50,7 +50,7 @@ input bool InpEnableElliott = false;          // Enable Elliott Advanced Strateg
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
 input bool InpEnableAIMode = true;             // Enable AI Mode
-input double InpAIConfidenceThreshold = 0.45;  // AI Confidence Threshold (🔥 Lowered from 0.65 to 0.45)
+input double InpAIConfidenceThreshold = 0.45;  // AI Confidence Threshold ( Lowered from 0.65 to 0.45)
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 
 //--- Enterprise Mode Settings
@@ -98,6 +98,7 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 #include "Core\Utils\SymbolContext.mqh"
 #include "Core\Strategy\StrategyWrapper.mqh"
 #include "Core\Trading\TPManagerEntry.mqh"
+#include "IndicatorManager.mqh"
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\TransformerBrain.mqh"
 #include "AIModules\EnsembleMetaLearner.mqh"
@@ -688,12 +689,13 @@ int OnInit()
     }
 
     // Initialize AI systems integration
-    if(InpUsePythonAI || InpUseCppAI || InpUseHybridAI)
+    if((InpUsePythonAI || InpUseHybridAI) && !InitializeAISystems())
     {
-        if(!InitializeAISystems())
-        {
-            Print("[WARNING] Failed to initialize extended AI systems - continuing with basic AI");
-        }
+        Print("[WARNING] Failed to initialize extended AI systems - continuing with basic AI");
+    }
+    else if(InpUsePythonAI || InpUseHybridAI)
+    {
+        Print("[AI] Extended AI systems initialized successfully");
     }
     
     // Initialize risk management systems
@@ -753,14 +755,13 @@ int OnInit()
     currentEquity = peakEquity;
     accountEquity = peakEquity;
     
-    // 🔥 CRITICAL FIX: Initialize daily risk limits!
     // Allow risking up to 10% of account per day (conservative daily limit)
     maxDailyRisk = accountEquity * 0.10;  // 10% of equity per day max
     dailyRiskUsed = 0.0;
     PrintFormat("[RISK-INIT] Max daily risk set to %.2f (10%% of equity %.2f)", 
                maxDailyRisk, accountEquity);
     
-    // 🔥 CRITICAL FIX: Initialize Portfolio Risk Manager and Risk Validation Gate!
+    // Initialize Portfolio Risk Manager and Risk Validation Gate!
     // InpMaxDailyRisk is already in decimal format (0.06 = 6%), don't divide by 100!
     if(!portfolioRisk.Initialize(&positionSizer, InpMaxDailyRisk, 10.0))
     {
@@ -933,7 +934,7 @@ string GetDeInitReasonText(int reasonCode)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-    // 🔥 DEBUG: First tick detection
+    // First tick detection
     static bool firstTick = true;
     static int tickCount = 0;
     tickCount++;
@@ -946,7 +947,7 @@ void OnTick()
         firstTick = false;
     }
     
-    // 🔥 FIX: Enhanced logging every 50 ticks to show pipeline activity
+    // Enhanced logging every 50 ticks to show pipeline activity
     if(tickCount % 50 == 0)
     {
         PrintFormat("[DEBUG-ONTICK] Tick #%d - EA is processing ticks normally", tickCount);
@@ -957,7 +958,7 @@ void OnTick()
         if(InpEnableEnterpriseMode && g_enterpriseManager != NULL)
         {
             int activeStrats = g_enterpriseManager.GetActiveStrategyCount();
-            int eaPositions = GetEAPositionCount();  // 🔥 FIX: Count only THIS EA's positions
+            int eaPositions = GetEAPositionCount();  // Count only THIS EA's positions
             int cooldownSecs = g_lastTradeTime > 0 ? (int)(TimeCurrent() - g_lastTradeTime) : 0;
             Print("[ENTERPRISE-STATUS] Active strategies: ", activeStrats, " | Cooldown: ", 
                   cooldownSecs, "s / ", InpMinSecondsBetweenTrades, "s");
@@ -1005,7 +1006,7 @@ void OnTick()
     // Enterprise Mode Multi-Symbol Signal Generation
     if(InpEnableEnterpriseMode && g_enterpriseManager != NULL)
     {
-        // CRITICAL: Check cooldown to prevent chain trading
+        // Check cooldown to prevent chain trading
         datetime tickTime = TimeCurrent();
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
         
@@ -1015,7 +1016,7 @@ void OnTick()
             return;
         }
         
-        // 🔥 FIX: Check position limit - count only THIS EA's positions by magic number
+        // Check position limit - count only THIS EA's positions by magic number
         int eaPositions = GetEAPositionCount();
         if(eaPositions >= InpMaxPositionsTotal)
         {
@@ -1047,21 +1048,48 @@ void OnTick()
                                    SymbolInfoDouble(currentSymbol, SYMBOL_ASK) : 
                                    SymbolInfoDouble(currentSymbol, SYMBOL_BID);
                 
-                // Calculate ATR for adaptive SL/TP
-                int atrHandle = iATR(currentSymbol, PERIOD_CURRENT, 14);
+                // Calculate ATR for adaptive SL/TP using IndicatorManager
+                CIndicatorManager* indManager = CIndicatorManager::Instance();
+                int atrHandle = INVALID_HANDLE;
+                if(indManager != NULL)
+                    atrHandle = indManager.GetATRHandle(currentSymbol, PERIOD_CURRENT, 14);
+
                 double atr[];
                 ArraySetAsSeries(atr, true);
-                if(CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
+                if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
                 {
                     // Use ATR-based SL/TP calculation (adaptive)
                     double atrValue = atr[0];
                     double pointValue = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
-                    double stopLossPips = (atrValue / pointValue) * 2.0;  // 2x ATR for SL
+                    
+                    // Check if this is a synthetic index (different pip calculation)
+                    bool isSynthetic = (StringFind(currentSymbol, "Volatility") >= 0 || 
+                                       StringFind(currentSymbol, "Boom") >= 0 || 
+                                       StringFind(currentSymbol, "Crash") >= 0 ||
+                                       StringFind(currentSymbol, "Step") >= 0);
+                    
+                    double stopLossPips = 0;
+                    if(isSynthetic)
+                    {
+                        // For synthetics: ATR is already in price units, convert carefully
+                        // Use 1.5x ATR as SL, but convert to pips properly
+                        stopLossPips = (atrValue * 1.5) / pointValue;
+                    }
+                    else
+                    {
+                        // For regular pairs: standard calculation
+                        stopLossPips = (atrValue / pointValue) * 2.0;
+                    }
+                    
                     double takeProfitPips = stopLossPips * 2.0;  // 2:1 RR ratio
                     
-                    // Clamp SL/TP to reasonable bounds
-                    stopLossPips = MathMax(20, MathMin(150, stopLossPips));
-                    takeProfitPips = stopLossPips * 2.0;
+                    // Clamp SL/TP to reasonable bounds based on price percentage
+                    // Min SL: 0.5% of price, Max SL: 3.0% of price (tighter for safety)
+                    double minSlPips = (entryPrice * 0.005) / pointValue;
+                    double maxSlPips = (entryPrice * 0.03) / pointValue;
+                    
+                    stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
+                    takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
                     
                     double proposedRisk = InpMaxRiskPerTrade; // Pass decimal (0.02), not dollar amount
                     
@@ -1135,7 +1163,7 @@ void OnTick()
                                     }
                                 }
                                 
-                                // CRITICAL: Stop after first successful trade to enforce cooldown
+                                // Stop after first successful trade to enforce cooldown
                                 return;
                             }
                         }
@@ -1222,8 +1250,6 @@ void OnTick()
     }
 
     // Process trading logic
-    // Process trading logic
-    // tradingEngine.OnTick(); // Replaced with robust loop
     ProcessAllSymbols();
 
     // Manage open positions via Trading Engine

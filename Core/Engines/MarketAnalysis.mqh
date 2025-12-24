@@ -369,33 +369,31 @@ public:
         return true;
     }
     
-    CMarketAnalysis() :{
-        m_currentRegime = MARKET_REGIME_RANGING; // Default to ranging market
-        m_previousRegime = MARKET_REGIME_RANGING;
-        m_lastRegimeChange = 0;
-        m_regimeStability = 0;
-        m_trendStrength = 0.0;
-        m_volatility = 0.0;
-        m_momentum = 0.0;
-        m_volumeProfile = 0.0;
-        m_regimeHistoryCount = 0;
-
-        // Initialize indicator settings and handles
+    CMarketAnalysis() :
+        m_currentRegime(MARKET_REGIME_RANGING),
+        m_previousRegime(MARKET_REGIME_RANGING),
+        m_lastRegimeChange(0),
+        m_regimeStability(0),
+        m_trendStrength(0.0),
+        m_volatility(0.0),
+        m_momentum(0.0),
+        m_volumeProfile(0.0),
+        m_regimeHistoryCount(0),
         m_symbol(""),
         m_period(PERIOD_CURRENT),
         m_initTime(0),
         m_indicatorsReady(false),
         m_initAttempts(0),
         m_lastInitAttempt(0),
-        // Initialize indicator handles
-        m_adxHandle = INVALID_HANDLE;
-        m_atrHandle = INVALID_HANDLE;
-        m_bbHandle = INVALID_HANDLE;
-        m_macdHandle = INVALID_HANDLE;
-        m_rsiHandle = INVALID_HANDLE;
-        m_ma20Handle = INVALID_HANDLE;
-        m_ma50Handle = INVALID_HANDLE;
-        m_ma200Handle = INVALID_HANDLE;
+        m_adxHandle(INVALID_HANDLE),
+        m_atrHandle(INVALID_HANDLE),
+        m_bbHandle(INVALID_HANDLE),
+        m_macdHandle(INVALID_HANDLE),
+        m_rsiHandle(INVALID_HANDLE),
+        m_ma20Handle(INVALID_HANDLE),
+        m_ma50Handle(INVALID_HANDLE),
+        m_ma200Handle(INVALID_HANDLE)
+    {
         
         // Initialize indicator parameters
         m_adxPeriod = 14;

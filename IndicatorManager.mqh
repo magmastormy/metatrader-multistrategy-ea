@@ -12,15 +12,15 @@
 // Define indicator types for easier reference
 enum ENUM_INDICATOR_TYPE
 {
-   IND_RSI,        // Relative Strength Index
-   IND_MA,         // Moving Average
-   IND_MACD,       // MACD
-   IND_ATR,        // Average True Range
-   IND_BB,         // Bollinger Bands
-   IND_STOCH,      // Stochastic
-   IND_ICHIMOKU,   // Ichimoku Cloud
-   IND_ADX,        // ADX
-   IND_CUSTOM      // Custom indicator
+   INDICATOR_RSI,        // Relative Strength Index
+   INDICATOR_MA,         // Moving Average
+   INDICATOR_MACD,       // MACD
+   INDICATOR_ATR,        // Average True Range
+   INDICATOR_BB,         // Bollinger Bands
+   INDICATOR_STOCH,      // Stochastic
+   INDICATOR_ICHIMOKU,   // Ichimoku Cloud
+   INDICATOR_ADX,        // ADX
+   INDICATOR_CUSTOM      // Custom indicator
 };
 
 //+------------------------------------------------------------------+
@@ -46,6 +46,7 @@ private:
    IndicatorHandle   m_handles[];   // Array of handles
    
                      CIndicatorManager() {}; // Private constructor
+                     ~CIndicatorManager();  // Destructor
    
 public:
    static CIndicatorManager *Instance();
@@ -163,7 +164,7 @@ void CIndicatorManager::AccessHandle(int handle)
 int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price)
 {
    int params[5] = {period, applied_price};
-   int handle = FindHandle(IND_RSI, symbol, tf, params);
+   int handle = FindHandle(INDICATOR_RSI, symbol, tf, params);
    
    if(handle != INVALID_HANDLE)
    {
@@ -181,7 +182,7 @@ int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       m_handles[size].lastAccess = TimeCurrent();
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
-      m_handles[size].type = IND_RSI;
+      m_handles[size].type = INDICATOR_RSI;
       m_handles[size].parameters[0] = period;
       m_handles[size].parameters[1] = (int)applied_price;
    }
@@ -195,7 +196,7 @@ int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
 int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int ma_shift, ENUM_MA_METHOD ma_method, ENUM_APPLIED_PRICE applied_price)
 {
    int params[5] = {period, ma_shift, ma_method, applied_price};
-   int handle = FindHandle(IND_MA, symbol, tf, params);
+   int handle = FindHandle(INDICATOR_MA, symbol, tf, params);
    
    if(handle != INVALID_HANDLE)
    {
@@ -213,7 +214,7 @@ int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period
       m_handles[size].lastAccess = TimeCurrent();
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
-      m_handles[size].type = IND_MA;
+      m_handles[size].type = INDICATOR_MA;
       m_handles[size].parameters[0] = period;
       m_handles[size].parameters[1] = ma_shift;
       m_handles[size].parameters[2] = (int)ma_method;
@@ -229,7 +230,7 @@ int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period
 int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int period)
 {
    int params[5] = {period};
-   int handle = FindHandle(IND_ATR, symbol, tf, params);
+   int handle = FindHandle(INDICATOR_ATR, symbol, tf, params);
    
    if(handle != INVALID_HANDLE)
    {
@@ -247,7 +248,7 @@ int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       m_handles[size].lastAccess = TimeCurrent();
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
-      m_handles[size].type = IND_ATR;
+      m_handles[size].type = INDICATOR_ATR;
       m_handles[size].parameters[0] = period;
    }
    
@@ -260,7 +261,7 @@ int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
 int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast_ema_period, int slow_ema_period, int signal_period, ENUM_APPLIED_PRICE applied_price)
 {
    int params[5] = {fast_ema_period, slow_ema_period, signal_period, applied_price};
-   int handle = FindHandle(IND_MACD, symbol, tf, params);
+   int handle = FindHandle(INDICATOR_MACD, symbol, tf, params);
    
    if(handle != INVALID_HANDLE)
    {
@@ -278,7 +279,7 @@ int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast
       m_handles[size].lastAccess = TimeCurrent();
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
-      m_handles[size].type = IND_MACD;
+      m_handles[size].type = INDICATOR_MACD;
       m_handles[size].parameters[0] = fast_ema_period;
       m_handles[size].parameters[1] = slow_ema_period;
       m_handles[size].parameters[2] = signal_period;
@@ -295,22 +296,22 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
 {
    switch(type)
    {
-      case IND_RSI:
+      case INDICATOR_RSI:
          if(ArraySize(params) >= 2)
             return GetRSIHandle(symbol, tf, params[0], (ENUM_APPLIED_PRICE)params[1]);
          break;
          
-      case IND_MA:
+      case INDICATOR_MA:
          if(ArraySize(params) >= 4)
             return GetMAHandle(symbol, tf, params[0], params[1], (ENUM_MA_METHOD)params[2], (ENUM_APPLIED_PRICE)params[3]);
          break;
          
-      case IND_ATR:
+      case INDICATOR_ATR:
          if(ArraySize(params) >= 1)
             return GetATRHandle(symbol, tf, params[0]);
          break;
          
-      case IND_MACD:
+      case INDICATOR_MACD:
          if(ArraySize(params) >= 4)
             return GetMACDHandle(symbol, tf, params[0], params[1], params[2], (ENUM_APPLIED_PRICE)params[3]);
          break;

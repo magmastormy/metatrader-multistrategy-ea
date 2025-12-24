@@ -1,4 +1,4 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //| Swing Trading Strategy Module                                   |
 //| Uses MA(20), MA(50), and RSI(14)                                 |
 //+------------------------------------------------------------------+
@@ -73,7 +73,7 @@ private:
         bool dataReady = false;
         while(attempts < 10 && !dataReady)
         {
-            // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
+            // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
             if(CopyBuffer(maFastHandle, 0, 0, 2, maFast) == 2 &&
                CopyBuffer(maSlowHandle, 0, 0, 2, maSlow) == 2)
             {
@@ -109,7 +109,7 @@ private:
         dataReady = false;
         while(attempts < 10 && !dataReady)
         {
-            // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
+            // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
             if(CopyBuffer(rsiHandle, 0, 0, 1, rsi) == 1)
             {
                 dataReady = true;
@@ -145,6 +145,7 @@ private:
             {
                 m_diagnostics.LogSMCDetection(
                     bullishCross ? "BULLISH_CROSS" : "BEARISH_CROSS",
+                    m_symbol,
                     maFast[0],
                     maFast[0],
                     maSlow[0],

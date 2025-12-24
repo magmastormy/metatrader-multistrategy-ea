@@ -32,7 +32,7 @@ class SocketServer:
             self.server_socket.settimeout(1.0)  # 1 second timeout
             
             self.is_running = True
-            logger.info(f"✅ Socket Server started on {self.host}:{self.port}")
+            logger.info(f"Socket Server started on {self.host}:{self.port}")
             
         except Exception as e:
             logger.error(f"Failed to start Socket server: {e}")
@@ -70,45 +70,46 @@ class SocketServer:
     def _handle_client(self, client_socket: socket.socket, address):
         """Handle client connection"""
         try:
-            # Receive data
-            data = b''
             while True:
-                chunk = client_socket.recv(4096)
-                if not chunk:
+                # Receive data
+                data = b''
+                while True:
+                    chunk = client_socket.recv(4096)
+                    if not chunk:
+                        return # Client disconnected
+                    data += chunk
+                    if len(chunk) < 4096:  # Last chunk assumption (legacy)
+                        break
+                
+                if not data:
                     break
-                data += chunk
-                if len(chunk) < 4096:  # Last chunk
-                    break
-            
-            if not data:
-                return
-            
-            message_str = data.decode('utf-8')
-            logger.debug(f"Received from {address}: {message_str[:100]}...")
-            
-            # Parse and validate
-            message = MessageProtocol.parse_message(message_str)
-            is_valid, validation_msg = MessageProtocol.validate_request(message)
-            
-            if not is_valid:
-                response = MessageProtocol.create_error_response(validation_msg)
-            else:
-                # Handle message
-                response = self.message_handler(message)
-            
-            # Send response
-            client_socket.sendall(response.encode('utf-8'))
-            logger.debug(f"Sent to {address}: {response[:100]}...")
-            
+                
+                message_str = data.decode('utf-8')
+                # logger.debug(f"Received from {address}: {message_str[:100]}...")
+                
+                # Parse and validate
+                try:
+                    message = MessageProtocol.parse_message(message_str)
+                    is_valid, validation_msg = MessageProtocol.validate_request(message)
+                    
+                    if not is_valid:
+                        response = MessageProtocol.create_error_response(validation_msg)
+                    else:
+                        # Handle message
+                        response = self.message_handler(message)
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")
+                    response = MessageProtocol.create_error_response(str(e))
+                
+                # Send response
+                client_socket.sendall(response.encode('utf-8'))
+                # logger.debug(f"Sent to {address}: {response[:100]}...")
+                
         except Exception as e:
             logger.error(f"Error handling client {address}: {e}")
-            try:
-                error_response = MessageProtocol.create_error_response(str(e))
-                client_socket.sendall(error_response.encode('utf-8'))
-            except:
-                pass
         finally:
             client_socket.close()
+            logger.info(f"Client disconnected: {address}")
     
     def stop(self):
         """Stop socket server"""

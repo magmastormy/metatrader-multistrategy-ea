@@ -123,7 +123,7 @@ class ModelManager:
                     with open(lgbm_path, 'rb') as f:
                         self.models['lgbm'] = pickle.load(f)
                     self.model_weights['lgbm'] = 0.6
-                    logger.info("✅ LightGBM model loaded")
+                    logger.info("LightGBM model loaded")
                 except Exception as e:
                     logger.error(f"Failed to load LightGBM: {e}")
         
@@ -138,7 +138,7 @@ class ModelManager:
                     )
                     self.models['transformer'].eval()
                     self.model_weights['transformer'] = 0.4
-                    logger.info("✅ Transformer model loaded")
+                    logger.info("Transformer model loaded")
                 except Exception as e:
                     logger.error(f"Failed to load Transformer: {e}")
         
@@ -152,12 +152,12 @@ class ModelManager:
                         providers=['CPUExecutionProvider']
                     )
                     self.model_weights['onnx'] = 0.5
-                    logger.info("✅ ONNX model loaded")
+                    logger.info("ONNX model loaded")
                 except Exception as e:
                     logger.error(f"Failed to load ONNX: {e}")
         
         if not self.models:
-            logger.warning("⚠️ No models loaded, using fallback logic")
+            logger.warning("NO MODELS LOADED, using fallback logic")
     
     def predict(self, features: np.ndarray) -> Dict[str, float]:
         """Generate ensemble prediction"""

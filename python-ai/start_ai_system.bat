@@ -1,28 +1,65 @@
 @echo off
-REM Start AI Trading System with automatic bridge selection
+setlocal enabledelayedexpansion
 
 echo ========================================
-echo  AI TRADING SYSTEM LAUNCHER
+echo   AI Trading System Startup Script
 echo ========================================
 echo.
 
-REM Activate conda environment (ai_nexus)
-if exist "%USERPROFILE%\anaconda3\Scripts\activate.bat" (
-    echo Activating conda environment: ai_nexus...
-    call %USERPROFILE%\anaconda3\Scripts\activate.bat ai_nexus
-) else if exist "ai_trading_env\Scripts\activate.bat" (
-    echo Activating virtual environment...
-    call ai_trading_env\Scripts\activate.bat
-) else (
-    echo Warning: No environment found
-    echo Using system Python...
+REM Move into python-ai directory
+pushd "%~dp0..\python-ai"
+
+REM Activate hariaki conda environment
+call conda activate hariaki
+
+REM Validate activation
+if errorlevel 1 (
+    echo ERROR: Failed to activate hariaki environment.
+    echo Ensure conda is installed and the environment exists.
+    popd
+    pause
+    exit /b 1
 )
 
-REM Create logs directory
-if not exist "logs" mkdir logs
+echo Environment activated: hariaki
+echo Python version:
+python --version
+echo.
 
-REM Start the system
-echo Starting AI system...
-python main.py --bridge auto
+REM Prompt optional bridge selection
+set "BRIDGE_MODE=socket"
+if not "%1"=="" (
+    set "BRIDGE_MODE=%1"
+) else (
+    echo Available bridge modes: auto, zmq, socket, file
+    set /p BRIDGE_MODE=Enter bridge mode [socket]: 
+    if "%BRIDGE_MODE%"=="" set "BRIDGE_MODE=socket"
+)
 
+echo Selected bridge: %BRIDGE_MODE%
+echo.
+
+echo Starting AI Trading System...
+echo Logs -> python-ai\logs\ai_runtime.log
+echo Press Ctrl+C to stop the AI server.
+echo ========================================
+
+python main.py --bridge %BRIDGE_MODE%
+
+echo.
+set RUN_TEST=N
+echo Run communication test harness now? [Y/N]
+set /p RUN_TEST=Choice [N]: 
+if "%RUN_TEST%"=="" set "RUN_TEST=N"
+
+if /I "%RUN_TEST%"=="Y" (
+    echo.
+    echo Running test harness (socket)...
+    python test_harness.py --type socket
+)
+
+popd
+echo.
+echo Shutdown complete. Review logs if needed.
 pause
+endlocal

@@ -1,4 +1,4 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //| Order Block Strategy Module                                     |
 //+------------------------------------------------------------------+
 #ifndef __STRATEGY_ORDERBLOCK_MQH__
@@ -260,11 +260,12 @@ bool CStrategyOrderBlock::FindOrderBlocks(const string symbol, const ENUM_TIMEFR
             if(m_diagnostics != NULL) {
                 m_diagnostics.LogSMCDetection(
                     "ORDER_BLOCK_FOUND",
+                    m_symbol,
                     price,
                     rates[i].high,
                     rates[i].low,
                     isBullish,
-                    60.0  // Base score
+                    60.0
                 );
             }
         }
@@ -330,7 +331,7 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
     confidence = 0.0;
     
     // Find order blocks for this symbol/timeframe (with throttling)
-    datetime currentTime = TimeCurrent();
+    datetime localCurrentTime = TimeCurrent();
     bool needsRescan = (currentTime - m_lastScan) >= m_scanCooldown;
     
     if (needsRescan) {
@@ -396,24 +397,31 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
             if(m_diagnostics != NULL) {
                 m_diagnostics.LogSMCDetection(
                     "ORDER_BLOCK_TOUCH",
+                    m_symbol,
                     bid,
                     blockHigh,
                     blockLow,
                     true,
-                    block.strength * 20.0  // Convert strength to score
+                    block.strength * 20.0
                 );
             }
             
-            // The closer to the order block, the higher the confidence
-            double dist = MathAbs(bid - blockPrice) / point;
-            confidence = (50.0 - dist) / 50.0;
-            if(confidence < 0) confidence = 0;
-            if(confidence > 1) confidence = 1;
             
-            // Early filter: skip low-confidence signals (below 30%)
+            // Calculate confidence based on distance from zone center relative to zone width
+            double zoneWidth = (blockHigh - blockLow);
+            if(zoneWidth <= 0) zoneWidth = point * 10;
+            double zoneCenter = (blockHigh + blockLow) / 2.0;
+            double dist = MathAbs(bid - zoneCenter);
+            confidence = MathMax(0.3, 1.0 - (dist / zoneWidth));
+            confidence = MathMin(1.0, confidence);
+            
+            // Boost confidence based on block strength
+            confidence = confidence * (0.5 + (block.strength * 0.1));
+            confidence = MathMin(1.0, MathMax(0.0, confidence));
+            
             if(confidence < m_minConfidence) {
                 m_lowConfidenceFiltered++;
-                continue;  // Keep checking other blocks
+                continue;
             }
             
             m_signalsGenerated++;
@@ -438,24 +446,29 @@ ENUM_TRADE_SIGNAL CStrategyOrderBlock::GetSignal(double &confidence)
             if(m_diagnostics != NULL) {
                 m_diagnostics.LogSMCDetection(
                     "ORDER_BLOCK_TOUCH",
+                    m_symbol,
                     ask,
                     blockHigh,
                     blockLow,
                     false,
-                    block.strength * 20.0  // Convert strength to score
+                    block.strength * 20.0
                 );
             }
             
-            // The closer to the order block, the higher the confidence
-            double dist = MathAbs(ask - blockPrice) / point;
-            confidence = (50.0 - dist) / 50.0;
-            if(confidence < 0) confidence = 0;
-            if(confidence > 1) confidence = 1;
             
-            // Early filter: skip low-confidence signals (below 30%)
+            double zoneWidth = (blockHigh - blockLow);
+            if(zoneWidth <= 0) zoneWidth = point * 10;
+            double zoneCenter = (blockHigh + blockLow) / 2.0;
+            double dist = MathAbs(ask - zoneCenter);
+            confidence = MathMax(0.3, 1.0 - (dist / zoneWidth));
+            confidence = MathMin(1.0, confidence);
+            
+            confidence = confidence * (0.5 + (block.strength * 0.1));
+            confidence = MathMin(1.0, MathMax(0.0, confidence));
+            
             if(confidence < m_minConfidence) {
                 m_lowConfidenceFiltered++;
-                continue;  // Keep checking other blocks
+                continue;
             }
             
             m_signalsGenerated++;

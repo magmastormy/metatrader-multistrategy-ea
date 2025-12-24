@@ -156,7 +156,8 @@ public:
                                    const double &confidences[], const ENUM_TIMEFRAMES &timeframes[]);
     
     // SMC-specific logging
-    void LogSMCDetection(const string type, // "OrderBlock", "FVG", "Supply/Demand", "Sweep"
+    void LogSMCDetection(const string type,
+                        const string symbol,
                         const double price,
                         const double top,
                         const double bottom,
@@ -185,6 +186,9 @@ public:
     // Configuration
     void SetLogLevel(int level) { m_logLevel = level; }
     void EnableDiagnostics(bool enable) { m_enabled = enable; }
+    
+    // Validation
+    bool ValidateAndLogConfidence(const string strategyName, const string symbol, const double confidence);
     
 private:
     void WriteToFile(const string message);
@@ -285,6 +289,9 @@ void CSignalDiagnostics::LogSignalGeneration(const string strategyName,
                                             const string reasoning)
 {
     if(!m_enabled) return;
+    
+    // Validate confidence
+    ValidateAndLogConfidence(strategyName, symbol, confidence);
     
     SSignalRecord record;
     record.timestamp = TimeCurrent();
@@ -440,6 +447,7 @@ void CSignalDiagnostics::LogHedgingPrevented(const string strategy,
 //| Log SMC Detection                                               |
 //+------------------------------------------------------------------+
 void CSignalDiagnostics::LogSMCDetection(const string type,
+                                        const string symbol,
                                         const double price,
                                         const double top,
                                         const double bottom,
@@ -448,8 +456,8 @@ void CSignalDiagnostics::LogSMCDetection(const string type,
 {
     if(!m_enabled || m_logLevel < 3) return;
     
-    string msg = StringFormat("[SMC_%s] Price: %.5f | Zone: %.5f-%.5f | %s | Score: %.1f",
-                            type, price, bottom, top,
+    string msg = StringFormat("[SMC_%s] %s | Price: %.5f | Zone: %.5f-%.5f | %s | Score: %.1f",
+                            type, symbol, price, bottom, top,
                             bullish ? "BULLISH" : "BEARISH",
                             score);
     
@@ -573,5 +581,31 @@ string CSignalDiagnostics::TimeframeToString(int tf)
 
 
 // Duplicate methods removed - already defined above
+
+//+------------------------------------------------------------------+
+//| Validate and Log Confidence                                     |
+//+------------------------------------------------------------------+
+bool CSignalDiagnostics::ValidateAndLogConfidence(const string strategyName, const string symbol, const double confidence)
+{
+    if(confidence < 0.0 || confidence > 1.0)
+    {
+        string msg = StringFormat("[CRITICAL_ALERT] INVALID_CONFIDENCE | %s | %s | Value: %.4f | Range: [0.0, 1.0]",
+                                strategyName, symbol, confidence);
+        
+        Print(msg);
+        WriteToFile(msg);
+        
+        // Also log to error handler if available
+        CEnhancedErrorHandler* localErrorHandler = CEnhancedErrorHandler::GetInstance();
+        if(CheckPointer(localErrorHandler) != POINTER_INVALID)
+        {
+            localErrorHandler.LogError(ERROR_CRITICAL, "SignalDiagnostics", 
+                                "Confidence out of bounds: " + DoubleToString(confidence, 4));
+        }
+        
+        return false;
+    }
+    return true;
+}
 
 #endif // SIGNAL_DIAGNOSTICS_MQH

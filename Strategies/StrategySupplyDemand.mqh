@@ -148,6 +148,7 @@ private:
                 if(m_diagnostics != NULL) {
                     m_diagnostics.LogSMCDetection(
                         "SUPPLY_ZONE",
+                        m_symbol,
                         (zoneTop + zoneBottom) / 2.0,
                         zoneTop,
                         zoneBottom,
@@ -166,6 +167,7 @@ private:
                 if(m_diagnostics != NULL) {
                     m_diagnostics.LogSMCDetection(
                         "DEMAND_ZONE",
+                        m_symbol,
                         (zoneTop + zoneBottom) / 2.0,
                         zoneTop,
                         zoneBottom,
