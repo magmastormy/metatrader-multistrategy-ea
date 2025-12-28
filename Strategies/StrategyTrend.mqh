@@ -11,14 +11,14 @@
 class CStrategyTrend : public CStrategyBase
 {
 private:
-    int m_sma_fast_period;   // Fast SMA period
-    int m_sma_slow_period;   // Slow SMA period
+    int m_sma_fast_period;   // Fast EMA period (was SMA)
+    int m_sma_slow_period;   // Slow EMA period (was SMA)
     int m_adx_period;        // ADX period
     double m_adx_threshold;  // ADX threshold for trend strength
     double m_minTrendStrength; // Trend filter (55%)
     
-    int m_sma_fast_handle;  // Fast SMA indicator handle
-    int m_sma_slow_handle;  // Slow SMA indicator handle
+    int m_sma_fast_handle;  // Fast EMA indicator handle
+    int m_sma_slow_handle;  // Slow EMA indicator handle
     int m_adx_handle;       // ADX indicator handle
     int m_trendHandle;      // 50 EMA for additional trend validation
     
@@ -52,8 +52,8 @@ public:
             return false;
             
         // Initialize indicators
-        m_sma_fast_handle = iMA(symbol, timeframe, m_sma_fast_period, 0, MODE_SMA, PRICE_CLOSE);
-        m_sma_slow_handle = iMA(symbol, timeframe, m_sma_slow_period, 0, MODE_SMA, PRICE_CLOSE);
+        m_sma_fast_handle = iMA(symbol, timeframe, m_sma_fast_period, 0, MODE_EMA, PRICE_CLOSE);
+        m_sma_slow_handle = iMA(symbol, timeframe, m_sma_slow_period, 0, MODE_EMA, PRICE_CLOSE);
         m_adx_handle = iADX(symbol, timeframe, m_adx_period);
         m_trendHandle = iMA(symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
         
@@ -77,6 +77,35 @@ public:
         if(m_adx_handle != INVALID_HANDLE) IndicatorRelease(m_adx_handle);
         if(m_trendHandle != INVALID_HANDLE) IndicatorRelease(m_trendHandle);
         CStrategyBase::Deinit();
+    }
+
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
+    {
+        if(!IsEnabled() || !m_is_initialized || symbol == "" || timeframe == 0)
+            return;
+        if(symbol != m_symbol || timeframe != m_timeframe)
+            return;
+
+        if(m_sma_fast_handle == INVALID_HANDLE)
+            m_sma_fast_handle = iMA(m_symbol, m_timeframe, m_sma_fast_period, 0, MODE_EMA, PRICE_CLOSE);
+        if(m_sma_slow_handle == INVALID_HANDLE)
+            m_sma_slow_handle = iMA(m_symbol, m_timeframe, m_sma_slow_period, 0, MODE_EMA, PRICE_CLOSE);
+        if(m_adx_handle == INVALID_HANDLE)
+            m_adx_handle = iADX(m_symbol, m_timeframe, m_adx_period);
+        if(m_trendHandle == INVALID_HANDLE)
+            m_trendHandle = iMA(m_symbol, m_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
+
+        if(m_sma_fast_handle == INVALID_HANDLE || m_sma_slow_handle == INVALID_HANDLE || m_adx_handle == INVALID_HANDLE || m_trendHandle == INVALID_HANDLE)
+            return;
+
+        double sma_fast[1];
+        double sma_slow[1];
+        double adx[1];
+        double trend[1];
+        CopyBuffer(m_sma_fast_handle, 0, 0, 1, sma_fast);
+        CopyBuffer(m_sma_slow_handle, 0, 0, 1, sma_slow);
+        CopyBuffer(m_adx_handle, 0, 0, 1, adx);
+        CopyBuffer(m_trendHandle, 0, 0, 1, trend);
     }
     
     //--- Override method from base class

@@ -226,12 +226,12 @@ private:
         if(index < slowPeriod + 1) return 0; // Not enough data
         
         // Calculate current moving averages
-        double fastMA = CalculateSMA(rates, index, fastPeriod);
-        double slowMA = CalculateSMA(rates, index, slowPeriod);
+        double fastMA = CalculateEMA(rates, index, fastPeriod);
+        double slowMA = CalculateEMA(rates, index, slowPeriod);
         
         // Calculate previous moving averages
-        double prevFastMA = CalculateSMA(rates, index - 1, fastPeriod);
-        double prevSlowMA = CalculateSMA(rates, index - 1, slowPeriod);
+        double prevFastMA = CalculateEMA(rates, index - 1, fastPeriod);
+        double prevSlowMA = CalculateEMA(rates, index - 1, slowPeriod);
         
         // Generate crossover signals
         if(prevFastMA <= prevSlowMA && fastMA > slowMA) {
@@ -343,14 +343,9 @@ private:
     }
     
     // Technical Indicator Calculation Functions
+    // EMA wrapper for legacy SMA callers
     double CalculateSMA(const MqlRates &rates[], int index, int period) {
-        if(index < period - 1) return 0.0;
-        
-        double sum = 0.0;
-        for(int i = 0; i < period; i++) {
-            sum += rates[index - i].close;
-        }
-        return sum / period;
+        return CalculateEMA(rates, index, period);
     }
     
     double CalculateRSI(const MqlRates &rates[], int index, int period) {
@@ -376,7 +371,7 @@ private:
     
     void CalculateBollingerBands(const MqlRates &rates[], int index, int period, double stdDev,
                                  double &upperBand, double &middleBand, double &lowerBand) {
-        middleBand = CalculateSMA(rates, index, period);
+        middleBand = CalculateEMA(rates, index, period);
         
         if(index < period - 1) {
             upperBand = middleBand;

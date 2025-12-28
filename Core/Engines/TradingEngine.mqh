@@ -21,20 +21,15 @@
 #include "../../Strategies/StrategyRSI.mqh"
 #include "../../Strategies/StrategyTrend.mqh"
 #include "../../Strategies/StrategyMeanReversion.mqh"
-#include "../../Strategies/StrategySupplyDemand.mqh"
 #include "../../Strategies/StrategySwing.mqh"
 #include "../../Strategies/StrategyVolatility.mqh"
-#include "../../Strategies/StrategyOrderBlockFVG.mqh"
-#include "../../Strategies/StrategyStepIndex.mqh"
 #include "../../Strategies/StrategyMACD.mqh"
-#include "../../Strategies/StrategyOrderBlock.mqh"
 #include "../../Strategies/StrategyBollinger.mqh"
 #include "../../Strategies/StrategyBollingerBreakout.mqh"
 #include "../../Strategies/StrategySMC.mqh"
 #include "../../Strategies/StrategyBreakout.mqh"
 #include "../../Strategies/StrategyIchimoku.mqh"
-#include "../../Strategies/StrategyElliottWave.mqh"
-#include "../../Strategies/StrategyFairValueGap.mqh"
+#include "../../Strategies/StrategyElliottWaveEnhanced.mqh"
 #include "../../Strategies/StrategyHarmonicPatterns.mqh"
 #include "../Strategy/StrategyWrapper.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
@@ -538,20 +533,7 @@ bool CTradingEngine::InitializeStrategies()
             }
         }
         
-        // 5. Supply Demand Strategy
-        if(InpEnableSupplyDemand)
-        {
-            CStrategySupplyDemand *supplyDemand = new CStrategySupplyDemand(StringFormat("SupplyDemand_%s", context.symbol));
-            if(supplyDemand != NULL && supplyDemand.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
-            {
-                CStrategyWrapper *wrapper = new CStrategyWrapper(supplyDemand);
-                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
-                else delete supplyDemand;
-            }
-            else if(supplyDemand != NULL) delete supplyDemand;
-        }
-        
-        // 6. Swing Strategy
+        // 5. Swing Strategy
         if(InpEnableSwing)
         {
             CStrategySwing *swing = new CStrategySwing(StringFormat("Swing_%s", context.symbol));
@@ -564,7 +546,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(swing != NULL) delete swing;
         }
         
-        // 7. Volatility Strategy
+        // 6. Volatility Strategy
         if(InpEnableVolatility)
         {
             CStrategyVolatility *volatility = new CStrategyVolatility(StringFormat("Volatility_%s", context.symbol));
@@ -577,33 +559,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(volatility != NULL) delete volatility;
         }
         
-        // 8. Order Block FVG Strategy
-        if(InpEnableOrderBlockFVG)
-        {
-            CStrategyOrderBlockFVG *obfvg = new CStrategyOrderBlockFVG(StringFormat("OBFVG_%s", context.symbol), 0);
-            if(obfvg != NULL && obfvg.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
-            {
-                CStrategyWrapper *wrapper = new CStrategyWrapper(obfvg);
-                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
-                else delete obfvg;
-            }
-            else if(obfvg != NULL) delete obfvg;
-        }
-        
-        // 9. Step Index Strategy (skip if dependencies unavailable)
-        if(InpEnableStepIndex && m_levelBreaker != NULL)
-        {
-            CStrategyStepIndex *stepIndex = new CStrategyStepIndex(m_levelBreaker, NULL, NULL);
-            if(stepIndex != NULL && stepIndex.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
-            {
-                CStrategyWrapper *wrapper = new CStrategyWrapper(stepIndex);
-                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
-                else delete stepIndex;
-            }
-            else if(stepIndex != NULL) delete stepIndex;
-        }
-        
-        // 10. MACD Strategy
+        // 7. MACD Strategy
         if(InpEnableMACD)
         {
             CStrategyMACD *macd = new CStrategyMACD(StringFormat("MACD_%s", context.symbol));
@@ -616,20 +572,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(macd != NULL) delete macd;
         }
         
-        // 11. Order Block Strategy
-        if(InpEnableOrderBlock)
-        {
-            CStrategyOrderBlock *ob = new CStrategyOrderBlock(StringFormat("OrderBlock_%s", context.symbol));
-            if(ob != NULL && ob.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
-            {
-                CStrategyWrapper *wrapper = new CStrategyWrapper(ob);
-                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
-                else delete ob;
-            }
-            else if(ob != NULL) delete ob;
-        }
-        
-        // 12. Bollinger Strategy
+        // 9. Bollinger Strategy
         if(InpEnableBollinger)
         {
             CStrategyBollinger *bb = new CStrategyBollinger(StringFormat("Bollinger_%s", context.symbol));
@@ -642,10 +585,10 @@ bool CTradingEngine::InitializeStrategies()
             else if(bb != NULL) delete bb;
         }
         
-        // 13. Bollinger Breakout Strategy
+        // 10. Bollinger Breakout Strategy
         if(InpEnableBollingerBreakout)
         {
-            CStrategyBollingerBreakout *bbBreak = new CStrategyBollingerBreakout(StringFormat("BBBreak_%s", context.symbol));
+            CStrategyBollingerBreakout *bbBreak = new CStrategyBollingerBreakout(StringFormat("BBBreakout_%s", context.symbol));
             if(bbBreak != NULL && bbBreak.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
             {
                 CStrategyWrapper *wrapper = new CStrategyWrapper(bbBreak);
@@ -655,7 +598,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(bbBreak != NULL) delete bbBreak;
         }
         
-        // 14. Advanced SMC Strategy
+        // 11. Advanced SMC Strategy
         if(InpEnableSMC)
         {
             CStrategySMC *smc = new CStrategySMC();
@@ -668,7 +611,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(smc != NULL) delete smc;
         }
         
-        // 15. Breakout Strategy
+        // 12. Breakout Strategy
         if(InpEnableBreakout)
         {
             CStrategyBreakout *breakout = new CStrategyBreakout(StringFormat("Breakout_%s", context.symbol));
@@ -681,7 +624,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(breakout != NULL) delete breakout;
         }
         
-        // 16. Fibonacci Strategy (Already included via StrategyFactory - uses existing class)
+        // 13. Fibonacci Strategy (Already included via StrategyFactory - uses existing class)
         if(InpEnableFibonacci)
         {
             CStrategyFibonacci *fib = new CStrategyFibonacci(StringFormat("Fibonacci_%s", context.symbol), 0);
@@ -694,10 +637,10 @@ bool CTradingEngine::InitializeStrategies()
             else if(fib != NULL) delete fib;
         }
         
-        // 17. Elliott Wave Strategy
+        // 14. Elliott Wave Enhanced Strategy
         if(InpEnableElliottWave)
         {
-            CStrategyElliottWave *elliottWave = new CStrategyElliottWave();
+            CStrategyElliottWaveEnhanced *elliottWave = new CStrategyElliottWaveEnhanced(StringFormat("ElliottWave_%s", context.symbol));
             if(elliottWave != NULL && elliottWave.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
             {
                 CStrategyWrapper *wrapper = new CStrategyWrapper(elliottWave);
@@ -707,7 +650,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(elliottWave != NULL) delete elliottWave;
         }
         
-        // 18. Ichimoku Strategy
+        // 15. Ichimoku Strategy
         if(InpEnableIchimoku)
         {
             CStrategyIchimoku *ichimoku = new CStrategyIchimoku(StringFormat("Ichimoku_%s", context.symbol));
@@ -720,20 +663,7 @@ bool CTradingEngine::InitializeStrategies()
             else if(ichimoku != NULL) delete ichimoku;
         }
         
-        // 19. Fair Value Gap Strategy
-        if(InpEnableFairValueGap)
-        {
-            CStrategyFairValueGap *fvg = new CStrategyFairValueGap(StringFormat("FVG_%s", context.symbol));
-            if(fvg != NULL && fvg.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
-            {
-                CStrategyWrapper *wrapper = new CStrategyWrapper(fvg);
-                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
-                else delete fvg;
-            }
-            else if(fvg != NULL) delete fvg;
-        }
-        
-        // 20. Harmonic Patterns Strategy
+        // 16. Harmonic Patterns Strategy
         if(InpEnableHarmonicPatterns)
         {
             CStrategyHarmonicPatterns *harmonic = new CStrategyHarmonicPatterns(StringFormat("Harmonic_%s", context.symbol));
@@ -744,19 +674,6 @@ bool CTradingEngine::InitializeStrategies()
                 else delete harmonic;
             }
             else if(harmonic != NULL) delete harmonic;
-        }
-        
-        // 21. Elliott Advanced Strategy (Already included via StrategyFactory - uses existing class)
-        if(InpEnableElliott)
-        {
-            CStrategyElliott *elliott = new CStrategyElliott(StringFormat("Elliott_%s", context.symbol));
-            if(elliott != NULL && elliott.Init(context.symbol, context.timeframe, m_tradeManager, m_positionSizer))
-            {
-                CStrategyWrapper *wrapper = new CStrategyWrapper(elliott);
-                if(wrapper != NULL) { context.strategyWrappers.Add(wrapper); strategiesInitialized++; }
-                else delete elliott;
-            }
-            else if(elliott != NULL) delete elliott;
         }
         
         if(strategiesInitialized > 0)
@@ -1318,9 +1235,10 @@ void CTradingEngine::ManageOpenPositions()
             
             // Get AI prediction for position
             double aiPrediction = 0.5;
+            string posReasoning = "";
             if(m_integrationHub != NULL)
             {
-                 aiPrediction = m_integrationHub.GetAIPrediction(marketData, 10);
+                 aiPrediction = m_integrationHub.GetAIPrediction(marketData, 10, posReasoning);
             }
             
             // Dynamic position management based on AI
@@ -1331,32 +1249,27 @@ void CTradingEngine::ManageOpenPositions()
             // Don't close positions based on 0.0 prediction!
             bool aiEnabled = (aiPrediction != 0.0);
             
-            // Check for AI-driven exit signals (ONLY if AI is enabled)
+            // CRITICAL FIX #2: AI exit thresholds - Only exit on STRONG reversals, not minor weakness
+            // Changed from 0.45/0.55 hair-trigger to 0.20/0.80 strong reversal thresholds
             if(aiEnabled && orderType == ORDER_TYPE_BUY)
             {
-                if(aiPrediction < 0.3) // Strong sell signal
+                if(aiPrediction < 0.20) // VERY strong sell signal (was 0.3, now stricter)
                 {
                     shouldClose = true;
-                    PrintFormat("[AI-POSITION] AI suggests closing BUY position for %s (prediction: %.2f)", posSymbol, aiPrediction);
+                    PrintFormat("[AI-POSITION] STRONG reversal detected - closing BUY position for %s (prediction: %.2f)", posSymbol, aiPrediction);
                 }
-                else if(posProfit > 0 && aiPrediction < 0.45) // Take profit on weakness
-                {
-                    shouldClose = true;
-                    PrintFormat("[AI-POSITION] Taking profit on BUY for %s due to weakening signal", posSymbol);
-                }
+                // REMOVED: else if(posProfit > 0 && aiPrediction < 0.45) - This was the KILLER!
+                // Now only exits on strong reversals, not minor weakness
             }
             else if(aiEnabled) // SELL position (ONLY if AI enabled)
             {
-                if(aiPrediction > 0.7) // Strong buy signal
+                if(aiPrediction > 0.80) // VERY strong buy signal (was 0.7, now stricter)
                 {
                     shouldClose = true;
-                    PrintFormat("[AI-POSITION] AI suggests closing SELL position for %s (prediction: %.2f)", posSymbol, aiPrediction);
+                    PrintFormat("[AI-POSITION] STRONG reversal detected - closing SELL position for %s (prediction: %.2f)", posSymbol, aiPrediction);
                 }
-                else if(posProfit > 0 && aiPrediction > 0.55) // Take profit on strength
-                {
-                    shouldClose = true;
-                    PrintFormat("[AI-POSITION] Taking profit on SELL for %s due to strengthening signal", posSymbol);
-                }
+                // REMOVED: else if(posProfit > 0 && aiPrediction > 0.55) - This was the KILLER!
+                // Now only exits on strong reversals, not minor strength
             }
             
             // Risk management overrides
@@ -1485,19 +1398,19 @@ bool CTradingEngine::CanOpenNewPosition(string symbol)
 {
     // MULTI-STRATEGY SCALPING MODE: Increased limits for 4 strategies
     
-    // Check 1: Max positions per symbol (allow multiple strategies to trade)
-    const int MAX_POSITIONS_PER_SYMBOL = 10;  // 10 positions per symbol (4 strategies * 2-3 each)
+    // Check 1: Max positions per symbol (reduced for better risk control)
+    const int MAX_POSITIONS_PER_SYMBOL = 3;  // 3 positions per symbol max
     int symbolPositions = CountOpenPositions(symbol);
     
     if(symbolPositions >= MAX_POSITIONS_PER_SYMBOL)
     {
-        PrintFormat("[POSITION-LIMIT] %s has %d positions (max: %d) - Multi-strategy limit reached", 
+        PrintFormat("[POSITION-LIMIT] %s has %d positions (max: %d) - Symbol limit reached",
                    symbol, symbolPositions, MAX_POSITIONS_PER_SYMBOL);
         return false;
     }
     
-    // Check 2: Max total open positions (prevent portfolio over-exposure)
-    const int MAX_TOTAL_POSITIONS = 40;  // 40 total positions across all symbols/strategies
+    // Check 2: Max total open positions (reduced for better risk control)
+    const int MAX_TOTAL_POSITIONS = 15;  // 15 total positions across all symbols/strategies
     int totalPositions = PositionsTotal();
     
     if(totalPositions >= MAX_TOTAL_POSITIONS)

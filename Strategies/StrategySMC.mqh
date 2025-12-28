@@ -16,6 +16,7 @@
 #include "../Core/Engines/TrendEngine.mqh"
 #include "../Core/Engines/LiquidityEngine.mqh"
 #include "../Core/Engines/VolatilityEngine.mqh"
+#include "../Core/Visualization/ChartDrawingManager.mqh"
 
 //+------------------------------------------------------------------+
 //| SMC Zone Types                                                   |
@@ -86,6 +87,7 @@ private:
     CTrendEngine* m_trendEngine;
     CLiquidityEngine* m_liquidityEngine;
     CVolatilityEngine* m_volatilityEngine;
+    CChartDrawingManager* m_drawer;  // Visualization manager
     
     // Statistics
     int       m_zonesDetected;
@@ -183,6 +185,18 @@ CStrategySMC::CStrategySMC() :
     m_volatilityEngine = new CVolatilityEngine();
     if(m_volatilityEngine != NULL)
         m_volatilityEngine.Initialize(14, 20, m_diagnostics);
+    
+    // Initialize visualization manager
+    m_drawer = new CChartDrawingManager();
+    if(m_drawer != NULL)
+    {
+        SDrawingConfig config;
+        config.enableDrawing = true;
+        config.enableOrderBlocks = true;
+        config.enableFVG = true;
+        config.enableSupplyDemand = true;
+        m_drawer.SetConfiguration(config);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -228,6 +242,12 @@ CStrategySMC::~CStrategySMC()
         delete m_volatilityEngine;
         m_volatilityEngine = NULL;
     }
+    
+    if(m_drawer != NULL)
+    {
+        delete m_drawer;
+        m_drawer = NULL;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -240,6 +260,12 @@ bool CStrategySMC::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, vo
         
     m_zones.Clear();
     m_lastProcessedBar = -1;
+    
+    // Initialize visualization manager
+    if(m_drawer != NULL)
+    {
+        m_drawer.Initialize(symbol, timeframe, "SMC");
+    }
     
     // Log initialization
     if(m_diagnostics != NULL)
@@ -590,8 +616,8 @@ int CStrategySMC::ComputeHTFBias()
     // For simplicity in this strategy, we'll use iMA on the current symbol/htf
     // But iMA returns a handle, so we need to get the values
     
-    int maFastHandle = iMA(m_symbol, m_htfTimeframe, 20, 0, MODE_SMA, PRICE_CLOSE);
-    int maSlowHandle = iMA(m_symbol, m_htfTimeframe, 50, 0, MODE_SMA, PRICE_CLOSE);
+    int maFastHandle = iMA(m_symbol, m_htfTimeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int maSlowHandle = iMA(m_symbol, m_htfTimeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
     
     double fastVal[], slowVal[];
     ArraySetAsSeries(fastVal, true);
@@ -620,20 +646,48 @@ int CStrategySMC::ComputeHTFBias()
 //+------------------------------------------------------------------+
 void CStrategySMC::DrawZone(CSMCZone* zone)
 {
-    string name = zone.id;
-    color zoneColor = zone.isBullish ? clrGreen : clrRed;
+    if(zone == NULL) return;
     
-    if(ObjectFind(0, name) < 0)
+    // Use ChartDrawingManager if available
+    if(m_drawer != NULL)
     {
-        ObjectCreate(0, name, OBJ_RECTANGLE, 0, zone.createdTime, zone.top, TimeCurrent(), zone.bottom);
-        ObjectSetInteger(0, name, OBJPROP_COLOR, zoneColor);
-        ObjectSetInteger(0, name, OBJPROP_FILL, true);
-        ObjectSetInteger(0, name, OBJPROP_BACK, true);
+        datetime timeEnd = TimeCurrent();
+        string label = zone.id;
+        color zoneColor = zone.isBullish ? (color)COLOR_SCHEME_ORDERBLOCK_BULL : (color)COLOR_SCHEME_ORDERBLOCK_BEAR;
+        
+        if(zone.type == SMC_ZONE_ORDER_BLOCK)
+        {
+            m_drawer.DrawOrderBlock(zone.createdTime, timeEnd, zone.top, zone.bottom, 
+                                   zone.isBullish, zone.score / 100.0, zone.id);
+        }
+        else if(zone.type == SMC_ZONE_FVG)
+        {
+            m_drawer.DrawFVG(zone.createdTime, timeEnd, zone.top, zone.bottom, 
+                           zone.isBullish, true, zone.id);
+        }
+        else
+        {
+            m_drawer.DrawZone(zone.createdTime, timeEnd, zone.top, zone.bottom, 
+                            label, zoneColor, true, 85);
+        }
     }
     else
     {
-        // Extend zone - update the second time coordinate (index 1)
-        ObjectSetInteger(0, name, OBJPROP_TIME, 1, TimeCurrent());
+        // Fallback to direct object creation
+        string name = zone.id;
+        color zoneColor = zone.isBullish ? clrGreen : clrRed;
+        
+        if(ObjectFind(0, name) < 0)
+        {
+            ObjectCreate(0, name, OBJ_RECTANGLE, 0, zone.createdTime, zone.top, TimeCurrent(), zone.bottom);
+            ObjectSetInteger(0, name, OBJPROP_COLOR, zoneColor);
+            ObjectSetInteger(0, name, OBJPROP_FILL, true);
+            ObjectSetInteger(0, name, OBJPROP_BACK, true);
+        }
+        else
+        {
+            ObjectSetInteger(0, name, OBJPROP_TIME, 1, TimeCurrent());
+        }
     }
 }
 
@@ -675,13 +729,264 @@ void CStrategySMC::SetParameters(double momentum, int consolidation, int lookbac
 }
 
 //+------------------------------------------------------------------+
-//| Get Signal                                                       |
+//| Get Signal - PROPER SMC LOGIC                                    |
+//| Bullish OB (Demand): Price retraces DOWN into zone, then BUY     |
+//| Bearish OB (Supply): Price retraces UP into zone, then SELL      |
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CStrategySMC::GetSignal(double &confidence)
 {
     confidence = 0.0;
-    // Simplified implementation - return NONE for now
-    return TRADE_SIGNAL_NONE;
+    
+    if(!m_is_enabled || m_zones.Total() == 0)
+        return TRADE_SIGNAL_NONE;
+    
+    double bid = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+    double ask = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(point <= 0) point = 0.0001;
+    
+    // Get ATR for calculations
+    int atrHandle = iATR(m_symbol, m_timeframe, 14);
+    double atrBuffer[];
+    ArraySetAsSeries(atrBuffer, true);
+    double atr = 0.0;
+    if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0)
+        atr = atrBuffer[0];
+    if(atr <= 0) atr = (ask - bid) * 100;
+    IndicatorRelease(atrHandle);
+    
+    // Get recent price action for direction and confirmation analysis
+    double close0 = iClose(m_symbol, m_timeframe, 0); // Current
+    double close1 = iClose(m_symbol, m_timeframe, 1); // Last closed
+    double close2 = iClose(m_symbol, m_timeframe, 2);
+    double open1 = iOpen(m_symbol, m_timeframe, 1);
+    double high1 = iHigh(m_symbol, m_timeframe, 1);
+    double low1 = iLow(m_symbol, m_timeframe, 1);
+    double high2 = iHigh(m_symbol, m_timeframe, 2);
+    double low2 = iLow(m_symbol, m_timeframe, 2);
+    double open2 = iOpen(m_symbol, m_timeframe, 2);
+    double close3 = iClose(m_symbol, m_timeframe, 3);
+    
+    // Determine recent price direction (is price falling or rising into potential zones?)
+    bool priceWasFalling = (close2 > close1) || (close3 > close2 && close2 > close1);
+    bool priceWasRising = (close2 < close1) || (close3 < close2 && close2 < close1);
+    
+    ENUM_TRADE_SIGNAL bestSignal = TRADE_SIGNAL_NONE;
+    double bestConfidence = 0.0;
+    string bestZoneInfo = "";
+    
+    // Process each zone
+    for(int i = 0; i < m_zones.Total(); i++)
+    {
+        CSMCZone* zone = (CSMCZone*)m_zones.At(i);
+        if(zone == NULL) continue;
+        
+        // Skip already mitigated zones
+        if(zone.mitigated) continue;
+        
+        double zoneMid = (zone.top + zone.bottom) / 2.0;
+        double zoneSize = zone.top - zone.bottom;
+        
+        // === CHECK FOR ZONE MITIGATION (price passed completely through) ===
+        // Bullish zone mitigated if price closed below zone.bottom
+        if(zone.isBullish && close1 < zone.bottom && close2 < zone.bottom)
+        {
+            zone.mitigated = true;
+            if(m_diagnostics != NULL)
+                PrintFormat("[SMC] Zone MITIGATED (price broke below): %s", zone.id);
+            continue;
+        }
+        // Bearish zone mitigated if price closed above zone.top
+        if(!zone.isBullish && close1 > zone.top && close2 > zone.top)
+        {
+            zone.mitigated = true;
+            if(m_diagnostics != NULL)
+                PrintFormat("[SMC] Zone MITIGATED (price broke above): %s", zone.id);
+            continue;
+        }
+        
+        // === PROPER SMC ENTRY LOGIC ===
+        // Bullish OB (Demand Zone): Price must RETRACE DOWN into zone, then show REJECTION
+        // Bearish OB (Supply Zone): Price must RETRACE UP into zone, then show REJECTION
+        
+        bool validEntry = false;
+        ENUM_TRADE_SIGNAL zoneSignal = TRADE_SIGNAL_NONE;
+        double zoneConfidence = zone.score / 100.0;
+        string entryReason = "";
+        
+        if(zone.isBullish)
+        {
+            // === BULLISH ZONE (DEMAND) - Looking for BUY ===
+            // Condition 1: Price must have been FALLING (retracing) into the zone
+            // Condition 2: Price touched/entered the zone
+            // Condition 3: Price showed REJECTION (closed back above zone or bullish candle)
+            
+            bool priceTouchedZone = (low1 <= zone.top && low1 >= zone.bottom) ||
+                                    (low2 <= zone.top && low2 >= zone.bottom) ||
+                                    (bid <= zone.top && bid >= zone.bottom);
+            
+            bool priceRejectedUp = false;
+            
+            // Check for rejection patterns:
+            // 1. Pin bar rejection (wick into zone, close above)
+            bool pinBarRejection = (low1 <= zone.top && low1 >= zone.bottom) && 
+                                   (close1 > zone.top) &&
+                                   ((close1 - low1) > (high1 - close1) * 1.5); // Long lower wick
+            
+            // 2. Bullish engulfing at zone
+            bool bullishEngulfing = (low2 <= zone.top && low2 >= zone.bottom) &&
+                                    (close1 > open1) && // Bullish candle
+                                    (close1 > close2) && // Closed higher
+                                    (open1 <= close2);   // Opened at or below previous close
+            
+            // 3. Close back above zone after touching
+            bool closedAboveZone = (low1 <= zone.top || low2 <= zone.top) && 
+                                   (close1 > zone.top) && (close0 > zone.top);
+            
+            priceRejectedUp = pinBarRejection || bullishEngulfing || closedAboveZone;
+            
+            // Valid BUY entry: Price was falling, touched zone, and rejected upward
+            if(priceWasFalling && priceTouchedZone && priceRejectedUp)
+            {
+                validEntry = true;
+                zoneSignal = TRADE_SIGNAL_BUY;
+                entryReason = pinBarRejection ? "Pin Bar" : (bullishEngulfing ? "Engulfing" : "Zone Rejection");
+                zoneConfidence += 0.15; // Bonus for proper SMC entry
+            }
+            // Alternative: Price currently IN zone and showing bullish momentum
+            else if(bid >= zone.bottom && bid <= zone.top && close1 > open1 && priceWasFalling)
+            {
+                validEntry = true;
+                zoneSignal = TRADE_SIGNAL_BUY;
+                entryReason = "In-Zone Bullish Momentum";
+                zoneConfidence += 0.08;
+            }
+        }
+        else // !zone.isBullish
+        {
+            // === BEARISH ZONE (SUPPLY) - Looking for SELL ===
+            // Condition 1: Price must have been RISING (retracing) into the zone
+            // Condition 2: Price touched/entered the zone
+            // Condition 3: Price showed REJECTION (closed back below zone or bearish candle)
+            
+            bool priceTouchedZone = (high1 >= zone.bottom && high1 <= zone.top) ||
+                                    (high2 >= zone.bottom && high2 <= zone.top) ||
+                                    (bid >= zone.bottom && bid <= zone.top);
+            
+            bool priceRejectedDown = false;
+            
+            // Check for rejection patterns:
+            // 1. Pin bar rejection (wick into zone, close below)
+            bool pinBarRejection = (high1 >= zone.bottom && high1 <= zone.top) && 
+                                   (close1 < zone.bottom) &&
+                                   ((high1 - close1) > (close1 - low1) * 1.5); // Long upper wick
+            
+            // 2. Bearish engulfing at zone
+            bool bearishEngulfing = (high2 >= zone.bottom && high2 <= zone.top) &&
+                                    (close1 < open1) && // Bearish candle
+                                    (close1 < close2) && // Closed lower
+                                    (open1 >= close2);   // Opened at or above previous close
+            
+            // 3. Close back below zone after touching
+            bool closedBelowZone = (high1 >= zone.bottom || high2 >= zone.bottom) && 
+                                   (close1 < zone.bottom) && (close0 < zone.bottom);
+            
+            priceRejectedDown = pinBarRejection || bearishEngulfing || closedBelowZone;
+            
+            // Valid SELL entry: Price was rising, touched zone, and rejected downward
+            if(priceWasRising && priceTouchedZone && priceRejectedDown)
+            {
+                validEntry = true;
+                zoneSignal = TRADE_SIGNAL_SELL;
+                entryReason = pinBarRejection ? "Pin Bar" : (bearishEngulfing ? "Engulfing" : "Zone Rejection");
+                zoneConfidence += 0.15; // Bonus for proper SMC entry
+            }
+            // Alternative: Price currently IN zone and showing bearish momentum
+            else if(bid >= zone.bottom && bid <= zone.top && close1 < open1 && priceWasRising)
+            {
+                validEntry = true;
+                zoneSignal = TRADE_SIGNAL_SELL;
+                entryReason = "In-Zone Bearish Momentum";
+                zoneConfidence += 0.08;
+            }
+        }
+        
+        if(!validEntry) continue;
+        
+        // === CONFIDENCE SCORING ===
+        
+        // Zone type boost
+        if(zone.type == SMC_ZONE_ORDER_BLOCK)
+            zoneConfidence += 0.12;
+        else if(zone.type == SMC_ZONE_FVG)
+            zoneConfidence += 0.08;
+        
+        // HTF bias alignment
+        if(m_useHTFBias)
+        {
+            int bias = ComputeHTFBias();
+            if((bias > 0 && zone.isBullish) || (bias < 0 && !zone.isBullish))
+                zoneConfidence += 0.10; // Aligned with HTF
+            else if((bias < 0 && zone.isBullish) || (bias > 0 && !zone.isBullish))
+                zoneConfidence -= 0.20; // Counter-trend - heavy penalty
+        }
+        
+        // Structure confirmation
+        if(m_structureEngine != NULL)
+        {
+            m_structureEngine.DetectSwingPoints(m_symbol, m_timeframe);
+            if(zone.isBullish && m_structureEngine.IsBullishStructure())
+                zoneConfidence += 0.08;
+            else if(!zone.isBullish && m_structureEngine.IsBearishStructure())
+                zoneConfidence += 0.08;
+        }
+        
+        // Zone freshness (unmitigated, untested zones are best)
+        int zoneAge = Bars(m_symbol, m_timeframe, zone.createdTime, TimeCurrent());
+        if(zoneAge < 30)
+            zoneConfidence += 0.05; // Fresh zone
+        else if(zoneAge > 150)
+            zoneConfidence -= 0.08; // Old zone
+        
+        // First touch bonus (untested zones)
+        if(zone.rejections == 0)
+            zoneConfidence += 0.06; // First time testing this zone
+        
+        zoneConfidence = MathMin(1.0, MathMax(0.0, zoneConfidence));
+        
+        // Minimum confidence threshold
+        if(zoneConfidence < 0.40)
+            continue;
+        
+        // Track best signal
+        if(zoneConfidence > bestConfidence)
+        {
+            bestSignal = zoneSignal;
+            bestConfidence = zoneConfidence;
+            bestZoneInfo = StringFormat("%s | %s | Age:%d bars", 
+                                       zone.isBullish ? "DEMAND" : "SUPPLY",
+                                       entryReason, zoneAge);
+        }
+        
+        // Mark zone as tested
+        zone.rejections++;
+    }
+    
+    confidence = bestConfidence;
+    
+    if(bestSignal != TRADE_SIGNAL_NONE)
+    {
+        m_signalsGenerated++;
+        if(m_diagnostics != NULL)
+        {
+            PrintFormat("[SMC] SIGNAL: %s | Confidence: %.1f%% | %s", 
+                       bestSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                       bestConfidence * 100,
+                       bestZoneInfo);
+        }
+    }
+    
+    return bestSignal;
 }
 
 //+------------------------------------------------------------------+

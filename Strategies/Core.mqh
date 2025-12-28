@@ -367,19 +367,8 @@ public:
             else Print("[ERROR] RSI Strategy failed: ", GetLastError());
         }
         
-        // Execute Supply/Demand strategy if enabled
-        if(m_strategyEnabled[1]) {
-            m_strategySignals[1] = StrategySupplyDemand(m_strategyConfidences[1]);
-            if(GetLastError() == 0) anyStrategySucceeded = true;
-            else Print("[ERROR] Supply/Demand Strategy failed: ", GetLastError());
-        }
-        
-        // Execute OrderBlock/FVG strategy if enabled
-        if(m_strategyEnabled[2]) {
-            m_strategySignals[2] = StrategyOrderBlockFVG(m_strategyConfidences[2]);
-            if(GetLastError() == 0) anyStrategySucceeded = true;
-            else Print("[ERROR] OrderBlock/FVG Strategy failed: ", GetLastError());
-        }
+        // Supply/Demand and OrderBlockFVG strategies removed - covered by SMC
+        // Use SMC strategy instead which includes both
         
         // Execute Fibonacci strategy if enabled
         if(m_strategyEnabled[3]) {
@@ -388,12 +377,8 @@ public:
             else Print("[ERROR] Fibonacci Strategy failed: ", GetLastError());
         }
         
-        // Execute Elliott strategy if enabled
-        if(m_strategyEnabled[4]) {
-            m_strategySignals[4] = StrategyElliott(m_strategyConfidences[4]);
-            if(GetLastError() == 0) anyStrategySucceeded = true;
-            else Print("[ERROR] Elliott Strategy failed: ", GetLastError());
-        }
+        // Elliott strategy removed - redundant with Elliott Wave Enhanced
+        // (covered by StrategyElliottWaveEnhanced in TradingEngine)
         
         // Execute Swing strategy if enabled
         if(m_strategyEnabled[5]) {

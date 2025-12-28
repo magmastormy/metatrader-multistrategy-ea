@@ -144,17 +144,18 @@ void ProcessIntelligentTrading()
             // INTELLIGENT POSITION SIZING: Risk-based with volatility adjustment
             double lotSize = CalculateIntelligentLotSize(symbol, stopLossPips, aiSignal.confidence);
             
-            // 🚨 BEAST MODE FINAL EMERGENCY OVERRIDE - LAST LINE OF DEFENSE 🚨
-            if(lotSize > 0.1) {
-                Print("🚨🚨🚨 BEAST MODE FINAL OVERRIDE: Lot size ", DoubleToString(lotSize, 3), " reduced to 0.01 for ", symbol);
-                lotSize = 0.01;
-            }
+            // CRITICAL FIX #1: Proper risk-based caps (removed BEAST MODE suicide override)
+            double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+            double maxLot = MathMin(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX), 5.0); // Reasonable 5-lot cap
+            double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
             
-            double localAccountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-            if(localAccountBalance < 100.0 && lotSize > 0.01) {
-                Print("🚨 BEAST MODE: Small account - forcing micro lot for ", symbol);
-                lotSize = 0.01;
-            }
+            // Apply REASONABLE limits (not 0.01 micro lot suicide)
+            lotSize = MathMax(minLot, lotSize);
+            lotSize = MathMin(maxLot, lotSize);
+            lotSize = MathFloor(lotSize / lotStep) * lotStep;
+            lotSize = NormalizeDouble(lotSize, 2);
+            
+            Print("[POSITION-SIZING] ", symbol, " | Lot size: ", lotSize, " | SL pips: ", stopLossPips, " | Confidence: ", aiSignal.confidence);
             
             // FINAL RISK VALIDATION
             if(lotSize > 0 && ValidateTradeRisk(symbol, lotSize, stopLossPips)) {

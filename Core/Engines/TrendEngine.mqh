@@ -553,15 +553,24 @@ double CTrendEngine::CalculateTrendAngle(double &ma[], int period)
     if(period < 2)
         return 0;
     
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    if(point <= 0)
-        point = 0.00001;
+    // Calculate percentage change instead of raw slope
+    // This normalizes across different price scales (BTC vs forex)
+    double avgPrice = (ma[0] + ma[period-1]) / 2.0;
+    if(avgPrice <= 0)
+        return 0;
     
-    // Calculate slope
-    double slope = (ma[0] - ma[period-1]) / (period * point);
+    // Calculate slope as percentage change per bar
+    double pctChange = ((ma[0] - ma[period-1]) / avgPrice) * 100.0;
+    double slopePerBar = pctChange / period;
+    
+    // Scale factor to get meaningful angles (0.1% per bar = ~45 degrees)
+    double scaledSlope = slopePerBar * 10.0;
+    
+    // Clamp to prevent extreme values
+    scaledSlope = MathMax(-10.0, MathMin(10.0, scaledSlope));
     
     // Convert to angle in degrees
-    double angle = MathArctan(slope) * 180 / M_PI;
+    double angle = MathArctan(scaledSlope) * 180.0 / M_PI;
     
     return angle;
 }

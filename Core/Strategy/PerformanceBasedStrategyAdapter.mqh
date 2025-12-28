@@ -546,9 +546,9 @@ void CPerformanceBasedStrategyAdapter::RotateStrategiesBasedOnMarketConditions(c
                      StringFormat("Rotating strategies for market regime: %s", EnumToString(regime)));
     
     // Strategy preferences by market regime
-    string trendingStrategies[] = {"StrategyTrend", "StrategyElliott", "StrategySwing"};
-    string rangingStrategies[] = {"StrategySupplyDemand", "StrategyOrderBlock", "StrategyRSI"};
-    string volatileStrategies[] = {"StrategyVolatility", "StrategyBreakout", "StrategyFairValueGap"};
+    string trendingStrategies[] = {"StrategyTrend", "StrategyElliottWave", "StrategySwing"};
+    string rangingStrategies[] = {"StrategyRSI", "StrategyMeanReversion", "StrategyBollinger"};
+    string volatileStrategies[] = {"StrategyVolatility", "StrategyBreakout", "StrategySMC"};
     
     // Reset all strategy weights to base level
     for(int i = 0; i < m_reportCount; i++)

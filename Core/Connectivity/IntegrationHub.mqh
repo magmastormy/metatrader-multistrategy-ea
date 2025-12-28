@@ -125,7 +125,7 @@ public:
     void EnableHybridAI(bool enablePython, bool enableCpp, string pythonPath, string cppPath);
     
     // Simplified interface for EA
-    double GetAIPrediction(const double &marketData[], int dataSize);
+    double GetAIPrediction(const double &marketData[], int dataSize, string &reasoning);
     
     // Train models with new data
     bool TrainModels(const double &marketData[], double target);
@@ -388,6 +388,32 @@ bool CAIIntegrationHub::CallPythonAI(const double &marketData[], double &signal,
     Print(StringFormat("[PYTHON-AI] Prediction: action=%s, signal=%.3f, conf=%.3f", action, signal, confidence));
 
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Call C++ AI Implementation                                        |
+//+------------------------------------------------------------------+
+bool CAIIntegrationHub::CallCppAI(const double &marketData[], double &signal, double &confidence)
+{
+    if(!m_cppAIEnabled)
+    {
+        return false;
+    }
+
+    // Validate input data
+    int dataSize = ArraySize(marketData);
+    if(dataSize == 0)
+    {
+        return false;
+    }
+
+    // C++ AI implementation - placeholder for now
+    // This would use the NextGenStrategyBrain or TransformerBrain
+    // For now, return a neutral signal
+    signal = 0.5;
+    confidence = 0.0;
+
+    return false; // Not implemented yet, return false to fall back to other methods
 }
 
 //+------------------------------------------------------------------+
@@ -749,6 +775,144 @@ bool CAIIntegrationHub::TrainModels(const double &marketData[], double target)
     }
     
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Build Market Data JSON                                           |
+//+------------------------------------------------------------------+
+bool CAIIntegrationHub::BuildMarketDataJson(string &marketDataJson) const
+{
+    // Simple implementation - builds a basic JSON array of recent prices
+    MqlRates rates[];
+    int copied = CopyRates(m_symbol, m_timeframe, 0, 100, rates);
+    
+    if(copied <= 0)
+        return false;
+    
+    marketDataJson = "{\"prices\":[";
+    for(int i = 0; i < copied; i++)
+    {
+        marketDataJson += DoubleToString(rates[i].close, 5);
+        if(i < copied - 1)
+            marketDataJson += ",";
+    }
+    marketDataJson += "]}";
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Extract JSON String Value                                        |
+//+------------------------------------------------------------------+
+bool CAIIntegrationHub::ExtractJsonString(const string &json, const string key, string &value) const
+{
+    // Simple JSON string extraction
+    string searchKey = "\"" + key + "\":\"";
+    int startPos = StringFind(json, searchKey);
+    if(startPos < 0)
+        return false;
+    
+    startPos += StringLen(searchKey);
+    int endPos = StringFind(json, "\"", startPos);
+    if(endPos < 0)
+        return false;
+    
+    value = StringSubstr(json, startPos, endPos - startPos);
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Extract JSON Number Value                                        |
+//+------------------------------------------------------------------+
+bool CAIIntegrationHub::ExtractJsonNumber(const string &json, const string key, double &value) const
+{
+    // Simple JSON number extraction
+    string searchKey = "\"" + key + "\":";
+    int startPos = StringFind(json, searchKey);
+    if(startPos < 0)
+        return false;
+    
+    startPos += StringLen(searchKey);
+    
+    // Find the end of the number (comma, brace, or bracket)
+    int endPos = startPos;
+    while(endPos < StringLen(json))
+    {
+        ushort charCode = StringGetCharacter(json, endPos);
+        if(charCode == ',' || charCode == '}' || charCode == ']')
+            break;
+        endPos++;
+    }
+    
+    string numStr = StringSubstr(json, startPos, endPos - startPos);
+    StringTrimLeft(numStr);
+    StringTrimRight(numStr);
+    
+    value = StringToDouble(numStr);
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Extract Data Block from JSON Response                            |
+//+------------------------------------------------------------------+
+bool CAIIntegrationHub::ExtractDataBlock(const string &json, string &dataBlock) const
+{
+    // Extract the "data" field from JSON response
+    string searchKey = "\"data\":{";
+    int startPos = StringFind(json, searchKey);
+    if(startPos < 0)
+    {
+        // Try without data wrapper - maybe it's just the object itself
+        dataBlock = json;
+        return true;
+    }
+    
+    startPos += StringLen(searchKey) - 1; // Include the opening brace
+    
+    // Find matching closing brace
+    int braceCount = 0;
+    int endPos = startPos;
+    for(int i = startPos; i < StringLen(json); i++)
+    {
+        ushort charCode = StringGetCharacter(json, i);
+        if(charCode == '{')
+            braceCount++;
+        else if(charCode == '}')
+        {
+            braceCount--;
+            if(braceCount == 0)
+            {
+                endPos = i + 1;
+                break;
+            }
+        }
+    }
+    
+    if(endPos <= startPos)
+        return false;
+    
+    dataBlock = StringSubstr(json, startPos, endPos - startPos);
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Convert Timeframe to String                                      |
+//+------------------------------------------------------------------+
+string CAIIntegrationHub::TimeframeToString(ENUM_TIMEFRAMES timeframe) const
+{
+    switch(timeframe)
+    {
+        case PERIOD_M1:  return "M1";
+        case PERIOD_M5:  return "M5";
+        case PERIOD_M15: return "M15";
+        case PERIOD_M30: return "M30";
+        case PERIOD_H1:  return "H1";
+        case PERIOD_H4:  return "H4";
+        case PERIOD_D1:  return "D1";
+        case PERIOD_W1:  return "W1";
+        case PERIOD_MN1: return "MN1";
+        default:         return "CURRENT";
+    }
 }
 
 #endif // __AI_INTEGRATION_HUB_MQH__

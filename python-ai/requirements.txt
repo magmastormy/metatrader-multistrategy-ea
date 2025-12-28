@@ -42,3 +42,6 @@ pytest-cov>=4.1.0
 optuna>=3.4.0  # Hyperparameter optimization
 schedule>=1.2.0  # Task scheduling
 pyarrow>=14.0.0  # Parquet file support
+
+# Advanced AI Features
+hmmlearn>=0.3.0  # Hidden Markov Models for regime detection

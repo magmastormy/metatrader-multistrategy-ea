@@ -12,9 +12,6 @@
 // Import all strategies
 #include "../../Strategies/StrategySMC.mqh"
 #include "../../Strategies/StrategyElliottWaveEnhanced.mqh"
-#include "../../Strategies/StrategyOrderBlock.mqh"
-#include "../../Strategies/StrategyFairValueGap.mqh"
-#include "../../Strategies/StrategySupplyDemand.mqh"
 #include "../../Strategies/StrategySwing.mqh"
 #include "../../Strategies/StrategyTrend.mqh"
 #include "../../Strategies/StrategyVolatility.mqh"
@@ -102,6 +99,8 @@ public:
     // Signal generation
     ENUM_TRADE_SIGNAL GetConsensusSignal(double &confidence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbol(const string symbol, double &confidence);
+    ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
+    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetOrchestratedSignal(double &confidence);
     ENUM_TRADE_SIGNAL GetFilteredSignal(IStrategy* strategy, double &confidence);
     
@@ -113,6 +112,9 @@ public:
     int GetActiveStrategyCount() const;
     string GetStrategyReport() const;
     void UpdatePerformance(const string strategyName, bool success);
+    
+    // New bar processing - CRITICAL for zone scanning and drawing
+    void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
     
     // Auto-registration
     void AutoRegisterStrategies(bool &enabledFlags[]);
@@ -260,23 +262,37 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
 }
 
 //+------------------------------------------------------------------+
-//| Get Consensus Signal                                            |
+//| Get Consensus Signal (Enhanced with Confluence Tracking)        |
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignal(double &confidence)
 {
+    int confluence = 0;
+    return GetConsensusSignalWithConfluence(confidence, confluence);
+}
+
+//+------------------------------------------------------------------+
+//| Get Consensus Signal With Confluence                            |
+//+------------------------------------------------------------------+
+ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalWithConfluence(double &confidence, int &confluence)
+{
+    confluence = 0;
+    confidence = 0;
+
     if(!m_initialized || m_strategyCount == 0)
     {
-        confidence = 0;
         return TRADE_SIGNAL_NONE;
     }
     
     // Use orchestrator if enabled
     if(m_useOrchestrator && m_orchestrator != NULL)
     {
-        return GetOrchestratedSignal(confidence);
+        ENUM_TRADE_SIGNAL signal = GetOrchestratedSignal(confidence);
+        // Estimate confluence from orchestrator (if available)
+        confluence = m_strategyCount / 2;  // Rough estimate
+        return signal;
     }
     
-    // Simple consensus voting
+    // Enhanced consensus voting with confluence tracking
     int buyVotes = 0, sellVotes = 0;
     double buyConf = 0, sellConf = 0;
     int activeStrategies = 0;
@@ -318,25 +334,109 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignal(double &confide
     
     if(activeStrategies == 0)
     {
-        confidence = 0;
         return TRADE_SIGNAL_NONE;
     }
     
-    // Determine consensus
+    // Determine consensus with confluence
     if(buyVotes > sellVotes)
     {
+        confluence = buyVotes;  // Number of strategies agreeing
         confidence = buyConf / buyVotes;
         m_totalSignals++;
         return TRADE_SIGNAL_BUY;
     }
     else if(sellVotes > buyVotes)
     {
+        confluence = sellVotes;  // Number of strategies agreeing
         confidence = sellConf / sellVotes;
         m_totalSignals++;
         return TRADE_SIGNAL_SELL;
     }
     
+    return TRADE_SIGNAL_NONE;
+}
+
+//+------------------------------------------------------------------+
+//| Get Consensus Signal For Specific Symbol With Confluence        |
+//+------------------------------------------------------------------+
+ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence)
+{
+    confluence = 0;
     confidence = 0;
+
+    if(!m_initialized || m_strategyCount == 0)
+    {
+        return TRADE_SIGNAL_NONE;
+    }
+    
+    // Store original symbol for restoration
+    string originalSymbol = m_symbol;
+    
+    // Temporarily switch context to target symbol
+    m_symbol = symbol;
+    
+    int buyVotes = 0, sellVotes = 0;
+    double buyConf = 0, sellConf = 0;
+    int activeStrategies = 0;
+    
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(!m_strategies[i].enabled)
+            continue;
+        
+        double stratConf = 0;
+        ENUM_TRADE_SIGNAL signal;
+        
+        // Get signal (filtered if pipeline enabled)
+        if(m_usePipeline && m_pipeline != NULL)
+        {
+            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy, 
+                                            symbol, 
+                                            m_strategies[i].timeframe, 
+                                             stratConf);
+        }
+        else
+        {
+            signal = m_strategies[i].strategy.GetSignal(stratConf);
+        }
+
+        if(signal == TRADE_SIGNAL_BUY)
+        {
+            buyVotes++;
+            buyConf += stratConf * m_strategies[i].weight;
+        }
+        else if(signal == TRADE_SIGNAL_SELL)
+        {
+            sellVotes++;
+            sellConf += stratConf * m_strategies[i].weight;
+        }
+
+        activeStrategies++;
+    }
+    // Restore original symbol
+    m_symbol = originalSymbol;
+
+    if(
+        activeStrategies == 0)
+    {
+        return TRADE_SIGNAL_NONE;
+    }
+
+    if(buyVotes > sellVotes)
+    {
+        confluence = buyVotes;
+        confidence = buyConf / buyVotes;
+        m_totalSignals++;
+        return TRADE_SIGNAL_BUY;
+    }
+    else if(sellVotes > buyVotes)
+    {
+        confluence = sellVotes;
+        confidence = sellConf / sellVotes;
+        m_totalSignals++;
+        return TRADE_SIGNAL_SELL;
+    }
+    
     return TRADE_SIGNAL_NONE;
 }
 
@@ -475,33 +575,27 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(double &conf
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &enabledFlags[])
 {
-    // Register core SMC strategies
+    // Register core SMC strategies (FVG and SupplyDemand removed - covered by SMC)
     if(enabledFlags[0]) // SMC
-        RegisterStrategy(new CStrategySMC(), "Advanced SMC", true, 2.0);
+        RegisterStrategy(new CStrategySMC(), "Advanced SMC", true, 2.5); // Increased weight
     
-    if(enabledFlags[1]) // Elliott Wave
-        RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave Enhanced", true, 1.5);
+    if(enabledFlags[1]) // Elliott Wave Enhanced
+        RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave Enhanced", true, 2.0); // Increased weight
     
-    if(enabledFlags[2]) // Order Block
-        RegisterStrategy(new CStrategyOrderBlock(), "Order Block", true, 1.5);
-    
-    if(enabledFlags[3]) // FVG
-        RegisterStrategy(new CStrategyFairValueGap(), "Fair Value Gap", true, 1.3);
-    
-    if(enabledFlags[4]) // Supply/Demand
-        RegisterStrategy(new CStrategySupplyDemand("Supply Demand", 0), "Supply Demand", true, 1.3);
-    
-    if(enabledFlags[5]) // Swing
-        RegisterStrategy(new CStrategySwing(), "Swing Trading", true, 1.2);
+    if(enabledFlags[2]) // Breakout (Order Block removed - covered by SMC)
+        RegisterStrategy(new CStrategyBreakout(), "Breakout", true, 1.5);
     
     // Register additional strategies
-    if(enabledFlags[6]) // Trend
+    if(ArraySize(enabledFlags) > 3 && enabledFlags[3]) // Swing
+        RegisterStrategy(new CStrategySwing(), "Swing Trading", true, 1.2);
+    
+    if(ArraySize(enabledFlags) > 4 && enabledFlags[4]) // Trend
         RegisterStrategy(new CStrategyTrend(), "Trend Following", true, 1.2);
     
-    if(enabledFlags[7]) // RSI
+    if(ArraySize(enabledFlags) > 5 && enabledFlags[5]) // RSI
         RegisterStrategy(new CStrategyRSI(), "RSI Momentum", true, 1.0);
     
-    if(enabledFlags[8]) // MACD
+    if(ArraySize(enabledFlags) > 6 && enabledFlags[6]) // MACD
         RegisterStrategy(new CStrategyMACD(), "MACD Divergence", true, 1.0);
     
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
@@ -578,6 +672,25 @@ void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxL
     {
         // Orchestrator mode configuration (simplified stub)
         Print("Orchestrator mode set: WinRate=", minWinRate, " MaxLosses=", maxLosses);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| OnNewBar - CRITICAL for zone scanning and chart drawings         |
+//| Must be called from main EA on each new bar                      |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    if(!m_initialized || m_strategyCount == 0)
+        return;
+    
+    // Call OnNewBar on all enabled strategies
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(m_strategies[i].enabled && m_strategies[i].strategy != NULL)
+        {
+            m_strategies[i].strategy.OnNewBar(symbol, timeframe);
+        }
     }
 }
 

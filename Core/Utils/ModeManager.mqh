@@ -162,7 +162,7 @@ int CModeManager::CalculateHTFTrend(const string symbol)
     // Using last 2 swings or MA
     
     // For robustness, use MA slope + Price position
-    int maHandle = iMA(symbol, m_htfTimeframe, 50, 0, MODE_SMA, PRICE_CLOSE);
+    int maHandle = iMA(symbol, m_htfTimeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
     if(maHandle == INVALID_HANDLE) return 0;
     
     double maVal[];

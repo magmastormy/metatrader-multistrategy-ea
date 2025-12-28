@@ -1,0 +1,654 @@
+2025.12.28 13:17:57.434	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:57.434	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:57.465	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SUCCESS] Initialized indicators for Step Index 400.0 on PERIOD_CURRENT
+2025.12.28 13:17:57.543	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:57.543	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:57.651	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:57.651	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SUCCESS] Initialized indicators for Step Index 500.0 on PERIOD_CURRENT
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADING-ENGINE] Instrument universe initialized: 59 valid, 12 skipped, 59 total contexts
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENHANCED-RISK] Initialized with base risk: 2.00%
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENHANCED-RISK] Max risk per trade: 3.00%
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENHANCED-RISK] Max drawdown: 15.00%
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[RISK] Enhanced risk management activated with adaptive features
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TP] Progressive TP disabled - using unified exit management instead
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[RISK-INIT] Max daily risk set to 963.56 (10% of equity 9635.58)
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[PORTFOLIO-RISK] Portfolio risk manager initialized with max risk: 6.00%
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[RISK-GATE] Risk validation gate initialized successfully (MaxRisk: 2.0%, MaxDaily: 6.0%)
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[MULTI-STRATEGY-EA] ========================================
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[MULTI-STRATEGY-EA] System initialization SUCCESSFUL
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[MULTI-STRATEGY-EA] Live trading is ACTIVE
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[MULTI-STRATEGY-EA] ========================================
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TIMER] 1-second timer activated for multi-symbol processing
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[DEBUG-PROCESS] First call received! System initialized: YES, Trading enabled: YES, Source: TICK
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENHANCED-RISK] Daily risk counters reset for new trading day
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENHANCED-RISK] Daily risk: 0.00% | Max allowed: 6.00%
+2025.12.28 13:17:57.667	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] Processing new bar for Volatility 100 Index.0 on PERIOD_M30
+2025.12.28 13:17:57.761	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:57.761	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:57.776	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766817000_2025.12.27 06:30 | Price: 751.81-758.76
+2025.12.28 13:17:57.776	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_ORDER_BLOCK] Volatility 100 Index.0 | Price: 755.28500 | Zone: 751.81000-758.76000 | BULLISH | Score: 80.0
+2025.12.28 13:17:57.871	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:57.871	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:57.886	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766827800_2025.12.27 09:30 | Price: 761.55-766.58
+2025.12.28 13:17:57.887	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_ORDER_BLOCK] Volatility 100 Index.0 | Price: 764.06500 | Zone: 761.55000-766.58000 | BEARISH | Score: 100.0
+2025.12.28 13:17:57.980	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:57.980	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:57.996	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766835000_2025.12.27 11:30 | Price: 748.36-757.03
+2025.12.28 13:17:57.996	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_ORDER_BLOCK] Volatility 100 Index.0 | Price: 752.69500 | Zone: 748.36000-757.03000 | BEARISH | Score: 100.0
+2025.12.28 13:17:58.090	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:58.090	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:58.105	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766867400_2025.12.27 20:30 | Price: 733.93-745.24
+2025.12.28 13:17:58.105	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_ORDER_BLOCK] Volatility 100 Index.0 | Price: 739.58500 | Zone: 733.93000-745.24000 | BEARISH | Score: 100.0
+2025.12.28 13:17:58.201	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:58.201	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:58.216	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766869200_2025.12.27 21:00 | Price: 736.2-746.91
+2025.12.28 13:17:58.216	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_ORDER_BLOCK] Volatility 100 Index.0 | Price: 741.55500 | Zone: 736.20000-746.91000 | BEARISH | Score: 100.0
+2025.12.28 13:17:58.315	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:17:58.315	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766892600_2025.12.28 03:30 | Price: 702.27-708.78
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_ORDER_BLOCK] Volatility 100 Index.0 | Price: 705.52500 | Zone: 702.27000-708.78000 | BEARISH | Score: 100.0
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] Detected 6 new Order Blocks
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ChartDrawing] Drawing zone: SMC_ZONE_FVG_BULL_SMC_1_1766894400_2025.12.28 04:00 | Price: 691.77-702.27
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_FVG] Volatility 100 Index.0 | Price: 697.02000 | Zone: 691.77000-702.27000 | BULLISH | Score: 40.0
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] Detected 1 new Fair Value Gaps
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] Zone count changed: 0 -> 7
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:17:58.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] Zone MITIGATED (price broke below): SMC_0_1766817000
+2025.12.28 13:17:58.439	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:17:58.439	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] Zone MITIGATED (price broke below): SMC_1_1766894400
+2025.12.28 13:17:58.439	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:17:58.439	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_RANGING | Strength: 40.0 | Angle: 0.7 | ADX: 15.7
+2025.12.28 13:17:58.439	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] EURUSD.0 | Price: 1.17935 | Zone: 1.17915-1.17989 | BEARISH | Score: 50.0
+2025.12.28 13:17:58.439	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00078 (0.07%) | BB Width: 0.00345
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_RANGING
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.07%)
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | EURUSD.0 | Value: 1.0752 | Range: [0.0, 1.0]
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:17:58] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.0752
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | EURUSD.0 | M30 | Signal: SELL | Confidence: 107.52% | Reason: Signal passed all filters | Confidence: 1.08
+2025.12.28 13:17:58.563	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:17:58.673	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:17:58.673	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:17:58.673	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-VALIDATED] EURUSD.0 | Signal: SELL | Confidence: 2.6881249999999994 | Confluence: 1 | Quality: 1.0
+2025.12.28 13:17:58.673	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VOLUME-DEBUG] EURUSD.0 | Input: 0.01 | Min: 0.01 | Max: 20.0 | Step: 0.01
+2025.12.28 13:17:59.004	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	CTrade::OrderSend: market sell 0.01 EURUSD.0 sl: 1.18287 tp: 1.16522 [market closed]
+2025.12.28 13:17:59.004	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] Failed to execute SELL order on EURUSD.0 | Lot Size: 0.01 | Error Code: 4756
+2025.12.28 13:17:59.004	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] ResultRetcode: 10018 | ResultRetcodeDescription: market closed
+2025.12.28 13:17:59.113	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:17:59.113	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:17:59.113	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_RANGING | Strength: 50.0 | Angle: -0.2 | ADX: 18.9
+2025.12.28 13:17:59.113	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] GBPUSD.0 | Price: 1.35217 | Zone: 1.35172-1.35239 | BEARISH | Score: 50.0
+2025.12.28 13:17:59.113	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] GBPUSD.0 | Price: 1.35221 | Zone: 1.35205-1.35253 | BEARISH | Score: 50.0
+2025.12.28 13:17:59.113	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] GBPUSD.0 | Price: 1.35281 | Zone: 1.35229-1.35281 | BULLISH | Score: 65.5
+2025.12.28 13:17:59.113	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00100 (0.07%) | BB Width: 0.00413
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_RANGING
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.07%)
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | GBPUSD.0 | Value: 1.0752 | Range: [0.0, 1.0]
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:17:59] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.0752
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | GBPUSD.0 | M30 | Signal: SELL | Confidence: 107.52% | Reason: Signal passed all filters | Confidence: 1.08
+2025.12.28 13:17:59.221	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:17:59.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:17:59.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:17:59.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-VALIDATED] GBPUSD.0 | Signal: SELL | Confidence: 2.6881249999999994 | Confluence: 1 | Quality: 1.0
+2025.12.28 13:17:59.330	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VOLUME-DEBUG] GBPUSD.0 | Input: 0.01 | Min: 0.01 | Max: 20.0 | Step: 0.01
+2025.12.28 13:17:59.817	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	CTrade::OrderSend: market sell 0.01 GBPUSD.0 sl: 1.35650 tp: 1.33625 [market closed]
+2025.12.28 13:17:59.817	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] Failed to execute SELL order on GBPUSD.0 | Lot Size: 0.01 | Error Code: 4756
+2025.12.28 13:17:59.817	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] ResultRetcode: 10018 | ResultRetcodeDescription: market closed
+2025.12.28 13:17:59.925	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:17:59.925	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:17:59.925	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_RANGING | Strength: 70.1 | Angle: -2.3 | ADX: 18.3
+2025.12.28 13:17:59.925	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] USDJPY.0 | Price: 156.23000 | Zone: 156.08900-156.23400 | BULLISH | Score: 50.0
+2025.12.28 13:17:59.925	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] USDJPY.0 | Price: 156.27300 | Zone: 156.17400-156.31000 | BEARISH | Score: 50.0
+2025.12.28 13:17:59.925	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] USDJPY.0 | Price: 155.75100 | Zone: 155.75100-156.22900 | BEARISH | Score: 83.6
+2025.12.28 13:17:59.926	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] USDJPY.0 | Price: 155.68100 | Zone: 155.68100-155.75100 | BEARISH | Score: 78.9
+2025.12.28 13:17:59.926	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] USDJPY.0 | Price: 155.73500 | Zone: 155.67200-155.79900 | BULLISH | Score: 50.0
+2025.12.28 13:17:59.926	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] USDJPY.0 | Price: 155.55800 | Zone: 155.55800-155.68100 | BEARISH | Score: 66.3
+2025.12.28 13:17:59.926	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=92, Sell=0
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.10886 (0.07%) | BB Width: 0.41251
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_RANGING
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.07%)
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | USDJPY.0 | Value: 1.0752 | Range: [0.0, 1.0]
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:18:00] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.0752
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | USDJPY.0 | M30 | Signal: SELL | Confidence: 107.52% | Reason: Signal passed all filters | Confidence: 1.08
+2025.12.28 13:18:00.034	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:18:00.143	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:18:00.143	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:18:00.143	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-VALIDATED] USDJPY.0 | Signal: SELL | Confidence: 2.6881249999999994 | Confluence: 1 | Quality: 1.0
+2025.12.28 13:18:00.143	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VOLUME-DEBUG] USDJPY.0 | Input: 0.01 | Min: 0.01 | Max: 20.0 | Step: 0.01
+2025.12.28 13:18:00.696	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	CTrade::OrderSend: market sell 0.01 USDJPY.0 sl: 157.380 tp: 155.031 [market closed]
+2025.12.28 13:18:00.696	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] Failed to execute SELL order on USDJPY.0 | Lot Size: 0.01 | Error Code: 4756
+2025.12.28 13:18:00.696	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] ResultRetcode: 10018 | ResultRetcodeDescription: market closed
+2025.12.28 13:18:00.805	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:18:00.805	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:18:00.805	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_NONE | Strength: 71.4 | Angle: -6.4 | ADX: 20.1
+2025.12.28 13:18:00.805	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] XAUUSD.0 | Price: 4430.55000 | Zone: 4430.55000-4471.12000 | BEARISH | Score: 83.4
+2025.12.28 13:18:00.806	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=10, Sell=0
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 13.77786 (0.30%) | BB Width: 38.55780
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_NONE
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.30%)
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | XAUUSD.0 | Value: 1.0752 | Range: [0.0, 1.0]
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:18:01] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.0752
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | XAUUSD.0 | M30 | Signal: SELL | Confidence: 107.52% | Reason: Signal passed all filters | Confidence: 1.08
+2025.12.28 13:18:00.917	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:18:01.026	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:18:01.026	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:18:01.026	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-VALIDATED] XAUUSD.0 | Signal: SELL | Confidence: 2.6881249999999994 | Confluence: 1 | Quality: 1.0
+2025.12.28 13:18:01.026	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VOLUME-DEBUG] XAUUSD.0 | Input: 0.01 | Min: 0.01 | Max: 2.0 | Step: 0.01
+2025.12.28 13:18:01.263	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:01.263	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:01.375	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:01.375	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:01.485	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:01.485	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:01.499	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	CTrade::OrderSend: market sell 0.01 XAUUSD.0 sl: 4557.70 tp: 4481.69 [market closed]
+2025.12.28 13:18:01.499	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] Failed to execute SELL order on XAUUSD.0 | Lot Size: 0.01 | Error Code: 4756
+2025.12.28 13:18:01.499	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-ERROR] ResultRetcode: 10018 | ResultRetcodeDescription: market closed
+2025.12.28 13:18:01.595	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:01.595	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:01.611	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:18:01.611	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:18:01.611	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_NONE | Strength: 50.0 | Angle: -1.8 | ADX: 31.1
+2025.12.28 13:18:01.611	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] BTCUSD.0 | Price: 87750.05900 | Zone: 87669.69900-87750.05900 | BULLISH | Score: 66.1
+2025.12.28 13:18:01.611	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] BTCUSD.0 | Price: 87289.32800 | Zone: 87165.10100-87437.76200 | BULLISH | Score: 50.0
+2025.12.28 13:18:01.611	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] BTCUSD.0 | Price: 86619.71500 | Zone: 86619.71500-87266.45000 | BEARISH | Score: 70.1
+2025.12.28 13:18:01.611	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=1, Sell=0
+2025.12.28 13:18:01.705	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:01.705	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 170.06379 (0.19%) | BB Width: 403.57134
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_NONE
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.19%)
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - Structure break confirmed
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | BTCUSD.0 | Value: 1.3200 | Range: [0.0, 1.0]
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:18:01] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.3200
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | BTCUSD.0 | M30 | Signal: SELL | Confidence: 132.00% | Reason: Signal passed all filters | Confidence: 1.32
+2025.12.28 13:18:01.721	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:18:01.816	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:01.816	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:01.832	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:18:01.832	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:18:01.832	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-VALIDATED] BTCUSD.0 | Signal: SELL | Confidence: 3.3000000000000003 | Confluence: 1 | Quality: 1.0
+2025.12.28 13:18:01.832	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VOLUME-DEBUG] BTCUSD.0 | Input: 0.01 | Min: 0.01 | Max: 5.0 | Step: 0.01
+2025.12.28 13:18:01.928	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:01.928	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:02.039	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:02.039	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:02.148	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:02.148	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:02.255	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:02.255	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:02.347	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TRADE-SUCCESS] SELL order executed on BTCUSD.0 | Lot Size: 0.01 | SL: 88088.301 (438250 pips) | TP: 86773.55 (876500 pips) | Ticket: 4471721061
+2025.12.28 13:18:05.196	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.196	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:05.306	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.306	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:05.417	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.417	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:05.527	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.527	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:05.635	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.635	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:05.744	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.744	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:05.855	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.855	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:05.965	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:05.965	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:06.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:06.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:06.187	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:06.187	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.126	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:09.126	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.235	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:09.235	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.360	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:09.360	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.471	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:09.471	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.582	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:09.582	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.693	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:09.693	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.804	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.0
+2025.12.28 13:18:09.804	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:09.916	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.0
+2025.12.28 13:18:09.916	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:10.027	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.0
+2025.12.28 13:18:10.027	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:10.137	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.0
+2025.12.28 13:18:10.137	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.094	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.094	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.202	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.202	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.311	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.311	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.418	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.418	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.528	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.528	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.640	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.640	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.750	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.750	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.859	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.859	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:13.971	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:13.971	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:14.081	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:14.081	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:14.081	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:18:14.081	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:18:17.017	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.017	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.128	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.128	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.239	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.239	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.350	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.350	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.461	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.461	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.572	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.572	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.681	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.681	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.792	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.792	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:17.903	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.1
+2025.12.28 13:18:17.903	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:18.010	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:18.010	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:20.952	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:20.952	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.061	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.061	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.170	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.170	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.282	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.282	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.391	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.391	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.503	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.503	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.613	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.613	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.722	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.722	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.833	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.833	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:21.944	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:21.944	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:24.885	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:24.885	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:24.996	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:24.996	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.107	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.107	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.218	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.218	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.328	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.328	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.437	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.437	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.547	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.547	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.655	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.655	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.765	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.765	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:25.875	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:25.875	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:28.815	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:28.815	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:28.925	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:28.925	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.035	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.035	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.145	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.145	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.255	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.255	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.366	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.366	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.476	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.476	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.587	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.587	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.698	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.698	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:29.807	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:29.807	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:32.754	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:32.754	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:32.865	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:32.865	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:32.974	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:32.974	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:33.083	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:33.083	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:33.194	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:33.194	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:33.304	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:33.304	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:33.413	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:33.413	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:33.524	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:33.524	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:33.634	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:33.634	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:33.744	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.1
+2025.12.28 13:18:33.744	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:35.357	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[DEBUG-PROCESS] Call #50 - EA is processing normally (Source: TIMER)
+2025.12.28 13:18:35.357	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[DEBUG-PROCESS] Call #50 Time: 2025.12.28 05:18:35
+2025.12.28 13:18:35.357	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[DEBUG-STATUS] Current symbol: Volatility 100 Index.0 Symbols processed: 0
+2025.12.28 13:18:35.357	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENTERPRISE-STATUS] Active strategies: 4 | Cooldown: 37s / 120s
+2025.12.28 13:18:35.357	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENTERPRISE-STATUS] EA Positions: 1 / 5 | Account Total: 1 | Last trade: 2025.12.28 05:17
+2025.12.28 13:18:36.694	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:36.694	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:36.805	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:36.805	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:36.916	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:18:36.916	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:18:37.025	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.1
+2025.12.28 13:19:24.893	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:25.003	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:25.003	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:25.003	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:25.003	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:27.955	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:27.955	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.066	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.066	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.176	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.176	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.289	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.289	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.399	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.399	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.510	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.510	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.623	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.623	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.734	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.734	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.843	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.843	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.954	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:28.954	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:28.954	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:28.954	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:31.914	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:31.914	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.024	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.025	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.134	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.134	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.245	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.245	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.354	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.354	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.463	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.463	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.573	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.573	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.683	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.683	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.794	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.794	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.907	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:32.907	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:32.907	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:32.907	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:32.907	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:35.856	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:35.856	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:35.966	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:35.966	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.187	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.187	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.295	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.295	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.402	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.402	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.512	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.512	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.621	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.621	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.730	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.730	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.840	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -50.0 | ADX: 34.2
+2025.12.28 13:19:36.840	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:36.840	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:36.840	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:36.840	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87649.876, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:36.840	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:39.797	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:39.797	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:39.907	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:39.907	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.017	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.017	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.126	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.126	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.248	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.248	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.359	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.359	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.469	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.469	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.581	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.581	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.693	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.693	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.803	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:40.803	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:40.803	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:40.803	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:40.803	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87649.875, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:40.803	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:42.313	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[DEBUG-PROCESS] Call #150 - EA is processing normally (Source: TICK)
+2025.12.28 13:19:42.313	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[DEBUG-PROCESS] Call #150 Time: 2025.12.28 05:19:42
+2025.12.28 13:19:42.313	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[DEBUG-STATUS] Current symbol: Volatility 100 Index.0 Symbols processed: 0
+2025.12.28 13:19:42.313	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENTERPRISE-STATUS] Active strategies: 4 | Cooldown: 104s / 120s
+2025.12.28 13:19:42.313	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[ENTERPRISE-STATUS] EA Positions: 1 / 5 | Account Total: 1 | Last trade: 2025.12.28 05:17
+2025.12.28 13:19:43.749	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:43.749	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:43.858	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:43.858	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:43.968	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:43.968	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.078	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:44.078	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.190	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:44.190	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.298	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:44.298	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.410	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:44.410	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.519	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:44.519	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.628	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:44.628	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.738	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:44.738	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:44.738	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:44.738	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:44.738	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87649.874, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:44.738	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:47.676	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.2
+2025.12.28 13:19:47.676	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:47.784	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.2
+2025.12.28 13:19:47.784	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:47.895	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.8 | ADX: 34.2
+2025.12.28 13:19:47.895	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.005	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:48.005	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.116	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:48.116	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.227	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:48.227	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.337	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:48.337	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.446	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:48.446	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.555	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:48.555	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.665	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:48.665	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:48.665	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:48.665	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:48.665	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87649.872, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:48.665	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:51.605	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:51.605	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:51.717	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:51.717	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:51.829	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:51.829	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:51.940	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:51.940	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:52.049	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:52.049	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:52.161	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:52.161	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:52.270	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:52.270	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:52.381	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:52.381	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:52.492	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:52.492	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:52.603	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:52.603	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:52.603	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87650.046, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:52.603	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:52.603	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	CTrade::OrderSend: modify position #4471721061 BTCUSD.0 (sl: 87649.873, tp: 86773.550) [invalid stops]
+2025.12.28 13:19:52.603	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TRADE-ERROR] Trade Error: Code=10016, Comment=Invalid stops, Request ID=0
+2025.12.28 13:19:55.555	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:55.555	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:55.666	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:55.666	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:55.775	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:55.775	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:55.884	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:55.884	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:55.994	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:55.994	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:56.104	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:56.104	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:56.213	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:56.213	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:56.321	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:56.321	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:56.430	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:56.430	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:56.540	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:56.540	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:58.018	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:58.018	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:19:58.128	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_RANGING | Strength: 40.0 | Angle: 0.7 | ADX: 15.7
+2025.12.28 13:19:58.128	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] EURUSD.0 | Price: 1.17935 | Zone: 1.17915-1.17989 | BEARISH | Score: 50.0
+2025.12.28 13:19:58.128	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00078 (0.07%) | BB Width: 0.00345
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_RANGING
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.07%)
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | EURUSD.0 | Value: 1.0752 | Range: [0.0, 1.0]
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:19:58] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.0752
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | EURUSD.0 | M30 | Signal: SELL | Confidence: 107.52% | Reason: Signal passed all filters | Confidence: 1.08
+2025.12.28 13:19:58.241	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:58.353	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:19:58.353	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:19:58.353	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-REJECTED] EURUSD.0 | Reason: Volatility out of range | Confluence: 1 | Quality: 0.00 | Conf: 2.69
+2025.12.28 13:19:58.463	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:58.463	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:19:58.574	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_RANGING | Strength: 50.0 | Angle: -0.2 | ADX: 18.9
+2025.12.28 13:19:58.574	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] GBPUSD.0 | Price: 1.35217 | Zone: 1.35172-1.35239 | BEARISH | Score: 50.0
+2025.12.28 13:19:58.574	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] GBPUSD.0 | Price: 1.35221 | Zone: 1.35205-1.35253 | BEARISH | Score: 50.0
+2025.12.28 13:19:58.574	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] GBPUSD.0 | Price: 1.35281 | Zone: 1.35229-1.35281 | BULLISH | Score: 65.5
+2025.12.28 13:19:58.574	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=98, Sell=0
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.00100 (0.07%) | BB Width: 0.00413
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_RANGING
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.07%)
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - Structure break confirmed
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | GBPUSD.0 | Value: 1.5180 | Range: [0.0, 1.0]
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:19:58] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.5180
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | GBPUSD.0 | M30 | Signal: SELL | Confidence: 151.80% | Reason: Signal passed all filters | Confidence: 1.52
+2025.12.28 13:19:58.684	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:58.796	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:19:58.796	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:19:58.796	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-REJECTED] GBPUSD.0 | Reason: Volatility out of range | Confluence: 1 | Quality: 0.00 | Conf: 3.79
+2025.12.28 13:19:58.904	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:58.904	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_RANGING | Strength: 70.1 | Angle: -2.3 | ADX: 18.3
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] USDJPY.0 | Price: 156.23000 | Zone: 156.08900-156.23400 | BULLISH | Score: 50.0
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] USDJPY.0 | Price: 156.27300 | Zone: 156.17400-156.31000 | BEARISH | Score: 50.0
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] USDJPY.0 | Price: 155.75100 | Zone: 155.75100-156.22900 | BEARISH | Score: 83.6
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] USDJPY.0 | Price: 155.68100 | Zone: 155.68100-155.75100 | BEARISH | Score: 78.9
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] USDJPY.0 | Price: 155.73500 | Zone: 155.67200-155.79900 | BULLISH | Score: 50.0
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] USDJPY.0 | Price: 155.55800 | Zone: 155.55800-155.68100 | BEARISH | Score: 66.3
+2025.12.28 13:19:59.015	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=92, Sell=0
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 0.10886 (0.07%) | BB Width: 0.41251
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_RANGING
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.07%)
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | USDJPY.0 | Value: 1.0752 | Range: [0.0, 1.0]
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:19:59] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.0752
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | USDJPY.0 | M30 | Signal: SELL | Confidence: 107.52% | Reason: Signal passed all filters | Confidence: 1.08
+2025.12.28 13:19:59.124	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:59.234	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:19:59.234	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:19:59.234	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-VALIDATED] USDJPY.0 | Signal: SELL | Confidence: 2.6881249999999994 | Confluence: 1 | Quality: 1.0
+2025.12.28 13:19:59.344	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:59.344	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:19:59.455	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_NONE | Strength: 71.4 | Angle: -6.4 | ADX: 20.1
+2025.12.28 13:19:59.455	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] XAUUSD.0 | Price: 4430.55000 | Zone: 4430.55000-4471.12000 | BEARISH | Score: 83.4
+2025.12.28 13:19:59.455	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=10, Sell=0
+2025.12.28 13:19:59.488	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:59.488	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:59.566	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 13.77786 (0.30%) | BB Width: 38.55780
+2025.12.28 13:19:59.566	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_NONE
+2025.12.28 13:19:59.566	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] VolatilityFilter: PASSED - Volatility: VOLATILITY_LOW (0.30%)
+2025.12.28 13:19:59.566	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] LiquidityFilter: PASSED - Recent liquidity sweep detected
+2025.12.28 13:19:59.566	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] StructureFilter: PASSED - No recent structure break
+2025.12.28 13:19:59.566	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[CRITICAL_ALERT] INVALID_CONFIDENCE | Advanced SMC Strategy | XAUUSD.0 | Value: 1.0752 | Range: [0.0, 1.0]
+2025.12.28 13:19:59.567	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[2025.12.28 05:20:00] CRITICAL | SignalDiagnostics | LogError | N/A | 0 | Confidence out of bounds: 1.0752
+2025.12.28 13:19:59.567	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL] Advanced SMC Strategy | XAUUSD.0 | M30 | Signal: SELL | Confidence: 107.52% | Reason: Signal passed all filters | Confidence: 1.08
+2025.12.28 13:19:59.567	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:59.598	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:59.598	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:59.678	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_BULLISH_STRONG | Strength: 93.6 | Angle: 62.3 | ADX: 66.8
+2025.12.28 13:19:59.678	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[NO_SIGNAL] ElliottWave | Volatility 100 Index.0 | M30 | Reason: No valid wave pattern
+2025.12.28 13:19:59.678	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SIGNAL-VALIDATED] XAUUSD.0 | Signal: SELL | Confidence: 2.6881249999999994 | Confluence: 1 | Quality: 1.0
+2025.12.28 13:19:59.709	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:59.709	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:59.787	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] Volatility 100 Index.0 | Price: 816.15000 | Zone: 783.96000-816.15000 | BULLISH | Score: 65.1
+2025.12.28 13:19:59.787	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC] SIGNAL: SELL | Confidence: 100.0% | SUPPLY | Zone Rejection | Age:4 bars
+2025.12.28 13:19:59.819	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:59.819	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:19:59.898	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[TrendEngine] Trend: TREND_NONE | Strength: 50.0 | Angle: -1.8 | ADX: 31.1
+2025.12.28 13:19:59.898	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_HIGH] BTCUSD.0 | Price: 87750.05900 | Zone: 87669.69900-87750.05900 | BULLISH | Score: 66.1
+2025.12.28 13:19:59.898	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_LIQUIDITY_SWEEP] BTCUSD.0 | Price: 87289.32800 | Zone: 87165.10100-87437.76200 | BULLISH | Score: 50.0
+2025.12.28 13:19:59.898	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[SMC_BOS_LOW] BTCUSD.0 | Price: 86619.71500 | Zone: 86619.71500-87266.45000 | BEARISH | Score: 70.1
+2025.12.28 13:19:59.898	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[LiquidityEngine] Liquidity zones: Buy=1, Sell=0
+2025.12.28 13:19:59.929	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_BEARISH_WEAK | Strength: 84.4 | Angle: -49.9 | ADX: 34.2
+2025.12.28 13:19:59.929	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
+2025.12.28 13:20:00.006	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[VolatilityEngine] Volatility: VOLATILITY_LOW | ATR: 170.06379 (0.19%) | BB Width: 403.57151
+2025.12.28 13:20:00.006	MultiStrategyAutonomousEA (Volatility 100 Index.0,M30)	[Pipeline] TrendFilter: PASSED - BYPASSED - High confidence signal (1.00) | Trend: TREND_NONE

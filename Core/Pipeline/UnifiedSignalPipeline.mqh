@@ -494,6 +494,9 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     if(m_trendEngine.IsStrongTrend())
         confidence *= 1.15;
     
+    // Cap confidence to valid range [0.0, 1.0]
+    confidence = MathMin(1.0, MathMax(0.0, confidence));
+    
     LogFilterResult("TrendFilter", true, 
                    StringFormat("Trend: %s, Strength: %.1f", 
                               EnumToString(trend), trendStrength));
@@ -529,6 +532,9 @@ bool CUnifiedSignalPipeline::ApplyVolatilityFilter(ENUM_TRADE_SIGNAL &signal, do
     else if(volState == VOLATILITY_EXTREME)
         confidence *= 0.7;
     
+    // Cap confidence to valid range [0.0, 1.0]
+    confidence = MathMin(1.0, MathMax(0.0, confidence));
+    
     LogFilterResult("VolatilityFilter", true, 
                    StringFormat("Volatility: %s (%.2f%%)", 
                               EnumToString(volState), atrPercent));
@@ -558,6 +564,9 @@ bool CUnifiedSignalPipeline::ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, dou
         confidence *= 0.95; // Slightly reduce confidence near untested liquidity
         LogFilterResult("LiquidityFilter", true, "Price near liquidity zone");
     }
+    
+    // Cap confidence to valid range [0.0, 1.0]
+    confidence = MathMin(1.0, MathMax(0.0, confidence));
     
     return true;
 }
@@ -600,6 +609,9 @@ bool CUnifiedSignalPipeline::ApplyStructureFilter(ENUM_TRADE_SIGNAL &signal, dou
     {
         LogFilterResult("StructureFilter", true, "Structure break confirmed");
     }
+    
+    // Cap confidence to valid range [0.0, 1.0]
+    confidence = MathMin(1.0, MathMax(0.0, confidence));
     
     return true;
 }

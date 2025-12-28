@@ -19,8 +19,6 @@
 // Import strategy implementations from their respective files
 // Include strategy implementations from the project root Strategies directory
 #include "..\..\Strategies\StrategyRSI.mqh"
-#include "..\..\Strategies\StrategySupplyDemand.mqh"
-#include "..\..\Strategies\StrategyOrderBlockFVG.mqh"
 #include "..\..\Strategies\StrategySwing.mqh"
 #include "..\..\Strategies\StrategyVolatility.mqh"
 #include "..\..\Strategies\StrategyTrend.mqh"

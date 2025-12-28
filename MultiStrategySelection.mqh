@@ -422,8 +422,8 @@ ENUM_TRADE_SIGNAL GetFibonacciSignal(string symbol, ENUM_MARKET_REGIME regime)
 ENUM_TRADE_SIGNAL GetElliottWaveSignal(string symbol, ENUM_MARKET_REGIME regime)
 {
     // Simplified Elliott Wave - look for 5-wave patterns
-    int ma20Handle = iMA(symbol, PERIOD_H1, 20, 0, MODE_SMA, PRICE_CLOSE);
-    int ma50Handle = iMA(symbol, PERIOD_H1, 50, 0, MODE_SMA, PRICE_CLOSE);
+    int ma20Handle = iMA(symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int ma50Handle = iMA(symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
     
     double ma20Buffer[1], ma50Buffer[1];
     if(CopyBuffer(ma20Handle, 0, 0, 1, ma20Buffer) <= 0 ||

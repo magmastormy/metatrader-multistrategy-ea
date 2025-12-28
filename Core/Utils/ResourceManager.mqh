@@ -432,7 +432,7 @@ int CResourceManager::CreateIndicatorHandle(const string symbol,
     }
     else if(indicatorName == "MA")
     {
-        handle = iMA(symbol, timeframe, 20, 0, MODE_SMA, PRICE_CLOSE);
+        handle = iMA(symbol, timeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
     }
     else if(indicatorName == "MACD")
     {

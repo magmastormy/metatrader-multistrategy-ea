@@ -42,6 +42,32 @@ private:
     double m_lastSwingLow;
     int m_swingHighBar;
     int m_swingLowBar;
+
+    int m_maFastHandle;
+    int m_maSlowHandle;
+    int m_rsiHandle;
+
+    void CleanupIndicators()
+    {
+        if(m_maFastHandle != INVALID_HANDLE) { IndicatorRelease(m_maFastHandle); m_maFastHandle = INVALID_HANDLE; }
+        if(m_maSlowHandle != INVALID_HANDLE) { IndicatorRelease(m_maSlowHandle); m_maSlowHandle = INVALID_HANDLE; }
+        if(m_rsiHandle != INVALID_HANDLE) { IndicatorRelease(m_rsiHandle); m_rsiHandle = INVALID_HANDLE; }
+    }
+
+    bool UpdateIndicators(const string &symbol, const ENUM_TIMEFRAMES timeframe)
+    {
+        if(symbol == "" || timeframe == 0)
+            return false;
+
+        if(m_maFastHandle == INVALID_HANDLE)
+            m_maFastHandle = iMA(symbol, timeframe, m_maFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
+        if(m_maSlowHandle == INVALID_HANDLE)
+            m_maSlowHandle = iMA(symbol, timeframe, m_maSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
+        if(m_rsiHandle == INVALID_HANDLE)
+            m_rsiHandle = iRSI(symbol, timeframe, m_rsiPeriod, PRICE_CLOSE);
+
+        return (m_maFastHandle != INVALID_HANDLE && m_maSlowHandle != INVALID_HANDLE && m_rsiHandle != INVALID_HANDLE);
+    }
     
     // Helper method to calculate the signal
     int CalculateSignal(const string &symbol, const ENUM_TIMEFRAMES timeframe, double &outConfidence)
@@ -51,20 +77,10 @@ private:
         // Initialize arrays
         double maFast[2], maSlow[2], rsi[1];
         // Note: ArraySetAsSeries cannot be used with static arrays
-        
-        // Get fast and slow MA handles
-        int maFastHandle = iMA(symbol, timeframe, m_maFastPeriod, 0, MODE_SMA, PRICE_CLOSE);
-        if(maFastHandle == INVALID_HANDLE)
+
+        if(!UpdateIndicators(symbol, timeframe))
         {
-            Print("Failed to create fast MA handle");
-            return 0;
-        }
-        
-        int maSlowHandle = iMA(symbol, timeframe, m_maSlowPeriod, 0, MODE_SMA, PRICE_CLOSE);
-        if(maSlowHandle == INVALID_HANDLE)
-        {
-            Print("Failed to create slow MA handle");
-            IndicatorRelease(maFastHandle);
+            Print("Failed to create indicator handles");
             return 0;
         }
         
@@ -74,8 +90,8 @@ private:
         while(attempts < 10 && !dataReady)
         {
             // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
-            if(CopyBuffer(maFastHandle, 0, 0, 2, maFast) == 2 &&
-               CopyBuffer(maSlowHandle, 0, 0, 2, maSlow) == 2)
+            if(CopyBuffer(m_maFastHandle, 0, 0, 2, maFast) == 2 &&
+               CopyBuffer(m_maSlowHandle, 0, 0, 2, maSlow) == 2)
             {
                 dataReady = true;
             }
@@ -87,20 +103,6 @@ private:
             if(m_diagnostics != NULL)
                 m_diagnostics.LogStrategyError("Swing", "MA_BUFFER_FAILED", 
                                               StringFormat("Failed to copy MA buffer data after %d attempts for %s", attempts, symbol));
-            IndicatorRelease(maFastHandle);
-            IndicatorRelease(maSlowHandle);
-            return 0;
-        }
-        
-        // Release MA handles as we don't need them anymore
-        IndicatorRelease(maFastHandle);
-        IndicatorRelease(maSlowHandle);
-        
-        // Get RSI handle and value
-        int rsiHandle = iRSI(symbol, timeframe, m_rsiPeriod, PRICE_CLOSE);
-        if(rsiHandle == INVALID_HANDLE)
-        {
-            Print("Failed to create RSI handle");
             return 0;
         }
         
@@ -110,7 +112,7 @@ private:
         while(attempts < 10 && !dataReady)
         {
             // 🛡�?BEAST MODE: Removed Sleep(100) - indicators initialize properly without delays
-            if(CopyBuffer(rsiHandle, 0, 0, 1, rsi) == 1)
+            if(CopyBuffer(m_rsiHandle, 0, 0, 1, rsi) == 1)
             {
                 dataReady = true;
             }
@@ -122,10 +124,8 @@ private:
             if(m_diagnostics != NULL)
                 m_diagnostics.LogStrategyError("Swing", "RSI_BUFFER_FAILED", 
                                               StringFormat("Failed to copy RSI buffer data after %d attempts for %s", attempts, symbol));
-            IndicatorRelease(rsiHandle);
             return 0;
         }
-        IndicatorRelease(rsiHandle);
         
         // Calculate signal based on MA crossover and RSI
         int signal = 0;
@@ -192,7 +192,10 @@ public:
         m_lastSwingHigh(0),
         m_lastSwingLow(0),
         m_swingHighBar(0),
-        m_swingLowBar(0)
+        m_swingLowBar(0),
+        m_maFastHandle(INVALID_HANDLE),
+        m_maSlowHandle(INVALID_HANDLE),
+        m_rsiHandle(INVALID_HANDLE)
     {
         // Initialize diagnostics
         m_diagnostics = new CSignalDiagnostics();
@@ -225,7 +228,10 @@ public:
     // IStrategy implementation
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
     {
+        CleanupIndicators();
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer)) return false;
+
+        UpdateIndicators(m_symbol, m_timeframe);
         
         if(m_diagnostics != NULL)
         {
@@ -240,11 +246,25 @@ public:
     virtual void Deinit() override
     {
         Print("Deinitializing ", m_name);
+        CleanupIndicators();
         CStrategyBase::Deinit();
     }
     
     virtual void OnTick() override {}
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override {}
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
+    {
+        if(!IsEnabled() || !m_is_initialized || symbol == "" || timeframe == 0)
+            return;
+        if(symbol != m_symbol || timeframe != m_timeframe)
+            return;
+
+        UpdateIndicators(symbol, timeframe);
+
+        double tmp[1];
+        if(m_maFastHandle != INVALID_HANDLE) CopyBuffer(m_maFastHandle, 0, 0, 1, tmp);
+        if(m_maSlowHandle != INVALID_HANDLE) CopyBuffer(m_maSlowHandle, 0, 0, 1, tmp);
+        if(m_rsiHandle != INVALID_HANDLE) CopyBuffer(m_rsiHandle, 0, 0, 1, tmp);
+    }
     
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
@@ -265,8 +285,8 @@ public:
             
             if(m_diagnostics != NULL)
             {
-                string reason = StringFormat("MA crossover bullish | RSI: %.2f | Confidence: %.2f",
-                                           50 + signalValue * 50, confidence);
+                string reason = StringFormat("MA crossover bullish | SignalStrength: %.2f | Confidence: %.2f",
+                                           signalValue, confidence);
                 m_diagnostics.LogSignalGeneration("Swing", m_symbol, m_timeframe, 
                                                 signal, confidence, reason);
             }
@@ -278,8 +298,8 @@ public:
             
             if(m_diagnostics != NULL)
             {
-                string reason = StringFormat("MA crossover bearish | RSI: %.2f | Confidence: %.2f",
-                                           50 + signalValue * 50, confidence);
+                string reason = StringFormat("MA crossover bearish | SignalStrength: %.2f | Confidence: %.2f",
+                                           signalValue, confidence);
                 m_diagnostics.LogSignalGeneration("Swing", m_symbol, m_timeframe, 
                                                 signal, confidence, reason);
             }

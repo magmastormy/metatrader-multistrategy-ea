@@ -195,7 +195,21 @@ void CStrategyBollingerBreakout::OnTick()
 //+------------------------------------------------------------------+
 void CStrategyBollingerBreakout::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe)
 {
-    // Logic for new bar events can be added here
+    if(!m_is_enabled || !m_is_initialized || symbol == "" || timeframe == 0)
+        return;
+    
+    // Only process for matching symbol/timeframe
+    if(symbol != m_symbol || timeframe != m_timeframe)
+        return;
+    
+    // Ensure indicator handles are valid
+    if(m_bb_handle == INVALID_HANDLE || m_atr_handle == INVALID_HANDLE)
+        return;
+    
+    // Prime Bollinger band buffers on new bar
+    CopyBuffer(m_bb_handle, 1, 0, 3, m_upper_band);
+    CopyBuffer(m_bb_handle, 0, 0, 3, m_middle_band);
+    CopyBuffer(m_bb_handle, 2, 0, 3, m_lower_band);
 }
 
 #endif // __STRATEGY_BOLLINGER_BREAKOUT_MQH__

@@ -13,15 +13,11 @@
 
 #include "../Strategy/StrategyBase.mqh"
 #include "../../Strategies/StrategyRSI.mqh"
-#include "../../Strategies/StrategySupplyDemand.mqh"
-#include "../../Strategies/StrategyOrderBlockFVG.mqh"
 #include "../../Strategies/StrategySwing.mqh"
 // Include other strategy headers as they are converted
 
 // Forward declarations
 class CStrategyRSI;
-class CStrategySupplyDemand;
-class CStrategyOrderBlockFVG;
 class CStrategySwing;
 
 // Add these before SStrategyConfig:
@@ -53,10 +49,7 @@ public:
         STRATEGY_MA,
         STRATEGY_BOLLINGER,
         STRATEGY_MACD,
-        STRATEGY_SUPPLY_DEMAND,
-        STRATEGY_ORDER_BLOCK,
         STRATEGY_FIBONACCI,
-        STRATEGY_ELLIOTT,
         STRATEGY_SWING,
         STRATEGY_VOLATILITY,
         STRATEGY_TREND,
@@ -64,6 +57,8 @@ public:
         STRATEGY_BREAKOUT,
         STRATEGY_HARMONIC,
         STRATEGY_ICHIMOKU,
+        STRATEGY_SMC,              // Smart Money Concepts (covers Order Block, Supply/Demand)
+        STRATEGY_ELLIOTT_WAVE,     // Elliott Wave Enhanced
         // Add other strategy types here
         STRATEGY_COUNT  // Must be the last element
     };
@@ -100,22 +95,32 @@ public:
         m_strategyNames[STRATEGY_MA] = "Moving Average";
         m_strategyNames[STRATEGY_BOLLINGER] = "Bollinger Bands";
         m_strategyNames[STRATEGY_MACD] = "MACD";
-        m_strategyNames[STRATEGY_SUPPLY_DEMAND] = "Supply & Demand";
-        m_strategyNames[STRATEGY_ORDER_BLOCK] = "Order Block & FVG";
         m_strategyNames[STRATEGY_FIBONACCI] = "Fibonacci";
-        m_strategyNames[STRATEGY_ELLIOTT] = "Elliott Wave";
         m_strategyNames[STRATEGY_SWING] = "Swing Trading";
+        m_strategyNames[STRATEGY_VOLATILITY] = "Volatility";
+        m_strategyNames[STRATEGY_TREND] = "Trend Following";
+        m_strategyNames[STRATEGY_MEAN_REVERSION] = "Mean Reversion";
+        m_strategyNames[STRATEGY_BREAKOUT] = "Breakout";
+        m_strategyNames[STRATEGY_HARMONIC] = "Harmonic Patterns";
+        m_strategyNames[STRATEGY_ICHIMOKU] = "Ichimoku Cloud";
+        m_strategyNames[STRATEGY_SMC] = "Smart Money Concepts";
+        m_strategyNames[STRATEGY_ELLIOTT_WAVE] = "Elliott Wave Enhanced";
         
         // Initialize strategy descriptions
         m_strategyDescriptions[STRATEGY_RSI] = "Uses RSI overbought/oversold levels with price action confirmation";
         m_strategyDescriptions[STRATEGY_MA] = "Uses moving average crossovers for trade signals";
         m_strategyDescriptions[STRATEGY_BOLLINGER] = "Trades based on Bollinger Bands";
         m_strategyDescriptions[STRATEGY_MACD] = "Uses MACD for trend following and momentum";
-        m_strategyDescriptions[STRATEGY_SUPPLY_DEMAND] = "Identifies and trades supply and demand zones";
-        m_strategyDescriptions[STRATEGY_ORDER_BLOCK] = "Trades order blocks and fair value gaps";
         m_strategyDescriptions[STRATEGY_FIBONACCI] = "Uses Fibonacci retracement levels for entries and exits";
-        m_strategyDescriptions[STRATEGY_ELLIOTT] = "Implements Elliott Wave theory for market analysis";
         m_strategyDescriptions[STRATEGY_SWING] = "Swing trading strategy using multiple timeframes";
+        m_strategyDescriptions[STRATEGY_VOLATILITY] = "Volatility breakout strategy";
+        m_strategyDescriptions[STRATEGY_TREND] = "Trend following with multiple confirmations";
+        m_strategyDescriptions[STRATEGY_MEAN_REVERSION] = "Mean reversion to moving averages";
+        m_strategyDescriptions[STRATEGY_BREAKOUT] = "Breakout trading strategy";
+        m_strategyDescriptions[STRATEGY_HARMONIC] = "Harmonic pattern recognition and trading";
+        m_strategyDescriptions[STRATEGY_ICHIMOKU] = "Ichimoku Cloud comprehensive analysis";
+        m_strategyDescriptions[STRATEGY_SMC] = "Advanced Smart Money Concepts with order blocks, liquidity sweeps, and FVG";
+        m_strategyDescriptions[STRATEGY_ELLIOTT_WAVE] = "Elliott Wave theory with fractal analysis and wave counting";
     }
     
     ~CStrategyFactory()
@@ -145,19 +150,6 @@ public:
                 break;
             }
                 
-            case STRATEGY_SUPPLY_DEMAND:
-            {
-                CStrategySupplyDemand* sdStrategy = new CStrategySupplyDemand("SupplyDemand", 1);
-                strategy = sdStrategy;
-                break;
-            }
-                
-            case STRATEGY_ORDER_BLOCK:
-            {
-                CStrategyOrderBlockFVG* obStrategy = new CStrategyOrderBlockFVG("OrderBlock", 1);
-                strategy = obStrategy;
-                break;
-            }
                 
             case STRATEGY_SWING:
             {
