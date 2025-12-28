@@ -488,6 +488,7 @@ public:
                      const uint magicNumber = 0);
     
     bool ClosePosition(const ulong ticket, const string reason = "Manual close");
+    bool ClosePositionPartial(const ulong ticket, double volume, const string reason = "Partial close");
     bool CloseAllPositions(const string symbol = "", const string reason = "Close all");
     
     bool ModifyPosition(const ulong ticket,
@@ -650,6 +651,41 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
 }
 
 //+------------------------------------------------------------------+
+//| Close Position Partial                                           |
+//+------------------------------------------------------------------+
+bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, const string reason)
+{
+    if(volume <= 0)
+        return false;
+    
+    if(!m_positionInfo.SelectByTicket(ticket))
+        return false;
+    
+    string symbol = m_positionInfo.Symbol();
+    double positionVolume = m_positionInfo.Volume();
+    
+    double normalizedVolume = NormalizeVolume(symbol, volume);
+    if(normalizedVolume <= 0 || normalizedVolume >= positionVolume)
+        return false;
+    
+    bool result = m_trade.PositionClosePartial(ticket, normalizedVolume);
+    
+    ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)m_positionInfo.Type();
+    
+    if(result)
+    {
+        LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, true,
+                          StringFormat("Reason: %s", reason));
+        m_dailyLoss += 0.0; // no change but keep placeholder
+    }
+    else
+    {
+        LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, false,
+                          "Partial close failed - " + IntegerToString(GetLastError()));
+    }
+    
+    return result;
+}
 //| Close All Positions                                             |
 //+------------------------------------------------------------------+
 bool CTradeManager::CloseAllPositions(const string symbolParam, const string reason)
@@ -685,22 +721,68 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     {
         return false;
     }
-    
+
     if(!IsModificationNeeded(ticket, stopLoss, takeProfit))
     {
         return true;
     }
-    
+
+    // Get position details for stop level validation
+    string symbol = PositionGetString(POSITION_SYMBOL);
+    double positionPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+
+    ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+    // Validate stop levels against broker minimum distance
+    int stopLevel = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    double minDistance = stopLevel * point;
+    if(minDistance < point * 10) minDistance = point * 10; // Minimum 10 points fallback
+
+    double slDistance = MathAbs(positionPrice - stopLoss);
+    double tpDistance = (takeProfit > 0) ? MathAbs(positionPrice - takeProfit) : 0;
+
+    // Check if SL is too close to current price
+    if(stopLoss > 0 && slDistance < minDistance)
+    {
+        PrintFormat("[TRADE-WARN] ModifyPosition skipped - SL too close: %.5f (min: %.5f) | Symbol: %s",
+                   slDistance, minDistance, symbol);
+        return false;
+    }
+
+    // Check if TP is too close to current price
+    if(takeProfit > 0 && tpDistance < minDistance)
+    {
+        PrintFormat("[TRADE-WARN] ModifyPosition skipped - TP too close: %.5f (min: %.5f) | Symbol: %s",
+                   tpDistance, minDistance, symbol);
+        return false;
+    }
+
+    // Validate SL is on correct side of price
+    if(stopLoss > 0)
+    {
+        if(posType == POSITION_TYPE_BUY && stopLoss >= positionPrice)
+        {
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY SL above price: SL=%.5f, Price=%.5f", stopLoss, positionPrice);
+            return false;
+        }
+        if(posType == POSITION_TYPE_SELL && stopLoss <= positionPrice)
+        {
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL SL below price: SL=%.5f, Price=%.5f", stopLoss, positionPrice);
+            return false;
+        }
+    }
+
     if(m_trade.PositionModify(ticket, stopLoss, takeProfit))
     {
         UpdatePositionState(ticket, stopLoss, takeProfit);
         return true;
     }
-    
+
     MqlTradeResult tradeResult;
     m_trade.Result(tradeResult);
     LogTradeError(tradeResult, "ModifyPosition");
-    
+
     return false;
 }
 

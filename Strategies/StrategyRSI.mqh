@@ -34,6 +34,7 @@ public:
     virtual void Deinit() override;
     virtual void Update(const string symbol, const ENUM_TIMEFRAMES timeframe);
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override;
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override;
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_RSI; }
     
     // --- Configuration ---
@@ -165,6 +166,29 @@ ENUM_TRADE_SIGNAL CStrategyRSI::GetSignal(double &confidence)
     }
     else
         return TRADE_SIGNAL_NONE;
+}
+
+//+------------------------------------------------------------------+
+//| Handle new bar event                                             |
+//+------------------------------------------------------------------+
+void CStrategyRSI::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe)
+{
+    if(!IsEnabled() || !m_is_initialized || symbol == "" || timeframe == 0)
+        return;
+    if(symbol != m_symbol || timeframe != m_timeframe)
+        return;
+
+    if(m_trendHandle == INVALID_HANDLE)
+        m_trendHandle = iMA(m_symbol, m_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
+
+    double rsi_values[2];
+    m_rsi.GetData(1, 0, 2, rsi_values);
+
+    if(m_trendHandle != INVALID_HANDLE)
+    {
+        double trendBuffer[1];
+        CopyBuffer(m_trendHandle, 0, 0, 1, trendBuffer);
+    }
 }
 
 //+------------------------------------------------------------------+

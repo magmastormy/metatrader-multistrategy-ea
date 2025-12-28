@@ -33,6 +33,7 @@ public:
     
     // Update strategy on new bar
     virtual void OnNewBar(void) = 0;
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) = 0;
     
     // Get strategy name
     virtual string GetName(void) const = 0;

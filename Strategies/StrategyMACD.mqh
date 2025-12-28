@@ -236,14 +236,14 @@ ENUM_TRADE_SIGNAL CStrategyMACD::GetSignal(double &confidence)
     if(crossAbove || (m_histogramBuffer[0] > 0 && m_histogramBuffer[0] > m_histogramBuffer[1])) {
         // Bullish signal
         newEvent.direction = 1;
-        newEvent.strength = 0.5 + histogramStrength * 0.3 + consistencyBonus;
+        newEvent.strength = MathMin(1.0, 0.5 + histogramStrength * 0.3 + consistencyBonus);
         signal = TRADE_SIGNAL_BUY;
         confidence = newEvent.strength;
     }
     else if(crossBelow || (m_histogramBuffer[0] < 0 && m_histogramBuffer[0] < m_histogramBuffer[1])) {
         // Bearish signal
         newEvent.direction = -1;
-        newEvent.strength = 0.5 + histogramStrength * 0.3 + consistencyBonus;
+        newEvent.strength = MathMin(1.0, 0.5 + histogramStrength * 0.3 + consistencyBonus);
         signal = TRADE_SIGNAL_SELL;
         confidence = newEvent.strength;
     }

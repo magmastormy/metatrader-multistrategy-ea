@@ -2,3 +2,5 @@
 *.log
 *.ex5
 Documentation/
+CRITICAL_FIXES.mqh
+*.md

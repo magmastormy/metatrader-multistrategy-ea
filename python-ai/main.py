@@ -35,6 +35,7 @@ from core.model_manager import ModelManager
 from core.signal_generator import SignalGenerator
 from core.risk_engine import RiskEngine
 from core.analytics import Analytics
+from core.regime_detector import MarketRegimeDetector
 
 # Import bridge modules
 from bridge.message_protocol import MessageProtocol
@@ -72,10 +73,17 @@ class AITradingSystem:
         self.signal_generator = SignalGenerator(
             buy_threshold=0.7,
             sell_threshold=-0.7,
-            confidence_min=0.6
+            confidence_min=0.6,
+            use_dynamic_thresholds=True
         )
-        self.risk_engine = RiskEngine(max_risk_per_trade=0.02)
+        self.risk_engine = RiskEngine(
+            max_risk_per_trade=0.02,
+            max_portfolio_risk=0.10,
+            use_kelly=True,
+            kelly_fraction=0.25
+        )
         self.analytics = Analytics(log_dir="logs")
+        self.regime_detector = MarketRegimeDetector(n_regimes=4, lookback=100)
         
         # Initialize bridge
         self.bridge = None
@@ -264,26 +272,32 @@ class AITradingSystem:
             # Load data
             df = self.data_loader.load_from_dict(market_data)
             
-            # Extract features
+            # Detect market regime
+            regime = self.regime_detector.detect_regime(df)
+            
+            # Extract features (now with 50 features)
             features = self.feature_engineer.build_features(df)
             
-            # Get prediction
+            # Get prediction (ensemble with advanced models)
             prediction = self.model_manager.predict(features)
             
             # Log prediction
             self.analytics.log_prediction(prediction)
             
-            # Generate signal
+            # Generate signal (with regime awareness)
             signal = self.signal_generator.generate_signal(
                 prediction,
                 market_data,
-                symbol
+                symbol,
+                regime
             )
             
-            # Calculate risk
+            # Calculate risk (with portfolio and Kelly)
             risk_assessment = self.risk_engine.calculate_risk_score(
                 signal,
-                market_data
+                market_data,
+                account_balance=10000.0,  # TODO: Get from MT5
+                symbol=symbol
             )
             
             # Validate trade

@@ -1,4 +1,4 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //| Intelligent Risk Management Functions                            |
 //| Emergency fixes for catastrophic EA performance                  |
 //+------------------------------------------------------------------+
@@ -45,7 +45,7 @@ void UpdateDrawdownStatus()
 //+------------------------------------------------------------------+
 void UpdateMarketRegime()
 {
-    // 🛡�?SURGICAL FIX: Use static handles to prevent indicator handle leaks
+    // 🛡�?SURGICAL FIX: Use static handles to prevent indicator handle leaks
     static int atrHandle = INVALID_HANDLE;
     static int ma20Handle = INVALID_HANDLE;
     static int ma50Handle = INVALID_HANDLE;
@@ -53,8 +53,8 @@ void UpdateMarketRegime()
     // Initialize handles only once
     if(atrHandle == INVALID_HANDLE) {
         atrHandle = iATR(_Symbol, PERIOD_H1, 14);
-        ma20Handle = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_SMA, PRICE_CLOSE);
-        ma50Handle = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_SMA, PRICE_CLOSE);
+        ma20Handle = iMA(_Symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+        ma50Handle = iMA(_Symbol, PERIOD_H1, 50, 0, MODE_EMA, PRICE_CLOSE);
         
         if(atrHandle == INVALID_HANDLE || ma20Handle == INVALID_HANDLE || ma50Handle == INVALID_HANDLE) {
             Print("🚨 [SURGICAL-ERROR] Failed to create indicator handles for market regime detection");
@@ -222,7 +222,7 @@ bool IsStrategyValidForRegime(string symbol, ENUM_MARKET_REGIME regime)
     // In trending markets, avoid counter-trend S/D trades
     if(regime == MARKET_REGIME_TRENDING) {
         // Only allow S/D if it aligns with trend
-        int ma20Handle = iMA(symbol, PERIOD_H1, 20, 0, MODE_SMA, PRICE_CLOSE);
+        int ma20Handle = iMA(symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
         double ma20Buffer[1];
         if(CopyBuffer(ma20Handle, 0, 0, 1, ma20Buffer) <= 0) return true;
         double ma20 = ma20Buffer[0];
@@ -387,7 +387,7 @@ double CalculateIntelligentLotSize(const string symbol, const double stopLossPip
         return 0;
     }
     
-    // 🛡�?SURGICAL FIX: Prevent division by zero
+    // 🛡�?SURGICAL FIX: Prevent division by zero
     if(stopLossPips <= 0) {
         Print("🚨 [SURGICAL-ERROR] Invalid stopLossPips: ", stopLossPips, " for ", symbol);
         return 0.0;
@@ -438,7 +438,7 @@ double CalculateIntelligentLotSize(const string symbol, const double stopLossPip
         lotSize = MathMin(lotSize, 0.01); // Still cap at 0.01
     }
     
-    Print("🛡�?[BEAST-MODE-SIZING] ", symbol, " FINAL LOT: ", DoubleToString(lotSize, 3), 
+    Print("🛡�?[BEAST-MODE-SIZING] ", symbol, " FINAL LOT: ", DoubleToString(lotSize, 3), 
           " | Balance: $", DoubleToString(localAccountBalance, 0),
           " | Emergency Cap: ", DoubleToString(emergencyMaxLot, 3),
           " | Actual Risk: ", DoubleToString(actualRisk, 2), "%",
@@ -640,3 +640,4 @@ bool NormalizeAndValidateStops(const string symbol, const ENUM_ORDER_TYPE type,
     
     return true;
 }
+

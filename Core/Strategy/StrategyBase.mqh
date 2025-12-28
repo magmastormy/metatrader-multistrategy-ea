@@ -219,9 +219,7 @@ ENUM_TRADE_SIGNAL CStrategyBase::GetSignal(double &confidence)
 
 void CStrategyBase::OnNewBar(void)
 {
-    if(!m_is_enabled || !m_is_initialized)
-        return;
-    HandleNewBar();
+    OnNewBar(m_symbol, m_timeframe);
 }
 
 string CStrategyBase::GetName(void) const
@@ -331,6 +329,11 @@ void CStrategyBase::OnTick()
 
 void CStrategyBase::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe)
 {
+    if(!m_is_enabled || !m_is_initialized)
+        return;
+    if(symbol != m_symbol || timeframe != m_timeframe)
+        return;
+    HandleNewBar();
 }
 
 void CStrategyBase::OnTimer()

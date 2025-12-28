@@ -120,7 +120,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     // Create indicators
     m_handleATR = iATR(symbol, timeframe, m_atrPeriod);
     m_handleBB = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
-    m_handleStdDev = iStdDev(symbol, timeframe, m_hvPeriod, 0, MODE_SMA, PRICE_CLOSE);
+    m_handleStdDev = iStdDev(symbol, timeframe, m_hvPeriod, 0, MODE_EMA, PRICE_CLOSE);
     
     if(m_handleATR == INVALID_HANDLE || m_handleBB == INVALID_HANDLE || m_handleStdDev == INVALID_HANDLE)
         return false;

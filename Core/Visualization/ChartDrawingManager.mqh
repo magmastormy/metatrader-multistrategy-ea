@@ -344,9 +344,13 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
                                    const string label, color zoneColor, bool isFilled, int transparency)
 {
     if(!m_config.enableDrawing)
+    {
+        Print("[ChartDrawing] Drawing disabled - skipping zone: ", label);
         return false;
+    }
     
     string objName = GenerateObjectName("ZONE", label + "_" + TimeToString(timeStart));
+    Print("[ChartDrawing] Drawing zone: ", objName, " | Price: ", priceLow, "-", priceHigh);
     
     // Draw rectangle
     ObjectCreate(m_chartID, objName, OBJ_RECTANGLE, 0, timeStart, priceHigh, timeEnd, priceLow);
@@ -363,6 +367,7 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
     }
     
     m_objectsDrawn++;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -375,7 +380,7 @@ bool CChartDrawingManager::DrawOrderBlock(datetime timeStart, datetime timeEnd, 
     if(!m_config.enableDrawing || !m_config.enableOrderBlocks)
         return false;
     
-    color obColor = isBullish ? COLOR_SCHEME_ORDERBLOCK_BULL : COLOR_SCHEME_ORDERBLOCK_BEAR;
+    color obColor = isBullish ? (color)COLOR_SCHEME_ORDERBLOCK_BULL : (color)COLOR_SCHEME_ORDERBLOCK_BEAR;
     string label = isBullish ? "OB_BULL" : "OB_BEAR";
     if(uniqueId != "")
         label += "_" + uniqueId;
@@ -392,7 +397,7 @@ bool CChartDrawingManager::DrawFVG(datetime timeStart, datetime timeEnd, double 
     if(!m_config.enableDrawing || !m_config.enableFVG)
         return false;
     
-    color fvgColor = isBullish ? COLOR_SCHEME_FVG_BULL : COLOR_SCHEME_FVG_BEAR;
+    color fvgColor = isBullish ? (color)COLOR_SCHEME_FVG_BULL : (color)COLOR_SCHEME_FVG_BEAR;
     string label = isBullish ? "FVG_BULL" : "FVG_BEAR";
     if(uniqueId != "")
         label += "_" + uniqueId;
@@ -476,12 +481,12 @@ void CChartDrawingManager::CleanupOldObjects()
     if(!m_config.cleanupOldObjects)
         return;
     
-    datetime currentTime = TimeCurrent();
-    if(currentTime - m_lastCleanup < 60)  // Cleanup every minute
+    datetime cleanupTime = TimeCurrent();
+    if(cleanupTime - m_lastCleanup < 60)  // Cleanup every minute
         return;
     
     DeleteOldObjects(m_prefix, m_config.maxObjectAge);
-    m_lastCleanup = currentTime;
+    m_lastCleanup = cleanupTime;
 }
 
 //+------------------------------------------------------------------+
@@ -490,14 +495,14 @@ void CChartDrawingManager::CleanupOldObjects()
 void CChartDrawingManager::DeleteOldObjects(const string prefix, int maxAge)
 {
     int totalObjects = ObjectsTotal(m_chartID);
-    datetime currentTime = TimeCurrent();
+    datetime localCurrentTime = TimeCurrent();
     
     for(int i = totalObjects - 1; i >= 0; i--)
     {
         string objName = ObjectName(m_chartID, i);
         if(StringFind(objName, prefix) == 0)  // Starts with prefix
         {
-            if(IsObjectOld(objName, maxAge))
+            if(maxAge > 0 && (localCurrentTime - (datetime)ObjectGetInteger(m_chartID, objName, OBJPROP_TIME)) > maxAge)
             {
                 ObjectDelete(m_chartID, objName);
                 m_objectsDeleted++;

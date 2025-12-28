@@ -157,7 +157,7 @@ void CStrategyBollinger::UpdateBollingerBands()
     
     // Create or update Moving Average handle for trend confirmation
     if(m_maHandle == INVALID_HANDLE) {
-        m_maHandle = iMA(m_symbol, m_timeframe, 200, 0, MODE_SMA, m_appliedPrice);
+        m_maHandle = iMA(m_symbol, m_timeframe, 200, 0, MODE_EMA, m_appliedPrice);
         if(m_maHandle == INVALID_HANDLE) {
             PrintFormat("Failed to create Moving Average indicator for %s", m_symbol);
             return;
@@ -184,11 +184,26 @@ void CStrategyBollinger::OnTick()
 //+------------------------------------------------------------------+
 void CStrategyBollinger::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe)
 {
-    if(!m_is_enabled || symbol == "" || timeframe == 0) return;
-    
-    // Update indicators on new bar if needed (though handles persist)
+    if(!m_is_enabled || !m_is_initialized || symbol == "" || timeframe == 0)
+        return;
+
+    // Only process for matching symbol/timeframe
+    if(symbol != m_symbol || timeframe != m_timeframe)
+        return;
+
+    // Ensure indicator handles exist
     if(m_bbHandle == INVALID_HANDLE || m_maHandle == INVALID_HANDLE)
+    {
         UpdateBollingerBands();
+        if(m_bbHandle == INVALID_HANDLE || m_maHandle == INVALID_HANDLE)
+            return;
+    }
+
+    // Prime indicator buffers on new bar
+    CopyBuffer(m_bbHandle, 1, 0, 3, m_upperBand);
+    CopyBuffer(m_bbHandle, 0, 0, 3, m_middleBand);
+    CopyBuffer(m_bbHandle, 2, 0, 3, m_lowerBand);
+    CopyBuffer(m_maHandle, 0, 0, 3, m_maBuffer);
 }
 
 //+------------------------------------------------------------------+
