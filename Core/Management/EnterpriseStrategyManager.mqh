@@ -21,6 +21,8 @@
 #include "../../Strategies/StrategyBreakout.mqh"
 #include "../../Strategies/StrategyMeanReversion.mqh"
 #include "../../Strategies/SimpleMomentumStrategy.mqh"
+#include "../../Strategies/StrategySupportResistance.mqh"
+#include "../../Strategies/StrategyUnifiedICT.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -579,10 +581,10 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &enabledFlags[])
     if(enabledFlags[0]) // SMC
         RegisterStrategy(new CStrategySMC(), "Advanced SMC", true, 2.5); // Increased weight
     
-    if(enabledFlags[1]) // Elliott Wave Enhanced
+    if(ArraySize(enabledFlags) > 1 && enabledFlags[1]) // Elliott Wave Enhanced
         RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave Enhanced", true, 2.0); // Increased weight
     
-    if(enabledFlags[2]) // Breakout (Order Block removed - covered by SMC)
+    if(ArraySize(enabledFlags) > 2 && enabledFlags[2]) // Breakout (Order Block removed - covered by SMC)
         RegisterStrategy(new CStrategyBreakout(), "Breakout", true, 1.5);
     
     // Register additional strategies
@@ -597,6 +599,12 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &enabledFlags[])
     
     if(ArraySize(enabledFlags) > 6 && enabledFlags[6]) // MACD
         RegisterStrategy(new CStrategyMACD(), "MACD Divergence", true, 1.0);
+    
+    if(ArraySize(enabledFlags) > 7 && enabledFlags[7]) // Support/Resistance Trendlines
+        RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance + Trendlines", true, 1.5);
+    
+    if(ArraySize(enabledFlags) > 8 && enabledFlags[8]) // Unified ICT/SMC
+        RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT/SMC", true, 2.2);
     
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
           GetActiveStrategyCount());

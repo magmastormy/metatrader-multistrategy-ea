@@ -1,6 +1,7 @@
 //+------------------------------------------------------------------+
-//| Elliott Wave Strategy - Enterprise Grade                         |
-//| Implements proper 5-3 wave structure with Fibonacci ratios      |
+//| Elliott Wave Strategy v2.0 - Enterprise Grade                    |
+//| Implements proper 5-3 wave structure with Fibonacci ratios       |
+//| Enhanced with ZigZag filtering and Wave 3/5 entry signals        |
 //+------------------------------------------------------------------+
 #ifndef STRATEGY_ELLIOTTWAVE_ENHANCED_MQH
 #define STRATEGY_ELLIOTTWAVE_ENHANCED_MQH
@@ -10,24 +11,28 @@
 #include "../Core/Engines/TrendEngine.mqh"
 #include "../Core/Signals/SignalDiagnostics.mqh"
 
+// Enhanced Elliott Wave Component Files
+#include "ElliottWaveFiles/ZigZagFilter.mqh"
+#include "ElliottWaveFiles/WavePatternEngine.mqh"
+
 //+------------------------------------------------------------------+
 //| Elliott Wave Types                                              |
 //+------------------------------------------------------------------+
 enum ENUM_ELLIOTT_WAVE
 {
-    WAVE_NONE = 0,
-    WAVE_1,     // Impulse wave 1
-    WAVE_2,     // Corrective wave 2
-    WAVE_3,     // Impulse wave 3 (strongest)
-    WAVE_4,     // Corrective wave 4
-    WAVE_5,     // Final impulse wave 5
-    WAVE_A,     // Corrective wave A
-    WAVE_B,     // Corrective wave B
-    WAVE_C,     // Corrective wave C
-    WAVE_W,     // Complex correction W
-    WAVE_X,     // Complex correction X
-    WAVE_Y,     // Complex correction Y
-    WAVE_Z      // Complex correction Z
+    EW_WAVE_NONE = 0,
+    EW_WAVE_1,     // Impulse wave 1
+    EW_WAVE_2,     // Corrective wave 2
+    EW_WAVE_3,     // Impulse wave 3 (strongest)
+    EW_WAVE_4,     // Corrective wave 4
+    EW_WAVE_5,     // Final impulse wave 5
+    EW_WAVE_A,     // Corrective wave A
+    EW_WAVE_B,     // Corrective wave B
+    EW_WAVE_C,     // Corrective wave C
+    EW_WAVE_W,     // Complex correction W
+    EW_WAVE_X,     // Complex correction X
+    EW_WAVE_Y,     // Complex correction Y
+    EW_WAVE_Z      // Complex correction Z
 };
 
 //+------------------------------------------------------------------+
@@ -72,7 +77,7 @@ struct WavePoint
     double confidence;
     bool isValid;
     
-    WavePoint() : time(0), price(0), wave(WAVE_NONE), 
+    WavePoint() : time(0), price(0), wave(EW_WAVE_NONE), 
                  degree(0), confidence(0), isValid(false) {}
 };
 
@@ -96,16 +101,20 @@ struct WavePattern
 };
 
 //+------------------------------------------------------------------+
-//| Enhanced Elliott Wave Strategy Class                            |
+//| Enhanced Elliott Wave Strategy Class v2.0                       |
 //+------------------------------------------------------------------+
 class CStrategyElliottWaveEnhanced : public CStrategyBase
 {
 private:
-    // Engines
+    // Enhanced Components (v2.0)
+    CZigZagFilter*      m_zigzag;
+    CWavePatternEngine* m_waveEngine;
+
+    // Legacy Engines (for backward compatibility)
     CStructureEngine* m_structureEngine;
     CTrendEngine* m_trendEngine;
     CSignalDiagnostics* m_diagnostics;
-    
+
     // Wave analysis
     ElliottWaveRules m_rules;
     WavePattern m_currentPattern;
@@ -129,7 +138,7 @@ private:
     double CalculateFibonacciRatio(double price1, double price2, double price3);
     bool CheckWave2Rules(const WavePoint &wave0, const WavePoint &wave1, const WavePoint &wave2);
     // Validation helpers (use adjacent pivots)
-    bool CheckWave3Rules(const WavePoint &wave0, const WavePoint &wave1, const WavePoint &wave2);
+    bool CheckWave3Rules(const WavePoint &wave0, const WavePoint &wave1, const WavePoint &wave2, const WavePoint &wave3);
     bool CheckWave4Rules(const WavePoint &wave1, const WavePoint &wave2, const WavePoint &wave3, const WavePoint &wave4);
     bool CheckWave5Rules(const WavePoint &wave3, const WavePoint &wave5);
     double ProjectWaveTarget(const WavePattern &pattern);
@@ -169,6 +178,8 @@ public:
 //+------------------------------------------------------------------+
 CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
     CStrategyBase(name, 0),
+    m_zigzag(NULL),
+    m_waveEngine(NULL),
     m_structureEngine(NULL),
     m_trendEngine(NULL),
     m_diagnostics(NULL),
@@ -180,17 +191,17 @@ CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
     m_signalsGenerated(0),
     m_patternCount(0)
 {
-    // Initialize engines
+    // Initialize legacy engines
     m_structureEngine = new CStructureEngine();
     m_trendEngine = new CTrendEngine();
     m_diagnostics = new CSignalDiagnostics();
-    
+
     if(m_structureEngine != NULL)
         m_structureEngine.Initialize(10, 10.0, true, m_diagnostics);
-    
+
     if(m_trendEngine != NULL)
         m_trendEngine.Initialize(20, 50, 200, 14, m_diagnostics);
-    
+
     if(m_diagnostics != NULL)
         m_diagnostics.Initialize(500, 3);
 }
@@ -200,24 +211,15 @@ CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
 //+------------------------------------------------------------------+
 CStrategyElliottWaveEnhanced::~CStrategyElliottWaveEnhanced()
 {
-    if(m_structureEngine != NULL)
-    {
-        delete m_structureEngine;
-        m_structureEngine = NULL;
-    }
-    
-    if(m_trendEngine != NULL)
-    {
-        delete m_trendEngine;
-        m_trendEngine = NULL;
-    }
-    
-    if(m_diagnostics != NULL)
-    {
-        delete m_diagnostics;
-        m_diagnostics = NULL;
-    }
-    
+    // Clean up enhanced components
+    if(m_zigzag != NULL) { delete m_zigzag; m_zigzag = NULL; }
+    if(m_waveEngine != NULL) { delete m_waveEngine; m_waveEngine = NULL; }
+
+    // Clean up legacy engines
+    if(m_structureEngine != NULL) { delete m_structureEngine; m_structureEngine = NULL; }
+    if(m_trendEngine != NULL) { delete m_trendEngine; m_trendEngine = NULL; }
+    if(m_diagnostics != NULL) { delete m_diagnostics; m_diagnostics = NULL; }
+
     Deinit();
 }
 
@@ -229,19 +231,27 @@ bool CStrategyElliottWaveEnhanced::Init(const string symbol, const ENUM_TIMEFRAM
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
         return false;
-    
+
+    // Initialize enhanced ZigZag Filter
+    m_zigzag = new CZigZagFilter();
+    if(m_zigzag != NULL)
+        m_zigzag.Initialize(symbol, timeframe);
+
+    // Initialize enhanced Wave Pattern Engine
+    m_waveEngine = new CWavePatternEngine();
+    if(m_waveEngine != NULL)
+        m_waveEngine.Initialize(symbol, timeframe, m_zigzag);
+
     // Reset patterns
     m_currentPattern = WavePattern();
     for(int i = 0; i < 5; i++)
         m_patterns[i] = WavePattern();
     m_patternCount = 0;
-    
-    if(m_diagnostics != NULL)
-    {
-        string msg = StringFormat("Elliott Wave Enhanced initialized for %s on %s | Lookback: %d",
-                                symbol, EnumToString(timeframe), m_lookbackPeriod);
-        Print("[ElliottWave] ", msg);
-    }
+
+    PrintFormat("[ELLIOTT v2.0] Strategy initialized for %s on %s | ZigZag: %s | WaveEngine: %s",
+                symbol, EnumToString(timeframe),
+                m_zigzag != NULL ? "OK" : "FAIL",
+                m_waveEngine != NULL ? "OK" : "FAIL");
     
     return true;
 }
@@ -368,7 +378,36 @@ bool CStrategyElliottWaveEnhanced::IdentifyWavePattern(const MqlRates &rates[], 
     // RELAXED: Need at least 2 swings of each type (was 3)
     if(swingHighCount < 2 || swingLowCount < 2)
         return false; // Need at least 2 swings each for pattern
-    
+
+    // Diagnostics: log latest swings to understand pivot availability
+    if(m_diagnostics != NULL)
+    {
+        string swingLog = StringFormat("Swings H:%d L:%d | Last highs: ", swingHighCount, swingLowCount);
+
+        // Log up to 3 latest highs and lows
+        for(int i = MathMax(0, swingHighCount - 3); i < swingHighCount; i++)
+        {
+            SwingPoint sh;
+            if(m_structureEngine.GetLastSwingHigh(sh))
+            {
+                swingLog += StringFormat("[%s %.2f st:%.1f] ", TimeToString(sh.time, TIME_DATE|TIME_MINUTES), sh.price, sh.strength);
+            }
+        }
+        swingLog += " | Last lows: ";
+        for(int i = MathMax(0, swingLowCount - 3); i < swingLowCount; i++)
+        {
+            SwingPoint sl;
+            if(m_structureEngine.GetLastSwingLow(sl))
+            {
+                swingLog += StringFormat("[%s %.2f st:%.1f] ", TimeToString(sl.time, TIME_DATE|TIME_MINUTES), sl.price, sl.strength);
+            }
+        }
+        if(m_diagnostics != NULL)
+        {
+            m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", swingLog);
+        }
+    }
+
     // Reset patterns
     m_patternCount = 0;
     
@@ -465,7 +504,7 @@ bool CStrategyElliottWaveEnhanced::IdentifyWavePattern(const MqlRates &rates[], 
         {
             impulse.waves[i].price = swings[i].price;
             impulse.waves[i].time = swings[i].time;
-            impulse.waves[i].wave = (ENUM_ELLIOTT_WAVE)(WAVE_1 + i);
+            impulse.waves[i].wave = (ENUM_ELLIOTT_WAVE)(EW_WAVE_1 + i);
             impulse.waves[i].isValid = true;
             
             // Calculate confidence based on Fibonacci ratios
@@ -552,9 +591,9 @@ bool CStrategyElliottWaveEnhanced::IdentifyWavePattern(const MqlRates &rates[], 
     // Simplified corrective wave detection
     if(swingHighCount >= 2 && swingLowCount >= 1)
     {
-        corrective.waves[0].wave = WAVE_A;
-        corrective.waves[1].wave = WAVE_B;
-        corrective.waves[2].wave = WAVE_C;
+        corrective.waves[0].wave = EW_WAVE_A;
+        corrective.waves[1].wave = EW_WAVE_B;
+        corrective.waves[2].wave = EW_WAVE_C;
         corrective.waveCount = 3;
         
         if(ValidateCorrectiveWaves(corrective))
@@ -918,14 +957,14 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const WavePattern &pattern)
         string waveLabel = "";
         switch(pattern.waves[i].wave)
         {
-            case WAVE_1: waveLabel = "1"; break;
-            case WAVE_2: waveLabel = "2"; break;
-            case WAVE_3: waveLabel = "3"; break;
-            case WAVE_4: waveLabel = "4"; break;
-            case WAVE_5: waveLabel = "5"; break;
-            case WAVE_A: waveLabel = "A"; break;
-            case WAVE_B: waveLabel = "B"; break;
-            case WAVE_C: waveLabel = "C"; break;
+            case EW_WAVE_1: waveLabel = "1"; break;
+            case EW_WAVE_2: waveLabel = "2"; break;
+            case EW_WAVE_3: waveLabel = "3"; break;
+            case EW_WAVE_4: waveLabel = "4"; break;
+            case EW_WAVE_5: waveLabel = "5"; break;
+            case EW_WAVE_A: waveLabel = "A"; break;
+            case EW_WAVE_B: waveLabel = "B"; break;
+            case EW_WAVE_C: waveLabel = "C"; break;
             default: waveLabel = IntegerToString(i); break;
         }
 
@@ -949,14 +988,14 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const WavePattern &pattern)
         string waveLabel = "";
         switch(pattern.waves[lastIdx].wave)
         {
-            case WAVE_1: waveLabel = "1"; break;
-            case WAVE_2: waveLabel = "2"; break;
-            case WAVE_3: waveLabel = "3"; break;
-            case WAVE_4: waveLabel = "4"; break;
-            case WAVE_5: waveLabel = "5"; break;
-            case WAVE_A: waveLabel = "A"; break;
-            case WAVE_B: waveLabel = "B"; break;
-            case WAVE_C: waveLabel = "C"; break;
+            case EW_WAVE_1: waveLabel = "1"; break;
+            case EW_WAVE_2: waveLabel = "2"; break;
+            case EW_WAVE_3: waveLabel = "3"; break;
+            case EW_WAVE_4: waveLabel = "4"; break;
+            case EW_WAVE_5: waveLabel = "5"; break;
+            case EW_WAVE_A: waveLabel = "A"; break;
+            case EW_WAVE_B: waveLabel = "B"; break;
+            case EW_WAVE_C: waveLabel = "C"; break;
             default: waveLabel = IntegerToString(lastIdx); break;
         }
 

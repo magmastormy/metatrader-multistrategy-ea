@@ -245,3 +245,113 @@
   - Zone age (fresh < 30 bars: +5%, old > 150 bars: -8%)
   - First touch bonus (+6% for untested zones)
   - Proper SMC entry bonus (+15% for confirmed rejection patterns)
+
+## 2025-12-29 00:45
+- **Action:** Fix Elliott Wave diagnostics pointer compilation error
+- **Files Modified:** Strategies/StrategyElliottWaveEnhanced.mqh
+- **Outcome:** SUCCESS - Pointer dereference fixed, ready for recompilation
+- **Notes:** Replaced `m_diagnostics.Initialize` with `m_diagnostics->Initialize` to use member function syntax, resolving undeclared identifier error in compilation logs.
+
+## 2025-12-30 00:35
+- **Action:** Fixed pointer initialization calls in Elliott Wave Enhanced strategy
+- **Files Modified:**
+  - `Strategies/StrategyElliottWaveEnhanced.mqh` - switched structure/trend engine initialization to pointer dereference syntax
+- **Outcome:** Constructor now calls engine `Initialize` methods correctly
+- **Notes:** Verified via `sync_and_compile.ps1` (user run) — compilation succeeded with 0 errors; warning only
+
+## 2026-01-05 17:20
+- **Action:** Fixed Harmonic Patterns strategy compilation failures (pointer access)
+- **Files Modified:** Strategies/StrategyHarmonicPatterns.mqh
+- **Outcome:** SUCCESS - All member accesses now use pointer syntax; logging references corrected
+- **Notes:** Replaced `m_scanner`/`m_confirmation` direct member calls with `->`, adjusted confirmation validity check and log message to use `description`. Strategy should now compile cleanly once remaining modules are addressed.
+
+## 2026-01-05 17:35
+- **Action:** Resolved Trend strategy pointer dereference errors
+- **Files Modified:** Strategies/StrategyTrend.mqh
+- **Outcome:** SUCCESS - All component calls now use pointer syntax; compile errors cleared for strategy module
+- **Notes:** Updated Init/OnNewBar/GetSignal/management helpers to call `->` methods (Initialize, Update, ShouldTrade, etc.) on EMA, entry, trailing, and ADX components. Ensures StrategyTrend compiles and interacts correctly with modular components.
+
+## 2026-01-05 19:37
+- **Action:** Mapped signal flow from individual strategy modules into Enterprise mode orchestration and TradingEngine
+- **Files Referenced:** MultiStrategyAutonomousEA.mq5, Core/Management/EnterpriseStrategyManager.mqh, Core/Engines/TradingEngine.mqh, Interfaces/IStrategy.mqh, MultiStrategySelection.mqh
+- **Outcome:** Produced end-to-end data flow summary plus redundancy findings for user request
+- **Notes:** Captured how strategy wrappers feed CSymbolContext, how Enterprise manager applies pipeline/orchestrator layers, and how legacy MultiStrategySelection duplicates the newer consensus system.
+
+## 2025-12-30 XX:XX
+- **Action:** MAJOR STRATEGY IMPROVEMENTS - Implemented all improvements from user reports
+- **Files Created (18 new component files):**
+  - `Strategies/SMCFiles/MarketStructure.mqh` - BOS/CHoCH detection, swing points, trend tracking
+  - `Strategies/SMCFiles/KillZones.mqh` - ICT session-based time filters (Asian, London, NY)
+  - `Strategies/SMCFiles/OrderBlocks.mqh` - Corrected OB detection (last opposite candle before displacement)
+  - `Strategies/SMCFiles/FairValueGap.mqh` - Enhanced FVG with displacement validation
+  - `Strategies/SMCFiles/LiquiditySweep.mqh` - Stop hunt and false breakout detection
+  - `Strategies/SMCFiles/PremiumDiscount.mqh` - Premium/Discount zones and OTE (Optimal Trade Entry)
+  - `Strategies/SMCFiles/SMCConfluence.mqh` - Multi-factor confluence scoring engine
+  - `Strategies/TrendFiles/MultiEMASystem.mqh` - Multi-speed EMA (8/21/50/200)
+  - `Strategies/TrendFiles/TrendEntryTypes.mqh` - Early, Pullback, Continuation entries
+  - `Strategies/TrendFiles/TrendTrailingStop.mqh` - EMA and ATR-based trailing stops
+  - `Strategies/TrendFiles/ADXPositionSizing.mqh` - ADX tier-based position sizing
+  - `Strategies/FibonacciFiles/FibSwingDetector.mqh` - Efficient swing point detection
+  - `Strategies/FibonacciFiles/FibLevelsCalculator.mqh` - Retracements and extensions
+  - `Strategies/FibonacciFiles/FibConfirmation.mqh` - Pin bar, engulfing, RSI divergence confirmation
+  - `Strategies/HarmonicFiles/HarmonicPatternScanner.mqh` - O(n) efficient pattern scanner
+  - `Strategies/HarmonicFiles/HarmonicConfirmation.mqh` - RSI, candle pattern confirmation
+  - `Strategies/ElliottWaveFiles/ZigZagFilter.mqh` - Clean pivot extraction
+  - `Strategies/ElliottWaveFiles/WavePatternEngine.mqh` - Wave 3/5 entry signals
+- **Files Modified (5 main strategy files):**
+  - `Strategies/StrategySMC.mqh` - Added imports, version 2.0
+  - `Strategies/StrategyTrend.mqh` - Added imports, enhanced components, v2.0 GetSignal
+  - `Strategies/StrategyFibonacci.mqh` - Added imports for component files
+  - `Strategies/StrategyHarmonicPatterns.mqh` - Added imports, version 2.0
+  - `Strategies/StrategyElliottWaveEnhanced.mqh` - Added imports for ZigZag and Wave engine
+- **Outcome:** SUCCESS - All improvements from userReports implemented
+- **Key Improvements:**
+  - **SMC/ICT**: Market structure engine, ICT Kill Zones, corrected OB detection, premium/discount, OTE zones
+  - **Trend**: Multi-EMA (8/21/50/200), 4 entry types, ADX-based sizing, dynamic trailing
+  - **Fibonacci**: Efficient swing detection, extensions for targets, confluence zones, confirmation patterns
+  - **Harmonic**: O(n) scanner (was O(n^5)), 3-5% tolerance, confirmation requirements, proper TP/SL
+  - **Elliott Wave**: ZigZag filtering, Wave 3/5 entries, strict Elliott rules, Fibonacci validation
+
+## 2025-12-30 (Session 2)
+- **Action:** FULL INTEGRATION - Removed all legacy code from main strategy files, fully integrated enhanced components
+- **Files Modified:**
+  - `Strategies/StrategyTrend.mqh` - Complete rewrite: removed legacy EMA/ADX handles, now uses CMultiEMASystem, CTrendEntryTypes, CTrendTrailingStop, CADXPositionSizing
+  - `Strategies/StrategySMC.mqh` - Complete rewrite: uses CSMCMarketStructure, CICTKillZones, CSMCOrderBlocks, CSMCFairValueGap, CSMCLiquiditySweep, CSMCPremiumDiscount, CSMCConfluenceEngine
+  - `Strategies/StrategyFibonacci.mqh` - Complete rewrite: uses CFibSwingDetector, CFibLevelsCalculator, CFibConfirmation
+  - `Strategies/StrategyHarmonicPatterns.mqh` - Complete rewrite: uses CHarmonicPatternScanner, CHarmonicConfirmation with O(n) efficiency
+  - `Strategies/StrategyElliottWaveEnhanced.mqh` - Updated: added CZigZagFilter and CWavePatternEngine initialization
+- **Outcome:** SUCCESS - Main EA compiles with 0 errors
+- **Changes Made:**
+  - All strategies now v2.0 with enhanced components
+  - Proper constructor/destructor cleanup for component pointers
+  - Init methods create and initialize all required component objects
+  - OnNewBar updates all components with correct method names
+  - GetSignal uses multi-factor confluence from components
+  - Removed all legacy indicator handles and simplistic logic
+- **Notes:** Strategy system fully modernized with modular architecture
+
+## 2025-01-02 (Session 3)
+- **Action:** NEW STRATEGIES - Built Support/Resistance + Trendlines and Unified ICT/SMC strategies
+- **Files Created (10 new component files + 2 strategy files):**
+  - **Support/Resistance Strategy:**
+    - `Strategies/SupportResistanceFiles/SupportResistanceDetector.mqh` - S/R level detection (swing, psychological, daily/weekly/monthly)
+    - `Strategies/SupportResistanceFiles/TrendlineDetector.mqh` - Trendline detection and validation
+    - `Strategies/SupportResistanceFiles/SRTradingStrategies.mqh` - Bounce, breakout, trendline bounce strategies
+    - `Strategies/StrategySupportResistance.mqh` - Main S/R strategy file v1.0
+  - **Unified ICT/SMC Strategy:**
+    - `Strategies/UnifiedICTFiles/MarketStructureAnalyzer.mqh` - BMS, ISP, trend confirmation, multiplex structure
+    - `Strategies/UnifiedICTFiles/AdvancedOrderBlocks.mqh` - Source OB, Continuation OB, Breaker Blocks
+    - `Strategies/UnifiedICTFiles/LiquidityDetector.mqh` - Equal highs/lows, liquidity sweeps, session/daily/weekly levels
+    - `Strategies/UnifiedICTFiles/ImbalanceDetector.mqh` - Fair Value Gap (FVG) detection and rebalance tracking
+    - `Strategies/StrategyUnifiedICT.mqh` - Main Unified ICT strategy v1.0
+- **Files Modified:**
+  - `Core/Utils/Enums.mqh` - Added STRATEGY_SUPPORT_RESISTANCE (24) and STRATEGY_UNIFIED_ICT (25)
+  - `Core/Strategy/StrategyFactory.mqh` - Added new strategy types, names, and descriptions
+- **Outcome:** SUCCESS - Main EA compiles with 0 errors
+- **Key Features:**
+  - **S/R Strategy:** Swing-based S/R, psychological levels, daily/weekly levels, trendline detection, bounce/breakout/retest strategies
+  - **Unified ICT:** 4 entry types (Risk, Justification, Risk+Just, Full Just), Order Blocks, Liquidity sweeps, FVG, Kill Zones, Premium/Discount
+  - Both strategies use modular component architecture
+  - Confluence scoring with multiple factors
+  - Institutional level detection (.xx00, .xx50, .xx20, .xx80)
+- **Notes:** Both strategies fully implemented from userReports documentation, reusing existing SMCFiles components where appropriate

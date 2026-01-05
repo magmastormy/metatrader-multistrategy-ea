@@ -132,6 +132,19 @@ private:
         return (TimeCurrent() - m_initTime) < WARMUP_SECONDS;
     }
 
+    // Ensure indicator handles exist for current symbol/period
+    bool EnsureIndicatorsReady() {
+        if(m_symbol == "" || m_period == PERIOD_CURRENT)
+            return false;
+        // If any core handle is invalid, attempt re-init
+        if(m_atrHandle == INVALID_HANDLE || m_ma20Handle == INVALID_HANDLE || m_ma50Handle == INVALID_HANDLE || m_ma200Handle == INVALID_HANDLE)
+        {
+            if(!InitializeIndicators(m_symbol, m_period))
+                return false;
+        }
+        return true;
+    }
+
     double CalculateTrendStrength() {
         double trendStrength = 0.0;
         int adxPeriod = 14;
@@ -139,6 +152,14 @@ private:
         int ma50Period = 50;
         int ma200Period = 200;
         int priceActionBars = 10;
+
+        // Attempt re-init if handles invalid
+        if(!EnsureIndicatorsReady())
+        {
+            if(!IsInWarmup())
+                PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - indicators not initialized for %s.", m_symbol);
+            return 0.0;
+        }
 
         // Use ADX for trend strength (if available - may be skipped for Jump indices)
         if(m_adxHandle != INVALID_HANDLE && BarsCalculated(m_adxHandle) > adxPeriod) {
@@ -221,6 +242,14 @@ private:
         double volatility = 0.0;
         int atrPeriod = 14;
         int bbPeriod = 20;
+
+        // Attempt re-init if handles invalid
+        if(!EnsureIndicatorsReady())
+        {
+            if(!IsInWarmup())
+                PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - indicators not initialized for %s.", m_symbol);
+            return 0.0;
+        }
 
         // Use ATR for base volatility measurement
         if(m_atrHandle != INVALID_HANDLE && BarsCalculated(m_atrHandle) > atrPeriod) {

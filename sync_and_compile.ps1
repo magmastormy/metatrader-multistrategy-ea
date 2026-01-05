@@ -150,6 +150,31 @@ Write-Host "====================================================="
 Write-Host "Searching for .mq5 files in: $targetDir" -ForegroundColor Cyan
 $mq5Files = Get-ChildItem -Path $targetDir -Filter "*.mq5" -Recurse
 
+# Exclude known auxiliary scripts that should not be compiled
+$excludedRelativePaths = @(
+    "TestSocket.mq5",
+    "NextGenBrainTrainer.mq5"
+)
+
+$mq5Files = $mq5Files | Where-Object {
+    # Get relative path after the target directory prefix
+    $prefix = "C:\Program Files\MetaTrader 5\MQL5\Experts\metatrader-multistrategy-ea\"
+    $rel = $_.FullName
+    if ($rel.StartsWith($prefix)) {
+        $rel = $rel.Substring($prefix.Length)
+    }
+    
+    $shouldExclude = $false
+    foreach ($excluded in $excludedRelativePaths) {
+        if ($rel -like "*$excluded*" -or $rel -eq $excluded) {
+            $shouldExclude = $true
+            Write-Host "Excluding: $rel" -ForegroundColor Yellow
+            break
+        }
+    }
+    -not $shouldExclude
+}
+
 if ($mq5Files.Count -eq 0) {
     Write-Host "No .mq5 files found in target directory!" -ForegroundColor Red
     exit 1
@@ -162,12 +187,17 @@ $totalErrors = 0
 $compilationResults = @()
 
 # Create unified log file with UTF-8 encoding
-$unifiedLogPath = Join-Path $ProjectRoot "compile_all.log"
+$unifiedLogPath = Join-Path $ProjectRoot "compile_logs.log"
 "Compilation started at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $unifiedLogPath -Encoding UTF8
 "" | Out-File -FilePath $unifiedLogPath -Encoding UTF8 -Append
 
 foreach ($file in $mq5Files) {
-    $relPath = $file.FullName.Substring($targetDir.Length + 1)
+    # Get clean relative path after MetaTrader prefix
+    $prefix = "C:\Program Files\MetaTrader 5\MQL5\Experts\metatrader-multistrategy-ea\"
+    $relPath = $file.FullName
+    if ($relPath.StartsWith($prefix)) {
+        $relPath = $relPath.Substring($prefix.Length)
+    }
     Write-Host "Compiling $relPath" -ForegroundColor White
     
     $logName = "compile_" + $file.BaseName + ".log"

@@ -1,187 +1,237 @@
 #ifndef __STRATEGY_TREND_MQH__
 #define __STRATEGY_TREND_MQH__
-
 #include "../Core/Strategy/StrategyBase.mqh"
-#include <Indicators/Trend.mqh>
-
+// Enhanced Trend Strategy Component Files
+#include "TrendFiles/MultiEMASystem.mqh"
+#include "TrendFiles/TrendEntryTypes.mqh"
+#include "TrendFiles/TrendTrailingStop.mqh"
+#include "TrendFiles/ADXPositionSizing.mqh"
 //+------------------------------------------------------------------+
-//| Trend-Following Strategy                                         |
-//| Uses SMA(50/200) crossover with ADX(14) filter                   |
+//| Trend-Following Strategy v2.0                                    |
+//| Multi-Speed EMA (8/21/50/200), ADX-based sizing, trailing stops  |
+//| Entry Types: Early Trend, Pullback, Continuation, Classic Cross  |
 //+------------------------------------------------------------------+
 class CStrategyTrend : public CStrategyBase
 {
 private:
-    int m_sma_fast_period;   // Fast EMA period (was SMA)
-    int m_sma_slow_period;   // Slow EMA period (was SMA)
-    int m_adx_period;        // ADX period
-    double m_adx_threshold;  // ADX threshold for trend strength
-    double m_minTrendStrength; // Trend filter (55%)
-    
-    int m_sma_fast_handle;  // Fast EMA indicator handle
-    int m_sma_slow_handle;  // Slow EMA indicator handle
-    int m_adx_handle;       // ADX indicator handle
-    int m_trendHandle;      // 50 EMA for additional trend validation
-    
+    // Enhanced Components
+    CMultiEMASystem*        m_emaSystem;
+    CTrendEntryTypes*       m_entryTypes;
+    CTrendTrailingStop*     m_trailingStop;
+    CADXPositionSizing*     m_adxSizing;
+    // Configuration
+    int    m_lastBarProcessed;
 public:
-    //--- Constructor/Destructor
-    CStrategyTrend(const string name = "Trend Strategy", int magic = 0) : 
+    //--- Constructor
+    CStrategyTrend(const string name = "Trend Strategy v2.0", int magic = 0) :
         CStrategyBase(name, magic),
-        m_sma_fast_period(50),
-        m_sma_slow_period(200),
-        m_adx_period(14),
-        m_adx_threshold(20.0),
-        m_minTrendStrength(0.55),
-        m_sma_fast_handle(INVALID_HANDLE),
-        m_sma_slow_handle(INVALID_HANDLE),
-        m_adx_handle(INVALID_HANDLE),
-        m_trendHandle(INVALID_HANDLE) {}
-        
-    ~CStrategyTrend() 
-    { 
-        if(m_sma_fast_handle != INVALID_HANDLE) IndicatorRelease(m_sma_fast_handle);
-        if(m_sma_slow_handle != INVALID_HANDLE) IndicatorRelease(m_sma_slow_handle);
-        if(m_adx_handle != INVALID_HANDLE) IndicatorRelease(m_adx_handle);
-        if(m_trendHandle != INVALID_HANDLE) IndicatorRelease(m_trendHandle);
+        m_emaSystem(NULL),
+        m_entryTypes(NULL),
+        m_trailingStop(NULL),
+        m_adxSizing(NULL),
+        m_lastBarProcessed(0)
+    {
+        m_minConfidence = 0.55; // use base class field
     }
-    
+    //--- Destructor
+    ~CStrategyTrend()
+    {
+        Cleanup();
+    }
+    //--- Cleanup helper
+    void Cleanup()
+    {
+        if(m_emaSystem != NULL) { delete m_emaSystem; m_emaSystem = NULL; }
+        if(m_entryTypes != NULL) { delete m_entryTypes; m_entryTypes = NULL; }
+        if(m_trailingStop != NULL) { delete m_trailingStop; m_trailingStop = NULL; }
+        if(m_adxSizing != NULL) { delete m_adxSizing; m_adxSizing = NULL; }
+    }
     //--- Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
     {
-        // Call base init first
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
-            
-        // Initialize indicators
-        m_sma_fast_handle = iMA(symbol, timeframe, m_sma_fast_period, 0, MODE_EMA, PRICE_CLOSE);
-        m_sma_slow_handle = iMA(symbol, timeframe, m_sma_slow_period, 0, MODE_EMA, PRICE_CLOSE);
-        m_adx_handle = iADX(symbol, timeframe, m_adx_period);
-        m_trendHandle = iMA(symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
-        
-        if(m_sma_fast_handle == INVALID_HANDLE || 
-           m_sma_slow_handle == INVALID_HANDLE || 
-           m_adx_handle == INVALID_HANDLE ||
-           m_trendHandle == INVALID_HANDLE)
+        // Initialize Multi-EMA System (8/21/50/200)
+        m_emaSystem = new CMultiEMASystem();
+        if(m_emaSystem == NULL || !m_emaSystem.Initialize(symbol, timeframe))
         {
-            Print("Failed to create indicators for Trend Strategy");
+            Print("[TREND v2.0] Failed to initialize Multi-EMA System");
             return false;
         }
-        PrintFormat("[TREND] Strategy initialized for %s", symbol);
+        // Initialize Entry Types Engine
+        m_entryTypes = new CTrendEntryTypes();
+        if(m_entryTypes == NULL || !m_entryTypes.Initialize(symbol, timeframe, m_emaSystem))
+        {
+            Print("[TREND v2.0] Failed to initialize Entry Types");
+            return false;
+        }
+        // Initialize Trailing Stop System
+        m_trailingStop = new CTrendTrailingStop();
+        if(m_trailingStop == NULL || !m_trailingStop.Initialize(symbol, timeframe, m_emaSystem))
+        {
+            Print("[TREND v2.0] Failed to initialize Trailing Stop");
+            return false;
+        }
+        // Initialize ADX Position Sizing
+        m_adxSizing = new CADXPositionSizing();
+        if(m_adxSizing == NULL || !m_adxSizing.Initialize(symbol, timeframe))
+        {
+            Print("[TREND v2.0] Failed to initialize ADX Sizing");
+            return false;
+        }
+        PrintFormat("[TREND v2.0] Strategy initialized for %s on %s", symbol, EnumToString(timeframe));
         return true;
     }
-
     //--- Deinitialization
     virtual void Deinit() override
     {
-        if(m_sma_fast_handle != INVALID_HANDLE) IndicatorRelease(m_sma_fast_handle);
-        if(m_sma_slow_handle != INVALID_HANDLE) IndicatorRelease(m_sma_slow_handle);
-        if(m_adx_handle != INVALID_HANDLE) IndicatorRelease(m_adx_handle);
-        if(m_trendHandle != INVALID_HANDLE) IndicatorRelease(m_trendHandle);
+        Cleanup();
         CStrategyBase::Deinit();
     }
-
+    //--- New Bar Handler - Update all components
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
-        if(!IsEnabled() || !m_is_initialized || symbol == "" || timeframe == 0)
+        if(!IsEnabled() || !m_is_initialized)
             return;
         if(symbol != m_symbol || timeframe != m_timeframe)
             return;
-
-        if(m_sma_fast_handle == INVALID_HANDLE)
-            m_sma_fast_handle = iMA(m_symbol, m_timeframe, m_sma_fast_period, 0, MODE_EMA, PRICE_CLOSE);
-        if(m_sma_slow_handle == INVALID_HANDLE)
-            m_sma_slow_handle = iMA(m_symbol, m_timeframe, m_sma_slow_period, 0, MODE_EMA, PRICE_CLOSE);
-        if(m_adx_handle == INVALID_HANDLE)
-            m_adx_handle = iADX(m_symbol, m_timeframe, m_adx_period);
-        if(m_trendHandle == INVALID_HANDLE)
-            m_trendHandle = iMA(m_symbol, m_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
-
-        if(m_sma_fast_handle == INVALID_HANDLE || m_sma_slow_handle == INVALID_HANDLE || m_adx_handle == INVALID_HANDLE || m_trendHandle == INVALID_HANDLE)
+        int currentBar = iBars(m_symbol, m_timeframe);
+        if(currentBar == m_lastBarProcessed)
             return;
-
-        double sma_fast[1];
-        double sma_slow[1];
-        double adx[1];
-        double trend[1];
-        CopyBuffer(m_sma_fast_handle, 0, 0, 1, sma_fast);
-        CopyBuffer(m_sma_slow_handle, 0, 0, 1, sma_slow);
-        CopyBuffer(m_adx_handle, 0, 0, 1, adx);
-        CopyBuffer(m_trendHandle, 0, 0, 1, trend);
+        m_lastBarProcessed = currentBar;
+        // Update all components on new bar
+        if(m_emaSystem != NULL) m_emaSystem.Update();
+        if(m_entryTypes != NULL) m_entryTypes.Update();
     }
-    
-    //--- Override method from base class
+    //--- Main Signal Generation
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
-        if(!IsEnabled() || !m_is_initialized) {
-            confidence = 0.0;
-            return TRADE_SIGNAL_NONE;
-        }
-            
-        double signalValue = GetSignalValue(m_symbol, m_timeframe, confidence);
-        
-        if(signalValue > 0.5)
-        {
-            PrintFormat("[TREND] %s: BUY signal - Confidence: %.2f%%, ADX: strong trend",
-                       m_symbol, confidence * 100);
-            return TRADE_SIGNAL_BUY;
-        }
-        else if(signalValue < -0.5)
-        {
-            PrintFormat("[TREND] %s: SELL signal - Confidence: %.2f%%, ADX: strong trend",
-                       m_symbol, confidence * 100);
-            return TRADE_SIGNAL_SELL;
-        }
-        else
-            return TRADE_SIGNAL_NONE;
-    }
-    
-    virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_TREND; }
-    
-    //--- Get trading signal
-    double GetSignalValue(const string symbol, const ENUM_TIMEFRAMES timeframe, double &confidence)
-    {
-        if(m_sma_fast_handle == INVALID_HANDLE || m_sma_slow_handle == INVALID_HANDLE || m_adx_handle == INVALID_HANDLE)
-        {
-            confidence = 0.0;
-            return 0.0;
-        }
-
-        double sma_fast[2], sma_slow[2];
-        if(CopyBuffer(m_sma_fast_handle, 0, 1, 2, sma_fast) < 2 ||
-           CopyBuffer(m_sma_slow_handle, 0, 1, 2, sma_slow) < 2)
-        {
-            confidence = 0.0;
-            return 0.0;
-        }
-
-        double adx[1];
-        if(CopyBuffer(m_adx_handle, 0, 1, 1, adx) < 1)
-        {
-            confidence = 0.0;
-            return 0.0;
-        }
-
-        if(adx[0] > m_adx_threshold)
-        {
-            // Golden cross
-            if(sma_fast[0] > sma_slow[0] && sma_fast[1] <= sma_slow[1])
-            {
-                confidence = 0.8; // High confidence for a clear crossover
-                return 1.0; // Buy signal
-            }
-            // Death cross
-            else if(sma_fast[0] < sma_slow[0] && sma_fast[1] >= sma_slow[1])
-            {
-                confidence = 0.8; // High confidence for a clear crossover
-                return -1.0; // Sell signal
-            }
-        }
-
         confidence = 0.0;
-        return 0.0;
+        if(!IsEnabled() || !m_is_initialized)
+            return TRADE_SIGNAL_NONE;
+        if(m_emaSystem == NULL || m_entryTypes == NULL || m_adxSizing == NULL)
+            return TRADE_SIGNAL_NONE;
+        // Update components
+        m_emaSystem.Update();
+        m_entryTypes.Update();
+        // Check if ADX allows trading (trend strength filter)
+        if(!m_adxSizing.ShouldTrade())
+            return TRADE_SIGNAL_NONE;
+        // Get best entry signal from all entry types
+        STrendEntrySignal bestEntry = m_entryTypes.GetBestEntry();
+        if(bestEntry.direction == TRADE_SIGNAL_NONE)
+            return TRADE_SIGNAL_NONE;
+        // Apply ADX-based confidence adjustment
+        double adxMult = m_adxSizing.GetPositionSizeMultiplier();
+        confidence = MathMin(1.0, bestEntry.confidence * (0.85 + adxMult * 0.15));
+        // Minimum confidence filter
+        if(confidence < m_minConfidence)
+            return TRADE_SIGNAL_NONE;
+        // Log the signal
+        string trendState = EnumToString(m_emaSystem.GetAlignment());
+        PrintFormat("[TREND v2.0] %s: %s | Entry: %s | Conf: %.1f%% | Trend: %s | %s",
+                   m_symbol,
+                   bestEntry.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   EnumToString(bestEntry.type),
+                   confidence * 100,
+                   trendState,
+                   bestEntry.reason);
+        return bestEntry.direction;
     }
-    
+    //--- Strategy Type
+    virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_TREND; }
+    //--- Get Trade Parameters (SL/TP based on entry type)
+    bool GetTradeParameters(double &stopLoss, double &takeProfit, double &lotSize)
+    {
+        if(m_entryTypes == NULL || m_adxSizing == NULL)
+            return false;
+        STrendEntrySignal entry = m_entryTypes.GetBestEntry();
+        if(entry.direction == TRADE_SIGNAL_NONE)
+            return false;
+        stopLoss = entry.stopLoss;
+        takeProfit = entry.takeProfit;
+        lotSize = m_adxSizing.CalculateLotSize(0.01); // Base lot adjusted by ADX
+        return true;
+    }
+    //--- Trailing Stop Management
+    bool ManageTrailingStop(ulong ticket, ENUM_TRADE_SIGNAL direction, double entryPrice, double currentSL)
+    {
+        if(m_trailingStop == NULL)
+            return false;
+        STradeTrailInfo tradeInfo;
+        tradeInfo.ticket = ticket;
+        tradeInfo.entryPrice = entryPrice;
+        tradeInfo.currentSL = currentSL;
+        tradeInfo.isBuy = (direction == TRADE_SIGNAL_BUY);
+        double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
+        tradeInfo.highestPrice = tradeInfo.isBuy ? MathMax(entryPrice, lastPrice) : 0.0;
+        tradeInfo.lowestPrice  = tradeInfo.isBuy ? DBL_MAX : MathMin(entryPrice, lastPrice);
+        double newSL = m_trailingStop.CalculateTrailingStop(tradeInfo);
+        if(newSL != currentSL && newSL > 0)
+        {
+            // Return true to signal that SL should be updated
+            return true;
+        }
+        return false;
+    }
+    //--- Get New Trailing Stop Value
+    double GetNewTrailingStop(ENUM_TRADE_SIGNAL direction, double entryPrice, double currentSL)
+    {
+        if(m_trailingStop == NULL)
+            return currentSL;
+        STradeTrailInfo tradeInfo;
+        tradeInfo.entryPrice = entryPrice;
+        tradeInfo.currentSL = currentSL;
+        tradeInfo.isBuy = (direction == TRADE_SIGNAL_BUY);
+        double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
+        tradeInfo.highestPrice = tradeInfo.isBuy ? MathMax(entryPrice, lastPrice) : 0.0;
+        tradeInfo.lowestPrice  = tradeInfo.isBuy ? DBL_MAX : MathMin(entryPrice, lastPrice);
+        return m_trailingStop.CalculateTrailingStop(tradeInfo);
+    }
+    //--- Check Early Exit Conditions
+    bool ShouldExitEarly(ENUM_TRADE_SIGNAL direction, double entryPrice)
+    {
+        if(m_trailingStop == NULL)
+            return false;
+        STradeTrailInfo tradeInfo;
+        tradeInfo.entryPrice = entryPrice;
+        tradeInfo.isBuy = (direction == TRADE_SIGNAL_BUY);
+        double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
+        tradeInfo.highestPrice = tradeInfo.isBuy ? MathMax(entryPrice, lastPrice) : 0.0;
+        tradeInfo.lowestPrice  = tradeInfo.isBuy ? DBL_MAX : MathMin(entryPrice, lastPrice);
+        return m_trailingStop.ShouldExitEarly(tradeInfo);
+    }
+    //--- Get Position Size Multiplier
+    double GetPositionSizeMultiplier()
+    {
+        if(m_adxSizing == NULL)
+            return 1.0;
+        return m_adxSizing.GetPositionSizeMultiplier();
+    }
+    //--- Get Current Trend State
+    STrendState GetCurrentTrendState()
+    {
+        if(m_emaSystem == NULL)
+            return STrendState();
+        return m_emaSystem.GetTrendState();
+    }
+    //--- Get EMA Alignment Score
+    ENUM_EMA_ALIGNMENT GetEMAAlignment()
+    {
+        if(m_emaSystem == NULL)
+            return EMA_NEUTRAL;
+        return m_emaSystem.GetAlignment();
+    }
+    //--- Check if in Trading Session
+    bool IsInOptimalTradingTime()
+    {
+        // Best trend trading during London and NY overlap
+        MqlDateTime dt;
+        TimeToStruct(TimeCurrent(), dt);
+        int hour = dt.hour;
+        // London session: 8-16 GMT, NY session: 13-21 GMT
+        // Overlap: 13-16 GMT (best for trends)
+        return (hour >= 8 && hour <= 20);
+    }
 };
-
-
-
 #endif // __STRATEGY_TREND_MQH__
