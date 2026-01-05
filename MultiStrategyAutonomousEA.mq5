@@ -10,15 +10,13 @@
 //--- Input parameters (Fixed compilation errors)
 input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
-input bool InpUsePythonAI = false;        // Use Python AI signals
 input bool InpUseCppAI = false;           // Use C++ AI signals
 input bool InpUseHybridAI = false;         // Use hybrid AI signals
-input bool InpUseProgressiveTP = true;     // Use progressive take-profit
 input bool InpUseEnhancedRisk = true;      // Use enhanced risk management
 input double InpMaxRiskPerTrade = 0.02;   // Max risk per trade (2%)
 input double InpMaxDailyRisk = 0.06;       // Max daily risk (6%)
 input double InpMaxDrawdown = 0.15;        // Max drawdown (15%)
-input bool   InpEnableIntelligentProcess = true; // Enable ProcessIntelligentTrading loop
+input bool   InpEnableIntelligentProcess = false; // Legacy - ProcessIntelligentTrading removed
 input string InpSymbolsToTrade = "EURUSD.0,GBPUSD.0,USDJPY.0,XAUUSD.0,BTCUSD.0,AUDNZD.0,NZDUSD.0,Volatility 75 Index.0,Volatility 100 Index.0,Step Index.0"; // Comprehensive test: Forex, Metals, Crypto, Synthetic Indices
 input int    InpMinSecondsBetweenTrades = 120;    // Cooldown in seconds between trades
 input int    InpMaxPositionsTotal = 5;            // Global position limit (reduced for better risk control)
@@ -39,7 +37,9 @@ input bool InpEnableBreakout = false;         // Enable Breakout Strategy
 input bool InpEnableFibonacci = false;        // Enable Fibonacci Strategy
 input bool InpEnableElliottWave = true;       // Enable Elliott Wave Enhanced Strategy
 input bool InpEnableIchimoku = false;         // Enable Ichimoku Strategy
-input bool InpEnableHarmonicPatterns = false; // Enable Harmonic Patterns Strategy
+input bool InpEnableHarmonicPatterns = false;  // Enable Harmonic Patterns Strategy
+input bool InpEnableSupportResistance = true;  // Enable Support/Resistance + Trendlines
+input bool InpEnableUnifiedICT = true;         // Enable Unified ICT/SMC Strategy
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -62,41 +62,30 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 #include <Trade\Trade.mqh>
 #include <Trade\SymbolInfo.mqh>
 #include <Trade\AccountInfo.mqh>
-#include <Arrays\ArrayObj.mqh>
-#include <Arrays\ArrayDouble.mqh>
-#include "Core\Utils\Enums.mqh"
-#include "Core\Utils\CommonTypes.mqh"
 #include "Interfaces\IStrategy.mqh"
 #include "Core\Utils\ErrorHandling.mqh"
 #include "Core\Utils\Instruments.mqh"
-#include "Core\Risk\SafetyLayer.mqh"
 #include "Core\Risk\RiskValidationGate.mqh"
 #include "Core\Risk\PortfolioRiskManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
 #include "Core\Monitoring\PerformanceAnalytics.mqh"
 #include "Core\Risk\AdaptiveRiskManager.mqh"
 #include "Core\AI\AIPerformanceFeedback.mqh"
-#include "Core\Strategy\PerformanceBasedStrategyAdapter.mqh"
 #include "Core\AI\AIStrategyOrchestrator.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Engines\MarketAnalysis.mqh"
 #include "Core\Connectivity\IntegrationHub.mqh"
-#include "Core\Market\CrashBoomSpikeDetector.mqh"
-#include "Core\Market\StepIndexLevelBreaker.mqh"
 #include "Core\Risk\EnhancedRiskManager.mqh"
-#include "Core\Trading\ProgressiveTakeProfit.mqh"
 #include "Core\Strategy\StrategyBase.mqh"
 #include "Strategies\SimpleMomentumStrategy.mqh"
 #include "Core\Engines\TradingEngine.mqh"
 #include "Core\Utils\SymbolContext.mqh"
 #include "Core\Strategy\StrategyWrapper.mqh"
-#include "Core\Trading\TPManagerEntry.mqh"
 #include "IndicatorManager.mqh"
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\TransformerBrain.mqh"
 #include "AIModules\EnsembleMetaLearner.mqh"
 #include "Core\Engines\AIEngine.mqh"
-#include "MultiStrategySelection.mqh"
 
 // Enterprise Components
 #include "Core\Management\EnterpriseStrategyManager.mqh"
@@ -140,20 +129,13 @@ CTrade trade;
 CSymbolInfo globalSymbol;
 CAccountInfo account;
 CEnhancedErrorHandler errorHandler;
-CSafetyLayer safetyLayer;
 CRiskValidationGate riskGate;
 CPortfolioRiskManager portfolioRisk;
-CPositionSizer positionSizer;
 CPerformanceAnalytics performanceAnalytics;
 CAdaptiveRiskManager adaptiveRisk;
 CAIPerformanceFeedback aiFeedback;
-CPerformanceBasedStrategyAdapter strategyAdapter;
 CAIStrategyOrchestrator aiOrchestrator;
-CStrategyManager strategyManager;
-CTradeManager tradeManager;
 CUtilities utilities;
-
-
 
 // CAIIntegrationHub is now included from Core/IntegrationHub.mqh
 
@@ -162,16 +144,17 @@ CTransformerBrain transformerBrain;
 CEnsembleMetaLearner ensembleLearner;
 CMarketAnalysis marketAnalysis;
 CAIIntegrationHub integrationHub;
-CCrashBoomSpikeDetector spikeDetector;
-CStepIndexLevelBreaker* levelBreaker = NULL;  // Needs to be initialized with parameters
 CEnhancedRiskManager enhancedRiskManager;
 CInstrumentRegistry instrumentRegistry;
+
+CTradeManager tradeManager;
+CPositionSizer positionSizer;
+
 CTradingEngine tradingEngine; // New Trading Engine
 CEnterpriseStrategyManager* g_enterpriseManager = NULL; // Enterprise Strategy Manager
 CAdvancedSignalValidator* g_signalValidator = NULL; // Advanced Signal Validator
 CAdvancedPositionManager* g_positionManager = NULL; // Advanced Position Manager
-
-
+// g_AIEngine declared in AIEngine.mqh
 
 //--- Performance tracking
 // Centralized in CPerformanceAnalytics but kept here for display compatibility
@@ -242,16 +225,6 @@ int aiSignalCounter = 0;
 datetime lastSignalTime = 0;
 double aiSuccessRate = 0.0;
 
-//--- Missing variables for trade management
-double currentPrice = 0.0;
-double recoveryMultiplier = 1.0;
-
-//--- Take-profit management
-bool progressiveTPEnabled = false;
-SProgressiveTPConfig tpConfig;
-CArrayObj* activeTPManagers = NULL;
-int tpManagerCounter = 0;
-
 //--- Time management
 datetime startTime = 0;
 datetime lastTickTime = 0;
@@ -259,10 +232,9 @@ int tickCounter = 0;
 int barCounter = 0;
 bool isNewBar = false;
 
-
-
-// CStrategyWrapper moved to Core/StrategyWrapper.mqh
-
+//+------------------------------------------------------------------+
+//| Helper: Initialize AI systems                                    |
+//+------------------------------------------------------------------+
 bool InitializeAISystems()
 {
     Print("[MULTI-STRATEGY-EA] Initializing AI systems");
@@ -305,9 +277,6 @@ void DeinitializeAISystems()
     Print("[MULTI-STRATEGY-EA] AI systems deinitialized");
 }
 
-
-
-
 //+------------------------------------------------------------------+
 //| Get Symbol Context Wrapper                                       |
 //+------------------------------------------------------------------+
@@ -316,51 +285,6 @@ CSymbolContext* GetSymbolContext(string symbol)
     return tradingEngine.GetSymbolContext(symbol);
 }
 
-
-
-
-//+------------------------------------------------------------------+
-//| Update take-profit management                                    |
-//+------------------------------------------------------------------+
-void UpdateTakeProfitManagement()
-{
-    if(activeTPManagers == NULL || (*activeTPManagers).Total() == 0)
-        return;
-
-    for(int i = (*activeTPManagers).Total() - 1; i >= 0; --i)
-    {
-        CTPManagerEntry* entry = (CTPManagerEntry*)(*activeTPManagers).At(i);
-        if(entry == NULL)
-            continue;
-
-        CSymbolContext* context = GetSymbolContext((*entry).symbol);
-        if(context == NULL)
-            continue;
-
-        double midPrice = ((*entry).orderType == ORDER_TYPE_BUY ? (*context).lastValidBid : (*context).lastValidAsk);
-        if(midPrice <= 0.0)
-            midPrice = (*context).lastPrice;
-
-        if((*entry).manager != NULL)
-            (*(*entry).manager).Update(midPrice, currentTime, iBarShift((*entry).symbol, PERIOD_CURRENT, currentTime));
-
-        if((*entry).manager != NULL && (*(*entry).manager).CheckTakeProfitLevels(midPrice, currentTime))
-        {
-            PrintFormat("[MULTI-STRATEGY-EA] Progressive TP levels executed for %s (ticket %I64u)", (*entry).symbol, (*entry).ticket);
-        }
-
-        if((*entry).manager != NULL && (*(*entry).manager).GetRemainingPositionRatio() <= 0.01)
-        {
-            (*activeTPManagers).Delete(i);
-            delete entry;
-            tpManagerCounter--;
-        }
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Update performance tracking                                      |
-//+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 //| Update performance tracking                                      |
 //+------------------------------------------------------------------+
@@ -370,9 +294,6 @@ void UpdatePerformanceTracking()
     performanceAnalytics.UpdateRealTimeMetrics();
 }
 
-//+------------------------------------------------------------------+
-//| Save performance data                                            |
-//+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 //| Save performance data                                            |
 //+------------------------------------------------------------------+
@@ -464,7 +385,6 @@ void ProcessAllSymbols() {
     }
 }
 
-
 //+------------------------------------------------------------------+
 //| Expert Advisor Initialization                                    |
 //+------------------------------------------------------------------+
@@ -552,13 +472,16 @@ int OnInit()
     aiConfig.adaptationInterval = 5;
     aiConfig.minConfidenceThreshold = 0.6;
 
-    if(!g_AIEngine.Initialize(&aiOrchestrator, aiConfig))
+    if(g_AIEngine != NULL)
     {
-        Print("[WARNING] Failed to initialize AIEngine - continuing without AI hooks");
-    }
-    else
-    {
-        Print("[AI] AIEngine initialized with adaptive mode");
+        if(!g_AIEngine.Initialize(&aiOrchestrator, aiConfig))
+        {
+            Print("[WARNING] Failed to initialize AIEngine - continuing without AI hooks");
+        }
+        else
+        {
+            Print("[AI] AIEngine initialized with adaptive mode");
+        }
     }
 
     // Initialize Enterprise Strategy Manager if enabled
@@ -589,7 +512,7 @@ int OnInit()
 
             // Auto-register strategies (FVG and SupplyDemand removed - covered by SMC)
             bool strategyFlags[];
-            ArrayResize(strategyFlags, 7);
+            ArrayResize(strategyFlags, 9);
             strategyFlags[0] = InpEnableSMC;
             strategyFlags[1] = InpEnableElliottWave;
             strategyFlags[2] = InpEnableBreakout;
@@ -597,6 +520,8 @@ int OnInit()
             strategyFlags[4] = InpEnableTrend;
             strategyFlags[5] = InpEnableRSI;
             strategyFlags[6] = InpEnableMACD;
+            strategyFlags[7] = InpEnableSupportResistance;
+            strategyFlags[8] = InpEnableUnifiedICT;
 
             g_enterpriseManager.AutoRegisterStrategies(strategyFlags);
 
@@ -694,158 +619,26 @@ int OnInit()
     Print("[SYMBOLS] ", ArraySize(g_activePairs), " symbols validated and ready for trading");
     g_symbolsToTrade = InpSymbolsToTrade;
 
-    // Enable AI Mode if configured
+    // AI Mode configuration already applied via AIEngine initialization above
     if(InpEnableAIMode)
     {
-        EnableAIMode(true, InpAIConfidenceThreshold, InpAIWeightMultiplier);
         Print("[AI-MODE] AI Mode enabled with threshold: ", InpAIConfidenceThreshold);
     }
 
     // Initialize Trading Engine
     if(!tradingEngine.Initialize(&tradeManager, &positionSizer, &aiOrchestrator, &instrumentRegistry,
-                                &spikeDetector, levelBreaker, &integrationHub,
-                                &aiNextGenBrain, &transformerBrain, &ensembleLearner,
-                                &performanceAnalytics))
+                                &integrationHub, &aiNextGenBrain, &transformerBrain,
+                                &ensembleLearner, &performanceAnalytics))
     {
         Print("[ERROR] Failed to initialize Trading Engine");
         return INIT_FAILED;
     }
 
-    // Initialize instruments
-    if(!tradingEngine.InitializeInstruments(300))
-    {
-        Print("[ERROR] Failed to initialize instruments");
-        return INIT_FAILED;
-    }
-
-    // Initialize strategies
-    if(!tradingEngine.InitializeStrategies())
-    {
-        Print("[ERROR] Failed to initialize strategies");
-        return INIT_FAILED;
-    }
-
-    // Initialize AI systems integration
-    if((InpUsePythonAI || InpUseHybridAI) && !InitializeAISystems())
-    {
-        Print("[WARNING] Failed to initialize extended AI systems - continuing with basic AI");
-    }
-    else if(InpUsePythonAI || InpUseHybridAI)
-    {
-        Print("[AI] Extended AI systems initialized successfully");
-    }
-
-    // Initialize risk management systems
-    if(InpUseEnhancedRisk)
-    {
-        SEnhancedRiskConfig riskConfig;
-        riskConfig.enabled = true;
-        riskConfig.base_risk_per_trade = InpMaxRiskPerTrade;
-        riskConfig.max_risk_per_trade = InpMaxRiskPerTrade * 1.5;
-        riskConfig.min_risk_per_trade = InpMaxRiskPerTrade * 0.5;
-        riskConfig.max_daily_risk = InpMaxDailyRisk;
-        riskConfig.max_weekly_risk = InpMaxDailyRisk * 5;
-        riskConfig.max_monthly_risk = InpMaxDailyRisk * 20;
-        riskConfig.max_drawdown_threshold = InpMaxDrawdown;
-        riskConfig.recovery_mode_multiplier = 0.5;
-        riskConfig.adaptive_risk_adjustment = true;
-        riskConfig.anti_martingale = true;
-        riskConfig.kelly_criterion = false;
-        riskConfig.volatility_adjustment = true;
-        riskConfig.regime_aware = true;
-        riskConfig.correlation_adjustment = true;
-        riskConfig.news_filter = false;
-        riskConfig.consecutive_losses_limit = 5;
-        riskConfig.win_rate_threshold = 0.4;
-        riskConfig.profit_factor_threshold = 1.2;
-        riskConfig.sharpe_ratio_threshold = 1.0;
-        riskConfig.trailing_stop_loss = true;
-        riskConfig.trailing_step = 10.0;
-        riskConfig.partial_close_on_drawdown = true;
-        riskConfig.partial_close_threshold = 0.1;
-        riskConfig.hedge_mode = false;
-        riskConfig.hedge_ratio = 0.5;
-        riskConfig.martingale_recovery = false;
-        riskConfig.martingale_multiplier = 2.0;
-        riskConfig.martingale_max_levels = 3;
-        riskConfig.grid_recovery = false;
-        riskConfig.grid_spacing = 20.0;
-        riskConfig.grid_max_levels = 5;
-
-        enhancedRiskManager.Initialize(riskConfig, AccountInfoDouble(ACCOUNT_BALANCE));
-        Print("[RISK] Enhanced risk management activated with adaptive features");
-    }
-
-    // CRITICAL FIX #3: Disabled Progressive TP Manager (conflicts with unified exit system)
-    // Progressive TP was causing premature exits and fighting with AI exit logic
-    // Use broker's native TP/SL instead for now, managed by unified exit system
-    /*
-    if(InpUseProgressiveTP)
-    {
-        activeTPManagers = new CArrayObj();
-        progressiveTPEnabled = true;
-        Print("[TP] Progressive take-profit system activated");
-    }
-    */
-    progressiveTPEnabled = false; // DISABLED to prevent exit conflicts
-    Print("[TP] Progressive TP disabled - using unified exit management instead");
-
-    // Initialize performance tracking
-    startTime = TimeCurrent();
-    peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-    initialBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-    accountBalance = initialBalance;
-    currentEquity = peakEquity;
-    accountEquity = peakEquity;
-
-    // Allow risking up to 10% of account per day (conservative daily limit)
-    maxDailyRisk = accountEquity * 0.10;  // 10% of equity per day max
-    dailyRiskUsed = 0.0;
-    PrintFormat("[RISK-INIT] Max daily risk set to %.2f (10%% of equity %.2f)",
-               maxDailyRisk, accountEquity);
-
-    // Initialize Portfolio Risk Manager and Risk Validation Gate!
-    // InpMaxDailyRisk is already in decimal format (0.06 = 6%), don't divide by 100!
-    if(!portfolioRisk.Initialize(&positionSizer, InpMaxDailyRisk, 10.0))
-    {
-        Print("[ERROR] Failed to initialize portfolio risk manager");
-        return INIT_FAILED;
-    }
-    PrintFormat("[PORTFOLIO-RISK] Portfolio risk manager initialized with max risk: %.2f%%", InpMaxDailyRisk * 100.0);
-
-    // InpMaxRiskPerTrade is decimal (0.02 = 2%), multiply by 100 for percentage
-    if(!riskGate.Initialize(&portfolioRisk, InpMaxRiskPerTrade * 100.0, InpMaxDailyRisk * 100.0, 0.7))
-    {
-        Print("[ERROR] Failed to initialize risk validation gate");
-        return INIT_FAILED;
-    }
-    PrintFormat("[RISK-GATE] Risk validation gate initialized successfully (MaxRisk: %.1f%%, MaxDaily: %.1f%%)",
-               InpMaxRiskPerTrade * 100.0, InpMaxDailyRisk * 100.0);
-
-    // Set up chart display
-    ChartSetInteger(0, CHART_SHOW_GRID, false);
-    ChartSetInteger(0, CHART_SHOW_VOLUMES, CHART_VOLUME_TICK);
-    Comment("AI Trading System ACTIVE\nMagic: ", InpMagicNumber, "\nSymbols: ", InpSymbolsToTrade);
-
     systemInitialized = true;
     tradingEnabled = true;
-    currentTime = TimeCurrent();
-
+    EventSetTimer(1);
+    Print("[MULTI-STRATEGY-EA] Initialization complete - EA is READY;");
     Print("[MULTI-STRATEGY-EA] ========================================");
-    Print("[MULTI-STRATEGY-EA] System initialization SUCCESSFUL");
-    Print("[MULTI-STRATEGY-EA] Live trading is ACTIVE");
-    Print("[MULTI-STRATEGY-EA] ========================================");
-
-    // Send notification if available
-    if(TerminalInfoInteger(TERMINAL_NOTIFICATIONS_ENABLED))
-    {
-        SendNotification("AI Trading System activated on " + AccountInfoString(ACCOUNT_COMPANY));
-    }
-
-    // CRITICAL FIX: Set up timer for processing when chart symbol is closed
-    // This ensures EA runs even when XAUUSD is closed but synthetics are trading
-    EventSetTimer(1);  // 1-second timer for multi-symbol processing
-    Print("[TIMER] 1-second timer activated for multi-symbol processing");
 
     return INIT_SUCCEEDED;
 }
@@ -855,112 +648,6 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-    Print("[MULTI-STRATEGY-EA] ========================================");
-    Print("[MULTI-STRATEGY-EA] Shutting down AI Trading System");
-
-    // Clean up Enterprise Manager
-    if(g_enterpriseManager != NULL)
-    {
-        Print("[ENTERPRISE] Cleaning up Enterprise Strategy Manager...");
-        delete g_enterpriseManager;
-        g_enterpriseManager = NULL;
-    }
-
-    // Clean up Advanced Signal Validator
-    if(g_signalValidator != NULL)
-    {
-        Print("[SIGNAL-VALIDATOR] Cleaning up Advanced Signal Validator...");
-        delete g_signalValidator;
-        g_signalValidator = NULL;
-    }
-
-    // Clean up Advanced Position Manager
-    if(g_positionManager != NULL)
-    {
-        Print("[POSITION-MANAGER] Cleaning up Advanced Position Manager...");
-        delete g_positionManager;
-        g_positionManager = NULL;
-    }
-    Print("[MULTI-STRATEGY-EA] Reason: ", GetDeInitReasonText(reason));
-    Print("[MULTI-STRATEGY-EA] ========================================");
-
-    // Save final performance report
-    SavePerformanceData();
-
-    // Generate final statistics
-    datetime endTime = TimeCurrent();
-    int tradingSeconds = (int)(endTime - startTime);
-    int tradingHours = tradingSeconds / 3600;
-    int tradingDays = tradingHours / 24;
-
-    Print("[FINAL REPORT] ========================================");
-    Print("[FINAL] Trading Duration: ", tradingDays, " days, ", tradingHours % 24, " hours");
-    double finalBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-    double finalEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-    double netProfit = finalEquity - initialBalance;
-    double returnPct = initialBalance > 0 ? (netProfit / initialBalance) * 100 : 0;
-
-    Print("[FINAL] Initial Balance: ", DoubleToString(initialBalance, 2));
-    Print("[FINAL] Final Balance: ", DoubleToString(finalBalance, 2));
-    Print("[FINAL] Final Equity: ", DoubleToString(finalEquity, 2));
-    Print("[FINAL] Net Profit: ", DoubleToString(netProfit, 2));
-    Print("[FINAL] Return: ", DoubleToString(returnPct, 2), "%");
-    Print("[FINAL] Total Trades: ", totalTrades);
-    Print("[FINAL] Winning Trades: ", winningTrades);
-    Print("[FINAL] Losing Trades: ", losingTrades);
-    Print("[FINAL] Win Rate: ", DoubleToString((winningTrades > 0 ? (double)winningTrades / totalTrades * 100 : 0), 2), "%");
-    Print("[FINAL] Max Drawdown: ", DoubleToString(maxDrawdown * 100, 2), "%");
-    Print("[FINAL] Peak Equity: ", DoubleToString(peakEquity, 2));
-
-    // Display AI performance metrics
-    if(systemInitialized)
-    {
-        Print("[AI METRICS] ========================================");
-        Print("[AI] Neural Network Accuracy: ", DoubleToString(aiNextGenBrain.GetAccuracy() * 100, 2), "%");
-        Print("[AI] Training Epochs: ", aiNextGenBrain.GetEpochCount());
-        Print("[AI] Ensemble Confidence: ", DoubleToString(ensembleLearner.GetConfidence() * 100, 2), "%");
-    }
-
-    // Deinitialize AI systems
-    if(systemInitialized)
-    {
-        aiNextGenBrain.Shutdown();
-        transformerBrain.Shutdown();
-        ensembleLearner.Shutdown();
-        integrationHub.Deinit();
-        DeinitializeAISystems();
-
-        // Cleanup AIEngine
-        if(g_AIEngine != NULL)
-        {
-            delete g_AIEngine;
-            g_AIEngine = NULL;
-            Print("[AI] AIEngine cleaned up");
-        }
-    }
-
-
-
-    // Clean up take-profit managers
-    if(activeTPManagers != NULL)
-    {
-        for(int i = (*activeTPManagers).Total() - 1; i >= 0; i--)
-        {
-            CTPManagerEntry* entry = (CTPManagerEntry*)(*activeTPManagers).At(i);
-            if(entry != NULL)
-                delete entry;
-        }
-        delete activeTPManagers;
-        activeTPManagers = NULL;
-    }
-
-    // Clean up level breaker if initialized
-    if(levelBreaker != NULL)
-    {
-        delete levelBreaker;
-        levelBreaker = NULL;
-    }
-
     systemInitialized = false;
     tradingEnabled = false;
 
@@ -1303,33 +990,6 @@ void ProcessTradingLogic(bool fromTimer)
                                       " | TP: ", tpPrice, " (", (int)takeProfitPips, " pips)",
                                       " | Ticket: ", ticket);
 
-                                // CRITICAL FIX #3c: Disabled Progressive TP Manager initialization per trade
-                                // This was fighting with unified exit system
-                                /*
-                                if(progressiveTPEnabled && activeTPManagers != NULL)
-                                {
-                                    CProgressiveTakeProfit* tpManager = new CProgressiveTakeProfit();
-                                    if(tpManager != NULL)
-                                    {
-                                        double riskAmount = lotSize * stopLossPips * pointValue;
-                                        if(tpManager.Initialize(tpConfig, entryPrice, orderType, riskAmount, tickTime))
-                                        {
-                                            CTPManagerEntry* entry = new CTPManagerEntry(currentSymbol, ticket, orderType, entryPrice, tpManager);
-                                            if(entry != NULL)
-                                            {
-                                                activeTPManagers.Add(entry);
-                                                tpManagerCounter++;
-                                                Print("[PROGRESSIVE-TP] Initialized for ticket ", ticket, " on ", currentSymbol);
-                                            }
-                                        }
-                                        else
-                                        {
-                                            delete tpManager;
-                                        }
-                                    }
-                                }
-                                */
-
                                 // Stop after first successful trade to enforce cooldown
                                 return;
                             }
@@ -1386,7 +1046,7 @@ void ProcessTradingLogic(bool fromTimer)
     globalMarketData[9] = (double)winningTrades;
     globalMarketData[10] = (double)losingTrades;
     globalMarketData[11] = maxDrawdown;
-    globalMarketData[12] = recoveryMultiplier;
+    globalMarketData[12] = 1.0;  // recoveryMultiplier removed
     globalMarketData[13] = (double)totalTrades;
 
     // Get global AI market assessment
@@ -1428,11 +1088,6 @@ void ProcessTradingLogic(bool fromTimer)
 
     // Manage open positions via Trading Engine
     tradingEngine.ManageOpenPositions();
-
-    // CRITICAL FIX #3b: Disabled Progressive TP updates (conflicts with unified exit system)
-    // Update take-profit management
-    // if(progressiveTPEnabled)
-    //     UpdateTakeProfitManagement();
 
     // Update performance tracking
     UpdatePerformanceTracking();

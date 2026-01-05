@@ -116,7 +116,9 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_HARMONIC_PATTERNS = 19,   // Harmonic Patterns strategy
     STRATEGY_ELLIOTT_WAVE = 21,        // Elliott Wave Enhanced strategy
     STRATEGY_BRAIN = 22,               // Neural Network Brain strategy
-    STRATEGY_SMC = 23                  // Advanced Smart Money Concepts strategy (includes Order Blocks, Supply/Demand, FVG)
+    STRATEGY_SMC = 23,                 // Advanced Smart Money Concepts strategy (includes Order Blocks, Supply/Demand, FVG)
+    STRATEGY_SUPPORT_RESISTANCE = 24,  // Support/Resistance + Trendlines strategy
+    STRATEGY_UNIFIED_ICT = 25          // Unified ICT/SMC comprehensive strategy
 };
 
 //+------------------------------------------------------------------+

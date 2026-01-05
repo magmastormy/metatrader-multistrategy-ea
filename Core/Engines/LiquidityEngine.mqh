@@ -26,15 +26,15 @@ class CTradeManager;
 class CPerformanceAnalytics;
 class CAIStrategyOrchestrator;
 
-enum ENUM_LIQUIDITY_TYPE
+enum ENUM_LIQUIDITY_ENGINE_TYPE
 {
-    LIQUIDITY_NONE = 0,
-    LIQUIDITY_BUY_STOPS,
-    LIQUIDITY_SELL_STOPS,
-    LIQUIDITY_EQUAL_HIGHS,
-    LIQUIDITY_EQUAL_LOWS,
-    LIQUIDITY_SWEPT,
-    LIQUIDITY_VOID
+    LIQ_ENG_NONE = 0,
+    LIQ_ENG_BUY_STOPS,
+    LIQ_ENG_SELL_STOPS,
+    LIQ_ENG_EQUAL_HIGHS,
+    LIQ_ENG_EQUAL_LOWS,
+    LIQ_ENG_SWEPT,
+    LIQ_ENG_VOID
 };
 
 struct LiquidityZone
@@ -42,7 +42,7 @@ struct LiquidityZone
     double priceLevel;
     double zoneTop;
     double zoneBottom;
-    ENUM_LIQUIDITY_TYPE type;
+    ENUM_LIQUIDITY_ENGINE_TYPE type;
     int touchCount;
     double strength;
     datetime created;
@@ -146,7 +146,7 @@ bool CLiquidityEngine::DetectEqualLevels(const MqlRates &rates[], int period)
                     zone.priceLevel = avgHigh;
                     zone.zoneTop = avgHigh + tolerance;
                     zone.zoneBottom = avgHigh - tolerance;
-                    zone.type = LIQUIDITY_EQUAL_HIGHS;
+                    zone.type = LIQ_ENG_EQUAL_HIGHS;
                     zone.touchCount = equalHighCount + 1;
                     zone.created = rates[i].time;
                     zone.isActive = true;

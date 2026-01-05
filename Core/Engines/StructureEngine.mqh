@@ -33,17 +33,17 @@ class CAIStrategyOrchestrator;
 //+------------------------------------------------------------------+
 enum ENUM_STRUCTURE_TYPE
 {
-    STRUCTURE_NONE = 0,
-    STRUCTURE_HH,          // Higher High
-    STRUCTURE_HL,          // Higher Low  
-    STRUCTURE_LH,          // Lower High
-    STRUCTURE_LL,          // Lower Low
-    STRUCTURE_EQH,         // Equal High
-    STRUCTURE_EQL,         // Equal Low
-    STRUCTURE_BOS,         // Break of Structure
-    STRUCTURE_CHOCH,       // Change of Character
-    STRUCTURE_SWEEP,       // Liquidity Sweep
-    STRUCTURE_RAID         // Stop Hunt/Raid
+    STRUCT_TYPE_NONE = 0,
+    STRUCT_TYPE_HH,          // Higher High
+    STRUCT_TYPE_HL,          // Higher Low  
+    STRUCT_TYPE_LH,          // Lower High
+    STRUCT_TYPE_LL,          // Lower Low
+    STRUCT_TYPE_EQH,         // Equal High
+    STRUCT_TYPE_EQL,         // Equal Low
+    STRUCT_TYPE_BOS,         // Break of Structure
+    STRUCT_TYPE_CHOCH,       // Change of Character
+    STRUCT_TYPE_SWEEP,       // Liquidity Sweep
+    STRUCT_TYPE_RAID         // Stop Hunt/Raid
 };
 
 //+------------------------------------------------------------------+
@@ -59,7 +59,7 @@ struct SwingPoint
     bool isValid;
     bool isMitigated;
     
-    SwingPoint() : price(0), time(0), bar(0), type(STRUCTURE_NONE), 
+    SwingPoint() : price(0), time(0), bar(0), type(STRUCT_TYPE_NONE), 
                    strength(0), isValid(false), isMitigated(false) {}
 };
 
@@ -80,7 +80,7 @@ struct MarketStructureState
     double structureStrength;
     datetime lastUpdate;
     
-    MarketStructureState() : currentStructure(STRUCTURE_NONE), isBullish(false),
+    MarketStructureState() : currentStructure(STRUCT_TYPE_NONE), isBullish(false),
                             isBearish(false), lastHigh(0), lastLow(0),
                             prevHigh(0), prevLow(0), bosCount(0), chochCount(0),
                             structureStrength(0), lastUpdate(0) {}
@@ -230,7 +230,7 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
             point.price = rates[i].high;
             point.time = rates[i].time;
             point.bar = i;
-            point.type = STRUCTURE_HH; // Will be updated based on comparison
+            point.type = STRUCT_TYPE_HH; // Will be updated based on comparison
             point.strength = CalculateSwingStrength(rates, i, true);
             point.isValid = true;
             
@@ -267,7 +267,7 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
             point.price = rates[i].low;
             point.time = rates[i].time;
             point.bar = i;
-            point.type = STRUCTURE_LL; // Will be updated based on comparison
+            point.type = STRUCT_TYPE_LL; // Will be updated based on comparison
             point.strength = CalculateSwingStrength(rates, i, false);
             point.isValid = true;
             
@@ -487,12 +487,12 @@ void CStructureEngine::UpdateStructureState(const SwingPoint &newPoint, bool isH
         {
             if(newPoint.price > m_state.prevHigh)
             {
-                m_state.currentStructure = STRUCTURE_HH;
+                m_state.currentStructure = STRUCT_TYPE_HH;
                 m_state.bosCount++;
             }
             else if(newPoint.price < m_state.prevHigh)
             {
-                m_state.currentStructure = STRUCTURE_LH;
+                m_state.currentStructure = STRUCT_TYPE_LH;
                 if(m_state.isBullish)
                 {
                     m_state.chochCount++;
@@ -500,7 +500,7 @@ void CStructureEngine::UpdateStructureState(const SwingPoint &newPoint, bool isH
             }
             else
             {
-                m_state.currentStructure = STRUCTURE_EQH;
+                m_state.currentStructure = STRUCT_TYPE_EQH;
             }
         }
     }
@@ -514,12 +514,12 @@ void CStructureEngine::UpdateStructureState(const SwingPoint &newPoint, bool isH
         {
             if(newPoint.price < m_state.prevLow)
             {
-                m_state.currentStructure = STRUCTURE_LL;
+                m_state.currentStructure = STRUCT_TYPE_LL;
                 m_state.bosCount++;
             }
             else if(newPoint.price > m_state.prevLow)
             {
-                m_state.currentStructure = STRUCTURE_HL;
+                m_state.currentStructure = STRUCT_TYPE_HL;
                 if(m_state.isBearish)
                 {
                     m_state.chochCount++;
@@ -527,7 +527,7 @@ void CStructureEngine::UpdateStructureState(const SwingPoint &newPoint, bool isH
             }
             else
             {
-                m_state.currentStructure = STRUCTURE_EQL;
+                m_state.currentStructure = STRUCT_TYPE_EQL;
             }
         }
     }
@@ -542,11 +542,11 @@ bool CStructureEngine::DetectBOS(const SwingPoint &current, const SwingPoint &pr
         return false;
     
     // Bullish BOS: Higher high and higher low
-    if(current.type == STRUCTURE_HH && current.price > previous.price)
+    if(current.type == STRUCT_TYPE_HH && current.price > previous.price)
         return true;
     
     // Bearish BOS: Lower low and lower high
-    if(current.type == STRUCTURE_LL && current.price < previous.price)
+    if(current.type == STRUCT_TYPE_LL && current.price < previous.price)
         return true;
     
     return false;
@@ -561,11 +561,11 @@ bool CStructureEngine::DetectCHOCH(const SwingPoint &current, const SwingPoint &
         return false;
     
     // Bearish CHOCH: Lower high after uptrend
-    if(m_state.isBullish && current.type == STRUCTURE_LH)
+    if(m_state.isBullish && current.type == STRUCT_TYPE_LH)
         return true;
     
     // Bullish CHOCH: Higher low after downtrend
-    if(m_state.isBearish && current.type == STRUCTURE_HL)
+    if(m_state.isBearish && current.type == STRUCT_TYPE_HL)
         return true;
     
     return false;
@@ -723,7 +723,7 @@ bool CStructureEngine::HasLiquiditySweep(int lookback)
 {
     // This would need to track sweep events
     // For now, return based on structure analysis
-    return m_state.currentStructure == STRUCTURE_SWEEP;
+    return m_state.currentStructure == STRUCT_TYPE_SWEEP;
 }
 
 //+------------------------------------------------------------------+

@@ -14,6 +14,8 @@
 #include "../Strategy/StrategyBase.mqh"
 #include "../../Strategies/StrategyRSI.mqh"
 #include "../../Strategies/StrategySwing.mqh"
+#include "../../Strategies/StrategySupportResistance.mqh"
+#include "../../Strategies/StrategyUnifiedICT.mqh"
 // Include other strategy headers as they are converted
 
 // Forward declarations
@@ -59,6 +61,8 @@ public:
         STRATEGY_ICHIMOKU,
         STRATEGY_SMC,              // Smart Money Concepts (covers Order Block, Supply/Demand)
         STRATEGY_ELLIOTT_WAVE,     // Elliott Wave Enhanced
+        STRATEGY_SUPPORT_RESISTANCE, // Support/Resistance + Trendlines
+        STRATEGY_UNIFIED_ICT,      // Unified ICT/SMC comprehensive strategy
         // Add other strategy types here
         STRATEGY_COUNT  // Must be the last element
     };
@@ -105,6 +109,8 @@ public:
         m_strategyNames[STRATEGY_ICHIMOKU] = "Ichimoku Cloud";
         m_strategyNames[STRATEGY_SMC] = "Smart Money Concepts";
         m_strategyNames[STRATEGY_ELLIOTT_WAVE] = "Elliott Wave Enhanced";
+        m_strategyNames[STRATEGY_SUPPORT_RESISTANCE] = "Support/Resistance + Trendlines";
+        m_strategyNames[STRATEGY_UNIFIED_ICT] = "Unified ICT/SMC";
         
         // Initialize strategy descriptions
         m_strategyDescriptions[STRATEGY_RSI] = "Uses RSI overbought/oversold levels with price action confirmation";
@@ -121,6 +127,8 @@ public:
         m_strategyDescriptions[STRATEGY_ICHIMOKU] = "Ichimoku Cloud comprehensive analysis";
         m_strategyDescriptions[STRATEGY_SMC] = "Advanced Smart Money Concepts with order blocks, liquidity sweeps, and FVG";
         m_strategyDescriptions[STRATEGY_ELLIOTT_WAVE] = "Elliott Wave theory with fractal analysis and wave counting";
+        m_strategyDescriptions[STRATEGY_SUPPORT_RESISTANCE] = "S/R levels, trendlines, bounces, and breakout retests";
+        m_strategyDescriptions[STRATEGY_UNIFIED_ICT] = "Comprehensive ICT/SMC with market structure, OBs, liquidity, imbalance";
     }
     
     ~CStrategyFactory()
@@ -155,6 +163,20 @@ public:
             {
                 CStrategySwing* swingStrategyLocal = new CStrategySwing();
                 strategy = swingStrategyLocal;
+                break;
+            }
+            
+            case STRATEGY_SUPPORT_RESISTANCE:
+            {
+                CStrategySupportResistance* srStrategy = new CStrategySupportResistance();
+                strategy = srStrategy;
+                break;
+            }
+            
+            case STRATEGY_UNIFIED_ICT:
+            {
+                CStrategyUnifiedICT* ictStrategy = new CStrategyUnifiedICT();
+                strategy = ictStrategy;
                 break;
             }
                 

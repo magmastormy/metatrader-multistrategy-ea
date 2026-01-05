@@ -8,8 +8,6 @@
 #include "../Risk/PositionSizer.mqh"
 #include "../AI/AIStrategyOrchestrator.mqh"
 #include "../Utils/Instruments.mqh"
-#include "../Market/CrashBoomSpikeDetector.mqh"
-#include "../Market/StepIndexLevelBreaker.mqh"
 #include "../Connectivity/IntegrationHub.mqh"
 #include "../Utils/SymbolContext.mqh"
 #include "../Utils/ModeManager.mqh"
@@ -31,6 +29,8 @@
 #include "../../Strategies/StrategyIchimoku.mqh"
 #include "../../Strategies/StrategyElliottWaveEnhanced.mqh"
 #include "../../Strategies/StrategyHarmonicPatterns.mqh"
+#include "../../Strategies/StrategySupportResistance.mqh"
+#include "../../Strategies/StrategyUnifiedICT.mqh"
 #include "../Strategy/StrategyWrapper.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
 
@@ -60,8 +60,6 @@ private:
     CPositionSizer*         m_positionSizer;
     CAIStrategyOrchestrator* m_aiOrchestrator;
     CInstrumentRegistry*    m_instrumentRegistry;
-    CCrashBoomSpikeDetector* m_spikeDetector;
-    CStepIndexLevelBreaker* m_levelBreaker;
     CAIIntegrationHub*      m_integrationHub;
     CModeManager*           m_modeManager;
     CEnhancedRiskManager*   m_riskManager;
@@ -90,8 +88,6 @@ public:
                    CPositionSizer* p_positionSizer,
                    CAIStrategyOrchestrator* p_aiOrchestrator,
                    CInstrumentRegistry* p_instrumentRegistry,
-                   CCrashBoomSpikeDetector* p_spikeDetector,
-                   CStepIndexLevelBreaker* p_levelBreaker,
                    CAIIntegrationHub* p_integrationHub,
                    CNextGenStrategyBrain* p_aiNextGenBrain,
                    CTransformerBrain* p_transformerBrain,
@@ -146,8 +142,6 @@ CTradingEngine::CTradingEngine() :
     m_aiOrchestrator(NULL),
     m_performanceAnalytics(NULL),
     m_instrumentRegistry(NULL),
-    m_spikeDetector(NULL),
-    m_levelBreaker(NULL),
     m_integrationHub(NULL),
     m_aiNextGenBrain(NULL),
     m_transformerBrain(NULL),
@@ -193,8 +187,6 @@ bool CTradingEngine::Initialize(CTradeManager* p_tradeManager,
                    CPositionSizer* p_positionSizer,
                    CAIStrategyOrchestrator* p_aiOrchestrator,
                    CInstrumentRegistry* p_instrumentRegistry,
-                   CCrashBoomSpikeDetector* p_spikeDetector,
-                   CStepIndexLevelBreaker* p_levelBreaker,
                    CAIIntegrationHub* p_integrationHub,
                    CNextGenStrategyBrain* p_aiNextGenBrain,
                    CTransformerBrain* p_transformerBrain,
@@ -205,8 +197,6 @@ bool CTradingEngine::Initialize(CTradeManager* p_tradeManager,
     m_positionSizer = p_positionSizer;
     m_aiOrchestrator = p_aiOrchestrator;
     m_instrumentRegistry = p_instrumentRegistry;
-    m_spikeDetector = p_spikeDetector;
-    m_levelBreaker = p_levelBreaker;
     m_integrationHub = p_integrationHub;
     m_aiNextGenBrain = p_aiNextGenBrain;
     m_transformerBrain = p_transformerBrain;
@@ -344,12 +334,6 @@ bool CTradingEngine::InitializeInstruments(int maxSymbols)
         }
 
         RefreshSymbolData(context);
-        
-        if(m_spikeDetector != NULL)
-            m_spikeDetector.MonitorForSpikes(context.symbol);
-            
-        if(m_levelBreaker != NULL)
-            m_levelBreaker.MonitorStepLevels(context.symbol);
             
         m_symbolContexts.Add(context);
         validatedCount++;
@@ -498,6 +482,11 @@ bool CTradingEngine::InitializeStrategies()
                 {
                     context.strategyWrappers.Add(wrapper);
                     strategiesInitialized++;
+                    // Dual confirmation: EMA alignment + ADX strength
+                    bool isAligned = (trendState.isUptrend && signal == TRADE_SIGNAL_BUY) ||
+                                     (trendState.isDowntrend && signal == TRADE_SIGNAL_SELL);
+                    bool strongTrend = (m_emaSystem != NULL && m_emaSystem->GetAlignment() != EMA_NEUTRAL) ||
+                                       (trendState.strength >= 25.0);  // ADX threshold
                 }
                 else
                 {
