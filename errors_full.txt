@@ -1,0 +1,3 @@
+
+compile_MultiStrategyAutonomousEA.log:142:C:\Program Files\MetaTrader 5\MQL5\Experts\metatrader-multistrategy-ea\Strategies\StrategySMC.mqh(354,89) : error 256: undeclared identifier
+

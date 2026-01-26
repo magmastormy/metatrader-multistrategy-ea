@@ -24,6 +24,9 @@
 #include "SMCFiles/KillZones.mqh"
 #include "SMCFiles/PremiumDiscount.mqh"
 
+// Chart Visualization
+#include "../Core/Visualization/ChartDrawingManager.mqh"
+
 //+------------------------------------------------------------------+
 //| Entry Type Enum                                                  |
 //+------------------------------------------------------------------+
@@ -86,6 +89,7 @@ private:
     CImbalanceDetector*         m_imbalanceDetector;
     CICTKillZones*              m_killZones;
     CSMCPremiumDiscount*        m_premiumDiscount;
+    CChartDrawingManager*       m_drawingManager;
     
     // Configuration
     double                      m_minConfluenceScore;
@@ -138,6 +142,9 @@ private:
     // Validation
     bool                        IsAtInstitutionalLevel(double price);
     bool                        ValidateMarketMakerSetup(SICTEntrySetup &entry);
+    bool                        IsPriceAtMajorPOI(double price);  // Anchor-based validation
+    bool                        IsCounterTrendScoutValid(bool signalIsBullish);  // Counter-trend reversal check
+    bool                        ValidatePriceRejection(ENUM_TRADE_SIGNAL signal); // Candle confirmation
     
     // Trade Management
     double                      CalculateStopLoss(SICTEntrySetup &entry, ENUM_TRADE_SIGNAL signal);
@@ -155,8 +162,9 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_imbalanceDetector(NULL),
     m_killZones(NULL),
     m_premiumDiscount(NULL),
-    m_minConfluenceScore(50.0),
-    m_minConfluences(3),
+    m_drawingManager(NULL),
+    m_minConfluenceScore(35.0),
+    m_minConfluences(2),
     m_requireKillZone(false),
     m_requireOTE(false),
     m_lastBarProcessed(0),
@@ -173,6 +181,8 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
 CStrategyUnifiedICT::~CStrategyUnifiedICT()
 {
     Cleanup();
+    if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
+    Print("[UICT] Strategy deinitialized");
 }
 
 //+------------------------------------------------------------------+
@@ -238,13 +248,20 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
     
     // Initialize Premium/Discount
     m_premiumDiscount = new CSMCPremiumDiscount();
-    if(m_premiumDiscount == NULL || !m_premiumDiscount.Initialize(symbol, timeframe))
+    if(m_premiumDiscount != NULL)
+        m_premiumDiscount.Initialize(symbol, timeframe);
+    
+    // Chart Drawing Manager - initialized but drawing done in DrawElements
+    m_drawingManager = new CChartDrawingManager();
+    if(m_drawingManager != NULL)
     {
-        Print("[UICT v1.0] Failed to initialize Premium/Discount");
-        return false;
+        m_drawingManager.Initialize(symbol, timeframe, "UICT");
+        Print("[UICT] Chart drawing manager ready");
     }
     
-    PrintFormat("[UICT v1.0] Strategy initialized for %s on %s", symbol, EnumToString(timeframe));
+    m_lastBarProcessed = 0;
+    
+    Print("[UICT v1.0] Strategy initialized for ", symbol, " on ", EnumToString(timeframe));
     return true;
 }
 
@@ -273,6 +290,8 @@ void CStrategyUnifiedICT::OnNewBar(const string symbol, const ENUM_TIMEFRAMES ti
 {
     if(!m_is_enabled || symbol != m_symbol || timeframe != m_timeframe)
         return;
+    
+    // Drawing handled by DrawElements method
     
     int currentBar = iBars(m_symbol, m_timeframe);
     if(currentBar == m_lastBarProcessed)
@@ -332,7 +351,7 @@ void CStrategyUnifiedICT::DrawElements()
             if(imb.hasRebalanced) continue;
             
             string name = StringFormat("UICT_FVG_%d", i);
-            color fvgColor = imb.isBullish ? clrLimeGreen : clrOrangeRed;
+            color fvgColor = imb.isBullish ? clrGreen : clrRed;
             
             if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
             
@@ -404,10 +423,44 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     
     // Determine signal direction
     ENUM_TRADE_SIGNAL result = TRADE_SIGNAL_NONE;
+    bool isBullish = (m_structureAnalyzer != NULL && m_structureAnalyzer.IsBullish());
+    bool isBearish = (m_structureAnalyzer != NULL && m_structureAnalyzer.IsBearish());
+
+    // ANCHOR-BASED REVERSAL: Require price to be at a major POI
+    double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+    if(!IsPriceAtMajorPOI(currentPrice))
+    {
+        PrintFormat("[UICT] Filtered: Price %.5f not at major POI", currentPrice);
+        return TRADE_SIGNAL_NONE;
+    }
+
+    // COUNTER-TREND SCOUT: Allow reversals targeting HTF zones
+    bool htfAligned = m_structureAnalyzer.IsHTFAligned(isBullish);
+    result = isBullish ? TRADE_SIGNAL_BUY : (isBearish ? TRADE_SIGNAL_SELL : TRADE_SIGNAL_NONE);
+
+    if(!htfAligned)
+    {
+        // Check if counter-trend is valid (targeting opposing HTF zone)
+        if(!IsCounterTrendScoutValid(isBullish))
+        {
+            PrintFormat("[UICT] Filtered: No HTF alignment and no valid counter-trend target");
+            return TRADE_SIGNAL_NONE;
+        }
+        // Counter-trend is valid, reduce confidence but allow signal
+        bestEntry.confidence *= 0.85;
+        bestEntry.reason += " (Counter-Trend Scout)";
+    }
     
-    if(m_structureAnalyzer != NULL && m_structureAnalyzer.IsBullish())
+    // CANDLESTICK CONFIRMATION: Validate price rejection at POI
+    if(!ValidatePriceRejection(result))
+    {
+        PrintFormat("[UICT] Filtered: No candlestick rejection confirmation at POI");
+        return TRADE_SIGNAL_NONE;
+    }
+    
+    if(isBullish)
         result = TRADE_SIGNAL_BUY;
-    else if(m_structureAnalyzer != NULL && m_structureAnalyzer.IsBearish())
+    else if(isBearish)
         result = TRADE_SIGNAL_SELL;
     else
         return TRADE_SIGNAL_NONE;
@@ -424,15 +477,16 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         }
     }
     
-    // Apply OTE bonus (disabled due to pointer access issues)
-    /*if(m_premiumDiscount != NULL)
+    // Apply OTE bonus (fixed method calls and null check)
+    if(m_premiumDiscount != NULL)
     {
         double currentBid = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-        if(m_premiumDiscount->IsInOTE(currentBid))
+        if((result == TRADE_SIGNAL_BUY && m_premiumDiscount.IsInBullishOTE(currentBid)) ||
+           (result == TRADE_SIGNAL_SELL && m_premiumDiscount.IsInBearishOTE(currentBid)))
         {
-            confidence = MathMin(1.0, confidence * 1.08);
+            confidence = MathMin(1.0, confidence * 1.15); // Increased bonus to 15% for OTE
         }
-    }*/
+    }
     
     if(result != TRADE_SIGNAL_NONE)
     {
@@ -511,9 +565,11 @@ SICTEntrySetup CStrategyUnifiedICT::CreateJustificationEntry()
     SAdvancedOrderBlock ob;
     if(!m_obDetector.GetOrderBlock(obIdx, ob)) return entry;
     
-    // Check if price is near AOI
-    double tolerance = 15 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    if(MathAbs(price - ob.midpoint) > tolerance * 5)
+    // Check if price is near AOI using ATR-based tolerance
+    double atr = m_structureAnalyzer.GetATR(14);
+    double tolerance = (atr > 0) ? atr * 0.2 : 15 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    
+    if(MathAbs(price - ob.midpoint) > tolerance)
         return entry;
     
     // Check for BMS confirmation
@@ -730,20 +786,31 @@ bool CStrategyUnifiedICT::HasPremiumDiscountConfluence(double price, bool bullis
 //+------------------------------------------------------------------+
 bool CStrategyUnifiedICT::IsAtInstitutionalLevel(double price)
 {
-    int digits = (int)SymbolInfoInteger(m_symbol, SYMBOL_DIGITS);
+    // FIX: Scale-aware institutional level detection using Point and price units
+    double roundLevel = 0;
+    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     
-    if(digits == 5)
+    // Calculate distance to nearest "round" level
+    // Round levels are usually 500, 1000, 2000 points depending on instrument
+    double step = (StringFind(m_symbol, "Volatility") >= 0) ? 10.0 : 0.0050; // Dynamic step
+    
+    // For Synthetic Indices like Volatility 75, we look at integer levels
+    if(StringFind(m_symbol, "Volatility") >= 0)
     {
-        double normalized = MathRound(price * 10000) / 10000;
-        double fraction = normalized - MathFloor(normalized);
+        double remainder = MathMod(price, 1000.0);
+        if(remainder < 50.0 || remainder > 950.0) return true; // Triple zero
+        if(MathAbs(remainder - 500.0) < 50.0) return true; // 500 level
+    }
+    else
+    {
+        // For Forex: 00, 50, 20, 80 levels
+        int intPrice = (int)MathRound(price / point);
+        int pips = intPrice % 100;
+        if(pips == 0 || pips == 50 || pips == 20 || pips == 80) return true;
         
-        // Major: .xx00, .xx50
-        if(MathAbs(fraction - 0.0000) < 0.0003) return true;
-        if(MathAbs(fraction - 0.0050) < 0.0003) return true;
-        
-        // Minor: .xx20, .xx80
-        if(MathAbs(fraction - 0.0020) < 0.0003) return true;
-        if(MathAbs(fraction - 0.0080) < 0.0003) return true;
+        // Check with small tolerance
+        if(MathAbs(pips - 0) <= 2 || MathAbs(pips - 50) <= 2 || 
+           MathAbs(pips - 20) <= 2 || MathAbs(pips - 80) <= 2) return true;
     }
     
     return false;
@@ -782,7 +849,9 @@ bool CStrategyUnifiedICT::ValidateMarketMakerSetup(SICTEntrySetup &entry)
 //+------------------------------------------------------------------+
 double CStrategyUnifiedICT::CalculateStopLoss(SICTEntrySetup &entry, ENUM_TRADE_SIGNAL signal)
 {
-    double buffer = 5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    double atr = m_structureAnalyzer.GetATR(14);
+    double buffer = (atr > 0) ? atr * 0.1 : 5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    double defaultSl = (atr > 0) ? atr * 1.5 : 30 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     double stopLoss = 0;
     
     if(signal == TRADE_SIGNAL_BUY)
@@ -790,14 +859,14 @@ double CStrategyUnifiedICT::CalculateStopLoss(SICTEntrySetup &entry, ENUM_TRADE_
         if(entry.aoiBottom > 0)
             stopLoss = entry.aoiBottom - buffer;
         else
-            stopLoss = entry.entryPrice - (30 * SymbolInfoDouble(m_symbol, SYMBOL_POINT));
+            stopLoss = entry.entryPrice - defaultSl;
     }
     else
     {
         if(entry.aoiTop > 0)
             stopLoss = entry.aoiTop + buffer;
         else
-            stopLoss = entry.entryPrice + (30 * SymbolInfoDouble(m_symbol, SYMBOL_POINT));
+            stopLoss = entry.entryPrice + defaultSl;
     }
     
     return stopLoss;
@@ -809,21 +878,182 @@ double CStrategyUnifiedICT::CalculateStopLoss(SICTEntrySetup &entry, ENUM_TRADE_
 void CStrategyUnifiedICT::CalculateTakeProfits(SICTEntrySetup &entry, ENUM_TRADE_SIGNAL signal)
 {
     double risk = MathAbs(entry.entryPrice - entry.stopLoss);
+    double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     
-    if(signal == TRADE_SIGNAL_BUY)
+    // Default fixed-RR values in case structural targets fail
+    double target1 = (signal == TRADE_SIGNAL_BUY) ? entry.entryPrice + (risk * 2.0) : entry.entryPrice - (risk * 2.0);
+    double target2 = (signal == TRADE_SIGNAL_BUY) ? entry.entryPrice + (risk * 3.0) : entry.entryPrice - (risk * 3.0);
+    double target3 = (signal == TRADE_SIGNAL_BUY) ? entry.entryPrice + (risk * 5.0) : entry.entryPrice - (risk * 5.0);
+    
+    // Attempt to find structural targets (Liquidity Pools or Swing Points)
+    if(m_liquidityDetector != NULL)
     {
-        entry.takeProfit1 = entry.entryPrice + (risk * 2.0);
-        entry.takeProfit2 = entry.entryPrice + (risk * 3.0);
-        entry.takeProfit3 = entry.entryPrice + (risk * 5.0);
+        bool lookingForBuyside = (signal == TRADE_SIGNAL_BUY); // If we bought, TP is at buyside liquidity
+        int poolIdx = m_liquidityDetector.FindNearestLiquidity(currentPrice, lookingForBuyside);
+        if(poolIdx >= 0)
+        {
+            SLiquidityPool pool;
+            if(m_liquidityDetector.GetPool(poolIdx, pool))
+            {
+                // Target the structural level if it provides at least 1.5:1 RR
+                double potentialRR = MathAbs(pool.price - entry.entryPrice) / MathMax(SymbolInfoDouble(m_symbol, SYMBOL_POINT), risk);
+                if(potentialRR >= 1.5)
+                {
+                    target1 = pool.price;
+                    PrintFormat("[UICT] Structural TP1 set at Liquidity Pool: %.5f (RR: %.2f)", pool.price, potentialRR);
+                }
+            }
+        }
+    }
+    
+    entry.takeProfit1 = target1;
+    entry.takeProfit2 = target2;
+    entry.takeProfit3 = target3;
+    entry.riskReward = MathAbs(target1 - entry.entryPrice) / MathMax(SymbolInfoDouble(m_symbol, SYMBOL_POINT), risk);
+}
+
+
+//+------------------------------------------------------------------+
+//| Check if Price is at a Major POI (Anchor-Based Validation)       |
+//+------------------------------------------------------------------+
+bool CStrategyUnifiedICT::IsPriceAtMajorPOI(double price)
+{
+    double tolerance = 20 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    
+    // Check Order Blocks
+    if(m_obDetector != NULL)
+    {
+        int obIdx = m_obDetector.FindActiveOBAtPrice(price, tolerance);
+        if(obIdx >= 0)
+            return true;
+    }
+    
+    // Check Liquidity Pools
+    if(m_liquidityDetector != NULL)
+    {
+        if(m_liquidityDetector.IsNearLiquidity(price, 20))
+            return true;
+    }
+    
+    // Check Imbalances (FVGs)
+    if(m_imbalanceDetector != NULL)
+    {
+        // Check if price is inside an active imbalance
+        for(int i = 0; i < m_imbalanceDetector.GetImbalanceCount(); i++)
+        {
+            SImbalance imb;
+            if(m_imbalanceDetector.GetImbalance(i, imb))
+            {
+                if(!imb.hasRebalanced && price >= imb.bottom && price <= imb.top)
+                    return true;
+            }
+        }
+    }
+    
+    // Check Premium/Discount zone
+    if(m_premiumDiscount != NULL)
+    {
+        if(m_premiumDiscount.IsInBullishOTE(price) || m_premiumDiscount.IsInBearishOTE(price))
+            return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Counter-Trend Scout is Valid                            |
+//| Allows reversals when targeting an opposing HTF zone             |
+//+------------------------------------------------------------------+
+bool CStrategyUnifiedICT::IsCounterTrendScoutValid(bool signalIsBullish)
+{
+    if(m_liquidityDetector == NULL)
+        return false;
+    
+    double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+    
+    // For bullish counter-trend (selling into buy zone):
+    // Check if there's unswept sellside liquidity (target for shorts)
+    if(!signalIsBullish)
+    {
+        // Looking for sellside liquidity below current price
+        int targetPoolIdx = m_liquidityDetector.FindNearestLiquidity(currentPrice, false);
+        if(targetPoolIdx >= 0)
+        {
+            SLiquidityPool pool;
+            if(m_liquidityDetector.GetPool(targetPoolIdx, pool))
+            {
+                // Target must be unswept and significant
+                if(!pool.isSwept && pool.strength >= 0.7)
+                {
+                    PrintFormat("[UICT] Counter-Trend Scout: Sellside target at %.5f (strength: %.2f)", 
+                               pool.price, pool.strength);
+                    return true;
+                }
+            }
+        }
     }
     else
     {
-        entry.takeProfit1 = entry.entryPrice - (risk * 2.0);
-        entry.takeProfit2 = entry.entryPrice - (risk * 3.0);
-        entry.takeProfit3 = entry.entryPrice - (risk * 5.0);
+        // For bearish counter-trend (buying into sell zone):
+        // Looking for buyside liquidity above current price
+        int targetPoolIdx = m_liquidityDetector.FindNearestLiquidity(currentPrice, true);
+        if(targetPoolIdx >= 0)
+        {
+            SLiquidityPool pool;
+            if(m_liquidityDetector.GetPool(targetPoolIdx, pool))
+            {
+                if(!pool.isSwept && pool.strength >= 0.7)
+                {
+                    PrintFormat("[UICT] Counter-Trend Scout: Buyside target at %.5f (strength: %.2f)", 
+                               pool.price, pool.strength);
+                    return true;
+                }
+            }
+        }
     }
     
-    entry.riskReward = 2.0; // Minimum RR at TP1
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Validate Price Rejection at POI (Candlestick Confirmation)      |
+//+------------------------------------------------------------------+
+bool CStrategyUnifiedICT::ValidatePriceRejection(ENUM_TRADE_SIGNAL signal)
+{
+    // Need at least 2 bars for confirmation
+    if(Bars(m_symbol, m_timeframe) < 5) return true;
+    
+    double open1 = iOpen(m_symbol, m_timeframe, 1);
+    double close1 = iClose(m_symbol, m_timeframe, 1);
+    double high1 = iHigh(m_symbol, m_timeframe, 1);
+    double low1 = iLow(m_symbol, m_timeframe, 1);
+    
+    double body = MathAbs(close1 - open1);
+    double range = high1 - low1;
+    if(range <= 0) return false;
+    
+    if(signal == TRADE_SIGNAL_BUY)
+    {
+        // Bullish Rejection: Bullish Pin Bar or Bullish Engulfing or long lower wick
+        bool isBullishPin = (close1 > open1) && ((open1 - low1) > body * 2.0);
+        bool isBullishEngulfing = (close1 > open1) && (iClose(m_symbol, m_timeframe, 2) < iOpen(m_symbol, m_timeframe, 2)) && (close1 > iHigh(m_symbol, m_timeframe, 2));
+        double lowerWick = (open1 > close1) ? open1 - low1 : close1 - low1;
+        bool strongLowerWick = lowerWick > (range * 0.4); 
+        
+        return isBullishPin || isBullishEngulfing || strongLowerWick;
+    }
+    else if(signal == TRADE_SIGNAL_SELL)
+    {
+        // Bearish Rejection: Bearish Pin Bar or Bearish Engulfing or long upper wick
+        bool isBearishPin = (close1 < open1) && ((high1 - open1) > body * 2.0);
+        bool isBearishEngulfing = (close1 < open1) && (iClose(m_symbol, m_timeframe, 2) > iOpen(m_symbol, m_timeframe, 2)) && (close1 < iLow(m_symbol, m_timeframe, 2));
+        double upperWick = (open1 < close1) ? high1 - open1 : high1 - close1;
+        bool strongUpperWick = upperWick > (range * 0.4);
+        
+        return isBearishPin || isBearishEngulfing || strongUpperWick;
+    }
+    
+    return false;
 }
 
 #endif // __STRATEGY_UNIFIED_ICT_MQH__

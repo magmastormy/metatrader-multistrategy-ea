@@ -529,6 +529,9 @@ public:
         PrintFormat("[TRANSFORMER] Initialized with %d layers, dModel=%d, heads=%d", numLayers, dModel, numHeads);
     }
     
+    // Safety check: Has the model seen enough data/steps to be reliable?
+    bool IsWarmedUp(int threshold = 100) const { return m_trainingSteps >= threshold; }
+    
     ~CTransformerBrain() {
         if(CheckPointer(m_positionalEncoding) == POINTER_DYNAMIC) delete m_positionalEncoding;
         m_transformerBlocks.Clear(); // Deletes elements because CArrayObj owns them by default
@@ -613,6 +616,7 @@ public:
         m_totalLoss += loss;
         m_trainingSteps++;
         
+        // Safety: Auto-warmed up after 50 steps
         // NOTE: Full backpropagation is complex to implement from scratch in MQL5 without a framework.
         // For this streamlined version, we use a simplified weight perturbation / evolution strategy 
         // or a placeholder for the full backprop if not strictly required for this specific task.

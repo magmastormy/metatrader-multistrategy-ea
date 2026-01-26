@@ -7,7 +7,6 @@
 
 #include <Arrays\ArrayDouble.mqh>
 #include <Math\Stat\Math.mqh>
-#include "PythonBridge.mqh"
 #include "TransformerBrain.mqh"
 #include "EnsembleMetaLearner.mqh"
 #include "UncertaintyQuantifier.mqh"
@@ -139,7 +138,6 @@ private:
     CTransformerBrain* m_transformerBrain;
     CEnsembleMetaLearner* m_ensembleSystem;
     CUncertaintyQuantifier* m_uncertaintyQuantifier;
-    CPythonBridge* m_pythonBridge;
     
     // Performance tracking
     double m_totalReturn;
@@ -166,8 +164,6 @@ public:
         m_transformerBrain = NULL;
         m_ensembleSystem = NULL;
         m_uncertaintyQuantifier = NULL;
-        m_pythonBridge = NULL;
-        
         m_totalReturn = 0.0;
         m_totalTrades = 0;
         m_winningTrades = 0;
@@ -187,9 +183,7 @@ public:
         if(CheckPointer(m_transformerBrain) == POINTER_DYNAMIC) delete m_transformerBrain;
         if(CheckPointer(m_ensembleSystem) == POINTER_DYNAMIC) delete m_ensembleSystem;
         if(CheckPointer(m_uncertaintyQuantifier) == POINTER_DYNAMIC) delete m_uncertaintyQuantifier;
-        if(CheckPointer(m_pythonBridge) == POINTER_DYNAMIC) delete m_pythonBridge;
     }
-    
     // Initialize the AI brain system
     bool Initialize(string brainSymbol, ENUM_TIMEFRAMES timeframe) {
         m_symbol = brainSymbol;
@@ -316,23 +310,9 @@ public:
     }
     
 private:
-    // Send inference request to Python AI server
+    // Python AI server integration removed - use C++ AI components only
     bool SendInferenceRequest(const double &modelInput[], SEnhancedTradeSignal &signal) {
-        if(m_pythonBridge == NULL) {
-            m_pythonBridge = new CPythonBridge("127.0.0.1", 8888);
-            // Try handshake on first connect
-            if(!m_pythonBridge.Handshake()) {
-                Print("[AI-BRIDGE] Handshake failed");
-                return false;
-            }
-        }
-        
-        int size = ArraySize(modelInput);
-        string response = m_pythonBridge.GetPrediction(m_symbol, modelInput, size);
-        
-        if(StringLen(response) > 0) {
-            return ParseJSONResponse(response, signal);
-        }
+        // Python bridge removed - this function is deprecated
         return false;
     }
 
@@ -438,6 +418,23 @@ public:
         }
         
         return report;
+    }
+
+    // --- Dashboard Getters ---
+    double GetCurrentUncertainty()
+    {
+        if(m_uncertaintyQuantifier == NULL) return 1.0;
+        // Return latest uncertainty if available or estimated based on history
+        double avgUnc, maxUnc, avgErr;
+        int samples;
+        m_uncertaintyQuantifier.GetUncertaintyStats(avgUnc, maxUnc, avgErr, samples);
+        return avgUnc;
+    }
+    
+    string GetEnsembleStatus()
+    {
+        if(m_ensembleSystem == NULL) return "N/A";
+        return (m_serverCircuitOpen ? "LOCAL ONLY" : "HYBRID CLOUD");
     }
 
     // Shutdown alias

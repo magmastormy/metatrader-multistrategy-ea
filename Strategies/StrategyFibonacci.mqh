@@ -25,7 +25,6 @@ private:
     CFibConfirmation*       m_confirmation;
 
     // Configuration
-    double m_minConfidence;
     int    m_lastBarProcessed;
 
 public:
@@ -40,7 +39,7 @@ public:
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_FIBONACCI; }
 
     // Configuration
-    void SetMinConfidence(double conf) { m_minConfidence = conf; }
+    void SetMinConfidence(double conf) { OverrideMinConfidence(conf); }
 
 private:
     void Cleanup();
@@ -55,7 +54,6 @@ CStrategyFibonacci::CStrategyFibonacci(const string name, int magic) :
     m_swingDetector(NULL),
     m_levelsCalc(NULL),
     m_confirmation(NULL),
-    m_minConfidence(0.55),
     m_lastBarProcessed(0)
 {
 }
@@ -96,7 +94,7 @@ bool CStrategyFibonacci::Init(const string symbol, const ENUM_TIMEFRAMES timefra
 
     // Initialize Levels Calculator
     m_levelsCalc = new CFibLevelsCalculator();
-    if(m_levelsCalc == NULL || !m_levelsCalc.Initialize(symbol, timeframe, m_swingDetector))
+    if(m_levelsCalc == NULL || !m_levelsCalc.Initialize(symbol, timeframe))
     {
         Print("[FIB v2.0] Failed to initialize Levels Calculator");
         return false;
@@ -146,11 +144,16 @@ void CStrategyFibonacci::OnNewBar(const string symbol, const ENUM_TIMEFRAMES tim
     m_lastBarProcessed = currentBar;
 
     // Update all components on new bar
-    if(m_swingDetector != NULL) m_swingDetector.Update();
-    if(m_levelsCalc != NULL) m_levelsCalc.Update();
+    if(m_swingDetector != NULL) 
+    {
+        m_swingDetector.Update();
+        if(m_levelsCalc != NULL)
+            m_levelsCalc.CalculateMultipleSetups(m_swingDetector);
+    }
 
     // Draw Fibonacci levels
-    DrawFibLevels();
+    if(MQLInfoInteger(MQL_VISUAL_MODE))
+        DrawFibLevels();
 }
 
 //+------------------------------------------------------------------+
@@ -160,31 +163,33 @@ void CStrategyFibonacci::DrawFibLevels()
 {
     if(m_levelsCalc == NULL) return;
 
-    // Draw retracement levels
-    int levelCount = m_levelsCalc.GetLevelCount();
-    for(int i = 0; i < levelCount; i++)
+    SFibSetup setup;
+    // Try to get best bullish setup first, then bearish for drawing
+    if(!m_levelsCalc.GetBestBullishSetup(setup))
+        if(!m_levelsCalc.GetBestBearishSetup(setup))
+            return;
+
+    // Draw retracement levels from the best setup
+    for(int i = 0; i < setup.levelCount; i++)
     {
-        SFibLevel level;
-        if(m_levelsCalc.GetLevel(i, level) && level.isActive)
-        {
-            string name = StringFormat("FIB_%s_%.3f", level.isBullish ? "BULL" : "BEAR", level.ratio);
-            color clr = clrGray;
+        SFibLevel level = setup.levels[i];
+        string name = StringFormat("FIB_%s_%.3f", setup.isBullish ? "BULL" : "BEAR", level.ratio);
+        color clr = clrGray;
 
-            if(level.ratio == 0.618) clr = clrGold;
-            else if(level.ratio == 0.500) clr = clrGoldenrod;
-            else if(level.ratio == 0.382) clr = clrDarkGoldenrod;
-            else if(level.ratio > 1.0) clr = clrDodgerBlue; // Extensions
+        if(level.ratio == 0.618) clr = clrGold;
+        else if(level.ratio == 0.500) clr = clrGoldenrod;
+        else if(level.ratio == 0.382) clr = clrDarkGoldenrod;
+        else if(level.ratio > 1.0) clr = clrDodgerBlue; // Extensions
 
-            if(ObjectFind(0, name) >= 0)
-                ObjectDelete(0, name);
+        if(ObjectFind(0, name) >= 0)
+            ObjectDelete(0, name);
 
-            ObjectCreate(0, name, OBJ_HLINE, 0, 0, level.price);
-            ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
-            ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
-            ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
-            ObjectSetString(0, name, OBJPROP_TEXT,
-                StringFormat("%.1f%% (%.5f)", level.ratio * 100, level.price));
-        }
+        ObjectCreate(0, name, OBJ_HLINE, 0, 0, level.price);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+        ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+        ObjectSetString(0, name, OBJPROP_TEXT,
+            StringFormat("%.1f%% (%.5f)", level.ratio * 100, level.price));
     }
 }
 
@@ -203,48 +208,57 @@ ENUM_TRADE_SIGNAL CStrategyFibonacci::GetSignal(double &confidence)
 
     // Update components
     m_swingDetector.Update();
-    m_levelsCalc.Update();
+    m_levelsCalc.CalculateMultipleSetups(m_swingDetector);
 
-    // Get best Fibonacci setup
-    SFibSetup setup = m_levelsCalc.GetBestSetup();
+    SFibSetup setup;
+    bool foundSetup = false;
+    ENUM_TRADE_SIGNAL signalType = TRADE_SIGNAL_NONE;
 
-    if(setup.direction == 0)
+    // Check Bullish Setups
+    if(m_levelsCalc.GetBestBullishSetup(setup))
+    {
+        foundSetup = true;
+        signalType = TRADE_SIGNAL_BUY;
+    }
+    // Check Bearish Setups
+    else if(m_levelsCalc.GetBestBearishSetup(setup))
+    {
+        foundSetup = true;
+        signalType = TRADE_SIGNAL_SELL;
+    }
+
+    if(!foundSetup)
         return TRADE_SIGNAL_NONE;
 
-    // Check for confirmation
-    SFibConfirmationResult confResult = m_confirmation.CheckConfirmation(setup);
+    // We need a specific level for confirmation. Use 61.8% as primary entry
+    double entryLevel = setup.fib618;
+    
+    // Check for confirmation at the Fib level
+    SFibConfirmation confirm = m_confirmation.GetConfirmation(entryLevel, setup.isBullish);
 
-    if(!confResult.confirmed)
+    if(confirm.type == CONFIRM_NONE)
         return TRADE_SIGNAL_NONE;
 
     // Calculate confidence based on setup score and confirmation
-    confidence = (setup.score / 100.0) * confResult.strength;
+    confidence = (setup.overallScore / 100.0) * confirm.strength;
     confidence = MathMin(1.0, confidence);
 
     // Minimum confidence filter
     if(confidence < m_minConfidence)
         return TRADE_SIGNAL_NONE;
 
-    ENUM_TRADE_SIGNAL result = TRADE_SIGNAL_NONE;
-
-    if(setup.direction > 0)
-        result = TRADE_SIGNAL_BUY;
-    else if(setup.direction < 0)
-        result = TRADE_SIGNAL_SELL;
-
-    if(result != TRADE_SIGNAL_NONE)
+    if(signalType != TRADE_SIGNAL_NONE)
     {
-        PrintFormat("[FIB v2.0] %s: %s | Conf: %.1f%% | Level: %.1f%% | %s | SL: %.5f | TP: %.5f",
-                   m_symbol,
-                   result == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   confidence * 100,
-                   setup.level * 100,
-                   confResult.pattern,
-                   setup.stopLoss,
-                   setup.takeProfit);
+        PrintFormat("[FIB v2.0] %s: %s | Conf: %.1f%% | Level: 61.8%% | %s",
+                    m_symbol,
+                    signalType == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                    confidence * 100,
+                    confirm.description);
+        
+        RecordSignal();
     }
 
-    return result;
+    return signalType;
 }
 
 #endif // __STRATEGY_FIBONACCI_MQH__

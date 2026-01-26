@@ -396,7 +396,7 @@ double CTrendlineDetector::CalculateTrendlineStrength(int touches, double slope)
 //+------------------------------------------------------------------+
 void CTrendlineDetector::Update()
 {
-    DetectTrendlines(100);
+    DetectTrendlines(300);  // Expanded from 100 for historical memory
 }
 
 //+------------------------------------------------------------------+

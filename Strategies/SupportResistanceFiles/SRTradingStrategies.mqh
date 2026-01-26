@@ -540,7 +540,7 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
             continue;
         
         // Project trendline to current time
-        double projectedPrice = m_trendDetector.ProjectTrendline(trendline, currentTime);
+        double projectedPrice = m_trendDetector.ProjectTrendline(trendline, localTime);
         
         double tolerance = 15 * point;
         

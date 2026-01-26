@@ -118,7 +118,7 @@ CAdvancedOrderBlockDetector::CAdvancedOrderBlockDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
     m_obCount(0),
-    m_maxOBs(20)
+    m_maxOBs(100)  // Expanded from 20 for historical memory
 {
     ArrayResize(m_orderBlocks, 0);
 }
@@ -148,7 +148,7 @@ bool CAdvancedOrderBlockDetector::Initialize(const string symbol, ENUM_TIMEFRAME
 //+------------------------------------------------------------------+
 void CAdvancedOrderBlockDetector::Update()
 {
-    ScanForOrderBlocks(50);
+    ScanForOrderBlocks(500);  // Expanded from 50 for historical memory
     
     // Update mitigation status
     for(int i = 0; i < m_obCount; i++)

@@ -33,6 +33,7 @@
 #include "../../Strategies/StrategyUnifiedICT.mqh"
 #include "../Strategy/StrategyWrapper.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
+#include "../Utils/CoreConfig.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -149,7 +150,7 @@ CTradingEngine::CTradingEngine() :
     m_symbolContexts(NULL),
     m_lastStrategyDebugTime(0),
     m_lastHistoryCheck(0),
-    m_defaultRiskPerTrade(0.02),
+    m_defaultRiskPerTrade(GLOBAL_DEFAULT_RISK_PERCENT),
     m_recoveryMultiplier(1.0),
     m_modeManager(NULL),
     m_riskManager(NULL)
@@ -843,11 +844,16 @@ void CTradingEngine::ProcessSymbol(CSymbolContext* ctx)
     if(ExecuteTradeForSymbol(ctx, signal, confidence, tick, volumeOut, stopLossOut))
     {
         double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-        double recovery = (m_recoveryMultiplier > 0.0 ? m_recoveryMultiplier : 1.0);
         double riskAmt = ctx.riskPerTrade;
-        double totalRisk = equity * riskAmt * recovery;
-        if(totalRisk > 0.0)
-            UpdateSymbolRiskUsage(ctx, totalRisk);
+        
+        // Update global risk manager if available
+        if(m_riskManager != NULL)
+        {
+            m_riskManager.AddRiskUsage(riskAmt);
+        }
+        
+        // Also update symbol-specific usage for internal tracking
+        UpdateSymbolRiskUsage(ctx, equity * riskAmt);
     }
 }
 

@@ -9,6 +9,7 @@
 #include <Arrays\ArrayObj.mqh>
 #include <Arrays\ArrayDouble.mqh>
 #include "../Utils/Enums.mqh"
+#include "../Utils/CoreConfig.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -62,6 +63,7 @@ struct SEnhancedRiskConfig
     bool grid_recovery;              // Use grid for recovery
     double grid_spacing;             // Grid spacing
     int grid_max_levels;             // Maximum grid levels
+    int max_active_positions;        // Maximum global active positions
 };
 
 //+------------------------------------------------------------------+
@@ -172,6 +174,21 @@ public:
     bool IsTradeAllowed(const double proposed_risk,
                        const ENUM_ORDER_TYPE order_type,
                        const datetime current_time);
+
+    // Track risk usage
+    void AddRiskUsage(const double risk_percent)
+    {
+       m_daily_risk_used += risk_percent;
+       m_weekly_risk_used += risk_percent;
+       m_monthly_risk_used += risk_percent;
+       m_trades_today++;
+       m_trades_this_week++;
+       m_trades_this_month++;
+       
+       PrintFormat("[ENHANCED-RISK] Tracked usage: +%.2f%% | Total daily: %.2f%%", 
+                   risk_percent * 100, m_daily_risk_used * 100);
+    }
+
     
     // Get current risk level
     double GetCurrentRiskLevel() const { return m_current_risk; }
@@ -282,9 +299,9 @@ CEnhancedRiskManager::CEnhancedRiskManager()
     
     // Initialize default configuration
     m_config.enabled = true;
-    m_config.base_risk_per_trade = 0.02;  // 2% base risk
-    m_config.max_risk_per_trade = 0.05;   // 5% max risk per trade
-    m_config.min_risk_per_trade = 0.005;  // 0.5% min risk per trade
+    m_config.base_risk_per_trade = GLOBAL_DEFAULT_RISK_PERCENT;
+    m_config.max_risk_per_trade = GLOBAL_MAX_RISK_PERCENT;
+    m_config.min_risk_per_trade = GLOBAL_MIN_RISK_PERCENT;
     m_config.max_daily_risk = 0.06;      // 6% max daily risk
     m_config.max_weekly_risk = 0.12;     // 12% max weekly risk
     m_config.max_monthly_risk = 0.20;     // 20% max monthly risk
@@ -313,6 +330,7 @@ CEnhancedRiskManager::CEnhancedRiskManager()
     m_config.grid_recovery = false;
     m_config.grid_spacing = 50.0;
     m_config.grid_max_levels = 5;
+    m_config.max_active_positions = 5;  // Default limit
     
     // Initialize state variables
     m_current_equity = 0.0;
@@ -376,6 +394,7 @@ bool CEnhancedRiskManager::Initialize(const SEnhancedRiskConfig& config, const d
     
     Print("[ENHANCED-RISK] Initialized with base risk: ", DoubleToString(m_config.base_risk_per_trade * 100, 2), "%");
     Print("[ENHANCED-RISK] Max risk per trade: ", DoubleToString(m_config.max_risk_per_trade * 100, 2), "%");
+    Print("[ENHANCED-RISK] Max active positions: ", m_config.max_active_positions);
     Print("[ENHANCED-RISK] Max drawdown: ", DoubleToString(m_config.max_drawdown_threshold * 100, 2), "%");
     
     return true;
@@ -448,6 +467,8 @@ bool CEnhancedRiskManager::IsTradeAllowed(const double proposed_risk,
                                         const ENUM_ORDER_TYPE order_type,
                                         const datetime current_time)
 {
+    CheckAndResetDailyLimits();
+    
     if(!m_config.enabled)
         return true;
     
@@ -488,6 +509,13 @@ bool CEnhancedRiskManager::IsTradeAllowed(const double proposed_risk,
     if(!CheckConsecutiveLossLimit())
     {
         Print("[ENHANCED-RISK] Consecutive loss limit exceeded");
+        return false;
+    }
+    
+    // Check global position limit (Double Trading / Over-trading protection)
+    if(PositionsTotal() >= m_config.max_active_positions)
+    {
+        Print("[ENHANCED-RISK] ❌ GLOBAL POSITION LIMIT REACHED (", m_config.max_active_positions, ")");
         return false;
     }
     

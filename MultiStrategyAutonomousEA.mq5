@@ -10,46 +10,47 @@
 //--- Input parameters (Fixed compilation errors)
 input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
-input bool InpUseCppAI = false;           // Use C++ AI signals
-input bool InpUseHybridAI = false;         // Use hybrid AI signals
 input bool InpUseEnhancedRisk = true;      // Use enhanced risk management
 input double InpMaxRiskPerTrade = 0.02;   // Max risk per trade (2%)
 input double InpMaxDailyRisk = 0.06;       // Max daily risk (6%)
 input double InpMaxDrawdown = 0.15;        // Max drawdown (15%)
-input bool   InpEnableIntelligentProcess = false; // Legacy - ProcessIntelligentTrading removed
-input string InpSymbolsToTrade = "EURUSD.0,GBPUSD.0,USDJPY.0,XAUUSD.0,BTCUSD.0,AUDNZD.0,NZDUSD.0,Volatility 75 Index.0,Volatility 100 Index.0,Step Index.0"; // Comprehensive test: Forex, Metals, Crypto, Synthetic Indices
+input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,AUXUSD.0,EURUSD.0";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 120;    // Cooldown in seconds between trades
-input int    InpMaxPositionsTotal = 5;            // Global position limit (reduced for better risk control)
+input int    InpMaxPositionsTotal = 15;           // Global position limit
 
 //--- Strategy Selection (for testing)
 input group "Strategy Selection"
-input bool InpEnableMomentum = true;        // Enable Momentum Strategy
-input bool InpEnableRSI = true;             // Enable RSI Strategy
-input bool InpEnableTrend = true;           // Enable Trend Strategy
-input bool InpEnableMeanReversion = true;   // Enable Mean Reversion Strategy
+input bool InpEnableMomentum = false;        // Enable Momentum Strategy
+input bool InpEnableRSI = false;             // Enable RSI Strategy
+input bool InpEnableTrend = false;           // Enable Trend Strategy
+input bool InpEnableMeanReversion = false;   // Enable Mean Reversion Strategy
 input bool InpEnableSwing = false;          // Enable Swing Strategy
 input bool InpEnableVolatility = false;     // Enable Volatility Strategy
 input bool InpEnableMACD = false;           // Enable MACD Strategy
 input bool InpEnableBollinger = false;      // Enable Bollinger Strategy
 input bool InpEnableBollingerBreakout = false; // Enable Bollinger Breakout Strategy
-input bool InpEnableSMC = true;               // Enable Advanced SMC Strategy
+input bool InpEnableSMC = false;               // Enable Advanced SMC Strategy
 input bool InpEnableBreakout = false;         // Enable Breakout Strategy
 input bool InpEnableFibonacci = false;        // Enable Fibonacci Strategy
-input bool InpEnableElliottWave = true;       // Enable Elliott Wave Enhanced Strategy
+input bool InpEnableElliottWave = false;       // Enable Elliott Wave Enhanced Strategy
 input bool InpEnableIchimoku = false;         // Enable Ichimoku Strategy
 input bool InpEnableHarmonicPatterns = false;  // Enable Harmonic Patterns Strategy
-input bool InpEnableSupportResistance = true;  // Enable Support/Resistance + Trendlines
-input bool InpEnableUnifiedICT = true;         // Enable Unified ICT/SMC Strategy
+input bool InpEnableSupportResistance = false; // Enable Support/Resistance + Trendlines
+input bool InpEnableUnifiedICT = false;        // Enable Unified ICT/SMC Strategy
+input bool InpEnableCandlestick = false;       // Enable Candlestick Patterns Strategy
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
-input bool InpEnableAIMode = true;             // Enable AI Mode
+input bool InpEnableAIMode = false;            // Enable AI Mode
+input bool InpEnableNeuralNetwork = false;     // Enable Neural Network
+input bool InpEnableTransformer = false;       // Enable Transformer Brain
+input bool InpEnableEnsemble = false;          // Enable Ensemble Learning
+input bool InpEnableGeneticOptimizer = false;  // Enable Genetic Optimizer (experimental)
 input double InpAIConfidenceThreshold = 0.60;  // AI Confidence Threshold (Increased for better quality)
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
-input bool InpEnableEnterpriseMode = true;     // Enable Enterprise Mode
 input bool InpUseSignalPipeline = true;        // Use Signal Pipeline
 input bool InpUseOrchestrator = true;          // Use AI Orchestrator
 input double InpMinTrendStrength = 50.0;       // Minimum Trend Strength
@@ -64,6 +65,7 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 #include <Trade\AccountInfo.mqh>
 #include "Interfaces\IStrategy.mqh"
 #include "Core\Utils\ErrorHandling.mqh"
+#include "IndicatorManager.mqh"
 #include "Core\Utils\Instruments.mqh"
 #include "Core\Risk\RiskValidationGate.mqh"
 #include "Core\Risk\PortfolioRiskManager.mqh"
@@ -85,6 +87,7 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\TransformerBrain.mqh"
 #include "AIModules\EnsembleMetaLearner.mqh"
+#include "AIModules\NeuralNetworkStrategy.mqh"
 #include "Core\Engines\AIEngine.mqh"
 
 // Enterprise Components
@@ -97,10 +100,16 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 
 // Enhanced Strategies
 #include "Strategies\StrategyElliottWaveEnhanced.mqh"
+#include "Strategies\StrategyCandlestick.mqh"
+
+// Advanced AI Modules
+#include "AIModules\GeneticOptimizer.mqh"
 
 // Advanced Signal Validation and Position Management
 #include "Core\Signals\AdvancedSignalValidator.mqh"
 #include "Core\Trading\AdvancedPositionManager.mqh"
+#include "Core\Strategy\AIStrategyAdapter.mqh"
+#include "Core\Visualization\VisualDashboard.mqh"
 
 //+------------------------------------------------------------------+
 //| Forward declarations
@@ -142,19 +151,22 @@ CUtilities utilities;
 CNextGenStrategyBrain aiNextGenBrain;
 CTransformerBrain transformerBrain;
 CEnsembleMetaLearner ensembleLearner;
+CNeuralNetworkStrategy* neuralNetStrategy = NULL;
+CPositionSizer positionSizer;
 CMarketAnalysis marketAnalysis;
 CAIIntegrationHub integrationHub;
 CEnhancedRiskManager enhancedRiskManager;
 CInstrumentRegistry instrumentRegistry;
 
 CTradeManager tradeManager;
-CPositionSizer positionSizer;
+
 
 CTradingEngine tradingEngine; // New Trading Engine
 CEnterpriseStrategyManager* g_enterpriseManager = NULL; // Enterprise Strategy Manager
 CAdvancedSignalValidator* g_signalValidator = NULL; // Advanced Signal Validator
 CAdvancedPositionManager* g_positionManager = NULL; // Advanced Position Manager
 // g_AIEngine declared in AIEngine.mqh
+CVisualDashboard g_dashboard;
 
 //--- Performance tracking
 // Centralized in CPerformanceAnalytics but kept here for display compatibility
@@ -484,93 +496,108 @@ int OnInit()
         }
     }
 
-    // Initialize Enterprise Strategy Manager if enabled
-    if(InpEnableEnterpriseMode)
+    // Initialize Enterprise Strategy Manager (Always Enabled)
+    Print("[ENTERPRISE] Initializing Enterprise Strategy Manager...");
+
+    g_enterpriseManager = new CEnterpriseStrategyManager();
+    if(g_enterpriseManager != NULL)
     {
-        Print("[ENTERPRISE] Initializing Enterprise Strategy Manager...");
+        // Initialize manager with CRITICAL components
+        g_enterpriseManager.Initialize(Symbol(), Period(), InpUseOrchestrator, InpUseSignalPipeline,
+                                      &tradeManager, &positionSizer);
 
-        g_enterpriseManager = new CEnterpriseStrategyManager();
-        if(g_enterpriseManager != NULL)
+        // Configure pipeline filters
+        if(InpUseSignalPipeline)
         {
-            // Initialize manager with CRITICAL components
-            g_enterpriseManager.Initialize(Symbol(), Period(), InpUseOrchestrator, InpUseSignalPipeline,
-                                          &tradeManager, &positionSizer);
-
-            // Configure pipeline filters
-            if(InpUseSignalPipeline)
-            {
-                SignalFilterSettings filters;
-                filters.enableTrendFilter = true;
-                filters.enableVolatilityFilter = true;
-                filters.enableLiquidityFilter = InpEnableLiquidityFilter;
-                filters.enableStructureFilter = InpEnableStructureFilter;
-                filters.minConfidence = InpAIConfidenceThreshold;
-                filters.maxVolatility = InpMaxVolatility;
-                filters.minTrendStrength = (int)InpMinTrendStrength;
-                g_enterpriseManager.SetPipelineFilters(filters);
-            }
-
-            // Auto-register strategies (FVG and SupplyDemand removed - covered by SMC)
-            bool strategyFlags[];
-            ArrayResize(strategyFlags, 9);
-            strategyFlags[0] = InpEnableSMC;
-            strategyFlags[1] = InpEnableElliottWave;
-            strategyFlags[2] = InpEnableBreakout;
-            strategyFlags[3] = InpEnableSwing;
-            strategyFlags[4] = InpEnableTrend;
-            strategyFlags[5] = InpEnableRSI;
-            strategyFlags[6] = InpEnableMACD;
-            strategyFlags[7] = InpEnableSupportResistance;
-            strategyFlags[8] = InpEnableUnifiedICT;
-
-            g_enterpriseManager.AutoRegisterStrategies(strategyFlags);
-
-            Print("[ENTERPRISE] Manager initialized with ", g_enterpriseManager.GetActiveStrategyCount(), " active strategies");
-
-            // Initialize Advanced Signal Validator
-            g_signalValidator = new CAdvancedSignalValidator();
-            if(g_signalValidator != NULL)
-            {
-                // Configure validator for profitability
-                g_signalValidator.SetMinConfluence(1);  // Allow single strategy signals
-                g_signalValidator.SetMinQualityScore(0.55);  // Match confidence threshold
-                g_signalValidator.SetMaxSpreadMultiplier(2.0);  // Max spread = 2x ATR
-                g_signalValidator.EnableTimeFilter(true, 1, 22);  // Trade 1 AM - 10 PM GMT
-                g_signalValidator.EnableSessionFilter(true, true, true, true);  // All sessions
-                g_signalValidator.EnableVolatilityFilter(true, 0.0, 5.0);  // Max 5% volatility
-                g_signalValidator.EnableSpreadFilter(true, 2.0);
-                Print("[SIGNAL-VALIDATOR] Advanced signal validation enabled");
-            }
-
-            // Initialize Advanced Position Manager
-            g_positionManager = new CAdvancedPositionManager();
-            if(g_positionManager != NULL)
-            {
-                SPositionManagementConfig posConfig;
-                posConfig.enableTrailingStop = true;
-                posConfig.trailingStartPips = 20.0;
-                posConfig.trailingStepPips = 5.0;
-                posConfig.trailingDistancePips = 15.0;
-                posConfig.enableBreakeven = true;
-                posConfig.breakevenTriggerPips = 15.0;
-                posConfig.breakevenBufferPips = 5.0;
-                posConfig.enablePartialClose = true;
-                posConfig.partialClose1Pips = 30.0;
-                posConfig.partialClose1Percent = 50.0;  // Close 50% at 30 pips
-                posConfig.partialClose2Pips = 60.0;
-                posConfig.partialClose2Percent = 25.0;  // Close 25% more at 60 pips
-                posConfig.enableTimeBasedExit = false;
-                posConfig.maxPositionHours = 24;
-
-                g_positionManager.SetConfig(posConfig);
-                g_positionManager.SetTradeManager(&tradeManager);
-                Print("[POSITION-MANAGER] Advanced position management enabled");
-            }
+            SignalFilterSettings filters;
+            filters.enableTrendFilter = true;
+            filters.enableVolatilityFilter = true;
+            filters.enableLiquidityFilter = InpEnableLiquidityFilter;
+            filters.enableStructureFilter = InpEnableStructureFilter;
+            filters.minConfidence = InpAIConfidenceThreshold;
+            filters.maxVolatility = InpMaxVolatility;
+            filters.minTrendStrength = (int)InpMinTrendStrength;
+            g_enterpriseManager.SetPipelineFilters(filters);
         }
-        else
+
+        // Auto-register strategies (Complete 18-strategy mapping)
+        bool strategyFlags[];
+        ArrayResize(strategyFlags, 18);
+        strategyFlags[0]  = InpEnableMomentum;
+        strategyFlags[1]  = InpEnableRSI;
+        strategyFlags[2]  = InpEnableTrend;
+        strategyFlags[3]  = InpEnableMeanReversion;
+        strategyFlags[4]  = InpEnableSwing;
+        strategyFlags[5]  = InpEnableVolatility;
+        strategyFlags[6]  = InpEnableMACD;
+        strategyFlags[7]  = InpEnableBollinger;
+        strategyFlags[8]  = InpEnableBollingerBreakout;
+        strategyFlags[9]  = InpEnableSMC;
+        strategyFlags[10] = InpEnableBreakout;
+        strategyFlags[11] = InpEnableFibonacci;
+        strategyFlags[12] = InpEnableElliottWave;
+        strategyFlags[13] = InpEnableIchimoku;
+        strategyFlags[14] = InpEnableHarmonicPatterns;
+        strategyFlags[15] = InpEnableSupportResistance;
+        strategyFlags[16] = InpEnableUnifiedICT;
+        strategyFlags[17] = InpEnableCandlestick;
+
+        g_enterpriseManager.AutoRegisterStrategies(strategyFlags);
+
+        // Manual Registration of AI Adapter
+        if(InpEnableAIMode && neuralNetStrategy != NULL)
         {
-            Print("[ERROR] Failed to create Enterprise Strategy Manager");
+           Print("[ENTERPRISE] Registering Neural Network AI Adapter...");
+           // High weight for AI to influence consensus
+           double aiWeight = InpAIWeightMultiplier > 0 ? InpAIWeightMultiplier : 3.0; 
+           g_enterpriseManager.RegisterStrategy(new CAIStrategyAdapter(neuralNetStrategy), "Neural Network AI", true, aiWeight);
         }
+
+        Print("[ENTERPRISE] Manager initialized with ", g_enterpriseManager.GetActiveStrategyCount(), " active strategies");
+
+        // Initialize Advanced Signal Validator
+        g_signalValidator = new CAdvancedSignalValidator();
+        if(g_signalValidator != NULL)
+        {
+            // Configure validator for profitability
+            g_signalValidator.SetMinConfluence(1);  // Allow single strategy signals
+            g_signalValidator.SetMinQualityScore(0.55);  // Match confidence threshold
+            g_signalValidator.SetMaxSpreadMultiplier(2.0);  // Max spread = 2x ATR
+            g_signalValidator.EnableTimeFilter(true, 1, 22);  // Trade 1 AM - 10 PM GMT
+            g_signalValidator.EnableSessionFilter(true, true, true, true);  // All sessions
+            g_signalValidator.EnableVolatilityFilter(true, 0.0, 5.0);  // Max 5% volatility
+            g_signalValidator.EnableSpreadFilter(true, 2.0);
+            Print("[SIGNAL-VALIDATOR] Advanced signal validation enabled");
+        }
+
+        // Initialize Advanced Position Manager
+        g_positionManager = new CAdvancedPositionManager();
+        if(g_positionManager != NULL)
+        {
+            SPositionManagementConfig posConfig;
+            posConfig.enableTrailingStop = true;
+            posConfig.trailingStartPips = 20.0;
+            posConfig.trailingStepPips = 5.0;
+            posConfig.trailingDistancePips = 15.0;
+            posConfig.enableBreakeven = true;
+            posConfig.breakevenTriggerPips = 15.0;
+            posConfig.breakevenBufferPips = 5.0;
+            posConfig.enablePartialClose = true;
+            posConfig.partialClose1Pips = 30.0;
+            posConfig.partialClose1Percent = 50.0;  // Close 50% at 30 pips
+            posConfig.partialClose2Pips = 60.0;
+            posConfig.partialClose2Percent = 25.0;  // Close 25% more at 60 pips
+            posConfig.enableTimeBasedExit = false;
+            posConfig.maxPositionHours = 24;
+
+            g_positionManager.SetConfig(posConfig);
+            g_positionManager.SetTradeManager(&tradeManager);
+            Print("[POSITION-MANAGER] Advanced position management enabled");
+        }
+    }
+    else
+    {
+        Print("[ERROR] Failed to create Enterprise Strategy Manager");
     }
 
     // Validate and process trading symbols
@@ -619,10 +646,29 @@ int OnInit()
     Print("[SYMBOLS] ", ArraySize(g_activePairs), " symbols validated and ready for trading");
     g_symbolsToTrade = InpSymbolsToTrade;
 
-    // AI Mode configuration already applied via AIEngine initialization above
-    if(InpEnableAIMode)
+    // Initialize Neural Network Strategy
+    if(InpEnableAIMode && InpEnableNeuralNetwork)
     {
-        Print("[AI-MODE] AI Mode enabled with threshold: ", InpAIConfidenceThreshold);
+        neuralNetStrategy = new CNeuralNetworkStrategy();
+        if(neuralNetStrategy != NULL)
+        {
+            if(neuralNetStrategy.Initialize(Symbol(), Period()))
+            {
+                Print("[INIT] Neural Network Strategy initialized successfully");
+            }
+            else
+            {
+                Print("[INIT] WARNING: Neural Network Strategy initialization failed");
+                delete neuralNetStrategy;
+                neuralNetStrategy = NULL;
+            }
+        }
+        Print("[AI-MODE] AI Mode enabled | NN: ", InpEnableNeuralNetwork, " | Transformer: ", InpEnableTransformer, 
+              " | Ensemble: ", InpEnableEnsemble, " | Threshold: ", InpAIConfidenceThreshold);
+    }
+    else if(InpEnableAIMode)
+    {
+        Print("[AI-MODE] AI Mode enabled but Neural Network disabled");
     }
 
     // Initialize Trading Engine
@@ -634,8 +680,13 @@ int OnInit()
         return INIT_FAILED;
     }
 
+    // Final system initialization
     systemInitialized = true;
     tradingEnabled = true;
+
+    // Initialize Dashboard
+    g_dashboard.Initialize();
+    
     EventSetTimer(1);
     Print("[MULTI-STRATEGY-EA] Initialization complete - EA is READY;");
     Print("[MULTI-STRATEGY-EA] ========================================");
@@ -654,11 +705,42 @@ void OnDeinit(const int reason)
     // Kill the timer
     EventKillTimer();
 
+    // Properly delete all dynamic objects to prevent memory leaks
+    if(g_enterpriseManager != NULL)
+    {
+        delete g_enterpriseManager;
+        g_enterpriseManager = NULL;
+    }
+    
+    if(g_signalValidator != NULL)
+    {
+        delete g_signalValidator;
+        g_signalValidator = NULL;
+    }
+    
+    if(g_positionManager != NULL)
+    {
+        delete g_positionManager;
+        g_positionManager = NULL;
+    }
+    
+    if(neuralNetStrategy != NULL)
+    {
+        delete neuralNetStrategy;
+        neuralNetStrategy = NULL;
+    }
+    
+    if(g_AIEngine != NULL)
+    {
+        delete g_AIEngine;
+        g_AIEngine = NULL;
+    }
+
     // Clear chart
     Comment("");
 
     Print("[MULTI-STRATEGY-EA] ========================================");
-    Print("[MULTI-STRATEGY-EA] Shutdown complete");
+    Print("[MULTI-STRATEGY-EA] Shutdown complete - Memory cleaned");
     Print("[MULTI-STRATEGY-EA] ========================================");
 }
 
@@ -729,7 +811,8 @@ void ProcessTradingLogic(bool fromTimer)
         Print("[DEBUG-STATUS] Current symbol: ", _Symbol, " Symbols processed: ", GetProcessedSymbolCount());
 
         // Show Enterprise Manager status
-        if(InpEnableEnterpriseMode && g_enterpriseManager != NULL)
+        // Show Enterprise Manager status
+        if(g_enterpriseManager != NULL)
         {
             int activeStrats = g_enterpriseManager.GetActiveStrategyCount();
             int eaPositions = GetEAPositionCount();  // Count only THIS EA's positions
@@ -740,6 +823,11 @@ void ProcessTradingLogic(bool fromTimer)
                   " | Account Total: ", PositionsTotal(),
                   " | Last trade: ", g_lastTradeTime > 0 ? TimeToString(g_lastTradeTime) : "Never");
         }
+        
+        // --- Update Dashboard ---
+        int activeStrats = (g_enterpriseManager != NULL) ? g_enterpriseManager.GetActiveStrategyCount() : 0;
+        int eaPos = GetEAPositionCount();
+        g_dashboard.Update(activeStrats, eaPos, accountBalance, accountEquity, &aiNextGenBrain, neuralNetStrategy);
     }
 
     if(!systemInitialized || !tradingEnabled)
@@ -787,7 +875,7 @@ void ProcessTradingLogic(bool fromTimer)
         lastBarTimeLocal = currentBarTime;
 
         // Call OnNewBar on EnterpriseManager to trigger strategy zone scanning and drawings
-        if(InpEnableEnterpriseMode && g_enterpriseManager != NULL)
+        if(g_enterpriseManager != NULL)
         {
             // Process OnNewBar for chart symbol
             g_enterpriseManager.OnNewBar(_Symbol, (ENUM_TIMEFRAMES)Period());
@@ -807,7 +895,8 @@ void ProcessTradingLogic(bool fromTimer)
     }
 
     // Enterprise Mode Multi-Symbol Signal Generation
-    if(InpEnableEnterpriseMode && g_enterpriseManager != NULL)
+    // UNIFIED PIPELINE - All strategies including AI now go through here
+    if(g_enterpriseManager != NULL)
     {
         // Check cooldown to prevent chain trading
         datetime tickTime = TimeCurrent();
@@ -980,6 +1069,9 @@ void ProcessTradingLogic(bool fromTimer)
                             else
                             {
                                 ulong ticket = trade.ResultOrder();
+                                
+                                // FIX: Update risk manager usage
+                                enhancedRiskManager.AddRiskUsage(proposedRisk);
 
                                 // Update last trade time for cooldown
                                 g_lastTradeTime = tickTime;
@@ -1000,7 +1092,8 @@ void ProcessTradingLogic(bool fromTimer)
                         }
                     }
                 }
-                IndicatorRelease(atrHandle);
+                // FIX: Removed IndicatorRelease(atrHandle) because handles from CIndicatorManager are shared/cached.
+                // Releasing them here invalidates the handle for other parts of the EA.
             }
         }
     }

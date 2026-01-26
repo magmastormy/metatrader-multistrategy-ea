@@ -25,6 +25,7 @@ private:
     bool     m_enableScalping;     // Allow rapid signals
     double   m_minTrendStrength;   // Minimum trend strength for trades
     double   m_minVolatility;      // Minimum volatility threshold
+    datetime m_lastSignalTime;     // Track absolute time of last signal
 
     bool CreateHandles()
     {
@@ -63,6 +64,25 @@ private:
     }
 
 public:
+    // Default constructor for Enterprise Manager
+    CSimpleMomentumStrategy() :
+        CStrategyBase("Momentum"),
+        m_fastPeriod(8),
+        m_slowPeriod(21),
+        m_thresholdPoints(12.0),
+        m_fastHandle(INVALID_HANDLE),
+        m_slowHandle(INVALID_HANDLE),
+        m_trendHandle(INVALID_HANDLE),
+        m_atrHandle(INVALID_HANDLE),
+        m_lastDiff(0.0),
+        m_lastSignalBar(0),
+        m_lastSignalTime(0),
+        m_enableScalping(false),
+        m_minTrendStrength(0.55),
+        m_minVolatility(0.0005)
+    {
+    }
+
     CSimpleMomentumStrategy(const string name, const int fastPeriod = 8, const int slowPeriod = 21, const double thresholdPoints = 12.0) :
         CStrategyBase(name),
         m_fastPeriod(fastPeriod),
@@ -74,7 +94,8 @@ public:
         m_atrHandle(INVALID_HANDLE),
         m_lastDiff(0.0),
         m_lastSignalBar(0),
-        m_enableScalping(true),      // SCALPING MODE: Allow rapid signals
+        m_lastSignalTime(0),
+        m_enableScalping(false),      // SCALPING MODE: Disabled by default
         m_minTrendStrength(0.55),    // TREND FILTER: 55% minimum trend alignment
         m_minVolatility(0.0005)      // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
     {
@@ -124,13 +145,14 @@ public:
         // Ensure handles are valid
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE) return TRADE_SIGNAL_NONE;
 
-        // SCALPING MODE: Allow multiple signals per bar if enabled
+        // COOLDOWN: Always enforce at least 60 seconds between signals per symbol
+        if(TimeCurrent() - m_lastSignalTime < 60) return TRADE_SIGNAL_NONE;
+
         if(!m_enableScalping)
         {
             // Conservative mode: Only one signal per bar
             datetime currentBar = iTime(m_symbol, m_timeframe, 0);
             if(currentBar == m_lastSignalBar) return TRADE_SIGNAL_NONE;
-            m_lastSignalBar = currentBar;
         }
 
         double fastNow, fastPrev, slowNow, slowPrev;
@@ -208,6 +230,8 @@ public:
             double trendConfidence = (signal == TRADE_SIGNAL_BUY) ? trendStrength : (1.0 - trendStrength);
             confidence = (momentumConfidence * 0.6) + (trendConfidence * 0.4); // 60% momentum, 40% trend
             
+            m_lastSignalBar = iTime(m_symbol, m_timeframe, 0);
+            m_lastSignalTime = TimeCurrent();
             RecordSignal();
         }
 
