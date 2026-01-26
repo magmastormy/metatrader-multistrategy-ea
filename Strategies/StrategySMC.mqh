@@ -334,6 +334,27 @@ ENUM_TRADE_SIGNAL CStrategySMC::GetSignal(double &confidence)
         signal = bearishResult;
         result = TRADE_SIGNAL_SELL;
     }
+    else if(bullishResult.totalScore == bearishResult.totalScore && bullishResult.totalScore >= m_minConfluenceScore)
+    {
+        // FIXED: Handle ties - use factorCount as tiebreaker
+        if(bullishResult.factorCount > bearishResult.factorCount)
+        {
+            signal = bullishResult;
+            result = TRADE_SIGNAL_BUY;
+        }
+        else if(bearishResult.factorCount > bullishResult.factorCount)
+        {
+            signal = bearishResult;
+            result = TRADE_SIGNAL_SELL;
+        }
+        else
+        {
+            // Complete tie - return no signal with warning
+            PrintFormat("[SMC] Equal scores and factors - no signal generated (Score: %.2f)",
+                      bullishResult.totalScore);
+            return TRADE_SIGNAL_NONE;
+        }
+    }
     else
     {
         return TRADE_SIGNAL_NONE;

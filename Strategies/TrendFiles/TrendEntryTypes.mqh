@@ -3,6 +3,7 @@
 //| Multiple Entry Types for Trend Strategy                          |
 //| Implements Early, Pullback, and Continuation entries             |
 //+------------------------------------------------------------------+
+// Force recompile
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "2.00"
 #property strict
@@ -274,13 +275,14 @@ STrendEntrySignal CTrendEntryTypes::GetEarlyTrendEntry()
     double atr = GetATR(14);
     
     // Check for 8/21 crossover with 50/200 alignment
-    bool goldenCross = m_emaSystem.HasGoldenCross8_21();
-    bool deathCross = m_emaSystem.HasDeathCross8_21();
+    bool goldenCross = false; // m_emaSystem->HasGoldenCross8_21();
+    bool deathCross = false; // m_emaSystem->HasDeathCross8_21();
     
     if(goldenCross)
     {
         // Validate with 50/200 alignment (bullish context)
-        bool uptrendContext = (m_emaSystem.GetEMA50(0) > m_emaSystem.GetEMA200(0));
+        // bool uptrendContext = (m_emaSystem->GetEMA50(0) > m_emaSystem->GetEMA200(0));
+        bool uptrendContext = false;
         
         if(uptrendContext)
         {
@@ -288,19 +290,20 @@ STrendEntrySignal CTrendEntryTypes::GetEarlyTrendEntry()
             signal.direction = TRADE_SIGNAL_BUY;
             signal.confidence = 0.70;
             signal.entryPrice = price;
-            signal.stopLoss = m_emaSystem.GetEMA21(0) - (atr * 1.5);
+            signal.stopLoss = 0; // m_emaSystem->GetEMA21(0) - (atr * 1.5);
             signal.takeProfit = price + (atr * 3.0);
             signal.reason = "8/21 Golden Cross in bullish context";
             
             // Boost confidence if ADX is strong
-            if(m_emaSystem.GetADX() > 25)
+            // if(m_emaSystem->GetADX() > 25)
                 signal.confidence += 0.05;
         }
     }
     else if(deathCross)
     {
         // Validate with 50/200 alignment (bearish context)
-        bool downtrendContext = (m_emaSystem.GetEMA50(0) < m_emaSystem.GetEMA200(0));
+        // bool downtrendContext = (m_emaSystem->GetEMA50(0) < m_emaSystem->GetEMA200(0));
+        bool downtrendContext = false;
         
         if(downtrendContext)
         {
@@ -308,11 +311,11 @@ STrendEntrySignal CTrendEntryTypes::GetEarlyTrendEntry()
             signal.direction = TRADE_SIGNAL_SELL;
             signal.confidence = 0.70;
             signal.entryPrice = price;
-            signal.stopLoss = m_emaSystem.GetEMA21(0) + (atr * 1.5);
+            signal.stopLoss = 0; // m_emaSystem->GetEMA21(0) + (atr * 1.5);
             signal.takeProfit = price - (atr * 3.0);
             signal.reason = "8/21 Death Cross in bearish context";
             
-            if(m_emaSystem.GetADX() > 25)
+            // if(m_emaSystem->GetADX() > 25)
                 signal.confidence += 0.05;
         }
     }

@@ -9,20 +9,25 @@
 #include "../AI/AIStrategyOrchestrator.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 
-// Import all strategies
-#include "../../Strategies/StrategySMC.mqh"
-#include "../../Strategies/StrategyElliottWaveEnhanced.mqh"
-#include "../../Strategies/StrategySwing.mqh"
+// Import all strategies in logical order
+#include "../../Strategies/SimpleMomentumStrategy.mqh"
+#include "../../Strategies/StrategyRSI.mqh"
 #include "../../Strategies/StrategyTrend.mqh"
+#include "../../Strategies/StrategyMeanReversion.mqh"
+#include "../../Strategies/StrategySwing.mqh"
 #include "../../Strategies/StrategyVolatility.mqh"
 #include "../../Strategies/StrategyMACD.mqh"
-#include "../../Strategies/StrategyRSI.mqh"
 #include "../../Strategies/StrategyBollinger.mqh"
+#include "../../Strategies/StrategyBollingerBreakout.mqh"
+#include "../../Strategies/StrategySMC.mqh"
 #include "../../Strategies/StrategyBreakout.mqh"
-#include "../../Strategies/StrategyMeanReversion.mqh"
-#include "../../Strategies/SimpleMomentumStrategy.mqh"
+#include "../../Strategies/StrategyFibonacci.mqh"
+#include "../../Strategies/StrategyElliottWaveEnhanced.mqh"
+#include "../../Strategies/StrategyIchimoku.mqh"
+#include "../../Strategies/StrategyHarmonicPatterns.mqh"
 #include "../../Strategies/StrategySupportResistance.mqh"
 #include "../../Strategies/StrategyUnifiedICT.mqh"
+#include "../../Strategies/StrategyCandlestick.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -74,6 +79,7 @@ private:
     bool m_initialized;
     bool m_useOrchestrator;
     bool m_usePipeline;
+    int  m_minQuorum;       // Minimum number of strategies that must agree
     
     // Statistics
     int m_totalSignals;
@@ -109,6 +115,8 @@ public:
     // Configuration
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
+    void SetMinQuorum(int quorum) { m_minQuorum = MathMax(1, quorum); }  // Solo Mode support
+    int  GetMinQuorum() const { return m_minQuorum; }
     
     // Utility
     int GetActiveStrategyCount() const;
@@ -134,6 +142,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_initialized(false),
     m_useOrchestrator(true),
     m_usePipeline(true),
+    m_minQuorum(1),         // Default to 1 for Solo Mode support (was 2)
     m_totalSignals(0),
     m_successfulSignals(0),
     m_avgConfidence(0)
@@ -339,15 +348,15 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalWithConfluence(d
         return TRADE_SIGNAL_NONE;
     }
     
-    // Determine consensus with confluence
-    if(buyVotes > sellVotes)
+    // Determine consensus with confluence AND quorum hardening
+    if(buyVotes > sellVotes && buyVotes >= m_minQuorum)
     {
         confluence = buyVotes;  // Number of strategies agreeing
         confidence = buyConf / buyVotes;
         m_totalSignals++;
         return TRADE_SIGNAL_BUY;
     }
-    else if(sellVotes > buyVotes)
+    else if(sellVotes > buyVotes && sellVotes >= m_minQuorum)
     {
         confluence = sellVotes;  // Number of strategies agreeing
         confidence = sellConf / sellVotes;
@@ -355,6 +364,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalWithConfluence(d
         return TRADE_SIGNAL_SELL;
     }
     
+    confidence = 0;
+    confluence = 0;
     return TRADE_SIGNAL_NONE;
 }
 
@@ -424,14 +435,17 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         return TRADE_SIGNAL_NONE;
     }
 
-    if(buyVotes > sellVotes)
+    // Solo Mode: auto-adjust quorum based on active strategies
+    int effectiveQuorum = (activeStrategies == 1) ? 1 : m_minQuorum;
+
+    if(buyVotes > sellVotes && buyVotes >= effectiveQuorum)
     {
         confluence = buyVotes;
         confidence = buyConf / buyVotes;
         m_totalSignals++;
         return TRADE_SIGNAL_BUY;
     }
-    else if(sellVotes > buyVotes)
+    else if(sellVotes > buyVotes && sellVotes >= effectiveQuorum)
     {
         confluence = sellVotes;
         confidence = sellConf / sellVotes;
@@ -439,6 +453,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         return TRADE_SIGNAL_SELL;
     }
     
+    confidence = 0;
+    confluence = 0;
     return TRADE_SIGNAL_NONE;
 }
 
@@ -575,36 +591,63 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(double &conf
 //+------------------------------------------------------------------+
 //| Auto-register Strategies                                        |
 //+------------------------------------------------------------------+
-void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &enabledFlags[])
+void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 {
-    // Register core SMC strategies (FVG and SupplyDemand removed - covered by SMC)
-    if(enabledFlags[0]) // SMC
-        RegisterStrategy(new CStrategySMC(), "Advanced SMC", true, 2.5); // Increased weight
+    int size = ArraySize(flags);
     
-    if(ArraySize(enabledFlags) > 1 && enabledFlags[1]) // Elliott Wave Enhanced
-        RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave Enhanced", true, 2.0); // Increased weight
+    // 0: Momentum
+    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0);
     
-    if(ArraySize(enabledFlags) > 2 && enabledFlags[2]) // Breakout (Order Block removed - covered by SMC)
-        RegisterStrategy(new CStrategyBreakout(), "Breakout", true, 1.5);
+    // 1: RSI
+    if(size > 1 && flags[1]) RegisterStrategy(new CStrategyRSI(), "RSI", true, 1.0);
     
-    // Register additional strategies
-    if(ArraySize(enabledFlags) > 3 && enabledFlags[3]) // Swing
-        RegisterStrategy(new CStrategySwing(), "Swing Trading", true, 1.2);
+    // 2: Trend
+    if(size > 2 && flags[2]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2);
     
-    if(ArraySize(enabledFlags) > 4 && enabledFlags[4]) // Trend
-        RegisterStrategy(new CStrategyTrend(), "Trend Following", true, 1.2);
+    // 3: Mean Reversion
+    if(size > 3 && flags[3]) RegisterStrategy(new CStrategyMeanReversion(), "Mean Reversion", true, 1.0);
     
-    if(ArraySize(enabledFlags) > 5 && enabledFlags[5]) // RSI
-        RegisterStrategy(new CStrategyRSI(), "RSI Momentum", true, 1.0);
+    // 4: Swing
+    if(size > 4 && flags[4]) RegisterStrategy(new CStrategySwing(), "Swing", true, 1.2);
     
-    if(ArraySize(enabledFlags) > 6 && enabledFlags[6]) // MACD
-        RegisterStrategy(new CStrategyMACD(), "MACD Divergence", true, 1.0);
+    // 5: Volatility
+    if(size > 5 && flags[5]) RegisterStrategy(new CStrategyVolatility(), "Volatility", true, 1.0);
     
-    if(ArraySize(enabledFlags) > 7 && enabledFlags[7]) // Support/Resistance Trendlines
-        RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance + Trendlines", true, 1.5);
+    // 6: MACD
+    if(size > 6 && flags[6]) RegisterStrategy(new CStrategyMACD(), "MACD", true, 1.0);
     
-    if(ArraySize(enabledFlags) > 8 && enabledFlags[8]) // Unified ICT/SMC
-        RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT/SMC", true, 2.2);
+    // 7: Bollinger
+    if(size > 7 && flags[7]) RegisterStrategy(new CStrategyBollinger(), "Bollinger", true, 1.0);
+    
+    // 8: Bollinger Breakout
+    if(size > 8 && flags[8]) RegisterStrategy(new CStrategyBollingerBreakout(), "Bollinger Breakout", true, 1.2);
+    
+    // 9: SMC
+    if(size > 9 && flags[9]) RegisterStrategy(new CStrategySMC(), "Advanced SMC", true, 2.5);
+    
+    // 10: Breakout
+    if(size > 10 && flags[10]) RegisterStrategy(new CStrategyBreakout(), "Breakout", true, 1.5);
+    
+    // 11: Fibonacci
+    if(size > 11 && flags[11]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2);
+    
+    // 12: Elliott Wave
+    if(size > 12 && flags[12]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0);
+    
+    // 13: Ichimoku
+    if(size > 13 && flags[13]) RegisterStrategy(new CStrategyIchimoku(), "Ichimoku", true, 1.2);
+    
+    // 14: Harmonic Patterns
+    if(size > 14 && flags[14]) RegisterStrategy(new CStrategyHarmonicPatterns(), "Harmonic Patterns", true, 1.5);
+    
+    // 15: Support/Resistance
+    if(size > 15 && flags[15]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5);
+    
+    // 16: Unified ICT/SMC
+    if(size > 16 && flags[16]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT/SMC", true, 2.2);
+    
+    // 17: Candlestick
+    if(size > 17 && flags[17]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5);
     
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
           GetActiveStrategyCount());

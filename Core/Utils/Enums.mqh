@@ -118,7 +118,8 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_BRAIN = 22,               // Neural Network Brain strategy
     STRATEGY_SMC = 23,                 // Advanced Smart Money Concepts strategy (includes Order Blocks, Supply/Demand, FVG)
     STRATEGY_SUPPORT_RESISTANCE = 24,  // Support/Resistance + Trendlines strategy
-    STRATEGY_UNIFIED_ICT = 25          // Unified ICT/SMC comprehensive strategy
+    STRATEGY_UNIFIED_ICT = 25,         // Unified ICT/SMC comprehensive strategy
+    STRATEGY_CANDLESTICK = 26          // Candlestick Pattern Recognition strategy
 };
 
 //+------------------------------------------------------------------+

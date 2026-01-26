@@ -12,7 +12,7 @@
 
 #include <Arrays/ArrayObj.mqh>
 
-#define MAX_SR_LEVELS 100
+// Dynamic array approach - no fixed limit
 
 //+------------------------------------------------------------------+
 //| S/R Type Enum                                                    |
@@ -56,7 +56,6 @@ class CSupportResistanceDetector
 private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
-    
     SSupportResistance  m_levels[];
     int                 m_levelCount;
     int                 m_maxLevels;
@@ -71,6 +70,23 @@ private:
     void                ClusterLevels();
     void                CalculateStrength();
     void                UpdateTouches();
+    
+    void                AddLevel(double price, ENUM_SR_TYPE type, bool isSupport)
+    {
+        // Dynamic resize - always ensure capacity
+        if(m_levelCount >= ArraySize(m_levels))
+        {
+            ArrayResize(m_levels, m_levelCount + 50); // Add capacity in chunks of 50
+        }
+        
+        m_levels[m_levelCount].price = price;
+        m_levels[m_levelCount].type = type;
+        m_levels[m_levelCount].createdTime = TimeCurrent();
+        m_levels[m_levelCount].touches = 0;
+        m_levels[m_levelCount].strength = 0.6;
+        m_levels[m_levelCount].isSupport = isSupport;
+        m_levelCount++;
+    }
     
 public:
                         CSupportResistanceDetector();
@@ -191,16 +207,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
         
         if(isSwingHigh)
         {
-            int newSize = m_levelCount + 1;
-            ArrayResize(m_levels, newSize);
-            
-            m_levels[m_levelCount].price = high[i];
-            m_levels[m_levelCount].type = SR_SWING_HIGH_LOW;
-            m_levels[m_levelCount].createdTime = iTime(m_symbol, m_timeframe, i);
-            m_levels[m_levelCount].touches = 1;
-            m_levels[m_levelCount].timeframe = m_timeframe;
-            m_levels[m_levelCount].isSupport = false;
-            m_levelCount++;
+            AddLevel(high[i], SR_SWING_HIGH_LOW, false);
         }
     }
     
@@ -219,16 +226,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
         
         if(isSwingLow)
         {
-            int newSize = m_levelCount + 1;
-            ArrayResize(m_levels, newSize);
-            
-            m_levels[m_levelCount].price = low[i];
-            m_levels[m_levelCount].type = SR_SWING_HIGH_LOW;
-            m_levels[m_levelCount].createdTime = iTime(m_symbol, m_timeframe, i);
-            m_levels[m_levelCount].touches = 1;
-            m_levels[m_levelCount].timeframe = m_timeframe;
-            m_levels[m_levelCount].isSupport = true;
-            m_levelCount++;
+            AddLevel(low[i], SR_SWING_HIGH_LOW, true);
         }
     }
 }
@@ -249,7 +247,8 @@ void CSupportResistanceDetector::DetectPsychologicalLevels()
     {
         double level = roundLevel + (i * step);
         
-        if(m_levelCount >= MAX_SR_LEVELS - 1) break;
+        // Dynamic array - no hard limit, but cap for performance
+        if(m_levelCount >= 500) break; // Soft cap at 500 for performance
         
         bool exists = false;
         for(int j = 0; j < m_levelCount; j++)
@@ -263,13 +262,7 @@ void CSupportResistanceDetector::DetectPsychologicalLevels()
         
         if(!exists && level > 0)
         {
-            m_levels[m_levelCount].price = level;
-            m_levels[m_levelCount].type = SR_PSYCHOLOGICAL;
-            m_levels[m_levelCount].createdTime = TimeCurrent();
-            m_levels[m_levelCount].touches = 0;
-            m_levels[m_levelCount].strength = 0.6;
-            m_levels[m_levelCount].isSupport = (level < lastPrice);
-            m_levelCount++;
+            AddLevel(level, SR_PSYCHOLOGICAL, (level < lastPrice));
         }
     }
 }
@@ -285,22 +278,14 @@ void CSupportResistanceDetector::DetectTimeframeLevels()
     
     if(yesterdayHigh > 0)
     {
-        ArrayResize(m_levels, m_levelCount + 1);
-        m_levels[m_levelCount].price = yesterdayHigh;
-        m_levels[m_levelCount].type = SR_DAILY_HIGH_LOW;
-        m_levels[m_levelCount].strength = 0.75;
-        m_levels[m_levelCount].isSupport = false;
-        m_levelCount++;
+        AddLevel(yesterdayHigh, SR_DAILY_HIGH_LOW, false);
+        m_levels[m_levelCount-1].strength = 0.75;
     }
     
     if(yesterdayLow > 0)
     {
-        ArrayResize(m_levels, m_levelCount + 1);
-        m_levels[m_levelCount].price = yesterdayLow;
-        m_levels[m_levelCount].type = SR_DAILY_HIGH_LOW;
-        m_levels[m_levelCount].strength = 0.75;
-        m_levels[m_levelCount].isSupport = true;
-        m_levelCount++;
+        AddLevel(yesterdayLow, SR_DAILY_HIGH_LOW, true);
+        m_levels[m_levelCount-1].strength = 0.75;
     }
     
     // Previous week high/low
@@ -309,22 +294,14 @@ void CSupportResistanceDetector::DetectTimeframeLevels()
     
     if(lastWeekHigh > 0)
     {
-        ArrayResize(m_levels, m_levelCount + 1);
-        m_levels[m_levelCount].price = lastWeekHigh;
-        m_levels[m_levelCount].type = SR_WEEKLY_HIGH_LOW;
-        m_levels[m_levelCount].strength = 0.85;
-        m_levels[m_levelCount].isSupport = false;
-        m_levelCount++;
+        AddLevel(lastWeekHigh, SR_WEEKLY_HIGH_LOW, false);
+        m_levels[m_levelCount-1].strength = 0.85;
     }
     
     if(lastWeekLow > 0)
     {
-        ArrayResize(m_levels, m_levelCount + 1);
-        m_levels[m_levelCount].price = lastWeekLow;
-        m_levels[m_levelCount].type = SR_WEEKLY_HIGH_LOW;
-        m_levels[m_levelCount].strength = 0.85;
-        m_levels[m_levelCount].isSupport = true;
-        m_levelCount++;
+        AddLevel(lastWeekLow, SR_WEEKLY_HIGH_LOW, true);
+        m_levels[m_levelCount-1].strength = 0.85;
     }
     
     // Previous month high/low
@@ -333,22 +310,14 @@ void CSupportResistanceDetector::DetectTimeframeLevels()
     
     if(lastMonthHigh > 0)
     {
-        ArrayResize(m_levels, m_levelCount + 1);
-        m_levels[m_levelCount].price = lastMonthHigh;
-        m_levels[m_levelCount].type = SR_MONTHLY_HIGH_LOW;
-        m_levels[m_levelCount].strength = 0.90;
-        m_levels[m_levelCount].isSupport = false;
-        m_levelCount++;
+        AddLevel(lastMonthHigh, SR_MONTHLY_HIGH_LOW, false);
+        m_levels[m_levelCount-1].strength = 0.90;
     }
     
     if(lastMonthLow > 0)
     {
-        ArrayResize(m_levels, m_levelCount + 1);
-        m_levels[m_levelCount].price = lastMonthLow;
-        m_levels[m_levelCount].type = SR_MONTHLY_HIGH_LOW;
-        m_levels[m_levelCount].strength = 0.90;
-        m_levels[m_levelCount].isSupport = true;
-        m_levelCount++;
+        AddLevel(lastMonthLow, SR_MONTHLY_HIGH_LOW, true);
+        m_levels[m_levelCount-1].strength = 0.90;
     }
 }
 
@@ -460,7 +429,7 @@ void CSupportResistanceDetector::UpdateTouches()
 //+------------------------------------------------------------------+
 void CSupportResistanceDetector::Update()
 {
-    DetectLevels(200);
+    DetectLevels(500);  // Expanded from 200 for historical memory
 }
 
 //+------------------------------------------------------------------+

@@ -104,11 +104,15 @@ private:
     
     int                 m_swingStrength;
     
+    // Indicator handles
+    int                 m_atrHandle;
+    int                 m_htfAtrHandle;
+    int                 m_ltfAtrHandle;
+    
     // Internal methods
     void                FindStructuralPoints(int lookback);
     bool                HasMomentum();
     bool                HasVolume();
-    double              GetATR(int period);
     ENUM_TIMEFRAMES     GetHigherTF(ENUM_TIMEFRAMES tf);
     ENUM_TIMEFRAMES     GetLowerTF(ENUM_TIMEFRAMES tf);
     void                AnalyzeStructure(STFStructure &tfStruct);
@@ -117,6 +121,7 @@ public:
                         CMarketStructureAnalyzer();
                        ~CMarketStructureAnalyzer();
     
+    double              GetATR(int period);
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, int swingStrength = 3);
     void                Update();
     
@@ -157,7 +162,10 @@ CMarketStructureAnalyzer::CMarketStructureAnalyzer() :
     m_timeframe(PERIOD_CURRENT),
     m_highCount(0),
     m_lowCount(0),
-    m_swingStrength(3)
+    m_swingStrength(3),
+    m_atrHandle(INVALID_HANDLE),
+    m_htfAtrHandle(INVALID_HANDLE),
+    m_ltfAtrHandle(INVALID_HANDLE)
 {
     ArrayResize(m_highs, 0);
     ArrayResize(m_lows, 0);
@@ -183,6 +191,15 @@ bool CMarketStructureAnalyzer::Initialize(const string symbol, ENUM_TIMEFRAMES t
     
     m_structure = SMarketStructure();
     
+    // Initialize handles via singleton IndicatorManager
+    CIndicatorManager* indManager = CIndicatorManager::Instance();
+    if(indManager != NULL)
+    {
+        m_atrHandle = indManager.GetATRHandle(m_symbol, m_timeframe, 14);
+        m_htfAtrHandle = indManager.GetATRHandle(m_symbol, GetHigherTF(m_timeframe), 14);
+        m_ltfAtrHandle = indManager.GetATRHandle(m_symbol, GetLowerTF(m_timeframe), 14);
+    }
+    
     return true;
 }
 
@@ -191,6 +208,10 @@ bool CMarketStructureAnalyzer::Initialize(const string symbol, ENUM_TIMEFRAMES t
 //+------------------------------------------------------------------+
 void CMarketStructureAnalyzer::Update()
 {
+    // FIX: Check indicator readiness before updating
+    if(m_atrHandle != INVALID_HANDLE && BarsCalculated(m_atrHandle) < 100) return;
+    if(m_htfAtrHandle != INVALID_HANDLE && BarsCalculated(m_htfAtrHandle) < 100) return;
+    
     FindStructuralPoints(100);
     DetectBMS();
     UpdateMultiplexStructure();
@@ -511,17 +532,24 @@ bool CMarketStructureAnalyzer::HasVolume()
 //+------------------------------------------------------------------+
 double CMarketStructureAnalyzer::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    int handle = m_atrHandle;
+    // If handle is invalid or was requested for non-default period, fallback to manager
+    if(period != 14 || handle == INVALID_HANDLE)
+    {
+        CIndicatorManager* indManager = CIndicatorManager::Instance();
+        if(indManager != NULL)
+            handle = indManager.GetATRHandle(m_symbol, m_timeframe, period);
+    }
+    
     if(handle == INVALID_HANDLE) return 0;
     
-    double value[1];
+    double value[];
+    ArraySetAsSeries(value, true);
     if(CopyBuffer(handle, 0, 0, 1, value) > 0)
     {
-        IndicatorRelease(handle);
         return value[0];
     }
     
-    IndicatorRelease(handle);
     return 0;
 }
 

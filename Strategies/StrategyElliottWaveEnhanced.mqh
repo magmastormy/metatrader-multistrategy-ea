@@ -7,6 +7,7 @@
 #define STRATEGY_ELLIOTTWAVE_ENHANCED_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Visualization/ChartDrawingManager.mqh"
 #include "../Core/Engines/StructureEngine.mqh"
 #include "../Core/Engines/TrendEngine.mqh"
 #include "../Core/Signals/SignalDiagnostics.mqh"
@@ -62,7 +63,7 @@ struct ElliottWaveRules
         wave3_extension_min(1.618), wave4_retracement_max(0.618),
         wave5_extension_min(0.618), waveA_retracement(0.5),
         waveB_retracement_max(1.382), waveC_projection(1.0),
-        tolerance(0.1), min_bars_per_wave(5), min_wave_size_atr(1.0) {}
+        tolerance(0.05), min_bars_per_wave(8), min_wave_size_atr(1.0) {}
 };
 
 //+------------------------------------------------------------------+
@@ -120,6 +121,7 @@ private:
     WavePattern m_currentPattern;
     WavePattern m_patterns[5];      // Track multiple patterns
     int m_patternCount;
+    CChartDrawingManager* m_drawingManager;
     
     // Configuration
     int m_lookbackPeriod;
@@ -189,7 +191,8 @@ CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
     m_wavesIdentified(0),
     m_patternsCompleted(0),
     m_signalsGenerated(0),
-    m_patternCount(0)
+    m_patternCount(0),
+    m_drawingManager(NULL)
 {
     // Initialize legacy engines
     m_structureEngine = new CStructureEngine();
@@ -220,6 +223,7 @@ CStrategyElliottWaveEnhanced::~CStrategyElliottWaveEnhanced()
     if(m_trendEngine != NULL) { delete m_trendEngine; m_trendEngine = NULL; }
     if(m_diagnostics != NULL) { delete m_diagnostics; m_diagnostics = NULL; }
 
+    if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
     Deinit();
 }
 
@@ -242,6 +246,23 @@ bool CStrategyElliottWaveEnhanced::Init(const string symbol, const ENUM_TIMEFRAM
     if(m_waveEngine != NULL)
         m_waveEngine.Initialize(symbol, timeframe, m_zigzag);
 
+    // Initialize drawing manager
+    m_drawingManager = new CChartDrawingManager();
+    if(m_drawingManager != NULL)
+    {
+        m_drawingManager.Initialize(symbol, timeframe, "EW");
+        SDrawingConfig config = m_drawingManager.GetConfiguration();
+        config.enableStructure = false;
+        config.enableSupportResistance = false;
+        config.enableOrderBlocks = false;
+        config.enableSupplyDemand = false;
+        config.enableFVG = false;
+        config.enableElliottWave = true;
+        config.enableTrendLines = true;
+        config.enableSignalMarkers = false;
+        m_drawingManager.SetConfiguration(config);
+    }
+    
     // Reset patterns
     m_currentPattern = WavePattern();
     for(int i = 0; i < 5; i++)
@@ -261,6 +282,8 @@ bool CStrategyElliottWaveEnhanced::Init(const string symbol, const ENUM_TIMEFRAM
 //+------------------------------------------------------------------+
 void CStrategyElliottWaveEnhanced::Deinit()
 {
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupAll();
     CStrategyBase::Deinit();
 }
 
@@ -922,38 +945,24 @@ void CStrategyElliottWaveEnhanced::OnNewBar(const string symbol, const ENUM_TIME
 //+------------------------------------------------------------------+
 void CStrategyElliottWaveEnhanced::DrawWavePattern(const WavePattern &pattern)
 {
-    if(pattern.waveCount < 2)
+    if(pattern.waveCount < 2 || m_drawingManager == NULL)
         return;
-
-    string prefix = "EW_" + m_symbol + "_";
-    color waveColor = pattern.isImpulse ? clrDodgerBlue : clrOrange;
-
-    // Draw lines connecting wave points
+    
+    color waveColor = pattern.isImpulse ? clrDeepSkyBlue : clrOrange;
+    
+    // Clear previous drawings for this cycle
+    m_drawingManager.CleanupOldObjects();
+    
+    // Draw lines connecting wave points and labels
     for(int i = 0; i < pattern.waveCount - 1; i++)
     {
         if(!pattern.waves[i].isValid || !pattern.waves[i+1].isValid)
             continue;
-
-        string lineName = prefix + "Line_" + IntegerToString(i);
-
-        // Delete existing line if it exists
-        ObjectDelete(0, lineName);
-
-        // Create trend line between wave points
-        if(ObjectCreate(0, lineName, OBJ_TREND, 0,
-                       pattern.waves[i].time, pattern.waves[i].price,
-                       pattern.waves[i+1].time, pattern.waves[i+1].price))
-        {
-            ObjectSetInteger(0, lineName, OBJPROP_COLOR, waveColor);
-            ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 2);
-            ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, false);
-            ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, false);
-        }
-
-        // Add wave label
-        string labelName = prefix + "Label_" + IntegerToString(i);
-        ObjectDelete(0, labelName);
-
+        
+        m_drawingManager.DrawTrendLine(pattern.waves[i].time, pattern.waves[i].price,
+                                        pattern.waves[i+1].time, pattern.waves[i+1].price,
+                                        waveColor, 2, STYLE_SOLID);
+        
         string waveLabel = "";
         switch(pattern.waves[i].wave)
         {
@@ -967,24 +976,14 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const WavePattern &pattern)
             case EW_WAVE_C: waveLabel = "C"; break;
             default: waveLabel = IntegerToString(i); break;
         }
-
-        if(ObjectCreate(0, labelName, OBJ_TEXT, 0,
-                       pattern.waves[i].time, pattern.waves[i].price))
-        {
-            ObjectSetString(0, labelName, OBJPROP_TEXT, waveLabel);
-            ObjectSetInteger(0, labelName, OBJPROP_COLOR, waveColor);
-            ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 10);
-            ObjectSetInteger(0, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
-        }
+        
+        m_drawingManager.DrawWaveLabel(pattern.waves[i].time, pattern.waves[i].price, waveLabel, pattern.isImpulse);
     }
-
-    // Draw last wave label
+    
+    // Draw final label
     if(pattern.waveCount > 0 && pattern.waves[pattern.waveCount-1].isValid)
     {
         int lastIdx = pattern.waveCount - 1;
-        string labelName = prefix + "Label_" + IntegerToString(lastIdx);
-        ObjectDelete(0, labelName);
-
         string waveLabel = "";
         switch(pattern.waves[lastIdx].wave)
         {
@@ -998,15 +997,8 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const WavePattern &pattern)
             case EW_WAVE_C: waveLabel = "C"; break;
             default: waveLabel = IntegerToString(lastIdx); break;
         }
-
-        if(ObjectCreate(0, labelName, OBJ_TEXT, 0,
-                       pattern.waves[lastIdx].time, pattern.waves[lastIdx].price))
-        {
-            ObjectSetString(0, labelName, OBJPROP_TEXT, waveLabel);
-            ObjectSetInteger(0, labelName, OBJPROP_COLOR, waveColor);
-            ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 10);
-            ObjectSetInteger(0, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
-        }
+        
+        m_drawingManager.DrawWaveLabel(pattern.waves[lastIdx].time, pattern.waves[lastIdx].price, waveLabel, pattern.isImpulse);
     }
 
     if(m_diagnostics != NULL)
@@ -1023,8 +1015,8 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const WavePattern &pattern)
 //+------------------------------------------------------------------+
 void CStrategyElliottWaveEnhanced::ClearWaveDrawings()
 {
-    string prefix = "EW_" + m_symbol + "_";
-    ObjectsDeleteAll(0, prefix);
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupOldObjects();
 }
 
 #endif // STRATEGY_ELLIOTTWAVE_ENHANCED_MQH

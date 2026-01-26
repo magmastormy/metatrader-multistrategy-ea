@@ -62,6 +62,9 @@ private:
     double m_maxAllowedRisk;
     int m_activePositions;
     
+    // Indicator handles
+    int m_atrHandle;
+    
     // FIX: Injected error handler pointer for logging
     CEnhancedErrorHandler* m_errorHandler;
     
@@ -225,6 +228,7 @@ CPositionSizer::CPositionSizer(void)
     m_maxAllowedRisk = MAX_TOTAL_RISK;
     m_activePositions = 0;
     m_errorHandler = NULL;
+    m_atrHandle = INVALID_HANDLE;
     // Initialize default parameters
     m_params.sizingMode = POSITION_SIZE_RISK_PERCENT;
     m_params.fixedLotSize = MIN_LOT_SIZE;
@@ -254,6 +258,12 @@ CPositionSizer::~CPositionSizer(void)
         context.timestamp = TimeCurrent();
         context.severity = ERROR_INFO;
         CEnhancedErrorHandler::LogError(ERROR_INFO, context);
+    }
+    
+    if(m_atrHandle != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_atrHandle);
+        m_atrHandle = INVALID_HANDLE;
     }
 }
 
@@ -464,8 +474,19 @@ double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
     }
     
     // Calculate position size
-    double riskPerPip = tickValue * (1.0 / point);
-    double lotSize = riskAmount / (stopLossPips * riskPerPip);
+    // FIX: Removed (1.0 / point) multipliers because stopLossPips is already in points (Distance / Point).
+    // The correct formula for MQL5 lot sizing given distance in points:
+    // Lots = RiskAmount / (Points * TickValue) 
+    // This assumes 1 point move (TickSize) = TickValue for 1 standard lot.
+    double lotSize = 0;
+    if(stopLossPips > 0 && tickValue > 0)
+    {
+        lotSize = riskAmount / (stopLossPips * tickValue);
+    }
+    else
+    {
+        lotSize = MIN_LOT_SIZE;
+    }
     
     return MathMax(MIN_LOT_SIZE, lotSize);
 }
@@ -592,10 +613,16 @@ void CPositionSizer::UpdateRiskMetrics(void)
     {
         if(PositionSelectByTicket(PositionGetTicket(i)))
         {
-            double positionRisk = PositionGetDouble(POSITION_VOLUME) * 
-                                 MathAbs(PositionGetDouble(POSITION_PRICE_OPEN) - 
-                                        PositionGetDouble(POSITION_SL));
-            m_currentTotalRisk += positionRisk;
+            string posSym = PositionGetString(POSITION_SYMBOL);
+            double tickVal = SymbolInfoDouble(posSym, SYMBOL_TRADE_TICK_VALUE);
+            double tickSz  = SymbolInfoDouble(posSym, SYMBOL_TRADE_TICK_SIZE);
+            
+            if(tickSz > 0)
+            {
+                double points = MathAbs(PositionGetDouble(POSITION_PRICE_OPEN) - PositionGetDouble(POSITION_SL)) / tickSz;
+                double positionRisk = PositionGetDouble(POSITION_VOLUME) * points * tickVal;
+                m_currentTotalRisk += positionRisk;
+            }
         }
     }
     
@@ -723,8 +750,18 @@ double CPositionSizer::ApplyRiskLimits(const double proposedSize, const double m
 //+------------------------------------------------------------------+
 double CPositionSizer::GetATR(const string symbolParam, const int period)
 {
+    // FIX: Cache indicator handle to prevent massive memory leak
+    if(m_atrHandle == INVALID_HANDLE || m_lastSymbol != symbolParam)
+    {
+        if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+        m_atrHandle = iATR(symbolParam, PERIOD_CURRENT, period);
+    }
+    
+    if(m_atrHandle == INVALID_HANDLE) return 0.0;
+    
     double atrArray[];
-    if(CopyBuffer(iATR(symbolParam, PERIOD_CURRENT, period), 0, 0, 1, atrArray) <= 0)
+    ArraySetAsSeries(atrArray, true);
+    if(CopyBuffer(m_atrHandle, 0, 0, 1, atrArray) <= 0)
         return 0.0;
     
     return atrArray[0];

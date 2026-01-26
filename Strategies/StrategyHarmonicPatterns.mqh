@@ -7,6 +7,7 @@
 #define __STRATEGY_HARMONIC_PATTERNS_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Visualization/ChartDrawingManager.mqh"
 
 // Enhanced Harmonic Patterns Component Files
 #include "HarmonicFiles/HarmonicPatternScanner.mqh"
@@ -21,6 +22,7 @@ private:
     // Enhanced Components
     CHarmonicPatternScanner*  m_scanner;
     CHarmonicConfirmation*    m_confirmation;
+    CChartDrawingManager*     m_drawingManager;
 
     // Configuration
     double m_minPatternScore;
@@ -58,6 +60,7 @@ CStrategyHarmonicPatterns::CStrategyHarmonicPatterns(const string name, int magi
     CStrategyBase(name, magic),
     m_scanner(NULL),
     m_confirmation(NULL),
+    m_drawingManager(NULL),
     m_minPatternScore(70.0),
     m_lastBarProcessed(0),
     m_patternsDetected(0),
@@ -80,6 +83,7 @@ void CStrategyHarmonicPatterns::Cleanup()
 {
     if(m_scanner != NULL) { delete m_scanner; m_scanner = NULL; }
     if(m_confirmation != NULL) { delete m_confirmation; m_confirmation = NULL; }
+    if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
 }
 
 //+------------------------------------------------------------------+
@@ -106,6 +110,21 @@ bool CStrategyHarmonicPatterns::Init(const string symbol, const ENUM_TIMEFRAMES 
         return false;
     }
 
+    m_drawingManager = new CChartDrawingManager();
+    if(m_drawingManager != NULL)
+    {
+        m_drawingManager.Initialize(symbol, timeframe, "HARM");
+        SDrawingConfig config = m_drawingManager.GetConfiguration();
+        config.enableSupplyDemand = true;
+        config.enableSupportResistance = false;
+        config.enableStructure = false;
+        config.enableOrderBlocks = false;
+        config.enableFVG = false;
+        config.enableSignalMarkers = true;
+        config.enableTrendLines = true;
+        m_drawingManager.SetConfiguration(config);
+    }
+
     PrintFormat("[HARMONIC v2.0] Strategy initialized for %s on %s", symbol, EnumToString(timeframe));
     return true;
 }
@@ -115,7 +134,8 @@ bool CStrategyHarmonicPatterns::Init(const string symbol, const ENUM_TIMEFRAMES 
 //+------------------------------------------------------------------+
 void CStrategyHarmonicPatterns::Deinit()
 {
-    ObjectsDeleteAll(0, "HARM_");
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupAll();
     Cleanup();
     CStrategyBase::Deinit();
 }
@@ -149,6 +169,8 @@ void CStrategyHarmonicPatterns::OnNewBar(const string symbol, const ENUM_TIMEFRA
     }
 
     // Draw patterns
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupOldObjects();
     DrawPatterns();
 }
 
@@ -157,7 +179,7 @@ void CStrategyHarmonicPatterns::OnNewBar(const string symbol, const ENUM_TIMEFRA
 //+------------------------------------------------------------------+
 void CStrategyHarmonicPatterns::DrawPatterns()
 {
-    if(m_scanner == NULL) return;
+    if(m_scanner == NULL || m_drawingManager == NULL) return;
 
     int patternCount = m_scanner.GetPatternCount();
     for(int i = 0; i < patternCount; i++)
@@ -165,26 +187,35 @@ void CStrategyHarmonicPatterns::DrawPatterns()
         SHarmonicPatternData pattern;
         if(m_scanner.GetPatternAt(i, pattern) && pattern.isValid)
         {
-            // Draw pattern lines X-A-B-C-D
-            string baseName = StringFormat("HARM_%s_%d", EnumToString(pattern.type), i);
             color patternColor = (pattern.direction == HARMONIC_BULLISH) ? clrDodgerBlue : clrCrimson;
 
             // Draw PRZ zone
-            string przName = baseName + "_PRZ";
-            double przTop = pattern.przHigh;
-            double przBottom = pattern.przLow;
+            datetime zoneEnd = TimeCurrent();
+            datetime zoneStart = pattern.dTime > 0 ? pattern.dTime : zoneEnd - 3 * PeriodSeconds(m_timeframe);
+            m_drawingManager.DrawZone(zoneStart, zoneEnd,
+                                       pattern.przHigh, pattern.przLow,
+                                       StringFormat("%s_PRZ", EnumToString(pattern.type)),
+                                       patternColor, true, 70);
 
-            if(ObjectFind(0, przName) >= 0)
-                ObjectDelete(0, przName);
+            // Draw XABCD legs
+            m_drawingManager.DrawTrendLine(pattern.xTime, pattern.xPoint, pattern.aTime, pattern.aPoint, patternColor, 2, STYLE_SOLID);
+            m_drawingManager.DrawTrendLine(pattern.aTime, pattern.aPoint, pattern.bTime, pattern.bPoint, patternColor, 2, STYLE_SOLID);
+            m_drawingManager.DrawTrendLine(pattern.bTime, pattern.bPoint, pattern.cTime, pattern.cPoint, patternColor, 2, STYLE_SOLID);
+            m_drawingManager.DrawTrendLine(pattern.cTime, pattern.cPoint, pattern.dTime, pattern.dPoint, patternColor, 2, STYLE_SOLID);
 
-            ObjectCreate(0, przName, OBJ_RECTANGLE, 0,
-                pattern.dTime, przTop,
-                TimeCurrent(), przBottom);
-            ObjectSetInteger(0, przName, OBJPROP_COLOR, patternColor);
-            ObjectSetInteger(0, przName, OBJPROP_FILL, true);
-            ObjectSetInteger(0, przName, OBJPROP_BACK, true);
-            ObjectSetInteger(0, przName, OBJPROP_STYLE, STYLE_SOLID);
-            ObjectSetInteger(0, przName, OBJPROP_WIDTH, 1);
+            // Annotate key points
+            m_drawingManager.DrawTextLabel(pattern.xTime, pattern.xPoint, "X", patternColor, 8, ANCHOR_CENTER);
+            m_drawingManager.DrawTextLabel(pattern.aTime, pattern.aPoint, "A", patternColor, 8, ANCHOR_CENTER);
+            m_drawingManager.DrawTextLabel(pattern.bTime, pattern.bPoint, "B", patternColor, 8, ANCHOR_CENTER);
+            m_drawingManager.DrawTextLabel(pattern.cTime, pattern.cPoint, "C", patternColor, 8, ANCHOR_CENTER);
+            m_drawingManager.DrawTextLabel(pattern.dTime, pattern.dPoint, "D", patternColor, 8, ANCHOR_CENTER);
+
+            // Add informational label near D
+            string info = StringFormat("%s | %.0f%% | PRZ %.1f",
+                                       EnumToString(pattern.type),
+                                       pattern.strength,
+                                       pattern.prz);
+            m_drawingManager.DrawTextLabel(pattern.dTime, pattern.dPoint, info, patternColor, 9, ANCHOR_RIGHT);
         }
     }
 }

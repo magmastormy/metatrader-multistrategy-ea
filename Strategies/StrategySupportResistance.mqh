@@ -11,6 +11,7 @@
 #define __STRATEGY_SUPPORT_RESISTANCE_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Visualization/ChartDrawingManager.mqh"
 
 // S/R Strategy Component Files
 #include "SupportResistanceFiles/SupportResistanceDetector.mqh"
@@ -42,6 +43,7 @@ private:
     CSRBounceStrategy*          m_bounceStrategy;
     CSRBreakoutStrategy*        m_breakoutStrategy;
     CTrendlineBounceStrategy*   m_trendlineStrategy;
+    CChartDrawingManager*       m_drawingManager;
     
     // Configuration
     ENUM_SR_STRATEGY_MODE       m_mode;
@@ -88,6 +90,7 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
     m_bounceStrategy(NULL),
     m_breakoutStrategy(NULL),
     m_trendlineStrategy(NULL),
+    m_drawingManager(NULL),
     m_mode(SR_MODE_ALL),
     m_lastBarProcessed(0),
     m_signalsGenerated(0),
@@ -115,6 +118,7 @@ void CStrategySupportResistance::Cleanup()
     if(m_bounceStrategy != NULL) { delete m_bounceStrategy; m_bounceStrategy = NULL; }
     if(m_breakoutStrategy != NULL) { delete m_breakoutStrategy; m_breakoutStrategy = NULL; }
     if(m_trendlineStrategy != NULL) { delete m_trendlineStrategy; m_trendlineStrategy = NULL; }
+    if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
 }
 
 //+------------------------------------------------------------------+
@@ -175,6 +179,23 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     m_levelsDetected = m_srDetector.GetLevelCount();
     m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
     
+    // Initialize drawing manager
+    m_drawingManager = new CChartDrawingManager();
+    if(m_drawingManager != NULL)
+    {
+        m_drawingManager.Initialize(symbol, timeframe, "SR");
+        SDrawingConfig config = m_drawingManager.GetConfiguration();
+        config.enableDrawing = true;
+        config.enableSupportResistance = true;
+        config.enableTrendLines = true;
+        config.enableStructure = false;
+        config.enableOrderBlocks = false;
+        config.enableSupplyDemand = false;
+        config.enableFVG = false;
+        config.enableSignalMarkers = false;
+        m_drawingManager.SetConfiguration(config);
+    }
+    
     PrintFormat("[S/R v1.0] Strategy initialized for %s on %s | Levels: %d | Trendlines: %d",
                 symbol, EnumToString(timeframe), m_levelsDetected, m_trendlinesDetected);
     
@@ -186,8 +207,8 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
 //+------------------------------------------------------------------+
 void CStrategySupportResistance::Deinit()
 {
-    ObjectsDeleteAll(0, "SR_");
-    ObjectsDeleteAll(0, "TL_");
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupOldObjects();
     Cleanup();
     CStrategyBase::Deinit();
 }
@@ -226,7 +247,9 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
         m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
     }
     
-    // Draw on chart
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupAll();
+    
     DrawLevels();
     DrawTrendlines();
 }
@@ -236,9 +259,7 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
 //+------------------------------------------------------------------+
 void CStrategySupportResistance::DrawLevels()
 {
-    if(m_srDetector == NULL) return;
-    
-    ObjectsDeleteAll(0, "SR_");
+    if(m_srDetector == NULL || m_drawingManager == NULL) return;
     
     for(int i = 0; i < m_srDetector.GetLevelCount(); i++)
     {
@@ -246,7 +267,6 @@ void CStrategySupportResistance::DrawLevels()
         if(!m_srDetector.GetLevel(i, level))
             continue;
         
-        string name = StringFormat("SR_%d", i);
         color levelColor = level.isSupport ? clrDodgerBlue : clrCrimson;
         
         if(level.isBroken)
@@ -254,16 +274,12 @@ void CStrategySupportResistance::DrawLevels()
         else if(level.roleReversed)
             levelColor = clrGold;
         
-        if(ObjectFind(0, name) >= 0)
-            ObjectDelete(0, name);
+        string label = StringFormat("%s | %.0f%% | T:%d",
+                                    EnumToString(level.type),
+                                    level.strength * 100.0,
+                                    level.touches);
         
-        ObjectCreate(0, name, OBJ_HLINE, 0, 0, level.price);
-        ObjectSetInteger(0, name, OBJPROP_COLOR, levelColor);
-        ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
-        ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
-        ObjectSetString(0, name, OBJPROP_TOOLTIP, 
-                       StringFormat("%s | Str: %.0f%% | Touches: %d",
-                                   EnumToString(level.type), level.strength * 100, level.touches));
+        m_drawingManager.DrawHorizontalLevel(level.price, levelColor, label, STYLE_DOT, 1, true);
     }
 }
 
@@ -272,9 +288,7 @@ void CStrategySupportResistance::DrawLevels()
 //+------------------------------------------------------------------+
 void CStrategySupportResistance::DrawTrendlines()
 {
-    if(m_trendDetector == NULL) return;
-    
-    ObjectsDeleteAll(0, "TL_");
+    if(m_trendDetector == NULL || m_drawingManager == NULL) return;
     
     for(int i = 0; i < m_trendDetector.GetTrendlineCount(); i++)
     {
@@ -285,24 +299,21 @@ void CStrategySupportResistance::DrawTrendlines()
         if(!trendline.isValid)
             continue;
         
-        string name = StringFormat("TL_%d", i);
         color lineColor = (trendline.type == TRENDLINE_SUPPORT) ? clrLimeGreen : clrOrangeRed;
         
         if(trendline.isBroken)
             lineColor = clrGray;
         
-        if(ObjectFind(0, name) >= 0)
-            ObjectDelete(0, name);
+        ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DASHDOT : STYLE_SOLID;
+        m_drawingManager.DrawTrendLine(trendline.point1Time, trendline.point1Price,
+                                        trendline.point2Time, trendline.point2Price,
+                                        lineColor, 2, style);
         
-        ObjectCreate(0, name, OBJ_TREND, 0,
-                    trendline.point1Time, trendline.point1Price,
-                    trendline.point2Time, trendline.point2Price);
-        ObjectSetInteger(0, name, OBJPROP_COLOR, lineColor);
-        ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, true);
-        ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
-        ObjectSetString(0, name, OBJPROP_TOOLTIP,
-                       StringFormat("%s | Str: %.0f%% | Touches: %d",
-                                   EnumToString(trendline.type), trendline.strength * 100, trendline.touches));
+        string label = StringFormat("%s | Str: %.0f%% | Touches: %d",
+                                    EnumToString(trendline.type),
+                                    trendline.strength * 100.0,
+                                    trendline.touches);
+        m_drawingManager.DrawTextLabel(trendline.point2Time, trendline.point2Price, label, lineColor, 8, ANCHOR_LEFT);
     }
 }
 

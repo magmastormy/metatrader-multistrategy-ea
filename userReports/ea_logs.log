@@ -1,176 +1,130 @@
-2025.12.28 19:59:21.132	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[MULTI-STRATEGY-EA] Live trading is ACTIVE
-2025.12.28 19:59:21.132	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[MULTI-STRATEGY-EA] ========================================
-2025.12.28 19:59:21.132	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TIMER] 1-second timer activated for multi-symbol processing
-2025.12.28 19:59:21.132	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[DEBUG-PROCESS] First call received! System initialized: YES, Trading enabled: YES, Source: TICK
-2025.12.28 19:59:21.132	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ENHANCED-RISK] Daily risk counters reset for new trading day
-2025.12.28 19:59:21.132	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ENHANCED-RISK] Daily risk: 0.00% | Max allowed: 6.00%
-2025.12.28 19:59:21.132	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC] Processing new bar for Volatility 75 Index.0 on PERIOD_H1
-2025.12.28 19:59:21.243	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766736000_2025.12.26 08:00 | Price: 43338.25-43623.38
-2025.12.28 19:59:21.243	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 43480.81500 | Zone: 43338.25000-43623.38000 | BEARISH | Score: 100.0
-2025.12.28 19:59:21.353	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766757600_2025.12.26 14:00 | Price: 43016.59-43502.04
-2025.12.28 19:59:21.353	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 43259.31500 | Zone: 43016.59000-43502.04000 | BULLISH | Score: 80.0
-2025.12.28 19:59:21.465	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766793600_2025.12.27 00:00 | Price: 43756.69-44329.82
-2025.12.28 19:59:21.465	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 44043.25500 | Zone: 43756.69000-44329.82000 | BULLISH | Score: 80.0
-2025.12.28 19:59:21.576	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766797200_2025.12.27 01:00 | Price: 44010.47-45310.95
-2025.12.28 19:59:21.576	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 44660.71000 | Zone: 44010.47000-45310.95000 | BULLISH | Score: 80.0
-2025.12.28 19:59:21.688	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766815200_2025.12.27 06:00 | Price: 45604.77-46668.53
-2025.12.28 19:59:21.688	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 46136.65000 | Zone: 45604.77000-46668.53000 | BEARISH | Score: 100.0
-2025.12.28 19:59:21.800	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766822400_2025.12.27 08:00 | Price: 44534.24-44963.66
-2025.12.28 19:59:21.800	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 44748.95000 | Zone: 44534.24000-44963.66000 | BEARISH | Score: 100.0
-2025.12.28 19:59:21.911	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766865600_2025.12.27 20:00 | Price: 45400.77-46077.03
-2025.12.28 19:59:21.911	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 45738.90000 | Zone: 45400.77000-46077.03000 | BULLISH | Score: 80.0
-2025.12.28 19:59:21.912	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC] Detected 7 new Order Blocks
-2025.12.28 19:59:21.912	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_LIQUIDITY_SWEEP] Volatility 75 Index.0 | Price: 46753.59000 | Zone: 46753.59000-46799.17000 | BEARISH | Score: 60.0
-2025.12.28 19:59:21.912	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_LIQUIDITY_SWEEP] Volatility 75 Index.0 | Price: 46177.16000 | Zone: 46136.86000-46177.16000 | BULLISH | Score: 60.0
-2025.12.28 19:59:21.912	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_LIQUIDITY_SWEEP] Volatility 75 Index.0 | Price: 46175.07000 | Zone: 46136.86000-46175.07000 | BULLISH | Score: 60.0
-2025.12.28 19:59:21.912	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC] Zone count changed: 0 -> 7
-2025.12.28 19:59:21.912	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -44.2 | ADX: 23.8
-2025.12.28 19:59:21.912	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 19:59:54.142	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[DEBUG-PROCESS] Call #50 - EA is processing normally (Source: TIMER)
-2025.12.28 19:59:54.142	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[DEBUG-PROCESS] Call #50 Time: 2025.12.28 11:59:55
-2025.12.28 19:59:54.142	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[DEBUG-STATUS] Current symbol: Volatility 75 Index.0 Symbols processed: 0
-2025.12.28 19:59:54.142	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ENTERPRISE-STATUS] Active strategies: 4 | Cooldown: 0s / 120s
-2025.12.28 19:59:54.142	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ENTERPRISE-STATUS] EA Positions: 5 / 5 | Account Total: 5 | Last trade: Never
-2025.12.28 19:59:59.162	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC] Processing new bar for Volatility 75 Index.0 on PERIOD_H1
-2025.12.28 19:59:59.277	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766757600_2025.12.26 14:00 | Price: 43016.59-43502.04
-2025.12.28 19:59:59.278	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 43259.31500 | Zone: 43016.59000-43502.04000 | BULLISH | Score: 80.0
-2025.12.28 19:59:59.390	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766793600_2025.12.27 00:00 | Price: 43756.69-44329.82
-2025.12.28 19:59:59.390	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 44043.25500 | Zone: 43756.69000-44329.82000 | BULLISH | Score: 80.0
-2025.12.28 19:59:59.504	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766797200_2025.12.27 01:00 | Price: 44010.47-45310.95
-2025.12.28 19:59:59.505	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 44660.71000 | Zone: 44010.47000-45310.95000 | BULLISH | Score: 80.0
-2025.12.28 19:59:59.617	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766815200_2025.12.27 06:00 | Price: 45604.77-46668.53
-2025.12.28 19:59:59.617	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 46136.65000 | Zone: 45604.77000-46668.53000 | BEARISH | Score: 100.0
-2025.12.28 19:59:59.729	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BEAR_SMC_0_1766822400_2025.12.27 08:00 | Price: 44534.24-44963.66
-2025.12.28 19:59:59.730	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 44748.95000 | Zone: 44534.24000-44963.66000 | BEARISH | Score: 100.0
-2025.12.28 19:59:59.843	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[ChartDrawing] Drawing zone: SMC_ZONE_OB_BULL_SMC_0_1766865600_2025.12.27 20:00 | Price: 45400.77-46077.03
-2025.12.28 19:59:59.843	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_ORDER_BLOCK] Volatility 75 Index.0 | Price: 45738.90000 | Zone: 45400.77000-46077.03000 | BULLISH | Score: 80.0
-2025.12.28 19:59:59.843	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC] Detected 6 new Order Blocks
-2025.12.28 19:59:59.843	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC_LIQUIDITY_SWEEP] Volatility 75 Index.0 | Price: 46753.59000 | Zone: 46753.59000-46928.09000 | BEARISH | Score: 60.0
-2025.12.28 19:59:59.843	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[SMC] Zone count changed: 7 -> 13
-2025.12.28 19:59:59.956	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.7 | ADX: 23.1
-2025.12.28 19:59:59.956	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:51.942	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:51.942	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.056	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.056	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.171	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.171	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.284	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.284	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.396	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.396	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.511	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.511	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.624	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.624	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.736	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.736	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:52.848	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:00:52.848	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:55.736	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:55.736	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:55.849	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:55.849	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:55.965	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:55.965	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:56.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:56.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:56.188	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:56.188	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:56.300	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:56.300	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:56.416	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:56.416	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:56.527	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:56.527	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:56.637	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:56.637	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:56.748	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:56.748	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:59.623	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:59.623	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:59.735	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:59.735	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:59.847	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:59.847	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:00:59.961	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:00:59.961	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:00.074	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:00.074	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:00.187	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:00.187	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:00.298	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:00.298	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:00.411	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:00.411	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:00.525	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:00.525	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:00.637	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:00.637	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:03.519	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:03.519	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:03.630	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:03.630	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:03.742	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:03.742	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:03.856	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:03.856	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:03.969	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:03.969	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:04.080	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:04.080	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:04.192	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:04.192	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:04.305	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:04.305	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:04.419	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:04.419	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:04.530	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.5 | ADX: 23.1
-2025.12.28 20:01:04.530	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:07.401	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:07.401	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:07.513	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:07.513	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:07.625	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:07.625	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:07.739	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:07.739	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:07.854	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:07.854	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:07.965	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:07.965	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:08.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:08.077	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:08.190	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:08.190	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:08.303	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:08.303	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:08.414	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:08.414	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:11.297	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:11.297	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:11.409	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:11.409	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:11.520	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:11.520	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:11.631	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:11.631	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:11.742	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:11.742	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:11.854	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:11.854	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:11.967	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:11.967	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:12.079	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:12.079	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:12.192	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:12.192	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:12.303	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:12.303	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:15.173	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:15.173	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:15.285	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:15.285	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:15.397	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
-2025.12.28 20:01:15.397	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[NO_SIGNAL] ElliottWave | Volatility 75 Index.0 | H1 | Reason: No valid wave pattern
-2025.12.28 20:01:15.509	MultiStrategyAutonomousEA (Volatility 75 Index.0,H1)	[TrendEngine] Trend: TREND_NONE | Strength: 74.8 | Angle: -46.6 | ADX: 23.1
+#### ALL AI Enabled (NN, ENSEMBLE, GENETIC,TRASFORMER) & ENTERPRISE MODE IS ON & NO OTHER STRATEGIES ON
+2026.01.08 01:48:42.348	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ACCOUNT] Free Margin: 9764.92
+2026.01.08 01:48:42.348	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI] Initializing AI subsystems...
+2026.01.08 01:48:42.349	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TRANSFORMER] Initialized with 2 layers, dModel=64, heads=4
+2026.01.08 01:48:42.349	MultiStrategyAutonomousEA (EURUSD.0,H1)	[UNCERTAINTY] Quantifier initialized with 100 history size
+2026.01.08 01:48:42.349	MultiStrategyAutonomousEA (EURUSD.0,H1)	[NEXTGEN] AI Strategy Brain initialized for EURUSD.0
+2026.01.08 01:48:42.349	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI] All AI subsystems initialized successfully
+2026.01.08 01:48:42.349	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI] AIEngine initialized with adaptive mode
+2026.01.08 01:48:42.349	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENTERPRISE] Initializing Enterprise Strategy Manager...
+2026.01.08 01:48:42.352	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SignalDiagnostics] Initialized successfully. Log file: userReports\SignalDiagnostics_2026.01.07_17-48-43.log
+2026.01.08 01:48:42.352	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TimeframeConsistency] Initialized with mode: CONFLICT_RES_WEIGHTED, Min Alignment: 0.6, Require Full: false
+2026.01.08 01:48:42.353	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TrendEngine] Initialized | MA: 20/50/200 | ADX: 14
+2026.01.08 01:48:42.353	MultiStrategyAutonomousEA (EURUSD.0,H1)	[StructureEngine] Initialized | Period: 10 | MinSize: 10.0 | ATR: true
+2026.01.08 01:48:42.353	MultiStrategyAutonomousEA (EURUSD.0,H1)	[UnifiedSignalPipeline] Initialized with filters: Trend=true Volatility=true Liquidity=true Structure=true
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SignalDiagnostics] Failed to create log file: userReports\SignalDiagnostics_2026.01.07_17-48-43.log Error: 5004
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SignalDiagnostics] Will continue without file logging (console only)
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TimeframeConsistency] Initialized with mode: CONFLICT_RES_WEIGHTED, Min Alignment: 0.6, Require Full: false
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ORCHESTRATOR-INFO] AI Strategy Orchestrator initialized - Min Win Rate: 40.0%, Max Consecutive Losses: 5
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Initialized for EURUSD.0 on PERIOD_H1
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Pipeline: ENABLED
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Orchestrator: ENABLED
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	Pipeline filters configured
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Auto-registration complete. Active strategies: 0
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENTERPRISE] Manager initialized with 0 active strategies
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SIGNAL-VALIDATOR] Advanced signal validation enabled
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[POSITION-MANAGER] Advanced position management enabled
+2026.01.08 01:48:42.354	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SYMBOLS] Processing 10 trading symbols
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SYMBOLS] 10 symbols validated and ready for trading
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[NEURAL-NET] Network weights initialized with Xavier method
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[NEURAL-NET] Initialized for EURUSD.0 on PERIOD_H1
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[INIT] Neural Network Strategy initialized successfully
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI-MODE] AI Mode enabled | NN: true | Transformer: true | Ensemble: true | Threshold: 0.6
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Initialized with base risk: 2.00%
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Max risk per trade: 5.00%
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Max drawdown: 15.00%
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[MULTI-STRATEGY-EA] Initialization complete - EA is READY;
+2026.01.08 01:48:42.356	MultiStrategyAutonomousEA (EURUSD.0,H1)	[MULTI-STRATEGY-EA] ========================================
+2026.01.08 01:48:43.360	MultiStrategyAutonomousEA (EURUSD.0,H1)	[DEBUG-PROCESS] First call received! System initialized: YES, Trading enabled: YES, Source: TIMER
+2026.01.08 01:48:43.360	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Daily risk counters reset for new trading day
+2026.01.08 01:48:43.360	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Daily risk: 0.00% | Max allowed: 6.00%
+2026.01.08 01:48:43.360	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI-GLOBAL] AI systems disabled - Using default risk parameters
+2026.01.08 01:49:13.849	MultiStrategyAutonomousEA (EURUSD.0,H1)	[DEBUG-PROCESS] Call #50 - EA is processing normally (Source: TICK)
+2026.01.08 01:49:13.849	MultiStrategyAutonomousEA (EURUSD.0,H1)	[DEBUG-PROCESS] Call #50 Time: 2026.01.07 17:49:15
+2026.01.08 01:49:13.849	MultiStrategyAutonomousEA (EURUSD.0,H1)	[DEBUG-STATUS] Current symbol: EURUSD.0 Symbols processed: 0
+2026.01.08 01:49:13.849	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENTERPRISE-STATUS] Active strategies: 0 | Cooldown: 0s / 120s
+2026.01.08 01:49:13.849	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENTERPRISE-STATUS] EA Positions: 0 / 5 | Account Total: 1 | Last trade: Never
+
+### ENTERPRISE MODE ENABLED & ONE STRATEGY ENABLED & NO AI ENABLED
+
+2026.01.08 01:52:37.202	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI] Initializing AI subsystems...
+2026.01.08 01:52:37.203	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TRANSFORMER] Initialized with 2 layers, dModel=64, heads=4
+2026.01.08 01:52:37.203	MultiStrategyAutonomousEA (EURUSD.0,H1)	[UNCERTAINTY] Quantifier initialized with 100 history size
+2026.01.08 01:52:37.203	MultiStrategyAutonomousEA (EURUSD.0,H1)	[NEXTGEN] AI Strategy Brain initialized for EURUSD.0
+2026.01.08 01:52:37.203	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI] All AI subsystems initialized successfully
+2026.01.08 01:52:37.203	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI] AIEngine initialized with adaptive mode
+2026.01.08 01:52:37.203	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENTERPRISE] Initializing Enterprise Strategy Manager...
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SignalDiagnostics] Initialized successfully. Log file: userReports\SignalDiagnostics_2026.01.07_17-52-38.log
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TimeframeConsistency] Initialized with mode: CONFLICT_RES_WEIGHTED, Min Alignment: 0.6, Require Full: false
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TrendEngine] Initialized | MA: 20/50/200 | ADX: 14
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[StructureEngine] Initialized | Period: 10 | MinSize: 10.0 | ATR: true
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[UnifiedSignalPipeline] Initialized with filters: Trend=true Volatility=true Liquidity=true Structure=true
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SignalDiagnostics] Failed to create log file: userReports\SignalDiagnostics_2026.01.07_17-52-38.log Error: 5004
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SignalDiagnostics] Will continue without file logging (console only)
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[TimeframeConsistency] Initialized with mode: CONFLICT_RES_WEIGHTED, Min Alignment: 0.6, Require Full: false
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ORCHESTRATOR-INFO] AI Strategy Orchestrator initialized - Min Win Rate: 40.0%, Max Consecutive Losses: 5
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Initialized for EURUSD.0 on PERIOD_H1
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Pipeline: ENABLED
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Orchestrator: ENABLED
+2026.01.08 01:52:37.205	MultiStrategyAutonomousEA (EURUSD.0,H1)	Pipeline filters configured
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ChartDrawing] Initialized for EURUSD.0 on PERIOD_H1
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SMC v2.0] Strategy initialized for EURUSD.0 on PERIOD_H1
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ORCHESTRATOR-INFO] Strategy added to orchestrator: Advanced SMC (Weight: 2.50)
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Registered strategy: Advanced SMC | Enabled: true | Weight: 2.5
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[EnterpriseStrategyManager] Auto-registration complete. Active strategies: 1
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENTERPRISE] Manager initialized with 1 active strategies
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SIGNAL-VALIDATOR] Advanced signal validation enabled
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[POSITION-MANAGER] Advanced position management enabled
+2026.01.08 01:52:37.215	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SYMBOLS] Processing 10 trading symbols
+2026.01.08 01:52:37.216	MultiStrategyAutonomousEA (EURUSD.0,H1)	[SYMBOLS] 10 symbols validated and ready for trading
+2026.01.08 01:52:37.216	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Initialized with base risk: 2.00%
+2026.01.08 01:52:37.216	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Max risk per trade: 5.00%
+2026.01.08 01:52:37.216	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Max drawdown: 15.00%
+2026.01.08 01:52:37.216	MultiStrategyAutonomousEA (EURUSD.0,H1)	[MULTI-STRATEGY-EA] Initialization complete - EA is READY;
+2026.01.08 01:52:37.216	MultiStrategyAutonomousEA (EURUSD.0,H1)	[MULTI-STRATEGY-EA] ========================================
+2026.01.08 01:52:37.249	MultiStrategyAutonomousEA (EURUSD.0,H1)	[DEBUG-PROCESS] First call received! System initialized: YES, Trading enabled: YES, Source: TICK
+2026.01.08 01:52:37.249	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Daily risk counters reset for new trading day
+2026.01.08 01:52:37.249	MultiStrategyAutonomousEA (EURUSD.0,H1)	[ENHANCED-RISK] Daily risk: 0.00% | Max allowed: 6.00%
+2026.01.08 01:52:40.645	MultiStrategyAutonomousEA (EURUSD.0,H1)	[AI-GLOBAL] AI systems disabled - Using default risk parameters
+
+2026.01.08 01:55:55.535	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #100 - EA is processing normally (Source: TIMER)
+2026.01.08 01:55:55.535	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #100 Time: 2026.01.07 17:55:56
+2026.01.08 01:55:55.535	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0
+2026.01.08 01:55:55.535	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENTERPRISE-STATUS] Active strategies: 1 | Cooldown: 0s / 120s
+2026.01.08 01:55:55.535	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENTERPRISE-STATUS] EA Positions: 0 / 5 | Account Total: 0 | Last trade: Never
+2026.01.08 01:56:20.298	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #150 - EA is processing normally (Source: TIMER)
+2026.01.08 01:56:20.298	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #150 Time: 2026.01.07 17:56:21
+2026.01.08 01:56:20.298	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0
+2026.01.08 01:56:20.298	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENTERPRISE-STATUS] Active strategies: 1 | Cooldown: 0s / 120s
+2026.01.08 01:56:20.298	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENTERPRISE-STATUS] EA Positions: 0 / 5 | Account Total: 0 | Last trade: Never
+
+#### 1 STRATEGY ENABLED WITH ENTERPRISE OFF
+
+2026.01.08 01:57:06.286	MultiStrategyAutonomousEA (Step Index.0,M30)	[TRANSFORMER] Initialized with 6 layers, dModel=256, heads=8
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[MULTI-STRATEGY-EA] ========================================
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[MULTI-STRATEGY-EA] Advanced AI Trading System v2.0 Starting
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[MULTI-STRATEGY-EA] ========================================
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[INFO] Running on DEMO account
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[AI] Initializing AI subsystems...
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[TRANSFORMER] Initialized with 2 layers, dModel=64, heads=4
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[UNCERTAINTY] Quantifier initialized with 100 history size
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[NEXTGEN] AI Strategy Brain initialized for Step Index.0
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[AI] All AI subsystems initialized successfully
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[AI] AIEngine initialized with adaptive mode
+2026.01.08 01:57:06.287	MultiStrategyAutonomousEA (Step Index.0,M30)	[SYMBOLS] Processing 10 trading symbols
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[SYMBOLS] 10 symbols validated and ready for trading
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENHANCED-RISK] Initialized with base risk: 2.00%
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENHANCED-RISK] Max risk per trade: 5.00%
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENHANCED-RISK] Max drawdown: 15.00%
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[MULTI-STRATEGY-EA] Initialization complete - EA is READY;
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[MULTI-STRATEGY-EA] ========================================
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] First call received! System initialized: YES, Trading enabled: YES, Source: TICK
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENHANCED-RISK] Daily risk counters reset for new trading day
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[ENHANCED-RISK] Daily risk: 0.00% | Max allowed: 6.00%
+2026.01.08 01:57:06.288	MultiStrategyAutonomousEA (Step Index.0,M30)	[AI-GLOBAL] AI systems disabled - Using default risk parameters
+2026.01.08 01:58:34.307	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #50 - EA is processing normally (Source: TIMER)
+2026.01.08 01:58:34.307	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #50 Time: 2026.01.07 17:58:35
+2026.01.08 01:58:34.307	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0
+2026.01.08 01:58:59.279	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #100 - EA is processing normally (Source: TIMER)
+2026.01.08 01:58:59.279	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-PROCESS] Call #100 Time: 2026.01.07 17:59:00
+2026.01.08 01:58:59.279	MultiStrategyAutonomousEA (Step Index.0,M30)	[DEBUG-STATUS] Current symbol: Step Index.0 Symbols processed: 0

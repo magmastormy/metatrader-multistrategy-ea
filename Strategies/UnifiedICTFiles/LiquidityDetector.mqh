@@ -140,8 +140,8 @@ void CLiquidityDetector::Update()
     m_poolCount = 0;
     ArrayResize(m_liquidityPools, 0);
     
-    DetectEqualHighsLows(50);
-    DetectSwingLiquidity(50);
+    DetectEqualHighsLows(500);  // Expanded from 50 for historical memory
+    DetectSwingLiquidity(500);  // Expanded from 50 for historical memory
     DetectTimeframeLiquidity();
     
     // Check for sweeps

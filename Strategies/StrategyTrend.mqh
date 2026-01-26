@@ -231,7 +231,7 @@ public:
         int hour = dt.hour;
         // London session: 8-16 GMT, NY session: 13-21 GMT
         // Overlap: 13-16 GMT (best for trends)
-        return (hour >= 8 && hour <= 20);
+        return (hour >= 13 && hour <= 16);
     }
 };
 #endif // __STRATEGY_TREND_MQH__

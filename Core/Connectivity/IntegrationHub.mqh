@@ -10,7 +10,6 @@
 #include "HTTPClient.mqh"
 #include "../../AIModules/NextGenStrategyBrain.mqh"
 #include "../../AIModules/UncertaintyQuantifier.mqh"
-#include "../../AIModules/PythonBridge.mqh"
 #include <Arrays/ArrayDouble.mqh>
 
 // Forward declarations
@@ -149,11 +148,6 @@ private:
     CHTTPClient* m_httpClient;
     string m_pythonServerUrl;
     bool m_pythonServerHealthy;
-
-    // Python bridge (socket/ZMQ)
-    CPythonBridge* m_pythonBridge;
-    string m_pythonHost;
-    int    m_pythonPort;
 
     // Cached market series
     CArrayDouble m_priceHistory;
@@ -311,83 +305,12 @@ bool CAIIntegrationHub::CallPythonAI(const double &marketData[], double &signal,
         return false;
     }
 
-    // Initialize bridge if needed
-    if(m_pythonBridge == NULL)
-    {
-        m_pythonBridge = new CPythonBridge(m_pythonHost, m_pythonPort);
-        if(!m_pythonBridge.Handshake())
-        {
-            reasoning = "Python AI handshake failed";
-            delete m_pythonBridge;
-            m_pythonBridge = NULL;
-            m_pythonHealthy = false;
-            return false;
-        }
-        m_pythonHealthy = true;
-    }
-
-    // Periodic heartbeat to ensure connection remains alive
-    if(!m_pythonBridge.Heartbeat())
-    {
-        delete m_pythonBridge;
-        m_pythonBridge = new CPythonBridge(m_pythonHost, m_pythonPort);
-        if(!m_pythonBridge.Handshake())
-        {
-            reasoning = "Python AI heartbeat failed";
-            delete m_pythonBridge;
-            m_pythonBridge = NULL;
-            m_pythonHealthy = false;
-            return false;
-        }
-    }
-
-    string jsonPayload = "{";
-    jsonPayload += StringFormat("\"symbol\":\"%s\",", m_symbol);
-    jsonPayload += StringFormat("\"timeframe\":\"%s\",", TimeframeToString(m_timeframe));
-
-    string marketJson = "";
-    if(!BuildMarketDataJson(marketJson))
-    {
-        reasoning = "Failed to build market data payload";
-        return false;
-    }
-    jsonPayload += StringFormat("\"market_data\":%s", marketJson);
-    jsonPayload += "}";
-
-    string rawResponse = m_pythonBridge.SendRequest("signal_request", jsonPayload);
-    if(StringLen(rawResponse) == 0)
-    {
-        reasoning = "Empty response from Python AI";
-        m_pythonHealthy = false;
-        return false;
-    }
-
-    m_pythonHealthy = true;
-
-    string dataBlock;
-    if(!ExtractDataBlock(rawResponse, dataBlock))
-    {
-        reasoning = "Invalid response format";
-        return false;
-    }
-
-    double signalValue = 0.0;
-    double confidenceValue = 0.0;
-    string action = "";
-    string responseReason = "";
-
-    ExtractJsonNumber(dataBlock, "signal_value", signalValue);
-    ExtractJsonNumber(dataBlock, "confidence", confidenceValue);
-    ExtractJsonString(dataBlock, "action", action);
-    ExtractJsonString(dataBlock, "reason", responseReason);
-
-    signal = signalValue;
-    confidence = confidenceValue;
-    reasoning = responseReason;
-
-    Print(StringFormat("[PYTHON-AI] Prediction: action=%s, signal=%.3f, conf=%.3f", action, signal, confidence));
-
-    return true;
+    // Python AI integration disabled - feature removed
+    reasoning = "Python AI integration removed";
+    signal = 0.0;
+    confidence = 0.0;
+    m_pythonHealthy = false;
+    return false;
 }
 
 //+------------------------------------------------------------------+
@@ -481,10 +404,7 @@ CAIIntegrationHub::CAIIntegrationHub() :
     m_lastDataUpdate(0),
     m_httpClient(NULL),
     m_pythonServerUrl("http://localhost:8000"),
-    m_pythonServerHealthy(false),
-    m_pythonBridge(NULL),
-    m_pythonHost("127.0.0.1"),
-    m_pythonPort(8888)
+    m_pythonServerHealthy(false)
 {
     // Initialize HTTP client
     m_httpClient = new CHTTPClient(m_pythonServerUrl, 5000);
@@ -502,12 +422,6 @@ CAIIntegrationHub::~CAIIntegrationHub()
     {
         delete m_httpClient;
         m_httpClient = NULL;
-    }
-
-    if(m_pythonBridge != NULL)
-    {
-        delete m_pythonBridge;
-        m_pythonBridge = NULL;
     }
 }
 
