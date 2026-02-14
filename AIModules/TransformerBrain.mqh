@@ -37,6 +37,13 @@ private:
     
     double m_attentionWeights[];
     
+    // LCG
+    uint m_randomState;
+    double GetDeterministicRandom() {
+        m_randomState = m_randomState * 1664525 + 1013904223;
+        return (double)m_randomState / 4294967296.0;
+    }
+    
     double SoftMax(double &inputArray[], int offset, int length, int index) {
         double softmaxSum = 0.0;
         double maxValue = -DBL_MAX;
@@ -58,11 +65,12 @@ private:
     }
     
 public:
-    CMultiHeadAttention(int dModel = 512, int numHeads = 16) {
+    CMultiHeadAttention(int dModel = 512, int numHeads = 16, int seed = 12345) {
         m_dModel = dModel;
         m_numHeads = numHeads;
         m_dK = dModel / numHeads;
         m_dV = dModel / numHeads;
+        m_randomState = (uint)seed;
         
         // Initialize weight matrices
         int qkvSize = dModel * dModel;
@@ -71,13 +79,13 @@ public:
         ArrayResize(m_WV, qkvSize);
         ArrayResize(m_WO, qkvSize);
         
-        // Xavier initialization
+        // Xavier initialization (Deterministic)
         double scale = MathSqrt(2.0 / dModel);
         for(int i = 0; i < qkvSize; i++) {
-            m_WQ[i] = (MathRand() / 32767.0 - 0.5) * scale;
-            m_WK[i] = (MathRand() / 32767.0 - 0.5) * scale;
-            m_WV[i] = (MathRand() / 32767.0 - 0.5) * scale;
-            m_WO[i] = (MathRand() / 32767.0 - 0.5) * scale;
+            m_WQ[i] = (GetDeterministicRandom() - 0.5) * scale;
+            m_WK[i] = (GetDeterministicRandom() - 0.5) * scale;
+            m_WV[i] = (GetDeterministicRandom() - 0.5) * scale;
+            m_WO[i] = (GetDeterministicRandom() - 0.5) * scale;
         }
     }
     
@@ -337,15 +345,23 @@ private:
     double m_W2[];
     double m_B1[];
     double m_B2[];
+
+    // LCG
+    uint m_randomState;
+    double GetDeterministicRandom() {
+        m_randomState = m_randomState * 1664525 + 1013904223;
+        return (double)m_randomState / 4294967296.0;
+    }
     
     double ReLU(double x) {
         return MathMax(0.0, x);
     }
     
 public:
-    CFeedForwardNetwork(int dModel = 256, int dFF = 1024) {
+    CFeedForwardNetwork(int dModel = 256, int dFF = 1024, int seed = 12345) {
         m_dModel = dModel;
         m_dFF = dFF;
+        m_randomState = (uint)seed;
         
         // Initialize weight matrices and bias vectors
         ArrayResize(m_W1, dModel * dFF);
@@ -358,11 +374,11 @@ public:
         double scale2 = MathSqrt(2.0 / dFF);
         
         for(int i = 0; i < dModel * dFF; i++) {
-            m_W1[i] = (MathRand() / 32767.0 - 0.5) * scale1;
+            m_W1[i] = (GetDeterministicRandom() - 0.5) * scale1;
         }
         
         for(int i = 0; i < dFF * dModel; i++) {
-            m_W2[i] = (MathRand() / 32767.0 - 0.5) * scale2;
+            m_W2[i] = (GetDeterministicRandom() - 0.5) * scale2;
         }
         
         // Initialize biases to zero
@@ -421,9 +437,9 @@ private:
     double m_residual[];
     
 public:
-    CTransformerBlock(int dModel = 256, int numHeads = 8, int dFF = 1024) {
-        m_attention = new CMultiHeadAttention(dModel, numHeads);
-        m_feedForward = new CFeedForwardNetwork(dModel, dFF);
+    CTransformerBlock(int dModel = 256, int numHeads = 8, int dFF = 1024, int seed = 0) {
+        m_attention = new CMultiHeadAttention(dModel, numHeads, seed);
+        m_feedForward = new CFeedForwardNetwork(dModel, dFF, seed + 1);
         m_layerNorm1 = new CLayerNorm(dModel);
         m_layerNorm2 = new CLayerNorm(dModel);
     }
@@ -522,7 +538,7 @@ public:
         // Create Transformer Blocks
         m_transformerBlocks.Clear();
         for(int i = 0; i < numLayers; i++) {
-            CTransformerBlock *block = new CTransformerBlock(dModel, numHeads, dFF);
+            CTransformerBlock *block = new CTransformerBlock(dModel, numHeads, dFF, 42 + i * 10);
             m_transformerBlocks.Add(block);
         }
         

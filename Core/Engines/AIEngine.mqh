@@ -264,7 +264,7 @@ public:
             return response;
         }
         
-        response.processingTimeMs = (int)(GetTickCount() - startTime);
+        response.processingTimeMs = (int)(GetTickCount() - queryStartTime);
         
         if(response.success) m_successfulQueries++;
         
@@ -462,7 +462,18 @@ private:
         if(m_orchestrator != NULL) {
             response.prediction = m_orchestrator.GetEnsembleConfidence();
             response.confidence = response.prediction;
-            response.explanation = "Ensemble prediction based on active strategies";
+            
+            // detailed explanation
+            int strategyCount = m_orchestrator.GetActiveStrategyCount();
+            string regime = EnumToString(m_orchestrator.GetCurrentMarketRegime());
+            response.explanation = StringFormat("Ensemble prediction: %.2f | Active Strategies: %d | Regime: %s", 
+                                              response.prediction, strategyCount, regime);
+        }
+        else {
+             response.prediction = 0.5;
+             response.confidence = 0.0;
+             response.explanation = "Orchestrator not initialized";
+             response.success = false;
         }
         
         return response;
@@ -478,7 +489,17 @@ private:
             double confidence = m_orchestrator.GetEnsembleConfidence();
             response.prediction = confidence; // Proxy for signal direction not available
             response.confidence = confidence;
-            response.explanation = "Signal query limited - returning ensemble confidence";
+            
+            int strategyCount = m_orchestrator.GetActiveStrategyCount();
+            string regime = EnumToString(m_orchestrator.GetCurrentMarketRegime());
+            response.explanation = StringFormat("Signal Confidence: %.2f | Active Strategies: %d | Regime: %s", 
+                                              confidence, strategyCount, regime);
+        }
+        else {
+             response.prediction = 0.5;
+             response.confidence = 0.0;
+             response.explanation = "Orchestrator not initialized";
+             response.success = false;
         }
         
         return response;

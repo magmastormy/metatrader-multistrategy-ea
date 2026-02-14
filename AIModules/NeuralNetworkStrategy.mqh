@@ -107,12 +107,15 @@ public:
         double xavier_hidden1 = MathSqrt(2.0 / 15);
         double xavier_hidden2 = MathSqrt(2.0 / 10);
         
+        // Local deterministic seeding for reproducibility
+        m_randomState = 12345; // Fixed seed
+
         // Initialize W1
         for(int i = 0; i < 25; i++)
         {
             for(int j = 0; j < 15; j++)
             {
-                W1[i][j] = (MathRand() / 32768.0 - 0.5) * 2 * xavier_input;
+                W1[i][j] = (GetDeterministicRandom() - 0.5) * 2 * xavier_input;
             }
         }
         
@@ -121,7 +124,7 @@ public:
         {
             for(int j = 0; j < 10; j++)
             {
-                W2[i][j] = (MathRand() / 32768.0 - 0.5) * 2 * xavier_hidden1;
+                W2[i][j] = (GetDeterministicRandom() - 0.5) * 2 * xavier_hidden1;
             }
         }
         
@@ -130,7 +133,7 @@ public:
         {
             for(int j = 0; j < 3; j++)
             {
-                W3[i][j] = (MathRand() / 32768.0 - 0.5) * 2 * xavier_hidden2;
+                W3[i][j] = (GetDeterministicRandom() - 0.5) * 2 * xavier_hidden2;
             }
         }
         
@@ -144,9 +147,74 @@ public:
         for(int i = 0; i < 3; i++)
             B3[i] = 0.01;
         
-        Print("[NEURAL-NET] Network weights initialized with Xavier method");
+        Print("[NEURAL-NET] Network weights initialized with Deterministic Xavier method");
+    }
+
+    // Simple LCG for deterministic behavior
+    uint m_randomState;
+    double GetDeterministicRandom()
+    {
+        m_randomState = m_randomState * 1664525 + 1013904223;
+        return (double)m_randomState / 4294967296.0;
     }
     
+    // Helper to get indicator value from buffer
+    double GetIndicatorValue(int handle, int buffer, int shift)
+    {
+        double val[1];
+        if(CopyBuffer(handle, buffer, shift, 1, val) > 0) return val[0];
+        return 0.0;
+    }
+
+    // Helper for MA value
+    double GetMAValue(int period, int shift, ENUM_MA_METHOD method, ENUM_APPLIED_PRICE price, int bar)
+    {
+        int handle = iMA(m_symbol, m_timeframe, period, shift, method, price);
+        return GetIndicatorValue(handle, 0, bar);
+    }
+
+    // Helper for RSI value
+    double GetRSIValue(int period, ENUM_APPLIED_PRICE price, int bar)
+    {
+        int handle = iRSI(m_symbol, m_timeframe, period, price);
+        return GetIndicatorValue(handle, 0, bar);
+    }
+
+    // Helper for ATR value
+    double GetATRValue(int period, int bar)
+    {
+        int handle = iATR(m_symbol, m_timeframe, period);
+        return GetIndicatorValue(handle, 0, bar);
+    }
+
+    // Helper for ADX value
+    double GetADXValue(int period, int bar)
+    {
+        int handle = iADX(m_symbol, m_timeframe, period);
+        return GetIndicatorValue(handle, 0, bar);
+    }
+
+    // Helper for Bollinger Bands value
+    double GetBBValue(int period, double dev, int shift, ENUM_APPLIED_PRICE price, int buffer, int bar)
+    {
+        int handle = iBands(m_symbol, m_timeframe, period, dev, shift, price);
+        return GetIndicatorValue(handle, buffer, bar);
+    }
+
+    // Helper for MACD value
+    double GetMACDValue(int fast, int slow, int signal, ENUM_APPLIED_PRICE price, int buffer, int bar)
+    {
+        int handle = iMACD(m_symbol, m_timeframe, fast, slow, signal, price);
+        return GetIndicatorValue(handle, buffer, bar);
+    }
+
+    // Helper for CCI value
+    double GetCCIValue(int period, ENUM_APPLIED_PRICE price, int bar)
+    {
+        int handle = iCCI(m_symbol, m_timeframe, period, price);
+        return GetIndicatorValue(handle, 0, bar);
+    }
+
     // Extract 25 features from current market state
     bool ExtractFeatures(double &features[])
     {
@@ -158,53 +226,113 @@ public:
         // Initialize all features to 0
         ArrayInitialize(features, 0.0);
         
-        // Features 1-5: Market Structure (placeholder - integrate with actual SMC data)
-        features[0] = GetNormalizedValue(0, 10, 5);  // BMS count placeholder
-        features[1] = GetNormalizedValue(0, 1, 0.5); // Trend strength placeholder
-        features[2] = GetNormalizedValue(0, 1, 0.7); // Structure quality placeholder
-        features[3] = 1.0;  // HTF aligned placeholder
-        features[4] = GetNormalizedValue(0, 5, 2);   // Consecutive BMS placeholder
+        // --- Market Structure (Features 0-4) ---
+        // Feature 0: Trend Direction based on MA Cross (Fast vs Slow)
+        double maFast = GetMAValue(9, 0, MODE_EMA, PRICE_CLOSE, 1);
+        double maSlow = GetMAValue(21, 0, MODE_EMA, PRICE_CLOSE, 1);
+        features[0] = (maFast > maSlow) ? 1.0 : (maFast < maSlow) ? -1.0 : 0.0;
         
-        // Features 6-10: Order Block (placeholder)
-        features[5] = GetNormalizedValue(0, 1, 0.6); // OB strength
-        features[6] = GetNormalizedValue(0, 5, 2);   // Touches
-        features[7] = GetNormalizedValue(0, 50, 10); // Age
-        features[8] = GetNormalizedValue(0, 5, 1.5); // Distance in ATR
-        features[9] = 0.0;  // Has imbalance
+        // Feature 1: Trend Strength (ADX)
+        double adx = GetADXValue(14, 1);
+        features[1] = GetNormalizedValue(0, 100, adx);
+
+        // Feature 2: Momentum (RSI)
+        double rsi = GetRSIValue(14, PRICE_CLOSE, 1);
+        features[2] = GetNormalizedValue(0, 100, rsi);
         
-        // Features 11-15: Liquidity (placeholder)
-        features[10] = 0.0; // Nearby liquidity
-        features[11] = 0.0; // Was swept
-        features[12] = GetNormalizedValue(0, 1, 0.5); // Sweep quality
-        features[13] = GetNormalizedValue(0, 5, 2);   // Distance to liquidity
-        features[14] = GetNormalizedValue(0, 1, 0.6); // Pool strength
-        
-        // Features 16-19: Candlestick patterns
+        // Feature 3: Price vs EMA200 (Long term trend)
+        double ema200 = GetMAValue(200, 0, MODE_EMA, PRICE_CLOSE, 1);
         double close = iClose(m_symbol, m_timeframe, 1);
+        features[3] = (close > ema200) ? 1.0 : -1.0;
+        
+        // Feature 4: Volatility (ATR Normalized)
+        double atr = GetATRValue(14, 1);
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        features[4] = GetNormalizedValue(0, 100 * point, atr); // Rough normalization
+        
+        // --- Oscillator / Reversion (Features 5-9) ---
+        // Feature 5: Stochastic Lookalike (RSI based: Overbought/Oversold)
+        features[5] = (rsi > 70) ? 1.0 : (rsi < 30) ? -1.0 : 0.0;
+        
+        // Feature 6: Bollinger Band Position
+        double bbUpper = GetBBValue(20, 2, 0, PRICE_CLOSE, 1, 1); // Buffer 1 = Upper
+        double bbLower = GetBBValue(20, 2, 0, PRICE_CLOSE, 2, 1); // Buffer 2 = Lower
+        double bbBasis = (bbUpper - bbLower > 0) ? (close - bbLower) / (bbUpper - bbLower) : 0.5;
+        features[6] = MathMin(1.0, MathMax(0.0, bbBasis)); // 0 = Lower Band, 1 = Upper Band
+        
+        // Feature 7: MACD Histogram
+        double macdMain = GetMACDValue(12, 26, 9, PRICE_CLOSE, 0, 1); // Buffer 0 = Main
+        double macdSignal = GetMACDValue(12, 26, 9, PRICE_CLOSE, 1, 1); // Buffer 1 = Signal
+        double macdHist = macdMain - macdSignal;
+        features[7] = (macdHist > 0) ? 1.0 : -1.0;
+        
+        // Feature 8: Williams %R or similar (using RSI delta)
+        double rsiPrev = GetRSIValue(14, PRICE_CLOSE, 2);
+        features[8] = (rsi - rsiPrev) / 100.0; // Momentum change
+        
+        // Feature 9: CCI
+        double cci = GetCCIValue(14, PRICE_CLOSE, 1);
+        features[9] = GetNormalizedValue(-200, 200, cci); // Limit to range usually -1 to 1
+        
+        // --- Volume / Liquidity Proxy (Features 10-14) ---
+        // Feature 10: Volume Trend
+        long vol = iVolume(m_symbol, m_timeframe, 1);
+        long volPrev = iVolume(m_symbol, m_timeframe, 2);
+        features[10] = (vol > volPrev) ? 1.0 : 0.0;
+        
+        // Feature 11: MFI (Money Flow Index) - approximated via RSI/Vol mix
+        features[11] = (rsi > 50 && vol > volPrev) ? 1.0 : 0.0;
+
+        // Feature 12: High/Low Breakout (Donchian-ish)
+        double high20 = iHigh(m_symbol, m_timeframe, iHighest(m_symbol, m_timeframe, MODE_HIGH, 20, 1));
+        double low20 = iLow(m_symbol, m_timeframe, iLowest(m_symbol, m_timeframe, MODE_LOW, 20, 1));
+        features[12] = (close >= high20) ? 1.0 : (close <= low20) ? -1.0 : 0.0;
+        
+        // Feature 13: Candle Range Quality
         double open = iOpen(m_symbol, m_timeframe, 1);
         double high = iHigh(m_symbol, m_timeframe, 1);
         double low = iLow(m_symbol, m_timeframe, 1);
         
+        // Feature 14: Gap (Open vs Prev Close)
+        double closePrev = iClose(m_symbol, m_timeframe, 2);
+        features[14] = (open > closePrev) ? 1.0 : (open < closePrev) ? -1.0 : 0.0;
+        
+        // --- Price Action (Features 15-19) ---
         double body = MathAbs(close - open);
         double range = high - low;
         double bodyRatio = (range > 0) ? body / range : 0;
         
-        features[15] = bodyRatio; // Body ratio
+        features[15] = bodyRatio; // 1 = Marubozu, 0 = Doji
         features[16] = (close > open) ? 1.0 : -1.0; // Bullish/Bearish
-        features[17] = 0.0; // Engulfing placeholder
-        features[18] = bodyRatio; // Candle strength
         
-        // Features 20-22: FVG/IFVG (placeholder)
-        features[19] = 0.0; // Active FVG
-        features[20] = 0.0; // Active IFVG
-        features[21] = 0.0; // Fill percent
+        // Feature 17: Upper Wick Ratio
+        double upperWick = (close > open) ? (high - close) : (high - open);
+        features[17] = (range > 0) ? upperWick / range : 0;
         
-        // Features 23-25: Time/Session
+        // Feature 18: Lower Wick Ratio
+        double lowerWick = (close > open) ? (open - low) : (close - low);
+        features[18] = (range > 0) ? lowerWick / range : 0;
+        
+        // Feature 19: Inside Bar check
+        double highPrev = iHigh(m_symbol, m_timeframe, 2);
+        double lowPrev = iLow(m_symbol, m_timeframe, 2);
+        bool insideBar = (high < highPrev) && (low > lowPrev);
+        features[19] = insideBar ? 1.0 : 0.0;
+        
+        // --- Time & Context (Features 20-22) ---
+        // Features 20-22: Time/Session
         MqlDateTime dt;
         TimeToStruct(TimeCurrent(), dt);
-        features[22] = dt.hour / 24.0;                          // Hour normalized
-        features[23] = dt.day_of_week / 7.0;                    // Day normalized
-        features[24] = IsKillZoneTime(dt.hour) ? 1.0 : 0.0;   // Kill zone binary
+        features[20] = dt.hour / 24.0;                          // Hour normalized
+        features[21] = dt.day_of_week / 7.0;                    // Day normalized
+        features[22] = IsKillZoneTime(dt.hour) ? 1.0 : 0.0;   // Kill zone binary
+        
+        // --- Noise / Random (Features 23-24) ---
+        // Feature 23: Random Noise (for robustness)
+        features[23] = GetDeterministicRandom();
+        
+        // Feature 24: Bias Unit
+        features[24] = 1.0;
         
         return true;
     }

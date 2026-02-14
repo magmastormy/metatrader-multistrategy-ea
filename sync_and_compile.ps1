@@ -47,7 +47,7 @@ if (-not (Test-Path -LiteralPath $Destination)) {
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 }
 
-$excludeDirs = @(".git", ".vs", "x64", "Debug", "Release", ".windsurf", "__pycache__")
+$excludeDirs = @(".git", ".vs", "x64", "Debug", "Release", ".windsurf", "__pycache__", ".agent", ".gemini")
 $excludeFiles = @("*.exe", "*.pdb", "*.obj", "*.log")
 
 $robocopyArgs = @($Source, $Destination, "/MIR", "/R:3", "/W:1", "/NFL", "/NDL", "/NP")
@@ -140,7 +140,7 @@ $mq5Files = $mq5Files | Where-Object {
 $fullName = $_.FullName
 $shouldExclude = $false
 foreach ($excluded in $excludedRelativePaths) {
-if ($fullName -like "$excluded") {
+if ($fullName -like "*$excluded") {
 $shouldExclude = $true
 Write-Host "Excluding: $excluded" -ForegroundColor Yellow
 break
