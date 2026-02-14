@@ -40,13 +40,16 @@ public:
     void Shutdown() { 
         // Cleanup handled in destructor
     }
-    double GetConfidence() const { return 0.85; } // Placeholder confidence
+    double GetConfidence() const { return m_lastConfidence; } 
+
+private:
+    double m_lastConfidence;
 };
 
 //+------------------------------------------------------------------+
 //| Constructor                                                     |
 //+------------------------------------------------------------------+
-CEnsembleMetaLearner::CEnsembleMetaLearner()
+CEnsembleMetaLearner::CEnsembleMetaLearner() : m_lastConfidence(0.0)
 {
 }
 
@@ -152,6 +155,7 @@ bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double 
         ensembleBuySignal = weightedBuySignal / totalWeight;
         ensembleSellSignal = weightedSellSignal / totalWeight;
         confidence = weightedConfidenceScore / totalWeight;
+        m_lastConfidence = confidence; // Store for retrieval
         return true;
     }
     

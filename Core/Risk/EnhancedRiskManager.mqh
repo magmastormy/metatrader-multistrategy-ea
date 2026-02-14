@@ -2,6 +2,9 @@
 //| EnhancedRiskManager.mqh - Advanced Risk Management System       |
 //| Adaptive, multi-dimensional risk management for maximum profitability |
 //+------------------------------------------------------------------+
+#ifndef ENHANCED_RISK_MANAGER_MQH
+#define ENHANCED_RISK_MANAGER_MQH
+
 #property copyright "Copyright 2025, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
 #property version   "1.00"
@@ -186,7 +189,7 @@ public:
        m_trades_this_month++;
        
        PrintFormat("[ENHANCED-RISK] Tracked usage: +%.2f%% | Total daily: %.2f%%", 
-                   risk_percent * 100, m_daily_risk_used * 100);
+                   risk_percent, m_daily_risk_used);
     }
 
     
@@ -392,10 +395,10 @@ bool CEnhancedRiskManager::Initialize(const SEnhancedRiskConfig& config, const d
     
     InitializeStatistics();
     
-    Print("[ENHANCED-RISK] Initialized with base risk: ", DoubleToString(m_config.base_risk_per_trade * 100, 2), "%");
-    Print("[ENHANCED-RISK] Max risk per trade: ", DoubleToString(m_config.max_risk_per_trade * 100, 2), "%");
+    Print("[ENHANCED-RISK] Initialized with base risk: ", DoubleToString(m_config.base_risk_per_trade, 2), "%");
+    Print("[ENHANCED-RISK] Max risk per trade: ", DoubleToString(m_config.max_risk_per_trade, 2), "%");
     Print("[ENHANCED-RISK] Max active positions: ", m_config.max_active_positions);
-    Print("[ENHANCED-RISK] Max drawdown: ", DoubleToString(m_config.max_drawdown_threshold * 100, 2), "%");
+    Print("[ENHANCED-RISK] Max drawdown: ", DoubleToString(m_config.max_drawdown_threshold, 2), "%");
     
     return true;
 }
@@ -443,7 +446,7 @@ double CEnhancedRiskManager::CalculateRiskPerTrade(const double current_equity,
     
     // Apply Kelly criterion if enabled
     if(m_config.kelly_criterion)
-        base_risk = MathMin(base_risk, m_kelly_fraction * 0.25); // Use 25% of Kelly
+        base_risk = MathMin(base_risk, CalculateKellyFraction()); // Kelly returns percentage 0-100
     
     // Apply bounds
     base_risk = MathMax(m_config.min_risk_per_trade, MathMin(m_config.max_risk_per_trade, base_risk));
@@ -477,9 +480,9 @@ bool CEnhancedRiskManager::IsTradeAllowed(const double proposed_risk,
     {
         Print("[ENHANCED-RISK] ❌ DAILY RISK LIMIT EXCEEDED!");
         PrintFormat("[ENHANCED-RISK] Daily risk used: %.2f%% | Proposed: %.2f%% | Max allowed: %.2f%%",
-                    m_daily_risk_used * 100, proposed_risk * 100, m_config.max_daily_risk * 100);
+                    m_daily_risk_used, proposed_risk, m_config.max_daily_risk);
         PrintFormat("[ENHANCED-RISK] Total would be: %.2f%% > %.2f%% (limit)",
-                    (m_daily_risk_used + proposed_risk) * 100, m_config.max_daily_risk * 100);
+                    (m_daily_risk_used + proposed_risk), m_config.max_daily_risk);
         Print("[ENHANCED-RISK] ℹ️ Risk resets at midnight. Close losing positions or wait until tomorrow.");
         return false;
     }
@@ -659,7 +662,7 @@ double CEnhancedRiskManager::CalculatePerformanceAdjustment()
     
     // Adjust based on win rate
     if(m_stats.win_rate < m_config.win_rate_threshold)
-        adjustment *= 0.8;  // Reduce risk if win rate is low
+        adjustment *= 0.8;  // Reduce risk if win rate is low (threshold is percentage, e.g. 40.0)
     
     // Adjust based on profit factor
     if(m_stats.profit_factor < m_config.profit_factor_threshold)
@@ -840,7 +843,7 @@ void CEnhancedRiskManager::UpdateStatistics(const double profit_loss, const bool
     
     // Calculate win rate
     if(m_stats.total_trades > 0)
-        m_stats.win_rate = m_stats.winning_trades / m_stats.total_trades;
+        m_stats.win_rate = (m_stats.winning_trades / (double)m_stats.total_trades) * 100.0;
     
     // Calculate profit factor
     if(m_stats.total_loss > 0)
@@ -863,7 +866,7 @@ void CEnhancedRiskManager::UpdateDrawdown(const double current_equity)
     }
     else
     {
-        m_stats.current_drawdown = (m_peak_equity - current_equity) / m_peak_equity;
+        m_stats.current_drawdown = ((m_peak_equity - current_equity) / m_peak_equity) * 100.0;
         if(m_stats.current_drawdown > m_stats.max_drawdown)
             m_stats.max_drawdown = m_stats.current_drawdown;
     }
@@ -878,7 +881,7 @@ void CEnhancedRiskManager::UpdateDrawdown(const double current_equity)
 //+------------------------------------------------------------------+
 void CEnhancedRiskManager::UpdateReturns(const double profit_loss)
 {
-    double return_pct = profit_loss / m_current_equity;
+    double return_pct = (profit_loss / m_current_equity) * 100.0;
     m_returns_series.Add(return_pct);
 }
 
@@ -963,14 +966,14 @@ string CEnhancedRiskManager::GenerateRiskReport()
     report += "=====================================\n";
     report += StringFormat("Current Equity: %.2f\n", m_current_equity);
     report += StringFormat("Peak Equity: %.2f\n", m_peak_equity);
-    report += StringFormat("Current Drawdown: %.2f%%\n", m_stats.current_drawdown * 100);
-    report += StringFormat("Max Drawdown: %.2f%%\n", m_stats.max_drawdown * 100);
-    report += StringFormat("Win Rate: %.2f%%\n", m_stats.win_rate * 100);
+    report += StringFormat("Current Drawdown: %.2f%%\n", m_stats.current_drawdown);
+    report += StringFormat("Max Drawdown: %.2f%%\n", m_stats.max_drawdown);
+    report += StringFormat("Win Rate: %.2f%%\n", m_stats.win_rate);
     report += StringFormat("Profit Factor: %.2f\n", m_stats.profit_factor);
     report += StringFormat("Sharpe Ratio: %.4f\n", m_stats.sharpe_ratio);
     report += StringFormat("Recovery Mode: %s\n", m_recovery_mode ? "ACTIVE" : "INACTIVE");
     report += StringFormat("Consecutive Losses: %d\n", m_consecutive_losses);
-    report += StringFormat("Current Risk Level: %.2f%%\n", m_current_risk * 100);
+    report += StringFormat("Current Risk Level: %.2f%%\n", m_current_risk);
     
     return report;
 }
@@ -1025,3 +1028,33 @@ void CEnhancedRiskManager::PrintRiskStatistics()
 {
     Print(GenerateRiskReport());
 }
+
+//+------------------------------------------------------------------+
+//| Calculate Kelly Criterion Fraction                               |
+//+------------------------------------------------------------------+
+double CEnhancedRiskManager::CalculateKellyFraction()
+{
+    if(m_stats.total_trades < 10)
+        return m_config.base_risk_per_trade;
+        
+    double p = m_stats.win_rate / 100.0; // Win probability (0-1)
+    double q = 1.0 - p;                  // Loss probability
+    
+    // b = odds (Average Win / Average Loss)
+    double b = (m_stats.average_loss > 0) ? (m_stats.average_win / m_stats.average_loss) : 1.0;
+    
+    if(b <= 0) return m_config.min_risk_per_trade;
+    
+    // Kelly Formula: K = (p*(b+1) - 1) / b
+    double kelly = (p * (b + 1.0) - 1.0) / b;
+    
+    // Apply 25% dampening (Fractional Kelly) for safety
+    kelly *= 0.25;
+    
+    // Convert to percentage (0-100) and bound
+    double kelly_pct = MathMax(m_config.min_risk_per_trade, MathMin(m_config.max_risk_per_trade, kelly * 100.0));
+    
+    return kelly_pct;
+}
+
+#endif // ENHANCED_RISK_MANAGER_MQH

@@ -11,9 +11,10 @@
 input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
 input bool InpUseEnhancedRisk = true;      // Use enhanced risk management
-input double InpMaxRiskPerTrade = 0.02;   // Max risk per trade (2%)
-input double InpMaxDailyRisk = 0.06;       // Max daily risk (6%)
-input double InpMaxDrawdown = 0.15;        // Max drawdown (15%)
+input double InpMaxRiskPerTrade = 2.0;    // Max risk per trade (e.g., 2.0 for 2%)
+input double InpMaxDailyRisk = 6.0;       // Max daily risk (e.g., 6.0 for 6%)
+input double InpMaxPortfolioRisk = 10.0;   // Max total portfolio risk (e.g., 10.0 for 10%)
+input double InpMaxDrawdown = 15.0;       // Max drawdown (e.g., 15.0 for 15%)
 input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,AUXUSD.0,EURUSD.0";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 120;    // Cooldown in seconds between trades
 input int    InpMaxPositionsTotal = 15;           // Global position limit
@@ -76,14 +77,14 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 #include "Core\AI\AIStrategyOrchestrator.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Engines\MarketAnalysis.mqh"
-#include "Core\Connectivity\IntegrationHub.mqh"
+// DELETED: #include "Core\Connectivity\IntegrationHub.mqh"
 #include "Core\Risk\EnhancedRiskManager.mqh"
 #include "Core\Strategy\StrategyBase.mqh"
 #include "Strategies\SimpleMomentumStrategy.mqh"
-#include "Core\Engines\TradingEngine.mqh"
+// DELETED: #include "Core\Engines\TradingEngine.mqh"
 #include "Core\Utils\SymbolContext.mqh"
 #include "Core\Strategy\StrategyWrapper.mqh"
-#include "IndicatorManager.mqh"
+// AUDIT FIX: Removed duplicate #include "IndicatorManager.mqh" (already included at line 68)
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\TransformerBrain.mqh"
 #include "AIModules\EnsembleMetaLearner.mqh"
@@ -103,13 +104,14 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 #include "Strategies\StrategyCandlestick.mqh"
 
 // Advanced AI Modules
-#include "AIModules\GeneticOptimizer.mqh"
+// DELETED: #include "AIModules\GeneticOptimizer.mqh"
 
 // Advanced Signal Validation and Position Management
 #include "Core\Signals\AdvancedSignalValidator.mqh"
 #include "Core\Trading\AdvancedPositionManager.mqh"
 #include "Core\Strategy\AIStrategyAdapter.mqh"
 #include "Core\Visualization\VisualDashboard.mqh"
+#include "Core\Engines\AIEngine.mqh" // Added for AI Adaptation
 
 //+------------------------------------------------------------------+
 //| Forward declarations
@@ -143,6 +145,8 @@ CPortfolioRiskManager portfolioRisk;
 CPerformanceAnalytics performanceAnalytics;
 CAdaptiveRiskManager adaptiveRisk;
 CAIPerformanceFeedback aiFeedback;
+// CAIStrategyOrchestrator aiOrchestrator; // Already declared? Check global scope.
+// Using global aiOrchestrator
 CAIStrategyOrchestrator aiOrchestrator;
 CUtilities utilities;
 
@@ -154,14 +158,14 @@ CEnsembleMetaLearner ensembleLearner;
 CNeuralNetworkStrategy* neuralNetStrategy = NULL;
 CPositionSizer positionSizer;
 CMarketAnalysis marketAnalysis;
-CAIIntegrationHub integrationHub;
+// DELETED: CAIIntegrationHub integrationHub;
 CEnhancedRiskManager enhancedRiskManager;
 CInstrumentRegistry instrumentRegistry;
 
 CTradeManager tradeManager;
 
 
-CTradingEngine tradingEngine; // New Trading Engine
+// REMOVED: CTradingEngine tradingEngine; // Dead code removal
 CEnterpriseStrategyManager* g_enterpriseManager = NULL; // Enterprise Strategy Manager
 CAdvancedSignalValidator* g_signalValidator = NULL; // Advanced Signal Validator
 CAdvancedPositionManager* g_positionManager = NULL; // Advanced Position Manager
@@ -213,15 +217,7 @@ double AccountRiskMax = 10.0;
 double DrawdownReduceThreshold = 5.0;
 double CorrelationThreshold = 0.7;
 
-double InputToPercent(const double value)
-{
-    return (value > 1.0 ? value / 100.0 : value);
-}
 
-bool IsNullOrEmpty(const string &text)
-{
-    return (text == NULL || text == "");
-}
 
 //--- Market state tracking
 ENUM_MARKET_REGIME currentRegime = MARKET_REGIME_UNKNOWN;
@@ -247,55 +243,13 @@ bool isNewBar = false;
 //+------------------------------------------------------------------+
 //| Helper: Initialize AI systems                                    |
 //+------------------------------------------------------------------+
-bool InitializeAISystems()
-{
-    Print("[MULTI-STRATEGY-EA] Initializing AI systems");
-
-    if(!aiNextGenBrain.Initialize(Symbol(), Period()))
-    {
-        Print("[MULTI-STRATEGY-EA] Failed to initialize NextGen AI brain");
-        return false;
-    }
-
-    if(!transformerBrain.Initialize())
-    {
-        Print("[MULTI-STRATEGY-EA] Failed to initialize transformer brain");
-        return false;
-    }
-
-    if(!ensembleLearner.Initialize())
-    {
-        Print("[MULTI-STRATEGY-EA] Failed to initialize ensemble learner");
-        return false;
-    }
-
-    if(!integrationHub.Initialize(_Symbol, PERIOD_CURRENT))
-    {
-        Print("[MULTI-STRATEGY-EA] Failed to initialize AI integration hub");
-        return false;
-    }
-
-    Print("[MULTI-STRATEGY-EA] AI systems initialized successfully");
-    return true;
-}
-
-void DeinitializeAISystems()
-{
-    Print("[MULTI-STRATEGY-EA] Deinitializing AI systems");
-    aiNextGenBrain.Shutdown();
-    transformerBrain.Shutdown();
-    ensembleLearner.Shutdown();
-    integrationHub.Deinit();
-    Print("[MULTI-STRATEGY-EA] AI systems deinitialized");
-}
+// [DEAD CODE REMOVED] InitializeAISystems and DeinitializeAISystems
+// AI initialization strategy moved to OnInit/OnDeinit with proper gating
 
 //+------------------------------------------------------------------+
 //| Get Symbol Context Wrapper                                       |
 //+------------------------------------------------------------------+
-CSymbolContext* GetSymbolContext(string symbol)
-{
-    return tradingEngine.GetSymbolContext(symbol);
-}
+// [REMOVED] GetSymbolContext - Context management moved to CEnterpriseStrategyManager
 
 //+------------------------------------------------------------------+
 //| Update performance tracking                                      |
@@ -343,8 +297,7 @@ string GetLastErrorMessage()
 //+------------------------------------------------------------------+
 //| Helper: Get Processed Symbol Count                               |
 //+------------------------------------------------------------------+
-int g_processedSymbolCount = 0;
-int GetProcessedSymbolCount() { return g_processedSymbolCount; }
+// [REMOVED] GetProcessedSymbolCount helper
 
 //+------------------------------------------------------------------+
 //| Helper: Count EA Positions (by magic number)                     |
@@ -367,35 +320,7 @@ int GetEAPositionCount()
 //+------------------------------------------------------------------+
 //| Robust Symbol Iteration                                          |
 //+------------------------------------------------------------------+
-void ProcessAllSymbols() {
-    string symbols[];
-    StringSplit(InpSymbolsToTrade, ',', symbols);
-    g_processedSymbolCount = 0;
-
-    for(int i = 0; i < ArraySize(symbols); i++) {
-        string currentSymbol = symbols[i];
-        StringTrimLeft(currentSymbol);
-        StringTrimRight(currentSymbol);
-
-        if(currentSymbol == "") continue;
-
-        // Skip if symbol not available
-        if(!SymbolInfoInteger(currentSymbol, SYMBOL_TRADE_MODE)) {
-            // Print("[SKIP] Symbol not available: ", currentSymbol);
-            continue; // CRITICAL: Continue to next symbol
-        }
-
-        CSymbolContext* ctx = tradingEngine.GetSymbolContext(currentSymbol);
-        if(ctx == NULL) {
-            // Print("[WARNING] Context missing for: ", currentSymbol);
-            continue;
-        }
-
-        // Process symbol with error isolation
-        tradingEngine.ProcessSymbol(ctx);
-        g_processedSymbolCount++;
-    }
-}
+// [REMOVED] ProcessAllSymbols - Logic consolidated into ProcessTradingLogic and EnterpriseManager
 
 //+------------------------------------------------------------------+
 //| Expert Advisor Initialization                                    |
@@ -444,35 +369,36 @@ int OnInit()
     Print("[ACCOUNT] Equity: ", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2));
     Print("[ACCOUNT] Free Margin: ", DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2));
 
-    // Initialize AI components first
-    Print("[AI] Initializing AI subsystems...");
-
-    if(!aiNextGenBrain.Initialize(Symbol(), Period()))
+    // AUDIT FIX: Gate AI subsystem initialization behind InpEnableAIMode
+    if(InpEnableAIMode)
     {
-        Print("[ERROR] Failed to initialize NextGen AI Brain");
-        return INIT_FAILED;
-    }
+        Print("[AI] Initializing AI subsystems...");
 
-    if(!transformerBrain.Initialize())
+        if(!aiNextGenBrain.Initialize(Symbol(), Period()))
+        {
+            Print("[ERROR] Failed to initialize NextGen AI Brain");
+            return INIT_FAILED;
+        }
+
+        if(!transformerBrain.Initialize())
+        {
+            Print("[ERROR] Failed to initialize Transformer Brain");
+            return INIT_FAILED;
+        }
+
+        if(!ensembleLearner.Initialize())
+        {
+            Print("[ERROR] Failed to initialize Ensemble Learner");
+            return INIT_FAILED;
+        }
+
+        // AI Subsystems initialized
+        Print("[AI] All AI subsystems initialized successfully");
+    }
+    else
     {
-        Print("[ERROR] Failed to initialize Transformer Brain");
-        return INIT_FAILED;
+        Print("[AI] AI Mode disabled — skipping AI subsystem initialization");
     }
-
-    if(!ensembleLearner.Initialize())
-    {
-        Print("[ERROR] Failed to initialize Ensemble Learner");
-        return INIT_FAILED;
-    }
-
-    // Initialize AI Integration Hub for main symbol
-    if(!integrationHub.Initialize(Symbol(), Period()))
-    {
-        Print("[ERROR] Failed to initialize AI Integration Hub");
-        return INIT_FAILED;
-    }
-
-    Print("[AI] All AI subsystems initialized successfully");
 
     // Initialize AIEngine with orchestrator
     if(g_AIEngine == NULL)
@@ -484,6 +410,34 @@ int OnInit()
     aiConfig.adaptationInterval = 5;
     aiConfig.minConfidenceThreshold = 0.6;
 
+    // Initialize Enhanced Risk Manager
+    if(InpUseEnhancedRisk)
+    {
+        SEnhancedRiskConfig riskConfig;
+        riskConfig.enabled = true;
+        riskConfig.base_risk_per_trade = InpMaxRiskPerTrade;   // Now 2.0 (percentage)
+        riskConfig.max_risk_per_trade = InpMaxRiskPerTrade * 1.5;
+        riskConfig.min_risk_per_trade = 0.5;
+        riskConfig.max_daily_risk = InpMaxDailyRisk;
+        riskConfig.max_weekly_risk = InpMaxDailyRisk * 3.0;
+        riskConfig.max_monthly_risk = InpMaxDailyRisk * 10.0;
+        riskConfig.max_drawdown_threshold = InpMaxDrawdown;
+        riskConfig.recovery_mode_multiplier = 0.5;
+        riskConfig.adaptive_risk_adjustment = true;
+        riskConfig.volatility_adjustment = true;
+        riskConfig.correlation_adjustment = true;
+        riskConfig.max_active_positions = InpMaxPositionsTotal;
+        
+        if(!enhancedRiskManager.Initialize(riskConfig, AccountInfoDouble(ACCOUNT_EQUITY)))
+        {
+            Print("[ERROR] Failed to initialize Enhanced Risk Manager");
+        }
+        else
+        {
+            Print("[INIT] Enhanced Risk Manager initialized — Unit: PERCENTAGE (0-100)");
+        }
+    }
+    
     if(g_AIEngine != NULL)
     {
         if(!g_AIEngine.Initialize(&aiOrchestrator, aiConfig))
@@ -496,6 +450,59 @@ int OnInit()
         }
     }
 
+    // AUDIT FIX: Initialize PositionSizer BEFORE passing to EnterpriseManager
+    SPositionSizingParams sizingParams;
+    sizingParams.sizingMode       = POSITION_SIZE_RISK_PERCENT;
+    sizingParams.fixedLotSize     = InpLotSize;
+    sizingParams.riskPercent      = InpMaxRiskPerTrade;         // Now using consistent 0-100 scale (e.g., 2.0)
+    sizingParams.atrPeriod        = 14;
+    sizingParams.atrMultiplier    = 1.5;
+    sizingParams.maxLotSize       = MAX_LOT_SIZE;
+    sizingParams.minLotSize       = MIN_LOT_SIZE;
+    sizingParams.correlationAdjustment  = 1.0;
+    sizingParams.useVolatilityAdjustment = true;
+    sizingParams.useCorrelationAdjustment = false;
+    if(!positionSizer.SetParameters(sizingParams))
+    {
+        Print("[CRITICAL] PositionSizer initialization FAILED — will use min lot fallback!");
+    }
+    else
+    {
+        Print("[INIT] PositionSizer initialized — Mode: RISK_PERCENT, Risk: ",
+              DoubleToString(sizingParams.riskPercent, 2), "%");
+    }
+
+    // Initialize AI Engine for Adaptation
+    if(InpEnableAIMode)
+    {
+        if(g_AIEngine == NULL) g_AIEngine = new CAIEngine();
+        
+        // Initialize with the GLOBAL orchestrator so they share the same brain
+        SAIAdaptiveConfig adaptiveConfig;
+        adaptiveConfig.enabled = true;
+        adaptiveConfig.learningRate = 0.1;
+        adaptiveConfig.adaptationInterval = 1; // Adapt every bar
+        adaptiveConfig.minConfidenceThreshold = InpAIConfidenceThreshold;
+
+        if(g_AIEngine.Initialize(&aiOrchestrator, adaptiveConfig))
+        {
+            Print("[INIT] AI Engine initialized in ADAPTIVE mode");
+        }
+        else
+        {
+            Print("[ERROR] Failed to initialize AI Engine");
+        }
+    }
+
+    // AUDIT FIX: Initialize Risk Gate
+    // CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManager, maxRiskPerTrade, maxPortfolioRisk, correlationThreshold)
+    if(!riskGate.Initialize(&portfolioRisk, InpMaxRiskPerTrade, InpMaxPortfolioRisk, 0.7))
+    {
+        Print("[CRITICAL] RiskValidationGate failed to initialize!");
+        return INIT_FAILED;
+    }
+    Print("[INIT] RiskValidationGate initialized");
+
     // Initialize Enterprise Strategy Manager (Always Enabled)
     Print("[ENTERPRISE] Initializing Enterprise Strategy Manager...");
 
@@ -503,8 +510,11 @@ int OnInit()
     if(g_enterpriseManager != NULL)
     {
         // Initialize manager with CRITICAL components
+        // Initialize manager with CRITICAL components and INJECTED Orchestrator
         g_enterpriseManager.Initialize(Symbol(), Period(), InpUseOrchestrator, InpUseSignalPipeline,
-                                      &tradeManager, &positionSizer);
+                                      &tradeManager, &positionSizer, &aiOrchestrator);
+
+        // Configure pipeline filters
 
         // Configure pipeline filters
         if(InpUseSignalPipeline)
@@ -544,14 +554,8 @@ int OnInit()
 
         g_enterpriseManager.AutoRegisterStrategies(strategyFlags);
 
-        // Manual Registration of AI Adapter
-        if(InpEnableAIMode && neuralNetStrategy != NULL)
-        {
-           Print("[ENTERPRISE] Registering Neural Network AI Adapter...");
-           // High weight for AI to influence consensus
-           double aiWeight = InpAIWeightMultiplier > 0 ? InpAIWeightMultiplier : 3.0; 
-           g_enterpriseManager.RegisterStrategy(new CAIStrategyAdapter(neuralNetStrategy), "Neural Network AI", true, aiWeight);
-        }
+        // AUDIT FIX: NN AI Adapter registration moved to AFTER neuralNetStrategy creation (see line ~680)
+        // Previously registered here where neuralNetStrategy was always NULL
 
         Print("[ENTERPRISE] Manager initialized with ", g_enterpriseManager.GetActiveStrategyCount(), " active strategies");
 
@@ -665,20 +669,22 @@ int OnInit()
         }
         Print("[AI-MODE] AI Mode enabled | NN: ", InpEnableNeuralNetwork, " | Transformer: ", InpEnableTransformer, 
               " | Ensemble: ", InpEnableEnsemble, " | Threshold: ", InpAIConfidenceThreshold);
+
+        // AUDIT FIX: Register NN strategy AFTER successful creation (was previously at line ~548 before creation)
+        if(neuralNetStrategy != NULL && g_enterpriseManager != NULL)
+        {
+            Print("[ENTERPRISE] Registering Neural Network AI Adapter (post-init)...");
+            double aiWeight = InpAIWeightMultiplier > 0 ? InpAIWeightMultiplier : 3.0;
+            g_enterpriseManager.RegisterStrategy(new CAIStrategyAdapter(neuralNetStrategy), "Neural Network AI", true, aiWeight);
+        }
     }
     else if(InpEnableAIMode)
     {
         Print("[AI-MODE] AI Mode enabled but Neural Network disabled");
     }
 
-    // Initialize Trading Engine
-    if(!tradingEngine.Initialize(&tradeManager, &positionSizer, &aiOrchestrator, &instrumentRegistry,
-                                &integrationHub, &aiNextGenBrain, &transformerBrain,
-                                &ensembleLearner, &performanceAnalytics))
-    {
-        Print("[ERROR] Failed to initialize Trading Engine");
-        return INIT_FAILED;
-    }
+    // Trading Engine Removed - Unified under CTradeManager and CAdvancedPositionManager
+    // if(!tradingEngine.Initialize(...)) { ... }
 
     // Final system initialization
     systemInitialized = true;
@@ -710,6 +716,12 @@ void OnDeinit(const int reason)
     {
         delete g_enterpriseManager;
         g_enterpriseManager = NULL;
+    }
+    
+    if(g_AIEngine != NULL)
+    {
+        delete g_AIEngine;
+        g_AIEngine = NULL;
     }
     
     if(g_signalValidator != NULL)
@@ -808,14 +820,16 @@ void ProcessTradingLogic(bool fromTimer)
     {
         PrintFormat("[DEBUG-PROCESS] Call #%d - EA is processing normally (Source: %s)", callCount, fromTimer ? "TIMER" : "TICK");
         Print("[DEBUG-PROCESS] Call #", callCount, " Time: ", TimeCurrent());
-        Print("[DEBUG-STATUS] Current symbol: ", _Symbol, " Symbols processed: ", GetProcessedSymbolCount());
+        Print("[DEBUG-STATUS] Current symbol: ", _Symbol);
 
         // Show Enterprise Manager status
-        // Show Enterprise Manager status
+        int activeStrats = 0;
+        int eaPositions = 0;
+
         if(g_enterpriseManager != NULL)
         {
-            int activeStrats = g_enterpriseManager.GetActiveStrategyCount();
-            int eaPositions = GetEAPositionCount();  // Count only THIS EA's positions
+            activeStrats = g_enterpriseManager.GetActiveStrategyCount();
+            eaPositions = GetEAPositionCount();  // Count only THIS EA's positions
             int cooldownSecs = g_lastTradeTime > 0 ? (int)(TimeCurrent() - g_lastTradeTime) : 0;
             Print("[ENTERPRISE-STATUS] Active strategies: ", activeStrats, " | Cooldown: ",
                   cooldownSecs, "s / ", InpMinSecondsBetweenTrades, "s");
@@ -825,9 +839,7 @@ void ProcessTradingLogic(bool fromTimer)
         }
         
         // --- Update Dashboard ---
-        int activeStrats = (g_enterpriseManager != NULL) ? g_enterpriseManager.GetActiveStrategyCount() : 0;
-        int eaPos = GetEAPositionCount();
-        g_dashboard.Update(activeStrats, eaPos, accountBalance, accountEquity, &aiNextGenBrain, neuralNetStrategy);
+        g_dashboard.Update(activeStrats, eaPositions, accountBalance, accountEquity, &aiNextGenBrain, neuralNetStrategy);
     }
 
     if(!systemInitialized || !tradingEnabled)
@@ -863,7 +875,7 @@ void ProcessTradingLogic(bool fromTimer)
         peakEquity = currentEquity;
 
     if(peakEquity > 0)
-        currentDrawdown = (peakEquity - currentEquity) / peakEquity;
+        currentDrawdown = ((peakEquity - currentEquity) / peakEquity) * 100.0; // Standardized to 0-100 scale
 
     // CRITICAL FIX: New bar detection for zone scanning and chart drawings
     static datetime lastBarTimeLocal = 0;
@@ -887,6 +899,13 @@ void ProcessTradingLogic(bool fromTimer)
                 {
                     g_enterpriseManager.OnNewBar(g_activePairs[pairIdx], (ENUM_TIMEFRAMES)Period());
                 }
+            }
+
+            // TRIGGER AI ADAPTATION
+            if(InpEnableAIMode && g_AIEngine != NULL)
+            {
+                g_AIEngine.ProcessAdaptation();
+                // Print("[AI] Adaptation cycle processed"); // Uncomment for verbose debug
             }
 
             if(callCount % 100 == 0)
@@ -917,10 +936,19 @@ void ProcessTradingLogic(bool fromTimer)
             return;
         }
 
-        // Loop through all configured trading symbols
-        for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
+        // CRITICAL AUDIT FIX: Restrict trading to the current chart symbol ONLY.
+        // The previous loop over g_activePairs caused strategies (which are bound to _Symbol)
+        // to be evaluated against other symbols, leading to invalid signals (e.g. EURUSD logic applied to GBPUSD).
+        // Until strategies are instantiated per-symbol, we must strictly limit execution to _Symbol.
+        
+        string currentSymbol = _Symbol;
+        
+        // We simulate a single-iteration loop for the chart symbol to keep the logic structure similar
+        // independent of the g_activePairs list for now.
+        for(int symIdx = 0; symIdx < 1; symIdx++)
         {
-            string currentSymbol = g_activePairs[symIdx];
+            // string currentSymbol = g_activePairs[symIdx]; // DISABLED
+
 
             // Get signal with confluence tracking (per-symbol analysis)
             double confidence = 0;
@@ -1033,13 +1061,33 @@ void ProcessTradingLogic(bool fromTimer)
 
                     double proposedRisk = InpMaxRiskPerTrade; // Pass decimal (0.02), not dollar amount
 
-                    if(enhancedRiskManager.IsTradeAllowed(proposedRisk, orderType, tickTime))
+                    // AUDIT FIX: Use RiskValidationGate for comprehensive checks
+                    STradeValidationRequest tradeReq;
+                    tradeReq.symbol = currentSymbol;
+                    tradeReq.orderType = orderType;
+                    tradeReq.lotSize = 0.0; // Lot size not known yet, validation gate will validate prelim checks
+                    tradeReq.stopLossPips = stopLossPips;
+                    tradeReq.takeProfitPips = takeProfitPips;
+                    tradeReq.confidence = confidence;
+                    tradeReq.strategy = "Enterprise AI";
+                    tradeReq.reasoning = "Orchestrator consensus signal";
+                    
+                    // Pre-check risk with 0.01 lot to validate trade parameters first
+                    tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
+                    
+                    SValidationResult riskResult = riskGate.ValidateTradeRequest(tradeReq);
+                    
+                    if(riskResult.approved && enhancedRiskManager.IsTradeAllowed(proposedRisk, orderType, tickTime))
                     {
                         // Calculate optimal lot size
                         double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, confidence);
 
-                        // Validate the lot size
-                        if(lotSize > 0)
+                        // Update request with actual lot size and re-validate
+                        tradeReq.lotSize = lotSize;
+                        riskResult = riskGate.ValidateTradeRequest(tradeReq);
+                        
+                        // Validate the lot size and final risk approval
+                        if(lotSize > 0 && riskResult.approved)
                         {
                             // Calculate SL/TP prices
                             double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
@@ -1125,7 +1173,8 @@ void ProcessTradingLogic(bool fromTimer)
         return;
     }
 
-    // Collect market data for AI analysis
+    // Collect market data for AI analysis using EnhancedRiskManager stats
+    SRiskStats riskStats = enhancedRiskManager.GetRiskStatistics();
     double globalMarketData[20];
     globalMarketData[0] = currentEquity;
     globalMarketData[1] = accountBalance;
@@ -1133,54 +1182,18 @@ void ProcessTradingLogic(bool fromTimer)
     globalMarketData[3] = (double)PositionsTotal();
     globalMarketData[4] = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
     globalMarketData[5] = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-    globalMarketData[6] = dailyRiskUsed;
-    globalMarketData[7] = totalProfit;
-    globalMarketData[8] = totalLoss;
-    globalMarketData[9] = (double)winningTrades;
-    globalMarketData[10] = (double)losingTrades;
-    globalMarketData[11] = maxDrawdown;
-    globalMarketData[12] = 1.0;  // recoveryMultiplier removed
-    globalMarketData[13] = (double)totalTrades;
+    globalMarketData[6] = riskStats.current_drawdown;
+    globalMarketData[7] = riskStats.total_profit;
+    globalMarketData[8] = riskStats.total_loss;
+    globalMarketData[9] = (double)riskStats.winning_trades;
+    globalMarketData[10] = (double)riskStats.losing_trades;
+    globalMarketData[11] = riskStats.max_drawdown;
+    globalMarketData[12] = (double)riskStats.win_rate;
+    globalMarketData[13] = (double)riskStats.total_trades;
 
-    // Get global AI market assessment
-    string aiReasoning = "";
-    double globalAIPrediction = integrationHub.GetAIPrediction(globalMarketData, 14, aiReasoning);
-
-    // Adjust trading aggressiveness based on AI
-    // Note: If AI is disabled, GetAIPrediction returns 0.0 - treat this as neutral
-    if(globalAIPrediction > 0.7)
-    {
-        currentRiskPerTrade = InpMaxRiskPerTrade * 1.2; // Increase risk in favorable conditions
-        Print("[AI-GLOBAL] Market conditions favorable - Risk increased to ", NormalizeDouble(currentRiskPerTrade * 100, 2), "%");
-    }
-    else if(globalAIPrediction > 0.0 && globalAIPrediction < 0.3)
-    {
-        // Only reduce risk if AI is active AND predicting unfavorable conditions
-        // If AI returns 0.0 (disabled), skip this and use default risk
-        currentRiskPerTrade = InpMaxRiskPerTrade * 0.5; // Reduce risk in unfavorable conditions
-        Print("[AI-GLOBAL] Market conditions unfavorable - Risk reduced to ", NormalizeDouble(currentRiskPerTrade * 100, 2), "%");
-    }
-    else
-    {
-        // Use default risk for neutral conditions or when AI is disabled (0.0)
-        currentRiskPerTrade = InpMaxRiskPerTrade;
-        if(globalAIPrediction == 0.0)
-        {
-            // Only log once that AI is disabled to avoid spam
-            static bool aiDisabledWarningShown = false;
-            if(!aiDisabledWarningShown)
-            {
-                Print("[AI-GLOBAL] AI systems disabled - Using default risk parameters");
-                aiDisabledWarningShown = true;
-            }
-        }
-    }
-
-    // Process trading logic
-    ProcessAllSymbols();
-
-    // Manage open positions via Trading Engine
-    tradingEngine.ManageOpenPositions();
+    // AI Market Assessment (Heuristic IntegrationHub removed)
+    double globalAIPrediction = 0.0;
+    string aiReasoning = "AI Orchestrator Active";
 
     // Update performance tracking
     UpdatePerformanceTracking();
@@ -1221,3 +1234,17 @@ void ProcessTradingLogic(bool fromTimer)
 
     Comment(status);
 }
+//+------------------------------------------------------------------+
+//| Trade Transaction Event Handler                                  |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction& trans,
+                        const MqlTradeRequest& request,
+                        const MqlTradeResult& result)
+{
+    // Forward trade events to Enterprise Manager for AI feedback
+    if(g_enterpriseManager != NULL)
+    {
+        g_enterpriseManager.OnTradeTransaction(trans, request, result);
+    }
+}
+

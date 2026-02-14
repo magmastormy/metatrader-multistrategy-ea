@@ -78,6 +78,7 @@ private:
     
     bool m_initialized;
     bool m_useOrchestrator;
+    bool m_ownsOrchestrator;  // New flag to track ownership
     bool m_usePipeline;
     int  m_minQuorum;       // Minimum number of strategies that must agree
     
@@ -93,7 +94,8 @@ public:
     // Initialization
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
                    bool useOrchestrator = true, bool usePipeline = true,
-                   CTradeManager* tradeManagerPtr = NULL, CPositionSizer* positionSizerPtr = NULL);
+                   CTradeManager* tradeManagerPtr = NULL, CPositionSizer* positionSizerPtr = NULL,
+                   CAIStrategyOrchestrator* orchestratorPtr = NULL);
     
     // Strategy management
     bool RegisterStrategy(IStrategy* strategy, const string name, 
@@ -126,6 +128,9 @@ public:
     // New bar processing - CRITICAL for zone scanning and drawing
     void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
     
+    // Trade Feedback - Wires trade results to AI Orchestrator
+    void OnTradeTransaction(const MqlTradeTransaction& trans, const MqlTradeRequest& request, const MqlTradeResult& result);
+    
     // Auto-registration
     void AutoRegisterStrategies(bool &enabledFlags[]);
 };
@@ -141,6 +146,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_strategyCount(0),
     m_initialized(false),
     m_useOrchestrator(true),
+    m_ownsOrchestrator(true), // Default to owning it unless injected
     m_usePipeline(true),
     m_minQuorum(1),         // Default to 1 for Solo Mode support (was 2)
     m_totalSignals(0),
@@ -171,7 +177,7 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
         m_pipeline = NULL;
     }
     
-    if(m_orchestrator != NULL)
+    if(m_orchestrator != NULL && m_ownsOrchestrator)
     {
         delete m_orchestrator;
         m_orchestrator = NULL;
@@ -183,7 +189,8 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
 //+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            bool useOrchestrator, bool usePipeline,
-                                           CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr)
+                                           CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
+                                           CAIStrategyOrchestrator* orchestratorPtr)
 {
     m_symbol = symbol;
     m_baseTimeframe = timeframe;
@@ -206,10 +213,25 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     // Initialize orchestrator
     if(m_useOrchestrator)
     {
-        m_orchestrator = new CAIStrategyOrchestrator();
+        if(orchestratorPtr != NULL)
+        {
+            // Use injected orchestrator
+            m_orchestrator = orchestratorPtr;
+            m_ownsOrchestrator = false;
+            Print("[ENTERPRISE] Using injected AI Strategy Orchestrator");
+        }
+        else
+        {
+            // Create internal orchestrator (legacy behavior)
+            m_orchestrator = new CAIStrategyOrchestrator();
+            m_ownsOrchestrator = true;
+            Print("[ENTERPRISE] Created internal AI Strategy Orchestrator");
+        }
+
         if(m_orchestrator != NULL)
         {
-            m_orchestrator.Initialize(0.4, 5);
+            if(m_ownsOrchestrator) // Only initialize if we own it, otherwise assume it's initialized by owner
+                m_orchestrator.Initialize(0.4, 5);
         }
     }
     
@@ -382,6 +404,17 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         return TRADE_SIGNAL_NONE;
     }
     
+    // AUDIT FIX: Use orchestrator if enabled (matching GetConsensusSignalWithConfluence behavior)
+    if(m_useOrchestrator && m_orchestrator != NULL)
+    {
+        string originalSymbol = m_symbol;
+        m_symbol = symbol;
+        ENUM_TRADE_SIGNAL signal = GetOrchestratedSignal(confidence);
+        confluence = m_strategyCount / 2;  // Rough estimate from orchestrator
+        m_symbol = originalSymbol;
+        return signal;
+    }
+    
     // Store original symbol for restoration
     string originalSymbol = m_symbol;
     
@@ -469,7 +502,17 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const 
         return TRADE_SIGNAL_NONE;
     }
     
-    // Store original symbol for restoration
+    // CRITICAL FIX: Prevent cross-symbol signal contamination
+    // Strategies are bound to m_symbol (chart symbol). Requesting a signal for a different symbol
+    // using the same strategy instances triggers "cross-talk" (e.g. EURUSD RSI trading GBPUSD).
+    if(symbol != m_symbol)
+    {
+        PrintFormat("[CRITICAL] Cross-symbol request rejected in EnterpriseManager. Requested: %s, Bound: %s", symbol, m_symbol);
+        confidence = 0;
+        return TRADE_SIGNAL_NONE;
+    }
+
+    // Store original symbol for restoration (kept for safety, though we blocked mismatch above)
     string originalSymbol = m_symbol;
     
     // Temporarily switch context to target symbol
@@ -709,8 +752,13 @@ void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settin
 {
     if(m_pipeline != NULL)
     {
-        // Pipeline filtering configuration (simplified stub)
-        Print("Pipeline filters configured");
+        // AUDIT FIX: Actually apply the filter settings to the pipeline
+        m_pipeline.Initialize(settings);
+        Print("[EnterpriseStrategyManager] Pipeline filters applied: TrendFilter=",
+              settings.enableTrendFilter, " MinConf=", settings.minConfidence,
+              " MaxVol=", settings.maxVolatility,
+              " StructureFilter=", settings.enableStructureFilter,
+              " LiquidityFilter=", settings.enableLiquidityFilter);
     }
 }
 
@@ -741,6 +789,46 @@ void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES t
         if(m_strategies[i].enabled && m_strategies[i].strategy != NULL)
         {
             m_strategies[i].strategy.OnNewBar(symbol, timeframe);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| OnTradeTransaction - Handle trade events for AI feedback        |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& trans,
+                                                   const MqlTradeRequest& request,
+                                                   const MqlTradeResult& result)
+{
+    // Check for transaction adding a deal (trade execution)
+    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+    {
+        long dealTicket = trans.deal;
+        if(HistoryDealSelect(dealTicket))
+        {
+            ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+            
+            // We care about exits (deals that close a position) to meaningful profit/loss
+            if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY)
+            {
+                double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+                double swap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+                double commission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                double netProfit = profit + swap + commission;
+                
+                // Feed result to Orchestrator ensemble tracking
+                if(m_orchestrator != NULL)
+                {
+                    bool success = (netProfit > 0);
+                    m_orchestrator.RecordEnsembleResult(success);
+                    
+                    if(success) m_successfulSignals++;
+                    
+                    // Log for debugging
+                    PrintFormat("[EnterpriseManager] Trade Closed | Ticket: %d | Net Profit: %.2f | AI Feedback Sent: %s",
+                               dealTicket, netProfit, success ? "SUCCESS" : "FAILURE");
+                }
+            }
         }
     }
 }

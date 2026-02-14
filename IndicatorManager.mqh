@@ -98,9 +98,17 @@ int CIndicatorManager::FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_
          m_handles[i].symbol == symbol &&
          m_handles[i].timeframe == tf)
       {
-         // Compare parameters if needed
+         // AUDIT FIX: Actually compare indicator parameters to prevent returning wrong handle
          bool paramsMatch = true;
-         // Add parameter comparison logic here if needed
+         int paramCount = MathMin(ArraySize(params), 5);
+         for(int p = 0; p < paramCount; p++)
+         {
+            if(m_handles[i].parameters[p] != params[p])
+            {
+               paramsMatch = false;
+               break;
+            }
+         }
          
          if(paramsMatch)
             return m_handles[i].handle;
@@ -328,8 +336,7 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
 CIndicatorManager::~CIndicatorManager()
 {
    ReleaseAll();
-   if(CheckPointer(m_instance) == POINTER_DYNAMIC)
-      delete m_instance;
+   // AUDIT FIX: Removed 'delete m_instance' — destructor must not delete itself (double-free / UB)
    m_instance = NULL;
 }
 

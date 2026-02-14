@@ -255,19 +255,9 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
     }
     
     // Set parameters
-    if(pPortfolioRiskManager == NULL) {
-        CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate",
-                                      "Invalid portfolio risk manager", 0);
-        return false;
-    }
-    
-    // Use pointer assignment instead of copy assignment
-    m_portfolioRiskManager = pPortfolioRiskManager;
     m_maxRiskPerTrade = maxRiskPerTrade;
     m_maxPortfolioRisk = maxPortfolioRisk;
     m_correlationThreshold = correlationThreshold;
-    
-    return true;
     
     // Initialize audit logging
     if(m_auditLogging)
