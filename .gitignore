@@ -5,3 +5,5 @@ Documentation/
 CRITICAL_FIXES.mqh
 *.md
 *.txt
+!AUDIT_REPORT.md
+!RUNTIME_DECISION_GRAPH.md

@@ -116,7 +116,27 @@ public:
         DrawLabel("Separator3", "------------------------------------------------", row++, 0, clrGray);
         
         // --- Footer ---
-        DrawLabel("Footer", "System Health: [ EXCELLENT ]", row++, 0, m_statusColor);
+        string healthText = "GOOD";
+        color healthColor = clrYellow;
+        double equityRatio = (balance > 0.0) ? (equity / balance) : 1.0;
+
+        if(activeStrats <= 0 || equityRatio < 0.90)
+        {
+            healthText = "CRITICAL";
+            healthColor = clrRed;
+        }
+        else if(equityRatio < 0.97)
+        {
+            healthText = "CAUTION";
+            healthColor = clrOrange;
+        }
+        else if(nn != NULL && brain != NULL)
+        {
+            healthText = "EXCELLENT";
+            healthColor = clrLime;
+        }
+
+        DrawLabel("Footer", "System Health: [ " + healthText + " ]", row++, 0, healthColor);
         
         ChartRedraw();
     }

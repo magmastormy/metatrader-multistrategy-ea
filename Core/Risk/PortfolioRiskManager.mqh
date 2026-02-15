@@ -40,7 +40,7 @@ public:
     
     // Core Risk Methods
     double GetPortfolioRisk();
-    bool   IsTradeAllowed(string symbol, double lotSize);
+    bool   IsTradeAllowed(string symbol, double lotSize, double stopLossPoints = 0.0);
     bool   CheckCorrelationLimits(string symbol);
     bool   IsEmergencyMode() const { return m_emergencyMode; }
     void   SetEmergencyMode(bool state) { m_emergencyMode = state; }
@@ -48,7 +48,9 @@ public:
 private:
     double GetPositionRisk(ulong ticket);
     void   UpdateCurrentRisk();
-    double CalculatePotentialTradeRisk(string symbol, double lotSize);
+    double CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints = 0.0);
+    double CalculateSymbolCorrelation(const string symbol1, const string symbol2);
+    int    GetPositionsOnSymbol(const string symbol);
 };
 
 //+------------------------------------------------------------------+
@@ -102,8 +104,14 @@ double CPortfolioRiskManager::GetPortfolioRisk()
 //+------------------------------------------------------------------+
 //| Check if a new trade is allowed                                  |
 //+------------------------------------------------------------------+
-bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize)
+bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double stopLossPoints)
 {
+    if(symbol == "" || lotSize <= 0.0)
+    {
+        Print("[PortfolioRisk] BLOCKED: Invalid trade request parameters");
+        return false;
+    }
+
     if(m_emergencyMode)
     {
         Print("[PortfolioRisk] BLOCKED: Emergency Mode Active");
@@ -121,13 +129,16 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize)
     }
     
     // Check estimated impact
-    double estimatedNewRisk = CalculatePotentialTradeRisk(symbol, lotSize);
+    double estimatedNewRisk = CalculatePotentialTradeRisk(symbol, lotSize, stopLossPoints);
     if(m_currentTotalRisk + estimatedNewRisk > m_maxPortfolioRisk * 1.1) // Allow small buffer
     {
         PrintFormat("[PortfolioRisk] BLOCKED: New Total %.2f%% > Max %.2f%%", 
                    m_currentTotalRisk + estimatedNewRisk, m_maxPortfolioRisk);
         return false;
     }
+
+    if(!CheckCorrelationLimits(symbol))
+        return false;
     
     return true;
 }
@@ -137,21 +148,43 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize)
 //+------------------------------------------------------------------+
 bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
 {
-    // Simplified correlation check
-    int positionsOnSymbol = 0;
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        if(PositionSelectByTicket(PositionGetTicket(i)))
-        {
-            if(PositionGetString(POSITION_SYMBOL) == symbol)
-                positionsOnSymbol++;
-        }
-    }
+    int positionsOnSymbol = GetPositionsOnSymbol(symbol);
     
     if(positionsOnSymbol >= 2) // Hard limit: Max 2 positions per symbol
     {
         Print("[PortfolioRisk] BLOCKED: Max positions limit (2) reached for ", symbol);
         return false;
+    }
+
+    if(m_maxCorrelation > 0.0)
+    {
+        double maxAbsCorrelation = 0.0;
+        string mostCorrelatedSymbol = "";
+
+        for(int i = 0; i < PositionsTotal(); i++)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0 || !PositionSelectByTicket(ticket))
+                continue;
+
+            string existingSymbol = PositionGetString(POSITION_SYMBOL);
+            if(existingSymbol == symbol)
+                continue;
+
+            double correlation = MathAbs(CalculateSymbolCorrelation(symbol, existingSymbol));
+            if(correlation > maxAbsCorrelation)
+            {
+                maxAbsCorrelation = correlation;
+                mostCorrelatedSymbol = existingSymbol;
+            }
+        }
+
+        if(maxAbsCorrelation > m_maxCorrelation)
+        {
+            PrintFormat("[PortfolioRisk] BLOCKED: Correlation %.2f > Max %.2f (%s vs %s)",
+                       maxAbsCorrelation, m_maxCorrelation, symbol, mostCorrelatedSymbol);
+            return false;
+        }
     }
     
     return true;
@@ -163,9 +196,9 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
 void CPortfolioRiskManager::UpdateCurrentRisk()
 {
     double totalRiskDollar = 0.0;
-    double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double accountBalanceLocal = AccountInfoDouble(ACCOUNT_BALANCE);
     
-    if(accountBalance <= 0) 
+    if(accountBalanceLocal <= 0) 
     {
         m_currentTotalRisk = 0.0;
         return;
@@ -180,7 +213,7 @@ void CPortfolioRiskManager::UpdateCurrentRisk()
         }
     }
     
-    m_currentTotalRisk = (totalRiskDollar / accountBalance) * 100.0;
+    m_currentTotalRisk = (totalRiskDollar / accountBalanceLocal) * 100.0;
 }
 
 //+------------------------------------------------------------------+
@@ -209,12 +242,110 @@ double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
 //+------------------------------------------------------------------+
 //| Approximate new trade risk                                       |
 //+------------------------------------------------------------------+
-double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double lotSize)
+double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints)
 {
+    if(lotSize <= 0.0 || symbol == "")
+        return 0.0;
+
+    double accountBalanceLocal = AccountInfoDouble(ACCOUNT_BALANCE);
+    if(accountBalanceLocal <= 0.0)
+        return 0.0;
+
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-    // Assume 50 pip risk for estimation if exact SL unknown at this stage
-    // 50 pips * tickValue * lotSize
-    return (50.0 * tickValue * lotSize) / AccountInfoDouble(ACCOUNT_BALANCE) * 100.0;
+    double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+    if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
+        return 0.0;
+
+    double effectiveStopPoints = stopLossPoints;
+
+    // If caller did not provide stop distance, estimate from ATR to stay symbol-aware.
+    if(effectiveStopPoints <= 0.0)
+    {
+        int atrHandle = iATR(symbol, PERIOD_CURRENT, 14);
+        if(atrHandle != INVALID_HANDLE)
+        {
+            double atrBuffer[1];
+            if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0 && atrBuffer[0] > 0.0)
+                effectiveStopPoints = (atrBuffer[0] / point) * 1.5;
+            IndicatorRelease(atrHandle);
+        }
+    }
+
+    if(effectiveStopPoints <= 0.0)
+    {
+        int stopLevelPoints = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+        effectiveStopPoints = MathMax(100.0, (double)stopLevelPoints * 2.0);
+    }
+
+    double stopLossPriceDistance = effectiveStopPoints * point;
+    double riskPerLot = (stopLossPriceDistance / tickSize) * tickValue;
+    double totalRisk = riskPerLot * lotSize;
+    return (totalRisk / accountBalanceLocal) * 100.0;
+}
+
+double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, const string symbol2)
+{
+    if(symbol1 == "" || symbol2 == "" || symbol1 == symbol2)
+        return 0.0;
+    if(!SymbolSelect(symbol1, true) || !SymbolSelect(symbol2, true))
+        return 0.0;
+
+    const int period = 30;
+    double prices1[];
+    double prices2[];
+
+    if(CopyClose(symbol1, PERIOD_H1, 0, period, prices1) < period ||
+       CopyClose(symbol2, PERIOD_H1, 0, period, prices2) < period)
+    {
+        return 0.0;
+    }
+
+    double returns1[];
+    double returns2[];
+    ArrayResize(returns1, period - 1);
+    ArrayResize(returns2, period - 1);
+
+    for(int i = 1; i < period; i++)
+    {
+        if(prices1[i - 1] == 0.0 || prices2[i - 1] == 0.0)
+            return 0.0;
+        returns1[i - 1] = (prices1[i] - prices1[i - 1]) / prices1[i - 1];
+        returns2[i - 1] = (prices2[i] - prices2[i - 1]) / prices2[i - 1];
+    }
+
+    double sum1 = 0.0, sum2 = 0.0, sum12 = 0.0, sum1sq = 0.0, sum2sq = 0.0;
+    int n = period - 1;
+    for(int i = 0; i < n; i++)
+    {
+        sum1 += returns1[i];
+        sum2 += returns2[i];
+        sum12 += returns1[i] * returns2[i];
+        sum1sq += returns1[i] * returns1[i];
+        sum2sq += returns2[i] * returns2[i];
+    }
+
+    double numerator = n * sum12 - sum1 * sum2;
+    double denominator = MathSqrt((n * sum1sq - sum1 * sum1) * (n * sum2sq - sum2 * sum2));
+    if(denominator <= 0.0)
+        return 0.0;
+
+    return numerator / denominator;
+}
+
+int CPortfolioRiskManager::GetPositionsOnSymbol(const string symbol)
+{
+    int count = 0;
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket > 0 && PositionSelectByTicket(ticket) &&
+           PositionGetString(POSITION_SYMBOL) == symbol)
+        {
+            count++;
+        }
+    }
+    return count;
 }
 
 #endif // CORE_RISK_PORTFOLIO_MANAGER_MQH

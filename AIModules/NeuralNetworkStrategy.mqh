@@ -24,6 +24,9 @@ public:
     int expectedOutput;     // 0=None, 1=Buy, 2=Sell
     double actualResult;    // Profit/loss from this trade
     datetime time;
+    bool hasResult;
+    bool linkedToTrade;
+    string predictionId;
     
     CTrainingExample()
     {
@@ -31,6 +34,9 @@ public:
         expectedOutput = 0;
         actualResult = 0.0;
         time = 0;
+        hasResult = false;
+        linkedToTrade = false;
+        predictionId = "";
     }
 };
 
@@ -59,6 +65,9 @@ private:
     // Training data
     CArrayObj m_trainingData;
     int m_minTrainingExamples;
+    int m_maxTrainingExamples;
+    int m_resultMatchWindowSec;
+    int m_predictionCounter;
     
     // Symbol and timeframe
     string m_symbol;
@@ -72,12 +81,104 @@ public:
         m_epoch(0),
         m_lastLoss(0.0),
         m_minTrainingExamples(20),  // Reduced from 100 for faster startup
+        m_maxTrainingExamples(2000),
+        m_resultMatchWindowSec(86400),
+        m_predictionCounter(0),
         m_symbol(""),
         m_timeframe(PERIOD_CURRENT),
         m_initialized(false),
         m_enableOnlineTraining(true)
     {
         InitializeNetwork();
+    }
+
+    bool ReservePredictionForSignal(const ENUM_TRADE_SIGNAL signal, string &predictionId, const int maxAgeSec = 600)
+    {
+        predictionId = "";
+        if(!m_enableOnlineTraining)
+            return false;
+
+        int expectedOutput = 0;
+        if(signal == TRADE_SIGNAL_BUY)
+            expectedOutput = 1;
+        else if(signal == TRADE_SIGNAL_SELL)
+            expectedOutput = 2;
+        else
+            return false;
+
+        datetime now = TimeCurrent();
+        for(int i = m_trainingData.Total() - 1; i >= 0; i--)
+        {
+            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
+            if(example == NULL)
+                continue;
+
+            if(example.expectedOutput != expectedOutput || example.hasResult || example.linkedToTrade)
+                continue;
+
+            int ageSec = (int)(now - example.time);
+            if(ageSec < 0 || ageSec > maxAgeSec)
+                continue;
+
+            example.linkedToTrade = true;
+            predictionId = example.predictionId;
+            return (predictionId != "");
+        }
+
+        return false;
+    }
+
+    void ReleasePredictionReservation(const string predictionId)
+    {
+        if(predictionId == "")
+            return;
+
+        for(int i = m_trainingData.Total() - 1; i >= 0; i--)
+        {
+            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
+            if(example == NULL)
+                continue;
+
+            if(example.predictionId == predictionId && !example.hasResult)
+            {
+                example.linkedToTrade = false;
+                return;
+            }
+        }
+    }
+
+    bool UpdateTradeResultByPredictionId(const string predictionId, const double profitLoss)
+    {
+        if(!m_enableOnlineTraining || predictionId == "")
+            return false;
+
+        for(int i = m_trainingData.Total() - 1; i >= 0; i--)
+        {
+            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
+            if(example == NULL)
+                continue;
+
+            if(example.predictionId == predictionId)
+            {
+                if(example.hasResult)
+                    return true;
+
+                example.actualResult = profitLoss;
+                example.hasResult = true;
+                example.linkedToTrade = true;
+
+                PrintFormat("[NEURAL-NET] Updated trade result by prediction ID %s: %.2f",
+                            predictionId, profitLoss);
+
+                int completed = GetCompletedTradesCount();
+                if(completed > 0 && (completed % 20) == 0)
+                    TrainNetwork();
+
+                return true;
+            }
+        }
+
+        return false;
     }
     
     ~CNeuralNetworkStrategy()
@@ -180,49 +281,63 @@ public:
     double GetMAValue(int period, int shift, ENUM_MA_METHOD method, ENUM_APPLIED_PRICE price, int bar)
     {
         int handle = iMA(m_symbol, m_timeframe, period, shift, method, price);
-        return GetIndicatorValue(handle, 0, bar);
+        double value = GetIndicatorValue(handle, 0, bar);
+        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
+        return value;
     }
 
     // Helper for RSI value
     double GetRSIValue(int period, ENUM_APPLIED_PRICE price, int bar)
     {
         int handle = iRSI(m_symbol, m_timeframe, period, price);
-        return GetIndicatorValue(handle, 0, bar);
+        double value = GetIndicatorValue(handle, 0, bar);
+        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
+        return value;
     }
 
     // Helper for ATR value
     double GetATRValue(int period, int bar)
     {
         int handle = iATR(m_symbol, m_timeframe, period);
-        return GetIndicatorValue(handle, 0, bar);
+        double value = GetIndicatorValue(handle, 0, bar);
+        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
+        return value;
     }
 
     // Helper for ADX value
     double GetADXValue(int period, int bar)
     {
         int handle = iADX(m_symbol, m_timeframe, period);
-        return GetIndicatorValue(handle, 0, bar);
+        double value = GetIndicatorValue(handle, 0, bar);
+        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
+        return value;
     }
 
     // Helper for Bollinger Bands value
     double GetBBValue(int period, double dev, int shift, ENUM_APPLIED_PRICE price, int buffer, int bar)
     {
-        int handle = iBands(m_symbol, m_timeframe, period, dev, shift, price);
-        return GetIndicatorValue(handle, buffer, bar);
+        int handle = iBands(m_symbol, m_timeframe, period, shift, dev, price);
+        double value = GetIndicatorValue(handle, buffer, bar);
+        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
+        return value;
     }
 
     // Helper for MACD value
     double GetMACDValue(int fast, int slow, int signal, ENUM_APPLIED_PRICE price, int buffer, int bar)
     {
         int handle = iMACD(m_symbol, m_timeframe, fast, slow, signal, price);
-        return GetIndicatorValue(handle, buffer, bar);
+        double value = GetIndicatorValue(handle, buffer, bar);
+        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
+        return value;
     }
 
     // Helper for CCI value
     double GetCCIValue(int period, ENUM_APPLIED_PRICE price, int bar)
     {
         int handle = iCCI(m_symbol, m_timeframe, period, price);
-        return GetIndicatorValue(handle, 0, bar);
+        double value = GetIndicatorValue(handle, 0, bar);
+        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
+        return value;
     }
 
     // Extract 25 features from current market state
@@ -451,7 +566,19 @@ public:
             ArrayCopy(example.inputs, inputs);
             example.expectedOutput = maxIndex;
             example.time = TimeCurrent();
-            m_trainingData.Add(example);
+            example.predictionId = GeneratePredictionId();
+
+            if(m_trainingData.Total() >= m_maxTrainingExamples)
+            {
+                if(!PruneOldestTrainingExample())
+                {
+                    delete example;
+                    example = NULL;
+                }
+            }
+
+            if(example != NULL)
+                m_trainingData.Add(example);
         }
         
         PrintFormat("[NEURAL-NET] Signal: %d | Confidence: %.2f%%", maxIndex, maxProb * 100);
@@ -465,32 +592,53 @@ public:
     }
     
     // Update trade result for training
-    void UpdateTradeResult(datetime tradeTime, double profitLoss)
+    bool UpdateTradeResult(datetime tradeTime, double profitLoss)
     {
         if(!m_enableOnlineTraining)
-            return;
+            return false;
 
-        // Find the training example and update result
+        int matchedIndex = -1;
+        int bestDelta = 2147483647;
+
+        // Match the nearest pending sample generated before the trade close
         for(int i = m_trainingData.Total() - 1; i >= 0; i--)
         {
             CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example == NULL) continue;
-            
-            if(MathAbs(example.time - tradeTime) < 60)  // Within 1 minute
+            if(example == NULL || example.hasResult)
+                continue;
+
+            long delta = (long)(tradeTime - example.time);
+            if(delta < 0 || delta > m_resultMatchWindowSec)
+                continue;
+
+            if((int)delta < bestDelta)
             {
-                example.actualResult = profitLoss;
-                
-                PrintFormat("[NEURAL-NET] Updated trade result: %.2f", profitLoss);
-                
-                // Trigger training every 20 completed trades
-                if(GetCompletedTradesCount() % 20 == 0)
-                {
-                    TrainNetwork();
-                }
-                
-                break;
+                bestDelta = (int)delta;
+                matchedIndex = i;
             }
         }
+
+        if(matchedIndex < 0)
+        {
+            PrintFormat("[NEURAL-NET] No pending sample match for trade result at %s",
+                       TimeToString(tradeTime, TIME_DATE | TIME_SECONDS));
+            return false;
+        }
+
+        CTrainingExample* matched = (CTrainingExample*)m_trainingData.At(matchedIndex);
+        if(matched == NULL)
+            return false;
+
+        matched.actualResult = profitLoss;
+        matched.hasResult = true;
+        matched.linkedToTrade = true;
+        PrintFormat("[NEURAL-NET] Updated trade result: %.2f | sample-age: %ds", profitLoss, bestDelta);
+
+        int completed = GetCompletedTradesCount();
+        if(completed > 0 && (completed % 20) == 0)
+            TrainNetwork();
+
+        return true;
     }
     
     // Train network with backpropagation
@@ -502,30 +650,55 @@ public:
         if(m_trainingData.Total() < m_minTrainingExamples)
             return;
         
-        Print("[NEURAL-NET] Training network with ", m_trainingData.Total(), " examples");
+        int labeledIndices[];
+        ArrayResize(labeledIndices, 0);
+        int labeledCount = 0;
+        for(int i = 0; i < m_trainingData.Total(); i++)
+        {
+            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
+            if(ex != NULL && ex.hasResult)
+            {
+                int newSize = labeledCount + 1;
+                ArrayResize(labeledIndices, newSize);
+                labeledIndices[labeledCount] = i;
+                labeledCount = newSize;
+            }
+        }
+
+        if(labeledCount <= 0)
+        {
+            Print("[NEURAL-NET] Training skipped: no labeled examples");
+            return;
+        }
+
+        PrintFormat("[NEURAL-NET] Training with %d labeled / %d total examples",
+                    labeledCount, m_trainingData.Total());
         
         // Mini-batch training
         int batchSize = 32;
-        int batches = m_trainingData.Total() / batchSize;
+        int batches = (labeledCount + batchSize - 1) / batchSize;
         
         for(int epoch = 0; epoch < 10; epoch++)  // 10 epochs
         {
             double epochLoss = 0.0;
+            int processedSamples = 0;
             
             for(int b = 0; b < batches; b++)
             {
                 // Process one batch
-                for(int i = 0; i < batchSize; i++)
+                int start = b * batchSize;
+                int end = start + batchSize;
+                if(end > labeledCount)
+                    end = labeledCount;
+                for(int i = start; i < end; i++)
                 {
-                    int idx = b * batchSize + i;
-                    if(idx >= m_trainingData.Total())
-                        break;
+                    int idx = labeledIndices[i];
                     
                     CTrainingExample* example = (CTrainingExample*)m_trainingData.At(idx);
                     if(example == NULL) continue;
                     
                     // Only train on completed trades
-                    if(example.actualResult == 0.0)
+                    if(!example.hasResult)
                         continue;
                     
                     // Forward pass
@@ -552,13 +725,14 @@ public:
                     
                     double loss = CalculateLoss(outputs, target);
                     epochLoss += loss;
+                    processedSamples++;
                     
                     // Backward pass (simplified weight update)
                     UpdateWeights(example.inputs, outputs, target);
                 }
             }
             
-            m_lastLoss = epochLoss / (batches * batchSize);
+            m_lastLoss = (processedSamples > 0) ? (epochLoss / processedSamples) : 0.0;
             m_epoch++;
             
             PrintFormat("[NEURAL-NET] Epoch %d | Loss: %.6f", epoch, m_lastLoss);
@@ -575,7 +749,7 @@ public:
         for(int i = 0; i < m_trainingData.Total(); i++)
         {
             CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
-            if(ex != NULL && ex.actualResult != 0.0)
+            if(ex != NULL && ex.hasResult)
                 count++;
         }
         return count;
@@ -646,6 +820,45 @@ public:
     }
     
 private:
+    string GeneratePredictionId()
+    {
+        m_predictionCounter++;
+        ulong timePart = (ulong)(GetMicrosecondCount() % 1000000000);
+        int seq = m_predictionCounter % 100000;
+        return StringFormat("%09I64u%05d", timePart, seq);
+    }
+
+    bool PruneOldestTrainingExample()
+    {
+        int total = m_trainingData.Total();
+        if(total <= 0)
+            return false;
+
+        // Prefer pruning already-labeled samples first.
+        for(int i = 0; i < total; i++)
+        {
+            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
+            if(example != NULL && example.hasResult)
+                return m_trainingData.Delete(i);
+        }
+
+        // Then prune stale, unlinked unlabeled samples.
+        datetime now = TimeCurrent();
+        for(int i = 0; i < total; i++)
+        {
+            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
+            if(example == NULL)
+                continue;
+
+            int ageSec = (int)(now - example.time);
+            if(!example.linkedToTrade && !example.hasResult && ageSec > m_resultMatchWindowSec)
+                return m_trainingData.Delete(i);
+        }
+
+        // As a final fallback, drop the oldest entry.
+        return m_trainingData.Delete(0);
+    }
+
     double ReLU(double x)
     {
         return MathMax(0.0, x);

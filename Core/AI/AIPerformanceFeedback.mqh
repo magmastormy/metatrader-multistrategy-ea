@@ -135,6 +135,8 @@ private:
     int m_minPredictionsForRetraining;
     datetime m_lastRetrainingTime;
     int m_retrainingInterval; // seconds
+    int m_retrainingCount;
+    string m_lastRetrainingReason;
     
     // Performance tracking
     datetime m_lastMetricsUpdate;
@@ -211,6 +213,10 @@ private:
     
     // Validation
     bool ValidatePredictionRecord(const SAIPredictionRecord &record);
+
+    // Retraining persistence
+    void PersistRetrainingRequest(const string reason);
+    void ExportLabeledDataset(const string fileName, const int maxRows);
     
     // Logging
     void LogFeedback(const string message);
@@ -228,6 +234,8 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_minPredictionsForRetraining(50),
     m_lastRetrainingTime(0),
     m_retrainingInterval(86400), // 24 hours
+    m_retrainingCount(0),
+    m_lastRetrainingReason(""),
     m_lastMetricsUpdate(0),
     m_metricsUpdateInterval(300), // 5 minutes
     m_initialized(false)
@@ -561,15 +569,24 @@ bool CAIPerformanceFeedback::ShouldRetrain(void)
 //+------------------------------------------------------------------+
 void CAIPerformanceFeedback::TriggerRetraining(const string reason)
 {
+    if(!m_initialized)
+        return;
+
+    UpdateMetrics();
+
     m_lastRetrainingTime = TimeCurrent();
-    
-    LogFeedback("AI Model retraining triggered: " + reason);
-    
-    // Here you would call the actual retraining functions
-    // This is a placeholder for the retraining logic
-    Print("🤖 [AI-RETRAIN] Initiating AI model retraining: ", reason);
-    Print("🤖 [AI-RETRAIN] Current accuracy: ", DoubleToString(m_currentMetrics.accuracy * 100, 1), "%");
-    Print("🤖 [AI-RETRAIN] Current profitability: ", DoubleToString(m_currentMetrics.profitability, 4));
+    m_retrainingCount++;
+    m_lastRetrainingReason = reason;
+
+    PersistRetrainingRequest(reason);
+    ExportLabeledDataset("AI_Retraining_Dataset.csv", 500);
+
+    LogFeedback("AI model retraining triggered: " + reason);
+    Print("[AI-RETRAIN] Triggered #", m_retrainingCount, " | Reason: ", reason);
+    Print("[AI-RETRAIN] Metrics | Accuracy: ", DoubleToString(m_currentMetrics.accuracy * 100, 1),
+          "% | Recent Accuracy: ", DoubleToString(m_currentMetrics.recentAccuracy * 100, 1),
+          "% | Profitability: ", DoubleToString(m_currentMetrics.profitability, 4),
+          " | Sharpe: ", DoubleToString(m_currentMetrics.sharpeRatio, 3));
 }
 
 //+------------------------------------------------------------------+
@@ -799,6 +816,106 @@ void CAIPerformanceFeedback::SetRetrainingThresholds(double minAccuracy, double 
     
     LogFeedback(StringFormat("Retraining thresholds updated: Accuracy=%.2f%%, Profitability=%.4f", 
                             m_minAccuracyThreshold * 100, m_minProfitabilityThreshold));
+}
+
+//+------------------------------------------------------------------+
+//| Persist retraining request                                      |
+//+------------------------------------------------------------------+
+void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
+{
+    string cleanReason = reason;
+    StringReplace(cleanReason, ",", ";");
+    StringReplace(cleanReason, "\r", " ");
+    StringReplace(cleanReason, "\n", " ");
+
+    string fileName = "AI_Retraining_Requests.csv";
+    int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if(handle == INVALID_HANDLE)
+    {
+        LogFeedback("Failed to open retraining request log: " + fileName);
+        return;
+    }
+
+    bool writeHeader = (FileSize(handle) == 0);
+    FileSeek(handle, 0, SEEK_END);
+
+    if(writeHeader)
+    {
+        FileWriteString(handle, "timestamp,reason,total_predictions,recent_accuracy,recent_profitability,calibration_error\n");
+    }
+
+    string line = StringFormat("%s,%s,%d,%.6f,%.6f,%.6f\n",
+                               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
+                               cleanReason,
+                               m_currentMetrics.totalPredictions,
+                               m_currentMetrics.recentAccuracy,
+                               m_currentMetrics.recentProfitability,
+                               m_currentMetrics.calibrationError);
+    FileWriteString(handle, line);
+    FileClose(handle);
+}
+
+//+------------------------------------------------------------------+
+//| Export labeled dataset snapshot                                 |
+//+------------------------------------------------------------------+
+void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const int maxRows)
+{
+    int limit = MathMax(1, maxRows);
+    int recordCount = m_bufferFull ? m_maxRecords : m_currentIndex;
+    if(recordCount <= 0)
+        return;
+
+    int labeledCount = 0;
+    int startIndex = m_bufferFull ? m_currentIndex : 0;
+    for(int i = 0; i < recordCount; i++)
+    {
+        int idx = (startIndex + i) % m_maxRecords;
+        if(m_predictions[idx].outcomeTime > 0)
+            labeledCount++;
+    }
+
+    if(labeledCount <= 0)
+        return;
+
+    int skip = MathMax(0, labeledCount - limit);
+    int handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if(handle == INVALID_HANDLE)
+    {
+        LogFeedback("Failed to export labeled dataset: " + fileName);
+        return;
+    }
+
+    FileWriteString(handle, "prediction_time,outcome_time,symbol,prediction,actual_outcome,confidence,uncertainty,actual_return,prediction_correct,regime\n");
+
+    int seenLabeled = 0;
+    for(int i = 0; i < recordCount; i++)
+    {
+        int idx = (startIndex + i) % m_maxRecords;
+        if(m_predictions[idx].outcomeTime <= 0)
+            continue;
+
+        if(seenLabeled < skip)
+        {
+            seenLabeled++;
+            continue;
+        }
+
+        string row = StringFormat("%s,%s,%s,%s,%s,%.6f,%.6f,%.6f,%d,%s\n",
+                                  TimeToString(m_predictions[idx].predictionTime, TIME_DATE | TIME_SECONDS),
+                                  TimeToString(m_predictions[idx].outcomeTime, TIME_DATE | TIME_SECONDS),
+                                  m_predictions[idx].symbol,
+                                  EnumToString(m_predictions[idx].prediction),
+                                  EnumToString(m_predictions[idx].actualOutcome),
+                                  m_predictions[idx].confidence,
+                                  m_predictions[idx].uncertainty,
+                                  m_predictions[idx].actualReturn,
+                                  m_predictions[idx].predictionCorrect ? 1 : 0,
+                                  EnumToString(m_predictions[idx].regime));
+        FileWriteString(handle, row);
+        seenLabeled++;
+    }
+
+    FileClose(handle);
 }
 
 //+------------------------------------------------------------------+

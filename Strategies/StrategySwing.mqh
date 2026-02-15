@@ -11,7 +11,6 @@
 #include "../Core/Trading/HistoryOrderInfo.mqh"
 #include "../Core/Trading/PositionInfo.mqh"
 #include "../Core/Trading/DealInfo.mqh"
-#include "../Core/Trading/Trade.mqh"
 #include "../Core/Signals/SignalDiagnostics.mqh"
 #include "../Core/Signals/TimeframeConsistency.mqh"
 

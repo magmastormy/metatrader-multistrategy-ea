@@ -80,17 +80,32 @@ public:
     {
         double atr[1];
         int atr_handle = m_atr_handle;
+        bool temporaryHandle = false;
         if(atr_handle == INVALID_HANDLE)
+        {
             atr_handle = iATR(symbol, timeframe, m_atr_period);
-        if(CopyBuffer(atr_handle, 0, 0, 1, atr) != 1)
+            temporaryHandle = (atr_handle != INVALID_HANDLE);
+        }
+        if(atr_handle == INVALID_HANDLE || CopyBuffer(atr_handle, 0, 1, 1, atr) != 1)
+        {
+            if(temporaryHandle)
+                IndicatorRelease(atr_handle);
+            confidence = 0.0;
+            return 0.0;
+        }
+        if(temporaryHandle)
+            IndicatorRelease(atr_handle);
+
+        // Closed-bar comparison to avoid unstable intrabar signals
+        double close = iClose(symbol, timeframe, 1);
+        double prev_close = iClose(symbol, timeframe, 2);
+        double atr_value = atr[0];
+        double price_change = MathAbs(close - prev_close);
+        if(atr_value <= 0.0)
         {
             confidence = 0.0;
             return 0.0;
         }
-        double close = iClose(symbol, timeframe, 0);
-        double prev_close = iClose(symbol, timeframe, 1);
-        double atr_value = atr[0];
-        double price_change = MathAbs(close - prev_close);
         confidence = MathMin(price_change / (atr_value * 0.5), 1.0);
         if(price_change > atr_value * 1.5)
         {

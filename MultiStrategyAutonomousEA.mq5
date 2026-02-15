@@ -39,6 +39,7 @@ input bool InpEnableHarmonicPatterns = false;  // Enable Harmonic Patterns Strat
 input bool InpEnableSupportResistance = false; // Enable Support/Resistance + Trendlines
 input bool InpEnableUnifiedICT = false;        // Enable Unified ICT/SMC Strategy
 input bool InpEnableCandlestick = false;       // Enable Candlestick Patterns Strategy
+input bool InpUseCuratedStrategySet = true;    // Enable curated production strategy subset
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -48,6 +49,11 @@ input bool InpEnableTransformer = false;       // Enable Transformer Brain
 input bool InpEnableEnsemble = false;          // Enable Ensemble Learning
 input double InpAIConfidenceThreshold = 0.60;  // AI Confidence Threshold (Increased for better quality)
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
+
+//--- NN attribution forward-test diagnostics
+input group "NN Attribution Diagnostics"
+input bool InpEnableNNAttributionDiagnostics = false; // Enable NN attribution live diagnostics
+input bool InpRunNNAttributionSelfTest = false;       // Run local mapping self-test at init
 
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
@@ -152,6 +158,12 @@ CNextGenStrategyBrain aiNextGenBrain;
 CTransformerBrain transformerBrain;
 CEnsembleMetaLearner ensembleLearner;
 CNeuralNetworkStrategy* neuralNetStrategy = NULL;
+CNeuralNetworkStrategy* g_neuralNetStrategies[];
+string g_neuralNetStrategySymbols[];
+ulong g_predictionPositionIds[];
+string g_predictionIdsByPosition[];
+ulong g_pendingClosePositionIds[];
+double g_pendingCloseNetProfit[];
 CPositionSizer positionSizer;
 CMarketAnalysis marketAnalysis;
 // DELETED: CAIIntegrationHub integrationHub;
@@ -163,6 +175,8 @@ CTradeManager tradeManager;
 
 // REMOVED: CTradingEngine tradingEngine; // Dead code removal
 CEnterpriseStrategyManager* g_enterpriseManager = NULL; // Enterprise Strategy Manager
+CEnterpriseStrategyManager* g_enterpriseManagers[];      // Per-symbol managers
+string g_enterpriseManagerSymbols[];                     // Manager symbol mapping
 CAdvancedSignalValidator* g_signalValidator = NULL; // Advanced Signal Validator
 CAdvancedPositionManager* g_positionManager = NULL; // Advanced Position Manager
 // g_AIEngine declared in AIEngine.mqh
@@ -198,6 +212,7 @@ double g_correlationMatrix[10][10];
 datetime g_lastTradeTime = 0;
 int g_totalActivePositions = 0;
 string g_activePairs[];
+datetime g_lastSymbolBarTimes[];
 int g_minTimeBetweenTrades = 120;
 int g_maxPositionsAllowed = 10;
 string g_symbolsToTrade = "";
@@ -205,6 +220,14 @@ bool g_beastModeProtection = true;
 bool systemInitialized = false;
 bool tradingEnabled = false;
 bool g_adaptiveRiskReady = false;
+
+// NN attribution diagnostics counters
+int g_nnDiagEntryMapCount = 0;
+int g_nnDiagCloseByIdCount = 0;
+int g_nnDiagCloseFallbackCount = 0;
+int g_nnDiagCloseMissCount = 0;
+int g_nnDiagPartialCloseCount = 0;
+datetime g_nnDiagLastSummaryTime = 0;
 
 // Risk configuration defaults (overridable by configuration modules)
 double DefaultStopLossPips = 20.0;
@@ -312,6 +335,526 @@ int GetEAPositionCount()
         }
     }
     return count;
+}
+
+string ExtractPredictionIdFromComment(const string comment)
+{
+    int marker = StringFind(comment, "|N:");
+    if(marker < 0)
+        return "";
+
+    int start = marker + 3;
+    if(start >= StringLen(comment))
+        return "";
+
+    return StringSubstr(comment, start);
+}
+
+string BuildTradeCommentWithPrediction(const string baseComment, const string predictionId)
+{
+    string comment = baseComment;
+    if(predictionId == "")
+        return comment;
+
+    string suffix = "|N:" + predictionId;
+    const int maxCommentLength = 31;
+    int availableBase = maxCommentLength - StringLen(suffix);
+    if(availableBase < 0)
+        return StringSubstr(suffix, 0, maxCommentLength);
+
+    if(StringLen(comment) > availableBase)
+        comment = StringSubstr(comment, 0, availableBase);
+
+    return comment + suffix;
+}
+
+int FindPredictionPositionIndex(const ulong positionId)
+{
+    for(int i = 0; i < ArraySize(g_predictionPositionIds); i++)
+    {
+        if(g_predictionPositionIds[i] == positionId)
+            return i;
+    }
+    return -1;
+}
+
+void UpsertPredictionPositionMap(const ulong positionId, const string predictionId)
+{
+    if(positionId == 0 || predictionId == "")
+        return;
+
+    int idx = FindPredictionPositionIndex(positionId);
+    if(idx >= 0)
+    {
+        g_predictionIdsByPosition[idx] = predictionId;
+        return;
+    }
+
+    int size = ArraySize(g_predictionPositionIds);
+    ArrayResize(g_predictionPositionIds, size + 1);
+    ArrayResize(g_predictionIdsByPosition, size + 1);
+    g_predictionPositionIds[size] = positionId;
+    g_predictionIdsByPosition[size] = predictionId;
+}
+
+string GetPredictionIdForPosition(const ulong positionId)
+{
+    int idx = FindPredictionPositionIndex(positionId);
+    if(idx < 0 || idx >= ArraySize(g_predictionIdsByPosition))
+        return "";
+    return g_predictionIdsByPosition[idx];
+}
+
+void RemovePredictionPositionMap(const ulong positionId)
+{
+    int idx = FindPredictionPositionIndex(positionId);
+    if(idx < 0)
+        return;
+
+    int last = ArraySize(g_predictionPositionIds) - 1;
+    if(last < 0)
+        return;
+
+    if(idx != last)
+    {
+        g_predictionPositionIds[idx] = g_predictionPositionIds[last];
+        g_predictionIdsByPosition[idx] = g_predictionIdsByPosition[last];
+    }
+
+    ArrayResize(g_predictionPositionIds, last);
+    ArrayResize(g_predictionIdsByPosition, last);
+}
+
+int FindPendingCloseProfitIndex(const ulong positionId)
+{
+    for(int i = 0; i < ArraySize(g_pendingClosePositionIds); i++)
+    {
+        if(g_pendingClosePositionIds[i] == positionId)
+            return i;
+    }
+    return -1;
+}
+
+void AccumulatePendingCloseProfit(const ulong positionId, const double netProfit)
+{
+    if(positionId == 0)
+        return;
+
+    int idx = FindPendingCloseProfitIndex(positionId);
+    if(idx >= 0)
+    {
+        g_pendingCloseNetProfit[idx] += netProfit;
+        return;
+    }
+
+    int size = ArraySize(g_pendingClosePositionIds);
+    ArrayResize(g_pendingClosePositionIds, size + 1);
+    ArrayResize(g_pendingCloseNetProfit, size + 1);
+    g_pendingClosePositionIds[size] = positionId;
+    g_pendingCloseNetProfit[size] = netProfit;
+}
+
+double ConsumePendingCloseProfit(const ulong positionId)
+{
+    int idx = FindPendingCloseProfitIndex(positionId);
+    if(idx < 0)
+        return 0.0;
+
+    double accumulated = g_pendingCloseNetProfit[idx];
+    int last = ArraySize(g_pendingClosePositionIds) - 1;
+    if(last >= 0)
+    {
+        if(idx != last)
+        {
+            g_pendingClosePositionIds[idx] = g_pendingClosePositionIds[last];
+            g_pendingCloseNetProfit[idx] = g_pendingCloseNetProfit[last];
+        }
+        ArrayResize(g_pendingClosePositionIds, last);
+        ArrayResize(g_pendingCloseNetProfit, last);
+    }
+
+    return accumulated;
+}
+
+void ClearPendingCloseProfit(const ulong positionId)
+{
+    int idx = FindPendingCloseProfitIndex(positionId);
+    if(idx < 0)
+        return;
+
+    int last = ArraySize(g_pendingClosePositionIds) - 1;
+    if(last >= 0)
+    {
+        if(idx != last)
+        {
+            g_pendingClosePositionIds[idx] = g_pendingClosePositionIds[last];
+            g_pendingCloseNetProfit[idx] = g_pendingCloseNetProfit[last];
+        }
+        ArrayResize(g_pendingClosePositionIds, last);
+        ArrayResize(g_pendingCloseNetProfit, last);
+    }
+}
+
+bool IsPositionIdStillOpen(const ulong positionId)
+{
+    if(positionId == 0)
+        return false;
+
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+
+        ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+        if(identifier == positionId)
+            return true;
+    }
+
+    return false;
+}
+
+void NNDiagLog(const string message)
+{
+    if(InpEnableNNAttributionDiagnostics)
+        Print("[NN-DIAG] ", message);
+}
+
+void NNDiagPrintSummary(const string context = "")
+{
+    if(!InpEnableNNAttributionDiagnostics)
+        return;
+
+    string tag = (context == "") ? "runtime" : context;
+    PrintFormat("[NN-DIAG] Summary (%s) | EntryMap=%d | CloseById=%d | CloseFallback=%d | CloseMiss=%d | PartialClose=%d | ActiveMap=%d",
+                tag,
+                g_nnDiagEntryMapCount,
+                g_nnDiagCloseByIdCount,
+                g_nnDiagCloseFallbackCount,
+                g_nnDiagCloseMissCount,
+                g_nnDiagPartialCloseCount,
+                ArraySize(g_predictionPositionIds));
+    g_nnDiagLastSummaryTime = TimeCurrent();
+}
+
+bool RunNNAttributionSelfTest()
+{
+    if(!InpRunNNAttributionSelfTest)
+        return true;
+
+    NNDiagLog("Self-test started");
+    bool ok = true;
+
+    string testPrediction = "12345678901234";
+    string comment = BuildTradeCommentWithPrediction("Enterprise AI Signal", testPrediction);
+    string extracted = ExtractPredictionIdFromComment(comment);
+    if(extracted != testPrediction)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: comment prediction extraction mismatch");
+    }
+
+    const ulong testPositionId = 999001;
+    UpsertPredictionPositionMap(testPositionId, testPrediction);
+    if(GetPredictionIdForPosition(testPositionId) != testPrediction)
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: position->prediction map upsert/get mismatch");
+    }
+    RemovePredictionPositionMap(testPositionId);
+    if(GetPredictionIdForPosition(testPositionId) != "")
+    {
+        ok = false;
+        NNDiagLog("Self-test failed: position->prediction map remove mismatch");
+    }
+
+    NNDiagLog(ok ? "Self-test passed" : "Self-test failed");
+    return ok;
+}
+
+//+------------------------------------------------------------------+
+//| Authoritative risk decision helper                               |
+//| NOTE: RiskValidationGate is the only trade-entry veto authority. |
+//+------------------------------------------------------------------+
+bool ApproveTradeByRiskGate(const STradeValidationRequest &request,
+                            const string phaseTag,
+                            SValidationResult &result)
+{
+    result = riskGate.ValidateTradeRequest(request);
+    if(!result.approved)
+    {
+        Print("[RISK-CONTRACT] REJECTED (", phaseTag, ") ",
+              request.symbol, " | ", result.message);
+        return false;
+    }
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Strategy-name helper                                             |
+//+------------------------------------------------------------------+
+string GetStrategyNameByIndex(const int index)
+{
+    switch(index)
+    {
+        case 0: return "Momentum";
+        case 1: return "RSI";
+        case 2: return "Trend";
+        case 3: return "Mean Reversion";
+        case 4: return "Swing";
+        case 5: return "Volatility";
+        case 6: return "MACD";
+        case 7: return "Bollinger";
+        case 8: return "Bollinger Breakout";
+        case 9: return "SMC";
+        case 10: return "Breakout";
+        case 11: return "Fibonacci";
+        case 12: return "Elliott Wave";
+        case 13: return "Ichimoku";
+        case 14: return "Harmonic Patterns";
+        case 15: return "Support/Resistance";
+        case 16: return "Unified ICT";
+        case 17: return "Candlestick";
+        default: return "Unknown";
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Build strategy flags + curated profile filtering                 |
+//+------------------------------------------------------------------+
+void BuildStrategyFlags(bool &strategyFlags[])
+{
+    ArrayResize(strategyFlags, 18);
+    strategyFlags[0]  = InpEnableMomentum;
+    strategyFlags[1]  = InpEnableRSI;
+    strategyFlags[2]  = InpEnableTrend;
+    strategyFlags[3]  = InpEnableMeanReversion;
+    strategyFlags[4]  = InpEnableSwing;
+    strategyFlags[5]  = InpEnableVolatility;
+    strategyFlags[6]  = InpEnableMACD;
+    strategyFlags[7]  = InpEnableBollinger;
+    strategyFlags[8]  = InpEnableBollingerBreakout;
+    strategyFlags[9]  = InpEnableSMC;
+    strategyFlags[10] = InpEnableBreakout;
+    strategyFlags[11] = InpEnableFibonacci;
+    strategyFlags[12] = InpEnableElliottWave;
+    strategyFlags[13] = InpEnableIchimoku;
+    strategyFlags[14] = InpEnableHarmonicPatterns;
+    strategyFlags[15] = InpEnableSupportResistance;
+    strategyFlags[16] = InpEnableUnifiedICT;
+    strategyFlags[17] = InpEnableCandlestick;
+
+    if(!InpUseCuratedStrategySet)
+        return;
+
+    bool curatedMask[18] = {
+        true,   // Momentum
+        true,   // RSI
+        true,   // Trend
+        false,  // Mean Reversion
+        false,  // Swing
+        false,  // Volatility
+        true,   // MACD
+        false,  // Bollinger
+        false,  // Bollinger Breakout
+        true,   // SMC
+        false,  // Breakout
+        false,  // Fibonacci
+        true,   // Elliott Wave
+        true,   // Ichimoku
+        false,  // Harmonic Patterns
+        true,   // Support/Resistance
+        true,   // Unified ICT
+        true    // Candlestick
+    };
+
+    int enabledBefore = 0;
+    int enabledAfter = 0;
+    for(int i = 0; i < ArraySize(strategyFlags); i++)
+    {
+        if(strategyFlags[i])
+            enabledBefore++;
+
+        if(strategyFlags[i] && !curatedMask[i])
+        {
+            strategyFlags[i] = false;
+            Print("[CURATION] Disabled overlapping strategy: ", GetStrategyNameByIndex(i));
+        }
+
+        if(strategyFlags[i])
+            enabledAfter++;
+    }
+
+    PrintFormat("[CURATION] Production strategy profile active (%d -> %d enabled)", enabledBefore, enabledAfter);
+}
+
+//+------------------------------------------------------------------+
+//| Manager lookup helpers                                           |
+//+------------------------------------------------------------------+
+int FindEnterpriseManagerIndex(const string symbol)
+{
+    for(int i = 0; i < ArraySize(g_enterpriseManagerSymbols); i++)
+    {
+        if(g_enterpriseManagerSymbols[i] == symbol)
+            return i;
+    }
+    return -1;
+}
+
+CEnterpriseStrategyManager* GetEnterpriseManagerForSymbol(const string symbol)
+{
+    int idx = FindEnterpriseManagerIndex(symbol);
+    if(idx < 0 || idx >= ArraySize(g_enterpriseManagers))
+        return NULL;
+    return g_enterpriseManagers[idx];
+}
+
+int GetTotalActiveStrategyCount()
+{
+    int total = 0;
+    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
+    {
+        if(g_enterpriseManagers[i] != NULL)
+            total += g_enterpriseManagers[i].GetActiveStrategyCount();
+    }
+    return total;
+}
+
+void ReleaseEnterpriseManagers()
+{
+    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
+    {
+        if(g_enterpriseManagers[i] != NULL)
+        {
+            delete g_enterpriseManagers[i];
+            g_enterpriseManagers[i] = NULL;
+        }
+    }
+    ArrayResize(g_enterpriseManagers, 0);
+    ArrayResize(g_enterpriseManagerSymbols, 0);
+    ArrayResize(g_lastSymbolBarTimes, 0);
+    g_enterpriseManager = NULL;
+}
+
+int FindNeuralNetStrategyIndex(const string symbol)
+{
+    for(int i = 0; i < ArraySize(g_neuralNetStrategySymbols); i++)
+    {
+        if(g_neuralNetStrategySymbols[i] == symbol)
+            return i;
+    }
+    return -1;
+}
+
+CNeuralNetworkStrategy* GetNeuralNetForSymbol(const string symbol)
+{
+    int idx = FindNeuralNetStrategyIndex(symbol);
+    if(idx < 0 || idx >= ArraySize(g_neuralNetStrategies))
+        return NULL;
+    return g_neuralNetStrategies[idx];
+}
+
+void ReleaseNeuralNetStrategies()
+{
+    for(int i = 0; i < ArraySize(g_neuralNetStrategies); i++)
+    {
+        if(g_neuralNetStrategies[i] != NULL)
+        {
+            delete g_neuralNetStrategies[i];
+            g_neuralNetStrategies[i] = NULL;
+        }
+    }
+    ArrayResize(g_neuralNetStrategies, 0);
+    ArrayResize(g_neuralNetStrategySymbols, 0);
+    ArrayResize(g_predictionPositionIds, 0);
+    ArrayResize(g_predictionIdsByPosition, 0);
+    ArrayResize(g_pendingClosePositionIds, 0);
+    ArrayResize(g_pendingCloseNetProfit, 0);
+    neuralNetStrategy = NULL;
+}
+
+bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    if(GetNeuralNetForSymbol(symbol) != NULL)
+        return true;
+
+    CNeuralNetworkStrategy* nn = new CNeuralNetworkStrategy();
+    if(nn == NULL)
+    {
+        Print("[AI-MODE] Failed to allocate Neural Network for ", symbol);
+        return false;
+    }
+
+    if(!nn.Initialize(symbol, timeframe))
+    {
+        Print("[AI-MODE] Neural Network initialization failed for ", symbol);
+        delete nn;
+        return false;
+    }
+
+    int currentSize = ArraySize(g_neuralNetStrategies);
+    ArrayResize(g_neuralNetStrategies, currentSize + 1);
+    ArrayResize(g_neuralNetStrategySymbols, currentSize + 1);
+    g_neuralNetStrategies[currentSize] = nn;
+    g_neuralNetStrategySymbols[currentSize] = symbol;
+
+    CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(symbol);
+    if(symbolManager != NULL)
+    {
+        double aiWeight = InpAIWeightMultiplier > 0 ? InpAIWeightMultiplier : 3.0;
+        if(!symbolManager.RegisterStrategy(new CAIStrategyAdapter(nn), "Neural Network AI", true, aiWeight))
+            Print("[AI-MODE] WARNING: Failed to register NN adapter for ", symbol);
+    }
+
+    Print("[AI-MODE] Neural Network ready for ", symbol);
+    return true;
+}
+
+bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFlags[])
+{
+    CEnterpriseStrategyManager* manager = new CEnterpriseStrategyManager();
+    if(manager == NULL)
+    {
+        Print("[ERROR] Failed to allocate Enterprise Strategy Manager for ", symbol);
+        return false;
+    }
+
+    if(!manager.Initialize(symbol, (ENUM_TIMEFRAMES)Period(), InpUseOrchestrator, InpUseSignalPipeline,
+                           &tradeManager, &positionSizer, &aiOrchestrator, (long)InpMagicNumber))
+    {
+        Print("[ERROR] Failed to initialize Enterprise Strategy Manager for ", symbol);
+        delete manager;
+        return false;
+    }
+
+    if(InpUseSignalPipeline)
+    {
+        SignalFilterSettings filters;
+        filters.enableTrendFilter = true;
+        filters.enableVolatilityFilter = true;
+        filters.enableLiquidityFilter = InpEnableLiquidityFilter;
+        filters.enableStructureFilter = InpEnableStructureFilter;
+        filters.minConfidence = InpAIConfidenceThreshold;
+        filters.maxVolatility = InpMaxVolatility;
+        filters.minTrendStrength = (int)InpMinTrendStrength;
+        manager.SetPipelineFilters(filters);
+    }
+
+    manager.AutoRegisterStrategies(strategyFlags);
+
+    int size = ArraySize(g_enterpriseManagers);
+    ArrayResize(g_enterpriseManagers, size + 1);
+    ArrayResize(g_enterpriseManagerSymbols, size + 1);
+    ArrayResize(g_lastSymbolBarTimes, size + 1);
+    g_enterpriseManagers[size] = manager;
+    g_enterpriseManagerSymbols[size] = symbol;
+    g_lastSymbolBarTimes[size] = 0;
+
+    if(symbol == _Symbol)
+        g_enterpriseManager = manager;
+
+    Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies");
+    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -525,106 +1068,9 @@ int OnInit()
             Print("[WARNING] AdaptiveRiskManager parameter setup failed - using static risk settings");
     }
 
-    // Initialize Enterprise Strategy Manager (Always Enabled)
-    Print("[ENTERPRISE] Initializing Enterprise Strategy Manager...");
-
-    g_enterpriseManager = new CEnterpriseStrategyManager();
-    if(g_enterpriseManager != NULL)
-    {
-        // Initialize manager with CRITICAL components
-        // Initialize manager with CRITICAL components and INJECTED Orchestrator
-        g_enterpriseManager.Initialize(Symbol(), Period(), InpUseOrchestrator, InpUseSignalPipeline,
-                                      &tradeManager, &positionSizer, &aiOrchestrator);
-
-        // Configure pipeline filters
-
-        // Configure pipeline filters
-        if(InpUseSignalPipeline)
-        {
-            SignalFilterSettings filters;
-            filters.enableTrendFilter = true;
-            filters.enableVolatilityFilter = true;
-            filters.enableLiquidityFilter = InpEnableLiquidityFilter;
-            filters.enableStructureFilter = InpEnableStructureFilter;
-            filters.minConfidence = InpAIConfidenceThreshold;
-            filters.maxVolatility = InpMaxVolatility;
-            filters.minTrendStrength = (int)InpMinTrendStrength;
-            g_enterpriseManager.SetPipelineFilters(filters);
-        }
-
-        // Auto-register strategies (Complete 18-strategy mapping)
-        bool strategyFlags[];
-        ArrayResize(strategyFlags, 18);
-        strategyFlags[0]  = InpEnableMomentum;
-        strategyFlags[1]  = InpEnableRSI;
-        strategyFlags[2]  = InpEnableTrend;
-        strategyFlags[3]  = InpEnableMeanReversion;
-        strategyFlags[4]  = InpEnableSwing;
-        strategyFlags[5]  = InpEnableVolatility;
-        strategyFlags[6]  = InpEnableMACD;
-        strategyFlags[7]  = InpEnableBollinger;
-        strategyFlags[8]  = InpEnableBollingerBreakout;
-        strategyFlags[9]  = InpEnableSMC;
-        strategyFlags[10] = InpEnableBreakout;
-        strategyFlags[11] = InpEnableFibonacci;
-        strategyFlags[12] = InpEnableElliottWave;
-        strategyFlags[13] = InpEnableIchimoku;
-        strategyFlags[14] = InpEnableHarmonicPatterns;
-        strategyFlags[15] = InpEnableSupportResistance;
-        strategyFlags[16] = InpEnableUnifiedICT;
-        strategyFlags[17] = InpEnableCandlestick;
-
-        g_enterpriseManager.AutoRegisterStrategies(strategyFlags);
-
-        // AUDIT FIX: NN AI Adapter registration moved to AFTER neuralNetStrategy creation (see line ~680)
-        // Previously registered here where neuralNetStrategy was always NULL
-
-        Print("[ENTERPRISE] Manager initialized with ", g_enterpriseManager.GetActiveStrategyCount(), " active strategies");
-
-        // Initialize Advanced Signal Validator
-        g_signalValidator = new CAdvancedSignalValidator();
-        if(g_signalValidator != NULL)
-        {
-            // Configure validator for profitability
-            g_signalValidator.SetMinConfluence(1);  // Allow single strategy signals
-            g_signalValidator.SetMinQualityScore(0.55);  // Match confidence threshold
-            g_signalValidator.SetMaxSpreadMultiplier(2.0);  // Max spread = 2x ATR
-            g_signalValidator.EnableTimeFilter(true, 1, 22);  // Trade 1 AM - 10 PM GMT
-            g_signalValidator.EnableSessionFilter(true, true, true, true);  // All sessions
-            g_signalValidator.EnableVolatilityFilter(true, 0.0, 5.0);  // Max 5% volatility
-            g_signalValidator.EnableSpreadFilter(true, 2.0);
-            Print("[SIGNAL-VALIDATOR] Advanced signal validation enabled");
-        }
-
-        // Initialize Advanced Position Manager
-        g_positionManager = new CAdvancedPositionManager();
-        if(g_positionManager != NULL)
-        {
-            SPositionManagementConfig posConfig;
-            posConfig.enableTrailingStop = true;
-            posConfig.trailingStartPips = 20.0;
-            posConfig.trailingStepPips = 5.0;
-            posConfig.trailingDistancePips = 15.0;
-            posConfig.enableBreakeven = true;
-            posConfig.breakevenTriggerPips = 15.0;
-            posConfig.breakevenBufferPips = 5.0;
-            posConfig.enablePartialClose = true;
-            posConfig.partialClose1Pips = 30.0;
-            posConfig.partialClose1Percent = 50.0;  // Close 50% at 30 pips
-            posConfig.partialClose2Pips = 60.0;
-            posConfig.partialClose2Percent = 25.0;  // Close 25% more at 60 pips
-            posConfig.enableTimeBasedExit = false;
-            posConfig.maxPositionHours = 24;
-
-            g_positionManager.SetConfig(posConfig);
-            g_positionManager.SetTradeManager(&tradeManager);
-            Print("[POSITION-MANAGER] Advanced position management enabled");
-        }
-    }
-    else
-    {
-        Print("[ERROR] Failed to create Enterprise Strategy Manager");
-    }
+    // Build strategy flags with optional curated production profile
+    bool strategyFlags[];
+    BuildStrategyFlags(strategyFlags);
 
     // Validate and process trading symbols
     string symbols[];
@@ -655,6 +1101,21 @@ int OnInit()
             continue;
         }
 
+        bool alreadyAdded = false;
+        for(int j = 0; j < ArraySize(g_activePairs); j++)
+        {
+            if(g_activePairs[j] == sym)
+            {
+                alreadyAdded = true;
+                break;
+            }
+        }
+        if(alreadyAdded)
+        {
+            Print("[SYMBOLS] Duplicate symbol skipped: ", sym);
+            continue;
+        }
+
         // Add to active pairs array
         int size = ArraySize(g_activePairs);
         ArrayResize(g_activePairs, size + 1);
@@ -669,45 +1130,137 @@ int OnInit()
         Print("  - Contract Size: ", SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE));
     }
 
+    // Always include chart symbol in manager set for deterministic local chart behavior
+    bool chartSymbolFound = false;
+    for(int i = 0; i < ArraySize(g_activePairs); i++)
+    {
+        if(g_activePairs[i] == _Symbol)
+        {
+            chartSymbolFound = true;
+            break;
+        }
+    }
+    if(!chartSymbolFound && SymbolSelect(_Symbol, true))
+    {
+        int size = ArraySize(g_activePairs);
+        ArrayResize(g_activePairs, size + 1);
+        g_activePairs[size] = _Symbol;
+        Print("[SYMBOLS] Added chart symbol to active set: ", _Symbol);
+    }
+
+    if(ArraySize(g_activePairs) <= 0)
+    {
+        Print("[CRITICAL] No valid trading symbols after validation.");
+        return INIT_FAILED;
+    }
+
     Print("[SYMBOLS] ", ArraySize(g_activePairs), " symbols validated and ready for trading");
     g_symbolsToTrade = InpSymbolsToTrade;
 
-    // Initialize Neural Network Strategy
+    // Initialize enterprise manager per symbol
+    Print("[ENTERPRISE] Initializing per-symbol strategy managers...");
+    ReleaseEnterpriseManagers();
+    int managerInitCount = 0;
+    for(int i = 0; i < ArraySize(g_activePairs); i++)
+    {
+        if(InitializeEnterpriseManagerForSymbol(g_activePairs[i], strategyFlags))
+            managerInitCount++;
+    }
+
+    if(managerInitCount <= 0 || ArraySize(g_enterpriseManagers) <= 0)
+    {
+        Print("[CRITICAL] Failed to initialize any Enterprise Strategy Manager.");
+        return INIT_FAILED;
+    }
+
+    if(g_enterpriseManager == NULL)
+        g_enterpriseManager = g_enterpriseManagers[0];
+
+    // Initialize Advanced Signal Validator (shared)
+    g_signalValidator = new CAdvancedSignalValidator();
+    if(g_signalValidator != NULL)
+    {
+        g_signalValidator.SetMinConfluence(1);  // Allow single-strategy signals
+        g_signalValidator.SetMinQualityScore(0.55);
+        g_signalValidator.SetMaxSpreadMultiplier(2.0);
+        g_signalValidator.EnableTimeFilter(true, 1, 22);
+        g_signalValidator.EnableSessionFilter(true, true, true, true);
+        g_signalValidator.EnableVolatilityFilter(true, 0.0, 5.0);
+        g_signalValidator.EnableSpreadFilter(true, 2.0);
+        Print("[SIGNAL-VALIDATOR] Advanced signal validation enabled");
+    }
+
+    // Initialize Advanced Position Manager (shared, magic scoped)
+    g_positionManager = new CAdvancedPositionManager();
+    if(g_positionManager != NULL)
+    {
+        SPositionManagementConfig posConfig;
+        posConfig.enableTrailingStop = true;
+        posConfig.trailingStartPips = 20.0;
+        posConfig.trailingStepPips = 5.0;
+        posConfig.trailingDistancePips = 15.0;
+        posConfig.enableBreakeven = true;
+        posConfig.breakevenTriggerPips = 15.0;
+        posConfig.breakevenBufferPips = 5.0;
+        posConfig.enablePartialClose = true;
+        posConfig.partialClose1Pips = 30.0;
+        posConfig.partialClose1Percent = 50.0;
+        posConfig.partialClose2Pips = 60.0;
+        posConfig.partialClose2Percent = 25.0;
+        posConfig.enableTimeBasedExit = false;
+        posConfig.maxPositionHours = 24;
+
+        g_positionManager.SetConfig(posConfig);
+        g_positionManager.SetTradeManager(&tradeManager);
+        g_positionManager.SetManagedMagic((long)InpMagicNumber);
+        Print("[POSITION-MANAGER] Advanced position management enabled (magic scoped)");
+    }
+
+    // Initialize Neural Network Strategy per active symbol
     if(InpEnableAIMode && InpEnableNeuralNetwork)
     {
-        neuralNetStrategy = new CNeuralNetworkStrategy();
-        if(neuralNetStrategy != NULL)
+        ReleaseNeuralNetStrategies();
+        int nnInitCount = 0;
+        for(int i = 0; i < ArraySize(g_activePairs); i++)
         {
-            if(neuralNetStrategy.Initialize(Symbol(), Period()))
-            {
-                Print("[INIT] Neural Network Strategy initialized successfully");
-            }
-            else
-            {
-                Print("[INIT] WARNING: Neural Network Strategy initialization failed");
-                delete neuralNetStrategy;
-                neuralNetStrategy = NULL;
-            }
+            if(InitializeNeuralNetForSymbol(g_activePairs[i], (ENUM_TIMEFRAMES)Period()))
+                nnInitCount++;
         }
-        Print("[AI-MODE] AI Mode enabled | NN: ", InpEnableNeuralNetwork, " | Transformer: ", InpEnableTransformer, 
-              " | Ensemble: ", InpEnableEnsemble, " | Threshold: ", InpAIConfidenceThreshold);
 
-        // AUDIT FIX: Register NN strategy AFTER successful creation (was previously at line ~548 before creation)
-        if(neuralNetStrategy != NULL && g_enterpriseManager != NULL)
-        {
-            Print("[ENTERPRISE] Registering Neural Network AI Adapter (post-init)...");
-            double aiWeight = InpAIWeightMultiplier > 0 ? InpAIWeightMultiplier : 3.0;
-            g_enterpriseManager.RegisterStrategy(new CAIStrategyAdapter(neuralNetStrategy), "Neural Network AI", true, aiWeight);
-        }
+        neuralNetStrategy = GetNeuralNetForSymbol(_Symbol);
+        if(neuralNetStrategy == NULL && ArraySize(g_neuralNetStrategies) > 0)
+            neuralNetStrategy = g_neuralNetStrategies[0];
+
+        Print("[AI-MODE] AI Mode enabled | NN: ", InpEnableNeuralNetwork, " | Transformer: ", InpEnableTransformer, 
+              " | Ensemble: ", InpEnableEnsemble, " | Threshold: ", InpAIConfidenceThreshold,
+              " | NN Managers: ", nnInitCount);
     }
     else if(InpEnableAIMode)
     {
+        ReleaseNeuralNetStrategies();
         Print("[AI-MODE] AI Mode enabled but Neural Network disabled");
     }
 
-    if(g_enterpriseManager != NULL && g_enterpriseManager.GetActiveStrategyCount() <= 0)
+    if(GetTotalActiveStrategyCount() <= 0)
     {
         Print("[CRITICAL] No active strategies registered. Enable at least one strategy or neural AI mode.");
+        return INIT_FAILED;
+    }
+
+    if(InpEnableNNAttributionDiagnostics)
+    {
+        g_nnDiagEntryMapCount = 0;
+        g_nnDiagCloseByIdCount = 0;
+        g_nnDiagCloseFallbackCount = 0;
+        g_nnDiagCloseMissCount = 0;
+        g_nnDiagPartialCloseCount = 0;
+        g_nnDiagLastSummaryTime = TimeCurrent();
+        NNDiagLog("NN attribution diagnostics enabled");
+    }
+
+    if(!RunNNAttributionSelfTest())
+    {
+        Print("[NN-DIAG] Self-test failed; initialization aborted by diagnostic gate");
         return INIT_FAILED;
     }
 
@@ -740,11 +1293,7 @@ void OnDeinit(const int reason)
     EventKillTimer();
 
     // Properly delete all dynamic objects to prevent memory leaks
-    if(g_enterpriseManager != NULL)
-    {
-        delete g_enterpriseManager;
-        g_enterpriseManager = NULL;
-    }
+    ReleaseEnterpriseManagers();
     
     if(g_signalValidator != NULL)
     {
@@ -757,12 +1306,10 @@ void OnDeinit(const int reason)
         delete g_positionManager;
         g_positionManager = NULL;
     }
+
+    NNDiagPrintSummary("deinit");
     
-    if(neuralNetStrategy != NULL)
-    {
-        delete neuralNetStrategy;
-        neuralNetStrategy = NULL;
-    }
+    ReleaseNeuralNetStrategies();
     
     if(g_AIEngine != NULL)
     {
@@ -848,9 +1395,9 @@ void ProcessTradingLogic(bool fromTimer)
         int activeStrats = 0;
         int eaPositions = 0;
 
-        if(g_enterpriseManager != NULL)
+        if(ArraySize(g_enterpriseManagers) > 0)
         {
-            activeStrats = g_enterpriseManager.GetActiveStrategyCount();
+            activeStrats = GetTotalActiveStrategyCount();
             eaPositions = GetEAPositionCount();  // Count only THIS EA's positions
             int cooldownSecs = g_lastTradeTime > 0 ? (int)(TimeCurrent() - g_lastTradeTime) : 0;
             Print("[ENTERPRISE-STATUS] Active strategies: ", activeStrats, " | Cooldown: ",
@@ -862,6 +1409,13 @@ void ProcessTradingLogic(bool fromTimer)
         
         // --- Update Dashboard ---
         g_dashboard.Update(activeStrats, eaPositions, accountBalance, accountEquity, &aiNextGenBrain, neuralNetStrategy);
+    }
+
+    if(InpEnableNNAttributionDiagnostics)
+    {
+        bool timeDue = (g_nnDiagLastSummaryTime == 0 || (TimeCurrent() - g_nnDiagLastSummaryTime) >= 300);
+        if(callCount % 200 == 0 || timeDue)
+            NNDiagPrintSummary("periodic");
     }
 
     if(!systemInitialized || !tradingEnabled)
@@ -899,272 +1453,296 @@ void ProcessTradingLogic(bool fromTimer)
     if(peakEquity > 0)
         currentDrawdown = ((peakEquity - currentEquity) / peakEquity) * 100.0; // Standardized to 0-100 scale
 
-    // CRITICAL FIX: New bar detection for zone scanning and chart drawings
-    static datetime lastBarTimeLocal = 0;
-    datetime currentBarTime = iTime(_Symbol, (ENUM_TIMEFRAMES)Period(), 0);
-    bool newBarDetected = (currentBarTime != lastBarTimeLocal);
-
-    if(newBarDetected)
+    // Multi-symbol new-bar processing: each symbol has a dedicated strategy manager.
+    bool anyNewBarDetected = false;
+    if(ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
-        lastBarTimeLocal = currentBarTime;
-
-        // Call OnNewBar on EnterpriseManager to trigger strategy zone scanning and drawings
-        if(g_enterpriseManager != NULL)
+        if(ArraySize(g_lastSymbolBarTimes) != ArraySize(g_activePairs))
         {
-            // Process OnNewBar for chart symbol
-            g_enterpriseManager.OnNewBar(_Symbol, (ENUM_TIMEFRAMES)Period());
-
-            // TRIGGER AI ADAPTATION
-            if(InpEnableAIMode && g_AIEngine != NULL)
-            {
-                g_AIEngine.ProcessAdaptation();
-                // Print("[AI] Adaptation cycle processed"); // Uncomment for verbose debug
-            }
-
-            if(g_adaptiveRiskReady)
-                adaptiveRisk.AdaptRiskParameters();
-
-            if(callCount % 100 == 0)
-                Print("[DRAWINGS] OnNewBar processed for chart symbol only: ", _Symbol);
+            ArrayResize(g_lastSymbolBarTimes, ArraySize(g_activePairs));
+            ArrayInitialize(g_lastSymbolBarTimes, 0);
         }
+
+        for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
+        {
+            string symbolForBar = g_activePairs[symIdx];
+            datetime currentBarTime = iTime(symbolForBar, (ENUM_TIMEFRAMES)Period(), 0);
+            if(currentBarTime <= 0)
+                continue;
+
+            if(currentBarTime != g_lastSymbolBarTimes[symIdx])
+            {
+                g_lastSymbolBarTimes[symIdx] = currentBarTime;
+                anyNewBarDetected = true;
+
+                CEnterpriseStrategyManager* barManager = GetEnterpriseManagerForSymbol(symbolForBar);
+                if(barManager != NULL)
+                    barManager.OnNewBar(symbolForBar, (ENUM_TIMEFRAMES)Period());
+            }
+        }
+    }
+
+    if(anyNewBarDetected)
+    {
+        if(InpEnableAIMode && g_AIEngine != NULL)
+            g_AIEngine.ProcessAdaptation();
+
+        if(g_adaptiveRiskReady)
+            adaptiveRisk.AdaptRiskParameters();
+
+        if(callCount % 100 == 0)
+            Print("[DRAWINGS] OnNewBar processed for all managed symbols");
     }
 
     // Enterprise Mode Multi-Symbol Signal Generation
     // UNIFIED PIPELINE - All strategies including AI now go through here
-    if(g_enterpriseManager != NULL)
+    if(ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
         // Check cooldown to prevent chain trading
         datetime tickTime = TimeCurrent();
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
+        bool canOpenNewTrades = true;
 
         if(secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0)
         {
-            // Cooldown active - skip trading this tick
-            return;
+            canOpenNewTrades = false;
+            if(callCount % 100 == 0)
+                Print("[ENTERPRISE-BLOCKED] Cooldown active: ", secondsSinceLastTrade, " / ", InpMinSecondsBetweenTrades, " seconds");
         }
 
         // Check position limit - count only THIS EA's positions by magic number
         int eaPositions = GetEAPositionCount();
         if(eaPositions >= InpMaxPositionsTotal)
         {
+            canOpenNewTrades = false;
             if(callCount % 100 == 0)  // Log occasionally to avoid spam
                 Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", InpMaxPositionsTotal);
-            return;
         }
 
-        // CRITICAL AUDIT FIX: Restrict trading to the current chart symbol ONLY.
-        // The previous loop over g_activePairs caused strategies (which are bound to _Symbol)
-        // to be evaluated against other symbols, leading to invalid signals (e.g. EURUSD logic applied to GBPUSD).
-        // Until strategies are instantiated per-symbol, we must strictly limit execution to _Symbol.
-        
-        string currentSymbol = _Symbol;
-        
-        // We simulate a single-iteration loop for the chart symbol to keep the logic structure similar
-        // independent of the g_activePairs list for now.
-        for(int symIdx = 0; symIdx < 1; symIdx++)
+        if(canOpenNewTrades)
         {
-            // string currentSymbol = g_activePairs[symIdx]; // DISABLED
-
-
-            // Get signal with confluence tracking (per-symbol analysis)
-            double confidence = 0;
-            int confluence = 0;
-            ENUM_TRADE_SIGNAL enterpriseSignal = g_enterpriseManager.GetConsensusSignalForSymbolWithConfluence(
-                currentSymbol, confidence, confluence);
-
-            // Advanced signal validation
-            bool signalApproved = false;
-            if(enterpriseSignal != TRADE_SIGNAL_NONE && g_signalValidator != NULL)
+            // Evaluate each active symbol through its own symbol-bound enterprise manager.
+            for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
             {
-                // Get ATR for validation
-                CIndicatorManager* indManager = CIndicatorManager::Instance();
-                int atrHandle = INVALID_HANDLE;
-                double atrValue = 0.0;
-                if(indManager != NULL)
+                string currentSymbol = g_activePairs[symIdx];
+                CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(currentSymbol);
+                if(symbolManager == NULL)
+                    continue;
+
+                // Get signal with confluence tracking (per-symbol analysis)
+                double confidence = 0;
+                int confluence = 0;
+                ENUM_TRADE_SIGNAL enterpriseSignal = symbolManager.GetConsensusSignalForSymbolWithConfluence(
+                    currentSymbol, confidence, confluence);
+
+                // Advanced signal validation
+                bool signalApproved = false;
+                if(enterpriseSignal != TRADE_SIGNAL_NONE && g_signalValidator != NULL)
                 {
-                    atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
+                    // Get ATR for validation
+                    CIndicatorManager* indManager = CIndicatorManager::Instance();
+                    int atrHandle = INVALID_HANDLE;
+                    double atrValue = 0.0;
+                    if(indManager != NULL)
+                    {
+                        atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
+                        double atr[];
+                        ArraySetAsSeries(atr, true);
+                        if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
+                            atrValue = atr[0];
+                    }
+
+                    // Validate signal
+                    SSignalValidationResult validation = g_signalValidator.ValidateSignal(
+                        currentSymbol, enterpriseSignal, confidence, confluence, atrValue);
+
+                    if(!validation.isValid)
+                    {
+                        // IMPROVED: Always log rejections for debugging (was only every 50 calls)
+                        Print("[SIGNAL-REJECTED] ", currentSymbol, " | Reason: ", validation.reason,
+                              " | Confluence: ", confluence, " | Quality: ", DoubleToString(validation.qualityScore, 2),
+                              " | Conf: ", DoubleToString(confidence, 2));
+                        continue;  // Skip this signal
+                    }
+
+                    // Signal passed validation - proceed with trade
+                    string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+                    Print("[SIGNAL-VALIDATED] ", currentSymbol, " | Signal: ", signalType,
+                          " | Confidence: ", confidence, " | Confluence: ", confluence,
+                          " | Quality: ", validation.qualityScore);
+
+                    // Use validated confidence
+                    confidence = validation.qualityScore;  // Use quality score as final confidence
+                    signalApproved = true;
+                }
+                else if(enterpriseSignal != TRADE_SIGNAL_NONE && confidence >= InpAIConfidenceThreshold)
+                {
+                    // Fallback if validator not initialized
+                    string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+                    Print("[ENTERPRISE] ", currentSymbol, " | Signal: ", signalType, " | Confidence: ", confidence, " | Confluence: ", confluence);
+                    signalApproved = true;
+                }
+
+                // Execute trade if signal was approved
+                if(signalApproved && enterpriseSignal != TRADE_SIGNAL_NONE)
+                {
+                    // Execute trade if risk checks pass
+                    ENUM_ORDER_TYPE orderType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+                    string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+
+                    // Get current price
+                    double entryPrice = (enterpriseSignal == TRADE_SIGNAL_BUY) ?
+                                       SymbolInfoDouble(currentSymbol, SYMBOL_ASK) :
+                                       SymbolInfoDouble(currentSymbol, SYMBOL_BID);
+
+                    // Calculate ATR for adaptive SL/TP using IndicatorManager
+                    CIndicatorManager* indManager = CIndicatorManager::Instance();
+                    int atrHandle = INVALID_HANDLE;
+                    if(indManager != NULL)
+                        atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
+
                     double atr[];
                     ArraySetAsSeries(atr, true);
                     if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
-                        atrValue = atr[0];
-                }
-
-                // Validate signal
-                SSignalValidationResult validation = g_signalValidator.ValidateSignal(
-                    currentSymbol, enterpriseSignal, confidence, confluence, atrValue);
-
-                if(!validation.isValid)
-                {
-                    // IMPROVED: Always log rejections for debugging (was only every 50 calls)
-                    Print("[SIGNAL-REJECTED] ", currentSymbol, " | Reason: ", validation.reason,
-                          " | Confluence: ", confluence, " | Quality: ", DoubleToString(validation.qualityScore, 2),
-                          " | Conf: ", DoubleToString(confidence, 2));
-                    continue;  // Skip this signal
-                }
-
-                // Signal passed validation - proceed with trade
-                string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
-                Print("[SIGNAL-VALIDATED] ", currentSymbol, " | Signal: ", signalType,
-                      " | Confidence: ", confidence, " | Confluence: ", confluence,
-                      " | Quality: ", validation.qualityScore);
-
-                // Use validated confidence
-                confidence = validation.qualityScore;  // Use quality score as final confidence
-                signalApproved = true;
-            }
-            else if(enterpriseSignal != TRADE_SIGNAL_NONE && confidence >= InpAIConfidenceThreshold)
-            {
-                // Fallback if validator not initialized
-                string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
-                Print("[ENTERPRISE] ", currentSymbol, " | Signal: ", signalType, " | Confidence: ", confidence, " | Confluence: ", confluence);
-                signalApproved = true;
-            }
-
-            // Execute trade if signal was approved
-            if(signalApproved && enterpriseSignal != TRADE_SIGNAL_NONE)
-            {
-                // Execute trade if risk checks pass
-                ENUM_ORDER_TYPE orderType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
-
-                // Get current price
-                double entryPrice = (enterpriseSignal == TRADE_SIGNAL_BUY) ?
-                                   SymbolInfoDouble(currentSymbol, SYMBOL_ASK) :
-                                   SymbolInfoDouble(currentSymbol, SYMBOL_BID);
-
-                // Calculate ATR for adaptive SL/TP using IndicatorManager
-                CIndicatorManager* indManager = CIndicatorManager::Instance();
-                int atrHandle = INVALID_HANDLE;
-                if(indManager != NULL)
-                    atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
-
-                double atr[];
-                ArraySetAsSeries(atr, true);
-                if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
-                {
-                    // Use ATR-based SL/TP calculation (adaptive)
-                    double atrValue = atr[0];
-                    double pointValue = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
-
-                    // Check if this is a synthetic index (different pip calculation)
-                    bool isSynthetic = (StringFind(currentSymbol, "Volatility") >= 0 ||
-                                       StringFind(currentSymbol, "Boom") >= 0 ||
-                                       StringFind(currentSymbol, "Crash") >= 0 ||
-                                       StringFind(currentSymbol, "Step") >= 0);
-
-                    double stopLossPips = 0;
-                    if(isSynthetic)
                     {
-                        // For synthetics: ATR is already in price units, convert carefully
-                        // Use 1.5x ATR as SL, but convert to pips properly
-                        stopLossPips = (atrValue * 1.5) / pointValue;
-                    }
-                    else
-                    {
-                        // For regular pairs: standard calculation
-                        stopLossPips = (atrValue / pointValue) * 2.0;
-                    }
+                        // Use ATR-based SL/TP calculation (adaptive)
+                        double atrValue = atr[0];
+                        double pointValue = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
 
-                    double takeProfitPips = stopLossPips * 2.0;  // 2:1 RR ratio
+                        // Check if this is a synthetic index (different pip calculation)
+                        bool isSynthetic = (StringFind(currentSymbol, "Volatility") >= 0 ||
+                                           StringFind(currentSymbol, "Boom") >= 0 ||
+                                           StringFind(currentSymbol, "Crash") >= 0 ||
+                                           StringFind(currentSymbol, "Step") >= 0);
 
-                    // Clamp SL/TP to reasonable bounds based on price percentage
-                    // Min SL: 0.5% of price, Max SL: 3.0% of price (tighter for safety)
-                    double minSlPips = (entryPrice * 0.005) / pointValue;
-                    double maxSlPips = (entryPrice * 0.03) / pointValue;
-
-                    stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
-                    takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
-
-                    double proposedRisk = InpMaxRiskPerTrade;
-                    if(g_adaptiveRiskReady && adaptiveRisk.GetCurrentRiskPercent() > 0.0)
-                        proposedRisk = adaptiveRisk.GetCurrentRiskPercent();
-                    currentRiskPerTrade = proposedRisk;
-
-                    // AUDIT FIX: Use RiskValidationGate for comprehensive checks
-                    STradeValidationRequest tradeReq;
-                    tradeReq.symbol = currentSymbol;
-                    tradeReq.orderType = orderType;
-                    tradeReq.lotSize = 0.0; // Lot size not known yet, validation gate will validate prelim checks
-                    tradeReq.stopLossPips = stopLossPips;
-                    tradeReq.takeProfitPips = takeProfitPips;
-                    tradeReq.confidence = confidence;
-                    tradeReq.strategy = "Enterprise AI";
-                    tradeReq.reasoning = "Orchestrator consensus signal";
-                    
-                    // Pre-check risk with 0.01 lot to validate trade parameters first
-                    tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
-                    
-                    SValidationResult riskResult = riskGate.ValidateTradeRequest(tradeReq);
-                    
-                    if(riskResult.approved && enhancedRiskManager.IsTradeAllowed(proposedRisk, orderType, tickTime))
-                    {
-                        SPositionSizingParams currentSizingParams = positionSizer.GetParameters();
-                        currentSizingParams.riskPercent = proposedRisk;
-                        if(!positionSizer.SetParameters(currentSizingParams))
+                        double stopLossPips = 0;
+                        if(isSynthetic)
                         {
-                            Print("[RISK] Failed to apply adaptive sizing params - trade skipped");
-                            continue;
-                        }
-
-                        // Calculate optimal lot size
-                        double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, confidence);
-
-                        // Update request with actual lot size and re-validate
-                        tradeReq.lotSize = lotSize;
-                        riskResult = riskGate.ValidateTradeRequest(tradeReq);
-                        
-                        // Validate the lot size and final risk approval
-                        if(lotSize > 0 && riskResult.approved)
-                        {
-                            // Execute through TradeManager to keep one authoritative execution stack
-                            bool tradeSuccess = tradeManager.OpenPosition(
-                                currentSymbol,
-                                orderType,
-                                lotSize,
-                                entryPrice,
-                                stopLossPips,
-                                takeProfitPips,
-                                "Enterprise AI Signal",
-                                (uint)InpMagicNumber
-                            );
-
-                            // Check trade result
-                            if(!tradeSuccess)
-                            {
-                                int errorCode = GetLastError();
-                                Print("[TRADE-ERROR] Failed to execute ", signalType, " order on ", currentSymbol,
-                                      " | Lot Size: ", lotSize, " | Error Code: ", errorCode);
-                            }
-                            else
-                            {
-                                ulong ticket = tradeManager.GetLastTicket();
-                                double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
-                                double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
-                                
-                                // FIX: Update risk manager usage
-                                enhancedRiskManager.AddRiskUsage(proposedRisk);
-
-                                // Update last trade time for cooldown
-                                g_lastTradeTime = tickTime;
-
-                                Print("[TRADE-SUCCESS] ", signalType, " order executed on ", currentSymbol,
-                                      " | Lot Size: ", lotSize,
-                                      " | SL: ", slPrice, " (", (int)stopLossPips, " pips)",
-                                      " | TP: ", tpPrice, " (", (int)takeProfitPips, " pips)",
-                                      " | Ticket: ", ticket);
-
-                                // Stop after first successful trade to enforce cooldown
-                                return;
-                            }
+                            // For synthetics: ATR is already in price units, convert carefully
+                            // Use 1.5x ATR as SL, but convert to pips properly
+                            stopLossPips = (atrValue * 1.5) / pointValue;
                         }
                         else
                         {
-                            Print("[AI-GLOBAL] Invalid lot size calculated for ", currentSymbol, " - trade skipped");
+                            // For regular pairs: standard calculation
+                            stopLossPips = (atrValue / pointValue) * 2.0;
+                        }
+
+                        double takeProfitPips = stopLossPips * 2.0;  // 2:1 RR ratio
+
+                        // Clamp SL/TP to reasonable bounds based on price percentage
+                        // Min SL: 0.5% of price, Max SL: 3.0% of price (tighter for safety)
+                        double minSlPips = (entryPrice * 0.005) / pointValue;
+                        double maxSlPips = (entryPrice * 0.03) / pointValue;
+
+                        stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
+                        takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
+
+                        double proposedRisk = InpMaxRiskPerTrade;
+                        if(g_adaptiveRiskReady && adaptiveRisk.GetCurrentRiskPercent() > 0.0)
+                            proposedRisk = adaptiveRisk.GetCurrentRiskPercent();
+                        currentRiskPerTrade = proposedRisk;
+
+                        // AUDIT FIX: Use RiskValidationGate for comprehensive checks
+                        STradeValidationRequest tradeReq;
+                        tradeReq.symbol = currentSymbol;
+                        tradeReq.orderType = orderType;
+                        tradeReq.lotSize = 0.0; // Lot size not known yet, validation gate will validate prelim checks
+                        tradeReq.stopLossPips = stopLossPips;
+                        tradeReq.takeProfitPips = takeProfitPips;
+                        tradeReq.confidence = confidence;
+                        tradeReq.strategy = "Enterprise AI";
+                        tradeReq.reasoning = "Orchestrator consensus signal";
+                        
+                        // Pre-check risk with 0.01 lot to validate trade parameters first
+                        tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
+                        
+                        SValidationResult riskResult;
+                        if(ApproveTradeByRiskGate(tradeReq, "pre-size", riskResult))
+                        {
+                            SPositionSizingParams currentSizingParams = positionSizer.GetParameters();
+                            currentSizingParams.riskPercent = proposedRisk;
+                            if(!positionSizer.SetParameters(currentSizingParams))
+                            {
+                                Print("[RISK] Failed to apply adaptive sizing params - trade skipped");
+                                continue;
+                            }
+
+                            // Calculate optimal lot size
+                            double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, confidence);
+
+                            // Update request with actual lot size and re-validate
+                            tradeReq.lotSize = lotSize;
+                            if(!ApproveTradeByRiskGate(tradeReq, "post-size", riskResult))
+                                continue;
+                            
+                            // Validate the lot size and final risk approval
+                            if(lotSize > 0)
+                            {
+                                string predictionId = "";
+                                CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(currentSymbol);
+                                if(symbolNet == NULL)
+                                    symbolNet = neuralNetStrategy;
+
+                                if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork)
+                                    symbolNet.ReservePredictionForSignal(enterpriseSignal, predictionId, 600);
+
+                                string tradeComment = BuildTradeCommentWithPrediction("Enterprise AI Signal", predictionId);
+
+                                // Execute through TradeManager to keep one authoritative execution stack
+                                bool tradeSuccess = tradeManager.OpenPosition(
+                                    currentSymbol,
+                                    orderType,
+                                    lotSize,
+                                    entryPrice,
+                                    stopLossPips,
+                                    takeProfitPips,
+                                    tradeComment,
+                                    (uint)InpMagicNumber
+                                );
+
+                                // Check trade result
+                                if(!tradeSuccess)
+                                {
+                                    if(symbolNet != NULL && predictionId != "")
+                                        symbolNet.ReleasePredictionReservation(predictionId);
+
+                                    int errorCode = GetLastError();
+                                    Print("[TRADE-ERROR] Failed to execute ", signalType, " order on ", currentSymbol,
+                                          " | Lot Size: ", lotSize, " | Error Code: ", errorCode);
+                                }
+                                else
+                                {
+                                    ulong ticket = tradeManager.GetLastTicket();
+                                    double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
+                                    double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
+                                    
+                                    // Advisory only: EnhancedRiskManager tracks usage/analytics, but does not veto entries.
+                                    enhancedRiskManager.AddRiskUsage(proposedRisk);
+
+                                    // Update last trade time for cooldown
+                                    g_lastTradeTime = tickTime;
+
+                                    Print("[TRADE-SUCCESS] ", signalType, " order executed on ", currentSymbol,
+                                          " | Lot Size: ", lotSize,
+                                          " | SL: ", slPrice, " (", (int)stopLossPips, " pips)",
+                                          " | TP: ", tpPrice, " (", (int)takeProfitPips, " pips)",
+                                          " | Ticket: ", ticket);
+
+                                    // Stop after first successful trade to enforce cooldown while still
+                                    // allowing the rest of runtime management below in this cycle.
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                Print("[AI-GLOBAL] Invalid lot size calculated for ", currentSymbol, " - trade skipped");
+                            }
                         }
                     }
+                    // FIX: Removed IndicatorRelease(atrHandle) because handles from CIndicatorManager are shared/cached.
+                    // Releasing them here invalidates the handle for other parts of the EA.
                 }
-                // FIX: Removed IndicatorRelease(atrHandle) because handles from CIndicatorManager are shared/cached.
-                // Releasing them here invalidates the handle for other parts of the EA.
             }
         }
     }
@@ -1264,33 +1842,131 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
 {
-    // Attribute only this EA's closed deals to orchestration feedback
+    // Attribute only this EA's deals to neural training feedback
     if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
     {
         if(HistoryDealSelect(trans.deal))
         {
             long dealMagic = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
-            if(dealMagic != InpMagicNumber)
-                return;
-
-            ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
-            if((dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_OUT_BY) &&
-               InpEnableAIMode &&
-               InpEnableNeuralNetwork &&
-               neuralNetStrategy != NULL)
+            if(dealMagic == InpMagicNumber)
             {
-                datetime dealTime = (datetime)HistoryDealGetInteger(trans.deal, DEAL_TIME);
-                double dealProfit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
-                double dealSwap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);
-                double dealCommission = HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
-                double netProfit = dealProfit + dealSwap + dealCommission;
-                neuralNetStrategy.UpdateTradeResult(dealTime, netProfit);
+                ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+                ulong positionId = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+                string dealComment = HistoryDealGetString(trans.deal, DEAL_COMMENT);
+
+                // Capture entry-time mapping from comment to position for exact close labeling
+                if((dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT) && positionId > 0)
+                {
+                    string openPredictionId = ExtractPredictionIdFromComment(dealComment);
+                    if(openPredictionId != "")
+                    {
+                        UpsertPredictionPositionMap(positionId, openPredictionId);
+                        g_nnDiagEntryMapCount++;
+                        NNDiagLog(StringFormat("Entry mapped | Symbol=%s | PositionID=%I64u | PredictionID=%s",
+                                               trans.symbol, positionId, openPredictionId));
+                    }
+                    else
+                    {
+                        NNDiagLog(StringFormat("Entry without prediction ID | Symbol=%s | PositionID=%I64u | Comment=%s",
+                                               trans.symbol, positionId, dealComment));
+                    }
+                }
+
+                if((dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_OUT_BY || dealEntry == DEAL_ENTRY_INOUT) &&
+                   InpEnableAIMode &&
+                   InpEnableNeuralNetwork)
+                {
+                    datetime dealTime = (datetime)HistoryDealGetInteger(trans.deal, DEAL_TIME);
+                    double dealProfit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
+                    double dealSwap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);
+                    double dealCommission = HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+                    double netProfit = dealProfit + dealSwap + dealCommission;
+                    bool positionStillOpen = (positionId > 0 && IsPositionIdStillOpen(positionId));
+
+                    // Partial close: defer labeling until full position close so NN gets complete trade P/L.
+                    if(positionStillOpen)
+                    {
+                        if(positionId > 0)
+                            AccumulatePendingCloseProfit(positionId, netProfit);
+
+                        g_nnDiagPartialCloseCount++;
+                        NNDiagLog(StringFormat("Partial close deferred | Symbol=%s | PositionID=%I64u | DealNet=%.2f",
+                                               trans.symbol, positionId, netProfit));
+                    }
+                    else
+                    {
+                        double totalNetProfit = netProfit;
+                        if(positionId > 0)
+                            totalNetProfit += ConsumePendingCloseProfit(positionId);
+
+                        CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(trans.symbol);
+                        if(symbolNet == NULL)
+                            symbolNet = neuralNetStrategy;
+
+                        if(symbolNet != NULL)
+                        {
+                            string predictionId = ExtractPredictionIdFromComment(dealComment);
+                            if(predictionId == "" && positionId > 0)
+                                predictionId = GetPredictionIdForPosition(positionId);
+
+                            bool updatedById = false;
+                            if(predictionId != "")
+                                updatedById = symbolNet.UpdateTradeResultByPredictionId(predictionId, totalNetProfit);
+
+                            bool updatedByFallback = false;
+                            if(!updatedById)
+                                updatedByFallback = symbolNet.UpdateTradeResult(dealTime, totalNetProfit);
+
+                            if(updatedById)
+                            {
+                                g_nnDiagCloseByIdCount++;
+                                NNDiagLog(StringFormat("Close labeled by ID | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
+                                                       trans.symbol, positionId, predictionId, totalNetProfit));
+                            }
+                            else if(updatedByFallback)
+                            {
+                                g_nnDiagCloseFallbackCount++;
+                                NNDiagLog(StringFormat("Close labeled by fallback | Symbol=%s | PositionID=%I64u | Net=%.2f",
+                                                       trans.symbol, positionId, totalNetProfit));
+                            }
+                            else
+                            {
+                                g_nnDiagCloseMissCount++;
+                                NNDiagLog(StringFormat("Close label miss | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
+                                                       trans.symbol, positionId, predictionId, totalNetProfit));
+                            }
+                        }
+                        else
+                        {
+                            g_nnDiagCloseMissCount++;
+                            NNDiagLog(StringFormat("Close label miss: no NN instance | Symbol=%s | PositionID=%I64u",
+                                                   trans.symbol, positionId));
+                        }
+
+                        if(positionId > 0 && !IsPositionIdStillOpen(positionId))
+                        {
+                            RemovePredictionPositionMap(positionId);
+                            ClearPendingCloseProfit(positionId);
+                            NNDiagLog(StringFormat("Position map cleared | Symbol=%s | PositionID=%I64u",
+                                                   trans.symbol, positionId));
+                        }
+                    }
+                }
             }
         }
     }
 
-    // Forward trade events to Enterprise Manager for AI feedback
-    if(g_enterpriseManager != NULL)
+    // Forward trade events to symbol-specific manager to avoid duplicated attribution.
+    string txSymbol = trans.symbol;
+    if(txSymbol == "" && trans.deal > 0 && HistoryDealSelect(trans.deal))
+        txSymbol = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+
+    CEnterpriseStrategyManager* txManager = GetEnterpriseManagerForSymbol(txSymbol);
+    if(txManager != NULL)
+    {
+        txManager.OnTradeTransaction(trans, request, result);
+    }
+    else if(g_enterpriseManager != NULL)
     {
         g_enterpriseManager.OnTradeTransaction(trans, request, result);
     }

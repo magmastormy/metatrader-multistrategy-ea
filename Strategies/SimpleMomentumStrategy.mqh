@@ -25,7 +25,7 @@ private:
     bool     m_enableScalping;     // Allow rapid signals
     double   m_minTrendStrength;   // Minimum trend strength for trades
     double   m_minVolatility;      // Minimum volatility threshold
-    datetime m_lastSignalTime;     // Track absolute time of last signal
+    datetime m_lastSignalTimestamp;     // Track absolute time of last signal
 
     bool CreateHandles()
     {
@@ -53,8 +53,9 @@ private:
         double fastBuffer[2];
         double slowBuffer[2];
 
-        if(CopyBuffer(m_fastHandle, 0, 0, 2, fastBuffer) < 2) return false;
-        if(CopyBuffer(m_slowHandle, 0, 0, 2, slowBuffer) < 2) return false;
+        // Closed-bar values: current signal bar = shift 1, previous = shift 2
+        if(CopyBuffer(m_fastHandle, 0, 1, 2, fastBuffer) < 2) return false;
+        if(CopyBuffer(m_slowHandle, 0, 1, 2, slowBuffer) < 2) return false;
 
         fastNow = fastBuffer[0];
         fastPrev = fastBuffer[1];
@@ -76,7 +77,7 @@ public:
         m_atrHandle(INVALID_HANDLE),
         m_lastDiff(0.0),
         m_lastSignalBar(0),
-        m_lastSignalTime(0),
+        m_lastSignalTimestamp(0),
         m_enableScalping(false),
         m_minTrendStrength(0.55),
         m_minVolatility(0.0005)
@@ -94,7 +95,7 @@ public:
         m_atrHandle(INVALID_HANDLE),
         m_lastDiff(0.0),
         m_lastSignalBar(0),
-        m_lastSignalTime(0),
+        m_lastSignalTimestamp(0),
         m_enableScalping(false),      // SCALPING MODE: Disabled by default
         m_minTrendStrength(0.55),    // TREND FILTER: 55% minimum trend alignment
         m_minVolatility(0.0005)      // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
@@ -146,12 +147,12 @@ public:
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE) return TRADE_SIGNAL_NONE;
 
         // COOLDOWN: Always enforce at least 60 seconds between signals per symbol
-        if(TimeCurrent() - m_lastSignalTime < 60) return TRADE_SIGNAL_NONE;
+        if(TimeCurrent() - m_lastSignalTimestamp < 60) return TRADE_SIGNAL_NONE;
 
         if(!m_enableScalping)
         {
             // Conservative mode: Only one signal per bar
-            datetime currentBar = iTime(m_symbol, m_timeframe, 0);
+            datetime currentBar = iTime(m_symbol, m_timeframe, 1);
             if(currentBar == m_lastSignalBar) return TRADE_SIGNAL_NONE;
         }
 
@@ -167,7 +168,7 @@ public:
 
         // --- VOLATILITY FILTER ---
         double atrBuffer[1];
-        if(CopyBuffer(m_atrHandle, 0, 0, 1, atrBuffer) < 1) return TRADE_SIGNAL_NONE;
+        if(CopyBuffer(m_atrHandle, 0, 1, 1, atrBuffer) < 1) return TRADE_SIGNAL_NONE;
         if(atrBuffer[0] < m_minVolatility) 
         {
             // Market too quiet
@@ -175,9 +176,9 @@ public:
         }
 
         // --- TREND FILTER ---
-        double priceForTrend = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        double priceForTrend = iClose(m_symbol, m_timeframe, 1);
         double trendBuffer[1];
-        if(CopyBuffer(m_trendHandle, 0, 0, 1, trendBuffer) < 1) return TRADE_SIGNAL_NONE;
+        if(CopyBuffer(m_trendHandle, 0, 1, 1, trendBuffer) < 1) return TRADE_SIGNAL_NONE;
         double trendMA = trendBuffer[0];
 
         // Calculate trend strength (0.0 = strong down, 0.5 = neutral, 1.0 = strong up)
@@ -230,8 +231,8 @@ public:
             double trendConfidence = (signal == TRADE_SIGNAL_BUY) ? trendStrength : (1.0 - trendStrength);
             confidence = (momentumConfidence * 0.6) + (trendConfidence * 0.4); // 60% momentum, 40% trend
             
-            m_lastSignalBar = iTime(m_symbol, m_timeframe, 0);
-            m_lastSignalTime = TimeCurrent();
+            m_lastSignalBar = iTime(m_symbol, m_timeframe, 1);
+            m_lastSignalTimestamp = TimeCurrent();
             RecordSignal();
         }
 

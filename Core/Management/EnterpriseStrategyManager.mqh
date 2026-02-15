@@ -7,6 +7,7 @@
 
 #include "../Pipeline/UnifiedSignalPipeline.mqh"
 #include "../AI/AIStrategyOrchestrator.mqh"
+#include "../Visualization/DrawingCoordinator.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 
 // Import all strategies in logical order
@@ -57,6 +58,9 @@ struct StrategyEntry
     int successCount;
     int failCount;
     double avgConfidence;
+    ENUM_TRADE_SIGNAL lastSignal;
+    double lastSignalConfidence;
+    datetime lastEvaluationTime;
 };
 
 //+------------------------------------------------------------------+
@@ -75,6 +79,7 @@ private:
     
     string m_symbol;
     ENUM_TIMEFRAMES m_baseTimeframe;
+    long m_managedMagic;
     
     bool m_initialized;
     bool m_useOrchestrator;
@@ -92,6 +97,8 @@ private:
     int m_lastContributorCount;
     string m_lastSignalSymbol;
     datetime m_lastSignalTime;
+
+    bool IsPositionIdStillOpen(const ulong positionId) const;
     
 public:
     CEnterpriseStrategyManager();
@@ -101,7 +108,8 @@ public:
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
                    bool useOrchestrator = true, bool usePipeline = true,
                    CTradeManager* tradeManagerPtr = NULL, CPositionSizer* positionSizerPtr = NULL,
-                   CAIStrategyOrchestrator* orchestratorPtr = NULL);
+                   CAIStrategyOrchestrator* orchestratorPtr = NULL,
+                   const long managedMagic = 0);
     
     // Strategy management
     bool RegisterStrategy(IStrategy* strategy, const string name, 
@@ -150,6 +158,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_strategyCount(0),
+    m_managedMagic(0),
     m_initialized(false),
     m_useOrchestrator(true),
     m_ownsOrchestrator(true), // Default to owning it unless injected
@@ -200,10 +209,12 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
 bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            bool useOrchestrator, bool usePipeline,
                                            CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
-                                           CAIStrategyOrchestrator* orchestratorPtr)
+                                           CAIStrategyOrchestrator* orchestratorPtr,
+                                           const long managedMagic)
 {
     m_symbol = symbol;
     m_baseTimeframe = timeframe;
+    m_managedMagic = managedMagic;
     m_useOrchestrator = useOrchestrator;
     m_usePipeline = usePipeline;
     m_tradeManager = tradeManagerPtr;   // CRITICAL FIX: Store for strategy initialization
@@ -270,7 +281,10 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     
     if(!initSuccess)
     {
-        Print("[EnterpriseStrategyManager] WARNING: Strategy ", name, " initialization failed!");
+        Print("[EnterpriseStrategyManager] ERROR: Strategy ", name, " initialization failed. Skipping registration.");
+        delete strategy;
+        strategy = NULL;
+        return false;
     }
     
     // CRITICAL FIX: Synchronize enabled state with strategy object
@@ -289,6 +303,9 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
     m_strategies[m_strategyCount].avgConfidence = 0;
+    m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
+    m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
+    m_strategies[m_strategyCount].lastEvaluationTime = 0;
     
     m_strategyCount++;
     
@@ -345,7 +362,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     if(m_useOrchestrator && m_orchestrator != NULL)
     {
         ENUM_TRADE_SIGNAL signal = GetOrchestratedSignal(symbol, m_baseTimeframe, confidence);
-        confluence = m_strategyCount / 2;  // Rough estimate from orchestrator
+        confluence = (signal != TRADE_SIGNAL_NONE) ? m_lastContributorCount : 0;
         return signal;
     }
     
@@ -379,6 +396,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         {
             signal = m_strategies[i].strategy.GetSignal(stratConf);
         }
+
+        m_strategies[i].lastSignal = signal;
+        m_strategies[i].lastSignalConfidence = stratConf;
+        m_strategies[i].lastEvaluationTime = TimeCurrent();
 
         if(signal == TRADE_SIGNAL_BUY)
         {
@@ -470,6 +491,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(const string
         {
             signal = m_strategies[i].strategy.GetSignal(stratConf);
         }
+
+        m_strategies[i].lastSignal = signal;
+        m_strategies[i].lastSignalConfidence = stratConf;
+        m_strategies[i].lastEvaluationTime = TimeCurrent();
         
         if(signal != TRADE_SIGNAL_NONE)
         {
@@ -658,8 +683,12 @@ void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxL
 {
     if(m_orchestrator != NULL)
     {
-        // Orchestrator mode configuration (simplified stub)
-        Print("Orchestrator mode set: WinRate=", minWinRate, " MaxLosses=", maxLosses);
+        double clampedWinRate = MathMax(0.0, MathMin(1.0, minWinRate));
+        int clampedMaxLosses = MathMax(1, maxLosses);
+        m_orchestrator.SetMinWinRateThreshold(clampedWinRate);
+        m_orchestrator.SetMaxConsecutiveLosses(clampedMaxLosses);
+        PrintFormat("[EnterpriseStrategyManager] Orchestrator mode updated | MinWinRate=%.2f | MaxConsecutiveLosses=%d",
+                    clampedWinRate, clampedMaxLosses);
     }
 }
 
@@ -671,15 +700,55 @@ void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES t
 {
     if(!m_initialized || m_strategyCount == 0)
         return;
-    
-    // Call OnNewBar on all enabled strategies
+
+    datetime barTime = iTime(symbol, timeframe, 0);
+    if(barTime <= 0)
+        barTime = TimeCurrent();
+
+    CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
+    if(drawingCoordinator != NULL)
+        drawingCoordinator.BeginBarCycle(symbol, timeframe, barTime);
+
+    // Call OnNewBar and persist per-bar analysis snapshots
     for(int i = 0; i < m_strategyCount; i++)
     {
-        if(m_strategies[i].enabled && m_strategies[i].strategy != NULL)
+        if(m_strategies[i].strategy == NULL)
+            continue;
+
+        if(m_strategies[i].enabled)
         {
             m_strategies[i].strategy.OnNewBar(symbol, timeframe);
         }
+        else
+        {
+            m_strategies[i].lastSignal = TRADE_SIGNAL_NONE;
+            m_strategies[i].lastSignalConfidence = 0.0;
+        }
+
+        if(drawingCoordinator != NULL)
+        {
+            int totalSignals = 0;
+            int successfulSignals = 0;
+            double accuracy = 0.0;
+            m_strategies[i].strategy.GetStatistics(totalSignals, successfulSignals, accuracy);
+
+            drawingCoordinator.RecordStrategySnapshot(
+                m_strategies[i].name,
+                m_strategies[i].enabled,
+                m_strategies[i].lastSignal,
+                m_strategies[i].lastSignalConfidence,
+                totalSignals,
+                successfulSignals,
+                accuracy,
+                m_strategies[i].lastEvaluationTime > 0
+                    ? m_strategies[i].lastEvaluationTime
+                    : m_strategies[i].strategy.GetLastSignalTime()
+            );
+        }
     }
+
+    if(drawingCoordinator != NULL)
+        drawingCoordinator.EndBarCycle();
 }
 
 //+------------------------------------------------------------------+
@@ -690,16 +759,29 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                                                    const MqlTradeResult& result)
 {
     // Check for transaction adding a deal (trade execution)
-    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+    if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
     {
-        long dealTicket = trans.deal;
+        ulong dealTicket = trans.deal;
         if(HistoryDealSelect(dealTicket))
         {
+            long dealMagic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+            if(m_managedMagic > 0 && dealMagic != m_managedMagic)
+                return;
+
+            string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+            if(dealSymbol != "" && dealSymbol != m_symbol)
+                return;
+
             ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+            ulong positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
             
             // We care about exits (deals that close a position) to meaningful profit/loss
-            if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY)
+            if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY || entryType == DEAL_ENTRY_INOUT)
             {
+                // Avoid double-counting partial closes; attribute only once when position is fully closed.
+                if(positionId > 0 && IsPositionIdStillOpen(positionId))
+                    return;
+
                 double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
                 double swap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
                 double commission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
@@ -728,12 +810,31 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                     }
                     
                     // Log for debugging
-                    PrintFormat("[EnterpriseManager] Trade Closed | Ticket: %d | Net Profit: %.2f | AI Feedback Sent: %s",
-                               dealTicket, netProfit, success ? "SUCCESS" : "FAILURE");
+                    PrintFormat("[EnterpriseManager] Trade Closed | Symbol: %s | Ticket: %I64u | PositionID: %I64u | Net Profit: %.2f | AI Feedback Sent: %s",
+                               dealSymbol, dealTicket, positionId, netProfit, success ? "SUCCESS" : "FAILURE");
                 }
             }
         }
     }
+}
+
+bool CEnterpriseStrategyManager::IsPositionIdStillOpen(const ulong positionId) const
+{
+    if(positionId == 0)
+        return false;
+
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+
+        ulong openPositionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+        if(openPositionId == positionId)
+            return true;
+    }
+
+    return false;
 }
 
 #endif // ENTERPRISE_STRATEGY_MANAGER_MQH

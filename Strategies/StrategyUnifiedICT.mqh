@@ -125,6 +125,7 @@ public:
 private:
     void                        Cleanup();
     void                        DrawElements();
+    bool                        RefreshComponentsForCurrentBar();
     
     // Entry System
     SICTEntrySetup              CreateRiskEntry();
@@ -291,24 +292,8 @@ void CStrategyUnifiedICT::OnNewBar(const string symbol, const ENUM_TIMEFRAMES ti
     if(!m_is_enabled || symbol != m_symbol || timeframe != m_timeframe)
         return;
     
-    // Drawing handled by DrawElements method
-    
-    int currentBar = iBars(m_symbol, m_timeframe);
-    if(currentBar == m_lastBarProcessed)
-        return;
-    m_lastBarProcessed = currentBar;
-    
-    // Update all components
-    if(m_structureAnalyzer != NULL) m_structureAnalyzer.Update();
-    if(m_obDetector != NULL) m_obDetector.Update();
-    if(m_liquidityDetector != NULL) m_liquidityDetector.Update();
-    if(m_imbalanceDetector != NULL) m_imbalanceDetector.Update();
-    if(m_premiumDiscount != NULL) m_premiumDiscount.Update();
-    
-    m_obsDetected = m_obDetector.GetOBCount();
-    
-    // Draw elements
-    DrawElements();
+    if(RefreshComponentsForCurrentBar())
+        DrawElements();
 }
 
 //+------------------------------------------------------------------+
@@ -316,7 +301,11 @@ void CStrategyUnifiedICT::OnNewBar(const string symbol, const ENUM_TIMEFRAMES ti
 //+------------------------------------------------------------------+
 void CStrategyUnifiedICT::DrawElements()
 {
-    ObjectsDeleteAll(0, "UICT_");
+    CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
+    if(drawingCoordinator != NULL)
+        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, "UICT_");
+    else
+        ObjectsDeleteAll(0, "UICT_");
     
     // Draw Order Blocks
     if(m_obDetector != NULL)
@@ -374,12 +363,8 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     if(!m_is_enabled || !m_is_initialized)
         return TRADE_SIGNAL_NONE;
     
-    // Update all components
-    if(m_structureAnalyzer != NULL) m_structureAnalyzer.Update();
-    if(m_obDetector != NULL) m_obDetector.Update();
-    if(m_liquidityDetector != NULL) m_liquidityDetector.Update();
-    if(m_imbalanceDetector != NULL) m_imbalanceDetector.Update();
-    if(m_premiumDiscount != NULL) m_premiumDiscount.Update();
+    // Ensure heavy component updates run once per bar across OnNewBar/GetSignal
+    RefreshComponentsForCurrentBar();
     
     // Check Kill Zone requirement
     if(m_requireKillZone && m_killZones != NULL)
@@ -502,6 +487,29 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     }
     
     return result;
+}
+
+bool CStrategyUnifiedICT::RefreshComponentsForCurrentBar()
+{
+    int currentBar = iBars(m_symbol, m_timeframe);
+    if(currentBar <= 0)
+        return false;
+
+    if(currentBar == m_lastBarProcessed)
+        return false;
+
+    m_lastBarProcessed = currentBar;
+
+    if(m_structureAnalyzer != NULL) m_structureAnalyzer.Update();
+    if(m_obDetector != NULL) m_obDetector.Update();
+    if(m_liquidityDetector != NULL) m_liquidityDetector.Update();
+    if(m_imbalanceDetector != NULL) m_imbalanceDetector.Update();
+    if(m_premiumDiscount != NULL) m_premiumDiscount.Update();
+
+    if(m_obDetector != NULL)
+        m_obsDetected = m_obDetector.GetOBCount();
+
+    return true;
 }
 
 //+------------------------------------------------------------------+

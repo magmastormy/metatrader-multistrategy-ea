@@ -88,22 +88,22 @@ public:
             
         // Get Bollinger Bands values
         double upper[1], middle[1], lower[1];
-        if(CopyBuffer(m_bb_handle, 1, 0, 1, upper) != 1 ||
-           CopyBuffer(m_bb_handle, 0, 0, 1, middle) != 1 ||
-           CopyBuffer(m_bb_handle, 2, 0, 1, lower) != 1)
+        if(CopyBuffer(m_bb_handle, 1, 1, 1, upper) != 1 ||
+           CopyBuffer(m_bb_handle, 0, 1, 1, middle) != 1 ||
+           CopyBuffer(m_bb_handle, 2, 1, 1, lower) != 1)
         {
             confidence = 0.0;
             return TRADE_SIGNAL_NONE;
         }
         // Get RSI value
         double rsi[1];
-        if(CopyBuffer(m_rsi_handle, 0, 0, 1, rsi) != 1)
+        if(CopyBuffer(m_rsi_handle, 0, 1, 1, rsi) != 1)
         {
             confidence = 0.0;
             return TRADE_SIGNAL_NONE;
         }
         // Get current price
-        double price = iClose(m_symbol, m_timeframe, 0);
+        double price = iClose(m_symbol, m_timeframe, 1);
         
         // Check for oversold condition (potential buy)
         if(price <= lower[0] && rsi[0] < m_rsi_oversold)

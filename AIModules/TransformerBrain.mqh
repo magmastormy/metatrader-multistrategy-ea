@@ -504,6 +504,9 @@ private:
     double m_inputSequence[];
     double m_output[];
     double m_attentionWeights[];
+    double m_classificationWeights[];     // 3 x dModel classification head
+    double m_classificationBiases[];      // 3-class bias
+    double m_classificationBiasVelocity[];
     
     // Training parameters
     double m_learningRate;
@@ -511,6 +514,7 @@ private:
     double m_totalLoss;
     double m_momentum;
     double m_velocity[];
+    uint m_trainingRandomState;
     
     // Model parameters
     int m_dModel;
@@ -518,6 +522,85 @@ private:
     int m_numLayers;
     int m_dFF;
     int m_maxSeqLen;
+
+    double GetTrainingRandom()
+    {
+        m_trainingRandomState = m_trainingRandomState * 1664525 + 1013904223;
+        return (double)m_trainingRandomState / 4294967296.0;
+    }
+
+    void InitializeClassificationHead()
+    {
+        int weightCount = 3 * m_dModel;
+        ArrayResize(m_classificationWeights, weightCount);
+        ArrayResize(m_classificationBiases, 3);
+        ArrayResize(m_velocity, weightCount);
+        ArrayResize(m_classificationBiasVelocity, 3);
+
+        ArrayInitialize(m_velocity, 0.0);
+        ArrayInitialize(m_classificationBiasVelocity, 0.0);
+
+        double scale = MathSqrt(2.0 / (m_dModel + 3.0));
+        for(int i = 0; i < weightCount; i++)
+            m_classificationWeights[i] = (GetTrainingRandom() - 0.5) * 2.0 * scale;
+
+        ArrayInitialize(m_classificationBiases, 0.0);
+    }
+
+    bool ComputeClassProbabilities(const double &features[], double &probabilities[])
+    {
+        if(ArraySize(features) != m_dModel)
+            return false;
+
+        double logits[3];
+        for(int c = 0; c < 3; c++)
+        {
+            double score = m_classificationBiases[c];
+            int rowOffset = c * m_dModel;
+            for(int i = 0; i < m_dModel; i++)
+                score += m_classificationWeights[rowOffset + i] * features[i];
+            logits[c] = score;
+        }
+
+        double maxLogit = MathMax(logits[0], MathMax(logits[1], logits[2]));
+        double exp0 = MathExp(logits[0] - maxLogit);
+        double exp1 = MathExp(logits[1] - maxLogit);
+        double exp2 = MathExp(logits[2] - maxLogit);
+        double sumExp = exp0 + exp1 + exp2;
+        if(sumExp <= 1e-12)
+            return false;
+
+        ArrayResize(probabilities, 3);
+        probabilities[0] = exp0 / sumExp;
+        probabilities[1] = exp1 / sumExp;
+        probabilities[2] = exp2 / sumExp;
+        return true;
+    }
+
+    void UpdateClassificationHead(const double &features[], const double &probabilities[], const int targetClass)
+    {
+        if(ArraySize(features) != m_dModel || ArraySize(probabilities) != 3)
+            return;
+
+        for(int c = 0; c < 3; c++)
+        {
+            double target = (c == targetClass) ? 1.0 : 0.0;
+            double error = probabilities[c] - target;
+            int rowOffset = c * m_dModel;
+
+            for(int i = 0; i < m_dModel; i++)
+            {
+                int idx = rowOffset + i;
+                double grad = error * features[i];
+                m_velocity[idx] = m_momentum * m_velocity[idx] + (1.0 - m_momentum) * grad;
+                m_classificationWeights[idx] -= m_learningRate * m_velocity[idx];
+            }
+
+            m_classificationBiasVelocity[c] =
+                m_momentum * m_classificationBiasVelocity[c] + (1.0 - m_momentum) * error;
+            m_classificationBiases[c] -= m_learningRate * m_classificationBiasVelocity[c];
+        }
+    }
     
 public:
     CTransformerBrain(int dModel = 256, int numHeads = 8, int numLayers = 6,
@@ -531,6 +614,7 @@ public:
         m_trainingSteps = 0;
         m_totalLoss = 0.0;
         m_momentum = 0.9;
+        m_trainingRandomState = 20240215;
         
         // Initialize Positional Encoding
         m_positionalEncoding = new CPositionalEncoding(maxSeqLen, dModel);
@@ -541,6 +625,8 @@ public:
             CTransformerBlock *block = new CTransformerBlock(dModel, numHeads, dFF, 42 + i * 10);
             m_transformerBlocks.Add(block);
         }
+
+        InitializeClassificationHead();
         
         PrintFormat("[TRANSFORMER] Initialized with %d layers, dModel=%d, heads=%d", numLayers, dModel, numHeads);
     }
@@ -607,38 +693,32 @@ public:
     
     // Training step with gradient-based weight updates
     bool TrainStep(const double &inputFeatures[], int targetClass, double &loss) {
-        // Forward pass
-        double predictions[];
-        if(!Forward(inputFeatures, predictions)) return false;
-        
-        // Softmax
+        if(targetClass < 0 || targetClass > 2)
+            return false;
+
+        // Encode input sequence with transformer stack.
+        double encodedFeatures[];
+        if(!Forward(inputFeatures, encodedFeatures))
+            return false;
+
+        if(ArraySize(encodedFeatures) != m_dModel)
+            return false;
+
+        // Predict class probabilities with a trained classification head.
         double probabilities[];
-        ArrayResize(probabilities, 3);
-        
-        double maxPred = -DBL_MAX;
-        for(int i = 0; i < ArraySize(predictions); i++) if(predictions[i] > maxPred) maxPred = predictions[i];
-        
-        double sumExp = 0.0;
-        for(int i = 0; i < ArraySize(predictions); i++) {
-            sumExp += MathExp(predictions[i] - maxPred);
-        }
-        
-        for(int i = 0; i < ArraySize(predictions); i++) {
-            probabilities[i] = MathExp(predictions[i] - maxPred) / sumExp;
-        }
-        
-        // Calculate loss
+        if(!ComputeClassProbabilities(encodedFeatures, probabilities))
+            return false;
+
+        // Cross-entropy objective.
         loss = CalculateLoss(probabilities, targetClass);
+        if(!MathIsValidNumber(loss))
+            return false;
+
+        // Update classification head weights with momentum SGD.
+        UpdateClassificationHead(encodedFeatures, probabilities, targetClass);
+
         m_totalLoss += loss;
         m_trainingSteps++;
-        
-        // Safety: Auto-warmed up after 50 steps
-        // NOTE: Full backpropagation is complex to implement from scratch in MQL5 without a framework.
-        // For this streamlined version, we use a simplified weight perturbation / evolution strategy 
-        // or a placeholder for the full backprop if not strictly required for this specific task.
-        // Given the user asked for "Optimized MQL5-safe logic", a full autograd system is likely overkill/risky.
-        // We will implement a simplified momentum update on the last layer as a proxy for learning.
-        
         return true;
     }
     
@@ -665,7 +745,10 @@ public:
     void ResetTraining() {
         m_trainingSteps = 0;
         m_totalLoss = 0.0;
-        ArrayResize(m_velocity, 0); // Reset velocity
+        if(ArraySize(m_velocity) > 0)
+            ArrayInitialize(m_velocity, 0.0);
+        if(ArraySize(m_classificationBiasVelocity) > 0)
+            ArrayInitialize(m_classificationBiasVelocity, 0.0);
     }
     
     // Initialize the brain
