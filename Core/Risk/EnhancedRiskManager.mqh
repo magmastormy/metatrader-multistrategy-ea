@@ -766,7 +766,7 @@ void CEnhancedRiskManager::CheckAndResetDailyLimits()
         
         Print("[ENHANCED-RISK] Daily risk counters reset for new trading day");
         PrintFormat("[ENHANCED-RISK] Daily risk: 0.00%% | Max allowed: %.2f%%", 
-                   m_config.max_daily_risk * 100);
+                   m_config.max_daily_risk);
     }
 }
 

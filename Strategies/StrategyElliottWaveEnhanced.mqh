@@ -206,7 +206,7 @@ CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
         m_trendEngine.Initialize(20, 50, 200, 14, m_diagnostics);
 
     if(m_diagnostics != NULL)
-        m_diagnostics.Initialize(500, 3);
+        m_diagnostics.Initialize(500, 2);
 }
 
 //+------------------------------------------------------------------+
@@ -402,35 +402,6 @@ bool CStrategyElliottWaveEnhanced::IdentifyWavePattern(const MqlRates &rates[], 
     if(swingHighCount < 2 || swingLowCount < 2)
         return false; // Need at least 2 swings each for pattern
 
-    // Diagnostics: log latest swings to understand pivot availability
-    if(m_diagnostics != NULL)
-    {
-        string swingLog = StringFormat("Swings H:%d L:%d | Last highs: ", swingHighCount, swingLowCount);
-
-        // Log up to 3 latest highs and lows
-        for(int i = MathMax(0, swingHighCount - 3); i < swingHighCount; i++)
-        {
-            SwingPoint sh;
-            if(m_structureEngine.GetLastSwingHigh(sh))
-            {
-                swingLog += StringFormat("[%s %.2f st:%.1f] ", TimeToString(sh.time, TIME_DATE|TIME_MINUTES), sh.price, sh.strength);
-            }
-        }
-        swingLog += " | Last lows: ";
-        for(int i = MathMax(0, swingLowCount - 3); i < swingLowCount; i++)
-        {
-            SwingPoint sl;
-            if(m_structureEngine.GetLastSwingLow(sl))
-            {
-                swingLog += StringFormat("[%s %.2f st:%.1f] ", TimeToString(sl.time, TIME_DATE|TIME_MINUTES), sl.price, sl.strength);
-            }
-        }
-        if(m_diagnostics != NULL)
-        {
-            m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", swingLog);
-        }
-    }
-
     // Reset patterns
     m_patternCount = 0;
     
@@ -438,75 +409,101 @@ bool CStrategyElliottWaveEnhanced::IdentifyWavePattern(const MqlRates &rates[], 
     WavePattern impulse;
     impulse.isImpulse = true;
     
-    // Get swing points from structure engine
+    // Get swing points from structure engine + direct rate pivots
     SwingPoint swings[10];
     int swingCount = 0;
-    
-    // Collect recent swing highs and lows from structure engine
-    SwingPoint swing;
-    
-    // Get last few swing highs and lows
-    for(int i = 0; i < 5 && swingCount < 10; i++)
+    double pointValue = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(pointValue <= 0.0)
+        pointValue = 0.00001;
+    double dedupThreshold = pointValue * 0.5;
+
+    SwingPoint candidate;
+
+    // Seed with the latest high/low from structure engine (single fetch each, no duplicates).
+    if(m_structureEngine.GetLastSwingHigh(candidate) && candidate.isValid)
     {
-        if(m_structureEngine.GetLastSwingHigh(swing) && swing.isValid)
-        {
-            swings[swingCount++] = swing;
-        }
-        if(m_structureEngine.GetLastSwingLow(swing) && swing.isValid)
-        {
-            swings[swingCount++] = swing;
-        }
+        swings[swingCount++] = candidate;
     }
-    
-    // Also extract swings directly from rates for more accuracy
+    if(m_structureEngine.GetLastSwingLow(candidate) && candidate.isValid)
+    {
+        bool exists = false;
+        for(int j = 0; j < swingCount; j++)
+        {
+            if(swings[j].time == candidate.time || MathAbs(swings[j].price - candidate.price) <= dedupThreshold)
+            {
+                exists = true;
+                break;
+            }
+        }
+        if(!exists && swingCount < 10)
+            swings[swingCount++] = candidate;
+    }
+
+    // Extract pivots directly from rates and deduplicate by time/price.
     for(int i = 2; i < count - 2 && swingCount < 10; i++)
     {
-        // Check for swing high
-        if(rates[i].high > rates[i-1].high && rates[i].high > rates[i-2].high &&
-           rates[i].high > rates[i+1].high && rates[i].high > rates[i+2].high)
+        bool isSwingHigh = (rates[i].high > rates[i-1].high && rates[i].high > rates[i-2].high &&
+                            rates[i].high > rates[i+1].high && rates[i].high > rates[i+2].high);
+        bool isSwingLow = (rates[i].low < rates[i-1].low && rates[i].low < rates[i-2].low &&
+                           rates[i].low < rates[i+1].low && rates[i].low < rates[i+2].low);
+        if(!isSwingHigh && !isSwingLow)
+            continue;
+
+        candidate.price = isSwingHigh ? rates[i].high : rates[i].low;
+        candidate.time = rates[i].time;
+        candidate.bar = i;
+        candidate.type = isSwingHigh ? STRUCT_TYPE_HH : STRUCT_TYPE_LL;
+        candidate.strength = 50.0;
+        candidate.isValid = true;
+        candidate.isMitigated = false;
+
+        bool exists = false;
+        for(int j = 0; j < swingCount; j++)
         {
-            bool exists = false;
-            for(int j = 0; j < swingCount; j++)
+            if(swings[j].time == candidate.time || MathAbs(swings[j].price - candidate.price) <= dedupThreshold)
             {
-                if(MathAbs(swings[j].price - rates[i].high) < 0.0001)
-                {
-                    exists = true;
-                    break;
-                }
-            }
-            if(!exists)
-            {
-                swings[swingCount].price = rates[i].high;
-                swings[swingCount].time = rates[i].time;
-                swings[swingCount].isValid = true;
-                swingCount++;
+                exists = true;
+                break;
             }
         }
-        // Check for swing low
-        else if(rates[i].low < rates[i-1].low && rates[i].low < rates[i-2].low &&
-                rates[i].low < rates[i+1].low && rates[i].low < rates[i+2].low)
-        {
-            bool exists = false;
-            for(int j = 0; j < swingCount; j++)
-            {
-                if(MathAbs(swings[j].price - rates[i].low) < 0.0001)
-                {
-                    exists = true;
-                    break;
-                }
-            }
-            if(!exists)
-            {
-                swings[swingCount].price = rates[i].low;
-                swings[swingCount].time = rates[i].time;
-                swings[swingCount].isValid = true;
-                swingCount++;
-            }
-        }
+
+        if(!exists)
+            swings[swingCount++] = candidate;
     }
     
     if(swingCount < 3)
         return false; // Need at least 3 swings for partial wave pattern detection
+
+    // Keep deterministic chronological ordering (oldest -> newest).
+    for(int i = 0; i < swingCount - 1; i++)
+    {
+        for(int j = i + 1; j < swingCount; j++)
+        {
+            if(swings[i].time > swings[j].time)
+            {
+                SwingPoint temp = swings[i];
+                swings[i] = swings[j];
+                swings[j] = temp;
+            }
+        }
+    }
+
+    // Focus pattern detection on the most recent sequence.
+    if(swingCount > 5)
+    {
+        int start = swingCount - 5;
+        for(int i = 0; i < 5; i++)
+            swings[i] = swings[start + i];
+        swingCount = 5;
+    }
+
+    if(m_diagnostics != NULL)
+    {
+        string swingLog = StringFormat("Swings H:%d L:%d | Recent sequence(%d): ", swingHighCount, swingLowCount, swingCount);
+        for(int i = 0; i < swingCount; i++)
+            swingLog += StringFormat("[%s %.2f] ", TimeToString(swings[i].time, TIME_DATE|TIME_MINUTES), swings[i].price);
+        m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", swingLog);
+    }
     
     // Identify impulse wave pattern from swings
     // For bullish impulse: Low-High-Low-High-Low (waves 1-2-3-4-5)
@@ -731,7 +728,7 @@ bool CStrategyElliottWaveEnhanced::CheckWave2Rules(const WavePoint &wave0, const
                                     wave2Retracement * 100,
                                     minRetrace * 100,
                                     maxRetrace * 100);
-            Print("[ElliottWave] ", msg);
+            m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", msg);
         }
         return false;
     }
@@ -790,7 +787,7 @@ bool CStrategyElliottWaveEnhanced::CheckWave4Rules(const WavePoint &wave1, const
             string msg = StringFormat("Wave 4 retracement excessive: %.1f%% (maximum %.1f%%)",
                                     wave4Retracement * 100,
                                     maxRetrace * 100);
-            Print("[ElliottWave] ", msg);
+            m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", msg);
         }
         return false;
     }

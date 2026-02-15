@@ -537,26 +537,24 @@ public:
         // outputs[1] = probability of BUY
         // outputs[2] = probability of SELL
         
-        // Find highest probability
-        int maxIndex = 0;
-        double maxProb = outputs[0];
-        
-        for(int i = 1; i < 3; i++)
-        {
-            if(outputs[i] > maxProb)
-            {
-                maxProb = outputs[i];
-                maxIndex = i;
-            }
-        }
-        
-        // Require minimum 60% confidence
-        if(maxProb < 0.60)
+        // We only trade directional classes (BUY/SELL). "NONE" is informational hold.
+        int directionIndex = (outputs[1] >= outputs[2]) ? 1 : 2;
+        double directionProb = outputs[directionIndex];
+        double noneProb = outputs[0];
+        double minDirectionalConfidence = 0.60;
+        if(m_enableOnlineTraining && m_trainingData.Total() < m_minTrainingExamples)
+            minDirectionalConfidence = 0.45;
+
+        if(directionProb < minDirectionalConfidence || directionProb <= noneProb)
         {
             confidence = 0.0;
+            PrintFormat("[NEURAL-NET] HOLD | None: %.2f%% | Buy: %.2f%% | Sell: %.2f%%",
+                        noneProb * 100.0, outputs[1] * 100.0, outputs[2] * 100.0);
             return TRADE_SIGNAL_NONE;
         }
-        
+
+        int maxIndex = directionIndex;
+        double maxProb = directionProb;
         confidence = maxProb;
         
         // Store for training when online training is enabled
@@ -581,7 +579,9 @@ public:
                 m_trainingData.Add(example);
         }
         
-        PrintFormat("[NEURAL-NET] Signal: %d | Confidence: %.2f%%", maxIndex, maxProb * 100);
+        PrintFormat("[NEURAL-NET] Signal: %s | Confidence: %.2f%% | None: %.2f%% | Buy: %.2f%% | Sell: %.2f%%",
+                    (maxIndex == 1 ? "BUY" : "SELL"),
+                    maxProb * 100.0, noneProb * 100.0, outputs[1] * 100.0, outputs[2] * 100.0);
         
         if(maxIndex == 1)
             return TRADE_SIGNAL_BUY;

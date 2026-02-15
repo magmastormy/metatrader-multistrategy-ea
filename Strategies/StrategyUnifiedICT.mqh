@@ -103,6 +103,8 @@ private:
     int                         m_obsDetected;
     int                         m_liquiditySweeps;
     int                         m_tradesInKillZone;
+    string                      m_lastFilterLogMessage;
+    datetime                    m_lastFilterLogTime;
     
 public:
                                 CStrategyUnifiedICT(const string name = "Unified ICT v1.0", int magic = 0);
@@ -124,6 +126,7 @@ public:
     
 private:
     void                        Cleanup();
+    void                        LogFilterEvent(const string message);
     void                        DrawElements();
     bool                        RefreshComponentsForCurrentBar();
     
@@ -172,7 +175,9 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_signalsGenerated(0),
     m_obsDetected(0),
     m_liquiditySweeps(0),
-    m_tradesInKillZone(0)
+    m_tradesInKillZone(0),
+    m_lastFilterLogMessage(""),
+    m_lastFilterLogTime(0)
 {
 }
 
@@ -296,6 +301,22 @@ void CStrategyUnifiedICT::OnNewBar(const string symbol, const ENUM_TIMEFRAMES ti
         DrawElements();
 }
 
+void CStrategyUnifiedICT::LogFilterEvent(const string message)
+{
+    datetime nowTime = TimeCurrent();
+    bool isFilterMessage = (StringFind(message, "[UICT] Filtered:") == 0);
+
+    // Avoid flooding logs with repeated filter reasons during fast-tick periods.
+    if(isFilterMessage && (nowTime - m_lastFilterLogTime) < 2)
+        return;
+    if(message == m_lastFilterLogMessage && (nowTime - m_lastFilterLogTime) <= 10)
+        return;
+
+    Print(message);
+    m_lastFilterLogMessage = message;
+    m_lastFilterLogTime = nowTime;
+}
+
 //+------------------------------------------------------------------+
 //| Draw Elements                                                    |
 //+------------------------------------------------------------------+
@@ -415,7 +436,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     if(!IsPriceAtMajorPOI(currentPrice))
     {
-        PrintFormat("[UICT] Filtered: Price %.5f not at major POI", currentPrice);
+        LogFilterEvent(StringFormat("[UICT] Filtered: Price %.5f not at major POI", currentPrice));
         return TRADE_SIGNAL_NONE;
     }
 
@@ -428,7 +449,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         // Check if counter-trend is valid (targeting opposing HTF zone)
         if(!IsCounterTrendScoutValid(isBullish))
         {
-            PrintFormat("[UICT] Filtered: No HTF alignment and no valid counter-trend target");
+            LogFilterEvent("[UICT] Filtered: No HTF alignment and no valid counter-trend target");
             return TRADE_SIGNAL_NONE;
         }
         // Counter-trend is valid, reduce confidence but allow signal
@@ -439,7 +460,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     // CANDLESTICK CONFIRMATION: Validate price rejection at POI
     if(!ValidatePriceRejection(result))
     {
-        PrintFormat("[UICT] Filtered: No candlestick rejection confirmation at POI");
+        LogFilterEvent("[UICT] Filtered: No candlestick rejection confirmation at POI");
         return TRADE_SIGNAL_NONE;
     }
     
@@ -993,8 +1014,8 @@ bool CStrategyUnifiedICT::IsCounterTrendScoutValid(bool signalIsBullish)
                 // Target must be unswept and significant
                 if(!pool.isSwept && pool.strength >= 0.7)
                 {
-                    PrintFormat("[UICT] Counter-Trend Scout: Sellside target at %.5f (strength: %.2f)", 
-                               pool.price, pool.strength);
+                    LogFilterEvent(StringFormat("[UICT] Counter-Trend Scout: Sellside target at %.5f (strength: %.2f)", 
+                                               pool.price, pool.strength));
                     return true;
                 }
             }
@@ -1012,8 +1033,8 @@ bool CStrategyUnifiedICT::IsCounterTrendScoutValid(bool signalIsBullish)
             {
                 if(!pool.isSwept && pool.strength >= 0.7)
                 {
-                    PrintFormat("[UICT] Counter-Trend Scout: Buyside target at %.5f (strength: %.2f)", 
-                               pool.price, pool.strength);
+                    LogFilterEvent(StringFormat("[UICT] Counter-Trend Scout: Buyside target at %.5f (strength: %.2f)", 
+                                               pool.price, pool.strength));
                     return true;
                 }
             }

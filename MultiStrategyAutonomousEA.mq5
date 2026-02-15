@@ -953,6 +953,21 @@ int OnInit()
         Print("[AI] AI Mode disabled — skipping AI subsystem initialization");
     }
 
+    // Initialize shared orchestrator before any manager/AI engine consumes it.
+    if(InpUseOrchestrator || InpEnableAIMode)
+    {
+        if(!aiOrchestrator.Initialize(0.4, 5))
+        {
+            Print("[CRITICAL] Failed to initialize AI Strategy Orchestrator");
+            return INIT_FAILED;
+        }
+        Print("[INIT] AI Strategy Orchestrator initialized");
+    }
+    else
+    {
+        Print("[AI] Orchestrator disabled by input flags");
+    }
+
     // Initialize Enhanced Risk Manager
     if(InpUseEnhancedRisk)
     {
