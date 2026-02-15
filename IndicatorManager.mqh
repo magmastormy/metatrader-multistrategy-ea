@@ -40,6 +40,7 @@ private:
       string         symbol;        // Symbol
       ENUM_TIMEFRAMES timeframe;    // Timeframe
       ENUM_INDICATOR_TYPE type;     // Indicator type
+      int            paramCount;    // Number of meaningful params
       int            parameters[5]; // Store common parameters
    };
    
@@ -101,12 +102,13 @@ int CIndicatorManager::FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_
          // AUDIT FIX: Actually compare indicator parameters to prevent returning wrong handle
          bool paramsMatch = true;
          int paramCount = MathMin(ArraySize(params), 5);
-         for(int p = 0; p < paramCount; p++)
+         if(m_handles[i].paramCount != paramCount)
+            paramsMatch = false;
+         for(int p = 0; p < paramCount && paramsMatch; p++)
          {
             if(m_handles[i].parameters[p] != params[p])
             {
                paramsMatch = false;
-               break;
             }
          }
          
@@ -191,6 +193,8 @@ int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
       m_handles[size].type = INDICATOR_RSI;
+      m_handles[size].paramCount = 2;
+      ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = period;
       m_handles[size].parameters[1] = (int)applied_price;
    }
@@ -223,6 +227,8 @@ int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
       m_handles[size].type = INDICATOR_MA;
+      m_handles[size].paramCount = 4;
+      ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = period;
       m_handles[size].parameters[1] = ma_shift;
       m_handles[size].parameters[2] = (int)ma_method;
@@ -257,6 +263,8 @@ int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
       m_handles[size].type = INDICATOR_ATR;
+      m_handles[size].paramCount = 1;
+      ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = period;
    }
    
@@ -288,6 +296,8 @@ int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast
       m_handles[size].symbol = symbol;
       m_handles[size].timeframe = tf;
       m_handles[size].type = INDICATOR_MACD;
+      m_handles[size].paramCount = 4;
+      ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = fast_ema_period;
       m_handles[size].parameters[1] = slow_ema_period;
       m_handles[size].parameters[2] = signal_period;

@@ -26,6 +26,72 @@ return $null
 
 }
 
+function Resolve-TerminalIncludePath {
+param(
+    [string]$AppDataRoot,
+    [string[]]$AdditionalCandidates
+)
+
+if (-not (Test-Path -LiteralPath $AppDataRoot)) {
+    # continue and check explicit candidates below
+}
+else {
+    $terminalRoots = Get-ChildItem -Path $AppDataRoot -Directory -ErrorAction SilentlyContinue
+    foreach ($terminal in $terminalRoots) {
+        $candidate = Join-Path $terminal.FullName "MQL5\Include\Object.mqh"
+        if (Test-Path -LiteralPath $candidate) {
+            return (Split-Path -Parent $candidate)
+        }
+    }
+}
+
+foreach ($candidateDir in $AdditionalCandidates) {
+    if ([string]::IsNullOrWhiteSpace($candidateDir)) {
+        continue
+    }
+    $candidate = Join-Path $candidateDir "Object.mqh"
+    if (Test-Path -LiteralPath $candidate) {
+        return (Split-Path -Parent $candidate)
+    }
+}
+
+return $null
+}
+
+function Ensure-TerminalDataIncludes {
+param(
+    [string]$AppDataRoot,
+    [string]$SourceIncludeRoot
+)
+
+if ([string]::IsNullOrWhiteSpace($SourceIncludeRoot) -or -not (Test-Path -LiteralPath (Join-Path $SourceIncludeRoot "Object.mqh"))) {
+    return
+}
+
+if (-not (Test-Path -LiteralPath $AppDataRoot)) {
+    return
+}
+
+$terminalDirs = Get-ChildItem -Path $AppDataRoot -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^[A-F0-9]{32}$' }
+
+foreach ($terminalDir in $terminalDirs) {
+    $targetIncludeRoot = Join-Path $terminalDir.FullName "MQL5\Include"
+    $targetObject = Join-Path $targetIncludeRoot "Object.mqh"
+    if (Test-Path -LiteralPath $targetObject) {
+        continue
+    }
+
+    New-Item -ItemType Directory -Path $targetIncludeRoot -Force | Out-Null
+    Write-Host "Seeding terminal include library: $targetIncludeRoot" -ForegroundColor Yellow
+    $null = & robocopy $SourceIncludeRoot $targetIncludeRoot "/E" "/R:2" "/W:1" "/NFL" "/NDL" "/NP"
+    $copyExitCode = $LASTEXITCODE
+    if ($copyExitCode -ge 8) {
+        Write-Host "Warning: include seeding failed for $targetIncludeRoot (robocopy exit code $copyExitCode)." -ForegroundColor Yellow
+    }
+}
+}
+
 function Sync-Project {
 param(
 [string]$Source,
@@ -121,6 +187,30 @@ $metaEditor = Resolve-MetaEditor -Candidates $metaEditorCandidates
 if (-not $metaEditor) {
 throw "MetaEditor executable not found. Checked: $([string]::Join(', ', $metaEditorCandidates))"
 }
+
+$terminalIncludePath = Resolve-TerminalIncludePath `
+    -AppDataRoot (Join-Path $env:APPDATA "MetaQuotes\Terminal") `
+    -AdditionalCandidates @(
+        (Join-Path $MetaTraderRoot "MQL5\Include"),
+        "C:\Program Files\MetaTrader 5\MQL5\Include",
+        "C:\Program Files (x86)\MetaTrader 5\MQL5\Include"
+    )
+if (-not $terminalIncludePath) {
+Write-Host "Warning: MT5 standard include library was not discovered in known locations. Compilation will continue and MetaEditor will report include errors if unresolved." -ForegroundColor Yellow
+}
+else {
+Write-Host "Detected MT5 include path: $terminalIncludePath" -ForegroundColor Gray
+}
+
+$primaryIncludeCandidate = Join-Path $MetaTraderRoot "MQL5\Include"
+$includeSeedSource = $null
+if (Test-Path -LiteralPath (Join-Path $primaryIncludeCandidate "Object.mqh")) {
+    $includeSeedSource = $primaryIncludeCandidate
+}
+elseif ($terminalIncludePath) {
+    $includeSeedSource = $terminalIncludePath
+}
+Ensure-TerminalDataIncludes -AppDataRoot (Join-Path $env:APPDATA "MetaQuotes\Terminal") -SourceIncludeRoot $includeSeedSource
 
 $targetDir = Join-Path $MetaTraderRoot "MQL5\Experts\metatrader-multistrategy-ea"
 

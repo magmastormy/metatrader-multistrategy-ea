@@ -86,6 +86,12 @@ private:
     int m_totalSignals;
     int m_successfulSignals;
     double m_avgConfidence;
+
+    // Last orchestrated decision context for basic trade attribution
+    string m_lastSignalContributors[];
+    int m_lastContributorCount;
+    string m_lastSignalSymbol;
+    datetime m_lastSignalTime;
     
 public:
     CEnterpriseStrategyManager();
@@ -111,7 +117,7 @@ public:
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbol(const string symbol, double &confidence);
     ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence);
-    ENUM_TRADE_SIGNAL GetOrchestratedSignal(double &confidence);
+    ENUM_TRADE_SIGNAL GetOrchestratedSignal(const string symbol, ENUM_TIMEFRAMES timeframe, double &confidence);
     ENUM_TRADE_SIGNAL GetFilteredSignal(IStrategy* strategy, double &confidence);
     
     // Configuration
@@ -151,9 +157,13 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_minQuorum(1),         // Default to 1 for Solo Mode support (was 2)
     m_totalSignals(0),
     m_successfulSignals(0),
-    m_avgConfidence(0)
+    m_avgConfidence(0),
+    m_lastContributorCount(0),
+    m_lastSignalSymbol(""),
+    m_lastSignalTime(0)
 {
     ArrayResize(m_strategies, 0);
+    ArrayResize(m_lastSignalContributors, 0);
 }
 
 //+------------------------------------------------------------------+
@@ -308,87 +318,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignal(double &confide
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalWithConfluence(double &confidence, int &confluence)
 {
-    confluence = 0;
-    confidence = 0;
-
-    if(!m_initialized || m_strategyCount == 0)
-    {
-        return TRADE_SIGNAL_NONE;
-    }
-    
-    // Use orchestrator if enabled
-    if(m_useOrchestrator && m_orchestrator != NULL)
-    {
-        ENUM_TRADE_SIGNAL signal = GetOrchestratedSignal(confidence);
-        // Estimate confluence from orchestrator (if available)
-        confluence = m_strategyCount / 2;  // Rough estimate
-        return signal;
-    }
-    
-    // Enhanced consensus voting with confluence tracking
-    int buyVotes = 0, sellVotes = 0;
-    double buyConf = 0, sellConf = 0;
-    int activeStrategies = 0;
-    
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(!m_strategies[i].enabled)
-            continue;
-        
-        double stratConf = 0;
-        ENUM_TRADE_SIGNAL signal;
-        
-        // Get signal (filtered if pipeline enabled)
-        if(m_usePipeline && m_pipeline != NULL)
-        {
-            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy, 
-                                             m_symbol, 
-                                             m_strategies[i].timeframe, 
-                                             stratConf);
-        }
-        else
-        {
-            signal = m_strategies[i].strategy.GetSignal(stratConf);
-        }
-        
-        if(signal == TRADE_SIGNAL_BUY)
-        {
-            buyVotes++;
-            buyConf += stratConf * m_strategies[i].weight;
-        }
-        else if(signal == TRADE_SIGNAL_SELL)
-        {
-            sellVotes++;
-            sellConf += stratConf * m_strategies[i].weight;
-        }
-        
-        activeStrategies++;
-    }
-    
-    if(activeStrategies == 0)
-    {
-        return TRADE_SIGNAL_NONE;
-    }
-    
-    // Determine consensus with confluence AND quorum hardening
-    if(buyVotes > sellVotes && buyVotes >= m_minQuorum)
-    {
-        confluence = buyVotes;  // Number of strategies agreeing
-        confidence = buyConf / buyVotes;
-        m_totalSignals++;
-        return TRADE_SIGNAL_BUY;
-    }
-    else if(sellVotes > buyVotes && sellVotes >= m_minQuorum)
-    {
-        confluence = sellVotes;  // Number of strategies agreeing
-        confidence = sellConf / sellVotes;
-        m_totalSignals++;
-        return TRADE_SIGNAL_SELL;
-    }
-    
-    confidence = 0;
-    confluence = 0;
-    return TRADE_SIGNAL_NONE;
+    return GetConsensusSignalForSymbolWithConfluence(m_symbol, confidence, confluence);
 }
 
 //+------------------------------------------------------------------+
@@ -403,15 +333,19 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     {
         return TRADE_SIGNAL_NONE;
     }
+
+    // Strategies are bound to the manager symbol; reject mismatched symbol requests.
+    if(symbol != m_symbol)
+    {
+        PrintFormat("[CRITICAL] Cross-symbol request rejected in EnterpriseManager. Requested: %s, Bound: %s", symbol, m_symbol);
+        return TRADE_SIGNAL_NONE;
+    }
     
     // AUDIT FIX: Use orchestrator if enabled (matching GetConsensusSignalWithConfluence behavior)
     if(m_useOrchestrator && m_orchestrator != NULL)
     {
-        string originalSymbol = m_symbol;
-        m_symbol = symbol;
-        ENUM_TRADE_SIGNAL signal = GetOrchestratedSignal(confidence);
+        ENUM_TRADE_SIGNAL signal = GetOrchestratedSignal(symbol, m_baseTimeframe, confidence);
         confluence = m_strategyCount / 2;  // Rough estimate from orchestrator
-        m_symbol = originalSymbol;
         return signal;
     }
     
@@ -496,99 +430,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const string symbol, double &confidence)
 {
-    if(!m_initialized || m_strategyCount == 0)
-    {
-        confidence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-    
-    // CRITICAL FIX: Prevent cross-symbol signal contamination
-    // Strategies are bound to m_symbol (chart symbol). Requesting a signal for a different symbol
-    // using the same strategy instances triggers "cross-talk" (e.g. EURUSD RSI trading GBPUSD).
-    if(symbol != m_symbol)
-    {
-        PrintFormat("[CRITICAL] Cross-symbol request rejected in EnterpriseManager. Requested: %s, Bound: %s", symbol, m_symbol);
-        confidence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-
-    // Store original symbol for restoration (kept for safety, though we blocked mismatch above)
-    string originalSymbol = m_symbol;
-    
-    // Temporarily switch context to target symbol
-    m_symbol = symbol;
-    
-    // Simple consensus voting for the target symbol
-    int buyVotes = 0, sellVotes = 0;
-    double buyConf = 0, sellConf = 0;
-    int activeStrategies = 0;
-    
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(!m_strategies[i].enabled)
-            continue;
-        
-        double stratConf = 0;
-        ENUM_TRADE_SIGNAL signal;
-        
-        // Get signal (filtered if pipeline enabled)
-        if(m_usePipeline && m_pipeline != NULL)
-        {
-            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy, 
-                                             symbol,  // Use target symbol
-                                             m_strategies[i].timeframe, 
-                                             stratConf);
-        }
-        else
-        {
-            signal = m_strategies[i].strategy.GetSignal(stratConf);
-        }
-        
-        if(signal == TRADE_SIGNAL_BUY)
-        {
-            buyVotes++;
-            buyConf += stratConf * m_strategies[i].weight;
-        }
-        else if(signal == TRADE_SIGNAL_SELL)
-        {
-            sellVotes++;
-            sellConf += stratConf * m_strategies[i].weight;
-        }
-        
-        activeStrategies++;
-    }
-    
-    // Restore original symbol
-    m_symbol = originalSymbol;
-    
-    if(activeStrategies == 0)
-    {
-        confidence = 0;
-        return TRADE_SIGNAL_NONE;
-    }
-    
-    // Determine consensus
-    if(buyVotes > sellVotes)
-    {
-        confidence = buyConf / buyVotes;
-        m_totalSignals++;
-        return TRADE_SIGNAL_BUY;
-    }
-    else if(sellVotes > buyVotes)
-    {
-        confidence = sellConf / sellVotes;
-        m_totalSignals++;
-        return TRADE_SIGNAL_SELL;
-    }
-    
-    confidence = 0;
-    return TRADE_SIGNAL_NONE;
+    int confluence = 0;
+    return GetConsensusSignalForSymbolWithConfluence(symbol, confidence, confluence);
 }
 
 //+------------------------------------------------------------------+
 //| Get Orchestrated Signal                                         |
 //+------------------------------------------------------------------+
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(double &confidence)
+ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(const string symbol, ENUM_TIMEFRAMES timeframe, double &confidence)
 {
     if(m_orchestrator == NULL || m_strategyCount == 0)
     {
@@ -607,7 +456,20 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(double &conf
             continue;
         
         double stratConf = 0;
-        ENUM_TRADE_SIGNAL signal = m_strategies[i].strategy.GetSignal(stratConf);
+        ENUM_TRADE_SIGNAL signal;
+        if(m_usePipeline && m_pipeline != NULL)
+        {
+            signal = m_pipeline.ProcessSignal(
+                m_strategies[i].strategy,
+                symbol,
+                m_strategies[i].timeframe == PERIOD_CURRENT ? timeframe : m_strategies[i].timeframe,
+                stratConf
+            );
+        }
+        else
+        {
+            signal = m_strategies[i].strategy.GetSignal(stratConf);
+        }
         
         if(signal != TRADE_SIGNAL_NONE)
         {
@@ -623,12 +485,39 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(double &conf
     if(voteCount == 0)
     {
         confidence = 0;
+        m_lastContributorCount = 0;
+        ArrayResize(m_lastSignalContributors, 0);
         return TRADE_SIGNAL_NONE;
     }
     
     // Get orchestrated decision
     ArrayResize(votes, voteCount);
-    return m_orchestrator.GetEnsembleSignal(votes, voteCount, confidence);
+    ENUM_TRADE_SIGNAL finalSignal = m_orchestrator.GetEnsembleSignal(votes, voteCount, confidence);
+
+    if(finalSignal != TRADE_SIGNAL_NONE)
+    {
+        int contributorCount = 0;
+        ArrayResize(m_lastSignalContributors, voteCount);
+        for(int i = 0; i < voteCount; i++)
+        {
+            if(votes[i].signal == finalSignal)
+            {
+                m_lastSignalContributors[contributorCount] = votes[i].strategyName;
+                contributorCount++;
+            }
+        }
+        ArrayResize(m_lastSignalContributors, contributorCount);
+        m_lastContributorCount = contributorCount;
+        m_lastSignalSymbol = symbol;
+        m_lastSignalTime = TimeCurrent();
+    }
+    else
+    {
+        m_lastContributorCount = 0;
+        ArrayResize(m_lastSignalContributors, 0);
+    }
+
+    return finalSignal;
 }
 
 //+------------------------------------------------------------------+
@@ -752,8 +641,8 @@ void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settin
 {
     if(m_pipeline != NULL)
     {
-        // AUDIT FIX: Actually apply the filter settings to the pipeline
-        m_pipeline.Initialize(settings);
+        // Apply runtime filter configuration without re-initializing pipeline engines.
+        m_pipeline.SetFilters(settings);
         Print("[EnterpriseStrategyManager] Pipeline filters applied: TrendFilter=",
               settings.enableTrendFilter, " MinConf=", settings.minConfidence,
               " MaxVol=", settings.maxVolatility,
@@ -823,6 +712,20 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                     m_orchestrator.RecordEnsembleResult(success);
                     
                     if(success) m_successfulSignals++;
+
+                    // Best-effort attribution: assign closed trade outcome to latest contributors
+                    if(m_lastContributorCount > 0 &&
+                       trans.symbol == m_lastSignalSymbol &&
+                       (TimeCurrent() - m_lastSignalTime) <= 3600)
+                    {
+                        for(int i = 0; i < m_lastContributorCount; i++)
+                        {
+                            if(m_lastSignalContributors[i] != "")
+                                m_orchestrator.UpdateStrategyPerformance(m_lastSignalContributors[i], netProfit);
+                        }
+                        m_lastContributorCount = 0;
+                        ArrayResize(m_lastSignalContributors, 0);
+                    }
                     
                     // Log for debugging
                     PrintFormat("[EnterpriseManager] Trade Closed | Ticket: %d | Net Profit: %.2f | AI Feedback Sent: %s",

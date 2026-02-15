@@ -64,6 +64,7 @@ private:
     string m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
     bool m_initialized;
+    bool m_enableOnlineTraining;
     
 public:
     CNeuralNetworkStrategy() : 
@@ -73,7 +74,8 @@ public:
         m_minTrainingExamples(20),  // Reduced from 100 for faster startup
         m_symbol(""),
         m_timeframe(PERIOD_CURRENT),
-        m_initialized(false)
+        m_initialized(false),
+        m_enableOnlineTraining(true)
     {
         InitializeNetwork();
     }
@@ -87,13 +89,21 @@ public:
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
+        m_enableOnlineTraining = true;
         m_initialized = true;
-        
-        // Load existing network if available
-        if(!LoadNetwork())
+
+        // Online training + persistence enabled in live runtime.
+        if(m_enableOnlineTraining)
+        {
+            if(!LoadNetwork())
+            {
+                InitializeNetwork();
+                SaveNetwork();
+            }
+        }
+        else
         {
             InitializeNetwork();
-            SaveNetwork();
         }
         
         PrintFormat("[NEURAL-NET] Initialized for %s on %s", symbol, EnumToString(timeframe));
@@ -327,10 +337,12 @@ public:
         features[21] = dt.day_of_week / 7.0;                    // Day normalized
         features[22] = IsKillZoneTime(dt.hour) ? 1.0 : 0.0;   // Kill zone binary
         
-        // --- Noise / Random (Features 23-24) ---
-        // Feature 23: Random Noise (for robustness)
-        features[23] = GetDeterministicRandom();
-        
+        // --- Context Tail Features (23-24) ---
+        // Feature 23: Volatility regime ratio (fast ATR / slow ATR proxy)
+        double atrFast = GetATRValue(14, 1);
+        double atrSlow = GetATRValue(50, 1);
+        features[23] = (atrSlow > 0.0) ? MathMin(2.0, atrFast / atrSlow) : 1.0;
+
         // Feature 24: Bias Unit
         features[24] = 1.0;
         
@@ -384,7 +396,7 @@ public:
     // Get trading signal from neural network
     ENUM_TRADE_SIGNAL GetNeuralSignal(double &confidence)
     {
-        if(m_trainingData.Total() < m_minTrainingExamples)
+        if(m_enableOnlineTraining && m_trainingData.Total() < m_minTrainingExamples)
         {
             // Not enough data - return signal anyway with low confidence
             // This enables "exploration" phase while gathering training data
@@ -432,12 +444,15 @@ public:
         
         confidence = maxProb;
         
-        // Store for training
-        CTrainingExample* example = new CTrainingExample();
-        ArrayCopy(example.inputs, inputs);
-        example.expectedOutput = maxIndex;
-        example.time = TimeCurrent();
-        m_trainingData.Add(example);
+        // Store for training when online training is enabled
+        if(m_enableOnlineTraining)
+        {
+            CTrainingExample* example = new CTrainingExample();
+            ArrayCopy(example.inputs, inputs);
+            example.expectedOutput = maxIndex;
+            example.time = TimeCurrent();
+            m_trainingData.Add(example);
+        }
         
         PrintFormat("[NEURAL-NET] Signal: %d | Confidence: %.2f%%", maxIndex, maxProb * 100);
         
@@ -452,6 +467,9 @@ public:
     // Update trade result for training
     void UpdateTradeResult(datetime tradeTime, double profitLoss)
     {
+        if(!m_enableOnlineTraining)
+            return;
+
         // Find the training example and update result
         for(int i = m_trainingData.Total() - 1; i >= 0; i--)
         {
@@ -478,6 +496,9 @@ public:
     // Train network with backpropagation
     void TrainNetwork()
     {
+        if(!m_enableOnlineTraining)
+            return;
+
         if(m_trainingData.Total() < m_minTrainingExamples)
             return;
         
@@ -563,6 +584,9 @@ public:
     // Save network weights and biases to file
     bool SaveNetwork()
     {
+        if(!m_enableOnlineTraining)
+            return false;
+
         string filename = "AI_Net_" + m_symbol + "_" + EnumToString(m_timeframe) + ".bin";
         int fileHandle = FileOpen(filename, FILE_WRITE|FILE_BIN);
         if(fileHandle == INVALID_HANDLE) return false;
@@ -591,6 +615,9 @@ public:
     // Load network weights and biases from file
     bool LoadNetwork()
     {
+        if(!m_enableOnlineTraining)
+            return false;
+
         string filename = "AI_Net_" + m_symbol + "_" + EnumToString(m_timeframe) + ".bin";
         if(!FileIsExist(filename)) return false;
         
