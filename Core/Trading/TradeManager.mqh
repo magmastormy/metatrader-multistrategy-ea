@@ -524,9 +524,9 @@ private:
     bool NormalizeAndValidateStops(const string symbol, const ENUM_ORDER_TYPE orderType, const double price, const double tp, double &slOut, double &tpOut, string &errorMsg);
     bool ValidateTradeRequest(const string symbol, const ENUM_ORDER_TYPE orderType, const double volume, const double price);
     bool CheckDailyLimits();
-    bool IsTradeAllowed(const string symbol, const double volume);
+    bool IsTradeAllowed(const string symbol, const double volume, const ENUM_ORDER_TYPE orderType = ORDER_TYPE_BUY);
     double CalculatePositionRisk(const string symbolParam, const double volume, const double stopLossPips);
-    bool CheckMarginRequirements(const string symbolParam, const double volume);
+    bool CheckMarginRequirements(const string symbolParam, const double volume, const ENUM_ORDER_TYPE orderType = ORDER_TYPE_BUY);
     bool CheckCorrelationLimits(const string symbolName);
     bool ExecuteMarketOrder(const string symbol, const ENUM_ORDER_TYPE orderType,
                            const double volume, const double stopLoss, 
@@ -676,7 +676,6 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
     {
         LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, true,
                           StringFormat("Reason: %s", reason));
-        m_dailyLoss += 0.0; // no change but keep placeholder
     }
     else
     {
@@ -867,14 +866,28 @@ double CTradeManager::NormalizeVolume(const string symbolName, const double volu
     double minVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MIN);
     double maxVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MAX);
     double stepVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_STEP);
+    if(stepVolume <= 0.0)
+        stepVolume = 0.01;
     
     if(volume < minVolume)
         return 0.0;
     
-    if(volume > maxVolume)
-        return maxVolume;
+    int volumeDigits = 0;
+    double stepProbe = stepVolume;
+    while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8)
+    {
+        stepProbe *= 10.0;
+        volumeDigits++;
+    }
     
-    return NormalizeDouble(MathFloor(volume / stepVolume) * stepVolume, 2);
+    double normalized = MathFloor((volume + 1e-12) / stepVolume) * stepVolume;
+    normalized = NormalizeDouble(normalized, volumeDigits);
+    normalized = MathMin(normalized, maxVolume);
+
+    if(normalized < minVolume)
+        return 0.0;
+
+    return normalized;
 }
 
 //+------------------------------------------------------------------+
@@ -1110,9 +1123,18 @@ double CTradeManager::CalculatePositionRisk(const string symbolParam, const doub
 //+------------------------------------------------------------------+
 //| Check Margin Requirements                                      |
 //+------------------------------------------------------------------+
-bool CTradeManager::CheckMarginRequirements(const string symbolParam, const double volume)
+bool CTradeManager::CheckMarginRequirements(const string symbolParam, const double volume, const ENUM_ORDER_TYPE orderType)
 {
-    double marginRequired = SymbolInfoDouble(symbolParam, SYMBOL_MARGIN_INITIAL) * volume;
+    double currentPrice = (orderType == ORDER_TYPE_SELL) ?
+                         SymbolInfoDouble(symbolParam, SYMBOL_BID) :
+                         SymbolInfoDouble(symbolParam, SYMBOL_ASK);
+    if(currentPrice <= 0.0)
+        return false;
+
+    double marginRequired = 0.0;
+    if(!OrderCalcMargin(orderType, symbolParam, volume, currentPrice, marginRequired))
+        return false;
+
     double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
     
     if(marginRequired <= 0) return false;
@@ -1240,7 +1262,7 @@ bool CTradeManager::ValidateTradeRequest(const string symbolName, const ENUM_ORD
     if(!ValidateSymbol(symbolName)) return false;
     if(!ValidateVolume(symbolName, volume)) return false;
     if(!ValidatePrice(symbolName, price)) return false;
-    if(!CheckMarginRequirements(symbolName, volume)) return false;
+    if(!CheckMarginRequirements(symbolName, volume, orderType)) return false;
     if(!CheckCorrelationLimits(symbolName)) return false;
     
     return true;
@@ -1262,9 +1284,13 @@ bool CTradeManager::CheckDailyLimits(void)
         lastCheckedDay = dt.day;
     }
     
-    double maxDailyLoss = AccountInfoDouble(ACCOUNT_BALANCE) * 0.05;
+    double maxDailyLoss = m_maxDailyLoss;
+    if(maxDailyLoss <= 0.0)
+        maxDailyLoss = AccountInfoDouble(ACCOUNT_BALANCE) * 0.05;
+
     if(m_dailyLoss >= maxDailyLoss)
     {
+        PrintFormat("[TRADE-LIMIT] Daily loss limit reached: %.2f / %.2f", m_dailyLoss, maxDailyLoss);
         return false;
     }
     
@@ -1274,7 +1300,7 @@ bool CTradeManager::CheckDailyLimits(void)
 //+------------------------------------------------------------------+
 //| Is Trade Allowed                                                 |
 //+------------------------------------------------------------------+
-bool CTradeManager::IsTradeAllowed(const string symbolName, const double volume)
+bool CTradeManager::IsTradeAllowed(const string symbolName, const double volume, const ENUM_ORDER_TYPE orderType)
 {
     if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) return false;
     if(!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)) return false;
@@ -1282,7 +1308,7 @@ bool CTradeManager::IsTradeAllowed(const string symbolName, const double volume)
     
     if(!ValidateSymbol(symbolName)) return false;
     if(!ValidateVolume(symbolName, volume)) return false;
-    if(!CheckMarginRequirements(symbolName, volume)) return false;
+    if(!CheckMarginRequirements(symbolName, volume, orderType)) return false;
     if(!CheckCorrelationLimits(symbolName)) return false;
     if(!CheckDailyLimits()) return false;
     if(m_emergencyStop) return false;
@@ -1439,7 +1465,7 @@ bool CTradeManager::OpenPosition(const string symbol,
     }
     
     // Check if trade is allowed
-    if(!IsTradeAllowed(symbol, volume))
+    if(!IsTradeAllowed(symbol, volume, orderType))
     {
         return false;
     }

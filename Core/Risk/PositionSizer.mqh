@@ -640,7 +640,7 @@ void CPositionSizer::UpdateRiskMetrics(void)
 double CPositionSizer::CalculateMaxSafeSize(const string symbolParam)
 {
     double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-    double marginRequired = SymbolInfoDouble(symbolParam, SYMBOL_MARGIN_INITIAL);
+    double marginRequired = CalculateMarginRequirement(symbolParam, 1.0);
     
     if(marginRequired <= 0 || freeMargin <= 0)
         return MIN_LOT_SIZE;
@@ -724,8 +724,25 @@ double CPositionSizer::NormalizeVolume(const string symbolParam, const double vo
 //+------------------------------------------------------------------+
 double CPositionSizer::CalculateMarginRequirement(const string symbolParam, const double lotSize)
 {
-    double marginRequired = SymbolInfoDouble(symbolParam, SYMBOL_MARGIN_INITIAL);
-    return marginRequired * lotSize;
+    if(lotSize <= 0.0 || symbolParam == "")
+        return 0.0;
+
+    double ask = SymbolInfoDouble(symbolParam, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(symbolParam, SYMBOL_BID);
+
+    double marginBuy = 0.0;
+    double marginSell = 0.0;
+    bool buyOk = (ask > 0.0) && OrderCalcMargin(ORDER_TYPE_BUY, symbolParam, lotSize, ask, marginBuy);
+    bool sellOk = (bid > 0.0) && OrderCalcMargin(ORDER_TYPE_SELL, symbolParam, lotSize, bid, marginSell);
+
+    if(buyOk && sellOk)
+        return MathMax(marginBuy, marginSell);
+    if(buyOk)
+        return marginBuy;
+    if(sellOk)
+        return marginSell;
+
+    return 0.0;
 }
 
 //+------------------------------------------------------------------+

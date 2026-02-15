@@ -1,7 +1,9 @@
 param(
 [string]$MetaTraderRoot = "C:\Program Files\MetaTrader 5",
 [string]$ProjectRoot,
-[switch]$SkipSync
+[switch]$SkipSync,
+[switch]$MirrorSync,
+[switch]$SeedTerminalIncludes
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,12 +84,17 @@ foreach ($terminalDir in $terminalDirs) {
         continue
     }
 
-    New-Item -ItemType Directory -Path $targetIncludeRoot -Force | Out-Null
-    Write-Host "Seeding terminal include library: $targetIncludeRoot" -ForegroundColor Yellow
-    $null = & robocopy $SourceIncludeRoot $targetIncludeRoot "/E" "/R:2" "/W:1" "/NFL" "/NDL" "/NP"
-    $copyExitCode = $LASTEXITCODE
-    if ($copyExitCode -ge 8) {
-        Write-Host "Warning: include seeding failed for $targetIncludeRoot (robocopy exit code $copyExitCode)." -ForegroundColor Yellow
+    try {
+        New-Item -ItemType Directory -Path $targetIncludeRoot -Force -ErrorAction Stop | Out-Null
+        Write-Host "Seeding terminal include library: $targetIncludeRoot" -ForegroundColor Yellow
+        $null = & robocopy $SourceIncludeRoot $targetIncludeRoot "/E" "/R:2" "/W:1" "/NFL" "/NDL" "/NP"
+        $copyExitCode = $LASTEXITCODE
+        if ($copyExitCode -ge 8) {
+            Write-Host "Warning: include seeding failed for $targetIncludeRoot (robocopy exit code $copyExitCode)." -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "Warning: include seeding skipped for $targetIncludeRoot ($($_.Exception.Message))" -ForegroundColor Yellow
     }
 }
 }
@@ -95,11 +102,12 @@ foreach ($terminalDir in $terminalDirs) {
 function Sync-Project {
 param(
 [string]$Source,
-[string]$Destination
+[string]$Destination,
+[switch]$MirrorMode
 )
 
 Write-Host "`n====================================================="
-Write-Host "   SYCHRONIZING PROJECT TO METATRADER 5" -ForegroundColor Cyan
+Write-Host "   SYNCHRONIZING PROJECT TO METATRADER 5" -ForegroundColor Cyan
 Write-Host "====================================================="
 Write-Host "Source: $Source" -ForegroundColor Gray
 Write-Host "Target: $Destination" -ForegroundColor Gray
@@ -113,10 +121,27 @@ if (-not (Test-Path -LiteralPath $Destination)) {
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 }
 
+$resolvedSource = (Resolve-Path -LiteralPath $Source).ProviderPath
+$resolvedDestination = [System.IO.Path]::GetFullPath($Destination)
+if ($resolvedSource -eq $resolvedDestination) {
+    throw "Sync source and destination resolve to the same path: $resolvedSource"
+}
+if ($resolvedDestination -notmatch [regex]::Escape("\MQL5\Experts\")) {
+    throw "Refusing to sync outside MT5 Experts scope: $resolvedDestination"
+}
+
 $excludeDirs = @(".git", ".vs", "x64", "Debug", "Release", ".windsurf", "__pycache__", ".agent", ".gemini")
 $excludeFiles = @("*.exe", "*.pdb", "*.obj", "*.log")
 
-$robocopyArgs = @($Source, $Destination, "/MIR", "/R:3", "/W:1", "/NFL", "/NDL", "/NP")
+if ($MirrorMode) {
+    Write-Host "Sync mode: MIRROR (deletes target files not present in source)" -ForegroundColor Yellow
+    $robocopyArgs = @($Source, $Destination, "/MIR", "/R:3", "/W:1", "/NFL", "/NDL", "/NP")
+}
+else {
+    Write-Host "Sync mode: SAFE COPY (no target deletions)" -ForegroundColor Green
+    $robocopyArgs = @($Source, $Destination, "/E", "/R:3", "/W:1", "/NFL", "/NDL", "/NP")
+}
+
 foreach ($dir in $excludeDirs) { $robocopyArgs += "/XD"; $robocopyArgs += $dir }
 foreach ($file in $excludeFiles) { $robocopyArgs += "/XF"; $robocopyArgs += $file }
 
@@ -202,27 +227,42 @@ else {
 Write-Host "Detected MT5 include path: $terminalIncludePath" -ForegroundColor Gray
 }
 
-$primaryIncludeCandidate = Join-Path $MetaTraderRoot "MQL5\Include"
-$includeSeedSource = $null
-if (Test-Path -LiteralPath (Join-Path $primaryIncludeCandidate "Object.mqh")) {
-    $includeSeedSource = $primaryIncludeCandidate
+if ($SeedTerminalIncludes) {
+    $primaryIncludeCandidate = Join-Path $MetaTraderRoot "MQL5\Include"
+    $includeSeedSource = $null
+    if (Test-Path -LiteralPath (Join-Path $primaryIncludeCandidate "Object.mqh")) {
+        $includeSeedSource = $primaryIncludeCandidate
+    }
+    elseif ($terminalIncludePath) {
+        $includeSeedSource = $terminalIncludePath
+    }
+    Ensure-TerminalDataIncludes -AppDataRoot (Join-Path $env:APPDATA "MetaQuotes\Terminal") -SourceIncludeRoot $includeSeedSource
 }
-elseif ($terminalIncludePath) {
-    $includeSeedSource = $terminalIncludePath
+else {
+    Write-Host "Terminal include seeding skipped (use -SeedTerminalIncludes to enable)." -ForegroundColor Gray
 }
-Ensure-TerminalDataIncludes -AppDataRoot (Join-Path $env:APPDATA "MetaQuotes\Terminal") -SourceIncludeRoot $includeSeedSource
 
 $targetDir = Join-Path $MetaTraderRoot "MQL5\Experts\metatrader-multistrategy-ea"
+$compileDir = $ProjectRoot
 
 if (-not $SkipSync) {
-Sync-Project -Source $ProjectRoot -Destination $targetDir
+Sync-Project -Source $ProjectRoot -Destination $targetDir -MirrorMode:$MirrorSync
+}
+
+if (-not (Test-Path -LiteralPath $compileDir)) {
+    throw "Compile source directory not found: $compileDir"
+}
+
+Write-Host "Compilation source: $compileDir" -ForegroundColor Gray
+if ($compileDir -ne $targetDir) {
+    Write-Host "Deployment target remains: $targetDir" -ForegroundColor Gray
 }
 
 Write-Host "`n====================================================="
 Write-Host "   COMPILATION STARTED" -ForegroundColor Cyan
 Write-Host "====================================================="
 
-$mq5Files = Get-ChildItem -Path $targetDir -Filter "*.mq5" -Recurse
+$mq5Files = Get-ChildItem -Path $compileDir -Filter "*.mq5" -Recurse
 
 $excludedRelativePaths = @("TestSocket.mq5", "NextGenBrainTrainer.mq5")
 
@@ -256,8 +296,9 @@ Write-Host "Compiling $($file.Name)..." -ForegroundColor White
 $logName = "compile_" + $file.BaseName + ".log"
 $logPath = Join-Path $ProjectRoot $logName
 
-# MetaEditor compilation
-$process = Start-Process -FilePath $metaEditor -ArgumentList "/compile:`"$($file.FullName)`"", "/log:`"$logPath`"" -Wait -PassThru
+    # MetaEditor compilation
+    # Use /portable to resolve standard includes from install-local MQL5\Include when AppData terminal data is unavailable.
+    $process = Start-Process -FilePath $metaEditor -ArgumentList "/compile:`"$($file.FullName)`"", "/log:`"$logPath`"", "/portable" -Wait -PassThru
 $exitCode = $process.ExitCode
 
 Show-Log -Title $logName -Path $logPath

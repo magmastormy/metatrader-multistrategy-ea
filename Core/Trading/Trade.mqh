@@ -129,9 +129,14 @@ public:
     //--- Utility methods
     void PrintRequest() { m_trade.PrintRequest(); }
     void PrintResult() { m_trade.PrintResult(); }
-    void ClearStructures() { /* Protected method - stubbed */ }
-    bool IsStopped(const string symbolParam = "") { /* Protected method - stubbed */ return false; }
-    bool SelectPosition(const string symbolParam) { /* Protected method - stubbed */ return false; }
+    void ClearStructures() { ResetLastError(); }
+    bool IsStopped(const string symbolParam = "")
+    {
+        if(symbolParam != "" && !SymbolInfoInteger(symbolParam, SYMBOL_SELECT))
+            return true;
+        return (!TerminalInfoInteger(TERMINAL_CONNECTED) || !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED));
+    }
+    bool SelectPosition(const string symbolParam) { return PositionSelect(symbolParam); }
 };
 
 #endif // __TRADE_MQH__

@@ -378,9 +378,9 @@ public:
         return (m_totalTrades > 0) ? (double)m_winningTrades / m_totalTrades : 0.0;
     }
 
-    // Get epoch count (placeholder for now as online learning is continuous)
+    // Get training experience count (online learning does not use fixed epochs)
     int GetEpochCount() {
-        return m_totalTrades; // Using total trades as a proxy for "experience" or epochs
+        return m_totalTrades;
     }
 
     // Save AI state to file

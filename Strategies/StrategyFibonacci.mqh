@@ -7,6 +7,7 @@
 #define __STRATEGY_FIBONACCI_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Visualization/DrawingCoordinator.mqh"
 
 // Enhanced Fibonacci Strategy Component Files
 #include "FibonacciFiles/FibSwingDetector.mqh"
@@ -162,6 +163,12 @@ void CStrategyFibonacci::OnNewBar(const string symbol, const ENUM_TIMEFRAMES tim
 void CStrategyFibonacci::DrawFibLevels()
 {
     if(m_levelsCalc == NULL) return;
+
+    CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
+    if(drawingCoordinator != NULL)
+        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, "FIB_");
+    else
+        ObjectsDeleteAll(0, "FIB_");
 
     SFibSetup setup;
     // Try to get best bullish setup first, then bearish for drawing

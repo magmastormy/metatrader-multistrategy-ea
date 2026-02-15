@@ -184,7 +184,7 @@ private:
     string FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result);
     
     // Performance tracking
-    void UpdatePerformanceMetrics(const datetime startTime);
+    void UpdatePerformanceMetrics(const ulong startTime);
 };
 
 //+------------------------------------------------------------------+
@@ -276,7 +276,7 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
 //+------------------------------------------------------------------+
 SValidationResult CRiskValidationGate::ValidateTradeRequest(const STradeValidationRequest &request)
 {
-    datetime startTimeParam = TimeCurrent();
+    ulong startTimeParam = GetMicrosecondCount();
     m_validationCount++;
     
     SValidationResult result;
@@ -497,7 +497,7 @@ bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &r
         return false;
     }
 
-    if(!(*manager).IsTradeAllowed(request.symbol, request.lotSize))
+    if(!(*manager).IsTradeAllowed(request.symbol, request.lotSize, request.stopLossPips))
     {
         message = "Trade blocked by portfolio risk manager";
         return false;
@@ -850,10 +850,12 @@ string CRiskValidationGate::FormatValidationMessage(const STradeValidationReques
 //+------------------------------------------------------------------+
 //| Update performance metrics                                     |
 //+------------------------------------------------------------------+
-void CRiskValidationGate::UpdatePerformanceMetrics(const datetime startTimeParam)
+void CRiskValidationGate::UpdatePerformanceMetrics(const ulong startTimeParam)
 {
-    datetime endTime = (datetime)GetMicrosecondCount();
-    double validationTime = (double)(endTime - startTimeParam) / 1000.0; // Convert to milliseconds
+    ulong endTime = GetMicrosecondCount();
+    double validationTime = 0.0;
+    if(endTime >= startTimeParam)
+        validationTime = (double)(endTime - startTimeParam) / 1000.0; // microseconds -> milliseconds
     
     if(m_validationCount == 1)
     {
@@ -868,4 +870,3 @@ void CRiskValidationGate::UpdatePerformanceMetrics(const datetime startTimeParam
 }
 
 #endif // CORE_RISK_VALIDATION_GATE_MQH
-

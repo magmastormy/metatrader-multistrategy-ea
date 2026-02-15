@@ -117,42 +117,43 @@ ENUM_TRADE_SIGNAL CStrategyBollingerBreakout::GetSignal(double &confidence)
     if(m_bb_handle == INVALID_HANDLE || m_atr_handle == INVALID_HANDLE) return TRADE_SIGNAL_NONE;
 
     // Copy Bollinger data to buffers
-    if(CopyBuffer(m_bb_handle, 1, 0, 3, m_upper_band) < 3 || // Upper band is buffer 1
-       CopyBuffer(m_bb_handle, 0, 0, 3, m_middle_band) < 3 || // Middle band is buffer 0
-       CopyBuffer(m_bb_handle, 2, 0, 3, m_lower_band) < 3)   // Lower band is buffer 2
+    if(CopyBuffer(m_bb_handle, 1, 0, 4, m_upper_band) < 4 || // Upper band is buffer 1
+       CopyBuffer(m_bb_handle, 0, 0, 4, m_middle_band) < 4 || // Middle band is buffer 0
+       CopyBuffer(m_bb_handle, 2, 0, 4, m_lower_band) < 4)   // Lower band is buffer 2
     {
         return TRADE_SIGNAL_NONE;
     }
     
     // Check Volatility
     double atrBuffer[1];
-    if(CopyBuffer(m_atr_handle, 0, 0, 1, atrBuffer) < 1) return TRADE_SIGNAL_NONE;
+    if(CopyBuffer(m_atr_handle, 0, 1, 1, atrBuffer) < 1) return TRADE_SIGNAL_NONE;
     if(atrBuffer[0] < m_min_volatility) return TRADE_SIGNAL_NONE; // Too quiet for breakout
 
     // Get price data
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    if(CopyRates(m_symbol, m_timeframe, 0, 3, rates) < 3)
+    if(CopyRates(m_symbol, m_timeframe, 0, 4, rates) < 4)
     {
         return TRADE_SIGNAL_NONE;
     }
 
     // --- Breakout Logic ---
-    double current_close = rates[0].close;
-    double prev_close = rates[1].close;
+    // Closed-bar confirmation: use shifts 1 and 2 (not live bar 0)
+    double current_close = rates[1].close;
+    double prev_close = rates[2].close;
     
-    double upper_band_current = m_upper_band[0];
-    double upper_band_prev = m_upper_band[1];
+    double upper_band_current = m_upper_band[1];
+    double upper_band_prev = m_upper_band[2];
     
-    double lower_band_current = m_lower_band[0];
-    double lower_band_prev = m_lower_band[1];
+    double lower_band_current = m_lower_band[1];
+    double lower_band_prev = m_lower_band[2];
 
     // Bullish breakout: Close above upper band
     if(current_close > upper_band_current && prev_close <= upper_band_prev)
     {
         // Confirm with strong candle body
-        double bodySize = MathAbs(rates[0].close - rates[0].open);
-        double totalSize = rates[0].high - rates[0].low;
+        double bodySize = MathAbs(rates[1].close - rates[1].open);
+        double totalSize = rates[1].high - rates[1].low;
         if(totalSize > 0 && bodySize / totalSize > 0.6) // Strong bullish candle
         {
             confidence = 0.8; 
@@ -164,8 +165,8 @@ ENUM_TRADE_SIGNAL CStrategyBollingerBreakout::GetSignal(double &confidence)
     if(current_close < lower_band_current && prev_close >= lower_band_prev)
     {
         // Confirm with strong candle body
-        double bodySize = MathAbs(rates[0].close - rates[0].open);
-        double totalSize = rates[0].high - rates[0].low;
+        double bodySize = MathAbs(rates[1].close - rates[1].open);
+        double totalSize = rates[1].high - rates[1].low;
         if(totalSize > 0 && bodySize / totalSize > 0.6) // Strong bearish candle
         {
             confidence = 0.8; 

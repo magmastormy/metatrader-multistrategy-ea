@@ -41,6 +41,7 @@ class CAdvancedPositionManager
 private:
     CTradeManager* m_tradeManager;
     SPositionManagementConfig m_config;
+    long m_managedMagic;
     
     // Position tracking
     struct SPositionTracker
@@ -65,6 +66,7 @@ public:
     // Configuration
     void SetConfig(const SPositionManagementConfig &config) { m_config = config; }
     void SetTradeManager(CTradeManager* manager) { m_tradeManager = manager; }
+    void SetManagedMagic(const long magicNumber) { m_managedMagic = magicNumber; }
     
     // Main management function
     void ManageAllPositions();
@@ -79,8 +81,10 @@ public:
     // Helper functions
     double GetCurrentProfitPips(ulong ticket);
     double GetHighestProfitPips(ulong ticket, SPositionTracker &tracker);
+    double NormalizeCloseVolume(const string symbol, const double volume);
     bool UpdateTracker(ulong ticket, SPositionTracker &tracker);
     int FindTrackerIndex(ulong ticket);
+    bool IsManagedPosition(ulong ticket);
     
     // Statistics
     int GetManagedPositionsCount() { return ArraySize(m_trackedPositions); }
@@ -90,7 +94,8 @@ public:
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
 CAdvancedPositionManager::CAdvancedPositionManager() :
-    m_tradeManager(NULL)
+    m_tradeManager(NULL),
+    m_managedMagic(0)
 {
     // Default configuration
     m_config.enableTrailingStop = true;
@@ -130,7 +135,7 @@ void CAdvancedPositionManager::ManageAllPositions()
     for(int i = PositionsTotal() - 1; i >= 0; i--)
     {
         ulong ticket = PositionGetTicket(i);
-        if(ticket > 0)
+        if(ticket > 0 && IsManagedPosition(ticket))
         {
             int idx = FindTrackerIndex(ticket);
             if(idx < 0)
@@ -164,9 +169,18 @@ void CAdvancedPositionManager::ManageAllPositions()
     // Remove closed positions from tracking
     for(int i = ArraySize(m_trackedPositions) - 1; i >= 0; i--)
     {
-        if(!PositionSelectByTicket(m_trackedPositions[i].ticket))
+        ulong trackedTicket = m_trackedPositions[i].ticket;
+        bool shouldRemove = true;
+
+        if(PositionSelectByTicket(trackedTicket))
         {
-            // Position closed - remove from array
+            if(m_managedMagic <= 0 || PositionGetInteger(POSITION_MAGIC) == m_managedMagic)
+                shouldRemove = false;
+        }
+
+        if(shouldRemove)
+        {
+            // Position closed or not managed by this EA - remove from array
             int newSize = ArraySize(m_trackedPositions) - 1;
             for(int j = i; j < newSize; j++)
                 m_trackedPositions[j] = m_trackedPositions[j + 1];
@@ -180,23 +194,24 @@ void CAdvancedPositionManager::ManageAllPositions()
 //+------------------------------------------------------------------+
 void CAdvancedPositionManager::ManagePosition(ulong ticket)
 {
+    if(!IsManagedPosition(ticket))
+        return;
+
     int idx = FindTrackerIndex(ticket);
     if(idx < 0) return;
-    
-    SPositionTracker tracker = m_trackedPositions[idx];
-    
+
     // Apply management rules in order
     if(m_config.enableBreakeven)
-        ApplyBreakeven(ticket, tracker);
+        ApplyBreakeven(ticket, m_trackedPositions[idx]);
     
     if(m_config.enableTrailingStop)
-        ApplyTrailingStop(ticket, tracker);
+        ApplyTrailingStop(ticket, m_trackedPositions[idx]);
     
     if(m_config.enablePartialClose)
-        ApplyPartialClose(ticket, tracker);
+        ApplyPartialClose(ticket, m_trackedPositions[idx]);
     
     if(m_config.enableTimeBasedExit)
-        ApplyTimeBasedExit(ticket, tracker);
+        ApplyTimeBasedExit(ticket, m_trackedPositions[idx]);
 }
 
 //+------------------------------------------------------------------+
@@ -323,7 +338,7 @@ bool CAdvancedPositionManager::ApplyPartialClose(ulong ticket, SPositionTracker 
     // First partial close
     if(!tracker.partialClose1Done && currentProfitPips >= m_config.partialClose1Pips)
     {
-        double closeVolume = NormalizeDouble(volume * m_config.partialClose1Percent / 100.0, 2);
+        double closeVolume = NormalizeCloseVolume(symbol, volume * m_config.partialClose1Percent / 100.0);
         if(closeVolume >= SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN))
         {
             if(m_tradeManager.ClosePositionPartial(ticket, closeVolume, "Partial Close 1"))
@@ -339,7 +354,7 @@ bool CAdvancedPositionManager::ApplyPartialClose(ulong ticket, SPositionTracker 
        currentProfitPips >= m_config.partialClose2Pips)
     {
         double remainingVolume = PositionGetDouble(POSITION_VOLUME);
-        double closeVolume = NormalizeDouble(remainingVolume * m_config.partialClose2Percent / 100.0, 2);
+        double closeVolume = NormalizeCloseVolume(symbol, remainingVolume * m_config.partialClose2Percent / 100.0);
         if(closeVolume >= SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN))
         {
             if(m_tradeManager.ClosePositionPartial(ticket, closeVolume, "Partial Close 2"))
@@ -407,6 +422,35 @@ double CAdvancedPositionManager::GetHighestProfitPips(ulong ticket, SPositionTra
     return tracker.highestProfit;
 }
 
+double CAdvancedPositionManager::NormalizeCloseVolume(const string symbol, const double volume)
+{
+    if(volume <= 0.0)
+        return 0.0;
+
+    double minVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    double maxVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+    double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    if(stepVol <= 0.0)
+        stepVol = 0.01;
+
+    int volumeDigits = 0;
+    double stepProbe = stepVol;
+    while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8)
+    {
+        stepProbe *= 10.0;
+        volumeDigits++;
+    }
+
+    double normalized = MathFloor((volume + 1e-12) / stepVol) * stepVol;
+    normalized = NormalizeDouble(normalized, volumeDigits);
+    normalized = MathMin(normalized, maxVol);
+
+    if(normalized < minVol)
+        return 0.0;
+
+    return normalized;
+}
+
 //+------------------------------------------------------------------+
 //| Update Tracker                                                   |
 //+------------------------------------------------------------------+
@@ -433,6 +477,20 @@ int CAdvancedPositionManager::FindTrackerIndex(ulong ticket)
             return i;
     }
     return -1;
+}
+
+//+------------------------------------------------------------------+
+//| Check if position belongs to managed magic scope                 |
+//+------------------------------------------------------------------+
+bool CAdvancedPositionManager::IsManagedPosition(ulong ticket)
+{
+    if(!PositionSelectByTicket(ticket))
+        return false;
+
+    if(m_managedMagic <= 0)
+        return true;
+
+    return (PositionGetInteger(POSITION_MAGIC) == m_managedMagic);
 }
 
 #endif // __ADVANCED_POSITION_MANAGER_MQH__

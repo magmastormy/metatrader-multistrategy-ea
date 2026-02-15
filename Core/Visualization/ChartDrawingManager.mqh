@@ -13,6 +13,7 @@
 #include <ChartObjects\ChartObjectsShapes.mqh>
 #include <ChartObjects\ChartObjectsArrows.mqh>
 #include <ChartObjects\ChartObjectsTxtControls.mqh>
+#include "DrawingCoordinator.mqh"
 
 //+------------------------------------------------------------------+
 //| Color Palette - Professional & Consistent                        |
@@ -96,6 +97,7 @@ private:
     
     // Helper methods
     string GenerateObjectName(const string objectType, const string uniqueId);
+    void PrepareSnapshotDraw();
     bool IsObjectOld(const string objName, int maxAge);
     void DeleteOldObjects(const string prefix, int maxAge);
     
@@ -191,6 +193,8 @@ bool CChartDrawingManager::DrawHorizontalLevel(double price, color levelColor, c
 {
     if(!m_config.enableDrawing || !m_config.enableSupportResistance)
         return false;
+
+    PrepareSnapshotDraw();
     
     int tfSeconds = PeriodSeconds(m_timeframe);
     if(tfSeconds <= 0)
@@ -269,12 +273,24 @@ string CChartDrawingManager::GenerateObjectName(const string objectType, const s
 }
 
 //+------------------------------------------------------------------+
+//| Enforce per-bar immutable snapshot lifecycle by prefix           |
+//+------------------------------------------------------------------+
+void CChartDrawingManager::PrepareSnapshotDraw()
+{
+    CDrawingCoordinator* coordinator = GetDrawingCoordinator();
+    if(coordinator != NULL)
+        coordinator.PreparePrefixForCurrentBar(m_chartID, m_symbol, m_timeframe, m_prefix);
+}
+
+//+------------------------------------------------------------------+
 //| Draw Swing High                                                 |
 //+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawSwingHigh(datetime time, double price, const string label)
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
         return false;
+
+    PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("SWING_HIGH", TimeToString(time));
     
@@ -303,6 +319,8 @@ bool CChartDrawingManager::DrawSwingLow(datetime time, double price, const strin
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
         return false;
+
+    PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("SWING_LOW", TimeToString(time));
     
@@ -331,6 +349,8 @@ bool CChartDrawingManager::DrawBOS(datetime time1, double price1, datetime time2
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
         return false;
+
+    PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("BOS", TimeToString(time2));
     
@@ -363,6 +383,8 @@ bool CChartDrawingManager::DrawCHOCH(datetime time1, double price1, datetime tim
 {
     if(!m_config.enableDrawing || !m_config.enableStructure)
         return false;
+
+    PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("CHOCH", TimeToString(time2));
     
@@ -399,6 +421,8 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
         Print("[ChartDrawing] Drawing disabled - skipping zone: ", label);
         return false;
     }
+
+    PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("ZONE", label + "_" + TimeToString(timeStart));
     Print("[ChartDrawing] Drawing zone: ", objName, " | Price: ", priceLow, "-", priceHigh);
@@ -467,6 +491,8 @@ bool CChartDrawingManager::DrawLiquidityLevel(datetime time1, datetime time2, do
 {
     if(!m_config.enableDrawing || !m_config.enableLiquidity)
         return false;
+
+    PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("LIQUIDITY", label + "_" + TimeToString(time1));
     
@@ -497,6 +523,8 @@ bool CChartDrawingManager::DrawEntrySignal(datetime time, double price, bool isB
 {
     if(!m_config.enableDrawing || !m_config.enableSignalMarkers)
         return false;
+
+    PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("ENTRY", strategyName + "_" + TimeToString(time));
     
@@ -617,6 +645,8 @@ void CChartDrawingManager::DeleteObject(const string objName)
 //+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, datetime time3, double price)
 {
+    PrepareSnapshotDraw();
+
     // Draw liquidity line
     if(!DrawLiquidityLevel(time1, time3, price, "EQH", false))
         return false;
@@ -642,6 +672,8 @@ bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, dateti
 //+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetime time3, double price)
 {
+    PrepareSnapshotDraw();
+
     // Draw liquidity line
     if(!DrawLiquidityLevel(time1, time3, price, "EQL", false))
         return false;
@@ -685,6 +717,8 @@ bool CChartDrawingManager::DrawWaveLabel(datetime time, double price, const stri
     // Check for "Debug" label if not in debug mode
     if(StringFind(label, "Debug") >= 0 && !m_config.enableDebugMode)
         return false;
+
+    PrepareSnapshotDraw();
         
     string objName = GenerateObjectName("WAVE", label + "_" + TimeToString(time));
     
@@ -706,6 +740,8 @@ bool CChartDrawingManager::DrawFibProjection(datetime time1, double price1, date
 {
     if(!m_config.enableDrawing || !m_config.enableElliottWave)
         return false;
+
+    PrepareSnapshotDraw();
         
     string objName = GenerateObjectName("FIB_EXP", TimeToString(time3));
     
@@ -732,6 +768,8 @@ bool CChartDrawingManager::DrawExitSignal(datetime time, double price, bool wasP
 {
     if(!m_config.enableDrawing || !m_config.enableSignalMarkers)
         return false;
+
+    PrepareSnapshotDraw();
         
     string objName = GenerateObjectName("EXIT", TimeToString(time));
     
@@ -777,6 +815,8 @@ bool CChartDrawingManager::DrawTrendLine(datetime time1, double price1, datetime
 {
     if(!m_config.enableDrawing || !m_config.enableTrendLines)
         return false;
+
+    PrepareSnapshotDraw();
         
     string objName = GenerateObjectName("TL", TimeToString(time2));
     
@@ -798,6 +838,8 @@ bool CChartDrawingManager::DrawTextLabel(datetime time, double price, const stri
 {
     if(!m_config.enableDrawing)
         return false;
+
+    PrepareSnapshotDraw();
         
     string objName = GenerateObjectName("TXT", text + "_" + TimeToString(time));
     

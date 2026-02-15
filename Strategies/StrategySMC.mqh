@@ -75,6 +75,7 @@ public:
 private:
     void Cleanup();
     void DrawSMCElements();
+    bool RefreshComponentsForCurrentBar();
 };
 
 //+------------------------------------------------------------------+
@@ -230,20 +231,8 @@ void CStrategySMC::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe
     if(!m_is_enabled || symbol != m_symbol || timeframe != m_timeframe)
         return;
 
-    int currentBar = iBars(m_symbol, m_timeframe);
-    if(currentBar == m_lastBarProcessed)
-        return;
-    m_lastBarProcessed = currentBar;
-
-    // Update all components on new bar
-    if(m_marketStructure != NULL) m_marketStructure.DetectSwingPoints(100);
-    if(m_orderBlocks != NULL) m_orderBlocks.UpdateOrderBlocks();
-    if(m_fvgDetector != NULL) m_fvgDetector.UpdateFVGs();
-    if(m_liquiditySweep != NULL) m_liquiditySweep.UpdateSweeps();
-    if(m_premiumDiscount != NULL) m_premiumDiscount.Update();
-
-    // Draw SMC elements
-    DrawSMCElements();
+    if(RefreshComponentsForCurrentBar())
+        DrawSMCElements();
 }
 
 //+------------------------------------------------------------------+
@@ -299,12 +288,8 @@ ENUM_TRADE_SIGNAL CStrategySMC::GetSignal(double &confidence)
     if(m_confluence == NULL)
         return TRADE_SIGNAL_NONE;
 
-    // Update all components
-    if(m_marketStructure != NULL) m_marketStructure.DetectSwingPoints(100);
-    if(m_orderBlocks != NULL) m_orderBlocks.UpdateOrderBlocks();
-    if(m_fvgDetector != NULL) m_fvgDetector.UpdateFVGs();
-    if(m_liquiditySweep != NULL) m_liquiditySweep.UpdateSweeps();
-    if(m_premiumDiscount != NULL) m_premiumDiscount.Update();
+    // Ensure heavy component updates run once per bar across OnNewBar/GetSignal
+    RefreshComponentsForCurrentBar();
 
     // Check Kill Zone requirement
     if(m_requireKillZone && m_killZones != NULL)
@@ -438,4 +423,24 @@ ENUM_TRADE_SIGNAL CStrategySMC::GetSignal(double &confidence)
     }
 
     return result;
+}
+
+bool CStrategySMC::RefreshComponentsForCurrentBar()
+{
+    int currentBar = iBars(m_symbol, m_timeframe);
+    if(currentBar <= 0)
+        return false;
+
+    if(currentBar == m_lastBarProcessed)
+        return false;
+
+    m_lastBarProcessed = currentBar;
+
+    if(m_marketStructure != NULL) m_marketStructure.DetectSwingPoints(100);
+    if(m_orderBlocks != NULL) m_orderBlocks.UpdateOrderBlocks();
+    if(m_fvgDetector != NULL) m_fvgDetector.UpdateFVGs();
+    if(m_liquiditySweep != NULL) m_liquiditySweep.UpdateSweeps();
+    if(m_premiumDiscount != NULL) m_premiumDiscount.Update();
+
+    return true;
 }
