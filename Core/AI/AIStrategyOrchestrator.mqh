@@ -596,11 +596,28 @@ bool CAIStrategyOrchestrator::UpdateStrategyPerformance(const string strategyNam
         m_strategies[index].winningTrades++;
         m_strategies[index].consecutiveWins++;
         m_strategies[index].consecutiveLosses = 0;
+
+        // Maintain rolling average profit per winning trade
+        int wins = m_strategies[index].winningTrades;
+        if(wins > 0)
+        {
+            double prevTotalProfit = m_strategies[index].avgProfit * (wins - 1);
+            m_strategies[index].avgProfit = (prevTotalProfit + tradeResult) / wins;
+        }
     }
     else
     {
         m_strategies[index].consecutiveLosses++;
         m_strategies[index].consecutiveWins = 0;
+
+        // Maintain rolling average loss magnitude per losing trade
+        int losses = m_strategies[index].totalTrades - m_strategies[index].winningTrades;
+        if(losses > 0)
+        {
+            double absLoss = MathAbs(tradeResult);
+            double prevTotalLoss = m_strategies[index].avgLoss * (losses - 1);
+            m_strategies[index].avgLoss = (prevTotalLoss + absLoss) / losses;
+        }
         
         // Update max consecutive losses
         if(m_strategies[index].consecutiveLosses > m_strategies[index].maxConsecutiveLosses)
@@ -677,11 +694,12 @@ double CAIStrategyOrchestrator::CalculatePerformanceAdjustedWeight(const int str
     double sharpeFactor = 1.0;
     double recentPerformanceFactor = 1.0;
     double regimeFactor = 1.0;
+    double winRateNormalized = strategy.winRate / 100.0;
     
     // Win rate adjustment
-    if(strategy.winRate > 0.6)
+    if(winRateNormalized > 0.6)
         winRateFactor = 1.5; // Boost high performers
-    else if(strategy.winRate < m_minWinRateThreshold)
+    else if(winRateNormalized < m_minWinRateThreshold)
         winRateFactor = 0.5; // Reduce poor performers
     
     // Profit factor adjustment
@@ -1462,11 +1480,13 @@ void CAIStrategyOrchestrator::CalculateStrategyMetrics(const int index)
         m_strategies[index].winRate = ((double)m_strategies[index].winningTrades / m_strategies[index].totalTrades) * 100.0;
     }
     
-    // Calculate profit factor (simplified - would need actual P&L data)
-    if(m_strategies[index].avgLoss != 0.0)
-    {
-        m_strategies[index].profitFactor = MathAbs(m_strategies[index].avgProfit / m_strategies[index].avgLoss);
-    }
+    // Calculate profit factor from observed win/loss averages
+    if(m_strategies[index].avgLoss > 0.0)
+        m_strategies[index].profitFactor = m_strategies[index].avgProfit / m_strategies[index].avgLoss;
+    else if(m_strategies[index].avgProfit > 0.0)
+        m_strategies[index].profitFactor = 2.0;
+    else
+        m_strategies[index].profitFactor = 0.0;
     
     // Calculate Sharpe ratio (simplified)
     m_strategies[index].sharpeRatio = CalculateSharpeRatio(index);

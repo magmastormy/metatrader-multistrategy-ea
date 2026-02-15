@@ -572,13 +572,16 @@ private:
     
     void AdaptToPerformance() {
         // Adjust risk based on recent performance
+        if(m_orchestrator == NULL)
+            return;
+
+        // Performance-driven strategy adaptation hooks
+        m_orchestrator.UpdateStrategyWeights();
+
         if(m_predictionAccuracy < 0.4) {
-            // Poor performance - reduce risk
-            if(m_orchestrator != NULL) {
-                // Could trigger conservative mode
-            }
+            m_orchestrator.CheckStrategyDisabling();
         } else if(m_predictionAccuracy > 0.6) {
-            // Good performance - can be more aggressive (within limits)
+            m_orchestrator.CheckStrategyReEnabling();
         }
     }
     
