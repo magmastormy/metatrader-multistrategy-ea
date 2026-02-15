@@ -52,6 +52,7 @@ struct StrategyEntry
 {
     IStrategy* strategy;
     string name;
+    string orchestratorKey;
     bool enabled;
     double weight;
     ENUM_TIMEFRAMES timeframe;
@@ -99,6 +100,7 @@ private:
     datetime m_lastSignalTime;
 
     bool IsPositionIdStillOpen(const ulong positionId) const;
+    string BuildOrchestratorStrategyKey(const string strategyName, ENUM_TIMEFRAMES timeframe) const;
     
 public:
     CEnterpriseStrategyManager();
@@ -265,6 +267,12 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     return true;
 }
 
+string CEnterpriseStrategyManager::BuildOrchestratorStrategyKey(const string strategyName, ENUM_TIMEFRAMES timeframe) const
+{
+    ENUM_TIMEFRAMES resolvedTf = (timeframe == PERIOD_CURRENT ? m_baseTimeframe : timeframe);
+    return strategyName + "|" + m_symbol + "|" + EnumToString(resolvedTf);
+}
+
 //+------------------------------------------------------------------+
 //| Register Strategy                                               |
 //+------------------------------------------------------------------+
@@ -276,7 +284,8 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
         return false;
     
     // Initialize strategy with VALID pointers
-    bool initSuccess = strategy.Init(m_symbol, tf == PERIOD_CURRENT ? m_baseTimeframe : tf, 
+    ENUM_TIMEFRAMES resolvedTf = (tf == PERIOD_CURRENT ? m_baseTimeframe : tf);
+    bool initSuccess = strategy.Init(m_symbol, resolvedTf,
                                      m_tradeManager, m_positionSizer);
     
     if(!initSuccess)
@@ -297,9 +306,10 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     
     m_strategies[m_strategyCount].strategy = strategy;
     m_strategies[m_strategyCount].name = name;
+    m_strategies[m_strategyCount].orchestratorKey = BuildOrchestratorStrategyKey(name, resolvedTf);
     m_strategies[m_strategyCount].enabled = enabled;
     m_strategies[m_strategyCount].weight = weight;
-    m_strategies[m_strategyCount].timeframe = tf == PERIOD_CURRENT ? m_baseTimeframe : tf;
+    m_strategies[m_strategyCount].timeframe = resolvedTf;
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
     m_strategies[m_strategyCount].avgConfidence = 0;
@@ -312,7 +322,11 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     // Register with orchestrator
     if(m_orchestrator != NULL)
     {
-        m_orchestrator.AddStrategy(name, weight);
+        if(!m_orchestrator.AddStrategy(m_strategies[m_strategyCount - 1].orchestratorKey, weight))
+        {
+            Print("[EnterpriseStrategyManager] WARNING: Failed to add strategy to orchestrator: ",
+                  m_strategies[m_strategyCount - 1].orchestratorKey);
+        }
     }
     
     Print("[EnterpriseStrategyManager] Registered strategy: ", name, 
@@ -498,7 +512,9 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(const string
         
         if(signal != TRADE_SIGNAL_NONE)
         {
-            votes[voteCount].strategyName = m_strategies[i].name;
+            votes[voteCount].strategyName = (m_strategies[i].orchestratorKey != ""
+                                             ? m_strategies[i].orchestratorKey
+                                             : m_strategies[i].name);
             votes[voteCount].signal = signal;
             votes[voteCount].confidence = stratConf;
             votes[voteCount].weight = m_strategies[i].weight;

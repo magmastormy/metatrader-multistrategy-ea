@@ -956,7 +956,7 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::ProcessWeightedVoting(SEnsembleVote &
     double sellConsensus = sellWeight / totalWeight;
     confidence = totalConfidence / totalWeight;
     
-    // 🎯 REQUIREMENT 4.5: IF multiple strategies agree on direction THEN confidence SHALL be increased
+    // REQUIREMENT 4.5: IF multiple strategies agree on direction THEN confidence SHALL be increased
     double agreementLevel = MathMax(buyConsensus, sellConsensus);
     if(agreementLevel >= 0.7) // Strong agreement threshold
     {
@@ -964,11 +964,11 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::ProcessWeightedVoting(SEnsembleVote &
         confidence = MathMin(confidence, 1.0); // Cap at 1.0
         
         LogOrchestrationEvent(ERROR_INFO, 
-                             StringFormat("🤝 Strategy Agreement Bonus: %.1f%% consensus, confidence boosted by %.2f", 
+                             StringFormat("Strategy agreement bonus: %.1f%% consensus, confidence boosted by %.2f", 
                                          agreementLevel * 100, m_agreementBonus * agreementLevel));
     }
     
-    // 🎯 REQUIREMENT 4.6: WHEN strategies disagree THEN the EA SHALL either skip the trade or use ensemble voting
+    // REQUIREMENT 4.6: WHEN strategies disagree THEN the EA SHALL either skip the trade or use ensemble voting
     double disagreementLevel = MathMin(buyConsensus, sellConsensus);
     if(disagreementLevel > 0.3 && MathAbs(buyConsensus - sellConsensus) < 0.3) // High disagreement
     {
@@ -976,31 +976,31 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::ProcessWeightedVoting(SEnsembleVote &
         confidence = MathMax(confidence, 0.0); // Floor at 0.0
         
         LogOrchestrationEvent(ERROR_WARNING, 
-                             StringFormat("⚠️ Strategy Disagreement: BUY=%.1f%%, SELL=%.1f%%, confidence reduced by %.2f", 
+                             StringFormat("Strategy disagreement: BUY=%.1f%%, SELL=%.1f%%, confidence reduced by %.2f", 
                                          buyConsensus * 100, sellConsensus * 100, m_disagreementPenalty * disagreementLevel));
         
         // If disagreement is too high and confidence too low, skip trade
         if(confidence < m_minVotingConfidence)
         {
-            LogOrchestrationEvent(ERROR_INFO, "🚫 Trade skipped due to high strategy disagreement");
+            LogOrchestrationEvent(ERROR_INFO, "Trade skipped due to high strategy disagreement");
             return TRADE_SIGNAL_NONE;
         }
     }
     
-    // 🎯 REQUIREMENT 4.7: WHEN market regime is uncertain THEN only high-confidence signals SHALL be executed
+    // REQUIREMENT 4.7: WHEN market regime is uncertain THEN only high-confidence signals SHALL be executed
     if(m_regimeConfidence < m_regimeUncertaintyThreshold)
     {
         if(confidence < m_highConfidenceThreshold)
         {
             LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("🌫�?Regime uncertain (%.2f), requiring high confidence (%.2f) - signal rejected", 
+                                 StringFormat("Regime uncertain (%.2f), requiring high confidence (%.2f) - signal rejected", 
                                              m_regimeConfidence, confidence));
             return TRADE_SIGNAL_NONE;
         }
         else
         {
             LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("�?High confidence signal (%.2f) accepted despite regime uncertainty", confidence));
+                                 StringFormat("High confidence signal (%.2f) accepted despite regime uncertainty", confidence));
         }
     }
     
@@ -1361,7 +1361,7 @@ void CAIStrategyOrchestrator::PrintOrchestrationReport(void)
     if(!m_initialized) return;
     
     Print("\n=== AI STRATEGY ORCHESTRATOR REPORT ===");
-    Print("🎯 ENSEMBLE PERFORMANCE:");
+    Print("ENSEMBLE PERFORMANCE:");
     Print("   Total Strategies: ", m_strategyCount);
     Print("   Active Strategies: ", GetActiveStrategyCount());
     Print("   Average Win Rate: ", DoubleToString(GetAverageWinRate(), 1), "%");
@@ -1369,7 +1369,7 @@ void CAIStrategyOrchestrator::PrintOrchestrationReport(void)
     Print("   Ensemble Accuracy: ", DoubleToString(GetEnsembleAccuracy(), 1), "%");
     Print("   Current Regime: ", EnumToString(m_currentRegime), " (", DoubleToString(m_regimeConfidence, 2), ")");
     
-    Print("\n📊 STRATEGY DETAILS:");
+    Print("\nSTRATEGY DETAILS:");
     for(int i = 0; i < m_strategyCount; i++)
     {
         string status = m_strategies[i].enabled ? (m_strategies[i].temporarilyDisabled ? "DISABLED" : "ACTIVE") : "INACTIVE";
@@ -1387,14 +1387,14 @@ void CAIStrategyOrchestrator::PrintOrchestrationReport(void)
         }
     }
     
-    Print("\n⚙️ CONFIGURATION:");
+    Print("\nCONFIGURATION:");
     Print("   Min Win Rate Threshold: ", DoubleToString(m_minWinRateThreshold * 100, 1), "%");
     Print("   Max Consecutive Losses: ", m_maxConsecutiveLosses);
     Print("   Rolling Window Size: ", m_rollingWindowSize);
     Print("   Consensus Threshold: ", DoubleToString(m_consensusThreshold, 2));
     Print("   Use Confidence Weighting: ", m_useConfidenceWeighting ? "YES" : "NO");
     
-    Print("\n🗳�?ENSEMBLE VOTING CONFIG:");
+    Print("\nENSEMBLE VOTING CONFIG:");
     Print("   Agreement Bonus: ", DoubleToString(m_agreementBonus, 3));
     Print("   Disagreement Penalty: ", DoubleToString(m_disagreementPenalty, 3));
     Print("   Regime Uncertainty Threshold: ", DoubleToString(m_regimeUncertaintyThreshold, 2));
@@ -1647,7 +1647,7 @@ void CAIStrategyOrchestrator::LogEnsembleDecision(const SEnsembleDecision &decis
     else if(decision.finalSignal == TRADE_SIGNAL_SELL) signalStr = "SELL";
     
     LogOrchestrationEvent(ERROR_INFO, 
-                         StringFormat("🗳�?ENSEMBLE DECISION: %s | Confidence: %.2f | Consensus: %.1f%% | Votes: %d/%d valid",
+                         StringFormat("Ensemble decision: %s | Confidence: %.2f | Consensus: %.1f%% | Votes: %d/%d valid",
                                      signalStr, decision.confidence, decision.consensusStrength * 100,
                                      decision.validVotes, decision.totalVotes));
     
@@ -1686,7 +1686,7 @@ void CAIStrategyOrchestrator::UpdateEnsemblePerformance(const SEnsembleDecision 
             m_accuracyIndex = (m_accuracyIndex + 1) % 20;
             
             LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("📊 Ensemble performance updated: Outcome=%.2f, Success=%s, Accuracy=%.1f%%",
+                                 StringFormat("Ensemble performance updated: Outcome=%.2f, Success=%s, Accuracy=%.1f%%",
                                              outcome, (outcome > 0.0) ? "YES" : "NO", currentAccuracy));
             break;
         }
@@ -1791,7 +1791,7 @@ void CAIStrategyOrchestrator::ApplyAgreementBonus(double &confidence, double agr
         confidence = MathMin(confidence, 1.0); // Cap at 1.0
         
         LogOrchestrationEvent(ERROR_INFO, 
-                             StringFormat("🤝 Agreement Bonus Applied: %.1f%% agreement, +%.3f confidence", 
+                             StringFormat("Agreement bonus applied: %.1f%% agreement, +%.3f confidence", 
                                          agreementLevel * 100, bonus));
     }
 }
@@ -1808,7 +1808,7 @@ void CAIStrategyOrchestrator::ApplyDisagreementPenalty(double &confidence, doubl
         confidence = MathMax(confidence, 0.0); // Floor at 0.0
         
         LogOrchestrationEvent(ERROR_WARNING, 
-                             StringFormat("⚠️ Disagreement Penalty Applied: %.1f%% disagreement, -%.3f confidence", 
+                             StringFormat("Disagreement penalty applied: %.1f%% disagreement, -%.3f confidence", 
                                          disagreementLevel * 100, penalty));
     }
 }
@@ -1822,15 +1822,15 @@ bool CAIStrategyOrchestrator::ShouldSkipDueToUncertainty(double confidence)
     {
         if(confidence < m_highConfidenceThreshold)
         {
-        LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("🌫�?Trade skipped: Regime uncertain (%.2f), confidence (%.2f) below threshold (%.2f)", 
+            LogOrchestrationEvent(ERROR_INFO, 
+                                 StringFormat("Trade skipped: Regime uncertain (%.2f), confidence (%.2f) below threshold (%.2f)", 
                                              m_regimeConfidence, confidence, m_highConfidenceThreshold));
             return true;
         }
         else
         {
             LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("�?High confidence trade accepted despite regime uncertainty: %.2f >= %.2f", 
+                                 StringFormat("High confidence trade accepted despite regime uncertainty: %.2f >= %.2f", 
                                              confidence, m_highConfidenceThreshold));
         }
     }
@@ -1876,7 +1876,7 @@ void CAIStrategyOrchestrator::LogVotingDecisionReasoning(SEnsembleVote &votes[],
     if(finalSignal == TRADE_SIGNAL_BUY) signalStr = "BUY";
     else if(finalSignal == TRADE_SIGNAL_SELL) signalStr = "SELL";
     
-    LogOrchestrationEvent(ERROR_INFO, "🗳�?ENSEMBLE VOTING SUMMARY:");
+    LogOrchestrationEvent(ERROR_INFO, "ENSEMBLE VOTING SUMMARY:");
     LogOrchestrationEvent(ERROR_INFO, StringFormat("   Final Decision: %s | Final Confidence: %.3f", signalStr, confidence));
     LogOrchestrationEvent(ERROR_INFO, StringFormat("   Vote Count: BUY=%d (%.2f), SELL=%d (%.2f), NEUTRAL=%d", buyVotes, buyWeight, sellVotes, sellWeight, neutralVotes));
     LogOrchestrationEvent(ERROR_INFO, StringFormat("   Average Strategy Confidence: %.3f", avgConfidence));

@@ -13,6 +13,9 @@
 #include "../Utils/Enums.mqh"
 #include <Arrays/ArrayObj.mqh>
 
+// Global per-session sequence to keep diagnostic file names unique
+int g_signalDiagnosticsFileSequence = 0;
+
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
@@ -98,6 +101,8 @@ private:
     // File logging
     int           m_fileHandle;
     string        m_logFileName;
+    string        m_lastNoSignalKey;
+    datetime      m_lastNoSignalTime;
     
 public:
     CSignalDiagnostics();
@@ -211,7 +216,9 @@ CSignalDiagnostics::CSignalDiagnostics() :
     m_noSignals(0),
     m_conflicts(0),
     m_timeframeConflicts(0),
-    m_fileHandle(INVALID_HANDLE)
+    m_fileHandle(INVALID_HANDLE),
+    m_lastNoSignalKey(""),
+    m_lastNoSignalTime(0)
 {
 }
 
@@ -230,26 +237,43 @@ bool CSignalDiagnostics::Initialize(int maxRecords = 1000, int logLevel = 3)
 {
     m_maxRecords = maxRecords;
     m_logLevel = logLevel;
+    m_currentIndex = 0;
+    m_lastNoSignalKey = "";
+    m_lastNoSignalTime = 0;
     ArrayResize(m_records, m_maxRecords);
     
     // Create log file with proper directory
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
     StringReplace(timestamp, ":", "-");
     StringReplace(timestamp, " ", "_");
+    g_signalDiagnosticsFileSequence++;
+    string uniqueSuffix = IntegerToString((int)GetTickCount()) + "_" + IntegerToString(g_signalDiagnosticsFileSequence);
     
     // Use userReports directory (same as EA logs)
     string logDir = "userReports";
-    m_logFileName = logDir + "\\SignalDiagnostics_" + timestamp + ".log";
+    ResetLastError();
+    FolderCreate(logDir);
+    m_logFileName = logDir + "\\SignalDiagnostics_" + timestamp + "_" + uniqueSuffix + ".log";
     
-    // Try to open file (MQL5 will create directory if needed)
+    // Try terminal-local file first
     m_fileHandle = FileOpen(m_logFileName, FILE_WRITE|FILE_TXT|FILE_ANSI);
     if(m_fileHandle == INVALID_HANDLE)
     {
-        int error = GetLastError();
-        Print("[SignalDiagnostics] Failed to create log file: ", m_logFileName, " Error: ", error);
-        Print("[SignalDiagnostics] Will continue without file logging (console only)");
-        // Don't fail initialization - just continue without file logging
-        return true;  // Changed from false to true
+        // Fallback to terminal COMMON files to avoid path/permission collisions
+        string commonFileName = "SignalDiagnostics_" + timestamp + "_" + uniqueSuffix + ".log";
+        m_fileHandle = FileOpen(commonFileName, FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+        if(m_fileHandle != INVALID_HANDLE)
+        {
+            m_logFileName = "COMMON\\" + commonFileName;
+        }
+        else
+        {
+            int error = GetLastError();
+            Print("[SignalDiagnostics] Failed to create log file: ", m_logFileName, " Error: ", error);
+            Print("[SignalDiagnostics] Will continue without file logging (console only)");
+            // Don't fail initialization - just continue without file logging
+            return true;
+        }
     }
     
     WriteToFile("=== Signal Diagnostics System Initialized ===");
@@ -327,6 +351,14 @@ void CSignalDiagnostics::LogNoSignal(const string strategyName,
                                     const string reason)
 {
     if(!m_enabled || m_logLevel < 3) return;
+
+    // Suppress duplicate no-signal spam occurring within the same second.
+    string signalKey = strategyName + "|" + symbol + "|" + IntegerToString(timeframe) + "|" + reason;
+    datetime nowTime = TimeCurrent();
+    if(signalKey == m_lastNoSignalKey && nowTime == m_lastNoSignalTime)
+        return;
+    m_lastNoSignalKey = signalKey;
+    m_lastNoSignalTime = nowTime;
     
     m_noSignals++;
     
@@ -392,9 +424,21 @@ void CSignalDiagnostics::LogStrategyError(const string strategyName,
                                          const string details)
 {
     if(!m_enabled) return;
-    
-    string msg = StringFormat("[ERROR] %s | Type: %s | Details: %s",
-                            strategyName, errorType, details);
+
+    string normalizedType = errorType;
+    StringToUpper(normalizedType);
+    bool isDebug = (normalizedType == "DEBUG");
+    bool isTrace = (normalizedType == "TRACE");
+
+    if(isDebug && m_logLevel < 3) return;
+    if(isTrace && m_logLevel < 4) return;
+
+    string levelTag = "[ERROR]";
+    if(isDebug) levelTag = "[DEBUG]";
+    else if(isTrace) levelTag = "[TRACE]";
+
+    string msg = StringFormat("%s %s | Type: %s | Details: %s",
+                            levelTag, strategyName, errorType, details);
     
     Print(msg);
     WriteToFile(msg);

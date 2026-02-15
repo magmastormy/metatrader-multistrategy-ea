@@ -98,12 +98,18 @@ private:
     int m_handleMASlow;
     int m_handleADX;
     int m_handleATR;
+    string m_indicatorSymbol;
+    ENUM_TIMEFRAMES m_indicatorTimeframe;
+    datetime m_lastIndicatorErrorLog;
+    ENUM_TREND_TYPE m_lastLoggedTrendType;
+    datetime m_lastTrendLogTime;
     
     // Diagnostics
     CSignalDiagnostics* m_diagnostics;
     
     // Internal methods
     bool InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe);
+    bool IndicatorsReadyForRead(int minBars);
     void ReleaseIndicators();
     TrendState CalculateMAs(const string symbol, ENUM_TIMEFRAMES timeframe,
                       double &ma_fast[], double &ma_medium[], double &ma_slow[], double &ma[]);
@@ -172,6 +178,11 @@ CTrendEngine::CTrendEngine() :
     m_handleMASlow(INVALID_HANDLE),
     m_handleADX(INVALID_HANDLE),
     m_handleATR(INVALID_HANDLE),
+    m_indicatorSymbol(""),
+    m_indicatorTimeframe(PERIOD_CURRENT),
+    m_lastIndicatorErrorLog(0),
+    m_lastLoggedTrendType(TREND_NONE),
+    m_lastTrendLogTime(0),
     m_diagnostics(NULL)
 {
 }
@@ -212,8 +223,19 @@ bool CTrendEngine::Initialize(int maFast, int maMedium, int maSlow,
 //+------------------------------------------------------------------+
 bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
-    // Release old indicators
+    bool handlesReady = (m_handleMAFast != INVALID_HANDLE &&
+                         m_handleMAMedium != INVALID_HANDLE &&
+                         m_handleMASlow != INVALID_HANDLE &&
+                         m_handleADX != INVALID_HANDLE &&
+                         m_handleATR != INVALID_HANDLE);
+    bool contextMatches = (m_indicatorSymbol == symbol && m_indicatorTimeframe == timeframe);
+    if(handlesReady && contextMatches)
+        return true;
+
+    // Context changed or handles missing - rebuild once.
     ReleaseIndicators();
+    m_indicatorSymbol = symbol;
+    m_indicatorTimeframe = timeframe;
     
     // Create new indicators
     m_handleMAFast = iMA(symbol, timeframe, m_maPeriodFast, 0, MODE_EMA, PRICE_CLOSE);
@@ -268,6 +290,30 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
     return true;
 }
 
+bool CTrendEngine::IndicatorsReadyForRead(int minBars)
+{
+    int fastBars = BarsCalculated(m_handleMAFast);
+    int medBars = BarsCalculated(m_handleMAMedium);
+    int slowBars = BarsCalculated(m_handleMASlow);
+    int adxBars = BarsCalculated(m_handleADX);
+    int atrBars = BarsCalculated(m_handleATR);
+
+    if(fastBars < minBars || medBars < minBars || slowBars < minBars || adxBars < minBars || atrBars < minBars)
+    {
+        datetime nowTime = TimeCurrent();
+        if((nowTime - m_lastIndicatorErrorLog) >= 60)
+        {
+            PrintFormat("[TrendEngine] Indicators warming up for %s %s | MAf=%d MAm=%d MAs=%d ADX=%d ATR=%d need=%d",
+                        m_indicatorSymbol, EnumToString(m_indicatorTimeframe),
+                        fastBars, medBars, slowBars, adxBars, atrBars, minBars);
+            m_lastIndicatorErrorLog = nowTime;
+        }
+        return false;
+    }
+
+    return true;
+}
+
 //+------------------------------------------------------------------+
 //| Release Indicators                                              |
 //+------------------------------------------------------------------+
@@ -312,36 +358,61 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     // Initialize indicators if needed
     if(!InitializeIndicators(symbol, timeframe))
         return false;
+
+    int minBars = MathMax(m_maPeriodSlow + 5, m_adxPeriod + 5);
+    if(!IndicatorsReadyForRead(minBars))
+        return false;
     
     // Get indicator values
     double ma_fast[5], ma_medium[5], ma_slow[5];
     double adx[1], plusDI[1], minusDI[1], atr[1];
     
+    ResetLastError();
     if(CopyBuffer(m_handleMAFast, 0, 0, 5, ma_fast) != 5 ||
        CopyBuffer(m_handleMAMedium, 0, 0, 5, ma_medium) != 5 ||
        CopyBuffer(m_handleMASlow, 0, 0, 5, ma_slow) != 5)
     {
-        if(m_diagnostics != NULL)
+        datetime nowTime = TimeCurrent();
+        if(m_diagnostics != NULL && (nowTime - m_lastIndicatorErrorLog) >= 30)
+        {
+            int err = GetLastError();
             m_diagnostics.LogStrategyError("TrendEngine", "MA_BUFFER_COPY_FAILED",
-                                          "Failed to copy MA buffer data");
+                                          StringFormat("Failed to copy MA buffer data for %s %s (err=%d)",
+                                                       symbol, EnumToString(timeframe), err));
+            m_lastIndicatorErrorLog = nowTime;
+        }
         return false;
     }
     
+    ResetLastError();
     if(CopyBuffer(m_handleADX, 0, 0, 1, adx) != 1 ||
        CopyBuffer(m_handleADX, 1, 0, 1, plusDI) != 1 ||
        CopyBuffer(m_handleADX, 2, 0, 1, minusDI) != 1)
     {
-        if(m_diagnostics != NULL)
+        datetime nowTime = TimeCurrent();
+        if(m_diagnostics != NULL && (nowTime - m_lastIndicatorErrorLog) >= 30)
+        {
+            int err = GetLastError();
             m_diagnostics.LogStrategyError("TrendEngine", "ADX_BUFFER_COPY_FAILED",
-                                          "Failed to copy ADX buffer data");
+                                          StringFormat("Failed to copy ADX buffer data for %s %s (err=%d)",
+                                                       symbol, EnumToString(timeframe), err));
+            m_lastIndicatorErrorLog = nowTime;
+        }
         return false;
     }
     
+    ResetLastError();
     if(CopyBuffer(m_handleATR, 0, 0, 1, atr) != 1)
     {
-        if(m_diagnostics != NULL)
+        datetime nowTime = TimeCurrent();
+        if(m_diagnostics != NULL && (nowTime - m_lastIndicatorErrorLog) >= 30)
+        {
+            int err = GetLastError();
             m_diagnostics.LogStrategyError("TrendEngine", "ATR_BUFFER_COPY_FAILED",
-                                          "Failed to copy ATR buffer data");
+                                          StringFormat("Failed to copy ATR buffer data for %s %s (err=%d)",
+                                                       symbol, EnumToString(timeframe), err));
+            m_lastIndicatorErrorLog = nowTime;
+        }
         return false;
     }
     
@@ -372,10 +443,16 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     // Log trend update
     if(m_diagnostics != NULL)
     {
-        string trendStr = EnumToString(m_currentTrend.type);
-        string msg = StringFormat("Trend: %s | Strength: %.1f | Angle: %.1f | ADX: %.1f",
-                                trendStr, m_currentTrend.strength, m_currentTrend.angle, adx[0]);
-        Print("[TrendEngine] ", msg);
+        datetime nowTime = TimeCurrent();
+        if(m_currentTrend.type != m_lastLoggedTrendType || (nowTime - m_lastTrendLogTime) >= 300)
+        {
+            string trendStr = EnumToString(m_currentTrend.type);
+            string msg = StringFormat("Trend: %s | Strength: %.1f | Angle: %.1f | ADX: %.1f",
+                                      trendStr, m_currentTrend.strength, m_currentTrend.angle, adx[0]);
+            Print("[TrendEngine] ", msg);
+            m_lastLoggedTrendType = m_currentTrend.type;
+            m_lastTrendLogTime = nowTime;
+        }
     }
     
     return true;
@@ -715,6 +792,11 @@ void CTrendEngine::Reset()
 {
     m_currentTrend = TrendState();
     m_mtfTrend = MTFTrendState();
+    m_indicatorSymbol = "";
+    m_indicatorTimeframe = PERIOD_CURRENT;
+    m_lastIndicatorErrorLog = 0;
+    m_lastLoggedTrendType = TREND_NONE;
+    m_lastTrendLogTime = 0;
     ReleaseIndicators();
 }
 
