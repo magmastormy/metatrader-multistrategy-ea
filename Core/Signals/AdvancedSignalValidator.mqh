@@ -24,6 +24,12 @@ struct SSignalValidationResult
     bool passedSessionFilter;
 };
 
+enum ENUM_VALIDATION_PROFILE
+{
+    VALIDATION_PROFILE_NEW_BAR = 0,
+    VALIDATION_PROFILE_INTRABAR = 1
+};
+
 //+------------------------------------------------------------------+
 //| Advanced Signal Validator                                        |
 //+------------------------------------------------------------------+
@@ -33,6 +39,10 @@ private:
     // Configuration
     int m_minStrategyConfluence;      // Minimum strategies that must agree
     double m_minQualityScore;         // Minimum quality score (0.0-1.0)
+    double m_minSignalConfidence;     // Minimum input confidence
+    int m_intrabarMinConfluence;      // Intrabar minimum confluence
+    double m_intrabarMinQualityScore; // Intrabar minimum quality score
+    double m_intrabarMinConfidence;   // Intrabar minimum confidence
     double m_maxSpreadMultiplier;     // Max spread as multiplier of ATR
     bool m_enableTimeFilter;
     bool m_enableSessionFilter;
@@ -67,6 +77,21 @@ public:
     // Configuration
     void SetMinConfluence(int minConfluence) { m_minStrategyConfluence = minConfluence; }
     void SetMinQualityScore(double minScore) { m_minQualityScore = minScore; }
+    void SetMinSignalConfidence(double minConfidence) { m_minSignalConfidence = minConfidence; }
+    void SetValidationProfiles(int newBarConfluence,
+                               double newBarQuality,
+                               double newBarConfidence,
+                               int intrabarConfluence,
+                               double intrabarQuality,
+                               double intrabarConfidence)
+    {
+        m_minStrategyConfluence = MathMax(1, newBarConfluence);
+        m_minQualityScore = MathMax(0.0, MathMin(1.0, newBarQuality));
+        m_minSignalConfidence = MathMax(0.0, MathMin(1.0, newBarConfidence));
+        m_intrabarMinConfluence = MathMax(1, intrabarConfluence);
+        m_intrabarMinQualityScore = MathMax(0.0, MathMin(1.0, intrabarQuality));
+        m_intrabarMinConfidence = MathMax(0.0, MathMin(1.0, intrabarConfidence));
+    }
     void SetMaxSpreadMultiplier(double multiplier) { m_maxSpreadMultiplier = multiplier; }
     void EnableTimeFilter(bool enable, int startHour = 0, int endHour = 23) 
     { 
@@ -100,7 +125,8 @@ public:
         ENUM_TRADE_SIGNAL signal,
         double confidence,
         int strategyConfluence,
-        double atrValue = 0.0
+        double atrValue = 0.0,
+        ENUM_VALIDATION_PROFILE profile = VALIDATION_PROFILE_NEW_BAR
     );
     
     // Individual filter checks
@@ -143,6 +169,10 @@ private:
 CAdvancedSignalValidator::CAdvancedSignalValidator() :
     m_minStrategyConfluence(2),
     m_minQualityScore(0.65),
+    m_minSignalConfidence(0.60),
+    m_intrabarMinConfluence(1),
+    m_intrabarMinQualityScore(0.75),
+    m_intrabarMinConfidence(0.70),
     m_maxSpreadMultiplier(2.0),       // Max spread = 2x ATR
     m_enableTimeFilter(true),
     m_enableSessionFilter(true),
@@ -179,7 +209,8 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     ENUM_TRADE_SIGNAL signal,
     double confidence,
     int strategyConfluence,
-    double atrValue)
+    double atrValue,
+    ENUM_VALIDATION_PROFILE profile)
 {
     SSignalValidationResult result;
     result.isValid = false;
@@ -193,12 +224,32 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     result.passedSessionFilter = true;
     
     m_signalsValidated++;
+
+    int requiredConfluence = m_minStrategyConfluence;
+    double requiredQuality = m_minQualityScore;
+    double requiredConfidence = m_minSignalConfidence;
+
+    if(profile == VALIDATION_PROFILE_INTRABAR)
+    {
+        requiredConfluence = m_intrabarMinConfluence;
+        requiredQuality = m_intrabarMinQualityScore;
+        requiredConfidence = m_intrabarMinConfidence;
+    }
+
+    // 0. Confidence gate (profile-aware)
+    if(confidence < requiredConfidence)
+    {
+        result.reason = StringFormat("Confidence below profile threshold: %.2f < %.2f",
+                                    confidence, requiredConfidence);
+        m_signalsRejected++;
+        return result;
+    }
     
     // 1. Check strategy confluence
-    if(strategyConfluence < m_minStrategyConfluence)
+    if(strategyConfluence < requiredConfluence)
     {
         result.reason = StringFormat("Insufficient confluence: %d < %d strategies", 
-                                    strategyConfluence, m_minStrategyConfluence);
+                                    strategyConfluence, requiredConfluence);
         m_signalsRejected++;
         return result;
     }
@@ -258,10 +309,10 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     result.qualityScore = CalculateQualityScore(confidence, strategyConfluence, confidence, allFiltersPassed);
     
     // 7. Final quality check
-    if(result.qualityScore < m_minQualityScore)
+    if(result.qualityScore < requiredQuality)
     {
         result.reason = StringFormat("Quality score too low: %.2f < %.2f", 
-                                    result.qualityScore, m_minQualityScore);
+                                    result.qualityScore, requiredQuality);
         m_signalsRejected++;
         return result;
     }

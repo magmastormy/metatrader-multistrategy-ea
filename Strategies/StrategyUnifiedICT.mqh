@@ -107,6 +107,9 @@ private:
     string                      m_lastFilterLogMessage;
     datetime                    m_lastFilterLogTime;
     string                      m_drawPrefix;
+    bool                        m_drawOnChartSymbolOnly;
+    datetime                    m_lastDrawLogTime;
+    datetime                    m_lastDrawRecoveryCheck;
     
 public:
                                 CStrategyUnifiedICT(const string name = "Unified ICT v1.0", int magic = 0);
@@ -184,7 +187,10 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_tradesInKillZone(0),
     m_lastFilterLogMessage(""),
     m_lastFilterLogTime(0),
-    m_drawPrefix("UICT_")
+    m_drawPrefix(""),
+    m_drawOnChartSymbolOnly(false),
+    m_lastDrawLogTime(0),
+    m_lastDrawRecoveryCheck(0)
 {
 }
 
@@ -247,6 +253,7 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
         return false;
 
     m_drawPrefix = BuildDrawPrefix(symbol, timeframe);
+    m_drawOnChartSymbolOnly = (symbol == _Symbol && timeframe == (ENUM_TIMEFRAMES)Period());
     
     // Initialize Market Structure Analyzer
     m_structureAnalyzer = new CMarketStructureAnalyzer();
@@ -299,10 +306,14 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
     {
         m_drawingManager.Initialize(symbol, timeframe, "UICT");
         m_drawPrefix = m_drawingManager.GetPrefix();
-        Print("[UICT] Chart drawing manager ready");
+        Print("[UICT] Chart drawing manager ready | Symbol=", symbol,
+              " | DrawOnChart=", m_drawOnChartSymbolOnly ? "true" : "false");
     }
     
     m_lastBarProcessed = 0;
+
+    if(m_drawOnChartSymbolOnly && RefreshComponentsForCurrentBar())
+        DrawElements();
     
     Print("[UICT v1.0] Strategy initialized for ", symbol, " on ", EnumToString(timeframe));
     return true;
@@ -313,7 +324,8 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
 //+------------------------------------------------------------------+
 void CStrategyUnifiedICT::Deinit()
 {
-    ObjectsDeleteAll(0, m_drawPrefix);
+    if(StringLen(m_drawPrefix) > 0)
+        ObjectsDeleteAll(0, m_drawPrefix);
     Cleanup();
     CStrategyBase::Deinit();
 }
@@ -323,7 +335,35 @@ void CStrategyUnifiedICT::Deinit()
 //+------------------------------------------------------------------+
 void CStrategyUnifiedICT::OnTick()
 {
-    if(!m_is_enabled) return;
+    if(!m_is_enabled)
+        return;
+
+    if(!m_drawOnChartSymbolOnly || StringLen(m_drawPrefix) == 0)
+        return;
+
+    datetime nowTime = TimeCurrent();
+    if((nowTime - m_lastDrawRecoveryCheck) < 10)
+        return;
+
+    m_lastDrawRecoveryCheck = nowTime;
+
+    bool hasActiveObjects = false;
+    int totalObjects = ObjectsTotal(0, 0, -1);
+    for(int i = totalObjects - 1; i >= 0; i--)
+    {
+        string objName = ObjectName(0, i, 0, -1);
+        if(StringFind(objName, m_drawPrefix) == 0)
+        {
+            hasActiveObjects = true;
+            break;
+        }
+    }
+
+    if(!hasActiveObjects && m_lastBarProcessed > 0)
+    {
+        DrawElements();
+        Print("[UICT-DRAW] Recovered missing drawings for ", m_symbol);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -334,7 +374,7 @@ void CStrategyUnifiedICT::OnNewBar(const string symbol, const ENUM_TIMEFRAMES ti
     if(!m_is_enabled || symbol != m_symbol || timeframe != m_timeframe)
         return;
     
-    if(RefreshComponentsForCurrentBar())
+    if(RefreshComponentsForCurrentBar() && m_drawOnChartSymbolOnly)
         DrawElements();
 }
 
@@ -359,11 +399,19 @@ void CStrategyUnifiedICT::LogFilterEvent(const string message)
 //+------------------------------------------------------------------+
 void CStrategyUnifiedICT::DrawElements()
 {
+    if(!m_drawOnChartSymbolOnly || StringLen(m_drawPrefix) == 0)
+        return;
+
     CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
     if(drawingCoordinator != NULL)
         drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, m_drawPrefix);
-    else
+    else if(StringLen(m_drawPrefix) > 0)
         ObjectsDeleteAll(0, m_drawPrefix);
+
+    int totalOb = 0;
+    int drawnOb = 0;
+    int totalFvg = 0;
+    int drawnFvg = 0;
     
     // Draw Order Blocks
     if(m_obDetector != NULL)
@@ -373,6 +421,7 @@ void CStrategyUnifiedICT::DrawElements()
             SAdvancedOrderBlock ob;
             if(!m_obDetector.GetOrderBlock(i, ob)) continue;
             if(ob.isMitigated) continue;
+            totalOb++;
             
             string name = StringFormat("%sOB_%d", m_drawPrefix, i);
             color obColor = (ob.type == OB_SOURCE_BULLISH || ob.type == OB_CONTINUATION_BULL || ob.type == OB_BREAKER_BULL) 
@@ -383,8 +432,9 @@ void CStrategyUnifiedICT::DrawElements()
             ObjectCreate(0, name, OBJ_RECTANGLE, 0, ob.time, ob.top, TimeCurrent(), ob.bottom);
             ObjectSetInteger(0, name, OBJPROP_COLOR, obColor);
             ObjectSetInteger(0, name, OBJPROP_FILL, true);
-            ObjectSetInteger(0, name, OBJPROP_BACK, true);
+            ObjectSetInteger(0, name, OBJPROP_BACK, false);
             ObjectSetString(0, name, OBJPROP_TOOLTIP, StringFormat("%s | Str: %.0f%%", EnumToString(ob.type), ob.strength * 100));
+            drawnOb++;
         }
     }
     
@@ -396,6 +446,7 @@ void CStrategyUnifiedICT::DrawElements()
             SImbalance imb;
             if(!m_imbalanceDetector.GetImbalance(i, imb)) continue;
             if(imb.hasRebalanced) continue;
+            totalFvg++;
             
             string name = StringFormat("%sFVG_%d", m_drawPrefix, i);
             color fvgColor = imb.isBullish ? clrGreen : clrRed;
@@ -405,9 +456,20 @@ void CStrategyUnifiedICT::DrawElements()
             ObjectCreate(0, name, OBJ_RECTANGLE, 0, imb.time, imb.top, TimeCurrent(), imb.bottom);
             ObjectSetInteger(0, name, OBJPROP_COLOR, fvgColor);
             ObjectSetInteger(0, name, OBJPROP_FILL, true);
-            ObjectSetInteger(0, name, OBJPROP_BACK, true);
+            ObjectSetInteger(0, name, OBJPROP_BACK, false);
             ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
+            drawnFvg++;
         }
+    }
+
+    ChartRedraw(0);
+
+    datetime nowTime = TimeCurrent();
+    if(nowTime - m_lastDrawLogTime >= 60)
+    {
+        PrintFormat("[UICT-DRAW] %s | OB: %d/%d | FVG: %d/%d | Prefix: %s",
+                    m_symbol, drawnOb, totalOb, drawnFvg, totalFvg, m_drawPrefix);
+        m_lastDrawLogTime = nowTime;
     }
 }
 
