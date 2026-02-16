@@ -40,6 +40,7 @@ struct StrategyEntry
     IStrategy* strategy;
     string name;
     bool enabled;
+    bool intrabarEligible;
     double weight;
     ENUM_TIMEFRAMES timeframe;
     int successCount;
@@ -48,6 +49,12 @@ struct StrategyEntry
     ENUM_TRADE_SIGNAL lastSignal;
     double lastSignalConfidence;
     datetime lastEvaluationTime;
+};
+
+enum ENUM_SIGNAL_EVAL_MODE
+{
+    EVAL_MODE_NEW_BAR = 0,
+    EVAL_MODE_INTRABAR = 1
 };
 
 //+------------------------------------------------------------------+
@@ -97,7 +104,8 @@ public:
     // Strategy management
     bool RegisterStrategy(IStrategy* strategy, const string name, 
                          bool enabled = true, double weight = 1.0,
-                         ENUM_TIMEFRAMES tf = PERIOD_CURRENT);
+                         ENUM_TIMEFRAMES tf = PERIOD_CURRENT,
+                         bool intrabarEligible = false);
     bool EnableStrategy(const string name);
     bool DisableStrategy(const string name);
     void EnableAllStrategies();
@@ -108,6 +116,7 @@ public:
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbol(const string symbol, double &confidence);
     ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence);
+    ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
     ENUM_TRADE_SIGNAL GetOrchestratedSignal(const string symbol, ENUM_TIMEFRAMES timeframe, double &confidence);
     ENUM_TRADE_SIGNAL GetFilteredSignal(IStrategy* strategy, double &confidence);
     
@@ -119,6 +128,7 @@ public:
     
     // Utility
     int GetActiveStrategyCount() const;
+    int GetActiveBrainStrategyCount() const;
     string GetStrategyReport() const;
     void UpdatePerformance(const string strategyName, bool success);
     
@@ -216,7 +226,8 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
 //+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const string name,
                                                  bool enabled, double weight,
-                                                 ENUM_TIMEFRAMES tf)
+                                                 ENUM_TIMEFRAMES tf,
+                                                 bool intrabarEligible)
 {
     if(strategy == NULL || !m_initialized)
         return false;
@@ -245,6 +256,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].strategy = strategy;
     m_strategies[m_strategyCount].name = name;
     m_strategies[m_strategyCount].enabled = enabled;
+    m_strategies[m_strategyCount].intrabarEligible = intrabarEligible;
     m_strategies[m_strategyCount].weight = weight;
     m_strategies[m_strategyCount].timeframe = resolvedTf;
     m_strategies[m_strategyCount].successCount = 0;
@@ -257,7 +269,8 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategyCount++;
     
     Print("[EnterpriseStrategyManager] Registered strategy: ", name, 
-          " | Enabled: ", enabled, " | Weight: ", weight);
+          " | Enabled: ", enabled, " | Weight: ", weight,
+          " | Intrabar: ", intrabarEligible ? "YES" : "NO");
     
     return true;
 }
@@ -283,6 +296,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalWithConfluence(d
 //| Get Consensus Signal For Specific Symbol With Confluence        |
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence)
+{
+    return GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, EVAL_MODE_NEW_BAR);
+}
+
+ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluenceMode(const string symbol,
+                                                                                              double &confidence,
+                                                                                              int &confluence,
+                                                                                              ENUM_SIGNAL_EVAL_MODE evalMode)
 {
     confluence = 0;
     confidence = 0;
@@ -313,6 +334,9 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     for(int i = 0; i < m_strategyCount; i++)
     {
         if(!m_strategies[i].enabled)
+            continue;
+
+        if(evalMode == EVAL_MODE_INTRABAR && !m_strategies[i].intrabarEligible)
             continue;
         
         double stratConf = 0;
@@ -357,8 +381,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     // Restore original symbol
     m_symbol = originalSymbol;
 
-    if(
-        activeStrategies == 0)
+    if(activeStrategies == 0)
     {
         return TRADE_SIGNAL_NONE;
     }
@@ -430,25 +453,25 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     int size = ArraySize(flags);
     
     // 0: Momentum
-    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0);
+    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, PERIOD_CURRENT, true);
     
     // 1: Trend
-    if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2);
+    if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, PERIOD_CURRENT, false);
     
     // 2: Fibonacci
-    if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2);
+    if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, PERIOD_CURRENT, false);
     
     // 3: Elliott Wave
-    if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0);
+    if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0, PERIOD_CURRENT, false);
     
     // 4: Support/Resistance
-    if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5);
+    if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, PERIOD_CURRENT, false);
     
     // 5: Unified ICT/SMC
-    if(size > 5 && flags[5]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT/SMC", true, 2.2);
+    if(size > 5 && flags[5]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT/SMC", true, 2.2, PERIOD_CURRENT, false);
     
     // 6: Candlestick
-    if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5);
+    if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, PERIOD_CURRENT, false);
     
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
           GetActiveStrategyCount());
@@ -465,6 +488,25 @@ int CEnterpriseStrategyManager::GetActiveStrategyCount() const
         if(m_strategies[i].enabled)
             count++;
     }
+    return count;
+}
+
+//+------------------------------------------------------------------+
+//| Get Active Brain Strategy Count                                  |
+//+------------------------------------------------------------------+
+int CEnterpriseStrategyManager::GetActiveBrainStrategyCount() const
+{
+    int count = 0;
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(!m_strategies[i].enabled || m_strategies[i].strategy == NULL)
+            continue;
+
+        ENUM_STRATEGY_TYPE strategyType = m_strategies[i].strategy.GetType();
+        if(strategyType == STRATEGY_BRAIN || strategyType == STRATEGY_AI_ENHANCED)
+            count++;
+    }
+
     return count;
 }
 

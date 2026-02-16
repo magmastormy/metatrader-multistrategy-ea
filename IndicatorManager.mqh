@@ -20,6 +20,7 @@ enum ENUM_INDICATOR_TYPE
    INDICATOR_STOCH,      // Stochastic
    INDICATOR_ICHIMOKU,   // Ichimoku Cloud
    INDICATOR_ADX,        // ADX
+   INDICATOR_CCI,        // CCI
    INDICATOR_CUSTOM      // Custom indicator
 };
 
@@ -57,6 +58,9 @@ public:
    int               GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int ma_shift, ENUM_MA_METHOD ma_method, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
    int               GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int period);
    int               GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast_ema_period, int slow_ema_period, int signal_period, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
+   int               GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int period);
+   int               GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int shift, double deviation, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
+   int               GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
    
    // General method to access a handle
    int               GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[]);
@@ -308,6 +312,107 @@ int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast
 }
 
 //+------------------------------------------------------------------+
+//| Get ADX handle                                                   |
+//+------------------------------------------------------------------+
+int CIndicatorManager::GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int period)
+{
+   int params[5] = {period};
+   int handle = FindHandle(INDICATOR_ADX, symbol, tf, params);
+
+   if(handle != INVALID_HANDLE)
+   {
+      AccessHandle(handle);
+      return handle;
+   }
+
+   handle = iADX(symbol, tf, period);
+   if(handle != INVALID_HANDLE)
+   {
+      int size = ArraySize(m_handles);
+      ArrayResize(m_handles, size + 1);
+      m_handles[size].handle = handle;
+      m_handles[size].lastAccess = TimeCurrent();
+      m_handles[size].symbol = symbol;
+      m_handles[size].timeframe = tf;
+      m_handles[size].type = INDICATOR_ADX;
+      m_handles[size].paramCount = 1;
+      ArrayInitialize(m_handles[size].parameters, 0);
+      m_handles[size].parameters[0] = period;
+   }
+
+   return handle;
+}
+
+//+------------------------------------------------------------------+
+//| Get Bollinger Bands handle                                       |
+//+------------------------------------------------------------------+
+int CIndicatorManager::GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int shift, double deviation, ENUM_APPLIED_PRICE applied_price)
+{
+   int scaledDeviation = (int)MathRound(deviation * 1000.0);
+   int params[5] = {period, shift, scaledDeviation, (int)applied_price};
+   int handle = FindHandle(INDICATOR_BB, symbol, tf, params);
+
+   if(handle != INVALID_HANDLE)
+   {
+      AccessHandle(handle);
+      return handle;
+   }
+
+   handle = iBands(symbol, tf, period, shift, deviation, applied_price);
+   if(handle != INVALID_HANDLE)
+   {
+      int size = ArraySize(m_handles);
+      ArrayResize(m_handles, size + 1);
+      m_handles[size].handle = handle;
+      m_handles[size].lastAccess = TimeCurrent();
+      m_handles[size].symbol = symbol;
+      m_handles[size].timeframe = tf;
+      m_handles[size].type = INDICATOR_BB;
+      m_handles[size].paramCount = 4;
+      ArrayInitialize(m_handles[size].parameters, 0);
+      m_handles[size].parameters[0] = period;
+      m_handles[size].parameters[1] = shift;
+      m_handles[size].parameters[2] = scaledDeviation;
+      m_handles[size].parameters[3] = (int)applied_price;
+   }
+
+   return handle;
+}
+
+//+------------------------------------------------------------------+
+//| Get CCI handle                                                   |
+//+------------------------------------------------------------------+
+int CIndicatorManager::GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price)
+{
+   int params[5] = {period, (int)applied_price};
+   int handle = FindHandle(INDICATOR_CCI, symbol, tf, params);
+
+   if(handle != INVALID_HANDLE)
+   {
+      AccessHandle(handle);
+      return handle;
+   }
+
+   handle = iCCI(symbol, tf, period, applied_price);
+   if(handle != INVALID_HANDLE)
+   {
+      int size = ArraySize(m_handles);
+      ArrayResize(m_handles, size + 1);
+      m_handles[size].handle = handle;
+      m_handles[size].lastAccess = TimeCurrent();
+      m_handles[size].symbol = symbol;
+      m_handles[size].timeframe = tf;
+      m_handles[size].type = INDICATOR_CCI;
+      m_handles[size].paramCount = 2;
+      ArrayInitialize(m_handles[size].parameters, 0);
+      m_handles[size].parameters[0] = period;
+      m_handles[size].parameters[1] = (int)applied_price;
+   }
+
+   return handle;
+}
+
+//+------------------------------------------------------------------+
 //| General method to get a handle                                   |
 //+------------------------------------------------------------------+
 int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[])
@@ -332,6 +437,21 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
       case INDICATOR_MACD:
          if(ArraySize(params) >= 4)
             return GetMACDHandle(symbol, tf, params[0], params[1], params[2], (ENUM_APPLIED_PRICE)params[3]);
+         break;
+
+      case INDICATOR_ADX:
+         if(ArraySize(params) >= 1)
+            return GetADXHandle(symbol, tf, params[0]);
+         break;
+
+      case INDICATOR_BB:
+         if(ArraySize(params) >= 4)
+            return GetBandsHandle(symbol, tf, params[0], params[1], params[2] / 1000.0, (ENUM_APPLIED_PRICE)params[3]);
+         break;
+
+      case INDICATOR_CCI:
+         if(ArraySize(params) >= 2)
+            return GetCCIHandle(symbol, tf, params[0], (ENUM_APPLIED_PRICE)params[1]);
          break;
          
       // Add other indicator types as needed

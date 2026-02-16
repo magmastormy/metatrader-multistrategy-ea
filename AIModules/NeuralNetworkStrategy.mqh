@@ -10,9 +10,16 @@
 #define __NEURAL_NETWORK_STRATEGY_MQH__
 
 // Network architecture: 25→15→10→3 (Input→Hidden1→Hidden2→Output)
+//TODO: - Increase architecture, indicators and more to make it bigger and more smart
 
 #include "../Core/Utils/Enums.mqh"
+#include "../Core/AI/NNModelStorage.mqh"
+#include "../IndicatorManager.mqh"
 #include <Arrays/ArrayObj.mqh>
+
+#define NN_CHECKPOINT_MAGIC 1313758027
+#define NN_CHECKPOINT_VERSION 2
+#define NN_MAX_PERSISTED_SAMPLES 300
 
 //+------------------------------------------------------------------+
 //| Training Example Structure                                       |
@@ -27,6 +34,11 @@ public:
     bool hasResult;
     bool linkedToTrade;
     string predictionId;
+    bool pseudoLabeled;
+    datetime labelDueTime;
+    double entryPriceSnapshot;
+    int barsAhead;
+    bool isTradeLinked;
     
     CTrainingExample()
     {
@@ -37,6 +49,11 @@ public:
         hasResult = false;
         linkedToTrade = false;
         predictionId = "";
+        pseudoLabeled = false;
+        labelDueTime = 0;
+        entryPriceSnapshot = 0.0;
+        barsAhead = 1;
+        isTradeLinked = false;
     }
 };
 
@@ -74,6 +91,23 @@ private:
     ENUM_TIMEFRAMES m_timeframe;
     bool m_initialized;
     bool m_enableOnlineTraining;
+    bool m_enablePseudoLabeling;
+    int m_pseudoLabelBarsAhead;
+    int m_sampleIntervalSec;
+    int m_checkpointEveryLabeled;
+    int m_labeledSinceCheckpoint;
+    datetime m_lastObservationTime;
+    datetime m_lastPseudoLabelProcessTime;
+    datetime m_lastSignalLogTime;
+    datetime m_lastExplorationLogTime;
+    datetime m_lastIndicatorWarningTime;
+    datetime m_lastCheckpointTimestamp;
+    string m_lastLoadStatus;
+    int m_totalObservations;
+    int m_tradeLinkedLabels;
+    int m_pseudoLabels;
+    int m_trainingSteps;
+    int m_checkpointWrites;
     
 public:
     CNeuralNetworkStrategy() : 
@@ -87,9 +121,26 @@ public:
         m_symbol(""),
         m_timeframe(PERIOD_CURRENT),
         m_initialized(false),
-        m_enableOnlineTraining(true)
+        m_enableOnlineTraining(true),
+        m_enablePseudoLabeling(true),
+        m_pseudoLabelBarsAhead(1),
+        m_sampleIntervalSec(30),
+        m_checkpointEveryLabeled(10),
+        m_labeledSinceCheckpoint(0),
+        m_lastObservationTime(0),
+        m_lastPseudoLabelProcessTime(0),
+        m_lastSignalLogTime(0),
+        m_lastExplorationLogTime(0),
+        m_lastIndicatorWarningTime(0),
+        m_lastCheckpointTimestamp(0),
+        m_lastLoadStatus("UNINITIALIZED"),
+        m_totalObservations(0),
+        m_tradeLinkedLabels(0),
+        m_pseudoLabels(0),
+        m_trainingSteps(0),
+        m_checkpointWrites(0)
     {
-        InitializeNetwork();
+        m_trainingData.FreeMode(true);
     }
 
     bool ReservePredictionForSignal(const ENUM_TRADE_SIGNAL signal, string &predictionId, const int maxAgeSec = 600)
@@ -121,7 +172,16 @@ public:
                 continue;
 
             example.linkedToTrade = true;
+            example.isTradeLinked = true;
             predictionId = example.predictionId;
+            return (predictionId != "");
+        }
+
+        // Force-create a trade-linked observation when no recent sample exists.
+        string forcedPredictionId = "";
+        if(CollectObservationInternal(true, expectedOutput, forcedPredictionId))
+        {
+            predictionId = forcedPredictionId;
             return (predictionId != "");
         }
 
@@ -142,6 +202,7 @@ public:
             if(example.predictionId == predictionId && !example.hasResult)
             {
                 example.linkedToTrade = false;
+                example.isTradeLinked = false;
                 return;
             }
         }
@@ -160,19 +221,33 @@ public:
 
             if(example.predictionId == predictionId)
             {
-                if(example.hasResult)
-                    return true;
+                bool wasLabeled = example.hasResult;
+                bool wasPseudo = example.pseudoLabeled;
 
                 example.actualResult = profitLoss;
                 example.hasResult = true;
                 example.linkedToTrade = true;
+                example.isTradeLinked = true;
+                example.pseudoLabeled = false;
+
+                if(!wasLabeled)
+                {
+                    m_tradeLinkedLabels++;
+                    m_labeledSinceCheckpoint++;
+                }
+                else if(wasPseudo)
+                {
+                    if(m_pseudoLabels > 0)
+                        m_pseudoLabels--;
+                    m_tradeLinkedLabels++;
+                    m_labeledSinceCheckpoint++;
+                }
 
                 PrintFormat("[NEURAL-NET] Updated trade result by prediction ID %s: %.2f",
                             predictionId, profitLoss);
 
-                int completed = GetCompletedTradesCount();
-                if(completed > 0 && (completed % 20) == 0)
-                    TrainNetwork();
+                if(!wasLabeled || wasPseudo)
+                    HandleNewLabeledData();
 
                 return true;
             }
@@ -183,6 +258,8 @@ public:
     
     ~CNeuralNetworkStrategy()
     {
+        if(m_initialized && m_enableOnlineTraining)
+            SaveCheckpointAtomic(true);
         m_trainingData.Clear();
     }
     
@@ -194,21 +271,50 @@ public:
         m_initialized = true;
 
         // Online training + persistence enabled in live runtime.
+        bool loaded = false;
         if(m_enableOnlineTraining)
-        {
-            if(!LoadNetwork())
-            {
-                InitializeNetwork();
-                SaveNetwork();
-            }
-        }
-        else
+            loaded = LoadCheckpoint();
+
+        if(!loaded)
         {
             InitializeNetwork();
+            m_lastLoadStatus = "COLD_START";
+            m_lastCheckpointTimestamp = TimeCurrent();
+            SaveCheckpointAtomic(true);
+            PrintFormat("[NEURAL-NET] Model checkpoint COLD_START | Symbol=%s | TF=%s",
+                        m_symbol, EnumToString(m_timeframe));
         }
         
-        PrintFormat("[NEURAL-NET] Initialized for %s on %s", symbol, EnumToString(timeframe));
+        PrintFormat("[NEURAL-NET] Initialized for %s on %s | LoadState=%s",
+                    symbol, EnumToString(timeframe), m_lastLoadStatus);
         return true;
+    }
+
+    void ConfigureOnlineLearning(const bool enablePseudoLabeling,
+                                 const int pseudoLabelBarsAhead,
+                                 const int sampleIntervalSeconds,
+                                 const int checkpointEveryLabeled)
+    {
+        m_enablePseudoLabeling = enablePseudoLabeling;
+        m_pseudoLabelBarsAhead = MathMax(1, pseudoLabelBarsAhead);
+        m_sampleIntervalSec = MathMax(1, sampleIntervalSeconds);
+        m_checkpointEveryLabeled = MathMax(1, checkpointEveryLabeled);
+
+        PrintFormat("[NEURAL-NET] Online config | Symbol=%s | Pseudo=%s | BarsAhead=%d | SampleSec=%d | CkptEvery=%d",
+                    m_symbol,
+                    m_enablePseudoLabeling ? "ON" : "OFF",
+                    m_pseudoLabelBarsAhead,
+                    m_sampleIntervalSec,
+                    m_checkpointEveryLabeled);
+    }
+
+    void TickOnlineLearning()
+    {
+        if(!m_initialized || !m_enableOnlineTraining)
+            return;
+
+        CollectObservation();
+        ProcessPseudoLabels();
     }
     
     void InitializeNetwork()
@@ -272,72 +378,143 @@ public:
     // Helper to get indicator value from buffer
     double GetIndicatorValue(int handle, int buffer, int shift)
     {
+        if(handle == INVALID_HANDLE)
+            return 0.0;
+
         double val[1];
-        if(CopyBuffer(handle, buffer, shift, 1, val) > 0) return val[0];
+        if(CopyBuffer(handle, buffer, shift, 1, val) > 0)
+            return val[0];
         return 0.0;
+    }
+
+    void WarnIndicatorIssue(const string indicatorName)
+    {
+        datetime now = TimeCurrent();
+        if(m_lastIndicatorWarningTime == 0 || (now - m_lastIndicatorWarningTime) >= 60)
+        {
+            PrintFormat("[NEURAL-NET] Indicator handle unavailable: %s | Symbol=%s | TF=%s",
+                        indicatorName, m_symbol, EnumToString(m_timeframe));
+            m_lastIndicatorWarningTime = now;
+        }
     }
 
     // Helper for MA value
     double GetMAValue(int period, int shift, ENUM_MA_METHOD method, ENUM_APPLIED_PRICE price, int bar)
     {
-        int handle = iMA(m_symbol, m_timeframe, period, shift, method, price);
-        double value = GetIndicatorValue(handle, 0, bar);
-        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
-        return value;
+        CIndicatorManager* ind = CIndicatorManager::Instance();
+        if(ind == NULL)
+            return 0.0;
+
+        int handle = ind.GetMAHandle(m_symbol, m_timeframe, period, shift, method, price);
+        if(handle == INVALID_HANDLE)
+        {
+            WarnIndicatorIssue("MA");
+            return 0.0;
+        }
+
+        return GetIndicatorValue(handle, 0, bar);
     }
 
     // Helper for RSI value
     double GetRSIValue(int period, ENUM_APPLIED_PRICE price, int bar)
     {
-        int handle = iRSI(m_symbol, m_timeframe, period, price);
-        double value = GetIndicatorValue(handle, 0, bar);
-        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
-        return value;
+        CIndicatorManager* ind = CIndicatorManager::Instance();
+        if(ind == NULL)
+            return 0.0;
+
+        int handle = ind.GetRSIHandle(m_symbol, m_timeframe, period, price);
+        if(handle == INVALID_HANDLE)
+        {
+            WarnIndicatorIssue("RSI");
+            return 0.0;
+        }
+
+        return GetIndicatorValue(handle, 0, bar);
     }
 
     // Helper for ATR value
     double GetATRValue(int period, int bar)
     {
-        int handle = iATR(m_symbol, m_timeframe, period);
-        double value = GetIndicatorValue(handle, 0, bar);
-        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
-        return value;
+        CIndicatorManager* ind = CIndicatorManager::Instance();
+        if(ind == NULL)
+            return 0.0;
+
+        int handle = ind.GetATRHandle(m_symbol, m_timeframe, period);
+        if(handle == INVALID_HANDLE)
+        {
+            WarnIndicatorIssue("ATR");
+            return 0.0;
+        }
+
+        return GetIndicatorValue(handle, 0, bar);
     }
 
     // Helper for ADX value
     double GetADXValue(int period, int bar)
     {
-        int handle = iADX(m_symbol, m_timeframe, period);
-        double value = GetIndicatorValue(handle, 0, bar);
-        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
-        return value;
+        CIndicatorManager* ind = CIndicatorManager::Instance();
+        if(ind == NULL)
+            return 0.0;
+
+        int handle = ind.GetADXHandle(m_symbol, m_timeframe, period);
+        if(handle == INVALID_HANDLE)
+        {
+            WarnIndicatorIssue("ADX");
+            return 0.0;
+        }
+
+        return GetIndicatorValue(handle, 0, bar);
     }
 
     // Helper for Bollinger Bands value
     double GetBBValue(int period, double dev, int shift, ENUM_APPLIED_PRICE price, int buffer, int bar)
     {
-        int handle = iBands(m_symbol, m_timeframe, period, shift, dev, price);
-        double value = GetIndicatorValue(handle, buffer, bar);
-        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
-        return value;
+        CIndicatorManager* ind = CIndicatorManager::Instance();
+        if(ind == NULL)
+            return 0.0;
+
+        int handle = ind.GetBandsHandle(m_symbol, m_timeframe, period, shift, dev, price);
+        if(handle == INVALID_HANDLE)
+        {
+            WarnIndicatorIssue("BOLLINGER");
+            return 0.0;
+        }
+
+        return GetIndicatorValue(handle, buffer, bar);
     }
 
     // Helper for MACD value
     double GetMACDValue(int fast, int slow, int signal, ENUM_APPLIED_PRICE price, int buffer, int bar)
     {
-        int handle = iMACD(m_symbol, m_timeframe, fast, slow, signal, price);
-        double value = GetIndicatorValue(handle, buffer, bar);
-        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
-        return value;
+        CIndicatorManager* ind = CIndicatorManager::Instance();
+        if(ind == NULL)
+            return 0.0;
+
+        int handle = ind.GetMACDHandle(m_symbol, m_timeframe, fast, slow, signal, price);
+        if(handle == INVALID_HANDLE)
+        {
+            WarnIndicatorIssue("MACD");
+            return 0.0;
+        }
+
+        return GetIndicatorValue(handle, buffer, bar);
     }
 
     // Helper for CCI value
     double GetCCIValue(int period, ENUM_APPLIED_PRICE price, int bar)
     {
-        int handle = iCCI(m_symbol, m_timeframe, period, price);
-        double value = GetIndicatorValue(handle, 0, bar);
-        if(handle != INVALID_HANDLE) IndicatorRelease(handle);
-        return value;
+        CIndicatorManager* ind = CIndicatorManager::Instance();
+        if(ind == NULL)
+            return 0.0;
+
+        int handle = ind.GetCCIHandle(m_symbol, m_timeframe, period, price);
+        if(handle == INVALID_HANDLE)
+        {
+            WarnIndicatorIssue("CCI");
+            return 0.0;
+        }
+
+        return GetIndicatorValue(handle, 0, bar);
     }
 
     // Extract 25 features from current market state
@@ -508,87 +685,122 @@ public:
         Softmax(outputs, 3);
     }
     
+    bool CollectObservation()
+    {
+        string ignoredPredictionId = "";
+        return CollectObservationInternal(false, 0, ignoredPredictionId);
+    }
+
+    void ProcessPseudoLabels()
+    {
+        if(!m_initialized || !m_enableOnlineTraining || !m_enablePseudoLabeling)
+            return;
+
+        datetime now = TimeCurrent();
+        if(m_lastPseudoLabelProcessTime > 0 && (now - m_lastPseudoLabelProcessTime) < 5)
+            return;
+        m_lastPseudoLabelProcessTime = now;
+
+        double currentClose = iClose(m_symbol, m_timeframe, 0);
+        if(currentClose <= 0.0)
+            currentClose = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        if(currentClose <= 0.0)
+            return;
+
+        int pseudoLabeledNow = 0;
+        for(int i = 0; i < m_trainingData.Total(); i++)
+        {
+            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
+            if(example == NULL || example.hasResult || example.linkedToTrade || example.isTradeLinked)
+                continue;
+
+            if(example.labelDueTime <= 0 || now < example.labelDueTime)
+                continue;
+
+            if(example.expectedOutput != 1 && example.expectedOutput != 2)
+                continue;
+
+            if(example.expectedOutput == 1)
+                example.actualResult = currentClose - example.entryPriceSnapshot;
+            else
+                example.actualResult = example.entryPriceSnapshot - currentClose;
+
+            example.hasResult = true;
+            example.pseudoLabeled = true;
+            example.isTradeLinked = false;
+            pseudoLabeledNow++;
+        }
+
+        if(pseudoLabeledNow > 0)
+        {
+            m_pseudoLabels += pseudoLabeledNow;
+            m_labeledSinceCheckpoint += pseudoLabeledNow;
+            PrintFormat("[NEURAL-NET] Pseudo labels processed: %d | Total pseudo: %d",
+                        pseudoLabeledNow, m_pseudoLabels);
+            HandleNewLabeledData();
+        }
+    }
+
     // Get trading signal from neural network
     ENUM_TRADE_SIGNAL GetNeuralSignal(double &confidence)
     {
-        if(m_enableOnlineTraining && m_trainingData.Total() < m_minTrainingExamples)
-        {
-            // Not enough data - return signal anyway with low confidence
-            // This enables "exploration" phase while gathering training data
-            confidence = 0.30;  // Low confidence during exploration
-            PrintFormat("[NEURAL-NET] Exploration mode: %d/%d training examples", 
-                       m_trainingData.Total(), m_minTrainingExamples);
-            // Continue to generate a signal instead of returning NONE
-        }
-        
-        // Extract current features
+        confidence = 0.0;
+        if(!m_initialized)
+            return TRADE_SIGNAL_NONE;
+
+        if(m_enableOnlineTraining)
+            CollectObservation();
+
         double inputs[25];
         if(!ExtractFeatures(inputs))
-        {
-            confidence = 0.0;
             return TRADE_SIGNAL_NONE;
-        }
-        
-        // Forward propagate
+
         double outputs[3];
         ForwardPropagate(inputs, outputs);
-        
-        // outputs[0] = probability of NONE
-        // outputs[1] = probability of BUY
-        // outputs[2] = probability of SELL
-        
-        // We only trade directional classes (BUY/SELL). "NONE" is informational hold.
+
+        int labeledCount = GetCompletedTradesCount();
+        if(m_enableOnlineTraining && labeledCount < m_minTrainingExamples)
+        {
+            datetime now = TimeCurrent();
+            if(m_lastExplorationLogTime == 0 || (now - m_lastExplorationLogTime) >= 30)
+            {
+                PrintFormat("[NEURAL-NET] Exploration mode: labeled %d/%d | observations=%d",
+                            labeledCount, m_minTrainingExamples, m_totalObservations);
+                m_lastExplorationLogTime = now;
+            }
+        }
+
         int directionIndex = (outputs[1] >= outputs[2]) ? 1 : 2;
         double directionProb = outputs[directionIndex];
         double noneProb = outputs[0];
+
         double minDirectionalConfidence = 0.60;
-        if(m_enableOnlineTraining && m_trainingData.Total() < m_minTrainingExamples)
+        if(m_enableOnlineTraining && labeledCount < m_minTrainingExamples)
             minDirectionalConfidence = 0.45;
 
         if(directionProb < minDirectionalConfidence || directionProb <= noneProb)
         {
-            confidence = 0.0;
-            PrintFormat("[NEURAL-NET] HOLD | None: %.2f%% | Buy: %.2f%% | Sell: %.2f%%",
-                        noneProb * 100.0, outputs[1] * 100.0, outputs[2] * 100.0);
+            datetime now = TimeCurrent();
+            if(m_lastSignalLogTime == 0 || (now - m_lastSignalLogTime) >= 15)
+            {
+                PrintFormat("[NEURAL-NET] HOLD | None: %.2f%% | Buy: %.2f%% | Sell: %.2f%%",
+                            noneProb * 100.0, outputs[1] * 100.0, outputs[2] * 100.0);
+                m_lastSignalLogTime = now;
+            }
             return TRADE_SIGNAL_NONE;
         }
 
-        int maxIndex = directionIndex;
-        double maxProb = directionProb;
-        confidence = maxProb;
-        
-        // Store for training when online training is enabled
-        if(m_enableOnlineTraining)
+        confidence = directionProb;
+        datetime now = TimeCurrent();
+        if(m_lastSignalLogTime == 0 || (now - m_lastSignalLogTime) >= 5)
         {
-            CTrainingExample* example = new CTrainingExample();
-            ArrayCopy(example.inputs, inputs);
-            example.expectedOutput = maxIndex;
-            example.time = TimeCurrent();
-            example.predictionId = GeneratePredictionId();
-
-            if(m_trainingData.Total() >= m_maxTrainingExamples)
-            {
-                if(!PruneOldestTrainingExample())
-                {
-                    delete example;
-                    example = NULL;
-                }
-            }
-
-            if(example != NULL)
-                m_trainingData.Add(example);
+            PrintFormat("[NEURAL-NET] Signal: %s | Confidence: %.2f%% | None: %.2f%% | Buy: %.2f%% | Sell: %.2f%%",
+                        (directionIndex == 1 ? "BUY" : "SELL"),
+                        directionProb * 100.0, noneProb * 100.0, outputs[1] * 100.0, outputs[2] * 100.0);
+            m_lastSignalLogTime = now;
         }
-        
-        PrintFormat("[NEURAL-NET] Signal: %s | Confidence: %.2f%% | None: %.2f%% | Buy: %.2f%% | Sell: %.2f%%",
-                    (maxIndex == 1 ? "BUY" : "SELL"),
-                    maxProb * 100.0, noneProb * 100.0, outputs[1] * 100.0, outputs[2] * 100.0);
-        
-        if(maxIndex == 1)
-            return TRADE_SIGNAL_BUY;
-        else if(maxIndex == 2)
-            return TRADE_SIGNAL_SELL;
-        
-        return TRADE_SIGNAL_NONE;
+
+        return (directionIndex == 1) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
     }
     
     // Update trade result for training
@@ -619,11 +831,7 @@ public:
         }
 
         if(matchedIndex < 0)
-        {
-            PrintFormat("[NEURAL-NET] No pending sample match for trade result at %s",
-                       TimeToString(tradeTime, TIME_DATE | TIME_SECONDS));
             return false;
-        }
 
         CTrainingExample* matched = (CTrainingExample*)m_trainingData.At(matchedIndex);
         if(matched == NULL)
@@ -632,114 +840,85 @@ public:
         matched.actualResult = profitLoss;
         matched.hasResult = true;
         matched.linkedToTrade = true;
+        matched.isTradeLinked = true;
+        matched.pseudoLabeled = false;
+        m_tradeLinkedLabels++;
+        m_labeledSinceCheckpoint++;
+
         PrintFormat("[NEURAL-NET] Updated trade result: %.2f | sample-age: %ds", profitLoss, bestDelta);
 
-        int completed = GetCompletedTradesCount();
-        if(completed > 0 && (completed % 20) == 0)
-            TrainNetwork();
-
+        HandleNewLabeledData();
         return true;
     }
     
-    // Train network with backpropagation
+    // Train network with incremental backprop updates
     void TrainNetwork()
     {
         if(!m_enableOnlineTraining)
             return;
 
-        if(m_trainingData.Total() < m_minTrainingExamples)
-            return;
-        
         int labeledIndices[];
-        ArrayResize(labeledIndices, 0);
-        int labeledCount = 0;
-        for(int i = 0; i < m_trainingData.Total(); i++)
-        {
-            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
-            if(ex != NULL && ex.hasResult)
-            {
-                int newSize = labeledCount + 1;
-                ArrayResize(labeledIndices, newSize);
-                labeledIndices[labeledCount] = i;
-                labeledCount = newSize;
-            }
-        }
-
-        if(labeledCount <= 0)
-        {
-            Print("[NEURAL-NET] Training skipped: no labeled examples");
+        BuildLabeledIndices(labeledIndices);
+        int labeledCount = ArraySize(labeledIndices);
+        if(labeledCount < m_minTrainingExamples)
             return;
-        }
 
-        PrintFormat("[NEURAL-NET] Training with %d labeled / %d total examples",
-                    labeledCount, m_trainingData.Total());
-        
-        // Mini-batch training
-        int batchSize = 32;
-        int batches = (labeledCount + batchSize - 1) / batchSize;
-        
-        for(int epoch = 0; epoch < 10; epoch++)  // 10 epochs
+        const int maxSamplesPerCycle = 256;
+        const int epochsPerCycle = 2;
+
+        int start = 0;
+        if(labeledCount > maxSamplesPerCycle)
+            start = labeledCount - maxSamplesPerCycle;
+
+        int processedTotal = 0;
+        double aggregatedLoss = 0.0;
+
+        for(int epochIter = 0; epochIter < epochsPerCycle; epochIter++)
         {
             double epochLoss = 0.0;
-            int processedSamples = 0;
-            
-            for(int b = 0; b < batches; b++)
+            int processed = 0;
+
+            for(int i = start; i < labeledCount; i++)
             {
-                // Process one batch
-                int start = b * batchSize;
-                int end = start + batchSize;
-                if(end > labeledCount)
-                    end = labeledCount;
-                for(int i = start; i < end; i++)
-                {
-                    int idx = labeledIndices[i];
-                    
-                    CTrainingExample* example = (CTrainingExample*)m_trainingData.At(idx);
-                    if(example == NULL) continue;
-                    
-                    // Only train on completed trades
-                    if(!example.hasResult)
-                        continue;
-                    
-                    // Forward pass
-                    double outputs[3];
-                    ForwardPropagate(example.inputs, outputs);
-                    
-                    // Calculate loss (cross-entropy)
-                    double target[3];
-                    ArrayInitialize(target, 0.0);
-                    
-                    // Adjust target based on actual result
-                    if(example.actualResult > 0)
-                    {
-                        // Profitable trade - reinforce this action
-                        target[example.expectedOutput] = 1.0;
-                    }
-                    else
-                    {
-                        // Losing trade - penalize this action
-                        target[example.expectedOutput] = 0.0;
-                        // Encourage NONE instead
-                        target[0] = 1.0;
-                    }
-                    
-                    double loss = CalculateLoss(outputs, target);
-                    epochLoss += loss;
-                    processedSamples++;
-                    
-                    // Backward pass (simplified weight update)
-                    UpdateWeights(example.inputs, outputs, target);
-                }
+                CTrainingExample* example = (CTrainingExample*)m_trainingData.At(labeledIndices[i]);
+                if(example == NULL || !example.hasResult)
+                    continue;
+
+                double outputs[3];
+                ForwardPropagate(example.inputs, outputs);
+
+                double target[3];
+                ArrayInitialize(target, 0.0);
+                if(example.actualResult > 0.0)
+                    target[example.expectedOutput] = 1.0;
+                else
+                    target[0] = 1.0;
+
+                double sampleWeight = example.pseudoLabeled ? 0.60 : 1.00;
+                double loss = CalculateLoss(outputs, target);
+                epochLoss += (loss * sampleWeight);
+                processed++;
+
+                UpdateWeights(example.inputs, outputs, target, sampleWeight);
             }
-            
-            m_lastLoss = (processedSamples > 0) ? (epochLoss / processedSamples) : 0.0;
+
+            if(processed > 0)
+            {
+                aggregatedLoss += (epochLoss / processed);
+                processedTotal += processed;
+            }
+
             m_epoch++;
-            
-            PrintFormat("[NEURAL-NET] Epoch %d | Loss: %.6f", epoch, m_lastLoss);
         }
-        
-        // Save after training
-        SaveNetwork();
+
+        if(processedTotal > 0)
+        {
+            m_lastLoss = aggregatedLoss / epochsPerCycle;
+            m_trainingSteps++;
+            PrintFormat("[NEURAL-NET] Training step complete | Epoch=%d | Loss=%.6f | Labeled=%d | TrainedSamples=%d",
+                        m_epoch, m_lastLoss, labeledCount, processedTotal);
+            SaveCheckpointAtomic(false);
+        }
     }
     
     int GetTrainingExampleCount() { return m_trainingData.Total(); }
@@ -754,69 +933,137 @@ public:
         }
         return count;
     }
-    
-    // Save network weights and biases to file
-    bool SaveNetwork()
+
+    bool SaveNetwork() { return SaveCheckpointAtomic(true); }
+    bool LoadNetwork() { return LoadCheckpoint(); }
+
+    bool SaveCheckpointAtomic(const bool forceWrite = false)
     {
-        if(!m_enableOnlineTraining)
+        if(!m_enableOnlineTraining || !m_initialized)
             return false;
 
-        string filename = "AI_Net_" + m_symbol + "_" + EnumToString(m_timeframe) + ".bin";
-        int fileHandle = FileOpen(filename, FILE_WRITE|FILE_BIN);
-        if(fileHandle == INVALID_HANDLE) return false;
-        
-        // Write weights (manually since FileWriteArray doesn't like 2D slices)
-        for(int i=0; i<25; i++) {
-            for(int j=0; j<15; j++) FileWriteDouble(fileHandle, W1[i][j]);
+        if(!forceWrite && m_labeledSinceCheckpoint <= 0)
+            return false;
+
+        NNModelStorage_EnsureFolders();
+
+        string primaryFile = NNModelStorage_GetPrimaryPath(m_symbol, m_timeframe);
+        string backupFile = NNModelStorage_GetBackupPath(m_symbol, m_timeframe);
+        string tempFile = NNModelStorage_GetTempPath(m_symbol, m_timeframe);
+
+        int sampleIndices[];
+        BuildPersistedSampleIndices(sampleIndices);
+        uint checksum = ComputeCheckpointChecksum(sampleIndices);
+
+        int fileHandle = FileOpen(tempFile, FILE_WRITE | FILE_BIN | FILE_COMMON);
+        if(fileHandle == INVALID_HANDLE)
+            return false;
+
+        datetime checkpointTime = TimeCurrent();
+
+        FileWriteInteger(fileHandle, NN_CHECKPOINT_MAGIC);
+        FileWriteInteger(fileHandle, NN_CHECKPOINT_VERSION);
+        FileWriteString(fileHandle, m_symbol);
+        FileWriteInteger(fileHandle, (int)m_timeframe);
+        FileWriteLong(fileHandle, (long)checkpointTime);
+        FileWriteDouble(fileHandle, m_learningRate);
+        FileWriteInteger(fileHandle, m_epoch);
+        FileWriteDouble(fileHandle, m_lastLoss);
+        FileWriteInteger(fileHandle, m_minTrainingExamples);
+        FileWriteInteger(fileHandle, m_maxTrainingExamples);
+        FileWriteInteger(fileHandle, m_resultMatchWindowSec);
+        FileWriteInteger(fileHandle, m_predictionCounter);
+        FileWriteInteger(fileHandle, m_enableOnlineTraining ? 1 : 0);
+        FileWriteInteger(fileHandle, m_enablePseudoLabeling ? 1 : 0);
+        FileWriteInteger(fileHandle, m_pseudoLabelBarsAhead);
+        FileWriteInteger(fileHandle, m_sampleIntervalSec);
+        FileWriteInteger(fileHandle, m_checkpointEveryLabeled);
+        FileWriteInteger(fileHandle, m_totalObservations);
+        FileWriteInteger(fileHandle, m_tradeLinkedLabels);
+        FileWriteInteger(fileHandle, m_pseudoLabels);
+        FileWriteInteger(fileHandle, m_trainingSteps);
+        FileWriteInteger(fileHandle, m_checkpointWrites);
+
+        for(int i = 0; i < 25; i++)
+            for(int j = 0; j < 15; j++)
+                FileWriteDouble(fileHandle, W1[i][j]);
+        for(int i = 0; i < 15; i++)
+            for(int j = 0; j < 10; j++)
+                FileWriteDouble(fileHandle, W2[i][j]);
+        for(int i = 0; i < 10; i++)
+            for(int j = 0; j < 3; j++)
+                FileWriteDouble(fileHandle, W3[i][j]);
+        for(int i = 0; i < 15; i++) FileWriteDouble(fileHandle, B1[i]);
+        for(int i = 0; i < 10; i++) FileWriteDouble(fileHandle, B2[i]);
+        for(int i = 0; i < 3; i++) FileWriteDouble(fileHandle, B3[i]);
+
+        int sampleCount = ArraySize(sampleIndices);
+        FileWriteInteger(fileHandle, sampleCount);
+        for(int i = 0; i < sampleCount; i++)
+        {
+            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(sampleIndices[i]);
+            if(ex == NULL)
+                continue;
+
+            FileWriteInteger(fileHandle, ex.expectedOutput);
+            FileWriteDouble(fileHandle, ex.actualResult);
+            FileWriteLong(fileHandle, (long)ex.time);
+            FileWriteInteger(fileHandle, ex.hasResult ? 1 : 0);
+            FileWriteInteger(fileHandle, ex.linkedToTrade ? 1 : 0);
+            FileWriteString(fileHandle, ex.predictionId);
+            FileWriteInteger(fileHandle, ex.pseudoLabeled ? 1 : 0);
+            FileWriteLong(fileHandle, (long)ex.labelDueTime);
+            FileWriteDouble(fileHandle, ex.entryPriceSnapshot);
+            FileWriteInteger(fileHandle, ex.barsAhead);
+            FileWriteInteger(fileHandle, ex.isTradeLinked ? 1 : 0);
+            for(int k = 0; k < 25; k++)
+                FileWriteDouble(fileHandle, ex.inputs[k]);
         }
-        for(int i=0; i<15; i++) {
-            for(int j=0; j<10; j++) FileWriteDouble(fileHandle, W2[i][j]);
-        }
-        for(int i=0; i<10; i++) {
-            for(int j=0; j<3; j++) FileWriteDouble(fileHandle, W3[i][j]);
-        }
-        
-        // Write biases
-        for(int i=0; i<15; i++) FileWriteDouble(fileHandle, B1[i]);
-        for(int i=0; i<10; i++) FileWriteDouble(fileHandle, B2[i]);
-        for(int i=0; i<3; i++) FileWriteDouble(fileHandle, B3[i]);
-        
+
+        FileWriteInteger(fileHandle, (int)checksum);
         FileClose(fileHandle);
-        Print("[NEURAL-NET] Network state saved to ", filename);
+
+        if(!NNModelStorage_PromoteTempToPrimary(tempFile, primaryFile, backupFile))
+            return false;
+
+        m_checkpointWrites++;
+        m_lastCheckpointTimestamp = checkpointTime;
         return true;
     }
-    
-    // Load network weights and biases from file
-    bool LoadNetwork()
+
+    bool LoadCheckpoint()
     {
         if(!m_enableOnlineTraining)
             return false;
 
-        string filename = "AI_Net_" + m_symbol + "_" + EnumToString(m_timeframe) + ".bin";
-        if(!FileIsExist(filename)) return false;
-        
-        int fileHandle = FileOpen(filename, FILE_READ|FILE_BIN);
-        if(fileHandle == INVALID_HANDLE) return false;
-        
-        // Read weights
-        for(int i=0; i<25; i++) {
-            for(int j=0; j<15; j++) W1[i][j] = FileReadDouble(fileHandle);
-        }
-        for(int i=0; i<15; i++) {
-            for(int j=0; j<10; j++) W2[i][j] = FileReadDouble(fileHandle);
-        }
-        for(int i=0; i<10; i++) {
-            for(int j=0; j<3; j++) W3[i][j] = FileReadDouble(fileHandle);
-        }
-        
-        // Read biases
-        for(int i=0; i<15; i++) B1[i] = FileReadDouble(fileHandle);
-        for(int i=0; i<10; i++) B2[i] = FileReadDouble(fileHandle);
-        for(int i=0; i<3; i++) B3[i] = FileReadDouble(fileHandle);
-        
-        FileClose(fileHandle);
-        Print("[NEURAL-NET] Network state loaded from ", filename);
-        return true;
+        NNModelStorage_EnsureFolders();
+        string primaryFile = NNModelStorage_GetPrimaryPath(m_symbol, m_timeframe);
+        string backupFile = NNModelStorage_GetBackupPath(m_symbol, m_timeframe);
+
+        if(LoadCheckpointFromPath(primaryFile, "LOADED"))
+            return true;
+        if(LoadCheckpointFromPath(backupFile, "RESTORED_FROM_BACKUP"))
+            return true;
+        return false;
+    }
+
+    void GetModelHealthStats(int &totalObservations,
+                             int &tradeLinkedLabels,
+                             int &pseudoLabels,
+                             int &pendingLabels,
+                             int &trainingSteps,
+                             int &checkpointWrites,
+                             int &epoch,
+                             double &lastLoss)
+    {
+        totalObservations = m_totalObservations;
+        tradeLinkedLabels = m_tradeLinkedLabels;
+        pseudoLabels = m_pseudoLabels;
+        pendingLabels = GetPendingLabelsCount();
+        trainingSteps = m_trainingSteps;
+        checkpointWrites = m_checkpointWrites;
+        epoch = m_epoch;
+        lastLoss = m_lastLoss;
     }
     
 private:
@@ -826,6 +1073,365 @@ private:
         ulong timePart = (ulong)(GetMicrosecondCount() % 1000000000);
         int seq = m_predictionCounter % 100000;
         return StringFormat("%09I64u%05d", timePart, seq);
+    }
+
+    bool CollectObservationInternal(const bool forceSample, const int forcedOutput, string &generatedPredictionId)
+    {
+        generatedPredictionId = "";
+        if(!m_initialized || !m_enableOnlineTraining)
+            return false;
+
+        datetime now = TimeCurrent();
+        if(!forceSample && m_lastObservationTime > 0 && (now - m_lastObservationTime) < m_sampleIntervalSec)
+            return false;
+
+        double inputs[25];
+        if(!ExtractFeatures(inputs))
+            return false;
+
+        double outputs[3];
+        ForwardPropagate(inputs, outputs);
+
+        int expectedOutput = forcedOutput;
+        if(expectedOutput <= 0)
+            expectedOutput = (outputs[1] >= outputs[2]) ? 1 : 2;
+
+        CTrainingExample* example = new CTrainingExample();
+        if(example == NULL)
+            return false;
+
+        for(int i = 0; i < 25; i++)
+            example.inputs[i] = inputs[i];
+
+        example.expectedOutput = expectedOutput;
+        example.time = now;
+        example.predictionId = GeneratePredictionId();
+        example.linkedToTrade = (forcedOutput > 0);
+        example.isTradeLinked = (forcedOutput > 0);
+        example.pseudoLabeled = false;
+
+        int periodSec = PeriodSeconds(m_timeframe);
+        if(periodSec <= 0)
+            periodSec = 60;
+
+        example.barsAhead = MathMax(1, m_pseudoLabelBarsAhead);
+        example.labelDueTime = now + (datetime)(periodSec * example.barsAhead);
+        example.entryPriceSnapshot = iClose(m_symbol, m_timeframe, 0);
+        if(example.entryPriceSnapshot <= 0.0)
+            example.entryPriceSnapshot = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+
+        if(m_trainingData.Total() >= m_maxTrainingExamples)
+        {
+            if(!PruneOldestTrainingExample())
+            {
+                delete example;
+                return false;
+            }
+        }
+
+        m_trainingData.Add(example);
+        generatedPredictionId = example.predictionId;
+        m_totalObservations++;
+        m_lastObservationTime = now;
+        return true;
+    }
+
+    int GetPendingLabelsCount()
+    {
+        int pending = 0;
+        for(int i = 0; i < m_trainingData.Total(); i++)
+        {
+            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
+            if(ex != NULL && !ex.hasResult)
+                pending++;
+        }
+        return pending;
+    }
+
+    void HandleNewLabeledData()
+    {
+        int checkpointInterval = MathMax(1, m_checkpointEveryLabeled);
+        if(m_labeledSinceCheckpoint < checkpointInterval)
+            return;
+
+        if(GetCompletedTradesCount() >= m_minTrainingExamples)
+            TrainNetwork();
+
+        SaveCheckpointAtomic(true);
+        m_labeledSinceCheckpoint = 0;
+    }
+
+    void BuildLabeledIndices(int &indices[])
+    {
+        ArrayResize(indices, 0);
+        for(int i = 0; i < m_trainingData.Total(); i++)
+        {
+            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
+            if(ex == NULL || !ex.hasResult)
+                continue;
+
+            int newSize = ArraySize(indices) + 1;
+            ArrayResize(indices, newSize);
+            indices[newSize - 1] = i;
+        }
+    }
+
+    void BuildPersistedSampleIndices(int &indices[])
+    {
+        ArrayResize(indices, 0);
+        int total = m_trainingData.Total();
+
+        for(int i = total - 1; i >= 0; i--)
+        {
+            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
+            if(ex == NULL)
+                continue;
+
+            if(!ex.hasResult && !ex.linkedToTrade && !ex.isTradeLinked)
+                continue;
+
+            int newSize = ArraySize(indices) + 1;
+            ArrayResize(indices, newSize);
+            indices[newSize - 1] = i;
+            if(newSize >= NN_MAX_PERSISTED_SAMPLES)
+                break;
+        }
+
+        if(ArraySize(indices) == 0)
+        {
+            for(int i = total - 1; i >= 0; i--)
+            {
+                CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
+                if(ex == NULL)
+                    continue;
+
+                int newSize = ArraySize(indices) + 1;
+                ArrayResize(indices, newSize);
+                indices[newSize - 1] = i;
+                if(newSize >= 50)
+                    break;
+            }
+        }
+
+        int left = 0;
+        int right = ArraySize(indices) - 1;
+        while(left < right)
+        {
+            int tmp = indices[left];
+            indices[left] = indices[right];
+            indices[right] = tmp;
+            left++;
+            right--;
+        }
+    }
+
+    void BuildAllSampleIndices(int &indices[])
+    {
+        int total = m_trainingData.Total();
+        ArrayResize(indices, total);
+        for(int i = 0; i < total; i++)
+            indices[i] = i;
+    }
+
+    uint HashCombine(const uint seed, const uint value)
+    {
+        return (seed ^ value) * 16777619;
+    }
+
+    uint HashLong(const uint seed, const long value)
+    {
+        ulong uValue = (ulong)value;
+        uint low = (uint)(uValue & 0xFFFFFFFF);
+        uint high = (uint)((uValue >> 32) & 0xFFFFFFFF);
+        uint hash = HashCombine(seed, low);
+        return HashCombine(hash, high);
+    }
+
+    uint HashDouble(const uint seed, const double value)
+    {
+        long scaled = (long)MathRound(value * 1000000.0);
+        return HashLong(seed, scaled);
+    }
+
+    uint HashString(const uint seed, const string value)
+    {
+        uint hash = seed;
+        int len = StringLen(value);
+        for(int i = 0; i < len; i++)
+            hash = HashCombine(hash, (uint)StringGetCharacter(value, i));
+        hash = HashCombine(hash, (uint)len);
+        return hash;
+    }
+
+    uint ComputeCheckpointChecksum(const int &sampleIndices[])
+    {
+        uint hash = 2166136261;
+
+        hash = HashCombine(hash, NN_CHECKPOINT_MAGIC);
+        hash = HashCombine(hash, NN_CHECKPOINT_VERSION);
+        hash = HashString(hash, m_symbol);
+        hash = HashCombine(hash, (uint)m_timeframe);
+        hash = HashDouble(hash, m_learningRate);
+        hash = HashCombine(hash, (uint)m_epoch);
+        hash = HashDouble(hash, m_lastLoss);
+        hash = HashCombine(hash, (uint)m_minTrainingExamples);
+        hash = HashCombine(hash, (uint)m_maxTrainingExamples);
+        hash = HashCombine(hash, (uint)m_resultMatchWindowSec);
+        hash = HashCombine(hash, (uint)m_predictionCounter);
+        hash = HashCombine(hash, m_enableOnlineTraining ? 1 : 0);
+        hash = HashCombine(hash, m_enablePseudoLabeling ? 1 : 0);
+        hash = HashCombine(hash, (uint)m_pseudoLabelBarsAhead);
+        hash = HashCombine(hash, (uint)m_sampleIntervalSec);
+        hash = HashCombine(hash, (uint)m_checkpointEveryLabeled);
+        hash = HashCombine(hash, (uint)m_totalObservations);
+        hash = HashCombine(hash, (uint)m_tradeLinkedLabels);
+        hash = HashCombine(hash, (uint)m_pseudoLabels);
+        hash = HashCombine(hash, (uint)m_trainingSteps);
+        hash = HashCombine(hash, (uint)m_checkpointWrites);
+
+        for(int i = 0; i < 25; i++)
+            for(int j = 0; j < 15; j++)
+                hash = HashDouble(hash, W1[i][j]);
+        for(int i = 0; i < 15; i++)
+            for(int j = 0; j < 10; j++)
+                hash = HashDouble(hash, W2[i][j]);
+        for(int i = 0; i < 10; i++)
+            for(int j = 0; j < 3; j++)
+                hash = HashDouble(hash, W3[i][j]);
+        for(int i = 0; i < 15; i++) hash = HashDouble(hash, B1[i]);
+        for(int i = 0; i < 10; i++) hash = HashDouble(hash, B2[i]);
+        for(int i = 0; i < 3; i++) hash = HashDouble(hash, B3[i]);
+
+        int sampleCount = ArraySize(sampleIndices);
+        hash = HashCombine(hash, (uint)sampleCount);
+        for(int s = 0; s < sampleCount; s++)
+        {
+            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(sampleIndices[s]);
+            if(ex == NULL)
+                continue;
+
+            hash = HashCombine(hash, (uint)ex.expectedOutput);
+            hash = HashDouble(hash, ex.actualResult);
+            hash = HashLong(hash, (long)ex.time);
+            hash = HashCombine(hash, ex.hasResult ? 1 : 0);
+            hash = HashCombine(hash, ex.linkedToTrade ? 1 : 0);
+            hash = HashString(hash, ex.predictionId);
+            hash = HashCombine(hash, ex.pseudoLabeled ? 1 : 0);
+            hash = HashLong(hash, (long)ex.labelDueTime);
+            hash = HashDouble(hash, ex.entryPriceSnapshot);
+            hash = HashCombine(hash, (uint)ex.barsAhead);
+            hash = HashCombine(hash, ex.isTradeLinked ? 1 : 0);
+            for(int k = 0; k < 25; k++)
+                hash = HashDouble(hash, ex.inputs[k]);
+        }
+
+        return hash;
+    }
+
+    bool LoadCheckpointFromPath(const string filePath, const string loadStatus)
+    {
+        if(!FileIsExist(filePath, FILE_COMMON))
+            return false;
+
+        int fileHandle = FileOpen(filePath, FILE_READ | FILE_BIN | FILE_COMMON);
+        if(fileHandle == INVALID_HANDLE)
+            return false;
+
+        int magic = FileReadInteger(fileHandle);
+        int version = FileReadInteger(fileHandle);
+        if(magic != NN_CHECKPOINT_MAGIC || version != NN_CHECKPOINT_VERSION)
+        {
+            FileClose(fileHandle);
+            return false;
+        }
+
+        string checkpointSymbol = FileReadString(fileHandle);
+        int checkpointTf = FileReadInteger(fileHandle);
+        datetime checkpointTime = (datetime)FileReadLong(fileHandle);
+        if(checkpointSymbol != m_symbol || checkpointTf != (int)m_timeframe)
+        {
+            FileClose(fileHandle);
+            return false;
+        }
+
+        m_learningRate = FileReadDouble(fileHandle);
+        m_epoch = FileReadInteger(fileHandle);
+        m_lastLoss = FileReadDouble(fileHandle);
+        m_minTrainingExamples = FileReadInteger(fileHandle);
+        m_maxTrainingExamples = FileReadInteger(fileHandle);
+        m_resultMatchWindowSec = FileReadInteger(fileHandle);
+        m_predictionCounter = FileReadInteger(fileHandle);
+        m_enableOnlineTraining = (FileReadInteger(fileHandle) != 0);
+        m_enablePseudoLabeling = (FileReadInteger(fileHandle) != 0);
+        m_pseudoLabelBarsAhead = FileReadInteger(fileHandle);
+        m_sampleIntervalSec = FileReadInteger(fileHandle);
+        m_checkpointEveryLabeled = FileReadInteger(fileHandle);
+        m_totalObservations = FileReadInteger(fileHandle);
+        m_tradeLinkedLabels = FileReadInteger(fileHandle);
+        m_pseudoLabels = FileReadInteger(fileHandle);
+        m_trainingSteps = FileReadInteger(fileHandle);
+        m_checkpointWrites = FileReadInteger(fileHandle);
+
+        for(int i = 0; i < 25; i++)
+            for(int j = 0; j < 15; j++)
+                W1[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 15; i++)
+            for(int j = 0; j < 10; j++)
+                W2[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 10; i++)
+            for(int j = 0; j < 3; j++)
+                W3[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 15; i++) B1[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 10; i++) B2[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 3; i++) B3[i] = FileReadDouble(fileHandle);
+
+        int sampleCount = FileReadInteger(fileHandle);
+        m_trainingData.Clear();
+        for(int s = 0; s < sampleCount; s++)
+        {
+            CTrainingExample* ex = new CTrainingExample();
+            if(ex == NULL)
+            {
+                FileClose(fileHandle);
+                return false;
+            }
+
+            ex.expectedOutput = FileReadInteger(fileHandle);
+            ex.actualResult = FileReadDouble(fileHandle);
+            ex.time = (datetime)FileReadLong(fileHandle);
+            ex.hasResult = (FileReadInteger(fileHandle) != 0);
+            ex.linkedToTrade = (FileReadInteger(fileHandle) != 0);
+            ex.predictionId = FileReadString(fileHandle);
+            ex.pseudoLabeled = (FileReadInteger(fileHandle) != 0);
+            ex.labelDueTime = (datetime)FileReadLong(fileHandle);
+            ex.entryPriceSnapshot = FileReadDouble(fileHandle);
+            ex.barsAhead = FileReadInteger(fileHandle);
+            ex.isTradeLinked = (FileReadInteger(fileHandle) != 0);
+            for(int i = 0; i < 25; i++)
+                ex.inputs[i] = FileReadDouble(fileHandle);
+
+            m_trainingData.Add(ex);
+        }
+
+        uint storedChecksum = (uint)FileReadInteger(fileHandle);
+        FileClose(fileHandle);
+
+        int allIndices[];
+        BuildAllSampleIndices(allIndices);
+        uint computedChecksum = ComputeCheckpointChecksum(allIndices);
+        if(storedChecksum != computedChecksum)
+        {
+            m_trainingData.Clear();
+            return false;
+        }
+
+        m_lastLoadStatus = loadStatus;
+        m_lastCheckpointTimestamp = checkpointTime;
+        PrintFormat("[NEURAL-NET] Model checkpoint %s | Symbol=%s | TF=%s | Epoch=%d | Obs=%d | Labeled=%d | Saved=%s",
+                    loadStatus, m_symbol, EnumToString(m_timeframe), m_epoch,
+                    m_totalObservations, GetCompletedTradesCount(),
+                    TimeToString(m_lastCheckpointTimestamp, TIME_DATE | TIME_SECONDS));
+        return true;
     }
 
     bool PruneOldestTrainingExample()
@@ -896,10 +1502,10 @@ private:
         return loss;
     }
     
-    void UpdateWeights(const double &inputs[], const double &outputs[], const double &target[])
+    void UpdateWeights(const double &inputs[], const double &outputs[], const double &target[], const double sampleWeight)
     {
         // Simplified weight update (gradient descent on output layer)
-        // Full implementation would require proper backpropagation through all layers
+        //TODO: Full implementation would require proper backpropagation through all layers
         
         double outputError[3];  // OUTPUT_SIZE
         for(int i = 0; i < 3; i++)  // OUTPUT_SIZE
@@ -907,21 +1513,23 @@ private:
             outputError[i] = outputs[i] - target[i];
         }
         
+        double scaledRate = m_learningRate * MathMax(0.1, sampleWeight);
+
         // Update output layer weights (W3) and biases (B3)
-        // This is a simplified version - proper backprop would compute gradients through all layers
+        //TODO: This is a simplified version - proper backprop would compute gradients through all layers
         for(int i = 0; i < 10; i++)
         {
             for(int j = 0; j < 3; j++)
             {
                 double gradient = outputError[j];
-                W3[i][j] -= m_learningRate * gradient * 0.1; // Scaled down
+                W3[i][j] -= scaledRate * gradient * 0.1; // Scaled down
             }
         }
         
         // Update biases
         for(int i = 0; i < 3; i++)
         {
-            B3[i] -= m_learningRate * outputError[i];
+            B3[i] -= scaledRate * outputError[i];
         }
     }
     
