@@ -106,8 +106,6 @@ int CDrawingCoordinator::FindPrefixState(const string key) const
 datetime CDrawingCoordinator::ResolveBarTime(const string symbol, ENUM_TIMEFRAMES timeframe) const
 {
     datetime barTime = iTime(symbol, timeframe, 0);
-    if(barTime <= 0)
-        barTime = TimeCurrent();
     return barTime;
 }
 
@@ -192,6 +190,9 @@ bool CDrawingCoordinator::PreparePrefixForCurrentBar(const long chartId,
         m_prefixStates[newStateCount - 1] = state;
         idx = newStateCount - 1;
     }
+
+    if(barTime <= 0)
+        return false;
 
     if(m_prefixStates[idx].lastPreparedBarTime == barTime)
         return false;

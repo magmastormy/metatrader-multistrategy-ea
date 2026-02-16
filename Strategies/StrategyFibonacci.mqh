@@ -27,6 +27,7 @@ private:
 
     // Configuration
     int    m_lastBarProcessed;
+    string m_drawPrefix;
 
 public:
     CStrategyFibonacci(const string name = "Fibonacci v2.0", int magic = 0);
@@ -45,6 +46,7 @@ public:
 private:
     void Cleanup();
     void DrawFibLevels();
+    string BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const;
 };
 
 //+------------------------------------------------------------------+
@@ -55,7 +57,8 @@ CStrategyFibonacci::CStrategyFibonacci(const string name, int magic) :
     m_swingDetector(NULL),
     m_levelsCalc(NULL),
     m_confirmation(NULL),
-    m_lastBarProcessed(0)
+    m_lastBarProcessed(0),
+    m_drawPrefix("FIB_")
 {
 }
 
@@ -77,6 +80,16 @@ void CStrategyFibonacci::Cleanup()
     if(m_confirmation != NULL) { delete m_confirmation; m_confirmation = NULL; }
 }
 
+string CStrategyFibonacci::BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const
+{
+    string safeSymbol = symbol;
+    StringReplace(safeSymbol, ".", "_");
+    StringReplace(safeSymbol, " ", "_");
+    StringReplace(safeSymbol, "/", "_");
+    StringReplace(safeSymbol, "-", "_");
+    return StringFormat("FIB_%s_%d_", safeSymbol, (int)timeframe);
+}
+
 //+------------------------------------------------------------------+
 //| Initialization                                                   |
 //+------------------------------------------------------------------+
@@ -84,6 +97,8 @@ bool CStrategyFibonacci::Init(const string symbol, const ENUM_TIMEFRAMES timefra
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
         return false;
+
+    m_drawPrefix = BuildDrawPrefix(symbol, timeframe);
 
     // Initialize Swing Detector
     m_swingDetector = new CFibSwingDetector();
@@ -118,7 +133,7 @@ bool CStrategyFibonacci::Init(const string symbol, const ENUM_TIMEFRAMES timefra
 //+------------------------------------------------------------------+
 void CStrategyFibonacci::Deinit()
 {
-    ObjectsDeleteAll(0, "FIB_");
+    ObjectsDeleteAll(0, m_drawPrefix);
     Cleanup();
     CStrategyBase::Deinit();
 }
@@ -166,9 +181,9 @@ void CStrategyFibonacci::DrawFibLevels()
 
     CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
     if(drawingCoordinator != NULL)
-        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, "FIB_");
+        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, m_drawPrefix);
     else
-        ObjectsDeleteAll(0, "FIB_");
+        ObjectsDeleteAll(0, m_drawPrefix);
 
     SFibSetup setup;
     // Try to get best bullish setup first, then bearish for drawing
@@ -180,7 +195,7 @@ void CStrategyFibonacci::DrawFibLevels()
     for(int i = 0; i < setup.levelCount; i++)
     {
         SFibLevel level = setup.levels[i];
-        string name = StringFormat("FIB_%s_%.3f", setup.isBullish ? "BULL" : "BEAR", level.ratio);
+        string name = StringFormat("%s%s_%.3f", m_drawPrefix, setup.isBullish ? "BULL" : "BEAR", level.ratio);
         color clr = clrGray;
 
         if(level.ratio == 0.618) clr = clrGold;

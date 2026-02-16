@@ -4,11 +4,8 @@
 This document defines one operational trade decision path for `MultiStrategyAutonomousEA.mq5` and explicit ownership boundaries for pre-trade, execution, and post-trade handling.
 
 ## Ownership Contract
-- Authoritative pre-trade veto: `CRiskValidationGate` (`Core/Risk/RiskValidationGate.mqh`)
-- Risk context provider (used by gate): `CPortfolioRiskManager` (`Core/Risk/PortfolioRiskManager.mqh`)
-- Advisory only (no pre-trade veto):
-  - `CAdaptiveRiskManager` -> suggests runtime risk percent
-  - `CEnhancedRiskManager` -> telemetry/performance/risk-usage tracking
+- Authoritative pre-trade veto: `CUnifiedRiskManager` (`Core/Risk/UnifiedRiskManager.mqh`)
+- Internal risk components (not EA-owned at runtime): `CRiskValidationGate`, `CPortfolioRiskManager`
 - Execution owner: `CTradeManager` (`Core/Trading/TradeManager.mqh`)
 - Position lifecycle owner: `CAdvancedPositionManager` (`Core/Trading/AdvancedPositionManager.mqh`)
 
@@ -19,12 +16,12 @@ This document defines one operational trade decision path for `MultiStrategyAuto
 
 2. Pre-Trade Preparation
 - EA computes ATR-derived SL/TP and candidate risk percent.
-- `CAdaptiveRiskManager` may adjust suggested risk percent (advisory).
+- `CUnifiedRiskManager` updates adaptive risk percent and daily budget state.
 
 3. Authoritative Risk Validation
-- Phase A (`pre-size`): `CRiskValidationGate::ValidateTradeRequest(...)` with min lot.
+- Phase A (`pre-size`): `CUnifiedRiskManager::ValidateTradeRequest(...)` with min lot.
 - Position size is calculated.
-- Phase B (`post-size`): `CRiskValidationGate::ValidateTradeRequest(...)` with final lot.
+- Phase B (`post-size`): `CUnifiedRiskManager::ValidateTradeRequest(...)` with final lot.
 - Any rejection here is final; no trade is sent.
 
 4. Execution
@@ -32,7 +29,7 @@ This document defines one operational trade decision path for `MultiStrategyAuto
 - Trade manager performs execution-safety checks (symbol/volume/margin/trading permission), not strategy-governance risk policy.
 
 5. Post-Execution
-- On success, EA records advisory usage in `CEnhancedRiskManager`.
+- On success, EA records realized usage via `CUnifiedRiskManager::RegisterExecutedTradeRisk(...)`.
 - Cooldown timestamp is updated.
 
 6. Open Position Management
@@ -54,8 +51,8 @@ This document defines one operational trade decision path for `MultiStrategyAuto
 
 ## Invariants
 - No direct `CTrade.Buy/Sell` calls in EA decision path.
-- All entries pass through `CRiskValidationGate` before `CTradeManager::OpenPosition(...)`.
-- Advisory risk modules cannot block entries.
+- All entries pass through `CUnifiedRiskManager` before `CTradeManager::OpenPosition(...)`.
+- Legacy advisory risk modules are removed from runtime path.
 - Position manager does not manage non-EA positions (magic-scoped).
 
 ## NN Attribution Forward-Test Protocol

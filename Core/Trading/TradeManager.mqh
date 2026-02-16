@@ -98,6 +98,7 @@ private:
     double m_maxDailyLoss;                   // Maximum daily loss limit (in account currency)
     double m_dailyLoss;                      // Current daily loss
     datetime m_dailyResetTime;               // Daily reset timestamp
+    bool m_externalRiskAuthority;            // External module owns risk veto when true
     
     // Trade execution state
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
@@ -451,6 +452,7 @@ public:
         m_maxDailyLoss(0.0),
         m_dailyLoss(0.0),
         m_dailyResetTime(0),
+        m_externalRiskAuthority(false),
         m_pendingOrderCount(0),
         m_stateCount(0),
         m_totalTrades(0),
@@ -476,6 +478,7 @@ public:
     void SetSlippage(const uint slippage) { m_slippage = slippage; }
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
     void SetMaxDailyLoss(const double maxLoss) { m_maxDailyLoss = maxLoss; }
+    void SetExternalRiskAuthority(const bool enabled) { m_externalRiskAuthority = enabled; }
     
     // Main trading functions
     bool OpenPosition(const string symbol,
@@ -605,13 +608,8 @@ bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
     newSL = NormalizeDouble(newSL, (int)digits);
     
     if(!IsModificationNeeded(ticket, newSL, currentTP)) return false;
-    
-    if(!m_trade.PositionModify(ticket, newSL, currentTP))
-    {
-        return false;
-    }
-    
-    return true;
+
+    return ModifyPosition(ticket, newSL, currentTP);
 }
 
 //+------------------------------------------------------------------+
@@ -721,65 +719,127 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
         return false;
     }
 
-    if(!IsModificationNeeded(ticket, stopLoss, takeProfit))
-    {
-        return true;
-    }
-
     // Get position details for stop level validation
     string symbol = PositionGetString(POSITION_SYMBOL);
     double positionPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
-
+    double currentSL = PositionGetDouble(POSITION_SL);
+    double currentTP = PositionGetDouble(POSITION_TP);
     ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-
+    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+    
     // Validate stop levels against broker minimum distance
     int stopLevel = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double minDistance = stopLevel * point;
     if(minDistance < point * 10) minDistance = point * 10; // Minimum 10 points fallback
 
-    double slDistance = MathAbs(positionPrice - stopLoss);
-    double tpDistance = (takeProfit > 0) ? MathAbs(positionPrice - takeProfit) : 0;
-
-    // Check if SL is too close to current price
-    if(stopLoss > 0 && slDistance < minDistance)
+    double adjustedSL = stopLoss;
+    double adjustedTP = takeProfit;
+    bool slAdjusted = false;
+    bool tpAdjusted = false;
+    
+    // Auto-normalize SL distance to broker constraints instead of repeatedly skipping.
+    if(adjustedSL > 0)
     {
-        PrintFormat("[TRADE-WARN] ModifyPosition skipped - SL too close: %.5f (min: %.5f) | Symbol: %s",
-                   slDistance, minDistance, symbol);
-        return false;
-    }
-
-    // Check if TP is too close to current price
-    if(takeProfit > 0 && tpDistance < minDistance)
-    {
-        PrintFormat("[TRADE-WARN] ModifyPosition skipped - TP too close: %.5f (min: %.5f) | Symbol: %s",
-                   tpDistance, minDistance, symbol);
-        return false;
-    }
-
-    // Validate SL is on correct side of price
-    if(stopLoss > 0)
-    {
-        if(posType == POSITION_TYPE_BUY && stopLoss >= positionPrice)
+        double slDistance = MathAbs(positionPrice - adjustedSL);
+        if(slDistance < minDistance)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY SL above price: SL=%.5f, Price=%.5f", stopLoss, positionPrice);
-            return false;
-        }
-        if(posType == POSITION_TYPE_SELL && stopLoss <= positionPrice)
-        {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL SL below price: SL=%.5f, Price=%.5f", stopLoss, positionPrice);
-            return false;
+            if(posType == POSITION_TYPE_BUY)
+                adjustedSL = positionPrice - minDistance - point;
+            else
+                adjustedSL = positionPrice + minDistance + point;
+            
+            adjustedSL = NormalizeDouble(adjustedSL, digits);
+            slAdjusted = true;
         }
     }
 
-    if(m_trade.PositionModify(ticket, stopLoss, takeProfit))
+    // Auto-normalize TP distance to broker constraints instead of repeatedly skipping.
+    if(adjustedTP > 0)
     {
-        UpdatePositionState(ticket, stopLoss, takeProfit);
+        double tpDistance = MathAbs(positionPrice - adjustedTP);
+        if(tpDistance < minDistance)
+        {
+            if(posType == POSITION_TYPE_BUY)
+                adjustedTP = positionPrice + minDistance + point;
+            else
+                adjustedTP = positionPrice - minDistance - point;
+            
+            adjustedTP = NormalizeDouble(adjustedTP, digits);
+            tpAdjusted = true;
+        }
+    }
+
+    // Normalize requested stop levels before any comparisons or server calls.
+    if(adjustedSL > 0)
+        adjustedSL = NormalizeDouble(adjustedSL, digits);
+    if(adjustedTP > 0)
+        adjustedTP = NormalizeDouble(adjustedTP, digits);
+
+    // Validate SL is on correct side of current price
+    if(adjustedSL > 0)
+    {
+        if(posType == POSITION_TYPE_BUY && adjustedSL >= positionPrice)
+        {
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY SL above price: SL=%.5f, Price=%.5f", adjustedSL, positionPrice);
+            return false;
+        }
+        if(posType == POSITION_TYPE_SELL && adjustedSL <= positionPrice)
+        {
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL SL below price: SL=%.5f, Price=%.5f", adjustedSL, positionPrice);
+            return false;
+        }
+    }
+
+    // Validate TP is on correct side of current price
+    if(adjustedTP > 0)
+    {
+        if(posType == POSITION_TYPE_BUY && adjustedTP <= positionPrice)
+        {
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY TP below/at price: TP=%.5f, Price=%.5f", adjustedTP, positionPrice);
+            return false;
+        }
+        if(posType == POSITION_TYPE_SELL && adjustedTP >= positionPrice)
+        {
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL TP above/at price: TP=%.5f, Price=%.5f", adjustedTP, positionPrice);
+            return false;
+        }
+    }
+
+    // Skip redundant server requests when requested levels are already in place.
+    double comparisonTolerance = point * 0.5;
+    bool slUnchanged = (adjustedSL == 0.0 && currentSL == 0.0) || MathAbs(adjustedSL - currentSL) <= comparisonTolerance;
+    bool tpUnchanged = (adjustedTP == 0.0 && currentTP == 0.0) || MathAbs(adjustedTP - currentTP) <= comparisonTolerance;
+    if(slUnchanged && tpUnchanged)
+    {
+        UpdatePositionState(ticket, currentSL, currentTP);
+        return true;
+    }
+
+    if(!IsModificationNeeded(ticket, adjustedSL, adjustedTP))
+    {
+        return true;
+    }
+
+    if(slAdjusted || tpAdjusted)
+    {
+        PrintFormat("[TRADE-INFO] ModifyPosition normalized stops | Symbol: %s | SL: %.5f | TP: %.5f | MinDistance: %.5f",
+                    symbol, adjustedSL, adjustedTP, minDistance);
+    }
+
+    if(m_trade.PositionModify(ticket, adjustedSL, adjustedTP))
+    {
+        UpdatePositionState(ticket, adjustedSL, adjustedTP);
         return true;
     }
 
     MqlTradeResult tradeResult;
     m_trade.Result(tradeResult);
+    if(tradeResult.retcode == TRADE_RETCODE_NO_CHANGES)
+    {
+        UpdatePositionState(ticket, adjustedSL, adjustedTP);
+        return true;
+    }
     LogTradeError(tradeResult, "ModifyPosition");
 
     return false;
@@ -1263,7 +1323,7 @@ bool CTradeManager::ValidateTradeRequest(const string symbolName, const ENUM_ORD
     if(!ValidateVolume(symbolName, volume)) return false;
     if(!ValidatePrice(symbolName, price)) return false;
     if(!CheckMarginRequirements(symbolName, volume, orderType)) return false;
-    if(!CheckCorrelationLimits(symbolName)) return false;
+    if(!m_externalRiskAuthority && !CheckCorrelationLimits(symbolName)) return false;
     
     return true;
 }
@@ -1309,8 +1369,11 @@ bool CTradeManager::IsTradeAllowed(const string symbolName, const double volume,
     if(!ValidateSymbol(symbolName)) return false;
     if(!ValidateVolume(symbolName, volume)) return false;
     if(!CheckMarginRequirements(symbolName, volume, orderType)) return false;
-    if(!CheckCorrelationLimits(symbolName)) return false;
-    if(!CheckDailyLimits()) return false;
+    if(!m_externalRiskAuthority)
+    {
+        if(!CheckCorrelationLimits(symbolName)) return false;
+        if(!CheckDailyLimits()) return false;
+    }
     if(m_emergencyStop) return false;
     
     return true;

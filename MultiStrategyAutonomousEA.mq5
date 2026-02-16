@@ -10,7 +10,7 @@
 //--- Input parameters (Fixed compilation errors)
 input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
-input bool InpUseEnhancedRisk = true;      // Use enhanced risk management
+input bool InpUseEnhancedRisk = true;      // Enable adaptive sizing inside unified risk manager
 input double InpMaxRiskPerTrade = 2.0;    // Max risk per trade (e.g., 2.0 for 2%)
 input double InpMaxDailyRisk = 6.0;       // Max daily risk (e.g., 6.0 for 6%)
 input double InpMaxPortfolioRisk = 10.0;   // Max total portfolio risk (e.g., 10.0 for 10%)
@@ -18,33 +18,23 @@ input double InpMaxDrawdown = 15.0;       // Max drawdown (e.g., 15.0 for 15%)
 input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,AUXUSD.0,EURUSD.0";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 120;    // Cooldown in seconds between trades
 input int    InpMaxPositionsTotal = 15;           // Global position limit
+input bool   InpAllowSyntheticOffHours = true;    // Allow synthetic indices to trade 24/7 (outside normal forex hours)
 
 //--- Strategy Selection (for testing)
 input group "Strategy Selection"
-input bool InpEnableMomentum = false;        // Enable Momentum Strategy
-input bool InpEnableRSI = false;             // Enable RSI Strategy
+input bool InpEnableMomentum = true;         // Enable Momentum Strategy
 input bool InpEnableTrend = false;           // Enable Trend Strategy
-input bool InpEnableMeanReversion = false;   // Enable Mean Reversion Strategy
-input bool InpEnableSwing = false;          // Enable Swing Strategy
-input bool InpEnableVolatility = false;     // Enable Volatility Strategy
-input bool InpEnableMACD = false;           // Enable MACD Strategy
-input bool InpEnableBollinger = false;      // Enable Bollinger Strategy
-input bool InpEnableBollingerBreakout = false; // Enable Bollinger Breakout Strategy
-input bool InpEnableSMC = false;               // Enable Advanced SMC Strategy
-input bool InpEnableBreakout = false;         // Enable Breakout Strategy
 input bool InpEnableFibonacci = false;        // Enable Fibonacci Strategy
 input bool InpEnableElliottWave = false;       // Enable Elliott Wave Enhanced Strategy
-input bool InpEnableIchimoku = false;         // Enable Ichimoku Strategy
-input bool InpEnableHarmonicPatterns = false;  // Enable Harmonic Patterns Strategy
 input bool InpEnableSupportResistance = false; // Enable Support/Resistance + Trendlines
-input bool InpEnableUnifiedICT = false;        // Enable Unified ICT/SMC Strategy
+input bool InpEnableUnifiedICT = true;         // Enable Unified ICT/SMC Strategy
 input bool InpEnableCandlestick = false;       // Enable Candlestick Patterns Strategy
 input bool InpUseCuratedStrategySet = true;    // Enable curated production strategy subset
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
-input bool InpEnableAIMode = true;             // Enable AI Mode
-input bool InpEnableNeuralNetwork = true;      // Enable Neural Network
+input bool InpEnableAIMode = false;            // Enable AI Mode
+input bool InpEnableNeuralNetwork = false;     // Enable Neural Network
 input bool InpEnableTransformer = false;       // Enable Transformer Brain
 input bool InpEnableEnsemble = false;          // Enable Ensemble Learning
 input double InpAIConfidenceThreshold = 0.60;  // AI Confidence Threshold (Increased for better quality)
@@ -58,11 +48,13 @@ input bool InpRunNNAttributionSelfTest = false;       // Run local mapping self-
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
 input bool InpUseSignalPipeline = true;        // Use Signal Pipeline
-input bool InpUseOrchestrator = true;          // Use AI Orchestrator
+input bool InpUseOrchestrator = true;          // Legacy flag (trade decisions now governed by EnterpriseManager only)
 input double InpMinTrendStrength = 50.0;       // Minimum Trend Strength
 input double InpMaxVolatility = 3.0;           // Maximum Volatility %
 input bool InpEnableStructureFilter = true;    // Enable Structure Filter
 input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
+input bool InpSignalScanOnNewBarOnly = true;   // Evaluate fresh entry signals only on new bar
+input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before risk gate
 
 //--- Include files
 #include <Object.mqh>
@@ -72,17 +64,14 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 #include "Core\Utils\ErrorHandling.mqh"
 #include "IndicatorManager.mqh"
 #include "Core\Utils\Instruments.mqh"
-#include "Core\Risk\RiskValidationGate.mqh"
-#include "Core\Risk\PortfolioRiskManager.mqh"
+#include "Core\Risk\UnifiedRiskManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
 #include "Core\Monitoring\PerformanceAnalytics.mqh"
-#include "Core\Risk\AdaptiveRiskManager.mqh"
 #include "Core\AI\AIPerformanceFeedback.mqh"
 #include "Core\AI\AIStrategyOrchestrator.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Engines\MarketAnalysis.mqh"
 // DELETED: #include "Core\Connectivity\IntegrationHub.mqh"
-#include "Core\Risk\EnhancedRiskManager.mqh"
 #include "Core\Strategy\StrategyBase.mqh"
 #include "Strategies\SimpleMomentumStrategy.mqh"
 // DELETED: #include "Core\Engines\TradingEngine.mqh"
@@ -142,10 +131,8 @@ input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 CSymbolInfo globalSymbol;
 CAccountInfo account;
 CEnhancedErrorHandler errorHandler;
-CRiskValidationGate riskGate;
-CPortfolioRiskManager portfolioRisk;
+CUnifiedRiskManager unifiedRiskManager;
 CPerformanceAnalytics performanceAnalytics;
-CAdaptiveRiskManager adaptiveRisk;
 CAIPerformanceFeedback aiFeedback;
 // CAIStrategyOrchestrator aiOrchestrator; // Already declared? Check global scope.
 // Using global aiOrchestrator
@@ -167,7 +154,6 @@ double g_pendingCloseNetProfit[];
 CPositionSizer positionSizer;
 CMarketAnalysis marketAnalysis;
 // DELETED: CAIIntegrationHub integrationHub;
-CEnhancedRiskManager enhancedRiskManager;
 CInstrumentRegistry instrumentRegistry;
 
 CTradeManager tradeManager;
@@ -219,7 +205,6 @@ string g_symbolsToTrade = "";
 bool g_beastModeProtection = true;
 bool systemInitialized = false;
 bool tradingEnabled = false;
-bool g_adaptiveRiskReady = false;
 
 // NN attribution diagnostics counters
 int g_nnDiagEntryMapCount = 0;
@@ -334,6 +319,30 @@ int GetEAPositionCount()
                 count++;
         }
     }
+    return count;
+}
+
+int GetOpenPositionCountForSymbol(const string symbol, const bool onlyThisEAMagic = false)
+{
+    if(symbol == "")
+        return 0;
+
+    int count = 0;
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+
+        if(PositionGetString(POSITION_SYMBOL) != symbol)
+            continue;
+
+        if(onlyThisEAMagic && PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+            continue;
+
+        count++;
+    }
+
     return count;
 }
 
@@ -574,13 +583,13 @@ bool RunNNAttributionSelfTest()
 
 //+------------------------------------------------------------------+
 //| Authoritative risk decision helper                               |
-//| NOTE: RiskValidationGate is the only trade-entry veto authority. |
+//| NOTE: UnifiedRiskManager is the only trade-entry veto authority. |
 //+------------------------------------------------------------------+
-bool ApproveTradeByRiskGate(const STradeValidationRequest &request,
-                            const string phaseTag,
-                            SValidationResult &result)
+bool ApproveTradeByUnifiedRisk(const STradeValidationRequest &request,
+                               const string phaseTag,
+                               SValidationResult &result)
 {
-    result = riskGate.ValidateTradeRequest(request);
+    result = unifiedRiskManager.ValidateTradeRequest(request, phaseTag);
     if(!result.approved)
     {
         Print("[RISK-CONTRACT] REJECTED (", phaseTag, ") ",
@@ -598,25 +607,33 @@ string GetStrategyNameByIndex(const int index)
     switch(index)
     {
         case 0: return "Momentum";
-        case 1: return "RSI";
-        case 2: return "Trend";
-        case 3: return "Mean Reversion";
-        case 4: return "Swing";
-        case 5: return "Volatility";
-        case 6: return "MACD";
-        case 7: return "Bollinger";
-        case 8: return "Bollinger Breakout";
-        case 9: return "SMC";
-        case 10: return "Breakout";
-        case 11: return "Fibonacci";
-        case 12: return "Elliott Wave";
-        case 13: return "Ichimoku";
-        case 14: return "Harmonic Patterns";
-        case 15: return "Support/Resistance";
-        case 16: return "Unified ICT";
-        case 17: return "Candlestick";
+        case 1: return "Trend";
+        case 2: return "Fibonacci";
+        case 3: return "Elliott Wave";
+        case 4: return "Support/Resistance";
+        case 5: return "Unified ICT";
+        case 6: return "Candlestick";
         default: return "Unknown";
     }
+}
+
+string BuildEnabledStrategyList(const bool &strategyFlags[])
+{
+    string enabled = "";
+    for(int i = 0; i < ArraySize(strategyFlags); i++)
+    {
+        if(!strategyFlags[i])
+            continue;
+
+        if(StringLen(enabled) > 0)
+            enabled += ", ";
+        enabled += GetStrategyNameByIndex(i);
+    }
+
+    if(StringLen(enabled) == 0)
+        return "None";
+
+    return enabled;
 }
 
 //+------------------------------------------------------------------+
@@ -624,48 +641,26 @@ string GetStrategyNameByIndex(const int index)
 //+------------------------------------------------------------------+
 void BuildStrategyFlags(bool &strategyFlags[])
 {
-    ArrayResize(strategyFlags, 18);
+    ArrayResize(strategyFlags, 7);
     strategyFlags[0]  = InpEnableMomentum;
-    strategyFlags[1]  = InpEnableRSI;
-    strategyFlags[2]  = InpEnableTrend;
-    strategyFlags[3]  = InpEnableMeanReversion;
-    strategyFlags[4]  = InpEnableSwing;
-    strategyFlags[5]  = InpEnableVolatility;
-    strategyFlags[6]  = InpEnableMACD;
-    strategyFlags[7]  = InpEnableBollinger;
-    strategyFlags[8]  = InpEnableBollingerBreakout;
-    strategyFlags[9]  = InpEnableSMC;
-    strategyFlags[10] = InpEnableBreakout;
-    strategyFlags[11] = InpEnableFibonacci;
-    strategyFlags[12] = InpEnableElliottWave;
-    strategyFlags[13] = InpEnableIchimoku;
-    strategyFlags[14] = InpEnableHarmonicPatterns;
-    strategyFlags[15] = InpEnableSupportResistance;
-    strategyFlags[16] = InpEnableUnifiedICT;
-    strategyFlags[17] = InpEnableCandlestick;
+    strategyFlags[1]  = InpEnableTrend;
+    strategyFlags[2]  = InpEnableFibonacci;
+    strategyFlags[3]  = InpEnableElliottWave;
+    strategyFlags[4]  = InpEnableSupportResistance;
+    strategyFlags[5]  = InpEnableUnifiedICT;
+    strategyFlags[6]  = InpEnableCandlestick;
 
     if(!InpUseCuratedStrategySet)
         return;
 
-    bool curatedMask[18] = {
+    bool curatedMask[7] = {
         true,   // Momentum
-        true,   // RSI
-        true,   // Trend
-        false,  // Mean Reversion
-        false,  // Swing
-        false,  // Volatility
-        true,   // MACD
-        false,  // Bollinger
-        false,  // Bollinger Breakout
-        true,   // SMC
-        false,  // Breakout
+        false,  // Trend
         false,  // Fibonacci
-        true,   // Elliott Wave
-        true,   // Ichimoku
-        false,  // Harmonic Patterns
-        true,   // Support/Resistance
+        false,  // Elliott Wave
+        false,  // Support/Resistance
         true,   // Unified ICT
-        true    // Candlestick
+        false   // Candlestick
     };
 
     int enabledBefore = 0;
@@ -678,7 +673,7 @@ void BuildStrategyFlags(bool &strategyFlags[])
         if(strategyFlags[i] && !curatedMask[i])
         {
             strategyFlags[i] = false;
-            Print("[CURATION] Disabled overlapping strategy: ", GetStrategyNameByIndex(i));
+            Print("[CURATION] Disabled by curated profile: ", GetStrategyNameByIndex(i));
         }
 
         if(strategyFlags[i])
@@ -686,6 +681,7 @@ void BuildStrategyFlags(bool &strategyFlags[])
     }
 
     PrintFormat("[CURATION] Production strategy profile active (%d -> %d enabled)", enabledBefore, enabledAfter);
+    Print("[CURATION] Effective runtime strategy set: ", BuildEnabledStrategyList(strategyFlags));
 }
 
 //+------------------------------------------------------------------+
@@ -819,8 +815,8 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         return false;
     }
 
-    if(!manager.Initialize(symbol, (ENUM_TIMEFRAMES)Period(), InpUseOrchestrator, InpUseSignalPipeline,
-                           &tradeManager, &positionSizer, &aiOrchestrator, (long)InpMagicNumber))
+    if(!manager.Initialize(symbol, (ENUM_TIMEFRAMES)Period(), InpUseSignalPipeline,
+                           &tradeManager, &positionSizer, (long)InpMagicNumber))
     {
         Print("[ERROR] Failed to initialize Enterprise Strategy Manager for ", symbol);
         delete manager;
@@ -840,6 +836,8 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         manager.SetPipelineFilters(filters);
     }
 
+    manager.SetMinQuorum(2);
+    Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
     manager.AutoRegisterStrategies(strategyFlags);
 
     int size = ArraySize(g_enterpriseManagers);
@@ -890,6 +888,7 @@ int OnInit()
         return INIT_FAILED;
     }
     tradeManager.SetMaxDailyLoss(MathMax(0.0, AccountInfoDouble(ACCOUNT_BALANCE) * (InpMaxDailyRisk / 100.0)));
+    tradeManager.SetExternalRiskAuthority(true);
 
     // Validate account type and permissions
     ENUM_ACCOUNT_TRADE_MODE tradeMode = (ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE);
@@ -953,49 +952,46 @@ int OnInit()
         Print("[AI] AI Mode disabled — skipping AI subsystem initialization");
     }
 
-    // Initialize shared orchestrator before any manager/AI engine consumes it.
-    if(InpUseOrchestrator || InpEnableAIMode)
+    // Initialize shared orchestrator only for optional AI adaptation modules.
+    if(InpEnableAIMode)
     {
         if(!aiOrchestrator.Initialize(0.4, 5))
         {
             Print("[CRITICAL] Failed to initialize AI Strategy Orchestrator");
             return INIT_FAILED;
         }
-        Print("[INIT] AI Strategy Orchestrator initialized");
+        Print("[INIT] AI Strategy Orchestrator initialized (AI adaptation only)");
     }
     else
     {
-        Print("[AI] Orchestrator disabled by input flags");
+        if(InpUseOrchestrator)
+            Print("[AI] InpUseOrchestrator is legacy; trade decisions remain manager-governed");
+        Print("[AI] Orchestrator disabled (AI mode off)");
     }
 
-    // Initialize Enhanced Risk Manager
-    if(InpUseEnhancedRisk)
+    // Initialize unified risk authority (single risk contract)
+    SUnifiedRiskConfig unifiedRiskConfig;
+    unifiedRiskConfig.baseRiskPerTradePercent = InpMaxRiskPerTrade;
+    unifiedRiskConfig.minRiskPerTradePercent = MathMax(0.1, InpMaxRiskPerTrade * 0.5);
+    unifiedRiskConfig.maxRiskPerTradePercent = MathMin(MAX_RISK_PER_TRADE, InpMaxRiskPerTrade);
+    unifiedRiskConfig.maxDailyRiskPercent = InpMaxDailyRisk;
+    unifiedRiskConfig.maxPortfolioRiskPercent = InpMaxPortfolioRisk;
+    unifiedRiskConfig.correlationThreshold = CorrelationThreshold;
+    unifiedRiskConfig.drawdownWarningPercent = MathMax(3.0, InpMaxDrawdown * 0.5);
+    unifiedRiskConfig.drawdownCriticalPercent = InpMaxDrawdown;
+    unifiedRiskConfig.adaptationMinTrades = 20;
+    unifiedRiskConfig.enableAdaptiveSizing = InpUseEnhancedRisk;
+    unifiedRiskConfig.enableAuditLogging = true;
+    unifiedRiskConfig.auditLogFile = "UnifiedRiskValidation.log";
+
+    if(!unifiedRiskManager.Initialize(unifiedRiskConfig, &performanceAnalytics))
     {
-        SEnhancedRiskConfig riskConfig;
-        riskConfig.enabled = true;
-        riskConfig.base_risk_per_trade = InpMaxRiskPerTrade;   // Now 2.0 (percentage)
-        riskConfig.max_risk_per_trade = InpMaxRiskPerTrade * 1.5;
-        riskConfig.min_risk_per_trade = 0.5;
-        riskConfig.max_daily_risk = InpMaxDailyRisk;
-        riskConfig.max_weekly_risk = InpMaxDailyRisk * 3.0;
-        riskConfig.max_monthly_risk = InpMaxDailyRisk * 10.0;
-        riskConfig.max_drawdown_threshold = InpMaxDrawdown;
-        riskConfig.recovery_mode_multiplier = 0.5;
-        riskConfig.adaptive_risk_adjustment = true;
-        riskConfig.volatility_adjustment = true;
-        riskConfig.correlation_adjustment = true;
-        riskConfig.max_active_positions = InpMaxPositionsTotal;
-        
-        if(!enhancedRiskManager.Initialize(riskConfig, AccountInfoDouble(ACCOUNT_EQUITY)))
-        {
-            Print("[ERROR] Failed to initialize Enhanced Risk Manager");
-        }
-        else
-        {
-            Print("[INIT] Enhanced Risk Manager initialized — Unit: PERCENTAGE (0-100)");
-        }
+        Print("[CRITICAL] UnifiedRiskManager failed to initialize!");
+        return INIT_FAILED;
     }
-    // AUDIT FIX: Initialize PositionSizer BEFORE passing to EnterpriseManager
+    Print("[INIT] UnifiedRiskManager initialized as single risk authority");
+
+    // Initialize PositionSizer before enterprise managers
     SPositionSizingParams sizingParams;
     sizingParams.sizingMode       = POSITION_SIZE_RISK_PERCENT;
     sizingParams.fixedLotSize     = InpLotSize;
@@ -1042,50 +1038,16 @@ int OnInit()
         Print("[AI] AIEngine disabled (InpEnableAIMode=false)");
     }
 
-    // Initialize portfolio risk manager before injecting into validation gate
-    if(!portfolioRisk.Initialize(InpMaxPortfolioRisk, 0.7))
-    {
-        Print("[CRITICAL] PortfolioRiskManager failed to initialize!");
-        return INIT_FAILED;
-    }
-    Print("[INIT] PortfolioRiskManager initialized");
-
-    // AUDIT FIX: Initialize Risk Gate
-    // CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManager, maxRiskPerTrade, maxPortfolioRisk, correlationThreshold)
-    if(!riskGate.Initialize(&portfolioRisk, InpMaxRiskPerTrade, InpMaxPortfolioRisk, 0.7))
-    {
-        Print("[CRITICAL] RiskValidationGate failed to initialize!");
-        return INIT_FAILED;
-    }
-    Print("[INIT] RiskValidationGate initialized");
-
-    // Initialize adaptive risk manager and wire it to analytics + position sizing
-    if(!adaptiveRisk.Initialize(&performanceAnalytics, &positionSizer))
-    {
-        Print("[WARNING] AdaptiveRiskManager initialization failed - proceeding with static risk settings");
-        g_adaptiveRiskReady = false;
-    }
-    else
-    {
-        SAdaptiveRiskParams adaptiveParams;
-        adaptiveParams.baseRiskPercent = InpMaxRiskPerTrade;
-        adaptiveParams.minRiskPercent = MathMax(0.1, InpMaxRiskPerTrade * 0.5);
-        adaptiveParams.maxRiskPercent = MathMin(MAX_RISK_PER_TRADE, InpMaxRiskPerTrade);
-        adaptiveParams.baseConfidenceThreshold = InpAIConfidenceThreshold;
-        adaptiveParams.minConfidenceThreshold = MathMax(0.50, InpAIConfidenceThreshold - 0.10);
-        adaptiveParams.maxConfidenceThreshold = MathMin(0.90, InpAIConfidenceThreshold + 0.10);
-        adaptiveParams.adaptationPeriod = 20;
-        adaptiveParams.enableAdaptation = true;
-        g_adaptiveRiskReady = adaptiveRisk.SetParameters(adaptiveParams);
-        if(g_adaptiveRiskReady)
-            Print("[INIT] AdaptiveRiskManager initialized");
-        else
-            Print("[WARNING] AdaptiveRiskManager parameter setup failed - using static risk settings");
-    }
-
     // Build strategy flags with optional curated production profile
     bool strategyFlags[];
     BuildStrategyFlags(strategyFlags);
+    PrintFormat("[RUNTIME-FINGERPRINT] Runtime=%s | File=%s | TerminalBuild=%d | Curated=%s | RegistrySize=%d | ActiveProfile=%s",
+                TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
+                __FILE__,
+                (int)TerminalInfoInteger(TERMINAL_BUILD),
+                InpUseCuratedStrategySet ? "true" : "false",
+                ArraySize(strategyFlags),
+                BuildEnabledStrategyList(strategyFlags));
 
     // Validate and process trading symbols
     string symbols[];
@@ -1195,14 +1157,15 @@ int OnInit()
     g_signalValidator = new CAdvancedSignalValidator();
     if(g_signalValidator != NULL)
     {
-        g_signalValidator.SetMinConfluence(1);  // Allow single-strategy signals
-        g_signalValidator.SetMinQualityScore(0.55);
+        g_signalValidator.SetMinConfluence(2);
+        g_signalValidator.SetMinQualityScore(0.68);
         g_signalValidator.SetMaxSpreadMultiplier(2.0);
         g_signalValidator.EnableTimeFilter(true, 1, 22);
         g_signalValidator.EnableSessionFilter(true, true, true, true);
         g_signalValidator.EnableVolatilityFilter(true, 0.0, 5.0);
         g_signalValidator.EnableSpreadFilter(true, 2.0);
-        Print("[SIGNAL-VALIDATOR] Advanced signal validation enabled");
+        g_signalValidator.SetAllowSyntheticOffHours(InpAllowSyntheticOffHours);
+        Print("[SIGNAL-VALIDATOR] Advanced signal validation enabled | Synthetic Off-Hours: ", InpAllowSyntheticOffHours);
     }
 
     // Initialize Advanced Position Manager (shared, magic scoped)
@@ -1451,11 +1414,8 @@ void ProcessTradingLogic(bool fromTimer)
 
     currentTime = TimeCurrent();
 
-    // Check and reset daily risk limits at midnight
-    if(InpUseEnhancedRisk)
-    {
-        enhancedRiskManager.CheckAndResetDailyLimits();
-    }
+    // Refresh unified risk state (daily reset + adaptive risk level)
+    unifiedRiskManager.RefreshRuntimeState();
 
     currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -1470,12 +1430,19 @@ void ProcessTradingLogic(bool fromTimer)
 
     // Multi-symbol new-bar processing: each symbol has a dedicated strategy manager.
     bool anyNewBarDetected = false;
+    bool symbolHasNewBar[];
+    ArrayResize(symbolHasNewBar, ArraySize(g_activePairs));
+    for(int i = 0; i < ArraySize(symbolHasNewBar); i++)
+        symbolHasNewBar[i] = false;
+
     if(ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
         if(ArraySize(g_lastSymbolBarTimes) != ArraySize(g_activePairs))
         {
             ArrayResize(g_lastSymbolBarTimes, ArraySize(g_activePairs));
             ArrayInitialize(g_lastSymbolBarTimes, 0);
+            for(int i = 0; i < ArraySize(symbolHasNewBar); i++)
+                symbolHasNewBar[i] = true; // First cycle after resize should evaluate immediately
         }
 
         for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
@@ -1489,6 +1456,7 @@ void ProcessTradingLogic(bool fromTimer)
             {
                 g_lastSymbolBarTimes[symIdx] = currentBarTime;
                 anyNewBarDetected = true;
+                symbolHasNewBar[symIdx] = true;
 
                 CEnterpriseStrategyManager* barManager = GetEnterpriseManagerForSymbol(symbolForBar);
                 if(barManager != NULL)
@@ -1501,9 +1469,6 @@ void ProcessTradingLogic(bool fromTimer)
     {
         if(InpEnableAIMode && g_AIEngine != NULL)
             g_AIEngine.ProcessAdaptation();
-
-        if(g_adaptiveRiskReady)
-            adaptiveRisk.AdaptRiskParameters();
 
         if(callCount % 100 == 0)
             Print("[DRAWINGS] OnNewBar processed for all managed symbols");
@@ -1543,6 +1508,21 @@ void ProcessTradingLogic(bool fromTimer)
                 CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(currentSymbol);
                 if(symbolManager == NULL)
                     continue;
+
+                if(InpSignalScanOnNewBarOnly && !symbolHasNewBar[symIdx])
+                    continue;
+
+                if(InpPortfolioMaxPositionsPerSymbol > 0)
+                {
+                    int symbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, false);
+                    if(symbolPositionCount >= InpPortfolioMaxPositionsPerSymbol)
+                    {
+                        if(callCount % 100 == 0)
+                            PrintFormat("[ENTERPRISE-BLOCKED] %s symbol position cap reached: %d / %d",
+                                        currentSymbol, symbolPositionCount, InpPortfolioMaxPositionsPerSymbol);
+                        continue;
+                    }
+                }
 
                 // Get signal with confluence tracking (per-symbol analysis)
                 double confidence = 0;
@@ -1653,12 +1633,12 @@ void ProcessTradingLogic(bool fromTimer)
                         stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
                         takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
 
-                        double proposedRisk = InpMaxRiskPerTrade;
-                        if(g_adaptiveRiskReady && adaptiveRisk.GetCurrentRiskPercent() > 0.0)
-                            proposedRisk = adaptiveRisk.GetCurrentRiskPercent();
+                        double proposedRisk = unifiedRiskManager.GetActiveRiskPerTradePercent();
+                        if(proposedRisk <= 0.0)
+                            proposedRisk = InpMaxRiskPerTrade;
                         currentRiskPerTrade = proposedRisk;
 
-                        // AUDIT FIX: Use RiskValidationGate for comprehensive checks
+                        // Unified risk manager is the only pre-trade veto contract.
                         STradeValidationRequest tradeReq;
                         tradeReq.symbol = currentSymbol;
                         tradeReq.orderType = orderType;
@@ -1673,7 +1653,7 @@ void ProcessTradingLogic(bool fromTimer)
                         tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
                         
                         SValidationResult riskResult;
-                        if(ApproveTradeByRiskGate(tradeReq, "pre-size", riskResult))
+                        if(ApproveTradeByUnifiedRisk(tradeReq, "pre-size", riskResult))
                         {
                             SPositionSizingParams currentSizingParams = positionSizer.GetParameters();
                             currentSizingParams.riskPercent = proposedRisk;
@@ -1688,7 +1668,7 @@ void ProcessTradingLogic(bool fromTimer)
 
                             // Update request with actual lot size and re-validate
                             tradeReq.lotSize = lotSize;
-                            if(!ApproveTradeByRiskGate(tradeReq, "post-size", riskResult))
+                            if(!ApproveTradeByUnifiedRisk(tradeReq, "post-size", riskResult))
                                 continue;
                             
                             // Validate the lot size and final risk approval
@@ -1732,8 +1712,8 @@ void ProcessTradingLogic(bool fromTimer)
                                     double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
                                     double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
                                     
-                                    // Advisory only: EnhancedRiskManager tracks usage/analytics, but does not veto entries.
-                                    enhancedRiskManager.AddRiskUsage(proposedRisk);
+                                    // Register realized risk usage after successful execution.
+                                    unifiedRiskManager.RegisterExecutedTradeRisk(riskResult);
 
                                     // Update last trade time for cooldown
                                     g_lastTradeTime = tickTime;
@@ -1789,8 +1769,9 @@ void ProcessTradingLogic(bool fromTimer)
         return;
     }
 
-    // Collect market data for AI analysis using EnhancedRiskManager stats
-    SRiskStats riskStats = enhancedRiskManager.GetRiskStatistics();
+    // Collect market data for AI analysis from unified risk + performance snapshots
+    SUnifiedRiskSnapshot riskSnapshot = unifiedRiskManager.GetSnapshot();
+    SPerformanceMetrics perfMetrics = performanceAnalytics.GetPerformanceMetrics();
     double globalMarketData[20];
     globalMarketData[0] = currentEquity;
     globalMarketData[1] = accountBalance;
@@ -1798,14 +1779,14 @@ void ProcessTradingLogic(bool fromTimer)
     globalMarketData[3] = (double)PositionsTotal();
     globalMarketData[4] = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
     globalMarketData[5] = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-    globalMarketData[6] = riskStats.current_drawdown;
-    globalMarketData[7] = riskStats.total_profit;
-    globalMarketData[8] = riskStats.total_loss;
-    globalMarketData[9] = (double)riskStats.winning_trades;
-    globalMarketData[10] = (double)riskStats.losing_trades;
-    globalMarketData[11] = riskStats.max_drawdown;
-    globalMarketData[12] = (double)riskStats.win_rate;
-    globalMarketData[13] = (double)riskStats.total_trades;
+    globalMarketData[6] = riskSnapshot.currentDrawdownPercent;
+    globalMarketData[7] = perfMetrics.totalProfit;
+    globalMarketData[8] = MathMax(0.0, -perfMetrics.totalProfit);
+    globalMarketData[9] = (double)perfMetrics.winningTrades;
+    globalMarketData[10] = (double)perfMetrics.losingTrades;
+    globalMarketData[11] = perfMetrics.maxDrawdown;
+    globalMarketData[12] = perfMetrics.winRate;
+    globalMarketData[13] = (double)perfMetrics.totalTrades;
 
     // AI Market Assessment (Heuristic IntegrationHub removed)
     double globalAIPrediction = 0.0;
@@ -1813,43 +1794,8 @@ void ProcessTradingLogic(bool fromTimer)
 
     // Update performance tracking
     UpdatePerformanceTracking();
-
-    // Prepare AI confidence display (handle NaN, INF, and zero-trade cases)
-    string aiConfidenceStr;
-    if(MathIsValidNumber(globalAIPrediction) && globalAIPrediction >= 0.0 && globalAIPrediction <= 1.0)
-    {
-        aiConfidenceStr = StringFormat("%.1f%%", globalAIPrediction * 100);
-    }
-    else if(winningTrades == 0 && losingTrades == 0)
-    {
-        aiConfidenceStr = "N/A (No trades yet)";
-    }
-    else
-    {
-        aiConfidenceStr = "N/A (Calculating...)";
-    }
-
-    // Update chart display
-    string status = StringFormat(
-        "AI Trading System ACTIVE\n" +
-        "Balance: %.2f | Equity: %.2f\n" +
-        "Drawdown: %.2f%% | Risk: %.2f%%\n" +
-        "Positions: %d | W/L: %d/%d\n" +
-        "AI Confidence: %s\n" +
-        "Next Update: %s",
-        accountBalance,
-        currentEquity,
-        currentDrawdown,
-        currentRiskPerTrade,
-        PositionsTotal(),
-        winningTrades,
-        losingTrades,
-        aiConfidenceStr,
-        TimeToString(currentTime + 60)
-    );
-
-    Comment(status);
 }
+
 //+------------------------------------------------------------------+
 //| Trade Transaction Event Handler                                  |
 //+------------------------------------------------------------------+
@@ -1986,4 +1932,3 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
         g_enterpriseManager.OnTradeTransaction(trans, request, result);
     }
 }
-
