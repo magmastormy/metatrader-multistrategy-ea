@@ -96,6 +96,7 @@ private:
     int                         m_minConfluences;
     bool                        m_requireKillZone;
     bool                        m_requireOTE;
+    bool                        m_allowCounterTrendScout;
     int                         m_lastBarProcessed;
     
     // Statistics
@@ -105,6 +106,7 @@ private:
     int                         m_tradesInKillZone;
     string                      m_lastFilterLogMessage;
     datetime                    m_lastFilterLogTime;
+    string                      m_drawPrefix;
     
 public:
                                 CStrategyUnifiedICT(const string name = "Unified ICT v1.0", int magic = 0);
@@ -123,6 +125,7 @@ public:
     void                        SetMinConfluences(int count) { m_minConfluences = count; }
     void                        SetRequireKillZone(bool req) { m_requireKillZone = req; }
     void                        SetRequireOTE(bool req) { m_requireOTE = req; }
+    void                        SetAllowCounterTrendScout(bool allow) { m_allowCounterTrendScout = allow; }
     
 private:
     void                        Cleanup();
@@ -149,6 +152,8 @@ private:
     bool                        IsPriceAtMajorPOI(double price);  // Anchor-based validation
     bool                        IsCounterTrendScoutValid(bool signalIsBullish);  // Counter-trend reversal check
     bool                        ValidatePriceRejection(ENUM_TRADE_SIGNAL signal); // Candle confirmation
+    bool                        ResolveDirectionalBias(bool &bullish) const;
+    string                      BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const;
     
     // Trade Management
     double                      CalculateStopLoss(SICTEntrySetup &entry, ENUM_TRADE_SIGNAL signal);
@@ -167,17 +172,19 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_killZones(NULL),
     m_premiumDiscount(NULL),
     m_drawingManager(NULL),
-    m_minConfluenceScore(35.0),
-    m_minConfluences(2),
+    m_minConfluenceScore(45.0),
+    m_minConfluences(4),
     m_requireKillZone(false),
     m_requireOTE(false),
+    m_allowCounterTrendScout(true),
     m_lastBarProcessed(0),
     m_signalsGenerated(0),
     m_obsDetected(0),
     m_liquiditySweeps(0),
     m_tradesInKillZone(0),
     m_lastFilterLogMessage(""),
-    m_lastFilterLogTime(0)
+    m_lastFilterLogTime(0),
+    m_drawPrefix("UICT_")
 {
 }
 
@@ -204,6 +211,33 @@ void CStrategyUnifiedICT::Cleanup()
     if(m_premiumDiscount != NULL) { delete m_premiumDiscount; m_premiumDiscount = NULL; }
 }
 
+string CStrategyUnifiedICT::BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const
+{
+    string safeSymbol = symbol;
+    StringReplace(safeSymbol, ".", "_");
+    StringReplace(safeSymbol, " ", "_");
+    StringReplace(safeSymbol, "/", "_");
+    StringReplace(safeSymbol, "-", "_");
+    return StringFormat("UICT_%s_%d_", safeSymbol, (int)timeframe);
+}
+
+bool CStrategyUnifiedICT::ResolveDirectionalBias(bool &bullish) const
+{
+    bullish = false;
+    if(m_structureAnalyzer == NULL)
+        return false;
+
+    bool isBullish = m_structureAnalyzer.IsBullish();
+    bool isBearish = m_structureAnalyzer.IsBearish();
+
+    // Reject ambiguous/neutral states to avoid forcing bearish defaults.
+    if(isBullish == isBearish)
+        return false;
+
+    bullish = isBullish;
+    return true;
+}
+
 //+------------------------------------------------------------------+
 //| Initialization                                                   |
 //+------------------------------------------------------------------+
@@ -211,6 +245,8 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
 {
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
         return false;
+
+    m_drawPrefix = BuildDrawPrefix(symbol, timeframe);
     
     // Initialize Market Structure Analyzer
     m_structureAnalyzer = new CMarketStructureAnalyzer();
@@ -262,6 +298,7 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
     if(m_drawingManager != NULL)
     {
         m_drawingManager.Initialize(symbol, timeframe, "UICT");
+        m_drawPrefix = m_drawingManager.GetPrefix();
         Print("[UICT] Chart drawing manager ready");
     }
     
@@ -276,7 +313,7 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
 //+------------------------------------------------------------------+
 void CStrategyUnifiedICT::Deinit()
 {
-    ObjectsDeleteAll(0, "UICT_");
+    ObjectsDeleteAll(0, m_drawPrefix);
     Cleanup();
     CStrategyBase::Deinit();
 }
@@ -324,9 +361,9 @@ void CStrategyUnifiedICT::DrawElements()
 {
     CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
     if(drawingCoordinator != NULL)
-        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, "UICT_");
+        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, m_drawPrefix);
     else
-        ObjectsDeleteAll(0, "UICT_");
+        ObjectsDeleteAll(0, m_drawPrefix);
     
     // Draw Order Blocks
     if(m_obDetector != NULL)
@@ -337,7 +374,7 @@ void CStrategyUnifiedICT::DrawElements()
             if(!m_obDetector.GetOrderBlock(i, ob)) continue;
             if(ob.isMitigated) continue;
             
-            string name = StringFormat("UICT_OB_%d", i);
+            string name = StringFormat("%sOB_%d", m_drawPrefix, i);
             color obColor = (ob.type == OB_SOURCE_BULLISH || ob.type == OB_CONTINUATION_BULL || ob.type == OB_BREAKER_BULL) 
                            ? clrDodgerBlue : clrCrimson;
             
@@ -360,7 +397,7 @@ void CStrategyUnifiedICT::DrawElements()
             if(!m_imbalanceDetector.GetImbalance(i, imb)) continue;
             if(imb.hasRebalanced) continue;
             
-            string name = StringFormat("UICT_FVG_%d", i);
+            string name = StringFormat("%sFVG_%d", m_drawPrefix, i);
             color fvgColor = imb.isBullish ? clrGreen : clrRed;
             
             if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
@@ -393,6 +430,13 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         if(!m_killZones.IsInKillZone())
             return TRADE_SIGNAL_NONE;
     }
+
+    bool isBullish = false;
+    if(!ResolveDirectionalBias(isBullish))
+    {
+        LogFilterEvent("[UICT] Filtered: Ambiguous or neutral structure bias");
+        return TRADE_SIGNAL_NONE;
+    }
     
     // Get best entry setup
     SICTEntrySetup bestEntry;
@@ -422,15 +466,21 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     // Check if we have a valid entry
     if(bestEntry.entryType == ICT_ENTRY_NONE || bestEntry.confidence < m_minConfidence)
         return TRADE_SIGNAL_NONE;
+
+    double entryConfluenceScore = ((double)bestEntry.confluenceCount / 6.0) * 100.0;
+    if(bestEntry.confluenceCount < m_minConfluences || entryConfluenceScore < m_minConfluenceScore)
+    {
+        LogFilterEvent(StringFormat("[UICT] Filtered: Confluence gate failed (%d / %.1f%%)",
+                                    bestEntry.confluenceCount, entryConfluenceScore));
+        return TRADE_SIGNAL_NONE;
+    }
     
     // Validate Market Maker setup
     if(!ValidateMarketMakerSetup(bestEntry))
         return TRADE_SIGNAL_NONE;
     
-    // Determine signal direction
-    ENUM_TRADE_SIGNAL result = TRADE_SIGNAL_NONE;
-    bool isBullish = (m_structureAnalyzer != NULL && m_structureAnalyzer.IsBullish());
-    bool isBearish = (m_structureAnalyzer != NULL && m_structureAnalyzer.IsBearish());
+    // Determine signal direction from validated structure bias
+    ENUM_TRADE_SIGNAL result = isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
 
     // ANCHOR-BASED REVERSAL: Require price to be at a major POI
     double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
@@ -442,18 +492,61 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
 
     // COUNTER-TREND SCOUT: Allow reversals targeting HTF zones
     bool htfAligned = m_structureAnalyzer.IsHTFAligned(isBullish);
-    result = isBullish ? TRADE_SIGNAL_BUY : (isBearish ? TRADE_SIGNAL_SELL : TRADE_SIGNAL_NONE);
 
     if(!htfAligned)
     {
+        if(!m_allowCounterTrendScout)
+        {
+            LogFilterEvent("[UICT] Filtered: Counter-trend setup blocked (production mode)");
+            return TRADE_SIGNAL_NONE;
+        }
+
+        bool aggressiveCounterTrend = (bestEntry.entryType == ICT_ENTRY_RISK ||
+                                       bestEntry.entryType == ICT_ENTRY_RISK_WITH_JUST);
+        if(aggressiveCounterTrend)
+        {
+            LogFilterEvent("[UICT] Filtered: Counter-trend blocked for aggressive entry type");
+            return TRADE_SIGNAL_NONE;
+        }
+
+        int requiredCounterConfluence = (int)MathMax((double)(m_minConfluences + 1), 5.0);
+        if(bestEntry.confluenceCount < requiredCounterConfluence)
+        {
+            LogFilterEvent(StringFormat("[UICT] Filtered: Counter-trend confluence too low (%d < %d)",
+                                        bestEntry.confluenceCount, requiredCounterConfluence));
+            return TRADE_SIGNAL_NONE;
+        }
+
         // Check if counter-trend is valid (targeting opposing HTF zone)
         if(!IsCounterTrendScoutValid(isBullish))
         {
             LogFilterEvent("[UICT] Filtered: No HTF alignment and no valid counter-trend target");
             return TRADE_SIGNAL_NONE;
         }
+
+        bool inKillZone = (m_killZones != NULL && m_killZones.IsInKillZone());
+        if(!inKillZone)
+        {
+            LogFilterEvent("[UICT] Filtered: Counter-trend requires active kill-zone");
+            return TRADE_SIGNAL_NONE;
+        }
+
+        bool hasOteAlignment = false;
+        if(m_premiumDiscount != NULL)
+        {
+            if(result == TRADE_SIGNAL_BUY)
+                hasOteAlignment = m_premiumDiscount.IsInBullishOTE(currentPrice);
+            else if(result == TRADE_SIGNAL_SELL)
+                hasOteAlignment = m_premiumDiscount.IsInBearishOTE(currentPrice);
+        }
+        if(!hasOteAlignment)
+        {
+            LogFilterEvent("[UICT] Filtered: Counter-trend requires OTE alignment");
+            return TRADE_SIGNAL_NONE;
+        }
+
         // Counter-trend is valid, reduce confidence but allow signal
-        bestEntry.confidence *= 0.85;
+        bestEntry.confidence *= 0.65;
         bestEntry.reason += " (Counter-Trend Scout)";
     }
     
@@ -463,13 +556,6 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         LogFilterEvent("[UICT] Filtered: No candlestick rejection confirmation at POI");
         return TRADE_SIGNAL_NONE;
     }
-    
-    if(isBullish)
-        result = TRADE_SIGNAL_BUY;
-    else if(isBearish)
-        result = TRADE_SIGNAL_SELL;
-    else
-        return TRADE_SIGNAL_NONE;
     
     confidence = bestEntry.confidence;
     
@@ -543,8 +629,9 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskEntry()
     if(m_structureAnalyzer == NULL || m_obDetector == NULL)
         return entry;
     
-    double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-    bool bullish = m_structureAnalyzer.IsBullish();
+    bool bullish = false;
+    if(!ResolveDirectionalBias(bullish))
+        return entry;
     
     // Find active Order Block
     int obIdx = bullish ? m_obDetector.FindBestBullishOB() : m_obDetector.FindBestBearishOB();
@@ -585,7 +672,9 @@ SICTEntrySetup CStrategyUnifiedICT::CreateJustificationEntry()
         return entry;
     
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-    bool bullish = m_structureAnalyzer.IsBullish();
+    bool bullish = false;
+    if(!ResolveDirectionalBias(bullish))
+        return entry;
     
     // Find active Order Block
     int obIdx = bullish ? m_obDetector.FindBestBullishOB() : m_obDetector.FindBestBearishOB();
@@ -629,7 +718,7 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskWithJustEntry()
 {
     SICTEntrySetup entry;
     
-    if(m_structureAnalyzer == NULL)
+    if(m_structureAnalyzer == NULL || m_obDetector == NULL)
         return entry;
     
     // Check for first BMS but trend not confirmed
@@ -640,8 +729,9 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskWithJustEntry()
     if(m_structureAnalyzer.IsTrendConfirmed())
         return entry;
     
-    // Get LTF confirmation
-    bool bullish = m_structureAnalyzer.IsBullish();
+    bool bullish = false;
+    if(!ResolveDirectionalBias(bullish))
+        return entry;
     
     int obIdx = bullish ? m_obDetector.FindBestBullishOB() : m_obDetector.FindBestBearishOB();
     if(obIdx < 0) return entry;
@@ -660,7 +750,6 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskWithJustEntry()
     entry.confidence = 0.72;
     entry.reason = "Risk + Justification after first BMS";
     
-    double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     entry.stopLoss = CalculateStopLoss(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
     CalculateTakeProfits(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
     
@@ -674,7 +763,7 @@ SICTEntrySetup CStrategyUnifiedICT::CreateFullJustificationEntry()
 {
     SICTEntrySetup entry;
     
-    if(m_structureAnalyzer == NULL)
+    if(m_structureAnalyzer == NULL || m_obDetector == NULL)
         return entry;
     
     // HTF trend must be confirmed (2+ BMS)
@@ -684,7 +773,9 @@ SICTEntrySetup CStrategyUnifiedICT::CreateFullJustificationEntry()
     if(m_structureAnalyzer.GetConsecutiveBMS() < 2)
         return entry;
     
-    bool bullish = m_structureAnalyzer.IsBullish();
+    bool bullish = false;
+    if(!ResolveDirectionalBias(bullish))
+        return entry;
     
     int obIdx = bullish ? m_obDetector.FindBestBullishOB() : m_obDetector.FindBestBearishOB();
     if(obIdx < 0) return entry;
@@ -776,9 +867,12 @@ bool CStrategyUnifiedICT::HasLiquidityConfluence(double price)
 {
     if(m_liquidityDetector == NULL) return false;
     
-    // Check if liquidity was recently swept
     bool isBuyside;
-    return m_liquidityDetector.HasRecentSweep(isBuyside);
+    if(!m_liquidityDetector.HasRecentSweep(isBuyside))
+        return false;
+
+    // Require price proximity to active liquidity to avoid distant, stale sweeps.
+    return m_liquidityDetector.IsNearLiquidity(price, 30);
 }
 
 //+------------------------------------------------------------------+

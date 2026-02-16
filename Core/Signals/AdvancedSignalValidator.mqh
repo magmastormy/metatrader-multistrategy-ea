@@ -38,6 +38,7 @@ private:
     bool m_enableSessionFilter;
     bool m_enableVolatilityFilter;
     bool m_enableSpreadFilter;
+    bool m_allowSyntheticOffHours;    // Allow synthetics to trade 24/7
     
     // Time filter settings
     int m_startHour;                  // Trading start hour (0-23)
@@ -91,6 +92,7 @@ public:
         m_enableSpreadFilter = enable;
         m_maxSpreadMultiplier = maxSpreadMultiplier;
     }
+    void SetAllowSyntheticOffHours(bool allow) { m_allowSyntheticOffHours = allow; }
     
     // Main validation function
     SSignalValidationResult ValidateSignal(
@@ -103,9 +105,13 @@ public:
     
     // Individual filter checks
     bool CheckSpreadFilter(const string symbol, double atrValue);
-    bool CheckTimeFilter();
-    bool CheckSessionFilter();
+    bool CheckTimeFilter(const string symbol = "");
+    bool CheckSessionFilter(const string symbol = "");
     bool CheckVolatilityFilter(const string symbol, double atrValue);
+    
+private:
+    // Helper function
+    bool IsSyntheticSymbol(const string symbol);
     
     // Quality score calculation
     double CalculateQualityScore(
@@ -135,13 +141,14 @@ public:
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
 CAdvancedSignalValidator::CAdvancedSignalValidator() :
-    m_minStrategyConfluence(1),      // FIXED: Allow single strategy signals (was 2, too restrictive)
-    m_minQualityScore(0.55),          // FIXED: Lowered from 0.65 to match confidence threshold
+    m_minStrategyConfluence(2),
+    m_minQualityScore(0.65),
     m_maxSpreadMultiplier(2.0),       // Max spread = 2x ATR
     m_enableTimeFilter(true),
     m_enableSessionFilter(true),
     m_enableVolatilityFilter(true),
     m_enableSpreadFilter(true),
+    m_allowSyntheticOffHours(true),   // Allow synthetics to trade 24/7 by default
     m_startHour(1),                   // Start at 1 AM
     m_endHour(22),                    // End at 10 PM
     m_avoidNewsHours(true),
@@ -211,7 +218,7 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     // 3. Check time filter
     if(m_enableTimeFilter)
     {
-        result.passedTimeFilter = CheckTimeFilter();
+        result.passedTimeFilter = CheckTimeFilter(symbol);
         if(!result.passedTimeFilter)
         {
             result.reason = "Outside trading hours";
@@ -223,7 +230,7 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     // 4. Check session filter
     if(m_enableSessionFilter)
     {
-        result.passedSessionFilter = CheckSessionFilter();
+        result.passedSessionFilter = CheckSessionFilter(symbol);
         if(!result.passedSessionFilter)
         {
             result.reason = "Not in active trading session";
@@ -284,13 +291,17 @@ bool CAdvancedSignalValidator::CheckSpreadFilter(const string symbol, double atr
 //+------------------------------------------------------------------+
 //| Check Time Filter                                                |
 //+------------------------------------------------------------------+
-bool CAdvancedSignalValidator::CheckTimeFilter()
+bool CAdvancedSignalValidator::CheckTimeFilter(const string symbol = "")
 {
+    // If synthetic indices and off-hours allowed, bypass time filter
+    if(m_allowSyntheticOffHours && IsSyntheticSymbol(symbol))
+        return true;
+    
     MqlDateTime dt;
     TimeToStruct(TimeCurrent(), dt);
     int currentHour = dt.hour;
     
-    // Check trading hours
+    // Check trading hours (1 AM - 10 PM GMT by default)
     if(m_startHour <= m_endHour)
     {
         if(currentHour < m_startHour || currentHour >= m_endHour)
@@ -319,8 +330,12 @@ bool CAdvancedSignalValidator::CheckTimeFilter()
 //+------------------------------------------------------------------+
 //| Check Session Filter                                             |
 //+------------------------------------------------------------------+
-bool CAdvancedSignalValidator::CheckSessionFilter()
+bool CAdvancedSignalValidator::CheckSessionFilter(const string symbol = "")
 {
+    // If synthetic indices and off-hours allowed, bypass session filter
+    if(m_allowSyntheticOffHours && IsSyntheticSymbol(symbol))
+        return true;
+    
     MqlDateTime dt;
     TimeToStruct(TimeCurrent(), dt);
     int gmtHour = dt.hour;  // Assuming server time is GMT
@@ -337,6 +352,25 @@ bool CAdvancedSignalValidator::CheckSessionFilter()
     if(m_tradeNewYorkSession && gmtHour >= 13 && gmtHour < 22)
         return true;
     
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Symbol is Synthetic Index                               |
+//+------------------------------------------------------------------+
+bool CAdvancedSignalValidator::IsSyntheticSymbol(const string symbol)
+{
+    if(symbol == "" || symbol == NULL) return false;
+    
+    // Check for Deriv synthetic indices that trade 24/7
+    if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
+       StringFind(symbol, "Step") >= 0 ||      // Step Index variants
+       StringFind(symbol, "Boom") >= 0 ||      // Boom 1000, Boom 500
+       StringFind(symbol, "Crash") >= 0 ||     // Crash 1000, Crash 500
+       StringFind(symbol, "Jump") >= 0)        // Jump 10, Jump 25, etc.
+    {
+        return true;
+    }
     return false;
 }
 

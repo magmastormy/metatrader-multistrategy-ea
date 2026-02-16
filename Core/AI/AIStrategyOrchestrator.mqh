@@ -891,6 +891,14 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::GetEnsembleSignal(SEnsembleVote &vote
         confidence = 0.0;
         return TRADE_SIGNAL_NONE;
     }
+
+    // Require at least two valid voters when ensemble has multiple registered strategies.
+    if(validVoteCount == 1 && m_strategyCount > 1)
+    {
+        confidence = 0.0;
+        LogOrchestrationEvent(ERROR_INFO, "Single-vote ensemble signal rejected (multi-strategy quorum not met)");
+        return TRADE_SIGNAL_NONE;
+    }
     
     // Process weighted voting
     ENUM_TRADE_SIGNAL signal = ProcessWeightedVoting(validVotes, validVoteCount, confidence);
@@ -924,6 +932,8 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::ProcessWeightedVoting(SEnsembleVote &
     double sellWeight = 0.0;
     double totalWeight = 0.0;
     double totalConfidence = 0.0;
+    int buyVotes = 0;
+    int sellVotes = 0;
     
     // Calculate weighted votes
     for(int i = 0; i < voteCount; i++)
@@ -935,10 +945,12 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::ProcessWeightedVoting(SEnsembleVote &
         if(votes[i].signal == TRADE_SIGNAL_BUY)
         {
             buyWeight += effectiveWeight;
+            buyVotes++;
         }
         else if(votes[i].signal == TRADE_SIGNAL_SELL)
         {
             sellWeight += effectiveWeight;
+            sellVotes++;
         }
         
         totalWeight += effectiveWeight;
@@ -958,7 +970,7 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::ProcessWeightedVoting(SEnsembleVote &
     
     // REQUIREMENT 4.5: IF multiple strategies agree on direction THEN confidence SHALL be increased
     double agreementLevel = MathMax(buyConsensus, sellConsensus);
-    if(agreementLevel >= 0.7) // Strong agreement threshold
+    if(voteCount >= 2 && (buyVotes >= 2 || sellVotes >= 2) && agreementLevel >= 0.7) // Require real multi-strategy agreement
     {
         confidence += m_agreementBonus * agreementLevel;
         confidence = MathMin(confidence, 1.0); // Cap at 1.0
@@ -990,17 +1002,18 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::ProcessWeightedVoting(SEnsembleVote &
     // REQUIREMENT 4.7: WHEN market regime is uncertain THEN only high-confidence signals SHALL be executed
     if(m_regimeConfidence < m_regimeUncertaintyThreshold)
     {
-        if(confidence < m_highConfidenceThreshold)
+        int directionalVotes = (buyConsensus >= sellConsensus) ? buyVotes : sellVotes;
+        if(confidence < m_highConfidenceThreshold || directionalVotes < 2)
         {
             LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("Regime uncertain (%.2f), requiring high confidence (%.2f) - signal rejected", 
-                                             m_regimeConfidence, confidence));
+                                 StringFormat("Regime uncertain (%.2f), requiring high-confidence multi-vote signal (conf=%.2f, votes=%d) - signal rejected", 
+                                             m_regimeConfidence, confidence, directionalVotes));
             return TRADE_SIGNAL_NONE;
         }
         else
         {
             LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("High confidence signal (%.2f) accepted despite regime uncertainty", confidence));
+                                 StringFormat("High confidence multi-vote signal accepted despite regime uncertainty (conf=%.2f, votes=%d)", confidence, directionalVotes));
         }
     }
     

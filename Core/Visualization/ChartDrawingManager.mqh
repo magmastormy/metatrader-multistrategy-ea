@@ -97,6 +97,7 @@ private:
     
     // Helper methods
     string GenerateObjectName(const string objectType, const string uniqueId);
+    string BuildScopedPrefix(const string basePrefix, const string symbol, ENUM_TIMEFRAMES tf);
     void PrepareSnapshotDraw();
     bool IsObjectOld(const string objName, int maxAge);
     void DeleteOldObjects(const string prefix, int maxAge);
@@ -169,6 +170,7 @@ public:
     // Utility
     void EnableDebugMode(bool enable) { m_config.enableDebugMode = enable; }
     bool IsDebugMode() const { return m_config.enableDebugMode; }
+    string GetPrefix() const { return m_prefix; }
 };
 
 //+------------------------------------------------------------------+
@@ -251,11 +253,30 @@ bool CChartDrawingManager::Initialize(const string symbol, ENUM_TIMEFRAMES tf, c
     m_symbol = symbol;
     m_timeframe = tf;
     m_chartID = ChartID();
-    m_prefix = (prefix == "") ? "CHART_" : prefix + "_";
+    m_prefix = BuildScopedPrefix(prefix, symbol, tf);
     m_lastCleanup = TimeCurrent();
     
     Print("[ChartDrawing] Initialized for ", symbol, " on ", EnumToString(tf));
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Build scoped drawing prefix (symbol + timeframe isolated)        |
+//+------------------------------------------------------------------+
+string CChartDrawingManager::BuildScopedPrefix(const string basePrefix,
+                                               const string symbol,
+                                               ENUM_TIMEFRAMES tf)
+{
+    string root = (basePrefix == "") ? "CHART" : basePrefix;
+
+    // Sanitize symbol for object names
+    string safeSymbol = symbol;
+    StringReplace(safeSymbol, ".", "_");
+    StringReplace(safeSymbol, " ", "_");
+    StringReplace(safeSymbol, "/", "_");
+    StringReplace(safeSymbol, "-", "_");
+
+    return StringFormat("%s_%s_%d_", root, safeSymbol, (int)tf);
 }
 
 //+------------------------------------------------------------------+

@@ -432,11 +432,11 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     ENUM_TREND_TYPE trend = m_trendEngine.GetCurrentTrend();
     double trendStrength = m_trendEngine.GetTrendStrength();
     
-    // 🔥 FIX: Bypass filter for very high confidence signals (>75%)
-    if(confidence > 0.75)
+    // Only bypass trend alignment in neutral/ranging regimes for truly exceptional confidence.
+    if(confidence > 0.90 && (trend == TREND_RANGING || trend == TREND_NONE))
     {
         LogFilterResult("TrendFilter", true, 
-                       StringFormat("BYPASSED - High confidence signal (%.2f) | Trend: %s", 
+                       StringFormat("BYPASSED - Exceptional confidence in neutral trend (%.2f) | Trend: %s", 
                                   confidence, EnumToString(trend)));
         return true;
     }
