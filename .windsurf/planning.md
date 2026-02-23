@@ -1,5 +1,51 @@
 # Current Planning
 
+## Active Track (2026-02-22)
+- [x] Research Windsurf workflow patterns and map them into repository-ready markdown workflows.
+- [x] Create baseline workflow pack in `.windsurf/workflows`:
+  - [x] `audit_runtime_ai.md`
+  - [x] `implement_safe_fix.md`
+  - [x] `shadow_run_triage.md`
+  - [x] `release_doc_sync.md`
+  - [x] `compile_clean.md`
+  - [x] workflow index `README.md`
+- [x] Create general-purpose workflows for broader coding usage:
+  - [x] global any-task loop
+  - [x] web build/adjust/debug
+  - [x] web hotfix debug
+  - [x] python feature+bugfix
+  - [x] python debug triage
+- [x] Place general-purpose workflows under `.windsurf/workflows/global` for reusable/global organization.
+- [x] Harden `.windsurf/rules/rule-pro.md` for stricter autonomous execution and quality gates.
+- [x] Enforce explicit no-placeholder policy in rules (no TODO/FIXME/stub completion outputs).
+- [x] Add repository state-file maintenance policy (`context.md`, `history.md`, `planning.md`) into rules.
+
+## Immediate Follow-up
+- [ ] Remove duplicated general workflow copies in `.windsurf/workflows` root when Windows file lock/ACL allows deletion.
+- [ ] Optionally mirror `.windsurf/workflows/global` into your external/global Windsurf profile location if you want cross-project reuse.
+- [ ] Keep session state files updated at close of each major implementation batch.
+
+## System Recovery Track (2026-02-22 Snapshot)
+- [x] Wire Transformer/Ensemble into runtime vote path via adapters.
+- [x] Add shared AI feature builder for adapter input parity.
+- [x] Register symbol-qualified strategies with orchestrator (`symbol::strategy`).
+- [x] Synchronize adapted orchestrator weights back into enterprise managers.
+- [x] Feed closed-trade contributor performance into orchestrator updates.
+- [x] Add adaptive intrabar quorum logic with confidence safety floor.
+- [x] Add first-class consensus diagnostics (`raw_none`, `filtered_out`, `quorum_failed`, `intrabar_not_eligible`).
+- [x] Align Momentum intrabar eligibility to non-intrabar.
+- [x] Enable all-symbol intrabar default (`InpIntrabarChartSymbolOnly=false`).
+- [x] Add shadow-mode runtime path (`InpShadowMode=true`) with `[SHADOW-TRADE]` outputs.
+- [x] Fix indicator singleton teardown path on deinit.
+- [x] Fix liquidity filter symbol context in unified pipeline.
+
+## Recovery Validation To Continue
+- [ ] Run a clean shadow session and capture 24h-equivalent telemetry window.
+- [ ] Confirm `no_signal_ratio < 97%` on intrabar-enabled symbols.
+- [ ] Confirm non-zero Transformer and Ensemble vote counts per active symbol.
+- [ ] Confirm orchestrator report shows non-zero registered strategies and active adaptation.
+- [ ] Confirm deinit has no indicator-manager leak warnings.
+
 ## ✅ CRITICAL FIXES COMPLETED (2025-12-25) - ALL ISSUES RESOLVED
 - [x] Remove BEAST MODE override (ProcessIntelligentTrading.mqh:147-156)
   - [x] Delete lines forcing 0.01 lot size

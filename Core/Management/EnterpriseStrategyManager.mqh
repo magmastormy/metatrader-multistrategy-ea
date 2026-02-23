@@ -89,7 +89,28 @@ private:
     string m_lastSignalSymbol;
     datetime m_lastSignalTime;
 
+    // Consensus diagnostics counters
+    ulong m_diagRawNone;
+    ulong m_diagFilteredOut;
+    ulong m_diagQuorumFailed;
+    ulong m_diagIntrabarNotEligible;
+    datetime m_lastDiagLogTime;
+
+    // Position-level contributor attribution
+    ulong m_attributionPositionIds[];
+    string m_attributionContributorCsv[];
+    string m_closedTradeContributors[];
+    double m_closedTradeNetProfit;
+    bool m_hasClosedTradeAttribution;
+
     bool IsPositionIdStillOpen(const ulong positionId) const;
+    int FindStrategyIndexByName(const string name) const;
+    void MaybeLogConsensusDiagnostics(const string symbol);
+    int FindAttributionIndexByPositionId(const ulong positionId) const;
+    string JoinContributors(const string &contributors[]) const;
+    void SplitContributors(const string csv, string &contributors[]) const;
+    void UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
+    bool PopPositionAttribution(const ulong positionId, string &contributors[]);
     
 public:
     CEnterpriseStrategyManager();
@@ -125,6 +146,12 @@ public:
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum) { m_minQuorum = MathMax(1, quorum); }  // Solo Mode support
     int  GetMinQuorum() const { return m_minQuorum; }
+    bool UpdateStrategyWeightByName(const string name, const double weight);
+    int GetRegisteredStrategyCount() const { return m_strategyCount; }
+    string GetRegisteredStrategyName(const int index) const;
+    double GetRegisteredStrategyWeight(const int index) const;
+    void GetLastSignalContributors(string &contributors[]) const;
+    bool PopClosedTradeAttribution(string &contributors[], double &netProfit);
     
     // Utility
     int GetActiveStrategyCount() const;
@@ -159,10 +186,20 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_avgConfidence(0),
     m_lastContributorCount(0),
     m_lastSignalSymbol(""),
-    m_lastSignalTime(0)
+    m_lastSignalTime(0),
+    m_diagRawNone(0),
+    m_diagFilteredOut(0),
+    m_diagQuorumFailed(0),
+    m_diagIntrabarNotEligible(0),
+    m_lastDiagLogTime(0),
+    m_closedTradeNetProfit(0.0),
+    m_hasClosedTradeAttribution(false)
 {
     ArrayResize(m_strategies, 0);
     ArrayResize(m_lastSignalContributors, 0);
+    ArrayResize(m_attributionPositionIds, 0);
+    ArrayResize(m_attributionContributorCsv, 0);
+    ArrayResize(m_closedTradeContributors, 0);
 }
 
 //+------------------------------------------------------------------+
@@ -320,39 +357,57 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         return TRADE_SIGNAL_NONE;
     }
     
+    int cycleRawNone = 0;
+    int cycleFilteredOut = 0;
+    int cycleQuorumFailed = 0;
+    int cycleIntrabarNotEligible = 0;
+
     // Store original symbol for restoration
     string originalSymbol = m_symbol;
-    
+
     // Temporarily switch context to target symbol
     m_symbol = symbol;
-    
+
     int buyVotes = 0, sellVotes = 0;
     double buyConf = 0, sellConf = 0;
     double buyWeightSum = 0.0, sellWeightSum = 0.0;
     int activeStrategies = 0;
-    
+    string buyContributors[];
+    string sellContributors[];
+    ArrayResize(buyContributors, 0);
+    ArrayResize(sellContributors, 0);
+
     for(int i = 0; i < m_strategyCount; i++)
     {
         if(!m_strategies[i].enabled)
             continue;
 
         if(evalMode == EVAL_MODE_INTRABAR && !m_strategies[i].intrabarEligible)
+        {
+            cycleIntrabarNotEligible++;
             continue;
-        
+        }
+
         double stratConf = 0;
-        ENUM_TRADE_SIGNAL signal;
-        
+        ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
+
         // Get signal (filtered if pipeline enabled)
         if(m_usePipeline && m_pipeline != NULL)
         {
-            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy, 
-                                            symbol, 
-                                            m_strategies[i].timeframe, 
-                                             stratConf);
+            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy,
+                                              symbol,
+                                              m_strategies[i].timeframe,
+                                              stratConf);
+            if(m_pipeline.WasLastSignalRawNone())
+                cycleRawNone++;
+            if(m_pipeline.WasLastSignalFilteredByPipeline())
+                cycleFilteredOut++;
         }
         else
         {
             signal = m_strategies[i].strategy.GetSignal(stratConf);
+            if(signal == TRADE_SIGNAL_NONE)
+                cycleRawNone++;
         }
 
         m_strategies[i].lastSignal = signal;
@@ -368,49 +423,108 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             buyVotes++;
             buyConf += stratConf * strategyWeight;
             buyWeightSum += strategyWeight;
+
+            int buySize = ArraySize(buyContributors);
+            ArrayResize(buyContributors, buySize + 1);
+            buyContributors[buySize] = m_strategies[i].name;
         }
         else if(signal == TRADE_SIGNAL_SELL)
         {
             sellVotes++;
             sellConf += stratConf * strategyWeight;
             sellWeightSum += strategyWeight;
+
+            int sellSize = ArraySize(sellContributors);
+            ArrayResize(sellContributors, sellSize + 1);
+            sellContributors[sellSize] = m_strategies[i].name;
         }
 
         activeStrategies++;
     }
+
     // Restore original symbol
     m_symbol = originalSymbol;
 
+    m_diagRawNone += (ulong)MathMax(0, cycleRawNone);
+    m_diagFilteredOut += (ulong)MathMax(0, cycleFilteredOut);
+    m_diagIntrabarNotEligible += (ulong)MathMax(0, cycleIntrabarNotEligible);
+
     if(activeStrategies == 0)
     {
+        MaybeLogConsensusDiagnostics(symbol);
         return TRADE_SIGNAL_NONE;
     }
 
-    // Solo Mode: auto-adjust quorum based on active strategies
-    int effectiveQuorum = (activeStrategies == 1) ? 1 : m_minQuorum;
+    int effectiveQuorum = m_minQuorum;
+    if(evalMode == EVAL_MODE_INTRABAR)
+        effectiveQuorum = 1;
+    else if(activeStrategies == 1)
+        effectiveQuorum = 1;
+    effectiveQuorum = MathMax(1, MathMin(effectiveQuorum, activeStrategies));
 
     bool buyQuorumMet = (buyVotes >= effectiveQuorum);
     bool sellQuorumMet = (sellVotes >= effectiveQuorum);
 
+    ENUM_TRADE_SIGNAL finalSignal = TRADE_SIGNAL_NONE;
+    double finalConfidence = 0.0;
+    int finalConfluence = 0;
+    string selectedContributors[];
+    ArrayResize(selectedContributors, 0);
+
     if(buyQuorumMet && (!sellQuorumMet || buyConf > sellConf))
     {
-        confluence = buyVotes;
-        double weightedConfidence = (buyWeightSum > 0.0) ? (buyConf / buyWeightSum) : 0.0;
-        confidence = MathMax(0.0, MathMin(1.0, weightedConfidence));
-        m_totalSignals++;
-        return TRADE_SIGNAL_BUY;
+        finalSignal = TRADE_SIGNAL_BUY;
+        finalConfluence = buyVotes;
+        finalConfidence = (buyWeightSum > 0.0) ? (buyConf / buyWeightSum) : 0.0;
+        ArrayCopy(selectedContributors, buyContributors);
     }
     else if(sellQuorumMet && (!buyQuorumMet || sellConf > buyConf))
     {
-        confluence = sellVotes;
-        double weightedConfidence = (sellWeightSum > 0.0) ? (sellConf / sellWeightSum) : 0.0;
-        confidence = MathMax(0.0, MathMin(1.0, weightedConfidence));
-        m_totalSignals++;
-        return TRADE_SIGNAL_SELL;
+        finalSignal = TRADE_SIGNAL_SELL;
+        finalConfluence = sellVotes;
+        finalConfidence = (sellWeightSum > 0.0) ? (sellConf / sellWeightSum) : 0.0;
+        ArrayCopy(selectedContributors, sellContributors);
     }
-    
+    else
+    {
+        cycleQuorumFailed++;
+    }
+
+    // Intrabar safety gate: single-voter signal requires stronger confidence.
+    if(finalSignal != TRADE_SIGNAL_NONE &&
+       evalMode == EVAL_MODE_INTRABAR &&
+       effectiveQuorum == 1 &&
+       finalConfidence < 0.65)
+    {
+        cycleQuorumFailed++;
+        finalSignal = TRADE_SIGNAL_NONE;
+        finalConfidence = 0.0;
+        finalConfluence = 0;
+        ArrayResize(selectedContributors, 0);
+    }
+
+    m_diagQuorumFailed += (ulong)MathMax(0, cycleQuorumFailed);
+
+    if(finalSignal != TRADE_SIGNAL_NONE)
+    {
+        confluence = finalConfluence;
+        confidence = MathMax(0.0, MathMin(1.0, finalConfidence));
+        m_totalSignals++;
+
+        m_lastSignalSymbol = symbol;
+        m_lastSignalTime = TimeCurrent();
+        ArrayCopy(m_lastSignalContributors, selectedContributors);
+        m_lastContributorCount = ArraySize(m_lastSignalContributors);
+
+        MaybeLogConsensusDiagnostics(symbol);
+        return finalSignal;
+    }
+
     confidence = 0;
     confluence = 0;
+    m_lastContributorCount = 0;
+    ArrayResize(m_lastSignalContributors, 0);
+    MaybeLogConsensusDiagnostics(symbol);
     return TRADE_SIGNAL_NONE;
 }
 
@@ -432,16 +546,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(const string
     // Delegate to manager-owned consensus logic and preserve confluence/quorum behavior.
     int confluence = 0;
     ENUM_TRADE_SIGNAL signal = GetConsensusSignalForSymbolWithConfluence(symbol, confidence, confluence);
-    m_lastContributorCount = confluence;
-    if(signal != TRADE_SIGNAL_NONE)
-    {
-        m_lastSignalSymbol = symbol;
-        m_lastSignalTime = TimeCurrent();
-    }
-    else
-    {
+    if(signal == TRADE_SIGNAL_NONE)
         ArrayResize(m_lastSignalContributors, 0);
-    }
     return signal;
 }
 
@@ -453,7 +559,7 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     int size = ArraySize(flags);
     
     // 0: Momentum
-    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, PERIOD_CURRENT, true);
+    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, PERIOD_CURRENT, false);
     
     // 1: Trend
     if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, PERIOD_CURRENT, false);
@@ -573,6 +679,164 @@ void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxL
                 clampedWinRate, clampedMaxLosses);
 }
 
+bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, const double weight)
+{
+    int index = FindStrategyIndexByName(name);
+    if(index < 0)
+        return false;
+
+    double sanitizedWeight = MathMax(0.0, MathMin(10.0, weight));
+    m_strategies[index].weight = sanitizedWeight;
+    if(m_strategies[index].strategy != NULL)
+        m_strategies[index].strategy.SetWeight(sanitizedWeight);
+
+    return true;
+}
+
+string CEnterpriseStrategyManager::GetRegisteredStrategyName(const int index) const
+{
+    if(index < 0 || index >= m_strategyCount)
+        return "";
+    return m_strategies[index].name;
+}
+
+double CEnterpriseStrategyManager::GetRegisteredStrategyWeight(const int index) const
+{
+    if(index < 0 || index >= m_strategyCount)
+        return 0.0;
+    return m_strategies[index].weight;
+}
+
+void CEnterpriseStrategyManager::GetLastSignalContributors(string &contributors[]) const
+{
+    ArrayCopy(contributors, m_lastSignalContributors);
+}
+
+bool CEnterpriseStrategyManager::PopClosedTradeAttribution(string &contributors[], double &netProfit)
+{
+    if(!m_hasClosedTradeAttribution)
+        return false;
+
+    ArrayCopy(contributors, m_closedTradeContributors);
+    netProfit = m_closedTradeNetProfit;
+
+    ArrayResize(m_closedTradeContributors, 0);
+    m_closedTradeNetProfit = 0.0;
+    m_hasClosedTradeAttribution = false;
+    return true;
+}
+
+int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
+{
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(m_strategies[i].name == name)
+            return i;
+    }
+    return -1;
+}
+
+void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbol)
+{
+    datetime now = TimeCurrent();
+    if(m_lastDiagLogTime == 0 || (now - m_lastDiagLogTime) >= 60)
+    {
+        PrintFormat("[CONSENSUS-DIAG] %s | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u",
+                    symbol, m_diagRawNone, m_diagFilteredOut, m_diagQuorumFailed, m_diagIntrabarNotEligible);
+        m_diagRawNone = 0;
+        m_diagFilteredOut = 0;
+        m_diagQuorumFailed = 0;
+        m_diagIntrabarNotEligible = 0;
+        m_lastDiagLogTime = now;
+    }
+}
+
+int CEnterpriseStrategyManager::FindAttributionIndexByPositionId(const ulong positionId) const
+{
+    for(int i = 0; i < ArraySize(m_attributionPositionIds); i++)
+    {
+        if(m_attributionPositionIds[i] == positionId)
+            return i;
+    }
+    return -1;
+}
+
+string CEnterpriseStrategyManager::JoinContributors(const string &contributors[]) const
+{
+    string csv = "";
+    for(int i = 0; i < ArraySize(contributors); i++)
+    {
+        if(contributors[i] == "")
+            continue;
+        if(StringLen(csv) > 0)
+            csv += ";";
+        csv += contributors[i];
+    }
+    return csv;
+}
+
+void CEnterpriseStrategyManager::SplitContributors(const string csv, string &contributors[]) const
+{
+    ArrayResize(contributors, 0);
+    if(csv == "")
+        return;
+
+    string parsed[];
+    int count = StringSplit(csv, ';', parsed);
+    if(count <= 0)
+        return;
+
+    ArrayResize(contributors, count);
+    for(int i = 0; i < count; i++)
+        contributors[i] = parsed[i];
+}
+
+void CEnterpriseStrategyManager::UpsertPositionAttribution(const ulong positionId, const string &contributors[])
+{
+    if(positionId == 0 || ArraySize(contributors) <= 0)
+        return;
+
+    string contributorCsv = JoinContributors(contributors);
+    if(contributorCsv == "")
+        return;
+
+    int idx = FindAttributionIndexByPositionId(positionId);
+    if(idx >= 0)
+    {
+        m_attributionContributorCsv[idx] = contributorCsv;
+        return;
+    }
+
+    int size = ArraySize(m_attributionPositionIds);
+    ArrayResize(m_attributionPositionIds, size + 1);
+    ArrayResize(m_attributionContributorCsv, size + 1);
+    m_attributionPositionIds[size] = positionId;
+    m_attributionContributorCsv[size] = contributorCsv;
+}
+
+bool CEnterpriseStrategyManager::PopPositionAttribution(const ulong positionId, string &contributors[])
+{
+    int idx = FindAttributionIndexByPositionId(positionId);
+    if(idx < 0)
+        return false;
+
+    SplitContributors(m_attributionContributorCsv[idx], contributors);
+
+    int last = ArraySize(m_attributionPositionIds) - 1;
+    if(last >= 0)
+    {
+        if(idx != last)
+        {
+            m_attributionPositionIds[idx] = m_attributionPositionIds[last];
+            m_attributionContributorCsv[idx] = m_attributionContributorCsv[last];
+        }
+        ArrayResize(m_attributionPositionIds, last);
+        ArrayResize(m_attributionContributorCsv, last);
+    }
+
+    return true;
+}
+
 //+------------------------------------------------------------------+
 //| OnNewBar - CRITICAL for zone scanning and chart drawings         |
 //| Must be called from main EA on each new bar                      |
@@ -655,6 +919,14 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
 
             ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
             ulong positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+
+            if((entryType == DEAL_ENTRY_IN || entryType == DEAL_ENTRY_INOUT) &&
+               positionId > 0 &&
+               m_lastContributorCount > 0 &&
+               ArraySize(m_lastSignalContributors) > 0)
+            {
+                UpsertPositionAttribution(positionId, m_lastSignalContributors);
+            }
             
             // We care about exits (deals that close a position) to meaningful profit/loss
             if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY || entryType == DEAL_ENTRY_INOUT)
@@ -671,6 +943,18 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                 bool success = (netProfit > 0);
                 if(success)
                     m_successfulSignals++;
+
+                m_hasClosedTradeAttribution = false;
+                m_closedTradeNetProfit = 0.0;
+                ArrayResize(m_closedTradeContributors, 0);
+
+                string contributors[];
+                if(positionId > 0 && PopPositionAttribution(positionId, contributors))
+                {
+                    ArrayCopy(m_closedTradeContributors, contributors);
+                    m_closedTradeNetProfit = netProfit;
+                    m_hasClosedTradeAttribution = (ArraySize(m_closedTradeContributors) > 0);
+                }
 
                 // Reset cached contributor context after close in manager-only governance mode.
                 m_lastContributorCount = 0;

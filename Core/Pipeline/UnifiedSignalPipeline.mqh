@@ -79,11 +79,14 @@ private:
     int m_signalsProcessed;
     int m_signalsFiltered;
     int m_signalsPassed;
+    string m_lastEvaluatedSymbol;
+    bool m_lastRawSignalNone;
+    bool m_lastFilteredByPipeline;
     
     // Internal methods
     bool ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
     bool ApplyVolatilityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
-    bool ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
+    bool ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence, const string symbol);
     bool ApplyStructureFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
     bool ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal);
     void LogFilterResult(const string filter, bool passed, const string reason);
@@ -112,6 +115,9 @@ public:
     int GetSignalsProcessed() const { return m_signalsProcessed; }
     int GetSignalsFiltered() const { return m_signalsFiltered; }
     int GetSignalsPassed() const { return m_signalsPassed; }
+    bool WasLastSignalRawNone() const { return m_lastRawSignalNone; }
+    bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
+    string GetLastEvaluatedSymbol() const { return m_lastEvaluatedSymbol; }
     double GetFilterRate() const 
     { 
         return m_signalsProcessed > 0 ? 
@@ -138,7 +144,10 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_hedgingProtection(NULL),
     m_signalsProcessed(0),
     m_signalsFiltered(0),
-    m_signalsPassed(0)
+    m_signalsPassed(0),
+    m_lastEvaluatedSymbol(""),
+    m_lastRawSignalNone(false),
+    m_lastFilteredByPipeline(false)
 {
 }
 
@@ -211,9 +220,14 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                                                        ENUM_TIMEFRAMES timeframe, 
                                                        double &confidence)
 {
+    m_lastEvaluatedSymbol = symbol;
+    m_lastRawSignalNone = false;
+    m_lastFilteredByPipeline = false;
+
     if(strategy == NULL)
     {
         confidence = 0;
+        m_lastRawSignalNone = true;
         return TRADE_SIGNAL_NONE;
     }
     
@@ -224,6 +238,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     
     if(signal == TRADE_SIGNAL_NONE)
     {
+        m_lastRawSignalNone = true;
         m_signalsFiltered++;
         return TRADE_SIGNAL_NONE;
     }
@@ -251,7 +266,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         passed = passed && ApplyVolatilityFilter(signal, confidence);
     
     if(m_filters.enableLiquidityFilter)
-        passed = passed && ApplyLiquidityFilter(signal, confidence);
+        passed = passed && ApplyLiquidityFilter(signal, confidence, symbol);
     
     if(m_filters.enableStructureFilter)
         passed = passed && ApplyStructureFilter(signal, confidence);
@@ -311,6 +326,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     
     if(!passed)
     {
+        m_lastFilteredByPipeline = true;
         m_signalsFiltered++;
         signal = TRADE_SIGNAL_NONE;
         confidence = 0;
@@ -545,7 +561,7 @@ bool CUnifiedSignalPipeline::ApplyVolatilityFilter(ENUM_TRADE_SIGNAL &signal, do
 //+------------------------------------------------------------------+
 //| Apply Liquidity Filter                                          |
 //+------------------------------------------------------------------+
-bool CUnifiedSignalPipeline::ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence)
+bool CUnifiedSignalPipeline::ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence, const string symbol)
 {
     if(m_liquidityEngine == NULL)
         return true;
@@ -558,7 +574,8 @@ bool CUnifiedSignalPipeline::ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, dou
     }
     
     // Check if price is near liquidity
-    double localCurrentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    string liquiditySymbol = (symbol != "") ? symbol : _Symbol;
+    double localCurrentPrice = SymbolInfoDouble(liquiditySymbol, SYMBOL_BID);
     if(m_liquidityEngine.IsPriceNearLiquidity(localCurrentPrice, 30))
     {
         confidence *= 0.95; // Slightly reduce confidence near untested liquidity
