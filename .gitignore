@@ -3,7 +3,5 @@
 *.ex5
 Documentation/
 CRITICAL_FIXES.mqh
-*.md
-*.txt
-!AUDIT_REPORT.md
-!RUNTIME_DECISION_GRAPH.md
+# Documentation is intentionally versioned.
+# Keep markdown/text system docs tracked.

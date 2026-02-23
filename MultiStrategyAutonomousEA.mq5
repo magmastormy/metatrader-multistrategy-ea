@@ -49,7 +49,8 @@ input bool InpRunNNAttributionSelfTest = false;       // Run local mapping self-
 input group "Runtime Cadence & Learning"
 input bool InpEnableHybridCadence = true;             // Enable hybrid cadence (new-bar + timed intrabar scans)
 input int  InpIntrabarScanSeconds = 10;               // Intrabar scan interval in seconds
-input bool InpIntrabarChartSymbolOnly = true;         // Restrict intrabar scans to chart symbol
+input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans to chart symbol
+input bool InpShadowMode = true;                      // Shadow mode: log virtual trades without sending orders
 input bool InpEnableNNPseudoLabeling = true;          // Enable pseudo-labeling when no trade-linked label exists
 input int  InpNNPseudoLabelBarsAhead = 1;             // Pseudo-label horizon in bars
 input int  InpNNSampleIntervalSeconds = 30;           // Observation sampling interval (seconds)
@@ -89,8 +90,6 @@ input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before ris
 #include "Core\Strategy\StrategyWrapper.mqh"
 // AUDIT FIX: Removed duplicate #include "IndicatorManager.mqh" (already included at line 68)
 #include "AIModules\NextGenStrategyBrain.mqh"
-#include "AIModules\TransformerBrain.mqh"
-#include "AIModules\EnsembleMetaLearner.mqh"
 #include "AIModules\NeuralNetworkStrategy.mqh"
 #include "Core\Engines\AIEngine.mqh"
 
@@ -113,6 +112,8 @@ input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before ris
 #include "Core\Signals\AdvancedSignalValidator.mqh"
 #include "Core\Trading\AdvancedPositionManager.mqh"
 #include "Core\Strategy\AIStrategyAdapter.mqh"
+#include "Core\Strategy\TransformerAIStrategyAdapter.mqh"
+#include "Core\Strategy\EnsembleAIStrategyAdapter.mqh"
 #include "Core\Visualization\VisualDashboard.mqh"
 
 //+------------------------------------------------------------------+
@@ -152,8 +153,6 @@ CUtilities utilities;
 // CAIIntegrationHub is now included from Core/IntegrationHub.mqh
 
 CNextGenStrategyBrain aiNextGenBrain;
-CTransformerBrain transformerBrain;
-CEnsembleMetaLearner ensembleLearner;
 CNeuralNetworkStrategy* neuralNetStrategy = NULL;
 CNeuralNetworkStrategy* g_neuralNetStrategies[];
 string g_neuralNetStrategySymbols[];
@@ -232,6 +231,7 @@ ulong g_hbNoSignalCount = 0;
 ulong g_hbValidatorRejects = 0;
 ulong g_hbRiskRejects = 0;
 ulong g_hbTradesOpened = 0;
+ulong g_hbShadowTrades = 0;
 ulong g_hbQuietNoNewBar = 0;
 datetime g_lastHeartbeatLogTime = 0;
 datetime g_lastNNHealthLogTime = 0;
@@ -745,6 +745,62 @@ int GetTotalActiveBrainStrategyCount()
     return total;
 }
 
+string BuildQualifiedStrategyName(const string symbol, const string strategyName)
+{
+    return symbol + "::" + strategyName;
+}
+
+void RegisterManagerStrategiesWithOrchestrator(const string symbol, CEnterpriseStrategyManager* manager)
+{
+    if(!InpEnableAIMode || manager == NULL)
+        return;
+
+    for(int i = 0; i < manager.GetRegisteredStrategyCount(); i++)
+    {
+        string strategyName = manager.GetRegisteredStrategyName(i);
+        double strategyWeight = manager.GetRegisteredStrategyWeight(i);
+        string qualifiedName = BuildQualifiedStrategyName(symbol, strategyName);
+        if(!aiOrchestrator.AddStrategy(qualifiedName, strategyWeight))
+        {
+            Print("[AI-ORCH] AddStrategy skipped/failed for ", qualifiedName);
+        }
+    }
+}
+
+void SyncOrchestratorWeightsToManagers()
+{
+    if(!InpEnableAIMode)
+        return;
+
+    int updates = 0;
+    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
+    {
+        CEnterpriseStrategyManager* manager = g_enterpriseManagers[i];
+        if(manager == NULL)
+            continue;
+
+        string symbol = (i < ArraySize(g_enterpriseManagerSymbols)) ? g_enterpriseManagerSymbols[i] : "";
+        if(symbol == "")
+            continue;
+
+        for(int s = 0; s < manager.GetRegisteredStrategyCount(); s++)
+        {
+            string localName = manager.GetRegisteredStrategyName(s);
+            string qualifiedName = BuildQualifiedStrategyName(symbol, localName);
+
+            SStrategyPerformance perf;
+            if(aiOrchestrator.GetStrategyPerformance(qualifiedName, perf))
+            {
+                if(manager.UpdateStrategyWeightByName(localName, perf.weight))
+                    updates++;
+            }
+        }
+    }
+
+    if(updates > 0)
+        Print("[AI-ORCH] Synced adapted weights to enterprise managers: ", updates);
+}
+
 void ReleaseEnterpriseManagers()
 {
     for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
@@ -853,6 +909,12 @@ bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe
         double aiWeight = InpAIWeightMultiplier > 0 ? InpAIWeightMultiplier : 3.0;
         if(!symbolManager.RegisterStrategy(new CAIStrategyAdapter(nn), "Neural Network AI", true, aiWeight, PERIOD_CURRENT, true))
             Print("[AI-MODE] WARNING: Failed to register NN adapter for ", symbol);
+        else if(InpEnableAIMode)
+        {
+            string qualified = BuildQualifiedStrategyName(symbol, "Neural Network AI");
+            if(!aiOrchestrator.AddStrategy(qualified, aiWeight))
+                Print("[AI-ORCH] AddStrategy skipped/failed for ", qualified);
+        }
     }
 
     Print("[AI-MODE] Neural Network ready for ", symbol);
@@ -892,6 +954,20 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     manager.SetMinQuorum(2);
     Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
     manager.AutoRegisterStrategies(strategyFlags);
+
+    if(InpEnableAIMode && InpEnableTransformer)
+    {
+        if(!manager.RegisterStrategy(new CTransformerAIStrategyAdapter(), "Transformer AI", true, 1.1, PERIOD_CURRENT, true))
+            Print("[AI-MODE] WARNING: Failed to register Transformer adapter for ", symbol);
+    }
+
+    if(InpEnableAIMode && InpEnableEnsemble)
+    {
+        if(!manager.RegisterStrategy(new CEnsembleAIStrategyAdapter(), "Ensemble AI", true, 1.2, PERIOD_CURRENT, true))
+            Print("[AI-MODE] WARNING: Failed to register Ensemble adapter for ", symbol);
+    }
+
+    RegisterManagerStrategiesWithOrchestrator(symbol, manager);
 
     int size = ArraySize(g_enterpriseManagers);
     ArrayResize(g_enterpriseManagers, size + 1);
@@ -966,34 +1042,7 @@ int OnInit()
             Print("[ERROR] Failed to initialize NextGen AI Brain");
             return INIT_FAILED;
         }
-
-        if(InpEnableTransformer)
-        {
-            if(!transformerBrain.Initialize())
-            {
-                Print("[ERROR] Failed to initialize Transformer Brain");
-                return INIT_FAILED;
-            }
-        }
-        else
-        {
-            Print("[AI] Transformer disabled by input flag");
-        }
-
-        if(InpEnableEnsemble)
-        {
-            if(!ensembleLearner.Initialize())
-            {
-                Print("[ERROR] Failed to initialize Ensemble Learner");
-                return INIT_FAILED;
-            }
-        }
-        else
-        {
-            Print("[AI] Ensemble learner disabled by input flag");
-        }
-
-        Print("[AI] Configured AI subsystems initialized successfully");
+        Print("[AI] Runtime AI voters are adapter-owned and registered per symbol");
     }
     else
     {
@@ -1313,6 +1362,7 @@ int OnInit()
     g_hbValidatorRejects = 0;
     g_hbRiskRejects = 0;
     g_hbTradesOpened = 0;
+    g_hbShadowTrades = 0;
     g_hbQuietNoNewBar = 0;
     g_lastHeartbeatLogTime = TimeCurrent();
     g_lastNNHealthLogTime = TimeCurrent();
@@ -1356,12 +1406,17 @@ void OnDeinit(const int reason)
     NNDiagPrintSummary("deinit");
     
     ReleaseNeuralNetStrategies();
+
+    if(InpEnableAIMode)
+        aiOrchestrator.PrintOrchestrationReport();
     
     if(g_AIEngine != NULL)
     {
         delete g_AIEngine;
         g_AIEngine = NULL;
     }
+
+    CIndicatorManager::DestroyInstance();
 
     // Clear chart
     Comment("");
@@ -1554,7 +1609,10 @@ void ProcessTradingLogic(bool fromTimer)
     if(anyNewBarDetected)
     {
         if(InpEnableAIMode && g_AIEngine != NULL)
+        {
             g_AIEngine.ProcessAdaptation();
+            SyncOrchestratorWeightsToManagers();
+        }
 
         if(callCount % 100 == 0)
             Print("[DRAWINGS] OnNewBar processed for all managed symbols");
@@ -1793,6 +1851,32 @@ void ProcessTradingLogic(bool fromTimer)
                             // Validate the lot size and final risk approval
                             if(lotSize > 0)
                             {
+                                string contributors[];
+                                symbolManager.GetLastSignalContributors(contributors);
+                                string contributorSummary = "";
+                                for(int c = 0; c < ArraySize(contributors); c++)
+                                {
+                                    if(contributors[c] == "")
+                                        continue;
+                                    if(StringLen(contributorSummary) > 0)
+                                        contributorSummary += ",";
+                                    contributorSummary += contributors[c];
+                                }
+
+                                double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
+                                double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
+
+                                if(InpShadowMode)
+                                {
+                                    g_hbShadowTrades++;
+                                    g_lastTradeTime = tickTime;
+                                    PrintFormat("[SHADOW-TRADE] %s | %s | lot=%.2f | conf=%.2f | confluence=%d | contributors=%s | SL=%.5f | TP=%.5f",
+                                                currentSymbol, signalType, lotSize, confidence, confluence, contributorSummary, slPrice, tpPrice);
+
+                                    // Stop after first shadow trade to preserve cooldown semantics.
+                                    break;
+                                }
+
                                 string predictionId = "";
                                 CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(currentSymbol);
                                 if(symbolNet == NULL)
@@ -1828,8 +1912,6 @@ void ProcessTradingLogic(bool fromTimer)
                                 else
                                 {
                                     ulong ticket = tradeManager.GetLastTicket();
-                                    double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
-                                    double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
                                     g_hbTradesOpened++;
                                     
                                     // Register realized risk usage after successful execution.
@@ -1842,7 +1924,8 @@ void ProcessTradingLogic(bool fromTimer)
                                           " | Lot Size: ", lotSize,
                                           " | SL: ", slPrice, " (", (int)stopLossPips, " pips)",
                                           " | TP: ", tpPrice, " (", (int)takeProfitPips, " pips)",
-                                          " | Ticket: ", ticket);
+                                          " | Ticket: ", ticket,
+                                          " | Contributors: ", contributorSummary);
 
                                     // Stop after first successful trade to enforce cooldown while still
                                     // allowing the rest of runtime management below in this cycle.
@@ -1865,9 +1948,9 @@ void ProcessTradingLogic(bool fromTimer)
     datetime heartbeatNow = TimeCurrent();
     if(g_lastHeartbeatLogTime == 0 || (heartbeatNow - g_lastHeartbeatLogTime) >= 60)
     {
-        PrintFormat("[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u",
+        PrintFormat("[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | shadow_trades=%I64u",
                     g_hbScansAttempted, g_hbIntrabarScansExecuted, g_hbNoSignalCount,
-                    g_hbValidatorRejects, g_hbRiskRejects, g_hbTradesOpened);
+                    g_hbValidatorRejects, g_hbRiskRejects, g_hbTradesOpened, g_hbShadowTrades);
         PrintFormat("[QUIET-REASONS] no_new_bar=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u",
                     g_hbQuietNoNewBar, g_hbNoSignalCount, g_hbValidatorRejects, g_hbRiskRejects);
 
@@ -2098,12 +2181,44 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
         txSymbol = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
 
     CEnterpriseStrategyManager* txManager = GetEnterpriseManagerForSymbol(txSymbol);
+    CEnterpriseStrategyManager* attributionManager = NULL;
+    string feedbackSymbol = txSymbol;
     if(txManager != NULL)
     {
         txManager.OnTradeTransaction(trans, request, result);
+        attributionManager = txManager;
     }
     else if(g_enterpriseManager != NULL)
     {
         g_enterpriseManager.OnTradeTransaction(trans, request, result);
+        attributionManager = g_enterpriseManager;
+        if(feedbackSymbol == "" && ArraySize(g_enterpriseManagerSymbols) > 0)
+            feedbackSymbol = g_enterpriseManagerSymbols[0];
+    }
+
+    if(InpEnableAIMode && attributionManager != NULL)
+    {
+        if(feedbackSymbol == "")
+            feedbackSymbol = _Symbol;
+
+        string contributors[];
+        double tradeNetProfit = 0.0;
+        if(attributionManager.PopClosedTradeAttribution(contributors, tradeNetProfit))
+        {
+            int updates = 0;
+            for(int i = 0; i < ArraySize(contributors); i++)
+            {
+                if(contributors[i] == "")
+                    continue;
+
+                string qualified = BuildQualifiedStrategyName(feedbackSymbol, contributors[i]);
+                if(aiOrchestrator.UpdateStrategyPerformance(qualified, tradeNetProfit))
+                    updates++;
+            }
+
+            if(updates > 0)
+                PrintFormat("[AI-ORCH] Applied closed-trade feedback | Symbol=%s | Contributors=%d | Net=%.2f",
+                            feedbackSymbol, updates, tradeNetProfit);
+        }
     }
 }

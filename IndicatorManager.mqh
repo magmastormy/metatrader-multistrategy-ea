@@ -52,6 +52,7 @@ private:
    
 public:
    static CIndicatorManager *Instance();
+   static void              DestroyInstance();
    
    // Get a handle for an indicator, creating it if needed
    int               GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
@@ -90,6 +91,19 @@ CIndicatorManager *CIndicatorManager::Instance()
       m_instance = new CIndicatorManager();
       
    return m_instance;
+}
+
+//+------------------------------------------------------------------+
+//| Destroy singleton instance explicitly                            |
+//+------------------------------------------------------------------+
+void CIndicatorManager::DestroyInstance()
+{
+   if(m_instance != NULL)
+   {
+      CIndicatorManager *instance = m_instance;
+      m_instance = NULL;
+      delete instance;
+   }
 }
 
 //+------------------------------------------------------------------+

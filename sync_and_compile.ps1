@@ -3,7 +3,8 @@ param(
 [string]$ProjectRoot,
 [switch]$SkipSync,
 [switch]$MirrorSync,
-[switch]$SeedTerminalIncludes
+[switch]$SeedTerminalIncludes,
+[switch]$KeepCompileArtifacts
 )
 
 $ErrorActionPreference = "Stop"
@@ -175,6 +176,47 @@ else {
 
 }
 
+function Cleanup-CompileArtifacts {
+param(
+    [string]$RootPath,
+    [string[]]$GeneratedArtifacts,
+    [switch]$KeepArtifacts
+)
+
+if ($KeepArtifacts) {
+    Write-Host "Compile artifacts retained (-KeepCompileArtifacts enabled)." -ForegroundColor Yellow
+    return
+}
+
+$targets = @()
+if ($GeneratedArtifacts) {
+    $targets += $GeneratedArtifacts
+}
+
+$patternTargets = @()
+$patternTargets += Get-ChildItem -Path $RootPath -File -Filter "compile_*.log" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+$patternTargets += Get-ChildItem -Path $RootPath -File -Filter "compile_*.txt" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+$patternTargets += Join-Path $RootPath "compile_logs.log"
+
+$targets += $patternTargets
+$targets = $targets | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+$removed = 0
+foreach ($target in $targets) {
+    if (Test-Path -LiteralPath $target) {
+        try {
+            Remove-Item -LiteralPath $target -Force -ErrorAction Stop
+            $removed++
+        }
+        catch {
+            Write-Host "Warning: failed to remove artifact $target ($($_.Exception.Message))" -ForegroundColor Yellow
+        }
+    }
+}
+
+Write-Host "Compile artifact cleanup complete. Removed $removed file(s)." -ForegroundColor Gray
+}
+
 function Get-CompileErrors {
 param([string]$LogPath)
 
@@ -287,6 +329,8 @@ exit 1
 $totalErrors = 0
 $compilationResults = @()
 $unifiedLogPath = Join-Path $ProjectRoot "compile_logs.log"
+$generatedCompileArtifacts = @()
+$generatedCompileArtifacts += $unifiedLogPath
 
 "Compilation started at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $unifiedLogPath -Encoding UTF8
 
@@ -295,6 +339,7 @@ Write-Host "Compiling $($file.Name)..." -ForegroundColor White
 
 $logName = "compile_" + $file.BaseName + ".log"
 $logPath = Join-Path $ProjectRoot $logName
+$generatedCompileArtifacts += $logPath
 
     # MetaEditor compilation
     # Use /portable to resolve standard includes from install-local MQL5\Include when AppData terminal data is unavailable.
@@ -338,5 +383,7 @@ Write-Host "✅ SUCCESS: All files compiled with 0 errors!" -ForegroundColor Gre
 } else {
 Write-Host "❌ FAILED: $totalErrors errors found." -ForegroundColor Red
 }
+
+Cleanup-CompileArtifacts -RootPath $ProjectRoot -GeneratedArtifacts $generatedCompileArtifacts -KeepArtifacts:$KeepCompileArtifacts
 
 exit $totalErrors

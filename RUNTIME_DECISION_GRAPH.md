@@ -1,77 +1,98 @@
 # Runtime Decision Graph
 
-## Purpose
-This document defines one operational trade decision path for `MultiStrategyAutonomousEA.mq5` and explicit ownership boundaries for pre-trade, execution, and post-trade handling.
+## Document Metadata
+- Last Updated: 2026-02-22
+- Scope: Runtime signal-to-execution flow
+- Source: `MultiStrategyAutonomousEA.mq5`
 
-## Ownership Contract
-- Authoritative pre-trade veto: `CUnifiedRiskManager` (`Core/Risk/UnifiedRiskManager.mqh`)
-- Internal risk components (not EA-owned at runtime): `CRiskValidationGate`, `CPortfolioRiskManager`
-- Execution owner: `CTradeManager` (`Core/Trading/TradeManager.mqh`)
-- Position lifecycle owner: `CAdvancedPositionManager` (`Core/Trading/AdvancedPositionManager.mqh`)
+## Purpose
+Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
+
+## Ownership Map
+- Orchestration: `MultiStrategyAutonomousEA.mq5`
+- Consensus: `CEnterpriseStrategyManager`
+- Filtering: `CUnifiedSignalPipeline`
+- AI adaptation/weights: `CAIStrategyOrchestrator`
+- Risk veto: `CUnifiedRiskManager`
+- Execution: `CTradeManager`
+- Position lifecycle: `CAdvancedPositionManager`
+- Indicator cache lifecycle: `CIndicatorManager`
 
 ## End-to-End Flow
-1. Signal Generation
-- Per-symbol `CEnterpriseStrategyManager` instances generate consensus signals.
-- Pipeline/orchestrator filtering happens inside manager path.
 
-2. Pre-Trade Preparation
-- EA computes ATR-derived SL/TP and candidate risk percent.
-- `CUnifiedRiskManager` updates adaptive risk percent and daily budget state.
+```mermaid
+flowchart TD
+  A[OnInit] --> B[Initialize trade, risk, managers]
+  B --> C[Register core and AI strategy adapters]
+  C --> D[OnTick or OnTimer ProcessTradingLogic]
 
-3. Authoritative Risk Validation
-- Phase A (`pre-size`): `CUnifiedRiskManager::ValidateTradeRequest(...)` with min lot.
-- Position size is calculated.
-- Phase B (`post-size`): `CUnifiedRiskManager::ValidateTradeRequest(...)` with final lot.
-- Any rejection here is final; no trade is sent.
+  D --> E{New bar?}
+  E -->|Yes| F[Evaluate NEW_BAR mode]
+  E -->|No| G{Hybrid intrabar eligible?}
+  G -->|Yes| H[Evaluate INTRABAR mode]
+  G -->|No| I[Skip symbol]
 
-4. Execution
-- `CTradeManager::OpenPosition(...)` sends the order.
-- Trade manager performs execution-safety checks (symbol/volume/margin/trading permission), not strategy-governance risk policy.
+  F --> J[Manager consensus + confluence]
+  H --> J
+  J --> K{Signal NONE?}
+  K -->|Yes| L[Increment no-signal telemetry]
+  K -->|No| M[Advanced signal validation]
 
-5. Post-Execution
-- On success, EA records realized usage via `CUnifiedRiskManager::RegisterExecutedTradeRisk(...)`.
-- Cooldown timestamp is updated.
+  M --> N{Validator pass?}
+  N -->|No| O[Log SIGNAL-REJECTED]
+  N -->|Yes| P[Build ATR SL/TP + risk request]
 
-6. Open Position Management
-- `CAdvancedPositionManager::ManageAllPositions()` handles trailing/breakeven/partial closes.
-- Management scope is restricted by EA magic number.
+  P --> Q[UnifiedRisk pre-size validation]
+  Q --> R{Pass?}
+  R -->|No| S[Risk rejection]
+  R -->|Yes| T[Position sizing]
 
-7. Trade Feedback
-- `OnTradeTransaction` routes closed-trade feedback to symbol-specific enterprise manager.
-- Orchestrator and neural strategy feedback are updated from closed deal outcomes.
-- Neural attribution path:
-  - Signal prediction reserves an NN prediction ID.
-  - Order comment embeds the ID (`|N:<predictionId>`).
-  - Entry deals map `POSITION_IDENTIFIER -> predictionId`.
-  - Partial close deals are accumulated by `POSITION_IDENTIFIER` and not labeled immediately.
-  - Final close labels the NN sample using total net P/L (accumulated partials + final close).
-  - Close labeling attempts exact ID first, then fallback time-heuristic only if exact ID is unavailable.
-  - Position mapping is cleared only after final close.
-  - Enterprise manager feedback is scoped by manager symbol and managed magic number.
+  T --> U[UnifiedRisk post-size validation]
+  U --> V{Pass?}
+  V -->|No| S
+  V -->|Yes| W{Shadow mode?}
+
+  W -->|Yes| X[Log SHADOW-TRADE]
+  W -->|No| Y[TradeManager OpenPosition]
+
+  Y --> Z{Execution success?}
+  Z -->|No| AA[Trade error path]
+  Z -->|Yes| AB[Register executed risk + cooldown]
+
+  AB --> AC[OnTradeTransaction feedback]
+  AC --> AD[Manager and orchestrator performance updates]
+  AC --> AE[NN attribution mapping and labeling]
+
+  D --> AF[Position manager lifecycle actions]
+  D --> AG[Periodic HEARTBEAT and CONSENSUS-DIAG]
+```
+
+## Intrabar Policy
+- New-bar and intrabar paths are explicit evaluation modes.
+- Intrabar eligibility respects symbol scope and cadence interval.
+- Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Diagnostics
+- Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
+  - `raw_none`
+  - `filtered_out`
+  - `quorum_failed`
+  - `intrabar_not_eligible`
+
+## AI Runtime Evidence
+- `[AI-VOTE][Transformer]`
+- `[AI-VOTE][Ensemble]`
+- NN health/labeling logs where enabled
 
 ## Invariants
-- No direct `CTrade.Buy/Sell` calls in EA decision path.
-- All entries pass through `CUnifiedRiskManager` before `CTradeManager::OpenPosition(...)`.
-- Legacy advisory risk modules are removed from runtime path.
-- Position manager does not manage non-EA positions (magic-scoped).
+- No direct ad-hoc order sends in decision path.
+- Unified risk gate must approve before execution.
+- Shadow mode executes full decision stack but does not send orders.
+- `CIndicatorManager::DestroyInstance()` must run on deinit.
 
-## NN Attribution Forward-Test Protocol
-1. Enable inputs:
-- `InpEnableAIMode=true`
-- `InpEnableNeuralNetwork=true`
-- `InpEnableNNAttributionDiagnostics=true`
-- Optional first run: `InpRunNNAttributionSelfTest=true`
-
-2. Run on demo and trigger trades (including partial closes if enabled).
-
-3. Expected logs:
-- Entry mapping: `[NN-DIAG] Entry mapped ... PositionID ... PredictionID ...`
-- Exact close attribution: `[NN-DIAG] Close labeled by ID ...`
-- Partial close deferral: `[NN-DIAG] Partial close deferred ...`
-- Final close cleanup: `[NN-DIAG] Position map cleared ...`
-- Periodic summary: `[NN-DIAG] Summary (periodic) ...`
-
-4. Pass criteria:
-- `CloseById` grows with real closes.
-- `CloseMiss` remains near zero.
-- `ActiveMap` does not leak upward over long runtime.
+## Fast Debug Read Order
+1. `[HEARTBEAT]`
+2. `[CONSENSUS-DIAG]`
+3. `[SIGNAL-REJECTED]`
+4. `[AI-VOTE]`
+5. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]`

@@ -355,3 +355,124 @@
   - Confluence scoring with multiple factors
   - Institutional level detection (.xx00, .xx50, .xx20, .xx80)
 - **Notes:** Both strategies fully implemented from userReports documentation, reusing existing SMCFiles components where appropriate
+
+## 2026-02-22 18:10
+- **Action:** Researched Windsurf workflow patterns and created repository workflow pack
+- **Files Modified/Created:**
+  - `.windsurf/workflows/README.md`
+  - `.windsurf/workflows/audit_runtime_ai.md`
+  - `.windsurf/workflows/implement_safe_fix.md`
+  - `.windsurf/workflows/shadow_run_triage.md`
+  - `.windsurf/workflows/release_doc_sync.md`
+  - `.windsurf/workflows/compile_clean.md`
+- **Outcome:** SUCCESS - Workflow pack added and discoverable in `.windsurf/workflows`
+- **Validation:** Confirmed file presence via directory listing and content checks
+- **Notes:** Workflow set includes EA runtime audit, implementation, shadow triage, doc-sync, and compile-clean flows
+
+## 2026-02-22 18:25
+- **Action:** Added general-purpose workflows for cross-task coding (web + python + universal loop)
+- **Files Created (initial):**
+  - `.windsurf/workflows/global_task_loop.md`
+  - `.windsurf/workflows/web_build_adjust_debug.md`
+  - `.windsurf/workflows/web_debug_hotfix.md`
+  - `.windsurf/workflows/python_feature_bugfix.md`
+  - `.windsurf/workflows/python_debug_triage.md`
+- **Outcome:** SUCCESS - New reusable workflows created
+- **Validation:** Verified files and README index updates
+
+## 2026-02-22 18:40
+- **Action:** Separated general workflows into dedicated global folder
+- **Files Created/Updated:**
+  - `.windsurf/workflows/global/global_task_loop.md`
+  - `.windsurf/workflows/global/web_build_adjust_debug.md`
+  - `.windsurf/workflows/global/web_debug_hotfix.md`
+  - `.windsurf/workflows/global/python_feature_bugfix.md`
+  - `.windsurf/workflows/global/python_debug_triage.md`
+- **Outcome:** PARTIAL-SUCCESS - Global folder populated and ready
+- **Validation:** Confirmed all files exist in `.windsurf/workflows/global`
+- **Blocker:** Windows denied move/delete on original root copies in `.windsurf/workflows`; copied files into `global` as canonical location
+
+## 2026-02-22 18:55
+- **Action:** Hardened always-on Windsurf rule contract
+- **Files Modified:**
+  - `.windsurf/rules/rule-pro.md`
+- **Outcome:** SUCCESS - Rule now enforces stronger autonomous execution behavior
+- **Key Changes:**
+  - execution-first and evidence-based completion
+  - explicit ban on placeholders/TODO/FIXME/stub outputs unless requested
+  - stronger quality and safety guardrails
+  - explicit requirement to maintain `.windsurf/context.md`, `.windsurf/history.md`, `.windsurf/planning.md`
+
+## 2026-02-22 19:05
+- **Action:** Updated repository state files per new rule
+- **Files Modified:**
+  - `.windsurf/context.md`
+  - `.windsurf/planning.md`
+  - `.windsurf/history.md`
+- **Outcome:** SUCCESS - Session state synchronized
+- **Notes:** Added active-track plan and session context for workflow/rule changes
+
+## 2026-02-22 19:20
+- **Action:** Backfilled full implementation history for recovery work (code-path reconciliation)
+- **Files Referenced:**
+  - `MultiStrategyAutonomousEA.mq5`
+  - `Core/Management/EnterpriseStrategyManager.mqh`
+  - `Core/Pipeline/UnifiedSignalPipeline.mqh`
+  - `IndicatorManager.mqh`
+  - `Core/AI/AIFeatureVectorBuilder.mqh`
+  - `Core/Strategy/TransformerAIStrategyAdapter.mqh`
+  - `Core/Strategy/EnsembleAIStrategyAdapter.mqh`
+- **Outcome:** SUCCESS - implementation details now explicitly captured in session state
+- **Validation Method:** direct repository code inspection and symbol/path grep verification
+- **Implementation Record:**
+  - Added runtime flags for rollout behavior:
+    - `InpIntrabarChartSymbolOnly=false` (all-symbol intrabar default)
+    - `InpShadowMode=true` (shadow-first execution mode)
+  - Added AI adapter includes in EA runtime:
+    - Transformer adapter include
+    - Ensemble adapter include
+  - Enterprise manager initialization now registers AI adapters as real strategy voters when enabled:
+    - `CTransformerAIStrategyAdapter` registered with weight `1.1`, intrabar-eligible
+    - `CEnsembleAIStrategyAdapter` registered with weight `1.2`, intrabar-eligible
+  - Added manager/orchestrator registration bridge:
+    - `BuildQualifiedStrategyName(symbol, strategyName)`
+    - `RegisterManagerStrategiesWithOrchestrator(...)`
+    - qualified naming uses `symbol::strategy`
+  - Added adaptation weight synchronization path:
+    - `SyncOrchestratorWeightsToManagers()`
+    - manager API `UpdateStrategyWeightByName(name, weight)` applies adapted weights back to active strategy entries
+  - Added post-close performance feedback path:
+    - manager stores contributor attribution per position
+    - EA `OnTradeTransaction` pops closed-trade attribution and calls `aiOrchestrator.UpdateStrategyPerformance(...)` for each contributor
+  - Added adaptive consensus behavior in `CEnterpriseStrategyManager`:
+    - `EVAL_MODE_NEW_BAR`: quorum stays manager minimum (`m_minQuorum`, default 2)
+    - `EVAL_MODE_INTRABAR`: effective quorum reduced to 1
+    - intrabar safety floor: single-voter signal must meet confidence `>= 0.65`
+  - Added consensus diagnostics counters and periodic log line:
+    - `raw_none`
+    - `filtered_out`
+    - `quorum_failed`
+    - `intrabar_not_eligible`
+    - emitted as `[CONSENSUS-DIAG]` every ~60 seconds per manager
+  - Corrected cadence mismatch by disabling Momentum intrabar eligibility in auto-registration.
+  - Corrected pipeline liquidity symbol usage:
+    - liquidity price context now uses evaluated symbol argument (`ApplyLiquidityFilter(..., symbol)` path)
+  - Added explicit singleton lifecycle teardown:
+    - `CIndicatorManager::DestroyInstance()` implemented in `IndicatorManager.mqh`
+    - called in EA `OnDeinit` after subsystem cleanup
+  - Added shadow execution branch in live decision loop:
+    - emits `[SHADOW-TRADE]` with symbol, side, lot, confidence, confluence, contributors, SL/TP
+    - preserves cooldown semantics without sending real orders
+  - Added dedicated AI runtime voters and telemetry:
+    - `TransformerAIStrategyAdapter` with `[AI-VOTE][Transformer]` heartbeat
+    - `EnsembleAIStrategyAdapter` with `[AI-VOTE][Ensemble]` heartbeat
+    - both use shared feature builder for input consistency
+
+## 2026-02-22 19:28
+- **Action:** Updated Windsurf state files to reflect implementation reality instead of partial summaries
+- **Files Modified:**
+  - `.windsurf/context.md`
+  - `.windsurf/planning.md`
+  - `.windsurf/history.md`
+- **Outcome:** SUCCESS - state files now include detailed implementation baseline, completed recovery items, and pending validation gates
+- **Notes:** This update specifically addresses missing implementation detail coverage requested by user.
