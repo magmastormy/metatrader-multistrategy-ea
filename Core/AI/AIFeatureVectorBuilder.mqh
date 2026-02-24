@@ -7,6 +7,20 @@
 #ifndef CORE_AI_FEATURE_VECTOR_BUILDER_MQH
 #define CORE_AI_FEATURE_VECTOR_BUILDER_MQH
 
+// AI Model Configuration Constants
+#define TRANSFORMER_D_MODEL_DEFAULT        128
+#define TRANSFORMER_NUM_HEADS_DEFAULT       8
+#define TRANSFORMER_NUM_LAYERS_A_DEFAULT    4
+#define TRANSFORMER_D_FF_DEFAULT           512
+#define TRANSFORMER_D_FF_B_DEFAULT          384
+#define TRANSFORMER_DROPOUT_DEFAULT         64
+#define TRANSFORMER_LR_A_DEFAULT           0.001
+#define TRANSFORMER_LR_B_DEFAULT          0.0015
+#define FEATURE_VECTOR_SIZE               25
+#define TEMPORAL_BLEND_CURRENT            0.85
+#define TEMPORAL_BLEND_LAG                0.15
+#define DMODE_BASE_FEATURE_RATIO_WARNING   6
+
 #include "../../IndicatorManager.mqh"
 
 class CAIFeatureVectorBuilder
@@ -41,7 +55,7 @@ private:
 public:
     static bool BuildNNFeatureVector(const string symbol, const ENUM_TIMEFRAMES timeframe, double &features[])
     {
-        ArrayResize(features, 25);
+        ArrayResize(features, FEATURE_VECTOR_SIZE);
         ArrayInitialize(features, 0.0);
 
         if(symbol == "")
@@ -82,7 +96,8 @@ public:
         features[1] = GetNormalizedValue(0.0, 100.0, adx);
         features[2] = GetNormalizedValue(0.0, 100.0, rsi);
         features[3] = (close > ema200) ? 1.0 : -1.0;
-        features[4] = GetNormalizedValue(0.0, 100.0 * point, atrFast);
+        double atrPercent = (close > 0.0) ? (atrFast / close) * 100.0 : 0.0;
+        features[4] = GetNormalizedValue(0.0, 5.0, atrPercent);
 
         // 5-9: Oscillator / reversion
         features[5] = (rsi > 70.0) ? 1.0 : (rsi < 30.0) ? -1.0 : 0.0;
@@ -101,7 +116,8 @@ public:
         double high20 = iHigh(symbol, timeframe, iHighest(symbol, timeframe, MODE_HIGH, 20, 1));
         double low20 = iLow(symbol, timeframe, iLowest(symbol, timeframe, MODE_LOW, 20, 1));
         features[12] = (close >= high20) ? 1.0 : (close <= low20) ? -1.0 : 0.0;
-        features[13] = high - low;
+        double candleRangePercent = (close > 0.0) ? ((high - low) / close) * 100.0 : 0.0;
+        features[13] = GetNormalizedValue(0.0, 2.0, candleRangePercent);
         features[14] = (open > closePrev) ? 1.0 : (open < closePrev) ? -1.0 : 0.0;
 
         // 15-19: Price action
@@ -136,32 +152,59 @@ public:
     static bool BuildTransformerInput(const string symbol,
                                       const ENUM_TIMEFRAMES timeframe,
                                       double &inputSequence[],
-                                      const int dModel = 256,
+                                      const int dModel = TRANSFORMER_D_MODEL_DEFAULT,
                                       const int sequenceLength = 1)
     {
         if(dModel <= 0 || sequenceLength <= 0)
+        {
+            Print("[AIFeatureVectorBuilder] ERROR: Invalid parameters - dModel=", dModel, ", sequenceLength=", sequenceLength);
             return false;
+        }
 
         double baseFeatures[];
         if(!BuildNNFeatureVector(symbol, timeframe, baseFeatures))
+        {
+            Print("[AIFeatureVectorBuilder] ERROR: Failed to build base feature vector");
             return false;
+        }
 
         int baseSize = ArraySize(baseFeatures);
         if(baseSize <= 0)
+        {
+            Print("[AIFeatureVectorBuilder] ERROR: Base feature vector is empty");
             return false;
+        }
+
+        // Validate that dModel is reasonable compared to base feature size
+        if(dModel > baseSize * DMODE_BASE_FEATURE_RATIO_WARNING)
+        {
+            static datetime s_lastDModelWarningTime = 0;
+            datetime now = TimeCurrent();
+            if(s_lastDModelWarningTime == 0 || (now - s_lastDModelWarningTime) >= 300)
+            {
+                Print("[AIFeatureVectorBuilder] WARNING: dModel (", dModel, ") is much larger than base features (", baseSize, ")");
+                s_lastDModelWarningTime = now;
+            }
+        }
 
         int totalSize = dModel * sequenceLength;
         ArrayResize(inputSequence, totalSize);
+        ArrayInitialize(inputSequence, 0.0);
 
         for(int s = 0; s < sequenceLength; s++)
         {
             for(int i = 0; i < dModel; i++)
             {
+                // Use modulo to cycle through base features when dModel > baseSize
+                // This creates a repeating pattern with slight variations
                 int baseIndex = i % baseSize;
                 int prevIndex = (baseIndex + baseSize - 1) % baseSize;
+                
                 double currentValue = baseFeatures[baseIndex];
                 double lagValue = baseFeatures[prevIndex];
-                inputSequence[s * dModel + i] = currentValue * 0.85 + lagValue * 0.15;
+                
+                // Blend current value with lagged value for temporal context
+                inputSequence[s * dModel + i] = currentValue * TEMPORAL_BLEND_CURRENT + lagValue * TEMPORAL_BLEND_LAG;
             }
         }
 

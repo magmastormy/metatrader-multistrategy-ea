@@ -56,7 +56,7 @@ public:
     CTransformerAIStrategyAdapter()
     {
         // Runtime-lean transformer profile; per-symbol instance owned by adapter.
-        m_transformer = new CTransformerBrain(256, 8, 4, 512, 64, 0.001);
+        m_transformer = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
         m_symbol = "";
         m_timeframe = PERIOD_CURRENT;
         m_enabled = true;
@@ -87,7 +87,7 @@ public:
         m_symbol = symbol;
         m_timeframe = timeframe;
         if(m_transformer == NULL)
-            m_transformer = new CTransformerBrain(256, 8, 4, 512, 64, 0.001);
+            m_transformer = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
         if(m_transformer == NULL)
             return false;
         return m_transformer.Initialize();
@@ -112,7 +112,7 @@ public:
         }
 
         double inputSequence[];
-        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, 256, 1))
+        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, 1))
         {
             m_noneVotes++;
             LogVoteHeartbeat();

@@ -46,8 +46,8 @@ class CPerformanceAnalytics;
 class CAIStrategyOrchestrator;
 
 // Trade execution settings
-#define MAX_TRADE_RETRIES 3
-#define TRADE_RETRY_DELAY 100 // ms
+#define MAX_TRADE_RETRIES 4
+#define TRADE_RETRY_DELAY 150 // ms
 #define MAX_ORDERS_PER_SYMBOL 5
 #define ORDER_TIMEOUT_SECONDS 30
 
@@ -75,6 +75,8 @@ private:
     uint m_magicNumber;                      // Magic number for trades
     string m_expertName;                     // Expert advisor name
     bool m_useAsyncMode;                     // Use asynchronous order execution
+    ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
+    int m_minModifyIntervalSec;              // Minimum interval between routine stop updates
     
     // Trade tracking and statistics
     struct TradeStats {
@@ -293,16 +295,38 @@ private:
     bool IsModificationNeeded(ulong ticket, double newSL, double newTP) {
         int index = FindPositionState(ticket);
         if(index == -1) return true; // New position, modification needed
-        
-        // BEAST MODE: 30-second throttling for position management operations
-        datetime localCurrentTime2 = TimeCurrent();
-        if(localCurrentTime2 - m_positionStates[index].lastModified < 30) {
-            return false; // Too soon since last modification
-        }
-        
-        // Get symbol for proper tolerance calculation
-        if(!PositionSelectByTicket(ticket)) return false;
+
+        if(!PositionSelectByTicket(ticket))
+            return false;
+
         string positionSymbol = PositionGetString(POSITION_SYMBOL);
+        ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+        double currentSL = PositionGetDouble(POSITION_SL);
+
+        // Bounded throttling with emergency bypass for missing or materially tighter protection.
+        datetime localCurrentTime2 = TimeCurrent();
+        int elapsedSec = (int)(localCurrentTime2 - m_positionStates[index].lastModified);
+        if(elapsedSec < m_minModifyIntervalSec) {
+            double pointFast = SymbolInfoDouble(positionSymbol, SYMBOL_POINT);
+            if(pointFast <= 0.0)
+                pointFast = 0.00001;
+
+            bool missingProtection = (newSL > 0.0 && currentSL <= 0.0);
+            bool materiallyTighter = false;
+            if(newSL > 0.0 && currentSL > 0.0)
+            {
+                double tightenThreshold = pointFast * 20.0;
+                if(posType == POSITION_TYPE_BUY)
+                    materiallyTighter = (newSL - currentSL) > tightenThreshold;
+                else if(posType == POSITION_TYPE_SELL)
+                    materiallyTighter = (currentSL - newSL) > tightenThreshold;
+            }
+
+            if(!missingProtection && !materiallyTighter)
+                return false;
+        }
+
+        // Get symbol for proper tolerance calculation
         double point = SymbolInfoDouble(positionSymbol, SYMBOL_POINT);
         double tolerance = point * 5; // 5 points tolerance to avoid micro-adjustments
         
@@ -432,6 +456,31 @@ private:
         int currentHour = dt.hour;
         return (currentHour >= 1 && currentHour <= 23);
     }
+
+    bool IsTransientTradeRetcode(const uint retcode) const
+    {
+        return (retcode == TRADE_RETCODE_REQUOTE ||
+                retcode == TRADE_RETCODE_PRICE_CHANGED ||
+                retcode == TRADE_RETCODE_PRICE_OFF ||
+                retcode == TRADE_RETCODE_TIMEOUT ||
+                retcode == TRADE_RETCODE_TOO_MANY_REQUESTS ||
+                retcode == TRADE_RETCODE_CONNECTION);
+    }
+
+    bool IsLimitedRetryRetcode(const uint retcode) const
+    {
+        return (retcode == TRADE_RETCODE_LOCKED ||
+                retcode == TRADE_RETCODE_FROZEN);
+    }
+
+    void ApplyFillingModeForSymbol(const string symbolParam)
+    {
+        if(symbolParam == "")
+            return;
+
+        if(!m_trade.SetTypeFillingBySymbol(symbolParam))
+            m_trade.SetTypeFilling(m_orderFillMode);
+    }
     
 public:
     // Constructor with dependency injection
@@ -448,6 +497,8 @@ public:
         m_slippage(10),
         m_magicNumber(0),
         m_useAsyncMode(true),
+        m_orderFillMode(ORDER_FILLING_IOC),
+        m_minModifyIntervalSec(5),
         m_emergencyStop(false),
         m_maxDailyLoss(0.0),
         m_dailyLoss(0.0),
@@ -475,10 +526,12 @@ public:
     bool Initialize(const uint magicNumber = 12345, const string expertName = "MultiStrategyEA");
     
     // Set trading parameters
-    void SetSlippage(const uint slippage) { m_slippage = slippage; }
+    void SetSlippage(const uint slippage) { m_slippage = slippage; m_trade.SetDeviationInPoints(m_slippage); }
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
     void SetMaxDailyLoss(const double maxLoss) { m_maxDailyLoss = maxLoss; }
     void SetExternalRiskAuthority(const bool enabled) { m_externalRiskAuthority = enabled; }
+    void SetOrderFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_orderFillMode = mode; }
+    void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
     
     // Main trading functions
     bool OpenPosition(const string symbol,
@@ -557,7 +610,7 @@ bool CTradeManager::Initialize(const uint magicNumber,
     
     m_trade.SetExpertMagicNumber(m_magicNumber);
     m_trade.SetDeviationInPoints(m_slippage);
-    m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+    m_trade.SetTypeFilling(m_orderFillMode);
     
     m_dailyResetTime = TimeCurrent();
     m_dailyLoss = 0.0;
@@ -860,9 +913,12 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     bool result = false;
     int retryCount = 0;
     int delayMs = TRADE_RETRY_DELAY;
+    uint lastRetcode = 0;
     
     while(retryCount < MAX_TRADE_RETRIES && !result)
     {
+        ApplyFillingModeForSymbol(symbolName);
+
         if(orderType == ORDER_TYPE_BUY)
         {
             result = m_trade.Buy(volume, symbolName, 0, stopLoss, takeProfit, comment);
@@ -879,29 +935,51 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
             LogTradeError(tradeResult, "ExecuteMarketOrder");
             
             uint retcode = tradeResult.retcode;
-            if(retcode != TRADE_RETCODE_REQUOTE && retcode != TRADE_RETCODE_PRICE_CHANGED)
-                break;
-            
-            retryCount++;
-            if(retryCount < MAX_TRADE_RETRIES)
+            lastRetcode = retcode;
+
+            if(IsTransientTradeRetcode(retcode))
             {
-                Print("[TRADE-RETRY] ", symbolName);
-                Sleep(delayMs);
-                delayMs *= 2;
-                m_symbolInfo.Refresh();
+                retryCount++;
+                if(retryCount < MAX_TRADE_RETRIES)
+                {
+                    PrintFormat("[TRADE-RETRY] %s | attempt=%d/%d | retcode=%u",
+                                symbolName, retryCount + 1, MAX_TRADE_RETRIES, retcode);
+                    Sleep(delayMs);
+                    delayMs = MathMin(2000, delayMs * 2);
+                    m_symbolInfo.Refresh();
+                }
+                continue;
             }
+
+            // LOCKED/FROZEN can persist; allow only one bounded retry to avoid prolonged stall loops.
+            if(IsLimitedRetryRetcode(retcode) && retryCount == 0)
+            {
+                retryCount = 1;
+                PrintFormat("[TRADE-RETRY-LIMITED] %s | retcode=%u | single_retry=1",
+                            symbolName, retcode);
+                Sleep(TRADE_RETRY_DELAY);
+                m_symbolInfo.Refresh();
+                continue;
+            }
+
+            break;
         }
         else
         {
             MqlTradeResult prResult;
             m_trade.Result(prResult);
-            if(prResult.volume > 0 && prResult.volume < volume)
-                Print("[PARTIAL-FILL] ", symbolName);
+            if((prResult.retcode == TRADE_RETCODE_DONE_PARTIAL) || (prResult.volume > 0 && prResult.volume < volume))
+            {
+                PrintFormat("[PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | retcode=%u",
+                            symbolName, volume, prResult.volume, prResult.retcode);
+            }
         }
     }
     
     if(!result && retryCount >= MAX_TRADE_RETRIES)
         Print("[TRADE-FAILED] max retries exceeded");
+    else if(!result && lastRetcode != 0)
+        PrintFormat("[TRADE-FAILED] %s | retcode=%u | retries=%d", symbolName, lastRetcode, retryCount);
     
     return result;
 }
@@ -1511,6 +1589,13 @@ bool CTradeManager::OpenPosition(const string symbol,
                                 const string comment,
                                 const uint magicNumber)
 {
+    double normalizedVolume = NormalizeVolume(symbol, volume);
+    if(normalizedVolume <= 0.0)
+    {
+        LogError(StringFormat("Invalid normalized volume %.3f (requested %.3f)", normalizedVolume, volume), symbol);
+        return false;
+    }
+
     // Update magic number if provided
     if(magicNumber > 0)
     {
@@ -1522,13 +1607,13 @@ bool CTradeManager::OpenPosition(const string symbol,
     }
     
     // Validate trade request
-    if(!ValidateTradeRequest(symbol, orderType, volume, price))
+    if(!ValidateTradeRequest(symbol, orderType, normalizedVolume, price))
     {
         return false;
     }
     
     // Check if trade is allowed
-    if(!IsTradeAllowed(symbol, volume, orderType))
+    if(!IsTradeAllowed(symbol, normalizedVolume, orderType))
     {
         return false;
     }
@@ -1553,7 +1638,7 @@ bool CTradeManager::OpenPosition(const string symbol,
     }
     
     // Execute the order
-    return ExecuteMarketOrder(symbol, orderType, volume, sl, tp, comment);
+    return ExecuteMarketOrder(symbol, orderType, normalizedVolume, sl, tp, comment);
 }
 
 //+------------------------------------------------------------------+

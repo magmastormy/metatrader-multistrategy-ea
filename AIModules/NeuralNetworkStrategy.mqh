@@ -91,6 +91,7 @@ private:
     ENUM_TIMEFRAMES m_timeframe;
     bool m_initialized;
     bool m_enableOnlineTraining;
+    bool m_allowWeightMutation;
     bool m_enablePseudoLabeling;
     int m_pseudoLabelBarsAhead;
     int m_sampleIntervalSec;
@@ -121,8 +122,9 @@ public:
         m_symbol(""),
         m_timeframe(PERIOD_CURRENT),
         m_initialized(false),
-        m_enableOnlineTraining(true),
-        m_enablePseudoLabeling(true),
+        m_enableOnlineTraining(false),
+        m_allowWeightMutation(false),
+        m_enablePseudoLabeling(false),
         m_pseudoLabelBarsAhead(1),
         m_sampleIntervalSec(30),
         m_checkpointEveryLabeled(10),
@@ -267,7 +269,6 @@ public:
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
-        m_enableOnlineTraining = true;
         m_initialized = true;
 
         // Online training + persistence enabled in live runtime.
@@ -290,18 +291,36 @@ public:
         return true;
     }
 
+    void SetOnlineTrainingEnabled(const bool enabled)
+    {
+        m_enableOnlineTraining = enabled;
+        if(!enabled)
+        {
+            m_enablePseudoLabeling = false;
+            m_allowWeightMutation = false;
+        }
+    }
+
+    void SetWeightMutationEnabled(const bool enabled)
+    {
+        // Weight mutation is intentionally opt-in and must never bypass runtime risk controls.
+        m_allowWeightMutation = (enabled && m_enableOnlineTraining);
+    }
+
     void ConfigureOnlineLearning(const bool enablePseudoLabeling,
                                  const int pseudoLabelBarsAhead,
                                  const int sampleIntervalSeconds,
                                  const int checkpointEveryLabeled)
     {
-        m_enablePseudoLabeling = enablePseudoLabeling;
+        m_enablePseudoLabeling = (m_enableOnlineTraining && enablePseudoLabeling);
         m_pseudoLabelBarsAhead = MathMax(1, pseudoLabelBarsAhead);
         m_sampleIntervalSec = MathMax(1, sampleIntervalSeconds);
         m_checkpointEveryLabeled = MathMax(1, checkpointEveryLabeled);
 
-        PrintFormat("[NEURAL-NET] Online config | Symbol=%s | Pseudo=%s | BarsAhead=%d | SampleSec=%d | CkptEvery=%d",
+        PrintFormat("[NEURAL-NET] Online config | Symbol=%s | Online=%s | WeightMutation=%s | Pseudo=%s | BarsAhead=%d | SampleSec=%d | CkptEvery=%d",
                     m_symbol,
+                    m_enableOnlineTraining ? "ON" : "OFF",
+                    m_allowWeightMutation ? "ON" : "OFF",
                     m_enablePseudoLabeling ? "ON" : "OFF",
                     m_pseudoLabelBarsAhead,
                     m_sampleIntervalSec,
@@ -549,8 +568,8 @@ public:
         
         // Feature 4: Volatility (ATR Normalized)
         double atr = GetATRValue(14, 1);
-        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-        features[4] = GetNormalizedValue(0, 100 * point, atr); // Rough normalization
+        double atrPercent = (close > 0.0) ? (atr / close) * 100.0 : 0.0;
+        features[4] = GetNormalizedValue(0.0, 5.0, atrPercent);
         
         // --- Oscillator / Reversion (Features 5-9) ---
         // Feature 5: Stochastic Lookalike (RSI based: Overbought/Oversold)
@@ -594,6 +613,8 @@ public:
         double open = iOpen(m_symbol, m_timeframe, 1);
         double high = iHigh(m_symbol, m_timeframe, 1);
         double low = iLow(m_symbol, m_timeframe, 1);
+        double candleRangePct = (close > 0.0) ? ((high - low) / close) * 100.0 : 0.0;
+        features[13] = GetNormalizedValue(0.0, 2.0, candleRangePct);
         
         // Feature 14: Gap (Open vs Prev Close)
         double closePrev = iClose(m_symbol, m_timeframe, 2);
@@ -898,8 +919,8 @@ public:
                 double loss = CalculateLoss(outputs, target);
                 epochLoss += (loss * sampleWeight);
                 processed++;
-
-                UpdateWeights(example.inputs, outputs, target, sampleWeight);
+                if(m_allowWeightMutation)
+                    UpdateWeights(example.inputs, outputs, target, sampleWeight);
             }
 
             if(processed > 0)
@@ -914,10 +935,24 @@ public:
         if(processedTotal > 0)
         {
             m_lastLoss = aggregatedLoss / epochsPerCycle;
-            m_trainingSteps++;
-            PrintFormat("[NEURAL-NET] Training step complete | Epoch=%d | Loss=%.6f | Labeled=%d | TrainedSamples=%d",
-                        m_epoch, m_lastLoss, labeledCount, processedTotal);
-            SaveCheckpointAtomic(false);
+            if(m_allowWeightMutation)
+            {
+                m_trainingSteps++;
+                PrintFormat("[NEURAL-NET] Training step complete | Epoch=%d | Loss=%.6f | Labeled=%d | TrainedSamples=%d",
+                            m_epoch, m_lastLoss, labeledCount, processedTotal);
+                SaveCheckpointAtomic(false);
+            }
+            else
+            {
+                static datetime s_lastMutationDisabledLog = 0;
+                datetime now = TimeCurrent();
+                if(s_lastMutationDisabledLog == 0 || (now - s_lastMutationDisabledLog) >= 300)
+                {
+                    PrintFormat("[NEURAL-NET] Weight mutation disabled | Symbol=%s | Labeled=%d | LastLoss=%.6f",
+                                m_symbol, labeledCount, m_lastLoss);
+                    s_lastMutationDisabledLog = now;
+                }
+            }
         }
     }
     
@@ -1154,7 +1189,7 @@ private:
         if(m_labeledSinceCheckpoint < checkpointInterval)
             return;
 
-        if(GetCompletedTradesCount() >= m_minTrainingExamples)
+        if(m_allowWeightMutation && GetCompletedTradesCount() >= m_minTrainingExamples)
             TrainNetwork();
 
         SaveCheckpointAtomic(true);
@@ -1361,8 +1396,8 @@ private:
         m_maxTrainingExamples = FileReadInteger(fileHandle);
         m_resultMatchWindowSec = FileReadInteger(fileHandle);
         m_predictionCounter = FileReadInteger(fileHandle);
-        m_enableOnlineTraining = (FileReadInteger(fileHandle) != 0);
-        m_enablePseudoLabeling = (FileReadInteger(fileHandle) != 0);
+        bool persistedOnlineTraining = (FileReadInteger(fileHandle) != 0);
+        bool persistedPseudoLabeling = (FileReadInteger(fileHandle) != 0);
         m_pseudoLabelBarsAhead = FileReadInteger(fileHandle);
         m_sampleIntervalSec = FileReadInteger(fileHandle);
         m_checkpointEveryLabeled = FileReadInteger(fileHandle);
@@ -1423,6 +1458,19 @@ private:
         {
             m_trainingData.Clear();
             return false;
+        }
+
+        // Runtime governance stays authoritative over persisted online flags.
+        if(!m_enableOnlineTraining)
+        {
+            m_enablePseudoLabeling = false;
+            m_allowWeightMutation = false;
+        }
+        else
+        {
+            m_enablePseudoLabeling = persistedPseudoLabeling;
+            if(!persistedOnlineTraining)
+                m_allowWeightMutation = false;
         }
 
         m_lastLoadStatus = loadStatus;

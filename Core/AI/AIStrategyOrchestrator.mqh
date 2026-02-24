@@ -506,7 +506,7 @@ bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const i
 //+------------------------------------------------------------------+
 //| Add Strategy to Orchestrator                                   |
 //+------------------------------------------------------------------+
-bool CAIStrategyOrchestrator::AddStrategy(const string strategyName, const double initialWeight = 1.0)
+bool CAIStrategyOrchestrator::AddStrategy(const string strategyName, const double initialWeight)
 {
     if(!m_initialized)
     {
@@ -526,16 +526,18 @@ bool CAIStrategyOrchestrator::AddStrategy(const string strategyName, const doubl
         return false;
     }
     
-    if(m_strategyCount >= MAX_STRATEGIES)
-    {
-        LogOrchestrationEvent(ERROR_RECOVERABLE, "Maximum strategies limit reached");
-        return false;
-    }
-    
     // Check for duplicate strategy names
     if(FindStrategyIndex(strategyName) >= 0)
     {
         LogOrchestrationEvent(ERROR_WARNING, "Strategy already exists: " + strategyName);
+        return false;
+    }
+
+    if(m_strategyCount >= MAX_STRATEGIES)
+    {
+        LogOrchestrationEvent(ERROR_RECOVERABLE,
+                             StringFormat("Maximum strategies limit reached (%d/%d)",
+                                         m_strategyCount, MAX_STRATEGIES));
         return false;
     }
     
@@ -657,25 +659,42 @@ bool CAIStrategyOrchestrator::UpdateStrategyPerformance(const string strategyNam
 void CAIStrategyOrchestrator::UpdateStrategyWeights(void)
 {
     if(!m_initialized) return;
-    
+
+    int eligibleStrategies = 0;
+    int adjustedStrategies = 0;
+
     for(int i = 0; i < m_strategyCount; i++)
     {
-        if(m_strategies[i].totalTrades < 5) continue; // Need minimum trades for adjustment
-        
+        if(m_strategies[i].totalTrades < 5)
+            continue; // Need minimum trades for adjustment
+
+        eligibleStrategies++;
         double newWeight = CalculatePerformanceAdjustedWeight(i);
-        
+
         // Apply gradual weight adjustment to avoid sudden changes
         double currentWeight = m_strategies[i].weight;
         double adjustmentFactor = 0.1; // 10% adjustment per update
-        
+
         m_strategies[i].weight = currentWeight + (newWeight - currentWeight) * adjustmentFactor;
-        
+
         // Ensure weight stays within bounds
         if(m_strategies[i].weight < 0.1) m_strategies[i].weight = 0.1;
         if(m_strategies[i].weight > 3.0) m_strategies[i].weight = 3.0;
+        adjustedStrategies++;
     }
-    
-    LogOrchestrationEvent(ERROR_INFO, "Strategy weights updated based on performance");
+
+    if(adjustedStrategies > 0)
+    {
+        LogOrchestrationEvent(ERROR_INFO,
+                             StringFormat("Strategy weights updated based on performance (%d adjusted, %d total)",
+                                         adjustedStrategies, m_strategyCount));
+    }
+    else
+    {
+        LogOrchestrationEvent(ERROR_INFO,
+                             StringFormat("Strategy weight adaptation skipped - insufficient trade evidence (eligible=%d, total=%d)",
+                                         eligibleStrategies, m_strategyCount));
+    }
 }
 
 //+------------------------------------------------------------------+

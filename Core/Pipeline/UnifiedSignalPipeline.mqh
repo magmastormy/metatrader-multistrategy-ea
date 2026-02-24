@@ -274,24 +274,21 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     if(m_filters.enableTimeFilter)
         passed = passed && ApplyTimeFilter(signal);
     
-    // 🔥 FIX: Dynamic confidence threshold based on market conditions
+    // Dynamic confidence threshold with institutional bias toward stricter gating in weak regimes.
     double effectiveMinConfidence = m_filters.minConfidence;
     
-    // Lower threshold for ranging markets (more opportunities needed)
+    // In ranging/uncertain regimes, tighten threshold to avoid noise-driven entries.
     if(m_trendEngine != NULL)
     {
         ENUM_TREND_TYPE trend = m_trendEngine.GetCurrentTrend();
         if(trend == TREND_RANGING || trend == TREND_NONE)
         {
-            effectiveMinConfidence = MathMax(0.20, m_filters.minConfidence * 0.75);  // Up to 25% reduction
-        }
-        else if(trend == TREND_NONE)
-        {
-            effectiveMinConfidence = m_filters.minConfidence * 0.90;
+            effectiveMinConfidence = MathMin(1.0, MathMax(m_filters.minConfidence, m_filters.minConfidence * 1.15));
         }
         else if(m_trendEngine.IsStrongTrend())
         {
-            effectiveMinConfidence = MathMin(1.0, m_filters.minConfidence * 0.95); // Allow slight relaxation
+            // Strong directional context allows only minimal relaxation.
+            effectiveMinConfidence = MathMax(0.0, m_filters.minConfidence * 0.98);
         }
     }
     

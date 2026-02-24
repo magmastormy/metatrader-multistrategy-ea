@@ -176,7 +176,7 @@ enum ENUM_SPIKE_TYPE
 //| Trading Constants                                               |
 //+------------------------------------------------------------------+
 #ifndef MAX_STRATEGIES
-#define MAX_STRATEGIES 10          // Maximum strategies per symbol
+#define MAX_STRATEGIES 256         // Maximum orchestrator strategy entries (symbol::strategy)
 #endif
 
 #ifndef MAX_SYMBOLS

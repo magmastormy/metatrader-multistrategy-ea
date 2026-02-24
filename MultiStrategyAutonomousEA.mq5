@@ -51,10 +51,22 @@ input bool InpEnableHybridCadence = true;             // Enable hybrid cadence (
 input int  InpIntrabarScanSeconds = 10;               // Intrabar scan interval in seconds
 input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans to chart symbol
 input bool InpShadowMode = true;                      // Shadow mode: log virtual trades without sending orders
-input bool InpEnableNNPseudoLabeling = true;          // Enable pseudo-labeling when no trade-linked label exists
+input bool InpEnableNNOnlineTraining = false;         // Enable online NN observation/labeling loop
+input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation (institutional default OFF)
+input bool InpEnableNNPseudoLabeling = false;         // Enable pseudo-labeling when no trade-linked label exists
 input int  InpNNPseudoLabelBarsAhead = 1;             // Pseudo-label horizon in bars
 input int  InpNNSampleIntervalSeconds = 30;           // Observation sampling interval (seconds)
 input int  InpNNCheckpointEveryLabeled = 10;          // Checkpoint every N newly labeled samples
+
+//--- Execution & Emergency Controls
+input group "Execution Safety"
+input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
+input int InpTradeSlippagePoints = 10;                                  // Max slippage in points
+input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
+input bool InpEmergencyFlattenAllAccountPositions = true;               // Flatten account-wide positions on emergency stop
+input int InpUnprotectedRemediationIntervalSec = 15;                    // Seconds between unprotected-position remediation sweeps
+input int InpUnprotectedMaxRestoreAttempts = 3;                         // Max stop-restore attempts before forced close
+input bool InpCloseUnprotectedOnRemediationFailure = true;              // Force close own unprotected positions after max attempts
 
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
@@ -235,6 +247,12 @@ ulong g_hbShadowTrades = 0;
 ulong g_hbQuietNoNewBar = 0;
 datetime g_lastHeartbeatLogTime = 0;
 datetime g_lastNNHealthLogTime = 0;
+datetime g_lastSignalEvalSecond = 0;
+int g_symbolEvalStartIndex = 0;
+datetime g_lastExternalCapacityLogTime = 0;
+datetime g_lastUnprotectedRemediationAttempt = 0;
+ulong g_unprotectedPositionTickets[];
+int g_unprotectedPositionAttempts[];
 
 // Risk configuration defaults (overridable by configuration modules)
 double DefaultStopLossPips = 20.0;
@@ -361,6 +379,183 @@ int GetOpenPositionCountForSymbol(const string symbol, const bool onlyThisEAMagi
     }
 
     return count;
+}
+
+int FindUnprotectedTrackerIndex(const ulong ticket)
+{
+    for(int i = 0; i < ArraySize(g_unprotectedPositionTickets); i++)
+    {
+        if(g_unprotectedPositionTickets[i] == ticket)
+            return i;
+    }
+    return -1;
+}
+
+int GetUnprotectedTrackerAttempts(const ulong ticket)
+{
+    int idx = FindUnprotectedTrackerIndex(ticket);
+    if(idx < 0 || idx >= ArraySize(g_unprotectedPositionAttempts))
+        return 0;
+    return g_unprotectedPositionAttempts[idx];
+}
+
+void SetUnprotectedTrackerAttempts(const ulong ticket, const int attempts)
+{
+    int idx = FindUnprotectedTrackerIndex(ticket);
+    if(idx < 0)
+    {
+        int size = ArraySize(g_unprotectedPositionTickets);
+        ArrayResize(g_unprotectedPositionTickets, size + 1);
+        ArrayResize(g_unprotectedPositionAttempts, size + 1);
+        g_unprotectedPositionTickets[size] = ticket;
+        g_unprotectedPositionAttempts[size] = MathMax(0, attempts);
+        return;
+    }
+
+    g_unprotectedPositionAttempts[idx] = MathMax(0, attempts);
+}
+
+void ClearUnprotectedTrackerTicket(const ulong ticket)
+{
+    int idx = FindUnprotectedTrackerIndex(ticket);
+    if(idx < 0)
+        return;
+
+    int last = ArraySize(g_unprotectedPositionTickets) - 1;
+    if(last < 0)
+        return;
+
+    g_unprotectedPositionTickets[idx] = g_unprotectedPositionTickets[last];
+    g_unprotectedPositionAttempts[idx] = g_unprotectedPositionAttempts[last];
+    ArrayResize(g_unprotectedPositionTickets, last);
+    ArrayResize(g_unprotectedPositionAttempts, last);
+}
+
+void CleanupUnprotectedTracker()
+{
+    for(int i = ArraySize(g_unprotectedPositionTickets) - 1; i >= 0; i--)
+    {
+        ulong ticket = g_unprotectedPositionTickets[i];
+        if(ticket == 0 || !PositionSelectByTicket(ticket) || PositionGetDouble(POSITION_SL) > 0.0)
+            ClearUnprotectedTrackerTicket(ticket);
+    }
+}
+
+double BuildUnprotectedFallbackStopPoints(const string symbol, const double referencePrice)
+{
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    int stopLevelPts = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+    double fallbackByStops = MathMax(50.0, (double)stopLevelPts * 2.0);
+    double fallbackByPrice = (referencePrice > 0.0) ? ((referencePrice * 0.01) / point) : fallbackByStops;
+    return MathMax(fallbackByStops, fallbackByPrice);
+}
+
+void AttemptUnprotectedPositionRemediation()
+{
+    int unprotectedDetected = unifiedRiskManager.GetUnprotectedPositionCount();
+    if(unprotectedDetected <= 0)
+    {
+        CleanupUnprotectedTracker();
+        return;
+    }
+
+    datetime nowTime = TimeCurrent();
+    int remediationInterval = MathMax(5, InpUnprotectedRemediationIntervalSec);
+    if(g_lastUnprotectedRemediationAttempt != 0 &&
+       (nowTime - g_lastUnprotectedRemediationAttempt) < remediationInterval)
+    {
+        return;
+    }
+    g_lastUnprotectedRemediationAttempt = nowTime;
+    CleanupUnprotectedTracker();
+
+    int restoredCount = 0;
+    int restoreFailedCount = 0;
+    int forcedClosedCount = 0;
+    int externalUnprotectedCount = 0;
+
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+
+        if(PositionGetDouble(POSITION_SL) > 0.0)
+        {
+            ClearUnprotectedTrackerTicket(ticket);
+            continue;
+        }
+
+        long positionMagic = PositionGetInteger(POSITION_MAGIC);
+        if(positionMagic != InpMagicNumber)
+        {
+            externalUnprotectedCount++;
+            continue;
+        }
+
+        string symbol = PositionGetString(POSITION_SYMBOL);
+        ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+        double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+        if(currentPrice <= 0.0)
+        {
+            currentPrice = (posType == POSITION_TYPE_BUY) ?
+                           SymbolInfoDouble(symbol, SYMBOL_BID) :
+                           SymbolInfoDouble(symbol, SYMBOL_ASK);
+        }
+
+        if(currentPrice <= 0.0)
+        {
+            restoreFailedCount++;
+            SetUnprotectedTrackerAttempts(ticket, GetUnprotectedTrackerAttempts(ticket) + 1);
+            continue;
+        }
+
+        double fallbackStopPoints = BuildUnprotectedFallbackStopPoints(symbol, currentPrice);
+        double fallbackTakeProfitPoints = fallbackStopPoints * 2.0;
+        ENUM_ORDER_TYPE syntheticOrderType = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        double newSL = tradeManager.CalculateStopLoss(symbol, syntheticOrderType, currentPrice, fallbackStopPoints);
+        double newTP = tradeManager.CalculateTakeProfit(symbol, syntheticOrderType, currentPrice, fallbackTakeProfitPoints);
+
+        if(newSL > 0.0 && tradeManager.ModifyPosition(ticket, newSL, newTP))
+        {
+            restoredCount++;
+            ClearUnprotectedTrackerTicket(ticket);
+            continue;
+        }
+
+        int attempts = GetUnprotectedTrackerAttempts(ticket) + 1;
+        SetUnprotectedTrackerAttempts(ticket, attempts);
+        restoreFailedCount++;
+
+        int maxRestoreAttempts = MathMax(1, InpUnprotectedMaxRestoreAttempts);
+        if(InpCloseUnprotectedOnRemediationFailure && attempts >= maxRestoreAttempts)
+        {
+            if(tradeManager.ClosePosition(ticket, "Unprotected SL remediation failure"))
+            {
+                forcedClosedCount++;
+                ClearUnprotectedTrackerTicket(ticket);
+            }
+            else
+            {
+                PrintFormat("[RISK-UNPROTECTED] Forced close failed | ticket=%I64u | attempts=%d",
+                            ticket, attempts);
+            }
+        }
+    }
+
+    int remainingUnprotected = unifiedRiskManager.GetUnprotectedPositionCount();
+    PrintFormat("[RISK-UNPROTECTED] detected=%d | restored=%d | failed=%d | forced_closed=%d | external=%d | remaining=%d",
+                unprotectedDetected, restoredCount, restoreFailedCount,
+                forcedClosedCount, externalUnprotectedCount, remainingUnprotected);
+
+    if(externalUnprotectedCount > 0)
+    {
+        PrintFormat("[RISK-UNPROTECTED] External unprotected positions are blocking entries (count=%d)",
+                    externalUnprotectedCount);
+    }
 }
 
 string ExtractPredictionIdFromComment(const string comment)
@@ -886,6 +1081,9 @@ bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe
         return false;
     }
 
+    nn.SetOnlineTrainingEnabled(InpEnableNNOnlineTraining);
+    nn.SetWeightMutationEnabled(InpEnableNNWeightMutation);
+
     if(!nn.Initialize(symbol, timeframe))
     {
         Print("[AI-MODE] Neural Network initialization failed for ", symbol);
@@ -893,7 +1091,7 @@ bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe
         return false;
     }
 
-    nn.ConfigureOnlineLearning(InpEnableNNPseudoLabeling,
+    nn.ConfigureOnlineLearning(InpEnableNNOnlineTraining && InpEnableNNPseudoLabeling,
                                InpNNPseudoLabelBarsAhead,
                                InpNNSampleIntervalSeconds,
                                InpNNCheckpointEveryLabeled);
@@ -952,6 +1150,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     }
 
     manager.SetMinQuorum(2);
+    manager.SetIntrabarMinQuorum(2);
     Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
     manager.AutoRegisterStrategies(strategyFlags);
 
@@ -1006,6 +1205,9 @@ int OnInit()
         return INIT_FAILED;
     }
 
+    tradeManager.SetOrderFillMode(InpOrderFillingMode);
+    tradeManager.SetSlippage((uint)MathMax(1, InpTradeSlippagePoints));
+    tradeManager.SetProtectiveModifyCooldownSeconds(InpProtectiveModifyCooldownSec);
     if(!tradeManager.Initialize((uint)InpMagicNumber, "MultiStrategyAutonomousEA"))
     {
         Print("[CRITICAL] Failed to initialize TradeManager");
@@ -1321,7 +1523,10 @@ int OnInit()
 
         Print("[AI-MODE] AI Mode enabled | NN: ", InpEnableNeuralNetwork, " | Transformer: ", InpEnableTransformer, 
               " | Ensemble: ", InpEnableEnsemble, " | Threshold: ", InpAIConfidenceThreshold,
-              " | NN Managers: ", nnInitCount);
+              " | NN Managers: ", nnInitCount,
+              " | NN Online: ", InpEnableNNOnlineTraining,
+              " | NN WeightMutation: ", InpEnableNNWeightMutation,
+              " | NN Pseudo: ", InpEnableNNPseudoLabeling);
     }
     else if(InpEnableAIMode)
     {
@@ -1366,6 +1571,12 @@ int OnInit()
     g_hbQuietNoNewBar = 0;
     g_lastHeartbeatLogTime = TimeCurrent();
     g_lastNNHealthLogTime = TimeCurrent();
+    g_lastSignalEvalSecond = 0;
+    g_symbolEvalStartIndex = 0;
+    g_lastExternalCapacityLogTime = 0;
+    g_lastUnprotectedRemediationAttempt = 0;
+    ArrayResize(g_unprotectedPositionTickets, 0);
+    ArrayResize(g_unprotectedPositionAttempts, 0);
 
     // Initialize Dashboard
     g_dashboard.Initialize();
@@ -1406,9 +1617,8 @@ void OnDeinit(const int reason)
     NNDiagPrintSummary("deinit");
     
     ReleaseNeuralNetStrategies();
-
-    if(InpEnableAIMode)
-        aiOrchestrator.PrintOrchestrationReport();
+    ArrayResize(g_unprotectedPositionTickets, 0);
+    ArrayResize(g_unprotectedPositionAttempts, 0);
     
     if(g_AIEngine != NULL)
     {
@@ -1539,6 +1749,12 @@ void ProcessTradingLogic(bool fromTimer)
         Comment("Trading is DISABLED - Waiting for permissions...");
         return;
     }
+    if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+    {
+        Print("[DEBUG-PROCESS] Terminal disconnected - postponing signal evaluation");
+        Comment("Terminal disconnected - waiting for reconnect...");
+        return;
+    }
 
     currentTime = TimeCurrent();
 
@@ -1556,8 +1772,16 @@ void ProcessTradingLogic(bool fromTimer)
     if(peakEquity > 0)
         currentDrawdown = ((peakEquity - currentEquity) / peakEquity) * 100.0; // Standardized to 0-100 scale
 
+    // Deterministic remediation loop for unprotected-position veto states.
+    AttemptUnprotectedPositionRemediation();
+    bool unprotectedPositionsActive = unifiedRiskManager.HasUnprotectedPositions();
+    if(unprotectedPositionsActive && callCount % 50 == 0)
+    {
+        Print("[RISK-UNPROTECTED] New entries paused until stop protection is restored");
+    }
+
     // Run online NN learning maintenance regardless of trade signal frequency.
-    if(InpEnableAIMode && InpEnableNeuralNetwork)
+    if(InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
     {
         for(int nnIdx = 0; nnIdx < ArraySize(g_neuralNetStrategies); nnIdx++)
         {
@@ -1618,9 +1842,20 @@ void ProcessTradingLogic(bool fromTimer)
             Print("[DRAWINGS] OnNewBar processed for all managed symbols");
     }
 
+    // Deterministic event separation: run signal generation at most once per second
+    // even when both OnTick and OnTimer are active.
+    bool allowSignalEvaluation = true;
+    datetime signalEvalNow = TimeCurrent();
+    if(g_lastSignalEvalSecond == signalEvalNow)
+        allowSignalEvaluation = false;
+    else
+        g_lastSignalEvalSecond = signalEvalNow;
+    if(!allowSignalEvaluation)
+        g_hbQuietNoNewBar++;
+
     // Enterprise Mode Multi-Symbol Signal Generation
     // UNIFIED PIPELINE - All strategies including AI now go through here
-    if(ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
+    if(allowSignalEvaluation && ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
         // Check cooldown to prevent chain trading
         datetime tickTime = TimeCurrent();
@@ -1643,11 +1878,25 @@ void ProcessTradingLogic(bool fromTimer)
                 Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", InpMaxPositionsTotal);
         }
 
+        if(unprotectedPositionsActive)
+            canOpenNewTrades = false;
+
         if(canOpenNewTrades)
         {
             // Evaluate each active symbol through its own symbol-bound enterprise manager.
-            for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
+            int symbolCount = ArraySize(g_activePairs);
+            int rotationStart = 0;
+            if(symbolCount > 0)
             {
+                if(g_symbolEvalStartIndex < 0)
+                    g_symbolEvalStartIndex = 0;
+                rotationStart = g_symbolEvalStartIndex % symbolCount;
+                g_symbolEvalStartIndex = (g_symbolEvalStartIndex + 1) % symbolCount;
+            }
+
+            for(int scanOffset = 0; scanOffset < symbolCount; scanOffset++)
+            {
+                int symIdx = (rotationStart + scanOffset) % symbolCount;
                 string currentSymbol = g_activePairs[symIdx];
                 CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(currentSymbol);
                 if(symbolManager == NULL)
@@ -1687,9 +1936,24 @@ void ProcessTradingLogic(bool fromTimer)
                     int symbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, false);
                     if(symbolPositionCount >= InpPortfolioMaxPositionsPerSymbol)
                     {
+                        int eaSymbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, true);
+                        int externalSymbolPositions = MathMax(0, symbolPositionCount - eaSymbolPositionCount);
                         if(callCount % 100 == 0)
-                            PrintFormat("[ENTERPRISE-BLOCKED] %s symbol position cap reached: %d / %d",
-                                        currentSymbol, symbolPositionCount, InpPortfolioMaxPositionsPerSymbol);
+                            PrintFormat("[ENTERPRISE-BLOCKED] %s symbol position cap reached: total=%d / %d | ea=%d | external=%d",
+                                        currentSymbol, symbolPositionCount, InpPortfolioMaxPositionsPerSymbol,
+                                        eaSymbolPositionCount, externalSymbolPositions);
+
+                        if(externalSymbolPositions > 0)
+                        {
+                            datetime capLogNow = TimeCurrent();
+                            if(g_lastExternalCapacityLogTime == 0 || (capLogNow - g_lastExternalCapacityLogTime) >= 60)
+                            {
+                                PrintFormat("[CAPACITY-EXTERNAL] %s blocked by non-EA positions | external=%d | ea=%d | total=%d | cap=%d | magic=%d",
+                                            currentSymbol, externalSymbolPositions, eaSymbolPositionCount,
+                                            symbolPositionCount, InpPortfolioMaxPositionsPerSymbol, InpMagicNumber);
+                                g_lastExternalCapacityLogTime = capLogNow;
+                            }
+                        }
                         continue;
                     }
                 }
@@ -1775,23 +2039,28 @@ void ProcessTradingLogic(bool fromTimer)
 
                     double atr[];
                     ArraySetAsSeries(atr, true);
-                    if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
+                    double atrValue = 0.0;
+                    bool atrReady = (atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0 && atr[0] > 0.0);
+                    if(atrReady)
+                        atrValue = atr[0];
+
+                    double pointValue = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
+                    if(pointValue <= 0.0)
+                        pointValue = 0.00001;
+
+                    // Check if this is a synthetic index (different pip calculation)
+                    bool isSynthetic = (StringFind(currentSymbol, "Volatility") >= 0 ||
+                                       StringFind(currentSymbol, "Boom") >= 0 ||
+                                       StringFind(currentSymbol, "Crash") >= 0 ||
+                                       StringFind(currentSymbol, "Step") >= 0);
+
+                    double stopLossPips = 0.0;
+                    if(atrReady)
                     {
                         // Use ATR-based SL/TP calculation (adaptive)
-                        double atrValue = atr[0];
-                        double pointValue = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
-
-                        // Check if this is a synthetic index (different pip calculation)
-                        bool isSynthetic = (StringFind(currentSymbol, "Volatility") >= 0 ||
-                                           StringFind(currentSymbol, "Boom") >= 0 ||
-                                           StringFind(currentSymbol, "Crash") >= 0 ||
-                                           StringFind(currentSymbol, "Step") >= 0);
-
-                        double stopLossPips = 0;
                         if(isSynthetic)
                         {
                             // For synthetics: ATR is already in price units, convert carefully
-                            // Use 1.5x ATR as SL, but convert to pips properly
                             stopLossPips = (atrValue * 1.5) / pointValue;
                         }
                         else
@@ -1799,35 +2068,46 @@ void ProcessTradingLogic(bool fromTimer)
                             // For regular pairs: standard calculation
                             stopLossPips = (atrValue / pointValue) * 2.0;
                         }
+                    }
+                    else
+                    {
+                        // Gap/stress fallback: derive a deterministic stop distance from broker constraints + price percent.
+                        int stopLevelPts = (int)SymbolInfoInteger(currentSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+                        double fallbackByStopLevel = MathMax(30.0, (double)stopLevelPts * 2.0);
+                        double fallbackByPrice = (entryPrice * (isSynthetic ? 0.003 : 0.01)) / pointValue;
+                        stopLossPips = MathMax(fallbackByStopLevel, fallbackByPrice);
+                        PrintFormat("[RISK-FALLBACK] ATR unavailable for %s | using fallback stop distance %.1f points",
+                                    currentSymbol, stopLossPips);
+                    }
 
-                        double takeProfitPips = stopLossPips * 2.0;  // 2:1 RR ratio
+                    double takeProfitPips = stopLossPips * 2.0;  // 2:1 RR ratio
 
-                        // Clamp SL/TP to reasonable bounds based on price percentage
-                        // Min SL: 0.5% of price, Max SL: 3.0% of price (tighter for safety)
-                        double minSlPips = (entryPrice * 0.005) / pointValue;
-                        double maxSlPips = (entryPrice * 0.03) / pointValue;
+                    // Clamp SL/TP to reasonable bounds based on price percentage
+                    // Min SL: 0.5% of price, Max SL: 3.0% of price (tighter for safety)
+                    double minSlPips = (entryPrice * 0.005) / pointValue;
+                    double maxSlPips = (entryPrice * 0.03) / pointValue;
 
-                        stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
-                        takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
+                    stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
+                    takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
 
-                        double proposedRisk = unifiedRiskManager.GetActiveRiskPerTradePercent();
-                        if(proposedRisk <= 0.0)
-                            proposedRisk = InpMaxRiskPerTrade;
-                        currentRiskPerTrade = proposedRisk;
+                    double proposedRisk = unifiedRiskManager.GetActiveRiskPerTradePercent();
+                    if(proposedRisk <= 0.0)
+                        proposedRisk = InpMaxRiskPerTrade;
+                    currentRiskPerTrade = proposedRisk;
 
-                        // Unified risk manager is the only pre-trade veto contract.
-                        STradeValidationRequest tradeReq;
-                        tradeReq.symbol = currentSymbol;
-                        tradeReq.orderType = orderType;
-                        tradeReq.lotSize = 0.0; // Lot size not known yet, validation gate will validate prelim checks
-                        tradeReq.stopLossPips = stopLossPips;
-                        tradeReq.takeProfitPips = takeProfitPips;
-                        tradeReq.confidence = confidence;
-                        tradeReq.strategy = "Enterprise AI";
-                        tradeReq.reasoning = "Orchestrator consensus signal";
-                        
-                        // Pre-check risk with 0.01 lot to validate trade parameters first
-                        tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
+                    // Unified risk manager is the only pre-trade veto contract.
+                    STradeValidationRequest tradeReq;
+                    tradeReq.symbol = currentSymbol;
+                    tradeReq.orderType = orderType;
+                    tradeReq.lotSize = 0.0; // Lot size not known yet, validation gate will validate prelim checks
+                    tradeReq.stopLossPips = stopLossPips;
+                    tradeReq.takeProfitPips = takeProfitPips;
+                    tradeReq.confidence = confidence;
+                    tradeReq.strategy = "Enterprise AI";
+                    tradeReq.reasoning = "Orchestrator consensus signal";
+                    
+                    // Pre-check risk with minimum lot to validate trade parameters first
+                    tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
                         
                         SValidationResult riskResult;
                         if(ApproveTradeByUnifiedRisk(tradeReq, "pre-size", riskResult))
@@ -1882,7 +2162,7 @@ void ProcessTradingLogic(bool fromTimer)
                                 if(symbolNet == NULL)
                                     symbolNet = neuralNetStrategy;
 
-                                if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork)
+                                if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
                                     symbolNet.ReservePredictionForSignal(enterpriseSignal, predictionId, 600);
 
                                 string tradeComment = BuildTradeCommentWithPrediction("Enterprise AI Signal", predictionId);
@@ -1937,7 +2217,6 @@ void ProcessTradingLogic(bool fromTimer)
                                 Print("[AI-GLOBAL] Invalid lot size calculated for ", currentSymbol, " - trade skipped");
                             }
                         }
-                    }
                     // FIX: Removed IndicatorRelease(atrHandle) because handles from CIndicatorManager are shared/cached.
                     // Releasing them here invalidates the handle for other parts of the EA.
                 }
@@ -1954,6 +2233,16 @@ void ProcessTradingLogic(bool fromTimer)
         PrintFormat("[QUIET-REASONS] no_new_bar=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u",
                     g_hbQuietNoNewBar, g_hbNoSignalCount, g_hbValidatorRejects, g_hbRiskRejects);
 
+        SUnifiedRiskSnapshot heartbeatRisk = unifiedRiskManager.GetSnapshot();
+        PrintFormat("[RISK-BUDGET] effective=%.2f/%.2f | entry=%.2f | mtm=%.2f | open_exposure=%.2f | conservative=%s | emergency=%s",
+                    heartbeatRisk.dailyRiskUsedPercent,
+                    heartbeatRisk.maxDailyRiskPercent,
+                    heartbeatRisk.dailyEntryRiskUsedPercent,
+                    heartbeatRisk.dailyMarkToMarketLossPercent,
+                    heartbeatRisk.openExposureRiskPercent,
+                    heartbeatRisk.conservativeMode ? "true" : "false",
+                    heartbeatRisk.emergencyMode ? "true" : "false");
+
         CIndicatorManager* indicatorManager = CIndicatorManager::Instance();
         if(indicatorManager != NULL)
             indicatorManager.ReleaseUnused(300);
@@ -1961,7 +2250,7 @@ void ProcessTradingLogic(bool fromTimer)
         g_lastHeartbeatLogTime = heartbeatNow;
     }
 
-    if(InpEnableAIMode && InpEnableNeuralNetwork &&
+    if(InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining &&
        (g_lastNNHealthLogTime == 0 || (heartbeatNow - g_lastNNHealthLogTime) >= 60))
     {
         for(int nnIdx = 0; nnIdx < ArraySize(g_neuralNetStrategies); nnIdx++)
@@ -1993,7 +2282,13 @@ void ProcessTradingLogic(bool fromTimer)
     // Advanced Position Management (trailing stops, break-even, partial closes)
     if(g_positionManager != NULL && PositionsTotal() > 0)
     {
-        g_positionManager.ManageAllPositions();
+        static datetime s_lastPositionManageTime = 0;
+        datetime nowManage = TimeCurrent();
+        if(s_lastPositionManageTime == 0 || (nowManage - s_lastPositionManageTime) >= 1)
+        {
+            g_positionManager.ManageAllPositions();
+            s_lastPositionManageTime = nowManage;
+        }
     }
 
     // Emergency stop on excessive drawdown
@@ -2003,17 +2298,29 @@ void ProcessTradingLogic(bool fromTimer)
         Alert("[EMERGENCY] Maximum drawdown exceeded! Trading halted!");
         Comment("EMERGENCY STOP - Drawdown: ", NormalizeDouble(currentDrawdown, 2), "%");
 
-        // Close all positions
+        // Emergency flatten according to configured scope.
+        int closedCount = 0;
+        int skippedCount = 0;
         for(int i = PositionsTotal() - 1; i >= 0; i--)
         {
             if(PositionGetTicket(i) > 0)
             {
-                if(PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+                bool shouldClose = InpEmergencyFlattenAllAccountPositions ||
+                                   (PositionGetInteger(POSITION_MAGIC) == InpMagicNumber);
+                if(shouldClose)
                 {
-                    tradeManager.ClosePosition(PositionGetTicket(i), "Emergency Stop");
+                    if(tradeManager.ClosePosition(PositionGetTicket(i), "Emergency Stop"))
+                        closedCount++;
+                }
+                else
+                {
+                    skippedCount++;
                 }
             }
         }
+        PrintFormat("[EMERGENCY] Flatten completed | closed=%d | skipped=%d | account_wide=%s",
+                    closedCount, skippedCount,
+                    InpEmergencyFlattenAllAccountPositions ? "true" : "false");
         return;
     }
 
@@ -2088,7 +2395,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
                 if((dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_OUT_BY || dealEntry == DEAL_ENTRY_INOUT) &&
                    InpEnableAIMode &&
-                   InpEnableNeuralNetwork)
+                   InpEnableNeuralNetwork &&
+                   InpEnableNNOnlineTraining)
                 {
                     double dealProfit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
                     double dealSwap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);

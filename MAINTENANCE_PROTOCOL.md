@@ -1,7 +1,7 @@
 # Maintenance Protocol
 
 ## Document Metadata
-- Last Updated: 2026-02-22
+- Last Updated: 2026-02-23
 - Scope: Forward update contract
 
 This document defines mandatory implementation, validation, and documentation steps for future batches.
@@ -32,7 +32,13 @@ Validate relevant log tags:
 - Execution remains `CTradeManager`-owned.
 - Deinit keeps explicit `CIndicatorManager::DestroyInstance()`.
 
-### 1.5 Artifact hygiene
+### 1.5 Code quality requirements
+- Memory safety: AI components must implement proper RAII with safe cleanup
+- Input validation: All public methods must validate parameters and bounds
+- Constants: Eliminate magic numbers; use defined constants for configuration
+- Error handling: Provide meaningful error messages and graceful degradation
+
+### 1.6 Artifact hygiene
 - Compile-generated `.log/.txt` artifacts should be removed by default after compile runs.
 - Keep artifacts only when explicitly requested.
 
