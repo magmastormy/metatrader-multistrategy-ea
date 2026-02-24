@@ -1,7 +1,7 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-02-22
+- Last Updated: 2026-02-23
 - Status: Active baseline
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
@@ -79,6 +79,24 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `shadow_session_mt5_tester.ini`
 - `shadow_session_inputs.ini`
 - `shadow_session.set`
+
+## Code Quality & Safety
+- **Memory Management**: AI adapters implement proper RAII with safe cleanup of transformer models
+- **Error Handling**: Comprehensive input validation and bounds checking across all AI components
+- **Constants**: Standardized configuration constants eliminate magic numbers throughout the codebase
+- **Compilation**: Maintains 0 errors, 0 warnings with continuous integration verification
+
+## Institutional Remediation Status (2026-02-23)
+- **Deterministic cadence control**: Signal evaluation is now second-gated to prevent duplicate decision runs when `OnTick` and `OnTimer` overlap.
+- **Portfolio hard veto on missing SL**: Any open position without a protective stop is treated as a risk-governance breach that blocks new entries.
+- **Mark-to-market daily budgeting**: Daily risk usage now tracks max of entry budget, equity drawdown from daily baseline, and open portfolio stop risk.
+- **Execution resilience**: Fill mode is configurable (IOC default), transient broker retcodes are retried with bounded backoff, and protective SL/TP updates support emergency bypass.
+- **AI governance lock-down**: NN online training, pseudo-labeling, and weight mutation are disabled by default and cannot bypass unified risk controls.
+- **Unprotected position remediation**: Runtime now attempts deterministic SL restoration for EA-owned unprotected positions, with bounded retries and forced-close fallback after configured attempts.
+- **Operator risk clarity**: Heartbeat now emits `[RISK-BUDGET]` split telemetry (`entry`, `mtm`, `open_exposure`, `effective`) to distinguish daily budget consumption vs exposure cap pressure.
+- **Symbol fairness controls**: Per-cycle symbol evaluation now rotates start index to neutralize deterministic first-symbol bias under one-trade-per-cycle behavior.
+- **External-capacity diagnostics**: `[CAPACITY-EXTERNAL]` explicitly reports when non-EA positions consume per-symbol capacity.
+- **Execution retry hardening**: `LOCKED`/`FROZEN` retcodes now use single bounded retry instead of full exponential retry path.
 
 ## Documentation Index
 - Full structure specification: `SYSTEM_STRUCTURE.md`

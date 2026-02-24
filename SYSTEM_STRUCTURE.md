@@ -1,7 +1,7 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-02-22
+- Last Updated: 2026-02-23
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
 
@@ -54,6 +54,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - single pre-trade veto authority
   - two-phase validation (`pre-size`, `post-size`)
   - daily/portfolio risk budgeting and drawdown controls
+  - mark-to-market aware daily budget enforcement
+  - hard veto on unprotected (no-SL) open positions
+  - split budget telemetry (`entry`, `mtm`, `open_exposure`, `effective`) for operator clarity
+  - expose unprotected-position state for runtime remediation workflows
   - executed-risk registration after successful sends
 
 ### 2.6 Execution domain
@@ -61,6 +65,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Responsibilities:
   - convert approved intent into actual order send
   - enforce execution-level safety checks
+  - configurable broker fill policy (IOC/FOK/RETURN)
+  - bounded retries for transient broker retcodes
+  - single bounded retry behavior for `LOCKED` / `FROZEN` retcodes
+  - emergency-aware protective modification flow
   - expose ticket/result status for post-send handling
 
 ### 2.7 Position lifecycle domain
@@ -92,6 +100,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Transformer adapter (`CTransformerAIStrategyAdapter`)
 - Ensemble adapter (`CEnsembleAIStrategyAdapter`)
 
+**Memory Safety**: All AI adapters implement RAII patterns with proper cleanup of transformer models and comprehensive error handling. Constants are used throughout to eliminate magic numbers.
+
 ### 3.3 Curated runtime profile
 Curated mode can restrict runtime active set to a smaller operational profile while preserving full retained implementation in code.
 
@@ -100,6 +110,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 ### 4.1 Cadence selection
 - New-bar path: conservative scan cadence.
 - Intrabar path: timer-driven scans when enabled.
+- Symbol evaluation start index rotates each cycle to reduce deterministic first-symbol concentration.
 
 ### 4.2 Consensus
 - Manager computes strategy votes and confidence.
@@ -117,6 +128,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - Pre-size validation to accept/reject candidate conditions.
 - Position sizing computes lot.
 - Post-size validation with actual lot before execution.
+- Unprotected-position remediation runs before new-entry scans; unresolved states pause new entries until resolved.
 
 ### 4.5 Execution branch
 - Shadow mode: logs virtual trade, no send.
@@ -126,6 +138,11 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - Successful trades register executed risk usage.
 - Close transactions feed manager/orchestrator adaptation.
 - NN attribution maps prediction IDs through close labeling.
+
+### 4.7 Deterministic event separation
+- Tick and timer handlers share a second-level signal-evaluation gate.
+- This prevents duplicate strategy consensus passes in the same wall-clock second.
+- Connectivity gating blocks signal evaluation while terminal connection is down.
 
 ## 5. Data and Control Boundaries
 
@@ -155,6 +172,9 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 
 ### 7.1 Key log families
 - Decision heartbeat: `[HEARTBEAT]`
+- Risk budget split: `[RISK-BUDGET]`
+- Unprotected remediation: `[RISK-UNPROTECTED]`
+- External capacity denial: `[CAPACITY-EXTERNAL]`
 - Consensus diagnostics: `[CONSENSUS-DIAG]`
 - Signal rejection reasons: `[SIGNAL-REJECTED]`
 - AI liveness: `[AI-VOTE]`

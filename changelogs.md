@@ -2,6 +2,42 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-02-23
+
+### Batch 17: Residual Audit Trace Hardening Execution (2026-02-23)
+- **Unprotected Position Response:** Added deterministic remediation loop in `MultiStrategyAutonomousEA.mq5` that attempts SL/TP restoration on EA-owned unprotected positions, tracks bounded retry attempts, and force-closes after configured retry limit when restoration fails.
+- **Risk Telemetry Split:** Extended `SUnifiedRiskSnapshot` in `Core/Risk/UnifiedRiskManager.mqh` with explicit `dailyEntryRiskUsedPercent`, `dailyMarkToMarketLossPercent`, and `openExposureRiskPercent`; heartbeat now emits `[RISK-BUDGET]` decomposition.
+- **Risk Denominator Consistency:** `RiskValidationGate` per-trade risk-percent normalization now uses equity-aware denominator (`min(balance,equity)` fallback-safe) to align with portfolio-risk stress accounting.
+- **Entry Pause on Unprotected State:** Runtime now pauses new entries while unprotected-position state remains active, rather than repeatedly driving expected risk rejections.
+- **Execution Retry Policy Refinement:** `Core/Trading/TradeManager.mqh` now treats `LOCKED`/`FROZEN` as limited one-retry conditions (not full transient backoff class) and logs bounded failure outcomes.
+- **Symbol Priority Neutralization:** Trading loop now rotates per-cycle symbol start index before scanning, reducing deterministic first-symbol concentration under one-trade-per-cycle behavior.
+- **External Capacity Diagnostics:** Added `[CAPACITY-EXTERNAL]` telemetry when per-symbol cap is consumed by non-EA/manual positions.
+- **Orchestrator Runtime Hygiene:** Removed duplicate deinit orchestration report emission path and hardened adaptation logging to explicitly report insufficient trade evidence when no strategy qualifies for weight updates.
+- **Orchestrator Capacity:** Increased `MAX_STRATEGIES` to `256` to reduce qualified strategy registration saturation.
+- **Portfolio Risk Stability (carried in this batch):** Kept equity-aware denominator (`min(balance,equity)`), conservative correlation fallback on data failure, and no release of shared indicator handles in `PortfolioRiskManager`.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 16: Institutional Remediation Hardening (2026-02-23)
+- **Risk Governance:** `PortfolioRiskManager` now treats missing SL as hard-veto state with elevated portfolio risk propagation; zero-risk fallback for unprotected positions removed.
+- **Risk Budgeting:** `UnifiedRiskManager` daily budget is now mark-to-market aware (`max(entry-risk-used, daily equity drawdown, open portfolio stop risk)`).
+- **Validation Gate:** `RiskValidationGate` now explicitly rejects entries while unprotected positions exist and uses consistent risk-percent flow in portfolio checks.
+- **Execution Safety:** `TradeManager` now supports configurable fill mode (IOC default), broader transient-retcode retries with bounded backoff, normalized-volume execution path, and emergency-aware protective stop updates.
+- **Deterministic Runtime:** Main loop now enforces second-level signal dedupe across `OnTick`/`OnTimer`, terminal-connectivity gating, and 1s-bounded position-management cadence.
+- **AI Safety:** NN online training, pseudo-labeling, and weight mutation are now opt-in and disabled by default; checkpoint load no longer re-enables unsafe runtime mutation.
+- **AI Runtime Robustness:** Orchestrator registry capacity expanded (`MAX_STRATEGIES=64`) to prevent symbol-qualified strategy registration failures observed in `testing.log`.
+- **Feature Pipeline Stability:** Transformer feature defaults reduced (`dModel 128`), warning spam throttled, and cross-symbol feature normalization corrected to percent-based scaling.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 15: Code Review Fixes + Memory Safety Improvements (2026-02-23)
+- **Fixed:** Critical memory leak in `CEnsembleAIStrategyAdapter` - transformer models now properly deleted in destructor with failure-safe cleanup.
+- **Fixed:** Null pointer dereference risk in `CEnterpriseStrategyManager::RegisterStrategy` - removed unsafe pointer assignment after deletion.
+- **Enhanced:** Added comprehensive bounds checking and input validation in `CAIFeatureVectorBuilder::BuildTransformerInput` with detailed error messages.
+- **Improved:** Added proper error handling and array validation in `CEnterpriseStrategyManager::PopClosedTradeAttribution`.
+- **Standardized:** Defined constants for all hardcoded transformer parameters across AI components (`TRANSFORMER_D_MODEL_DEFAULT`, etc.).
+- **Verified:** Confirmed proper initialization of new `UnifiedSignalPipeline` member variables.
+- **Quality:** Eliminated magic numbers and improved maintainability across AI adapter implementations.
+- **Compilation:** Verified 0 errors, 0 warnings with all 2,783 lines of new code integrated successfully.
+
 ## [Unreleased] - 2026-02-22
 
 ### Batch 14: Documentation Standardization + Compile Artifact Cleanup (2026-02-22)

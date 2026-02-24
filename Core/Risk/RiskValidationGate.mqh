@@ -106,7 +106,7 @@ public:
     // Individual validation checks
     bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
     bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
-    bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRisk, string &message);
+    bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
     bool ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk);
     bool ValidateMarginRequirements(const STradeValidationRequest &request, string &message);
     bool ValidateAccountHealth(const STradeValidationRequest &request, string &message);
@@ -130,6 +130,34 @@ public:
     
     // Configuration
     void SetMaxRiskPerTrade(const double maxRisk) { m_maxRiskPerTrade = maxRisk; }
+    void SetMaxPortfolioRisk(const double maxRisk) { m_maxPortfolioRisk = maxRisk; }
+    void SetCorrelationThreshold(const double threshold) { m_correlationThreshold = threshold; }
+    
+private:
+    // Portfolio helper accessors
+    double GetPortfolioRiskValue() const;
+    bool PortfolioAllowsTrade(const string symbolParam, const double lotSize) const;
+    bool PortfolioCorrelationAllowed(const string symbolParam) const;
+    bool PortfolioEmergencyActive() const;
+    bool PortfolioHasUnprotectedPositions() const;
+
+    // Internal helper functions
+    bool IsSymbolDataValid(const string symbolParam);
+    double GetSymbolTickValue(const string symbolParam);
+    double GetSymbolPoint(const string symbolParam);
+    bool CheckAccountTradingPermissions(void);
+    
+    // Correlation calculations
+    double CalculateSymbolCorrelation(const string symbol1Param, const string symbol2Param);
+    double GetMaxCorrelationWithPortfolio(const string symbolParam);
+    
+    // Audit functions
+    void WriteAuditLog(const string message);
+    string FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result);
+    
+    // Performance tracking
+    void UpdatePerformanceMetrics(const ulong startTime);
+};
 
 //+------------------------------------------------------------------+
 //| Portfolio helper implementations                                |
@@ -165,27 +193,14 @@ bool CRiskValidationGate::PortfolioEmergencyActive() const
         return false;
     return (*manager).IsEmergencyMode();
 }
-    void SetMaxPortfolioRisk(const double maxRisk) { m_maxPortfolioRisk = maxRisk; }
-    void SetCorrelationThreshold(const double threshold) { m_correlationThreshold = threshold; }
-    
-private:
-    // Internal helper functions
-    bool IsSymbolDataValid(const string symbolParam);
-    double GetSymbolTickValue(const string symbolParam);
-    double GetSymbolPoint(const string symbolParam);
-    bool CheckAccountTradingPermissions(void);
-    
-    // Correlation calculations
-    double CalculateSymbolCorrelation(const string symbol1Param, const string symbol2Param);
-    double GetMaxCorrelationWithPortfolio(const string symbolParam);
-    
-    // Audit functions
-    void WriteAuditLog(const string message);
-    string FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result);
-    
-    // Performance tracking
-    void UpdatePerformanceMetrics(const ulong startTime);
-};
+
+bool CRiskValidationGate::PortfolioHasUnprotectedPositions() const
+{
+    CPortfolioRiskManager* manager = m_portfolioRiskManager;
+    if(CheckPointer(manager) == POINTER_INVALID)
+        return false;
+    return (*manager).HasUnprotectedPositions();
+}
 
 //+------------------------------------------------------------------+
 //| Constructor                                                     |
@@ -448,15 +463,22 @@ bool CRiskValidationGate::ValidateRiskLimits(const STradeValidationRequest &requ
         return false;
     }
     
-    // Convert to percentage
+    // Convert to percentage using equity-aware denominator for stress-consistent risk sizing.
     double accountBalanceLocal = AccountInfoDouble(ACCOUNT_BALANCE);
-    if(accountBalanceLocal <= 0)
+    double accountEquityLocal = AccountInfoDouble(ACCOUNT_EQUITY);
+    double riskDenominator = 0.0;
+    if(accountBalanceLocal > 0.0 && accountEquityLocal > 0.0)
+        riskDenominator = MathMin(accountBalanceLocal, accountEquityLocal);
+    else
+        riskDenominator = MathMax(accountBalanceLocal, accountEquityLocal);
+
+    if(riskDenominator <= 0.0)
     {
-        message = "Invalid account balance";
+        message = "Invalid account risk denominator";
         return false;
     }
     
-    riskPercent = (tradeRisk / accountBalanceLocal) * 100.0;
+    riskPercent = (tradeRisk / riskDenominator) * 100.0;
     
     // Check against maximum risk per trade
     if(riskPercent > m_maxRiskPerTrade)
@@ -478,7 +500,7 @@ bool CRiskValidationGate::ValidateRiskLimits(const STradeValidationRequest &requ
 //+------------------------------------------------------------------+
 //| Validate portfolio risk                                        |
 //+------------------------------------------------------------------+
-bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRisk, string &message)
+bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message)
 {
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
 
@@ -488,8 +510,14 @@ bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &r
         return false;
     }
 
+    if(PortfolioHasUnprotectedPositions())
+    {
+        message = "Open position without protective stop-loss detected";
+        return false;
+    }
+
     double currentRisk = (*manager).GetPortfolioRisk();
-    double totalRisk = currentRisk + tradeRisk;
+    double totalRisk = currentRisk + tradeRiskPercent;
 
     if(totalRisk > m_maxPortfolioRisk)
     {
@@ -694,7 +722,7 @@ void CRiskValidationGate::LogValidationResult(const STradeValidationRequest &req
 //+------------------------------------------------------------------+
 //| Enable audit logging                                           |
 //+------------------------------------------------------------------+
-void CRiskValidationGate::EnableAuditLogging(const bool enabled, const string logFile = "RiskValidation.log")
+void CRiskValidationGate::EnableAuditLogging(const bool enabled, const string logFile)
 {
     m_auditLogging = enabled;
     m_auditLogFile = logFile;

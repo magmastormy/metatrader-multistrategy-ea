@@ -11,6 +11,7 @@
 
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
+#include "../../IndicatorManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Portfolio Risk Manager Class                                     |
@@ -22,6 +23,8 @@ private:
     double m_maxCorrelation;        // Max correlation coefficient (e.g. 0.7)
     bool   m_emergencyMode;         // Emergency circuit breaker
     double m_currentTotalRisk;      // Cached total risk %
+    bool   m_missingStopDetected;   // True when any open position has no protective SL
+    int    m_missingStopCount;      // Number of open positions without SL
     
     // Track per-symbol exposure
     struct SymbolExposure
@@ -44,10 +47,13 @@ public:
     bool   CheckCorrelationLimits(string symbol);
     bool   IsEmergencyMode() const { return m_emergencyMode; }
     void   SetEmergencyMode(bool state) { m_emergencyMode = state; }
+    bool   HasUnprotectedPositions() const { return m_missingStopDetected; }
+    int    GetUnprotectedPositionCount() const { return m_missingStopCount; }
 
 private:
     double GetPositionRisk(ulong ticket);
     void   UpdateCurrentRisk();
+    double GetRiskDenominator() const;
     double CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints = 0.0);
     double CalculateSymbolCorrelation(const string symbol1, const string symbol2);
     int    GetPositionsOnSymbol(const string symbol);
@@ -60,7 +66,9 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_maxPortfolioRisk(10.0),
     m_maxCorrelation(0.7),
     m_emergencyMode(false),
-    m_currentTotalRisk(0.0)
+    m_currentTotalRisk(0.0),
+    m_missingStopDetected(false),
+    m_missingStopCount(0)
 {
 }
 
@@ -85,6 +93,8 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     m_maxPortfolioRisk = maxRiskPercent;
     m_maxCorrelation = maxCorrelation;
     m_emergencyMode = false;
+    m_missingStopDetected = false;
+    m_missingStopCount = 0;
     
     PrintFormat("[PortfolioRisk] Initialized. Max Risk: %.1f%%, Max Correlation: %.2f", 
                 m_maxPortfolioRisk, m_maxCorrelation);
@@ -98,6 +108,20 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
 double CPortfolioRiskManager::GetPortfolioRisk()
 {
     UpdateCurrentRisk();
+
+    if(m_missingStopDetected)
+    {
+        static datetime s_lastMissingStopLog = 0;
+        datetime nowTime = TimeCurrent();
+        if(s_lastMissingStopLog == 0 || (nowTime - s_lastMissingStopLog) >= 60)
+        {
+            PrintFormat("[PortfolioRisk] BLOCKED: %d open position(s) missing stop-loss protection",
+                        m_missingStopCount);
+            s_lastMissingStopLog = nowTime;
+        }
+        // Preserve elevated risk state instead of collapsing to 0.0
+        return m_currentTotalRisk;
+    }
     return m_currentTotalRisk;
 }
 
@@ -130,7 +154,7 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
     
     // Check estimated impact
     double estimatedNewRisk = CalculatePotentialTradeRisk(symbol, lotSize, stopLossPoints);
-    if(m_currentTotalRisk + estimatedNewRisk > m_maxPortfolioRisk * 1.1) // Allow small buffer
+    if(m_currentTotalRisk + estimatedNewRisk > m_maxPortfolioRisk)
     {
         PrintFormat("[PortfolioRisk] BLOCKED: New Total %.2f%% > Max %.2f%%", 
                    m_currentTotalRisk + estimatedNewRisk, m_maxPortfolioRisk);
@@ -196,9 +220,11 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
 void CPortfolioRiskManager::UpdateCurrentRisk()
 {
     double totalRiskDollar = 0.0;
-    double accountBalanceLocal = AccountInfoDouble(ACCOUNT_BALANCE);
+    double riskDenominator = GetRiskDenominator();
+    m_missingStopDetected = false;
+    m_missingStopCount = 0;
     
-    if(accountBalanceLocal <= 0) 
+    if(riskDenominator <= 0.0)
     {
         m_currentTotalRisk = 0.0;
         return;
@@ -209,11 +235,37 @@ void CPortfolioRiskManager::UpdateCurrentRisk()
         ulong ticket = PositionGetTicket(i);
         if(PositionSelectByTicket(ticket))
         {
-            totalRiskDollar += GetPositionRisk(ticket);
+            double positionRisk = GetPositionRisk(ticket);
+            if(positionRisk < 0.0)
+            {
+                m_missingStopDetected = true;
+                m_missingStopCount++;
+                continue;
+            }
+            totalRiskDollar += positionRisk;
         }
     }
     
-    m_currentTotalRisk = (totalRiskDollar / accountBalanceLocal) * 100.0;
+    m_currentTotalRisk = (totalRiskDollar / riskDenominator) * 100.0;
+    if(m_missingStopDetected)
+    {
+        // Missing SL is treated as an immediate risk-governance breach.
+        m_currentTotalRisk = MathMax(m_currentTotalRisk, m_maxPortfolioRisk + 0.01);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Equity-aware denominator for stress-state risk normalization      |
+//+------------------------------------------------------------------+
+double CPortfolioRiskManager::GetRiskDenominator() const
+{
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+    if(balance > 0.0 && equity > 0.0)
+        return MathMin(balance, equity);
+
+    return MathMax(balance, equity);
 }
 
 //+------------------------------------------------------------------+
@@ -228,7 +280,8 @@ double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
     double volume = PositionGetDouble(POSITION_VOLUME);
     string symbol = PositionGetString(POSITION_SYMBOL);
     
-    if(sl <= 0) return 0.0; // No SL = No measurable risk (or infinite)
+    if(sl <= 0)
+        return -1.0; // Missing SL is an unbounded-risk state and must hard-veto new entries.
     
     double diff = MathAbs(openPrice - sl);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
@@ -247,8 +300,8 @@ double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double 
     if(lotSize <= 0.0 || symbol == "")
         return 0.0;
 
-    double accountBalanceLocal = AccountInfoDouble(ACCOUNT_BALANCE);
-    if(accountBalanceLocal <= 0.0)
+    double riskDenominator = GetRiskDenominator();
+    if(riskDenominator <= 0.0)
         return 0.0;
 
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -262,13 +315,28 @@ double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double 
     // If caller did not provide stop distance, estimate from ATR to stay symbol-aware.
     if(effectiveStopPoints <= 0.0)
     {
-        int atrHandle = iATR(symbol, PERIOD_CURRENT, 14);
-        if(atrHandle != INVALID_HANDLE)
+        CIndicatorManager* indManager = CIndicatorManager::Instance();
+        if(indManager != NULL)
         {
-            double atrBuffer[1];
-            if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0 && atrBuffer[0] > 0.0)
-                effectiveStopPoints = (atrBuffer[0] / point) * 1.5;
-            IndicatorRelease(atrHandle);
+            int atrHandle = indManager.GetATRHandle(symbol, PERIOD_CURRENT, 14);
+            if(atrHandle != INVALID_HANDLE)
+            {
+                double atrBuffer[1];
+                if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0 && atrBuffer[0] > 0.0)
+                    effectiveStopPoints = (atrBuffer[0] / point) * 1.5;
+            }
+        }
+        else
+        {
+            // Fallback path when shared indicator manager is unavailable.
+            int atrHandle = iATR(symbol, PERIOD_CURRENT, 14);
+            if(atrHandle != INVALID_HANDLE)
+            {
+                double atrBuffer[1];
+                if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0 && atrBuffer[0] > 0.0)
+                    effectiveStopPoints = (atrBuffer[0] / point) * 1.5;
+                IndicatorRelease(atrHandle);
+            }
         }
     }
 
@@ -281,15 +349,21 @@ double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double 
     double stopLossPriceDistance = effectiveStopPoints * point;
     double riskPerLot = (stopLossPriceDistance / tickSize) * tickValue;
     double totalRisk = riskPerLot * lotSize;
-    return (totalRisk / accountBalanceLocal) * 100.0;
+    return (totalRisk / riskDenominator) * 100.0;
 }
 
 double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, const string symbol2)
 {
-    if(symbol1 == "" || symbol2 == "" || symbol1 == symbol2)
-        return 0.0;
+    const double conservativeCorrelation = 1.0;
+    static datetime s_lastCorrelationDataWarn = 0;
+
+    if(symbol1 == "" || symbol2 == "")
+        return conservativeCorrelation;
+    if(symbol1 == symbol2)
+        return conservativeCorrelation;
+
     if(!SymbolSelect(symbol1, true) || !SymbolSelect(symbol2, true))
-        return 0.0;
+        return conservativeCorrelation;
 
     const int period = 30;
     double prices1[];
@@ -298,7 +372,14 @@ double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, c
     if(CopyClose(symbol1, PERIOD_H1, 0, period, prices1) < period ||
        CopyClose(symbol2, PERIOD_H1, 0, period, prices2) < period)
     {
-        return 0.0;
+        datetime now = TimeCurrent();
+        if(s_lastCorrelationDataWarn == 0 || (now - s_lastCorrelationDataWarn) >= 300)
+        {
+            PrintFormat("[PortfolioRisk] Correlation data unavailable for %s/%s - applying conservative block",
+                        symbol1, symbol2);
+            s_lastCorrelationDataWarn = now;
+        }
+        return conservativeCorrelation;
     }
 
     double returns1[];
@@ -309,7 +390,7 @@ double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, c
     for(int i = 1; i < period; i++)
     {
         if(prices1[i - 1] == 0.0 || prices2[i - 1] == 0.0)
-            return 0.0;
+            return conservativeCorrelation;
         returns1[i - 1] = (prices1[i] - prices1[i - 1]) / prices1[i - 1];
         returns2[i - 1] = (prices2[i] - prices2[i - 1]) / prices2[i - 1];
     }
@@ -328,7 +409,7 @@ double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, c
     double numerator = n * sum12 - sum1 * sum2;
     double denominator = MathSqrt((n * sum1sq - sum1 * sum1) * (n * sum2sq - sum2 * sum2));
     if(denominator <= 0.0)
-        return 0.0;
+        return conservativeCorrelation;
 
     return numerator / denominator;
 }

@@ -15,6 +15,8 @@ class CEnsembleAIStrategyAdapter : public IStrategy
 {
 private:
     CEnsembleMetaLearner m_ensemble;
+    CTransformerBrain* m_modelA;
+    CTransformerBrain* m_modelB;
     string m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
     bool m_enabled;
@@ -36,18 +38,56 @@ private:
             return false;
 
         // Two diverse transformer members for ensemble voting.
-        CTransformerBrain* modelA = new CTransformerBrain(256, 8, 4, 512, 64, 0.001);
-        CTransformerBrain* modelB = new CTransformerBrain(256, 8, 3, 384, 64, 0.0015);
-        if(modelA == NULL || modelB == NULL)
+        m_modelA = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
+        m_modelB = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT - 1, TRANSFORMER_D_FF_B_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_B_DEFAULT);
+        if(m_modelA == NULL || m_modelB == NULL)
+        {
+            // Clean up on failure
+            if(m_modelA != NULL)
+            {
+                delete m_modelA;
+                m_modelA = NULL;
+            }
+            if(m_modelB != NULL)
+            {
+                delete m_modelB;
+                m_modelB = NULL;
+            }
             return false;
+        }
 
-        if(!modelA.Initialize() || !modelB.Initialize())
+        if(!m_modelA.Initialize() || !m_modelB.Initialize())
+        {
+            // Clean up on initialization failure
+            if(m_modelA != NULL)
+            {
+                delete m_modelA;
+                m_modelA = NULL;
+            }
+            if(m_modelB != NULL)
+            {
+                delete m_modelB;
+                m_modelB = NULL;
+            }
             return false;
+        }
 
-        if(!m_ensemble.AddModel(modelA, 1.0))
+        if(!m_ensemble.AddModel(m_modelA, 1.0))
+        {
+            // Clean up on ensemble addition failure
+            delete m_modelA;
+            m_modelA = NULL;
+            delete m_modelB;
+            m_modelB = NULL;
             return false;
-        if(!m_ensemble.AddModel(modelB, 1.0))
+        }
+        if(!m_ensemble.AddModel(m_modelB, 1.0))
+        {
+            // Clean up on ensemble addition failure
+            delete m_modelB;
+            m_modelB = NULL;
             return false;
+        }
 
         m_modelsInitialized = true;
         return true;
@@ -67,6 +107,8 @@ private:
 public:
     CEnsembleAIStrategyAdapter()
     {
+        m_modelA = NULL;
+        m_modelB = NULL;
         m_symbol = "";
         m_timeframe = PERIOD_CURRENT;
         m_enabled = true;
@@ -83,6 +125,18 @@ public:
     virtual ~CEnsembleAIStrategyAdapter()
     {
         m_ensemble.Shutdown();
+        
+        // Clean up transformer models
+        if(m_modelA != NULL)
+        {
+            delete m_modelA;
+            m_modelA = NULL;
+        }
+        if(m_modelB != NULL)
+        {
+            delete m_modelB;
+            m_modelB = NULL;
+        }
     }
 
     virtual bool Init(const string symbol,
@@ -113,7 +167,7 @@ public:
         }
 
         double inputSequence[];
-        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, 256, 1))
+        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, 1))
         {
             m_noneVotes++;
             LogVoteHeartbeat();

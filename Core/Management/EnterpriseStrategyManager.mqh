@@ -77,6 +77,7 @@ private:
     bool m_initialized;
     bool m_usePipeline;
     int  m_minQuorum;       // Minimum number of strategies that must agree
+    int  m_intrabarMinQuorum; // Intrabar quorum floor when multiple strategies are active
     
     // Statistics
     int m_totalSignals;
@@ -145,6 +146,7 @@ public:
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum) { m_minQuorum = MathMax(1, quorum); }  // Solo Mode support
+    void SetIntrabarMinQuorum(int quorum) { m_intrabarMinQuorum = MathMax(1, quorum); }
     int  GetMinQuorum() const { return m_minQuorum; }
     bool UpdateStrategyWeightByName(const string name, const double weight);
     int GetRegisteredStrategyCount() const { return m_strategyCount; }
@@ -181,6 +183,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_initialized(false),
     m_usePipeline(true),
     m_minQuorum(2),         // Require >=2 aligned contributors when multiple strategies are active
+    m_intrabarMinQuorum(1),
     m_totalSignals(0),
     m_successfulSignals(0),
     m_avgConfidence(0),
@@ -278,7 +281,6 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     {
         Print("[EnterpriseStrategyManager] ERROR: Strategy ", name, " initialization failed. Skipping registration.");
         delete strategy;
-        strategy = NULL;
         return false;
     }
     
@@ -457,7 +459,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
     int effectiveQuorum = m_minQuorum;
     if(evalMode == EVAL_MODE_INTRABAR)
-        effectiveQuorum = 1;
+        effectiveQuorum = m_intrabarMinQuorum;
     else if(activeStrategies == 1)
         effectiveQuorum = 1;
     effectiveQuorum = MathMax(1, MathMin(effectiveQuorum, activeStrategies));
@@ -715,14 +717,34 @@ void CEnterpriseStrategyManager::GetLastSignalContributors(string &contributors[
 bool CEnterpriseStrategyManager::PopClosedTradeAttribution(string &contributors[], double &netProfit)
 {
     if(!m_hasClosedTradeAttribution)
+    {
+        ArrayResize(contributors, 0);
+        netProfit = 0.0;
         return false;
+    }
 
+    // Validate input arrays
+    if(ArraySize(m_closedTradeContributors) <= 0)
+    {
+        Print("[EnterpriseStrategyManager] WARNING: PopClosedTradeAttribution called with empty contributors array");
+        m_hasClosedTradeAttribution = false;
+        ArrayResize(contributors, 0);
+        netProfit = 0.0;
+        return false;
+    }
+
+    // Copy contributors to output array
+    int contributorCount = ArraySize(m_closedTradeContributors);
+    ArrayResize(contributors, contributorCount);
     ArrayCopy(contributors, m_closedTradeContributors);
+    
     netProfit = m_closedTradeNetProfit;
 
+    // Clear the stored attribution
     ArrayResize(m_closedTradeContributors, 0);
     m_closedTradeNetProfit = 0.0;
     m_hasClosedTradeAttribution = false;
+    
     return true;
 }
 

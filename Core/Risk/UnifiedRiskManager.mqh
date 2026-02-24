@@ -36,7 +36,10 @@ struct SUnifiedRiskConfig
 struct SUnifiedRiskSnapshot
 {
     double activeRiskPerTradePercent;
-    double dailyRiskUsedPercent;
+    double dailyRiskUsedPercent;           // Effective max(entry_budget, mtm_loss, open_exposure)
+    double dailyEntryRiskUsedPercent;      // Cumulative accepted entry risk intents
+    double dailyMarkToMarketLossPercent;   // Equity loss vs daily baseline
+    double openExposureRiskPercent;        // Current stop-defined portfolio exposure
     double maxDailyRiskPercent;
     double portfolioRiskPercent;
     double currentDrawdownPercent;
@@ -66,6 +69,7 @@ private:
 
     double m_activeRiskPerTradePercent;
     double m_dailyRiskUsedPercent;
+    double m_dailyStartEquity;
     datetime m_lastDailyReset;
     bool m_initialized;
     bool m_conservativeMode;
@@ -87,13 +91,18 @@ public:
     void RegisterExecutedTradeRisk(const SValidationResult &validationResult);
 
     double GetActiveRiskPerTradePercent() const { return m_activeRiskPerTradePercent; }
-    double GetRemainingDailyRiskPercent() const;
+    double GetRemainingDailyRiskPercent();
     SUnifiedRiskSnapshot GetSnapshot();
+    bool HasUnprotectedPositions();
+    int GetUnprotectedPositionCount();
 
 private:
     void UpdateAdaptiveRiskLevel();
     bool IsNewTradingDay(const datetime nowTime) const;
     double ClampRiskPercent(const double value) const;
+    double CalculateDailyMarkToMarketLossPercent();
+    double GetCurrentOpenExposureRiskPercent();
+    double GetEffectiveDailyRiskUsedPercent();
 };
 
 //+------------------------------------------------------------------+
@@ -103,6 +112,7 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_performanceAnalytics(NULL),
     m_activeRiskPerTradePercent(1.0),
     m_dailyRiskUsedPercent(0.0),
+    m_dailyStartEquity(0.0),
     m_lastDailyReset(0),
     m_initialized(false),
     m_conservativeMode(false)
@@ -175,6 +185,9 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
 
     m_activeRiskPerTradePercent = ClampRiskPercent(m_config.baseRiskPerTradePercent);
     m_dailyRiskUsedPercent = 0.0;
+    m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(m_dailyStartEquity <= 0.0)
+        m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
     m_lastDailyReset = TimeCurrent();
     m_initialized = true;
 
@@ -212,6 +225,9 @@ void CUnifiedRiskManager::CheckAndResetDailyLimits()
     if(IsNewTradingDay(nowTime))
     {
         m_dailyRiskUsedPercent = 0.0;
+        m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+        if(m_dailyStartEquity <= 0.0)
+            m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
         m_lastDailyReset = nowTime;
         Print("[RISK-UNIFIED] Daily risk usage reset");
     }
@@ -237,10 +253,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
 
     CheckAndResetDailyLimits();
 
-    if(m_dailyRiskUsedPercent >= m_config.maxDailyRiskPercent)
+    double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent();
+    if(effectiveDailyRisk >= m_config.maxDailyRiskPercent)
     {
         result.message = StringFormat("Daily risk budget exhausted: %.2f%% / %.2f%%",
-                                      m_dailyRiskUsedPercent, m_config.maxDailyRiskPercent);
+                                      effectiveDailyRisk, m_config.maxDailyRiskPercent);
         result.severity = ERROR_LEVEL_WARNING;
         return result;
     }
@@ -249,13 +266,13 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     if(!result.approved)
         return result;
 
-    double projectedDailyRisk = m_dailyRiskUsedPercent + MathMax(0.0, result.riskPercent);
+    double projectedDailyRisk = effectiveDailyRisk + MathMax(0.0, result.riskPercent);
     if(projectedDailyRisk > m_config.maxDailyRiskPercent)
     {
         result.approved = false;
         result.severity = ERROR_LEVEL_WARNING;
         result.message = StringFormat("Daily risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
-                                      phaseTag, m_dailyRiskUsedPercent, result.riskPercent, m_config.maxDailyRiskPercent);
+                                      phaseTag, effectiveDailyRisk, result.riskPercent, m_config.maxDailyRiskPercent);
     }
 
     return result;
@@ -281,9 +298,9 @@ void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &val
 //+------------------------------------------------------------------+
 //| Remaining daily risk                                             |
 //+------------------------------------------------------------------+
-double CUnifiedRiskManager::GetRemainingDailyRiskPercent() const
+double CUnifiedRiskManager::GetRemainingDailyRiskPercent()
 {
-    double remaining = m_config.maxDailyRiskPercent - m_dailyRiskUsedPercent;
+    double remaining = m_config.maxDailyRiskPercent - GetEffectiveDailyRiskUsedPercent();
     if(remaining < 0.0)
         return 0.0;
     return remaining;
@@ -298,9 +315,14 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     ZeroMemory(snapshot);
 
     snapshot.activeRiskPerTradePercent = m_activeRiskPerTradePercent;
-    snapshot.dailyRiskUsedPercent = m_dailyRiskUsedPercent;
+    snapshot.dailyEntryRiskUsedPercent = MathMax(0.0, m_dailyRiskUsedPercent);
+    snapshot.dailyMarkToMarketLossPercent = CalculateDailyMarkToMarketLossPercent();
+    snapshot.openExposureRiskPercent = GetCurrentOpenExposureRiskPercent();
+    snapshot.dailyRiskUsedPercent = MathMax(snapshot.dailyEntryRiskUsedPercent,
+                                            MathMax(snapshot.dailyMarkToMarketLossPercent,
+                                                    snapshot.openExposureRiskPercent));
     snapshot.maxDailyRiskPercent = m_config.maxDailyRiskPercent;
-    snapshot.portfolioRiskPercent = m_portfolioRiskManager.GetPortfolioRisk();
+    snapshot.portfolioRiskPercent = snapshot.openExposureRiskPercent;
     snapshot.emergencyMode = m_portfolioRiskManager.IsEmergencyMode();
     snapshot.conservativeMode = m_conservativeMode;
 
@@ -331,6 +353,56 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     }
 
     return snapshot;
+}
+
+//+------------------------------------------------------------------+
+//| Runtime unprotected-position state                                |
+//+------------------------------------------------------------------+
+bool CUnifiedRiskManager::HasUnprotectedPositions()
+{
+    return (GetUnprotectedPositionCount() > 0);
+}
+
+int CUnifiedRiskManager::GetUnprotectedPositionCount()
+{
+    // Refresh portfolio risk state first so missing-stop flags are current.
+    m_portfolioRiskManager.GetPortfolioRisk();
+    return m_portfolioRiskManager.GetUnprotectedPositionCount();
+}
+
+//+------------------------------------------------------------------+
+//| Mark-to-market daily drawdown component                           |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::CalculateDailyMarkToMarketLossPercent()
+{
+    double baselineEquity = m_dailyStartEquity;
+    if(baselineEquity <= 0.0)
+        baselineEquity = AccountInfoDouble(ACCOUNT_BALANCE);
+
+    if(baselineEquity <= 0.0)
+        return 0.0;
+
+    double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
+    return MathMax(0.0, ((baselineEquity - equityNow) / baselineEquity) * 100.0);
+}
+
+//+------------------------------------------------------------------+
+//| Open exposure component                                           |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::GetCurrentOpenExposureRiskPercent()
+{
+    return m_portfolioRiskManager.GetPortfolioRisk();
+}
+
+//+------------------------------------------------------------------+
+//| Effective daily risk usage (entry-budget + mark-to-market loss)  |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::GetEffectiveDailyRiskUsedPercent()
+{
+    double effective = MathMax(0.0, m_dailyRiskUsedPercent);
+    effective = MathMax(effective, CalculateDailyMarkToMarketLossPercent());
+    effective = MathMax(effective, GetCurrentOpenExposureRiskPercent());
+    return effective;
 }
 
 //+------------------------------------------------------------------+
