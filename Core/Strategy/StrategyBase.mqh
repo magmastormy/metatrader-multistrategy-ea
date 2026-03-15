@@ -48,6 +48,7 @@ protected:
     int               m_lowConfidenceFiltered;  // Count of filtered low-conf signals
     int               m_errorCount;
     datetime          m_lastErrorTime;
+    string            m_lastDecisionReasonTag;
 
     CTradeManager*    m_tradeManager;
     CPositionSizer*   m_positionSizer;
@@ -77,6 +78,7 @@ public:
     virtual bool ValidateParameters(void);
     virtual datetime GetLastSignalTime(void) const;
     virtual void GetStatistics(int &signals, int &successful, double &accuracy);
+    virtual string GetLastDecisionReasonTag(void) const override;
 
     virtual void Update(void);
 
@@ -88,6 +90,7 @@ protected:
     virtual void HandleNewBar();
     void RecordSignal(const bool successful = false);
     void RecordSignalOutcome(const bool successful);
+    void SetDecisionReasonTag(const string tag);
 
 public:
     void SetTradeManager(CTradeManager* manager);
@@ -126,6 +129,7 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_lowConfidenceFiltered(0),
     m_errorCount(0),
     m_lastErrorTime(0),
+    m_lastDecisionReasonTag("BASE_UNSET"),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_errorHandler(NULL)
@@ -192,6 +196,7 @@ bool CStrategyBase::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, v
     m_positionSizer = (CPositionSizer*)positionSizerPtr;
 
     m_is_initialized = (m_tradeManager != NULL && m_positionSizer != NULL);
+    m_lastDecisionReasonTag = m_is_initialized ? "BASE_INITIALIZED" : "BASE_INIT_FAILED";
     return m_is_initialized;
 }
 
@@ -204,16 +209,29 @@ void CStrategyBase::Deinit(void)
     m_lastSignalTime = 0;
     m_errorCount = 0;
     m_lastErrorTime = 0;
+    m_lastDecisionReasonTag = "BASE_DEINIT";
 }
 
 ENUM_TRADE_SIGNAL CStrategyBase::GetSignal(double &confidence)
 {
     confidence = 0.0;
+    m_lastDecisionReasonTag = "";
     if(!m_is_enabled || !m_is_initialized)
+    {
+        m_lastDecisionReasonTag = "BASE_DISABLED_OR_UNINITIALIZED";
         return TRADE_SIGNAL_NONE;
+    }
     ENUM_TRADE_SIGNAL signal = ExecuteSignal(confidence);
     if(signal != TRADE_SIGNAL_NONE)
+    {
         RecordSignal();
+        if(m_lastDecisionReasonTag == "")
+            m_lastDecisionReasonTag = "BASE_SIGNAL";
+    }
+    else if(m_lastDecisionReasonTag == "")
+    {
+        m_lastDecisionReasonTag = "BASE_NO_SIGNAL";
+    }
     return signal;
 }
 
@@ -269,6 +287,11 @@ void CStrategyBase::GetStatistics(int &signals, int &successful, double &accurac
     accuracy = (m_totalSignals > 0 ? ((double)m_successfulSignals / (double)m_totalSignals) * 100.0 : 0.0);
 }
 
+string CStrategyBase::GetLastDecisionReasonTag(void) const
+{
+    return m_lastDecisionReasonTag;
+}
+
 void CStrategyBase::Update(void)
 {
     if(!m_is_enabled || !m_is_initialized)
@@ -296,6 +319,11 @@ void CStrategyBase::RecordSignalOutcome(const bool successful)
 {
     if(successful)
         m_successfulSignals++;
+}
+
+void CStrategyBase::SetDecisionReasonTag(const string tag)
+{
+    m_lastDecisionReasonTag = tag;
 }
 
 void CStrategyBase::SetTradeManager(CTradeManager* manager)

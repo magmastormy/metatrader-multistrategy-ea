@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| ImbalanceDetector.mqh                                            |
-//| Fair Value Gap / Imbalance Detection for Unified ICT/SMC         |
+//| Fair Value Gap / Imbalance Detection for Unified ICT             |
 //| Copyright 2025, Multi-Strategy EA                                |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Multi-Strategy EA"

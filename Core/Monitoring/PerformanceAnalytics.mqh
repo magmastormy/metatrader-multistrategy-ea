@@ -223,18 +223,6 @@ void CPerformanceAnalytics::RecordTrade(const string tradeSymbol, const ENUM_ORD
 {
     if(!m_initialized) return;
 
-    m_totalTrades++;
-
-    // Resize arrays if needed
-    int currentSize = ArraySize(m_tradeTimes);
-    if(currentSize <= m_totalTrades)
-    {
-        ResizeArrays(m_totalTrades + 100);
-    }
-
-    // Record trade time
-    m_tradeTimes[m_totalTrades - 1] = TimeCurrent();
-
     LogPerformanceUpdate(StringFormat("Trade recorded: %s %s %.2f lots at %.5f",
                                      tradeSymbol, EnumToString(orderType), volume, price));
 }
@@ -245,19 +233,52 @@ void CPerformanceAnalytics::RecordTrade(const string tradeSymbol, const ENUM_ORD
 void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double profit)
 {
     if(!m_initialized) return;
+
+    m_totalTrades++;
+
+    int currentSize = ArraySize(m_tradeTimes);
+    if(currentSize <= m_totalTrades)
+    {
+        ResizeArrays(m_totalTrades + 100);
+    }
+
+    double riskDenominator = 0.0;
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(balance > 0.0 && equity > 0.0)
+        riskDenominator = MathMin(balance, equity);
+    else
+        riskDenominator = MathMax(balance, equity);
+    if(riskDenominator <= 0.0)
+        riskDenominator = 1.0;
+
+    double normalizedReturn = (profit / riskDenominator) * 100.0;
+    for(int i = ArraySize(m_recentReturns) - 1; i > 0; i--)
+        m_recentReturns[i] = m_recentReturns[i - 1];
+    m_recentReturns[0] = normalizedReturn;
+    m_tradeTimes[m_totalTrades - 1] = TimeCurrent();
+    m_dailyReturns[m_totalTrades - 1] = normalizedReturn;
     
     // Update profit/loss tracking
     if(profit > 0)
     {
+        m_successfulTrades++;
+        m_consecutiveLosses = 0;
         m_totalProfit += profit;
         if(profit > m_largestWin)
             m_largestWin = profit;
     }
     else if(profit < 0)
     {
+        m_failedTrades++;
+        m_consecutiveLosses++;
         m_totalLoss += MathAbs(profit);
         if(MathAbs(profit) > m_largestLoss)
             m_largestLoss = MathAbs(profit);
+    }
+    else
+    {
+        m_consecutiveLosses = 0;
     }
     
     // Update equity tracking
@@ -266,6 +287,8 @@ void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double p
     
     // Recalculate metrics
     CalculateMetrics();
+    CalculateRollingMetrics();
+    CheckPerformanceTriggers();
     
     LogPerformanceUpdate(StringFormat("Closed trade #%d: Profit %.2f, Total P&L: %.2f", 
                                      (int)ticket, profit, m_totalProfit - m_totalLoss));

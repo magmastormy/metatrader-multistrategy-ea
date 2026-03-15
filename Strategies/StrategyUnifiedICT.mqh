@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| StrategyUnifiedICT.mqh                                           |
-//| Unified ICT/SMC Trading Strategy v1.0                            |
+//| Unified ICT Trading Strategy v1.0                                |
 //| Combines Market Structure, Order Blocks, Supply/Demand,          |
 //| Liquidity, Imbalance, and Institutional Order Flow               |
 //| Copyright 2025, Multi-Strategy EA                                |
@@ -20,7 +20,7 @@
 #include "UnifiedICTFiles/LiquidityDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
-// Reuse existing SMC components where appropriate
+// Reuse ICT-specific confluence components
 #include "SMCFiles/KillZones.mqh"
 #include "SMCFiles/PremiumDiscount.mqh"
 
@@ -133,6 +133,7 @@ public:
 private:
     void                        Cleanup();
     void                        LogFilterEvent(const string message);
+    ENUM_TRADE_SIGNAL           RejectSignal(const string reasonTag, const string filterMessage = "");
     void                        DrawElements();
     bool                        RefreshComponentsForCurrentBar();
     
@@ -394,6 +395,14 @@ void CStrategyUnifiedICT::LogFilterEvent(const string message)
     m_lastFilterLogTime = nowTime;
 }
 
+ENUM_TRADE_SIGNAL CStrategyUnifiedICT::RejectSignal(const string reasonTag, const string filterMessage)
+{
+    SetDecisionReasonTag(reasonTag);
+    if(filterMessage != "")
+        LogFilterEvent(filterMessage);
+    return TRADE_SIGNAL_NONE;
+}
+
 //+------------------------------------------------------------------+
 //| Draw Elements                                                    |
 //+------------------------------------------------------------------+
@@ -479,9 +488,10 @@ void CStrategyUnifiedICT::DrawElements()
 ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
 {
     confidence = 0.0;
+    SetDecisionReasonTag("UICT_UNSET");
     
     if(!m_is_enabled || !m_is_initialized)
-        return TRADE_SIGNAL_NONE;
+        return RejectSignal("UICT_DISABLED_OR_UNINIT");
     
     // Ensure heavy component updates run once per bar across OnNewBar/GetSignal
     RefreshComponentsForCurrentBar();
@@ -490,15 +500,52 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     if(m_requireKillZone && m_killZones != NULL)
     {
         if(!m_killZones.IsInKillZone())
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("UICT_KILLZONE_INACTIVE");
     }
 
     bool isBullish = false;
     if(!ResolveDirectionalBias(isBullish))
     {
-        LogFilterEvent("[UICT] Filtered: Ambiguous or neutral structure bias");
-        return TRADE_SIGNAL_NONE;
+        return RejectSignal("UICT_NEUTRAL_BIAS", "[UICT] Filtered: Ambiguous or neutral structure bias");
     }
+
+    // Compact falsifiable event tuple:
+    // 1) structure break, 2) displacement impulse, 3) mitigation/retest.
+    ENUM_BMS_TYPE structureBreak = m_structureAnalyzer != NULL ? m_structureAnalyzer.DetectBMS() : BMS_NONE;
+    bool hasStructureBreakEvent = (structureBreak != BMS_NONE);
+    bool hasDisplacementEvent = false;
+    if(m_imbalanceDetector != NULL)
+        hasDisplacementEvent = (m_imbalanceDetector.GetImbalanceCount() > 0);
+
+    bool hasMitigationRetestEvent = false;
+    double eventReferencePrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+    if(m_obDetector != NULL)
+    {
+        int bestObIdx = isBullish ? m_obDetector.FindBestBullishOB() : m_obDetector.FindBestBearishOB();
+        if(bestObIdx >= 0)
+        {
+            SAdvancedOrderBlock eventOb;
+            if(m_obDetector.GetOrderBlock(bestObIdx, eventOb))
+            {
+                eventReferencePrice = eventOb.midpoint;
+                double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+                if(point <= 0.0)
+                    point = 0.00001;
+                double atr = (m_structureAnalyzer != NULL) ? m_structureAnalyzer.GetATR(14) : 0.0;
+                double tolerance = (atr > 0.0) ? (atr * 0.25) : (point * 25.0);
+                hasMitigationRetestEvent = (MathAbs(SymbolInfoDouble(m_symbol, SYMBOL_BID) - eventOb.midpoint) <= tolerance);
+            }
+        }
+    }
+
+    if(!hasStructureBreakEvent)
+        return RejectSignal("UICT_EVENT_NO_STRUCTURE_BREAK",
+                            "[UICT] Filtered: Event tuple missing structure break");
+    if(!(hasDisplacementEvent && hasMitigationRetestEvent))
+        return RejectSignal("UICT_EVENT_TUPLE_INCOMPLETE",
+                            StringFormat("[UICT] Filtered: Event tuple incomplete (disp=%s, retest=%s)",
+                                         hasDisplacementEvent ? "true" : "false",
+                                         hasMitigationRetestEvent ? "true" : "false"));
     
     // Get best entry setup
     SICTEntrySetup bestEntry;
@@ -527,19 +574,19 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     
     // Check if we have a valid entry
     if(bestEntry.entryType == ICT_ENTRY_NONE || bestEntry.confidence < m_minConfidence)
-        return TRADE_SIGNAL_NONE;
+        return RejectSignal("UICT_NO_ENTRY_SETUP");
 
     double entryConfluenceScore = ((double)bestEntry.confluenceCount / 6.0) * 100.0;
     if(bestEntry.confluenceCount < m_minConfluences || entryConfluenceScore < m_minConfluenceScore)
     {
-        LogFilterEvent(StringFormat("[UICT] Filtered: Confluence gate failed (%d / %.1f%%)",
-                                    bestEntry.confluenceCount, entryConfluenceScore));
-        return TRADE_SIGNAL_NONE;
+        return RejectSignal("UICT_CONFLUENCE_GATE",
+                            StringFormat("[UICT] Filtered: Confluence gate failed (%d / %.1f%%)",
+                                         bestEntry.confluenceCount, entryConfluenceScore));
     }
     
     // Validate Market Maker setup
     if(!ValidateMarketMakerSetup(bestEntry))
-        return TRADE_SIGNAL_NONE;
+        return RejectSignal("UICT_MARKET_MAKER_INVALID");
     
     // Determine signal direction from validated structure bias
     ENUM_TRADE_SIGNAL result = isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
@@ -548,8 +595,8 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     if(!IsPriceAtMajorPOI(currentPrice))
     {
-        LogFilterEvent(StringFormat("[UICT] Filtered: Price %.5f not at major POI", currentPrice));
-        return TRADE_SIGNAL_NONE;
+        return RejectSignal("UICT_NOT_AT_MAJOR_POI",
+                            StringFormat("[UICT] Filtered: Price %.5f not at major POI", currentPrice));
     }
 
     // COUNTER-TREND SCOUT: Allow reversals targeting HTF zones
@@ -557,40 +604,47 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
 
     if(!htfAligned)
     {
+        bool rangeRegime = (m_structureAnalyzer != NULL && !m_structureAnalyzer.IsTrendConfirmed());
+        if(!rangeRegime)
+        {
+            return RejectSignal("UICT_COUNTERTREND_NON_RANGE",
+                                "[UICT] Filtered: Counter-trend logic restricted to range regime");
+        }
+
         if(!m_allowCounterTrendScout)
         {
-            LogFilterEvent("[UICT] Filtered: Counter-trend setup blocked (production mode)");
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("UICT_COUNTERTREND_BLOCKED_PRODUCTION",
+                                "[UICT] Filtered: Counter-trend setup blocked (production mode)");
         }
 
         bool aggressiveCounterTrend = (bestEntry.entryType == ICT_ENTRY_RISK ||
                                        bestEntry.entryType == ICT_ENTRY_RISK_WITH_JUST);
         if(aggressiveCounterTrend)
         {
-            LogFilterEvent("[UICT] Filtered: Counter-trend blocked for aggressive entry type");
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("UICT_COUNTERTREND_AGGRESSIVE_BLOCK",
+                                "[UICT] Filtered: Counter-trend blocked for aggressive entry type");
         }
 
         int requiredCounterConfluence = (int)MathMax((double)(m_minConfluences + 1), 5.0);
         if(bestEntry.confluenceCount < requiredCounterConfluence)
         {
-            LogFilterEvent(StringFormat("[UICT] Filtered: Counter-trend confluence too low (%d < %d)",
-                                        bestEntry.confluenceCount, requiredCounterConfluence));
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("UICT_COUNTERTREND_CONFLUENCE_LOW",
+                                StringFormat("[UICT] Filtered: Counter-trend confluence too low (%d < %d)",
+                                             bestEntry.confluenceCount, requiredCounterConfluence));
         }
 
         // Check if counter-trend is valid (targeting opposing HTF zone)
         if(!IsCounterTrendScoutValid(isBullish))
         {
-            LogFilterEvent("[UICT] Filtered: No HTF alignment and no valid counter-trend target");
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("UICT_COUNTERTREND_INVALID_TARGET",
+                                "[UICT] Filtered: No HTF alignment and no valid counter-trend target");
         }
 
         bool inKillZone = (m_killZones != NULL && m_killZones.IsInKillZone());
         if(!inKillZone)
         {
-            LogFilterEvent("[UICT] Filtered: Counter-trend requires active kill-zone");
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("UICT_COUNTERTREND_KILLZONE_REQUIRED",
+                                "[UICT] Filtered: Counter-trend requires active kill-zone");
         }
 
         bool hasOteAlignment = false;
@@ -603,55 +657,76 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         }
         if(!hasOteAlignment)
         {
-            LogFilterEvent("[UICT] Filtered: Counter-trend requires OTE alignment");
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("UICT_COUNTERTREND_OTE_REQUIRED",
+                                "[UICT] Filtered: Counter-trend requires OTE alignment");
         }
 
         // Counter-trend is valid, reduce confidence but allow signal
-        bestEntry.confidence *= 0.65;
+        bestEntry.confidence *= 0.75;
         bestEntry.reason += " (Counter-Trend Scout)";
     }
     
     // CANDLESTICK CONFIRMATION: Validate price rejection at POI
     if(!ValidatePriceRejection(result))
     {
-        LogFilterEvent("[UICT] Filtered: No candlestick rejection confirmation at POI");
-        return TRADE_SIGNAL_NONE;
+        return RejectSignal("UICT_NO_REJECTION_CONFIRMATION",
+                            "[UICT] Filtered: No candlestick rejection confirmation at POI");
     }
     
-    confidence = bestEntry.confidence;
+    double eventQuality = 0.40;
+    if(hasStructureBreakEvent)
+        eventQuality += 0.20;
+    if(hasDisplacementEvent)
+        eventQuality += 0.20;
+    if(hasMitigationRetestEvent)
+        eventQuality += 0.20;
+    eventQuality += MathMin(0.15, ((double)bestEntry.confluenceCount / 10.0));
+    eventQuality = MathMin(0.95, MathMax(0.0, eventQuality));
+
+    confidence = MathMin(0.95, (bestEntry.confidence * 0.70) + (eventQuality * 0.30));
     
-    // Apply Kill Zone bonus
+    // Kill zone is conditioning only; bounded additive contribution.
+    double confidenceBonus = 0.0;
     if(m_killZones != NULL)
     {
         if(m_killZones.IsInKillZone())
         {
-            confidence = MathMin(1.0, confidence * 1.1);
+            confidenceBonus += 0.03;
             m_tradesInKillZone++;
         }
     }
     
-    // Apply OTE bonus (fixed method calls and null check)
+    // OTE is conditioning only; bounded additive contribution.
     if(m_premiumDiscount != NULL)
     {
         double currentBid = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         if((result == TRADE_SIGNAL_BUY && m_premiumDiscount.IsInBullishOTE(currentBid)) ||
            (result == TRADE_SIGNAL_SELL && m_premiumDiscount.IsInBearishOTE(currentBid)))
         {
-            confidence = MathMin(1.0, confidence * 1.15); // Increased bonus to 15% for OTE
+            confidenceBonus += 0.04;
         }
     }
+    confidence = MathMin(0.95, confidence + confidenceBonus);
     
     if(result != TRADE_SIGNAL_NONE)
     {
         m_signalsGenerated++;
+        SetDecisionReasonTag(result == TRADE_SIGNAL_BUY ? "UICT_SIGNAL_BUY" : "UICT_SIGNAL_SELL");
         
-        PrintFormat("[UICT v1.0] %s: %s | Entry: %s | Conf: %.1f%% | Confluences: %d | %s",
+        PrintFormat("[UICT-EVENT] %s | structure_break=%s | displacement=%s | mitigation=%s | ref=%.5f | event_quality=%.2f",
+                   m_symbol,
+                   hasStructureBreakEvent ? "true" : "false",
+                   hasDisplacementEvent ? "true" : "false",
+                   hasMitigationRetestEvent ? "true" : "false",
+                   eventReferencePrice,
+                   eventQuality);
+        PrintFormat("[UICT v1.0] %s: %s | Entry: %s | Conf: %.1f%% | Confluences: %d | EventQ: %.2f | %s",
                    m_symbol,
                    result == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
                    EnumToString(bestEntry.entryType),
                    confidence * 100,
                    bestEntry.confluenceCount,
+                   eventQuality,
                    bestEntry.reason);
     }
     

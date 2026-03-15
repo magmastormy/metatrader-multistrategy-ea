@@ -61,6 +61,10 @@ public:
     
     // Get strategy statistics
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) = 0;
+
+    // Last cycle decision reason tag for telemetry attribution.
+    // Empty string means strategy does not expose a reason.
+    virtual string GetLastDecisionReasonTag(void) const { return ""; }
 };
 
 #endif // INTERFACES_ISTRATEGY_MQH

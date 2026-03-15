@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| KillZones.mqh                                                    |
-//| ICT Kill Zone Time Filter for SMC Strategy                       |
+//| ICT Kill Zone Time Filter for Unified ICT Strategy               |
 //| Implements session-based trading windows                         |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Multi-Strategy EA"

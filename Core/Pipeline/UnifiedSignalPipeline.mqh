@@ -13,6 +13,7 @@
 #include "../Engines/StructureEngine.mqh"
 #include "../Engines/LiquidityEngine.mqh"
 #include "../Engines/VolatilityEngine.mqh"
+#include "../Engines/RegimeEngine.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 
 // Forward declarations
@@ -41,6 +42,11 @@ struct SignalFilterSettings
     bool enableStructureFilter;
     bool enableTimeFilter;
     double minConfidence;
+    double intrabarConfidenceCap;
+    bool enableRegimeCostGate;
+    double maxSpreadToAtrRatio;
+    int spreadShockCooldownSeconds;
+    double maxEntryRangeZScore;
     double maxVolatility;
     int minTrendStrength;
     
@@ -51,6 +57,11 @@ struct SignalFilterSettings
         enableStructureFilter(true),
         enableTimeFilter(false),
         minConfidence(0.40),
+        intrabarConfidenceCap(0.05),
+        enableRegimeCostGate(true),
+        maxSpreadToAtrRatio(0.25),
+        spreadShockCooldownSeconds(30),
+        maxEntryRangeZScore(2.50),
         maxVolatility(3.0),
         minTrendStrength(50) {}
 };
@@ -66,6 +77,7 @@ private:
     CStructureEngine* m_structureEngine;
     CLiquidityEngine* m_liquidityEngine;
     CVolatilityEngine* m_volatilityEngine;
+    CRegimeEngine* m_regimeEngine;
     
     // Diagnostics & Protection
     CSignalDiagnostics* m_diagnostics;
@@ -82,6 +94,9 @@ private:
     string m_lastEvaluatedSymbol;
     bool m_lastRawSignalNone;
     bool m_lastFilteredByPipeline;
+    bool m_intrabarContext;
+    bool m_lastRegimeSnapshotValid;
+    ENUM_REGIME_STATE m_lastRegimeState;
     
     // Internal methods
     bool ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
@@ -89,6 +104,11 @@ private:
     bool ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence, const string symbol);
     bool ApplyStructureFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
     bool ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal);
+    bool ApplyRegimeAndCostGate(const string symbol,
+                                ENUM_TIMEFRAMES timeframe,
+                                ENUM_TRADE_SIGNAL &signal,
+                                double &confidence,
+                                string &vetoReasonTag);
     void LogFilterResult(const string filter, bool passed, const string reason);
     
 public:
@@ -108,8 +128,9 @@ public:
                                        double &finalConfidence);
     
     // Configuration
-    void SetFilters(SignalFilterSettings &settings) { m_filters = settings; }
+    void SetFilters(SignalFilterSettings &settings);
     SignalFilterSettings GetFilters() const { return m_filters; }
+    void SetIntrabarContext(const bool intrabarContext) { m_intrabarContext = intrabarContext; }
     
     // Statistics
     int GetSignalsProcessed() const { return m_signalsProcessed; }
@@ -139,6 +160,7 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_structureEngine(NULL),
     m_liquidityEngine(NULL),
     m_volatilityEngine(NULL),
+    m_regimeEngine(NULL),
     m_diagnostics(NULL),
     m_tfConsistency(NULL),
     m_hedgingProtection(NULL),
@@ -147,7 +169,10 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_signalsPassed(0),
     m_lastEvaluatedSymbol(""),
     m_lastRawSignalNone(false),
-    m_lastFilteredByPipeline(false)
+    m_lastFilteredByPipeline(false),
+    m_intrabarContext(false),
+    m_lastRegimeSnapshotValid(false),
+    m_lastRegimeState(REGIME_RANGE)
 {
 }
 
@@ -160,6 +185,7 @@ CUnifiedSignalPipeline::~CUnifiedSignalPipeline()
     if(m_structureEngine != NULL) { delete m_structureEngine; m_structureEngine = NULL; }
     if(m_liquidityEngine != NULL) { delete m_liquidityEngine; m_liquidityEngine = NULL; }
     if(m_volatilityEngine != NULL) { delete m_volatilityEngine; m_volatilityEngine = NULL; }
+    if(m_regimeEngine != NULL) { delete m_regimeEngine; m_regimeEngine = NULL; }
     if(m_diagnostics != NULL) { delete m_diagnostics; m_diagnostics = NULL; }
     if(m_tfConsistency != NULL) { delete m_tfConsistency; m_tfConsistency = NULL; }
     if(m_hedgingProtection != NULL) { delete m_hedgingProtection; m_hedgingProtection = NULL; }
@@ -203,13 +229,37 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
     m_volatilityEngine = new CVolatilityEngine();
     if(m_volatilityEngine != NULL)
         m_volatilityEngine.Initialize(14, 20, m_diagnostics);
+
+    m_regimeEngine = new CRegimeEngine();
+    if(m_regimeEngine != NULL)
+    {
+        m_regimeEngine.Initialize(14, 20, 2.0, 30, 120);
+        m_regimeEngine.ConfigureCostLimits(m_filters.maxSpreadToAtrRatio,
+                                           m_filters.spreadShockCooldownSeconds,
+                                           m_filters.maxEntryRangeZScore);
+    }
     
     Print("[UnifiedSignalPipeline] Initialized with filters: Trend=", m_filters.enableTrendFilter,
           " Volatility=", m_filters.enableVolatilityFilter,
           " Liquidity=", m_filters.enableLiquidityFilter,
-          " Structure=", m_filters.enableStructureFilter);
+          " Structure=", m_filters.enableStructureFilter,
+          " RegimeCostGate=", m_filters.enableRegimeCostGate,
+          " MaxSpreadATR=", DoubleToString(m_filters.maxSpreadToAtrRatio, 3),
+          " SpreadShockCooldown=", m_filters.spreadShockCooldownSeconds,
+          " MaxEntryZ=", DoubleToString(m_filters.maxEntryRangeZScore, 2));
     
     return true;
+}
+
+void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
+{
+    m_filters = settings;
+    if(m_regimeEngine != NULL)
+    {
+        m_regimeEngine.ConfigureCostLimits(m_filters.maxSpreadToAtrRatio,
+                                           m_filters.spreadShockCooldownSeconds,
+                                           m_filters.maxEntryRangeZScore);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -223,6 +273,8 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     m_lastEvaluatedSymbol = symbol;
     m_lastRawSignalNone = false;
     m_lastFilteredByPipeline = false;
+    m_lastRegimeSnapshotValid = false;
+    m_lastRegimeState = REGIME_RANGE;
 
     if(strategy == NULL)
     {
@@ -258,6 +310,17 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     
     // Apply filters
     bool passed = true;
+
+    if(m_filters.enableRegimeCostGate)
+    {
+        string regimeVetoReason = "";
+        bool regimePassed = ApplyRegimeAndCostGate(symbol, timeframe, signal, confidence, regimeVetoReason);
+        if(!regimePassed)
+        {
+            passed = false;
+            LogFilterResult("RegimeCostGate", false, regimeVetoReason);
+        }
+    }
     
     if(m_filters.enableTrendFilter)
         passed = passed && ApplyTrendFilter(signal, confidence);
@@ -274,37 +337,88 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     if(m_filters.enableTimeFilter)
         passed = passed && ApplyTimeFilter(signal);
     
-    // Dynamic confidence threshold with institutional bias toward stricter gating in weak regimes.
-    double effectiveMinConfidence = m_filters.minConfidence;
-    
-    // In ranging/uncertain regimes, tighten threshold to avoid noise-driven entries.
-    if(m_trendEngine != NULL)
+    // Dynamic confidence threshold with bounded intrabar uplift in weak regimes.
+    double baseMinConfidence = m_filters.minConfidence;
+    double effectiveMinConfidence = baseMinConfidence;
+    double appliedCap = 0.0;
+    string thresholdReasonTag = "BASE_THRESHOLD";
+
+    if(m_lastRegimeSnapshotValid)
     {
-        ENUM_TREND_TYPE trend = m_trendEngine.GetCurrentTrend();
-        if(trend == TREND_RANGING || trend == TREND_NONE)
+        if(m_lastRegimeState == REGIME_RANGE)
         {
-            effectiveMinConfidence = MathMin(1.0, MathMax(m_filters.minConfidence, m_filters.minConfidence * 1.15));
+            thresholdReasonTag = "REGIME_RANGE";
+            double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.10);
+            if(m_intrabarContext)
+            {
+                appliedCap = MathMax(0.0, m_filters.intrabarConfidenceCap);
+                double cappedThreshold = baseMinConfidence + appliedCap;
+                effectiveMinConfidence = MathMin(1.0, MathMin(cappedThreshold, multiplierThreshold));
+            }
+            else
+            {
+                effectiveMinConfidence = MathMin(1.0, multiplierThreshold);
+            }
         }
-        else if(m_trendEngine.IsStrongTrend())
+        else if(m_lastRegimeState == REGIME_TREND)
         {
-            // Strong directional context allows only minimal relaxation.
-            effectiveMinConfidence = MathMax(0.0, m_filters.minConfidence * 0.98);
+            thresholdReasonTag = "REGIME_TREND_RELAX";
+            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.96);
+        }
+        else if(m_lastRegimeState == REGIME_BREAKOUT)
+        {
+            thresholdReasonTag = "REGIME_BREAKOUT_RELAX";
+            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.94);
+        }
+        else if(m_lastRegimeState == REGIME_CHAOS)
+        {
+            thresholdReasonTag = "REGIME_CHAOS";
+            double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.10);
+            if(m_intrabarContext)
+            {
+                appliedCap = MathMax(0.0, m_filters.intrabarConfidenceCap);
+                double cappedThreshold = baseMinConfidence + appliedCap;
+                effectiveMinConfidence = MathMin(1.0, MathMin(cappedThreshold, multiplierThreshold));
+            }
+            else
+            {
+                effectiveMinConfidence = MathMin(1.0, multiplierThreshold);
+            }
         }
     }
+    else if(m_trendEngine != NULL)
+    {
+        if(m_trendEngine.IsStrongTrend())
+        {
+            thresholdReasonTag = "TREND_ENGINE_STRONG_RELAX";
+            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.98);
+        }
+        else
+        {
+            thresholdReasonTag = "REGIME_ENGINE_WARMUP";
+        }
+    }
+
+    PrintFormat("[PIPELINE-THRESHOLD] base=%.2f | effective=%.2f | regime=%s | cap=%.2f | intrabar=%s",
+                baseMinConfidence,
+                effectiveMinConfidence,
+                thresholdReasonTag,
+                appliedCap,
+                m_intrabarContext ? "true" : "false");
     
     // Check confidence threshold
     if(confidence < effectiveMinConfidence)
     {
         LogFilterResult("ConfidenceFilter", false, 
-                       StringFormat("Confidence %.2f below minimum %.2f (effective: %.2f)", 
-                                  confidence, m_filters.minConfidence, effectiveMinConfidence));
+                       StringFormat("%s | Confidence %.2f below minimum %.2f (effective: %.2f)",
+                                    thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
         passed = false;
     }
-    else if(confidence >= effectiveMinConfidence && confidence < m_filters.minConfidence)
+    else if(confidence >= effectiveMinConfidence && confidence < baseMinConfidence)
     {
         LogFilterResult("ConfidenceFilter", true, 
-                       StringFormat("PASSED with adjusted threshold - Confidence: %.2f (min: %.2f, effective: %.2f)", 
-                                  confidence, m_filters.minConfidence, effectiveMinConfidence));
+                       StringFormat("%s | PASSED with adjusted threshold - Confidence: %.2f (min: %.2f, effective: %.2f)",
+                                    thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
     }
     
     // Apply hedging protection
@@ -432,6 +546,82 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
     
     finalConfidence = 0;
     return TRADE_SIGNAL_NONE;
+}
+
+//+------------------------------------------------------------------+
+//| Apply Regime + Cost Viability Gate                              |
+//+------------------------------------------------------------------+
+bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
+                                                    ENUM_TIMEFRAMES timeframe,
+                                                    ENUM_TRADE_SIGNAL &signal,
+                                                    double &confidence,
+                                                    string &vetoReasonTag)
+{
+    vetoReasonTag = "";
+    m_lastRegimeSnapshotValid = false;
+    if(m_regimeEngine == NULL)
+        return true;
+
+    if(!m_regimeEngine.Update(symbol, timeframe))
+    {
+        // Neutral degrade when regime engine data is warming/faulted.
+        confidence = MathMax(0.0, confidence * 0.98);
+        return true;
+    }
+
+    SRegimeSnapshot snapshot = m_regimeEngine.GetSnapshot();
+    if(!snapshot.valid)
+        return true;
+
+    m_lastRegimeSnapshotValid = true;
+    m_lastRegimeState = snapshot.state;
+
+    string regimeTag = m_regimeEngine.GetStateTag();
+    PrintFormat("[COST-GATE] %s | regime=%s | spread_atr=%.4f/%.4f | cooldown=%s | z=%.3f/%.3f",
+                symbol,
+                regimeTag,
+                snapshot.spreadToAtrRatio,
+                m_filters.maxSpreadToAtrRatio,
+                snapshot.spreadShockCooldownActive ? "true" : "false",
+                snapshot.rangeZScore,
+                m_filters.maxEntryRangeZScore);
+
+    // Regime-aware confidence attenuation while preserving deterministic output.
+    if(snapshot.state == REGIME_RANGE)
+        confidence = MathMax(0.0, confidence * 0.97);
+    else if(snapshot.state == REGIME_CHAOS)
+        confidence = MathMax(0.0, confidence * 0.92);
+
+    if(snapshot.spreadShockCooldownActive)
+    {
+        vetoReasonTag = StringFormat("REGIME_%s | spread shock cooldown active", regimeTag);
+        PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
+        signal = TRADE_SIGNAL_NONE;
+        confidence = 0.0;
+        return false;
+    }
+
+    if(snapshot.spreadToAtrRatio > m_filters.maxSpreadToAtrRatio)
+    {
+        vetoReasonTag = StringFormat("REGIME_%s | spread/ATR ratio %.4f exceeds %.4f",
+                                     regimeTag, snapshot.spreadToAtrRatio, m_filters.maxSpreadToAtrRatio);
+        PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
+        signal = TRADE_SIGNAL_NONE;
+        confidence = 0.0;
+        return false;
+    }
+
+    if(MathAbs(snapshot.rangeZScore) > m_filters.maxEntryRangeZScore)
+    {
+        vetoReasonTag = StringFormat("REGIME_%s | late-entry z-score %.3f exceeds %.3f",
+                                     regimeTag, snapshot.rangeZScore, m_filters.maxEntryRangeZScore);
+        PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
+        signal = TRADE_SIGNAL_NONE;
+        confidence = 0.0;
+        return false;
+    }
+
+    return true;
 }
 
 //+------------------------------------------------------------------+

@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| Structure Detection Engine - Enterprise Grade                    |
-//| Unified SMC structure detection for all strategies              |
+//| Unified ICT structure detection for all strategies               |
 //+------------------------------------------------------------------+
 #property copyright "Enterprise Trading Solutions"
 #property version   "2.0"

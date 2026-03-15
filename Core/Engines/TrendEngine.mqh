@@ -103,6 +103,12 @@ private:
     datetime m_lastIndicatorErrorLog;
     ENUM_TREND_TYPE m_lastLoggedTrendType;
     datetime m_lastTrendLogTime;
+    bool m_lastAdxValid;
+    int m_consecutiveAdxFailures;
+    double m_lastAdxRawValue;
+    int m_adxFailureReinitThreshold;
+    datetime m_lastAdxHealthLogTime;
+    datetime m_lastAdxReinitAttemptTime;
     
     // Diagnostics
     CSignalDiagnostics* m_diagnostics;
@@ -111,6 +117,16 @@ private:
     bool InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool IndicatorsReadyForRead(int minBars);
     void ReleaseIndicators();
+    bool IsValidAdxDomainValue(const double value) const;
+    void RecordAdxFailure(const string symbol,
+                          ENUM_TIMEFRAMES timeframe,
+                          const string reasonTag,
+                          int adxCopyRet,
+                          int plusCopyRet,
+                          int minusCopyRet,
+                          int lastErrorCode,
+                          double rawAdxValue);
+    void MaybeReinitializeAdxHandle(const string symbol, ENUM_TIMEFRAMES timeframe);
     TrendState CalculateMAs(const string symbol, ENUM_TIMEFRAMES timeframe,
                       double &ma_fast[], double &ma_medium[], double &ma_slow[], double &ma[]);
     double GetTrendStrength(const double &ma_fast[], const double &ma_medium[], const double &ma_slow[]);
@@ -183,6 +199,12 @@ CTrendEngine::CTrendEngine() :
     m_lastIndicatorErrorLog(0),
     m_lastLoggedTrendType(TREND_NONE),
     m_lastTrendLogTime(0),
+    m_lastAdxValid(true),
+    m_consecutiveAdxFailures(0),
+    m_lastAdxRawValue(0.0),
+    m_adxFailureReinitThreshold(3),
+    m_lastAdxHealthLogTime(0),
+    m_lastAdxReinitAttemptTime(0),
     m_diagnostics(NULL)
 {
 }
@@ -292,26 +314,142 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
 
 bool CTrendEngine::IndicatorsReadyForRead(int minBars)
 {
+    if(m_handleMAFast == INVALID_HANDLE ||
+       m_handleMAMedium == INVALID_HANDLE ||
+       m_handleMASlow == INVALID_HANDLE ||
+       m_handleADX == INVALID_HANDLE ||
+       m_handleATR == INVALID_HANDLE)
+    {
+        datetime nowTime = TimeCurrent();
+        if((nowTime - m_lastIndicatorErrorLog) >= 30)
+        {
+            PrintFormat("[TrendEngine] Indicator handles invalid for %s %s | MAf=%d MAm=%d MAs=%d ADX=%d ATR=%d",
+                        m_indicatorSymbol, EnumToString(m_indicatorTimeframe),
+                        m_handleMAFast, m_handleMAMedium, m_handleMASlow, m_handleADX, m_handleATR);
+            m_lastIndicatorErrorLog = nowTime;
+        }
+        return false;
+    }
+
+    int chartBars = Bars(m_indicatorSymbol, m_indicatorTimeframe);
     int fastBars = BarsCalculated(m_handleMAFast);
     int medBars = BarsCalculated(m_handleMAMedium);
     int slowBars = BarsCalculated(m_handleMASlow);
     int adxBars = BarsCalculated(m_handleADX);
     int atrBars = BarsCalculated(m_handleATR);
 
-    if(fastBars < minBars || medBars < minBars || slowBars < minBars || adxBars < minBars || atrBars < minBars)
+    if(chartBars < minBars ||
+       fastBars < minBars ||
+       medBars < minBars ||
+       slowBars < minBars ||
+       adxBars < minBars ||
+       atrBars < minBars)
     {
         datetime nowTime = TimeCurrent();
         if((nowTime - m_lastIndicatorErrorLog) >= 60)
         {
-            PrintFormat("[TrendEngine] Indicators warming up for %s %s | MAf=%d MAm=%d MAs=%d ADX=%d ATR=%d need=%d",
+            PrintFormat("[TrendEngine] Indicators warming up for %s %s | Bars=%d MAf=%d MAm=%d MAs=%d ADX=%d ATR=%d need=%d",
                         m_indicatorSymbol, EnumToString(m_indicatorTimeframe),
-                        fastBars, medBars, slowBars, adxBars, atrBars, minBars);
+                        chartBars, fastBars, medBars, slowBars, adxBars, atrBars, minBars);
             m_lastIndicatorErrorLog = nowTime;
         }
         return false;
     }
 
     return true;
+}
+
+bool CTrendEngine::IsValidAdxDomainValue(const double value) const
+{
+    return (MathIsValidNumber(value) && value >= 0.0 && value <= 100.0);
+}
+
+void CTrendEngine::RecordAdxFailure(const string symbol,
+                                    ENUM_TIMEFRAMES timeframe,
+                                    const string reasonTag,
+                                    int adxCopyRet,
+                                    int plusCopyRet,
+                                    int minusCopyRet,
+                                    int lastErrorCode,
+                                    double rawAdxValue)
+{
+    m_lastAdxValid = false;
+    m_lastAdxRawValue = rawAdxValue;
+    m_consecutiveAdxFailures++;
+
+    datetime nowTime = TimeCurrent();
+    if((nowTime - m_lastAdxHealthLogTime) >= 30)
+    {
+        int chartBars = Bars(symbol, timeframe);
+        int adxBars = (m_handleADX != INVALID_HANDLE) ? BarsCalculated(m_handleADX) : -1;
+        PrintFormat("[TrendEngine][ADX-HEALTH] %s | symbol=%s | timeframe=%s | copyRet=%d/%d/%d | err=%d | Bars=%d | BarsCalculated=%d | raw_adx=%.6f | consecutive_failures=%d",
+                    reasonTag,
+                    symbol,
+                    EnumToString(timeframe),
+                    adxCopyRet,
+                    plusCopyRet,
+                    minusCopyRet,
+                    lastErrorCode,
+                    chartBars,
+                    adxBars,
+                    rawAdxValue,
+                    m_consecutiveAdxFailures);
+
+        if(m_diagnostics != NULL)
+        {
+            m_diagnostics.LogStrategyError("TrendEngine",
+                                           reasonTag,
+                                           StringFormat("ADX health fault for %s %s | copy=%d/%d/%d err=%d bars=%d calc=%d raw=%.6f consecutive=%d",
+                                                        symbol,
+                                                        EnumToString(timeframe),
+                                                        adxCopyRet,
+                                                        plusCopyRet,
+                                                        minusCopyRet,
+                                                        lastErrorCode,
+                                                        chartBars,
+                                                        adxBars,
+                                                        rawAdxValue,
+                                                        m_consecutiveAdxFailures));
+        }
+
+        m_lastAdxHealthLogTime = nowTime;
+    }
+
+    MaybeReinitializeAdxHandle(symbol, timeframe);
+}
+
+void CTrendEngine::MaybeReinitializeAdxHandle(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    if(m_consecutiveAdxFailures < m_adxFailureReinitThreshold)
+        return;
+
+    datetime nowTime = TimeCurrent();
+    if(m_lastAdxReinitAttemptTime != 0 && (nowTime - m_lastAdxReinitAttemptTime) < 30)
+        return;
+    m_lastAdxReinitAttemptTime = nowTime;
+
+    if(m_handleADX != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_handleADX);
+        m_handleADX = INVALID_HANDLE;
+    }
+
+    m_handleADX = iADX(symbol, timeframe, m_adxPeriod);
+    if(m_handleADX == INVALID_HANDLE)
+    {
+        int err = GetLastError();
+        if(m_diagnostics != NULL)
+        {
+            m_diagnostics.LogStrategyError("TrendEngine", "ADX_REINIT_FAILED",
+                                           StringFormat("ADX handle reinit failed for %s %s (err=%d)",
+                                                        symbol, EnumToString(timeframe), err));
+        }
+        return;
+    }
+
+    PrintFormat("[TrendEngine][ADX-HEALTH] ADX handle reinitialized for %s %s after %d consecutive failures",
+                symbol, EnumToString(timeframe), m_consecutiveAdxFailures);
+    m_consecutiveAdxFailures = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -366,6 +504,10 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     // Get indicator values
     double ma_fast[5], ma_medium[5], ma_slow[5];
     double adx[1], plusDI[1], minusDI[1], atr[1];
+    adx[0] = -1.0;
+    plusDI[0] = -1.0;
+    minusDI[0] = -1.0;
+    atr[0] = 0.0;
     
     ResetLastError();
     if(CopyBuffer(m_handleMAFast, 0, 0, 5, ma_fast) != 5 ||
@@ -384,21 +526,53 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         return false;
     }
     
+    bool adxValid = true;
     ResetLastError();
-    if(CopyBuffer(m_handleADX, 0, 0, 1, adx) != 1 ||
-       CopyBuffer(m_handleADX, 1, 0, 1, plusDI) != 1 ||
-       CopyBuffer(m_handleADX, 2, 0, 1, minusDI) != 1)
+    int adxCopyRet = CopyBuffer(m_handleADX, 0, 0, 1, adx);
+    int plusCopyRet = CopyBuffer(m_handleADX, 1, 0, 1, plusDI);
+    int minusCopyRet = CopyBuffer(m_handleADX, 2, 0, 1, minusDI);
+    int adxCopyErr = GetLastError();
+    if(adxCopyRet != 1 || plusCopyRet != 1 || minusCopyRet != 1)
     {
-        datetime nowTime = TimeCurrent();
-        if(m_diagnostics != NULL && (nowTime - m_lastIndicatorErrorLog) >= 30)
+        adxValid = false;
+        RecordAdxFailure(symbol,
+                         timeframe,
+                         "ADX_BUFFER_COPY_FAILED",
+                         adxCopyRet,
+                         plusCopyRet,
+                         minusCopyRet,
+                         adxCopyErr,
+                         adx[0]);
+    }
+    else
+    {
+        m_lastAdxRawValue = adx[0];
+        if(!IsValidAdxDomainValue(adx[0]) ||
+           !IsValidAdxDomainValue(plusDI[0]) ||
+           !IsValidAdxDomainValue(minusDI[0]))
         {
-            int err = GetLastError();
-            m_diagnostics.LogStrategyError("TrendEngine", "ADX_BUFFER_COPY_FAILED",
-                                          StringFormat("Failed to copy ADX buffer data for %s %s (err=%d)",
-                                                       symbol, EnumToString(timeframe), err));
-            m_lastIndicatorErrorLog = nowTime;
+            adxValid = false;
+            RecordAdxFailure(symbol,
+                             timeframe,
+                             "ADX_VALUE_OUT_OF_RANGE",
+                             adxCopyRet,
+                             plusCopyRet,
+                             minusCopyRet,
+                             0,
+                             adx[0]);
         }
-        return false;
+    }
+
+    if(!adxValid)
+    {
+        adx[0] = 0.0;
+        plusDI[0] = 0.0;
+        minusDI[0] = 0.0;
+    }
+    else
+    {
+        m_lastAdxValid = true;
+        m_consecutiveAdxFailures = 0;
     }
     
     ResetLastError();
@@ -416,8 +590,10 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         return false;
     }
     
+    double effectiveAdx = adxValid ? adx[0] : 0.0;
+
     // Calculate trend strength
-    m_currentTrend.strength = CalculateTrendStrength(ma_fast, ma_medium, ma_slow, adx[0]);
+    m_currentTrend.strength = CalculateTrendStrength(ma_fast, ma_medium, ma_slow, effectiveAdx);
     
     // Calculate trend angle
     m_currentTrend.angle = CalculateTrendAngle(ma_medium, 5);
@@ -429,7 +605,9 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     m_currentTrend.volatility = atr[0];
     
     // Determine trend type
-    m_currentTrend.type = DetermineTrendType(m_currentTrend.strength, m_currentTrend.angle, adx[0]);
+    m_currentTrend.type = DetermineTrendType(m_currentTrend.strength, m_currentTrend.angle, effectiveAdx);
+    if(!adxValid)
+        m_currentTrend.type = TREND_RANGING;
     
     // Check acceleration/deceleration
     double prevMomentum = m_currentTrend.momentum;
@@ -447,8 +625,9 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         if(m_currentTrend.type != m_lastLoggedTrendType || (nowTime - m_lastTrendLogTime) >= 300)
         {
             string trendStr = EnumToString(m_currentTrend.type);
-            string msg = StringFormat("Trend: %s | Strength: %.1f | Angle: %.1f | ADX: %.1f",
-                                      trendStr, m_currentTrend.strength, m_currentTrend.angle, adx[0]);
+            string msg = StringFormat("Trend: %s | Strength: %.1f | Angle: %.1f | ADX: %.1f | ADXValid: %s",
+                                      trendStr, m_currentTrend.strength, m_currentTrend.angle, effectiveAdx,
+                                      adxValid ? "true" : "false");
             Print("[TrendEngine] ", msg);
             m_lastLoggedTrendType = m_currentTrend.type;
             m_lastTrendLogTime = nowTime;
@@ -797,6 +976,11 @@ void CTrendEngine::Reset()
     m_lastIndicatorErrorLog = 0;
     m_lastLoggedTrendType = TREND_NONE;
     m_lastTrendLogTime = 0;
+    m_lastAdxValid = true;
+    m_consecutiveAdxFailures = 0;
+    m_lastAdxRawValue = 0.0;
+    m_lastAdxHealthLogTime = 0;
+    m_lastAdxReinitAttemptTime = 0;
     ReleaseIndicators();
 }
 

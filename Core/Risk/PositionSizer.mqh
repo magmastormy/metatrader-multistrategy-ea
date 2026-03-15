@@ -146,6 +146,10 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     
     // Get symbol point value
     double GetSymbolPoint(const string symbol);
+
+    // Contract-spec-aware risk helpers
+    double GetRiskDenominator(void);
+    double CalculateRiskPerLot(const string symbol, const double stopLossPips);
     
     // Check margin requirements with enhanced validation
     bool CheckMarginRequirements(const string symbolParam, const ENUM_ORDER_TYPE orderType, const double lots)
@@ -431,62 +435,24 @@ double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
                                              const double stopLossPips,
                                              const double riskPercent)
 {
-    double accountBalanceParam = AccountInfoDouble(ACCOUNT_BALANCE);
-    if(accountBalanceParam <= 0)
+    double riskDenominator = GetRiskDenominator();
+    if(riskDenominator <= 0.0)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", "Invalid account balance", 0);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", "Invalid account risk denominator", 0);
         return MIN_LOT_SIZE;
     }
     
     // Calculate risk amount in account currency
-    double riskAmount = accountBalanceParam * (riskPercent / 100.0);
-    
-    // Get tick value
-    double tickValue = GetTickValue(symbolParam);
-    if(tickValue <= 0)
+    double riskAmount = riskDenominator * (riskPercent / 100.0);
+
+    double riskPerLot = CalculateRiskPerLot(symbolParam, stopLossPips);
+    if(riskPerLot <= 0.0)
     {
-        SErrorContext tvContext;
-        tvContext.component = "PositionSizer";
-        tvContext.operation = "CalculateRiskBasedSize";
-        tvContext.symbol = symbolParam;
-        tvContext.errorCode = 0;
-        tvContext.additionalInfo = "Invalid tick value for " + symbolParam;
-        tvContext.timestamp = TimeCurrent();
-        tvContext.severity = ERROR_RECOVERABLE;
-        CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, tvContext);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", "Unable to calculate risk per lot for " + symbolParam, 0);
         return MIN_LOT_SIZE;
     }
-    
-    // Get point value
-    double point = GetSymbolPoint(symbolParam);
-    if(point <= 0)
-    {
-        SErrorContext ptContext;
-        ptContext.component = "PositionSizer";
-        ptContext.operation = "CalculateRiskBasedSize";
-        ptContext.symbol = symbolParam;
-        ptContext.errorCode = 0;
-        ptContext.additionalInfo = "Invalid point value for " + symbolParam;
-        ptContext.timestamp = TimeCurrent();
-        ptContext.severity = ERROR_RECOVERABLE;
-        CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, ptContext);
-        return MIN_LOT_SIZE;
-    }
-    
-    // Calculate position size
-    // FIX: Removed (1.0 / point) multipliers because stopLossPips is already in points (Distance / Point).
-    // The correct formula for MQL5 lot sizing given distance in points:
-    // Lots = RiskAmount / (Points * TickValue) 
-    // This assumes 1 point move (TickSize) = TickValue for 1 standard lot.
-    double lotSize = 0;
-    if(stopLossPips > 0 && tickValue > 0)
-    {
-        lotSize = riskAmount / (stopLossPips * tickValue);
-    }
-    else
-    {
-        lotSize = MIN_LOT_SIZE;
-    }
+
+    double lotSize = riskAmount / riskPerLot;
     
     return MathMax(MIN_LOT_SIZE, lotSize);
 }
@@ -626,11 +592,11 @@ void CPositionSizer::UpdateRiskMetrics(void)
         }
     }
     
-    // Convert to percentage of account balance
-    double accountBalanceVal = AccountInfoDouble(ACCOUNT_BALANCE);
-    if(accountBalanceVal > 0)
+    // Convert to percentage using the same stress denominator as the risk gate.
+    double riskDenominator = GetRiskDenominator();
+    if(riskDenominator > 0.0)
     {
-        m_currentTotalRisk = (m_currentTotalRisk / accountBalanceVal) * 100.0;
+        m_currentTotalRisk = (m_currentTotalRisk / riskDenominator) * 100.0;
     }
 }
 
@@ -677,6 +643,39 @@ double CPositionSizer::GetSymbolPoint(const string symbolParam)
 }
 
 //+------------------------------------------------------------------+
+//| Account risk denominator                                        |
+//+------------------------------------------------------------------+
+double CPositionSizer::GetRiskDenominator(void)
+{
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+    if(balance > 0.0 && equity > 0.0)
+        return MathMin(balance, equity);
+
+    return MathMax(balance, equity);
+}
+
+//+------------------------------------------------------------------+
+//| Risk per 1.0 lot for a stop distance                            |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const double stopLossPips)
+{
+    if(symbolParam == "" || stopLossPips <= 0.0)
+        return 0.0;
+
+    double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
+    double tickSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
+    double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
+
+    if(tickValue <= 0.0 || tickSize <= 0.0 || point <= 0.0)
+        return 0.0;
+
+    double stopDistancePrice = stopLossPips * point;
+    return (stopDistancePrice / tickSize) * tickValue;
+}
+
+//+------------------------------------------------------------------+
 //| Normalize volume to symbol's step size                         |
 //+------------------------------------------------------------------+
 double CPositionSizer::NormalizeVolume(const string symbolParam, const double volume)
@@ -690,10 +689,6 @@ double CPositionSizer::NormalizeVolume(const string symbolParam, const double vo
     
     // Ensure we have valid step (default to 0.01 for forex, but check for synthetics)
     if(stepVol <= 0) stepVol = 0.01;
-    
-    // ALWAYS log the symbol properties for debugging
-    Print("[VOLUME-DEBUG] ", symbolParam, " | Input: ", volume, 
-          " | Min: ", minVol, " | Max: ", maxVol, " | Step: ", stepVol);
     
     // Normalize to step size
     double normalized = MathRound(volume / stepVol) * stepVol;

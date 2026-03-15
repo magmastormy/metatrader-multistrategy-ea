@@ -42,6 +42,10 @@ struct STradeValidationRequest
     double confidence;                // Signal confidence (0-1)
     string strategy;                  // Source strategy name
     string reasoning;                 // Trade reasoning
+    string strategyRole;              // Strategy governance role tag
+    string strategyCluster;           // Strategy cluster tag
+    string clusterCode;               // Compact cluster code (T/R/S/N)
+    string contributorContext;        // Contributor summary
     datetime requestTime;             // Request timestamp
 };
 
@@ -73,6 +77,10 @@ private:
     double m_maxPortfolioRisk;        // Maximum total portfolio risk (10%)
     double m_correlationThreshold;    // Correlation blocking threshold (0.7)
     double m_emergencyRiskOverride;   // Emergency risk override (5%)
+    bool m_clusterGovernanceEnabled;  // Cluster-level risk governance
+    bool m_clusterMutexEnabled;       // Same-symbol opposing-cluster mutex
+    int m_maxConcurrentPerCluster;    // Max open positions per cluster
+    double m_maxClusterRiskPercent;   // Max projected risk per cluster
     
     // Audit trail
     bool m_auditLogging;
@@ -112,7 +120,7 @@ public:
     bool ValidateAccountHealth(const STradeValidationRequest &request, string &message);
     
     // Risk calculations
-    double CalculateTradeRisk(const string symbolParam, const double lotSize, const double stopLossPips);
+    double CalculateTradeRisk(const string symbolParam, const double lotSize, const double stopLossPips) const;
     double CalculateCorrelationRisk(const string symbolParam);
     double CalculatePortfolioRiskAfterTrade(const double additionalRisk);
     
@@ -132,6 +140,10 @@ public:
     void SetMaxRiskPerTrade(const double maxRisk) { m_maxRiskPerTrade = maxRisk; }
     void SetMaxPortfolioRisk(const double maxRisk) { m_maxPortfolioRisk = maxRisk; }
     void SetCorrelationThreshold(const double threshold) { m_correlationThreshold = threshold; }
+    void ConfigureClusterGovernance(const bool enabled,
+                                    const int maxConcurrentPerCluster,
+                                    const double maxClusterRiskPercent,
+                                    const bool enableMutex);
     
 private:
     // Portfolio helper accessors
@@ -146,6 +158,12 @@ private:
     double GetSymbolTickValue(const string symbolParam);
     double GetSymbolPoint(const string symbolParam);
     bool CheckAccountTradingPermissions(void);
+    bool ValidateClusterGovernance(const STradeValidationRequest &request,
+                                   const double tradeRiskPercent,
+                                   string &message);
+    bool ParseClusterCodeFromComment(const string comment, string &clusterCode) const;
+    string NormalizeClusterCode(const string clusterCode) const;
+    double EstimatePositionRiskPercent(const ulong ticket) const;
     
     // Correlation calculations
     double CalculateSymbolCorrelation(const string symbol1Param, const string symbol2Param);
@@ -210,6 +228,10 @@ CRiskValidationGate::CRiskValidationGate() : m_portfolioRiskManager(NULL),
                                            m_maxPortfolioRisk(10.0),
                                            m_correlationThreshold(0.7),
                                            m_emergencyRiskOverride(5.0),
+                                           m_clusterGovernanceEnabled(true),
+                                           m_clusterMutexEnabled(true),
+                                           m_maxConcurrentPerCluster(3),
+                                           m_maxClusterRiskPercent(5.0),
                                            m_auditLogging(true),
                                            m_auditLogFile("RiskValidation.log"),
                                            m_validationCount(0),
@@ -338,8 +360,18 @@ SValidationResult CRiskValidationGate::ValidateTradeRequest(const STradeValidati
         LogValidationResult(request, result);
         return result;
     }
+
+    // 4. Validate cluster governance (strategy cluster mutex + cap)
+    if(!ValidateClusterGovernance(request, tradeRisk, validationMessage))
+    {
+        result.message = "Cluster governance validation failed: " + validationMessage;
+        result.severity = ERROR_LEVEL_WARNING;
+        m_rejectedCount++;
+        LogValidationResult(request, result);
+        return result;
+    }
     
-    // 4. Validate correlation limits
+    // 5. Validate correlation limits
     double correlationRisk = 0.0;
     if(!ValidateCorrelationLimits(request, validationMessage, correlationRisk))
     {
@@ -352,7 +384,7 @@ SValidationResult CRiskValidationGate::ValidateTradeRequest(const STradeValidati
     }
     result.correlationRisk = correlationRisk;
     
-    // 5. Validate margin requirements
+    // 6. Validate margin requirements
     if(!ValidateMarginRequirements(request, validationMessage))
     {
         result.message = "Margin validation failed: " + validationMessage;
@@ -362,7 +394,7 @@ SValidationResult CRiskValidationGate::ValidateTradeRequest(const STradeValidati
         return result;
     }
     
-    // 6. Validate account health
+    // 7. Validate account health
     if(!ValidateAccountHealth(request, validationMessage))
     {
         result.message = "Account health validation failed: " + validationMessage;
@@ -635,7 +667,7 @@ bool CRiskValidationGate::ValidateAccountHealth(const STradeValidationRequest &r
 //+------------------------------------------------------------------+
 //| Calculate trade risk                                           |
 //+------------------------------------------------------------------
-double CRiskValidationGate::CalculateTradeRisk(const string symbolParam, double lotSize, double stopLossPips)
+double CRiskValidationGate::CalculateTradeRisk(const string symbolParam, double lotSize, double stopLossPips) const
 {
     if(symbolParam == "" || stopLossPips <= 0) {
         return 0.0;
@@ -733,6 +765,23 @@ void CRiskValidationGate::EnableAuditLogging(const bool enabled, const string lo
     }
 }
 
+void CRiskValidationGate::ConfigureClusterGovernance(const bool enabled,
+                                                     const int maxConcurrentPerCluster,
+                                                     const double maxClusterRiskPercent,
+                                                     const bool enableMutex)
+{
+    m_clusterGovernanceEnabled = enabled;
+    m_clusterMutexEnabled = enableMutex;
+    m_maxConcurrentPerCluster = MathMax(1, maxConcurrentPerCluster);
+    m_maxClusterRiskPercent = MathMax(0.1, maxClusterRiskPercent);
+
+    PrintFormat("[RISK-CLUSTER] governance=%s | mutex=%s | max_positions=%d | max_risk=%.2f%%",
+                m_clusterGovernanceEnabled ? "enabled" : "disabled",
+                m_clusterMutexEnabled ? "enabled" : "disabled",
+                m_maxConcurrentPerCluster,
+                m_maxClusterRiskPercent);
+}
+
 //+------------------------------------------------------------------+
 //| Get validation statistics                                      |
 //+------------------------------------------------------------------+
@@ -763,6 +812,168 @@ void CRiskValidationGate::ResetStats(void)
 //+------------------------------------------------------------------+
 //| Internal helper functions                                      |
 //+------------------------------------------------------------------+
+string CRiskValidationGate::NormalizeClusterCode(const string clusterCode) const
+{
+    string code = clusterCode;
+    StringTrimLeft(code);
+    StringTrimRight(code);
+    StringToUpper(code);
+
+    if(StringLen(code) <= 0)
+        return "N";
+
+    string first = StringSubstr(code, 0, 1);
+    if(first == "T" || first == "R" || first == "S" || first == "N")
+        return first;
+
+    if(StringFind(code, "TREND") >= 0)
+        return "T";
+    if(StringFind(code, "MEAN") >= 0 || StringFind(code, "REVERSION") >= 0)
+        return "R";
+    if(StringFind(code, "STRUCTURE") >= 0)
+        return "S";
+
+    return "N";
+}
+
+bool CRiskValidationGate::ParseClusterCodeFromComment(const string comment, string &clusterCode) const
+{
+    clusterCode = "N";
+    int marker = StringFind(comment, "K:");
+    if(marker < 0 || (marker + 2) >= StringLen(comment))
+        return false;
+
+    clusterCode = NormalizeClusterCode(StringSubstr(comment, marker + 2, 1));
+    return true;
+}
+
+double CRiskValidationGate::EstimatePositionRiskPercent(const ulong ticket) const
+{
+    if(ticket == 0 || !PositionSelectByTicket(ticket))
+        return 0.0;
+
+    string symbol = PositionGetString(POSITION_SYMBOL);
+    double volume = PositionGetDouble(POSITION_VOLUME);
+    double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+    double stopLoss = PositionGetDouble(POSITION_SL);
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    if(stopLoss <= 0.0 || openPrice <= 0.0 || volume <= 0.0)
+        return m_maxRiskPerTrade;
+
+    double slPoints = MathAbs(openPrice - stopLoss) / point;
+    if(slPoints <= 0.0)
+        return m_maxRiskPerTrade;
+
+    double riskAmount = CalculateTradeRisk(symbol, volume, slPoints);
+    if(riskAmount <= 0.0)
+        return m_maxRiskPerTrade;
+
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double denominator = 0.0;
+    if(balance > 0.0 && equity > 0.0)
+        denominator = MathMin(balance, equity);
+    else
+        denominator = MathMax(balance, equity);
+
+    if(denominator <= 0.0)
+        return m_maxRiskPerTrade;
+
+    return (riskAmount / denominator) * 100.0;
+}
+
+bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationRequest &request,
+                                                    const double tradeRiskPercent,
+                                                    string &message)
+{
+    if(!m_clusterGovernanceEnabled)
+        return true;
+
+    string requestClusterCode = NormalizeClusterCode(request.clusterCode);
+    if(requestClusterCode == "N")
+        requestClusterCode = NormalizeClusterCode(request.strategyCluster);
+
+    if(requestClusterCode == "N")
+        return true;
+
+    int clusterOpenPositions = 0;
+    double clusterOpenRiskPercent = 0.0;
+
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+
+        string existingSymbol = PositionGetString(POSITION_SYMBOL);
+        ENUM_POSITION_TYPE existingType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+        string existingComment = PositionGetString(POSITION_COMMENT);
+        string existingClusterCode = "N";
+        ParseClusterCodeFromComment(existingComment, existingClusterCode);
+        existingClusterCode = NormalizeClusterCode(existingClusterCode);
+
+        if(existingClusterCode == "N" && existingSymbol == request.symbol)
+            existingClusterCode = requestClusterCode;
+
+        if(m_clusterMutexEnabled && existingSymbol == request.symbol)
+        {
+            bool oppositeDirection = ((request.orderType == ORDER_TYPE_BUY && existingType == POSITION_TYPE_SELL) ||
+                                      (request.orderType == ORDER_TYPE_SELL && existingType == POSITION_TYPE_BUY));
+            if(oppositeDirection &&
+               (existingClusterCode == "N" || existingClusterCode != requestClusterCode))
+            {
+                message = StringFormat("Opposing same-symbol cluster conflict (request=%s existing=%s ticket=%I64u)",
+                                       requestClusterCode, existingClusterCode, ticket);
+                PrintFormat("[RISK-MUTEX-BLOCK] symbol=%s | request_cluster=%s | existing_cluster=%s | request_side=%s | existing_side=%s | ticket=%I64u",
+                            request.symbol,
+                            requestClusterCode,
+                            existingClusterCode,
+                            EnumToString(request.orderType),
+                            EnumToString(existingType),
+                            ticket);
+                return false;
+            }
+        }
+
+        if(existingClusterCode == requestClusterCode)
+        {
+            clusterOpenPositions++;
+            clusterOpenRiskPercent += EstimatePositionRiskPercent(ticket);
+        }
+    }
+
+    int projectedPositions = clusterOpenPositions + 1;
+    double projectedRisk = clusterOpenRiskPercent + MathMax(0.0, tradeRiskPercent);
+
+    PrintFormat("[RISK-CLUSTER] cluster=%s | open_positions=%d | projected_positions=%d | open_risk=%.2f%% | projected_risk=%.2f%% | caps=%d/%.2f%%",
+                requestClusterCode,
+                clusterOpenPositions,
+                projectedPositions,
+                clusterOpenRiskPercent,
+                projectedRisk,
+                m_maxConcurrentPerCluster,
+                m_maxClusterRiskPercent);
+
+    if(projectedPositions > m_maxConcurrentPerCluster)
+    {
+        message = StringFormat("Cluster position cap exceeded (%d > %d) for cluster %s",
+                               projectedPositions, m_maxConcurrentPerCluster, requestClusterCode);
+        return false;
+    }
+
+    if(projectedRisk > m_maxClusterRiskPercent)
+    {
+        message = StringFormat("Cluster risk cap exceeded (%.2f%% > %.2f%%) for cluster %s",
+                               projectedRisk, m_maxClusterRiskPercent, requestClusterCode);
+        return false;
+    }
+
+    return true;
+}
+
 bool CRiskValidationGate::IsSymbolDataValid(const string symbolParam)
 {
     if(!SymbolSelect(symbolParam, true))
@@ -865,11 +1076,15 @@ void CRiskValidationGate::WriteAuditLog(const string message)
 //+------------------------------------------------------------------+
 string CRiskValidationGate::FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result)
 {
-    return StringFormat("VALIDATION: %s %s %.3f lots | %s | Risk: %.2f%% | Portfolio: %.2f%% | Correlation: %.2f",
+    string clusterCode = NormalizeClusterCode(request.clusterCode);
+    return StringFormat("VALIDATION: %s %s %.3f lots | %s | Role=%s | Cluster=%s(%s) | Risk: %.2f%% | Portfolio: %.2f%% | Correlation: %.2f",
                        request.symbol,
                        EnumToString(request.orderType),
                        request.lotSize,
                        result.approved ? "APPROVED" : "REJECTED",
+                       request.strategyRole,
+                       request.strategyCluster,
+                       clusterCode,
                        result.riskPercent,
                        result.portfolioRisk,
                        result.correlationRisk);

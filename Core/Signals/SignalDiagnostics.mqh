@@ -160,7 +160,7 @@ public:
     void LogMultiTimeframeAnalysis(const string &strategies[], ENUM_TRADE_SIGNAL &signals[],
                                    const double &confidences[], const ENUM_TIMEFRAMES &timeframes[]);
     
-    // SMC-specific logging
+    // Unified ICT structure logging
     void LogSMCDetection(const string type,
                         const string symbol,
                         const double price,
@@ -488,7 +488,7 @@ void CSignalDiagnostics::LogHedgingPrevented(const string strategy,
 }
 
 //+------------------------------------------------------------------+
-//| Log SMC Detection                                               |
+//| Log Unified ICT Structure Detection                             |
 //+------------------------------------------------------------------+
 void CSignalDiagnostics::LogSMCDetection(const string type,
                                         const string symbol,
@@ -500,7 +500,7 @@ void CSignalDiagnostics::LogSMCDetection(const string type,
 {
     if(!m_enabled || m_logLevel < 3) return;
     
-    string msg = StringFormat("[SMC_%s] %s | Price: %.5f | Zone: %.5f-%.5f | %s | Score: %.1f",
+    string msg = StringFormat("[ICT_STRUCT_%s] %s | Price: %.5f | Zone: %.5f-%.5f | %s | Score: %.1f",
                             type, symbol, price, bottom, top,
                             bullish ? "BULLISH" : "BEARISH",
                             score);
@@ -513,7 +513,7 @@ void CSignalDiagnostics::LogSMCDetection(const string type,
 }
 
 //+------------------------------------------------------------------+
-//| Log SMC Mitigation                                              |
+//| Log Unified ICT Structure Mitigation                            |
 //+------------------------------------------------------------------+
 void CSignalDiagnostics::LogSMCMitigation(const string type,
                                          const double price,
@@ -521,7 +521,7 @@ void CSignalDiagnostics::LogSMCMitigation(const string type,
 {
     if(!m_enabled || m_logLevel < 3) return;
     
-    string msg = StringFormat("[SMC_MITIGATED] %s | Price: %.5f | %s",
+    string msg = StringFormat("[ICT_MITIGATED] %s | Price: %.5f | %s",
                             type, price,
                             successful ? "SUCCESS" : "FAILED");
     

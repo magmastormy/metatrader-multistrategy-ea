@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //| AdvancedOrderBlocks.mqh                                          |
 //| Source, Continuation, and Breaker Block Detection                |
-//| For Unified ICT/SMC Strategy                                     |
+//| For Unified ICT Strategy                                         |
 //| Copyright 2025, Multi-Strategy EA                                |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Multi-Strategy EA"
