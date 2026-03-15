@@ -86,6 +86,10 @@ public:
 
     // Single trade validation authority.
     SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime");
+    void ConfigureClusterGovernance(const bool enabled,
+                                    const int maxConcurrentPerCluster,
+                                    const double maxClusterRiskPercent,
+                                    const bool enableMutex);
 
     // Register accepted risk usage only after successful execution.
     void RegisterExecutedTradeRisk(const SValidationResult &validationResult);
@@ -276,6 +280,17 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     }
 
     return result;
+}
+
+void CUnifiedRiskManager::ConfigureClusterGovernance(const bool enabled,
+                                                     const int maxConcurrentPerCluster,
+                                                     const double maxClusterRiskPercent,
+                                                     const bool enableMutex)
+{
+    m_validationGate.ConfigureClusterGovernance(enabled,
+                                                maxConcurrentPerCluster,
+                                                maxClusterRiskPercent,
+                                                enableMutex);
 }
 
 //+------------------------------------------------------------------+

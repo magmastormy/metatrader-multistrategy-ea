@@ -2,6 +2,89 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-03-07
+
+### Batch 25: Threshold Decoupling + Regime-Aligned Signal Gating (2026-03-07)
+- **Pipeline/Validator Threshold Split:** `MultiStrategyAutonomousEA.mq5` now exposes dedicated non-AI confidence controls (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`) instead of reusing `InpAIConfidenceThreshold` for the non-AI signal path.
+- **Intrabar Confidence Alignment:** the default single-voter intrabar confidence floor is reduced to `0.55` to align with the non-AI validator profile instead of remaining stricter than the rest of the stack by default.
+- **Regime-Driven Thresholding:** `Core/Pipeline/UnifiedSignalPipeline.mqh` now drives `[PIPELINE-THRESHOLD]` from `CRegimeEngine` snapshot state (`TREND`, `BREAKOUT`, `RANGE`, `CHAOS`) instead of inferring weak regime from `TrendEngine` neutral/warmup output.
+- **Execution Fallback Decoupling:** validator-fallback approval in `MultiStrategyAutonomousEA.mq5` no longer keys off `InpAIConfidenceThreshold`; it now uses the active validator profile confidence floor.
+- **Trend Reject Telemetry:** `Strategies/StrategyTrend.mqh` now emits explicit filtered-reason logs and decision tags (`TREND_ADX_FILTERED`, `TREND_NO_ENTRY`, `TREND_LOW_CONFIDENCE`, etc.) for primary-live diagnosability.
+- **Audit Refresh:** `Audit_trace.md` now records the latest `test1.log` finding that the pipeline confidence gate, not quorum, is the current no-trade blocker, and documents the new remediation batch.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 24: Execution-Safety Hardening + Transaction-Driven Analytics (2026-03-07)
+- **Synchronous Execution Default:** `Core/Trading/TradeManager.mqh` now initializes with async mode disabled, removing the most dangerous mismatch between EA-side success handling and broker confirmation timing.
+- **Fresh-Price Market Sends:** `CTradeManager` now resolves current execution price at submit time, rebuilds SL/TP from that price on every retry, and includes freeze-level-aware stop validation.
+- **Non-Blocking Retry Path:** transient broker retries no longer sleep inside the EA thread; retries now refresh and reprice immediately inside the bounded retry loop.
+- **Sizing Math Alignment:** `Core/Risk/PositionSizer.mqh` now uses tick-size/tick-value risk-per-lot math and `min(balance,equity)` denominator alignment with the risk gate and portfolio-risk path.
+- **Restart-Safe Lifecycle Reconstruction:** `Core/Trading/AdvancedPositionManager.mqh` now rebuilds partial-close and breakeven milestones for already-open positions using `POSITION_IDENTIFIER` and history-derived entry volume.
+- **Transaction-Driven Close Analytics:** `MultiStrategyAutonomousEA.mq5` now records confirmed close results into `PerformanceAnalytics` from `OnTradeTransaction`, and `Core/Monitoring/PerformanceAnalytics.mqh` now updates trade counts, win/loss state, recent returns, and consecutive-loss tracking on close.
+- **Broker/Account Guardrails:** `MultiStrategyAutonomousEA.mq5` now rejects unsupported non-hedging account modes at startup and skips close-only / invalid-volume-step symbols during symbol initialization.
+- **Low-Risk Correctness Cleanup:** fixed stale-symbol references in `TradeManager` management helpers, removed `PositionSizer` volume-debug log spam, and made the dormant `IsNewBar(...)` helper symbol/timeframe scoped.
+- **Audit Refresh:** `Audit_trace.md` now reflects the remediation status of the major audit findings instead of the pre-fix snapshot.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 23: Runtime No-Trade Recovery + Startup Mode Clarity (2026-03-07)
+- **Contributor-Aware Intrabar Quorum:** `Core/Management/EnterpriseStrategyManager.mqh` now derives intrabar dynamic quorum from actual live contributors in the current cycle instead of the entire eligible live pool, preventing single strong voters from being deadlocked by silent eligible voters.
+- **Operator Execution Visibility:** `MultiStrategyAutonomousEA.mq5` now emits `[EXECUTION-MODE]` at startup so `InpShadowMode=true` sessions are explicitly visible before execution debugging begins.
+- **Analytics Bootstrap Fix:** `MultiStrategyAutonomousEA.mq5` now initializes `PerformanceAnalytics` before wiring it into `CUnifiedRiskManager`.
+- **Audit Evidence Refresh:** `Audit_trace.md` now includes the 2026-03-07 `test1.log` evidence showing signal generation without quorum survival (`after_quorum=0`) and documents the immediate no-trade root cause.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+## [Unreleased] - 2026-02-24
+
+### Batch 22: Institutional Strategy Betterment + Cluster Risk Governance (2026-02-24)
+- **Soft Quarantine Governance:** `Core/Management/EnterpriseStrategyManager.mqh` now carries per-strategy role/cluster/live-vote/shadow metadata and enforces live-voter-only quorum participation while preserving feature/shadow diagnostics.
+- **Default Institutional Policy:** `MultiStrategyAutonomousEA.mq5` now applies soft-quarantine governance by strategy name (`Momentum/Trend/Unified ICT` live primary; `Candlestick/Fibonacci/Elliott Wave/Support-Resistance` feature/shadow by default).
+- **Role/Cluster Telemetry:** Added `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, and heartbeat `[ROLE-CLUSTER]` counters for operator attribution visibility.
+- **Regime + Cost Viability Gate:** Added `Core/Engines/RegimeEngine.mqh` and integrated into `Core/Pipeline/UnifiedSignalPipeline.mqh` with structured logs `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`.
+- **Pipeline Contract Extension:** `SignalFilterSettings` now includes regime/cost controls (`enableRegimeCostGate`, `maxSpreadToAtrRatio`, `spreadShockCooldownSeconds`, `maxEntryRangeZScore`).
+- **Momentum Consolidation:** `Strategies/SimpleMomentumStrategy.mqh` now uses state+trigger logic (EMA alignment + compression-to-break requirement) and de-emphasizes crossover-only churn.
+- **Unified ICT Simplification:** `Strategies/StrategyUnifiedICT.mqh` now requires compact event tuple checks (structure break + displacement + mitigation/retest), bounds event-quality confidence, and restricts counter-trend allowance to range regime context.
+- **Cluster-Aware Risk Controls:** `Core/Risk/RiskValidationGate.mqh` now validates same-symbol opposing-cluster mutex plus per-cluster concurrent-position and projected-risk caps, with `[RISK-CLUSTER]` and `[RISK-MUTEX-BLOCK]` telemetry.
+- **Risk Context Propagation:** `STradeValidationRequest` extended with strategy role/cluster/contributor context and compact cluster code; EA now forwards this context for both pre-size and post-size validation phases.
+- **Unified Risk API:** `Core/Risk/UnifiedRiskManager.mqh` now exposes cluster-governance configuration surface and EA wiring.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 21: Consensus Snapshot Integrity + Strategy Reject Attribution (2026-02-24)
+- **Snapshot Integrity Fix:** `Core/Management/EnterpriseStrategyManager.mqh` now uses separate baseline families for manager interval logging vs EA snapshot retrieval, eliminating zeroed snapshot artifacts caused by shared counter reset order.
+- **Strategy Decision Reason Contract:** Added `GetLastDecisionReasonTag()` to `Interfaces/IStrategy.mqh` and base implementation in `Core/Strategy/StrategyBase.mqh` for deterministic per-strategy none-path attribution.
+- **Momentum Reason Buckets:** `Strategies/SimpleMomentumStrategy.mqh` now tags and rate-limits reject paths (cooldown, low volatility, no crossover, trend misalignment, not-ready buckets).
+- **Unified ICT Reason Buckets:** `Strategies/StrategyUnifiedICT.mqh` now tags major none paths (neutral bias and filter buckets) for manager-level attribution.
+- **Manager Attribution Telemetry:** `Core/Management/EnterpriseStrategyManager.mqh` now emits `[CONSENSUS-STRATEGY]` and exposes additional counters via `GetConsensusDiagnosticsSnapshot(...)`.
+- **EA Heartbeat Attribution:** `MultiStrategyAutonomousEA.mq5` now emits `[STRATEGY-REJECTS]` and includes strategy-level counters in `[NO-SIGNAL-ALERT]` context.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 20: Institutional Throughput-Recovery + Signal-Integrity Hardening (2026-02-24)
+- **Consensus Throughput Recovery:** `Core/Management/EnterpriseStrategyManager.mqh` now supports eligibility-aware intrabar dynamic quorum (`<=1 => quorum=1`, else bounded by intrabar quorum floor) with configurable single-voter confidence guard.
+- **Intrabar Eligibility Control:** Added explicit per-strategy intrabar eligibility assignment API and wired curated-core defaults in `MultiStrategyAutonomousEA.mq5` for Momentum and Unified ICT via runtime inputs.
+- **Deadlock Attribution:** Added `[CONSENSUS-ROOT]` dominant-cause percentage telemetry and manager diagnostics snapshot APIs consumed by EA-level no-signal alerting.
+- **Pipeline Threshold Governance:** `Core/Pipeline/UnifiedSignalPipeline.mqh` now applies bounded weak-regime intrabar threshold uplift (`min(base+cap, base*multiplier)`) and emits `[PIPELINE-THRESHOLD]` reason tags.
+- **ADX Fail-Safe Hardening:** `Core/Engines/TrendEngine.mqh` now enforces handle/readiness checks, ADX/DI domain sanitation, neutral-degrade fallback on ADX faults, and bounded ADX-handle self-heal after consecutive failures.
+- **Operator Conversion Telemetry:** `MultiStrategyAutonomousEA.mq5` now emits `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[CONSENSUS-SNAPSHOT]`, and `[NO-SIGNAL-ALERT]` with consensus-root attribution.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 19: Full Retired-Strategy Reference Cleanup (2026-02-24)
+- **Deleted:** Unused legacy strategy config module `Config/StrategyConfig.mqh` that still contained removed strategy families (RSI/MACD/Bollinger/Swing/etc.).
+- **Normalized:** Source comments updated from `Unified ICT/SMC` to `Unified ICT` across Unified ICT helper modules.
+- **Normalized:** Structure diagnostics/log tags shifted from SMC-era naming to Unified ICT structure naming (`[ICT_STRUCT_*]`, `[ICT_MITIGATED]`).
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 18: Retired Strategy Artifact Purge (2026-02-24)
+- **Removed:** Dead strategy-removal comment stubs from `MultiStrategyAutonomousEA.mq5` (`DELETED/REMOVED` include and symbol leftovers).
+- **Removed:** Orphan harmonic strategy components:
+  - `Strategies/HarmonicFiles/HarmonicPatternScanner.mqh`
+  - `Strategies/HarmonicFiles/HarmonicConfirmation.mqh`
+- **Removed:** Dead wrapper artifacts with legacy `StrategySwing` naming:
+  - `Core/Utils/File.mqh`
+  - `Core/Trading/DealInfo.mqh`
+  - `Core/Trading/HistoryOrderInfo.mqh`
+  - `Core/Trading/PositionInfo.mqh`
+- **Pruned:** Retired strategy enum entries in `Core/Utils/Enums.mqh` so removed strategies are no longer represented in active type inventory.
+- **Normalized:** Runtime naming now uses `Unified ICT` (removed standalone SMC strategy label remnants in comments/registration text).
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
 ## [Unreleased] - 2026-02-23
 
 ### Batch 17: Residual Audit Trace Hardening Execution (2026-02-23)

@@ -44,6 +44,12 @@ private:
     double m_intrabarMinQualityScore; // Intrabar minimum quality score
     double m_intrabarMinConfidence;   // Intrabar minimum confidence
     double m_maxSpreadMultiplier;     // Max spread as multiplier of ATR
+    double m_maxSpreadToAtrRatio;     // Hard spread/ATR ratio ceiling
+    bool m_enableSpreadShockGate;     // Spread shock cooldown gate
+    double m_spreadShockMultiplier;   // Spread shock trigger multiple
+    int m_spreadShockCooldownSec;     // Cooldown seconds after shock
+    double m_spreadBaselineEma;       // Runtime spread baseline
+    datetime m_lastSpreadShockTime;   // Last detected spread shock
     bool m_enableTimeFilter;
     bool m_enableSessionFilter;
     bool m_enableVolatilityFilter;
@@ -117,6 +123,16 @@ public:
         m_enableSpreadFilter = enable;
         m_maxSpreadMultiplier = maxSpreadMultiplier;
     }
+    void ConfigureCostViability(double maxSpreadToAtrRatio,
+                                bool enableSpreadShockGate,
+                                double spreadShockMultiplier,
+                                int spreadShockCooldownSec)
+    {
+        m_maxSpreadToAtrRatio = MathMax(0.01, maxSpreadToAtrRatio);
+        m_enableSpreadShockGate = enableSpreadShockGate;
+        m_spreadShockMultiplier = MathMax(1.1, spreadShockMultiplier);
+        m_spreadShockCooldownSec = MathMax(5, spreadShockCooldownSec);
+    }
     void SetAllowSyntheticOffHours(bool allow) { m_allowSyntheticOffHours = allow; }
     
     // Main validation function
@@ -174,6 +190,12 @@ CAdvancedSignalValidator::CAdvancedSignalValidator() :
     m_intrabarMinQualityScore(0.75),
     m_intrabarMinConfidence(0.70),
     m_maxSpreadMultiplier(2.0),       // Max spread = 2x ATR
+    m_maxSpreadToAtrRatio(0.25),
+    m_enableSpreadShockGate(true),
+    m_spreadShockMultiplier(2.5),
+    m_spreadShockCooldownSec(30),
+    m_spreadBaselineEma(0.0),
+    m_lastSpreadShockTime(0),
     m_enableTimeFilter(true),
     m_enableSessionFilter(true),
     m_enableVolatilityFilter(true),
@@ -331,11 +353,33 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
 //+------------------------------------------------------------------+
 bool CAdvancedSignalValidator::CheckSpreadFilter(const string symbol, double atrValue)
 {
-    if(atrValue <= 0) return true;  // Skip if no ATR
+    if(atrValue <= 0)
+        return true;  // Skip if no ATR
     
-    double spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD) * SymbolInfoDouble(symbol, SYMBOL_POINT);
-    double maxSpread = atrValue * m_maxSpreadMultiplier;
-    
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    double spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD) * point;
+    double maxSpreadByMultiplier = atrValue * m_maxSpreadMultiplier;
+    double maxSpreadByRatio = atrValue * m_maxSpreadToAtrRatio;
+    double maxSpread = MathMin(maxSpreadByMultiplier, maxSpreadByRatio);
+
+    if(m_spreadBaselineEma <= 0.0)
+        m_spreadBaselineEma = spread;
+    else
+        m_spreadBaselineEma = (0.9 * m_spreadBaselineEma) + (0.1 * spread);
+
+    if(m_enableSpreadShockGate)
+    {
+        if(m_spreadBaselineEma > 0.0 && spread > (m_spreadBaselineEma * m_spreadShockMultiplier))
+            m_lastSpreadShockTime = TimeCurrent();
+
+        if(m_lastSpreadShockTime > 0 &&
+           (TimeCurrent() - m_lastSpreadShockTime) <= m_spreadShockCooldownSec)
+            return false;
+    }
+
     return spread <= maxSpread;
 }
 

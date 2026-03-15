@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| MarketStructureAnalyzer.mqh                                      |
-//| Advanced Market Structure for Unified ICT/SMC Strategy           |
+//| Advanced Market Structure for Unified ICT Strategy               |
 //| Implements BMS, ISP, Trend Confirmation, Multiplex Structure     |
 //| Copyright 2025, Multi-Strategy EA                                |
 //+------------------------------------------------------------------+

@@ -23,13 +23,14 @@ input bool   InpAllowSyntheticOffHours = true;    // Allow synthetic indices to 
 //--- Strategy Selection (for testing)
 input group "Strategy Selection"
 input bool InpEnableMomentum = true;         // Enable Momentum Strategy
-input bool InpEnableTrend = false;           // Enable Trend Strategy
-input bool InpEnableFibonacci = false;        // Enable Fibonacci Strategy
-input bool InpEnableElliottWave = false;       // Enable Elliott Wave Enhanced Strategy
-input bool InpEnableSupportResistance = false; // Enable Support/Resistance + Trendlines
-input bool InpEnableUnifiedICT = true;         // Enable Unified ICT/SMC Strategy
-input bool InpEnableCandlestick = false;       // Enable Candlestick Patterns Strategy
+input bool InpEnableTrend = true;            // Enable Trend Strategy
+input bool InpEnableFibonacci = true;        // Enable Fibonacci Strategy
+input bool InpEnableElliottWave = true;      // Enable Elliott Wave Enhanced Strategy
+input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines
+input bool InpEnableUnifiedICT = true;         // Enable Unified ICT Strategy
+input bool InpEnableCandlestick = true;       // Enable Candlestick Patterns Strategy
 input bool InpUseCuratedStrategySet = true;    // Enable curated production strategy subset
+input bool InpEnableSoftQuarantine = true;     // Keep weak strategies loaded as feature/shadow contributors
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -50,6 +51,19 @@ input group "Runtime Cadence & Learning"
 input bool InpEnableHybridCadence = true;             // Enable hybrid cadence (new-bar + timed intrabar scans)
 input int  InpIntrabarScanSeconds = 10;               // Intrabar scan interval in seconds
 input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans to chart symbol
+input bool InpIntrabarDynamicQuorumEnabled = true;    // Intrabar quorum adapts to eligible contributors
+input double InpPipelineMinConfidence = 0.50;         // Base confidence floor for non-AI pipeline signals
+input double InpValidatorNewBarMinConfidence = 0.50;  // Post-consensus confidence floor on new-bar scans
+input double InpValidatorIntrabarMinConfidence = 0.55; // Post-consensus confidence floor on intrabar scans
+input double InpIntrabarSingleVoterMinConfidence = 0.55; // Min confidence for single-voter intrabar consensus
+input double InpPipelineIntrabarConfidenceCap = 0.05; // Max weak-regime intrabar confidence threshold uplift
+input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microstructure cost gate before validator
+input double InpPipelineMaxSpreadToAtrRatio = 0.25;   // Max spread/ATR ratio allowed by cost gate
+input int InpPipelineSpreadShockCooldownSec = 30;     // Spread shock cooldown window
+input double InpPipelineLateEntryZScoreLimit = 2.50;  // Late-entry outlier z-score veto limit
+input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
+input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
+input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
 input bool InpShadowMode = true;                      // Shadow mode: log virtual trades without sending orders
 input bool InpEnableNNOnlineTraining = false;         // Enable online NN observation/labeling loop
 input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation (institutional default OFF)
@@ -78,6 +92,10 @@ input bool InpEnableStructureFilter = true;    // Enable Structure Filter
 input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 input bool InpSignalScanOnNewBarOnly = true;   // Evaluate fresh entry signals only on new bar
 input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before risk gate
+input bool InpEnableClusterRiskGovernance = true; // Enable cluster-aware risk mutex/caps in risk gate
+input bool InpEnableClusterMutex = true;          // Block opposing-cluster same-symbol stacking
+input int  InpRiskMaxConcurrentPerCluster = 3;    // Maximum concurrent open positions per cluster
+input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per cluster (%)
 
 //--- Include files
 #include <Object.mqh>
@@ -94,13 +112,10 @@ input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before ris
 #include "Core\AI\AIStrategyOrchestrator.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Engines\MarketAnalysis.mqh"
-// DELETED: #include "Core\Connectivity\IntegrationHub.mqh"
 #include "Core\Strategy\StrategyBase.mqh"
 #include "Strategies\SimpleMomentumStrategy.mqh"
-// DELETED: #include "Core\Engines\TradingEngine.mqh"
 #include "Core\Utils\SymbolContext.mqh"
 #include "Core\Strategy\StrategyWrapper.mqh"
-// AUDIT FIX: Removed duplicate #include "IndicatorManager.mqh" (already included at line 68)
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\NeuralNetworkStrategy.mqh"
 #include "Core\Engines\AIEngine.mqh"
@@ -117,9 +132,6 @@ input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before ris
 #include "Strategies\StrategyElliottWaveEnhanced.mqh"
 #include "Strategies\StrategyCandlestick.mqh"
 
-// Advanced AI Modules
-// DELETED: #include "AIModules\GeneticOptimizer.mqh"
-
 // Advanced Signal Validation and Position Management
 #include "Core\Signals\AdvancedSignalValidator.mqh"
 #include "Core\Trading\AdvancedPositionManager.mqh"
@@ -133,23 +145,6 @@ input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before ris
 //+------------------------------------------------------------------+
 // Classes now included from separate files
 
-//+------------------------------------------------------------------+
-//| Momentum strategy for multi-instrument orchestration             |
-//+------------------------------------------------------------------+
-// CSimpleMomentumStrategy moved to Strategies/SimpleMomentumStrategy.mqh
-
-//+------------------------------------------------------------------+
-//| Progressive TP entry wrapper per position                        |
-//+------------------------------------------------------------------+
-// CTPManagerEntry moved to Core/TPManagerEntry.mqh
-
-// CStrategyWrapper moved to Core/StrategyWrapper.mqh
-
-//+------------------------------------------------------------------+
-//| Symbol execution context                                         |
-//+------------------------------------------------------------------+
-// CSymbolContext moved to Core/SymbolContext.mqh
-
 //--- Global variables
 CSymbolInfo globalSymbol;
 CAccountInfo account;
@@ -157,12 +152,8 @@ CEnhancedErrorHandler errorHandler;
 CUnifiedRiskManager unifiedRiskManager;
 CPerformanceAnalytics performanceAnalytics;
 CAIPerformanceFeedback aiFeedback;
-// CAIStrategyOrchestrator aiOrchestrator; // Already declared? Check global scope.
-// Using global aiOrchestrator
 CAIStrategyOrchestrator aiOrchestrator;
 CUtilities utilities;
-
-// CAIIntegrationHub is now included from Core/IntegrationHub.mqh
 
 CNextGenStrategyBrain aiNextGenBrain;
 CNeuralNetworkStrategy* neuralNetStrategy = NULL;
@@ -174,13 +165,9 @@ ulong g_pendingClosePositionIds[];
 double g_pendingCloseNetProfit[];
 CPositionSizer positionSizer;
 CMarketAnalysis marketAnalysis;
-// DELETED: CAIIntegrationHub integrationHub;
 CInstrumentRegistry instrumentRegistry;
 
 CTradeManager tradeManager;
-
-
-// REMOVED: CTradingEngine tradingEngine; // Dead code removal
 CEnterpriseStrategyManager* g_enterpriseManager = NULL; // Enterprise Strategy Manager
 CEnterpriseStrategyManager* g_enterpriseManagers[];      // Per-symbol managers
 string g_enterpriseManagerSymbols[];                     // Manager symbol mapping
@@ -245,12 +232,30 @@ ulong g_hbRiskRejects = 0;
 ulong g_hbTradesOpened = 0;
 ulong g_hbShadowTrades = 0;
 ulong g_hbQuietNoNewBar = 0;
+ulong g_hbSignalsGenerated = 0;
+ulong g_hbSignalsAfterPipeline = 0;
+ulong g_hbSignalsAfterQuorum = 0;
+ulong g_hbSignalsValidated = 0;
+ulong g_hbSignalsRiskApproved = 0;
+ulong g_hbSignalsSent = 0;
+
+// Previous heartbeat snapshots for windowed conversion-rate logging
+ulong g_prevHbScansAttempted = 0;
+ulong g_prevHbNoSignalCount = 0;
+ulong g_prevHbSignalsGenerated = 0;
+ulong g_prevHbSignalsAfterPipeline = 0;
+ulong g_prevHbSignalsAfterQuorum = 0;
+ulong g_prevHbSignalsValidated = 0;
+ulong g_prevHbSignalsRiskApproved = 0;
+ulong g_prevHbSignalsSent = 0;
+
 datetime g_lastHeartbeatLogTime = 0;
 datetime g_lastNNHealthLogTime = 0;
 datetime g_lastSignalEvalSecond = 0;
 int g_symbolEvalStartIndex = 0;
 datetime g_lastExternalCapacityLogTime = 0;
 datetime g_lastUnprotectedRemediationAttempt = 0;
+datetime g_lastNoSignalAlertTime = 0;
 ulong g_unprotectedPositionTickets[];
 int g_unprotectedPositionAttempts[];
 
@@ -288,14 +293,6 @@ bool isNewBar = false;
 //+------------------------------------------------------------------+
 //| Helper: Initialize AI systems                                    |
 //+------------------------------------------------------------------+
-// [DEAD CODE REMOVED] InitializeAISystems and DeinitializeAISystems
-// AI initialization strategy moved to OnInit/OnDeinit with proper gating
-
-//+------------------------------------------------------------------+
-//| Get Symbol Context Wrapper                                       |
-//+------------------------------------------------------------------+
-// [REMOVED] GetSymbolContext - Context management moved to CEnterpriseStrategyManager
-
 //+------------------------------------------------------------------+
 //| Update performance tracking                                      |
 //+------------------------------------------------------------------+
@@ -318,12 +315,33 @@ void SavePerformanceData()
 //+------------------------------------------------------------------+
 bool IsNewBar(const string symbolParam, const ENUM_TIMEFRAMES timeframe)
 {
-    static datetime lastBarTime = 0;
+    static string barKeys[];
+    static datetime lastBarTimes[];
     datetime currentBarTime = iTime(symbolParam, timeframe, 0);
+    string key = symbolParam + "|" + IntegerToString((int)timeframe);
 
-    if(currentBarTime != lastBarTime)
+    int keyIndex = -1;
+    for(int i = 0; i < ArraySize(barKeys); i++)
     {
-        lastBarTime = currentBarTime;
+        if(barKeys[i] == key)
+        {
+            keyIndex = i;
+            break;
+        }
+    }
+
+    if(keyIndex < 0)
+    {
+        keyIndex = ArraySize(barKeys);
+        ArrayResize(barKeys, keyIndex + 1);
+        ArrayResize(lastBarTimes, keyIndex + 1);
+        barKeys[keyIndex] = key;
+        lastBarTimes[keyIndex] = 0;
+    }
+
+    if(currentBarTime != lastBarTimes[keyIndex])
+    {
+        lastBarTimes[keyIndex] = currentBarTime;
         return true;
     }
 
@@ -587,6 +605,19 @@ string BuildTradeCommentWithPrediction(const string baseComment, const string pr
         comment = StringSubstr(comment, 0, availableBase);
 
     return comment + suffix;
+}
+
+string NormalizeClusterCode(const string clusterCode)
+{
+    if(clusterCode == "T" || clusterCode == "R" || clusterCode == "S" || clusterCode == "N")
+        return clusterCode;
+    return "N";
+}
+
+string BuildClusterTaggedTradeComment(const string clusterCode, const string predictionId)
+{
+    string compactBase = "K:" + NormalizeClusterCode(clusterCode) + "|EA";
+    return BuildTradeCommentWithPrediction(compactBase, predictionId);
 }
 
 int FindPredictionPositionIndex(const ulong positionId)
@@ -866,15 +897,14 @@ void BuildStrategyFlags(bool &strategyFlags[])
     if(!InpUseCuratedStrategySet)
         return;
 
-    bool curatedMask[7] = {
-        true,   // Momentum
-        false,  // Trend
-        false,  // Fibonacci
-        false,  // Elliott Wave
-        false,  // Support/Resistance
-        true,   // Unified ICT
-        false   // Candlestick
-    };
+    bool curatedMask[7];
+    curatedMask[0] = true;  // Momentum
+    curatedMask[1] = true;  // Trend
+    curatedMask[2] = true;  // Fibonacci
+    curatedMask[3] = true;  // Elliott Wave
+    curatedMask[4] = true;  // Support/Resistance
+    curatedMask[5] = true;  // Unified ICT
+    curatedMask[6] = true;  // Candlestick
 
     int enabledBefore = 0;
     int enabledAfter = 0;
@@ -893,8 +923,65 @@ void BuildStrategyFlags(bool &strategyFlags[])
             enabledAfter++;
     }
 
-    PrintFormat("[CURATION] Production strategy profile active (%d -> %d enabled)", enabledBefore, enabledAfter);
+    if(InpEnableSoftQuarantine)
+        PrintFormat("[CURATION] Soft-quarantine profile active (%d -> %d enabled, weak modules shadow/feature only)", enabledBefore, enabledAfter);
+    else
+        PrintFormat("[CURATION] Expanded primary profile active (%d -> %d enabled)", enabledBefore, enabledAfter);
     Print("[CURATION] Effective runtime strategy set: ", BuildEnabledStrategyList(strategyFlags));
+}
+
+void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
+                                          const string symbol,
+                                          const bool &strategyFlags[])
+{
+    if(manager == NULL)
+        return;
+
+    // Primary live voters by policy
+    if(ArraySize(strategyFlags) > 0 && strategyFlags[0])
+        manager.SetStrategyGovernanceByName("Momentum", PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+    if(ArraySize(strategyFlags) > 1 && strategyFlags[1])
+        manager.SetStrategyGovernanceByName("Trend", PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+    if(ArraySize(strategyFlags) > 5 && strategyFlags[5])
+        manager.SetStrategyGovernanceByName("Unified ICT", PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
+    // Soft-quarantined legacy pattern modules
+    if(ArraySize(strategyFlags) > 2 && strategyFlags[2])
+        manager.SetStrategyGovernanceByName("Fibonacci",
+                                            CONTEXT_FEATURE,
+                                            MEAN_REVERSION_CLUSTER,
+                                            !InpEnableSoftQuarantine,
+                                            InpEnableSoftQuarantine);
+    if(ArraySize(strategyFlags) > 3 && strategyFlags[3])
+        manager.SetStrategyGovernanceByName("Elliott Wave",
+                                            SHADOW_RESEARCH,
+                                            STRUCTURE_CLUSTER,
+                                            !InpEnableSoftQuarantine,
+                                            InpEnableSoftQuarantine);
+    if(ArraySize(strategyFlags) > 4 && strategyFlags[4])
+        manager.SetStrategyGovernanceByName("Support/Resistance",
+                                            SHADOW_RESEARCH,
+                                            MEAN_REVERSION_CLUSTER,
+                                            !InpEnableSoftQuarantine,
+                                            InpEnableSoftQuarantine);
+    if(ArraySize(strategyFlags) > 6 && strategyFlags[6])
+        manager.SetStrategyGovernanceByName("Candlestick",
+                                            CONTEXT_FEATURE,
+                                            STRUCTURE_CLUSTER,
+                                            !InpEnableSoftQuarantine,
+                                            InpEnableSoftQuarantine);
+
+    // Intrabar eligibility only for explicitly approved low-latency contributors.
+    if(ArraySize(strategyFlags) > 0 && strategyFlags[0])
+        manager.SetStrategyIntrabarEligibilityByName("Momentum", InpIntrabarEligibilityMomentum);
+    if(ArraySize(strategyFlags) > 1 && strategyFlags[1])
+        manager.SetStrategyIntrabarEligibilityByName("Trend", false);
+    if(ArraySize(strategyFlags) > 5 && strategyFlags[5])
+        manager.SetStrategyIntrabarEligibilityByName("Unified ICT", InpIntrabarEligibilityUnifiedICT);
+
+    PrintFormat("[STRATEGY-GOVERNANCE] %s | soft_quarantine=%s | primary_live={Momentum,Trend,Unified ICT}",
+                symbol,
+                InpEnableSoftQuarantine ? "true" : "false");
 }
 
 //+------------------------------------------------------------------+
@@ -938,6 +1025,188 @@ int GetTotalActiveBrainStrategyCount()
             total += g_enterpriseManagers[i].GetActiveBrainStrategyCount();
     }
     return total;
+}
+
+void GetAggregatedConsensusDiagnostics(ulong &rawNone,
+                                       ulong &filteredOut,
+                                       ulong &quorumFailed,
+                                       ulong &intrabarNotEligible,
+                                       ulong &signalsGenerated,
+                                       ulong &signalsAfterPipeline,
+                                       ulong &signalsAfterQuorum,
+                                       ulong &momentumNone,
+                                       ulong &momentumCooldown,
+                                       ulong &momentumLowVolatility,
+                                       ulong &momentumNoCrossover,
+                                       ulong &momentumTrendMisaligned,
+                                       ulong &momentumNotReady,
+                                       ulong &uictNone,
+                                       ulong &uictNeutralBias,
+                                       ulong &uictOtherFilters,
+                                       ulong &reasonTotal)
+{
+    rawNone = 0;
+    filteredOut = 0;
+    quorumFailed = 0;
+    intrabarNotEligible = 0;
+    signalsGenerated = 0;
+    signalsAfterPipeline = 0;
+    signalsAfterQuorum = 0;
+    momentumNone = 0;
+    momentumCooldown = 0;
+    momentumLowVolatility = 0;
+    momentumNoCrossover = 0;
+    momentumTrendMisaligned = 0;
+    momentumNotReady = 0;
+    uictNone = 0;
+    uictNeutralBias = 0;
+    uictOtherFilters = 0;
+    reasonTotal = 0;
+
+    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
+    {
+        CEnterpriseStrategyManager* manager = g_enterpriseManagers[i];
+        if(manager == NULL)
+            continue;
+
+        ulong managerRawNone = 0;
+        ulong managerFilteredOut = 0;
+        ulong managerQuorumFailed = 0;
+        ulong managerIntrabarNotEligible = 0;
+        ulong managerSignalsGenerated = 0;
+        ulong managerSignalsAfterPipeline = 0;
+        ulong managerSignalsAfterQuorum = 0;
+        ulong managerMomentumNone = 0;
+        ulong managerMomentumCooldown = 0;
+        ulong managerMomentumLowVolatility = 0;
+        ulong managerMomentumNoCrossover = 0;
+        ulong managerMomentumTrendMisaligned = 0;
+        ulong managerMomentumNotReady = 0;
+        ulong managerUICTNone = 0;
+        ulong managerUICTNeutralBias = 0;
+        ulong managerUICTOtherFilters = 0;
+        ulong managerReasonTotal = 0;
+        manager.GetConsensusDiagnosticsSnapshot(managerRawNone,
+                                               managerFilteredOut,
+                                               managerQuorumFailed,
+                                               managerIntrabarNotEligible,
+                                               managerSignalsGenerated,
+                                               managerSignalsAfterPipeline,
+                                               managerSignalsAfterQuorum,
+                                               managerMomentumNone,
+                                               managerMomentumCooldown,
+                                               managerMomentumLowVolatility,
+                                               managerMomentumNoCrossover,
+                                               managerMomentumTrendMisaligned,
+                                               managerMomentumNotReady,
+                                               managerUICTNone,
+                                               managerUICTNeutralBias,
+                                               managerUICTOtherFilters,
+                                               managerReasonTotal);
+
+        rawNone += managerRawNone;
+        filteredOut += managerFilteredOut;
+        quorumFailed += managerQuorumFailed;
+        intrabarNotEligible += managerIntrabarNotEligible;
+        signalsGenerated += managerSignalsGenerated;
+        signalsAfterPipeline += managerSignalsAfterPipeline;
+        signalsAfterQuorum += managerSignalsAfterQuorum;
+        momentumNone += managerMomentumNone;
+        momentumCooldown += managerMomentumCooldown;
+        momentumLowVolatility += managerMomentumLowVolatility;
+        momentumNoCrossover += managerMomentumNoCrossover;
+        momentumTrendMisaligned += managerMomentumTrendMisaligned;
+        momentumNotReady += managerMomentumNotReady;
+        uictNone += managerUICTNone;
+        uictNeutralBias += managerUICTNeutralBias;
+        uictOtherFilters += managerUICTOtherFilters;
+        reasonTotal += managerReasonTotal;
+    }
+}
+
+void GetAggregatedRoleClusterDiagnostics(ulong &primarySignals,
+                                         ulong &featureSignals,
+                                         ulong &shadowSignals,
+                                         ulong &voteSuppressed,
+                                         ulong &trendClusterSignals,
+                                         ulong &meanReversionClusterSignals,
+                                         ulong &structureClusterSignals,
+                                         ulong &noneClusterSignals)
+{
+    primarySignals = 0;
+    featureSignals = 0;
+    shadowSignals = 0;
+    voteSuppressed = 0;
+    trendClusterSignals = 0;
+    meanReversionClusterSignals = 0;
+    structureClusterSignals = 0;
+    noneClusterSignals = 0;
+
+    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
+    {
+        CEnterpriseStrategyManager* manager = g_enterpriseManagers[i];
+        if(manager == NULL)
+            continue;
+
+        ulong managerPrimary = 0;
+        ulong managerFeature = 0;
+        ulong managerShadow = 0;
+        ulong managerSuppressed = 0;
+        ulong managerTrend = 0;
+        ulong managerMeanRev = 0;
+        ulong managerStructure = 0;
+        ulong managerNone = 0;
+
+        manager.GetRoleClusterDiagnosticsTotals(managerPrimary,
+                                                managerFeature,
+                                                managerShadow,
+                                                managerSuppressed,
+                                                managerTrend,
+                                                managerMeanRev,
+                                                managerStructure,
+                                                managerNone);
+
+        primarySignals += managerPrimary;
+        featureSignals += managerFeature;
+        shadowSignals += managerShadow;
+        voteSuppressed += managerSuppressed;
+        trendClusterSignals += managerTrend;
+        meanReversionClusterSignals += managerMeanRev;
+        structureClusterSignals += managerStructure;
+        noneClusterSignals += managerNone;
+    }
+}
+
+string GetDominantConsensusCause(const ulong rawNone,
+                                 const ulong filteredOut,
+                                 const ulong quorumFailed,
+                                 const ulong intrabarNotEligible)
+{
+    string dominant = "none";
+    ulong maxCount = 0;
+
+    if(intrabarNotEligible > maxCount)
+    {
+        maxCount = intrabarNotEligible;
+        dominant = "intrabar_not_eligible";
+    }
+    if(quorumFailed > maxCount)
+    {
+        maxCount = quorumFailed;
+        dominant = "quorum_failed";
+    }
+    if(filteredOut > maxCount)
+    {
+        maxCount = filteredOut;
+        dominant = "filtered_out";
+    }
+    if(rawNone > maxCount)
+    {
+        maxCount = rawNone;
+        dominant = "raw_none";
+    }
+
+    return dominant;
 }
 
 string BuildQualifiedStrategyName(const string symbol, const string strategyName)
@@ -1143,7 +1412,12 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         filters.enableVolatilityFilter = true;
         filters.enableLiquidityFilter = InpEnableLiquidityFilter;
         filters.enableStructureFilter = InpEnableStructureFilter;
-        filters.minConfidence = InpAIConfidenceThreshold;
+        filters.minConfidence = MathMax(0.0, MathMin(1.0, InpPipelineMinConfidence));
+        filters.intrabarConfidenceCap = MathMax(0.0, InpPipelineIntrabarConfidenceCap);
+        filters.enableRegimeCostGate = InpPipelineEnableRegimeCostGate;
+        filters.maxSpreadToAtrRatio = MathMax(0.01, InpPipelineMaxSpreadToAtrRatio);
+        filters.spreadShockCooldownSeconds = MathMax(5, InpPipelineSpreadShockCooldownSec);
+        filters.maxEntryRangeZScore = MathMax(0.5, InpPipelineLateEntryZScoreLimit);
         filters.maxVolatility = InpMaxVolatility;
         filters.minTrendStrength = (int)InpMinTrendStrength;
         manager.SetPipelineFilters(filters);
@@ -1151,8 +1425,21 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
 
     manager.SetMinQuorum(2);
     manager.SetIntrabarMinQuorum(2);
+    manager.SetIntrabarDynamicQuorumEnabled(InpIntrabarDynamicQuorumEnabled);
+    manager.SetIntrabarSingleVoterMinConfidence(InpIntrabarSingleVoterMinConfidence);
+    manager.SetConsensusDiagnosticsIntervalSeconds(InpDeadlockAttributionIntervalSec);
+    PrintFormat("[ENTERPRISE-CONFIG] %s | intrabar_dynamic_quorum=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_newbar_conf=%.2f | validator_intrabar_conf=%.2f | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+                symbol,
+                InpIntrabarDynamicQuorumEnabled ? "true" : "false",
+                InpIntrabarSingleVoterMinConfidence,
+                MathMax(0.0, MathMin(1.0, InpPipelineMinConfidence)),
+                MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
+                MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence)),
+                MathMax(10, InpDeadlockAttributionIntervalSec),
+                MathMax(0.0, InpPipelineIntrabarConfidenceCap));
     Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
     manager.AutoRegisterStrategies(strategyFlags);
+    ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
 
     if(InpEnableAIMode && InpEnableTransformer)
     {
@@ -1234,6 +1521,18 @@ int OnInit()
     Print("[ACCOUNT] Equity: ", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2));
     Print("[ACCOUNT] Free Margin: ", DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2));
 
+    ENUM_ACCOUNT_MARGIN_MODE marginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+    if(marginMode != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
+    {
+        PrintFormat("[CRITICAL] Unsupported account margin mode: %s | EA requires hedging account semantics for magic-scoped lifecycle management",
+                    EnumToString(marginMode));
+        return INIT_FAILED;
+    }
+    PrintFormat("[EXECUTION-MODE] mode=%s | shadow_mode=%s | note=%s",
+                InpShadowMode ? "SHADOW_ONLY" : "LIVE_SEND",
+                InpShadowMode ? "true" : "false",
+                InpShadowMode ? "orders will be simulated only" : "orders will be sent to broker");
+
     // AUDIT FIX: Gate AI subsystem initialization behind InpEnableAIMode
     if(InpEnableAIMode)
     {
@@ -1283,11 +1582,22 @@ int OnInit()
     unifiedRiskConfig.enableAuditLogging = true;
     unifiedRiskConfig.auditLogFile = "UnifiedRiskValidation.log";
 
+    if(!performanceAnalytics.Initialize())
+    {
+        Print("[CRITICAL] PerformanceAnalytics failed to initialize!");
+        return INIT_FAILED;
+    }
+    Print("[INIT] PerformanceAnalytics initialized");
+
     if(!unifiedRiskManager.Initialize(unifiedRiskConfig, &performanceAnalytics))
     {
         Print("[CRITICAL] UnifiedRiskManager failed to initialize!");
         return INIT_FAILED;
     }
+    unifiedRiskManager.ConfigureClusterGovernance(InpEnableClusterRiskGovernance,
+                                                  MathMax(1, InpRiskMaxConcurrentPerCluster),
+                                                  MathMax(0.1, InpRiskMaxClusterExposurePct),
+                                                  InpEnableClusterMutex);
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
 
     // Initialize PositionSizer before enterprise managers
@@ -1387,6 +1697,16 @@ int OnInit()
             Print("[WARNING] Symbol ", sym, " trading is disabled - skipping");
             continue;
         }
+        if(symbolTradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
+        {
+            Print("[WARNING] Symbol ", sym, " is close-only - skipping");
+            continue;
+        }
+        if(SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP) <= 0.0)
+        {
+            Print("[WARNING] Symbol ", sym, " has invalid volume step - skipping");
+            continue;
+        }
 
         bool alreadyAdded = false;
         for(int j = 0; j < ArraySize(g_activePairs); j++)
@@ -1470,14 +1790,26 @@ int OnInit()
     g_signalValidator = new CAdvancedSignalValidator();
     if(g_signalValidator != NULL)
     {
-        g_signalValidator.SetValidationProfiles(2, 0.68, 0.60, 1, 0.75, 0.70);
+        g_signalValidator.SetValidationProfiles(2,
+                                                0.68,
+                                                MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
+                                                1,
+                                                0.75,
+                                                MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence)));
         g_signalValidator.SetMaxSpreadMultiplier(2.0);
         g_signalValidator.EnableTimeFilter(true, 1, 22);
         g_signalValidator.EnableSessionFilter(true, true, true, true);
         g_signalValidator.EnableVolatilityFilter(true, 0.0, 5.0);
         g_signalValidator.EnableSpreadFilter(true, 2.0);
+        g_signalValidator.ConfigureCostViability(MathMax(0.01, InpPipelineMaxSpreadToAtrRatio),
+                                                 true,
+                                                 2.5,
+                                                 MathMax(5, InpPipelineSpreadShockCooldownSec));
         g_signalValidator.SetAllowSyntheticOffHours(InpAllowSyntheticOffHours);
-        Print("[SIGNAL-VALIDATOR] Advanced signal validation enabled | Synthetic Off-Hours: ", InpAllowSyntheticOffHours);
+        PrintFormat("[SIGNAL-VALIDATOR] Advanced signal validation enabled | Synthetic Off-Hours: %s | NewBarConf: %.2f | IntrabarConf: %.2f",
+                    InpAllowSyntheticOffHours ? "true" : "false",
+                    MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
+                    MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence)));
     }
 
     // Initialize Advanced Position Manager (shared, magic scoped)
@@ -1569,12 +1901,27 @@ int OnInit()
     g_hbTradesOpened = 0;
     g_hbShadowTrades = 0;
     g_hbQuietNoNewBar = 0;
+    g_hbSignalsGenerated = 0;
+    g_hbSignalsAfterPipeline = 0;
+    g_hbSignalsAfterQuorum = 0;
+    g_hbSignalsValidated = 0;
+    g_hbSignalsRiskApproved = 0;
+    g_hbSignalsSent = 0;
+    g_prevHbScansAttempted = 0;
+    g_prevHbNoSignalCount = 0;
+    g_prevHbSignalsGenerated = 0;
+    g_prevHbSignalsAfterPipeline = 0;
+    g_prevHbSignalsAfterQuorum = 0;
+    g_prevHbSignalsValidated = 0;
+    g_prevHbSignalsRiskApproved = 0;
+    g_prevHbSignalsSent = 0;
     g_lastHeartbeatLogTime = TimeCurrent();
     g_lastNNHealthLogTime = TimeCurrent();
     g_lastSignalEvalSecond = 0;
     g_symbolEvalStartIndex = 0;
     g_lastExternalCapacityLogTime = 0;
     g_lastUnprotectedRemediationAttempt = 0;
+    g_lastNoSignalAlertTime = 0;
     ArrayResize(g_unprotectedPositionTickets, 0);
     ArrayResize(g_unprotectedPositionAttempts, 0);
 
@@ -1964,6 +2311,15 @@ void ProcessTradingLogic(bool fromTimer)
                 ENUM_TRADE_SIGNAL enterpriseSignal = symbolManager.GetConsensusSignalForSymbolWithConfluenceMode(
                     currentSymbol, confidence, confluence, evalMode);
 
+                int cycleSignalsGenerated = 0;
+                int cycleSignalsAfterPipeline = 0;
+                bool cycleSignalAfterQuorum = false;
+                symbolManager.GetLastCycleFunnel(cycleSignalsGenerated, cycleSignalsAfterPipeline, cycleSignalAfterQuorum);
+                g_hbSignalsGenerated += (ulong)MathMax(0, cycleSignalsGenerated);
+                g_hbSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
+                if(cycleSignalAfterQuorum)
+                    g_hbSignalsAfterQuorum++;
+
                 if(enterpriseSignal == TRADE_SIGNAL_NONE)
                 {
                     g_hbNoSignalCount++;
@@ -2006,17 +2362,36 @@ void ProcessTradingLogic(bool fromTimer)
                     Print("[SIGNAL-VALIDATED] ", currentSymbol, " | Signal: ", signalType,
                           " | Confidence: ", confidence, " | Confluence: ", confluence,
                           " | Quality: ", validation.qualityScore);
+                    g_hbSignalsValidated++;
 
                     // Use validated confidence
                     confidence = validation.qualityScore;  // Use quality score as final confidence
                     signalApproved = true;
                 }
-                else if(enterpriseSignal != TRADE_SIGNAL_NONE && confidence >= InpAIConfidenceThreshold)
+                else if(enterpriseSignal != TRADE_SIGNAL_NONE)
                 {
-                    // Fallback if validator not initialized
-                    string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
-                    Print("[ENTERPRISE] ", currentSymbol, " | Signal: ", signalType, " | Confidence: ", confidence, " | Confluence: ", confluence);
-                    signalApproved = true;
+                    double fallbackMinConfidence = (validationProfile == VALIDATION_PROFILE_INTRABAR)
+                                                  ? MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence))
+                                                  : MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence));
+                    if(confidence >= fallbackMinConfidence)
+                    {
+                        // Fallback if validator not initialized
+                        string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+                        Print("[ENTERPRISE] ", currentSymbol, " | Signal: ", signalType,
+                              " | Confidence: ", confidence,
+                              " | Confluence: ", confluence,
+                              " | FallbackMinConf: ", DoubleToString(fallbackMinConfidence, 2));
+                        g_hbSignalsValidated++;
+                        signalApproved = true;
+                    }
+                    else
+                    {
+                        Print("[SIGNAL-REJECTED] ", currentSymbol,
+                              " | Reason: Validator unavailable and confidence below fallback threshold",
+                              " | Confluence: ", confluence,
+                              " | Conf: ", DoubleToString(confidence, 2),
+                              " | Required: ", DoubleToString(fallbackMinConfidence, 2));
+                    }
                 }
 
                 // Execute trade if signal was approved
@@ -2095,6 +2470,34 @@ void ProcessTradingLogic(bool fromTimer)
                         proposedRisk = InpMaxRiskPerTrade;
                     currentRiskPerTrade = proposedRisk;
 
+                    string contributorSummary = "";
+                    string strategyRoleTag = "PRIMARY_ALPHA";
+                    string strategyClusterTag = "NONE";
+                    string strategyClusterCode = "N";
+                    if(!symbolManager.GetLastSignalExecutionContext(strategyRoleTag,
+                                                                    strategyClusterTag,
+                                                                    strategyClusterCode,
+                                                                    contributorSummary))
+                    {
+                        strategyRoleTag = "PRIMARY_ALPHA";
+                        strategyClusterTag = "NONE";
+                        strategyClusterCode = "N";
+                    }
+
+                    if(contributorSummary == "")
+                    {
+                        string contributorsFallback[];
+                        symbolManager.GetLastSignalContributors(contributorsFallback);
+                        for(int c = 0; c < ArraySize(contributorsFallback); c++)
+                        {
+                            if(contributorsFallback[c] == "")
+                                continue;
+                            if(StringLen(contributorSummary) > 0)
+                                contributorSummary += ",";
+                            contributorSummary += contributorsFallback[c];
+                        }
+                    }
+
                     // Unified risk manager is the only pre-trade veto contract.
                     STradeValidationRequest tradeReq;
                     tradeReq.symbol = currentSymbol;
@@ -2103,8 +2506,16 @@ void ProcessTradingLogic(bool fromTimer)
                     tradeReq.stopLossPips = stopLossPips;
                     tradeReq.takeProfitPips = takeProfitPips;
                     tradeReq.confidence = confidence;
-                    tradeReq.strategy = "Enterprise AI";
-                    tradeReq.reasoning = "Orchestrator consensus signal";
+                    tradeReq.strategy = "EnterpriseConsensus";
+                    tradeReq.reasoning = StringFormat("role=%s | cluster=%s | contributors=%s",
+                                                      strategyRoleTag,
+                                                      strategyClusterTag,
+                                                      contributorSummary);
+                    tradeReq.strategyRole = strategyRoleTag;
+                    tradeReq.strategyCluster = strategyClusterTag;
+                    tradeReq.contributorContext = contributorSummary;
+                    tradeReq.clusterCode = strategyClusterCode;
+                    tradeReq.requestTime = TimeCurrent();
                     
                     // Pre-check risk with minimum lot to validate trade parameters first
                     tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
@@ -2127,31 +2538,22 @@ void ProcessTradingLogic(bool fromTimer)
                             tradeReq.lotSize = lotSize;
                             if(!ApproveTradeByUnifiedRisk(tradeReq, "post-size", riskResult))
                                 continue;
+                            g_hbSignalsRiskApproved++;
                             
                             // Validate the lot size and final risk approval
                             if(lotSize > 0)
                             {
-                                string contributors[];
-                                symbolManager.GetLastSignalContributors(contributors);
-                                string contributorSummary = "";
-                                for(int c = 0; c < ArraySize(contributors); c++)
-                                {
-                                    if(contributors[c] == "")
-                                        continue;
-                                    if(StringLen(contributorSummary) > 0)
-                                        contributorSummary += ",";
-                                    contributorSummary += contributors[c];
-                                }
-
                                 double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
                                 double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
 
                                 if(InpShadowMode)
                                 {
                                     g_hbShadowTrades++;
+                                    g_hbSignalsSent++;
                                     g_lastTradeTime = tickTime;
-                                    PrintFormat("[SHADOW-TRADE] %s | %s | lot=%.2f | conf=%.2f | confluence=%d | contributors=%s | SL=%.5f | TP=%.5f",
-                                                currentSymbol, signalType, lotSize, confidence, confluence, contributorSummary, slPrice, tpPrice);
+                                    PrintFormat("[SHADOW-TRADE] %s | %s | lot=%.2f | conf=%.2f | confluence=%d | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                                                currentSymbol, signalType, lotSize, confidence, confluence,
+                                                strategyRoleTag, strategyClusterTag, contributorSummary, slPrice, tpPrice);
 
                                     // Stop after first shadow trade to preserve cooldown semantics.
                                     break;
@@ -2165,7 +2567,7 @@ void ProcessTradingLogic(bool fromTimer)
                                 if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
                                     symbolNet.ReservePredictionForSignal(enterpriseSignal, predictionId, 600);
 
-                                string tradeComment = BuildTradeCommentWithPrediction("Enterprise AI Signal", predictionId);
+                                string tradeComment = BuildClusterTaggedTradeComment(strategyClusterCode, predictionId);
 
                                 // Execute through TradeManager to keep one authoritative execution stack
                                 bool tradeSuccess = tradeManager.OpenPosition(
@@ -2186,13 +2588,23 @@ void ProcessTradingLogic(bool fromTimer)
                                         symbolNet.ReleasePredictionReservation(predictionId);
 
                                     int errorCode = GetLastError();
+                                    uint brokerRetcode = tradeManager.GetLastRetcode();
+                                    uint requestId = tradeManager.GetLastRequestId();
                                     Print("[TRADE-ERROR] Failed to execute ", signalType, " order on ", currentSymbol,
-                                          " | Lot Size: ", lotSize, " | Error Code: ", errorCode);
+                                          " | Lot Size: ", lotSize,
+                                          " | Error Code: ", errorCode,
+                                          " | Retcode: ", brokerRetcode,
+                                          " | RequestID: ", requestId);
                                 }
                                 else
                                 {
                                     ulong ticket = tradeManager.GetLastTicket();
+                                    double brokerPrice = tradeManager.GetLastRequestedPrice();
+                                    double brokerSL = tradeManager.GetLastRequestedStopLoss();
+                                    double brokerTP = tradeManager.GetLastRequestedTakeProfit();
+                                    uint requestId = tradeManager.GetLastRequestId();
                                     g_hbTradesOpened++;
+                                    g_hbSignalsSent++;
                                     
                                     // Register realized risk usage after successful execution.
                                     unifiedRiskManager.RegisterExecutedTradeRisk(riskResult);
@@ -2202,9 +2614,13 @@ void ProcessTradingLogic(bool fromTimer)
 
                                     Print("[TRADE-SUCCESS] ", signalType, " order executed on ", currentSymbol,
                                           " | Lot Size: ", lotSize,
-                                          " | SL: ", slPrice, " (", (int)stopLossPips, " pips)",
-                                          " | TP: ", tpPrice, " (", (int)takeProfitPips, " pips)",
+                                          " | Price: ", brokerPrice,
+                                          " | SL: ", brokerSL, " (", (int)stopLossPips, " pips)",
+                                          " | TP: ", brokerTP, " (", (int)takeProfitPips, " pips)",
                                           " | Ticket: ", ticket,
+                                          " | RequestID: ", requestId,
+                                          " | Role: ", strategyRoleTag,
+                                          " | Cluster: ", strategyClusterTag,
                                           " | Contributors: ", contributorSummary);
 
                                     // Stop after first successful trade to enforce cooldown while still
@@ -2225,13 +2641,149 @@ void ProcessTradingLogic(bool fromTimer)
     }
 
     datetime heartbeatNow = TimeCurrent();
-    if(g_lastHeartbeatLogTime == 0 || (heartbeatNow - g_lastHeartbeatLogTime) >= 60)
+    int heartbeatIntervalSec = MathMax(10, InpDeadlockAttributionIntervalSec);
+    if(g_lastHeartbeatLogTime == 0 || (heartbeatNow - g_lastHeartbeatLogTime) >= heartbeatIntervalSec)
     {
+        ulong diagRawNone = 0;
+        ulong diagFilteredOut = 0;
+        ulong diagQuorumFailed = 0;
+        ulong diagIntrabarNotEligible = 0;
+        ulong diagSignalsGenerated = 0;
+        ulong diagSignalsAfterPipeline = 0;
+        ulong diagSignalsAfterQuorum = 0;
+        ulong diagMomentumNone = 0;
+        ulong diagMomentumCooldown = 0;
+        ulong diagMomentumLowVolatility = 0;
+        ulong diagMomentumNoCrossover = 0;
+        ulong diagMomentumTrendMisaligned = 0;
+        ulong diagMomentumNotReady = 0;
+        ulong diagUICTNone = 0;
+        ulong diagUICTNeutralBias = 0;
+        ulong diagUICTOtherFilters = 0;
+        ulong diagReasonTotal = 0;
+        ulong rolePrimarySignals = 0;
+        ulong roleFeatureSignals = 0;
+        ulong roleShadowSignals = 0;
+        ulong roleVoteSuppressed = 0;
+        ulong clusterTrendSignals = 0;
+        ulong clusterMeanReversionSignals = 0;
+        ulong clusterStructureSignals = 0;
+        ulong clusterNoneSignals = 0;
+        GetAggregatedConsensusDiagnostics(diagRawNone,
+                                          diagFilteredOut,
+                                          diagQuorumFailed,
+                                          diagIntrabarNotEligible,
+                                          diagSignalsGenerated,
+                                          diagSignalsAfterPipeline,
+                                          diagSignalsAfterQuorum,
+                                          diagMomentumNone,
+                                          diagMomentumCooldown,
+                                          diagMomentumLowVolatility,
+                                          diagMomentumNoCrossover,
+                                          diagMomentumTrendMisaligned,
+                                          diagMomentumNotReady,
+                                          diagUICTNone,
+                                          diagUICTNeutralBias,
+                                          diagUICTOtherFilters,
+                                          diagReasonTotal);
+        GetAggregatedRoleClusterDiagnostics(rolePrimarySignals,
+                                            roleFeatureSignals,
+                                            roleShadowSignals,
+                                            roleVoteSuppressed,
+                                            clusterTrendSignals,
+                                            clusterMeanReversionSignals,
+                                            clusterStructureSignals,
+                                            clusterNoneSignals);
+
         PrintFormat("[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | shadow_trades=%I64u",
                     g_hbScansAttempted, g_hbIntrabarScansExecuted, g_hbNoSignalCount,
                     g_hbValidatorRejects, g_hbRiskRejects, g_hbTradesOpened, g_hbShadowTrades);
+        PrintFormat("[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | shadow_or_live_sent=%I64u",
+                    g_hbSignalsGenerated,
+                    g_hbSignalsAfterPipeline,
+                    g_hbSignalsAfterQuorum,
+                    g_hbSignalsValidated,
+                    g_hbSignalsRiskApproved,
+                    g_hbSignalsSent);
+        PrintFormat("[CONSENSUS-SNAPSHOT] generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u",
+                    diagSignalsGenerated,
+                    diagSignalsAfterPipeline,
+                    diagSignalsAfterQuorum,
+                    diagRawNone,
+                    diagFilteredOut,
+                    diagQuorumFailed,
+                    diagIntrabarNotEligible,
+                    diagReasonTotal);
+        PrintFormat("[STRATEGY-REJECTS] momentum_none=%I64u | momentum_cooldown=%I64u | momentum_low_vol=%I64u | momentum_no_crossover=%I64u | momentum_trend_misaligned=%I64u | momentum_not_ready=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u | uict_other_filters=%I64u",
+                    diagMomentumNone,
+                    diagMomentumCooldown,
+                    diagMomentumLowVolatility,
+                    diagMomentumNoCrossover,
+                    diagMomentumTrendMisaligned,
+                    diagMomentumNotReady,
+                    diagUICTNone,
+                    diagUICTNeutralBias,
+                    diagUICTOtherFilters);
+        PrintFormat("[ROLE-CLUSTER] primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
+                    rolePrimarySignals,
+                    roleFeatureSignals,
+                    roleShadowSignals,
+                    roleVoteSuppressed,
+                    clusterTrendSignals,
+                    clusterMeanReversionSignals,
+                    clusterStructureSignals,
+                    clusterNoneSignals);
         PrintFormat("[QUIET-REASONS] no_new_bar=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u",
                     g_hbQuietNoNewBar, g_hbNoSignalCount, g_hbValidatorRejects, g_hbRiskRejects);
+
+        ulong windowScans = g_hbScansAttempted - g_prevHbScansAttempted;
+        ulong windowNoSignal = g_hbNoSignalCount - g_prevHbNoSignalCount;
+        ulong windowGenerated = g_hbSignalsGenerated - g_prevHbSignalsGenerated;
+        ulong windowAfterPipeline = g_hbSignalsAfterPipeline - g_prevHbSignalsAfterPipeline;
+        ulong windowAfterQuorum = g_hbSignalsAfterQuorum - g_prevHbSignalsAfterQuorum;
+        ulong windowValidated = g_hbSignalsValidated - g_prevHbSignalsValidated;
+        ulong windowRiskApproved = g_hbSignalsRiskApproved - g_prevHbSignalsRiskApproved;
+        ulong windowSent = g_hbSignalsSent - g_prevHbSignalsSent;
+
+        double rateAfterPipeline = (windowGenerated > 0) ? (100.0 * (double)windowAfterPipeline / (double)windowGenerated) : 0.0;
+        double rateAfterQuorum = (windowAfterPipeline > 0) ? (100.0 * (double)windowAfterQuorum / (double)windowAfterPipeline) : 0.0;
+        double rateValidated = (windowAfterQuorum > 0) ? (100.0 * (double)windowValidated / (double)windowAfterQuorum) : 0.0;
+        double rateRiskApproved = (windowValidated > 0) ? (100.0 * (double)windowRiskApproved / (double)windowValidated) : 0.0;
+        double rateSent = (windowRiskApproved > 0) ? (100.0 * (double)windowSent / (double)windowRiskApproved) : 0.0;
+        double noSignalRate = (windowScans > 0) ? (100.0 * (double)windowNoSignal / (double)windowScans) : 0.0;
+        PrintFormat("[CONVERSION-RATES] window_scans=%I64u | generated=%I64u | after_pipeline=%.1f%% | after_quorum=%.1f%% | validated=%.1f%% | risk_approved=%.1f%% | sent=%.1f%% | no_signal=%.1f%%",
+                    windowScans,
+                    windowGenerated,
+                    rateAfterPipeline,
+                    rateAfterQuorum,
+                    rateValidated,
+                    rateRiskApproved,
+                    rateSent,
+                    noSignalRate);
+
+        string dominantConsensusCause = GetDominantConsensusCause(diagRawNone,
+                                                                  diagFilteredOut,
+                                                                  diagQuorumFailed,
+                                                                  diagIntrabarNotEligible);
+        if(windowScans >= 20 &&
+           noSignalRate >= 80.0 &&
+           (g_lastNoSignalAlertTime == 0 || (heartbeatNow - g_lastNoSignalAlertTime) >= heartbeatIntervalSec))
+        {
+            PrintFormat("[NO-SIGNAL-ALERT] window_scans=%I64u | no_signal=%I64u (%.1f%%) | dominant=%s | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u | momentum_none=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u",
+                        windowScans,
+                        windowNoSignal,
+                        noSignalRate,
+                        dominantConsensusCause,
+                        diagRawNone,
+                        diagFilteredOut,
+                        diagQuorumFailed,
+                        diagIntrabarNotEligible,
+                        diagReasonTotal,
+                        diagMomentumNone,
+                        diagUICTNone,
+                        diagUICTNeutralBias);
+            g_lastNoSignalAlertTime = heartbeatNow;
+        }
 
         SUnifiedRiskSnapshot heartbeatRisk = unifiedRiskManager.GetSnapshot();
         PrintFormat("[RISK-BUDGET] effective=%.2f/%.2f | entry=%.2f | mtm=%.2f | open_exposure=%.2f | conservative=%s | emergency=%s",
@@ -2247,6 +2799,14 @@ void ProcessTradingLogic(bool fromTimer)
         if(indicatorManager != NULL)
             indicatorManager.ReleaseUnused(300);
 
+        g_prevHbScansAttempted = g_hbScansAttempted;
+        g_prevHbNoSignalCount = g_hbNoSignalCount;
+        g_prevHbSignalsGenerated = g_hbSignalsGenerated;
+        g_prevHbSignalsAfterPipeline = g_hbSignalsAfterPipeline;
+        g_prevHbSignalsAfterQuorum = g_hbSignalsAfterQuorum;
+        g_prevHbSignalsValidated = g_hbSignalsValidated;
+        g_prevHbSignalsRiskApproved = g_hbSignalsRiskApproved;
+        g_prevHbSignalsSent = g_hbSignalsSent;
         g_lastHeartbeatLogTime = heartbeatNow;
     }
 
@@ -2391,89 +2951,123 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                         NNDiagLog(StringFormat("Entry without prediction ID | Symbol=%s | PositionID=%I64u | Comment=%s",
                                                trans.symbol, positionId, dealComment));
                     }
+
+                    PrintFormat("[TRADE-CONFIRMED] %s | entry=%s | deal=%I64u | position_id=%I64u | price=%.5f | volume=%.2f | request_id=%u",
+                                trans.symbol,
+                                EnumToString(dealEntry),
+                                trans.deal,
+                                positionId,
+                                trans.price,
+                                trans.volume,
+                                result.request_id);
                 }
 
-                if((dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_OUT_BY || dealEntry == DEAL_ENTRY_INOUT) &&
-                   InpEnableAIMode &&
-                   InpEnableNeuralNetwork &&
-                   InpEnableNNOnlineTraining)
+                if(dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_OUT_BY || dealEntry == DEAL_ENTRY_INOUT)
                 {
                     double dealProfit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
                     double dealSwap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);
                     double dealCommission = HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
                     double netProfit = dealProfit + dealSwap + dealCommission;
                     bool positionStillOpen = (positionId > 0 && IsPositionIdStillOpen(positionId));
-                    string predictionIdFromComment = ExtractPredictionIdFromComment(dealComment);
-                    string predictionIdFromMap = (positionId > 0) ? GetPredictionIdForPosition(positionId) : "";
-                    string resolvedPredictionId = (predictionIdFromComment != "") ? predictionIdFromComment : predictionIdFromMap;
-                    bool hasPredictionContext = (resolvedPredictionId != "");
+                    double totalNetProfit = netProfit;
+                    bool finalCloseRecorded = false;
 
-                    // Partial close: defer labeling until full position close so NN gets complete trade P/L.
                     if(positionStillOpen)
                     {
-                        if(positionId > 0 && hasPredictionContext)
+                        if(positionId > 0)
                         {
                             AccumulatePendingCloseProfit(positionId, netProfit);
-
-                            g_nnDiagPartialCloseCount++;
-                            NNDiagLog(StringFormat("Partial close deferred | Symbol=%s | PositionID=%I64u | DealNet=%.2f",
-                                                   trans.symbol, positionId, netProfit));
                         }
                     }
                     else
                     {
-                        double totalNetProfit = netProfit;
-                        if(positionId > 0 && hasPredictionContext)
+                        if(positionId > 0)
                             totalNetProfit += ConsumePendingCloseProfit(positionId);
 
-                        CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(trans.symbol);
-                        if(symbolNet == NULL)
-                            symbolNet = neuralNetStrategy;
+                        performanceAnalytics.RecordClosedTrade((positionId > 0) ? positionId : trans.deal,
+                                                               totalNetProfit);
+                        finalCloseRecorded = true;
+                        PrintFormat("[TRADE-CONFIRMED] %s | entry=%s | deal=%I64u | position_id=%I64u | price=%.5f | volume=%.2f | net=%.2f | request_id=%u",
+                                    trans.symbol,
+                                    EnumToString(dealEntry),
+                                    trans.deal,
+                                    positionId,
+                                    trans.price,
+                                    trans.volume,
+                                    totalNetProfit,
+                                    result.request_id);
+                    }
 
-                        if(symbolNet != NULL && hasPredictionContext)
+                    if(InpEnableAIMode &&
+                       InpEnableNeuralNetwork &&
+                       InpEnableNNOnlineTraining)
+                    {
+                        string predictionIdFromComment = ExtractPredictionIdFromComment(dealComment);
+                        string predictionIdFromMap = (positionId > 0) ? GetPredictionIdForPosition(positionId) : "";
+                        string resolvedPredictionId = (predictionIdFromComment != "") ? predictionIdFromComment : predictionIdFromMap;
+                        bool hasPredictionContext = (resolvedPredictionId != "");
+
+                        if(positionStillOpen)
                         {
-                            bool updatedById = false;
-                            updatedById = symbolNet.UpdateTradeResultByPredictionId(resolvedPredictionId, totalNetProfit);
-
-                            bool updatedByFallback = false;
-                            if(!updatedById)
-                                updatedByFallback = symbolNet.UpdateTradeResult(dealTime, totalNetProfit);
-
-                            if(updatedById)
+                            if(positionId > 0 && hasPredictionContext)
                             {
-                                g_nnDiagCloseByIdCount++;
-                                NNDiagLog(StringFormat("Close labeled by ID | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
-                                                       trans.symbol, positionId, resolvedPredictionId, totalNetProfit));
+                                g_nnDiagPartialCloseCount++;
+                                NNDiagLog(StringFormat("Partial close deferred | Symbol=%s | PositionID=%I64u | DealNet=%.2f",
+                                                       trans.symbol, positionId, netProfit));
                             }
-                            else if(updatedByFallback)
+                        }
+                        else
+                        {
+                            CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(trans.symbol);
+                            if(symbolNet == NULL)
+                                symbolNet = neuralNetStrategy;
+
+                            if(symbolNet != NULL && hasPredictionContext)
                             {
-                                g_nnDiagCloseFallbackCount++;
-                                NNDiagLog(StringFormat("Close labeled by fallback | Symbol=%s | PositionID=%I64u | Net=%.2f",
-                                                       trans.symbol, positionId, totalNetProfit));
+                                bool updatedById = symbolNet.UpdateTradeResultByPredictionId(resolvedPredictionId, totalNetProfit);
+                                bool updatedByFallback = false;
+                                if(!updatedById)
+                                    updatedByFallback = symbolNet.UpdateTradeResult(dealTime, totalNetProfit);
+
+                                if(updatedById)
+                                {
+                                    g_nnDiagCloseByIdCount++;
+                                    NNDiagLog(StringFormat("Close labeled by ID | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
+                                                           trans.symbol, positionId, resolvedPredictionId, totalNetProfit));
+                                }
+                                else if(updatedByFallback)
+                                {
+                                    g_nnDiagCloseFallbackCount++;
+                                    NNDiagLog(StringFormat("Close labeled by fallback | Symbol=%s | PositionID=%I64u | Net=%.2f",
+                                                           trans.symbol, positionId, totalNetProfit));
+                                }
+                                else
+                                {
+                                    g_nnDiagCloseMissCount++;
+                                    NNDiagLog(StringFormat("Close label miss | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
+                                                           trans.symbol, positionId, resolvedPredictionId, totalNetProfit));
+                                }
                             }
-                            else
+                            else if(symbolNet == NULL && hasPredictionContext)
                             {
                                 g_nnDiagCloseMissCount++;
-                                NNDiagLog(StringFormat("Close label miss | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
-                                                       trans.symbol, positionId, resolvedPredictionId, totalNetProfit));
+                                NNDiagLog(StringFormat("Close label miss: no NN instance | Symbol=%s | PositionID=%I64u",
+                                                       trans.symbol, positionId));
+                            }
+                            else if(!hasPredictionContext)
+                            {
+                                NNDiagLog(StringFormat("Close skipped: no prediction context | Symbol=%s | PositionID=%I64u",
+                                                       trans.symbol, positionId));
                             }
                         }
-                        else if(symbolNet == NULL && hasPredictionContext)
-                        {
-                            g_nnDiagCloseMissCount++;
-                            NNDiagLog(StringFormat("Close label miss: no NN instance | Symbol=%s | PositionID=%I64u",
-                                                   trans.symbol, positionId));
-                        }
-                        else if(!hasPredictionContext)
-                        {
-                            NNDiagLog(StringFormat("Close skipped: no prediction context | Symbol=%s | PositionID=%I64u",
-                                                   trans.symbol, positionId));
-                        }
+                    }
 
-                        if(positionId > 0 && !IsPositionIdStillOpen(positionId))
+                    if(positionId > 0 && !IsPositionIdStillOpen(positionId))
+                    {
+                        RemovePredictionPositionMap(positionId);
+                        ClearPendingCloseProfit(positionId);
+                        if(finalCloseRecorded)
                         {
-                            RemovePredictionPositionMap(positionId);
-                            ClearPendingCloseProfit(positionId);
                             NNDiagLog(StringFormat("Position map cleared | Symbol=%s | PositionID=%I64u",
                                                    trans.symbol, positionId));
                         }

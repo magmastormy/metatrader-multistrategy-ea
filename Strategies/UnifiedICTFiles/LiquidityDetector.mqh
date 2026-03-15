@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| LiquidityDetector.mqh                                            |
-//| Liquidity Pool and Sweep Detection for Unified ICT/SMC           |
+//| Liquidity Pool and Sweep Detection for Unified ICT               |
 //| Copyright 2025, Multi-Strategy EA                                |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Multi-Strategy EA"

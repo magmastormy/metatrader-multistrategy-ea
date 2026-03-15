@@ -98,27 +98,14 @@ enum ENUM_MARKET_REGIME
 enum ENUM_STRATEGY_TYPE
 {
     STRATEGY_TYPE_CUSTOM = -1,         // Custom strategy type
-    STRATEGY_RSI = 0,                  // RSI based strategy
     STRATEGY_FIBONACCI = 3,            // Fibonacci retracements
-    STRATEGY_SWING = 5,                // Swing trading
-    STRATEGY_CORRELATION = 6,          // Correlation matrix
     STRATEGY_AI_ENHANCED = 7,          // AI enhanced signals
     STRATEGY_MOMENTUM = 8,             // Momentum strategy
-    STRATEGY_BREAKOUT = 9,             // Breakout strategy
     STRATEGY_TREND = 10,               // Trend following strategy
-    STRATEGY_MEAN_REVERSION = 11,      // Mean reversion strategy
-    STRATEGY_VOLATILITY = 12,          // Volatility breakout strategy
-    STRATEGY_MACD = 14,                // MACD strategy
-    STRATEGY_BOLLINGER = 15,           // Bollinger Bands strategy
-    STRATEGY_BOLLINGER_BREAKOUT = 16,  // Bollinger Breakout strategy
-    STRATEGY_FIBONACCI_RETRACEMENT = 17, // Fibonacci Retracement strategy
-    STRATEGY_ICHIMOKU = 18,            // Ichimoku Cloud strategy
-    STRATEGY_HARMONIC_PATTERNS = 19,   // Harmonic Patterns strategy
     STRATEGY_ELLIOTT_WAVE = 21,        // Elliott Wave Enhanced strategy
     STRATEGY_BRAIN = 22,               // Neural Network Brain strategy
-    STRATEGY_SMC = 23,                 // Advanced Smart Money Concepts strategy (includes Order Blocks, Supply/Demand, FVG)
     STRATEGY_SUPPORT_RESISTANCE = 24,  // Support/Resistance + Trendlines strategy
-    STRATEGY_UNIFIED_ICT = 25,         // Unified ICT/SMC comprehensive strategy
+    STRATEGY_UNIFIED_ICT = 25,         // Unified ICT strategy
     STRATEGY_CANDLESTICK = 26          // Candlestick Pattern Recognition strategy
 };
 

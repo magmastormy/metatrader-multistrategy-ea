@@ -47,8 +47,10 @@ private:
     struct SPositionTracker
     {
         ulong ticket;
+        ulong positionId;
         datetime openTime;
         double entryPrice;
+        double initialVolume;
         double initialSL;
         double initialTP;
         bool breakevenActivated;
@@ -84,6 +86,8 @@ public:
     double NormalizeCloseVolume(const string symbol, const double volume);
     double ResolveMinimumPipDistance(const string symbol, const double configuredPips, const double stopLevelMultiplier = 1.0);
     bool UpdateTracker(ulong ticket, SPositionTracker &tracker);
+    double ReconstructInitialVolume(const ulong positionId, const datetime openTime, const string symbol, const double fallbackVolume);
+    void RestoreTrackerState(ulong ticket, SPositionTracker &tracker);
     int FindTrackerIndex(ulong ticket);
     bool IsManagedPosition(ulong ticket);
     
@@ -148,14 +152,17 @@ void CAdvancedPositionManager::ManageAllPositions()
                     ArrayResize(m_trackedPositions, newSize);
                     
                     m_trackedPositions[newSize - 1].ticket = ticket;
+                    m_trackedPositions[newSize - 1].positionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
                     m_trackedPositions[newSize - 1].openTime = (datetime)PositionGetInteger(POSITION_TIME);
                     m_trackedPositions[newSize - 1].entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                    m_trackedPositions[newSize - 1].initialVolume = PositionGetDouble(POSITION_VOLUME);
                     m_trackedPositions[newSize - 1].initialSL = PositionGetDouble(POSITION_SL);
                     m_trackedPositions[newSize - 1].initialTP = PositionGetDouble(POSITION_TP);
                     m_trackedPositions[newSize - 1].breakevenActivated = false;
                     m_trackedPositions[newSize - 1].partialClose1Done = false;
                     m_trackedPositions[newSize - 1].partialClose2Done = false;
                     m_trackedPositions[newSize - 1].highestProfit = 0.0;
+                    RestoreTrackerState(ticket, m_trackedPositions[newSize - 1]);
                 }
             }
             else
@@ -477,11 +484,95 @@ double CAdvancedPositionManager::ResolveMinimumPipDistance(const string symbol, 
 }
 
 //+------------------------------------------------------------------+
+//| Reconstruct initial position volume from history                 |
+//+------------------------------------------------------------------+
+double CAdvancedPositionManager::ReconstructInitialVolume(const ulong positionId,
+                                                          const datetime openTime,
+                                                          const string symbol,
+                                                          const double fallbackVolume)
+{
+    if(positionId == 0 || symbol == "")
+        return fallbackVolume;
+
+    datetime historyFrom = openTime;
+    if(historyFrom > 3600)
+        historyFrom -= 3600;
+    else
+        historyFrom = 0;
+
+    if(!HistorySelect(historyFrom, TimeCurrent()))
+        return fallbackVolume;
+
+    double initialVolume = 0.0;
+    for(int i = 0; i < HistoryDealsTotal(); i++)
+    {
+        ulong dealTicket = HistoryDealGetTicket(i);
+        if(dealTicket == 0)
+            continue;
+
+        if((ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID) != positionId)
+            continue;
+
+        if(HistoryDealGetString(dealTicket, DEAL_SYMBOL) != symbol)
+            continue;
+
+        ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+        if(dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT)
+            initialVolume += HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+    }
+
+    if(initialVolume <= 0.0)
+        initialVolume = fallbackVolume;
+
+    return MathMax(initialVolume, fallbackVolume);
+}
+
+//+------------------------------------------------------------------+
+//| Restore lifecycle flags for already-open positions               |
+//+------------------------------------------------------------------+
+void CAdvancedPositionManager::RestoreTrackerState(ulong ticket, SPositionTracker &tracker)
+{
+    if(!PositionSelectByTicket(ticket))
+        return;
+
+    string symbol = PositionGetString(POSITION_SYMBOL);
+    ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+    double currentVolume = PositionGetDouble(POSITION_VOLUME);
+    double currentSL = PositionGetDouble(POSITION_SL);
+    double volumeStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    if(volumeStep <= 0.0)
+        volumeStep = 0.01;
+
+    tracker.initialVolume = ReconstructInitialVolume(tracker.positionId,
+                                                     tracker.openTime,
+                                                     symbol,
+                                                     MathMax(currentVolume, tracker.initialVolume));
+    tracker.highestProfit = GetCurrentProfitPips(ticket);
+
+    double epsilon = SymbolInfoDouble(symbol, SYMBOL_POINT) * 0.5;
+    if(posType == POSITION_TYPE_BUY)
+        tracker.breakevenActivated = (currentSL > 0.0 && currentSL >= tracker.entryPrice - epsilon);
+    else
+        tracker.breakevenActivated = (currentSL > 0.0 && currentSL <= tracker.entryPrice + epsilon);
+
+    double partialClose1Remaining = tracker.initialVolume * (1.0 - (m_config.partialClose1Percent / 100.0));
+    double partialClose2Remaining = partialClose1Remaining * (1.0 - (m_config.partialClose2Percent / 100.0));
+
+    tracker.partialClose1Done = (tracker.initialVolume > 0.0 &&
+                                 currentVolume <= partialClose1Remaining + (volumeStep * 0.5));
+    tracker.partialClose2Done = (tracker.initialVolume > 0.0 &&
+                                 currentVolume <= partialClose2Remaining + (volumeStep * 0.5));
+}
+
+//+------------------------------------------------------------------+
 //| Update Tracker                                                   |
 //+------------------------------------------------------------------+
 bool CAdvancedPositionManager::UpdateTracker(ulong ticket, SPositionTracker &tracker)
 {
     if(!PositionSelectByTicket(ticket)) return false;
+
+    if(tracker.positionId == 0)
+        tracker.positionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
     
     // Update highest profit
     double currentProfit = GetCurrentProfitPips(ticket);

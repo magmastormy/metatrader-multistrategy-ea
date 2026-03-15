@@ -19,6 +19,7 @@ private:
     int     m_fastHandle;
     int     m_slowHandle;
     int     m_trendHandle;         // Trend indicator (slower MA)
+    int     m_stateSlowHandle;     // Regime state EMA (200)
     int     m_atrHandle;           // Volatility filter
     double  m_lastDiff;
     datetime m_lastSignalBar;      // Track last bar where signal was generated
@@ -26,21 +27,46 @@ private:
     double   m_minTrendStrength;   // Minimum trend strength for trades
     double   m_minVolatility;      // Minimum volatility threshold
     datetime m_lastSignalTimestamp;     // Track absolute time of last signal
+    string   m_lastRejectReasonTag;
+    datetime m_lastRejectLogTime;
+
+    void LogRejectEvent(const string reasonTag)
+    {
+        datetime nowTime = TimeCurrent();
+        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
+            return;
+        if((nowTime - m_lastRejectLogTime) < 5)
+            return;
+
+        PrintFormat("[MOMENTUM] Filtered: %s | Symbol=%s | TF=%s",
+                    reasonTag, m_symbol, EnumToString(m_timeframe));
+        m_lastRejectReasonTag = reasonTag;
+        m_lastRejectLogTime = nowTime;
+    }
+
+    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
+    {
+        SetDecisionReasonTag(reasonTag);
+        LogRejectEvent(reasonTag);
+        return TRADE_SIGNAL_NONE;
+    }
 
     bool CreateHandles()
     {
         if(m_fastHandle != INVALID_HANDLE) IndicatorRelease(m_fastHandle);
         if(m_slowHandle != INVALID_HANDLE) IndicatorRelease(m_slowHandle);
         if(m_trendHandle != INVALID_HANDLE) IndicatorRelease(m_trendHandle);
+        if(m_stateSlowHandle != INVALID_HANDLE) IndicatorRelease(m_stateSlowHandle);
         if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
 
         m_fastHandle = iMA(m_symbol, m_timeframe, m_fastPeriod, 0, MODE_EMA, PRICE_CLOSE);
         m_slowHandle = iMA(m_symbol, m_timeframe, m_slowPeriod, 0, MODE_EMA, PRICE_CLOSE);
         m_trendHandle = iMA(m_symbol, m_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);  // Trend filter
+        m_stateSlowHandle = iMA(m_symbol, m_timeframe, 200, 0, MODE_EMA, PRICE_CLOSE); // Regime state filter
         m_atrHandle = iATR(m_symbol, m_timeframe, 14); // Standard 14-period ATR
 
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE || 
-           m_trendHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
+           m_trendHandle == INVALID_HANDLE || m_stateSlowHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
         {
             PrintFormat("[MOMENTUM-STRATEGY] Failed to create indicator handles for %s", m_symbol);
             return false;
@@ -74,10 +100,13 @@ public:
         m_fastHandle(INVALID_HANDLE),
         m_slowHandle(INVALID_HANDLE),
         m_trendHandle(INVALID_HANDLE),
+        m_stateSlowHandle(INVALID_HANDLE),
         m_atrHandle(INVALID_HANDLE),
         m_lastDiff(0.0),
         m_lastSignalBar(0),
         m_lastSignalTimestamp(0),
+        m_lastRejectReasonTag(""),
+        m_lastRejectLogTime(0),
         m_enableScalping(false),
         m_minTrendStrength(0.55),
         m_minVolatility(0.0005)
@@ -92,10 +121,13 @@ public:
         m_fastHandle(INVALID_HANDLE),
         m_slowHandle(INVALID_HANDLE),
         m_trendHandle(INVALID_HANDLE),
+        m_stateSlowHandle(INVALID_HANDLE),
         m_atrHandle(INVALID_HANDLE),
         m_lastDiff(0.0),
         m_lastSignalBar(0),
         m_lastSignalTimestamp(0),
+        m_lastRejectReasonTag(""),
+        m_lastRejectLogTime(0),
         m_enableScalping(false),      // SCALPING MODE: Disabled by default
         m_minTrendStrength(0.55),    // TREND FILTER: 55% minimum trend alignment
         m_minVolatility(0.0005)      // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
@@ -135,29 +167,39 @@ public:
         if(m_fastHandle != INVALID_HANDLE) { IndicatorRelease(m_fastHandle); m_fastHandle = INVALID_HANDLE; }
         if(m_slowHandle != INVALID_HANDLE) { IndicatorRelease(m_slowHandle); m_slowHandle = INVALID_HANDLE; }
         if(m_trendHandle != INVALID_HANDLE) { IndicatorRelease(m_trendHandle); m_trendHandle = INVALID_HANDLE; }
+        if(m_stateSlowHandle != INVALID_HANDLE) { IndicatorRelease(m_stateSlowHandle); m_stateSlowHandle = INVALID_HANDLE; }
         if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
         CStrategyBase::Deinit();
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
-        if(!IsEnabled() || !m_is_initialized) return TRADE_SIGNAL_NONE;
+        confidence = 0.0;
+        SetDecisionReasonTag("MOMENTUM_UNSET");
+
+        if(!IsEnabled() || !m_is_initialized)
+            return RejectSignal("MOMENTUM_DISABLED_OR_UNINIT");
         
         // Ensure handles are valid
-        if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE) return TRADE_SIGNAL_NONE;
+        if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE ||
+           m_trendHandle == INVALID_HANDLE || m_stateSlowHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
+            return RejectSignal("MOMENTUM_INVALID_HANDLES");
 
         // COOLDOWN: Always enforce at least 60 seconds between signals per symbol
-        if(TimeCurrent() - m_lastSignalTimestamp < 60) return TRADE_SIGNAL_NONE;
+        if(TimeCurrent() - m_lastSignalTimestamp < 60)
+            return RejectSignal("MOMENTUM_COOLDOWN");
 
         if(!m_enableScalping)
         {
             // Conservative mode: Only one signal per bar
             datetime currentBar = iTime(m_symbol, m_timeframe, 1);
-            if(currentBar == m_lastSignalBar) return TRADE_SIGNAL_NONE;
+            if(currentBar == m_lastSignalBar)
+                return RejectSignal("MOMENTUM_SAME_BAR_GUARD");
         }
 
         double fastNow, fastPrev, slowNow, slowPrev;
-        if(!FetchAverages(fastNow, fastPrev, slowNow, slowPrev)) return TRADE_SIGNAL_NONE;
+        if(!FetchAverages(fastNow, fastPrev, slowNow, slowPrev))
+            return RejectSignal("MOMENTUM_MA_UNAVAILABLE");
 
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         if(point <= 0.0) point = 0.0001;
@@ -167,37 +209,49 @@ public:
         double threshold = m_thresholdPoints * point;
 
         // --- VOLATILITY FILTER ---
-        double atrBuffer[1];
-        if(CopyBuffer(m_atrHandle, 0, 1, 1, atrBuffer) < 1) return TRADE_SIGNAL_NONE;
-        if(atrBuffer[0] < m_minVolatility) 
+        double atrWindow[24];
+        if(CopyBuffer(m_atrHandle, 0, 1, 24, atrWindow) < 24)
+            return RejectSignal("MOMENTUM_ATR_UNAVAILABLE");
+        if(atrWindow[0] < m_minVolatility) 
         {
             // Market too quiet
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("MOMENTUM_LOW_VOLATILITY");
         }
+
+        double atrCompressionFloor = atrWindow[1];
+        for(int a = 2; a < 24; a++)
+        {
+            if(atrWindow[a] < atrCompressionFloor)
+                atrCompressionFloor = atrWindow[a];
+        }
+        bool compressionState = (atrCompressionFloor > 0.0 && atrWindow[0] <= (atrCompressionFloor * 1.20));
+        bool volatilityExpansion = (atrWindow[1] > 0.0 && atrWindow[0] >= (atrWindow[1] * 1.05));
 
         // --- TREND FILTER ---
-        double priceForTrend = iClose(m_symbol, m_timeframe, 1);
         double trendBuffer[1];
-        if(CopyBuffer(m_trendHandle, 0, 1, 1, trendBuffer) < 1) return TRADE_SIGNAL_NONE;
+        double stateSlowBuffer[1];
+        if(CopyBuffer(m_trendHandle, 0, 1, 1, trendBuffer) < 1)
+            return RejectSignal("MOMENTUM_TREND_UNAVAILABLE");
+        if(CopyBuffer(m_stateSlowHandle, 0, 1, 1, stateSlowBuffer) < 1)
+            return RejectSignal("MOMENTUM_STATE_UNAVAILABLE");
         double trendMA = trendBuffer[0];
+        double stateSlowMA = stateSlowBuffer[0];
 
-        // Calculate trend strength (0.0 = strong down, 0.5 = neutral, 1.0 = strong up)
-        double trendStrength = 0.5;
-        if(priceForTrend > 0 && trendMA > 0)
-        {
-            double priceAboveTrend = (priceForTrend - trendMA) / trendMA;
-            trendStrength = 0.5 + (priceAboveTrend * 100.0); // Scale to 0-1 (adjusted scaling factor)
-            trendStrength = MathMax(0.0, MathMin(1.0, trendStrength));
-        }
+        bool bullishState = (fastNow > slowNow && slowNow > trendMA && trendMA > stateSlowMA);
+        bool bearishState = (fastNow < slowNow && slowNow < trendMA && trendMA < stateSlowMA);
+        if(!bullishState && !bearishState)
+            return RejectSignal("MOMENTUM_STATE_MISALIGNED");
 
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         
-        // Momentum crossover detection
-        if(diffNow > threshold && diffPrev <= threshold)
+        // Trigger must come from compression-to-break, not pure crossover noise.
+        bool crossedUp = (diffNow > threshold && diffPrev <= threshold);
+        bool crossedDown = (diffNow < -threshold && diffPrev >= -threshold);
+        if(crossedUp)
         {
             signal = TRADE_SIGNAL_BUY;
         }
-        else if(diffNow < -threshold && diffPrev >= -threshold)
+        else if(crossedDown)
         {
             signal = TRADE_SIGNAL_SELL;
         }
@@ -210,30 +264,31 @@ public:
                 signal = TRADE_SIGNAL_SELL;
         }
 
+        if(signal == TRADE_SIGNAL_NONE)
+            return RejectSignal("MOMENTUM_NO_CROSSOVER");
+
+        if(!compressionState || !volatilityExpansion)
+            return RejectSignal("MOMENTUM_NO_COMPRESSION_BREAK");
+
         if(signal != TRADE_SIGNAL_NONE)
         {
-            // TREND FILTER: Validate signal against trend
-            bool trendAligned = false;
-            
-            if(signal == TRADE_SIGNAL_BUY && trendStrength >= m_minTrendStrength)
-                trendAligned = true;
-            else if(signal == TRADE_SIGNAL_SELL && trendStrength <= (1.0 - m_minTrendStrength))
-                trendAligned = true;
-
-            if(!trendAligned)
+            bool stateAligned = ((signal == TRADE_SIGNAL_BUY && bullishState) ||
+                                 (signal == TRADE_SIGNAL_SELL && bearishState));
+            if(!stateAligned)
             {
-                // Reject signal: not aligned with trend
-                return TRADE_SIGNAL_NONE;
+                return RejectSignal("MOMENTUM_TREND_MISALIGNED");
             }
 
-            // Calculate confidence based on momentum strength and trend alignment
-            double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.0));
-            double trendConfidence = (signal == TRADE_SIGNAL_BUY) ? trendStrength : (1.0 - trendStrength);
-            confidence = (momentumConfidence * 0.6) + (trendConfidence * 0.4); // 60% momentum, 40% trend
+            double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.5));
+            double expansionConfidence = MathMin(1.0, atrWindow[0] / MathMax(atrWindow[1], m_minVolatility));
+            double stateConfidence = 1.0;
+            confidence = (momentumConfidence * 0.55) + (expansionConfidence * 0.30) + (stateConfidence * 0.15);
+            confidence = MathMin(1.0, MathMax(0.0, confidence));
             
             m_lastSignalBar = iTime(m_symbol, m_timeframe, 1);
             m_lastSignalTimestamp = TimeCurrent();
             RecordSignal();
+            SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
         }
 
         return signal;

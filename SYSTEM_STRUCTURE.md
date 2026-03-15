@@ -1,7 +1,7 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-02-23
+- Last Updated: 2026-03-07
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
 
@@ -22,6 +22,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - initialize all runtime subsystems
   - maintain cadence loops (new-bar/intrabar)
   - dispatch per-symbol evaluations
+  - own the non-AI confidence policy inputs for pipeline and validator stages
   - coordinate validator/risk/execution path
   - handle runtime telemetry and deinitialization
 
@@ -31,7 +32,9 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Responsibilities:
   - hold registered strategies (core + AI adapters)
   - execute strategy voting and confidence aggregation
-  - apply quorum rules by evaluation mode
+  - apply quorum rules by evaluation mode (strict new-bar, contributor-aware dynamic intrabar when enabled)
+  - enforce single-voter intrabar confidence floor
+  - expose per-cycle funnel snapshots and interval consensus diagnostics snapshots
   - emit consensus diagnostics
   - retain last-contributor context for attribution
 
@@ -39,6 +42,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Class: `CUnifiedSignalPipeline`
 - Responsibilities:
   - apply trend/volatility/liquidity/structure/confidence filters
+  - apply deterministic regime + cost viability pre-gate via `CRegimeEngine`
+  - apply bounded weak-regime intrabar confidence threshold uplift (`min(base+cap, base*multiplier)`) using `CRegimeEngine` snapshot state as the authority
+  - emit threshold-source telemetry (`[PIPELINE-THRESHOLD]`)
+  - emit regime/cost veto telemetry (`[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`)
   - normalize decision hygiene before final consensus acceptance
 
 ### 2.4 AI adaptation domain
@@ -56,18 +63,21 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - daily/portfolio risk budgeting and drawdown controls
   - mark-to-market aware daily budget enforcement
   - hard veto on unprotected (no-SL) open positions
+  - enforce cluster-aware governance (same-symbol opposing-cluster mutex + per-cluster caps) through `CRiskValidationGate`
   - split budget telemetry (`entry`, `mtm`, `open_exposure`, `effective`) for operator clarity
   - expose unprotected-position state for runtime remediation workflows
-  - executed-risk registration after successful sends
+  - executed-risk registration after successful synchronous sends
 
 ### 2.6 Execution domain
 - Class: `CTradeManager`
 - Responsibilities:
   - convert approved intent into actual order send
+  - run synchronous market execution by default
   - enforce execution-level safety checks
   - configurable broker fill policy (IOC/FOK/RETURN)
   - bounded retries for transient broker retcodes
   - single bounded retry behavior for `LOCKED` / `FROZEN` retcodes
+  - reprice market orders at submit time and rebuild protective SL/TP from the current market price
   - emergency-aware protective modification flow
   - expose ticket/result status for post-send handling
 
@@ -75,6 +85,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Class: `CAdvancedPositionManager`
 - Responsibilities:
   - trailing/BE/partial-close lifecycle handling
+  - reconstruct lifecycle milestones for already-open positions after restart
   - managed by EA magic scope
 
 ### 2.8 Shared indicator domain
@@ -92,8 +103,11 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Fibonacci
 - Elliott Wave
 - Support/Resistance
-- Unified ICT/SMC
+- Unified ICT
 - Candlestick
+
+Retired standalone strategy families (RSI, Mean Reversion, Swing, Volatility, MACD, Bollinger, Ichimoku, Harmonic, legacy SMC wrapper) are removed from active runtime inventory.
+The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also been removed to avoid stale retired-strategy references.
 
 ### 3.2 AI strategy adapters
 - Neural Network adapter (`CAIStrategyAdapter`)
@@ -105,6 +119,15 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 ### 3.3 Curated runtime profile
 Curated mode can restrict runtime active set to a smaller operational profile while preserving full retained implementation in code.
 
+### 3.4 Institutional governance roles
+- Strategy registration now includes explicit governance metadata:
+  - role: `PRIMARY_ALPHA`, `CONTEXT_FEATURE`, `SHADOW_RESEARCH`
+  - cluster: `TREND_CLUSTER`, `MEAN_REVERSION_CLUSTER`, `STRUCTURE_CLUSTER`, `NONE`
+- Default soft-quarantine policy:
+  - live primary voters: `Momentum`, `Trend`, `Unified ICT`
+  - feature/shadow contributors (loaded, diagnostics-on, live vote off by default): `Candlestick`, `Fibonacci`, `Elliott Wave`, `Support/Resistance`
+- Manager-level controls are exposed by strategy name for role, cluster, live-vote eligibility, and shadow mode.
+
 ## 4. Decision Pipeline (Signal to Execution)
 
 ### 4.1 Cadence selection
@@ -114,6 +137,9 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 
 ### 4.2 Consensus
 - Manager computes strategy votes and confidence.
+- Intrabar effective quorum is contributor-aware:
+  - actual live contributors this cycle `<=1`: effective quorum `1`
+  - otherwise: `min(intrabar_min_quorum, actual_live_contributors_this_cycle)`
 - Consensus may fail by:
   - raw no-vote
   - quorum miss
@@ -123,20 +149,25 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 ### 4.3 Validation
 - `CAdvancedSignalValidator` applies profile-dependent gating.
 - Rejected signals emit reasoned logs.
+- Cost viability parameters are explicit (`spread/ATR`, spread-shock cooldown).
 
 ### 4.4 Risk gate
 - Pre-size validation to accept/reject candidate conditions.
 - Position sizing computes lot.
 - Post-size validation with actual lot before execution.
 - Unprotected-position remediation runs before new-entry scans; unresolved states pause new entries until resolved.
+- Trade requests carry role/cluster/contributor context for cluster-aware risk governance.
 
 ### 4.5 Execution branch
 - Shadow mode: logs virtual trade, no send.
 - Live mode: send through `CTradeManager`.
+- Startup emits `[EXECUTION-MODE]` so shadow/live posture is explicit before the first scan.
+- Startup rejects unsupported non-hedging account models before runtime ownership becomes ambiguous.
+- Live comment tagging carries compact cluster code (`K:T/R/S/N`) for deterministic open-position cluster attribution.
 
 ### 4.6 Post-trade feedback
 - Successful trades register executed risk usage.
-- Close transactions feed manager/orchestrator adaptation.
+- Close transactions feed manager/orchestrator adaptation and `PerformanceAnalytics`.
 - NN attribution maps prediction IDs through close labeling.
 
 ### 4.7 Deterministic event separation
@@ -172,12 +203,20 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 
 ### 7.1 Key log families
 - Decision heartbeat: `[HEARTBEAT]`
+- Conversion funnel: `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`
 - Risk budget split: `[RISK-BUDGET]`
 - Unprotected remediation: `[RISK-UNPROTECTED]`
 - External capacity denial: `[CAPACITY-EXTERNAL]`
-- Consensus diagnostics: `[CONSENSUS-DIAG]`
+- Consensus diagnostics: `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`
+- Governance diagnostics: `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`
+- Strategy reject attribution: `[STRATEGY-REJECTS]`
 - Signal rejection reasons: `[SIGNAL-REJECTED]`
+- Threshold source tracing: `[PIPELINE-THRESHOLD]`
+- Regime/cost viability tracing: `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`
+- No-signal deadlock alerting: `[NO-SIGNAL-ALERT]`
+- Cluster risk governance tracing: `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI liveness: `[AI-VOTE]`
+- confirmed deals: `[TRADE-CONFIRMED]`
 - Shadow actions: `[SHADOW-TRADE]`
 - Execution outcomes: `[TRADE-SUCCESS]`, `[TRADE-ERROR]`
 
@@ -185,6 +224,9 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - no-signal ratio
 - validator rejection ratio
 - risk rejection ratio
+- generated-to-send conversion rate
+- quorum pass rate
+- validated-to-risk-approved conversion rate
 - AI vote activity per symbol per adapter
 - shadow/live trade throughput
 

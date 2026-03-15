@@ -21,6 +21,29 @@ private:
     CADXPositionSizing*     m_adxSizing;
     // Configuration
     int    m_lastBarProcessed;
+    string m_lastRejectReasonTag;
+    datetime m_lastRejectLogTime;
+
+    void LogRejectEvent(const string reasonTag)
+    {
+        datetime nowTime = TimeCurrent();
+        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
+            return;
+        if((nowTime - m_lastRejectLogTime) < 5)
+            return;
+
+        PrintFormat("[TREND v2.0] Filtered: %s | Symbol=%s | TF=%s",
+                    reasonTag, m_symbol, EnumToString(m_timeframe));
+        m_lastRejectReasonTag = reasonTag;
+        m_lastRejectLogTime = nowTime;
+    }
+
+    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
+    {
+        SetDecisionReasonTag(reasonTag);
+        LogRejectEvent(reasonTag);
+        return TRADE_SIGNAL_NONE;
+    }
 public:
     //--- Constructor
     CStrategyTrend(const string name = "Trend Strategy v2.0", int magic = 0) :
@@ -29,7 +52,9 @@ public:
         m_entryTypes(NULL),
         m_trailingStop(NULL),
         m_adxSizing(NULL),
-        m_lastBarProcessed(0)
+        m_lastBarProcessed(0),
+        m_lastRejectReasonTag(""),
+        m_lastRejectLogTime(0)
     {
         m_minConfidence = 0.55; // use base class field
     }
@@ -107,28 +132,30 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
+        SetDecisionReasonTag("TREND_UNSET");
         if(!IsEnabled() || !m_is_initialized)
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("TREND_DISABLED_OR_UNINIT");
         if(m_emaSystem == NULL || m_entryTypes == NULL || m_adxSizing == NULL)
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("TREND_COMPONENTS_NOT_READY");
         // Update components
         m_emaSystem.Update();
         m_entryTypes.Update();
         // Check if ADX allows trading (trend strength filter)
         if(!m_adxSizing.ShouldTrade())
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("TREND_ADX_FILTERED");
         // Get best entry signal from all entry types
         STrendEntrySignal bestEntry = m_entryTypes.GetBestEntry();
         if(bestEntry.direction == TRADE_SIGNAL_NONE)
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("TREND_NO_ENTRY");
         // Apply ADX-based confidence adjustment
         double adxMult = m_adxSizing.GetPositionSizeMultiplier();
         confidence = MathMin(1.0, bestEntry.confidence * (0.85 + adxMult * 0.15));
         // Minimum confidence filter
         if(confidence < m_minConfidence)
-            return TRADE_SIGNAL_NONE;
+            return RejectSignal("TREND_LOW_CONFIDENCE");
         // Log the signal
         string trendState = EnumToString(m_emaSystem.GetAlignment());
+        SetDecisionReasonTag(bestEntry.direction == TRADE_SIGNAL_BUY ? "TREND_SIGNAL_BUY" : "TREND_SIGNAL_SELL");
         PrintFormat("[TREND v2.0] %s: %s | Entry: %s | Conf: %.1f%% | Trend: %s | %s",
                    m_symbol,
                    bestEntry.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
