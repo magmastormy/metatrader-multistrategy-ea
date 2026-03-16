@@ -2,7 +2,13 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
-## [Unreleased] - 2026-03-07
+## [Unreleased] - 2026-03-16
+
+### Batch 26: Timeframe Consistency + AI Feedback Wiring (2026-03-16)
+- **Timeframe conflict resolution:** `Core/Management/EnterpriseStrategyManager.mqh` now resolves mixed-timeframe vote conflicts using `CTimeframeConsistency`.
+- **OnNewBar dispatch fix:** strategy `OnNewBar` calls now use each strategy's registered timeframe instead of the manager base timeframe.
+- **AI feedback wiring:** `MultiStrategyAutonomousEA.mq5` now records AI prediction/outcome pairs with request-to-position mapping for live trades.
+- **Indicator handle hygiene:** verified shared handle reuse via `IndicatorManager.mqh` parameter-based cache lookup.
 
 ### Batch 25: Threshold Decoupling + Regime-Aligned Signal Gating (2026-03-07)
 - **Pipeline/Validator Threshold Split:** `MultiStrategyAutonomousEA.mq5` now exposes dedicated non-AI confidence controls (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`) instead of reusing `InpAIConfidenceThreshold` for the non-AI signal path.

@@ -114,19 +114,19 @@ AI modules could increase signal confidence but have critical bugs:
    - Add calls to aiFeedback.RecordOutcome when trades close
    - Test: Verify aiFeedback logs show prediction-outcome pairs recorded
 
-### Phase 3: Fix Timeframe Coordination (Proper multi-TF decisions)
-1. **Fix OnNewBar timeframe dispatch**
+### Phase 3: Fix Timeframe Coordination (Proper multi-TF decisions) [Done]
+1. **Fix OnNewBar timeframe dispatch** [Done]
    - File: `Core/Management/EnterpriseStrategyManager.mqh`
    - Modify OnNewBar to call strategy.OnNewBar with strategy's registered timeframe, not manager timeframe
    - Test: Verify indicators initialize with correct timeframes, bar counts correct
 
-2. **Integrate TimeframeConsistency into manager consensus**
+2. **Integrate TimeframeConsistency into manager consensus** [Done]
    - File: `Core/Management/EnterpriseStrategyManager.mqh`
    - When aggregating strategy votes, use TimeframeConsistency to resolve TF conflicts
    - Test: Verify HTF-priority or majority-weighted consensus applied
 
-3. **Deduplicate indicator handles**
-   - File: `Core/Monitoring/IndicatorManager.mqh` (verify reuse logic)
+3. **Deduplicate indicator handles** [Done]
+   - File: `IndicatorManager.mqh` (verify reuse logic)
    - Confirm IndicatorManager deduplicates same TF+symbol combos
    - Test: Monitor handle count growth in heartbeat logs
 

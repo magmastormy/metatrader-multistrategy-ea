@@ -161,6 +161,13 @@ CNeuralNetworkStrategy* g_neuralNetStrategies[];
 string g_neuralNetStrategySymbols[];
 ulong g_predictionPositionIds[];
 string g_predictionIdsByPosition[];
+ulong g_aiPredictionPositionIds[];
+datetime g_aiPredictionTimesByPosition[];
+ENUM_TRADE_SIGNAL g_aiPredictionSignalsByPosition[];
+uint g_aiPendingRequestIds[];
+string g_aiPendingSymbols[];
+datetime g_aiPendingPredictionTimes[];
+ENUM_TRADE_SIGNAL g_aiPendingPredictionSignals[];
 ulong g_pendingClosePositionIds[];
 double g_pendingCloseNetProfit[];
 CPositionSizer positionSizer;
@@ -620,6 +627,20 @@ string BuildClusterTaggedTradeComment(const string clusterCode, const string pre
     return BuildTradeCommentWithPrediction(compactBase, predictionId);
 }
 
+bool ContributorsIncludeAI(const string &contributors[])
+{
+    for(int i = 0; i < ArraySize(contributors); i++)
+    {
+        if(contributors[i] == "Transformer AI" ||
+           contributors[i] == "Ensemble AI" ||
+           contributors[i] == "Neural Network AI")
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 int FindPredictionPositionIndex(const ulong positionId)
 {
     for(int i = 0; i < ArraySize(g_predictionPositionIds); i++)
@@ -675,6 +696,157 @@ void RemovePredictionPositionMap(const ulong positionId)
 
     ArrayResize(g_predictionPositionIds, last);
     ArrayResize(g_predictionIdsByPosition, last);
+}
+
+int FindAIPredictionPositionIndex(const ulong positionId)
+{
+    for(int i = 0; i < ArraySize(g_aiPredictionPositionIds); i++)
+    {
+        if(g_aiPredictionPositionIds[i] == positionId)
+            return i;
+    }
+    return -1;
+}
+
+void UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
+{
+    if(positionId == 0 || predictionTime <= 0 || predictionSignal == TRADE_SIGNAL_NONE)
+        return;
+
+    int idx = FindAIPredictionPositionIndex(positionId);
+    if(idx >= 0)
+    {
+        g_aiPredictionTimesByPosition[idx] = predictionTime;
+        g_aiPredictionSignalsByPosition[idx] = predictionSignal;
+        return;
+    }
+
+    int size = ArraySize(g_aiPredictionPositionIds);
+    ArrayResize(g_aiPredictionPositionIds, size + 1);
+    ArrayResize(g_aiPredictionTimesByPosition, size + 1);
+    ArrayResize(g_aiPredictionSignalsByPosition, size + 1);
+    g_aiPredictionPositionIds[size] = positionId;
+    g_aiPredictionTimesByPosition[size] = predictionTime;
+    g_aiPredictionSignalsByPosition[size] = predictionSignal;
+}
+
+datetime GetAIPredictionTimeForPosition(const ulong positionId)
+{
+    int idx = FindAIPredictionPositionIndex(positionId);
+    if(idx < 0 || idx >= ArraySize(g_aiPredictionTimesByPosition))
+        return 0;
+    return g_aiPredictionTimesByPosition[idx];
+}
+
+ENUM_TRADE_SIGNAL GetAIPredictionSignalForPosition(const ulong positionId)
+{
+    int idx = FindAIPredictionPositionIndex(positionId);
+    if(idx < 0 || idx >= ArraySize(g_aiPredictionSignalsByPosition))
+        return TRADE_SIGNAL_NONE;
+    return g_aiPredictionSignalsByPosition[idx];
+}
+
+void RemoveAIPredictionPositionMap(const ulong positionId)
+{
+    int idx = FindAIPredictionPositionIndex(positionId);
+    if(idx < 0)
+        return;
+
+    int last = ArraySize(g_aiPredictionPositionIds) - 1;
+    if(last < 0)
+        return;
+
+    if(idx != last)
+    {
+        g_aiPredictionPositionIds[idx] = g_aiPredictionPositionIds[last];
+        g_aiPredictionTimesByPosition[idx] = g_aiPredictionTimesByPosition[last];
+        g_aiPredictionSignalsByPosition[idx] = g_aiPredictionSignalsByPosition[last];
+    }
+
+    ArrayResize(g_aiPredictionPositionIds, last);
+    ArrayResize(g_aiPredictionTimesByPosition, last);
+    ArrayResize(g_aiPredictionSignalsByPosition, last);
+}
+
+int FindAIPendingRequestIndex(const uint requestId)
+{
+    for(int i = 0; i < ArraySize(g_aiPendingRequestIds); i++)
+    {
+        if(g_aiPendingRequestIds[i] == requestId)
+            return i;
+    }
+    return -1;
+}
+
+void UpsertAIPendingRequestMap(const uint requestId, const string symbol, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
+{
+    if(requestId == 0 || symbol == "" || predictionTime <= 0 || predictionSignal == TRADE_SIGNAL_NONE)
+        return;
+
+    int idx = FindAIPendingRequestIndex(requestId);
+    if(idx >= 0)
+    {
+        g_aiPendingSymbols[idx] = symbol;
+        g_aiPendingPredictionTimes[idx] = predictionTime;
+        g_aiPendingPredictionSignals[idx] = predictionSignal;
+        return;
+    }
+
+    int size = ArraySize(g_aiPendingRequestIds);
+    ArrayResize(g_aiPendingRequestIds, size + 1);
+    ArrayResize(g_aiPendingSymbols, size + 1);
+    ArrayResize(g_aiPendingPredictionTimes, size + 1);
+    ArrayResize(g_aiPendingPredictionSignals, size + 1);
+    g_aiPendingRequestIds[size] = requestId;
+    g_aiPendingSymbols[size] = symbol;
+    g_aiPendingPredictionTimes[size] = predictionTime;
+    g_aiPendingPredictionSignals[size] = predictionSignal;
+}
+
+bool ConsumeAIPendingRequestMap(const uint requestId, const string symbol, datetime &predictionTime, ENUM_TRADE_SIGNAL &predictionSignal)
+{
+    predictionTime = 0;
+    predictionSignal = TRADE_SIGNAL_NONE;
+
+    int idx = -1;
+    if(requestId > 0)
+        idx = FindAIPendingRequestIndex(requestId);
+
+    if(idx < 0 && symbol != "")
+    {
+        for(int i = ArraySize(g_aiPendingRequestIds) - 1; i >= 0; i--)
+        {
+            if(g_aiPendingSymbols[i] == symbol)
+            {
+                idx = i;
+                break;
+            }
+        }
+    }
+
+    if(idx < 0)
+        return false;
+
+    predictionTime = g_aiPendingPredictionTimes[idx];
+    predictionSignal = g_aiPendingPredictionSignals[idx];
+
+    int last = ArraySize(g_aiPendingRequestIds) - 1;
+    if(last >= 0)
+    {
+        if(idx != last)
+        {
+            g_aiPendingRequestIds[idx] = g_aiPendingRequestIds[last];
+            g_aiPendingSymbols[idx] = g_aiPendingSymbols[last];
+            g_aiPendingPredictionTimes[idx] = g_aiPendingPredictionTimes[last];
+            g_aiPendingPredictionSignals[idx] = g_aiPendingPredictionSignals[last];
+        }
+        ArrayResize(g_aiPendingRequestIds, last);
+        ArrayResize(g_aiPendingSymbols, last);
+        ArrayResize(g_aiPendingPredictionTimes, last);
+        ArrayResize(g_aiPendingPredictionSignals, last);
+    }
+
+    return true;
 }
 
 int FindPendingCloseProfitIndex(const ulong positionId)
@@ -1314,6 +1486,13 @@ void ReleaseNeuralNetStrategies()
     ArrayResize(g_neuralNetStrategySymbols, 0);
     ArrayResize(g_predictionPositionIds, 0);
     ArrayResize(g_predictionIdsByPosition, 0);
+    ArrayResize(g_aiPredictionPositionIds, 0);
+    ArrayResize(g_aiPredictionTimesByPosition, 0);
+    ArrayResize(g_aiPredictionSignalsByPosition, 0);
+    ArrayResize(g_aiPendingRequestIds, 0);
+    ArrayResize(g_aiPendingSymbols, 0);
+    ArrayResize(g_aiPendingPredictionTimes, 0);
+    ArrayResize(g_aiPendingPredictionSignals, 0);
     ArrayResize(g_pendingClosePositionIds, 0);
     ArrayResize(g_pendingCloseNetProfit, 0);
     neuralNetStrategy = NULL;
@@ -2494,17 +2673,19 @@ void ProcessTradingLogic(bool fromTimer)
                         strategyClusterCode = "N";
                     }
 
+                    string contributorsList[];
+                    symbolManager.GetLastSignalContributors(contributorsList);
+                    bool hasAIContributor = ContributorsIncludeAI(contributorsList);
+
                     if(contributorSummary == "")
                     {
-                        string contributorsFallback[];
-                        symbolManager.GetLastSignalContributors(contributorsFallback);
-                        for(int c = 0; c < ArraySize(contributorsFallback); c++)
+                        for(int c = 0; c < ArraySize(contributorsList); c++)
                         {
-                            if(contributorsFallback[c] == "")
+                            if(contributorsList[c] == "")
                                 continue;
                             if(StringLen(contributorSummary) > 0)
                                 contributorSummary += ",";
-                            contributorSummary += contributorsFallback[c];
+                            contributorSummary += contributorsList[c];
                         }
                     }
 
@@ -2555,6 +2736,20 @@ void ProcessTradingLogic(bool fromTimer)
                             {
                                 double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
                                 double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
+
+                                datetime aiPredictionTime = 0;
+                                bool aiPredictionRecorded = false;
+                                if(!InpShadowMode && InpEnableAIMode && hasAIContributor)
+                                {
+                                    aiPredictionTime = TimeCurrent();
+                                    aiFeedback.RecordPrediction(currentSymbol,
+                                                                enterpriseSignal,
+                                                                confidence,
+                                                                MathMax(0.0, 1.0 - confidence),
+                                                                g_currentRegime,
+                                                                aiPredictionTime);
+                                    aiPredictionRecorded = (aiPredictionTime > 0);
+                                }
 
                                 if(InpShadowMode)
                                 {
@@ -2632,6 +2827,9 @@ void ProcessTradingLogic(bool fromTimer)
                                           " | Role: ", strategyRoleTag,
                                           " | Cluster: ", strategyClusterTag,
                                           " | Contributors: ", contributorSummary);
+
+                                    if(aiPredictionRecorded && requestId > 0)
+                                        UpsertAIPendingRequestMap(requestId, currentSymbol, aiPredictionTime, enterpriseSignal);
 
                                     // Stop after first successful trade to enforce cooldown while still
                                     // allowing the rest of runtime management below in this cycle.
@@ -2962,6 +3160,15 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                                                trans.symbol, positionId, dealComment));
                     }
 
+                    datetime aiPredictionTime = 0;
+                    ENUM_TRADE_SIGNAL aiPredictionSignal = TRADE_SIGNAL_NONE;
+                    uint aiRequestId = result.request_id;
+                    if(InpEnableAIMode &&
+                       ConsumeAIPendingRequestMap(aiRequestId, trans.symbol, aiPredictionTime, aiPredictionSignal))
+                    {
+                        UpsertAIPredictionPositionMap(positionId, aiPredictionTime, aiPredictionSignal);
+                    }
+
                     PrintFormat("[TRADE-CONFIRMED] %s | entry=%s | deal=%I64u | position_id=%I64u | price=%.5f | volume=%.2f | request_id=%u",
                                 trans.symbol,
                                 EnumToString(dealEntry),
@@ -3006,6 +3213,24 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                                     trans.volume,
                                     totalNetProfit,
                                     result.request_id);
+                    }
+
+                    if(!positionStillOpen && InpEnableAIMode)
+                    {
+                        datetime aiPredictionTime = (positionId > 0) ? GetAIPredictionTimeForPosition(positionId) : 0;
+                        ENUM_TRADE_SIGNAL aiPredictionSignal = (positionId > 0) ? GetAIPredictionSignalForPosition(positionId) : TRADE_SIGNAL_NONE;
+                        if(aiPredictionTime > 0 && aiPredictionSignal != TRADE_SIGNAL_NONE)
+                        {
+                            ENUM_TRADE_SIGNAL actualOutcome = aiPredictionSignal;
+                            if(totalNetProfit < 0.0)
+                                actualOutcome = (aiPredictionSignal == TRADE_SIGNAL_BUY) ? TRADE_SIGNAL_SELL : TRADE_SIGNAL_BUY;
+                            else if(MathAbs(totalNetProfit) < 1e-8)
+                                actualOutcome = TRADE_SIGNAL_NONE;
+
+                            double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+                            double actualReturn = (equity > 0.0) ? (totalNetProfit / equity) : totalNetProfit;
+                            aiFeedback.RecordOutcome(trans.symbol, aiPredictionTime, actualOutcome, actualReturn);
+                        }
                     }
 
                     if(InpEnableAIMode &&
@@ -3075,6 +3300,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                     if(positionId > 0 && !IsPositionIdStillOpen(positionId))
                     {
                         RemovePredictionPositionMap(positionId);
+                        RemoveAIPredictionPositionMap(positionId);
                         ClearPendingCloseProfit(positionId);
                         if(finalCloseRecorded)
                         {

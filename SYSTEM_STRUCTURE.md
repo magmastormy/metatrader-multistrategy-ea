@@ -1,7 +1,7 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-03-07
+- Last Updated: 2026-03-16
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
 
@@ -32,6 +32,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Responsibilities:
   - hold registered strategies (core + AI adapters)
   - execute strategy voting and confidence aggregation
+  - resolve cross-timeframe vote conflicts via `CTimeframeConsistency`
+  - dispatch `OnNewBar` to each strategy using its registered timeframe
   - apply quorum rules by evaluation mode (strict new-bar, contributor-aware dynamic intrabar when enabled)
   - enforce single-voter intrabar confidence floor
   - expose per-cycle funnel snapshots and interval consensus diagnostics snapshots
@@ -137,6 +139,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 
 ### 4.2 Consensus
 - Manager computes strategy votes and confidence.
+- Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final consensus acceptance.
 - Intrabar effective quorum is contributor-aware:
   - actual live contributors this cycle `<=1`: effective quorum `1`
   - otherwise: `min(intrabar_min_quorum, actual_live_contributors_this_cycle)`
@@ -169,6 +172,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - Successful trades register executed risk usage.
 - Close transactions feed manager/orchestrator adaptation and `PerformanceAnalytics`.
 - NN attribution maps prediction IDs through close labeling.
+- AI performance feedback records prediction/outcome pairs using position-mapped prediction times.
 
 ### 4.7 Deterministic event separation
 - Tick and timer handlers share a second-level signal-evaluation gate.
