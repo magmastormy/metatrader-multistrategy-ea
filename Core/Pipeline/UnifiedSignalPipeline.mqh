@@ -338,6 +338,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         passed = passed && ApplyTimeFilter(signal);
     
     // Dynamic confidence threshold with bounded intrabar uplift in weak regimes.
+    // FIX: Significantly relaxed thresholds to allow marginal signals (0.37-0.54) to pass
     double baseMinConfidence = m_filters.minConfidence;
     double effectiveMinConfidence = baseMinConfidence;
     double appliedCap = 0.0;
@@ -348,7 +349,8 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         if(m_lastRegimeState == REGIME_RANGE)
         {
             thresholdReasonTag = "REGIME_RANGE";
-            double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.10);
+            // FIX: Much lighter adjustment for ranging markets - only 3% increase vs 10% before
+            double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.03);
             if(m_intrabarContext)
             {
                 appliedCap = MathMax(0.0, m_filters.intrabarConfidenceCap);
@@ -363,17 +365,20 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         else if(m_lastRegimeState == REGIME_TREND)
         {
             thresholdReasonTag = "REGIME_TREND_RELAX";
-            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.96);
+            // FIX: Even more relaxed for trends
+            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.92);
         }
         else if(m_lastRegimeState == REGIME_BREAKOUT)
         {
             thresholdReasonTag = "REGIME_BREAKOUT_RELAX";
-            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.94);
+            // FIX: Most relaxed for breakouts
+            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.90);
         }
         else if(m_lastRegimeState == REGIME_CHAOS)
         {
             thresholdReasonTag = "REGIME_CHAOS";
-            double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.10);
+            // FIX: Only 5% increase for chaos vs 10% before
+            double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.05);
             if(m_intrabarContext)
             {
                 appliedCap = MathMax(0.0, m_filters.intrabarConfidenceCap);
@@ -391,11 +396,12 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         if(m_trendEngine.IsStrongTrend())
         {
             thresholdReasonTag = "TREND_ENGINE_STRONG_RELAX";
-            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.98);
+            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.95);  // FIX: 5% relaxation for strong trends
         }
         else
         {
             thresholdReasonTag = "REGIME_ENGINE_WARMUP";
+            // FIX: During warmup, use base threshold as-is, don't penalize
         }
     }
 
@@ -587,10 +593,11 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
                 m_filters.maxEntryRangeZScore);
 
     // Regime-aware confidence attenuation while preserving deterministic output.
+    // REDUCED PENALTIES: was 0.97 RANGE, 0.92 CHAOS - now much lighter to avoid blocking marginal signals
     if(snapshot.state == REGIME_RANGE)
-        confidence = MathMax(0.0, confidence * 0.97);
+        confidence = MathMax(0.0, confidence * 0.99);  // Minimal penalty for ranging
     else if(snapshot.state == REGIME_CHAOS)
-        confidence = MathMax(0.0, confidence * 0.92);
+        confidence = MathMax(0.0, confidence * 0.97);  // Reduced from 0.92 for chaos
 
     if(snapshot.spreadShockCooldownActive)
     {

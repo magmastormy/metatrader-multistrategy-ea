@@ -119,20 +119,20 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        double output[];
-        if(!m_transformer.Forward(inputSequence, output) || ArraySize(output) < 3)
+        // FIX: Use GetPredictions instead of Forward to properly get 3-class probabilities
+        double predictions[];
+        if(!m_transformer.GetPredictions(inputSequence, predictions) || ArraySize(predictions) != 3)
         {
             m_noneVotes++;
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
 
-        // Map logits to class probabilities using NN-compatible labels:
-        // class 0 = NONE, class 1 = BUY, class 2 = SELL.
-        double pNone = 0.0;
-        double pBuy = 0.0;
-        double pSell = 0.0;
-        Softmax3(output[0], output[1], output[2], pNone, pBuy, pSell);
+        // predictions[0] = NONE, predictions[1] = BUY, predictions[2] = SELL
+        // Already normalized by classification head, no need for extra softmax
+        double pNone = predictions[0];
+        double pBuy = predictions[1];
+        double pSell = predictions[2];
 
         double directionalConfidence = MathMax(pBuy, pSell);
         confidence = MathMax(0.0, MathMin(1.0, directionalConfidence));
