@@ -1589,6 +1589,16 @@ int OnInit()
     }
     Print("[INIT] PerformanceAnalytics initialized");
 
+    // FIX: Initialize AI Performance Feedback for prediction tracking (Phase 2, Task 3)
+    if(!aiFeedback.Initialize(1000))
+    {
+        Print("[WARNING] AIPerformanceFeedback failed to initialize, continuing without AI learning tracking");
+    }
+    else
+    {
+        Print("[INIT] AIPerformanceFeedback initialized for AI model adaptation");
+    }
+
     if(!unifiedRiskManager.Initialize(unifiedRiskConfig, &performanceAnalytics))
     {
         Print("[CRITICAL] UnifiedRiskManager failed to initialize!");
