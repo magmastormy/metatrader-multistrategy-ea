@@ -1,7 +1,7 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-03-07
+- Last Updated: 2026-03-16
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
 
@@ -39,7 +39,7 @@ flowchart TD
   G -->|Yes| H[Evaluate INTRABAR mode]
   G -->|No| I[Skip symbol]
 
-  F --> J[Manager consensus + confluence]
+  F --> J[Manager consensus + confluence + timeframe consistency]
   H --> J
   J --> J0[Strategy role/cluster governance applied]
   J0 --> J1[Pipeline regime + cost viability gate]
@@ -75,6 +75,8 @@ flowchart TD
   D --> AF[Position manager lifecycle actions]
   D --> AG[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG]
 ```
+
+- Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
 
 ## Intrabar Policy
 - New-bar and intrabar paths are explicit evaluation modes.

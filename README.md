@@ -1,7 +1,7 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-03-07
+- Last Updated: 2026-03-16
 - Status: Active baseline
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
@@ -132,6 +132,11 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Sizing consistency**: `PositionSizer` now uses tick-size/tick-value risk math and `min(balance,equity)` denominator alignment with the risk gate.
 - **Restart-safe lifecycle reconstruction**: `AdvancedPositionManager` now reconstructs partial-close and breakeven state for already-open positions from position identifiers and history-derived entry volume.
 - **Close-driven analytics**: confirmed close deals now update `PerformanceAnalytics` from `OnTradeTransaction`, and startup rejects unsupported non-hedging account models.
+
+## Timeframe + AI Feedback Update (2026-03-16)
+- **Timeframe-consistent consensus**: manager consensus now applies `TimeframeConsistency` to resolve conflicts across mixed strategy timeframes.
+- **Correct OnNewBar dispatch**: strategy `OnNewBar` now receives its registered timeframe instead of the manager base timeframe.
+- **AI feedback wiring**: AI prediction/outcome tracking now records live-trade predictions and closes with position-mapped outcomes.
 
 ## Institutional Strategy Betterment Update (2026-02-24)
 - **Soft quarantine strategy governance**: all retained strategy modules stay loaded for diagnostics, but default live-voting authority is constrained to `Momentum`, `Trend`, and `Unified ICT`; weaker legacy modules are feature/shadow by default.

@@ -7,6 +7,7 @@
 
 #include "../Pipeline/UnifiedSignalPipeline.mqh"
 #include "../Visualization/DrawingCoordinator.mqh"
+#include "../Signals/TimeframeConsistency.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 
 // Retained production strategy inventory (7 kept in codebase)
@@ -120,6 +121,7 @@ class CEnterpriseStrategyManager
 {
 private:
     CUnifiedSignalPipeline* m_pipeline;
+    CTimeframeConsistency* m_tfConsistency;
     CTradeManager* m_tradeManager;  // CRITICAL FIX: Store for strategy initialization
     CPositionSizer* m_positionSizer; // CRITICAL FIX: Store for strategy initialization
     
@@ -370,6 +372,7 @@ public:
 //+------------------------------------------------------------------+
 CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_pipeline(NULL),
+    m_tfConsistency(NULL),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_strategyCount(0),
@@ -496,6 +499,12 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
         delete m_pipeline;
         m_pipeline = NULL;
     }
+
+    if(m_tfConsistency != NULL)
+    {
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -523,6 +532,16 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
             m_pipeline.Initialize(filters);
         }
     }
+
+    if(m_tfConsistency != NULL)
+    {
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
+    }
+
+    m_tfConsistency = new CTimeframeConsistency();
+    if(m_tfConsistency != NULL)
+        m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
     
     m_initialized = true;
     
@@ -678,6 +697,9 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     if(m_usePipeline && m_pipeline != NULL)
         m_pipeline.SetIntrabarContext(evalMode == EVAL_MODE_INTRABAR);
 
+    if(m_tfConsistency != NULL)
+        m_tfConsistency.Reset();
+
     for(int i = 0; i < m_strategyCount; i++)
     {
         if(!m_strategies[i].enabled)
@@ -776,6 +798,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         {
             activeStrategies++;
             continue;
+        }
+
+        if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE)
+        {
+            m_tfConsistency.AddTimeframeSignal(m_strategies[i].timeframe,
+                                               signal,
+                                               stratConf,
+                                               m_strategies[i].name);
         }
 
         double strategyWeight = MathMax(0.0, m_strategies[i].weight);
@@ -887,6 +917,70 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     {
         if((buyVotes + sellVotes) > 0)
             cycleQuorumFailed++;
+    }
+
+    if(m_tfConsistency != NULL && m_tfConsistency.HasConflicts())
+    {
+        double resolvedConfidence = 0.0;
+        string reasoning = "";
+        ENUM_TRADE_SIGNAL resolvedSignal = m_tfConsistency.ResolveSignals(resolvedConfidence, reasoning);
+        double cappedResolvedConfidence = MathMax(0.0, MathMin(1.0, resolvedConfidence));
+
+        if(resolvedSignal == TRADE_SIGNAL_NONE)
+        {
+            if(finalSignal != TRADE_SIGNAL_NONE)
+                cycleQuorumFailed++;
+            finalSignal = TRADE_SIGNAL_NONE;
+            finalConfidence = 0.0;
+            finalConfluence = 0;
+            ArrayResize(selectedContributors, 0);
+            ArrayResize(selectedContributorIndices, 0);
+        }
+        else
+        {
+            bool resolvedQuorumMet = (resolvedSignal == TRADE_SIGNAL_BUY) ? buyQuorumMet : sellQuorumMet;
+            if(resolvedQuorumMet)
+            {
+                if(resolvedSignal == TRADE_SIGNAL_BUY)
+                {
+                    if(finalSignal != TRADE_SIGNAL_BUY)
+                    {
+                        ArrayCopy(selectedContributors, buyContributors);
+                        ArrayCopy(selectedContributorIndices, buyContributorIndices);
+                        finalConfluence = buyVotes;
+                    }
+                    finalSignal = TRADE_SIGNAL_BUY;
+                }
+                else
+                {
+                    if(finalSignal != TRADE_SIGNAL_SELL)
+                    {
+                        ArrayCopy(selectedContributors, sellContributors);
+                        ArrayCopy(selectedContributorIndices, sellContributorIndices);
+                        finalConfluence = sellVotes;
+                    }
+                    finalSignal = TRADE_SIGNAL_SELL;
+                }
+
+                if(finalSignal != TRADE_SIGNAL_NONE)
+                {
+                    if(finalConfidence <= 0.0)
+                        finalConfidence = cappedResolvedConfidence;
+                    else
+                        finalConfidence = MathMin(finalConfidence, cappedResolvedConfidence);
+                }
+            }
+            else
+            {
+                if(finalSignal != TRADE_SIGNAL_NONE)
+                    cycleQuorumFailed++;
+                finalSignal = TRADE_SIGNAL_NONE;
+                finalConfidence = 0.0;
+                finalConfluence = 0;
+                ArrayResize(selectedContributors, 0);
+                ArrayResize(selectedContributorIndices, 0);
+            }
+        }
     }
 
     // Intrabar safety gate: single-voter signal requires stronger confidence.
@@ -1771,7 +1865,7 @@ void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES t
 
         if(m_strategies[i].enabled)
         {
-            m_strategies[i].strategy.OnNewBar(symbol, timeframe);
+            m_strategies[i].strategy.OnNewBar(symbol, m_strategies[i].timeframe);
         }
         else
         {

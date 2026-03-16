@@ -156,8 +156,8 @@ public:
     
     // Record AI prediction
     void RecordPrediction(const string &predictionSymbol, const ENUM_TRADE_SIGNAL prediction,
-                         const double confidence, const double uncertainty, 
-                         const ENUM_MARKET_REGIME regime);
+                         const double confidence, const double uncertainty,
+                         const ENUM_MARKET_REGIME regime, const datetime predictionTimeOverride = 0);
     
     // Record actual outcome
     void RecordOutcome(const string &outcomeSymbol, const datetime predictionTime,
@@ -291,14 +291,15 @@ bool CAIPerformanceFeedback::Initialize(int maxRecords = 1000)
 //| Record AI Prediction                                          |
 //+------------------------------------------------------------------+
 void CAIPerformanceFeedback::RecordPrediction(const string &predictionSymbol, const ENUM_TRADE_SIGNAL prediction,
-                                             const double confidence, const double uncertainty, 
-                                             const ENUM_MARKET_REGIME regime)
+                                             const double confidence, const double uncertainty,
+                                             const ENUM_MARKET_REGIME regime, const datetime predictionTimeOverride)
 {
     if(!m_initialized) return;
     
     // Create prediction record
     SAIPredictionRecord record;
-    record.predictionTime = TimeCurrent();
+    datetime predictionTime = (predictionTimeOverride > 0) ? predictionTimeOverride : TimeCurrent();
+    record.predictionTime = predictionTime;
     record.symbol = predictionSymbol;
     record.prediction = prediction;
     record.confidence = confidence;

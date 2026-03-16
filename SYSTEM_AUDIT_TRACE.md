@@ -1,7 +1,7 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-03-07
+- Last Updated: 2026-03-16
 - Scope: Runtime lifecycle and ownership trace
 
 ## Scope
@@ -129,6 +129,11 @@
 - Moved confirmed close analytics updates into `OnTradeTransaction` and strengthened `PerformanceAnalytics::RecordClosedTrade(...)`.
 - Reconstructed `AdvancedPositionManager` partial-close and breakeven state for already-open positions using `POSITION_IDENTIFIER` plus history-derived entry volume.
 - Rejected unsupported non-hedging account modes at startup and tightened symbol validation for close-only symbols and invalid volume-step specs.
+
+## 2026-03-16 Timeframe + AI Feedback Trace
+- Manager consensus now resolves mixed-timeframe conflicts using `CTimeframeConsistency`.
+- Strategy `OnNewBar` dispatch uses each strategy's registered timeframe to prevent cross-timeframe misalignment.
+- AI performance feedback now records prediction/outcome pairs using request-to-position mapping on live trades.
 
 ## 2026-02-24 Strategy Betterment Trace
 - Added institutional strategy governance metadata (role, cluster, live-vote eligibility, shadow mode) to `EnterpriseStrategyManager` and exposed setter APIs by strategy name.
