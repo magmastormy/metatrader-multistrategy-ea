@@ -640,32 +640,33 @@ public:
     }
     
     // Forward pass through the entire transformer
+    // Returns encoded features (size m_dModel, not 3-class predictions)
     bool Forward(const double &inputFeatures[], double &output[]) {
         if(ArraySize(inputFeatures) > m_maxSeqLen * m_dModel) return false;
-        
+
         // Prepare input sequence
         ArrayCopy(m_inputSequence, inputFeatures);
-        
+
         // Add positional encoding
         int seqLen = ArraySize(inputFeatures) / m_dModel;
         if(!m_positionalEncoding) return false;
         if(!m_positionalEncoding.AddPositionalEncoding(m_inputSequence, seqLen)) return false;
-        
+
         // Pass through transformer blocks
         double currentInput[];
         ArrayCopy(currentInput, m_inputSequence);
         double currentOutput[];
-        
+
         for(int i = 0; i < m_transformerBlocks.Total(); i++) {
             CTransformerBlock *block = dynamic_cast<CTransformerBlock*>(m_transformerBlocks.At(i));
             if(!block) return false;
-            
+
             // Forward pass through transformer block
             if(!block.Forward(currentInput, currentOutput)) return false;
-            
+
             ArrayCopy(currentInput, currentOutput);
         }
-        
+
         // Global average pooling
         ArrayResize(output, m_dModel);
         for(int i = 0; i < m_dModel; i++) {
@@ -675,8 +676,23 @@ public:
             }
             output[i] = sum / seqLen;
         }
-        
+
         ArrayCopy(m_output, output);
+        return true;
+    }
+
+    // FIX: New method to get 3-class predictions (NONE, BUY, SELL)
+    // This applies the classification head to encoded features
+    bool GetPredictions(const double &inputFeatures[], double &predictions[]) {
+        if(ArraySize(inputFeatures) > m_maxSeqLen * m_dModel) return false;
+
+        // Get encoded features from transformer
+        double encodedFeatures[];
+        if(!Forward(inputFeatures, encodedFeatures)) return false;
+
+        // Apply classification head to get 3-class probabilities
+        if(!ComputeClassProbabilities(encodedFeatures, predictions)) return false;
+
         return true;
     }
     

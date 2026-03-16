@@ -52,7 +52,7 @@ input bool InpEnableHybridCadence = true;             // Enable hybrid cadence (
 input int  InpIntrabarScanSeconds = 10;               // Intrabar scan interval in seconds
 input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans to chart symbol
 input bool InpIntrabarDynamicQuorumEnabled = true;    // Intrabar quorum adapts to eligible contributors
-input double InpPipelineMinConfidence = 0.50;         // Base confidence floor for non-AI pipeline signals
+input double InpPipelineMinConfidence = 0.40;         // Base confidence floor for non-AI pipeline signals (lowered from 0.50 to fix pipeline blocking)
 input double InpValidatorNewBarMinConfidence = 0.50;  // Post-consensus confidence floor on new-bar scans
 input double InpValidatorIntrabarMinConfidence = 0.55; // Post-consensus confidence floor on intrabar scans
 input double InpIntrabarSingleVoterMinConfidence = 0.55; // Min confidence for single-voter intrabar consensus
@@ -1588,6 +1588,16 @@ int OnInit()
         return INIT_FAILED;
     }
     Print("[INIT] PerformanceAnalytics initialized");
+
+    // FIX: Initialize AI Performance Feedback for prediction tracking (Phase 2, Task 3)
+    if(!aiFeedback.Initialize(1000))
+    {
+        Print("[WARNING] AIPerformanceFeedback failed to initialize, continuing without AI learning tracking");
+    }
+    else
+    {
+        Print("[INIT] AIPerformanceFeedback initialized for AI model adaptation");
+    }
 
     if(!unifiedRiskManager.Initialize(unifiedRiskConfig, &performanceAnalytics))
     {

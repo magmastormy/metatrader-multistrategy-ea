@@ -124,19 +124,12 @@ public:
 
     virtual ~CEnsembleAIStrategyAdapter()
     {
+        // FIX: Ensemble owns the models (m_modelA, m_modelB), so we don't delete them here
+        // The ensemble destructor will handle cleanup to prevent double-delete
+        // Just clear the references
         m_ensemble.Shutdown();
-        
-        // Clean up transformer models
-        if(m_modelA != NULL)
-        {
-            delete m_modelA;
-            m_modelA = NULL;
-        }
-        if(m_modelB != NULL)
-        {
-            delete m_modelB;
-            m_modelB = NULL;
-        }
+        m_modelA = NULL;
+        m_modelB = NULL;
     }
 
     virtual bool Init(const string symbol,
