@@ -33,10 +33,16 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - New-bar scans use conservative consensus behavior.
 - Intrabar scans run on timer intervals when enabled.
 - Intrabar scope can be chart-only or all managed symbols.
+- Startup now reconstructs the last EA trade timestamp from EA-owned history and open positions so cooldown state survives restart/re-attach scenarios.
+- Startup emits `[ACCOUNT-CAPACITY]` min-lot affordability diagnostics for each configured symbol before live execution begins.
+- Post-trade cooldown, total-position caps, unprotected-position vetoes, and per-symbol capacity now pause entry only; signal generation and validator telemetry continue running while the EA is blocked from sending.
+- Validator spread-shock state is symbol-scoped, so one symbol's transient spread event no longer poisons validator spread decisions on the rest of the portfolio.
 - Quorum uses normalized weighted confidence pooling (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy weights) instead of binary voter counts.
 - Curated core strategies now have explicit intrabar eligibility controls (`InpIntrabarEligibilityMomentum`, `InpIntrabarEligibilityUnifiedICT`) plus opt-in smoke-test toggles for Fibonacci and Support/Resistance (`InpIntrabarEligibilityFibonacci`, `InpIntrabarEligibilitySupportResistance`).
 - Non-AI strategy throughput is controlled by dedicated pipeline confidence and validator profile inputs (confidence + confluence + quality) instead of the AI threshold (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`, `InpValidator*MinConfluence`, `InpValidator*MinQuality`).
 - Consensus vote admission now reuses the pipeline's effective confidence floor for the current evaluation, so regime-relaxed pipeline passes are not discarded before quorum.
+- Post-quorum nullification now emits `[CONSENSUS-VETO]` so timeframe-resolution and single-voter safety drops are visible without inferring them from a `signal=NONE` quorum line.
+- `CRegimeEngine` can temporarily reuse its most recent valid same-context snapshot on transient warmup / `CopyBuffer` / handle-init faults, and self-resets handles after repeated data faults.
 
 ### AI participation
 - Runtime AI adapters can vote as strategies when enabled:
@@ -49,17 +55,24 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 ### Telemetry
 - `[HEARTBEAT]`: global runtime counters.
 - `[EXECUTION-MODE]`: startup execution mode (`SHADOW_ONLY` vs `LIVE_SEND`).
+- `[ACCOUNT-CAPACITY]`: startup free-margin vs minimum-lot affordability per active symbol.
+- `[TRADE-STATE]`: startup recovery of last EA trade/cooldown timing from history and open positions.
 - `[CONSENSUS-QUORUM]`: per-evaluation weighted quorum scores and direction result.
+- `[CONSENSUS-VETO]`: explicit post-quorum veto reason when timeframe resolution or single-voter safety nulls a candidate.
 - `[CONSENSUS-SNAPSHOT]`: EA-interval aggregate consensus counters.
 - `[CONSENSUS-DIAG]`: per-symbol consensus failure reasons.
 - `[CONSENSUS-ROOT]`: dominant deadlock/rejection cause with interval percentages.
 - `[CONSENSUS-STRATEGY]`: per-symbol strategy-level none-reason counters (Momentum/Unified ICT buckets).
 - `[STRATEGY-REJECTS]`: heartbeat aggregate strategy-level reject counters.
 - `[SIGNAL-REJECTED]`: validator rejection reason.
+- `[ENTERPRISE-BLOCKED]`: approved signal suppressed by cooldown, capacity, or protection gates before risk/execution.
+- `[RISK-CONTRACT]`: authoritative pre-trade risk rejection reason with preserved portfolio veto detail.
 - `[AI-VOTE]`: adapter liveness and vote counts.
 - `[SHADOW-TRADE]`: shadow execution events.
 - `[TRADE-CONFIRMED]`: confirmed deal lifecycle events from `OnTradeTransaction`.
 - `[PIPELINE-THRESHOLD]`: confidence-threshold source (`REGIME_RANGE`, `REGIME_TREND_RELAX`, `REGIME_BREAKOUT_RELAX`, `REGIME_CHAOS`, `REGIME_ENGINE_WARMUP`) with effective values.
+- `[REGIME-STATE]`: regime state, transient-fault reuse (`REUSE_LAST_VALID`), and repeated-fault handle self-heal (`HANDLE_RESET`).
+- `[TrendEngine][READINESS-FAULT]`: mature-series indicator readiness fault with bounded indicator-set reinitialization.
 - `[HEARTBEAT-FUNNEL]`: conversion funnel counters (`signals_generated` -> `shadow_or_live_sent`).
 - `[CONVERSION-RATES]`: window-normalized conversion rates for throughput tracking.
 - `[NO-SIGNAL-ALERT]`: dominant no-signal cause when no-signal ratio is elevated.
@@ -143,6 +156,15 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 ## Quorum Admission Alignment + Smoke Controls Update (2026-03-24)
 - **Consensus admission alignment**: `EnterpriseStrategyManager` now admits votes using the pipeline's last effective confidence floor, eliminating the mismatch where a signal could pass `[PIPELINE-THRESHOLD]` and still be excluded from quorum.
 - **Smoke-test intrabar controls**: added opt-in intrabar eligibility inputs for `Fibonacci` and `Support/Resistance` so productive mean-reversion contributors can be widened for smoke tests without changing production defaults.
+
+## Startup State Recovery + Capacity Diagnostics + Regime Fault Resilience Update (2026-03-24)
+- **Restart-safe cooldown state**: startup now reconstructs `g_lastTradeTime` from EA-owned deal history and currently open EA positions, so inherited positions no longer leave the runtime in a false `Last trade: Never` posture.
+- **Low-balance visibility**: startup now emits `[ACCOUNT-CAPACITY]` diagnostics showing whether free margin can support the symbol minimum lot, making underfunded smoke environments obvious before forced execution debugging.
+- **Transient regime fault resilience**: `CRegimeEngine` can reuse a recent valid snapshot on warmup / buffer-copy / handle-init faults and performs bounded handle reset after repeated data faults, reducing avoidable throughput collapse without bypassing the pipeline.
+
+## Entry Gate Decoupling Update (2026-03-24)
+- **Scan-through-cooldown behavior**: cooldown and other entry blocks no longer short-circuit the symbol evaluation loop, so `[CONSENSUS-QUORUM]`, `[SIGNAL-VALIDATED]`, and heartbeat funnel telemetry continue after a live fill.
+- **Entry-only suppression**: approved signals that cannot proceed because of cooldown, portfolio caps, unprotected positions, or per-symbol capacity now emit explicit `[ENTERPRISE-BLOCKED]` diagnostics instead of disappearing from the runtime path.
 
 ## Weighted Quorum + Live Strategy Promotion Update (2026-03-16)
 - **All retained strategies vote live**: every enabled retained strategy is registered as a live primary voter (no feature/shadow suppression).

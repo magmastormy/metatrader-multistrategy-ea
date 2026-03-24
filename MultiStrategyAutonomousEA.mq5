@@ -430,6 +430,164 @@ int GetOpenPositionCountForSymbol(const string symbol, const bool onlyThisEAMagi
     return count;
 }
 
+datetime GetLatestEAOpenPositionTime()
+{
+    datetime latestOpenTime = 0;
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+
+        if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+            continue;
+
+        datetime positionTime = (datetime)PositionGetInteger(POSITION_TIME);
+        if(positionTime > latestOpenTime)
+            latestOpenTime = positionTime;
+    }
+
+    return latestOpenTime;
+}
+
+datetime GetLatestEAHistoryDealTime()
+{
+    datetime nowTime = TimeCurrent();
+    if(!HistorySelect(0, nowTime))
+    {
+        PrintFormat("[TRADE-STATE] WARNING | history select failed during cooldown reconstruction | err=%d",
+                    GetLastError());
+        return 0;
+    }
+
+    datetime latestDealTime = 0;
+    int totalDeals = HistoryDealsTotal();
+    for(int i = 0; i < totalDeals; i++)
+    {
+        ulong dealTicket = HistoryDealGetTicket(i);
+        if(dealTicket == 0)
+            continue;
+
+        if((long)HistoryDealGetInteger(dealTicket, DEAL_MAGIC) != (long)InpMagicNumber)
+            continue;
+
+        datetime dealTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+        if(dealTime > latestDealTime)
+            latestDealTime = dealTime;
+    }
+
+    return latestDealTime;
+}
+
+void RecoverTradeTimingStateOnInit()
+{
+    datetime latestDealTime = GetLatestEAHistoryDealTime();
+    datetime latestOpenTime = GetLatestEAOpenPositionTime();
+    int eaPositions = GetEAPositionCount();
+
+    g_lastTradeTime = latestDealTime;
+    if(latestOpenTime > g_lastTradeTime)
+        g_lastTradeTime = latestOpenTime;
+
+    if(g_lastTradeTime > 0)
+    {
+        PrintFormat("[TRADE-STATE] Recovered last EA trade time=%s | history=%s | open_position=%s | ea_positions=%d",
+                    TimeToString(g_lastTradeTime, TIME_DATE | TIME_SECONDS),
+                    latestDealTime > 0 ? TimeToString(latestDealTime, TIME_DATE | TIME_SECONDS) : "none",
+                    latestOpenTime > 0 ? TimeToString(latestOpenTime, TIME_DATE | TIME_SECONDS) : "none",
+                    eaPositions);
+    }
+    else
+    {
+        PrintFormat("[TRADE-STATE] No prior EA trade activity recovered | ea_positions=%d",
+                    eaPositions);
+    }
+}
+
+double EstimateMinimumLotMarginRequirement(const string symbol)
+{
+    if(symbol == "")
+        return -1.0;
+
+    double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    if(minLot <= 0.0)
+        return -1.0;
+
+    double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+    double last = SymbolInfoDouble(symbol, SYMBOL_LAST);
+    if(ask <= 0.0)
+        ask = last;
+    if(bid <= 0.0)
+        bid = last;
+
+    double buyMargin = -1.0;
+    if(ask > 0.0)
+    {
+        double tmp = 0.0;
+        ResetLastError();
+        if(OrderCalcMargin(ORDER_TYPE_BUY, symbol, minLot, ask, tmp) && MathIsValidNumber(tmp) && tmp >= 0.0)
+            buyMargin = tmp;
+    }
+
+    double sellMargin = -1.0;
+    if(bid > 0.0)
+    {
+        double tmp = 0.0;
+        ResetLastError();
+        if(OrderCalcMargin(ORDER_TYPE_SELL, symbol, minLot, bid, tmp) && MathIsValidNumber(tmp) && tmp >= 0.0)
+            sellMargin = tmp;
+    }
+
+    if(buyMargin >= 0.0 && sellMargin >= 0.0)
+        return MathMin(buyMargin, sellMargin);
+    if(buyMargin >= 0.0)
+        return buyMargin;
+    if(sellMargin >= 0.0)
+        return sellMargin;
+
+    return -1.0;
+}
+
+void LogAccountCapacityDiagnostics()
+{
+    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+    int affordableSymbolCount = 0;
+
+    for(int i = 0; i < ArraySize(g_activePairs); i++)
+    {
+        string symbol = g_activePairs[i];
+        double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        double minMargin = EstimateMinimumLotMarginRequirement(symbol);
+
+        if(minMargin < 0.0)
+        {
+            PrintFormat("[ACCOUNT-CAPACITY] %s | min_lot=%.2f | free_margin=%.2f | est_margin=unavailable | affordable=unknown",
+                        symbol,
+                        minLot,
+                        freeMargin);
+            continue;
+        }
+
+        bool affordable = (freeMargin >= minMargin);
+        if(affordable)
+            affordableSymbolCount++;
+
+        PrintFormat("[ACCOUNT-CAPACITY] %s | min_lot=%.2f | free_margin=%.2f | est_margin=%.2f | affordable=%s",
+                    symbol,
+                    minLot,
+                    freeMargin,
+                    minMargin,
+                    affordable ? "true" : "false");
+    }
+
+    if(!InpShadowMode && ArraySize(g_activePairs) > 0 && affordableSymbolCount <= 0)
+    {
+        PrintFormat("[ACCOUNT-CAPACITY] WARNING | free_margin=%.2f cannot support the minimum lot on any configured symbol",
+                    freeMargin);
+    }
+}
+
 int FindUnprotectedTrackerIndex(const ulong ticket)
 {
     for(int i = 0; i < ArraySize(g_unprotectedPositionTickets); i++)
@@ -1032,8 +1190,19 @@ bool ApproveTradeByUnifiedRisk(const STradeValidationRequest &request,
     if(!result.approved)
     {
         g_hbRiskRejects++;
-        Print("[RISK-CONTRACT] REJECTED (", phaseTag, ") ",
-              request.symbol, " | ", result.message);
+        static string s_lastRejectKey = "";
+        static datetime s_lastRejectLogTime = 0;
+        string rejectKey = phaseTag + "|" + request.symbol + "|" + result.message;
+        datetime nowTime = TimeCurrent();
+        if(rejectKey != s_lastRejectKey ||
+           s_lastRejectLogTime == 0 ||
+           (nowTime - s_lastRejectLogTime) >= 15)
+        {
+            Print("[RISK-CONTRACT] REJECTED (", phaseTag, ") ",
+                  request.symbol, " | ", result.message);
+            s_lastRejectKey = rejectKey;
+            s_lastRejectLogTime = nowTime;
+        }
         return false;
     }
     return true;
@@ -2004,6 +2173,7 @@ int OnInit()
     ArrayInitialize(g_lastIntrabarScanTime, 0);
 
     Print("[SYMBOLS] ", ArraySize(g_activePairs), " symbols validated and ready for trading");
+    LogAccountCapacityDiagnostics();
     g_symbolsToTrade = InpSymbolsToTrade;
 
     // Initialize enterprise manager per symbol
@@ -2080,6 +2250,8 @@ int OnInit()
         g_positionManager.SetManagedMagic((long)InpMagicNumber);
         Print("[POSITION-MANAGER] Advanced position management enabled (magic scoped)");
     }
+
+    RecoverTradeTimingStateOnInit();
 
     // Initialize Neural Network Strategy per active symbol
     if(InpEnableAIMode && InpEnableNeuralNetwork)
@@ -2447,33 +2619,24 @@ void ProcessTradingLogic(bool fromTimer)
     // UNIFIED PIPELINE - All strategies including AI now go through here
     if(allowSignalEvaluation && ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
-        // Check cooldown to prevent chain trading
+        // Check entry gates, but keep signal evaluation running even while entry is paused.
         datetime tickTime = TimeCurrent();
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
-        bool canOpenNewTrades = true;
+        bool cooldownBlocked = (secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0);
+        bool unprotectedEntryBlocked = unprotectedPositionsActive;
 
-        if(secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0)
-        {
-            canOpenNewTrades = false;
-            if(callCount % 100 == 0)
-                Print("[ENTERPRISE-BLOCKED] Cooldown active: ", secondsSinceLastTrade, " / ", InpMinSecondsBetweenTrades, " seconds");
-        }
+        if(cooldownBlocked && callCount % 100 == 0)
+            Print("[ENTERPRISE-BLOCKED] Cooldown active: ", secondsSinceLastTrade, " / ", InpMinSecondsBetweenTrades, " seconds");
 
         // Check position limit - count only THIS EA's positions by magic number
         int eaPositions = GetEAPositionCount();
-        if(eaPositions >= InpMaxPositionsTotal)
-        {
-            canOpenNewTrades = false;
-            if(callCount % 100 == 0)  // Log occasionally to avoid spam
-                Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", InpMaxPositionsTotal);
-        }
+        bool totalPositionLimitBlocked = (eaPositions >= InpMaxPositionsTotal);
+        if(totalPositionLimitBlocked && callCount % 100 == 0)  // Log occasionally to avoid spam
+            Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", InpMaxPositionsTotal);
 
-        if(unprotectedPositionsActive)
-            canOpenNewTrades = false;
+        bool canOpenNewTrades = !(cooldownBlocked || totalPositionLimitBlocked || unprotectedEntryBlocked);
 
-        if(canOpenNewTrades)
-        {
-            // Evaluate each active symbol through its own symbol-bound enterprise manager.
+        // Evaluate each active symbol through its own symbol-bound enterprise manager.
             int symbolCount = ArraySize(g_activePairs);
             int rotationStart = 0;
             if(symbolCount > 0)
@@ -2520,33 +2683,6 @@ void ProcessTradingLogic(bool fromTimer)
                 ENUM_SIGNAL_EVAL_MODE evalMode = runIntrabarScan ? EVAL_MODE_INTRABAR : EVAL_MODE_NEW_BAR;
                 ENUM_VALIDATION_PROFILE validationProfile = runIntrabarScan ? VALIDATION_PROFILE_INTRABAR : VALIDATION_PROFILE_NEW_BAR;
                 g_hbScansAttempted++;
-
-                if(InpPortfolioMaxPositionsPerSymbol > 0)
-                {
-                    int symbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, false);
-                    if(symbolPositionCount >= InpPortfolioMaxPositionsPerSymbol)
-                    {
-                        int eaSymbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, true);
-                        int externalSymbolPositions = MathMax(0, symbolPositionCount - eaSymbolPositionCount);
-                        if(callCount % 100 == 0)
-                            PrintFormat("[ENTERPRISE-BLOCKED] %s symbol position cap reached: total=%d / %d | ea=%d | external=%d",
-                                        currentSymbol, symbolPositionCount, InpPortfolioMaxPositionsPerSymbol,
-                                        eaSymbolPositionCount, externalSymbolPositions);
-
-                        if(externalSymbolPositions > 0)
-                        {
-                            datetime capLogNow = TimeCurrent();
-                            if(g_lastExternalCapacityLogTime == 0 || (capLogNow - g_lastExternalCapacityLogTime) >= 60)
-                            {
-                                PrintFormat("[CAPACITY-EXTERNAL] %s blocked by non-EA positions | external=%d | ea=%d | total=%d | cap=%d | magic=%d",
-                                            currentSymbol, externalSymbolPositions, eaSymbolPositionCount,
-                                            symbolPositionCount, InpPortfolioMaxPositionsPerSymbol, InpMagicNumber);
-                                g_lastExternalCapacityLogTime = capLogNow;
-                            }
-                        }
-                        continue;
-                    }
-                }
 
                 // Get signal with confluence tracking (per-symbol analysis)
                 double confidence = 0;
@@ -2640,9 +2776,78 @@ void ProcessTradingLogic(bool fromTimer)
                 // Execute trade if signal was approved
                 if(signalApproved && enterpriseSignal != TRADE_SIGNAL_NONE)
                 {
+                    string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+                    bool symbolPositionCapBlocked = false;
+                    int symbolPositionCount = 0;
+                    int eaSymbolPositionCount = 0;
+                    int externalSymbolPositions = 0;
+
+                    if(InpPortfolioMaxPositionsPerSymbol > 0)
+                    {
+                        symbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, false);
+                        if(symbolPositionCount >= InpPortfolioMaxPositionsPerSymbol)
+                        {
+                            symbolPositionCapBlocked = true;
+                            eaSymbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, true);
+                            externalSymbolPositions = MathMax(0, symbolPositionCount - eaSymbolPositionCount);
+                        }
+                    }
+
+                    if(!canOpenNewTrades || symbolPositionCapBlocked)
+                    {
+                        string blockReason = "";
+                        if(cooldownBlocked)
+                            blockReason = StringFormat("cooldown %d/%d sec", secondsSinceLastTrade, InpMinSecondsBetweenTrades);
+                        if(totalPositionLimitBlocked)
+                        {
+                            if(blockReason != "")
+                                blockReason += " | ";
+                            blockReason += StringFormat("position limit %d/%d", eaPositions, InpMaxPositionsTotal);
+                        }
+                        if(unprotectedEntryBlocked)
+                        {
+                            if(blockReason != "")
+                                blockReason += " | ";
+                            blockReason += "unprotected positions";
+                        }
+                        if(symbolPositionCapBlocked)
+                        {
+                            if(blockReason != "")
+                                blockReason += " | ";
+                            blockReason += StringFormat("symbol cap total=%d/%d | ea=%d | external=%d",
+                                                        symbolPositionCount,
+                                                        InpPortfolioMaxPositionsPerSymbol,
+                                                        eaSymbolPositionCount,
+                                                        externalSymbolPositions);
+                        }
+
+                        PrintFormat("[ENTERPRISE-BLOCKED] %s approved %s suppressed by %s | conf=%.2f | confluence=%d",
+                                    currentSymbol,
+                                    signalType,
+                                    blockReason,
+                                    confidence,
+                                    confluence);
+
+                        if(symbolPositionCapBlocked && externalSymbolPositions > 0)
+                        {
+                            datetime capLogNow = TimeCurrent();
+                            if(g_lastExternalCapacityLogTime == 0 || (capLogNow - g_lastExternalCapacityLogTime) >= 60)
+                            {
+                                PrintFormat("[CAPACITY-EXTERNAL] %s blocked by non-EA positions | external=%d | ea=%d | total=%d | cap=%d | magic=%d",
+                                            currentSymbol,
+                                            externalSymbolPositions,
+                                            eaSymbolPositionCount,
+                                            symbolPositionCount,
+                                            InpPortfolioMaxPositionsPerSymbol,
+                                            InpMagicNumber);
+                                g_lastExternalCapacityLogTime = capLogNow;
+                            }
+                        }
+                        continue;
+                    }
+
                     // Execute trade if risk checks pass
                     ENUM_ORDER_TYPE orderType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                    string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
 
                     // Get current price
                     double entryPrice = (enterpriseSignal == TRADE_SIGNAL_BUY) ?
@@ -2899,7 +3104,6 @@ void ProcessTradingLogic(bool fromTimer)
                     // Releasing them here invalidates the handle for other parts of the EA.
                 }
             }
-        }
     }
 
     datetime heartbeatNow = TimeCurrent();

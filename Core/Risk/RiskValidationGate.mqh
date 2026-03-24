@@ -559,7 +559,8 @@ bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &r
 
     if(!(*manager).IsTradeAllowed(request.symbol, request.lotSize, request.stopLossPips))
     {
-        message = "Trade blocked by portfolio risk manager";
+        string portfolioReason = (*manager).GetLastBlockReason();
+        message = (portfolioReason != "") ? portfolioReason : "Trade blocked by portfolio risk manager";
         return false;
     }
 
@@ -584,7 +585,8 @@ bool CRiskValidationGate::ValidateCorrelationLimits(const STradeValidationReques
         CPortfolioRiskManager* manager = m_portfolioRiskManager;
         if(CheckPointer(manager) != POINTER_INVALID && !(*manager).CheckCorrelationLimits(request.symbol))
         {
-            message = "Correlation limit exceeded";
+            string correlationReason = (*manager).GetLastBlockReason();
+            message = (correlationReason != "") ? correlationReason : "Correlation limit exceeded";
             return false;
         }
     }

@@ -918,6 +918,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     int finalConfluence = 0;
     string selectedContributors[];
     int selectedContributorIndices[];
+    string vetoReason = "";
     ArrayResize(selectedContributors, 0);
     ArrayResize(selectedContributorIndices, 0);
 
@@ -943,6 +944,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         {
             // Both directions passed but were tied — emit NONE by policy.
             cycleQuorumFailed++;
+            vetoReason = StringFormat("dual_direction_tie | buyScore=%.3f | sellScore=%.3f", buyScore, sellScore);
         }
     }
     else if(buyQuorumMet)
@@ -978,6 +980,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         {
             if(finalSignal != TRADE_SIGNAL_NONE)
                 cycleQuorumFailed++;
+            if(reasoning != "")
+                vetoReason = "timeframe_conflict -> NONE | " + reasoning;
+            else
+                vetoReason = "timeframe_conflict -> NONE";
             finalSignal = TRADE_SIGNAL_NONE;
             finalConfidence = 0.0;
             finalConfluence = 0;
@@ -1022,6 +1028,13 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             {
                 if(finalSignal != TRADE_SIGNAL_NONE)
                     cycleQuorumFailed++;
+                if(reasoning != "")
+                    vetoReason = StringFormat("timeframe_resolved_%s_without_direction_quorum | %s",
+                                              TradeSignalToString(resolvedSignal),
+                                              reasoning);
+                else
+                    vetoReason = StringFormat("timeframe_resolved_%s_without_direction_quorum",
+                                              TradeSignalToString(resolvedSignal));
                 finalSignal = TRADE_SIGNAL_NONE;
                 finalConfidence = 0.0;
                 finalConfluence = 0;
@@ -1038,6 +1051,9 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
        finalConfidence < m_intrabarSingleVoterMinConfidence)
     {
         cycleQuorumFailed++;
+        vetoReason = StringFormat("intrabar_single_voter_confidence %.2f < %.2f",
+                                  finalConfidence,
+                                  m_intrabarSingleVoterMinConfidence);
         finalSignal = TRADE_SIGNAL_NONE;
         finalConfidence = 0.0;
         finalConfluence = 0;
@@ -1090,6 +1106,16 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
     m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
     m_lastCycleSignalAfterQuorum = (cycleSignalsAfterQuorum > 0);
+    if(vetoReason != "")
+    {
+        PrintFormat("[CONSENSUS-VETO] %s | reason=%s | buyScore=%.3f | sellScore=%.3f | buyVoterCount=%d | sellVoterCount=%d",
+                    symbol,
+                    vetoReason,
+                    buyScore,
+                    sellScore,
+                    buyVotes,
+                    sellVotes);
+    }
     PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
                 symbol,
                 buyScore,

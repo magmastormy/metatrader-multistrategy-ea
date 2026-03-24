@@ -20,6 +20,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - File: `MultiStrategyAutonomousEA.mq5`
 - Responsibilities:
   - initialize all runtime subsystems
+  - validate active symbols and emit startup account-capacity diagnostics before live execution
+  - reconstruct cooldown/trade-timing state from EA-owned open positions and deal history on startup
   - maintain cadence loops (new-bar/intrabar)
   - dispatch per-symbol evaluations
   - own the non-AI confidence policy inputs for pipeline and validator stages
@@ -46,6 +48,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Responsibilities:
   - apply trend/volatility/liquidity/structure/confidence filters
   - apply deterministic regime + cost viability pre-gate via `CRegimeEngine`
+  - tolerate transient regime data faults by reusing a recent same-context valid snapshot when safe
+  - trigger bounded `CRegimeEngine` handle self-heal after repeated data faults
   - apply bounded weak-regime intrabar confidence threshold uplift (`min(base+cap, base*multiplier)`) using `CRegimeEngine` snapshot state as the authority
   - emit threshold-source telemetry (`[PIPELINE-THRESHOLD]`)
   - emit regime/cost veto telemetry (`[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`)
@@ -135,6 +139,8 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 ## 4. Decision Pipeline (Signal to Execution)
 
 ### 4.1 Cadence selection
+- Startup emits per-symbol `[ACCOUNT-CAPACITY]` diagnostics before the first live scan and reconstructs `[TRADE-STATE]` so inherited EA positions carry cooldown forward across restarts.
+- Shared validator spread-shock state is symbol-scoped, not portfolio-global, so cross-symbol spread contamination cannot veto otherwise valid candidates.
 - New-bar path: conservative scan cadence.
 - Intrabar path: timer-driven scans when enabled.
 - Symbol evaluation start index rotates each cycle to reduce deterministic first-symbol concentration.
@@ -153,11 +159,13 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
   - quorum miss (threshold and/or min voters)
   - intrabar ineligibility
   - filter rejection
+- Post-quorum nullification is emitted as `[CONSENSUS-VETO]` when timeframe consistency or the intrabar single-voter floor clears an otherwise qualified candidate.
 
 ### 4.3 Validation
 - `CAdvancedSignalValidator` applies profile-dependent gating.
 - Validator profiles are input-configurable by scan mode (new-bar vs intrabar): minimum confidence, minimum strategy confluence, and minimum quality score.
 - Rejected signals emit reasoned logs.
+- Entry-governance blocks (cooldown, total-position cap, unresolved unprotected positions, per-symbol capacity) apply after validation so approved signals remain visible in diagnostics even when sends are paused.
 - Cost viability parameters are explicit (`spread/ATR`, spread-shock cooldown).
 
 ### 4.4 Risk gate
@@ -168,6 +176,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - Trade requests carry role/cluster/contributor context for cluster-aware risk governance.
 
 ### 4.5 Execution branch
+- Cooldown and capacity logic are entry-only gates; they do not suppress consensus or validator execution.
 - Shadow mode: logs virtual trade, no send.
 - Live mode: send through `CTradeManager`.
 - Startup emits `[EXECUTION-MODE]` so shadow/live posture is explicit before the first scan.
@@ -213,16 +222,19 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 
 ### 7.1 Key log families
 - Decision heartbeat: `[HEARTBEAT]`
+- Startup state: `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`
 - Conversion funnel: `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`
+- Entry suppression telemetry: `[ENTERPRISE-BLOCKED]`
 - Risk budget split: `[RISK-BUDGET]`
 - Unprotected remediation: `[RISK-UNPROTECTED]`
 - External capacity denial: `[CAPACITY-EXTERNAL]`
 - Consensus diagnostics: `[CONSENSUS-QUORUM]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`
+- Post-quorum veto diagnostics: `[CONSENSUS-VETO]`
 - Governance diagnostics: `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`
 - Strategy reject attribution: `[STRATEGY-REJECTS]`
 - Signal rejection reasons: `[SIGNAL-REJECTED]`
 - Threshold source tracing: `[PIPELINE-THRESHOLD]`
-- Regime/cost viability tracing: `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`
+- Regime/cost viability tracing: `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[TrendEngine][READINESS-FAULT]`
 - No-signal deadlock alerting: `[NO-SIGNAL-ALERT]`
 - Cluster risk governance tracing: `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI liveness: `[AI-VOTE]`
