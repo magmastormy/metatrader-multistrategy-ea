@@ -1,7 +1,7 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-03-16
+- Last Updated: 2026-03-24
 - Scope: Runtime lifecycle and ownership trace
 
 ## Scope
@@ -43,13 +43,14 @@
 
 ### 3. Signal path
 - Manager consensus + confluence.
-- Manager applies role/cluster governance and excludes feature/shadow-only contributors from live vote quorum.
-- Manager intrabar consensus can use contributor-aware dynamic quorum with single-voter confidence floor.
+- Manager applies role/cluster governance and evaluates quorum via normalized weighted confidence pooling.
+- Manager quorum requires `InpMinLiveVoters` floor and `InpQuorumThreshold` pass; intrabar single-voter output still requires configured minimum confidence.
+- Manager vote admission now uses the pipeline's effective confidence floor for the current evaluation, avoiding pipeline/quorum drift when regime-aware relaxation is active.
 - Manager emits consensus root-cause attribution snapshots for no-signal diagnostics.
 - Manager emits strategy-level none-reason attribution for core curated contributors.
 - Pipeline now includes deterministic regime/cost viability gate before validator.
 - Pipeline threshold adaptation now uses `CRegimeEngine` snapshot state and dedicated non-AI confidence floors instead of AI-threshold coupling.
-- Validation profile checks.
+- Validation profile checks (confidence + confluence + quality by scan mode: new-bar vs intrabar).
 - Risk gating (pre-size then post-size).
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
 - Pipeline confidence gate emits threshold-source metadata and uses bounded weak-regime intrabar uplift.
@@ -78,7 +79,7 @@
 
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]`
-- System telemetry: `[EXECUTION-MODE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`
@@ -135,7 +136,17 @@
 - Strategy `OnNewBar` dispatch uses each strategy's registered timeframe to prevent cross-timeframe misalignment.
 - AI performance feedback now records prediction/outcome pairs using request-to-position mapping on live trades.
 
+## 2026-03-24 Quorum Admission Alignment + Smoke Controls Trace
+- Aligned `EnterpriseStrategyManager` vote admission with `UnifiedSignalPipeline`'s effective confidence floor so pipeline-approved relaxed-threshold signals remain eligible for timeframe consistency and quorum.
+- Added opt-in intrabar eligibility controls for `Fibonacci` and `Support/Resistance` to support smoke tests that need the chain to reach validator/risk/execution without broadening production defaults.
+
+## 2026-03-16 Weighted Quorum + Live Strategy Promotion Trace
+- Promoted all retained strategies to live primary voters by default (per-strategy inputs gate registration).
+- Replaced binary count-based quorum with normalized weighted confidence quorum (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy `InpWeight*`).
+- Added per-evaluation quorum telemetry via `[CONSENSUS-QUORUM]`.
+
 ## 2026-02-24 Strategy Betterment Trace
+- Note: the soft-quarantine defaults recorded in this batch are historical; current default voting behavior is defined by the 2026-03-16 weighted quorum + live strategy promotion update.
 - Added institutional strategy governance metadata (role, cluster, live-vote eligibility, shadow mode) to `EnterpriseStrategyManager` and exposed setter APIs by strategy name.
 - Added soft-quarantine defaults in EA initialization:
   - primary live voters: `Momentum`, `Trend`, `Unified ICT`

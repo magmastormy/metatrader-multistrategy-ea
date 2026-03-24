@@ -30,7 +30,22 @@ input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Tre
 input bool InpEnableUnifiedICT = true;         // Enable Unified ICT Strategy
 input bool InpEnableCandlestick = true;       // Enable Candlestick Patterns Strategy
 input bool InpUseCuratedStrategySet = true;    // Enable curated production strategy subset
-input bool InpEnableSoftQuarantine = true;     // Keep weak strategies loaded as feature/shadow contributors
+input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained for backward compatibility; all enabled strategies vote live
+
+//--- Consensus quorum (weighted)
+input group "Consensus Quorum"
+input double InpQuorumThreshold = 0.55;        // Min normalized weighted score to pass quorum
+input int    InpMinLiveVoters   = 1;           // Min agreeing live voters (floor safety)
+
+//--- Strategy weights (used in weighted quorum)
+input group "Strategy Weights"
+input double InpWeightMomentum          = 1.0; // Momentum weight
+input double InpWeightTrend             = 1.2; // Trend weight
+input double InpWeightFibonacci         = 1.2; // Fibonacci weight
+input double InpWeightElliottWave       = 2.0; // Elliott Wave weight
+input double InpWeightSupportResistance = 1.5; // Support/Resistance weight
+input double InpWeightUnifiedICT        = 2.2; // Unified ICT weight (slightly higher precision)
+input double InpWeightCandlestick       = 1.5; // Candlestick weight
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -51,10 +66,8 @@ input group "Runtime Cadence & Learning"
 input bool InpEnableHybridCadence = true;             // Enable hybrid cadence (new-bar + timed intrabar scans)
 input int  InpIntrabarScanSeconds = 10;               // Intrabar scan interval in seconds
 input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans to chart symbol
-input bool InpIntrabarDynamicQuorumEnabled = true;    // Intrabar quorum adapts to eligible contributors
+input bool InpIntrabarDynamicQuorumEnabled = true;    // Legacy (deprecated): retained for backward compatibility; weighted quorum is authoritative
 input double InpPipelineMinConfidence = 0.40;         // Base confidence floor for non-AI pipeline signals (lowered from 0.50 to fix pipeline blocking)
-input double InpValidatorNewBarMinConfidence = 0.50;  // Post-consensus confidence floor on new-bar scans
-input double InpValidatorIntrabarMinConfidence = 0.55; // Post-consensus confidence floor on intrabar scans
 input double InpIntrabarSingleVoterMinConfidence = 0.55; // Min confidence for single-voter intrabar consensus
 input double InpPipelineIntrabarConfidenceCap = 0.05; // Max weak-regime intrabar confidence threshold uplift
 input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microstructure cost gate before validator
@@ -63,6 +76,8 @@ input int InpPipelineSpreadShockCooldownSec = 30;     // Spread shock cooldown w
 input double InpPipelineLateEntryZScoreLimit = 2.50;  // Late-entry outlier z-score veto limit
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
+input bool InpIntrabarEligibilityFibonacci = false;   // Intrabar eligibility for Fibonacci strategy
+input bool InpIntrabarEligibilitySupportResistance = false; // Intrabar eligibility for Support/Resistance strategy
 input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
 input bool InpShadowMode = true;                      // Shadow mode: log virtual trades without sending orders
 input bool InpEnableNNOnlineTraining = false;         // Enable online NN observation/labeling loop
@@ -71,6 +86,15 @@ input bool InpEnableNNPseudoLabeling = false;         // Enable pseudo-labeling 
 input int  InpNNPseudoLabelBarsAhead = 1;             // Pseudo-label horizon in bars
 input int  InpNNSampleIntervalSeconds = 30;           // Observation sampling interval (seconds)
 input int  InpNNCheckpointEveryLabeled = 10;          // Checkpoint every N newly labeled samples
+
+//--- Advanced signal validator (post-consensus)
+input group "Signal Validator"
+input int    InpValidatorNewBarMinConfluence    = 2;    // Minimum strategy confluence on new-bar scans
+input double InpValidatorNewBarMinQuality       = 0.68; // Minimum quality score on new-bar scans
+input double InpValidatorNewBarMinConfidence    = 0.50; // Post-consensus confidence floor on new-bar scans
+input int    InpValidatorIntrabarMinConfluence  = 1;    // Minimum strategy confluence on intrabar scans
+input double InpValidatorIntrabarMinQuality     = 0.75; // Minimum quality score on intrabar scans
+input double InpValidatorIntrabarMinConfidence  = 0.55; // Post-consensus confidence floor on intrabar scans
 
 //--- Execution & Emergency Controls
 input group "Execution Safety"
@@ -1095,10 +1119,7 @@ void BuildStrategyFlags(bool &strategyFlags[])
             enabledAfter++;
     }
 
-    if(InpEnableSoftQuarantine)
-        PrintFormat("[CURATION] Soft-quarantine profile active (%d -> %d enabled, weak modules shadow/feature only)", enabledBefore, enabledAfter);
-    else
-        PrintFormat("[CURATION] Expanded primary profile active (%d -> %d enabled)", enabledBefore, enabledAfter);
+    PrintFormat("[CURATION] Curated roster applied (%d -> %d enabled)", enabledBefore, enabledAfter);
     Print("[CURATION] Effective runtime strategy set: ", BuildEnabledStrategyList(strategyFlags));
 }
 
@@ -1109,51 +1130,70 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
     if(manager == NULL)
         return;
 
-    // Primary live voters by policy
+    // All enabled strategies are promoted to live primary voters.
     if(ArraySize(strategyFlags) > 0 && strategyFlags[0])
         manager.SetStrategyGovernanceByName("Momentum", PRIMARY_ALPHA, TREND_CLUSTER, true, false);
     if(ArraySize(strategyFlags) > 1 && strategyFlags[1])
         manager.SetStrategyGovernanceByName("Trend", PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+    if(ArraySize(strategyFlags) > 2 && strategyFlags[2])
+        manager.SetStrategyGovernanceByName("Fibonacci", PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
+    if(ArraySize(strategyFlags) > 3 && strategyFlags[3])
+        manager.SetStrategyGovernanceByName("Elliott Wave", PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+    if(ArraySize(strategyFlags) > 4 && strategyFlags[4])
+        manager.SetStrategyGovernanceByName("Support/Resistance", PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
     if(ArraySize(strategyFlags) > 5 && strategyFlags[5])
         manager.SetStrategyGovernanceByName("Unified ICT", PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
-
-    // Soft-quarantined legacy pattern modules
-    if(ArraySize(strategyFlags) > 2 && strategyFlags[2])
-        manager.SetStrategyGovernanceByName("Fibonacci",
-                                            CONTEXT_FEATURE,
-                                            MEAN_REVERSION_CLUSTER,
-                                            !InpEnableSoftQuarantine,
-                                            InpEnableSoftQuarantine);
-    if(ArraySize(strategyFlags) > 3 && strategyFlags[3])
-        manager.SetStrategyGovernanceByName("Elliott Wave",
-                                            SHADOW_RESEARCH,
-                                            STRUCTURE_CLUSTER,
-                                            !InpEnableSoftQuarantine,
-                                            InpEnableSoftQuarantine);
-    if(ArraySize(strategyFlags) > 4 && strategyFlags[4])
-        manager.SetStrategyGovernanceByName("Support/Resistance",
-                                            SHADOW_RESEARCH,
-                                            MEAN_REVERSION_CLUSTER,
-                                            !InpEnableSoftQuarantine,
-                                            InpEnableSoftQuarantine);
     if(ArraySize(strategyFlags) > 6 && strategyFlags[6])
-        manager.SetStrategyGovernanceByName("Candlestick",
-                                            CONTEXT_FEATURE,
-                                            STRUCTURE_CLUSTER,
-                                            !InpEnableSoftQuarantine,
-                                            InpEnableSoftQuarantine);
+        manager.SetStrategyGovernanceByName("Candlestick", PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
 
     // Intrabar eligibility only for explicitly approved low-latency contributors.
     if(ArraySize(strategyFlags) > 0 && strategyFlags[0])
         manager.SetStrategyIntrabarEligibilityByName("Momentum", InpIntrabarEligibilityMomentum);
     if(ArraySize(strategyFlags) > 1 && strategyFlags[1])
         manager.SetStrategyIntrabarEligibilityByName("Trend", false);
+    if(ArraySize(strategyFlags) > 2 && strategyFlags[2])
+        manager.SetStrategyIntrabarEligibilityByName("Fibonacci", InpIntrabarEligibilityFibonacci);
+    if(ArraySize(strategyFlags) > 4 && strategyFlags[4])
+        manager.SetStrategyIntrabarEligibilityByName("Support/Resistance", InpIntrabarEligibilitySupportResistance);
     if(ArraySize(strategyFlags) > 5 && strategyFlags[5])
         manager.SetStrategyIntrabarEligibilityByName("Unified ICT", InpIntrabarEligibilityUnifiedICT);
 
-    PrintFormat("[STRATEGY-GOVERNANCE] %s | soft_quarantine=%s | primary_live={Momentum,Trend,Unified ICT}",
+    PrintFormat("[STRATEGY-GOVERNANCE] %s | live_primary=ALL_ENABLED | strategies={%s}",
                 symbol,
-                InpEnableSoftQuarantine ? "true" : "false");
+                BuildEnabledStrategyList(strategyFlags));
+}
+
+void ApplyStrategyWeights(CEnterpriseStrategyManager* manager,
+                          const string symbol,
+                          const bool &strategyFlags[])
+{
+    if(manager == NULL)
+        return;
+
+    if(ArraySize(strategyFlags) > 0 && strategyFlags[0])
+        manager.UpdateStrategyWeightByName("Momentum", InpWeightMomentum);
+    if(ArraySize(strategyFlags) > 1 && strategyFlags[1])
+        manager.UpdateStrategyWeightByName("Trend", InpWeightTrend);
+    if(ArraySize(strategyFlags) > 2 && strategyFlags[2])
+        manager.UpdateStrategyWeightByName("Fibonacci", InpWeightFibonacci);
+    if(ArraySize(strategyFlags) > 3 && strategyFlags[3])
+        manager.UpdateStrategyWeightByName("Elliott Wave", InpWeightElliottWave);
+    if(ArraySize(strategyFlags) > 4 && strategyFlags[4])
+        manager.UpdateStrategyWeightByName("Support/Resistance", InpWeightSupportResistance);
+    if(ArraySize(strategyFlags) > 5 && strategyFlags[5])
+        manager.UpdateStrategyWeightByName("Unified ICT", InpWeightUnifiedICT);
+    if(ArraySize(strategyFlags) > 6 && strategyFlags[6])
+        manager.UpdateStrategyWeightByName("Candlestick", InpWeightCandlestick);
+
+    PrintFormat("[STRATEGY-WEIGHTS] %s | Momentum=%.2f | Trend=%.2f | Fibonacci=%.2f | ElliottWave=%.2f | SupportResistance=%.2f | UnifiedICT=%.2f | Candlestick=%.2f",
+                symbol,
+                InpWeightMomentum,
+                InpWeightTrend,
+                InpWeightFibonacci,
+                InpWeightElliottWave,
+                InpWeightSupportResistance,
+                InpWeightUnifiedICT,
+                InpWeightCandlestick);
 }
 
 //+------------------------------------------------------------------+
@@ -1602,23 +1642,33 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         manager.SetPipelineFilters(filters);
     }
 
-    manager.SetMinQuorum(2);
-    manager.SetIntrabarMinQuorum(2);
+    int minLiveVoters = MathMax(1, InpMinLiveVoters);
+    double quorumThreshold = MathMax(0.0, MathMin(1.0, InpQuorumThreshold));
+    manager.SetMinQuorum(minLiveVoters);
+    manager.SetIntrabarMinQuorum(minLiveVoters);
+    manager.SetQuorumThreshold(quorumThreshold);
     manager.SetIntrabarDynamicQuorumEnabled(InpIntrabarDynamicQuorumEnabled);
     manager.SetIntrabarSingleVoterMinConfidence(InpIntrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(InpDeadlockAttributionIntervalSec);
-    PrintFormat("[ENTERPRISE-CONFIG] %s | intrabar_dynamic_quorum=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_newbar_conf=%.2f | validator_intrabar_conf=%.2f | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+    PrintFormat("[ENTERPRISE-CONFIG] %s | quorum_threshold=%.2f | min_live_voters=%d | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_newbar_conf=%.2f | validator_newbar_confluence=%d | validator_newbar_quality=%.2f | validator_intrabar_conf=%.2f | validator_intrabar_confluence=%d | validator_intrabar_quality=%.2f | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
                 symbol,
+                quorumThreshold,
+                minLiveVoters,
                 InpIntrabarDynamicQuorumEnabled ? "true" : "false",
                 InpIntrabarSingleVoterMinConfidence,
                 MathMax(0.0, MathMin(1.0, InpPipelineMinConfidence)),
                 MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
+                MathMax(1, InpValidatorNewBarMinConfluence),
+                MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinQuality)),
                 MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence)),
+                MathMax(1, InpValidatorIntrabarMinConfluence),
+                MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinQuality)),
                 MathMax(10, InpDeadlockAttributionIntervalSec),
                 MathMax(0.0, InpPipelineIntrabarConfidenceCap));
     Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
     manager.AutoRegisterStrategies(strategyFlags);
     ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
+    ApplyStrategyWeights(manager, symbol, strategyFlags);
 
     if(InpEnableAIMode && InpEnableTransformer)
     {
@@ -1979,11 +2029,11 @@ int OnInit()
     g_signalValidator = new CAdvancedSignalValidator();
     if(g_signalValidator != NULL)
     {
-        g_signalValidator.SetValidationProfiles(2,
-                                                0.68,
+        g_signalValidator.SetValidationProfiles(MathMax(1, InpValidatorNewBarMinConfluence),
+                                                MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinQuality)),
                                                 MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
-                                                1,
-                                                0.75,
+                                                MathMax(1, InpValidatorIntrabarMinConfluence),
+                                                MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinQuality)),
                                                 MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence)));
         g_signalValidator.SetMaxSpreadMultiplier(2.0);
         g_signalValidator.EnableTimeFilter(true, 1, 22);
@@ -1995,10 +2045,14 @@ int OnInit()
                                                  2.5,
                                                  MathMax(5, InpPipelineSpreadShockCooldownSec));
         g_signalValidator.SetAllowSyntheticOffHours(InpAllowSyntheticOffHours);
-        PrintFormat("[SIGNAL-VALIDATOR] Advanced signal validation enabled | Synthetic Off-Hours: %s | NewBarConf: %.2f | IntrabarConf: %.2f",
+        PrintFormat("[SIGNAL-VALIDATOR] Advanced signal validation enabled | Synthetic Off-Hours: %s | NewBar(conf>=%.2f confluence>=%d quality>=%.2f) | Intrabar(conf>=%.2f confluence>=%d quality>=%.2f)",
                     InpAllowSyntheticOffHours ? "true" : "false",
                     MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
-                    MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence)));
+                    MathMax(1, InpValidatorNewBarMinConfluence),
+                    MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinQuality)),
+                    MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence)),
+                    MathMax(1, InpValidatorIntrabarMinConfluence),
+                    MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinQuality)));
     }
 
     // Initialize Advanced Position Manager (shared, magic scoped)

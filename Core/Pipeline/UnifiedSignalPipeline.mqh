@@ -97,6 +97,7 @@ private:
     bool m_intrabarContext;
     bool m_lastRegimeSnapshotValid;
     ENUM_REGIME_STATE m_lastRegimeState;
+    double m_lastEffectiveMinConfidence;
     
     // Internal methods
     bool ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
@@ -139,6 +140,7 @@ public:
     bool WasLastSignalRawNone() const { return m_lastRawSignalNone; }
     bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
     string GetLastEvaluatedSymbol() const { return m_lastEvaluatedSymbol; }
+    double GetLastEffectiveMinConfidence() const { return m_lastEffectiveMinConfidence; }
     double GetFilterRate() const 
     { 
         return m_signalsProcessed > 0 ? 
@@ -172,7 +174,8 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_lastFilteredByPipeline(false),
     m_intrabarContext(false),
     m_lastRegimeSnapshotValid(false),
-    m_lastRegimeState(REGIME_RANGE)
+    m_lastRegimeState(REGIME_RANGE),
+    m_lastEffectiveMinConfidence(0.40)
 {
 }
 
@@ -275,6 +278,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     m_lastFilteredByPipeline = false;
     m_lastRegimeSnapshotValid = false;
     m_lastRegimeState = REGIME_RANGE;
+    m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, m_filters.minConfidence));
 
     if(strategy == NULL)
     {
@@ -411,6 +415,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                 thresholdReasonTag,
                 appliedCap,
                 m_intrabarContext ? "true" : "false");
+    m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, effectiveMinConfidence));
     
     // Check confidence threshold
     if(confidence < effectiveMinConfidence)

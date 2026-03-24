@@ -1,7 +1,7 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-03-16
+- Last Updated: 2026-03-24
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
 
@@ -82,20 +82,22 @@ flowchart TD
 - New-bar and intrabar paths are explicit evaluation modes.
 - Intrabar eligibility respects symbol scope and cadence interval.
 - Intrabar/new-bar consensus behavior is manager-controlled.
-- Intrabar quorum can operate in contributor-aware dynamic mode:
-  - actual live contributors this cycle `<=1` => effective quorum `1`
-  - else effective quorum `min(intrabar_min_quorum, actual_live_contributors_this_cycle)`
+- Vote admission into timeframe consistency and quorum uses the pipeline's effective confidence floor for that evaluation, not just the static base pipeline minimum.
+- Quorum uses normalized weighted confidence pooling (intrabar eligibility defines the active live-voter pool for intrabar scans):
+  - per-direction score = `sum(weight_i * confidence_i)` for agreeing live voters (directional signal, confidence >= pipeline min)
+  - normalized score = `score / total_weight(active_live_voters)` (not just agreeing ones)
+  - direction passes quorum if `normalized_score >= InpQuorumThreshold` **and** agreeing voters `>= InpMinLiveVoters`
 - Single-voter intrabar output still requires configured minimum confidence.
-- Pipeline and validator confidence floors are configured separately from AI thresholds so non-AI strategies are not gated by AI policy.
+- Pipeline and validator profiles (confidence + confluence + quality) are configured separately from AI thresholds so non-AI strategies are not gated by AI policy.
 
 ## Strategy Governance Policy
 - Manager-level strategy metadata controls live-vote authority:
   - role: `PRIMARY_ALPHA`, `CONTEXT_FEATURE`, `SHADOW_RESEARCH`
   - cluster: `TREND_CLUSTER`, `MEAN_REVERSION_CLUSTER`, `STRUCTURE_CLUSTER`, `NONE`
-- Soft-quarantine default:
-  - live voters: `Momentum`, `Trend`, `Unified ICT`
-  - feature/shadow contributors (diagnostics only by default): `Candlestick`, `Fibonacci`, `Elliott Wave`, `Support/Resistance`
-- Non-live contributors are still evaluated for attribution but are explicitly excluded from final live quorum voting.
+- Default policy:
+  - all enabled retained strategies are registered as `PRIMARY_ALPHA` and vote live
+  - per-strategy inputs gate registration (disabled strategies are not registered into the pool)
+- Intrabar participation remains explicit: Momentum and Unified ICT are the default intrabar voters, while Fibonacci and Support/Resistance can be opted in for smoke tests via dedicated inputs.
 
 ## Regime/Cost Pre-Gate
 - `CRegimeEngine` runs before validator and can veto entries on:
@@ -131,6 +133,7 @@ flowchart TD
 - Symbol scan order rotates each cycle to reduce first-symbol concentration when only one trade is allowed per cycle.
 
 ## Diagnostics
+- Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`.
 - Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
   - `raw_none`
   - `filtered_out`
@@ -173,7 +176,7 @@ flowchart TD
 ## Fast Debug Read Order
 1. `[HEARTBEAT]`
 2. `[HEARTBEAT-FUNNEL]` / `[CONVERSION-RATES]`
-3. `[CONSENSUS-DIAG]` / `[CONSENSUS-ROOT]` / `[CONSENSUS-STRATEGY]`
+3. `[CONSENSUS-QUORUM]` / `[CONSENSUS-DIAG]` / `[CONSENSUS-ROOT]` / `[CONSENSUS-STRATEGY]`
 4. `[CONSENSUS-SNAPSHOT]` / `[STRATEGY-REJECTS]`
 5. `[PIPELINE-THRESHOLD]`
 6. `[SIGNAL-REJECTED]`

@@ -2,7 +2,31 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
-## [Unreleased] - 2026-03-16
+## [Unreleased] - 2026-03-24
+
+### Batch 29: Quorum Admission Alignment + Smoke Controls (2026-03-24)
+- **Consensus alignment:** `Core/Management/EnterpriseStrategyManager.mqh` now admits votes using `UnifiedSignalPipeline`'s effective confidence floor for the current evaluation instead of the static base pipeline minimum.
+- **No more relaxed-threshold drift:** signals that pass `[PIPELINE-THRESHOLD]` under regime-aware relaxation now remain eligible for timeframe consistency and weighted quorum instead of being silently dropped before consensus.
+- **Smoke-test controls:** added opt-in intrabar eligibility inputs for `Fibonacci` and `Support/Resistance` (`InpIntrabarEligibilityFibonacci`, `InpIntrabarEligibilitySupportResistance`) so productive mean-reversion contributors can be widened without changing production defaults.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to capture the quorum-admission contract and new smoke-test controls.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 28: Validator Profile Inputs (2026-03-16)
+- **Validator profile controls:** exposed post-consensus validator thresholds by scan mode:
+  - `InpValidatorNewBarMinConfluence`, `InpValidatorNewBarMinQuality`, `InpValidatorNewBarMinConfidence`
+  - `InpValidatorIntrabarMinConfluence`, `InpValidatorIntrabarMinQuality`, `InpValidatorIntrabarMinConfidence`
+- **Logging:** startup `[SIGNAL-VALIDATOR]` and per-symbol `[ENTERPRISE-CONFIG]` now emit validator confluence/quality alongside confidence floors.
+
+### Batch 27: Weighted Quorum + Live Strategy Promotion (2026-03-16)
+- **Strategy promotion:** all retained core strategies are now registered as live `PRIMARY_ALPHA` voters by default (no feature/shadow suppression when enabled).
+- **Per-strategy toggles:** strategy input enable flags gate registration (disabled strategies are not registered into the pool).
+- **Weighted quorum:** consensus now passes on normalized weighted confidence pooling with floor safety:
+  - `normalized_score = sum(weight_i * confidence_i) / total_weight(active_live_voters)`
+  - passes when `normalized_score >= InpQuorumThreshold` and agreeing voters `>= InpMinLiveVoters`
+- **Operator tuning:** added configurable quorum inputs and per-strategy weights (`InpQuorumThreshold`, `InpMinLiveVoters`, `InpWeight*`) in `MultiStrategyAutonomousEA.mq5`.
+- **Diagnostics:** added `[CONSENSUS-QUORUM]` per-evaluation telemetry (buy/sell scores, threshold, voter counts, result).
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to reflect weighted quorum and live strategy policy.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
 
 ### Batch 26: Timeframe Consistency + AI Feedback Wiring (2026-03-16)
 - **Timeframe conflict resolution:** `Core/Management/EnterpriseStrategyManager.mqh` now resolves mixed-timeframe vote conflicts using `CTimeframeConsistency`.
