@@ -25,6 +25,9 @@ private:
     double m_currentTotalRisk;      // Cached total risk %
     bool   m_missingStopDetected;   // True when any open position has no protective SL
     int    m_missingStopCount;      // Number of open positions without SL
+    string m_lastBlockReason;       // Last deterministic veto reason
+    string m_lastPrintedBlockReason;
+    datetime m_lastPrintedBlockTime;
     
     // Track per-symbol exposure
     struct SymbolExposure
@@ -49,6 +52,7 @@ public:
     void   SetEmergencyMode(bool state) { m_emergencyMode = state; }
     bool   HasUnprotectedPositions() const { return m_missingStopDetected; }
     int    GetUnprotectedPositionCount() const { return m_missingStopCount; }
+    string GetLastBlockReason() const { return m_lastBlockReason; }
 
 private:
     double GetPositionRisk(ulong ticket);
@@ -57,6 +61,7 @@ private:
     double CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints = 0.0);
     double CalculateSymbolCorrelation(const string symbol1, const string symbol2);
     int    GetPositionsOnSymbol(const string symbol);
+    void   RecordBlockReason(const string reason);
 };
 
 //+------------------------------------------------------------------+
@@ -68,7 +73,10 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_emergencyMode(false),
     m_currentTotalRisk(0.0),
     m_missingStopDetected(false),
-    m_missingStopCount(0)
+    m_missingStopCount(0),
+    m_lastBlockReason(""),
+    m_lastPrintedBlockReason(""),
+    m_lastPrintedBlockTime(0)
 {
 }
 
@@ -95,6 +103,9 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     m_emergencyMode = false;
     m_missingStopDetected = false;
     m_missingStopCount = 0;
+    m_lastBlockReason = "";
+    m_lastPrintedBlockReason = "";
+    m_lastPrintedBlockTime = 0;
     
     PrintFormat("[PortfolioRisk] Initialized. Max Risk: %.1f%%, Max Correlation: %.2f", 
                 m_maxPortfolioRisk, m_maxCorrelation);
@@ -130,15 +141,16 @@ double CPortfolioRiskManager::GetPortfolioRisk()
 //+------------------------------------------------------------------+
 bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double stopLossPoints)
 {
+    m_lastBlockReason = "";
     if(symbol == "" || lotSize <= 0.0)
     {
-        Print("[PortfolioRisk] BLOCKED: Invalid trade request parameters");
+        RecordBlockReason("Invalid trade request parameters");
         return false;
     }
 
     if(m_emergencyMode)
     {
-        Print("[PortfolioRisk] BLOCKED: Emergency Mode Active");
+        RecordBlockReason("Emergency Mode Active");
         return false;
     }
     
@@ -147,8 +159,9 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
     // If we are already above limit, block everything
     if(m_currentTotalRisk >= m_maxPortfolioRisk)
     {
-        PrintFormat("[PortfolioRisk] BLOCKED: Risk %.2f%% >= Max %.2f%%", 
-                   m_currentTotalRisk, m_maxPortfolioRisk);
+        RecordBlockReason(StringFormat("Risk %.2f%% >= Max %.2f%%",
+                                       m_currentTotalRisk,
+                                       m_maxPortfolioRisk));
         return false;
     }
     
@@ -156,8 +169,9 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
     double estimatedNewRisk = CalculatePotentialTradeRisk(symbol, lotSize, stopLossPoints);
     if(m_currentTotalRisk + estimatedNewRisk > m_maxPortfolioRisk)
     {
-        PrintFormat("[PortfolioRisk] BLOCKED: New Total %.2f%% > Max %.2f%%", 
-                   m_currentTotalRisk + estimatedNewRisk, m_maxPortfolioRisk);
+        RecordBlockReason(StringFormat("New Total %.2f%% > Max %.2f%%",
+                                       m_currentTotalRisk + estimatedNewRisk,
+                                       m_maxPortfolioRisk));
         return false;
     }
 
@@ -172,11 +186,12 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
 //+------------------------------------------------------------------+
 bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
 {
+    m_lastBlockReason = "";
     int positionsOnSymbol = GetPositionsOnSymbol(symbol);
     
     if(positionsOnSymbol >= 2) // Hard limit: Max 2 positions per symbol
     {
-        Print("[PortfolioRisk] BLOCKED: Max positions limit (2) reached for ", symbol);
+        RecordBlockReason(StringFormat("Max positions limit (2) reached for %s", symbol));
         return false;
     }
 
@@ -205,13 +220,33 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
 
         if(maxAbsCorrelation > m_maxCorrelation)
         {
-            PrintFormat("[PortfolioRisk] BLOCKED: Correlation %.2f > Max %.2f (%s vs %s)",
-                       maxAbsCorrelation, m_maxCorrelation, symbol, mostCorrelatedSymbol);
+            RecordBlockReason(StringFormat("Correlation %.2f > Max %.2f (%s vs %s)",
+                                           maxAbsCorrelation,
+                                           m_maxCorrelation,
+                                           symbol,
+                                           mostCorrelatedSymbol));
             return false;
         }
     }
     
     return true;
+}
+
+void CPortfolioRiskManager::RecordBlockReason(const string reason)
+{
+    m_lastBlockReason = reason;
+
+    datetime nowTime = TimeCurrent();
+    if(reason == m_lastPrintedBlockReason &&
+       m_lastPrintedBlockTime > 0 &&
+       (nowTime - m_lastPrintedBlockTime) < 15)
+    {
+        return;
+    }
+
+    Print("[PortfolioRisk] BLOCKED: ", reason);
+    m_lastPrintedBlockReason = reason;
+    m_lastPrintedBlockTime = nowTime;
 }
 
 //+------------------------------------------------------------------+

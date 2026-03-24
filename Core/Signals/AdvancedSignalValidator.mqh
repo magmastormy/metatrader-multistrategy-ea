@@ -30,6 +30,13 @@ enum ENUM_VALIDATION_PROFILE
     VALIDATION_PROFILE_INTRABAR = 1
 };
 
+struct SSpreadGateState
+{
+    string symbol;
+    double baselineEma;
+    datetime lastShockTime;
+};
+
 //+------------------------------------------------------------------+
 //| Advanced Signal Validator                                        |
 //+------------------------------------------------------------------+
@@ -48,13 +55,12 @@ private:
     bool m_enableSpreadShockGate;     // Spread shock cooldown gate
     double m_spreadShockMultiplier;   // Spread shock trigger multiple
     int m_spreadShockCooldownSec;     // Cooldown seconds after shock
-    double m_spreadBaselineEma;       // Runtime spread baseline
-    datetime m_lastSpreadShockTime;   // Last detected spread shock
     bool m_enableTimeFilter;
     bool m_enableSessionFilter;
     bool m_enableVolatilityFilter;
     bool m_enableSpreadFilter;
     bool m_allowSyntheticOffHours;    // Allow synthetics to trade 24/7
+    SSpreadGateState m_spreadGateStates[];
     
     // Time filter settings
     int m_startHour;                  // Trading start hour (0-23)
@@ -146,7 +152,7 @@ public:
     );
     
     // Individual filter checks
-    bool CheckSpreadFilter(const string symbol, double atrValue);
+    bool CheckSpreadFilter(const string symbol, double atrValue, string &rejectReason);
     bool CheckTimeFilter(const string symbol = "");
     bool CheckSessionFilter(const string symbol = "");
     bool CheckVolatilityFilter(const string symbol, double atrValue);
@@ -154,6 +160,9 @@ public:
 private:
     // Helper function
     bool IsSyntheticSymbol(const string symbol);
+    int FindSpreadGateStateIndex(const string symbol) const;
+    int EnsureSpreadGateState(const string symbol);
+    double CalculateSpreadPrice(const string symbol) const;
     
     // Quality score calculation
     double CalculateQualityScore(
@@ -194,8 +203,6 @@ CAdvancedSignalValidator::CAdvancedSignalValidator() :
     m_enableSpreadShockGate(true),
     m_spreadShockMultiplier(2.5),
     m_spreadShockCooldownSec(30),
-    m_spreadBaselineEma(0.0),
-    m_lastSpreadShockTime(0),
     m_enableTimeFilter(true),
     m_enableSessionFilter(true),
     m_enableVolatilityFilter(true),
@@ -279,10 +286,11 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     // 2. Check spread filter
     if(m_enableSpreadFilter)
     {
-        result.passedSpreadFilter = CheckSpreadFilter(symbol, atrValue);
+        string spreadRejectReason = "";
+        result.passedSpreadFilter = CheckSpreadFilter(symbol, atrValue, spreadRejectReason);
         if(!result.passedSpreadFilter)
         {
-            result.reason = "Spread too wide";
+            result.reason = (spreadRejectReason != "") ? spreadRejectReason : "Spread too wide";
             m_signalsRejected++;
             return result;
         }
@@ -351,36 +359,100 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
 //+------------------------------------------------------------------+
 //| Check Spread Filter                                             |
 //+------------------------------------------------------------------+
-bool CAdvancedSignalValidator::CheckSpreadFilter(const string symbol, double atrValue)
+int CAdvancedSignalValidator::FindSpreadGateStateIndex(const string symbol) const
 {
-    if(atrValue <= 0)
-        return true;  // Skip if no ATR
-    
+    for(int i = 0; i < ArraySize(m_spreadGateStates); i++)
+    {
+        if(m_spreadGateStates[i].symbol == symbol)
+            return i;
+    }
+    return -1;
+}
+
+int CAdvancedSignalValidator::EnsureSpreadGateState(const string symbol)
+{
+    int index = FindSpreadGateStateIndex(symbol);
+    if(index >= 0)
+        return index;
+
+    index = ArraySize(m_spreadGateStates);
+    ArrayResize(m_spreadGateStates, index + 1);
+    m_spreadGateStates[index].symbol = symbol;
+    m_spreadGateStates[index].baselineEma = 0.0;
+    m_spreadGateStates[index].lastShockTime = 0;
+    return index;
+}
+
+double CAdvancedSignalValidator::CalculateSpreadPrice(const string symbol) const
+{
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     if(point <= 0.0)
         point = 0.00001;
 
-    double spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD) * point;
+    double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+    double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+    double spread = 0.0;
+    if(ask > 0.0 && bid > 0.0 && ask >= bid)
+        spread = ask - bid;
+    else
+        spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD) * point;
+
+    if(!MathIsValidNumber(spread) || spread < 0.0)
+        spread = 0.0;
+
+    return spread;
+}
+
+bool CAdvancedSignalValidator::CheckSpreadFilter(const string symbol, double atrValue, string &rejectReason)
+{
+    rejectReason = "";
+    if(atrValue <= 0)
+        return true;  // Skip if no ATR
+
+    int stateIndex = EnsureSpreadGateState(symbol);
+    if(stateIndex < 0)
+        return true;
+
+    double spread = CalculateSpreadPrice(symbol);
     double maxSpreadByMultiplier = atrValue * m_maxSpreadMultiplier;
     double maxSpreadByRatio = atrValue * m_maxSpreadToAtrRatio;
     double maxSpread = MathMin(maxSpreadByMultiplier, maxSpreadByRatio);
 
-    if(m_spreadBaselineEma <= 0.0)
-        m_spreadBaselineEma = spread;
+    double baseline = m_spreadGateStates[stateIndex].baselineEma;
+    if(baseline <= 0.0)
+        baseline = spread;
     else
-        m_spreadBaselineEma = (0.9 * m_spreadBaselineEma) + (0.1 * spread);
+        baseline = (0.9 * baseline) + (0.1 * spread);
+    m_spreadGateStates[stateIndex].baselineEma = baseline;
 
     if(m_enableSpreadShockGate)
     {
-        if(m_spreadBaselineEma > 0.0 && spread > (m_spreadBaselineEma * m_spreadShockMultiplier))
-            m_lastSpreadShockTime = TimeCurrent();
+        if(baseline > 0.0 && spread > (baseline * m_spreadShockMultiplier))
+            m_spreadGateStates[stateIndex].lastShockTime = TimeCurrent();
 
-        if(m_lastSpreadShockTime > 0 &&
-           (TimeCurrent() - m_lastSpreadShockTime) <= m_spreadShockCooldownSec)
+        if(m_spreadGateStates[stateIndex].lastShockTime > 0 &&
+           (TimeCurrent() - m_spreadGateStates[stateIndex].lastShockTime) <= m_spreadShockCooldownSec)
+        {
+            rejectReason = StringFormat("Spread shock cooldown active: spread=%.5f baseline=%.5f trigger=%.5f",
+                                        spread,
+                                        baseline,
+                                        baseline * m_spreadShockMultiplier);
             return false;
+        }
     }
 
-    return spread <= maxSpread;
+    if(spread > maxSpread)
+    {
+        double spreadToAtr = (atrValue > 0.0) ? (spread / atrValue) : 0.0;
+        rejectReason = StringFormat("Spread too wide: spread=%.5f max=%.5f atr=%.5f ratio=%.3f",
+                                    spread,
+                                    maxSpread,
+                                    atrValue,
+                                    spreadToAtr);
+        return false;
+    }
+
+    return true;
 }
 
 //+------------------------------------------------------------------+

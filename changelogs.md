@@ -4,6 +4,31 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 
 ## [Unreleased] - 2026-03-24
 
+### Batch 32: Consensus Veto Telemetry + Symbol-Scoped Spread Gate + Trend Readiness Recovery (2026-03-24)
+- **Explicit post-quorum veto logs:** `Core/Management/EnterpriseStrategyManager.mqh` now emits `[CONSENSUS-VETO]` when a candidate is nulled after quorum by timeframe conflict resolution, dual-direction tie policy, or the intrabar single-voter confidence floor.
+- **Validator spread-state fix:** `Core/Signals/AdvancedSignalValidator.mqh` now tracks spread-shock baseline/cooldown per symbol instead of sharing one global runtime baseline across all symbols, and it now uses the same spread-price calculation model as the regime/cost gate.
+- **Readable spread rejection reasons:** validator spread rejections now include measured spread, ATR, and effective ceiling details instead of the generic `"Spread too wide"` message.
+- **Trend readiness self-heal:** `Core/Engines/TrendEngine.mqh` now classifies mature-series negative `BarsCalculated(...)` states as `[TrendEngine][READINESS-FAULT]` and performs bounded full-indicator-set reinitialization after repeated readiness faults.
+- **Risk root-cause preservation:** `Core/Risk/PortfolioRiskManager.mqh` now retains the last deterministic portfolio veto reason, and `Core/Risk/RiskValidationGate.mqh` surfaces that exact reason through `[RISK-CONTRACT]` instead of flattening it to generic manager-blocked text.
+- **Repeated veto log throttling:** identical portfolio and risk-contract rejection logs are now rate-limited, reducing cluster/correlation churn without changing `CUnifiedRiskManager` veto authority.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the new telemetry and fault-handling behavior.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 31: Startup State Recovery + Capacity Diagnostics + Regime Fault Resilience (2026-03-24)
+- **Restart-safe cooldown reconstruction:** `MultiStrategyAutonomousEA.mq5` now rebuilds `g_lastTradeTime` from EA-owned deal history and currently open EA positions during `OnInit`, fixing restart sessions where inherited positions were counted but runtime trade timing still reported `Last trade: Never`.
+- **Startup affordability telemetry:** startup now emits `[ACCOUNT-CAPACITY]` per active symbol using estimated minimum-lot margin, plus a live-mode warning when free margin cannot support the minimum lot on any configured symbol.
+- **Regime transient-fault resilience:** `Core/Engines/RegimeEngine.mqh` now reuses a recent valid same-context snapshot on transient `HANDLE_INIT_FAILED`, `WARMUP`, and `BUFFER_COPY_FAILED` events instead of immediately collapsing throughput to warmup behavior.
+- **Bounded regime self-heal:** repeated regime data faults now trigger `[REGIME-STATE] HANDLE_RESET` after bounded consecutive failures so stale indicator handles do not remain stuck indefinitely.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document startup recovery, affordability diagnostics, and regime-fault behavior.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 30: Entry Gate Decoupling + Blocked-Signal Telemetry (2026-03-24)
+- **Scan-through-cooldown:** `MultiStrategyAutonomousEA.mq5` now keeps the per-symbol consensus and validator loop running even when cooldown, total-position limits, unprotected-position vetoes, or symbol-capacity limits prevent new entries.
+- **Entry-stage enforcement:** these blocks now apply after signal validation and before unified-risk approval, preserving runtime visibility without weakening `CUnifiedRiskManager` or `CTradeManager` ownership.
+- **Blocked-signal diagnostics:** approved-but-suppressed signals now emit `[ENTERPRISE-BLOCKED]` with the active block reason, and per-symbol capacity telemetry still reports `[CAPACITY-EXTERNAL]` when outside positions consume capacity.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the entry-only gating contract.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
 ### Batch 29: Quorum Admission Alignment + Smoke Controls (2026-03-24)
 - **Consensus alignment:** `Core/Management/EnterpriseStrategyManager.mqh` now admits votes using `UnifiedSignalPipeline`'s effective confidence floor for the current evaluation instead of the static base pipeline minimum.
 - **No more relaxed-threshold drift:** signals that pass `[PIPELINE-THRESHOLD]` under regime-aware relaxation now remain eligible for timeframe consistency and weighted quorum instead of being silently dropped before consensus.

@@ -109,6 +109,9 @@ private:
     int m_adxFailureReinitThreshold;
     datetime m_lastAdxHealthLogTime;
     datetime m_lastAdxReinitAttemptTime;
+    int m_consecutiveReadinessFaults;
+    int m_readinessFailureReinitThreshold;
+    datetime m_lastReadinessReinitAttemptTime;
     
     // Diagnostics
     CSignalDiagnostics* m_diagnostics;
@@ -127,6 +130,16 @@ private:
                           int lastErrorCode,
                           double rawAdxValue);
     void MaybeReinitializeAdxHandle(const string symbol, ENUM_TIMEFRAMES timeframe);
+    void RecordReadinessFault(const string symbol,
+                             ENUM_TIMEFRAMES timeframe,
+                             int chartBars,
+                             int fastBars,
+                             int medBars,
+                             int slowBars,
+                             int adxBars,
+                             int atrBars,
+                             int minBars);
+    void MaybeReinitializeIndicatorSet(const string symbol, ENUM_TIMEFRAMES timeframe);
     TrendState CalculateMAs(const string symbol, ENUM_TIMEFRAMES timeframe,
                       double &ma_fast[], double &ma_medium[], double &ma_slow[], double &ma[]);
     double GetTrendStrength(const double &ma_fast[], const double &ma_medium[], const double &ma_slow[]);
@@ -205,6 +218,9 @@ CTrendEngine::CTrendEngine() :
     m_adxFailureReinitThreshold(3),
     m_lastAdxHealthLogTime(0),
     m_lastAdxReinitAttemptTime(0),
+    m_consecutiveReadinessFaults(0),
+    m_readinessFailureReinitThreshold(3),
+    m_lastReadinessReinitAttemptTime(0),
     m_diagnostics(NULL)
 {
 }
@@ -308,6 +324,8 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
                                           "Failed to create ATR indicator");
         return false;
     }
+
+    m_consecutiveReadinessFaults = 0;
     
     return true;
 }
@@ -337,6 +355,25 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
     int slowBars = BarsCalculated(m_handleMASlow);
     int adxBars = BarsCalculated(m_handleADX);
     int atrBars = BarsCalculated(m_handleATR);
+
+    bool hardReadinessFault = (chartBars >= minBars &&
+                               (fastBars <= 0 || medBars <= 0 || slowBars <= 0 ||
+                                adxBars <= 0 || atrBars <= 0));
+    if(hardReadinessFault)
+    {
+        RecordReadinessFault(m_indicatorSymbol,
+                             m_indicatorTimeframe,
+                             chartBars,
+                             fastBars,
+                             medBars,
+                             slowBars,
+                             adxBars,
+                             atrBars,
+                             minBars);
+        return false;
+    }
+
+    m_consecutiveReadinessFaults = 0;
 
     if(chartBars < minBars ||
        fastBars < minBars ||
@@ -450,6 +487,87 @@ void CTrendEngine::MaybeReinitializeAdxHandle(const string symbol, ENUM_TIMEFRAM
     PrintFormat("[TrendEngine][ADX-HEALTH] ADX handle reinitialized for %s %s after %d consecutive failures",
                 symbol, EnumToString(timeframe), m_consecutiveAdxFailures);
     m_consecutiveAdxFailures = 0;
+}
+
+void CTrendEngine::RecordReadinessFault(const string symbol,
+                                        ENUM_TIMEFRAMES timeframe,
+                                        int chartBars,
+                                        int fastBars,
+                                        int medBars,
+                                        int slowBars,
+                                        int adxBars,
+                                        int atrBars,
+                                        int minBars)
+{
+    m_consecutiveReadinessFaults++;
+
+    datetime nowTime = TimeCurrent();
+    if((nowTime - m_lastIndicatorErrorLog) >= 30)
+    {
+        PrintFormat("[TrendEngine][READINESS-FAULT] %s %s | Bars=%d MAf=%d MAm=%d MAs=%d ADX=%d ATR=%d need=%d | consecutive=%d",
+                    symbol,
+                    EnumToString(timeframe),
+                    chartBars,
+                    fastBars,
+                    medBars,
+                    slowBars,
+                    adxBars,
+                    atrBars,
+                    minBars,
+                    m_consecutiveReadinessFaults);
+
+        if(m_diagnostics != NULL)
+        {
+            m_diagnostics.LogStrategyError("TrendEngine",
+                                           "INDICATOR_READINESS_FAULT",
+                                           StringFormat("Readiness fault for %s %s | bars=%d fast=%d med=%d slow=%d adx=%d atr=%d need=%d consecutive=%d",
+                                                        symbol,
+                                                        EnumToString(timeframe),
+                                                        chartBars,
+                                                        fastBars,
+                                                        medBars,
+                                                        slowBars,
+                                                        adxBars,
+                                                        atrBars,
+                                                        minBars,
+                                                        m_consecutiveReadinessFaults));
+        }
+
+        m_lastIndicatorErrorLog = nowTime;
+    }
+
+    MaybeReinitializeIndicatorSet(symbol, timeframe);
+}
+
+void CTrendEngine::MaybeReinitializeIndicatorSet(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    if(m_consecutiveReadinessFaults < m_readinessFailureReinitThreshold)
+        return;
+
+    datetime nowTime = TimeCurrent();
+    if(m_lastReadinessReinitAttemptTime != 0 && (nowTime - m_lastReadinessReinitAttemptTime) < 30)
+        return;
+    m_lastReadinessReinitAttemptTime = nowTime;
+
+    ReleaseIndicators();
+    if(!InitializeIndicators(symbol, timeframe))
+    {
+        if(m_diagnostics != NULL)
+        {
+            m_diagnostics.LogStrategyError("TrendEngine",
+                                           "INDICATOR_SET_REINIT_FAILED",
+                                           StringFormat("Indicator set reinit failed for %s %s",
+                                                        symbol,
+                                                        EnumToString(timeframe)));
+        }
+        return;
+    }
+
+    PrintFormat("[TrendEngine][READINESS-FAULT] Indicator set reinitialized for %s %s after %d readiness faults",
+                symbol,
+                EnumToString(timeframe),
+                m_consecutiveReadinessFaults);
+    m_consecutiveReadinessFaults = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -981,6 +1099,8 @@ void CTrendEngine::Reset()
     m_lastAdxRawValue = 0.0;
     m_lastAdxHealthLogTime = 0;
     m_lastAdxReinitAttemptTime = 0;
+    m_consecutiveReadinessFaults = 0;
+    m_lastReadinessReinitAttemptTime = 0;
     ReleaseIndicators();
 }
 

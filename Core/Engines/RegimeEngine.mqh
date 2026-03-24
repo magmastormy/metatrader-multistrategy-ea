@@ -81,14 +81,11 @@ private:
     ENUM_REGIME_STATE m_lastLoggedState;
 
     SRegimeSnapshot m_lastSnapshot;
+    int m_consecutiveDataFaults;
+    datetime m_lastReuseLogTime;
 
-    bool EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
+    void ResetHandles()
     {
-        bool handlesReady = (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE);
-        bool contextMatches = (m_symbol == symbol && m_timeframe == timeframe);
-        if(handlesReady && contextMatches)
-            return true;
-
         if(m_atrHandle != INVALID_HANDLE)
         {
             IndicatorRelease(m_atrHandle);
@@ -99,6 +96,79 @@ private:
             IndicatorRelease(m_bbHandle);
             m_bbHandle = INVALID_HANDLE;
         }
+    }
+
+    int GetSnapshotReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) const
+    {
+        int barSeconds = PeriodSeconds(timeframe);
+        if(barSeconds <= 0)
+            barSeconds = 60;
+
+        return MathMax(60, MathMin(900, barSeconds));
+    }
+
+    bool TryReuseRecentSnapshot(const string symbol,
+                                const ENUM_TIMEFRAMES timeframe,
+                                const string reasonTag,
+                                const int errorCode)
+    {
+        if(!m_lastSnapshot.valid || m_symbol != symbol || m_timeframe != timeframe || m_lastSnapshot.timestamp <= 0)
+            return false;
+
+        int snapshotAgeSeconds = (int)MathMax(0, TimeCurrent() - m_lastSnapshot.timestamp);
+        if(snapshotAgeSeconds > GetSnapshotReuseWindowSeconds(timeframe))
+            return false;
+
+        datetime nowTime = TimeCurrent();
+        if(m_lastReuseLogTime == 0 || (nowTime - m_lastReuseLogTime) >= 30)
+        {
+            PrintFormat("[REGIME-STATE] REUSE_LAST_VALID | symbol=%s | timeframe=%s | reason=%s | age=%ds | err=%d",
+                        symbol,
+                        EnumToString(timeframe),
+                        reasonTag,
+                        snapshotAgeSeconds,
+                        errorCode);
+            m_lastReuseLogTime = nowTime;
+        }
+
+        return true;
+    }
+
+    void NoteDataFault(const string symbol,
+                       const ENUM_TIMEFRAMES timeframe,
+                       const string tag,
+                       const int errorCode)
+    {
+        m_consecutiveDataFaults++;
+        LogFault(tag, errorCode);
+
+        if(m_consecutiveDataFaults >= 3)
+        {
+            ResetHandles();
+            PrintFormat("[REGIME-STATE] HANDLE_RESET | symbol=%s | timeframe=%s | reason=%s | faults=%d",
+                        symbol,
+                        EnumToString(timeframe),
+                        tag,
+                        m_consecutiveDataFaults);
+            m_consecutiveDataFaults = 0;
+        }
+    }
+
+    bool EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
+    {
+        bool handlesReady = (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE);
+        bool contextMatches = (m_symbol == symbol && m_timeframe == timeframe);
+        if(handlesReady && contextMatches)
+            return true;
+
+        if(!contextMatches)
+        {
+            m_lastSnapshot.valid = false;
+            m_consecutiveDataFaults = 0;
+            m_lastReuseLogTime = 0;
+        }
+
+        ResetHandles();
 
         m_symbol = symbol;
         m_timeframe = timeframe;
@@ -199,19 +269,16 @@ public:
         m_lastSpreadShockTime(0),
         m_lastFaultLogTime(0),
         m_lastStateLogTime(0),
-        m_lastLoggedState(REGIME_RANGE)
+        m_lastLoggedState(REGIME_RANGE),
+        m_consecutiveDataFaults(0),
+        m_lastReuseLogTime(0)
     {
         ArrayResize(m_spreadSamples, 0);
     }
 
     ~CRegimeEngine()
     {
-        if(m_atrHandle != INVALID_HANDLE)
-            IndicatorRelease(m_atrHandle);
-        if(m_bbHandle != INVALID_HANDLE)
-            IndicatorRelease(m_bbHandle);
-        m_atrHandle = INVALID_HANDLE;
-        m_bbHandle = INVALID_HANDLE;
+        ResetHandles();
     }
 
     bool Initialize(const int atrPeriod = 14,
@@ -242,11 +309,11 @@ public:
 
     bool Update(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
-        m_lastSnapshot.valid = false;
         if(!EnsureHandles(symbol, timeframe))
         {
-            LogFault("HANDLE_INIT_FAILED", GetLastError());
-            return false;
+            int handleErr = GetLastError();
+            NoteDataFault(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
+            return TryReuseRecentSnapshot(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
         }
 
         int minBars = MathMax(m_bbPeriod + 5, m_atrPeriod + 5);
@@ -254,8 +321,8 @@ public:
            BarsCalculated(m_atrHandle) < minBars ||
            BarsCalculated(m_bbHandle) < minBars)
         {
-            LogFault("WARMUP", 0);
-            return false;
+            NoteDataFault(symbol, timeframe, "WARMUP", 0);
+            return TryReuseRecentSnapshot(symbol, timeframe, "WARMUP", 0);
         }
 
         double atr[1];
@@ -269,8 +336,8 @@ public:
         int copyErr = GetLastError();
         if(atrRet != 1 || upperRet != 1 || lowerRet != 1 || atr[0] <= 0.0)
         {
-            LogFault("BUFFER_COPY_FAILED", copyErr);
-            return false;
+            NoteDataFault(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
+            return TryReuseRecentSnapshot(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
         }
 
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -329,6 +396,7 @@ public:
         else
             state = REGIME_TREND;
 
+        m_consecutiveDataFaults = 0;
         m_lastSnapshot.valid = true;
         m_lastSnapshot.state = state;
         m_lastSnapshot.compression = compression;

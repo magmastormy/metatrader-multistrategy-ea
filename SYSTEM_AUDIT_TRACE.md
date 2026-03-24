@@ -27,7 +27,9 @@
 - Apply execution safety controls (fill mode, slippage, protective modify cooldown) before trade-manager bootstrap.
 - Initialize AI subsystems conditionally by flags.
 - Initialize performance analytics before unified-risk bootstrap.
+- Validate active symbols and emit `[ACCOUNT-CAPACITY]` affordability diagnostics before the first scan.
 - Build per-symbol managers and strategy registrations.
+- Reconstruct `[TRADE-STATE]` / cooldown timing from EA-owned history and open positions.
 - Register orchestrator strategy identities.
 
 ### 2. Tick/Timer cycle
@@ -36,6 +38,7 @@
 - Enforce terminal connectivity gate before signal evaluation.
 - Enforce deterministic second-level signal evaluation separation between tick/timer events.
 - Run deterministic unprotected-position remediation sweep before entry evaluation.
+- Keep symbol evaluation active during cooldown/capacity veto windows so blocked-entry behavior remains observable.
 - Rotate symbol evaluation start index each cycle to reduce fixed-order concentration.
 - Detect new-bar events per symbol.
 - Run intrabar scans when eligible.
@@ -49,8 +52,10 @@
 - Manager emits consensus root-cause attribution snapshots for no-signal diagnostics.
 - Manager emits strategy-level none-reason attribution for core curated contributors.
 - Pipeline now includes deterministic regime/cost viability gate before validator.
+- `CRegimeEngine` may reuse a recent valid same-context snapshot on transient warmup / copy / handle-init faults and performs bounded handle reset after repeated data faults.
 - Pipeline threshold adaptation now uses `CRegimeEngine` snapshot state and dedicated non-AI confidence floors instead of AI-threshold coupling.
 - Validation profile checks (confidence + confluence + quality by scan mode: new-bar vs intrabar).
+- Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
 - Risk gating (pre-size then post-size).
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
 - Pipeline confidence gate emits threshold-source metadata and uses bounded weak-regime intrabar uplift.
@@ -79,7 +84,7 @@
 
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]`
-- System telemetry: `[EXECUTION-MODE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[TrendEngine][READINESS-FAULT]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`
@@ -139,6 +144,21 @@
 ## 2026-03-24 Quorum Admission Alignment + Smoke Controls Trace
 - Aligned `EnterpriseStrategyManager` vote admission with `UnifiedSignalPipeline`'s effective confidence floor so pipeline-approved relaxed-threshold signals remain eligible for timeframe consistency and quorum.
 - Added opt-in intrabar eligibility controls for `Fibonacci` and `Support/Resistance` to support smoke tests that need the chain to reach validator/risk/execution without broadening production defaults.
+
+## 2026-03-24 Startup State Recovery + Capacity Diagnostics + Regime Fault Resilience Trace
+- Added startup reconstruction of `g_lastTradeTime` in `MultiStrategyAutonomousEA.mq5` using EA-owned history and open positions so inherited positions preserve cooldown state after restart/re-attach.
+- Added `[ACCOUNT-CAPACITY]` startup diagnostics that compare free margin with estimated minimum-lot margin for each active symbol and warn when live mode cannot afford any configured symbol.
+- Hardened `Core/Engines/RegimeEngine.mqh` to reuse recent valid snapshots on transient warmup / buffer-copy / handle-init faults and to emit bounded `[REGIME-STATE] HANDLE_RESET` self-heal telemetry after repeated data faults.
+
+## 2026-03-24 Entry Gate Decoupling Trace
+- Moved cooldown/position/protection/capacity enforcement to the post-validation pre-risk stage in `MultiStrategyAutonomousEA.mq5` so signal generation keeps running during blocked-entry windows.
+- Added explicit `[ENTERPRISE-BLOCKED]` logs for approved signals that are suppressed before risk/execution.
+
+## 2026-03-24 Consensus Veto + Validator Spread-State + Trend Readiness Trace
+- Added explicit `[CONSENSUS-VETO]` telemetry so post-quorum timeframe-conflict and single-voter nullification is visible without reconstructing it from downstream absence.
+- Changed `Core/Signals/AdvancedSignalValidator.mqh` spread-shock state from shared global runtime state to symbol-scoped runtime state, preventing cross-symbol spread contamination in validator decisions.
+- Hardened `Core/Engines/TrendEngine.mqh` against mature-series negative `BarsCalculated(...)` states by emitting `[TrendEngine][READINESS-FAULT]` and performing bounded full-indicator-set reinitialization after repeated readiness faults.
+- Preserved exact `PortfolioRiskManager` veto reasons through `RiskValidationGate` so `[RISK-CONTRACT]` reports concrete correlation / position-cap style causes instead of flattening them to generic manager-blocked text.
 
 ## 2026-03-16 Weighted Quorum + Live Strategy Promotion Trace
 - Promoted all retained strategies to live primary voters by default (per-strategy inputs gate registration).

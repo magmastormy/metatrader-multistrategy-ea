@@ -23,7 +23,9 @@ Defines the authoritative runtime decision path and ownership boundaries between
 ```mermaid
 flowchart TD
   A[OnInit] --> B[Initialize trade, risk, managers]
-  B --> C[Register core and AI strategy adapters]
+  B --> B1[Validate symbols + log ACCOUNT-CAPACITY]
+  B1 --> B2[Recover TRADE-STATE from history and open positions]
+  B2 --> C[Register core and AI strategy adapters]
   C --> D[OnTick or OnTimer ProcessTradingLogic]
 
   D --> D1{Terminal connected?}
@@ -49,31 +51,33 @@ flowchart TD
 
   M --> N{Validator pass?}
   N -->|No| O[Log SIGNAL-REJECTED]
-  N -->|Yes| P[Build ATR SL/TP + risk request with role/cluster/contributors]
+  N -->|Yes| P{Entry gate open?}
+  P -->|No| P2[Log ENTERPRISE-BLOCKED]
+  P -->|Yes| Q[Build ATR SL/TP + risk request with role/cluster/contributors]
 
-  P --> Q[UnifiedRisk pre-size validation]
-  Q --> R{Pass?}
-  R -->|No| S[Risk rejection]
-  R -->|Yes| T[Position sizing]
+  Q --> R[UnifiedRisk pre-size validation]
+  R --> S{Pass?}
+  S -->|No| T[Risk rejection]
+  S -->|Yes| U[Position sizing]
 
-  T --> U[UnifiedRisk post-size validation]
-  U --> V{Pass?}
-  V -->|No| S
-  V -->|Yes| W{Shadow mode?}
+  U --> V[UnifiedRisk post-size validation]
+  V --> W{Pass?}
+  W -->|No| T
+  W -->|Yes| X{Shadow mode?}
 
-  W -->|Yes| X[Log SHADOW-TRADE]
-  W -->|No| Y[TradeManager OpenPosition]
+  X -->|Yes| Y[Log SHADOW-TRADE]
+  X -->|No| Z[TradeManager OpenPosition]
 
-  Y --> Z{Execution success?}
-  Z -->|No| AA[Trade error path]
-  Z -->|Yes| AB[Register executed risk + cooldown]
+  Z --> AA{Execution success?}
+  AA -->|No| AB[Trade error path]
+  AA -->|Yes| AC[Register executed risk + cooldown]
 
-  AB --> AC[OnTradeTransaction feedback]
-  AC --> AD[Manager and orchestrator performance updates]
-  AC --> AE[NN attribution mapping and labeling]
+  AC --> AD[OnTradeTransaction feedback]
+  AD --> AE[Manager and orchestrator performance updates]
+  AD --> AF[NN attribution mapping and labeling]
 
-  D --> AF[Position manager lifecycle actions]
-  D --> AG[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG]
+  D --> AG[Position manager lifecycle actions]
+  D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG]
 ```
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
@@ -82,6 +86,7 @@ flowchart TD
 - New-bar and intrabar paths are explicit evaluation modes.
 - Intrabar eligibility respects symbol scope and cadence interval.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+- Cooldown, total-position, unprotected-position, and per-symbol capacity checks are entry gates, not scan gates; the EA keeps evaluating symbols while blocked from sending.
 - Vote admission into timeframe consistency and quorum uses the pipeline's effective confidence floor for that evaluation, not just the static base pipeline minimum.
 - Quorum uses normalized weighted confidence pooling (intrabar eligibility defines the active live-voter pool for intrabar scans):
   - per-direction score = `sum(weight_i * confidence_i)` for agreeing live voters (directional signal, confidence >= pipeline min)
@@ -104,6 +109,8 @@ flowchart TD
   - spread-shock cooldown
   - spread/ATR ratio breach
   - late-entry z-score outlier
+- On transient warmup / handle-init / buffer-copy faults, `CRegimeEngine` can reuse a recent valid same-symbol/timeframe snapshot instead of forcing immediate neutral degradation.
+- Repeated regime data faults trigger bounded handle reset and retry eligibility instead of indefinite stale-handle behavior.
 - Pipeline threshold adaptation now also consumes the regime snapshot, so confidence uplift/relaxation is aligned with the same market-state authority that drives the cost gate.
 - Gate telemetry:
   - `[REGIME-STATE]`
@@ -133,7 +140,10 @@ flowchart TD
 - Symbol scan order rotates each cycle to reduce first-symbol concentration when only one trade is allowed per cycle.
 
 ## Diagnostics
+- Startup affordability emitted as `[ACCOUNT-CAPACITY]`.
+- Startup cooldown recovery emitted as `[TRADE-STATE]`.
 - Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`.
+- Post-quorum nullification emitted as `[CONSENSUS-VETO]` when timeframe consistency or intrabar single-voter safety clears a candidate.
 - Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
   - `raw_none`
   - `filtered_out`
@@ -141,6 +151,7 @@ flowchart TD
   - `intrabar_not_eligible`
 - Startup execution posture emitted as `[EXECUTION-MODE]`.
 - Confirmed deal lifecycle emitted as `[TRADE-CONFIRMED]`.
+- Entry-suppressed approved signals emitted as `[ENTERPRISE-BLOCKED]`.
 - Consensus dominant-cause attribution emitted as `[CONSENSUS-ROOT]`.
 - Strategy-level none-reason attribution emitted as `[CONSENSUS-STRATEGY]`.
 - Heartbeat aggregate consensus snapshots emitted as `[CONSENSUS-SNAPSHOT]`.
@@ -153,6 +164,8 @@ flowchart TD
   - `REGIME_ENGINE_WARMUP`
 - Runtime conversion tracking emitted as `[HEARTBEAT-FUNNEL]` and `[CONVERSION-RATES]`.
 - Prolonged no-signal dominance alert emitted as `[NO-SIGNAL-ALERT]`.
+- Regime transient-fault reuse and repeated-fault reset are emitted under `[REGIME-STATE]`.
+- Trend indicator mature-series readiness faults and bounded set reinitialization are emitted under `[TrendEngine][READINESS-FAULT]`.
 - Strategy-governance telemetry emitted as `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, and heartbeat `[ROLE-CLUSTER]`.
 - Cluster risk telemetry emitted as `[RISK-CLUSTER]` and `[RISK-MUTEX-BLOCK]`.
 - Risk budget decomposition: `[RISK-BUDGET]`
@@ -174,14 +187,15 @@ flowchart TD
 - Unified ICT runtime labeling is normalized (no legacy `Unified ICT/SMC` path labels).
 
 ## Fast Debug Read Order
-1. `[HEARTBEAT]`
-2. `[HEARTBEAT-FUNNEL]` / `[CONVERSION-RATES]`
-3. `[CONSENSUS-QUORUM]` / `[CONSENSUS-DIAG]` / `[CONSENSUS-ROOT]` / `[CONSENSUS-STRATEGY]`
-4. `[CONSENSUS-SNAPSHOT]` / `[STRATEGY-REJECTS]`
-5. `[PIPELINE-THRESHOLD]`
-6. `[SIGNAL-REJECTED]`
-7. `[RISK-BUDGET]`
-8. `[RISK-UNPROTECTED]` / `[CAPACITY-EXTERNAL]`
-9. `[AI-VOTE]`
-10. `[NO-SIGNAL-ALERT]`
-11. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]`
+1. `[ACCOUNT-CAPACITY]` / `[TRADE-STATE]`
+2. `[HEARTBEAT]`
+3. `[HEARTBEAT-FUNNEL]` / `[CONVERSION-RATES]`
+4. `[CONSENSUS-QUORUM]` / `[CONSENSUS-VETO]` / `[CONSENSUS-DIAG]` / `[CONSENSUS-ROOT]` / `[CONSENSUS-STRATEGY]`
+5. `[CONSENSUS-SNAPSHOT]` / `[STRATEGY-REJECTS]`
+6. `[PIPELINE-THRESHOLD]` / `[REGIME-STATE]` / `[TrendEngine][READINESS-FAULT]`
+7. `[SIGNAL-REJECTED]`
+8. `[RISK-BUDGET]`
+9. `[RISK-UNPROTECTED]` / `[CAPACITY-EXTERNAL]`
+10. `[AI-VOTE]`
+11. `[NO-SIGNAL-ALERT]`
+12. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]`
