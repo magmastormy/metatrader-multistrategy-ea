@@ -1,7 +1,7 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-03-16
+- Last Updated: 2026-03-24
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
 
@@ -34,7 +34,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - execute strategy voting and confidence aggregation
   - resolve cross-timeframe vote conflicts via `CTimeframeConsistency`
   - dispatch `OnNewBar` to each strategy using its registered timeframe
-  - apply quorum rules by evaluation mode (strict new-bar, contributor-aware dynamic intrabar when enabled)
+  - apply normalized weighted quorum rules by evaluation mode (new-bar vs intrabar eligible pool)
+  - admit votes using the active pipeline confidence floor for that evaluation (including regime-relaxed thresholds)
   - enforce single-voter intrabar confidence floor
   - expose per-cycle funnel snapshots and interval consensus diagnostics snapshots
   - emit consensus diagnostics
@@ -125,9 +126,10 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - Strategy registration now includes explicit governance metadata:
   - role: `PRIMARY_ALPHA`, `CONTEXT_FEATURE`, `SHADOW_RESEARCH`
   - cluster: `TREND_CLUSTER`, `MEAN_REVERSION_CLUSTER`, `STRUCTURE_CLUSTER`, `NONE`
-- Default soft-quarantine policy:
-  - live primary voters: `Momentum`, `Trend`, `Unified ICT`
-  - feature/shadow contributors (loaded, diagnostics-on, live vote off by default): `Candlestick`, `Fibonacci`, `Elliott Wave`, `Support/Resistance`
+- Default policy:
+  - all enabled retained strategies are registered as `PRIMARY_ALPHA` and vote live
+  - per-strategy inputs gate registration (disabled strategies are not registered into the pool)
+- Opt-in smoke-test intrabar controls are available for `Fibonacci` and `Support/Resistance`; the default intrabar roster remains conservative.
 - Manager-level controls are exposed by strategy name for role, cluster, live-vote eligibility, and shadow mode.
 
 ## 4. Decision Pipeline (Signal to Execution)
@@ -140,17 +142,21 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 ### 4.2 Consensus
 - Manager computes strategy votes and confidence.
 - Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final consensus acceptance.
-- Intrabar effective quorum is contributor-aware:
-  - actual live contributors this cycle `<=1`: effective quorum `1`
-  - otherwise: `min(intrabar_min_quorum, actual_live_contributors_this_cycle)`
+- Quorum is evaluated via normalized weighted confidence pooling:
+  - per-direction score = `sum(weight_i * confidence_i)` for agreeing live voters (directional signal, confidence >= pipeline min)
+  - normalized score = `score / total_weight(active_live_voters)` (not just agreeing ones)
+  - direction passes quorum if `normalized_score >= InpQuorumThreshold` **and** agreeing voters `>= InpMinLiveVoters`
+  - if both directions pass, higher score wins; tie emits `TRADE_SIGNAL_NONE`
+- Vote admission into quorum reuses the pipeline's effective confidence threshold for that cycle, preventing pipeline-approved relaxed-threshold signals from being dropped before consensus.
 - Consensus may fail by:
   - raw no-vote
-  - quorum miss
+  - quorum miss (threshold and/or min voters)
   - intrabar ineligibility
   - filter rejection
 
 ### 4.3 Validation
 - `CAdvancedSignalValidator` applies profile-dependent gating.
+- Validator profiles are input-configurable by scan mode (new-bar vs intrabar): minimum confidence, minimum strategy confluence, and minimum quality score.
 - Rejected signals emit reasoned logs.
 - Cost viability parameters are explicit (`spread/ATR`, spread-shock cooldown).
 
@@ -211,7 +217,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - Risk budget split: `[RISK-BUDGET]`
 - Unprotected remediation: `[RISK-UNPROTECTED]`
 - External capacity denial: `[CAPACITY-EXTERNAL]`
-- Consensus diagnostics: `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`
+- Consensus diagnostics: `[CONSENSUS-QUORUM]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`
 - Governance diagnostics: `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`
 - Strategy reject attribution: `[STRATEGY-REJECTS]`
 - Signal rejection reasons: `[SIGNAL-REJECTED]`

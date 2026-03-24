@@ -1,7 +1,7 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-03-16
+- Last Updated: 2026-03-24
 - Status: Active baseline
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
@@ -33,9 +33,10 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - New-bar scans use conservative consensus behavior.
 - Intrabar scans run on timer intervals when enabled.
 - Intrabar scope can be chart-only or all managed symbols.
-- Intrabar quorum supports contributor-aware dynamic mode (`InpIntrabarDynamicQuorumEnabled`) using actual live contributors in the current cycle, with configurable single-voter confidence floor (`InpIntrabarSingleVoterMinConfidence`).
-- Curated core strategies now have explicit intrabar eligibility controls (`InpIntrabarEligibilityMomentum`, `InpIntrabarEligibilityUnifiedICT`).
-- Non-AI strategy throughput is controlled by dedicated pipeline and validator confidence inputs (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`) instead of the AI threshold.
+- Quorum uses normalized weighted confidence pooling (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy weights) instead of binary voter counts.
+- Curated core strategies now have explicit intrabar eligibility controls (`InpIntrabarEligibilityMomentum`, `InpIntrabarEligibilityUnifiedICT`) plus opt-in smoke-test toggles for Fibonacci and Support/Resistance (`InpIntrabarEligibilityFibonacci`, `InpIntrabarEligibilitySupportResistance`).
+- Non-AI strategy throughput is controlled by dedicated pipeline confidence and validator profile inputs (confidence + confluence + quality) instead of the AI threshold (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`, `InpValidator*MinConfluence`, `InpValidator*MinQuality`).
+- Consensus vote admission now reuses the pipeline's effective confidence floor for the current evaluation, so regime-relaxed pipeline passes are not discarded before quorum.
 
 ### AI participation
 - Runtime AI adapters can vote as strategies when enabled:
@@ -48,6 +49,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 ### Telemetry
 - `[HEARTBEAT]`: global runtime counters.
 - `[EXECUTION-MODE]`: startup execution mode (`SHADOW_ONLY` vs `LIVE_SEND`).
+- `[CONSENSUS-QUORUM]`: per-evaluation weighted quorum scores and direction result.
 - `[CONSENSUS-SNAPSHOT]`: EA-interval aggregate consensus counters.
 - `[CONSENSUS-DIAG]`: per-symbol consensus failure reasons.
 - `[CONSENSUS-ROOT]`: dominant deadlock/rejection cause with interval percentages.
@@ -138,7 +140,17 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Correct OnNewBar dispatch**: strategy `OnNewBar` now receives its registered timeframe instead of the manager base timeframe.
 - **AI feedback wiring**: AI prediction/outcome tracking now records live-trade predictions and closes with position-mapped outcomes.
 
+## Quorum Admission Alignment + Smoke Controls Update (2026-03-24)
+- **Consensus admission alignment**: `EnterpriseStrategyManager` now admits votes using the pipeline's last effective confidence floor, eliminating the mismatch where a signal could pass `[PIPELINE-THRESHOLD]` and still be excluded from quorum.
+- **Smoke-test intrabar controls**: added opt-in intrabar eligibility inputs for `Fibonacci` and `Support/Resistance` so productive mean-reversion contributors can be widened for smoke tests without changing production defaults.
+
+## Weighted Quorum + Live Strategy Promotion Update (2026-03-16)
+- **All retained strategies vote live**: every enabled retained strategy is registered as a live primary voter (no feature/shadow suppression).
+- **Weighted quorum**: consensus now passes when normalized weighted confidence crosses `InpQuorumThreshold` and `InpMinLiveVoters` is satisfied; per-evaluation scores are emitted as `[CONSENSUS-QUORUM]`.
+- **Operator tuning**: per-strategy weights are configurable via inputs (`InpWeight*`) without code changes.
+
 ## Institutional Strategy Betterment Update (2026-02-24)
+- **Note:** This batch is historical; current default voting behavior is defined by the 2026-03-16 weighted quorum + live strategy promotion update above.
 - **Soft quarantine strategy governance**: all retained strategy modules stay loaded for diagnostics, but default live-voting authority is constrained to `Momentum`, `Trend`, and `Unified ICT`; weaker legacy modules are feature/shadow by default.
 - **Role/cluster metadata**: strategy registration now carries `PRIMARY_ALPHA`, `CONTEXT_FEATURE`, `SHADOW_RESEARCH` roles and cluster tags (`TREND_CLUSTER`, `MEAN_REVERSION_CLUSTER`, `STRUCTURE_CLUSTER`).
 - **Regime + cost gate**: `UnifiedSignalPipeline` now runs deterministic regime/microstructure viability checks (`[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`) before validator/risk.

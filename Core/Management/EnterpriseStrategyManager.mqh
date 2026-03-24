@@ -114,6 +114,17 @@ string StrategyClusterShortCode(const ENUM_STRATEGY_CLUSTER cluster)
     }
 }
 
+string TradeSignalToString(const ENUM_TRADE_SIGNAL signal)
+{
+    switch(signal)
+    {
+        case TRADE_SIGNAL_BUY: return "BUY";
+        case TRADE_SIGNAL_SELL: return "SELL";
+        case TRADE_SIGNAL_NONE: return "NONE";
+        default: return "UNKNOWN";
+    }
+}
+
 //+------------------------------------------------------------------+
 //| Enterprise Strategy Manager Class                               |
 //+------------------------------------------------------------------+
@@ -134,10 +145,12 @@ private:
     
     bool m_initialized;
     bool m_usePipeline;
-    int  m_minQuorum;       // Minimum number of strategies that must agree
+    int  m_minQuorum;       // Minimum number of agreeing live voters (floor safety)
     int  m_intrabarMinQuorum; // Intrabar quorum floor when multiple strategies are active
     bool m_intrabarDynamicQuorumEnabled;
     double m_intrabarSingleVoterMinConfidence;
+    double m_quorumThreshold;       // Normalized weighted quorum threshold (0..1)
+    double m_pipelineMinConfidence; // Pipeline base confidence floor used for quorum eligibility
     
     // Statistics
     int m_totalSignals;
@@ -292,6 +305,10 @@ public:
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum) { m_minQuorum = MathMax(1, quorum); }  // Solo Mode support
+    void SetQuorumThreshold(const double threshold)
+    {
+        m_quorumThreshold = MathMax(0.0, MathMin(1.0, threshold));
+    }
     void SetIntrabarMinQuorum(int quorum) { m_intrabarMinQuorum = MathMax(1, quorum); }
     void SetIntrabarDynamicQuorumEnabled(const bool enabled) { m_intrabarDynamicQuorumEnabled = enabled; }
     void SetIntrabarSingleVoterMinConfidence(const double minConfidence)
@@ -379,10 +396,12 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_managedMagic(0),
     m_initialized(false),
     m_usePipeline(true),
-    m_minQuorum(2),         // Require >=2 aligned contributors when multiple strategies are active
+    m_minQuorum(2),         // Minimum agreeing live voters floor (overridden by EA input)
     m_intrabarMinQuorum(1),
     m_intrabarDynamicQuorumEnabled(true),
     m_intrabarSingleVoterMinConfidence(0.65),
+    m_quorumThreshold(0.55),
+    m_pipelineMinConfidence(0.40),
     m_totalSignals(0),
     m_successfulSignals(0),
     m_avgConfidence(0),
@@ -681,8 +700,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_symbol = symbol;
 
     int buyVotes = 0, sellVotes = 0;
-    double buyConf = 0, sellConf = 0;
+    double buyConf = 0.0, sellConf = 0.0;
     double buyWeightSum = 0.0, sellWeightSum = 0.0;
+    double totalLiveWeight = 0.0;
+    double quorumMinConfidence = MathMax(0.0, MathMin(1.0, m_pipelineMinConfidence));
     int activeStrategies = 0;
     int activeLiveStrategies = 0;
     string buyContributors[];
@@ -706,16 +727,26 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             continue;
 
         bool liveVoter = IsStrategyLiveVoter(i);
-        if(liveVoter)
+        bool eligibleForThisEval = liveVoter;
+        if(liveVoter && evalMode == EVAL_MODE_INTRABAR)
         {
-            activeLiveStrategies++;
-            if(evalMode == EVAL_MODE_INTRABAR)
+            if(m_strategies[i].intrabarEligible)
+                intrabarEligibleActiveCount++;
+            else
             {
-                if(m_strategies[i].intrabarEligible)
-                    intrabarEligibleActiveCount++;
-                else
-                    cycleIntrabarNotEligible++;
+                eligibleForThisEval = false;
+                cycleIntrabarNotEligible++;
             }
+        }
+
+        double strategyWeight = 0.0;
+        if(eligibleForThisEval)
+        {
+            strategyWeight = MathMax(0.0, m_strategies[i].weight);
+            if(strategyWeight <= 0.0)
+                strategyWeight = 1.0;
+            totalLiveWeight += strategyWeight;
+            activeLiveStrategies++;
         }
 
         double stratConf = 0.0;
@@ -786,6 +817,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         m_strategies[i].lastSignalConfidence = stratConf;
         m_strategies[i].lastEvaluationTime = TimeCurrent();
 
+        double signalConfidenceFloor = quorumMinConfidence;
+        if(m_usePipeline && m_pipeline != NULL)
+            signalConfidenceFloor = MathMax(0.0, MathMin(1.0, m_pipeline.GetLastEffectiveMinConfidence()));
+
         if(!liveVoter)
         {
             if(signal != TRADE_SIGNAL_NONE)
@@ -800,7 +835,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             continue;
         }
 
-        if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE)
+        if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE && stratConf >= signalConfidenceFloor)
         {
             m_tfConsistency.AddTimeframeSignal(m_strategies[i].timeframe,
                                                signal,
@@ -808,11 +843,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                                m_strategies[i].name);
         }
 
-        double strategyWeight = MathMax(0.0, m_strategies[i].weight);
-        if(strategyWeight <= 0.0)
-            strategyWeight = 1.0;
-
-        if(signal == TRADE_SIGNAL_BUY)
+        if(signal == TRADE_SIGNAL_BUY && stratConf >= signalConfidenceFloor)
         {
             buyVotes++;
             buyConf += stratConf * strategyWeight;
@@ -824,7 +855,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             buyContributors[buySize] = m_strategies[i].name;
             buyContributorIndices[buySize] = i;
         }
-        else if(signal == TRADE_SIGNAL_SELL)
+        else if(signal == TRADE_SIGNAL_SELL && stratConf >= signalConfidenceFloor)
         {
             sellVotes++;
             sellConf += stratConf * strategyWeight;
@@ -852,6 +883,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
     if(activeLiveStrategies == 0)
     {
+        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
+                    symbol,
+                    0.0,
+                    0.0,
+                    m_quorumThreshold,
+                    buyVotes,
+                    sellVotes,
+                    TradeSignalToString(TRADE_SIGNAL_NONE));
         m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
         m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
         m_lastCycleSignalAfterQuorum = false;
@@ -862,32 +901,17 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         return TRADE_SIGNAL_NONE;
     }
 
-    int cycleLiveContributorCount = buyVotes + sellVotes;
-    int effectiveQuorum = m_minQuorum;
-    if(evalMode == EVAL_MODE_INTRABAR)
-    {
-        if(m_intrabarDynamicQuorumEnabled)
-        {
-            // Dynamic intrabar quorum must reflect actual live contributors this cycle,
-            // not just the pool of eligible strategies, otherwise one strong voter can
-            // be deadlocked by multiple silent voters.
-            if(cycleLiveContributorCount <= 1)
-                effectiveQuorum = 1;
-            else
-                effectiveQuorum = MathMin(m_intrabarMinQuorum,
-                                          MathMin(intrabarEligibleActiveCount, cycleLiveContributorCount));
-        }
-        else
-        {
-            effectiveQuorum = m_intrabarMinQuorum;
-        }
-    }
-    else if(activeLiveStrategies == 1)
-        effectiveQuorum = 1;
-    effectiveQuorum = MathMax(1, MathMin(effectiveQuorum, activeLiveStrategies));
+    // Weighted confidence pool quorum:
+    // score(direction) = sum(weight_i * confidence_i) for agreeing voters (confidence >= pipeline min)
+    // normalized_score = score(direction) / total_weight_of_active_live_voters
+    double buyScore = (totalLiveWeight > 0.0) ? (buyConf / totalLiveWeight) : 0.0;
+    double sellScore = (totalLiveWeight > 0.0) ? (sellConf / totalLiveWeight) : 0.0;
+    buyScore = MathMax(0.0, MathMin(1.0, buyScore));
+    sellScore = MathMax(0.0, MathMin(1.0, sellScore));
 
-    bool buyQuorumMet = (buyVotes >= effectiveQuorum);
-    bool sellQuorumMet = (sellVotes >= effectiveQuorum);
+    int minLiveVoters = MathMax(1, m_minQuorum);
+    bool buyQuorumMet = (buyVotes >= minLiveVoters && buyScore >= m_quorumThreshold);
+    bool sellQuorumMet = (sellVotes >= minLiveVoters && sellScore >= m_quorumThreshold);
 
     ENUM_TRADE_SIGNAL finalSignal = TRADE_SIGNAL_NONE;
     double finalConfidence = 0.0;
@@ -897,7 +921,31 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     ArrayResize(selectedContributors, 0);
     ArrayResize(selectedContributorIndices, 0);
 
-    if(buyQuorumMet && (!sellQuorumMet || buyConf > sellConf))
+    if(buyQuorumMet && sellQuorumMet)
+    {
+        if(buyScore > sellScore)
+        {
+            finalSignal = TRADE_SIGNAL_BUY;
+            finalConfluence = buyVotes;
+            finalConfidence = (buyWeightSum > 0.0) ? (buyConf / buyWeightSum) : 0.0;
+            ArrayCopy(selectedContributors, buyContributors);
+            ArrayCopy(selectedContributorIndices, buyContributorIndices);
+        }
+        else if(sellScore > buyScore)
+        {
+            finalSignal = TRADE_SIGNAL_SELL;
+            finalConfluence = sellVotes;
+            finalConfidence = (sellWeightSum > 0.0) ? (sellConf / sellWeightSum) : 0.0;
+            ArrayCopy(selectedContributors, sellContributors);
+            ArrayCopy(selectedContributorIndices, sellContributorIndices);
+        }
+        else if((buyVotes + sellVotes) > 0)
+        {
+            // Both directions passed but were tied — emit NONE by policy.
+            cycleQuorumFailed++;
+        }
+    }
+    else if(buyQuorumMet)
     {
         finalSignal = TRADE_SIGNAL_BUY;
         finalConfluence = buyVotes;
@@ -905,7 +953,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         ArrayCopy(selectedContributors, buyContributors);
         ArrayCopy(selectedContributorIndices, buyContributorIndices);
     }
-    else if(sellQuorumMet && (!buyQuorumMet || sellConf > buyConf))
+    else if(sellQuorumMet)
     {
         finalSignal = TRADE_SIGNAL_SELL;
         finalConfluence = sellVotes;
@@ -986,7 +1034,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     // Intrabar safety gate: single-voter signal requires stronger confidence.
     if(finalSignal != TRADE_SIGNAL_NONE &&
        evalMode == EVAL_MODE_INTRABAR &&
-       effectiveQuorum == 1 &&
+       finalConfluence == 1 &&
        finalConfidence < m_intrabarSingleVoterMinConfidence)
     {
         cycleQuorumFailed++;
@@ -1020,6 +1068,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
         m_lastCycleSignalAfterQuorum = true;
 
+        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
+                    symbol,
+                    buyScore,
+                    sellScore,
+                    m_quorumThreshold,
+                    buyVotes,
+                    sellVotes,
+                    TradeSignalToString(finalSignal));
         MaybeLogConsensusDiagnostics(symbol);
         return finalSignal;
     }
@@ -1034,6 +1090,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
     m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
     m_lastCycleSignalAfterQuorum = (cycleSignalsAfterQuorum > 0);
+    PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
+                symbol,
+                buyScore,
+                sellScore,
+                m_quorumThreshold,
+                buyVotes,
+                sellVotes,
+                TradeSignalToString(TRADE_SIGNAL_NONE));
     MaybeLogConsensusDiagnostics(symbol);
     return TRADE_SIGNAL_NONE;
 }
@@ -1068,33 +1132,33 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 {
     int size = ArraySize(flags);
     
-    // 0: Momentum (primary trend voter)
+    // 0: Momentum (live primary voter)
     if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, TREND_CLUSTER, true, false);
     
-    // 1: Trend (primary trend voter)
+    // 1: Trend (live primary voter)
     if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, TREND_CLUSTER, true, false);
     
-    // 2: Fibonacci (context feature by default)
+    // 2: Fibonacci (live primary voter)
     if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, PERIOD_CURRENT, false,
-                                             CONTEXT_FEATURE, MEAN_REVERSION_CLUSTER, false, true);
+                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
     
-    // 3: Elliott Wave (shadow research by default)
+    // 3: Elliott Wave (live primary voter)
     if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0, PERIOD_CURRENT, false,
-                                             SHADOW_RESEARCH, STRUCTURE_CLUSTER, false, true);
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
-    // 4: Support/Resistance (shadow research by default)
+    // 4: Support/Resistance (live primary voter)
     if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, PERIOD_CURRENT, false,
-                                             SHADOW_RESEARCH, MEAN_REVERSION_CLUSTER, false, true);
+                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
     
-    // 5: Unified ICT (primary structure voter)
+    // 5: Unified ICT (live primary voter)
     if(size > 5 && flags[5]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT", true, 2.2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
-    // 6: Candlestick (context feature by default)
+    // 6: Candlestick (live primary voter)
     if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, PERIOD_CURRENT, false,
-                                             CONTEXT_FEATURE, STRUCTURE_CLUSTER, false, true);
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
           GetActiveStrategyCount());
@@ -1176,6 +1240,9 @@ string CEnterpriseStrategyManager::GetStrategyReport() const
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settings)
 {
+    // Cache pipeline base confidence floor for quorum eligibility even if the pipeline is disabled.
+    m_pipelineMinConfidence = MathMax(0.0, MathMin(1.0, settings.minConfidence));
+
     if(m_pipeline != NULL)
     {
         // Apply runtime filter configuration without re-initializing pipeline engines.
