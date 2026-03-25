@@ -67,6 +67,71 @@ struct SignalFilterSettings
 };
 
 //+------------------------------------------------------------------+
+//| Pipeline evidence snapshot                                       |
+//+------------------------------------------------------------------+
+struct SPipelineEvidenceSnapshot
+{
+    string symbol;
+    ENUM_TIMEFRAMES timeframe;
+    bool contextPrepared;
+    bool trendReady;
+    bool structureReady;
+    bool liquidityReady;
+    bool volatilityReady;
+    bool regimeValid;
+    ENUM_TREND_TYPE trend;
+    double trendStrength;
+    ENUM_VOLATILITY_STATE volatilityState;
+    double atrValue;
+    double atrPercent;
+    double structureStrength;
+    bool bullishStructure;
+    bool bearishStructure;
+    bool liquiditySweep;
+    bool priceNearLiquidity;
+    ENUM_REGIME_STATE regimeState;
+    double spreadToAtrRatio;
+    double rangeZScore;
+    double readinessScore;
+    double contextScore;
+    double costScore;
+    double effectiveMinConfidence;
+    bool softThresholdPass;
+    string vetoReasonTag;
+
+    SPipelineEvidenceSnapshot()
+    {
+        symbol = "";
+        timeframe = PERIOD_CURRENT;
+        contextPrepared = false;
+        trendReady = false;
+        structureReady = false;
+        liquidityReady = false;
+        volatilityReady = false;
+        regimeValid = false;
+        trend = TREND_NONE;
+        trendStrength = 0.0;
+        volatilityState = VOLATILITY_LOW;
+        atrValue = 0.0;
+        atrPercent = 0.0;
+        structureStrength = 0.0;
+        bullishStructure = false;
+        bearishStructure = false;
+        liquiditySweep = false;
+        priceNearLiquidity = false;
+        regimeState = REGIME_RANGE;
+        spreadToAtrRatio = 0.0;
+        rangeZScore = 0.0;
+        readinessScore = 0.5;
+        contextScore = 0.5;
+        costScore = 0.5;
+        effectiveMinConfidence = 0.4;
+        softThresholdPass = false;
+        vetoReasonTag = "";
+    }
+};
+
+//+------------------------------------------------------------------+
 //| Unified Signal Pipeline Class                                   |
 //+------------------------------------------------------------------+
 class CUnifiedSignalPipeline
@@ -98,8 +163,18 @@ private:
     bool m_lastRegimeSnapshotValid;
     ENUM_REGIME_STATE m_lastRegimeState;
     double m_lastEffectiveMinConfidence;
+    SPipelineEvidenceSnapshot m_lastEvidence;
+    string m_cachedContextSymbol;
+    ENUM_TIMEFRAMES m_cachedContextTimeframe;
+    datetime m_cachedContextBarTime;
+    bool m_cachedContextPrepared;
     
     // Internal methods
+    void ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe);
+    bool RefreshStructuralContext(const string symbol, ENUM_TIMEFRAMES timeframe);
+    void RefreshEvidenceFromEngines(const string symbol);
+    double ComputeReadinessScore() const;
+    double ComputeContextScore(const ENUM_TRADE_SIGNAL signal) const;
     bool ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
     bool ApplyVolatilityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
     bool ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence, const string symbol);
@@ -141,6 +216,7 @@ public:
     bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
     string GetLastEvaluatedSymbol() const { return m_lastEvaluatedSymbol; }
     double GetLastEffectiveMinConfidence() const { return m_lastEffectiveMinConfidence; }
+    void GetLastEvidenceSnapshot(SPipelineEvidenceSnapshot &snapshot) const { snapshot = m_lastEvidence; }
     double GetFilterRate() const 
     { 
         return m_signalsProcessed > 0 ? 
@@ -175,7 +251,11 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_intrabarContext(false),
     m_lastRegimeSnapshotValid(false),
     m_lastRegimeState(REGIME_RANGE),
-    m_lastEffectiveMinConfidence(0.40)
+    m_lastEffectiveMinConfidence(0.40),
+    m_cachedContextSymbol(""),
+    m_cachedContextTimeframe(PERIOD_CURRENT),
+    m_cachedContextBarTime(0),
+    m_cachedContextPrepared(false)
 {
 }
 
@@ -265,6 +345,180 @@ void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
     }
 }
 
+void CUnifiedSignalPipeline::ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    m_lastEvidence = SPipelineEvidenceSnapshot();
+    m_lastEvidence.symbol = symbol;
+    m_lastEvidence.timeframe = timeframe;
+    m_lastEvidence.effectiveMinConfidence = MathMax(0.0, MathMin(1.0, m_filters.minConfidence));
+}
+
+bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    datetime barTime = iTime(symbol, timeframe, 0);
+    if(barTime <= 0)
+        barTime = TimeCurrent();
+
+    bool cacheHit = (m_cachedContextPrepared &&
+                     m_cachedContextSymbol == symbol &&
+                     m_cachedContextTimeframe == timeframe &&
+                     m_cachedContextBarTime == barTime);
+
+    if(!cacheHit)
+    {
+        m_lastEvidence.trendReady = (m_trendEngine == NULL) ? true : m_trendEngine.UpdateTrend(symbol, timeframe);
+        m_lastEvidence.structureReady = (m_structureEngine == NULL) ? true : m_structureEngine.DetectSwingPoints(symbol, timeframe);
+        m_lastEvidence.liquidityReady = (m_liquidityEngine == NULL) ? true : m_liquidityEngine.DetectLiquidityZones(symbol, timeframe);
+        m_lastEvidence.volatilityReady = (m_volatilityEngine == NULL) ? true : m_volatilityEngine.UpdateVolatility(symbol, timeframe);
+
+        m_cachedContextSymbol = symbol;
+        m_cachedContextTimeframe = timeframe;
+        m_cachedContextBarTime = barTime;
+        m_cachedContextPrepared = true;
+    }
+    else
+    {
+        m_lastEvidence.trendReady = true;
+        m_lastEvidence.structureReady = true;
+        m_lastEvidence.liquidityReady = true;
+        m_lastEvidence.volatilityReady = true;
+    }
+
+    RefreshEvidenceFromEngines(symbol);
+    m_lastEvidence.contextPrepared = true;
+    m_lastEvidence.readinessScore = ComputeReadinessScore();
+    return true;
+}
+
+void CUnifiedSignalPipeline::RefreshEvidenceFromEngines(const string symbol)
+{
+    if(m_trendEngine != NULL)
+    {
+        m_lastEvidence.trend = m_trendEngine.GetCurrentTrend();
+        m_lastEvidence.trendStrength = m_trendEngine.GetTrendStrength();
+    }
+
+    if(m_structureEngine != NULL)
+    {
+        m_lastEvidence.structureStrength = m_structureEngine.GetStructureStrength();
+        m_lastEvidence.bullishStructure = (m_structureEngine.HasBullishBOS(5) || m_structureEngine.HasBullishCHOCH(5));
+        m_lastEvidence.bearishStructure = (m_structureEngine.HasBearishBOS(5) || m_structureEngine.HasBearishCHOCH(5));
+    }
+
+    if(m_liquidityEngine != NULL)
+    {
+        double probePrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+        if(probePrice <= 0.0)
+            probePrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        m_lastEvidence.liquiditySweep = m_liquidityEngine.HasLiquiditySweep(5);
+        m_lastEvidence.priceNearLiquidity = (probePrice > 0.0) ? m_liquidityEngine.IsPriceNearLiquidity(probePrice, 30) : false;
+    }
+
+    if(m_volatilityEngine != NULL)
+    {
+        m_lastEvidence.volatilityState = m_volatilityEngine.GetVolatilityState();
+        m_lastEvidence.atrValue = m_volatilityEngine.GetATR();
+        m_lastEvidence.atrPercent = m_volatilityEngine.GetATRPercent();
+    }
+}
+
+double CUnifiedSignalPipeline::ComputeReadinessScore() const
+{
+    double total = 0.0;
+    int components = 0;
+
+    if(m_filters.enableTrendFilter)
+    {
+        total += m_lastEvidence.trendReady ? 1.0 : 0.55;
+        components++;
+    }
+
+    if(m_filters.enableStructureFilter)
+    {
+        total += m_lastEvidence.structureReady ? 1.0 : 0.65;
+        components++;
+    }
+
+    if(m_filters.enableLiquidityFilter)
+    {
+        total += m_lastEvidence.liquidityReady ? 1.0 : 0.70;
+        components++;
+    }
+
+    if(m_filters.enableVolatilityFilter)
+    {
+        total += m_lastEvidence.volatilityReady ? 1.0 : 0.55;
+        components++;
+    }
+
+    if(m_filters.enableRegimeCostGate)
+    {
+        total += m_lastEvidence.regimeValid ? 1.0 : 0.70;
+        components++;
+    }
+
+    if(components <= 0)
+        return 1.0;
+
+    return MathMax(0.0, MathMin(1.0, total / components));
+}
+
+double CUnifiedSignalPipeline::ComputeContextScore(const ENUM_TRADE_SIGNAL signal) const
+{
+    double trendScore = 0.75;
+    if(signal == TRADE_SIGNAL_BUY)
+    {
+        if(m_lastEvidence.trend == TREND_BULLISH_STRONG || m_lastEvidence.trend == TREND_BULLISH_WEAK)
+            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 1.0 : 0.88;
+        else if(m_lastEvidence.trend == TREND_BEARISH_STRONG || m_lastEvidence.trend == TREND_BEARISH_WEAK)
+            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 0.45 : 0.65;
+    }
+    else if(signal == TRADE_SIGNAL_SELL)
+    {
+        if(m_lastEvidence.trend == TREND_BEARISH_STRONG || m_lastEvidence.trend == TREND_BEARISH_WEAK)
+            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 1.0 : 0.88;
+        else if(m_lastEvidence.trend == TREND_BULLISH_STRONG || m_lastEvidence.trend == TREND_BULLISH_WEAK)
+            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 0.45 : 0.65;
+    }
+
+    double structureScore = 0.72;
+    if(signal == TRADE_SIGNAL_BUY && m_lastEvidence.bullishStructure)
+        structureScore = 1.0;
+    else if(signal == TRADE_SIGNAL_SELL && m_lastEvidence.bearishStructure)
+        structureScore = 1.0;
+    else if(m_lastEvidence.structureStrength > 0.0)
+        structureScore = MathMax(0.55, MathMin(0.95, 0.60 + (m_lastEvidence.structureStrength / 250.0)));
+
+    double liquidityScore = 0.72;
+    if(m_lastEvidence.liquiditySweep)
+        liquidityScore = 0.95;
+    if(m_lastEvidence.priceNearLiquidity)
+        liquidityScore = MathMin(liquidityScore, 0.78);
+
+    double volatilityScore = 0.80;
+    if(m_lastEvidence.volatilityState == VOLATILITY_NORMAL)
+        volatilityScore = 1.0;
+    else if(m_lastEvidence.volatilityState == VOLATILITY_LOW)
+        volatilityScore = 0.88;
+    else if(m_lastEvidence.volatilityState == VOLATILITY_HIGH)
+        volatilityScore = 0.74;
+    else if(m_lastEvidence.volatilityState == VOLATILITY_EXTREME)
+        volatilityScore = 0.45;
+
+    double regimeScore = m_lastEvidence.costScore;
+    if(!m_lastEvidence.regimeValid)
+        regimeScore = MathMin(regimeScore, 0.72);
+    else if(m_lastEvidence.regimeState == REGIME_BREAKOUT || m_lastEvidence.regimeState == REGIME_TREND)
+        regimeScore = MathMax(regimeScore, 0.92);
+    else if(m_lastEvidence.regimeState == REGIME_RANGE)
+        regimeScore = MathMin(MathMax(regimeScore, 0.75), 0.88);
+    else if(m_lastEvidence.regimeState == REGIME_CHAOS)
+        regimeScore = MathMin(regimeScore, 0.68);
+
+    double total = trendScore + structureScore + liquidityScore + volatilityScore + regimeScore;
+    return MathMax(0.0, MathMin(1.0, total / 5.0));
+}
+
 //+------------------------------------------------------------------+
 //| Process Single Strategy Signal                                  |
 //+------------------------------------------------------------------+
@@ -273,6 +527,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                                                        ENUM_TIMEFRAMES timeframe, 
                                                        double &confidence)
 {
+    ResetEvidenceSnapshot(symbol, timeframe);
     m_lastEvaluatedSymbol = symbol;
     m_lastRawSignalNone = false;
     m_lastFilteredByPipeline = false;
@@ -299,18 +554,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         return TRADE_SIGNAL_NONE;
     }
     
-    // Update all engines
-    if(m_trendEngine != NULL)
-        m_trendEngine.UpdateTrend(symbol, timeframe);
-    
-    if(m_structureEngine != NULL)
-        m_structureEngine.DetectSwingPoints(symbol, timeframe);
-    
-    if(m_liquidityEngine != NULL)
-        m_liquidityEngine.DetectLiquidityZones(symbol, timeframe);
-    
-    if(m_volatilityEngine != NULL)
-        m_volatilityEngine.UpdateVolatility(symbol, timeframe);
+    RefreshStructuralContext(symbol, timeframe);
     
     // Apply filters
     bool passed = true;
@@ -340,9 +584,11 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     
     if(m_filters.enableTimeFilter)
         passed = passed && ApplyTimeFilter(signal);
+
+    m_lastEvidence.contextScore = ComputeContextScore(signal);
+    m_lastEvidence.readinessScore = ComputeReadinessScore();
     
     // Dynamic confidence threshold with bounded intrabar uplift in weak regimes.
-    // FIX: Significantly relaxed thresholds to allow marginal signals (0.37-0.54) to pass
     double baseMinConfidence = m_filters.minConfidence;
     double effectiveMinConfidence = baseMinConfidence;
     double appliedCap = 0.0;
@@ -353,7 +599,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         if(m_lastRegimeState == REGIME_RANGE)
         {
             thresholdReasonTag = "REGIME_RANGE";
-            // FIX: Much lighter adjustment for ranging markets - only 3% increase vs 10% before
             double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.03);
             if(m_intrabarContext)
             {
@@ -369,19 +614,16 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         else if(m_lastRegimeState == REGIME_TREND)
         {
             thresholdReasonTag = "REGIME_TREND_RELAX";
-            // FIX: Even more relaxed for trends
             effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.92);
         }
         else if(m_lastRegimeState == REGIME_BREAKOUT)
         {
             thresholdReasonTag = "REGIME_BREAKOUT_RELAX";
-            // FIX: Most relaxed for breakouts
             effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.90);
         }
         else if(m_lastRegimeState == REGIME_CHAOS)
         {
             thresholdReasonTag = "REGIME_CHAOS";
-            // FIX: Only 5% increase for chaos vs 10% before
             double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.05);
             if(m_intrabarContext)
             {
@@ -400,12 +642,11 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         if(m_trendEngine.IsStrongTrend())
         {
             thresholdReasonTag = "TREND_ENGINE_STRONG_RELAX";
-            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.95);  // FIX: 5% relaxation for strong trends
+            effectiveMinConfidence = MathMax(0.0, baseMinConfidence * 0.95);
         }
         else
         {
             thresholdReasonTag = "REGIME_ENGINE_WARMUP";
-            // FIX: During warmup, use base threshold as-is, don't penalize
         }
     }
 
@@ -416,14 +657,32 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                 appliedCap,
                 m_intrabarContext ? "true" : "false");
     m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, effectiveMinConfidence));
+    m_lastEvidence.effectiveMinConfidence = m_lastEffectiveMinConfidence;
     
     // Check confidence threshold
     if(confidence < effectiveMinConfidence)
     {
-        LogFilterResult("ConfidenceFilter", false, 
-                       StringFormat("%s | Confidence %.2f below minimum %.2f (effective: %.2f)",
-                                    thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
-        passed = false;
+        double thresholdGap = effectiveMinConfidence - confidence;
+        double softBand = 0.06;
+        bool softPass = (thresholdGap <= softBand &&
+                         m_lastEvidence.contextScore >= 0.62 &&
+                         m_lastEvidence.readinessScore >= 0.65);
+        if(softPass)
+        {
+            double attenuation = 1.0 - MathMin(0.35, (thresholdGap / softBand) * 0.35);
+            confidence = MathMax(0.0, MathMin(1.0, confidence * attenuation));
+            m_lastEvidence.softThresholdPass = true;
+            LogFilterResult("ConfidenceFilter", true,
+                           StringFormat("%s | soft-admit gap=%.3f | adjusted_conf=%.2f | effective=%.2f",
+                                        thresholdReasonTag, thresholdGap, confidence, effectiveMinConfidence));
+        }
+        else
+        {
+            LogFilterResult("ConfidenceFilter", false, 
+                           StringFormat("%s | Confidence %.2f below minimum %.2f (effective: %.2f)",
+                                        thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
+            passed = false;
+        }
     }
     else if(confidence >= effectiveMinConfidence && confidence < baseMinConfidence)
     {
@@ -431,19 +690,14 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                        StringFormat("%s | PASSED with adjusted threshold - Confidence: %.2f (min: %.2f, effective: %.2f)",
                                     thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
     }
-    
-    // Apply hedging protection
-    if(passed && m_hedgingProtection != NULL)
+
+    // Blend market context and readiness into the surviving confidence rather than using
+    // a second binary gate. This preserves marginal but still-credible votes for consensus.
+    if(passed)
     {
-        string hedgeReason = "";
-        ENUM_TRADE_SIGNAL filteredSignal = m_hedgingProtection.FilterSignal(symbol, signal, hedgeReason);
-        
-        if(filteredSignal == TRADE_SIGNAL_NONE)
-        {
-            LogFilterResult("HedgingProtection", false, hedgeReason);
-            passed = false;
-            signal = TRADE_SIGNAL_NONE;
-        }
+        double contextBlend = 0.80 + (0.20 * m_lastEvidence.contextScore);
+        double readinessBlend = 0.85 + (0.15 * m_lastEvidence.readinessScore);
+        confidence = MathMax(0.0, MathMin(1.0, confidence * contextBlend * readinessBlend));
     }
     
     if(!passed)
@@ -570,6 +824,8 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
 {
     vetoReasonTag = "";
     m_lastRegimeSnapshotValid = false;
+    m_lastEvidence.costScore = 0.72;
+    m_lastEvidence.regimeValid = false;
     if(m_regimeEngine == NULL)
         return true;
 
@@ -586,6 +842,10 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
 
     m_lastRegimeSnapshotValid = true;
     m_lastRegimeState = snapshot.state;
+    m_lastEvidence.regimeValid = true;
+    m_lastEvidence.regimeState = snapshot.state;
+    m_lastEvidence.spreadToAtrRatio = snapshot.spreadToAtrRatio;
+    m_lastEvidence.rangeZScore = snapshot.rangeZScore;
 
     string regimeTag = m_regimeEngine.GetStateTag();
     PrintFormat("[COST-GATE] %s | regime=%s | spread_atr=%.4f/%.4f | cooldown=%s | z=%.3f/%.3f",
@@ -604,9 +864,25 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
     else if(snapshot.state == REGIME_CHAOS)
         confidence = MathMax(0.0, confidence * 0.97);  // Reduced from 0.92 for chaos
 
+    double spreadPenalty = 0.0;
+    if(m_filters.maxSpreadToAtrRatio > 0.0)
+        spreadPenalty = MathMin(0.30, (snapshot.spreadToAtrRatio / m_filters.maxSpreadToAtrRatio) * 0.15);
+    double zPenalty = 0.0;
+    if(m_filters.maxEntryRangeZScore > 0.0)
+        zPenalty = MathMin(0.20, (MathAbs(snapshot.rangeZScore) / m_filters.maxEntryRangeZScore) * 0.10);
+    double regimeBaseScore = 0.85;
+    if(snapshot.state == REGIME_TREND || snapshot.state == REGIME_BREAKOUT)
+        regimeBaseScore = 1.0;
+    else if(snapshot.state == REGIME_RANGE)
+        regimeBaseScore = 0.84;
+    else if(snapshot.state == REGIME_CHAOS)
+        regimeBaseScore = 0.62;
+    m_lastEvidence.costScore = MathMax(0.10, MathMin(1.0, regimeBaseScore - spreadPenalty - zPenalty));
+
     if(snapshot.spreadShockCooldownActive)
     {
         vetoReasonTag = StringFormat("REGIME_%s | spread shock cooldown active", regimeTag);
+        m_lastEvidence.vetoReasonTag = vetoReasonTag;
         PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
         signal = TRADE_SIGNAL_NONE;
         confidence = 0.0;
@@ -617,6 +893,7 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
     {
         vetoReasonTag = StringFormat("REGIME_%s | spread/ATR ratio %.4f exceeds %.4f",
                                      regimeTag, snapshot.spreadToAtrRatio, m_filters.maxSpreadToAtrRatio);
+        m_lastEvidence.vetoReasonTag = vetoReasonTag;
         PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
         signal = TRADE_SIGNAL_NONE;
         confidence = 0.0;
@@ -627,6 +904,7 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
     {
         vetoReasonTag = StringFormat("REGIME_%s | late-entry z-score %.3f exceeds %.3f",
                                      regimeTag, snapshot.rangeZScore, m_filters.maxEntryRangeZScore);
+        m_lastEvidence.vetoReasonTag = vetoReasonTag;
         PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
         signal = TRADE_SIGNAL_NONE;
         confidence = 0.0;
@@ -667,10 +945,19 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     
     if(strongOpposingTrend)
     {
-        LogFilterResult("TrendFilter", false, 
-                       StringFormat("Strong opposing trend: %s (%.1f)", 
-                                  EnumToString(trend), trendStrength));
-        return false;
+        if(trendStrength >= 85.0)
+        {
+            LogFilterResult("TrendFilter", false, 
+                           StringFormat("Hard opposing trend veto: %s (%.1f)", 
+                                      EnumToString(trend), trendStrength));
+            return false;
+        }
+
+        confidence *= 0.72;
+        confidence = MathMin(1.0, MathMax(0.0, confidence));
+        LogFilterResult("TrendFilter", true,
+                       StringFormat("Opposing trend attenuated: %s (%.1f)", EnumToString(trend), trendStrength));
+        return true;
     }
     
     // 🔥 FIX: ALLOW signals in ranging markets (TREND_RANGING, TREND_NONE)
@@ -691,23 +978,25 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     
     if(!aligned)
     {
-        // 🔥 FIX: Don't reject weak misalignments - only log as warning
         if(trendStrength < 60)
         {
+            confidence *= 0.93;
             LogFilterResult("TrendFilter", true, 
                            StringFormat("Weak trend misalignment (%.1f) - ALLOWING signal", trendStrength));
             return true;
         }
-        
-        LogFilterResult("TrendFilter", false, 
-                       StringFormat("Strong trend misalignment: %s (%.1f)", 
+
+        confidence *= 0.80;
+        confidence = MathMin(1.0, MathMax(0.0, confidence));
+        LogFilterResult("TrendFilter", true, 
+                       StringFormat("Managed trend misalignment: %s (%.1f) | confidence attenuated", 
                                   EnumToString(trend), trendStrength));
-        return false;
+        return true;
     }
     
     // Boost confidence for strong aligned trends
     if(m_trendEngine.IsStrongTrend())
-        confidence *= 1.15;
+        confidence *= 1.10;
     
     // Cap confidence to valid range [0.0, 1.0]
     confidence = MathMin(1.0, MathMax(0.0, confidence));
@@ -731,12 +1020,22 @@ bool CUnifiedSignalPipeline::ApplyVolatilityFilter(ENUM_TRADE_SIGNAL &signal, do
     double atrPercent = m_volatilityEngine.GetATRPercent();
     
     // Check maximum volatility
-    if(atrPercent > m_filters.maxVolatility)
+    double hardVolatilityLimit = m_filters.maxVolatility * 1.35;
+    if(atrPercent > hardVolatilityLimit)
     {
         LogFilterResult("VolatilityFilter", false, 
-                       StringFormat("Volatility %.2f%% exceeds maximum %.2f%%", 
-                                  atrPercent, m_filters.maxVolatility));
+                       StringFormat("Volatility %.2f%% exceeds hard maximum %.2f%%", 
+                                  atrPercent, hardVolatilityLimit));
         return false;
+    }
+    else if(atrPercent > m_filters.maxVolatility)
+    {
+        confidence *= 0.82;
+        confidence = MathMin(1.0, MathMax(0.0, confidence));
+        LogFilterResult("VolatilityFilter", true,
+                       StringFormat("Volatility %.2f%% above soft maximum %.2f%% | confidence attenuated",
+                                    atrPercent, m_filters.maxVolatility));
+        return true;
     }
     
     // Adjust confidence based on volatility

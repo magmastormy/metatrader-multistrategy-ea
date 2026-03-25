@@ -50,10 +50,51 @@ struct StrategyEntry
     ENUM_TIMEFRAMES timeframe;
     int successCount;
     int failCount;
+    double healthScore;
     double avgConfidence;
     ENUM_TRADE_SIGNAL lastSignal;
     double lastSignalConfidence;
     datetime lastEvaluationTime;
+};
+
+struct SConsensusDecisionContext
+{
+    string symbol;
+    ENUM_TRADE_SIGNAL signal;
+    double confidence;
+    double convictionScore;
+    double buyScore;
+    double sellScore;
+    double buySupport;
+    double sellSupport;
+    double readyLiveWeight;
+    double totalLiveWeight;
+    double readinessScore;
+    double contextScore;
+    double costScore;
+    double diversityScore;
+    int confluence;
+    string reason;
+
+    SConsensusDecisionContext()
+    {
+        symbol = "";
+        signal = TRADE_SIGNAL_NONE;
+        confidence = 0.0;
+        convictionScore = 0.0;
+        buyScore = 0.0;
+        sellScore = 0.0;
+        buySupport = 0.0;
+        sellSupport = 0.0;
+        readyLiveWeight = 0.0;
+        totalLiveWeight = 0.0;
+        readinessScore = 0.0;
+        contextScore = 0.0;
+        costScore = 0.0;
+        diversityScore = 0.0;
+        confluence = 0;
+        reason = "";
+    }
 };
 
 enum ENUM_SIGNAL_EVAL_MODE
@@ -151,6 +192,8 @@ private:
     double m_intrabarSingleVoterMinConfidence;
     double m_quorumThreshold;       // Normalized weighted quorum threshold (0..1)
     double m_pipelineMinConfidence; // Pipeline base confidence floor used for quorum eligibility
+    double m_conflictDeadband;      // Deadband between buy/sell conviction before forcing direction
+    double m_minReadyWeightRatio;   // Minimum ready-live-weight share required to trade
     
     // Statistics
     int m_totalSignals;
@@ -165,6 +208,7 @@ private:
     string m_lastSignalRole;
     string m_lastSignalCluster;
     string m_lastSignalClusterCode;
+    SConsensusDecisionContext m_lastDecisionContext;
 
     // Consensus diagnostics counters
     ulong m_diagRawNone;
@@ -267,6 +311,9 @@ private:
     ENUM_STRATEGY_CLUSTER ResolveDominantCluster(const int &strategyIndices[]) const;
     bool IsStrategyLiveVoter(const int strategyIndex) const;
     void AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated);
+    double GetStrategyReliabilityMultiplier(const int strategyIndex) const;
+    double GetStrategyRoleVoteMultiplier(const int strategyIndex) const;
+    double CalculateDirectionDiversityScore(const int &strategyIndices[]) const;
     
 public:
     CEnterpriseStrategyManager();
@@ -315,6 +362,8 @@ public:
     {
         m_intrabarSingleVoterMinConfidence = MathMax(0.0, MathMin(1.0, minConfidence));
     }
+    void SetConflictDeadband(const double deadband) { m_conflictDeadband = MathMax(0.0, MathMin(0.50, deadband)); }
+    void SetMinReadyWeightRatio(const double ratio) { m_minReadyWeightRatio = MathMax(0.10, MathMin(1.0, ratio)); }
     void SetConsensusDiagnosticsIntervalSeconds(const int seconds) { m_diagLogIntervalSec = MathMax(10, seconds); }
     int  GetMinQuorum() const { return m_minQuorum; }
     bool UpdateStrategyWeightByName(const string name, const double weight);
@@ -340,6 +389,7 @@ public:
                                        string &clusterTag,
                                        string &clusterCode,
                                        string &contributorsCsv) const;
+    bool GetLastDecisionContext(SConsensusDecisionContext &context) const;
     void GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                          ulong &featureSignals,
                                          ulong &shadowSignals,
@@ -402,6 +452,8 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_intrabarSingleVoterMinConfidence(0.65),
     m_quorumThreshold(0.55),
     m_pipelineMinConfidence(0.40),
+    m_conflictDeadband(0.05),
+    m_minReadyWeightRatio(0.45),
     m_totalSignals(0),
     m_successfulSignals(0),
     m_avgConfidence(0),
@@ -617,6 +669,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].timeframe = resolvedTf;
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
+    m_strategies[m_strategyCount].healthScore = 0.75;
     m_strategies[m_strategyCount].avgConfidence = 0;
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
     m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
@@ -667,6 +720,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 {
     confluence = 0;
     confidence = 0;
+    m_lastDecisionContext = SConsensusDecisionContext();
+    m_lastDecisionContext.symbol = symbol;
 
     if(!m_initialized || m_strategyCount == 0)
     {
@@ -700,11 +755,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_symbol = symbol;
 
     int buyVotes = 0, sellVotes = 0;
-    double buyConf = 0.0, sellConf = 0.0;
+    double buyConviction = 0.0, sellConviction = 0.0;
     double buyWeightSum = 0.0, sellWeightSum = 0.0;
+    double buyContextSum = 0.0, sellContextSum = 0.0;
+    double buyReadinessSum = 0.0, sellReadinessSum = 0.0;
+    double buyCostSum = 0.0, sellCostSum = 0.0;
     double totalLiveWeight = 0.0;
+    double readyLiveWeight = 0.0;
     double quorumMinConfidence = MathMax(0.0, MathMin(1.0, m_pipelineMinConfidence));
-    int activeStrategies = 0;
     int activeLiveStrategies = 0;
     string buyContributors[];
     string sellContributors[];
@@ -740,17 +798,22 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         }
 
         double strategyWeight = 0.0;
+        double adjustedStrategyWeight = 0.0;
         if(eligibleForThisEval)
         {
             strategyWeight = MathMax(0.0, m_strategies[i].weight);
             if(strategyWeight <= 0.0)
                 strategyWeight = 1.0;
-            totalLiveWeight += strategyWeight;
+            adjustedStrategyWeight = strategyWeight *
+                                     GetStrategyRoleVoteMultiplier(i) *
+                                     GetStrategyReliabilityMultiplier(i);
+            totalLiveWeight += adjustedStrategyWeight;
             activeLiveStrategies++;
         }
 
         double stratConf = 0.0;
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
+        SPipelineEvidenceSnapshot pipelineEvidence;
 
         // Get signal (filtered if pipeline enabled)
         if(m_usePipeline && m_pipeline != NULL)
@@ -759,6 +822,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                               symbol,
                                               m_strategies[i].timeframe,
                                               stratConf);
+            m_pipeline.GetLastEvidenceSnapshot(pipelineEvidence);
             bool rawNone = m_pipeline.WasLastSignalRawNone();
             bool filteredByPipeline = m_pipeline.WasLastSignalFilteredByPipeline();
             if(rawNone)
@@ -773,6 +837,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         else
         {
             signal = m_strategies[i].strategy.GetSignal(stratConf);
+            pipelineEvidence = SPipelineEvidenceSnapshot();
+            pipelineEvidence.symbol = symbol;
+            pipelineEvidence.timeframe = m_strategies[i].timeframe;
+            pipelineEvidence.contextPrepared = true;
+            pipelineEvidence.readinessScore = 1.0;
+            pipelineEvidence.contextScore = 0.75;
+            pipelineEvidence.costScore = 0.75;
+            pipelineEvidence.effectiveMinConfidence = quorumMinConfidence;
             if(signal == TRADE_SIGNAL_NONE)
                 cycleRawNone++;
             else
@@ -816,24 +888,32 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         m_strategies[i].lastSignal = signal;
         m_strategies[i].lastSignalConfidence = stratConf;
         m_strategies[i].lastEvaluationTime = TimeCurrent();
+        m_strategies[i].avgConfidence = (m_strategies[i].avgConfidence <= 0.0)
+                                        ? stratConf
+                                        : ((m_strategies[i].avgConfidence * 0.85) + (stratConf * 0.15));
 
         double signalConfidenceFloor = quorumMinConfidence;
         if(m_usePipeline && m_pipeline != NULL)
             signalConfidenceFloor = MathMax(0.0, MathMin(1.0, m_pipeline.GetLastEffectiveMinConfidence()));
+        signalConfidenceFloor = MathMax(0.20, signalConfidenceFloor * 0.80);
 
         if(!liveVoter)
         {
             if(signal != TRADE_SIGNAL_NONE)
                 cycleVoteSuppressed++;
-            activeStrategies++;
             continue;
         }
 
         if(evalMode == EVAL_MODE_INTRABAR && !m_strategies[i].intrabarEligible)
         {
-            activeStrategies++;
             continue;
         }
+
+        double readinessScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.readinessScore));
+        double contextScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.contextScore));
+        double costScore = MathMax(0.25, MathMin(1.0, pipelineEvidence.costScore));
+        double readyWeightContribution = adjustedStrategyWeight * readinessScore;
+        readyLiveWeight += readyWeightContribution;
 
         if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE && stratConf >= signalConfidenceFloor)
         {
@@ -845,9 +925,13 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
         if(signal == TRADE_SIGNAL_BUY && stratConf >= signalConfidenceFloor)
         {
+            double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
             buyVotes++;
-            buyConf += stratConf * strategyWeight;
-            buyWeightSum += strategyWeight;
+            buyConviction += conviction * readyWeightContribution;
+            buyWeightSum += readyWeightContribution;
+            buyContextSum += contextScore * readyWeightContribution;
+            buyReadinessSum += readinessScore * readyWeightContribution;
+            buyCostSum += costScore * readyWeightContribution;
 
             int buySize = ArraySize(buyContributors);
             ArrayResize(buyContributors, buySize + 1);
@@ -857,9 +941,13 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         }
         else if(signal == TRADE_SIGNAL_SELL && stratConf >= signalConfidenceFloor)
         {
+            double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
             sellVotes++;
-            sellConf += stratConf * strategyWeight;
-            sellWeightSum += strategyWeight;
+            sellConviction += conviction * readyWeightContribution;
+            sellWeightSum += readyWeightContribution;
+            sellContextSum += contextScore * readyWeightContribution;
+            sellReadinessSum += readinessScore * readyWeightContribution;
+            sellCostSum += costScore * readyWeightContribution;
 
             int sellSize = ArraySize(sellContributors);
             ArrayResize(sellContributors, sellSize + 1);
@@ -868,7 +956,6 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             sellContributorIndices[sellSize] = i;
         }
 
-        activeStrategies++;
     }
 
     // Restore original symbol
@@ -897,21 +984,27 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         m_lastSignalRole = "PRIMARY_ALPHA";
         m_lastSignalCluster = "NONE";
         m_lastSignalClusterCode = "N";
+        m_lastDecisionContext.reason = "no_active_live_voters";
         MaybeLogConsensusDiagnostics(symbol);
         return TRADE_SIGNAL_NONE;
     }
 
-    // Weighted confidence pool quorum:
-    // score(direction) = sum(weight_i * confidence_i) for agreeing voters (confidence >= pipeline min)
-    // normalized_score = score(direction) / total_weight_of_active_live_voters
-    double buyScore = (totalLiveWeight > 0.0) ? (buyConf / totalLiveWeight) : 0.0;
-    double sellScore = (totalLiveWeight > 0.0) ? (sellConf / totalLiveWeight) : 0.0;
+    double minReadyWeight = totalLiveWeight * m_minReadyWeightRatio;
+    double quorumDenominator = (readyLiveWeight > 0.0) ? readyLiveWeight : totalLiveWeight;
+    if(quorumDenominator <= 0.0)
+        quorumDenominator = 1.0;
+
+    // Conviction model:
+    // score(direction) = adjusted conviction sum / ready-live-weight
+    double buyScore = buyConviction / quorumDenominator;
+    double sellScore = sellConviction / quorumDenominator;
     buyScore = MathMax(0.0, MathMin(1.0, buyScore));
     sellScore = MathMax(0.0, MathMin(1.0, sellScore));
 
     int minLiveVoters = MathMax(1, m_minQuorum);
-    bool buyQuorumMet = (buyVotes >= minLiveVoters && buyScore >= m_quorumThreshold);
-    bool sellQuorumMet = (sellVotes >= minLiveVoters && sellScore >= m_quorumThreshold);
+    bool readyWeightMet = (readyLiveWeight >= minReadyWeight);
+    bool buyQuorumMet = (readyWeightMet && buyVotes >= minLiveVoters && buyScore >= m_quorumThreshold);
+    bool sellQuorumMet = (readyWeightMet && sellVotes >= minLiveVoters && sellScore >= m_quorumThreshold);
 
     ENUM_TRADE_SIGNAL finalSignal = TRADE_SIGNAL_NONE;
     double finalConfidence = 0.0;
@@ -922,13 +1015,25 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     ArrayResize(selectedContributors, 0);
     ArrayResize(selectedContributorIndices, 0);
 
+    if(!readyWeightMet)
+    {
+        vetoReason = StringFormat("ready_weight %.3f < %.3f", readyLiveWeight, minReadyWeight);
+    }
+
     if(buyQuorumMet && sellQuorumMet)
     {
-        if(buyScore > sellScore)
+        double scoreDelta = MathAbs(buyScore - sellScore);
+        if(scoreDelta < m_conflictDeadband)
+        {
+            cycleQuorumFailed++;
+            vetoReason = StringFormat("dual_direction_deadband | buyScore=%.3f | sellScore=%.3f | deadband=%.3f",
+                                      buyScore, sellScore, m_conflictDeadband);
+        }
+        else if(buyScore > sellScore)
         {
             finalSignal = TRADE_SIGNAL_BUY;
             finalConfluence = buyVotes;
-            finalConfidence = (buyWeightSum > 0.0) ? (buyConf / buyWeightSum) : 0.0;
+            finalConfidence = (buyWeightSum > 0.0) ? (buyConviction / buyWeightSum) : 0.0;
             ArrayCopy(selectedContributors, buyContributors);
             ArrayCopy(selectedContributorIndices, buyContributorIndices);
         }
@@ -936,22 +1041,16 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         {
             finalSignal = TRADE_SIGNAL_SELL;
             finalConfluence = sellVotes;
-            finalConfidence = (sellWeightSum > 0.0) ? (sellConf / sellWeightSum) : 0.0;
+            finalConfidence = (sellWeightSum > 0.0) ? (sellConviction / sellWeightSum) : 0.0;
             ArrayCopy(selectedContributors, sellContributors);
             ArrayCopy(selectedContributorIndices, sellContributorIndices);
-        }
-        else if((buyVotes + sellVotes) > 0)
-        {
-            // Both directions passed but were tied — emit NONE by policy.
-            cycleQuorumFailed++;
-            vetoReason = StringFormat("dual_direction_tie | buyScore=%.3f | sellScore=%.3f", buyScore, sellScore);
         }
     }
     else if(buyQuorumMet)
     {
         finalSignal = TRADE_SIGNAL_BUY;
         finalConfluence = buyVotes;
-        finalConfidence = (buyWeightSum > 0.0) ? (buyConf / buyWeightSum) : 0.0;
+        finalConfidence = (buyWeightSum > 0.0) ? (buyConviction / buyWeightSum) : 0.0;
         ArrayCopy(selectedContributors, buyContributors);
         ArrayCopy(selectedContributorIndices, buyContributorIndices);
     }
@@ -959,7 +1058,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     {
         finalSignal = TRADE_SIGNAL_SELL;
         finalConfluence = sellVotes;
-        finalConfidence = (sellWeightSum > 0.0) ? (sellConf / sellWeightSum) : 0.0;
+        finalConfidence = (sellWeightSum > 0.0) ? (sellConviction / sellWeightSum) : 0.0;
         ArrayCopy(selectedContributors, sellContributors);
         ArrayCopy(selectedContributorIndices, sellContributorIndices);
     }
@@ -1083,12 +1182,47 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
         m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
         m_lastCycleSignalAfterQuorum = true;
+        m_lastDecisionContext.symbol = symbol;
+        m_lastDecisionContext.signal = finalSignal;
+        m_lastDecisionContext.confidence = confidence;
+        m_lastDecisionContext.confluence = finalConfluence;
+        m_lastDecisionContext.buyScore = buyScore;
+        m_lastDecisionContext.sellScore = sellScore;
+        m_lastDecisionContext.buySupport = buyWeightSum;
+        m_lastDecisionContext.sellSupport = sellWeightSum;
+        m_lastDecisionContext.readyLiveWeight = readyLiveWeight;
+        m_lastDecisionContext.totalLiveWeight = totalLiveWeight;
+        m_lastDecisionContext.readinessScore = (finalSignal == TRADE_SIGNAL_BUY && buyWeightSum > 0.0)
+                                               ? (buyReadinessSum / buyWeightSum)
+                                               : ((finalSignal == TRADE_SIGNAL_SELL && sellWeightSum > 0.0)
+                                                  ? (sellReadinessSum / sellWeightSum)
+                                                  : 0.0);
+        m_lastDecisionContext.contextScore = (finalSignal == TRADE_SIGNAL_BUY && buyWeightSum > 0.0)
+                                             ? (buyContextSum / buyWeightSum)
+                                             : ((finalSignal == TRADE_SIGNAL_SELL && sellWeightSum > 0.0)
+                                                ? (sellContextSum / sellWeightSum)
+                                                : 0.0);
+        m_lastDecisionContext.costScore = (finalSignal == TRADE_SIGNAL_BUY && buyWeightSum > 0.0)
+                                          ? (buyCostSum / buyWeightSum)
+                                          : ((finalSignal == TRADE_SIGNAL_SELL && sellWeightSum > 0.0)
+                                             ? (sellCostSum / sellWeightSum)
+                                             : 0.0);
+        m_lastDecisionContext.diversityScore = CalculateDirectionDiversityScore(selectedContributorIndices);
+        m_lastDecisionContext.convictionScore = (finalSignal == TRADE_SIGNAL_BUY) ? buyScore : sellScore;
+        m_lastDecisionContext.reason = StringFormat("ready_weight=%.3f/%.3f | deadband=%.3f | cost=%.2f | contributors=%s",
+                                                    readyLiveWeight,
+                                                    totalLiveWeight,
+                                                    m_conflictDeadband,
+                                                    m_lastDecisionContext.costScore,
+                                                    JoinContributorsWithContext(selectedContributorIndices));
 
-        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
+        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | readyWeight=%.3f/%.3f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
                     symbol,
                     buyScore,
                     sellScore,
                     m_quorumThreshold,
+                    readyLiveWeight,
+                    totalLiveWeight,
                     buyVotes,
                     sellVotes,
                     TradeSignalToString(finalSignal));
@@ -1106,6 +1240,16 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
     m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
     m_lastCycleSignalAfterQuorum = (cycleSignalsAfterQuorum > 0);
+    m_lastDecisionContext.symbol = symbol;
+    m_lastDecisionContext.signal = TRADE_SIGNAL_NONE;
+    m_lastDecisionContext.buyScore = buyScore;
+    m_lastDecisionContext.sellScore = sellScore;
+    m_lastDecisionContext.buySupport = buyWeightSum;
+    m_lastDecisionContext.sellSupport = sellWeightSum;
+    m_lastDecisionContext.readyLiveWeight = readyLiveWeight;
+    m_lastDecisionContext.totalLiveWeight = totalLiveWeight;
+    m_lastDecisionContext.costScore = 0.0;
+    m_lastDecisionContext.reason = (vetoReason != "") ? vetoReason : "direction_quorum_not_met";
     if(vetoReason != "")
     {
         PrintFormat("[CONSENSUS-VETO] %s | reason=%s | buyScore=%.3f | sellScore=%.3f | buyVoterCount=%d | sellVoterCount=%d",
@@ -1116,11 +1260,11 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                     buyVotes,
                     sellVotes);
     }
-    PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
-                symbol,
-                buyScore,
-                sellScore,
-                m_quorumThreshold,
+        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
+                    symbol,
+                    buyScore,
+                    sellScore,
+                    m_quorumThreshold,
                 buyVotes,
                 sellVotes,
                 TradeSignalToString(TRADE_SIGNAL_NONE));
@@ -1457,6 +1601,12 @@ bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
     return (m_lastContributorCount > 0 && ArraySize(m_lastSignalContributors) > 0);
 }
 
+bool CEnterpriseStrategyManager::GetLastDecisionContext(SConsensusDecisionContext &context) const
+{
+    context = m_lastDecisionContext;
+    return (m_lastDecisionContext.signal != TRADE_SIGNAL_NONE);
+}
+
 void CEnterpriseStrategyManager::GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                                                  ulong &featureSignals,
                                                                  ulong &shadowSignals,
@@ -1600,6 +1750,78 @@ bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) co
     if(!m_strategies[strategyIndex].liveVotingEnabled)
         return false;
     return true;
+}
+
+double CEnterpriseStrategyManager::GetStrategyReliabilityMultiplier(const int strategyIndex) const
+{
+    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
+        return 0.75;
+
+    double healthScore = m_strategies[strategyIndex].healthScore;
+    if(healthScore <= 0.0)
+        healthScore = 0.75;
+
+    return MathMax(0.55, MathMin(1.15, 0.65 + (0.50 * healthScore)));
+}
+
+double CEnterpriseStrategyManager::GetStrategyRoleVoteMultiplier(const int strategyIndex) const
+{
+    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
+        return 1.0;
+
+    ENUM_STRATEGY_ROLE role = (ENUM_STRATEGY_ROLE)m_strategies[strategyIndex].role;
+    if(role == CONTEXT_FEATURE)
+        return 0.85;
+    if(role == SHADOW_RESEARCH)
+        return 0.60;
+    return 1.0;
+}
+
+double CEnterpriseStrategyManager::CalculateDirectionDiversityScore(const int &strategyIndices[]) const
+{
+    if(ArraySize(strategyIndices) <= 0)
+        return 0.0;
+
+    bool roleSeen[3];
+    bool clusterSeen[4];
+    roleSeen[0] = false;
+    roleSeen[1] = false;
+    roleSeen[2] = false;
+    clusterSeen[0] = false;
+    clusterSeen[1] = false;
+    clusterSeen[2] = false;
+    clusterSeen[3] = false;
+
+    int roleCount = 0;
+    int clusterCount = 0;
+    for(int i = 0; i < ArraySize(strategyIndices); i++)
+    {
+        int idx = strategyIndices[i];
+        if(idx < 0 || idx >= m_strategyCount)
+            continue;
+
+        int role = m_strategies[idx].role;
+        if(role < 0 || role > 2)
+            role = 0;
+        if(!roleSeen[role])
+        {
+            roleSeen[role] = true;
+            roleCount++;
+        }
+
+        int cluster = m_strategies[idx].cluster;
+        if(cluster < 0 || cluster > 3)
+            cluster = 0;
+        if(!clusterSeen[cluster])
+        {
+            clusterSeen[cluster] = true;
+            clusterCount++;
+        }
+    }
+
+    double roleScore = MathMax(0.0, MathMin(1.0, (double)roleCount / 3.0));
+    double clusterScore = MathMax(0.0, MathMin(1.0, (double)clusterCount / 4.0));
+    return MathMax(0.0, MathMin(1.0, (roleScore * 0.55) + (clusterScore * 0.45)));
 }
 
 void CEnterpriseStrategyManager::AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated)
@@ -1933,6 +2155,31 @@ bool CEnterpriseStrategyManager::PopPositionAttribution(const ulong positionId, 
     return true;
 }
 
+void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, bool success)
+{
+    int idx = FindStrategyIndexByName(strategyName);
+    if(idx < 0 || idx >= m_strategyCount)
+        return;
+
+    if(success)
+        m_strategies[idx].successCount++;
+    else
+        m_strategies[idx].failCount++;
+
+    int totalOutcomes = m_strategies[idx].successCount + m_strategies[idx].failCount;
+    if(totalOutcomes <= 0)
+    {
+        m_strategies[idx].healthScore = 0.75;
+        return;
+    }
+
+    double realizedWinRate = (double)m_strategies[idx].successCount / (double)totalOutcomes;
+    double sampleTrust = MathMin(1.0, (double)totalOutcomes / 20.0);
+    double prior = 0.55;
+    double blendedWinRate = (prior * (1.0 - sampleTrust)) + (realizedWinRate * sampleTrust);
+    m_strategies[idx].healthScore = MathMax(0.35, MathMin(1.0, blendedWinRate));
+}
+
 //+------------------------------------------------------------------+
 //| OnNewBar - CRITICAL for zone scanning and chart drawings         |
 //| Must be called from main EA on each new bar                      |
@@ -2050,6 +2297,12 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                     ArrayCopy(m_closedTradeContributors, contributors);
                     m_closedTradeNetProfit = netProfit;
                     m_hasClosedTradeAttribution = (ArraySize(m_closedTradeContributors) > 0);
+                    for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
+                    {
+                        if(contributors[contributorIdx] == "")
+                            continue;
+                        UpdatePerformance(contributors[contributorIdx], success);
+                    }
                 }
 
                 // Reset cached contributor context after close in manager-only governance mode.

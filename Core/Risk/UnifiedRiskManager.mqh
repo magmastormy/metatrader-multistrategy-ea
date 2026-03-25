@@ -92,7 +92,7 @@ public:
                                     const bool enableMutex);
 
     // Register accepted risk usage only after successful execution.
-    void RegisterExecutedTradeRisk(const SValidationResult &validationResult);
+    void RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio = 1.0);
 
     double GetActiveRiskPerTradePercent() const { return m_activeRiskPerTradePercent; }
     double GetRemainingDailyRiskPercent();
@@ -296,7 +296,7 @@ void CUnifiedRiskManager::ConfigureClusterGovernance(const bool enabled,
 //+------------------------------------------------------------------+
 //| Register executed trade risk                                     |
 //+------------------------------------------------------------------+
-void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &validationResult)
+void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio)
 {
     if(!m_initialized)
         return;
@@ -306,8 +306,8 @@ void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &val
     double riskUsed = validationResult.riskPercent;
     if(riskUsed <= 0.0)
         riskUsed = m_activeRiskPerTradePercent;
-
-    m_dailyRiskUsedPercent += MathMax(0.0, riskUsed);
+    double normalizedFillRatio = MathMax(0.0, MathMin(1.0, fillRatio));
+    m_dailyRiskUsedPercent += MathMax(0.0, riskUsed * normalizedFillRatio);
 }
 
 //+------------------------------------------------------------------+

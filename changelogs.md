@@ -2,7 +2,20 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
-## [Unreleased] - 2026-03-24
+## [Unreleased] - 2026-03-25
+
+### Batch 33: Efficiency + Conviction Pipeline Upgrade (2026-03-25)
+- **Shared pipeline evidence:** `Core/Pipeline/UnifiedSignalPipeline.mqh` now caches structural engine work per symbol/timeframe/bar and emits reusable evidence (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass) instead of recomputing the same context on every strategy vote.
+- **Signal throughput recovery without bar-lowering:** pipeline and validator now allow bounded soft passes for near-threshold candidates when readiness/context/conviction evidence is strong, preserving quality gates while reducing avoidable attrition before consensus.
+- **Readiness-weighted consensus:** `Core/Management/EnterpriseStrategyManager.mqh` now computes directional conviction from adjusted live weight (`base weight x role multiplier x rolling healthScore`) and requires both weighted conviction and minimum ready-live-weight participation; conflict deadband prevents weak forced winners.
+- **Continuous strategy governance:** strategy trust is now updated through rolling `healthScore` from realized closed-trade outcomes, so live vote influence is continuous rather than purely binary.
+- **Timeframe conflict handling cleanup:** `Core/Signals/TimeframeConsistency.mqh` no longer neutralizes consensus through default hedging-prevention zeroing before quorum can act; timeframe resolution remains the authoritative conflict gate.
+- **Context-aware validator:** `Core/Signals/AdvancedSignalValidator.mqh` now scores confidence/confluence together with conviction, readiness, context, cost, diversity, and freshness, and the runtime now logs those dimensions on validation and rejection paths.
+- **Cycle-level candidate ranking:** `MultiStrategyAutonomousEA.mq5` now stages all risk-approved opportunities as `[SCAN-CANDIDATE]`, ranks them, and promotes a single `[SCAN-DECISION]` winner for shadow/live execution instead of sending the first acceptable symbol.
+- **Execution receipt accounting:** `Core/Trading/TradeManager.mqh` now emits `[EXECUTION-RECEIPT]`, partial fills emit `[FILL-DIFF]`, and `Core/Risk/UnifiedRiskManager.mqh` registers executed entry risk by fill ratio instead of always charging requested size.
+- **Telemetry efficiency:** `Core/Signals/SignalDiagnostics.mqh` now batches file flushes to reduce hot-path disk overhead.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to capture the new evidence, ranking, and execution-accounting flow.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
 
 ### Batch 32: Consensus Veto Telemetry + Symbol-Scoped Spread Gate + Trend Readiness Recovery (2026-03-24)
 - **Explicit post-quorum veto logs:** `Core/Management/EnterpriseStrategyManager.mqh` now emits `[CONSENSUS-VETO]` when a candidate is nulled after quorum by timeframe conflict resolution, dual-direction tie policy, or the intrabar single-voter confidence floor.

@@ -1,7 +1,7 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-03-24
+- Last Updated: 2026-03-25
 - Status: Active baseline
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
@@ -37,10 +37,16 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Startup emits `[ACCOUNT-CAPACITY]` min-lot affordability diagnostics for each configured symbol before live execution begins.
 - Post-trade cooldown, total-position caps, unprotected-position vetoes, and per-symbol capacity now pause entry only; signal generation and validator telemetry continue running while the EA is blocked from sending.
 - Validator spread-shock state is symbol-scoped, so one symbol's transient spread event no longer poisons validator spread decisions on the rest of the portfolio.
-- Quorum uses normalized weighted confidence pooling (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy weights) instead of binary voter counts.
+- Quorum uses normalized weighted conviction pooling (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy weights, readiness participation, rolling strategy health) instead of binary voter counts.
 - Curated core strategies now have explicit intrabar eligibility controls (`InpIntrabarEligibilityMomentum`, `InpIntrabarEligibilityUnifiedICT`) plus opt-in smoke-test toggles for Fibonacci and Support/Resistance (`InpIntrabarEligibilityFibonacci`, `InpIntrabarEligibilitySupportResistance`).
 - Non-AI strategy throughput is controlled by dedicated pipeline confidence and validator profile inputs (confidence + confluence + quality) instead of the AI threshold (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`, `InpValidator*MinConfluence`, `InpValidator*MinQuality`).
 - Consensus vote admission now reuses the pipeline's effective confidence floor for the current evaluation, so regime-relaxed pipeline passes are not discarded before quorum.
+- Pipeline engine work is now cached per symbol/timeframe/bar and converted into a shared evidence snapshot (`readiness`, `context`, `cost`), reducing duplicate hot-path indicator/structure churn across strategies.
+- Pipeline and validator both support bounded soft-pass behavior for near-threshold signals when readiness, context, and conviction are strong, so more valid trades survive to consensus without widening bad-signal admission.
+- Consensus is now readiness-aware and reliability-aware: live vote weight is adjusted by role, rolling strategy health, ready-live weight share, and a directional deadband before a side is allowed to win.
+- Strategy governance is now continuous rather than purely binary: role/cluster metadata still exists, but live vote impact is modulated by rolling `healthScore` and reliability multipliers instead of treating every enabled strategy as equally trusted at all times.
+- The runtime now scans the full symbol set, stages all risk-approved candidates, ranks them by quality/conviction/context/readiness/cost/diversity, and only then selects the best trade for the cycle.
+- Live execution now produces an execution receipt (`requested`, `filled`, `retcode`, `requestId`, retries) and daily risk usage is registered against actual fill ratio instead of always charging the requested size.
 - Post-quorum nullification now emits `[CONSENSUS-VETO]` so timeframe-resolution and single-voter safety drops are visible without inferring them from a `signal=NONE` quorum line.
 - `CRegimeEngine` can temporarily reuse its most recent valid same-context snapshot on transient warmup / `CopyBuffer` / handle-init faults, and self-resets handles after repeated data faults.
 
@@ -65,11 +71,15 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[CONSENSUS-STRATEGY]`: per-symbol strategy-level none-reason counters (Momentum/Unified ICT buckets).
 - `[STRATEGY-REJECTS]`: heartbeat aggregate strategy-level reject counters.
 - `[SIGNAL-REJECTED]`: validator rejection reason.
+- `[SCAN-CANDIDATE]`: risk-approved candidate staged for end-of-cycle ranking.
+- `[SCAN-DECISION]`: top-ranked candidate selected for shadow/live execution.
 - `[ENTERPRISE-BLOCKED]`: approved signal suppressed by cooldown, capacity, or protection gates before risk/execution.
 - `[RISK-CONTRACT]`: authoritative pre-trade risk rejection reason with preserved portfolio veto detail.
 - `[AI-VOTE]`: adapter liveness and vote counts.
 - `[SHADOW-TRADE]`: shadow execution events.
 - `[TRADE-CONFIRMED]`: confirmed deal lifecycle events from `OnTradeTransaction`.
+- `[EXECUTION-RECEIPT]`: broker execution receipt including requested/fill volume, retcode, and retry count.
+- `[FILL-DIFF]`: partial-fill delta between requested and executed size.
 - `[PIPELINE-THRESHOLD]`: confidence-threshold source (`REGIME_RANGE`, `REGIME_TREND_RELAX`, `REGIME_BREAKOUT_RELAX`, `REGIME_CHAOS`, `REGIME_ENGINE_WARMUP`) with effective values.
 - `[REGIME-STATE]`: regime state, transient-fault reuse (`REUSE_LAST_VALID`), and repeated-fault handle self-heal (`HANDLE_RESET`).
 - `[TrendEngine][READINESS-FAULT]`: mature-series indicator readiness fault with bounded indicator-set reinitialization.
@@ -166,7 +176,17 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Scan-through-cooldown behavior**: cooldown and other entry blocks no longer short-circuit the symbol evaluation loop, so `[CONSENSUS-QUORUM]`, `[SIGNAL-VALIDATED]`, and heartbeat funnel telemetry continue after a live fill.
 - **Entry-only suppression**: approved signals that cannot proceed because of cooldown, portfolio caps, unprotected positions, or per-symbol capacity now emit explicit `[ENTERPRISE-BLOCKED]` diagnostics instead of disappearing from the runtime path.
 
+## Efficiency + Conviction Upgrade (2026-03-25)
+- **Shared pipeline evidence**: `UnifiedSignalPipeline` now caches structural engine state per symbol/timeframe/bar and emits a reusable evidence snapshot (`readiness`, `context`, `cost`, effective confidence floor, soft-threshold pass) instead of recomputing the same context for every strategy vote.
+- **Smarter consensus**: `EnterpriseStrategyManager` now computes directional conviction from adjusted strategy weight (`base weight x role multiplier x rolling healthScore`) and requires both weighted conviction and minimum ready-live-weight participation before a side wins.
+- **Conflict handling without false neutralization**: timeframe resolution still owns mixed-timeframe conflict handling, but the old hot-path hedging neutralization no longer wipes out otherwise valid directional consensus before quorum can act.
+- **Context-aware validator**: `AdvancedSignalValidator` now grades signals with consensus/path evidence (`conviction`, `readiness`, `context`, `cost`, `diversity`, `freshness`) and allows bounded soft passes near the profile floor when the broader setup is strong.
+- **Cycle-level candidate ranking**: the EA no longer fires the first acceptable symbol; it stages all risk-approved opportunities, logs them as `[SCAN-CANDIDATE]`, and executes only the highest-ranked candidate via `[SCAN-DECISION]`.
+- **Execution accounting fidelity**: `TradeManager` now emits `[EXECUTION-RECEIPT]`, partial fills emit `[FILL-DIFF]`, and `UnifiedRiskManager` registers consumed daily entry risk against actual fill ratio.
+- **Lower telemetry overhead**: `SignalDiagnostics` now batches file flushes instead of forcing an on-disk flush on every write.
+
 ## Weighted Quorum + Live Strategy Promotion Update (2026-03-16)
+- **Historical note**: this batch introduced weighted confidence quorum; the current runtime extends it further with readiness/health-based conviction weighting from the 2026-03-25 efficiency upgrade.
 - **All retained strategies vote live**: every enabled retained strategy is registered as a live primary voter (no feature/shadow suppression).
 - **Weighted quorum**: consensus now passes when normalized weighted confidence crosses `InpQuorumThreshold` and `InpMinLiveVoters` is satisfied; per-evaluation scores are emitted as `[CONSENSUS-QUORUM]`.
 - **Operator tuning**: per-strategy weights are configurable via inputs (`InpWeight*`) without code changes.

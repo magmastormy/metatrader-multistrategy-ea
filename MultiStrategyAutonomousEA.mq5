@@ -36,6 +36,8 @@ input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained 
 input group "Consensus Quorum"
 input double InpQuorumThreshold = 0.55;        // Min normalized weighted score to pass quorum
 input int    InpMinLiveVoters   = 1;           // Min agreeing live voters (floor safety)
+input double InpConsensusConflictDeadband = 0.05; // Minimum buy/sell score delta required to break directional tie
+input double InpConsensusMinReadyWeightRatio = 0.45; // Minimum ready-live-weight share required before consensus can trade
 
 //--- Strategy weights (used in weighted quorum)
 input group "Strategy Weights"
@@ -320,6 +322,95 @@ datetime lastTickTime = 0;
 int tickCounter = 0;
 int barCounter = 0;
 bool isNewBar = false;
+
+struct SApprovedTradeCandidate
+{
+    bool valid;
+    string symbol;
+    ENUM_TRADE_SIGNAL signal;
+    ENUM_ORDER_TYPE orderType;
+    ENUM_SIGNAL_EVAL_MODE evalMode;
+    ENUM_VALIDATION_PROFILE validationProfile;
+    double consensusConfidence;
+    double tradeConfidence;
+    double qualityScore;
+    double convictionScore;
+    double contextScore;
+    double readinessScore;
+    double costScore;
+    double diversityScore;
+    double rankingScore;
+    int confluence;
+    double entryPrice;
+    double atrValue;
+    double stopLossPips;
+    double takeProfitPips;
+    double lotSize;
+    double slPrice;
+    double tpPrice;
+    string signalType;
+    string strategyRoleTag;
+    string strategyClusterTag;
+    string strategyClusterCode;
+    string contributorSummary;
+    bool hasAIContributor;
+    SValidationResult riskResult;
+
+    SApprovedTradeCandidate()
+    {
+        valid = false;
+        symbol = "";
+        signal = TRADE_SIGNAL_NONE;
+        orderType = ORDER_TYPE_BUY;
+        evalMode = EVAL_MODE_NEW_BAR;
+        validationProfile = VALIDATION_PROFILE_NEW_BAR;
+        consensusConfidence = 0.0;
+        tradeConfidence = 0.0;
+        qualityScore = 0.0;
+        convictionScore = 0.0;
+        contextScore = 0.0;
+        readinessScore = 0.0;
+        costScore = 0.0;
+        diversityScore = 0.0;
+        rankingScore = 0.0;
+        confluence = 0;
+        entryPrice = 0.0;
+        atrValue = 0.0;
+        stopLossPips = 0.0;
+        takeProfitPips = 0.0;
+        lotSize = 0.0;
+        slPrice = 0.0;
+        tpPrice = 0.0;
+        signalType = "";
+        strategyRoleTag = "PRIMARY_ALPHA";
+        strategyClusterTag = "NONE";
+        strategyClusterCode = "N";
+        contributorSummary = "";
+        hasAIContributor = false;
+        riskResult.approved = false;
+        riskResult.message = "";
+        riskResult.adjustedLotSize = 0.0;
+        riskResult.riskPercent = 0.0;
+        riskResult.portfolioRisk = 0.0;
+        riskResult.correlationRisk = 0.0;
+        riskResult.requiresAdjustment = false;
+        riskResult.severity = ERROR_LEVEL_INFO;
+    }
+};
+
+double CalculateCandidateRankingScore(const SApprovedTradeCandidate &candidate)
+{
+    double confluenceScore = MathMin(1.0, (double)candidate.confluence / 4.0);
+    double score = 0.0;
+    score += candidate.qualityScore * 0.30;
+    score += candidate.convictionScore * 0.25;
+    score += candidate.contextScore * 0.15;
+    score += candidate.readinessScore * 0.10;
+    score += candidate.costScore * 0.10;
+    score += candidate.diversityScore * 0.05;
+    score += confluenceScore * 0.05;
+    return MathMax(0.0, MathMin(1.0, score));
+}
 
 //+------------------------------------------------------------------+
 //| Helper: Initialize AI systems                                    |
@@ -1816,6 +1907,8 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     manager.SetMinQuorum(minLiveVoters);
     manager.SetIntrabarMinQuorum(minLiveVoters);
     manager.SetQuorumThreshold(quorumThreshold);
+    manager.SetConflictDeadband(MathMax(0.0, MathMin(0.50, InpConsensusConflictDeadband)));
+    manager.SetMinReadyWeightRatio(MathMax(0.10, MathMin(1.0, InpConsensusMinReadyWeightRatio)));
     manager.SetIntrabarDynamicQuorumEnabled(InpIntrabarDynamicQuorumEnabled);
     manager.SetIntrabarSingleVoterMinConfidence(InpIntrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(InpDeadlockAttributionIntervalSec);
@@ -2620,6 +2713,7 @@ void ProcessTradingLogic(bool fromTimer)
     if(allowSignalEvaluation && ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
         // Check entry gates, but keep signal evaluation running even while entry is paused.
+        SApprovedTradeCandidate bestCandidate;
         datetime tickTime = TimeCurrent();
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
         bool cooldownBlocked = (secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0);
@@ -2705,57 +2799,73 @@ void ProcessTradingLogic(bool fromTimer)
                     continue;
                 }
 
-                // Advanced signal validation
-                bool signalApproved = false;
-                if(enterpriseSignal != TRADE_SIGNAL_NONE && g_signalValidator != NULL)
-                {
-                    // Get ATR for validation
-                    CIndicatorManager* indManager = CIndicatorManager::Instance();
-                    int atrHandle = INVALID_HANDLE;
-                    double atrValue = 0.0;
-                    if(indManager != NULL)
-                    {
-                        atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
-                        double atr[];
-                        ArraySetAsSeries(atr, true);
-                        if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
-                            atrValue = atr[0];
-                    }
+                SConsensusDecisionContext decisionContext;
+                symbolManager.GetLastDecisionContext(decisionContext);
 
-                    // Validate signal
+                CIndicatorManager* indManager = CIndicatorManager::Instance();
+                int atrHandle = INVALID_HANDLE;
+                if(indManager != NULL)
+                    atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
+
+                double atr[];
+                ArraySetAsSeries(atr, true);
+                double atrValue = 0.0;
+                bool atrReady = (atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0 && atr[0] > 0.0);
+                if(atrReady)
+                    atrValue = atr[0];
+
+                bool signalApproved = false;
+                double qualityScore = confidence;
+                double tradeConfidence = confidence;
+                if(g_signalValidator != NULL)
+                {
+                    SSignalValidationContext validationContext;
+                    validationContext.convictionScore = MathMax(0.0, MathMin(1.0, decisionContext.convictionScore));
+                    validationContext.readinessScore = MathMax(0.0, MathMin(1.0, decisionContext.readinessScore));
+                    validationContext.contextScore = MathMax(0.0, MathMin(1.0, decisionContext.contextScore));
+                    validationContext.diversityScore = MathMax(0.0, MathMin(1.0, decisionContext.diversityScore));
+                    validationContext.costScore = MathMax(0.0, MathMin(1.0, decisionContext.costScore));
+                    validationContext.freshnessScore = (evalMode == EVAL_MODE_INTRABAR) ? 0.95 : 1.0;
+
                     SSignalValidationResult validation = g_signalValidator.ValidateSignal(
-                        currentSymbol, enterpriseSignal, confidence, confluence, atrValue, validationProfile);
+                        currentSymbol, enterpriseSignal, confidence, confluence, atrValue, validationProfile, validationContext);
 
                     if(!validation.isValid)
                     {
                         g_hbValidatorRejects++;
-                        // IMPROVED: Always log rejections for debugging (was only every 50 calls)
                         Print("[SIGNAL-REJECTED] ", currentSymbol, " | Reason: ", validation.reason,
                               " | Confluence: ", confluence, " | Quality: ", DoubleToString(validation.qualityScore, 2),
-                              " | Conf: ", DoubleToString(confidence, 2));
-                        continue;  // Skip this signal
+                              " | Conf: ", DoubleToString(confidence, 2),
+                              " | Conviction: ", DoubleToString(decisionContext.convictionScore, 2),
+                              " | Readiness: ", DoubleToString(decisionContext.readinessScore, 2),
+                              " | Context: ", DoubleToString(decisionContext.contextScore, 2),
+                              " | Cost: ", DoubleToString(decisionContext.costScore, 2));
+                        continue;
                     }
 
-                    // Signal passed validation - proceed with trade
+                    qualityScore = validation.qualityScore;
+                    tradeConfidence = MathMax(0.0, MathMin(1.0, (confidence * 0.60) + (validation.qualityScore * 0.40)));
                     string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
                     Print("[SIGNAL-VALIDATED] ", currentSymbol, " | Signal: ", signalType,
-                          " | Confidence: ", confidence, " | Confluence: ", confluence,
-                          " | Quality: ", validation.qualityScore);
+                          " | ConsensusConf: ", confidence, " | TradeConf: ", tradeConfidence,
+                          " | Confluence: ", confluence, " | Quality: ", validation.qualityScore,
+                          " | Conviction: ", DoubleToString(decisionContext.convictionScore, 2),
+                          " | Readiness: ", DoubleToString(decisionContext.readinessScore, 2),
+                          " | Context: ", DoubleToString(decisionContext.contextScore, 2),
+                          " | Cost: ", DoubleToString(decisionContext.costScore, 2));
                     g_hbSignalsValidated++;
-
-                    // Use validated confidence
-                    confidence = validation.qualityScore;  // Use quality score as final confidence
                     signalApproved = true;
                 }
-                else if(enterpriseSignal != TRADE_SIGNAL_NONE)
+                else
                 {
                     double fallbackMinConfidence = (validationProfile == VALIDATION_PROFILE_INTRABAR)
                                                   ? MathMax(0.0, MathMin(1.0, InpValidatorIntrabarMinConfidence))
                                                   : MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence));
                     if(confidence >= fallbackMinConfidence)
                     {
-                        // Fallback if validator not initialized
                         string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+                        qualityScore = confidence;
+                        tradeConfidence = confidence;
                         Print("[ENTERPRISE] ", currentSymbol, " | Signal: ", signalType,
                               " | Confidence: ", confidence,
                               " | Confluence: ", confluence,
@@ -2825,7 +2935,7 @@ void ProcessTradingLogic(bool fromTimer)
                                     currentSymbol,
                                     signalType,
                                     blockReason,
-                                    confidence,
+                                    tradeConfidence,
                                     confluence);
 
                         if(symbolPositionCapBlocked && externalSymbolPositions > 0)
@@ -2846,26 +2956,13 @@ void ProcessTradingLogic(bool fromTimer)
                         continue;
                     }
 
-                    // Execute trade if risk checks pass
+                    // Candidate construction continues with the ATR snapshot already fetched for validation.
                     ENUM_ORDER_TYPE orderType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
                     // Get current price
                     double entryPrice = (enterpriseSignal == TRADE_SIGNAL_BUY) ?
                                        SymbolInfoDouble(currentSymbol, SYMBOL_ASK) :
                                        SymbolInfoDouble(currentSymbol, SYMBOL_BID);
-
-                    // Calculate ATR for adaptive SL/TP using IndicatorManager
-                    CIndicatorManager* indManager = CIndicatorManager::Instance();
-                    int atrHandle = INVALID_HANDLE;
-                    if(indManager != NULL)
-                        atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
-
-                    double atr[];
-                    ArraySetAsSeries(atr, true);
-                    double atrValue = 0.0;
-                    bool atrReady = (atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0 && atr[0] > 0.0);
-                    if(atrReady)
-                        atrValue = atr[0];
 
                     double pointValue = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
                     if(pointValue <= 0.0)
@@ -2955,12 +3052,16 @@ void ProcessTradingLogic(bool fromTimer)
                     tradeReq.lotSize = 0.0; // Lot size not known yet, validation gate will validate prelim checks
                     tradeReq.stopLossPips = stopLossPips;
                     tradeReq.takeProfitPips = takeProfitPips;
-                    tradeReq.confidence = confidence;
+                    tradeReq.confidence = tradeConfidence;
                     tradeReq.strategy = "EnterpriseConsensus";
-                    tradeReq.reasoning = StringFormat("role=%s | cluster=%s | contributors=%s",
+                    tradeReq.reasoning = StringFormat("role=%s | cluster=%s | contributors=%s | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
                                                       strategyRoleTag,
                                                       strategyClusterTag,
-                                                      contributorSummary);
+                                                      contributorSummary,
+                                                      decisionContext.convictionScore,
+                                                      decisionContext.readinessScore,
+                                                      decisionContext.contextScore,
+                                                      decisionContext.costScore);
                     tradeReq.strategyRole = strategyRoleTag;
                     tradeReq.strategyCluster = strategyClusterTag;
                     tradeReq.contributorContext = contributorSummary;
@@ -2982,7 +3083,7 @@ void ProcessTradingLogic(bool fromTimer)
                             }
 
                             // Calculate optimal lot size
-                            double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, confidence);
+                            double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, tradeConfidence);
 
                             // Update request with actual lot size and re-validate
                             tradeReq.lotSize = lotSize;
@@ -2996,112 +3097,188 @@ void ProcessTradingLogic(bool fromTimer)
                                 double slPrice = tradeManager.CalculateStopLoss(currentSymbol, orderType, entryPrice, stopLossPips);
                                 double tpPrice = tradeManager.CalculateTakeProfit(currentSymbol, orderType, entryPrice, takeProfitPips);
 
-                                datetime aiPredictionTime = 0;
-                                bool aiPredictionRecorded = false;
-                                if(!InpShadowMode && InpEnableAIMode && hasAIContributor)
-                                {
-                                    aiPredictionTime = TimeCurrent();
-                                    aiFeedback.RecordPrediction(currentSymbol,
-                                                                enterpriseSignal,
-                                                                confidence,
-                                                                MathMax(0.0, 1.0 - confidence),
-                                                                g_currentRegime,
-                                                                aiPredictionTime);
-                                    aiPredictionRecorded = (aiPredictionTime > 0);
-                                }
+                                SApprovedTradeCandidate candidate;
+                                candidate.valid = true;
+                                candidate.symbol = currentSymbol;
+                                candidate.signal = enterpriseSignal;
+                                candidate.orderType = orderType;
+                                candidate.evalMode = evalMode;
+                                candidate.validationProfile = validationProfile;
+                                candidate.consensusConfidence = confidence;
+                                candidate.tradeConfidence = tradeConfidence;
+                                candidate.qualityScore = qualityScore;
+                                candidate.convictionScore = MathMax(0.0, MathMin(1.0, decisionContext.convictionScore));
+                                candidate.contextScore = MathMax(0.0, MathMin(1.0, decisionContext.contextScore));
+                                candidate.readinessScore = MathMax(0.0, MathMin(1.0, decisionContext.readinessScore));
+                                candidate.costScore = MathMax(0.0, MathMin(1.0, decisionContext.costScore));
+                                candidate.diversityScore = MathMax(0.0, MathMin(1.0, decisionContext.diversityScore));
+                                candidate.confluence = confluence;
+                                candidate.entryPrice = entryPrice;
+                                candidate.atrValue = atrValue;
+                                candidate.stopLossPips = stopLossPips;
+                                candidate.takeProfitPips = takeProfitPips;
+                                candidate.lotSize = lotSize;
+                                candidate.slPrice = slPrice;
+                                candidate.tpPrice = tpPrice;
+                                candidate.signalType = signalType;
+                                candidate.strategyRoleTag = strategyRoleTag;
+                                candidate.strategyClusterTag = strategyClusterTag;
+                                candidate.strategyClusterCode = strategyClusterCode;
+                                candidate.contributorSummary = contributorSummary;
+                                candidate.hasAIContributor = hasAIContributor;
+                                candidate.riskResult = riskResult;
+                                candidate.rankingScore = CalculateCandidateRankingScore(candidate);
 
-                                if(InpShadowMode)
-                                {
-                                    g_hbShadowTrades++;
-                                    g_hbSignalsSent++;
-                                    g_lastTradeTime = tickTime;
-                                    PrintFormat("[SHADOW-TRADE] %s | %s | lot=%.2f | conf=%.2f | confluence=%d | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
-                                                currentSymbol, signalType, lotSize, confidence, confluence,
-                                                strategyRoleTag, strategyClusterTag, contributorSummary, slPrice, tpPrice);
+                                bool replaceBestCandidate = (!bestCandidate.valid || candidate.rankingScore > bestCandidate.rankingScore);
+                                PrintFormat("[SCAN-CANDIDATE] %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | selected=%s",
+                                            candidate.symbol,
+                                            candidate.signalType,
+                                            candidate.rankingScore,
+                                            candidate.qualityScore,
+                                            candidate.convictionScore,
+                                            candidate.contextScore,
+                                            candidate.readinessScore,
+                                            candidate.costScore,
+                                            candidate.confluence,
+                                            replaceBestCandidate ? "true" : "false");
 
-                                    // Stop after first shadow trade to preserve cooldown semantics.
-                                    break;
-                                }
-
-                                string predictionId = "";
-                                CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(currentSymbol);
-                                if(symbolNet == NULL)
-                                    symbolNet = neuralNetStrategy;
-
-                                if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
-                                    symbolNet.ReservePredictionForSignal(enterpriseSignal, predictionId, 600);
-
-                                string tradeComment = BuildClusterTaggedTradeComment(strategyClusterCode, predictionId);
-
-                                // Execute through TradeManager to keep one authoritative execution stack
-                                bool tradeSuccess = tradeManager.OpenPosition(
-                                    currentSymbol,
-                                    orderType,
-                                    lotSize,
-                                    entryPrice,
-                                    stopLossPips,
-                                    takeProfitPips,
-                                    tradeComment,
-                                    (uint)InpMagicNumber
-                                );
-
-                                // Check trade result
-                                if(!tradeSuccess)
-                                {
-                                    if(symbolNet != NULL && predictionId != "")
-                                        symbolNet.ReleasePredictionReservation(predictionId);
-
-                                    int errorCode = GetLastError();
-                                    uint brokerRetcode = tradeManager.GetLastRetcode();
-                                    uint requestId = tradeManager.GetLastRequestId();
-                                    Print("[TRADE-ERROR] Failed to execute ", signalType, " order on ", currentSymbol,
-                                          " | Lot Size: ", lotSize,
-                                          " | Error Code: ", errorCode,
-                                          " | Retcode: ", brokerRetcode,
-                                          " | RequestID: ", requestId);
-                                }
-                                else
-                                {
-                                    ulong ticket = tradeManager.GetLastTicket();
-                                    double brokerPrice = tradeManager.GetLastRequestedPrice();
-                                    double brokerSL = tradeManager.GetLastRequestedStopLoss();
-                                    double brokerTP = tradeManager.GetLastRequestedTakeProfit();
-                                    uint requestId = tradeManager.GetLastRequestId();
-                                    g_hbTradesOpened++;
-                                    g_hbSignalsSent++;
-                                    
-                                    // Register realized risk usage after successful execution.
-                                    unifiedRiskManager.RegisterExecutedTradeRisk(riskResult);
-
-                                    // Update last trade time for cooldown
-                                    g_lastTradeTime = tickTime;
-
-                                    Print("[TRADE-SUCCESS] ", signalType, " order executed on ", currentSymbol,
-                                          " | Lot Size: ", lotSize,
-                                          " | Price: ", brokerPrice,
-                                          " | SL: ", brokerSL, " (", (int)stopLossPips, " pips)",
-                                          " | TP: ", brokerTP, " (", (int)takeProfitPips, " pips)",
-                                          " | Ticket: ", ticket,
-                                          " | RequestID: ", requestId,
-                                          " | Role: ", strategyRoleTag,
-                                          " | Cluster: ", strategyClusterTag,
-                                          " | Contributors: ", contributorSummary);
-
-                                    if(aiPredictionRecorded && requestId > 0)
-                                        UpsertAIPendingRequestMap(requestId, currentSymbol, aiPredictionTime, enterpriseSignal);
-
-                                    // Stop after first successful trade to enforce cooldown while still
-                                    // allowing the rest of runtime management below in this cycle.
-                                    break;
-                                }
+                                if(replaceBestCandidate)
+                                    bestCandidate = candidate;
                             }
                             else
                             {
                                 Print("[AI-GLOBAL] Invalid lot size calculated for ", currentSymbol, " - trade skipped");
                             }
                         }
-                    // FIX: Removed IndicatorRelease(atrHandle) because handles from CIndicatorManager are shared/cached.
-                    // Releasing them here invalidates the handle for other parts of the EA.
+                }
+            }
+
+            if(bestCandidate.valid)
+            {
+                PrintFormat("[SCAN-DECISION] %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | diversity=%.2f | confluence=%d | contributors=%s",
+                            bestCandidate.symbol,
+                            bestCandidate.signalType,
+                            bestCandidate.rankingScore,
+                            bestCandidate.qualityScore,
+                            bestCandidate.convictionScore,
+                            bestCandidate.contextScore,
+                            bestCandidate.readinessScore,
+                            bestCandidate.costScore,
+                            bestCandidate.diversityScore,
+                            bestCandidate.confluence,
+                            bestCandidate.contributorSummary);
+
+                datetime aiPredictionTime = 0;
+                bool aiPredictionRecorded = false;
+                if(!InpShadowMode && InpEnableAIMode && bestCandidate.hasAIContributor)
+                {
+                    aiPredictionTime = TimeCurrent();
+                    aiFeedback.RecordPrediction(bestCandidate.symbol,
+                                                bestCandidate.signal,
+                                                bestCandidate.tradeConfidence,
+                                                MathMax(0.0, 1.0 - bestCandidate.tradeConfidence),
+                                                g_currentRegime,
+                                                aiPredictionTime);
+                    aiPredictionRecorded = (aiPredictionTime > 0);
+                }
+
+                if(InpShadowMode)
+                {
+                    g_hbShadowTrades++;
+                    g_hbSignalsSent++;
+                    g_lastTradeTime = tickTime;
+                    PrintFormat("[SHADOW-TRADE] %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                                bestCandidate.symbol,
+                                bestCandidate.signalType,
+                                bestCandidate.lotSize,
+                                bestCandidate.tradeConfidence,
+                                bestCandidate.qualityScore,
+                                bestCandidate.convictionScore,
+                                bestCandidate.contextScore,
+                                bestCandidate.readinessScore,
+                                bestCandidate.costScore,
+                                bestCandidate.confluence,
+                                bestCandidate.strategyRoleTag,
+                                bestCandidate.strategyClusterTag,
+                                bestCandidate.contributorSummary,
+                                bestCandidate.slPrice,
+                                bestCandidate.tpPrice);
+                }
+                else
+                {
+                    string predictionId = "";
+                    CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(bestCandidate.symbol);
+                    if(symbolNet == NULL)
+                        symbolNet = neuralNetStrategy;
+
+                    if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
+                        symbolNet.ReservePredictionForSignal(bestCandidate.signal, predictionId, 600);
+
+                    string tradeComment = BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
+
+                    bool tradeSuccess = tradeManager.OpenPosition(
+                        bestCandidate.symbol,
+                        bestCandidate.orderType,
+                        bestCandidate.lotSize,
+                        bestCandidate.entryPrice,
+                        bestCandidate.stopLossPips,
+                        bestCandidate.takeProfitPips,
+                        tradeComment,
+                        (uint)InpMagicNumber
+                    );
+
+                    STradeExecutionReceipt executionReceipt;
+                    tradeManager.GetLastExecutionReceipt(executionReceipt);
+
+                    if(!tradeSuccess)
+                    {
+                        if(symbolNet != NULL && predictionId != "")
+                            symbolNet.ReleasePredictionReservation(predictionId);
+
+                        int errorCode = GetLastError();
+                        Print("[TRADE-ERROR] Failed to execute ", bestCandidate.signalType, " order on ", bestCandidate.symbol,
+                              " | Lot Size: ", bestCandidate.lotSize,
+                              " | Error Code: ", errorCode,
+                              " | Retcode: ", executionReceipt.retcode,
+                              " | RequestID: ", executionReceipt.requestId,
+                              " | Retries: ", executionReceipt.retryCount);
+                    }
+                    else
+                    {
+                        double fillRatio = 1.0;
+                        if(executionReceipt.requestedVolume > 0.0 && executionReceipt.filledVolume > 0.0)
+                            fillRatio = MathMin(1.0, executionReceipt.filledVolume / executionReceipt.requestedVolume);
+
+                        g_hbTradesOpened++;
+                        g_hbSignalsSent++;
+                        unifiedRiskManager.RegisterExecutedTradeRisk(bestCandidate.riskResult, fillRatio);
+                        g_lastTradeTime = tickTime;
+
+                        if(fillRatio < 0.999)
+                        {
+                            PrintFormat("[FILL-DIFF] %s | requested=%.2f | filled=%.2f | fill_ratio=%.3f | retcode=%u",
+                                        bestCandidate.symbol,
+                                        executionReceipt.requestedVolume,
+                                        executionReceipt.filledVolume,
+                                        fillRatio,
+                                        executionReceipt.retcode);
+                        }
+
+                        Print("[TRADE-SUCCESS] ", bestCandidate.signalType, " order executed on ", bestCandidate.symbol,
+                              " | Lot Size: ", executionReceipt.filledVolume > 0.0 ? executionReceipt.filledVolume : bestCandidate.lotSize,
+                              " | Price: ", executionReceipt.averagePrice,
+                              " | SL: ", tradeManager.GetLastRequestedStopLoss(), " (", (int)bestCandidate.stopLossPips, " pips)",
+                              " | TP: ", tradeManager.GetLastRequestedTakeProfit(), " (", (int)bestCandidate.takeProfitPips, " pips)",
+                              " | Ticket: ", tradeManager.GetLastTicket(),
+                              " | RequestID: ", executionReceipt.requestId,
+                              " | Role: ", bestCandidate.strategyRoleTag,
+                              " | Cluster: ", bestCandidate.strategyClusterTag,
+                              " | Contributors: ", bestCandidate.contributorSummary,
+                              " | Ranking: ", DoubleToString(bestCandidate.rankingScore, 3));
+
+                        if(aiPredictionRecorded && executionReceipt.requestId > 0)
+                            UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
+                    }
                 }
             }
     }

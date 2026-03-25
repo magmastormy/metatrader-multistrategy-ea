@@ -1,7 +1,7 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-03-24
+- Last Updated: 2026-03-25
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
 
@@ -24,6 +24,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - reconstruct cooldown/trade-timing state from EA-owned open positions and deal history on startup
   - maintain cadence loops (new-bar/intrabar)
   - dispatch per-symbol evaluations
+  - rank approved candidates across symbols before execution
   - own the non-AI confidence policy inputs for pipeline and validator stages
   - coordinate validator/risk/execution path
   - handle runtime telemetry and deinitialization
@@ -37,6 +38,9 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - resolve cross-timeframe vote conflicts via `CTimeframeConsistency`
   - dispatch `OnNewBar` to each strategy using its registered timeframe
   - apply normalized weighted quorum rules by evaluation mode (new-bar vs intrabar eligible pool)
+  - modulate live vote influence by role multiplier and rolling strategy `healthScore`
+  - compute conviction using pipeline evidence (`readiness`, `context`, `cost`) rather than raw confidence alone
+  - require minimum ready-live-weight participation and conflict deadband before directional selection
   - admit votes using the active pipeline confidence floor for that evaluation (including regime-relaxed thresholds)
   - enforce single-voter intrabar confidence floor
   - expose per-cycle funnel snapshots and interval consensus diagnostics snapshots
@@ -46,14 +50,17 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 ### 2.3 Pipeline domain
 - Class: `CUnifiedSignalPipeline`
 - Responsibilities:
+  - cache structural/indicator context once per symbol/timeframe/bar for reuse across strategy votes
   - apply trend/volatility/liquidity/structure/confidence filters
   - apply deterministic regime + cost viability pre-gate via `CRegimeEngine`
+  - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass)
+  - allow bounded soft-threshold promotion when near-threshold confidence is supported by strong readiness/context evidence
   - tolerate transient regime data faults by reusing a recent same-context valid snapshot when safe
   - trigger bounded `CRegimeEngine` handle self-heal after repeated data faults
   - apply bounded weak-regime intrabar confidence threshold uplift (`min(base+cap, base*multiplier)`) using `CRegimeEngine` snapshot state as the authority
   - emit threshold-source telemetry (`[PIPELINE-THRESHOLD]`)
   - emit regime/cost veto telemetry (`[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`)
-  - normalize decision hygiene before final consensus acceptance
+  - normalize decision hygiene before final consensus acceptance without hot-path hedging neutralization
 
 ### 2.4 AI adaptation domain
 - Class: `CAIStrategyOrchestrator`
@@ -73,7 +80,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - enforce cluster-aware governance (same-symbol opposing-cluster mutex + per-cluster caps) through `CRiskValidationGate`
   - split budget telemetry (`entry`, `mtm`, `open_exposure`, `effective`) for operator clarity
   - expose unprotected-position state for runtime remediation workflows
-  - executed-risk registration after successful synchronous sends
+  - executed-risk registration after successful synchronous sends, scaled by actual fill ratio
 
 ### 2.6 Execution domain
 - Class: `CTradeManager`
@@ -86,7 +93,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - single bounded retry behavior for `LOCKED` / `FROZEN` retcodes
   - reprice market orders at submit time and rebuild protective SL/TP from the current market price
   - emergency-aware protective modification flow
-  - expose ticket/result status for post-send handling
+  - expose execution receipt status (`requestId`, retcode, requested/fill volume, retry count, avg fill price) for post-send handling
 
 ### 2.7 Position lifecycle domain
 - Class: `CAdvancedPositionManager`
@@ -134,6 +141,9 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
   - all enabled retained strategies are registered as `PRIMARY_ALPHA` and vote live
   - per-strategy inputs gate registration (disabled strategies are not registered into the pool)
 - Opt-in smoke-test intrabar controls are available for `Fibonacci` and `Support/Resistance`; the default intrabar roster remains conservative.
+- Strategy trust is continuous, not purely binary:
+  - `healthScore` is updated from realized closed-trade outcomes
+  - live vote weight is scaled by reliability instead of only live/shadow membership
 - Manager-level controls are exposed by strategy name for role, cluster, live-vote eligibility, and shadow mode.
 
 ## 4. Decision Pipeline (Signal to Execution)
@@ -148,11 +158,14 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 ### 4.2 Consensus
 - Manager computes strategy votes and confidence.
 - Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final consensus acceptance.
-- Quorum is evaluated via normalized weighted confidence pooling:
-  - per-direction score = `sum(weight_i * confidence_i)` for agreeing live voters (directional signal, confidence >= pipeline min)
-  - normalized score = `score / total_weight(active_live_voters)` (not just agreeing ones)
-  - direction passes quorum if `normalized_score >= InpQuorumThreshold` **and** agreeing voters `>= InpMinLiveVoters`
-  - if both directions pass, higher score wins; tie emits `TRADE_SIGNAL_NONE`
+- Quorum is evaluated via normalized weighted conviction pooling:
+  - adjusted live weight = `base strategy weight x role multiplier x healthScore reliability multiplier`
+  - ready live weight = `adjusted live weight x pipeline readinessScore`
+  - per-direction conviction = `sum(ready live weight x conviction_i)` for agreeing live voters
+  - conviction is confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
+  - normalized score = `direction conviction / total ready live weight`
+  - direction passes quorum if `normalized_score >= InpQuorumThreshold`, agreeing voters `>= InpMinLiveVoters`, and `readyLiveWeight / totalLiveWeight >= InpConsensusMinReadyWeightRatio`
+- if both directions pass, higher score wins unless the spread is inside the configured conflict deadband, in which case consensus is vetoed to `TRADE_SIGNAL_NONE`
 - Vote admission into quorum reuses the pipeline's effective confidence threshold for that cycle, preventing pipeline-approved relaxed-threshold signals from being dropped before consensus.
 - Consensus may fail by:
   - raw no-vote
@@ -164,6 +177,8 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 ### 4.3 Validation
 - `CAdvancedSignalValidator` applies profile-dependent gating.
 - Validator profiles are input-configurable by scan mode (new-bar vs intrabar): minimum confidence, minimum strategy confluence, and minimum quality score.
+- Validator quality now consumes upstream decision-path evidence (`conviction`, `readiness`, `context`, `cost`, `diversity`, `freshness`) instead of only raw confidence/confluence.
+- Near-threshold confidence and confluence can soft-pass within bounded margins when the broader evidence profile is strong.
 - Rejected signals emit reasoned logs.
 - Entry-governance blocks (cooldown, total-position cap, unresolved unprotected positions, per-symbol capacity) apply after validation so approved signals remain visible in diagnostics even when sends are paused.
 - Cost viability parameters are explicit (`spread/ATR`, spread-shock cooldown).
@@ -177,11 +192,13 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 
 ### 4.5 Execution branch
 - Cooldown and capacity logic are entry-only gates; they do not suppress consensus or validator execution.
+- The runtime stages every risk-approved opportunity as a candidate and ranks them across the full symbol scan before sending.
 - Shadow mode: logs virtual trade, no send.
 - Live mode: send through `CTradeManager`.
 - Startup emits `[EXECUTION-MODE]` so shadow/live posture is explicit before the first scan.
 - Startup rejects unsupported non-hedging account models before runtime ownership becomes ambiguous.
 - Live comment tagging carries compact cluster code (`K:T/R/S/N`) for deterministic open-position cluster attribution.
+- Execution receipts and fill deltas are surfaced to the EA so post-send accounting uses actual fill state rather than requested size alone.
 
 ### 4.6 Post-trade feedback
 - Successful trades register executed risk usage.
@@ -233,6 +250,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - Governance diagnostics: `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`
 - Strategy reject attribution: `[STRATEGY-REJECTS]`
 - Signal rejection reasons: `[SIGNAL-REJECTED]`
+- Candidate ranking telemetry: `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`
 - Threshold source tracing: `[PIPELINE-THRESHOLD]`
 - Regime/cost viability tracing: `[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[TrendEngine][READINESS-FAULT]`
 - No-signal deadlock alerting: `[NO-SIGNAL-ALERT]`
@@ -240,7 +258,7 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
 - AI liveness: `[AI-VOTE]`
 - confirmed deals: `[TRADE-CONFIRMED]`
 - Shadow actions: `[SHADOW-TRADE]`
-- Execution outcomes: `[TRADE-SUCCESS]`, `[TRADE-ERROR]`
+- Execution outcomes: `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[EXECUTION-RECEIPT]`, `[FILL-DIFF]`
 
 ### 7.2 Primary operational KPIs
 - no-signal ratio

@@ -1,7 +1,7 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-03-24
+- Last Updated: 2026-03-25
 - Scope: Runtime lifecycle and ownership trace
 
 ## Scope
@@ -46,22 +46,26 @@
 
 ### 3. Signal path
 - Manager consensus + confluence.
-- Manager applies role/cluster governance and evaluates quorum via normalized weighted confidence pooling.
-- Manager quorum requires `InpMinLiveVoters` floor and `InpQuorumThreshold` pass; intrabar single-voter output still requires configured minimum confidence.
+- Manager applies role/cluster governance and evaluates quorum via normalized weighted conviction pooling.
+- Manager quorum requires `InpMinLiveVoters` floor, `InpQuorumThreshold` pass, minimum ready-live-weight participation, and conflict-deadband separation; intrabar single-voter output still requires configured minimum confidence.
 - Manager vote admission now uses the pipeline's effective confidence floor for the current evaluation, avoiding pipeline/quorum drift when regime-aware relaxation is active.
+- Manager live vote influence is modulated by rolling strategy `healthScore` rather than treating every enabled strategy as equally trusted at all times.
 - Manager emits consensus root-cause attribution snapshots for no-signal diagnostics.
 - Manager emits strategy-level none-reason attribution for core curated contributors.
 - Pipeline now includes deterministic regime/cost viability gate before validator.
+- Pipeline caches structural engine state once per symbol/timeframe/bar and carries a shared evidence snapshot (`readiness`, `context`, `cost`) forward through consensus and validation.
+- Pipeline and validator both support bounded soft-pass behavior for near-threshold candidates when the broader evidence profile is strong.
 - `CRegimeEngine` may reuse a recent valid same-context snapshot on transient warmup / copy / handle-init faults and performs bounded handle reset after repeated data faults.
 - Pipeline threshold adaptation now uses `CRegimeEngine` snapshot state and dedicated non-AI confidence floors instead of AI-threshold coupling.
-- Validation profile checks (confidence + confluence + quality by scan mode: new-bar vs intrabar).
+- Validation profile checks now combine confidence + confluence + quality with upstream conviction/readiness/context/cost evidence by scan mode (new-bar vs intrabar).
 - Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
 - Risk gating (pre-size then post-size).
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
 - Pipeline confidence gate emits threshold-source metadata and uses bounded weak-regime intrabar uplift.
 - Trend ADX failures degrade to neutral/ranging context with bounded ADX-handle self-heal.
 - ATR stop-distance fallback when indicator read fails.
-- Shadow or live execution branch.
+- Risk-approved opportunities are staged as ranked candidates across the full symbol scan before shadow or live execution.
+- Live execution captures broker receipt state and risk registration scales consumed entry budget by actual fill ratio.
 - Per-symbol capacity checks include explicit external-position block telemetry.
 
 ### 4. Post-trade path
@@ -84,10 +88,10 @@
 
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]`
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[TrendEngine][READINESS-FAULT]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[TrendEngine][READINESS-FAULT]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`
-- Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`
+- Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[EXECUTION-RECEIPT]`, `[FILL-DIFF]`
 
 ## Current Operational Constraints
 - Persistent terminal sessions are preferred.
@@ -99,6 +103,15 @@
 - Compile artifacts should be auto-cleaned after runs unless explicitly retained.
 - **Code Quality**: Recent fixes address memory leaks, null pointer safety, bounds checking, and standardized constants across AI components.
 - **Compilation**: Verified 0 errors, 0 warnings with all improvements integrated.
+
+## 2026-03-25 Efficiency + Conviction Trace
+- `Core/Pipeline/UnifiedSignalPipeline.mqh` now caches structural engine context per symbol/timeframe/bar and emits a reusable evidence snapshot carrying `readinessScore`, `contextScore`, `costScore`, effective confidence floor, and bounded soft-threshold state.
+- `Core/Signals/TimeframeConsistency.mqh` no longer neutralizes directional consensus through hot-path hedging prevention; timeframe conflict resolution remains authoritative without pre-emptively zeroing otherwise valid mixed-strategy output.
+- `Core/Management/EnterpriseStrategyManager.mqh` now computes directional conviction from adjusted live weight (`base weight x role multiplier x rolling healthScore`) and requires minimum ready-live-weight participation before a direction can pass quorum.
+- `Core/Signals/AdvancedSignalValidator.mqh` now consumes upstream decision-path evidence (`conviction`, `readiness`, `context`, `cost`, `diversity`, `freshness`) and allows bounded soft passes near confidence/confluence floors when the setup quality is strong.
+- `MultiStrategyAutonomousEA.mq5` now stages all risk-approved opportunities as ranked candidates, emits `[SCAN-CANDIDATE]` / `[SCAN-DECISION]`, and executes the best candidate per cycle instead of the first acceptable symbol.
+- `Core/Trading/TradeManager.mqh` now exposes execution receipts and `Core/Risk/UnifiedRiskManager.mqh` scales executed-risk registration by fill ratio, so partial fills do not overstate daily entry-budget consumption.
+- `Core/Signals/SignalDiagnostics.mqh` now batches flushes so diagnostic file output no longer forces a disk flush on every event.
 
 ## 2026-02-24 Cleanup Trace
 - Removed dead commented strategy stubs from `MultiStrategyAutonomousEA.mq5`.
