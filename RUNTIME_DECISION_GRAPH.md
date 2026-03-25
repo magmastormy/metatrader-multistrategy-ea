@@ -1,7 +1,7 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-03-24
+- Last Updated: 2026-03-25
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
 
@@ -63,14 +63,19 @@ flowchart TD
   U --> V[UnifiedRisk post-size validation]
   V --> W{Pass?}
   W -->|No| T
-  W -->|Yes| X{Shadow mode?}
+  W -->|Yes| X[Stage ranked candidate]
 
-  X -->|Yes| Y[Log SHADOW-TRADE]
-  X -->|No| Z[TradeManager OpenPosition]
+  X --> X1{More symbols?}
+  X1 -->|Yes| E4
+  X1 -->|No| X2[Select top-ranked candidate]
+  X2 --> X3{Shadow mode?}
+
+  X3 -->|Yes| Y[Log SHADOW-TRADE]
+  X3 -->|No| Z[TradeManager OpenPosition]
 
   Z --> AA{Execution success?}
   AA -->|No| AB[Trade error path]
-  AA -->|Yes| AC[Register executed risk + cooldown]
+  AA -->|Yes| AC[Register executed risk by fill ratio + cooldown]
 
   AC --> AD[OnTradeTransaction feedback]
   AD --> AE[Manager and orchestrator performance updates]
@@ -88,10 +93,14 @@ flowchart TD
 - Intrabar/new-bar consensus behavior is manager-controlled.
 - Cooldown, total-position, unprotected-position, and per-symbol capacity checks are entry gates, not scan gates; the EA keeps evaluating symbols while blocked from sending.
 - Vote admission into timeframe consistency and quorum uses the pipeline's effective confidence floor for that evaluation, not just the static base pipeline minimum.
-- Quorum uses normalized weighted confidence pooling (intrabar eligibility defines the active live-voter pool for intrabar scans):
-  - per-direction score = `sum(weight_i * confidence_i)` for agreeing live voters (directional signal, confidence >= pipeline min)
-  - normalized score = `score / total_weight(active_live_voters)` (not just agreeing ones)
-  - direction passes quorum if `normalized_score >= InpQuorumThreshold` **and** agreeing voters `>= InpMinLiveVoters`
+- Quorum uses normalized weighted conviction pooling (intrabar eligibility defines the active live-voter pool for intrabar scans):
+  - adjusted live weight = `base strategy weight x role multiplier x healthScore reliability multiplier`
+  - ready live weight = `adjusted live weight x pipeline readinessScore`
+  - conviction score = confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
+  - per-direction score = `sum(ready live weight x conviction score)` for agreeing live voters
+  - normalized score = `direction score / total ready live weight`
+  - direction passes quorum if `normalized_score >= InpQuorumThreshold`, agreeing voters `>= InpMinLiveVoters`, and ready-live participation stays above `InpConsensusMinReadyWeightRatio`
+- If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
 - Single-voter intrabar output still requires configured minimum confidence.
 - Pipeline and validator profiles (confidence + confluence + quality) are configured separately from AI thresholds so non-AI strategies are not gated by AI policy.
 
@@ -102,6 +111,9 @@ flowchart TD
 - Default policy:
   - all enabled retained strategies are registered as `PRIMARY_ALPHA` and vote live
   - per-strategy inputs gate registration (disabled strategies are not registered into the pool)
+- Governance is continuous, not only binary:
+  - closed-trade outcomes update rolling `healthScore`
+  - reliability multipliers scale live vote impact without bypassing role/cluster controls
 - Intrabar participation remains explicit: Momentum and Unified ICT are the default intrabar voters, while Fibonacci and Support/Resistance can be opted in for smoke tests via dedicated inputs.
 
 ## Regime/Cost Pre-Gate
@@ -109,9 +121,16 @@ flowchart TD
   - spread-shock cooldown
   - spread/ATR ratio breach
   - late-entry z-score outlier
+- `UnifiedSignalPipeline` caches structural context per symbol/timeframe/bar and carries forward evidence scores:
+  - `readinessScore`
+  - `contextScore`
+  - `costScore`
+  - effective confidence floor
+  - soft-threshold pass flag
 - On transient warmup / handle-init / buffer-copy faults, `CRegimeEngine` can reuse a recent valid same-symbol/timeframe snapshot instead of forcing immediate neutral degradation.
 - Repeated regime data faults trigger bounded handle reset and retry eligibility instead of indefinite stale-handle behavior.
 - Pipeline threshold adaptation now also consumes the regime snapshot, so confidence uplift/relaxation is aligned with the same market-state authority that drives the cost gate.
+- Near-threshold signals may survive the pipeline when readiness/context evidence is strong; the gate remains bounded rather than becoming a blanket relaxation.
 - Gate telemetry:
   - `[REGIME-STATE]`
   - `[COST-GATE]`
@@ -138,12 +157,17 @@ flowchart TD
 - Market orders rebuild execution price and protective stops at submit time.
 - Protective stop modifications are throttled but allow emergency bypass for missing/tightening protection.
 - Symbol scan order rotates each cycle to reduce first-symbol concentration when only one trade is allowed per cycle.
+- The runtime no longer executes the first valid symbol blindly; it stages `[SCAN-CANDIDATE]` entries and promotes the best `[SCAN-DECISION]` at the end of the cycle.
+- `TradeManager` emits `[EXECUTION-RECEIPT]` with requested/fill size, retcode, request id, and retries; partial fills emit `[FILL-DIFF]`.
+- `UnifiedRiskManager` registers executed risk using fill ratio so daily risk usage matches actual exposure.
 
 ## Diagnostics
 - Startup affordability emitted as `[ACCOUNT-CAPACITY]`.
 - Startup cooldown recovery emitted as `[TRADE-STATE]`.
 - Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`.
 - Post-quorum nullification emitted as `[CONSENSUS-VETO]` when timeframe consistency or intrabar single-voter safety clears a candidate.
+- Ranked approved candidates emitted as `[SCAN-CANDIDATE]`.
+- Final cycle winner emitted as `[SCAN-DECISION]`.
 - Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
   - `raw_none`
   - `filtered_out`
@@ -171,6 +195,7 @@ flowchart TD
 - Risk budget decomposition: `[RISK-BUDGET]`
 - Unprotected remediation lifecycle: `[RISK-UNPROTECTED]`
 - External position capacity blocks: `[CAPACITY-EXTERNAL]`
+- Execution receipt telemetry: `[EXECUTION-RECEIPT]`, `[FILL-DIFF]`
 
 ## AI Runtime Evidence
 - `[AI-VOTE][Transformer]`

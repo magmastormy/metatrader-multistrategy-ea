@@ -51,6 +51,42 @@ class CAIStrategyOrchestrator;
 #define MAX_ORDERS_PER_SYMBOL 5
 #define ORDER_TIMEOUT_SECONDS 30
 
+struct STradeExecutionReceipt
+{
+    bool accepted;
+    bool partialFill;
+    uint retcode;
+    uint requestId;
+    int retryCount;
+    ulong orderTicket;
+    ulong dealTicket;
+    double requestedVolume;
+    double filledVolume;
+    double averagePrice;
+    double stopLoss;
+    double takeProfit;
+    string symbol;
+    string note;
+
+    STradeExecutionReceipt()
+    {
+        accepted = false;
+        partialFill = false;
+        retcode = 0;
+        requestId = 0;
+        retryCount = 0;
+        orderTicket = 0;
+        dealTicket = 0;
+        requestedVolume = 0.0;
+        filledVolume = 0.0;
+        averagePrice = 0.0;
+        stopLoss = 0.0;
+        takeProfit = 0.0;
+        symbol = "";
+        note = "";
+    }
+};
+
 //+------------------------------------------------------------------+
 //| Trade Manager Class                                            |
 //+------------------------------------------------------------------+
@@ -109,6 +145,7 @@ private:
     double m_lastRequestedPrice;             // Last market price used for submit
     double m_lastRequestedStopLoss;          // Last SL sent to broker
     double m_lastRequestedTakeProfit;        // Last TP sent to broker
+    STradeExecutionReceipt m_lastExecutionReceipt;
     
     // Order tracking
     struct PendingOrder {
@@ -484,6 +521,13 @@ private:
         if(!m_trade.SetTypeFillingBySymbol(symbolParam))
             m_trade.SetTypeFilling(m_orderFillMode);
     }
+
+    void ResetExecutionReceipt(const string symbolParam, const double requestedVolume)
+    {
+        m_lastExecutionReceipt = STradeExecutionReceipt();
+        m_lastExecutionReceipt.symbol = symbolParam;
+        m_lastExecutionReceipt.requestedVolume = requestedVolume;
+    }
     
 public:
     // Constructor with dependency injection
@@ -577,6 +621,7 @@ public:
     double GetLastRequestedTakeProfit() const { return m_lastRequestedTakeProfit; }
     uint GetLastRequestId() const { return m_lastTradeResult.request_id; }
     uint GetLastRetcode() const { return m_lastTradeResult.retcode; }
+    void GetLastExecutionReceipt(STradeExecutionReceipt &receipt) const { receipt = m_lastExecutionReceipt; }
     
     // Statistics
     void GetTradeStatistics(int &total, int &successful, int &failed, double &successRate);
@@ -632,6 +677,7 @@ bool CTradeManager::Initialize(const uint magicNumber,
     m_lastRequestedPrice = 0.0;
     m_lastRequestedStopLoss = 0.0;
     m_lastRequestedTakeProfit = 0.0;
+    m_lastExecutionReceipt = STradeExecutionReceipt();
     
     m_dailyResetTime = TimeCurrent();
     m_dailyLoss = 0.0;
@@ -929,9 +975,12 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 {
     if(symbolName == "" || volume <= 0)
     {
+        ResetExecutionReceipt(symbolName, volume);
+        m_lastExecutionReceipt.note = "Invalid execution request";
         return false;
     }
     
+    ResetExecutionReceipt(symbolName, volume);
     bool result = false;
     int retryCount = 0;
     uint lastRetcode = 0;
@@ -969,6 +1018,8 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastRequestedPrice = executionPrice;
         m_lastRequestedStopLoss = stopLoss;
         m_lastRequestedTakeProfit = takeProfit;
+        m_lastExecutionReceipt.stopLoss = stopLoss;
+        m_lastExecutionReceipt.takeProfit = takeProfit;
 
         if(orderType == ORDER_TYPE_BUY)
         {
@@ -984,6 +1035,14 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
             MqlTradeResult tradeResult;
             m_trade.Result(tradeResult);
             m_lastTradeResult = tradeResult;
+            m_lastExecutionReceipt.accepted = false;
+            m_lastExecutionReceipt.retcode = tradeResult.retcode;
+            m_lastExecutionReceipt.requestId = tradeResult.request_id;
+            m_lastExecutionReceipt.orderTicket = tradeResult.order;
+            m_lastExecutionReceipt.dealTicket = tradeResult.deal;
+            m_lastExecutionReceipt.retryCount = retryCount;
+            m_lastExecutionReceipt.averagePrice = executionPrice;
+            m_lastExecutionReceipt.note = tradeResult.comment;
             LogTradeError(tradeResult, "ExecuteMarketOrder");
             
             uint retcode = tradeResult.retcode;
@@ -994,7 +1053,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                 retryCount++;
                 if(retryCount < MAX_TRADE_RETRIES)
                 {
-                    PrintFormat("[TRADE-RETRY] %s | attempt=%d/%d | retcode=%u",
+                    PrintFormat("[EXECUTION-RETRY] %s | attempt=%d/%d | retcode=%u",
                                 symbolName, retryCount + 1, MAX_TRADE_RETRIES, retcode);
                     m_symbolInfo.Refresh();
                 }
@@ -1005,7 +1064,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
             if(IsLimitedRetryRetcode(retcode) && retryCount == 0)
             {
                 retryCount = 1;
-                PrintFormat("[TRADE-RETRY-LIMITED] %s | retcode=%u | single_retry=1",
+                PrintFormat("[EXECUTION-RETRY] %s | retcode=%u | single_retry=1",
                             symbolName, retcode);
                 m_symbolInfo.Refresh();
                 continue;
@@ -1018,11 +1077,31 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
             MqlTradeResult prResult;
             m_trade.Result(prResult);
             m_lastTradeResult = prResult;
+            m_lastExecutionReceipt.accepted = true;
+            m_lastExecutionReceipt.retcode = prResult.retcode;
+            m_lastExecutionReceipt.requestId = prResult.request_id;
+            m_lastExecutionReceipt.orderTicket = prResult.order;
+            m_lastExecutionReceipt.dealTicket = prResult.deal;
+            m_lastExecutionReceipt.retryCount = retryCount;
+            m_lastExecutionReceipt.averagePrice = (prResult.price > 0.0) ? prResult.price : executionPrice;
+            m_lastExecutionReceipt.filledVolume = (prResult.volume > 0.0) ? prResult.volume : volume;
+            m_lastExecutionReceipt.partialFill = ((prResult.retcode == TRADE_RETCODE_DONE_PARTIAL) ||
+                                                  (m_lastExecutionReceipt.filledVolume > 0.0 && m_lastExecutionReceipt.filledVolume < volume));
+            m_lastExecutionReceipt.note = prResult.comment;
             if((prResult.retcode == TRADE_RETCODE_DONE_PARTIAL) || (prResult.volume > 0 && prResult.volume < volume))
             {
                 PrintFormat("[PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | retcode=%u",
                             symbolName, volume, prResult.volume, prResult.retcode);
             }
+
+            PrintFormat("[EXECUTION-RECEIPT] %s | accepted=%s | requested=%.2f | filled=%.2f | price=%.5f | retcode=%u | retries=%d",
+                        symbolName,
+                        m_lastExecutionReceipt.accepted ? "true" : "false",
+                        volume,
+                        m_lastExecutionReceipt.filledVolume,
+                        m_lastExecutionReceipt.averagePrice,
+                        m_lastExecutionReceipt.retcode,
+                        m_lastExecutionReceipt.retryCount);
         }
     }
     
@@ -1030,6 +1109,9 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         Print("[TRADE-FAILED] max retries exceeded");
     else if(!result && lastRetcode != 0)
         PrintFormat("[TRADE-FAILED] %s | retcode=%u | retries=%d", symbolName, lastRetcode, retryCount);
+
+    if(!result)
+        m_lastExecutionReceipt.retryCount = retryCount;
     
     return result;
 }

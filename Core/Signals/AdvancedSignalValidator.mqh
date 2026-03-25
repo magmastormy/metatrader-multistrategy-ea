@@ -24,6 +24,26 @@ struct SSignalValidationResult
     bool passedSessionFilter;
 };
 
+struct SSignalValidationContext
+{
+    double convictionScore;
+    double readinessScore;
+    double contextScore;
+    double diversityScore;
+    double costScore;
+    double freshnessScore;
+
+    SSignalValidationContext()
+    {
+        convictionScore = 0.5;
+        readinessScore = 0.5;
+        contextScore = 0.5;
+        diversityScore = 0.5;
+        costScore = 0.5;
+        freshnessScore = 1.0;
+    }
+};
+
 enum ENUM_VALIDATION_PROFILE
 {
     VALIDATION_PROFILE_NEW_BAR = 0,
@@ -147,8 +167,9 @@ public:
         ENUM_TRADE_SIGNAL signal,
         double confidence,
         int strategyConfluence,
-        double atrValue = 0.0,
-        ENUM_VALIDATION_PROFILE profile = VALIDATION_PROFILE_NEW_BAR
+        double atrValue,
+        ENUM_VALIDATION_PROFILE profile,
+        const SSignalValidationContext &context
     );
     
     // Individual filter checks
@@ -168,8 +189,8 @@ private:
     double CalculateQualityScore(
         double confidence,
         int strategyConfluence,
-        double avgConfidence,
-        bool passedFilters
+        bool passedFilters,
+        const SSignalValidationContext &context
     );
     
     // Statistics
@@ -239,7 +260,8 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     double confidence,
     int strategyConfluence,
     double atrValue,
-    ENUM_VALIDATION_PROFILE profile)
+    ENUM_VALIDATION_PROFILE profile,
+    const SSignalValidationContext &context)
 {
     SSignalValidationResult result;
     result.isValid = false;
@@ -265,22 +287,36 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
         requiredConfidence = m_intrabarMinConfidence;
     }
 
-    // 0. Confidence gate (profile-aware)
+    // 0. Confidence gate (profile-aware, with bounded soft-margin support)
     if(confidence < requiredConfidence)
     {
-        result.reason = StringFormat("Confidence below profile threshold: %.2f < %.2f",
-                                    confidence, requiredConfidence);
-        m_signalsRejected++;
-        return result;
+        double confidenceGap = requiredConfidence - confidence;
+        bool confidenceSoftPass = (confidenceGap <= 0.08 &&
+                                   context.convictionScore >= 0.62 &&
+                                   context.readinessScore >= 0.58 &&
+                                   context.contextScore >= 0.60);
+        if(!confidenceSoftPass)
+        {
+            result.reason = StringFormat("Confidence below profile threshold: %.2f < %.2f",
+                                        confidence, requiredConfidence);
+            m_signalsRejected++;
+            return result;
+        }
     }
     
     // 1. Check strategy confluence
     if(strategyConfluence < requiredConfluence)
     {
-        result.reason = StringFormat("Insufficient confluence: %d < %d strategies", 
-                                    strategyConfluence, requiredConfluence);
-        m_signalsRejected++;
-        return result;
+        bool confluenceSoftPass = ((requiredConfluence - strategyConfluence) == 1 &&
+                                   context.convictionScore >= 0.68 &&
+                                   context.diversityScore >= 0.40);
+        if(!confluenceSoftPass)
+        {
+            result.reason = StringFormat("Insufficient confluence: %d < %d strategies", 
+                                        strategyConfluence, requiredConfluence);
+            m_signalsRejected++;
+            return result;
+        }
     }
     
     // 2. Check spread filter
@@ -336,7 +372,7 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     bool allFiltersPassed = result.passedSpreadFilter && result.passedTimeFilter && 
                            result.passedSessionFilter && result.passedVolatilityFilter;
     
-    result.qualityScore = CalculateQualityScore(confidence, strategyConfluence, confidence, allFiltersPassed);
+    result.qualityScore = CalculateQualityScore(confidence, strategyConfluence, allFiltersPassed, context);
     
     // 7. Final quality check
     if(result.qualityScore < requiredQuality)
@@ -562,21 +598,25 @@ bool CAdvancedSignalValidator::CheckVolatilityFilter(const string symbol, double
 double CAdvancedSignalValidator::CalculateQualityScore(
     double confidence,
     int strategyConfluence,
-    double avgConfidence,
-    bool passedFilters)
+    bool passedFilters,
+    const SSignalValidationContext &context)
 {
     double score = 0.0;
     
-    // Confidence component (40%)
-    score += confidence * 0.4;
+    // Confidence component (25%)
+    score += confidence * 0.25;
     
-    // Confluence component (30%)
-    // More strategies agreeing = higher score
-    double confluenceScore = MathMin(1.0, strategyConfluence / 5.0);  // Max at 5 strategies
-    score += confluenceScore * 0.3;
+    // Confluence component (20%)
+    double confluenceScore = MathMin(1.0, strategyConfluence / 5.0);
+    score += confluenceScore * 0.20;
     
-    // Average confidence component (20%)
-    score += avgConfidence * 0.2;
+    // Decision-path components from consensus and pipeline evidence.
+    score += MathMax(0.0, MathMin(1.0, context.convictionScore)) * 0.15;
+    score += MathMax(0.0, MathMin(1.0, context.readinessScore)) * 0.10;
+    score += MathMax(0.0, MathMin(1.0, context.contextScore)) * 0.10;
+    score += MathMax(0.0, MathMin(1.0, context.diversityScore)) * 0.10;
+    score += MathMax(0.0, MathMin(1.0, context.freshnessScore)) * 0.05;
+    score += MathMax(0.0, MathMin(1.0, context.costScore)) * 0.05;
     
     // Filter component (10%)
     if(passedFilters)

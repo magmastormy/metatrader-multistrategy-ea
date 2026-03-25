@@ -103,6 +103,7 @@ private:
     string        m_logFileName;
     string        m_lastNoSignalKey;
     datetime      m_lastNoSignalTime;
+    int           m_pendingFlushCount;
     
 public:
     CSignalDiagnostics();
@@ -218,7 +219,8 @@ CSignalDiagnostics::CSignalDiagnostics() :
     m_timeframeConflicts(0),
     m_fileHandle(INVALID_HANDLE),
     m_lastNoSignalKey(""),
-    m_lastNoSignalTime(0)
+    m_lastNoSignalTime(0),
+    m_pendingFlushCount(0)
 {
 }
 
@@ -296,6 +298,7 @@ void CSignalDiagnostics::Shutdown()
         WriteToFile("\n=== Signal Diagnostics Summary ===");
         WriteToFile(GetDiagnosticSummary());
         WriteToFile("=== Shutdown at " + TimeToString(TimeCurrent()) + " ===");
+        FileFlush(m_fileHandle);
         
         FileClose(m_fileHandle);
         m_fileHandle = INVALID_HANDLE;
@@ -573,7 +576,12 @@ void CSignalDiagnostics::WriteToFile(const string message)
     {
         string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
         FileWriteString(m_fileHandle, timestamp + " | " + message + "\n");
-        FileFlush(m_fileHandle);
+        m_pendingFlushCount++;
+        if(m_pendingFlushCount >= 25)
+        {
+            FileFlush(m_fileHandle);
+            m_pendingFlushCount = 0;
+        }
     }
 }
 

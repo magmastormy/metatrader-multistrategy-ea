@@ -166,7 +166,7 @@ CTimeframeConsistency::CTimeframeConsistency() :
     m_diagnostics(NULL),
     m_htfWeight(1.5),
     m_confidenceThreshold(0.5),
-    m_preventHedging(true),
+    m_preventHedging(false),
     m_totalChecks(0),
     m_conflictsDetected(0),
     m_hedgesPrevented(0)
@@ -272,20 +272,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveSignals(double &finalConfidence,
         case CONFLICT_RES_WEIGHTED:
             result = ResolveWeighted(finalConfidence, reasoning);
             break;
-    }
-    
-    // Prevent hedging if enabled
-    if(m_preventHedging && WouldCauseHedge(result))
-    {
-        m_hedgesPrevented++;
-        reasoning += " [Hedge prevented]";
-        result = TRADE_SIGNAL_NONE;
-        finalConfidence = 0.0;
-        
-        if(m_diagnostics != NULL)
-        {
-            m_diagnostics.LogHedgingPrevented("TimeframeConsistency", result, "Signal neutralized");
-        }
     }
     
     return result;
