@@ -95,7 +95,9 @@ public:
     void RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio = 1.0);
 
     double GetActiveRiskPerTradePercent() const { return m_activeRiskPerTradePercent; }
+    double GetRecommendedRiskPerTradePercent(const double requestedRiskPercent = 0.0);
     double GetRemainingDailyRiskPercent();
+    double GetRemainingPortfolioRiskPercent();
     SUnifiedRiskSnapshot GetSnapshot();
     bool HasUnprotectedPositions();
     int GetUnprotectedPositionCount();
@@ -316,6 +318,35 @@ void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &val
 double CUnifiedRiskManager::GetRemainingDailyRiskPercent()
 {
     double remaining = m_config.maxDailyRiskPercent - GetEffectiveDailyRiskUsedPercent();
+    if(remaining < 0.0)
+        return 0.0;
+    return remaining;
+}
+
+double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double requestedRiskPercent)
+{
+    if(!m_initialized)
+        return 0.0;
+
+    CheckAndResetDailyLimits();
+
+    if(m_portfolioRiskManager.IsEmergencyMode() || HasUnprotectedPositions())
+        return 0.0;
+
+    double recommended = (requestedRiskPercent > 0.0) ? requestedRiskPercent : m_activeRiskPerTradePercent;
+    recommended = MathMin(recommended, m_activeRiskPerTradePercent);
+    recommended = MathMin(recommended, GetRemainingDailyRiskPercent());
+    recommended = MathMin(recommended, GetRemainingPortfolioRiskPercent());
+
+    if(recommended <= 0.0)
+        return 0.0;
+
+    return ClampRiskPercent(recommended);
+}
+
+double CUnifiedRiskManager::GetRemainingPortfolioRiskPercent()
+{
+    double remaining = m_config.maxPortfolioRiskPercent - GetCurrentOpenExposureRiskPercent();
     if(remaining < 0.0)
         return 0.0;
     return remaining;

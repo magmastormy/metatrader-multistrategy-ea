@@ -513,6 +513,12 @@ private:
                 retcode == TRADE_RETCODE_FROZEN);
     }
 
+    bool IsSuccessfulFillRetcode(const uint retcode) const
+    {
+        return (retcode == TRADE_RETCODE_DONE ||
+                retcode == TRADE_RETCODE_DONE_PARTIAL);
+    }
+
     void ApplyFillingModeForSymbol(const string symbolParam)
     {
         if(symbolParam == "")
@@ -527,6 +533,120 @@ private:
         m_lastExecutionReceipt = STradeExecutionReceipt();
         m_lastExecutionReceipt.symbol = symbolParam;
         m_lastExecutionReceipt.requestedVolume = requestedVolume;
+    }
+
+    bool ValidateExecutionPreflight(const string symbolName,
+                                    const ENUM_ORDER_TYPE orderType,
+                                    const double executionPrice,
+                                    string &reason)
+    {
+        reason = "";
+        if(!IsMarketOpen(symbolName))
+        {
+            reason = "market_unavailable";
+            return false;
+        }
+
+        MqlTick tick;
+        if(!SymbolInfoTick(symbolName, tick))
+        {
+            reason = "tick_unavailable";
+            return false;
+        }
+
+        datetime tickTime = (tick.time > 0) ? (datetime)tick.time : TimeCurrent();
+        int tickAgeSeconds = (int)MathMax(0, TimeCurrent() - tickTime);
+        if(tickAgeSeconds > 30)
+        {
+            reason = StringFormat("stale_tick age=%ds", tickAgeSeconds);
+            return false;
+        }
+
+        double bid = tick.bid;
+        double ask = tick.ask;
+        if(bid <= 0.0 || ask <= 0.0 || ask < bid)
+        {
+            reason = "invalid_quote";
+            return false;
+        }
+
+        double spread = ask - bid;
+        double minStopDistance = GetMinimumStopDistance(symbolName);
+        double spreadHardLimit = MathMax(minStopDistance * 2.0, executionPrice * 0.0015);
+        if(spread > spreadHardLimit)
+        {
+            reason = StringFormat("spread_anomaly spread=%.5f limit=%.5f", spread, spreadHardLimit);
+            return false;
+        }
+
+        if(orderType == ORDER_TYPE_BUY && executionPrice < bid)
+        {
+            reason = "buy_price_below_bid";
+            return false;
+        }
+
+        if(orderType == ORDER_TYPE_SELL && executionPrice > ask)
+        {
+            reason = "sell_price_above_ask";
+            return false;
+        }
+
+        return true;
+    }
+
+    bool ConfirmExecutionReceipt(const string symbolName,
+                                 const ENUM_ORDER_TYPE orderType,
+                                 const double requestedVolume,
+                                 const double fallbackPrice,
+                                 const MqlTradeResult &tradeResult)
+    {
+        datetime historyFrom = TimeCurrent() - 300;
+        datetime historyTo = TimeCurrent() + 60;
+
+        for(int attempt = 0; attempt < 3; attempt++)
+        {
+            if(HistorySelect(historyFrom, historyTo))
+            {
+                if(tradeResult.deal > 0 && HistoryDealSelect(tradeResult.deal))
+                {
+                    string dealSymbol = HistoryDealGetString(tradeResult.deal, DEAL_SYMBOL);
+                    long dealEntry = HistoryDealGetInteger(tradeResult.deal, DEAL_ENTRY);
+                    long dealType = HistoryDealGetInteger(tradeResult.deal, DEAL_TYPE);
+                    bool directionMatches = ((orderType == ORDER_TYPE_BUY && dealType == DEAL_TYPE_BUY) ||
+                                             (orderType == ORDER_TYPE_SELL && dealType == DEAL_TYPE_SELL));
+                    if(dealSymbol == symbolName &&
+                       directionMatches &&
+                       (dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT))
+                    {
+                        double dealVolume = HistoryDealGetDouble(tradeResult.deal, DEAL_VOLUME);
+                        double dealPrice = HistoryDealGetDouble(tradeResult.deal, DEAL_PRICE);
+                        if(dealVolume > 0.0)
+                            m_lastExecutionReceipt.filledVolume = dealVolume;
+                        if(dealPrice > 0.0)
+                            m_lastExecutionReceipt.averagePrice = dealPrice;
+                        else if(m_lastExecutionReceipt.averagePrice <= 0.0)
+                            m_lastExecutionReceipt.averagePrice = fallbackPrice;
+
+                        m_lastExecutionReceipt.accepted = true;
+                        m_lastExecutionReceipt.partialFill = (m_lastExecutionReceipt.filledVolume > 0.0 &&
+                                                              m_lastExecutionReceipt.filledVolume + 1e-8 < requestedVolume);
+                        m_lastExecutionReceipt.note = "history_deal_confirmed";
+                        return true;
+                    }
+                }
+            }
+
+            if(attempt < 2)
+                Sleep(TRADE_RETRY_DELAY);
+        }
+
+        m_lastExecutionReceipt.accepted = false;
+        if(m_lastExecutionReceipt.averagePrice <= 0.0)
+            m_lastExecutionReceipt.averagePrice = fallbackPrice;
+        if(m_lastExecutionReceipt.filledVolume <= 0.0)
+            m_lastExecutionReceipt.filledVolume = 0.0;
+        m_lastExecutionReceipt.note = "broker_accept_unconfirmed";
+        return false;
     }
     
 public:
@@ -981,11 +1101,11 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     }
     
     ResetExecutionReceipt(symbolName, volume);
-    bool result = false;
+    bool executionConfirmed = false;
     int retryCount = 0;
     uint lastRetcode = 0;
     
-    while(retryCount < MAX_TRADE_RETRIES && !result)
+    while(retryCount < MAX_TRADE_RETRIES && !executionConfirmed)
     {
         ApplyFillingModeForSymbol(symbolName);
 
@@ -997,6 +1117,21 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         if(executionPrice <= 0.0)
         {
             LogError("Unable to resolve current execution price", symbolName);
+            break;
+        }
+
+        string preflightReason = "";
+        if(!ValidateExecutionPreflight(symbolName, orderType, executionPrice, preflightReason))
+        {
+            m_lastExecutionReceipt.accepted = false;
+            m_lastExecutionReceipt.retryCount = retryCount;
+            m_lastExecutionReceipt.averagePrice = executionPrice;
+            m_lastExecutionReceipt.note = preflightReason;
+            PrintFormat("[EXECUTION-BLOCKED] %s | reason=%s | price=%.5f | volume=%.2f",
+                        symbolName,
+                        preflightReason,
+                        executionPrice,
+                        volume);
             break;
         }
 
@@ -1021,28 +1156,33 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastExecutionReceipt.stopLoss = stopLoss;
         m_lastExecutionReceipt.takeProfit = takeProfit;
 
+        bool sendAccepted = false;
         if(orderType == ORDER_TYPE_BUY)
         {
-            result = m_trade.Buy(volume, symbolName, executionPrice, stopLoss, takeProfit, comment);
+            sendAccepted = m_trade.Buy(volume, symbolName, executionPrice, stopLoss, takeProfit, comment);
         }
         else if(orderType == ORDER_TYPE_SELL)
         {
-            result = m_trade.Sell(volume, symbolName, executionPrice, stopLoss, takeProfit, comment);
+            sendAccepted = m_trade.Sell(volume, symbolName, executionPrice, stopLoss, takeProfit, comment);
         }
-        
-        if(!result)
+
+        MqlTradeResult tradeResult;
+        m_trade.Result(tradeResult);
+        m_lastTradeResult = tradeResult;
+        m_lastExecutionReceipt.retcode = tradeResult.retcode;
+        m_lastExecutionReceipt.requestId = tradeResult.request_id;
+        m_lastExecutionReceipt.orderTicket = tradeResult.order;
+        m_lastExecutionReceipt.dealTicket = tradeResult.deal;
+        m_lastExecutionReceipt.retryCount = retryCount;
+        m_lastExecutionReceipt.averagePrice = (tradeResult.price > 0.0) ? tradeResult.price : executionPrice;
+        m_lastExecutionReceipt.filledVolume = (tradeResult.volume > 0.0) ? tradeResult.volume : 0.0;
+        m_lastExecutionReceipt.partialFill = false;
+        m_lastExecutionReceipt.note = tradeResult.comment;
+
+        if(!sendAccepted)
         {
-            MqlTradeResult tradeResult;
-            m_trade.Result(tradeResult);
-            m_lastTradeResult = tradeResult;
             m_lastExecutionReceipt.accepted = false;
-            m_lastExecutionReceipt.retcode = tradeResult.retcode;
-            m_lastExecutionReceipt.requestId = tradeResult.request_id;
-            m_lastExecutionReceipt.orderTicket = tradeResult.order;
-            m_lastExecutionReceipt.dealTicket = tradeResult.deal;
-            m_lastExecutionReceipt.retryCount = retryCount;
             m_lastExecutionReceipt.averagePrice = executionPrice;
-            m_lastExecutionReceipt.note = tradeResult.comment;
             LogTradeError(tradeResult, "ExecuteMarketOrder");
             
             uint retcode = tradeResult.retcode;
@@ -1074,24 +1214,30 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         }
         else
         {
-            MqlTradeResult prResult;
-            m_trade.Result(prResult);
-            m_lastTradeResult = prResult;
-            m_lastExecutionReceipt.accepted = true;
-            m_lastExecutionReceipt.retcode = prResult.retcode;
-            m_lastExecutionReceipt.requestId = prResult.request_id;
-            m_lastExecutionReceipt.orderTicket = prResult.order;
-            m_lastExecutionReceipt.dealTicket = prResult.deal;
-            m_lastExecutionReceipt.retryCount = retryCount;
-            m_lastExecutionReceipt.averagePrice = (prResult.price > 0.0) ? prResult.price : executionPrice;
-            m_lastExecutionReceipt.filledVolume = (prResult.volume > 0.0) ? prResult.volume : volume;
-            m_lastExecutionReceipt.partialFill = ((prResult.retcode == TRADE_RETCODE_DONE_PARTIAL) ||
-                                                  (m_lastExecutionReceipt.filledVolume > 0.0 && m_lastExecutionReceipt.filledVolume < volume));
-            m_lastExecutionReceipt.note = prResult.comment;
-            if((prResult.retcode == TRADE_RETCODE_DONE_PARTIAL) || (prResult.volume > 0 && prResult.volume < volume))
+            if(IsSuccessfulFillRetcode(tradeResult.retcode))
+            {
+                m_lastExecutionReceipt.accepted = true;
+                if(m_lastExecutionReceipt.filledVolume <= 0.0)
+                    m_lastExecutionReceipt.filledVolume = volume;
+                m_lastExecutionReceipt.partialFill = ((tradeResult.retcode == TRADE_RETCODE_DONE_PARTIAL) ||
+                                                      (m_lastExecutionReceipt.filledVolume > 0.0 &&
+                                                       m_lastExecutionReceipt.filledVolume + 1e-8 < volume));
+                executionConfirmed = true;
+            }
+            else
+            {
+                executionConfirmed = ConfirmExecutionReceipt(symbolName, orderType, volume, executionPrice, tradeResult);
+            }
+
+            lastRetcode = tradeResult.retcode;
+
+            if(m_lastExecutionReceipt.partialFill)
             {
                 PrintFormat("[PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | retcode=%u",
-                            symbolName, volume, prResult.volume, prResult.retcode);
+                            symbolName,
+                            volume,
+                            m_lastExecutionReceipt.filledVolume,
+                            m_lastExecutionReceipt.retcode);
             }
 
             PrintFormat("[EXECUTION-RECEIPT] %s | accepted=%s | requested=%.2f | filled=%.2f | price=%.5f | retcode=%u | retries=%d",
@@ -1102,18 +1248,29 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                         m_lastExecutionReceipt.averagePrice,
                         m_lastExecutionReceipt.retcode,
                         m_lastExecutionReceipt.retryCount);
+            if(!executionConfirmed && !m_lastExecutionReceipt.accepted)
+            {
+                PrintFormat("[EXECUTION-UNCONFIRMED] %s | request_id=%u | order=%I64u | deal=%I64u | retcode=%u | note=%s",
+                            symbolName,
+                            m_lastExecutionReceipt.requestId,
+                            m_lastExecutionReceipt.orderTicket,
+                            m_lastExecutionReceipt.dealTicket,
+                            m_lastExecutionReceipt.retcode,
+                            m_lastExecutionReceipt.note);
+                break;
+            }
         }
     }
     
-    if(!result && retryCount >= MAX_TRADE_RETRIES)
+    if(!executionConfirmed && retryCount >= MAX_TRADE_RETRIES)
         Print("[TRADE-FAILED] max retries exceeded");
-    else if(!result && lastRetcode != 0)
+    else if(!executionConfirmed && lastRetcode != 0)
         PrintFormat("[TRADE-FAILED] %s | retcode=%u | retries=%d", symbolName, lastRetcode, retryCount);
 
-    if(!result)
+    if(!executionConfirmed)
         m_lastExecutionReceipt.retryCount = retryCount;
     
-    return result;
+    return executionConfirmed;
 }
 
 //+------------------------------------------------------------------+

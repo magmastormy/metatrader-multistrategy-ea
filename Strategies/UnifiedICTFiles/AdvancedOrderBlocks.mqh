@@ -30,6 +30,7 @@ enum ENUM_ORDER_BLOCK_TYPE
 //+------------------------------------------------------------------+
 struct SAdvancedOrderBlock
 {
+    // --- EXISTING FIELDS (keep all unchanged) ---
     ENUM_ORDER_BLOCK_TYPE type;
     datetime time;
     double top;
@@ -37,25 +38,35 @@ struct SAdvancedOrderBlock
     double open;
     double close;
     double midpoint;
-    
+
     bool isValidated;
     bool isMitigated;
     bool isTested;
     int testCount;
-    
+
     double bodySize;
     double range;
     double bodyPercent;
     double strength;
-    
+
     ENUM_TIMEFRAMES timeframe;
     bool atSupportResistance;
     bool hasImbalance;
-    
+
+    // --- NEW FIELDS (P0-B) ---
+    double ce;              // Consequent Encroachment = midpoint (used as entry/TP target, NOT mitigation)
+    bool isFresh;           // Has price NOT yet returned to this OB (true = never tested)
+    int timesRejected;      // How many times price bounced FROM this OB (more = stronger)
+    datetime firstTestedTime;   // When price first entered the OB zone
+    double mitigationLevel; // The price level that triggers mitigation (below bottom for bull, above top for bear)
+    bool shadowUsedForSL;   // Whether the OB wick/shadow extends the mitigation level
+
     SAdvancedOrderBlock() : type(OB_NONE), time(0), top(0), bottom(0), open(0), close(0),
                            midpoint(0), isValidated(false), isMitigated(false), isTested(false),
                            testCount(0), bodySize(0), range(0), bodyPercent(0), strength(0.5),
-                           timeframe(PERIOD_CURRENT), atSupportResistance(false), hasImbalance(false) {}
+                           timeframe(PERIOD_CURRENT), atSupportResistance(false), hasImbalance(false),
+                           ce(0), isFresh(true), timesRejected(0), firstTestedTime(0),
+                           mitigationLevel(0), shadowUsedForSL(false) {}
 };
 
 //+------------------------------------------------------------------+
@@ -78,6 +89,7 @@ private:
     int                 FindMostRecentSwingLow(int lookback = 50);
     double              FindOldLow(int startBar, int endBar);
     double              FindOldHigh(int startBar, int endBar);
+    int                 FindImpulseStart(bool bullish, int lookback = 30);  // P1-A helper
     
 public:
                         CAdvancedOrderBlockDetector();
@@ -218,139 +230,182 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
 }
 
 //+------------------------------------------------------------------+
-//| Detect Bullish Source OB                                         |
+//| Find Impulse Start — P1-A Helper                                |
 //+------------------------------------------------------------------+
+// Returns the starting bar index of the most recent impulsive move in the given direction.
+// An impulse is 3+ consecutive bars moving in the same direction with bodies >= 50% of range.
+// Returns -1 if no impulse found within lookback.
+int CAdvancedOrderBlockDetector::FindImpulseStart(bool bullish, int lookback)
+{
+    int consecutiveCount = 0;
+    int impulseStartBar  = -1;
+
+    for(int i = 1; i < lookback; i++)
+    {
+        double o = iOpen(m_symbol,  m_timeframe, i);
+        double c = iClose(m_symbol, m_timeframe, i);
+        double h = iHigh(m_symbol,  m_timeframe, i);
+        double l = iLow(m_symbol,   m_timeframe, i);
+
+        double body  = MathAbs(c - o);
+        double range = h - l;
+        bool strongBody = (range > 0 && body / range >= 0.50);
+
+        bool directionMatch = bullish ? (c > o) : (c < o);
+
+        if(directionMatch && strongBody)
+        {
+            consecutiveCount++;
+            if(consecutiveCount >= 3)
+            {
+                // Found 3+ consecutive impulse candles
+                // The impulse START is at bar i (oldest of the 3)
+                impulseStartBar = i;
+                break;
+            }
+        }
+        else
+        {
+            consecutiveCount = 0;
+        }
+    }
+
+    return impulseStartBar;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Bullish Source OB — P1-A Rewrite                         |
+//+------------------------------------------------------------------+
+// Algorithm:
+// 1. Find the most recent bullish impulse (3+ strong bullish candles)
+// 2. Starting at the bar just BEFORE the impulse began, walk backward
+// 3. Find the LAST bearish candle (close < open) before the impulse
+// 4. That candle = Source OB (the last selling before institutions flipped bullish)
 bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
 {
-    int lookback = 50;
-    int lowestBar = -1;
-    double lowestPrice = DBL_MAX;
-    
-    for(int i = 5; i < lookback; i++)
+    int impulseStartBar = FindImpulseStart(true, 50);
+    if(impulseStartBar < 0) return false;
+
+    // Walk forward from impulseStartBar to find the last bearish candle before the impulse.
+    int sourceOBBar = -1;
+
+    for(int i = impulseStartBar + 1; i < impulseStartBar + 20; i++)
     {
-        double low = iLow(m_symbol, m_timeframe, i);
-        if(low < lowestPrice)
+        if(i >= iBars(m_symbol, m_timeframe)) break;
+
+        double o = iOpen(m_symbol,  m_timeframe, i);
+        double c = iClose(m_symbol, m_timeframe, i);
+
+        if(c < o)  // Bearish candle
         {
-            lowestPrice = low;
-            lowestBar = i;
+            sourceOBBar = i;
+            // Do NOT break — keep looking for the LAST bearish candle
+            // (we want the one closest to the impulse start)
         }
     }
-    
-    if(lowestBar == -1) return false;
-    
-    double open = iOpen(m_symbol, m_timeframe, lowestBar);
-    double close = iClose(m_symbol, m_timeframe, lowestBar);
-    
-    // Must be bearish candle
-    if(close >= open) return false;
-    
-    // Find candle with most range near the low
-    int bestCandle = lowestBar;
-    double bestRange = 0;
-    
-    for(int i = lowestBar - 2; i <= lowestBar + 2; i++)
+
+    if(sourceOBBar < 0) return false;
+
+    // Validate: the OB candle should have a meaningful body
+    double o = iOpen(m_symbol,  m_timeframe, sourceOBBar);
+    double c = iClose(m_symbol, m_timeframe, sourceOBBar);
+    double h = iHigh(m_symbol,  m_timeframe, sourceOBBar);
+    double l = iLow(m_symbol,   m_timeframe, sourceOBBar);
+
+    double body = MathAbs(o - c);
+    double atr  = 0;
+    int atrHandle = iATR(m_symbol, m_timeframe, 14);
+    if(atrHandle != INVALID_HANDLE)
     {
-        if(i < 0) continue;
-        
-        double candleOpen = iOpen(m_symbol, m_timeframe, i);
-        double candleClose = iClose(m_symbol, m_timeframe, i);
-        
-        if(candleClose >= candleOpen) continue;
-        
-        double bodyRange = candleOpen - candleClose;
-        if(bodyRange > bestRange)
-        {
-            bestRange = bodyRange;
-            bestCandle = i;
-        }
+        double atrBuf[];
+        ArraySetAsSeries(atrBuf, true);
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)
+            atr = atrBuf[0];
+        IndicatorRelease(atrHandle);
     }
-    
-    double candleLow = iLow(m_symbol, m_timeframe, bestCandle);
-    if(!IsNearSupportLevel(candleLow))
-        return false;
-    
-    ob.type = OB_SOURCE_BULLISH;
-    ob.time = iTime(m_symbol, m_timeframe, bestCandle);
-    ob.top = iHigh(m_symbol, m_timeframe, bestCandle);
-    ob.bottom = iLow(m_symbol, m_timeframe, bestCandle);
-    ob.open = iOpen(m_symbol, m_timeframe, bestCandle);
-    ob.close = iClose(m_symbol, m_timeframe, bestCandle);
-    ob.midpoint = (ob.top + ob.bottom) / 2.0;
-    ob.bodySize = MathAbs(ob.open - ob.close);
-    ob.range = ob.top - ob.bottom;
-    ob.bodyPercent = (ob.range > 0) ? ob.bodySize / ob.range : 0;
+
+    // Body must be at least 20% of ATR to qualify as a meaningful OB
+    if(atr > 0 && body < atr * 0.20) return false;
+
+    ob.type      = OB_SOURCE_BULLISH;
+    ob.time      = iTime(m_symbol, m_timeframe, sourceOBBar);
+    ob.top       = h;
+    ob.bottom    = l;
+    ob.open      = o;
+    ob.close     = c;
+    ob.midpoint  = (h + l) / 2.0;
+    ob.ce        = ob.midpoint;
+    ob.bodySize  = body;
+    ob.range     = h - l;
+    ob.bodyPercent = (ob.range > 0) ? body / ob.range : 0;
     ob.timeframe = m_timeframe;
-    ob.strength = 0.85;
-    ob.atSupportResistance = true;
-    
+    ob.strength  = 0.85;
+    ob.isFresh   = true;
+    ob.atSupportResistance = IsNearSupportLevel(l);
+
     return true;
 }
 
 //+------------------------------------------------------------------+
-//| Detect Bearish Source OB                                         |
+//| Detect Bearish Source OB — P1-A Rewrite                         |
 //+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
 {
-    int lookback = 50;
-    int highestBar = -1;
-    double highestPrice = 0;
-    
-    for(int i = 5; i < lookback; i++)
+    int impulseStartBar = FindImpulseStart(false, 50);  // false = bearish impulse
+    if(impulseStartBar < 0) return false;
+
+    int sourceOBBar = -1;
+
+    for(int i = impulseStartBar + 1; i < impulseStartBar + 20; i++)
     {
-        double high = iHigh(m_symbol, m_timeframe, i);
-        if(high > highestPrice)
+        if(i >= iBars(m_symbol, m_timeframe)) break;
+
+        double o = iOpen(m_symbol,  m_timeframe, i);
+        double c = iClose(m_symbol, m_timeframe, i);
+
+        if(c > o)  // Bullish candle — last one before bearish impulse = source OB
         {
-            highestPrice = high;
-            highestBar = i;
+            sourceOBBar = i;
         }
     }
-    
-    if(highestBar == -1) return false;
-    
-    double open = iOpen(m_symbol, m_timeframe, highestBar);
-    double close = iClose(m_symbol, m_timeframe, highestBar);
-    
-    // Must be bullish candle
-    if(close <= open) return false;
-    
-    int bestCandle = highestBar;
-    double bestRange = 0;
-    
-    for(int i = highestBar - 2; i <= highestBar + 2; i++)
+
+    if(sourceOBBar < 0) return false;
+
+    double o = iOpen(m_symbol,  m_timeframe, sourceOBBar);
+    double c = iClose(m_symbol, m_timeframe, sourceOBBar);
+    double h = iHigh(m_symbol,  m_timeframe, sourceOBBar);
+    double l = iLow(m_symbol,   m_timeframe, sourceOBBar);
+    double body = MathAbs(o - c);
+
+    double atr = 0;
+    int atrHandle = iATR(m_symbol, m_timeframe, 14);
+    if(atrHandle != INVALID_HANDLE)
     {
-        if(i < 0) continue;
-        
-        double candleOpen = iOpen(m_symbol, m_timeframe, i);
-        double candleClose = iClose(m_symbol, m_timeframe, i);
-        
-        if(candleClose <= candleOpen) continue;
-        
-        double bodyRange = candleClose - candleOpen;
-        if(bodyRange > bestRange)
-        {
-            bestRange = bodyRange;
-            bestCandle = i;
-        }
+        double atrBuf[];
+        ArraySetAsSeries(atrBuf, true);
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)
+            atr = atrBuf[0];
+        IndicatorRelease(atrHandle);
     }
-    
-    double candleHigh = iHigh(m_symbol, m_timeframe, bestCandle);
-    if(!IsNearResistanceLevel(candleHigh))
-        return false;
-    
-    ob.type = OB_SOURCE_BEARISH;
-    ob.time = iTime(m_symbol, m_timeframe, bestCandle);
-    ob.top = iHigh(m_symbol, m_timeframe, bestCandle);
-    ob.bottom = iLow(m_symbol, m_timeframe, bestCandle);
-    ob.open = iOpen(m_symbol, m_timeframe, bestCandle);
-    ob.close = iClose(m_symbol, m_timeframe, bestCandle);
-    ob.midpoint = (ob.top + ob.bottom) / 2.0;
-    ob.bodySize = MathAbs(ob.open - ob.close);
-    ob.range = ob.top - ob.bottom;
-    ob.bodyPercent = (ob.range > 0) ? ob.bodySize / ob.range : 0;
+
+    if(atr > 0 && body < atr * 0.20) return false;
+
+    ob.type      = OB_SOURCE_BEARISH;
+    ob.time      = iTime(m_symbol, m_timeframe, sourceOBBar);
+    ob.top       = h;
+    ob.bottom    = l;
+    ob.open      = o;
+    ob.close     = c;
+    ob.midpoint  = (h + l) / 2.0;
+    ob.ce        = ob.midpoint;
+    ob.bodySize  = body;
+    ob.range     = h - l;
+    ob.bodyPercent = (ob.range > 0) ? body / ob.range : 0;
     ob.timeframe = m_timeframe;
-    ob.strength = 0.85;
-    ob.atSupportResistance = true;
-    
+    ob.strength  = 0.85;
+    ob.isFresh   = true;
+    ob.atSupportResistance = IsNearResistanceLevel(h);
+
     return true;
 }
 
@@ -621,33 +676,86 @@ bool CAdvancedOrderBlockDetector::ValidateOrderBlock(SAdvancedOrderBlock &ob)
 }
 
 //+------------------------------------------------------------------+
-//| Check Mitigation                                                 |
+//| Check Mitigation — P0-B Rewrite                                 |
 //+------------------------------------------------------------------+
+// ICT Rule: OB is mitigated only when a candle CLOSES through the full boundary.
+// Bullish OBs: mitigated when close < bottom.
+// Bearish OBs: mitigated when close > top.
+// CE (midpoint) is NOT a mitigation level — it is an entry refinement target.
 bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
 {
     if(ob.isMitigated) return true;
-    
-    double lastPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-    
-    // 50% fill = mitigated
-    if(ob.type == OB_SOURCE_BULLISH || ob.type == OB_CONTINUATION_BULL || ob.type == OB_BREAKER_BULL)
+
+    // Set CE on first call if not set
+    if(ob.ce == 0)
+        ob.ce = (ob.top + ob.bottom) / 2.0;
+
+    // Determine OB direction
+    bool isBullishOB = (ob.type == OB_SOURCE_BULLISH ||
+                        ob.type == OB_CONTINUATION_BULL ||
+                        ob.type == OB_BREAKER_BULL);
+
+    ob.mitigationLevel = isBullishOB ? ob.bottom : ob.top;
+
+    // Walk forward from OB formation time
+    for(int i = 0; i < 200; i++)
     {
-        if(lastPrice < ob.midpoint)
+        datetime barTime = iTime(m_symbol, m_timeframe, i);
+        if(barTime <= ob.time) break;
+
+        double barHigh  = iHigh(m_symbol,  m_timeframe, i);
+        double barLow   = iLow(m_symbol,   m_timeframe, i);
+        double barClose = iClose(m_symbol, m_timeframe, i);
+
+        // Track tests (price entering the OB body zone)
+        bool priceInOB = (barHigh >= ob.bottom && barLow <= ob.top);
+        if(priceInOB)
         {
-            ob.isMitigated = true;
-            return true;
+            if(!ob.isTested)
+            {
+                ob.isTested = true;
+                ob.isFresh  = false;
+                ob.firstTestedTime = barTime;
+            }
+            ob.testCount++;
+        }
+
+        // Check for rejection (price entered OB but closed OUT of it in the OB's direction)
+        if(isBullishOB && priceInOB && barClose > ob.top)
+            ob.timesRejected++;
+        if(!isBullishOB && priceInOB && barClose < ob.bottom)
+            ob.timesRejected++;
+
+        // MITIGATION CHECK — candle must CLOSE through the far boundary
+        if(isBullishOB)
+        {
+            if(barClose < ob.bottom)
+            {
+                ob.isMitigated = true;
+                return true;
+            }
+        }
+        else
+        {
+            if(barClose > ob.top)
+            {
+                ob.isMitigated = true;
+                return true;
+            }
         }
     }
-    else
-    {
-        if(lastPrice > ob.midpoint)
-        {
-            ob.isMitigated = true;
-            return true;
-        }
-    }
-    
-    return false;
+
+    // P0-B: Update strength based on freshness status
+    if(ob.isFresh)
+        ob.strength = MathMin(1.0, ob.strength + 0.10);  // Fresh OB = premium
+
+    if(ob.timesRejected >= 2)
+        ob.strength = MathMin(1.0, ob.strength + 0.08);  // Multiple rejections = proven zone
+
+    if(ob.timesRejected >= 3)
+        ob.isMitigated = true;  // OB exhausted after 3 rejections — treat as used up
+
+    return ob.isMitigated;
 }
 
 //+------------------------------------------------------------------+

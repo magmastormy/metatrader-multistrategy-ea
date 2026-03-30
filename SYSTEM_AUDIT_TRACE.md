@@ -1,7 +1,7 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-03-25
+- Last Updated: 2026-03-30
 - Scope: Runtime lifecycle and ownership trace
 
 ## Scope
@@ -104,6 +104,13 @@
 - **Code Quality**: Recent fixes address memory leaks, null pointer safety, bounds checking, and standardized constants across AI components.
 - **Compilation**: Verified 0 errors, 0 warnings with all improvements integrated.
 
+## 2026-03-30 Support/Resistance & Trendline System Overhaul Trace
+- `CTrendlineDetector` and `CSupportResistanceDetector` rewritten to map points cleanly off normalized ATR levels instead of hardcoded minimum pip parameters.
+- Look-ahead bias safely removed. All logic checks intersecting S/R lines and Trendlines now query `bar[1]` to ascertain completed chart realities and ignore active-wick repainting.
+- Indicator MT5 Chart memory heavily hardened via dynamic array bubble sorting in `StrategySupportResistance`, drawing only the top 6/8 power tiers instead of saturating the frontend with stale ghost levels.
+- Lot computations (`CADXPositionSizing`) explicitly refactored to consume Tick Size and Tick Value for hyper-accurate price distance conversion against the active risk profile.
+- Obsolete fast-decay and price-averaging node cluster bugs isolated and resolved in S/R memory structures.
+
 ## 2026-03-25 Efficiency + Conviction Trace
 - `Core/Pipeline/UnifiedSignalPipeline.mqh` now caches structural engine context per symbol/timeframe/bar and emits a reusable evidence snapshot carrying `readinessScore`, `contextScore`, `costScore`, effective confidence floor, and bounded soft-threshold state.
 - `Core/Signals/TimeframeConsistency.mqh` no longer neutralizes directional consensus through hot-path hedging prevention; timeframe conflict resolution remains authoritative without pre-emptively zeroing otherwise valid mixed-strategy output.
@@ -177,6 +184,25 @@
 - Promoted all retained strategies to live primary voters by default (per-strategy inputs gate registration).
 - Replaced binary count-based quorum with normalized weighted confidence quorum (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy `InpWeight*`).
 - Added per-evaluation quorum telemetry via `[CONSENSUS-QUORUM]`.
+
+## 2026-03-25 Runtime Integrity + Lifecycle Trace
+- Corrected same-bar structural cache replay in `Core/Pipeline/UnifiedSignalPipeline.mqh` so cached evaluations preserve the original engine-ready flags and neutral defaults when engines are not ready.
+- Hardened pipeline bootstrap so missing diagnostics/protection/core engines now fail startup rather than silently degrading to a hollow filter path.
+- Localized symbol-specific engine state:
+  - `Core/Engines/LiquidityEngine.mqh` now uses the requested symbol for point/tolerance math
+  - `Core/Engines/RegimeEngine.mqh` now clears spread-shock cooldown state on symbol/timeframe switches
+- Aligned sizing lifecycle with shared indicators by routing `Core/Risk/PositionSizer.mqh` ATR reads through `IndicatorManager` when available.
+- Extended the scan lifecycle with cycle-scoped attribution:
+  - `[SCAN-NO-TRADE]`
+  - `[RISK-CAP]`
+  - expanded `[QUIET-REASONS]`
+- Tightened execution lifecycle in `Core/Trading/TradeManager.mqh`:
+  - preflight viability check before send
+  - confirmed-fill classification instead of raw submit success
+  - explicit `[EXECUTION-BLOCKED]` / `[EXECUTION-UNCONFIRMED]` telemetry when safe execution cannot be proven
+- Verification:
+  - compile passed with `0 errors, 0 warnings`
+  - bounded MT5 shadow-launch attempt completed, but no fresh EA-level tester artifacts were emitted in this environment
 
 ## 2026-02-24 Strategy Betterment Trace
 - Note: the soft-quarantine defaults recorded in this batch are historical; current default voting behavior is defined by the 2026-03-16 weighted quorum + live strategy promotion update.

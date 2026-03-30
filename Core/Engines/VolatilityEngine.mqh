@@ -45,6 +45,19 @@ struct VolatilityMetrics
     bool isExpanding;
     bool isContracting;
     datetime lastUpdate;
+
+    VolatilityMetrics() :
+        atr(0.0),
+        atrPercent(0.0),
+        bollinger_width(0.0),
+        historical_volatility(0.0),
+        relative_volatility(0.0),
+        state(VOLATILITY_LOW),
+        isExpanding(false),
+        isContracting(false),
+        lastUpdate(0)
+    {
+    }
 };
 
 class CVolatilityEngine
@@ -58,12 +71,26 @@ private:
     int m_handleATR;
     int m_handleBB;
     int m_handleStdDev;
+    string m_indicatorSymbol;
+    ENUM_TIMEFRAMES m_indicatorTimeframe;
+    int m_consecutiveDataFaults;
+    datetime m_lastFaultLogTime;
+    datetime m_lastReuseLogTime;
+    datetime m_lastStateLogTime;
+    ENUM_VOLATILITY_STATE m_lastLoggedState;
     
     VolatilityMetrics m_metrics;
+    VolatilityMetrics m_lastValidMetrics;
     CSignalDiagnostics* m_diagnostics;
     
     ENUM_VOLATILITY_STATE DetermineState(double atrPercent);
     double CalculateHistoricalVolatility(const string symbol, ENUM_TIMEFRAMES tf);
+    void ResetHandles();
+    bool EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe);
+    bool TryReuseLastMetrics(const string symbol, const ENUM_TIMEFRAMES timeframe, const string reasonTag, const int errorCode);
+    void NoteDataFault(const string symbol, const ENUM_TIMEFRAMES timeframe, const string reasonTag, const int errorCode);
+    int GetReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) const;
+    void MaybeLogState(const string symbol, const ENUM_TIMEFRAMES timeframe);
     
 public:
     CVolatilityEngine();
@@ -90,15 +117,16 @@ public:
 CVolatilityEngine::CVolatilityEngine() : 
     m_atrPeriod(14), m_bbPeriod(20), m_bbDeviation(2.0), m_hvPeriod(20),
     m_handleATR(INVALID_HANDLE), m_handleBB(INVALID_HANDLE), m_handleStdDev(INVALID_HANDLE),
+    m_indicatorSymbol(""), m_indicatorTimeframe(PERIOD_CURRENT),
+    m_consecutiveDataFaults(0), m_lastFaultLogTime(0), m_lastReuseLogTime(0), m_lastStateLogTime(0),
+    m_lastLoggedState(VOLATILITY_LOW),
     m_diagnostics(NULL)
 {
 }
 
 CVolatilityEngine::~CVolatilityEngine()
 {
-    if(m_handleATR != INVALID_HANDLE) IndicatorRelease(m_handleATR);
-    if(m_handleBB != INVALID_HANDLE) IndicatorRelease(m_handleBB);
-    if(m_handleStdDev != INVALID_HANDLE) IndicatorRelease(m_handleStdDev);
+    ResetHandles();
 }
 
 bool CVolatilityEngine::Initialize(int atrPeriod, int bbPeriod, CSignalDiagnostics* diag)
@@ -106,61 +134,211 @@ bool CVolatilityEngine::Initialize(int atrPeriod, int bbPeriod, CSignalDiagnosti
     m_atrPeriod = atrPeriod;
     m_bbPeriod = bbPeriod;
     m_diagnostics = diag;
+    m_consecutiveDataFaults = 0;
+    m_lastFaultLogTime = 0;
+    m_lastReuseLogTime = 0;
+    m_lastStateLogTime = 0;
     Reset();
     return true;
 }
 
-bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES timeframe)
+void CVolatilityEngine::ResetHandles()
 {
-    // Release old handles
-    if(m_handleATR != INVALID_HANDLE) { IndicatorRelease(m_handleATR); m_handleATR = INVALID_HANDLE; }
-    if(m_handleBB != INVALID_HANDLE) { IndicatorRelease(m_handleBB); m_handleBB = INVALID_HANDLE; }
-    if(m_handleStdDev != INVALID_HANDLE) { IndicatorRelease(m_handleStdDev); m_handleStdDev = INVALID_HANDLE; }
-    
-    // Create indicators
+    if(m_handleATR != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_handleATR);
+        m_handleATR = INVALID_HANDLE;
+    }
+    if(m_handleBB != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_handleBB);
+        m_handleBB = INVALID_HANDLE;
+    }
+    if(m_handleStdDev != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_handleStdDev);
+        m_handleStdDev = INVALID_HANDLE;
+    }
+}
+
+int CVolatilityEngine::GetReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) const
+{
+    int barSeconds = PeriodSeconds(timeframe);
+    if(barSeconds <= 0)
+        barSeconds = 60;
+
+    return MathMax(60, MathMin(900, barSeconds));
+}
+
+bool CVolatilityEngine::EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    bool handlesReady = (m_handleATR != INVALID_HANDLE &&
+                         m_handleBB != INVALID_HANDLE &&
+                         m_handleStdDev != INVALID_HANDLE);
+    bool contextMatches = (m_indicatorSymbol == symbol && m_indicatorTimeframe == timeframe);
+    if(handlesReady && contextMatches)
+        return true;
+
+    if(!contextMatches)
+    {
+        m_lastValidMetrics = VolatilityMetrics();
+        m_lastReuseLogTime = 0;
+        m_consecutiveDataFaults = 0;
+    }
+
+    ResetHandles();
+    m_indicatorSymbol = symbol;
+    m_indicatorTimeframe = timeframe;
+
     m_handleATR = iATR(symbol, timeframe, m_atrPeriod);
     m_handleBB = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
     m_handleStdDev = iStdDev(symbol, timeframe, m_hvPeriod, 0, MODE_EMA, PRICE_CLOSE);
-    
-    if(m_handleATR == INVALID_HANDLE || m_handleBB == INVALID_HANDLE || m_handleStdDev == INVALID_HANDLE)
+
+    return (m_handleATR != INVALID_HANDLE &&
+            m_handleBB != INVALID_HANDLE &&
+            m_handleStdDev != INVALID_HANDLE);
+}
+
+bool CVolatilityEngine::TryReuseLastMetrics(const string symbol, const ENUM_TIMEFRAMES timeframe, const string reasonTag, const int errorCode)
+{
+    if(m_indicatorSymbol != symbol || m_indicatorTimeframe != timeframe || m_lastValidMetrics.lastUpdate <= 0)
         return false;
-    
-    // Get values
-    double atr[2];
-    double bb_upper[1], bb_lower[1], bb_middle[1];
-    double stddev[1];
-    
-    if(CopyBuffer(m_handleATR, 0, 0, 2, atr) != 2) return false;
-    if(CopyBuffer(m_handleBB, 1, 0, 1, bb_upper) != 1) return false;
-    if(CopyBuffer(m_handleBB, 2, 0, 1, bb_lower) != 1) return false;
-    if(CopyBuffer(m_handleBB, 0, 0, 1, bb_middle) != 1) return false;
-    if(CopyBuffer(m_handleStdDev, 0, 0, 1, stddev) != 1) return false;
-    
-    // Calculate metrics
+
+    int ageSeconds = (int)MathMax(0, TimeCurrent() - m_lastValidMetrics.lastUpdate);
+    if(ageSeconds > GetReuseWindowSeconds(timeframe))
+        return false;
+
+    datetime nowTime = TimeCurrent();
+    if(m_lastReuseLogTime == 0 || (nowTime - m_lastReuseLogTime) >= 30)
+    {
+        PrintFormat("[VOLATILITY-FAULT] REUSE_LAST_VALID | symbol=%s | timeframe=%s | reason=%s | age=%ds | err=%d",
+                    symbol,
+                    EnumToString(timeframe),
+                    reasonTag,
+                    ageSeconds,
+                    errorCode);
+        m_lastReuseLogTime = nowTime;
+    }
+
+    m_metrics = m_lastValidMetrics;
+    return true;
+}
+
+void CVolatilityEngine::NoteDataFault(const string symbol, const ENUM_TIMEFRAMES timeframe, const string reasonTag, const int errorCode)
+{
+    m_consecutiveDataFaults++;
+
+    datetime nowTime = TimeCurrent();
+    if(m_lastFaultLogTime == 0 || (nowTime - m_lastFaultLogTime) >= 30)
+    {
+        PrintFormat("[VOLATILITY-FAULT] %s | symbol=%s | timeframe=%s | err=%d | faults=%d",
+                    reasonTag,
+                    symbol,
+                    EnumToString(timeframe),
+                    errorCode,
+                    m_consecutiveDataFaults);
+        m_lastFaultLogTime = nowTime;
+    }
+
+    if(m_consecutiveDataFaults >= 3)
+    {
+        ResetHandles();
+        PrintFormat("[VOLATILITY-FAULT] HANDLE_RESET | symbol=%s | timeframe=%s | faults=%d",
+                    symbol,
+                    EnumToString(timeframe),
+                    m_consecutiveDataFaults);
+        m_consecutiveDataFaults = 0;
+    }
+}
+
+void CVolatilityEngine::MaybeLogState(const string symbol, const ENUM_TIMEFRAMES timeframe)
+{
+    datetime nowTime = TimeCurrent();
+    if(m_metrics.lastUpdate <= 0)
+        return;
+
+    if(m_metrics.state == m_lastLoggedState && (m_lastStateLogTime != 0 && (nowTime - m_lastStateLogTime) < 60))
+        return;
+
+    PrintFormat("[VOLATILITY-STATE] %s | timeframe=%s | state=%s | atr=%.5f | atr_pct=%.2f | rel=%.3f | expanding=%s | contracting=%s",
+                symbol,
+                EnumToString(timeframe),
+                EnumToString(m_metrics.state),
+                m_metrics.atr,
+                m_metrics.atrPercent,
+                m_metrics.relative_volatility,
+                m_metrics.isExpanding ? "true" : "false",
+                m_metrics.isContracting ? "true" : "false");
+    m_lastLoggedState = m_metrics.state;
+    m_lastStateLogTime = nowTime;
+}
+
+bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    if(!EnsureHandles(symbol, timeframe))
+    {
+        int handleErr = GetLastError();
+        NoteDataFault(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
+        return TryReuseLastMetrics(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
+    }
+
+    int minBars = MathMax(MathMax(m_atrPeriod + 5, m_bbPeriod + 5), m_hvPeriod + 5);
+    if(Bars(symbol, timeframe) < minBars ||
+       BarsCalculated(m_handleATR) < minBars ||
+       BarsCalculated(m_handleBB) < minBars ||
+       BarsCalculated(m_handleStdDev) < minBars)
+    {
+        NoteDataFault(symbol, timeframe, "WARMUP", 0);
+        return TryReuseLastMetrics(symbol, timeframe, "WARMUP", 0);
+    }
+
+    double atr[];
+    double bb_upper[];
+    double bb_lower[];
+    double stddev[];
+    ArrayResize(atr, 2);
+    ArrayResize(bb_upper, 1);
+    ArrayResize(bb_lower, 1);
+    ArrayResize(stddev, 1);
+    ArraySetAsSeries(atr, true);
+
+    ResetLastError();
+    int atrRet = CopyBuffer(m_handleATR, 0, 0, 2, atr);
+    int upperRet = CopyBuffer(m_handleBB, 1, 0, 1, bb_upper);
+    int lowerRet = CopyBuffer(m_handleBB, 2, 0, 1, bb_lower);
+    int stdDevRet = CopyBuffer(m_handleStdDev, 0, 0, 1, stddev);
+    int copyErr = GetLastError();
+    if(atrRet != 2 || upperRet != 1 || lowerRet != 1 || stdDevRet != 1 || atr[0] <= 0.0)
+    {
+        NoteDataFault(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
+        return TryReuseLastMetrics(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
+    }
+
     double price = SymbolInfoDouble(symbol, SYMBOL_BID);
+    if(price <= 0.0)
+        price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+    if(price <= 0.0)
+    {
+        NoteDataFault(symbol, timeframe, "PRICE_UNAVAILABLE", 0);
+        return TryReuseLastMetrics(symbol, timeframe, "PRICE_UNAVAILABLE", 0);
+    }
+
     m_metrics.atr = atr[0];
-    m_metrics.atrPercent = (atr[0] / price) * 100;
-    m_metrics.bollinger_width = bb_upper[0] - bb_lower[0];
-    m_metrics.historical_volatility = stddev[0];
-    m_metrics.relative_volatility = m_metrics.atr / m_metrics.historical_volatility;
-    
-    // Determine state
+    m_metrics.atrPercent = (atr[0] / price) * 100.0;
+    m_metrics.bollinger_width = MathMax(0.0, bb_upper[0] - bb_lower[0]);
+    m_metrics.historical_volatility = MathMax(0.0, stddev[0]);
+    m_metrics.relative_volatility = (m_metrics.historical_volatility > 0.0)
+                                    ? (m_metrics.atr / m_metrics.historical_volatility)
+                                    : 1.0;
     m_metrics.state = DetermineState(m_metrics.atrPercent);
-    
-    // Check expansion/contraction
     m_metrics.isExpanding = atr[0] > atr[1] * 1.1;
     m_metrics.isContracting = atr[0] < atr[1] * 0.9;
-    
     m_metrics.lastUpdate = TimeCurrent();
-    
-    if(m_diagnostics != NULL)
-    {
-        string msg = StringFormat("Volatility: %s | ATR: %.5f (%.2f%%) | BB Width: %.5f",
-                                EnumToString(m_metrics.state), m_metrics.atr, 
-                                m_metrics.atrPercent, m_metrics.bollinger_width);
-        Print("[VolatilityEngine] ", msg);
-    }
-    
+
+    m_lastValidMetrics = m_metrics;
+    m_consecutiveDataFaults = 0;
+    MaybeLogState(symbol, timeframe);
+
     return true;
 }
 
@@ -196,6 +374,10 @@ double CVolatilityEngine::GetVolatilityAdjustedTakeProfit(double baseTp)
 void CVolatilityEngine::Reset()
 {
     m_metrics = VolatilityMetrics();
+    m_lastValidMetrics = VolatilityMetrics();
+    m_indicatorSymbol = "";
+    m_indicatorTimeframe = PERIOD_CURRENT;
+    m_lastLoggedState = VOLATILITY_LOW;
 }
 
 #endif // VOLATILITY_ENGINE_MQH

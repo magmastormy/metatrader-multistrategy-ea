@@ -177,7 +177,7 @@ public:
             return false;
         stopLoss = entry.stopLoss;
         takeProfit = entry.takeProfit;
-        lotSize = m_adxSizing.CalculateLotSize(0.01); // Base lot adjusted by ADX
+        lotSize = m_adxSizing.CalculateLotSize(entry.entryPrice, entry.stopLoss); // Base lot adjusted by ADX and Exact distance
         return true;
     }
     //--- Trailing Stop Management
@@ -252,13 +252,17 @@ public:
     //--- Check if in Trading Session
     bool IsInOptimalTradingTime()
     {
-        // Best trend trading during London and NY overlap
+        // Best trend trading during London and NY overlap (8 AM - 12 PM EST)
+        // EST is UTC-5
         MqlDateTime dt;
-        TimeToStruct(TimeCurrent(), dt);
-        int hour = dt.hour;
-        // London session: 8-16 GMT, NY session: 13-21 GMT
-        // Overlap: 13-16 GMT (best for trends)
-        return (hour >= 13 && hour <= 16);
+        TimeToStruct(TimeGMT(), dt);
+        
+        // Convert GMT to EST (UTC-5)
+        int estHour = dt.hour - 5;
+        if(estHour < 0) estHour += 24;
+        
+        // Overlap: 8 AM to 12 PM EST
+        return (estHour >= 8 && estHour <= 12);
     }
 };
 #endif // __STRATEGY_TREND_MQH__

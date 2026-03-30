@@ -1,7 +1,7 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-03-25
+- Last Updated: 2026-03-30
 - Status: Active baseline
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
@@ -138,6 +138,20 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **External-capacity diagnostics**: `[CAPACITY-EXTERNAL]` explicitly reports when non-EA positions consume per-symbol capacity.
 - **Execution retry hardening**: `LOCKED`/`FROZEN` retcodes now use single bounded retry instead of full exponential retry path.
 
+## Support/Resistance & Trendline Overhaul (2026-03-30)
+- **ATR-Driven Structure Models**: S/R Swing Points and Trendline anchoring now leverage standardized ATR multiples instead of isolated price calculations, eliminating static minimum pip logic.
+- **Look-Ahead Bias Elimination**: The `CTrendEntryTypes` logic paths and all S/R intersection detectors now explicitly enforce `bar[1]` completed-bar rules to prevent indicator repainting and forward-sniffing false signals.
+- **Dynamic Sizing Integration**: `CADXPositionSizing` and strategy SL/TP mappers compute accurate trade sizing strictly from Tick Size and Value boundaries over physical price distances, rather than abstract percentage points or raw pips.
+- **Performance Optimized Drawing**: All MT5 graphical components under S/R and Trendlines now utilize custom dynamic arrays with bubble-sorting logic to drastically reduce node counts, capping drawings to strictly Top 6/8 power tiers.
+
+## Unified ICT Specification Update (2026-03-30)
+- **Strict FVG/OB alignment**: Mitigations now require full candle body closes beyond the boundary rather than mid-point touches. FVGs are now pure gap-based models logic, and OBs are dynamically anchored to displacement.
+- **Institutional Context**: `CSessionGapDetector` and `CAMDDetector` map structural direction to Accumulation/Manipulation/Distribution phases and NDOG/NWOG opening gaps.
+- **Silver Bullet Enforced**: `CICTKillZones` tracks precise institutional AM/PM and London windows.
+- **Weighted Confluence**: `StrategyUnifiedICT` scores entries on a 0-130 pt scale rather than treating all setup components equally.
+- **Dynamic Probabilities**: `ComputeEntryConfidence(...)` factors in MS Break intensity (CHoCH > BOS) and AMD phase to output confidence scalars dynamically.
+- **TP Hierarchy**: TPs are placed dynamically at opposing MS CE levels (FVG CE -> OB CE -> Liquidity Sweep), abandoning fixed-RR targets.
+
 ## Institutional Throughput/Integrity Update (2026-02-24)
 - **Intrabar deadlock conversion**: `EnterpriseStrategyManager` now computes intrabar effective quorum from actual live contributors in the current cycle (`<=1 => quorum=1`, else bounded by configured intrabar floor).
 - **Deadlock attribution visibility**: consensus diagnostics now include `[CONSENSUS-ROOT]`, `[CONSENSUS-STRATEGY]`, and snapshot APIs consumed by runtime `[CONSENSUS-SNAPSHOT]`/`[NO-SIGNAL-ALERT]`.
@@ -184,6 +198,16 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Cycle-level candidate ranking**: the EA no longer fires the first acceptable symbol; it stages all risk-approved opportunities, logs them as `[SCAN-CANDIDATE]`, and executes only the highest-ranked candidate via `[SCAN-DECISION]`.
 - **Execution accounting fidelity**: `TradeManager` now emits `[EXECUTION-RECEIPT]`, partial fills emit `[FILL-DIFF]`, and `UnifiedRiskManager` registers consumed daily entry risk against actual fill ratio.
 - **Lower telemetry overhead**: `SignalDiagnostics` now batches file flushes instead of forcing an on-disk flush on every write.
+
+## Runtime Integrity + Lifecycle Update (2026-03-25)
+- **Readiness cache correctness**: `Core/Pipeline/UnifiedSignalPipeline.mqh` now replays the original structural readiness snapshot on same-bar cache hits instead of force-upgrading cached engines to `ready=true`, and it suppresses stale getter reuse when an engine is not ready.
+- **Fail-closed pipeline startup**: `CUnifiedSignalPipeline::Initialize()` now returns failure when required components are not constructed, and `CEnterpriseStrategyManager::Initialize()` propagates that failure instead of running a degraded but silent pipeline.
+- **Symbol-scoped engine hygiene**: `Core/Engines/LiquidityEngine.mqh` now uses the requested symbol's point size instead of `_Symbol`, resets on data-copy failure, and `Core/Engines/RegimeEngine.mqh` clears spread-shock cooldown state on symbol/timeframe changes.
+- **Shared ATR lifecycle for sizing**: `Core/Risk/PositionSizer.mqh` now prefers `IndicatorManager` ATR handles before falling back to its local handle path, reducing duplicated indicator lifecycle policies between sizing and the rest of the runtime.
+- **Risk-budget-aware sizing**: `MultiStrategyAutonomousEA.mq5` now caps requested per-trade risk through `CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(...)` before sizing, emitting `[RISK-CAP]` whenever daily or portfolio headroom forces a tighter budget.
+- **Per-scan explainability**: the scan loop now emits `[SCAN-NO-TRADE]` with consensus reason context and expands `[QUIET-REASONS]` to include cadence holds, missing managers, entry blocks, and sizing rejects.
+- **Execution preflight + confirmation**: `Core/Trading/TradeManager.mqh` now blocks stale/invalid/stress quotes via `[EXECUTION-BLOCKED]`, treats success as a confirmed fill rather than a raw broker accept, and emits `[EXECUTION-UNCONFIRMED]` when a broker response could not be confirmed safely.
+- **Verification status**: `sync_and_compile.ps1 -MirrorSync` passed with `0 errors, 0 warnings`; a bounded MT5 shadow launch was attempted, but this environment still did not emit fresh EA-level tester artifacts for the new logs.
 
 ## Weighted Quorum + Live Strategy Promotion Update (2026-03-16)
 - **Historical note**: this batch introduced weighted confidence quorum; the current runtime extends it further with readiness/health-based conviction weighting from the 2026-03-25 efficiency upgrade.

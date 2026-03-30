@@ -12,6 +12,7 @@
 
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
+#include "../../IndicatorManager.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -762,20 +763,35 @@ double CPositionSizer::ApplyRiskLimits(const double proposedSize, const double m
 //+------------------------------------------------------------------+
 double CPositionSizer::GetATR(const string symbolParam, const int period)
 {
-    // FIX: Cache indicator handle to prevent massive memory leak
+    CIndicatorManager* indicatorManager = CIndicatorManager::Instance();
+    if(indicatorManager != NULL)
+    {
+        int sharedHandle = indicatorManager.GetATRHandle(symbolParam, PERIOD_CURRENT, period);
+        if(sharedHandle != INVALID_HANDLE)
+        {
+            double atrArrayShared[];
+            ArraySetAsSeries(atrArrayShared, true);
+            if(CopyBuffer(sharedHandle, 0, 0, 1, atrArrayShared) > 0 && atrArrayShared[0] > 0.0)
+                return atrArrayShared[0];
+        }
+    }
+
     if(m_atrHandle == INVALID_HANDLE || m_lastSymbol != symbolParam)
     {
-        if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+        if(m_atrHandle != INVALID_HANDLE)
+            IndicatorRelease(m_atrHandle);
         m_atrHandle = iATR(symbolParam, PERIOD_CURRENT, period);
+        m_lastSymbol = symbolParam;
     }
-    
-    if(m_atrHandle == INVALID_HANDLE) return 0.0;
-    
+
+    if(m_atrHandle == INVALID_HANDLE)
+        return 0.0;
+
     double atrArray[];
     ArraySetAsSeries(atrArray, true);
     if(CopyBuffer(m_atrHandle, 0, 0, 1, atrArray) <= 0)
         return 0.0;
-    
+
     return atrArray[0];
 }
 

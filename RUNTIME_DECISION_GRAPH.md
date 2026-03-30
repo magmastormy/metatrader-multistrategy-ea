@@ -1,7 +1,7 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-03-25
+- Last Updated: 2026-03-30
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
 
@@ -196,6 +196,29 @@ flowchart TD
 - Unprotected remediation lifecycle: `[RISK-UNPROTECTED]`
 - External position capacity blocks: `[CAPACITY-EXTERNAL]`
 - Execution receipt telemetry: `[EXECUTION-RECEIPT]`, `[FILL-DIFF]`
+- Per-scan no-trade attribution: `[SCAN-NO-TRADE]`
+- Risk-budget sizing caps: `[RISK-CAP]`
+- Execution preflight and ambiguous broker responses: `[EXECUTION-BLOCKED]`, `[EXECUTION-UNCONFIRMED]`
+
+## 2026-03-25 Decision-Path Refinement
+- Same-bar structural cache reuse now preserves original engine readiness rather than forcing later scans to assume all engines are ready.
+- Structural context reads are fail-soft:
+  - ready engine => consume current/reused getters
+  - not-ready engine => consume neutral defaults and lower readiness score
+- Candidate construction now happens under a capped risk budget from `CUnifiedRiskManager`, so sizing aligns with remaining daily/portfolio headroom before post-size veto.
+- Live execution success now requires a confirmed fill retcode or bounded history confirmation; a raw broker `Buy/Sell(...) == true` no longer qualifies on its own.
+
+## 12. 2026-03-30 Unified ICT Integration
+- `StrategyUnifiedICT` pipeline replaces the prior counting gate with `ScoreConfluences(...)` (max 130 weighted points).
+- Confidence limits are dynamically set by `ComputeEntryConfidence(...)` using MS Break type (CHoCH vs BOS) and `CAMDDetector` Distribution sweeps.
+- Final entry `SICTEntrySetup` carries partial close sizes (`lot1Pct`, `lot2Pct`, `lot3Pct`) ready for the executor.
+- Stop losses are automatically pushed to `breakevenPrice` when TP1 hits an opposing structural CE (Consequent Encroachment) defined by `CalculateTakeProfits(...)`.
+- `CICTPositionSizer` injects localized risk-per-trade guard checks tied to dynamic equity-balance drawdowns.
+
+## 13. 2026-03-30 Support/Resistance & Trendline Overhaul
+- **Look-Ahead Blocking**: `CTrendEntryTypes`, `CSRBounceStrategy`, and `CSRBreakoutStrategy` evaluate historical and live signals explicitly against `bar[1]` (confirmed-bar completion) to prevent pseudo-signals drawn from open repainting wicks.
+- **Dynamic Array Sorting**: Visual indicators emitted by `DrawLevels()` and `DrawTrendlines()` are governed by an internal strength-sorted bubble algorithm, isolating system rendering strictly to the most statistically resonant boundaries.
+- **Explicit ATR Targeting**: Takes priority over fixed pips across `CADXPositionSizing` and strategy mappers. Position lot sizing explicitly resolves absolute market Tick Distance formulas against equity risk rather than arbitrary percentages.
 
 ## AI Runtime Evidence
 - `[AI-VOTE][Transformer]`

@@ -166,6 +166,9 @@ private:
             m_lastSnapshot.valid = false;
             m_consecutiveDataFaults = 0;
             m_lastReuseLogTime = 0;
+            m_lastSpreadShockTime = 0;
+            m_lastStateLogTime = 0;
+            m_lastLoggedState = REGIME_RANGE;
         }
 
         ResetHandles();

@@ -56,13 +56,15 @@ private:
     int                 m_ema50Handle;      // Intermediate trend EMA
     int                 m_ema200Handle;     // Major trend EMA
     int                 m_adxHandle;        // ADX for strength
+    int                 m_atrHandle;        // ATR for slope normalization
     
     // EMA values (current and previous for crossover detection)
-    double              m_ema8[3];
-    double              m_ema21[3];
-    double              m_ema50[3];
-    double              m_ema200[3];
+    double              m_ema8[10];
+    double              m_ema21[10];
+    double              m_ema50[10];
+    double              m_ema200[10];
     double              m_adx[2];
+    double              m_atr[1];
     double              m_plusDI[1];
     double              m_minusDI[1];
     
@@ -92,10 +94,10 @@ public:
     ENUM_EMA_ALIGNMENT  GetAlignment() const { return m_alignment; }
     
     // EMA values
-    double              GetEMA8(int shift = 0) const { return (shift < 3) ? m_ema8[shift] : 0; }
-    double              GetEMA21(int shift = 0) const { return (shift < 3) ? m_ema21[shift] : 0; }
-    double              GetEMA50(int shift = 0) const { return (shift < 3) ? m_ema50[shift] : 0; }
-    double              GetEMA200(int shift = 0) const { return (shift < 3) ? m_ema200[shift] : 0; }
+    double              GetEMA8(int shift = 0) const { return (shift < 10) ? m_ema8[shift] : 0; }
+    double              GetEMA21(int shift = 0) const { return (shift < 10) ? m_ema21[shift] : 0; }
+    double              GetEMA50(int shift = 0) const { return (shift < 10) ? m_ema50[shift] : 0; }
+    double              GetEMA200(int shift = 0) const { return (shift < 10) ? m_ema200[shift] : 0; }
     double              GetADX() const { return m_adx[0]; }
     double              GetPlusDI() const { return m_plusDI[0]; }
     double              GetMinusDI() const { return m_minusDI[0]; }
@@ -117,8 +119,8 @@ public:
     bool                IsBelowAllEMAs(double price);
     
     // Pullback detection
-    bool                IsPullbackTo21EMA(double price, double tolerance = 10);
-    bool                IsPullbackTo50EMA(double price, double tolerance = 10);
+    bool                IsPullbackTo21EMA(double price, double toleranceAtrFactor = 0.5);
+    bool                IsPullbackTo50EMA(double price, double toleranceAtrFactor = 0.5);
     
     // Slope calculation
     double              GetEMASlope(int emaPeriod, int barsBack = 3);
@@ -135,6 +137,7 @@ CMultiEMASystem::CMultiEMASystem() :
     m_ema50Handle(INVALID_HANDLE),
     m_ema200Handle(INVALID_HANDLE),
     m_adxHandle(INVALID_HANDLE),
+    m_atrHandle(INVALID_HANDLE),
     m_alignment(EMA_NEUTRAL),
     m_consistentBars(0)
 {
@@ -143,6 +146,7 @@ CMultiEMASystem::CMultiEMASystem() :
     ArrayInitialize(m_ema50, 0);
     ArrayInitialize(m_ema200, 0);
     ArrayInitialize(m_adx, 0);
+    ArrayInitialize(m_atr, 0);
     ArrayInitialize(m_plusDI, 0);
     ArrayInitialize(m_minusDI, 0);
 }
@@ -169,10 +173,11 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
     m_ema50Handle = iMA(symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
     m_ema200Handle = iMA(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
     m_adxHandle = iADX(symbol, timeframe, 14);
+    m_atrHandle = iATR(symbol, timeframe, 14);
     
     if(m_ema8Handle == INVALID_HANDLE || m_ema21Handle == INVALID_HANDLE ||
        m_ema50Handle == INVALID_HANDLE || m_ema200Handle == INVALID_HANDLE ||
-       m_adxHandle == INVALID_HANDLE)
+       m_adxHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
     {
         Print("[MultiEMA] Failed to create indicator handles");
         return false;
@@ -194,6 +199,7 @@ void CMultiEMASystem::Deinit()
     if(m_ema50Handle != INVALID_HANDLE) { IndicatorRelease(m_ema50Handle); m_ema50Handle = INVALID_HANDLE; }
     if(m_ema200Handle != INVALID_HANDLE) { IndicatorRelease(m_ema200Handle); m_ema200Handle = INVALID_HANDLE; }
     if(m_adxHandle != INVALID_HANDLE) { IndicatorRelease(m_adxHandle); m_adxHandle = INVALID_HANDLE; }
+    if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
 }
 
 //+------------------------------------------------------------------+
@@ -201,11 +207,12 @@ void CMultiEMASystem::Deinit()
 //+------------------------------------------------------------------+
 bool CMultiEMASystem::UpdateEMAValues()
 {
-    if(CopyBuffer(m_ema8Handle, 0, 0, 3, m_ema8) < 3) return false;
-    if(CopyBuffer(m_ema21Handle, 0, 0, 3, m_ema21) < 3) return false;
-    if(CopyBuffer(m_ema50Handle, 0, 0, 3, m_ema50) < 3) return false;
-    if(CopyBuffer(m_ema200Handle, 0, 0, 3, m_ema200) < 3) return false;
+    if(CopyBuffer(m_ema8Handle, 0, 0, 10, m_ema8) < 10) return false;
+    if(CopyBuffer(m_ema21Handle, 0, 0, 10, m_ema21) < 10) return false;
+    if(CopyBuffer(m_ema50Handle, 0, 0, 10, m_ema50) < 10) return false;
+    if(CopyBuffer(m_ema200Handle, 0, 0, 10, m_ema200) < 10) return false;
     if(CopyBuffer(m_adxHandle, 0, 0, 2, m_adx) < 2) return false;
+    if(CopyBuffer(m_atrHandle, 0, 0, 1, m_atr) < 1) return false;
     if(CopyBuffer(m_adxHandle, 1, 0, 1, m_plusDI) < 1) return false;
     if(CopyBuffer(m_adxHandle, 2, 0, 1, m_minusDI) < 1) return false;
     
@@ -387,38 +394,49 @@ bool CMultiEMASystem::IsBelowAllEMAs(double price)
 //+------------------------------------------------------------------+
 //| Pullback Detection                                               |
 //+------------------------------------------------------------------+
-bool CMultiEMASystem::IsPullbackTo21EMA(double price, double tolerance)
+bool CMultiEMASystem::IsPullbackTo21EMA(double price, double toleranceAtrFactor = 0.5)
 {
-    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    double distance = MathAbs(price - m_ema21[0]) / point;
-    return (distance <= tolerance);
+    double atr = m_atr[0];
+    if(atr <= 0) return false;
+    double distance = MathAbs(price - m_ema21[0]);
+    return (distance <= (atr * toleranceAtrFactor));
 }
 
-bool CMultiEMASystem::IsPullbackTo50EMA(double price, double tolerance)
+bool CMultiEMASystem::IsPullbackTo50EMA(double price, double toleranceAtrFactor = 0.5)
 {
-    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    double distance = MathAbs(price - m_ema50[0]) / point;
-    return (distance <= tolerance);
+    double atr = m_atr[0];
+    if(atr <= 0) return false;
+    double distance = MathAbs(price - m_ema50[0]);
+    return (distance <= (atr * toleranceAtrFactor));
 }
 
 //+------------------------------------------------------------------+
 //| Get EMA Slope                                                    |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| Get EMA Slope (ATR Normalized)                                   |
+//+------------------------------------------------------------------+
 double CMultiEMASystem::GetEMASlope(int emaPeriod, int barsBack)
 {
     double current = 0, past = 0;
+    int idx = MathMin(barsBack, 9);
     
     switch(emaPeriod)
     {
-        case 8:  current = m_ema8[0]; past = m_ema8[MathMin(barsBack, 2)]; break;
-        case 21: current = m_ema21[0]; past = m_ema21[MathMin(barsBack, 2)]; break;
-        case 50: current = m_ema50[0]; past = m_ema50[MathMin(barsBack, 2)]; break;
-        case 200: current = m_ema200[0]; past = m_ema200[MathMin(barsBack, 2)]; break;
+        case 8:  current = m_ema8[0]; past = m_ema8[idx]; break;
+        case 21: current = m_ema21[0]; past = m_ema21[idx]; break;
+        case 50: current = m_ema50[0]; past = m_ema50[idx]; break;
+        case 200: current = m_ema200[0]; past = m_ema200[idx]; break;
         default: return 0;
     }
     
-    if(past > 0)
-        return (current - past) / past;
+    double atr = m_atr[0];
+    if(atr > 0 && past > 0)
+    {
+        // Calculate amount changed in terms of ATR
+        double rawDiff = current - past;
+        return (rawDiff / atr) / (double)barsBack;  // Slope is ATR-change per bar
+    }
     
     return 0;
 }

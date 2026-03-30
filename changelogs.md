@@ -2,7 +2,37 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
-## [Unreleased] - 2026-03-25
+## [Unreleased] - 2026-03-30
+
+### Batch 36: Support/Resistance & Trendline System Overhaul (2026-03-30)
+- **Quality-First Detection Alg:** Rewrote `CTrendlineDetector` to use ATR-based swing points instead of raw price logic, eliminating look-ahead bias and noise. Added slope tracking and angle validation (`IsValidSlopeAngle`).
+- **Look-Ahead Bias Removal:** Enforced `bar[1]` validation on all intersection/break checks and across the three entry generation classes (`CTrendEntryTypes`).
+- **Dynamic ATR Sizing Integration:** Updated `CADXPositionSizing` to calculate risk directly on exact price distances. Converted `CStrategyTrend`, `CSRBounceStrategy`, `CSRBreakoutStrategy`, and `CTrendlineBounceStrategy` pip-targets into active ATR multiples.
+- **S/R Memory & Performance Fixes:** Repaired fast-decay leakage within `CSupportResistanceDetector`. Added strength weighting (cluster merge prioritization instead of averaging). 
+- **Chart Hardening:** Overhauled `DrawTrendlines` and `DrawLevels` internally via dynamic arrays and simple bubble-sorts to cap and retain only the top active lines, greatly improving MT5 visualization performance.
+- **Verification:** `sync_and_compile.ps1` finished with `0 errors, 0 warnings`. Modules secured and compiled.
+
+### Batch 35: Unified ICT Specification Completion (2026-03-30)
+- **FVG & OB Institutional Alignment:** Rewrote `ImbalanceDetector.mqh` (gap-based FVG detection, IFVG tracking, strict full-close mitigation) and `AdvancedOrderBlocks.mqh` (source OB impulse anchoring, CE tracking, strict full-close mitigation).
+- **Session & Liquidity Models:** Implemented `SessionGapDetector.mqh` (NDOG/NWOG gap tracking) and `AMDDetector.mqh` (Accumulation/Manipulation/Distribution phase sweeps) to provide institutional time-and-price context.
+- **Silver Bullet Kill Zones:** Expanded `KillZones.mqh` with strict ICT Silver Bullet windows (London, NY AM, NY PM).
+- **Weighted Confluence Scoring:** Replaced count-based sorting in `StrategyUnifiedICT.mqh` with a 0-130 point weighted model integrating the new FVG, OB, AMD, and Session metrics.
+- **Dynamic Confidence Model:** Added `ComputeEntryConfidence(...)` to generate probability scores dynamically from MS break type (BOS vs CHoCH) and AMD phase timing.
+- **ICT TP Hierarchy:** Rewrote `CalculateTakeProfits(...)` to prioritize institutional targets (TP1=Opposing FVG CE, TP2=Opposing OB CE, TP3=Unswept structural liquidity).
+- **Position Sizer & Risk Guards:** Created `CICTPositionSizer.mqh` with equity-aware distance-based lot sizing and trailing daily/weekly drawdown circuit breakers.
+- **Verification:** `sync_and_compile.ps1` passed with `0 errors, 0 warnings`. Modules successfully integrated into `StrategyUnifiedICT.mqh`.
+
+### Batch 34: Runtime Integrity + Lifecycle Cleanup (2026-03-25)
+- **Readiness cache correctness:** `Core/Pipeline/UnifiedSignalPipeline.mqh` now replays the original structural readiness snapshot on same-bar cache hits instead of force-setting cached engines to ready.
+- **Neutral fallback on engine faults:** pipeline evidence now reads trend/structure/liquidity/volatility getters only when the corresponding engine is ready; otherwise it carries neutral defaults and a lower readiness score.
+- **Fail-closed startup:** pipeline initialization now returns failure when required diagnostics/protection/engine components cannot be constructed, and `Core/Management/EnterpriseStrategyManager.mqh` propagates that failure.
+- **Symbol-scope hygiene:** `Core/Engines/LiquidityEngine.mqh` now uses requested-symbol point geometry and resets on data-copy failure; `Core/Engines/RegimeEngine.mqh` now clears spread-shock cooldown state on context switches.
+- **Shared sizing indicators:** `Core/Risk/PositionSizer.mqh` now prefers ATR handles from `IndicatorManager` before using its legacy local fallback handle.
+- **Risk-budget-aware sizing:** `MultiStrategyAutonomousEA.mq5` now caps requested risk through `CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(...)` before position sizing and emits `[RISK-CAP]` when headroom forces a tighter budget.
+- **Per-scan no-trade visibility:** the EA now emits `[SCAN-NO-TRADE]` with consensus reason context and expands `[QUIET-REASONS]` to track cadence holds, missing managers, entry blocks, and sizing rejects.
+- **Execution reliability contract:** `Core/Trading/TradeManager.mqh` now runs quote/session preflight checks, requires a confirmed fill retcode or bounded deal-history confirmation before returning success, and logs `[EXECUTION-BLOCKED]` / `[EXECUTION-UNCONFIRMED]` on safe failures.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` for the readiness/execution trace changes.
+- **Verification:** `sync_and_compile.ps1 -MirrorSync` passed with `0 errors, 0 warnings`; a bounded MT5 shadow-tester launch was attempted, but the environment did not emit fresh EA-level runtime artifacts for this batch.
 
 ### Batch 33: Efficiency + Conviction Pipeline Upgrade (2026-03-25)
 - **Shared pipeline evidence:** `Core/Pipeline/UnifiedSignalPipeline.mqh` now caches structural engine work per symbol/timeframe/bar and emits reusable evidence (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass) instead of recomputing the same context on every strategy vote.

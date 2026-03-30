@@ -20,7 +20,12 @@ enum ENUM_KILL_ZONE
     KZ_LONDON,      // 02:00 - 05:00 EST (1st expansion, high probability)
     KZ_NY_AM,       // 08:00 - 11:00 EST (2nd expansion, highest probability)
     KZ_NY_PM,       // 13:00 - 16:00 EST (late day setups)
-    KZ_LONDON_NY    // 08:00 - 12:00 EST (overlap, extreme volatility)
+    KZ_LONDON_NY,   // 08:00 - 12:00 EST (overlap, extreme volatility)
+
+    // P2-C: ICT Silver Bullet windows
+    KZ_SILVER_BULLET_LONDON,    // 03:00 - 04:00 EST — London Silver Bullet
+    KZ_SILVER_BULLET_NY_AM,     // 10:00 - 11:00 EST — NY AM Silver Bullet
+    KZ_SILVER_BULLET_NY_PM      // 14:00 - 15:00 EST — NY PM Silver Bullet
 };
 
 //+------------------------------------------------------------------+
@@ -52,7 +57,7 @@ private:
     bool            m_useDST;
     
     // Session definitions
-    SSessionInfo    m_sessions[6];
+    SSessionInfo    m_sessions[9];  // expanded for Silver Bullet windows
     int             m_sessionCount;
     
     // Configuration
@@ -61,6 +66,7 @@ private:
     bool            m_enableNYAM;
     bool            m_enableNYPM;
     bool            m_enableOverlap;
+    bool            m_enableSilverBullet;     // P2-C: all Silver Bullet windows on/off
     
     // Internal
     void            InitializeSessions();
@@ -91,6 +97,13 @@ public:
     bool            IsNYAMSession();
     bool            IsNYPMSession();
     bool            IsLondonNYOverlap();
+
+    // P2-C: Silver Bullet
+    bool            IsSilverBullet();
+    string          GetSilverBulletName();
+    bool            IsLondonSilverBullet();
+    bool            IsNYAMSilverBullet();
+    bool            IsNYPMSilverBullet();
     
     // Best trading windows
     bool            IsHighProbabilityWindow();
@@ -104,12 +117,13 @@ CICTKillZones::CICTKillZones() :
     m_brokerGMTOffset(2),
     m_estOffset(-5),
     m_useDST(true),
-    m_sessionCount(5),
+    m_sessionCount(8),
     m_enableAsian(true),
     m_enableLondon(true),
     m_enableNYAM(true),
     m_enableNYPM(true),
-    m_enableOverlap(true)
+    m_enableOverlap(true),
+    m_enableSilverBullet(true)
 {
     InitializeSessions();
 }
@@ -170,6 +184,33 @@ void CICTKillZones::InitializeSessions()
     m_sessions[4].endMinute = 0;
     m_sessions[4].probabilityWeight = 1.0;
     m_sessions[4].name = "London-NY Overlap";
+
+    // P2-C: Silver Bullet — London (03:00 - 04:00 EST)
+    m_sessions[5].zone = KZ_SILVER_BULLET_LONDON;
+    m_sessions[5].startHour = 3;
+    m_sessions[5].startMinute = 0;
+    m_sessions[5].endHour = 4;
+    m_sessions[5].endMinute = 0;
+    m_sessions[5].probabilityWeight = 0.90;
+    m_sessions[5].name = "Silver Bullet (London)";
+
+    // P2-C: Silver Bullet — NY AM (10:00 - 11:00 EST)
+    m_sessions[6].zone = KZ_SILVER_BULLET_NY_AM;
+    m_sessions[6].startHour = 10;
+    m_sessions[6].startMinute = 0;
+    m_sessions[6].endHour = 11;
+    m_sessions[6].endMinute = 0;
+    m_sessions[6].probabilityWeight = 0.92;
+    m_sessions[6].name = "Silver Bullet (NY AM)";
+
+    // P2-C: Silver Bullet — NY PM (14:00 - 15:00 EST)
+    m_sessions[7].zone = KZ_SILVER_BULLET_NY_PM;
+    m_sessions[7].startHour = 14;
+    m_sessions[7].startMinute = 0;
+    m_sessions[7].endHour = 15;
+    m_sessions[7].endMinute = 0;
+    m_sessions[7].probabilityWeight = 0.80;
+    m_sessions[7].name = "Silver Bullet (NY PM)";
 }
 
 //+------------------------------------------------------------------+
@@ -206,11 +247,14 @@ void CICTKillZones::EnableSession(ENUM_KILL_ZONE zone, bool enable)
 {
     switch(zone)
     {
-        case KZ_ASIAN:      m_enableAsian = enable; break;
-        case KZ_LONDON:     m_enableLondon = enable; break;
-        case KZ_NY_AM:      m_enableNYAM = enable; break;
-        case KZ_NY_PM:      m_enableNYPM = enable; break;
-        case KZ_LONDON_NY:  m_enableOverlap = enable; break;
+        case KZ_ASIAN:                  m_enableAsian       = enable; break;
+        case KZ_LONDON:                 m_enableLondon      = enable; break;
+        case KZ_NY_AM:                  m_enableNYAM        = enable; break;
+        case KZ_NY_PM:                  m_enableNYPM        = enable; break;
+        case KZ_LONDON_NY:              m_enableOverlap     = enable; break;
+        case KZ_SILVER_BULLET_LONDON:
+        case KZ_SILVER_BULLET_NY_AM:
+        case KZ_SILVER_BULLET_NY_PM:    m_enableSilverBullet = enable; break;
         default: break;
     }
 }
@@ -280,7 +324,15 @@ bool CICTKillZones::IsInKillZone()
 //+------------------------------------------------------------------+
 ENUM_KILL_ZONE CICTKillZones::GetCurrentKillZone()
 {
-    // Check overlap first (highest priority)
+    // Silver Bullet windows take highest priority (narrower, more specific)
+    if(m_enableSilverBullet)
+    {
+        if(IsInSession(m_sessions[5])) return KZ_SILVER_BULLET_LONDON;
+        if(IsInSession(m_sessions[6])) return KZ_SILVER_BULLET_NY_AM;
+        if(IsInSession(m_sessions[7])) return KZ_SILVER_BULLET_NY_PM;
+    }
+
+    // Check overlap first
     if(m_enableOverlap && IsInSession(m_sessions[4]))
         return KZ_LONDON_NY;
     
@@ -370,8 +422,36 @@ bool CICTKillZones::IsHighProbabilityWindow()
 {
     ENUM_KILL_ZONE zone = GetCurrentKillZone();
     
-    // London and NY AM are highest probability
-    return (zone == KZ_LONDON || zone == KZ_NY_AM || zone == KZ_LONDON_NY);
+    // London, NY AM, Overlap, and Silver Bullet windows are highest probability
+    return (zone == KZ_LONDON ||
+            zone == KZ_NY_AM  ||
+            zone == KZ_LONDON_NY ||
+            zone == KZ_SILVER_BULLET_LONDON ||
+            zone == KZ_SILVER_BULLET_NY_AM  ||
+            zone == KZ_SILVER_BULLET_NY_PM);
+}
+
+//+------------------------------------------------------------------+
+//| P2-C: Silver Bullet Methods                                     |
+//+------------------------------------------------------------------+
+bool CICTKillZones::IsSilverBullet()
+{
+    ENUM_KILL_ZONE zone = GetCurrentKillZone();
+    return (zone == KZ_SILVER_BULLET_LONDON ||
+            zone == KZ_SILVER_BULLET_NY_AM  ||
+            zone == KZ_SILVER_BULLET_NY_PM);
+}
+
+bool CICTKillZones::IsLondonSilverBullet() { return IsInSession(m_sessions[5]); }
+bool CICTKillZones::IsNYAMSilverBullet()   { return IsInSession(m_sessions[6]); }
+bool CICTKillZones::IsNYPMSilverBullet()   { return IsInSession(m_sessions[7]); }
+
+string CICTKillZones::GetSilverBulletName()
+{
+    if(IsLondonSilverBullet()) return "Silver Bullet: London 03-04 EST";
+    if(IsNYAMSilverBullet())   return "Silver Bullet: NY AM 10-11 EST";
+    if(IsNYPMSilverBullet())   return "Silver Bullet: NY PM 14-15 EST";
+    return "No Silver Bullet";
 }
 
 //+------------------------------------------------------------------+

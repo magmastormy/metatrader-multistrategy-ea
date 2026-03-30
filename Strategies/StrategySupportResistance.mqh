@@ -261,12 +261,36 @@ void CStrategySupportResistance::DrawLevels()
 {
     if(m_srDetector == NULL || m_drawingManager == NULL) return;
     
+    SSupportResistance levels[];
+    int count = 0;
     for(int i = 0; i < m_srDetector.GetLevelCount(); i++)
     {
-        SSupportResistance level;
-        if(!m_srDetector.GetLevel(i, level))
-            continue;
-        
+        SSupportResistance lvl;
+        // Filter out weak lines dynamically via gate (e.g. 0.4)
+        if(m_srDetector.GetLevel(i, lvl) && lvl.strength >= 0.4)
+        {
+            ArrayResize(levels, count + 1);
+            levels[count] = lvl;
+            count++;
+        }
+    }
+    
+    // Bubble sort descending by strength
+    for(int i=0; i<count-1; i++) {
+        for(int j=0; j<count-i-1; j++) {
+            if(levels[j].strength < levels[j+1].strength) {
+                SSupportResistance temp = levels[j];
+                levels[j] = levels[j+1];
+                levels[j+1] = temp;
+            }
+        }
+    }
+    
+    int drawCount = MathMin(count, 8); // Cap S/R levels to top 8
+    
+    for(int i = 0; i < drawCount; i++)
+    {
+        SSupportResistance level = levels[i];
         color levelColor = level.isSupport ? clrDodgerBlue : clrCrimson;
         
         if(level.isBroken)
@@ -274,11 +298,12 @@ void CStrategySupportResistance::DrawLevels()
         else if(level.roleReversed)
             levelColor = clrGold;
         
-        string label = StringFormat("%s | %.0f%% | T:%d",
-                                    EnumToString(level.type),
+        string label = StringFormat("%s %.0f%% (T:%d)",
+                                    level.isSupport ? "Sup" : "Res",
                                     level.strength * 100.0,
                                     level.touches);
         
+        // Pass price as string tag label
         m_drawingManager.DrawHorizontalLevel(level.price, levelColor, label, STYLE_DOT, 1, true);
     }
 }
@@ -290,29 +315,54 @@ void CStrategySupportResistance::DrawTrendlines()
 {
     if(m_trendDetector == NULL || m_drawingManager == NULL) return;
     
+    STrendline lines[];
+    int count = 0;
     for(int i = 0; i < m_trendDetector.GetTrendlineCount(); i++)
     {
-        STrendline trendline;
-        if(!m_trendDetector.GetTrendline(i, trendline))
-            continue;
-        
-        if(!trendline.isValid)
-            continue;
-        
+        STrendline line;
+        if(m_trendDetector.GetTrendline(i, line) && line.isValid)
+        {
+            ArrayResize(lines, count + 1);
+            lines[count] = line;
+            count++;
+        }
+    }
+    
+    // Bubble sort descending by strength
+    for(int i=0; i<count-1; i++) {
+        for(int j=0; j<count-i-1; j++) {
+            if(lines[j].strength < lines[j+1].strength) {
+                STrendline temp = lines[j];
+                lines[j] = lines[j+1];
+                lines[j+1] = temp;
+            }
+        }
+    }
+    
+    int drawCount = MathMin(count, 6); // Cap Trendlines to top 6
+    
+    for(int i = 0; i < drawCount; i++)
+    {
+        STrendline trendline = lines[i];
         color lineColor = (trendline.type == TRENDLINE_SUPPORT) ? clrLimeGreen : clrOrangeRed;
         
         if(trendline.isBroken)
             lineColor = clrGray;
         
         ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DASHDOT : STYLE_SOLID;
+        
+        string nameID = StringFormat("TL_%d", i);
+        // In the absence of a proper ID param in drawing mgr wrapper, assume it creates its own.
+        // If the wrapper needs unique names, DrawTrendLine might need one, but looking at usage below, it's missing.
         m_drawingManager.DrawTrendLine(trendline.point1Time, trendline.point1Price,
                                         trendline.point2Time, trendline.point2Price,
                                         lineColor, 2, style);
         
-        string label = StringFormat("%s | Str: %.0f%% | Touches: %d",
-                                    EnumToString(trendline.type),
+        string label = StringFormat("%s %.0f%% (T:%d)",
+                                    trendline.type == TRENDLINE_SUPPORT ? "TL Sup" : "TL Res",
                                     trendline.strength * 100.0,
                                     trendline.touches);
+                                    
         m_drawingManager.DrawTextLabel(trendline.point2Time, trendline.point2Price, label, lineColor, 8, ANCHOR_LEFT);
     }
 }

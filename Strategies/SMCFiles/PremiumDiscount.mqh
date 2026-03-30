@@ -54,6 +54,12 @@ private:
     double              m_rangeLow;
     double              m_rangeMid;
     int                 m_rangeLookback;
+
+    // Swing anchor for OTE (replaces rolling lookback range) — P0-C
+    double              m_anchorSwingHigh;
+    double              m_anchorSwingLow;
+    bool                m_anchorIsBullish;  // true = retracement of a bullish leg (buying discount)
+    bool                m_hasAnchor;        // whether a swing anchor has been set
     
     // OTE zones
     SOTEZone            m_bullishOTE;
@@ -70,9 +76,12 @@ public:
     // Initialization
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                   int rangeLookback = 100);
-    
+
     // Update
     void                Update();
+
+    // Swing anchor setter (P0-C) — call after structure analyzer updates
+    void                SetSwingAnchor(double swingHigh, double swingLow, bool isBullishLeg);
     
     // Premium/Discount checks
     bool                IsPremium(double price);
@@ -112,7 +121,11 @@ CSMCPremiumDiscount::CSMCPremiumDiscount() :
     m_rangeHigh(0),
     m_rangeLow(0),
     m_rangeMid(0),
-    m_rangeLookback(100)
+    m_rangeLookback(100),
+    m_anchorSwingHigh(0),
+    m_anchorSwingLow(0),
+    m_anchorIsBullish(true),
+    m_hasAnchor(false)
 {
 }
 
@@ -140,57 +153,115 @@ bool CSMCPremiumDiscount::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Range                                                  |
+//| Calculate Range — P0-C: Anchor-Aware                            |
 //+------------------------------------------------------------------+
 void CSMCPremiumDiscount::CalculateRange()
 {
-    int bars = iBars(m_symbol, m_timeframe);
-    int lookback = MathMin(m_rangeLookback, bars - 1);
-    
-    m_rangeHigh = 0;
-    m_rangeLow = DBL_MAX;
-    
-    for(int i = 0; i < lookback; i++)
+    // If an anchor has been set externally (preferred), use it
+    if(m_hasAnchor)
     {
-        double high = iHigh(m_symbol, m_timeframe, i);
-        double low = iLow(m_symbol, m_timeframe, i);
-        
-        if(high > m_rangeHigh) m_rangeHigh = high;
-        if(low < m_rangeLow) m_rangeLow = low;
+        m_rangeHigh = m_anchorSwingHigh;
+        m_rangeLow  = m_anchorSwingLow;
+        m_rangeMid  = (m_rangeHigh + m_rangeLow) / 2.0;
+        return;
     }
-    
+
+    // Fallback: find the most recent significant swing high and low
+    // Use a tighter lookback (50 bars) to find the most recent relevant swing
+    int lookback = MathMin(50, iBars(m_symbol, m_timeframe) - 1);
+    double swingHigh = 0, swingLow = DBL_MAX;
+    int swingHighBar = -1, swingLowBar = -1;
+
+    for(int i = 3; i < lookback - 3; i++)
+    {
+        double h = iHigh(m_symbol, m_timeframe, i);
+        double l = iLow(m_symbol,  m_timeframe, i);
+
+        // Swing high: higher than 3 bars on each side
+        bool isSwingHigh = (h > iHigh(m_symbol, m_timeframe, i-1) &&
+                            h > iHigh(m_symbol, m_timeframe, i+1) &&
+                            h > iHigh(m_symbol, m_timeframe, i-2) &&
+                            h > iHigh(m_symbol, m_timeframe, i+2) &&
+                            h > iHigh(m_symbol, m_timeframe, i-3) &&
+                            h > iHigh(m_symbol, m_timeframe, i+3));
+
+        bool isSwingLow  = (l < iLow(m_symbol, m_timeframe, i-1) &&
+                            l < iLow(m_symbol, m_timeframe, i+1) &&
+                            l < iLow(m_symbol, m_timeframe, i-2) &&
+                            l < iLow(m_symbol, m_timeframe, i+2) &&
+                            l < iLow(m_symbol, m_timeframe, i-3) &&
+                            l < iLow(m_symbol, m_timeframe, i+3));
+
+        if(isSwingHigh && swingHighBar < 0) { swingHigh = h; swingHighBar = i; }
+        if(isSwingLow  && swingLowBar  < 0) { swingLow  = l; swingLowBar  = i; }
+
+        if(swingHighBar >= 0 && swingLowBar >= 0) break;
+    }
+
+    if(swingHigh > 0 && swingLow < DBL_MAX && swingHigh > swingLow)
+    {
+        m_rangeHigh = swingHigh;
+        m_rangeLow  = swingLow;
+        // Determine if bullish or bearish leg based on which swing came first (older bar index = earlier)
+        m_anchorIsBullish = (swingLowBar > swingHighBar);  // low came first = bullish leg up
+    }
+
     m_rangeMid = (m_rangeHigh + m_rangeLow) / 2.0;
 }
 
 //+------------------------------------------------------------------+
-//| Calculate OTE Zones                                              |
+//| Set Swing Anchor — P0-C                                          |
+//+------------------------------------------------------------------+
+void CSMCPremiumDiscount::SetSwingAnchor(double swingHigh, double swingLow, bool isBullishLeg)
+{
+    if(swingHigh <= swingLow) return;
+
+    m_anchorSwingHigh  = swingHigh;
+    m_anchorSwingLow   = swingLow;
+    m_anchorIsBullish  = isBullishLeg;
+    m_hasAnchor        = true;
+
+    // Recalculate range and OTE from anchor
+    m_rangeHigh = swingHigh;
+    m_rangeLow  = swingLow;
+    m_rangeMid  = (swingHigh + swingLow) / 2.0;
+
+    CalculateOTEZones();
+}
+
+//+------------------------------------------------------------------+
+//| Calculate OTE Zones — P0-C: Both Leg Directions                 |
 //+------------------------------------------------------------------+
 void CSMCPremiumDiscount::CalculateOTEZones()
 {
     double range = m_rangeHigh - m_rangeLow;
     if(range <= 0) return;
-    
-    // Bullish OTE: 61.8% to 78.6% retracement from high to low
-    // Price zone to BUY in a bullish trend
-    m_bullishOTE.swingHigh = m_rangeHigh;
-    m_bullishOTE.swingLow = m_rangeLow;
-    m_bullishOTE.high = m_rangeHigh - (range * 0.618);  // 61.8% retracement
-    m_bullishOTE.low = m_rangeHigh - (range * 0.786);   // 78.6% retracement
-    m_bullishOTE.isBullish = true;
-    m_bullishOTE.isActive = true;
-    m_bullishOTE.createdTime = TimeCurrent();
-    m_bullishOTE.score = 70.0;
-    
-    // Bearish OTE: 61.8% to 78.6% retracement from low to high
-    // Price zone to SELL in a bearish trend
-    m_bearishOTE.swingHigh = m_rangeHigh;
-    m_bearishOTE.swingLow = m_rangeLow;
-    m_bearishOTE.low = m_rangeLow + (range * 0.618);   // 61.8% retracement
-    m_bearishOTE.high = m_rangeLow + (range * 0.786);  // 78.6% retracement
-    m_bearishOTE.isBullish = false;
-    m_bearishOTE.isActive = true;
-    m_bearishOTE.createdTime = TimeCurrent();
-    m_bearishOTE.score = 70.0;
+
+    // BULLISH OTE: Price retraced from a swing high back toward the swing low.
+    // We want to BUY in the discount zone of this retracement.
+    // OTE = 61.8% to 78.6% retracement FROM the high TOWARD the low.
+    // Calculated as levels BELOW the swing high.
+    m_bullishOTE.swingHigh    = m_rangeHigh;
+    m_bullishOTE.swingLow     = m_rangeLow;
+    m_bullishOTE.high         = m_rangeHigh - (range * 0.618);  // 61.8% retrace level
+    m_bullishOTE.low          = m_rangeHigh - (range * 0.786);  // 78.6% retrace level
+    m_bullishOTE.isBullish    = true;
+    m_bullishOTE.isActive     = true;
+    m_bullishOTE.createdTime  = TimeCurrent();
+    m_bullishOTE.score        = 70.0;
+
+    // BEARISH OTE: Price retraced from a swing low back toward the swing high.
+    // We want to SELL in the premium zone of this retracement.
+    // OTE = 61.8% to 78.6% retracement FROM the low TOWARD the high.
+    // Calculated as levels ABOVE the swing low.
+    m_bearishOTE.swingHigh    = m_rangeHigh;
+    m_bearishOTE.swingLow     = m_rangeLow;
+    m_bearishOTE.low          = m_rangeLow + (range * 0.618);   // 61.8% retrace from low
+    m_bearishOTE.high         = m_rangeLow + (range * 0.786);   // 78.6% retrace from low
+    m_bearishOTE.isBullish    = false;
+    m_bearishOTE.isActive     = true;
+    m_bearishOTE.createdTime  = TimeCurrent();
+    m_bearishOTE.score        = 70.0;
 }
 
 //+------------------------------------------------------------------+

@@ -67,6 +67,7 @@ private:
     bool                HasBullishMomentum();
     bool                HasBearishMomentum();
     double              GetATR(int period = 14);
+    int                 m_atrHandle;
     
 public:
                         CTrendEntryTypes();
@@ -105,7 +106,8 @@ CTrendEntryTypes::CTrendEntryTypes() :
     m_ownEmaSystem(false),
     m_pullbackTolerance(15.0),
     m_minConsistencyBars(10),
-    m_minADXForContinuation(35.0)
+    m_minADXForContinuation(35.0),
+    m_atrHandle(INVALID_HANDLE)
 {
 }
 
@@ -141,7 +143,10 @@ bool CTrendEntryTypes::Initialize(string symbol, ENUM_TIMEFRAMES timeframe,
         }
     }
     
-    return (m_emaSystem != NULL);
+    if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); }
+    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
+    
+    return (m_emaSystem != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
 //+------------------------------------------------------------------+
@@ -153,6 +158,12 @@ void CTrendEntryTypes::Deinit()
     {
         delete m_emaSystem;
         m_emaSystem = NULL;
+    }
+    
+    if(m_atrHandle != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_atrHandle);
+        m_atrHandle = INVALID_HANDLE;
     }
 }
 
@@ -170,18 +181,18 @@ void CTrendEntryTypes::Update()
 //+------------------------------------------------------------------+
 double CTrendEntryTypes::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
     
     double atr[];
     ArraySetAsSeries(atr, true);
     if(CopyBuffer(handle, 0, 0, 1, atr) <= 0)
     {
-        IndicatorRelease(handle);
+        if(handle != m_atrHandle) IndicatorRelease(handle);
         return 0;
     }
     
-    IndicatorRelease(handle);
+    if(handle != m_atrHandle) IndicatorRelease(handle);
     return atr[0];
 }
 
@@ -242,12 +253,12 @@ bool CTrendEntryTypes::HasBearishRejection()
 //+------------------------------------------------------------------+
 bool CTrendEntryTypes::HasBullishMomentum()
 {
-    double close0 = iClose(m_symbol, m_timeframe, 0);
     double close1 = iClose(m_symbol, m_timeframe, 1);
     double close2 = iClose(m_symbol, m_timeframe, 2);
+    double close3 = iClose(m_symbol, m_timeframe, 3);
     
     // 3 consecutive higher closes
-    return (close0 > close1 && close1 > close2);
+    return (close1 > close2 && close2 > close3);
 }
 
 //+------------------------------------------------------------------+
@@ -255,12 +266,12 @@ bool CTrendEntryTypes::HasBullishMomentum()
 //+------------------------------------------------------------------+
 bool CTrendEntryTypes::HasBearishMomentum()
 {
-    double close0 = iClose(m_symbol, m_timeframe, 0);
     double close1 = iClose(m_symbol, m_timeframe, 1);
     double close2 = iClose(m_symbol, m_timeframe, 2);
+    double close3 = iClose(m_symbol, m_timeframe, 3);
     
     // 3 consecutive lower closes
-    return (close0 < close1 && close1 < close2);
+    return (close1 < close2 && close2 < close3);
 }
 
 //+------------------------------------------------------------------+
@@ -332,6 +343,7 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
     if(m_emaSystem == NULL) return signal;
     
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+    double close1 = iClose(m_symbol, m_timeframe, 1);  // Use completed bar for structure validation
     double atr = GetATR(14);
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
@@ -342,10 +354,10 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
     if(!trend.isUptrend && !trend.isDowntrend)
         return signal;
     
-    // Check if price is at 21 EMA
-    double ema21 = m_emaSystem.GetEMA21(0);
-    double ema50 = m_emaSystem.GetEMA50(0);
-    double distance = MathAbs(price - ema21) / point;
+    // Check if close1 was at 21 EMA
+    double ema21 = m_emaSystem.GetEMA21(1);
+    double ema50 = m_emaSystem.GetEMA50(1);
+    double distance = MathAbs(close1 - ema21) / point;
     
     if(distance > m_pullbackTolerance)
         return signal;
@@ -409,9 +421,10 @@ STrendEntrySignal CTrendEntryTypes::GetContinuationEntry()
     if(trend.consistency < m_minConsistencyBars)
         return signal;
     
-    double ema8 = m_emaSystem.GetEMA8(0);
+    double ema8 = m_emaSystem.GetEMA8(1);  // Check against completed EMA
+    double close1 = iClose(m_symbol, m_timeframe, 1);
     
-    if(trend.isUptrend && price > ema8)
+    if(trend.isUptrend && close1 > ema8)
     {
         // Price above 8 EMA in strong uptrend - add to position
         if(HasBullishMomentum())
@@ -430,7 +443,7 @@ STrendEntrySignal CTrendEntryTypes::GetContinuationEntry()
                 signal.confidence += 0.05;
         }
     }
-    else if(trend.isDowntrend && price < ema8)
+    else if(trend.isDowntrend && close1 < ema8)
     {
         // Price below 8 EMA in strong downtrend
         if(HasBearishMomentum())

@@ -71,7 +71,7 @@ private:
     void                CalculateStrength();
     void                UpdateTouches();
     
-    void                AddLevel(double price, ENUM_SR_TYPE type, bool isSupport)
+    void                AddLevel(double price, ENUM_SR_TYPE type, bool isSupport, datetime barTime = 0)
     {
         // Dynamic resize - always ensure capacity
         if(m_levelCount >= ArraySize(m_levels))
@@ -81,7 +81,7 @@ private:
         
         m_levels[m_levelCount].price = price;
         m_levels[m_levelCount].type = type;
-        m_levels[m_levelCount].createdTime = TimeCurrent();
+        m_levels[m_levelCount].createdTime = (barTime > 0) ? barTime : TimeCurrent();
         m_levels[m_levelCount].touches = 0;
         m_levels[m_levelCount].strength = 0.6;
         m_levels[m_levelCount].isSupport = isSupport;
@@ -184,14 +184,29 @@ void CSupportResistanceDetector::DetectLevels(int lookback)
 void CSupportResistanceDetector::DetectSwingLevels(int lookback)
 {
     double high[], low[];
+    datetime time[];
     ArraySetAsSeries(high, true);
     ArraySetAsSeries(low, true);
+    ArraySetAsSeries(time, true);
     
     if(CopyHigh(m_symbol, m_timeframe, 0, lookback, high) <= 0) return;
     if(CopyLow(m_symbol, m_timeframe, 0, lookback, low) <= 0) return;
+    if(CopyTime(m_symbol, m_timeframe, 0, lookback, time) <= 0) return;
     
     int str = m_swingStrength;
     
+    // SIGNIFICANCE FILTER
+    int atrHandle = iATR(m_symbol, m_timeframe, 14);
+    double atr = 0;
+    if(atrHandle != INVALID_HANDLE)
+    {
+        double atrBuf[];
+        ArraySetAsSeries(atrBuf, true);
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0) atr = atrBuf[0];
+        IndicatorRelease(atrHandle);
+    }
+    double minSwingSize = (atr > 0) ? atr * 0.30 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+
     // Find swing highs (resistance)
     for(int i = str; i < lookback - str; i++)
     {
@@ -207,7 +222,11 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
         
         if(isSwingHigh)
         {
-            AddLevel(high[i], SR_SWING_HIGH_LOW, false);
+            double neighborAvgHigh = (high[i-1] + high[i+1]) / 2.0;
+            if((high[i] - neighborAvgHigh) >= minSwingSize)
+            {
+                AddLevel(high[i], SR_SWING_HIGH_LOW, false, time[i]);
+            }
         }
     }
     
@@ -226,7 +245,11 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
         
         if(isSwingLow)
         {
-            AddLevel(low[i], SR_SWING_HIGH_LOW, true);
+            double neighborAvgLow = (low[i-1] + low[i+1]) / 2.0;
+            if((neighborAvgLow - low[i]) >= minSwingSize)
+            {
+                AddLevel(low[i], SR_SWING_HIGH_LOW, true, time[i]);
+            }
         }
     }
 }
@@ -334,10 +357,17 @@ void CSupportResistanceDetector::ClusterLevels()
         {
             if(MathAbs(m_levels[i].price - m_levels[j].price) < tolerance)
             {
-                // Merge levels
+                // Merge levels - keep the price with more significance
+                // Priority is based on enum value (smaller is higher timeframe/priority)
+                bool iHigherPriority = (m_levels[i].type <= m_levels[j].type);
+                if(!iHigherPriority)
+                {
+                    m_levels[i].price = m_levels[j].price;  // Keep j's price
+                }
+                
                 m_levels[i].touches += m_levels[j].touches;
                 m_levels[i].strength = MathMax(m_levels[i].strength, m_levels[j].strength);
-                m_levels[i].price = (m_levels[i].price + m_levels[j].price) / 2.0;
+                // DO NOT average the price
                 
                 // Remove j by shifting
                 for(int k = j; k < m_levelCount - 1; k++)
@@ -400,7 +430,16 @@ void CSupportResistanceDetector::CalculateStrength()
 //+------------------------------------------------------------------+
 void CSupportResistanceDetector::UpdateTouches()
 {
-    double tolerance = 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    int atrHandle = iATR(m_symbol, m_timeframe, 14);
+    double atr = 0;
+    if(atrHandle != INVALID_HANDLE)
+    {
+        double atrBuf[];
+        ArraySetAsSeries(atrBuf, true);
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0) atr = atrBuf[0];
+        IndicatorRelease(atrHandle);
+    }
+    double tolerance = (atr > 0) ? atr * 0.15 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
@@ -429,7 +468,7 @@ void CSupportResistanceDetector::UpdateTouches()
 //+------------------------------------------------------------------+
 void CSupportResistanceDetector::Update()
 {
-    DetectLevels(500);  // Expanded from 200 for historical memory
+    DetectLevels(200);  // Reduced to 200 for proper scaling and removing stale lines
 }
 
 //+------------------------------------------------------------------+
