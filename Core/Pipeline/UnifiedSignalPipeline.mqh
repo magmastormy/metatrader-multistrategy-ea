@@ -164,6 +164,7 @@ private:
     ENUM_REGIME_STATE m_lastRegimeState;
     double m_lastEffectiveMinConfidence;
     SPipelineEvidenceSnapshot m_lastEvidence;
+    SPipelineEvidenceSnapshot m_cachedStructuralEvidence;
     string m_cachedContextSymbol;
     ENUM_TIMEFRAMES m_cachedContextTimeframe;
     datetime m_cachedContextBarTime;
@@ -280,38 +281,53 @@ CUnifiedSignalPipeline::~CUnifiedSignalPipeline()
 bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
 {
     m_filters = settings;
+    bool initializationOk = true;
     
     // Initialize diagnostics
     m_diagnostics = new CSignalDiagnostics();
     if(m_diagnostics != NULL)
         m_diagnostics.Initialize(1000, 3);
+    else
+        initializationOk = false;
     
     // Initialize consistency checker
     m_tfConsistency = new CTimeframeConsistency();
     if(m_tfConsistency != NULL)
         m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
+    else
+        initializationOk = false;
     
     // Initialize hedging protection
     m_hedgingProtection = new CHedgingProtection();
     if(m_hedgingProtection != NULL)
         m_hedgingProtection.Initialize(HEDGING_MODE_PREVENT, false);
+    else
+        initializationOk = false;
     
     // Initialize engines
     m_trendEngine = new CTrendEngine();
     if(m_trendEngine != NULL)
         m_trendEngine.Initialize(20, 50, 200, 14, m_diagnostics);
+    else
+        initializationOk = false;
     
     m_structureEngine = new CStructureEngine();
     if(m_structureEngine != NULL)
         m_structureEngine.Initialize(10, 10.0, true, m_diagnostics);
+    else
+        initializationOk = false;
     
     m_liquidityEngine = new CLiquidityEngine();
     if(m_liquidityEngine != NULL)
         m_liquidityEngine.Initialize(10.0, 2, m_diagnostics);
+    else
+        initializationOk = false;
     
     m_volatilityEngine = new CVolatilityEngine();
     if(m_volatilityEngine != NULL)
         m_volatilityEngine.Initialize(14, 20, m_diagnostics);
+    else
+        initializationOk = false;
 
     m_regimeEngine = new CRegimeEngine();
     if(m_regimeEngine != NULL)
@@ -321,6 +337,8 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
                                            m_filters.spreadShockCooldownSeconds,
                                            m_filters.maxEntryRangeZScore);
     }
+    else
+        initializationOk = false;
     
     Print("[UnifiedSignalPipeline] Initialized with filters: Trend=", m_filters.enableTrendFilter,
           " Volatility=", m_filters.enableVolatilityFilter,
@@ -330,8 +348,11 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
           " MaxSpreadATR=", DoubleToString(m_filters.maxSpreadToAtrRatio, 3),
           " SpreadShockCooldown=", m_filters.spreadShockCooldownSeconds,
           " MaxEntryZ=", DoubleToString(m_filters.maxEntryRangeZScore, 2));
+
+    if(!initializationOk)
+        Print("[UnifiedSignalPipeline] ERROR: component initialization incomplete; fail-closed startup");
     
-    return true;
+    return initializationOk;
 }
 
 void CUnifiedSignalPipeline::SetFilters(SignalFilterSettings &settings)
@@ -366,10 +387,15 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
 
     if(!cacheHit)
     {
-        m_lastEvidence.trendReady = (m_trendEngine == NULL) ? true : m_trendEngine.UpdateTrend(symbol, timeframe);
-        m_lastEvidence.structureReady = (m_structureEngine == NULL) ? true : m_structureEngine.DetectSwingPoints(symbol, timeframe);
-        m_lastEvidence.liquidityReady = (m_liquidityEngine == NULL) ? true : m_liquidityEngine.DetectLiquidityZones(symbol, timeframe);
-        m_lastEvidence.volatilityReady = (m_volatilityEngine == NULL) ? true : m_volatilityEngine.UpdateVolatility(symbol, timeframe);
+        m_lastEvidence.trendReady = (m_trendEngine != NULL) && m_trendEngine.UpdateTrend(symbol, timeframe);
+        m_lastEvidence.structureReady = (m_structureEngine != NULL) && m_structureEngine.DetectSwingPoints(symbol, timeframe);
+        m_lastEvidence.liquidityReady = (m_liquidityEngine != NULL) && m_liquidityEngine.DetectLiquidityZones(symbol, timeframe);
+        m_lastEvidence.volatilityReady = (m_volatilityEngine != NULL) && m_volatilityEngine.UpdateVolatility(symbol, timeframe);
+
+        RefreshEvidenceFromEngines(symbol);
+        m_lastEvidence.contextPrepared = true;
+        m_lastEvidence.readinessScore = ComputeReadinessScore();
+        m_cachedStructuralEvidence = m_lastEvidence;
 
         m_cachedContextSymbol = symbol;
         m_cachedContextTimeframe = timeframe;
@@ -378,34 +404,54 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
     }
     else
     {
-        m_lastEvidence.trendReady = true;
-        m_lastEvidence.structureReady = true;
-        m_lastEvidence.liquidityReady = true;
-        m_lastEvidence.volatilityReady = true;
+        m_lastEvidence.trendReady = m_cachedStructuralEvidence.trendReady;
+        m_lastEvidence.structureReady = m_cachedStructuralEvidence.structureReady;
+        m_lastEvidence.liquidityReady = m_cachedStructuralEvidence.liquidityReady;
+        m_lastEvidence.volatilityReady = m_cachedStructuralEvidence.volatilityReady;
+        m_lastEvidence.trend = m_cachedStructuralEvidence.trend;
+        m_lastEvidence.trendStrength = m_cachedStructuralEvidence.trendStrength;
+        m_lastEvidence.volatilityState = m_cachedStructuralEvidence.volatilityState;
+        m_lastEvidence.atrValue = m_cachedStructuralEvidence.atrValue;
+        m_lastEvidence.atrPercent = m_cachedStructuralEvidence.atrPercent;
+        m_lastEvidence.structureStrength = m_cachedStructuralEvidence.structureStrength;
+        m_lastEvidence.bullishStructure = m_cachedStructuralEvidence.bullishStructure;
+        m_lastEvidence.bearishStructure = m_cachedStructuralEvidence.bearishStructure;
+        m_lastEvidence.liquiditySweep = m_cachedStructuralEvidence.liquiditySweep;
+        m_lastEvidence.priceNearLiquidity = m_cachedStructuralEvidence.priceNearLiquidity;
+        m_lastEvidence.contextPrepared = m_cachedStructuralEvidence.contextPrepared;
+        m_lastEvidence.readinessScore = m_cachedStructuralEvidence.readinessScore;
     }
 
-    RefreshEvidenceFromEngines(symbol);
-    m_lastEvidence.contextPrepared = true;
-    m_lastEvidence.readinessScore = ComputeReadinessScore();
     return true;
 }
 
 void CUnifiedSignalPipeline::RefreshEvidenceFromEngines(const string symbol)
 {
-    if(m_trendEngine != NULL)
+    if(m_trendEngine != NULL && m_lastEvidence.trendReady)
     {
         m_lastEvidence.trend = m_trendEngine.GetCurrentTrend();
         m_lastEvidence.trendStrength = m_trendEngine.GetTrendStrength();
     }
+    else
+    {
+        m_lastEvidence.trend = TREND_NONE;
+        m_lastEvidence.trendStrength = 0.0;
+    }
 
-    if(m_structureEngine != NULL)
+    if(m_structureEngine != NULL && m_lastEvidence.structureReady)
     {
         m_lastEvidence.structureStrength = m_structureEngine.GetStructureStrength();
         m_lastEvidence.bullishStructure = (m_structureEngine.HasBullishBOS(5) || m_structureEngine.HasBullishCHOCH(5));
         m_lastEvidence.bearishStructure = (m_structureEngine.HasBearishBOS(5) || m_structureEngine.HasBearishCHOCH(5));
     }
+    else
+    {
+        m_lastEvidence.structureStrength = 0.0;
+        m_lastEvidence.bullishStructure = false;
+        m_lastEvidence.bearishStructure = false;
+    }
 
-    if(m_liquidityEngine != NULL)
+    if(m_liquidityEngine != NULL && m_lastEvidence.liquidityReady)
     {
         double probePrice = SymbolInfoDouble(symbol, SYMBOL_BID);
         if(probePrice <= 0.0)
@@ -413,12 +459,23 @@ void CUnifiedSignalPipeline::RefreshEvidenceFromEngines(const string symbol)
         m_lastEvidence.liquiditySweep = m_liquidityEngine.HasLiquiditySweep(5);
         m_lastEvidence.priceNearLiquidity = (probePrice > 0.0) ? m_liquidityEngine.IsPriceNearLiquidity(probePrice, 30) : false;
     }
+    else
+    {
+        m_lastEvidence.liquiditySweep = false;
+        m_lastEvidence.priceNearLiquidity = false;
+    }
 
-    if(m_volatilityEngine != NULL)
+    if(m_volatilityEngine != NULL && m_lastEvidence.volatilityReady)
     {
         m_lastEvidence.volatilityState = m_volatilityEngine.GetVolatilityState();
         m_lastEvidence.atrValue = m_volatilityEngine.GetATR();
         m_lastEvidence.atrPercent = m_volatilityEngine.GetATRPercent();
+    }
+    else
+    {
+        m_lastEvidence.volatilityState = VOLATILITY_LOW;
+        m_lastEvidence.atrValue = 0.0;
+        m_lastEvidence.atrPercent = 0.0;
     }
 }
 

@@ -265,6 +265,10 @@ ulong g_hbRiskRejects = 0;
 ulong g_hbTradesOpened = 0;
 ulong g_hbShadowTrades = 0;
 ulong g_hbQuietNoNewBar = 0;
+ulong g_hbQuietCadenceHold = 0;
+ulong g_hbQuietMissingManager = 0;
+ulong g_hbEntryBlocked = 0;
+ulong g_hbSizingRejects = 0;
 ulong g_hbSignalsGenerated = 0;
 ulong g_hbSignalsAfterPipeline = 0;
 ulong g_hbSignalsAfterQuorum = 0;
@@ -289,6 +293,7 @@ int g_symbolEvalStartIndex = 0;
 datetime g_lastExternalCapacityLogTime = 0;
 datetime g_lastUnprotectedRemediationAttempt = 0;
 datetime g_lastNoSignalAlertTime = 0;
+ulong g_scanCycleSequence = 0;
 ulong g_unprotectedPositionTickets[];
 int g_unprotectedPositionAttempts[];
 
@@ -354,6 +359,7 @@ struct SApprovedTradeCandidate
     string strategyClusterCode;
     string contributorSummary;
     bool hasAIContributor;
+    ulong cycleId;
     SValidationResult riskResult;
 
     SApprovedTradeCandidate()
@@ -387,6 +393,7 @@ struct SApprovedTradeCandidate
         strategyClusterCode = "N";
         contributorSummary = "";
         hasAIContributor = false;
+        cycleId = 0;
         riskResult.approved = false;
         riskResult.message = "";
         riskResult.adjustedLotSize = 0.0;
@@ -1275,7 +1282,8 @@ bool RunNNAttributionSelfTest()
 //+------------------------------------------------------------------+
 bool ApproveTradeByUnifiedRisk(const STradeValidationRequest &request,
                                const string phaseTag,
-                               SValidationResult &result)
+                               SValidationResult &result,
+                               const ulong cycleId = 0)
 {
     result = unifiedRiskManager.ValidateTradeRequest(request, phaseTag);
     if(!result.approved)
@@ -1289,8 +1297,11 @@ bool ApproveTradeByUnifiedRisk(const STradeValidationRequest &request,
            s_lastRejectLogTime == 0 ||
            (nowTime - s_lastRejectLogTime) >= 15)
         {
-            Print("[RISK-CONTRACT] REJECTED (", phaseTag, ") ",
-                  request.symbol, " | ", result.message);
+            PrintFormat("[RISK-CONTRACT] REJECTED (%s) %s | cycle=%I64u | %s",
+                        phaseTag,
+                        request.symbol,
+                        cycleId,
+                        result.message);
             s_lastRejectKey = rejectKey;
             s_lastRejectLogTime = nowTime;
         }
@@ -2409,6 +2420,10 @@ int OnInit()
     g_hbTradesOpened = 0;
     g_hbShadowTrades = 0;
     g_hbQuietNoNewBar = 0;
+    g_hbQuietCadenceHold = 0;
+    g_hbQuietMissingManager = 0;
+    g_hbEntryBlocked = 0;
+    g_hbSizingRejects = 0;
     g_hbSignalsGenerated = 0;
     g_hbSignalsAfterPipeline = 0;
     g_hbSignalsAfterQuorum = 0;
@@ -2430,6 +2445,7 @@ int OnInit()
     g_lastExternalCapacityLogTime = 0;
     g_lastUnprotectedRemediationAttempt = 0;
     g_lastNoSignalAlertTime = 0;
+    g_scanCycleSequence = 0;
     ArrayResize(g_unprotectedPositionTickets, 0);
     ArrayResize(g_unprotectedPositionAttempts, 0);
 
@@ -2706,7 +2722,7 @@ void ProcessTradingLogic(bool fromTimer)
     else
         g_lastSignalEvalSecond = signalEvalNow;
     if(!allowSignalEvaluation)
-        g_hbQuietNoNewBar++;
+        g_hbQuietCadenceHold++;
 
     // Enterprise Mode Multi-Symbol Signal Generation
     // UNIFIED PIPELINE - All strategies including AI now go through here
@@ -2714,6 +2730,7 @@ void ProcessTradingLogic(bool fromTimer)
     {
         // Check entry gates, but keep signal evaluation running even while entry is paused.
         SApprovedTradeCandidate bestCandidate;
+        ulong scanCycleId = ++g_scanCycleSequence;
         datetime tickTime = TimeCurrent();
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
         bool cooldownBlocked = (secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0);
@@ -2747,7 +2764,13 @@ void ProcessTradingLogic(bool fromTimer)
                 string currentSymbol = g_activePairs[symIdx];
                 CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(currentSymbol);
                 if(symbolManager == NULL)
+                {
+                    g_hbQuietMissingManager++;
+                    PrintFormat("[SCAN-SKIP] cycle=%I64u | %s | reason=missing_enterprise_manager",
+                                scanCycleId,
+                                currentSymbol);
                     continue;
+                }
 
                 bool hasNewBar = symbolHasNewBar[symIdx];
                 bool runIntrabarScan = false;
@@ -2796,6 +2819,18 @@ void ProcessTradingLogic(bool fromTimer)
                 if(enterpriseSignal == TRADE_SIGNAL_NONE)
                 {
                     g_hbNoSignalCount++;
+                    SConsensusDecisionContext noTradeContext;
+                    symbolManager.GetLastDecisionContext(noTradeContext);
+                    PrintFormat("[SCAN-NO-TRADE] cycle=%I64u | %s | mode=%s | reason=%s | buy=%.3f | sell=%.3f | ready=%.3f/%.3f | confluence=%d",
+                                scanCycleId,
+                                currentSymbol,
+                                (evalMode == EVAL_MODE_INTRABAR) ? "INTRABAR" : "NEW_BAR",
+                                noTradeContext.reason,
+                                noTradeContext.buyScore,
+                                noTradeContext.sellScore,
+                                noTradeContext.readyLiveWeight,
+                                noTradeContext.totalLiveWeight,
+                                confluence);
                     continue;
                 }
 
@@ -2833,26 +2868,35 @@ void ProcessTradingLogic(bool fromTimer)
                     if(!validation.isValid)
                     {
                         g_hbValidatorRejects++;
-                        Print("[SIGNAL-REJECTED] ", currentSymbol, " | Reason: ", validation.reason,
-                              " | Confluence: ", confluence, " | Quality: ", DoubleToString(validation.qualityScore, 2),
-                              " | Conf: ", DoubleToString(confidence, 2),
-                              " | Conviction: ", DoubleToString(decisionContext.convictionScore, 2),
-                              " | Readiness: ", DoubleToString(decisionContext.readinessScore, 2),
-                              " | Context: ", DoubleToString(decisionContext.contextScore, 2),
-                              " | Cost: ", DoubleToString(decisionContext.costScore, 2));
+                        PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=%s | confluence=%d | quality=%.2f | conf=%.2f | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
+                                    scanCycleId,
+                                    currentSymbol,
+                                    validation.reason,
+                                    confluence,
+                                    validation.qualityScore,
+                                    confidence,
+                                    decisionContext.convictionScore,
+                                    decisionContext.readinessScore,
+                                    decisionContext.contextScore,
+                                    decisionContext.costScore);
                         continue;
                     }
 
                     qualityScore = validation.qualityScore;
                     tradeConfidence = MathMax(0.0, MathMin(1.0, (confidence * 0.60) + (validation.qualityScore * 0.40)));
                     string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
-                    Print("[SIGNAL-VALIDATED] ", currentSymbol, " | Signal: ", signalType,
-                          " | ConsensusConf: ", confidence, " | TradeConf: ", tradeConfidence,
-                          " | Confluence: ", confluence, " | Quality: ", validation.qualityScore,
-                          " | Conviction: ", DoubleToString(decisionContext.convictionScore, 2),
-                          " | Readiness: ", DoubleToString(decisionContext.readinessScore, 2),
-                          " | Context: ", DoubleToString(decisionContext.contextScore, 2),
-                          " | Cost: ", DoubleToString(decisionContext.costScore, 2));
+                    PrintFormat("[SIGNAL-VALIDATED] cycle=%I64u | %s | signal=%s | consensus=%.2f | trade=%.2f | confluence=%d | quality=%.2f | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
+                                scanCycleId,
+                                currentSymbol,
+                                signalType,
+                                confidence,
+                                tradeConfidence,
+                                confluence,
+                                validation.qualityScore,
+                                decisionContext.convictionScore,
+                                decisionContext.readinessScore,
+                                decisionContext.contextScore,
+                                decisionContext.costScore);
                     g_hbSignalsValidated++;
                     signalApproved = true;
                 }
@@ -2866,20 +2910,27 @@ void ProcessTradingLogic(bool fromTimer)
                         string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
                         qualityScore = confidence;
                         tradeConfidence = confidence;
-                        Print("[ENTERPRISE] ", currentSymbol, " | Signal: ", signalType,
-                              " | Confidence: ", confidence,
-                              " | Confluence: ", confluence,
-                              " | FallbackMinConf: ", DoubleToString(fallbackMinConfidence, 2));
+                        PrintFormat("[SIGNAL-VALIDATED] cycle=%I64u | %s | signal=%s | consensus=%.2f | trade=%.2f | confluence=%d | quality=%.2f | validator=fallback | required=%.2f",
+                                    scanCycleId,
+                                    currentSymbol,
+                                    signalType,
+                                    confidence,
+                                    tradeConfidence,
+                                    confluence,
+                                    qualityScore,
+                                    fallbackMinConfidence);
                         g_hbSignalsValidated++;
                         signalApproved = true;
                     }
                     else
                     {
-                        Print("[SIGNAL-REJECTED] ", currentSymbol,
-                              " | Reason: Validator unavailable and confidence below fallback threshold",
-                              " | Confluence: ", confluence,
-                              " | Conf: ", DoubleToString(confidence, 2),
-                              " | Required: ", DoubleToString(fallbackMinConfidence, 2));
+                        g_hbValidatorRejects++;
+                        PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=validator_unavailable_below_fallback | confluence=%d | conf=%.2f | required=%.2f",
+                                    scanCycleId,
+                                    currentSymbol,
+                                    confluence,
+                                    confidence,
+                                    fallbackMinConfidence);
                     }
                 }
 
@@ -2905,6 +2956,7 @@ void ProcessTradingLogic(bool fromTimer)
 
                     if(!canOpenNewTrades || symbolPositionCapBlocked)
                     {
+                        g_hbEntryBlocked++;
                         string blockReason = "";
                         if(cooldownBlocked)
                             blockReason = StringFormat("cooldown %d/%d sec", secondsSinceLastTrade, InpMinSecondsBetweenTrades);
@@ -2931,7 +2983,8 @@ void ProcessTradingLogic(bool fromTimer)
                                                         externalSymbolPositions);
                         }
 
-                        PrintFormat("[ENTERPRISE-BLOCKED] %s approved %s suppressed by %s | conf=%.2f | confluence=%d",
+                        PrintFormat("[ENTERPRISE-BLOCKED] cycle=%I64u | %s | signal=%s | reason=%s | conf=%.2f | confluence=%d",
+                                    scanCycleId,
                                     currentSymbol,
                                     signalType,
                                     blockReason,
@@ -3010,9 +3063,36 @@ void ProcessTradingLogic(bool fromTimer)
                     stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
                     takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
 
-                    double proposedRisk = unifiedRiskManager.GetActiveRiskPerTradePercent();
+                    double requestedRisk = unifiedRiskManager.GetActiveRiskPerTradePercent();
+                    if(requestedRisk <= 0.0)
+                        requestedRisk = InpMaxRiskPerTrade;
+
+                    double proposedRisk = unifiedRiskManager.GetRecommendedRiskPerTradePercent(requestedRisk);
                     if(proposedRisk <= 0.0)
-                        proposedRisk = InpMaxRiskPerTrade;
+                    {
+                        g_hbSizingRejects++;
+                        SUnifiedRiskSnapshot riskBudgetSnapshot = unifiedRiskManager.GetSnapshot();
+                        PrintFormat("[RISK-CAP] cycle=%I64u | %s | requested=%.2f | capped=0.00 | daily_remaining=%.2f | portfolio_remaining=%.2f | reason=no_remaining_risk_budget",
+                                    scanCycleId,
+                                    currentSymbol,
+                                    requestedRisk,
+                                    MathMax(0.0, riskBudgetSnapshot.maxDailyRiskPercent - riskBudgetSnapshot.dailyRiskUsedPercent),
+                                    unifiedRiskManager.GetRemainingPortfolioRiskPercent());
+                        continue;
+                    }
+
+                    if(MathAbs(proposedRisk - requestedRisk) > 0.0001)
+                    {
+                        SUnifiedRiskSnapshot riskBudgetSnapshot = unifiedRiskManager.GetSnapshot();
+                        PrintFormat("[RISK-CAP] cycle=%I64u | %s | requested=%.2f | capped=%.2f | daily_remaining=%.2f | portfolio_remaining=%.2f",
+                                    scanCycleId,
+                                    currentSymbol,
+                                    requestedRisk,
+                                    proposedRisk,
+                                    MathMax(0.0, riskBudgetSnapshot.maxDailyRiskPercent - riskBudgetSnapshot.dailyRiskUsedPercent),
+                                    unifiedRiskManager.GetRemainingPortfolioRiskPercent());
+                    }
+
                     currentRiskPerTrade = proposedRisk;
 
                     string contributorSummary = "";
@@ -3072,13 +3152,17 @@ void ProcessTradingLogic(bool fromTimer)
                     tradeReq.lotSize = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN); 
                         
                         SValidationResult riskResult;
-                        if(ApproveTradeByUnifiedRisk(tradeReq, "pre-size", riskResult))
+                        if(ApproveTradeByUnifiedRisk(tradeReq, "pre-size", riskResult, scanCycleId))
                         {
                             SPositionSizingParams currentSizingParams = positionSizer.GetParameters();
                             currentSizingParams.riskPercent = proposedRisk;
                             if(!positionSizer.SetParameters(currentSizingParams))
                             {
-                                Print("[RISK] Failed to apply adaptive sizing params - trade skipped");
+                                g_hbSizingRejects++;
+                                PrintFormat("[POSITION-SIZE-REJECTED] cycle=%I64u | %s | reason=failed_to_apply_sizing_params | risk=%.2f",
+                                            scanCycleId,
+                                            currentSymbol,
+                                            proposedRisk);
                                 continue;
                             }
 
@@ -3087,7 +3171,7 @@ void ProcessTradingLogic(bool fromTimer)
 
                             // Update request with actual lot size and re-validate
                             tradeReq.lotSize = lotSize;
-                            if(!ApproveTradeByUnifiedRisk(tradeReq, "post-size", riskResult))
+                            if(!ApproveTradeByUnifiedRisk(tradeReq, "post-size", riskResult, scanCycleId))
                                 continue;
                             g_hbSignalsRiskApproved++;
                             
@@ -3126,11 +3210,13 @@ void ProcessTradingLogic(bool fromTimer)
                                 candidate.strategyClusterCode = strategyClusterCode;
                                 candidate.contributorSummary = contributorSummary;
                                 candidate.hasAIContributor = hasAIContributor;
+                                candidate.cycleId = scanCycleId;
                                 candidate.riskResult = riskResult;
                                 candidate.rankingScore = CalculateCandidateRankingScore(candidate);
 
                                 bool replaceBestCandidate = (!bestCandidate.valid || candidate.rankingScore > bestCandidate.rankingScore);
-                                PrintFormat("[SCAN-CANDIDATE] %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | selected=%s",
+                                PrintFormat("[SCAN-CANDIDATE] cycle=%I64u | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | selected=%s",
+                                            candidate.cycleId,
                                             candidate.symbol,
                                             candidate.signalType,
                                             candidate.rankingScore,
@@ -3147,7 +3233,13 @@ void ProcessTradingLogic(bool fromTimer)
                             }
                             else
                             {
-                                Print("[AI-GLOBAL] Invalid lot size calculated for ", currentSymbol, " - trade skipped");
+                                g_hbSizingRejects++;
+                                PrintFormat("[POSITION-SIZE-REJECTED] cycle=%I64u | %s | reason=invalid_lot | lot=%.3f | stop=%.1f | conf=%.2f",
+                                            scanCycleId,
+                                            currentSymbol,
+                                            lotSize,
+                                            stopLossPips,
+                                            tradeConfidence);
                             }
                         }
                 }
@@ -3155,7 +3247,8 @@ void ProcessTradingLogic(bool fromTimer)
 
             if(bestCandidate.valid)
             {
-                PrintFormat("[SCAN-DECISION] %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | diversity=%.2f | confluence=%d | contributors=%s",
+                PrintFormat("[SCAN-DECISION] cycle=%I64u | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | diversity=%.2f | confluence=%d | contributors=%s",
+                            bestCandidate.cycleId,
                             bestCandidate.symbol,
                             bestCandidate.signalType,
                             bestCandidate.rankingScore,
@@ -3187,7 +3280,8 @@ void ProcessTradingLogic(bool fromTimer)
                     g_hbShadowTrades++;
                     g_hbSignalsSent++;
                     g_lastTradeTime = tickTime;
-                    PrintFormat("[SHADOW-TRADE] %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                    PrintFormat("[SHADOW-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                                bestCandidate.cycleId,
                                 bestCandidate.symbol,
                                 bestCandidate.signalType,
                                 bestCandidate.lotSize,
@@ -3236,12 +3330,16 @@ void ProcessTradingLogic(bool fromTimer)
                             symbolNet.ReleasePredictionReservation(predictionId);
 
                         int errorCode = GetLastError();
-                        Print("[TRADE-ERROR] Failed to execute ", bestCandidate.signalType, " order on ", bestCandidate.symbol,
-                              " | Lot Size: ", bestCandidate.lotSize,
-                              " | Error Code: ", errorCode,
-                              " | Retcode: ", executionReceipt.retcode,
-                              " | RequestID: ", executionReceipt.requestId,
-                              " | Retries: ", executionReceipt.retryCount);
+                        PrintFormat("[TRADE-ERROR] cycle=%I64u | %s | signal=%s | lot=%.2f | err=%d | retcode=%u | request=%u | retries=%d | note=%s",
+                                    bestCandidate.cycleId,
+                                    bestCandidate.symbol,
+                                    bestCandidate.signalType,
+                                    bestCandidate.lotSize,
+                                    errorCode,
+                                    executionReceipt.retcode,
+                                    executionReceipt.requestId,
+                                    executionReceipt.retryCount,
+                                    executionReceipt.note);
                     }
                     else
                     {
@@ -3256,7 +3354,8 @@ void ProcessTradingLogic(bool fromTimer)
 
                         if(fillRatio < 0.999)
                         {
-                            PrintFormat("[FILL-DIFF] %s | requested=%.2f | filled=%.2f | fill_ratio=%.3f | retcode=%u",
+                            PrintFormat("[FILL-DIFF] cycle=%I64u | %s | requested=%.2f | filled=%.2f | fill_ratio=%.3f | retcode=%u",
+                                        bestCandidate.cycleId,
                                         bestCandidate.symbol,
                                         executionReceipt.requestedVolume,
                                         executionReceipt.filledVolume,
@@ -3264,17 +3363,26 @@ void ProcessTradingLogic(bool fromTimer)
                                         executionReceipt.retcode);
                         }
 
-                        Print("[TRADE-SUCCESS] ", bestCandidate.signalType, " order executed on ", bestCandidate.symbol,
-                              " | Lot Size: ", executionReceipt.filledVolume > 0.0 ? executionReceipt.filledVolume : bestCandidate.lotSize,
-                              " | Price: ", executionReceipt.averagePrice,
-                              " | SL: ", tradeManager.GetLastRequestedStopLoss(), " (", (int)bestCandidate.stopLossPips, " pips)",
-                              " | TP: ", tradeManager.GetLastRequestedTakeProfit(), " (", (int)bestCandidate.takeProfitPips, " pips)",
-                              " | Ticket: ", tradeManager.GetLastTicket(),
-                              " | RequestID: ", executionReceipt.requestId,
-                              " | Role: ", bestCandidate.strategyRoleTag,
-                              " | Cluster: ", bestCandidate.strategyClusterTag,
-                              " | Contributors: ", bestCandidate.contributorSummary,
-                              " | Ranking: ", DoubleToString(bestCandidate.rankingScore, 3));
+                        ulong executionTicket = (executionReceipt.dealTicket > 0) ? executionReceipt.dealTicket :
+                                                ((executionReceipt.orderTicket > 0) ? executionReceipt.orderTicket :
+                                                 tradeManager.GetLastTicket());
+                        PrintFormat("[TRADE-SUCCESS] cycle=%I64u | %s | signal=%s | lot=%.2f | price=%.5f | sl=%.5f (%.0f pips) | tp=%.5f (%.0f pips) | ticket=%I64u | request=%u | role=%s | cluster=%s | contributors=%s | ranking=%.3f | note=%s",
+                                    bestCandidate.cycleId,
+                                    bestCandidate.symbol,
+                                    bestCandidate.signalType,
+                                    executionReceipt.filledVolume > 0.0 ? executionReceipt.filledVolume : bestCandidate.lotSize,
+                                    executionReceipt.averagePrice,
+                                    tradeManager.GetLastRequestedStopLoss(),
+                                    bestCandidate.stopLossPips,
+                                    tradeManager.GetLastRequestedTakeProfit(),
+                                    bestCandidate.takeProfitPips,
+                                    executionTicket,
+                                    executionReceipt.requestId,
+                                    bestCandidate.strategyRoleTag,
+                                    bestCandidate.strategyClusterTag,
+                                    bestCandidate.contributorSummary,
+                                    bestCandidate.rankingScore,
+                                    executionReceipt.note);
 
                         if(aiPredictionRecorded && executionReceipt.requestId > 0)
                             UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
@@ -3376,8 +3484,15 @@ void ProcessTradingLogic(bool fromTimer)
                     clusterMeanReversionSignals,
                     clusterStructureSignals,
                     clusterNoneSignals);
-        PrintFormat("[QUIET-REASONS] no_new_bar=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u",
-                    g_hbQuietNoNewBar, g_hbNoSignalCount, g_hbValidatorRejects, g_hbRiskRejects);
+        PrintFormat("[QUIET-REASONS] no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u | entry_blocked=%I64u | sizing=%I64u",
+                    g_hbQuietNoNewBar,
+                    g_hbQuietCadenceHold,
+                    g_hbQuietMissingManager,
+                    g_hbNoSignalCount,
+                    g_hbValidatorRejects,
+                    g_hbRiskRejects,
+                    g_hbEntryBlocked,
+                    g_hbSizingRejects);
 
         ulong windowScans = g_hbScansAttempted - g_prevHbScansAttempted;
         ulong windowNoSignal = g_hbNoSignalCount - g_prevHbNoSignalCount;

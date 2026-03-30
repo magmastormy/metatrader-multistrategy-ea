@@ -23,6 +23,17 @@ enum ENUM_BMS_TYPE
 };
 
 //+------------------------------------------------------------------+
+//| Structure Break Type Enum — P0-D                                 |
+//+------------------------------------------------------------------+
+enum ENUM_STRUCTURE_BREAK_TYPE
+{
+    STRUCT_BREAK_NONE = 0,
+    STRUCT_BREAK_BOS,           // Break of Structure — trend continuation
+    STRUCT_BREAK_CHOCH,         // Change of Character — potential reversal
+    STRUCT_BREAK_CHOCH_CONFIRMED  // CHoCH confirmed by follow-through (used for entry)
+};
+
+//+------------------------------------------------------------------+
 //| Structural Point Structure                                       |
 //+------------------------------------------------------------------+
 struct SStructuralPoint
@@ -48,22 +59,35 @@ struct SMarketStructure
     double currentLow;
     double previousHigh;
     double previousLow;
-    
+
     bool isBullishStructure;
     bool isBearishStructure;
     bool isConsolidating;
-    
+
     ENUM_BMS_TYPE lastBMSType;
     datetime lastBMSTime;
     double lastBMSPrice;
-    
+
     bool trendConfirmed;
     int consecutiveBMS;
-    
+
+    // --- NEW FIELDS (P0-D) ---
+    ENUM_STRUCTURE_BREAK_TYPE lastBreakType;  // BOS or CHoCH
+    bool lastBreakWasCHoCH;                   // Shortcut flag
+    bool lastBreakWasBOS;                     // Shortcut flag
+    int chochCount;                           // Number of CHoCH events (multiple = strong reversal)
+    int bosCount;                             // Number of BOS events in current trend
+    datetime lastChochTime;
+    datetime lastBosTime;
+    double lastBreakPrice;
+
     SMarketStructure() : currentHigh(0), currentLow(0), previousHigh(0), previousLow(0),
                         isBullishStructure(false), isBearishStructure(false), isConsolidating(true),
                         lastBMSType(BMS_NONE), lastBMSTime(0), lastBMSPrice(0),
-                        trendConfirmed(false), consecutiveBMS(0) {}
+                        trendConfirmed(false), consecutiveBMS(0),
+                        lastBreakType(STRUCT_BREAK_NONE), lastBreakWasCHoCH(false),
+                        lastBreakWasBOS(false), chochCount(0), bosCount(0),
+                        lastChochTime(0), lastBosTime(0), lastBreakPrice(0) {}
 };
 
 //+------------------------------------------------------------------+
@@ -144,8 +168,17 @@ public:
     SMarketStructure    GetStructure() const { return m_structure; }
     bool                IsBullish() const { return m_structure.isBullishStructure; }
     bool                IsBearish() const { return m_structure.isBearishStructure; }
+    bool                IsBullishStructure() const { return m_structure.isBullishStructure; }
+    bool                IsBearishStructure() const { return m_structure.isBearishStructure; }
     bool                IsTrendConfirmed() const { return m_structure.trendConfirmed; }
     int                 GetConsecutiveBMS() const { return m_structure.consecutiveBMS; }
+
+    // CHoCH/BOS accessors — P0-D
+    ENUM_STRUCTURE_BREAK_TYPE GetLastBreakType() const { return m_structure.lastBreakType; }
+    bool WasLastBreakCHoCH() const { return m_structure.lastBreakWasCHoCH; }
+    bool WasLastBreakBOS()   const { return m_structure.lastBreakWasBOS; }
+    int  GetCHoCHCount()     const { return m_structure.chochCount; }
+    int  GetBOSCount()       const { return m_structure.bosCount; }
     
     // Swing access
     int                 GetSwingHighCount() const { return m_highCount; }
@@ -437,49 +470,103 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
 }
 
 //+------------------------------------------------------------------+
-//| Has Structure Break                                              |
+//| Has Structure Break — P0-D Rewrite with CHoCH/BOS Classification|
 //+------------------------------------------------------------------+
 bool CMarketStructureAnalyzer::HasStructureBreak()
 {
     double close = iClose(m_symbol, m_timeframe, 0);
-    
+    m_structure.lastBreakType = STRUCT_BREAK_NONE;
+    m_structure.lastBreakWasCHoCH = false;
+    m_structure.lastBreakWasBOS   = false;
+
     if(m_structure.isBullishStructure)
     {
-        // Check for lower low (bearish break)
+        // In a bullish structure:
+        // BOS = close above current high (breaks to the upside — continuation)
+        // CHoCH = close below previous low (breaks to the downside — reversal)
+
+        if(close > m_structure.currentHigh)
+        {
+            // BOS: bullish trend continues upward
+            m_structure.lastBreakType   = STRUCT_BREAK_BOS;
+            m_structure.lastBreakWasBOS = true;
+            m_structure.lastBMSPrice    = close;
+            m_structure.lastBreakPrice  = close;
+            m_structure.bosCount++;
+            m_structure.lastBosTime     = TimeCurrent();
+            m_structure.consecutiveBMS++;
+            return true;
+        }
+
         if(close < m_structure.previousLow)
         {
-            m_structure.lastBMSPrice = close;
+            // CHoCH: bullish structure is being challenged by a bearish break
+            m_structure.lastBreakType     = STRUCT_BREAK_CHOCH;
+            m_structure.lastBreakWasCHoCH = true;
+            m_structure.lastBMSPrice      = close;
+            m_structure.lastBreakPrice    = close;
+            m_structure.chochCount++;
+            m_structure.lastChochTime     = TimeCurrent();
+            // Do NOT flip isBullishStructure yet — wait for confirmation (second break)
             return true;
         }
     }
     else if(m_structure.isBearishStructure)
     {
-        // Check for higher high (bullish break)
+        // In a bearish structure:
+        // BOS = close below current low (breaks to the downside — continuation)
+        // CHoCH = close above previous high (breaks to the upside — reversal)
+
+        if(close < m_structure.currentLow)
+        {
+            m_structure.lastBreakType   = STRUCT_BREAK_BOS;
+            m_structure.lastBreakWasBOS = true;
+            m_structure.lastBMSPrice    = close;
+            m_structure.lastBreakPrice  = close;
+            m_structure.bosCount++;
+            m_structure.lastBosTime     = TimeCurrent();
+            m_structure.consecutiveBMS++;
+            return true;
+        }
+
         if(close > m_structure.previousHigh)
         {
-            m_structure.lastBMSPrice = close;
+            m_structure.lastBreakType     = STRUCT_BREAK_CHOCH;
+            m_structure.lastBreakWasCHoCH = true;
+            m_structure.lastBMSPrice      = close;
+            m_structure.lastBreakPrice    = close;
+            m_structure.chochCount++;
+            m_structure.lastChochTime     = TimeCurrent();
             return true;
         }
     }
     else
     {
-        // Consolidating - check for breakout
+        // Consolidating — any breakout is treated as CHoCH (new structure forming)
         if(close > m_structure.currentHigh)
         {
-            m_structure.isBullishStructure = true;
-            m_structure.isConsolidating = false;
-            m_structure.lastBMSPrice = close;
+            m_structure.isBullishStructure  = true;
+            m_structure.isConsolidating     = false;
+            m_structure.lastBreakType       = STRUCT_BREAK_CHOCH;
+            m_structure.lastBreakWasCHoCH   = true;
+            m_structure.lastBMSPrice        = close;
+            m_structure.lastBreakPrice      = close;
+            m_structure.lastChochTime       = TimeCurrent();
             return true;
         }
         if(close < m_structure.currentLow)
         {
-            m_structure.isBearishStructure = true;
-            m_structure.isConsolidating = false;
-            m_structure.lastBMSPrice = close;
+            m_structure.isBearishStructure  = true;
+            m_structure.isConsolidating     = false;
+            m_structure.lastBreakType       = STRUCT_BREAK_CHOCH;
+            m_structure.lastBreakWasCHoCH   = true;
+            m_structure.lastBMSPrice        = close;
+            m_structure.lastBreakPrice      = close;
+            m_structure.lastChochTime       = TimeCurrent();
             return true;
         }
     }
-    
+
     return false;
 }
 

@@ -42,6 +42,7 @@ struct StrategyEntry
     string name;
     bool enabled;
     bool intrabarEligible;
+    int intrabarPolicy;
     bool liveVotingEnabled;
     bool shadowOnly;
     int role;
@@ -61,6 +62,7 @@ struct SConsensusDecisionContext
 {
     string symbol;
     ENUM_TRADE_SIGNAL signal;
+    int decisionClass;
     double confidence;
     double convictionScore;
     double buyScore;
@@ -73,6 +75,16 @@ struct SConsensusDecisionContext
     double contextScore;
     double costScore;
     double diversityScore;
+    double directionalQuality;
+    double supportRatio;
+    double directionalWeight;
+    double readyCoverage;
+    double quorumGap;
+    double stalenessPenalty;
+    int eligibleLiveVoterCount;
+    int effectiveMinVoters;
+    string quorumMode;
+    string vetoCode;
     int confluence;
     string reason;
 
@@ -80,6 +92,7 @@ struct SConsensusDecisionContext
     {
         symbol = "";
         signal = TRADE_SIGNAL_NONE;
+        decisionClass = 0;
         confidence = 0.0;
         convictionScore = 0.0;
         buyScore = 0.0;
@@ -92,6 +105,16 @@ struct SConsensusDecisionContext
         contextScore = 0.0;
         costScore = 0.0;
         diversityScore = 0.0;
+        directionalQuality = 0.0;
+        supportRatio = 0.0;
+        directionalWeight = 0.0;
+        readyCoverage = 0.0;
+        quorumGap = 0.0;
+        stalenessPenalty = 0.0;
+        eligibleLiveVoterCount = 0;
+        effectiveMinVoters = 0;
+        quorumMode = "FULL_QUORUM";
+        vetoCode = "";
         confluence = 0;
         reason = "";
     }
@@ -116,6 +139,21 @@ enum ENUM_STRATEGY_CLUSTER
     TREND_CLUSTER = 1,
     MEAN_REVERSION_CLUSTER = 2,
     STRUCTURE_CLUSTER = 3
+};
+
+enum ENUM_INTRABAR_POLICY
+{
+    INTRABAR_POLICY_OFF = 0,
+    INTRABAR_POLICY_PROBE = 1,
+    INTRABAR_POLICY_LIVE = 2
+};
+
+enum ENUM_CONSENSUS_DECISION_CLASS
+{
+    CONSENSUS_DECISION_NONE = 0,
+    CONSENSUS_DECISION_FULL_QUORUM = 1,
+    CONSENSUS_DECISION_SPARSE_INTRABAR = 2,
+    CONSENSUS_DECISION_VETOED = 3
 };
 
 string StrategyRoleToString(const ENUM_STRATEGY_ROLE role)
@@ -152,6 +190,30 @@ string StrategyClusterShortCode(const ENUM_STRATEGY_CLUSTER cluster)
         case STRATEGY_CLUSTER_NONE:
         default:
             return "N";
+    }
+}
+
+string IntrabarPolicyToString(const ENUM_INTRABAR_POLICY policy)
+{
+    switch(policy)
+    {
+        case INTRABAR_POLICY_OFF: return "OFF";
+        case INTRABAR_POLICY_PROBE: return "PROBE";
+        case INTRABAR_POLICY_LIVE: return "LIVE";
+        default: return "OFF";
+    }
+}
+
+string ConsensusDecisionClassToString(const ENUM_CONSENSUS_DECISION_CLASS decisionClass)
+{
+    switch(decisionClass)
+    {
+        case CONSENSUS_DECISION_FULL_QUORUM: return "FULL_QUORUM";
+        case CONSENSUS_DECISION_SPARSE_INTRABAR: return "SPARSE_INTRABAR";
+        case CONSENSUS_DECISION_VETOED: return "VETOED";
+        case CONSENSUS_DECISION_NONE:
+        default:
+            return "NONE";
     }
 }
 
@@ -194,6 +256,12 @@ private:
     double m_pipelineMinConfidence; // Pipeline base confidence floor used for quorum eligibility
     double m_conflictDeadband;      // Deadband between buy/sell conviction before forcing direction
     double m_minReadyWeightRatio;   // Minimum ready-live-weight share required to trade
+    double m_supportFloorNewBar;
+    double m_supportFloorIntrabar;
+    double m_sparseIntrabarMinQuality;
+    double m_sparseIntrabarMinSupportRatio;
+    double m_sparseIntrabarMinReadyCoverage;
+    double m_sparseIntrabarConfidencePenalty;
     
     // Statistics
     int m_totalSignals;
@@ -314,6 +382,11 @@ private:
     double GetStrategyReliabilityMultiplier(const int strategyIndex) const;
     double GetStrategyRoleVoteMultiplier(const int strategyIndex) const;
     double CalculateDirectionDiversityScore(const int &strategyIndices[]) const;
+    double ClampUnitValue(const double value) const;
+    ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicy(const int strategyIndex) const;
+    bool IsStrategyIntrabarLiveEligible(const int strategyIndex) const;
+    bool IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
+    double CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const;
     
 public:
     CEnterpriseStrategyManager();
@@ -364,10 +437,24 @@ public:
     }
     void SetConflictDeadband(const double deadband) { m_conflictDeadband = MathMax(0.0, MathMin(0.50, deadband)); }
     void SetMinReadyWeightRatio(const double ratio) { m_minReadyWeightRatio = MathMax(0.10, MathMin(1.0, ratio)); }
+    void SetSupportFloors(const double newBarFloor, const double intrabarFloor)
+    {
+        m_supportFloorNewBar = MathMax(0.05, MathMin(1.0, newBarFloor));
+        m_supportFloorIntrabar = MathMax(0.05, MathMin(1.0, intrabarFloor));
+    }
+    void SetSparseIntrabarThresholds(const double minQuality,
+                                     const double minSupportRatio,
+                                     const double minReadyCoverage)
+    {
+        m_sparseIntrabarMinQuality = MathMax(0.0, MathMin(1.0, minQuality));
+        m_sparseIntrabarMinSupportRatio = MathMax(0.0, MathMin(1.0, minSupportRatio));
+        m_sparseIntrabarMinReadyCoverage = MathMax(0.0, MathMin(1.0, minReadyCoverage));
+    }
     void SetConsensusDiagnosticsIntervalSeconds(const int seconds) { m_diagLogIntervalSec = MathMax(10, seconds); }
     int  GetMinQuorum() const { return m_minQuorum; }
     bool UpdateStrategyWeightByName(const string name, const double weight);
     bool SetStrategyIntrabarEligibilityByName(const string name, bool enabled);
+    bool SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy);
     bool SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role);
     bool SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster);
     bool SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled);
@@ -454,6 +541,12 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_pipelineMinConfidence(0.40),
     m_conflictDeadband(0.05),
     m_minReadyWeightRatio(0.45),
+    m_supportFloorNewBar(0.35),
+    m_supportFloorIntrabar(0.20),
+    m_sparseIntrabarMinQuality(0.62),
+    m_sparseIntrabarMinSupportRatio(0.20),
+    m_sparseIntrabarMinReadyCoverage(0.60),
+    m_sparseIntrabarConfidencePenalty(0.92),
     m_totalSignals(0),
     m_successfulSignals(0),
     m_avgConfidence(0),
@@ -600,7 +693,18 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
         if(m_pipeline != NULL)
         {
             SignalFilterSettings filters;
-            m_pipeline.Initialize(filters);
+            if(!m_pipeline.Initialize(filters))
+            {
+                Print("[EnterpriseStrategyManager] ERROR: Pipeline initialization failed for ", symbol);
+                delete m_pipeline;
+                m_pipeline = NULL;
+                return false;
+            }
+        }
+        else
+        {
+            Print("[EnterpriseStrategyManager] ERROR: Pipeline allocation failed for ", symbol);
+            return false;
         }
     }
 
@@ -661,6 +765,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].name = name;
     m_strategies[m_strategyCount].enabled = enabled;
     m_strategies[m_strategyCount].intrabarEligible = intrabarEligible;
+    m_strategies[m_strategyCount].intrabarPolicy = intrabarEligible ? (int)INTRABAR_POLICY_LIVE : (int)INTRABAR_POLICY_OFF;
     m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
     m_strategies[m_strategyCount].shadowOnly = shadowOnly;
     m_strategies[m_strategyCount].role = (int)role;
@@ -679,7 +784,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     
     Print("[EnterpriseStrategyManager] Registered strategy: ", name, 
           " | Enabled: ", enabled, " | Weight: ", weight,
-          " | Intrabar: ", intrabarEligible ? "YES" : "NO",
+          " | Intrabar: ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_strategies[m_strategyCount - 1].intrabarPolicy),
           " | Role: ", StrategyRoleToString(role),
           " | Cluster: ", StrategyClusterToString(cluster),
           " | LiveVote: ", liveVotingEnabled ? "YES" : "NO",
@@ -1457,13 +1562,19 @@ bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, c
 
 bool CEnterpriseStrategyManager::SetStrategyIntrabarEligibilityByName(const string name, bool enabled)
 {
+    return SetStrategyIntrabarPolicyByName(name, enabled ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
+}
+
+bool CEnterpriseStrategyManager::SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy)
+{
     int index = FindStrategyIndexByName(name);
     if(index < 0)
         return false;
 
-    m_strategies[index].intrabarEligible = enabled;
-    PrintFormat("[EnterpriseStrategyManager] Intrabar eligibility updated: %s => %s",
-                name, enabled ? "ENABLED" : "DISABLED");
+    m_strategies[index].intrabarPolicy = (int)policy;
+    m_strategies[index].intrabarEligible = (policy == INTRABAR_POLICY_LIVE);
+    PrintFormat("[EnterpriseStrategyManager] Intrabar policy updated: %s => %s",
+                name, IntrabarPolicyToString(policy));
     return true;
 }
 

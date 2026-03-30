@@ -1,7 +1,7 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-03-25
+- Last Updated: 2026-03-30
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
 
@@ -145,6 +145,22 @@ Curated mode can restrict runtime active set to a smaller operational profile wh
   - `healthScore` is updated from realized closed-trade outcomes
   - live vote weight is scaled by reliability instead of only live/shadow membership
 - Manager-level controls are exposed by strategy name for role, cluster, live-vote eligibility, and shadow mode.
+
+### 3.5 Unified ICT Architecture
+The `StrategyUnifiedICT` module operates as a dedicated institutional-flow container with strict rule adherence:
+- **FVG & Order Block Models:** detection is strictly gap-based (no body color/size filters), and mitigation requires a full boundary close, not just midpoint touches. Source order blocks are dynamically anchored to 3-bar displacement impulses.
+- **Session Context:** `CSessionGapDetector` tracks NDOG/NWOG opening gaps and fill percentages. `CICTKillZones` enforces Silver Bullet windows. `CAMDDetector` defines Accumulation/Manipulation/Distribution phase sweeps to time structural reversals.
+- **Confluence Scoring:** Replaces flat array counting with a weighted 0-130 point scale (`ScoreConfluences(...)`). Highest weights are given to Order Block presence (30pts) and FVG/Sweeps (20pts).
+- **Dynamic Confidence:** `ComputeEntryConfidence(...)` generates probabilistic confidence scalars dynamically using Market Structure break types (CHoCH = high, BOS = mid) combined with AMD Distribution phase alignment.
+- **Institutional TP Hierarchy:** `CalculateTakeProfits(...)` bypasses fixed Risk:Reward scaling. Targets are structurally anchored (TP1 = Opposing FVG CE, TP2 = Opposing OB CE, TP3 = Unswept Liquidity).
+- **Position Scaling:** `CICTPositionSizer` governs trade volume using an equity-aware point distance formula and enforces hard trailing daily/weekly portfolio drawdown guards.
+
+### 3.6 Support/Resistance & Trendline Architecture
+The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, non-repainting framework optimized for look-ahead safety and chart performance:
+- **ATR-Driven Clustering:** S/R levels and Trendline swings are normalized using dynamic ATR thresholds. The clustering algorithm merges nodes not by an arithmetic average, but by promoting the highest-strength focal line.
+- **Look-Ahead Bias Elimination:** All logic within `CTrendEntryTypes`, `CSRBounceStrategy`, `CSRBreakoutStrategy`, and `CSupportResistanceDetector` strictly evaluates signal breaks and touches against `bar[1]` (completed-bar confirmation), blocking forward-sniffing.
+- **Dynamic Chart Optimization:** Instead of emitting unlimited background markers, graphical line rendering passes through a bubble-sort array capping output strictly to the Top 8 highest-strength horizontal zones and Top 6 slope-validated trendlines.
+- **ATR Position Scaling:** Fixed pips have been removed entirely. `CADXPositionSizing` dynamically calculates Lot Size exclusively using exact market Tick Sizes/Values relative to physical price distance.
 
 ## 4. Decision Pipeline (Signal to Execution)
 
@@ -305,3 +321,18 @@ Any structural change must update all of:
 - `SYSTEM_AUDIT_TRACE.md`
 - `README.md`
 - `changelogs.md`
+
+## 11. 2026-03-25 Runtime Integrity Deltas
+- `CUnifiedSignalPipeline` now owns two distinct layers of state:
+  - current-cycle evidence (`m_lastEvidence`)
+  - same-bar structural cache (`m_cachedStructuralEvidence`)
+- Structural cache now preserves the original engine readiness contract for the bar; later strategy evaluations cannot silently upgrade a warmup/faulted engine into a ready contributor.
+- Pipeline startup is now fail-closed for required diagnostics/protection/engine components; `CEnterpriseStrategyManager` aborts initialization if the pipeline cannot be constructed cleanly.
+- `CLiquidityEngine` now tracks symbol-scoped point geometry internally instead of using chart-symbol geometry.
+- `CRegimeEngine` now resets spread-shock cooldown state on symbol/timeframe context changes, keeping cost gating symbol-local under multi-symbol scans.
+- `CPositionSizer` now prefers shared ATR handles from `CIndicatorManager`, reducing split ownership of sizing-critical indicator lifecycle.
+- `CTradeManager` execution ownership remains unchanged, but its market-send contract is now three-stage:
+  - preflight viability check
+  - broker submit
+  - bounded fill confirmation
+- The EA scan loop now carries a cycle identifier across no-trade, validation, block, candidate, decision, and execution logs for one-cycle traceability.

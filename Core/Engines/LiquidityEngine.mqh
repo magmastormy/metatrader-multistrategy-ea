@@ -57,6 +57,8 @@ private:
     int m_minTouchCount;
     int m_lookbackPeriod;
     CSignalDiagnostics* m_diagnostics;
+    string m_symbol;
+    double m_symbolPoint;
     
     LiquidityZone m_buyZones[];
     LiquidityZone m_sellZones[];
@@ -79,7 +81,8 @@ public:
 };
 
 CLiquidityEngine::CLiquidityEngine() : m_minZoneSize(10.0), m_minTouchCount(2), 
-                                       m_lookbackPeriod(100), m_diagnostics(NULL) 
+                                       m_lookbackPeriod(100), m_diagnostics(NULL),
+                                       m_symbol(""), m_symbolPoint(0.0)
 {
     ArrayResize(m_buyZones, 0);
     ArrayResize(m_sellZones, 0);
@@ -104,9 +107,17 @@ bool CLiquidityEngine::DetectLiquidityZones(const string symbol, ENUM_TIMEFRAMES
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
+
+    m_symbol = symbol;
+    m_symbolPoint = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    if(m_symbolPoint <= 0.0)
+        m_symbolPoint = 0.00001;
     
     if(CopyRates(symbol, timeframe, 0, m_lookbackPeriod, rates) < m_lookbackPeriod)
+    {
+        Reset();
         return false;
+    }
     
     ArrayResize(m_buyZones, 0);
     ArrayResize(m_sellZones, 0);
@@ -125,7 +136,9 @@ bool CLiquidityEngine::DetectLiquidityZones(const string symbol, ENUM_TIMEFRAMES
 
 bool CLiquidityEngine::DetectEqualLevels(const MqlRates &rates[], int period)
 {
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double point = m_symbolPoint;
+    if(point <= 0.0)
+        point = 0.00001;
     double tolerance = m_minZoneSize * point;
     
     for(int i = 1; i < period - 1; i++)
@@ -179,7 +192,9 @@ bool CLiquidityEngine::HasLiquiditySweep(int barsAgo)
 
 bool CLiquidityEngine::IsPriceNearLiquidity(double price, double threshold)
 {
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    double point = m_symbolPoint;
+    if(point <= 0.0)
+        point = 0.00001;
     double dist = threshold * point;
     
     for(int i = 0; i < ArraySize(m_buyZones); i++)
@@ -194,6 +209,7 @@ void CLiquidityEngine::Reset()
 {
     ArrayResize(m_buyZones, 0);
     ArrayResize(m_sellZones, 0);
+    m_symbolPoint = 0.0;
 }
 
 #endif // LIQUIDITY_ENGINE_MQH

@@ -62,7 +62,7 @@ public:
     // Position sizing
     double              GetPositionSizeMultiplier();
     double              GetAdjustedRiskPercent();
-    double              CalculateLotSize(double stopLossPips);
+    double              CalculateLotSize(double entryPrice, double stopLossPrice);
     bool                ShouldTrade();
     
     // Getters
@@ -230,9 +230,9 @@ double CADXPositionSizing::GetAdjustedRiskPercent()
 //+------------------------------------------------------------------+
 //| Calculate Lot Size                                               |
 //+------------------------------------------------------------------+
-double CADXPositionSizing::CalculateLotSize(double stopLossPips)
+double CADXPositionSizing::CalculateLotSize(double entryPrice, double stopLossPrice)
 {
-    if(stopLossPips <= 0) return 0;
+    if(entryPrice <= 0 || stopLossPrice <= 0 || entryPrice == stopLossPrice) return 0;
     if(!ShouldTrade()) return 0;
     
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -242,19 +242,18 @@ double CADXPositionSizing::CalculateLotSize(double stopLossPips)
     // Get tick value and size
     double tickValue = SymbolInfoDouble(m_symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(m_symbol, SYMBOL_TRADE_TICK_SIZE);
-    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     
-    if(tickValue <= 0 || tickSize <= 0 || point <= 0)
+    if(tickValue <= 0 || tickSize <= 0)
         return 0;
     
-    // Convert stop loss pips to points
-    double stopLossPoints = stopLossPips * 10;  // Assuming 5-digit broker
+    // Calculate exact risk per lot based on price distance
+    double priceDistance = MathAbs(entryPrice - stopLossPrice);
+    double riskPerLot = (priceDistance / tickSize) * tickValue;
     
-    // Calculate pip value per lot
-    double pipValue = tickValue / tickSize * point * 10;  // 10 points per pip
+    if(riskPerLot <= 0) return 0;
     
     // Calculate lot size
-    double lots = riskAmount / (stopLossPips * pipValue);
+    double lots = riskAmount / riskPerLot;
     
     // Normalize to broker's lot step
     double lotStep = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_STEP);

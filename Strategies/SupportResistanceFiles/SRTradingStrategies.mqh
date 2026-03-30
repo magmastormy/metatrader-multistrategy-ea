@@ -48,13 +48,16 @@ private:
     double              m_minConfidence;
     int                 m_emaFast;
     int                 m_emaSlow;
+    int                 m_emaFastHandle;
+    int                 m_emaSlowHandle;
     
     // Internal helpers
     bool                HasBullishRejection();
     bool                HasBearishRejection();
     bool                IsTrendAlignedBullish();
     bool                IsTrendAlignedBearish();
-    double              GetEMA(int period);
+    double              GetEMA(int handle);
+    double              GetATR(int period = 14);
     
 public:
                         CSRBounceStrategy();
@@ -78,7 +81,9 @@ CSRBounceStrategy::CSRBounceStrategy() :
     m_trendDetector(NULL),
     m_minConfidence(0.60),
     m_emaFast(50),
-    m_emaSlow(200)
+    m_emaSlow(200),
+    m_emaFastHandle(INVALID_HANDLE),
+    m_emaSlowHandle(INVALID_HANDLE)
 {
 }
 
@@ -87,6 +92,8 @@ CSRBounceStrategy::CSRBounceStrategy() :
 //+------------------------------------------------------------------+
 CSRBounceStrategy::~CSRBounceStrategy()
 {
+    if(m_emaFastHandle != INVALID_HANDLE) IndicatorRelease(m_emaFastHandle);
+    if(m_emaSlowHandle != INVALID_HANDLE) IndicatorRelease(m_emaSlowHandle);
 }
 
 //+------------------------------------------------------------------+
@@ -101,7 +108,13 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
     m_srDetector = srDetector;
     m_trendDetector = trendDetector;
     
-    return (m_srDetector != NULL);
+    if(m_emaFastHandle != INVALID_HANDLE) IndicatorRelease(m_emaFastHandle);
+    if(m_emaSlowHandle != INVALID_HANDLE) IndicatorRelease(m_emaSlowHandle);
+    
+    m_emaFastHandle = iMA(m_symbol, m_timeframe, m_emaFast, 0, MODE_EMA, PRICE_CLOSE);
+    m_emaSlowHandle = iMA(m_symbol, m_timeframe, m_emaSlow, 0, MODE_EMA, PRICE_CLOSE);
+    
+    return (m_srDetector != NULL && m_emaFastHandle != INVALID_HANDLE && m_emaSlowHandle != INVALID_HANDLE);
 }
 
 //+------------------------------------------------------------------+
@@ -137,6 +150,13 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     // Determine if support or resistance
     bool isSupport = (price >= nearestLevel.price);
     
+    double atr = GetATR(14);
+    double atrTargetMultiplier = 2.0; 
+    double atrStopMultiplier = 1.0;
+    
+    double defaultTarget = (atr > 0) ? (atr * atrTargetMultiplier) : (40 * point);
+    double defaultStop = (atr > 0) ? (atr * atrStopMultiplier) : (20 * point);
+
     if(isSupport)
     {
         // Look for bullish bounce from support
@@ -145,9 +165,9 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
             result.signal = TRADE_SIGNAL_BUY;
             result.confidence = nearestLevel.strength;
             result.entryPrice = price;
-            result.stopLoss = nearestLevel.price - (20 * point);
-            result.takeProfit1 = price + (40 * point);
-            result.takeProfit2 = price + (80 * point);
+            result.stopLoss = nearestLevel.price - defaultStop;
+            result.takeProfit1 = price + defaultTarget;
+            result.takeProfit2 = price + (defaultTarget * 2.0);
             result.reason = "Bullish bounce from support";
         }
     }
@@ -159,9 +179,9 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
             result.signal = TRADE_SIGNAL_SELL;
             result.confidence = nearestLevel.strength;
             result.entryPrice = price;
-            result.stopLoss = nearestLevel.price + (20 * point);
-            result.takeProfit1 = price - (40 * point);
-            result.takeProfit2 = price - (80 * point);
+            result.stopLoss = nearestLevel.price + defaultStop;
+            result.takeProfit1 = price - defaultTarget;
+            result.takeProfit2 = price - (defaultTarget * 2.0);
             result.reason = "Bearish bounce from resistance";
         }
     }
@@ -257,8 +277,9 @@ bool CSRBounceStrategy::HasBearishRejection()
 //+------------------------------------------------------------------+
 bool CSRBounceStrategy::IsTrendAlignedBullish()
 {
-    double ema50 = GetEMA(m_emaFast);
-    double ema200 = GetEMA(m_emaSlow);
+    double ema50 = GetEMA(m_emaFastHandle);
+    double ema200 = GetEMA(m_emaSlowHandle);
+    if(ema50 == 0 || ema200 == 0) return false;
     return (ema50 > ema200);
 }
 
@@ -267,28 +288,43 @@ bool CSRBounceStrategy::IsTrendAlignedBullish()
 //+------------------------------------------------------------------+
 bool CSRBounceStrategy::IsTrendAlignedBearish()
 {
-    double ema50 = GetEMA(m_emaFast);
-    double ema200 = GetEMA(m_emaSlow);
+    double ema50 = GetEMA(m_emaFastHandle);
+    double ema200 = GetEMA(m_emaSlowHandle);
+    if(ema50 == 0 || ema200 == 0) return false;
     return (ema50 < ema200);
 }
 
 //+------------------------------------------------------------------+
 //| Get EMA Value                                                    |
 //+------------------------------------------------------------------+
-double CSRBounceStrategy::GetEMA(int period)
+double CSRBounceStrategy::GetEMA(int handle)
 {
-    int handle = iMA(m_symbol, m_timeframe, period, 0, MODE_EMA, PRICE_CLOSE);
     if(handle == INVALID_HANDLE) return 0;
     
     double value[1];
     if(CopyBuffer(handle, 0, 0, 1, value) > 0)
     {
-        IndicatorRelease(handle);
         return value[0];
     }
     
-    IndicatorRelease(handle);
     return 0;
+}
+
+//+------------------------------------------------------------------+
+//| Get ATR Value                                                    |
+//+------------------------------------------------------------------+
+double CSRBounceStrategy::GetATR(int period)
+{
+    int handle = iATR(m_symbol, m_timeframe, period);
+    if(handle == INVALID_HANDLE) return 0;
+    
+    double atrBuf[1];
+    double result = 0;
+    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
+        result = atrBuf[0];
+        
+    IndicatorRelease(handle);
+    return result;
 }
 
 //+------------------------------------------------------------------+
@@ -305,6 +341,7 @@ private:
     double              m_minConfidence;
     
     bool                HasVolumeConfirmation();
+    double              GetATR(int period = 14);
     
 public:
                         CSRBreakoutStrategy();
@@ -394,14 +431,18 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
     
     result.confidence = 0.75;
     
+    double atr = GetATR(14);
+    double defaultTarget = (atr > 0) ? (atr * 1.5) : (30 * point);
+    double defaultStop = (atr > 0) ? (atr * 0.8) : (15 * point);
+
     if(price > brokenLevel.price)
     {
         // Broke resistance - look for buy on retest
         result.signal = TRADE_SIGNAL_BUY;
         result.entryPrice = price;
-        result.stopLoss = brokenLevel.price - (15 * point);
-        result.takeProfit1 = price + (30 * point);
-        result.takeProfit2 = price + (60 * point);
+        result.stopLoss = brokenLevel.price - defaultStop;
+        result.takeProfit1 = price + defaultTarget;
+        result.takeProfit2 = price + (defaultTarget * 2.0);
         result.reason = "Breakout retest - resistance became support";
         brokenLevel.roleReversed = true;
     }
@@ -410,9 +451,9 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
         // Broke support - look for sell on retest
         result.signal = TRADE_SIGNAL_SELL;
         result.entryPrice = price;
-        result.stopLoss = brokenLevel.price + (15 * point);
-        result.takeProfit1 = price - (30 * point);
-        result.takeProfit2 = price - (60 * point);
+        result.stopLoss = brokenLevel.price + defaultStop;
+        result.takeProfit1 = price - defaultTarget;
+        result.takeProfit2 = price - (defaultTarget * 2.0);
         result.reason = "Breakout retest - support became resistance";
         brokenLevel.roleReversed = true;
     }
@@ -453,6 +494,23 @@ bool CSRBreakoutStrategy::HasVolumeConfirmation()
 }
 
 //+------------------------------------------------------------------+
+//| Get ATR Value                                                    |
+//+------------------------------------------------------------------+
+double CSRBreakoutStrategy::GetATR(int period)
+{
+    int handle = iATR(m_symbol, m_timeframe, period);
+    if(handle == INVALID_HANDLE) return 0;
+    
+    double atrBuf[1];
+    double result = 0;
+    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
+        result = atrBuf[0];
+        
+    IndicatorRelease(handle);
+    return result;
+}
+
+//+------------------------------------------------------------------+
 //| Trendline Bounce Strategy                                        |
 //+------------------------------------------------------------------+
 class CTrendlineBounceStrategy
@@ -468,6 +526,7 @@ private:
     
     bool                HasBullishRejection();
     bool                HasBearishRejection();
+    double              GetATR(int period = 14);
     
 public:
                         CTrendlineBounceStrategy();
@@ -543,6 +602,11 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
         double projectedPrice = m_trendDetector.ProjectTrendline(trendline, localTime);
         
         double tolerance = 15 * point;
+        double atr = GetATR(14);
+        double targetMult = 2.0;
+        double stopMult   = 1.0;
+        double defaultTarget = (atr > 0) ? (atr * targetMult) : (40 * point);
+        double defaultStop   = (atr > 0) ? (atr * stopMult) : (20 * point);
         
         // Check if price at trendline
         if(MathAbs(price - projectedPrice) < tolerance)
@@ -555,9 +619,9 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
                     result.signal = TRADE_SIGNAL_BUY;
                     result.confidence = trendline.strength;
                     result.entryPrice = price;
-                    result.stopLoss = projectedPrice - (20 * point);
-                    result.takeProfit1 = price + (40 * point);
-                    result.takeProfit2 = price + (80 * point);
+                    result.stopLoss = projectedPrice - defaultStop;
+                    result.takeProfit1 = price + defaultTarget;
+                    result.takeProfit2 = price + (defaultTarget * 2.0);
                     result.reason = "Trendline support bounce";
                 }
             }
@@ -569,9 +633,9 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
                     result.signal = TRADE_SIGNAL_SELL;
                     result.confidence = trendline.strength;
                     result.entryPrice = price;
-                    result.stopLoss = projectedPrice + (20 * point);
-                    result.takeProfit1 = price - (40 * point);
-                    result.takeProfit2 = price - (80 * point);
+                    result.stopLoss = projectedPrice + defaultStop;
+                    result.takeProfit1 = price - defaultTarget;
+                    result.takeProfit2 = price - (defaultTarget * 2.0);
                     result.reason = "Trendline resistance bounce";
                 }
             }
@@ -657,6 +721,23 @@ bool CTrendlineBounceStrategy::HasBearishRejection()
         return true;
     
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Get ATR Value                                                    |
+//+------------------------------------------------------------------+
+double CTrendlineBounceStrategy::GetATR(int period)
+{
+    int handle = iATR(m_symbol, m_timeframe, period);
+    if(handle == INVALID_HANDLE) return 0;
+    
+    double atrBuf[1];
+    double result = 0;
+    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
+        result = atrBuf[0];
+        
+    IndicatorRelease(handle);
+    return result;
 }
 
 #endif // __SR_TRADING_STRATEGIES_MQH__

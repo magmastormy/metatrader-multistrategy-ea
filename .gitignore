@@ -3,5 +3,7 @@
 *.ex5
 Documentation/
 CRITICAL_FIXES.mqh
+ICT_Implementation_Spec.md
+SR_Trendline_Implementation_Spec.md
 # Documentation is intentionally versioned.
 # Keep markdown/text system docs tracked.
