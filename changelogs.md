@@ -2,7 +2,46 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
-## [Unreleased] - 2026-03-30
+## [Unreleased] - 2026-03-31
+
+### Batch 40: Strategy Registry + Default Throughput Recovery + AI Feature Bridge (2026-04-01)
+- **Registry + mode control:** added `ENUM_EA_MODE` in `Core/Utils/Enums.mqh` and new `Core/Strategy/StrategyRegistry.mqh`; `MultiStrategyAutonomousEA.mq5` now builds a single registry-backed roster, logs `[STRATEGY-REGISTRY]`, and degrades impossible mode combinations to a viable effective mode instead of silently running an empty activation set.
+- **Registry-driven manager bootstrap:** per-symbol manager registration now flows through the registry for indicator and adapter-based AI strategies, while risk gating remains `CUnifiedRiskManager`, execution remains `CTradeManager`, and lifecycle ownership remains unchanged.
+- **Mode-aware candidate handling:** the runtime now applies explicit EA-mode admission after consensus. `HYBRID` can require aligned AI+indicator contributors, `AI_ASSISTED` can emit `[AI-MODE-BONUS]`, and `INDICATOR_FILTERED` can veto AI-only candidates that lack indicator confirmation.
+- **Default intrabar starvation mitigation:** `MultiStrategyAutonomousEA.mq5` now uses a bounded intrabar keepalive pick when hybrid cadence would otherwise select zero symbols, and `[SCAN-BUDGET]` now reports `intrabar_keepalive`.
+- **Trend readiness hardening:** `Core/Engines/TrendEngine.mqh` no longer treats mature-series MA readiness gaps as immediate hard faults; it now tolerates partial readiness, attempts bounded EMA fallbacks for fast/medium/slow MA reads, and only reuses/degrades when no valid series can be reconstructed.
+- **AI architecture right-sizing:** `Core/AI/AIFeatureVectorBuilder.mqh`, `AIModules/TransformerBrain.mqh`, `AIModules/NextGenStrategyBrain.mqh`, `Core/Strategy/TransformerAIStrategyAdapter.mqh`, `Core/Strategy/EnsembleAIStrategyAdapter.mqh`, and `AIModules/EnsembleMetaLearner.mqh` now use a smaller transformer profile (`64/4/2/128`), pass actual sequence length, build real short bar sequences, and slice ensemble input per model capacity.
+- **NN input integrity + feature bridge:** `AIModules/NeuralNetworkStrategy.mqh` now validates feature vectors before inference/training, rejects NaN / broken-zero payloads, and can enrich the feature tail with transformer-encoded context from a lightweight internal feature extractor.
+- **Verified:** `./sync_and_compile.ps1 -MirrorSync` passes with `0 errors, 0 warnings`.
+
+### Batch 39: Default Runtime Efficiency Remediation (2026-04-01)
+- **Diagnosed:** `default.log` exposed repeated `TrendEngine` ATR readiness faults and long runs of idle scan-budget cycles, while also showing that saved MT5 runtime state can diverge from current source defaults.
+- **Remediated:** `Core/Engines/TrendEngine.mqh` now treats mature-series ATR read failure as recoverable, attempts a bounded ATR fallback, and only then degrades to reuse/neutral readiness behavior.
+- **Optimized:** `MultiStrategyAutonomousEA.mq5` now tags `[SCAN-BUDGET]` with `active_work` and skips the full symbol loop when neither new-bar nor intrabar work exists.
+- **Corrected:** `Support/Resistance` intrabar governance now respects the configured probe toggle instead of being silently forced `OFF`.
+- **Fixed:** `Strategies/StrategyElliottWaveEnhanced.mqh` now uses valid MT5 line-style enums and reuses the inherited min-confidence contract instead of shadowing it.
+- **Verified:** `./sync_and_compile.ps1 -MirrorSync` passes with `0 errors, 0 warnings`.
+
+### Batch 38: AXIOM Architecture Refactor + AI Hot-Path Debloat (2026-03-31)
+- **NextGen single-path runtime:** `AIModules/NextGenStrategyBrain.mqh` now runs as a local-only transformer path, removes the dead Python/cloud branch, uses `GetPredictions(...)` directly for class probabilities, and exposes dashboard-safe readiness/runtime-mode accessors.
+- **AI inference caching:** `Core/Strategy/AIStrategyAdapter.mqh`, `Core/Strategy/TransformerAIStrategyAdapter.mqh`, and `Core/Strategy/EnsembleAIStrategyAdapter.mqh` now reuse same-bar inference results so neural/transformer/ensemble votes run at most once per bar instead of once per tick.
+- **Ring-buffered AI data:** `AIModules/NextGenStrategyBrain.mqh`, `AIModules/UncertaintyQuantifier.mqh`, and `AIModules/NeuralNetworkStrategy.mqh` now use allocation-stable ring buffers for market history, uncertainty history, and NN training samples instead of repeated array shifts, `Delete(0)`, or heap-per-sample churn.
+- **Transformer/ensemble cleanup:** `AIModules/TransformerBrain.mqh` drops redundant forward-pass staging copies, and `AIModules/EnsembleMetaLearner.mqh` now aggregates class probabilities via `GetPredictions(...)`, trains via `TrainStep(...)`, and fixes container ownership/delete behavior.
+- **Fail-soft optional AI bootstrap:** `MultiStrategyAutonomousEA.mq5` now separates mandatory runtime bootstrap from optional AI brain/orchestrator/engine initialization and gates adaptation/dashboard/orchestrator use behind readiness flags instead of aborting the EA on optional AI failures.
+- **Detector indicator lifecycle cleanup:** `Strategies/SupportResistanceFiles/SupportResistanceDetector.mqh` now caches its ATR handle across repeated detection/touch passes rather than creating and releasing ATR handles inside hot methods.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the AXIOM refactor behavior and ownership boundaries.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 37: Intrabar Efficiency Mitigation + Sparse Consensus Upgrade (2026-03-31)
+- **Intrabar policy before pipeline spend:** `Core/Management/EnterpriseStrategyManager.mqh` now classifies strategies as `OFF`, `PROBE`, or `LIVE` for intrabar evaluation and skips `OFF` strategies before `ProcessSignal(...)` runs.
+- **Two-factor quorum geometry:** full quorum now requires both directional quality and support ratio, with separate new-bar vs intrabar support floors (`InpConsensusSupportFloorNewBar`, `InpConsensusSupportFloorIntrabar`) and explicit veto codes instead of generic quorum-miss text.
+- **Sparse intrabar lane:** manager now emits a tagged `SPARSE_INTRABAR` decision class for tightly gated one-sided single-voter packets and logs `[CONSENSUS-SPARSE]` / `[CONSENSUS-NEARMISS]` for accepted vs rejected sparse candidates.
+- **Yield-aware intrabar scheduler:** `MultiStrategyAutonomousEA.mq5` now maintains per-symbol `SSymbolScanState`, budgets intrabar scans by recent near-miss / recent-generation / readiness health, and escalates per-symbol backoff via `[INTRABAR-BACKOFF]`.
+- **Scheduler telemetry:** runtime now emits `[SCAN-BUDGET]` every scan cycle and `[TERMINATION-SNAPSHOT]` on deinit for abnormal-exit localization.
+- **Readiness reuse hardening:** `Core/Engines/TrendEngine.mqh` now distinguishes warmup vs transient copy vs handle faults, reuses a bounded last-good trend snapshot on transient MA/ATR copy failures, and fixes readiness reinit logging to report the true pre-reset fault count.
+- **Pipeline readiness evidence:** `Core/Pipeline/UnifiedSignalPipeline.mqh` and `Core/Engines/RegimeEngine.mqh` now propagate readiness class, reuse state, staleness, and staleness penalty into the pipeline evidence snapshot so degraded-but-usable data is penalized instead of silently flattened.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to reflect the new intrabar scheduler, sparse-consensus path, and readiness evidence contract.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
 
 ### Batch 36: Support/Resistance & Trendline System Overhaul (2026-03-30)
 - **Quality-First Detection Alg:** Rewrote `CTrendlineDetector` to use ATR-based swing points instead of raw price logic, eliminating look-ahead bias and noise. Added slope tracking and angle validation (`IsValidSlopeAngle`).

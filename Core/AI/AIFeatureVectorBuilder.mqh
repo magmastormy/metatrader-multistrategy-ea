@@ -8,12 +8,14 @@
 #define CORE_AI_FEATURE_VECTOR_BUILDER_MQH
 
 // AI Model Configuration Constants
-#define TRANSFORMER_D_MODEL_DEFAULT        128
-#define TRANSFORMER_NUM_HEADS_DEFAULT       8
-#define TRANSFORMER_NUM_LAYERS_A_DEFAULT    4
-#define TRANSFORMER_D_FF_DEFAULT           512
-#define TRANSFORMER_D_FF_B_DEFAULT          384
-#define TRANSFORMER_DROPOUT_DEFAULT         64
+#define TRANSFORMER_D_MODEL_DEFAULT         64
+#define TRANSFORMER_NUM_HEADS_DEFAULT        4
+#define TRANSFORMER_NUM_LAYERS_A_DEFAULT     2
+#define TRANSFORMER_D_FF_DEFAULT           128
+#define TRANSFORMER_D_FF_B_DEFAULT          96
+#define TRANSFORMER_MAX_SEQ_LEN_DEFAULT     50
+#define TRANSFORMER_SHORT_SEQ_LEN_DEFAULT   10
+#define TRANSFORMER_DROPOUT_DEFAULT TRANSFORMER_MAX_SEQ_LEN_DEFAULT
 #define TRANSFORMER_LR_A_DEFAULT           0.001
 #define TRANSFORMER_LR_B_DEFAULT          0.0015
 #define FEATURE_VECTOR_SIZE               25
@@ -53,43 +55,46 @@ private:
     }
 
 public:
-    static bool BuildNNFeatureVector(const string symbol, const ENUM_TIMEFRAMES timeframe, double &features[])
+    static bool BuildNNFeatureVector(const string symbol,
+                                     const ENUM_TIMEFRAMES timeframe,
+                                     double &features[],
+                                     const int barShift = 1)
     {
         ArrayResize(features, FEATURE_VECTOR_SIZE);
         ArrayInitialize(features, 0.0);
 
-        if(symbol == "")
+        if(symbol == "" || barShift < 1)
             return false;
 
         CIndicatorManager* ind = CIndicatorManager::Instance();
         if(ind == NULL)
             return false;
 
-        double close = iClose(symbol, timeframe, 1);
+        double close = iClose(symbol, timeframe, barShift);
         if(close <= 0.0)
             close = SymbolInfoDouble(symbol, SYMBOL_BID);
 
-        double open = iOpen(symbol, timeframe, 1);
-        double high = iHigh(symbol, timeframe, 1);
-        double low = iLow(symbol, timeframe, 1);
-        double closePrev = iClose(symbol, timeframe, 2);
+        double open = iOpen(symbol, timeframe, barShift);
+        double high = iHigh(symbol, timeframe, barShift);
+        double low = iLow(symbol, timeframe, barShift);
+        double closePrev = iClose(symbol, timeframe, barShift + 1);
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         if(point <= 0.0)
             point = 0.00001;
 
-        double maFast = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 9, 0, MODE_EMA, PRICE_CLOSE), 0, 1);
-        double maSlow = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE), 0, 1);
-        double ema200 = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE), 0, 1);
-        double adx = GetIndicatorValue(ind.GetADXHandle(symbol, timeframe, 14), 0, 1);
-        double rsi = GetIndicatorValue(ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, 1);
-        double rsiPrev = GetIndicatorValue(ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, 2);
-        double atrFast = GetIndicatorValue(ind.GetATRHandle(symbol, timeframe, 14), 0, 1);
-        double atrSlow = GetIndicatorValue(ind.GetATRHandle(symbol, timeframe, 50), 0, 1);
-        double bbUpper = GetIndicatorValue(ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE), 1, 1);
-        double bbLower = GetIndicatorValue(ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE), 2, 1);
-        double macdMain = GetIndicatorValue(ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE), 0, 1);
-        double macdSignal = GetIndicatorValue(ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE), 1, 1);
-        double cci = GetIndicatorValue(ind.GetCCIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, 1);
+        double maFast = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 9, 0, MODE_EMA, PRICE_CLOSE), 0, barShift);
+        double maSlow = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE), 0, barShift);
+        double ema200 = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE), 0, barShift);
+        double adx = GetIndicatorValue(ind.GetADXHandle(symbol, timeframe, 14), 0, barShift);
+        double rsi = GetIndicatorValue(ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, barShift);
+        double rsiPrev = GetIndicatorValue(ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, barShift + 1);
+        double atrFast = GetIndicatorValue(ind.GetATRHandle(symbol, timeframe, 14), 0, barShift);
+        double atrSlow = GetIndicatorValue(ind.GetATRHandle(symbol, timeframe, 50), 0, barShift);
+        double bbUpper = GetIndicatorValue(ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE), 1, barShift);
+        double bbLower = GetIndicatorValue(ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE), 2, barShift);
+        double macdMain = GetIndicatorValue(ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE), 0, barShift);
+        double macdSignal = GetIndicatorValue(ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE), 1, barShift);
+        double cci = GetIndicatorValue(ind.GetCCIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, barShift);
 
         // 0-4: Market structure
         features[0] = (maFast > maSlow) ? 1.0 : (maFast < maSlow) ? -1.0 : 0.0;
@@ -109,12 +114,12 @@ public:
         features[9] = GetNormalizedValue(-200.0, 200.0, cci);
 
         // 10-14: Volume / liquidity proxy
-        long volume = iVolume(symbol, timeframe, 1);
-        long volumePrev = iVolume(symbol, timeframe, 2);
+        long volume = iVolume(symbol, timeframe, barShift);
+        long volumePrev = iVolume(symbol, timeframe, barShift + 1);
         features[10] = (volume > volumePrev) ? 1.0 : 0.0;
         features[11] = (rsi > 50.0 && volume > volumePrev) ? 1.0 : 0.0;
-        double high20 = iHigh(symbol, timeframe, iHighest(symbol, timeframe, MODE_HIGH, 20, 1));
-        double low20 = iLow(symbol, timeframe, iLowest(symbol, timeframe, MODE_LOW, 20, 1));
+        double high20 = iHigh(symbol, timeframe, iHighest(symbol, timeframe, MODE_HIGH, 20, barShift));
+        double low20 = iLow(symbol, timeframe, iLowest(symbol, timeframe, MODE_LOW, 20, barShift));
         features[12] = (close >= high20) ? 1.0 : (close <= low20) ? -1.0 : 0.0;
         double candleRangePercent = (close > 0.0) ? ((high - low) / close) * 100.0 : 0.0;
         features[13] = GetNormalizedValue(0.0, 2.0, candleRangePercent);
@@ -130,8 +135,8 @@ public:
         double lowerWick = (close > open) ? (open - low) : (close - low);
         features[17] = (range > 0.0) ? upperWick / range : 0.0;
         features[18] = (range > 0.0) ? lowerWick / range : 0.0;
-        double highPrev = iHigh(symbol, timeframe, 2);
-        double lowPrev = iLow(symbol, timeframe, 2);
+        double highPrev = iHigh(symbol, timeframe, barShift + 1);
+        double lowPrev = iLow(symbol, timeframe, barShift + 1);
         bool insideBar = (high < highPrev) && (low > lowPrev);
         features[19] = insideBar ? 1.0 : 0.0;
 
@@ -161,28 +166,14 @@ public:
             return false;
         }
 
-        double baseFeatures[];
-        if(!BuildNNFeatureVector(symbol, timeframe, baseFeatures))
-        {
-            Print("[AIFeatureVectorBuilder] ERROR: Failed to build base feature vector");
-            return false;
-        }
-
-        int baseSize = ArraySize(baseFeatures);
-        if(baseSize <= 0)
-        {
-            Print("[AIFeatureVectorBuilder] ERROR: Base feature vector is empty");
-            return false;
-        }
-
         // Validate that dModel is reasonable compared to base feature size
-        if(dModel > baseSize * DMODE_BASE_FEATURE_RATIO_WARNING)
+        if(dModel > FEATURE_VECTOR_SIZE * DMODE_BASE_FEATURE_RATIO_WARNING)
         {
             static datetime s_lastDModelWarningTime = 0;
             datetime now = TimeCurrent();
             if(s_lastDModelWarningTime == 0 || (now - s_lastDModelWarningTime) >= 300)
             {
-                Print("[AIFeatureVectorBuilder] WARNING: dModel (", dModel, ") is much larger than base features (", baseSize, ")");
+                Print("[AIFeatureVectorBuilder] WARNING: dModel (", dModel, ") is much larger than base features (", FEATURE_VECTOR_SIZE, ")");
                 s_lastDModelWarningTime = now;
             }
         }
@@ -193,17 +184,22 @@ public:
 
         for(int s = 0; s < sequenceLength; s++)
         {
+            double stepFeatures[];
+            int barShift = MathMax(1, sequenceLength - s);
+            if(!BuildNNFeatureVector(symbol, timeframe, stepFeatures, barShift))
+                return false;
+
+            int baseSize = ArraySize(stepFeatures);
+            if(baseSize <= 0)
+                return false;
+
             for(int i = 0; i < dModel; i++)
             {
-                // Use modulo to cycle through base features when dModel > baseSize
-                // This creates a repeating pattern with slight variations
                 int baseIndex = i % baseSize;
                 int prevIndex = (baseIndex + baseSize - 1) % baseSize;
-                
-                double currentValue = baseFeatures[baseIndex];
-                double lagValue = baseFeatures[prevIndex];
-                
-                // Blend current value with lagged value for temporal context
+
+                double currentValue = stepFeatures[baseIndex];
+                double lagValue = stepFeatures[prevIndex];
                 inputSequence[s * dModel + i] = currentValue * TEMPORAL_BLEND_CURRENT + lagValue * TEMPORAL_BLEND_LAG;
             }
         }

@@ -1,7 +1,7 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-03-30
+- Last Updated: 2026-03-31
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
 
@@ -19,10 +19,12 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 ### 2.1 Entrypoint and orchestration
 - File: `MultiStrategyAutonomousEA.mq5`
 - Responsibilities:
-  - initialize all runtime subsystems
+  - initialize mandatory runtime subsystems first and isolate optional AI/bootstrap failures behind readiness flags
   - validate active symbols and emit startup account-capacity diagnostics before live execution
   - reconstruct cooldown/trade-timing state from EA-owned open positions and deal history on startup
   - maintain cadence loops (new-bar/intrabar)
+  - budget intrabar scans by symbol yield instead of blindly scanning the whole intrabar universe every cycle
+  - apply per-symbol intrabar backoff after repeated low-yield or readiness-faulted scans
   - dispatch per-symbol evaluations
   - rank approved candidates across symbols before execution
   - own the non-AI confidence policy inputs for pipeline and validator stages
@@ -38,11 +40,14 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - resolve cross-timeframe vote conflicts via `CTimeframeConsistency`
   - dispatch `OnNewBar` to each strategy using its registered timeframe
   - apply normalized weighted quorum rules by evaluation mode (new-bar vs intrabar eligible pool)
+  - classify intrabar strategy participation as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent
   - modulate live vote influence by role multiplier and rolling strategy `healthScore`
   - compute conviction using pipeline evidence (`readiness`, `context`, `cost`) rather than raw confidence alone
+  - require both directional quality and support-ratio floors before full quorum can pass
+  - allow a separately tagged `SPARSE_INTRABAR` lane for tightly gated one-sided single-voter packets
   - require minimum ready-live-weight participation and conflict deadband before directional selection
   - admit votes using the active pipeline confidence floor for that evaluation (including regime-relaxed thresholds)
-  - enforce single-voter intrabar confidence floor
+  - expose veto codes (`zero_voter`, `single_voter_confidence`, `sparse_support`, `timeframe_conflict`, readiness-related gates) instead of generic quorum-miss text
   - expose per-cycle funnel snapshots and interval consensus diagnostics snapshots
   - emit consensus diagnostics
   - retain last-contributor context for attribution
@@ -53,9 +58,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - cache structural/indicator context once per symbol/timeframe/bar for reuse across strategy votes
   - apply trend/volatility/liquidity/structure/confidence filters
   - apply deterministic regime + cost viability pre-gate via `CRegimeEngine`
-  - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass)
+  - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass`, readiness class, reuse/staleness flags)
   - allow bounded soft-threshold promotion when near-threshold confidence is supported by strong readiness/context evidence
   - tolerate transient regime data faults by reusing a recent same-context valid snapshot when safe
+  - tolerate transient trend MA/ATR copy faults by reusing a bounded last-good trend snapshot instead of forcing full indicator-set churn
   - trigger bounded `CRegimeEngine` handle self-heal after repeated data faults
   - apply bounded weak-regime intrabar confidence threshold uplift (`min(base+cap, base*multiplier)`) using `CRegimeEngine` snapshot state as the authority
   - emit threshold-source telemetry (`[PIPELINE-THRESHOLD]`)
@@ -68,6 +74,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - register qualified strategy identities (`symbol::name`)
   - maintain performance and weight state
   - adapt weights and feed updates back to managers
+  - remain optional at runtime; orchestration/adaptation failure disables AI adaptation without violating trade/risk/execution ownership
 
 ### 2.5 Risk domain
 - Class: `CUnifiedRiskManager`
@@ -129,6 +136,12 @@ The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also 
 - Ensemble adapter (`CEnsembleAIStrategyAdapter`)
 
 **Memory Safety**: All AI adapters implement RAII patterns with proper cleanup of transformer models and comprehensive error handling. Constants are used throughout to eliminate magic numbers.
+**Runtime Efficiency**:
+- inference is cached per bar in the adapter or backing AI module so repeated same-bar `GetSignal(...)` calls do not rerun transformer/NN forward passes
+- feature-build/inference failures are cached as `NONE` for the rest of the bar to avoid hot-loop retries on unchanged data
+- `CNextGenStrategyBrain` now runs as a local-only transformer path and exposes dashboard-safe readiness/runtime-mode state instead of legacy cloud/hybrid labels
+- `CEnsembleMetaLearner` now aggregates model class probabilities via `GetPredictions(...)` and uses container ownership correctly (`CArrayObj::FreeMode(true)`) to avoid double-delete behavior
+- `CNeuralNetworkStrategy`, `CUncertaintyQuantifier`, and `CMarketDataProcessor` now use ring-buffered histories instead of heap churn or `Delete(0)`/array-shift patterns
 
 ### 3.3 Curated runtime profile
 Curated mode can restrict runtime active set to a smaller operational profile while preserving full retained implementation in code.
@@ -161,6 +174,16 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - **Look-Ahead Bias Elimination:** All logic within `CTrendEntryTypes`, `CSRBounceStrategy`, `CSRBreakoutStrategy`, and `CSupportResistanceDetector` strictly evaluates signal breaks and touches against `bar[1]` (completed-bar confirmation), blocking forward-sniffing.
 - **Dynamic Chart Optimization:** Instead of emitting unlimited background markers, graphical line rendering passes through a bubble-sort array capping output strictly to the Top 8 highest-strength horizontal zones and Top 6 slope-validated trendlines.
 - **ATR Position Scaling:** Fixed pips have been removed entirely. `CADXPositionSizing` dynamically calculates Lot Size exclusively using exact market Tick Sizes/Values relative to physical price distance.
+- **Indicator Handle Hygiene:** clean detector paths now cache ATR handles at initialization and reuse them during repeated detection/touch passes instead of creating and releasing indicator handles inside hot methods.
+
+## 3.7 AXIOM Refactor Notes
+- The AXIOM refactor batch was a structural efficiency pass, not a strategy-logic rewrite.
+- Main outcomes:
+  - removed dead AI/control-flow branches and no-op lifecycle surface
+  - stabilized AI hot paths around bar-cached inference
+  - replaced repeated O(n) history shifts with fixed-size ring buffers in AI data structures
+  - separated mandatory runtime bootstrap from optional AI/bootstrap subsystems
+  - tightened detector-level indicator lifecycle in clean hot paths
 
 ## 4. Decision Pipeline (Signal to Execution)
 
@@ -170,6 +193,8 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - New-bar path: conservative scan cadence.
 - Intrabar path: timer-driven scans when enabled.
 - Symbol evaluation start index rotates each cycle to reduce deterministic first-symbol concentration.
+- Intrabar symbol selection is yield-aware: recent near-miss symbols, recent generators, and readiness-healthy symbols are prioritized first.
+- Per-symbol intrabar backoff tiers escalate from base cadence to `30s`, then `60s`, then suspension until a new bar resets the symbol.
 
 ### 4.2 Consensus
 - Manager computes strategy votes and confidence.
@@ -179,9 +204,11 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
   - ready live weight = `adjusted live weight x pipeline readinessScore`
   - per-direction conviction = `sum(ready live weight x conviction_i)` for agreeing live voters
   - conviction is confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
-  - normalized score = `direction conviction / total ready live weight`
-  - direction passes quorum if `normalized_score >= InpQuorumThreshold`, agreeing voters `>= InpMinLiveVoters`, and `readyLiveWeight / totalLiveWeight >= InpConsensusMinReadyWeightRatio`
+  - directional quality = `direction conviction / direction weight`
+  - support ratio = `direction weight / total ready live weight`
+  - direction passes full quorum if `directional_quality >= InpQuorumThreshold`, support ratio clears the new-bar/intrabar floor, agreeing voters clear the effective minimum, and `readyLiveWeight / totalLiveWeight >= InpConsensusMinReadyWeightRatio`
 - if both directions pass, higher score wins unless the spread is inside the configured conflict deadband, in which case consensus is vetoed to `TRADE_SIGNAL_NONE`
+- intrabar may instead admit a `SPARSE_INTRABAR` decision when exactly one direction has one voter and readiness/context/cost/support/coverage thresholds all remain high
 - Vote admission into quorum reuses the pipeline's effective confidence threshold for that cycle, preventing pipeline-approved relaxed-threshold signals from being dropped before consensus.
 - Consensus may fail by:
   - raw no-vote
@@ -336,3 +363,34 @@ Any structural change must update all of:
   - broker submit
   - bounded fill confirmation
 - The EA scan loop now carries a cycle identifier across no-trade, validation, block, candidate, decision, and execution logs for one-cycle traceability.
+
+## 12. 2026-04-01 Default Runtime Remediation
+- `CTrendEngine` still owns trend-readiness state, but ATR mature-series failures are now treated as recoverable data faults:
+  - attempt bounded ATR fallback from price series
+  - if fallback succeeds, emit degraded readiness-state telemetry and continue with valid evidence
+  - if fallback fails, degrade explicitly instead of silently pinning the symbol in false warmup
+- `MultiStrategyAutonomousEA` still owns scan scheduling, but now distinguishes idle cycles from active work before entering the per-symbol loop. This reduces wasted throughput and makes quiet-cycle accounting more truthful.
+- `CEnterpriseStrategyManager` still owns intrabar governance, and `Support/Resistance` now respects the configured probe toggle instead of being silently forced off.
+- `CStrategyElliottWaveEnhanced` ownership is unchanged; this batch only repaired MT5 enum usage and removed local min-confidence shadowing so the inherited base threshold remains authoritative.
+
+## 13. 2026-04-01 Strategy Registry + AI Runtime Extension
+- `CStrategyRegistry` is now the activation authority for strategy families and EA mode (`InpEAMode`):
+  - indicator strategies and AI adapters are registered from one roster
+  - unsupported mixes degrade to a viable effective mode during startup
+  - startup telemetry emits `[STRATEGY-REGISTRY]`
+- `MultiStrategyAutonomousEA` still owns manager bootstrap, but registration is now registry-driven rather than split across independent boolean branches.
+- EA mode affects the post-consensus admission contract:
+  - `HYBRID` can require aligned indicator + AI contributors when both families are active
+  - `AI_ASSISTED` keeps indicators primary and can add bounded confidence uplift from aligned AI contributors
+  - `INDICATOR_FILTERED` requires AI-primary candidates to survive indicator confirmation
+- Intrabar scheduling still remains EA-owned:
+  - primary budget selection is unchanged
+  - a bounded keepalive pick can now revive one symbol when hybrid cadence would otherwise fully starve intrabar work
+- `CTrendEngine` now treats mature-series MA fragility similarly to ATR fragility:
+  - partial readiness no longer forces immediate hard failure
+  - manual EMA fallbacks can reconstruct fast/medium/slow series
+  - snapshot reuse remains the final graceful-degradation path
+- The AI feature stack is now split more cleanly:
+  - transformer adapters use right-sized models and actual sequence lengths
+  - `CNeuralNetworkStrategy` validates feature integrity before inference/training
+  - NN tail features can be augmented with transformer-encoded context rather than relying on raw handcrafted tail features only

@@ -25,20 +25,29 @@ private:
     ulong m_sellVotes;
     ulong m_noneVotes;
     datetime m_lastVoteLogTime;
+    ENUM_TRADE_SIGNAL m_cachedSignal;
+    double m_cachedConfidence;
+    datetime m_cacheBarTime;
+    bool m_hasCachedSignal;
 
-    void Softmax3(const double in0, const double in1, const double in2, double &out0, double &out1, double &out2) const
+    datetime GetCurrentBarTime() const
     {
-        double maxValue = MathMax(in0, MathMax(in1, in2));
-        double ex0 = MathExp(in0 - maxValue);
-        double ex1 = MathExp(in1 - maxValue);
-        double ex2 = MathExp(in2 - maxValue);
-        double sum = ex0 + ex1 + ex2;
-        if(sum <= 1e-12)
-            sum = 1e-12;
+        if(m_symbol == "")
+            return 0;
+        return iTime(m_symbol, m_timeframe, 0);
+    }
 
-        out0 = ex0 / sum;
-        out1 = ex1 / sum;
-        out2 = ex2 / sum;
+    bool NeedsNewInference(const datetime currentBarTime) const
+    {
+        return (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime);
+    }
+
+    void UpdateCache(const datetime currentBarTime, const ENUM_TRADE_SIGNAL signal, const double confidence)
+    {
+        m_cachedSignal = signal;
+        m_cachedConfidence = confidence;
+        m_cacheBarTime = currentBarTime;
+        m_hasCachedSignal = true;
     }
 
     void LogVoteHeartbeat()
@@ -67,13 +76,16 @@ public:
         m_sellVotes = 0;
         m_noneVotes = 0;
         m_lastVoteLogTime = 0;
+        m_cachedSignal = TRADE_SIGNAL_NONE;
+        m_cachedConfidence = 0.0;
+        m_cacheBarTime = 0;
+        m_hasCachedSignal = false;
     }
 
     virtual ~CTransformerAIStrategyAdapter()
     {
         if(m_transformer != NULL)
         {
-            m_transformer.Shutdown();
             delete m_transformer;
             m_transformer = NULL;
         }
@@ -90,13 +102,16 @@ public:
             m_transformer = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
         if(m_transformer == NULL)
             return false;
-        return m_transformer.Initialize();
+        m_cachedSignal = TRADE_SIGNAL_NONE;
+        m_cachedConfidence = 0.0;
+        m_cacheBarTime = 0;
+        m_hasCachedSignal = false;
+        return true;
     }
 
     virtual void Deinit(void) override
     {
-        if(m_transformer != NULL)
-            m_transformer.Shutdown();
+        m_hasCachedSignal = false;
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -111,37 +126,47 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        double inputSequence[];
-        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, 1))
-        {
-            m_noneVotes++;
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        // FIX: Use GetPredictions instead of Forward to properly get 3-class probabilities
-        double predictions[];
-        if(!m_transformer.GetPredictions(inputSequence, predictions) || ArraySize(predictions) != 3)
-        {
-            m_noneVotes++;
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        // predictions[0] = NONE, predictions[1] = BUY, predictions[2] = SELL
-        // Already normalized by classification head, no need for extra softmax
-        double pNone = predictions[0];
-        double pBuy = predictions[1];
-        double pSell = predictions[2];
-
-        double directionalConfidence = MathMax(pBuy, pSell);
-        confidence = MathMax(0.0, MathMin(1.0, directionalConfidence));
-
+        datetime currentBarTime = GetCurrentBarTime();
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
-        if(pBuy > pSell && pBuy >= pNone && directionalConfidence >= 0.45)
-            signal = TRADE_SIGNAL_BUY;
-        else if(pSell > pBuy && pSell >= pNone && directionalConfidence >= 0.45)
-            signal = TRADE_SIGNAL_SELL;
+        if(!NeedsNewInference(currentBarTime))
+        {
+            confidence = m_cachedConfidence;
+            signal = m_cachedSignal;
+        }
+        else
+        {
+            double inputSequence[];
+            if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, 8))
+            {
+                m_noneVotes++;
+                UpdateCache(currentBarTime, TRADE_SIGNAL_NONE, 0.0);
+                LogVoteHeartbeat();
+                return TRADE_SIGNAL_NONE;
+            }
+
+            double predictions[];
+            if(!m_transformer.GetPredictions(inputSequence, 8, predictions) || ArraySize(predictions) != 3)
+            {
+                m_noneVotes++;
+                UpdateCache(currentBarTime, TRADE_SIGNAL_NONE, 0.0);
+                LogVoteHeartbeat();
+                return TRADE_SIGNAL_NONE;
+            }
+
+            double pNone = predictions[0];
+            double pBuy = predictions[1];
+            double pSell = predictions[2];
+
+            double directionalConfidence = MathMax(pBuy, pSell);
+            confidence = MathMax(0.0, MathMin(1.0, directionalConfidence));
+
+            if(pBuy > pSell && pBuy >= pNone && directionalConfidence >= 0.45)
+                signal = TRADE_SIGNAL_BUY;
+            else if(pSell > pBuy && pSell >= pNone && directionalConfidence >= 0.45)
+                signal = TRADE_SIGNAL_SELL;
+
+            UpdateCache(currentBarTime, signal, confidence);
+        }
 
         if(signal == TRADE_SIGNAL_BUY)
         {

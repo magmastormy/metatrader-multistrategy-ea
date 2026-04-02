@@ -4,6 +4,14 @@
 //+------------------------------------------------------------------+
 #property strict
 
+// TRAINING NOTE:
+// Only the lightweight 3 x dModel classification head receives gradient updates.
+// The transformer encoder blocks themselves remain fixed at Xavier-initialized
+// random weights. This is a linear-probing style setup over random features,
+// not full transformer fine-tuning. In this EA, the transformer is primarily a
+// compact feature extractor; the simple neural network remains the practical
+// online learner for adaptive behavior inside MQL5 constraints.
+
 #ifndef __TRANSFORMER_BRAIN_MQH__
 #define __TRANSFORMER_BRAIN_MQH__
 
@@ -501,8 +509,6 @@ class CTransformerBrain : public CObject {
 private:
     CArrayObj m_transformerBlocks;
     CPositionalEncoding *m_positionalEncoding;
-    double m_inputSequence[];
-    double m_output[];
     double m_attentionWeights[];
     double m_classificationWeights[];     // 3 x dModel classification head
     double m_classificationBiases[];      // 3-class bias
@@ -638,23 +644,36 @@ public:
         if(CheckPointer(m_positionalEncoding) == POINTER_DYNAMIC) delete m_positionalEncoding;
         m_transformerBlocks.Clear(); // Deletes elements because CArrayObj owns them by default
     }
-    
+
+    int GetModelDimension() const { return m_dModel; }
+    int GetMaxSequenceLength() const { return m_maxSeqLen; }
+
     // Forward pass through the entire transformer
     // Returns encoded features (size m_dModel, not 3-class predictions)
-    bool Forward(const double &inputFeatures[], double &output[]) {
-        if(ArraySize(inputFeatures) > m_maxSeqLen * m_dModel) return false;
+    bool Forward(const double &inputFeatures[], const int actualSeqLen, double &output[]) {
+        int totalFeatures = ArraySize(inputFeatures);
+        if(totalFeatures <= 0 || totalFeatures > m_maxSeqLen * m_dModel)
+            return false;
+        if(m_dModel <= 0 || (totalFeatures % m_dModel) != 0)
+            return false;
 
-        // Prepare input sequence
-        ArrayCopy(m_inputSequence, inputFeatures);
+        int derivedSeqLen = totalFeatures / m_dModel;
+        int seqLen = MathMin(MathMax(1, actualSeqLen), MathMin(m_maxSeqLen, derivedSeqLen));
+        int usableFeatures = seqLen * m_dModel;
+        if(usableFeatures <= 0 || usableFeatures > totalFeatures)
+            return false;
+
+        double workingData[];
+        ArrayResize(workingData, usableFeatures);
+        ArrayCopy(workingData, inputFeatures, 0, 0, usableFeatures);
 
         // Add positional encoding
-        int seqLen = ArraySize(inputFeatures) / m_dModel;
         if(!m_positionalEncoding) return false;
-        if(!m_positionalEncoding.AddPositionalEncoding(m_inputSequence, seqLen)) return false;
+        if(!m_positionalEncoding.AddPositionalEncoding(workingData, seqLen)) return false;
 
         // Pass through transformer blocks
         double currentInput[];
-        ArrayCopy(currentInput, m_inputSequence);
+        ArrayCopy(currentInput, workingData);
         double currentOutput[];
 
         for(int i = 0; i < m_transformerBlocks.Total(); i++) {
@@ -677,18 +696,36 @@ public:
             output[i] = sum / seqLen;
         }
 
-        ArrayCopy(m_output, output);
         return true;
+    }
+
+    bool Forward(const double &inputFeatures[], double &output[]) {
+        if(m_dModel <= 0)
+            return false;
+        int totalFeatures = ArraySize(inputFeatures);
+        if(totalFeatures <= 0 || (totalFeatures % m_dModel) != 0)
+            return false;
+        return Forward(inputFeatures, totalFeatures / m_dModel, output);
+    }
+
+    bool GetEncodedFeatures(const double &inputFeatures[], const int actualSeqLen, double &features[])
+    {
+        return Forward(inputFeatures, actualSeqLen, features);
     }
 
     // FIX: New method to get 3-class predictions (NONE, BUY, SELL)
     // This applies the classification head to encoded features
     bool GetPredictions(const double &inputFeatures[], double &predictions[]) {
         if(ArraySize(inputFeatures) > m_maxSeqLen * m_dModel) return false;
+        return GetPredictions(inputFeatures, ArraySize(inputFeatures) / MathMax(1, m_dModel), predictions);
+    }
+
+    bool GetPredictions(const double &inputFeatures[], const int actualSeqLen, double &predictions[]) {
+        if(ArraySize(inputFeatures) > m_maxSeqLen * m_dModel) return false;
 
         // Get encoded features from transformer
         double encodedFeatures[];
-        if(!Forward(inputFeatures, encodedFeatures)) return false;
+        if(!Forward(inputFeatures, actualSeqLen, encodedFeatures)) return false;
 
         // Apply classification head to get 3-class probabilities
         if(!ComputeClassProbabilities(encodedFeatures, predictions)) return false;
@@ -714,7 +751,8 @@ public:
 
         // Encode input sequence with transformer stack.
         double encodedFeatures[];
-        if(!Forward(inputFeatures, encodedFeatures))
+        int actualSeqLen = ArraySize(inputFeatures) / MathMax(1, m_dModel);
+        if(!Forward(inputFeatures, actualSeqLen, encodedFeatures))
             return false;
 
         if(ArraySize(encodedFeatures) != m_dModel)
@@ -767,15 +805,6 @@ public:
             ArrayInitialize(m_classificationBiasVelocity, 0.0);
     }
     
-    // Initialize the brain
-    bool Initialize() {
-        ResetTraining();
-        return true;
-    }
-    // Shutdown the brain
-    void Shutdown() {
-        // Cleanup is handled by destructor
-    }
 };
 
 #endif // __TRANSFORMER_BRAIN_MQH__

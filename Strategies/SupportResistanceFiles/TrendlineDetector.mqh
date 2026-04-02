@@ -395,8 +395,8 @@ void CTrendlineDetector::FindSupportTrendlines()
         // Inner loop: P2 (newer anchor point, must be more recent than P1)
         for(int j = i + 1; j < m_swingLowCount && m_trendlineCount < m_maxTrendlines; j++)
         {
-            SSwingPoint &p1 = m_swingLows[i];  // Older (higher bar index)
-            SSwingPoint &p2 = m_swingLows[j];  // Newer (lower bar index)
+            SSwingPoint p1 = m_swingLows[i];  // Older (higher bar index)
+            SSwingPoint p2 = m_swingLows[j];  // Newer (lower bar index)
 
             // P1 must be older (higher bar index in series)
             if(p1.barIndex <= p2.barIndex) continue;
@@ -461,8 +461,8 @@ void CTrendlineDetector::FindResistanceTrendlines()
     {
         for(int j = i + 1; j < m_swingHighCount && m_trendlineCount < m_maxTrendlines; j++)
         {
-            SSwingPoint &p1 = m_swingHighs[i];
-            SSwingPoint &p2 = m_swingHighs[j];
+            SSwingPoint p1 = m_swingHighs[i];
+            SSwingPoint p2 = m_swingHighs[j];
 
             if(p1.barIndex <= p2.barIndex) continue;
             if(!IsLineViable(p1, p2)) continue;

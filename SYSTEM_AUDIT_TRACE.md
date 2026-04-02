@@ -1,7 +1,7 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-03-30
+- Last Updated: 2026-03-31
 - Scope: Runtime lifecycle and ownership trace
 
 ## Scope
@@ -21,11 +21,11 @@
 
 ### 1. OnInit
 - Validate terminal and trading permissions.
-- Initialize execution/risk systems.
+- Initialize mandatory execution/risk/runtime systems.
 - Emit explicit `[EXECUTION-MODE]` startup telemetry for shadow vs live posture.
 - Reject unsupported non-hedging account models before runtime ownership is established.
 - Apply execution safety controls (fill mode, slippage, protective modify cooldown) before trade-manager bootstrap.
-- Initialize AI subsystems conditionally by flags.
+- Initialize optional AI subsystems conditionally by flags and convert failures into readiness-state degradation instead of fatal startup aborts.
 - Initialize performance analytics before unified-risk bootstrap.
 - Validate active symbols and emit `[ACCOUNT-CAPACITY]` affordability diagnostics before the first scan.
 - Build per-symbol managers and strategy registrations.
@@ -42,23 +42,32 @@
 - Rotate symbol evaluation start index each cycle to reduce fixed-order concentration.
 - Detect new-bar events per symbol.
 - Run intrabar scans when eligible.
+- Budget intrabar scans by symbol yield and apply per-symbol backoff after repeated low-yield or readiness-faulted intrabar passes.
 - Emit heartbeat funnel and conversion-rate telemetry at configured diagnostics interval.
 
 ### 3. Signal path
 - Manager consensus + confluence.
 - Manager applies role/cluster governance and evaluates quorum via normalized weighted conviction pooling.
-- Manager quorum requires `InpMinLiveVoters` floor, `InpQuorumThreshold` pass, minimum ready-live-weight participation, and conflict-deadband separation; intrabar single-voter output still requires configured minimum confidence.
+- Manager classifies intrabar strategies as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent.
+- Manager quorum requires directional quality, support-ratio floors, effective min voters, minimum ready-live-weight participation, and conflict-deadband separation.
+- Manager can emit a separate `SPARSE_INTRABAR` decision class for tightly gated one-sided single-voter intrabar packets.
 - Manager vote admission now uses the pipeline's effective confidence floor for the current evaluation, avoiding pipeline/quorum drift when regime-aware relaxation is active.
 - Manager live vote influence is modulated by rolling strategy `healthScore` rather than treating every enabled strategy as equally trusted at all times.
 - Manager emits consensus root-cause attribution snapshots for no-signal diagnostics.
 - Manager emits strategy-level none-reason attribution for core curated contributors.
 - Pipeline now includes deterministic regime/cost viability gate before validator.
-- Pipeline caches structural engine state once per symbol/timeframe/bar and carries a shared evidence snapshot (`readiness`, `context`, `cost`) forward through consensus and validation.
+- Pipeline caches structural engine state once per symbol/timeframe/bar and carries a shared evidence snapshot (`readiness`, `context`, `cost`, readiness class, reuse/staleness`) forward through consensus and validation.
 - Pipeline and validator both support bounded soft-pass behavior for near-threshold candidates when the broader evidence profile is strong.
 - `CRegimeEngine` may reuse a recent valid same-context snapshot on transient warmup / copy / handle-init faults and performs bounded handle reset after repeated data faults.
+- `CTrendEngine` may reuse a bounded last-good trend snapshot on transient MA/ATR copy faults instead of forcing full indicator-set churn, and it emits `[READINESS-STATE]` reuse telemetry.
 - Pipeline threshold adaptation now uses `CRegimeEngine` snapshot state and dedicated non-AI confidence floors instead of AI-threshold coupling.
 - Validation profile checks now combine confidence + confluence + quality with upstream conviction/readiness/context/cost evidence by scan mode (new-bar vs intrabar).
 - Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
+- AI vote generation is same-bar cached:
+  - neural votes reuse `GetNeuralSignalCached(...)`
+  - transformer and ensemble adapters reuse cached inference results until the bar changes
+  - failed feature-build/inference results are cached as `NONE` for the rest of the bar
+- `CNextGenStrategyBrain` now follows a single local-transformer path with ring-buffered market data history and no dead Python/cloud bridge branch.
 - Risk gating (pre-size then post-size).
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
 - Pipeline confidence gate emits threshold-source metadata and uses bounded weak-regime intrabar uplift.
@@ -77,6 +86,7 @@
 - Position manager lifecycle actions.
 - Periodic telemetry logs.
 - Indicator cache release policy.
+- Shutdown now emits `[TERMINATION-SNAPSHOT]` with final heartbeat counters before deinit cleanup.
 
 ### 6. OnDeinit
 - Release managers and dynamic strategy allocations.
@@ -92,6 +102,20 @@
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[EXECUTION-RECEIPT]`, `[FILL-DIFF]`
+
+## 2026-03-31 AXIOM Refactor Trace
+- Removed dead AI/control-flow weight:
+  - `CNextGenStrategyBrain` no longer carries the dormant Python/cloud branch or cloud-status labeling
+  - stale no-op lifecycle methods were removed from the transformer/ensemble/brain surface
+- Stabilized AI hot paths:
+  - `CMarketDataProcessor` now uses a ring buffer instead of shifting arrays on every update
+  - `CUncertaintyQuantifier` and `CNeuralNetworkStrategy` now use ring-buffered histories instead of `Delete(0)` or heap-per-sample patterns
+  - AI adapters now gate inference to one pass per bar
+- Tightened AI ownership/failure boundaries:
+  - optional AI brain/orchestrator/engine failures no longer kill the EA
+  - adaptation sync and dashboard AI state are now gated by explicit readiness flags
+- Tightened indicator lifecycle in clean detector paths:
+  - `CSupportResistanceDetector` now caches its ATR handle across repeated detection/touch passes instead of recreating it inside hot methods
 
 ## Current Operational Constraints
 - Persistent terminal sessions are preferred.
@@ -220,3 +244,39 @@
   - per-cluster concurrent position cap
   - per-cluster projected risk cap
 - Added runtime cluster-tagged trade comments (`K:T/R/S/N`) for deterministic cluster attribution on open positions.
+
+## 2026-04-01 Default Runtime Efficiency Trace
+- `default.log` carried two valid runtime signals:
+  - repeated `TrendEngine` ATR readiness faults
+  - repeated idle scan-budget passes
+- The same log also diverged from current code defaults, so the remediation batch split into two tracks:
+  - real hot-path fixes
+  - explicit operator guidance that saved runtime state must be verified from startup logs
+- Trend trace:
+  - mature-series ATR faults no longer hard-pin the engine in false warmup
+  - bounded ATR fallback now runs before reuse/neutral degradation
+  - readiness degradation remains explicit in logs
+- Scan trace:
+  - `[SCAN-BUDGET]` now includes `active_work`
+  - fully idle cycles skip the per-symbol loop
+  - quiet-cycle attribution remains visible in heartbeat counters
+- Governance/build trace:
+  - corrected `Support/Resistance` intrabar probe mapping
+  - repaired `StrategyElliottWaveEnhanced` line-style enum usage
+  - removed local min-confidence shadowing in Elliott Wave strategy
+  - compile verification finished cleanly with `0 errors, 0 warnings`
+
+## 2026-04-01 Strategy Registry + AI Runtime Audit
+- Added `ENUM_EA_MODE` and registry-backed activation via `CStrategyRegistry`.
+- Startup now records the requested mode, resolved effective mode, and active indicator/AI family counts under `[STRATEGY-REGISTRY]`.
+- Per-symbol manager construction is now registry-driven for:
+  - retained indicator strategies
+  - transformer adapter
+  - ensemble adapter
+  - neural adapter registration once the per-symbol NN exists
+- Post-consensus audit trail now includes mode-specific admission:
+  - candidate can be rejected for `hybrid_mode_alignment_missing`
+  - candidate can be rejected for `indicator_confirmation_missing`
+  - candidate can receive `[AI-MODE-BONUS]`
+- Scheduler audit trail now includes bounded intrabar keepalive recovery so default hybrid cadence cannot permanently collapse to `intrabar_selected=0`.
+- `CTrendEngine` audit trail now includes bounded MA fallback in addition to ATR fallback, keeping readiness degradation explicit without forcing repetitive full reinitialization.

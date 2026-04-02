@@ -110,6 +110,18 @@ enum ENUM_STRATEGY_TYPE
 };
 
 //+------------------------------------------------------------------+
+//| EA operating mode                                                |
+//+------------------------------------------------------------------+
+enum ENUM_EA_MODE
+{
+    EA_MODE_INDICATOR_ONLY = 0,    // Only indicator / discretionary strategies may vote
+    EA_MODE_AI_ONLY = 1,           // Only AI-backed strategies may vote
+    EA_MODE_HYBRID = 2,            // AI + indicators may contribute together
+    EA_MODE_AI_ASSISTED = 3,       // Indicators are primary, AI can assist aligned decisions
+    EA_MODE_INDICATOR_FILTERED = 4 // AI is primary, indicators act as confirmation / veto
+};
+
+//+------------------------------------------------------------------+
 //| Trade Management States                                         |
 //+------------------------------------------------------------------+
 enum ENUM_TRADE_STATE

@@ -83,9 +83,9 @@ public:
         // --- Transformer ---
         string tfStatus = "OFFLINE";
         color tfColor = clrRed;
-        if(brain != NULL)
+        if(brain != NULL && brain.IsInitialized())
         {
-            tfStatus = brain.GetEnsembleStatus();
+            tfStatus = brain.GetRuntimeMode();
             tfColor = clrCyan;
         }
         DrawLabel("TF_Title", "AI Engine Mode:", row, 0, m_textColor);

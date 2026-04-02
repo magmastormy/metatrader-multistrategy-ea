@@ -58,7 +58,7 @@ public:
         }
         
         // Use the neural network to get signal
-        return m_neuralNet.GetNeuralSignal(confidence);
+        return m_neuralNet.GetNeuralSignalCached(confidence);
     }
     
     virtual void OnNewBar(void) override {}

@@ -14,19 +14,20 @@
 
 #include "../Core/Utils/Enums.mqh"
 #include "../Core/AI/NNModelStorage.mqh"
+#include "../Core/AI/AIFeatureVectorBuilder.mqh"
 #include "../IndicatorManager.mqh"
-#include <Arrays/ArrayObj.mqh>
+#include "TransformerBrain.mqh"
 
 #define NN_CHECKPOINT_MAGIC 1313758027
 #define NN_CHECKPOINT_VERSION 2
 #define NN_MAX_PERSISTED_SAMPLES 300
+#define NN_MAX_TRAINING_EXAMPLES 2000
 
 //+------------------------------------------------------------------+
 //| Training Example Structure                                       |
 //+------------------------------------------------------------------+
-class CTrainingExample : public CObject
+struct STrainingExample
 {
-public:
     double inputs[25];
     int expectedOutput;     // 0=None, 1=Buy, 2=Sell
     double actualResult;    // Profit/loss from this trade
@@ -40,7 +41,7 @@ public:
     int barsAhead;
     bool isTradeLinked;
     
-    CTrainingExample()
+    void Reset()
     {
         ArrayInitialize(inputs, 0.0);
         expectedOutput = 0;
@@ -54,6 +55,11 @@ public:
         entryPriceSnapshot = 0.0;
         barsAhead = 1;
         isTradeLinked = false;
+    }
+
+    STrainingExample()
+    {
+        Reset();
     }
 };
 
@@ -80,7 +86,9 @@ private:
     double m_lastLoss;
     
     // Training data
-    CArrayObj m_trainingData;
+    STrainingExample m_trainingBuffer[NN_MAX_TRAINING_EXAMPLES];
+    int m_trainHead;
+    int m_trainCount;
     int m_minTrainingExamples;
     int m_maxTrainingExamples;
     int m_resultMatchWindowSec;
@@ -109,6 +117,15 @@ private:
     int m_pseudoLabels;
     int m_trainingSteps;
     int m_checkpointWrites;
+    ENUM_TRADE_SIGNAL m_cachedSignal;
+    double m_cachedConfidence;
+    datetime m_cacheBarTime;
+    bool m_hasCachedSignal;
+    CTransformerBrain* m_transformerRef;
+    bool m_ownsTransformerRef;
+    double m_lastTransformerInput[];
+    int m_lastTransformerSeqLen;
+    datetime m_lastFeatureValidationLogTime;
     
 public:
     CNeuralNetworkStrategy() : 
@@ -140,10 +157,189 @@ public:
         m_tradeLinkedLabels(0),
         m_pseudoLabels(0),
         m_trainingSteps(0),
-        m_checkpointWrites(0)
+        m_checkpointWrites(0),
+        m_cachedSignal(TRADE_SIGNAL_NONE),
+        m_cachedConfidence(0.0),
+        m_cacheBarTime(0),
+        m_hasCachedSignal(false),
+        m_transformerRef(NULL),
+        m_ownsTransformerRef(false),
+        m_lastTransformerSeqLen(0),
+        m_lastFeatureValidationLogTime(0)
     {
-        m_trainingData.FreeMode(true);
+        m_trainHead = 0;
+        m_trainCount = 0;
+        for(int i = 0; i < NN_MAX_TRAINING_EXAMPLES; i++)
+            m_trainingBuffer[i].Reset();
     }
+
+private:
+    int GetTrainingCapacity() const
+    {
+        return MathMax(1, MathMin(m_maxTrainingExamples, NN_MAX_TRAINING_EXAMPLES));
+    }
+
+    int TrainingPhysicalIndex(const int logicalIndex) const
+    {
+        if(logicalIndex < 0 || logicalIndex >= m_trainCount)
+            return -1;
+
+        int capacity = GetTrainingCapacity();
+        if(capacity <= 0)
+            return -1;
+
+        return (m_trainHead - m_trainCount + logicalIndex + capacity) % capacity;
+    }
+
+    void ClearTrainingData()
+    {
+        int capacity = GetTrainingCapacity();
+        for(int i = 0; i < capacity; i++)
+            m_trainingBuffer[i].Reset();
+        m_trainHead = 0;
+        m_trainCount = 0;
+    }
+
+    bool EnsureTransformerFeatureExtractor()
+    {
+        if(m_transformerRef != NULL)
+            return true;
+
+        m_transformerRef = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT,
+                                                 TRANSFORMER_NUM_HEADS_DEFAULT,
+                                                 TRANSFORMER_NUM_LAYERS_A_DEFAULT,
+                                                 TRANSFORMER_D_FF_DEFAULT,
+                                                 TRANSFORMER_MAX_SEQ_LEN_DEFAULT,
+                                                 TRANSFORMER_LR_A_DEFAULT);
+        if(m_transformerRef == NULL)
+            return false;
+
+        m_ownsTransformerRef = true;
+        return true;
+    }
+
+    void LogFeatureValidationFailure(const int zeroCount,
+                                     const int nanCount,
+                                     const int criticalZeroCount)
+    {
+        datetime now = TimeCurrent();
+        if(m_lastFeatureValidationLogTime == 0 || (now - m_lastFeatureValidationLogTime) >= 60)
+        {
+            PrintFormat("[NN] Feature validation failed: zeros=%d | nan=%d | critical_zeros=%d | Symbol=%s | TF=%s",
+                        zeroCount,
+                        nanCount,
+                        criticalZeroCount,
+                        m_symbol,
+                        EnumToString(m_timeframe));
+            m_lastFeatureValidationLogTime = now;
+        }
+    }
+
+    bool ValidateFeatures(const double &features[])
+    {
+        if(ArraySize(features) < 25)
+            return false;
+
+        int zeroCount = 0;
+        int nanCount = 0;
+        int criticalZeroCount = 0;
+        int criticalIndices[6] = {1, 2, 3, 4, 13, 23};
+
+        for(int i = 0; i < 25; i++)
+        {
+            if(!MathIsValidNumber(features[i]))
+                nanCount++;
+            if(MathAbs(features[i]) <= 1e-9)
+                zeroCount++;
+        }
+
+        for(int c = 0; c < 6; c++)
+        {
+            int idx = criticalIndices[c];
+            if(idx >= 0 && idx < 25 && MathAbs(features[idx]) <= 1e-9)
+                criticalZeroCount++;
+        }
+
+        if(nanCount > 0)
+        {
+            LogFeatureValidationFailure(zeroCount, nanCount, criticalZeroCount);
+            return false;
+        }
+
+        if(criticalZeroCount >= 4 || zeroCount > 14)
+        {
+            LogFeatureValidationFailure(zeroCount, nanCount, criticalZeroCount);
+            return false;
+        }
+
+        return true;
+    }
+
+    bool ApplyTransformerFeatureBridge(double &features[])
+    {
+        if(ArraySize(features) < 25)
+            return false;
+        if(!EnsureTransformerFeatureExtractor() || m_transformerRef == NULL)
+            return false;
+
+        int sequenceLength = MathMin(8, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT);
+        if(sequenceLength <= 0)
+            sequenceLength = 4;
+        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, m_lastTransformerInput, TRANSFORMER_D_MODEL_DEFAULT, sequenceLength))
+            return false;
+
+        m_lastTransformerSeqLen = sequenceLength;
+        double encodedFeatures[];
+        if(!m_transformerRef.GetEncodedFeatures(m_lastTransformerInput, m_lastTransformerSeqLen, encodedFeatures))
+            return false;
+
+        int encodedSize = ArraySize(encodedFeatures);
+        if(encodedSize <= 0)
+            return false;
+
+        int step = MathMax(1, encodedSize / 10);
+        for(int i = 0; i < 10; i++)
+        {
+            int idx = MathMin(encodedSize - 1, i * step);
+            features[15 + i] = MathMax(-3.0, MathMin(3.0, encodedFeatures[idx]));
+        }
+
+        return true;
+    }
+
+    void PushTrainingExample(STrainingExample &example)
+    {
+        int capacity = GetTrainingCapacity();
+        if(capacity <= 0)
+            return;
+
+        m_trainingBuffer[m_trainHead] = example;
+        m_trainHead = (m_trainHead + 1) % capacity;
+        if(m_trainCount < capacity)
+            m_trainCount++;
+    }
+
+    datetime GetCurrentBarTime() const
+    {
+        if(m_symbol == "")
+            return 0;
+        return iTime(m_symbol, m_timeframe, 0);
+    }
+
+    bool NeedsNewInference(const datetime currentBarTime) const
+    {
+        return (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime);
+    }
+
+    void UpdateSignalCache(const datetime currentBarTime, const ENUM_TRADE_SIGNAL signal, const double confidence)
+    {
+        m_cachedSignal = signal;
+        m_cachedConfidence = confidence;
+        m_cacheBarTime = currentBarTime;
+        m_hasCachedSignal = true;
+    }
+
+public:
 
     bool ReservePredictionForSignal(const ENUM_TRADE_SIGNAL signal, string &predictionId, const int maxAgeSec = 600)
     {
@@ -160,22 +356,23 @@ public:
             return false;
 
         datetime now = TimeCurrent();
-        for(int i = m_trainingData.Total() - 1; i >= 0; i--)
+        for(int i = m_trainCount - 1; i >= 0; i--)
         {
-            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example == NULL)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(m_trainingBuffer[physicalIndex].expectedOutput != expectedOutput ||
+               m_trainingBuffer[physicalIndex].hasResult ||
+               m_trainingBuffer[physicalIndex].linkedToTrade)
                 continue;
 
-            if(example.expectedOutput != expectedOutput || example.hasResult || example.linkedToTrade)
-                continue;
-
-            int ageSec = (int)(now - example.time);
+            int ageSec = (int)(now - m_trainingBuffer[physicalIndex].time);
             if(ageSec < 0 || ageSec > maxAgeSec)
                 continue;
 
-            example.linkedToTrade = true;
-            example.isTradeLinked = true;
-            predictionId = example.predictionId;
+            m_trainingBuffer[physicalIndex].linkedToTrade = true;
+            m_trainingBuffer[physicalIndex].isTradeLinked = true;
+            predictionId = m_trainingBuffer[physicalIndex].predictionId;
             return (predictionId != "");
         }
 
@@ -195,16 +392,16 @@ public:
         if(predictionId == "")
             return;
 
-        for(int i = m_trainingData.Total() - 1; i >= 0; i--)
+        for(int i = m_trainCount - 1; i >= 0; i--)
         {
-            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example == NULL)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
                 continue;
-
-            if(example.predictionId == predictionId && !example.hasResult)
+            if(m_trainingBuffer[physicalIndex].predictionId == predictionId &&
+               !m_trainingBuffer[physicalIndex].hasResult)
             {
-                example.linkedToTrade = false;
-                example.isTradeLinked = false;
+                m_trainingBuffer[physicalIndex].linkedToTrade = false;
+                m_trainingBuffer[physicalIndex].isTradeLinked = false;
                 return;
             }
         }
@@ -215,22 +412,21 @@ public:
         if(!m_enableOnlineTraining || predictionId == "")
             return false;
 
-        for(int i = m_trainingData.Total() - 1; i >= 0; i--)
+        for(int i = m_trainCount - 1; i >= 0; i--)
         {
-            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example == NULL)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
                 continue;
-
-            if(example.predictionId == predictionId)
+            if(m_trainingBuffer[physicalIndex].predictionId == predictionId)
             {
-                bool wasLabeled = example.hasResult;
-                bool wasPseudo = example.pseudoLabeled;
+                bool wasLabeled = m_trainingBuffer[physicalIndex].hasResult;
+                bool wasPseudo = m_trainingBuffer[physicalIndex].pseudoLabeled;
 
-                example.actualResult = profitLoss;
-                example.hasResult = true;
-                example.linkedToTrade = true;
-                example.isTradeLinked = true;
-                example.pseudoLabeled = false;
+                m_trainingBuffer[physicalIndex].actualResult = profitLoss;
+                m_trainingBuffer[physicalIndex].hasResult = true;
+                m_trainingBuffer[physicalIndex].linkedToTrade = true;
+                m_trainingBuffer[physicalIndex].isTradeLinked = true;
+                m_trainingBuffer[physicalIndex].pseudoLabeled = false;
 
                 if(!wasLabeled)
                 {
@@ -262,7 +458,11 @@ public:
     {
         if(m_initialized && m_enableOnlineTraining)
             SaveCheckpointAtomic(true);
-        m_trainingData.Clear();
+        if(m_ownsTransformerRef && CheckPointer(m_transformerRef) == POINTER_DYNAMIC)
+            delete m_transformerRef;
+        m_transformerRef = NULL;
+        m_ownsTransformerRef = false;
+        ClearTrainingData();
     }
     
     bool Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
@@ -270,6 +470,10 @@ public:
         m_symbol = symbol;
         m_timeframe = timeframe;
         m_initialized = true;
+        m_cachedSignal = TRADE_SIGNAL_NONE;
+        m_cachedConfidence = 0.0;
+        m_cacheBarTime = 0;
+        m_hasCachedSignal = false;
 
         // Online training + persistence enabled in live runtime.
         bool loaded = false;
@@ -289,6 +493,15 @@ public:
         PrintFormat("[NEURAL-NET] Initialized for %s on %s | LoadState=%s",
                     symbol, EnumToString(timeframe), m_lastLoadStatus);
         return true;
+    }
+
+    void SetTransformerRef(CTransformerBrain* transformerRef, const bool takeOwnership = false)
+    {
+        if(m_ownsTransformerRef && CheckPointer(m_transformerRef) == POINTER_DYNAMIC && m_transformerRef != transformerRef)
+            delete m_transformerRef;
+
+        m_transformerRef = transformerRef;
+        m_ownsTransformerRef = takeOwnership;
     }
 
     void SetOnlineTrainingEnabled(const bool enabled)
@@ -658,8 +871,9 @@ public:
 
         // Feature 24: Bias Unit
         features[24] = 1.0;
-        
-        return true;
+
+        ApplyTransformerFeatureBridge(features);
+        return ValidateFeatures(features);
     }
     
     // Forward propagation
@@ -729,26 +943,30 @@ public:
             return;
 
         int pseudoLabeledNow = 0;
-        for(int i = 0; i < m_trainingData.Total(); i++)
+        for(int i = 0; i < m_trainCount; i++)
         {
-            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example == NULL || example.hasResult || example.linkedToTrade || example.isTradeLinked)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(m_trainingBuffer[physicalIndex].hasResult ||
+               m_trainingBuffer[physicalIndex].linkedToTrade ||
+               m_trainingBuffer[physicalIndex].isTradeLinked)
                 continue;
 
-            if(example.labelDueTime <= 0 || now < example.labelDueTime)
+            if(m_trainingBuffer[physicalIndex].labelDueTime <= 0 || now < m_trainingBuffer[physicalIndex].labelDueTime)
                 continue;
 
-            if(example.expectedOutput != 1 && example.expectedOutput != 2)
+            if(m_trainingBuffer[physicalIndex].expectedOutput != 1 && m_trainingBuffer[physicalIndex].expectedOutput != 2)
                 continue;
 
-            if(example.expectedOutput == 1)
-                example.actualResult = currentClose - example.entryPriceSnapshot;
+            if(m_trainingBuffer[physicalIndex].expectedOutput == 1)
+                m_trainingBuffer[physicalIndex].actualResult = currentClose - m_trainingBuffer[physicalIndex].entryPriceSnapshot;
             else
-                example.actualResult = example.entryPriceSnapshot - currentClose;
+                m_trainingBuffer[physicalIndex].actualResult = m_trainingBuffer[physicalIndex].entryPriceSnapshot - currentClose;
 
-            example.hasResult = true;
-            example.pseudoLabeled = true;
-            example.isTradeLinked = false;
+            m_trainingBuffer[physicalIndex].hasResult = true;
+            m_trainingBuffer[physicalIndex].pseudoLabeled = true;
+            m_trainingBuffer[physicalIndex].isTradeLinked = false;
             pseudoLabeledNow++;
         }
 
@@ -763,7 +981,7 @@ public:
     }
 
     // Get trading signal from neural network
-    ENUM_TRADE_SIGNAL GetNeuralSignal(double &confidence)
+    ENUM_TRADE_SIGNAL ComputeNeuralSignal(double &confidence)
     {
         confidence = 0.0;
         if(!m_initialized)
@@ -823,6 +1041,33 @@ public:
 
         return (directionIndex == 1) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
     }
+
+public:
+    ENUM_TRADE_SIGNAL GetNeuralSignalCached(double &confidence)
+    {
+        confidence = 0.0;
+        if(!m_initialized)
+            return TRADE_SIGNAL_NONE;
+
+        if(m_enableOnlineTraining)
+            CollectObservation();
+
+        datetime currentBarTime = GetCurrentBarTime();
+        if(!NeedsNewInference(currentBarTime))
+        {
+            confidence = m_cachedConfidence;
+            return m_cachedSignal;
+        }
+
+        ENUM_TRADE_SIGNAL signal = ComputeNeuralSignal(confidence);
+        UpdateSignalCache(currentBarTime, signal, confidence);
+        return signal;
+    }
+
+    ENUM_TRADE_SIGNAL GetNeuralSignal(double &confidence)
+    {
+        return GetNeuralSignalCached(confidence);
+    }
     
     // Update trade result for training
     bool UpdateTradeResult(datetime tradeTime, double profitLoss)
@@ -834,13 +1079,15 @@ public:
         int bestDelta = 2147483647;
 
         // Match the nearest pending sample generated before the trade close
-        for(int i = m_trainingData.Total() - 1; i >= 0; i--)
+        for(int i = m_trainCount - 1; i >= 0; i--)
         {
-            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example == NULL || example.hasResult)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(m_trainingBuffer[physicalIndex].hasResult)
                 continue;
 
-            long delta = (long)(tradeTime - example.time);
+            long delta = (long)(tradeTime - m_trainingBuffer[physicalIndex].time);
             if(delta < 0 || delta > m_resultMatchWindowSec)
                 continue;
 
@@ -854,15 +1101,15 @@ public:
         if(matchedIndex < 0)
             return false;
 
-        CTrainingExample* matched = (CTrainingExample*)m_trainingData.At(matchedIndex);
-        if(matched == NULL)
+        int matchedPhysicalIndex = TrainingPhysicalIndex(matchedIndex);
+        if(matchedPhysicalIndex < 0)
             return false;
 
-        matched.actualResult = profitLoss;
-        matched.hasResult = true;
-        matched.linkedToTrade = true;
-        matched.isTradeLinked = true;
-        matched.pseudoLabeled = false;
+        m_trainingBuffer[matchedPhysicalIndex].actualResult = profitLoss;
+        m_trainingBuffer[matchedPhysicalIndex].hasResult = true;
+        m_trainingBuffer[matchedPhysicalIndex].linkedToTrade = true;
+        m_trainingBuffer[matchedPhysicalIndex].isTradeLinked = true;
+        m_trainingBuffer[matchedPhysicalIndex].pseudoLabeled = false;
         m_tradeLinkedLabels++;
         m_labeledSinceCheckpoint++;
 
@@ -901,26 +1148,28 @@ public:
 
             for(int i = start; i < labeledCount; i++)
             {
-                CTrainingExample* example = (CTrainingExample*)m_trainingData.At(labeledIndices[i]);
-                if(example == NULL || !example.hasResult)
+                int physicalIndex = TrainingPhysicalIndex(labeledIndices[i]);
+                if(physicalIndex < 0)
+                    continue;
+                if(!m_trainingBuffer[physicalIndex].hasResult)
                     continue;
 
                 double outputs[3];
-                ForwardPropagate(example.inputs, outputs);
+                ForwardPropagate(m_trainingBuffer[physicalIndex].inputs, outputs);
 
                 double target[3];
                 ArrayInitialize(target, 0.0);
-                if(example.actualResult > 0.0)
-                    target[example.expectedOutput] = 1.0;
+                if(m_trainingBuffer[physicalIndex].actualResult > 0.0)
+                    target[m_trainingBuffer[physicalIndex].expectedOutput] = 1.0;
                 else
                     target[0] = 1.0;
 
-                double sampleWeight = example.pseudoLabeled ? 0.60 : 1.00;
+                double sampleWeight = m_trainingBuffer[physicalIndex].pseudoLabeled ? 0.60 : 1.00;
                 double loss = CalculateLoss(outputs, target);
                 epochLoss += (loss * sampleWeight);
                 processed++;
                 if(m_allowWeightMutation)
-                    UpdateWeights(example.inputs, outputs, target, sampleWeight);
+                    UpdateWeights(m_trainingBuffer[physicalIndex].inputs, outputs, target, sampleWeight);
             }
 
             if(processed > 0)
@@ -956,14 +1205,16 @@ public:
         }
     }
     
-    int GetTrainingExampleCount() { return m_trainingData.Total(); }
+    int GetTrainingExampleCount() { return m_trainCount; }
     int GetCompletedTradesCount()
     {
         int count = 0;
-        for(int i = 0; i < m_trainingData.Total(); i++)
+        for(int i = 0; i < m_trainCount; i++)
         {
-            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
-            if(ex != NULL && ex.hasResult)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(m_trainingBuffer[physicalIndex].hasResult)
                 count++;
         }
         return count;
@@ -1036,23 +1287,22 @@ public:
         FileWriteInteger(fileHandle, sampleCount);
         for(int i = 0; i < sampleCount; i++)
         {
-            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(sampleIndices[i]);
-            if(ex == NULL)
+            int physicalIndex = TrainingPhysicalIndex(sampleIndices[i]);
+            if(physicalIndex < 0)
                 continue;
-
-            FileWriteInteger(fileHandle, ex.expectedOutput);
-            FileWriteDouble(fileHandle, ex.actualResult);
-            FileWriteLong(fileHandle, (long)ex.time);
-            FileWriteInteger(fileHandle, ex.hasResult ? 1 : 0);
-            FileWriteInteger(fileHandle, ex.linkedToTrade ? 1 : 0);
-            FileWriteString(fileHandle, ex.predictionId);
-            FileWriteInteger(fileHandle, ex.pseudoLabeled ? 1 : 0);
-            FileWriteLong(fileHandle, (long)ex.labelDueTime);
-            FileWriteDouble(fileHandle, ex.entryPriceSnapshot);
-            FileWriteInteger(fileHandle, ex.barsAhead);
-            FileWriteInteger(fileHandle, ex.isTradeLinked ? 1 : 0);
+            FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].expectedOutput);
+            FileWriteDouble(fileHandle, m_trainingBuffer[physicalIndex].actualResult);
+            FileWriteLong(fileHandle, (long)m_trainingBuffer[physicalIndex].time);
+            FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].hasResult ? 1 : 0);
+            FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].linkedToTrade ? 1 : 0);
+            FileWriteString(fileHandle, m_trainingBuffer[physicalIndex].predictionId);
+            FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].pseudoLabeled ? 1 : 0);
+            FileWriteLong(fileHandle, (long)m_trainingBuffer[physicalIndex].labelDueTime);
+            FileWriteDouble(fileHandle, m_trainingBuffer[physicalIndex].entryPriceSnapshot);
+            FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].barsAhead);
+            FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].isTradeLinked ? 1 : 0);
             for(int k = 0; k < 25; k++)
-                FileWriteDouble(fileHandle, ex.inputs[k]);
+                FileWriteDouble(fileHandle, m_trainingBuffer[physicalIndex].inputs[k]);
         }
 
         FileWriteInteger(fileHandle, (int)checksum);
@@ -1131,10 +1381,7 @@ private:
         if(expectedOutput <= 0)
             expectedOutput = (outputs[1] >= outputs[2]) ? 1 : 2;
 
-        CTrainingExample* example = new CTrainingExample();
-        if(example == NULL)
-            return false;
-
+        STrainingExample example;
         for(int i = 0; i < 25; i++)
             example.inputs[i] = inputs[i];
 
@@ -1155,16 +1402,7 @@ private:
         if(example.entryPriceSnapshot <= 0.0)
             example.entryPriceSnapshot = SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
-        if(m_trainingData.Total() >= m_maxTrainingExamples)
-        {
-            if(!PruneOldestTrainingExample())
-            {
-                delete example;
-                return false;
-            }
-        }
-
-        m_trainingData.Add(example);
+        PushTrainingExample(example);
         generatedPredictionId = example.predictionId;
         m_totalObservations++;
         m_lastObservationTime = now;
@@ -1174,10 +1412,12 @@ private:
     int GetPendingLabelsCount()
     {
         int pending = 0;
-        for(int i = 0; i < m_trainingData.Total(); i++)
+        for(int i = 0; i < m_trainCount; i++)
         {
-            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
-            if(ex != NULL && !ex.hasResult)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(!m_trainingBuffer[physicalIndex].hasResult)
                 pending++;
         }
         return pending;
@@ -1199,10 +1439,12 @@ private:
     void BuildLabeledIndices(int &indices[])
     {
         ArrayResize(indices, 0);
-        for(int i = 0; i < m_trainingData.Total(); i++)
+        for(int i = 0; i < m_trainCount; i++)
         {
-            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
-            if(ex == NULL || !ex.hasResult)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(!m_trainingBuffer[physicalIndex].hasResult)
                 continue;
 
             int newSize = ArraySize(indices) + 1;
@@ -1214,15 +1456,16 @@ private:
     void BuildPersistedSampleIndices(int &indices[])
     {
         ArrayResize(indices, 0);
-        int total = m_trainingData.Total();
+        int total = m_trainCount;
 
         for(int i = total - 1; i >= 0; i--)
         {
-            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
-            if(ex == NULL)
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
                 continue;
-
-            if(!ex.hasResult && !ex.linkedToTrade && !ex.isTradeLinked)
+            if(!m_trainingBuffer[physicalIndex].hasResult &&
+               !m_trainingBuffer[physicalIndex].linkedToTrade &&
+               !m_trainingBuffer[physicalIndex].isTradeLinked)
                 continue;
 
             int newSize = ArraySize(indices) + 1;
@@ -1236,10 +1479,9 @@ private:
         {
             for(int i = total - 1; i >= 0; i--)
             {
-                CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(i);
-                if(ex == NULL)
+                int physicalIndex = TrainingPhysicalIndex(i);
+                if(physicalIndex < 0)
                     continue;
-
                 int newSize = ArraySize(indices) + 1;
                 ArrayResize(indices, newSize);
                 indices[newSize - 1] = i;
@@ -1262,7 +1504,7 @@ private:
 
     void BuildAllSampleIndices(int &indices[])
     {
-        int total = m_trainingData.Total();
+        int total = m_trainCount;
         ArrayResize(indices, total);
         for(int i = 0; i < total; i++)
             indices[i] = i;
@@ -1341,23 +1583,22 @@ private:
         hash = HashCombine(hash, (uint)sampleCount);
         for(int s = 0; s < sampleCount; s++)
         {
-            CTrainingExample* ex = (CTrainingExample*)m_trainingData.At(sampleIndices[s]);
-            if(ex == NULL)
+            int physicalIndex = TrainingPhysicalIndex(sampleIndices[s]);
+            if(physicalIndex < 0)
                 continue;
-
-            hash = HashCombine(hash, (uint)ex.expectedOutput);
-            hash = HashDouble(hash, ex.actualResult);
-            hash = HashLong(hash, (long)ex.time);
-            hash = HashCombine(hash, ex.hasResult ? 1 : 0);
-            hash = HashCombine(hash, ex.linkedToTrade ? 1 : 0);
-            hash = HashString(hash, ex.predictionId);
-            hash = HashCombine(hash, ex.pseudoLabeled ? 1 : 0);
-            hash = HashLong(hash, (long)ex.labelDueTime);
-            hash = HashDouble(hash, ex.entryPriceSnapshot);
-            hash = HashCombine(hash, (uint)ex.barsAhead);
-            hash = HashCombine(hash, ex.isTradeLinked ? 1 : 0);
+            hash = HashCombine(hash, (uint)m_trainingBuffer[physicalIndex].expectedOutput);
+            hash = HashDouble(hash, m_trainingBuffer[physicalIndex].actualResult);
+            hash = HashLong(hash, (long)m_trainingBuffer[physicalIndex].time);
+            hash = HashCombine(hash, m_trainingBuffer[physicalIndex].hasResult ? 1 : 0);
+            hash = HashCombine(hash, m_trainingBuffer[physicalIndex].linkedToTrade ? 1 : 0);
+            hash = HashString(hash, m_trainingBuffer[physicalIndex].predictionId);
+            hash = HashCombine(hash, m_trainingBuffer[physicalIndex].pseudoLabeled ? 1 : 0);
+            hash = HashLong(hash, (long)m_trainingBuffer[physicalIndex].labelDueTime);
+            hash = HashDouble(hash, m_trainingBuffer[physicalIndex].entryPriceSnapshot);
+            hash = HashCombine(hash, (uint)m_trainingBuffer[physicalIndex].barsAhead);
+            hash = HashCombine(hash, m_trainingBuffer[physicalIndex].isTradeLinked ? 1 : 0);
             for(int k = 0; k < 25; k++)
-                hash = HashDouble(hash, ex.inputs[k]);
+                hash = HashDouble(hash, m_trainingBuffer[physicalIndex].inputs[k]);
         }
 
         return hash;
@@ -1421,16 +1662,10 @@ private:
         for(int i = 0; i < 3; i++) B3[i] = FileReadDouble(fileHandle);
 
         int sampleCount = FileReadInteger(fileHandle);
-        m_trainingData.Clear();
+        ClearTrainingData();
         for(int s = 0; s < sampleCount; s++)
         {
-            CTrainingExample* ex = new CTrainingExample();
-            if(ex == NULL)
-            {
-                FileClose(fileHandle);
-                return false;
-            }
-
+            STrainingExample ex;
             ex.expectedOutput = FileReadInteger(fileHandle);
             ex.actualResult = FileReadDouble(fileHandle);
             ex.time = (datetime)FileReadLong(fileHandle);
@@ -1445,7 +1680,7 @@ private:
             for(int i = 0; i < 25; i++)
                 ex.inputs[i] = FileReadDouble(fileHandle);
 
-            m_trainingData.Add(ex);
+            PushTrainingExample(ex);
         }
 
         uint storedChecksum = (uint)FileReadInteger(fileHandle);
@@ -1456,7 +1691,7 @@ private:
         uint computedChecksum = ComputeCheckpointChecksum(allIndices);
         if(storedChecksum != computedChecksum)
         {
-            m_trainingData.Clear();
+            ClearTrainingData();
             return false;
         }
 
@@ -1480,37 +1715,6 @@ private:
                     m_totalObservations, GetCompletedTradesCount(),
                     TimeToString(m_lastCheckpointTimestamp, TIME_DATE | TIME_SECONDS));
         return true;
-    }
-
-    bool PruneOldestTrainingExample()
-    {
-        int total = m_trainingData.Total();
-        if(total <= 0)
-            return false;
-
-        // Prefer pruning already-labeled samples first.
-        for(int i = 0; i < total; i++)
-        {
-            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example != NULL && example.hasResult)
-                return m_trainingData.Delete(i);
-        }
-
-        // Then prune stale, unlinked unlabeled samples.
-        datetime now = TimeCurrent();
-        for(int i = 0; i < total; i++)
-        {
-            CTrainingExample* example = (CTrainingExample*)m_trainingData.At(i);
-            if(example == NULL)
-                continue;
-
-            int ageSec = (int)(now - example.time);
-            if(!example.linkedToTrade && !example.hasResult && ageSec > m_resultMatchWindowSec)
-                return m_trainingData.Delete(i);
-        }
-
-        // As a final fallback, drop the oldest entry.
-        return m_trainingData.Delete(0);
     }
 
     double ReLU(double x)

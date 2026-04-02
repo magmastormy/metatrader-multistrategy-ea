@@ -1,7 +1,7 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-03-30
+- Last Updated: 2026-03-31
 - Status: Active baseline
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
@@ -32,13 +32,17 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 ### Decision cadence
 - New-bar scans use conservative consensus behavior.
 - Intrabar scans run on timer intervals when enabled.
+- Intrabar scheduling is now budgeted per cycle (`InpMaxIntrabarSymbolsPerCycle`) and prioritized by recent near-miss / recent generation / readiness health instead of uniform round-robin.
+- Per-symbol intrabar backoff now escalates after repeated `raw_none` / `zero_voter` outcomes, reducing wasted scans while still resetting on new bars.
 - Intrabar scope can be chart-only or all managed symbols.
 - Startup now reconstructs the last EA trade timestamp from EA-owned history and open positions so cooldown state survives restart/re-attach scenarios.
 - Startup emits `[ACCOUNT-CAPACITY]` min-lot affordability diagnostics for each configured symbol before live execution begins.
 - Post-trade cooldown, total-position caps, unprotected-position vetoes, and per-symbol capacity now pause entry only; signal generation and validator telemetry continue running while the EA is blocked from sending.
 - Validator spread-shock state is symbol-scoped, so one symbol's transient spread event no longer poisons validator spread decisions on the rest of the portfolio.
 - Quorum uses normalized weighted conviction pooling (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy weights, readiness participation, rolling strategy health) instead of binary voter counts.
-- Curated core strategies now have explicit intrabar eligibility controls (`InpIntrabarEligibilityMomentum`, `InpIntrabarEligibilityUnifiedICT`) plus opt-in smoke-test toggles for Fibonacci and Support/Resistance (`InpIntrabarEligibilityFibonacci`, `InpIntrabarEligibilitySupportResistance`).
+- Curated core strategies now use explicit `OFF` / `PROBE` / `LIVE` intrabar policy: Momentum and Unified ICT default to `LIVE`, Fibonacci defaults to `PROBE`, and the rest default to `OFF`.
+- Full quorum now requires both directional quality and directional support ratio (`InpConsensusSupportFloorNewBar`, `InpConsensusSupportFloorIntrabar`), not just a single pooled score.
+- Intrabar can admit a tightly gated `SPARSE_INTRABAR` decision class for one-sided single-voter packets when readiness, context, cost, support, and ready-coverage all remain strong.
 - Non-AI strategy throughput is controlled by dedicated pipeline confidence and validator profile inputs (confidence + confluence + quality) instead of the AI threshold (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`, `InpValidator*MinConfluence`, `InpValidator*MinQuality`).
 - Consensus vote admission now reuses the pipeline's effective confidence floor for the current evaluation, so regime-relaxed pipeline passes are not discarded before quorum.
 - Pipeline engine work is now cached per symbol/timeframe/bar and converted into a shared evidence snapshot (`readiness`, `context`, `cost`), reducing duplicate hot-path indicator/structure churn across strategies.
@@ -49,14 +53,28 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Live execution now produces an execution receipt (`requested`, `filled`, `retcode`, `requestId`, retries) and daily risk usage is registered against actual fill ratio instead of always charging the requested size.
 - Post-quorum nullification now emits `[CONSENSUS-VETO]` so timeframe-resolution and single-voter safety drops are visible without inferring them from a `signal=NONE` quorum line.
 - `CRegimeEngine` can temporarily reuse its most recent valid same-context snapshot on transient warmup / `CopyBuffer` / handle-init faults, and self-resets handles after repeated data faults.
+- `CTrendEngine` now distinguishes warmup, transient copy faults, handle faults, and reused snapshots, and it can reuse a bounded last-good trend snapshot instead of forcing a full readiness reset on every transient MA/ATR copy miss.
 
 ### AI participation
 - Runtime AI adapters can vote as strategies when enabled:
   - Neural Network adapter
   - Transformer adapter
   - Ensemble adapter
+- AI bootstrap is now explicitly fail-soft:
+  - trade/risk/manager initialization remains mandatory
+  - NextGen brain, orchestrator, and AI engine initialize only when enabled
+  - failures disable adaptation/dashboard AI features without aborting the EA
+- `CNextGenStrategyBrain` now runs as a local-only transformer path (`LOCAL_TRANSFORMER`); the removed Python/cloud bridge is no longer part of runtime control flow.
+- AI vote paths are now bar-cached:
+  - Neural adapter calls `GetNeuralSignalCached(...)`
+  - Transformer and Ensemble adapters cache per-bar inference results and cache `NONE` on failed feature-build/inference for the rest of the bar
+- AI data paths are allocation-stable:
+  - NextGen market data uses ring buffers instead of per-update array shifts
+  - uncertainty history uses ring buffers instead of `Delete(0)` churn
+  - NN training samples use a fixed-size struct ring buffer instead of per-sample heap allocation
 - Per-symbol strategy names are registered into orchestrator using `<symbol>::<strategy>` naming.
 - Weight adaptation is synchronized back into manager strategy weights.
+- Ensemble aggregation now consumes model class probabilities via `GetPredictions(...)`, so BUY/SELL confidence is derived from the classifier outputs rather than reused latent transformer features.
 
 ### Telemetry
 - `[HEARTBEAT]`: global runtime counters.
@@ -64,6 +82,8 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[ACCOUNT-CAPACITY]`: startup free-margin vs minimum-lot affordability per active symbol.
 - `[TRADE-STATE]`: startup recovery of last EA trade/cooldown timing from history and open positions.
 - `[CONSENSUS-QUORUM]`: per-evaluation weighted quorum scores and direction result.
+- `[CONSENSUS-SPARSE]`: accepted sparse intrabar consensus with quality/support/coverage details.
+- `[CONSENSUS-NEARMISS]`: intrabar near-miss packet rejected by sparse/full-quorum gates with explicit veto code.
 - `[CONSENSUS-VETO]`: explicit post-quorum veto reason when timeframe resolution or single-voter safety nulls a candidate.
 - `[CONSENSUS-SNAPSHOT]`: EA-interval aggregate consensus counters.
 - `[CONSENSUS-DIAG]`: per-symbol consensus failure reasons.
@@ -73,7 +93,9 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[SIGNAL-REJECTED]`: validator rejection reason.
 - `[SCAN-CANDIDATE]`: risk-approved candidate staged for end-of-cycle ranking.
 - `[SCAN-DECISION]`: top-ranked candidate selected for shadow/live execution.
+- `[SCAN-BUDGET]`: per-cycle intrabar scheduler budget and selected-symbol count.
 - `[ENTERPRISE-BLOCKED]`: approved signal suppressed by cooldown, capacity, or protection gates before risk/execution.
+- `[INTRABAR-BACKOFF]`: per-symbol backoff tier transitions after repeated low-yield intrabar scans.
 - `[RISK-CONTRACT]`: authoritative pre-trade risk rejection reason with preserved portfolio veto detail.
 - `[AI-VOTE]`: adapter liveness and vote counts.
 - `[SHADOW-TRADE]`: shadow execution events.
@@ -83,9 +105,11 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[PIPELINE-THRESHOLD]`: confidence-threshold source (`REGIME_RANGE`, `REGIME_TREND_RELAX`, `REGIME_BREAKOUT_RELAX`, `REGIME_CHAOS`, `REGIME_ENGINE_WARMUP`) with effective values.
 - `[REGIME-STATE]`: regime state, transient-fault reuse (`REUSE_LAST_VALID`), and repeated-fault handle self-heal (`HANDLE_RESET`).
 - `[TrendEngine][READINESS-FAULT]`: mature-series indicator readiness fault with bounded indicator-set reinitialization.
+- `[READINESS-STATE]`: bounded trend snapshot reuse event with symbol, timeframe, and reuse age.
 - `[HEARTBEAT-FUNNEL]`: conversion funnel counters (`signals_generated` -> `shadow_or_live_sent`).
 - `[CONVERSION-RATES]`: window-normalized conversion rates for throughput tracking.
 - `[NO-SIGNAL-ALERT]`: dominant no-signal cause when no-signal ratio is elevated.
+- `[TERMINATION-SNAPSHOT]`: shutdown-time heartbeat snapshot to localize abnormal exits.
 
 ## Operating Workflow
 
@@ -124,7 +148,15 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Memory Management**: AI adapters implement proper RAII with safe cleanup of transformer models
 - **Error Handling**: Comprehensive input validation and bounds checking across all AI components
 - **Constants**: Standardized configuration constants eliminate magic numbers throughout the codebase
+- **Hot-path efficiency**: AI inference is bounded to once per bar per adapter, detector ATR reads are cached where safe, and ring-buffered histories remove repeated O(n) shifts from AI paths
 - **Compilation**: Maintains 0 errors, 0 warnings with continuous integration verification
+
+## AXIOM Refactor Update (2026-03-31)
+- **Dead-path removal**: removed the obsolete NextGen Python/cloud branch and stale no-op AI lifecycle hooks so runtime behavior is single-path and easier to audit.
+- **Inference caching**: transformer-, ensemble-, and neural-backed signals now reuse same-bar results instead of recomputing on every tick.
+- **Allocation cleanup**: market data, uncertainty history, and NN training history now use ring buffers to avoid repeated array shifts and heap churn.
+- **Optional AI isolation**: optional AI subsystems now degrade cleanly behind readiness flags instead of taking down the whole EA when an auxiliary module fails to initialize.
+- **Indicator lifecycle cleanup**: detector-level ATR reads are now cached in clean hot paths rather than recreating and releasing handles inside repeated detection loops.
 
 ## Institutional Remediation Status (2026-02-23)
 - **Deterministic cadence control**: Signal evaluation is now second-gated to prevent duplicate decision runs when `OnTick` and `OnTimer` overlap.
@@ -224,6 +256,21 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Unified ICT event tuple**: live signal path is constrained by falsifiable tuple checks (structure break + displacement + mitigation/retest) with bounded quality scoring and range-only counter-trend allowance.
 - **Cluster-aware risk governance**: risk request now includes role/cluster/contributor context; risk gate enforces same-symbol opposing-cluster mutex and per-cluster position/risk caps (`[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`).
 - **Role/cluster telemetry**: heartbeat now reports `[ROLE-CLUSTER]` counters and manager diagnostics report `[CONSENSUS-ROLE]` / `[CONSENSUS-CLUSTER]`.
+
+## Default Runtime Remediation Update (2026-04-01)
+- **False trend warmup removed**: `Core/Engines/TrendEngine.mqh` no longer hard-blocks mature-series ATR `BarsCalculated == -1` states before attempting an ATR read. The engine now tries a bounded ATR fallback first, then degrades explicitly if needed.
+- **Idle-cycle suppression**: `MultiStrategyAutonomousEA.mq5` now emits `[SCAN-BUDGET]` with `hybrid`, `newbar_only`, and `active_work`, and it skips the full symbol loop on cycles that have neither a new bar nor an intrabar selection.
+- **Governance alignment**: `Support/Resistance` intrabar governance now maps to `PROBE` when enabled instead of being silently forced to `OFF`.
+- **Compile hygiene**: `Strategies/StrategyElliottWaveEnhanced.mqh` now uses valid MT5 line-style enums and relies on the inherited min-confidence contract, restoring clean compilation with `0 errors, 0 warnings`.
+- **Operator note**: the analyzed `default.log` did not match current source defaults, so baseline validation should always confirm startup telemetry such as `[EXECUTION-MODE]` and `[CADENCE-CONFIG]`.
+
+## Strategy Registry + AI Runtime Update (2026-04-01)
+- **Registry-backed activation**: startup now builds a single `CStrategyRegistry`, logs `[STRATEGY-REGISTRY]`, and exposes `InpEAMode` so indicator-only, AI-only, hybrid, AI-assisted, and indicator-filtered operating modes are explicit instead of implicit.
+- **Effective-mode safety**: impossible mode mixes now degrade cleanly to a viable effective mode at startup instead of leaving the runtime with an empty strategy family.
+- **Mode-aware post-consensus gating**: the EA can now reject candidates that violate the active mode contract and emits `[AI-MODE-BONUS]` when `AI_ASSISTED` receives aligned AI confirmation.
+- **Intrabar keepalive**: hybrid cadence now has a bounded keepalive pick when backoff/scheduling would otherwise leave `intrabar_selected=0` for a whole cycle, and `[SCAN-BUDGET]` includes `intrabar_keepalive`.
+- **Trend MA recovery**: `CTrendEngine` now treats mature-series MA copy failures as recoverable and attempts manual EMA reconstruction before reusing stale trend state.
+- **Lighter AI path**: transformer defaults are now right-sized for MT5 (`64/4/2/128/50`), transformer adapters consume short real bar sequences, and the NN validates its feature vector before inference/training while optionally enriching its tail with transformer-encoded context.
 
 ## Documentation Index
 - Full structure specification: `SYSTEM_STRUCTURE.md`

@@ -59,6 +59,7 @@ private:
     SSupportResistance  m_levels[];
     int                 m_levelCount;
     int                 m_maxLevels;
+    int                 m_atrHandle;
     
     double              m_clusterTolerance;
     int                 m_swingStrength;
@@ -70,6 +71,7 @@ private:
     void                ClusterLevels();
     void                CalculateStrength();
     void                UpdateTouches();
+    double              GetAtrValue() const;
     
     void                AddLevel(double price, ENUM_SR_TYPE type, bool isSupport, datetime barTime = 0)
     {
@@ -122,6 +124,7 @@ CSupportResistanceDetector::CSupportResistanceDetector() :
     m_timeframe(PERIOD_CURRENT),
     m_levelCount(0),
     m_maxLevels(100),
+    m_atrHandle(INVALID_HANDLE),
     m_clusterTolerance(20),
     m_swingStrength(3)
 {
@@ -133,6 +136,11 @@ CSupportResistanceDetector::CSupportResistanceDetector() :
 //+------------------------------------------------------------------+
 CSupportResistanceDetector::~CSupportResistanceDetector()
 {
+    if(m_atrHandle != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_atrHandle);
+        m_atrHandle = INVALID_HANDLE;
+    }
     ArrayFree(m_levels);
 }
 
@@ -142,13 +150,34 @@ CSupportResistanceDetector::~CSupportResistanceDetector()
 bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            double clusterPips, int swingStrength)
 {
+    if(m_atrHandle != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_atrHandle);
+        m_atrHandle = INVALID_HANDLE;
+    }
+
     m_symbol = symbol;
     m_timeframe = timeframe;
     m_clusterTolerance = clusterPips;
     m_swingStrength = swingStrength;
     m_levelCount = 0;
+
+    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
     
-    return true;
+    return (m_atrHandle != INVALID_HANDLE);
+}
+
+double CSupportResistanceDetector::GetAtrValue() const
+{
+    if(m_atrHandle == INVALID_HANDLE)
+        return 0.0;
+
+    double atrBuf[];
+    ArraySetAsSeries(atrBuf, true);
+    if(CopyBuffer(m_atrHandle, 0, 0, 1, atrBuf) <= 0)
+        return 0.0;
+
+    return atrBuf[0];
 }
 
 //+------------------------------------------------------------------+
@@ -196,15 +225,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
     int str = m_swingStrength;
     
     // SIGNIFICANCE FILTER
-    int atrHandle = iATR(m_symbol, m_timeframe, 14);
-    double atr = 0;
-    if(atrHandle != INVALID_HANDLE)
-    {
-        double atrBuf[];
-        ArraySetAsSeries(atrBuf, true);
-        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0) atr = atrBuf[0];
-        IndicatorRelease(atrHandle);
-    }
+    double atr = GetAtrValue();
     double minSwingSize = (atr > 0) ? atr * 0.30 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
 
     // Find swing highs (resistance)
@@ -430,15 +451,7 @@ void CSupportResistanceDetector::CalculateStrength()
 //+------------------------------------------------------------------+
 void CSupportResistanceDetector::UpdateTouches()
 {
-    int atrHandle = iATR(m_symbol, m_timeframe, 14);
-    double atr = 0;
-    if(atrHandle != INVALID_HANDLE)
-    {
-        double atrBuf[];
-        ArraySetAsSeries(atrBuf, true);
-        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0) atr = atrBuf[0];
-        IndicatorRelease(atrHandle);
-    }
+    double atr = GetAtrValue();
     double tolerance = (atr > 0) ? atr * 0.15 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     
     MqlRates rates[];

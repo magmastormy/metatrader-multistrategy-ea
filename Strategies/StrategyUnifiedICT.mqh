@@ -112,7 +112,7 @@ private:
     CChartDrawingManager*       m_drawingManager;
 
     // P1-C, P2-A, P2-B: New ICT Modules
-    CICTPositionSizer*          m_positionSizer;
+    CICTPositionSizer*          m_ictPositionSizer;
     CSessionGapDetector*        m_gapDetector;
     CAMDDetector*               m_amdDetector;
     
@@ -207,7 +207,7 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_killZones(NULL),
     m_premiumDiscount(NULL),
     m_drawingManager(NULL),
-    m_positionSizer(NULL),
+    m_ictPositionSizer(NULL),
     m_gapDetector(NULL),
     m_amdDetector(NULL),
     m_minConfluenceScore(45.0),
@@ -250,7 +250,7 @@ void CStrategyUnifiedICT::Cleanup()
     if(m_imbalanceDetector != NULL) { delete m_imbalanceDetector; m_imbalanceDetector = NULL; }
     if(m_killZones != NULL) { delete m_killZones; m_killZones = NULL; }
     if(m_premiumDiscount != NULL) { delete m_premiumDiscount; m_premiumDiscount = NULL; }
-    if(m_positionSizer != NULL) { delete m_positionSizer; m_positionSizer = NULL; }
+    if(m_ictPositionSizer != NULL) { delete m_ictPositionSizer; m_ictPositionSizer = NULL; }
     if(m_gapDetector != NULL)   { delete m_gapDetector;   m_gapDetector   = NULL; }
     if(m_amdDetector != NULL)   { delete m_amdDetector;   m_amdDetector   = NULL; }
 }
@@ -339,9 +339,9 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
         m_premiumDiscount.Initialize(symbol, timeframe);
 
     // P1-C: ICT Position Sizer
-    m_positionSizer = new CICTPositionSizer();
-    if(m_positionSizer != NULL)
-        m_positionSizer.Initialize(symbol, 1.0, 3.0, 6.0, 100.0);
+    m_ictPositionSizer = new CICTPositionSizer();
+    if(m_ictPositionSizer != NULL)
+        m_ictPositionSizer.Initialize(symbol, 1.0, 3.0, 6.0, 100.0);
 
     // P2-A: Session Gap Detector
     m_gapDetector = new CSessionGapDetector();
@@ -806,7 +806,7 @@ bool CStrategyUnifiedICT::RefreshComponentsForCurrentBar()
     if(m_premiumDiscount != NULL) m_premiumDiscount.Update();
     if(m_gapDetector != NULL)  m_gapDetector.Update();
     if(m_amdDetector != NULL)  m_amdDetector.Update();
-    if(m_positionSizer != NULL) m_positionSizer.Update();
+    if(m_ictPositionSizer != NULL) m_ictPositionSizer.Update();
 
     // P0-C: Pass current swing anchor to PremiumDiscount for accurate OTE
     if(m_structureAnalyzer != NULL && m_premiumDiscount != NULL)

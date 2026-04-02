@@ -284,7 +284,6 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
 
     int minBars = MathMax(MathMax(m_atrPeriod + 5, m_bbPeriod + 5), m_hvPeriod + 5);
     if(Bars(symbol, timeframe) < minBars ||
-       BarsCalculated(m_handleATR) < minBars ||
        BarsCalculated(m_handleBB) < minBars ||
        BarsCalculated(m_handleStdDev) < minBars)
     {

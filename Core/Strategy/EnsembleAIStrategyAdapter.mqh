@@ -28,37 +28,22 @@ private:
     ulong m_sellVotes;
     ulong m_noneVotes;
     datetime m_lastVoteLogTime;
+    ENUM_TRADE_SIGNAL m_cachedSignal;
+    double m_cachedConfidence;
+    datetime m_cacheBarTime;
+    bool m_hasCachedSignal;
 
     bool EnsureModels()
     {
         if(m_modelsInitialized)
             return true;
 
-        if(!m_ensemble.Initialize())
-            return false;
-
         // Two diverse transformer members for ensemble voting.
-        m_modelA = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
-        m_modelB = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT - 1, TRANSFORMER_D_FF_B_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_B_DEFAULT);
+        m_modelA = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_MAX_SEQ_LEN_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
+        m_modelB = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_B_DEFAULT, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT, TRANSFORMER_LR_B_DEFAULT);
         if(m_modelA == NULL || m_modelB == NULL)
         {
             // Clean up on failure
-            if(m_modelA != NULL)
-            {
-                delete m_modelA;
-                m_modelA = NULL;
-            }
-            if(m_modelB != NULL)
-            {
-                delete m_modelB;
-                m_modelB = NULL;
-            }
-            return false;
-        }
-
-        if(!m_modelA.Initialize() || !m_modelB.Initialize())
-        {
-            // Clean up on initialization failure
             if(m_modelA != NULL)
             {
                 delete m_modelA;
@@ -84,8 +69,11 @@ private:
         if(!m_ensemble.AddModel(m_modelB, 1.0))
         {
             // Clean up on ensemble addition failure
+            if(m_ensemble.GetActiveModelCount() > 0)
+                m_ensemble.RemoveModel(m_ensemble.GetActiveModelCount() - 1);
             delete m_modelB;
             m_modelB = NULL;
+            m_modelA = NULL;
             return false;
         }
 
@@ -120,6 +108,10 @@ public:
         m_sellVotes = 0;
         m_noneVotes = 0;
         m_lastVoteLogTime = 0;
+        m_cachedSignal = TRADE_SIGNAL_NONE;
+        m_cachedConfidence = 0.0;
+        m_cacheBarTime = 0;
+        m_hasCachedSignal = false;
     }
 
     virtual ~CEnsembleAIStrategyAdapter()
@@ -127,7 +119,6 @@ public:
         // FIX: Ensemble owns the models (m_modelA, m_modelB), so we don't delete them here
         // The ensemble destructor will handle cleanup to prevent double-delete
         // Just clear the references
-        m_ensemble.Shutdown();
         m_modelA = NULL;
         m_modelB = NULL;
     }
@@ -139,12 +130,16 @@ public:
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
+        m_cachedSignal = TRADE_SIGNAL_NONE;
+        m_cachedConfidence = 0.0;
+        m_cacheBarTime = 0;
+        m_hasCachedSignal = false;
         return EnsureModels();
     }
 
     virtual void Deinit(void) override
     {
-        m_ensemble.Shutdown();
+        m_hasCachedSignal = false;
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -159,32 +154,55 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        double inputSequence[];
-        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, 1))
-        {
-            m_noneVotes++;
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        double ensembleBuy = 0.0;
-        double ensembleSell = 0.0;
-        double ensembleConfidence = 0.0;
-        if(!m_ensemble.ProcessMarketData(inputSequence, ensembleBuy, ensembleSell, ensembleConfidence))
-        {
-            m_noneVotes++;
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        double directionalConfidence = MathMax(ensembleBuy, ensembleSell);
-        confidence = MathMax(0.0, MathMin(1.0, MathMax(ensembleConfidence, directionalConfidence)));
-
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
-        if(ensembleBuy > ensembleSell && directionalConfidence >= 0.45)
-            signal = TRADE_SIGNAL_BUY;
-        else if(ensembleSell > ensembleBuy && directionalConfidence >= 0.45)
-            signal = TRADE_SIGNAL_SELL;
+        datetime currentBarTime = (m_symbol == "") ? 0 : iTime(m_symbol, m_timeframe, 0);
+        bool needsNewInference = (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime);
+        if(!needsNewInference)
+        {
+            confidence = m_cachedConfidence;
+            signal = m_cachedSignal;
+        }
+        else
+        {
+            double inputSequence[];
+            if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT))
+            {
+                m_noneVotes++;
+                m_cachedSignal = TRADE_SIGNAL_NONE;
+                m_cachedConfidence = 0.0;
+                m_cacheBarTime = currentBarTime;
+                m_hasCachedSignal = (currentBarTime > 0);
+                LogVoteHeartbeat();
+                return TRADE_SIGNAL_NONE;
+            }
+
+            double ensembleBuy = 0.0;
+            double ensembleSell = 0.0;
+            double ensembleConfidence = 0.0;
+            if(!m_ensemble.ProcessMarketData(inputSequence, ensembleBuy, ensembleSell, ensembleConfidence))
+            {
+                m_noneVotes++;
+                m_cachedSignal = TRADE_SIGNAL_NONE;
+                m_cachedConfidence = 0.0;
+                m_cacheBarTime = currentBarTime;
+                m_hasCachedSignal = (currentBarTime > 0);
+                LogVoteHeartbeat();
+                return TRADE_SIGNAL_NONE;
+            }
+
+            double directionalConfidence = MathMax(ensembleBuy, ensembleSell);
+            confidence = MathMax(0.0, MathMin(1.0, MathMax(ensembleConfidence, directionalConfidence)));
+
+            if(ensembleBuy > ensembleSell && directionalConfidence >= 0.45)
+                signal = TRADE_SIGNAL_BUY;
+            else if(ensembleSell > ensembleBuy && directionalConfidence >= 0.45)
+                signal = TRADE_SIGNAL_SELL;
+
+            m_cachedSignal = signal;
+            m_cachedConfidence = confidence;
+            m_cacheBarTime = currentBarTime;
+            m_hasCachedSignal = true;
+        }
 
         if(signal == TRADE_SIGNAL_BUY)
         {
