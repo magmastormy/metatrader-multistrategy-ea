@@ -48,9 +48,16 @@
 ### 3. Signal path
 - Manager consensus + confluence.
 - Manager applies role/cluster governance and evaluates quorum via normalized weighted conviction pooling.
+- **Dynamic weight decay** (Batch 41): strategies filtering ≥ 3 consecutive cycles have live weight decayed to reduce denominator bloat; weight recovers when strategy votes again.
 - Manager classifies intrabar strategies as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent.
+- **Adaptive quorum thresholds** (Batch 41): manager calculates `effectiveQualityThreshold` and `supportFloor` based on actual active voter count:
+  - 1 active voter: directional quality ≥ 0.40, support ≥ 0.15
+  - 2 active voters: directional quality ≥ 0.48, support ≥ 0.30
+  - 3+ active voters: directional quality ≥ standard threshold, support ≥ scan-mode floor
+  - Prevents impossible quorum math where inactive strategies inflated weight pool and rejected legitimate votes.
 - Manager quorum requires directional quality, support-ratio floors, effective min voters, minimum ready-live-weight participation, and conflict-deadband separation.
 - Manager can emit a separate `SPARSE_INTRABAR` decision class for tightly gated one-sided single-voter intrabar packets.
+- **Detailed veto diagnostics** (Batch 41): manager emits specific veto codes with numeric evidence instead of generic `zero_voter` / `single_voter_confidence` placeholders.
 - Manager vote admission now uses the pipeline's effective confidence floor for the current evaluation, avoiding pipeline/quorum drift when regime-aware relaxation is active.
 - Manager live vote influence is modulated by rolling strategy `healthScore` rather than treating every enabled strategy as equally trusted at all times.
 - Manager emits consensus root-cause attribution snapshots for no-signal diagnostics.
