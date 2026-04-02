@@ -35,11 +35,6 @@ public:
     // Training helpers
     bool TrainModel(CTransformerBrain* model, const double &data[], int seqLen, int targetClass, double &loss);
     
-    // Lifecycle methods
-    bool Initialize() { return true; }
-    void Shutdown() { 
-        // Cleanup handled in destructor
-    }
     double GetConfidence() const { return m_lastConfidence; } 
 
 private:
@@ -51,6 +46,7 @@ private:
 //+------------------------------------------------------------------+
 CEnsembleMetaLearner::CEnsembleMetaLearner() : m_lastConfidence(0.0)
 {
+    m_models.FreeMode(true);
 }
 
 //+------------------------------------------------------------------+
@@ -58,11 +54,7 @@ CEnsembleMetaLearner::CEnsembleMetaLearner() : m_lastConfidence(0.0)
 //+------------------------------------------------------------------+
 CEnsembleMetaLearner::~CEnsembleMetaLearner()
 {
-    // Clean up models
-    for(int i = 0; i < m_models.Total(); i++)
-    {
-        delete m_models.At(i);
-    }
+    m_models.Clear();
 }
 
 //+------------------------------------------------------------------+
@@ -88,7 +80,7 @@ bool CEnsembleMetaLearner::AddModel(CTransformerBrain* model, double initialWeig
 bool CEnsembleMetaLearner::RemoveModel(int index)
 {
     if(index < 0 || index >= m_models.Total()) return false;
-    
+
     if(m_models.Delete(index))
     {
         m_modelWeights.Delete(index);
@@ -109,9 +101,9 @@ bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double 
     
     if(m_models.Total() == 0) return false;
     
+    double weightedNoneSignal = 0.0;
     double weightedBuySignal = 0.0;
     double weightedSellSignal = 0.0;
-    double weightedConfidenceScore = 0.0;
     double totalWeight = 0.0;
     
     // Get current market regime (simplified - using default)
@@ -129,33 +121,37 @@ bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double 
         double modelWeight = m_modelWeights.At(i);
         if(modelWeight < 0.01) continue;
         
-        double modelBuySignal = 0.0, modelSellSignal = 0.0, modelConfidence = 0.0;
-        
-        // Process market data through the transformer model
-        double modelOutput[];
-        if(model.Forward(marketData, modelOutput))
-        {
-            // Extract signals from model output
-            if(ArraySize(modelOutput) >= 3)
-            {
-                modelBuySignal = modelOutput[0];
-                modelSellSignal = modelOutput[1];
-                modelConfidence = modelOutput[2];
-                
-                weightedBuySignal = weightedBuySignal + (modelBuySignal * modelWeight);
-                weightedSellSignal = weightedSellSignal + (modelSellSignal * modelWeight);
-                weightedConfidenceScore = weightedConfidenceScore + (modelConfidence * modelWeight);
-                totalWeight = totalWeight + modelWeight;
-            }
-        }
+        int dModel = model.GetModelDimension();
+        int maxSeqLen = model.GetMaxSequenceLength();
+        int totalFeatures = ArraySize(marketData);
+        int availableSeqLen = (dModel > 0) ? (totalFeatures / dModel) : 0;
+        int actualSeqLen = MathMin(availableSeqLen, maxSeqLen);
+        if(dModel <= 0 || actualSeqLen <= 0)
+            continue;
+
+        double modelInput[];
+        int startOffset = MathMax(0, totalFeatures - (actualSeqLen * dModel));
+        ArrayResize(modelInput, actualSeqLen * dModel);
+        ArrayCopy(modelInput, marketData, 0, startOffset, actualSeqLen * dModel);
+
+        double predictions[];
+        if(!model.GetPredictions(modelInput, actualSeqLen, predictions) || ArraySize(predictions) != 3)
+            continue;
+
+        weightedNoneSignal = weightedNoneSignal + (predictions[0] * modelWeight);
+        weightedBuySignal = weightedBuySignal + (predictions[1] * modelWeight);
+        weightedSellSignal = weightedSellSignal + (predictions[2] * modelWeight);
+        totalWeight = totalWeight + modelWeight;
     }
     
     if(totalWeight > 0)
     {
+        double ensembleNoneSignal = weightedNoneSignal / totalWeight;
         ensembleBuySignal = weightedBuySignal / totalWeight;
         ensembleSellSignal = weightedSellSignal / totalWeight;
-        confidence = weightedConfidenceScore / totalWeight;
-        m_lastConfidence = confidence; // Store for retrieval
+        double directionalConfidence = MathMax(ensembleBuySignal, ensembleSellSignal);
+        confidence = MathMax(0.0, MathMin(1.0, MathMax(directionalConfidence, 1.0 - ensembleNoneSignal)));
+        m_lastConfidence = confidence;
         return true;
     }
     
@@ -261,14 +257,9 @@ double CEnsembleMetaLearner::EvaluateModelPerformance(CTransformerBrain* model, 
 {
     if(model == NULL || ArraySize(testData) == 0) return 0.0;
     
-    // Simple performance evaluation - in a real implementation,
-    // this would involve backtesting and statistical analysis
-    double output[];
-    if(model.Forward(testData, output) && ArraySize(output) > 0)
-    {
-        // Return a simple performance metric
-        return MathAbs(output[0]);
-    }
+    double predictions[];
+    if(model.GetPredictions(testData, predictions) && ArraySize(predictions) == 3)
+        return MathMax(predictions[1], predictions[2]);
     
     return 0.0;
 }
@@ -318,18 +309,6 @@ void CEnsembleMetaLearner::DeactivateUnderperformingModels(double threshold)
 bool CEnsembleMetaLearner::TrainModel(CTransformerBrain* model, const double &data[], int seqLen, int targetClass, double &loss)
 {
     if(model == NULL || ArraySize(data) == 0 || seqLen <= 0) return false;
-    
-    // Simple training simulation - in a real implementation, this would involve
-    // backpropagation and weight updates
-    double output[];
-    if(model.Forward(data, output))
-    {
-        // Calculate simple loss based on target class
-        double predicted = ArraySize(output) > 0 ? output[0] : 0.0;
-        double target = (targetClass == 1) ? 1.0 : 0.0; // Buy signal
-        loss = MathAbs(predicted - target);
-        return true;
-    }
-    
-    return false;
+
+    return model.TrainStep(data, targetClass, loss);
 }

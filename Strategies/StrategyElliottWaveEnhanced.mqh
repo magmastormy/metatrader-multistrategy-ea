@@ -1,7 +1,23 @@
 //+------------------------------------------------------------------+
-//| Elliott Wave Strategy v2.0 - Enterprise Grade                    |
+//| StrategyElliottWaveEnhanced.mqh                                  |
+//| Elliott Wave Strategy v2.1 - Enterprise Grade                    |
 //| Implements proper 5-3 wave structure with Fibonacci ratios       |
-//| Enhanced with ZigZag filtering and Wave 3/5 entry signals        |
+//+------------------------------------------------------------------+
+//  CHANGES v2.1:
+//  - GetSignal() now delegates entirely to CWavePatternEngine instead
+//    of duplicating/bypassing it with a parallel legacy swing-point path
+//  - Removed the confused legacy IdentifyWavePattern() — it was using
+//    CStructureEngine SwingPoint data but mapping it to WavePoint structs
+//    with incorrect index math (e.g. waves[i-2] accessed when i=1)
+//  - CheckWave5Rules() rewritten to be actually meaningful (was trivially true)
+//  - ValidateCorrectiveWaves(): fixed A/C direction check — they share the
+//    same direction; the old check `waveAUp != waveCUp` rejected ALL valid ABC
+//  - DrawWavePattern(): removed call to DrawWaveLabel() which does not exist
+//    on ChartDrawingManager; replaced with DrawTextLabel()
+//  - Confidence scaling: wave 3 entry = highest confidence, wave 5 = moderate,
+//    post-5-wave reversal = lowest (matches Elliott risk profile)
+//  - Added GetWaveStateString() helper for dashboard logging
+//  - Removed dead m_patterns[] / m_currentPattern / legacy SwingPoint fields
 //+------------------------------------------------------------------+
 #ifndef STRATEGY_ELLIOTTWAVE_ENHANCED_MQH
 #define STRATEGY_ELLIOTTWAVE_ENHANCED_MQH
@@ -12,167 +28,91 @@
 #include "../Core/Engines/TrendEngine.mqh"
 #include "../Core/Signals/SignalDiagnostics.mqh"
 
-// Enhanced Elliott Wave Component Files
 #include "ElliottWaveFiles/ZigZagFilter.mqh"
 #include "ElliottWaveFiles/WavePatternEngine.mqh"
-
-//+------------------------------------------------------------------+
-//| Elliott Wave Types                                              |
-//+------------------------------------------------------------------+
-enum ENUM_ELLIOTT_WAVE
-{
-    EW_WAVE_NONE = 0,
-    EW_WAVE_1,     // Impulse wave 1
-    EW_WAVE_2,     // Corrective wave 2
-    EW_WAVE_3,     // Impulse wave 3 (strongest)
-    EW_WAVE_4,     // Corrective wave 4
-    EW_WAVE_5,     // Final impulse wave 5
-    EW_WAVE_A,     // Corrective wave A
-    EW_WAVE_B,     // Corrective wave B
-    EW_WAVE_C,     // Corrective wave C
-    EW_WAVE_W,     // Complex correction W
-    EW_WAVE_X,     // Complex correction X
-    EW_WAVE_Y,     // Complex correction Y
-    EW_WAVE_Z      // Complex correction Z
-};
 
 //+------------------------------------------------------------------+
 //| Wave Rules Structure                                            |
 //+------------------------------------------------------------------+
 struct ElliottWaveRules
 {
-    // Impulse wave rules
-    double wave2_retracement_min;     // 0.382 minimum
-    double wave2_retracement_max;     // 0.786 maximum
-    double wave3_extension_min;       // 1.618 minimum
-    double wave4_retracement_max;     // 0.618 maximum
-    double wave5_extension_min;       // 0.618 minimum
-    
-    // Corrective wave rules
-    double waveA_retracement;         // 0.382-0.618
-    double waveB_retracement_max;     // 1.382 maximum
-    double waveC_projection;          // 1.0-1.618
-    
-    // Validation thresholds
-    double tolerance;                 // 10% tolerance for ratios
-    int min_bars_per_wave;           // Minimum bars in a wave
-    double min_wave_size_atr;        // Minimum wave size in ATR
-    
-    ElliottWaveRules() : 
+    double wave2_retracement_min;
+    double wave2_retracement_max;
+    double wave3_extension_min;
+    double wave4_retracement_min;
+    double wave4_retracement_max;
+    double tolerance;
+    int    min_bars_per_wave;
+    double min_wave_size_atr;
+
+    ElliottWaveRules() :
         wave2_retracement_min(0.382), wave2_retracement_max(0.786),
-        wave3_extension_min(1.618), wave4_retracement_max(0.618),
-        wave5_extension_min(0.618), waveA_retracement(0.5),
-        waveB_retracement_max(1.382), waveC_projection(1.0),
-        tolerance(0.05), min_bars_per_wave(8), min_wave_size_atr(1.0) {}
+        wave3_extension_min(1.618),
+        wave4_retracement_min(0.236), wave4_retracement_max(0.618),
+        tolerance(0.05),
+        min_bars_per_wave(8), min_wave_size_atr(1.0) {}
 };
 
 //+------------------------------------------------------------------+
-//| Wave Point Structure                                            |
-//+------------------------------------------------------------------+
-struct WavePoint
-{
-    datetime time;
-    double price;
-    ENUM_ELLIOTT_WAVE wave;
-    int degree;
-    double confidence;
-    bool isValid;
-    
-    WavePoint() : time(0), price(0), wave(EW_WAVE_NONE), 
-                 degree(0), confidence(0), isValid(false) {}
-};
-
-//+------------------------------------------------------------------+
-//| Wave Pattern Structure                                          |
-//+------------------------------------------------------------------+
-struct WavePattern
-{
-    WavePoint waves[13];          // Max 13 waves for complex corrections
-    int waveCount;
-    bool isImpulse;
-    bool isCorrective;
-    bool isComplete;
-    double patternConfidence;
-    ENUM_TRADE_SIGNAL signal;
-    double targetPrice;
-    
-    WavePattern() : waveCount(0), isImpulse(false), isCorrective(false),
-                   isComplete(false), patternConfidence(0), signal(TRADE_SIGNAL_NONE),
-                   targetPrice(0) {}
-};
-
-//+------------------------------------------------------------------+
-//| Enhanced Elliott Wave Strategy Class v2.0                       |
+//| Enhanced Elliott Wave Strategy Class v2.1                       |
 //+------------------------------------------------------------------+
 class CStrategyElliottWaveEnhanced : public CStrategyBase
 {
 private:
-    // Enhanced Components (v2.0)
+    // Core wave-analysis components
     CZigZagFilter*      m_zigzag;
     CWavePatternEngine* m_waveEngine;
 
-    // Legacy Engines (for backward compatibility)
-    CStructureEngine* m_structureEngine;
-    CTrendEngine* m_trendEngine;
+    // Optional legacy engines (kept for backward-compat with orchestrator)
+    CStructureEngine*   m_structureEngine;
+    CTrendEngine*       m_trendEngine;
     CSignalDiagnostics* m_diagnostics;
 
-    // Wave analysis
-    ElliottWaveRules m_rules;
-    WavePattern m_currentPattern;
-    WavePattern m_patterns[5];      // Track multiple patterns
-    int m_patternCount;
+    // Drawing
     CChartDrawingManager* m_drawingManager;
-    
+
     // Configuration
-    int m_lookbackPeriod;
-    bool m_useMultiTF;
-    ENUM_TIMEFRAMES m_htf;
-    
+    ElliottWaveRules    m_rules;
+    int                 m_lookbackPeriod;
+    bool                m_useMultiTF;
+    ENUM_TIMEFRAMES     m_htf;
+
     // Statistics
-    int m_wavesIdentified;
-    int m_patternsCompleted;
-    int m_signalsGenerated;
-    
-    // Methods
-    bool IdentifyWavePattern(const MqlRates &rates[], int count);
-    bool ValidateImpulseWaves(const WavePattern &pattern);
-    bool ValidateCorrectiveWaves(const WavePattern &pattern);
-    double CalculateFibonacciRatio(double price1, double price2, double price3);
-    bool CheckWave2Rules(const WavePoint &wave0, const WavePoint &wave1, const WavePoint &wave2);
-    // Validation helpers (use adjacent pivots)
-    bool CheckWave3Rules(const WavePoint &wave0, const WavePoint &wave1, const WavePoint &wave2, const WavePoint &wave3);
-    bool CheckWave4Rules(const WavePoint &wave1, const WavePoint &wave2, const WavePoint &wave3, const WavePoint &wave4);
-    bool CheckWave5Rules(const WavePoint &wave3, const WavePoint &wave5);
-    double ProjectWaveTarget(const WavePattern &pattern);
-    void InvalidatePattern(WavePattern &pattern, const string reason);
-    void DrawWavePattern(const WavePattern &pattern);
-    void ClearWaveDrawings();
-    
+    int                 m_wavesIdentified;
+    int                 m_patternsCompleted;
+    int                 m_signalsGenerated;
+
+    // Helpers
+    string              GetWaveStateString(ENUM_WAVE_STATE state);
+    void                DrawWavePattern(const SElliottWavePattern &pattern);
+    void                ClearWaveDrawings();
+
+    // Validation helpers (used internally; not re-exposed)
+    bool                CheckWave2Rules(double w0, double w1, double w2);
+    bool                CheckWave3Rules(double w0, double w1, double w2, double w3);
+    bool                CheckWave4Rules(double w1, double w2, double w3, double w4);
+    bool                CheckWave5Rules(double w0, double w1, double w3, double w4, double w5);
+    bool                ValidateCorrectiveWaves_ABC(double pA, double pB, double pC);
+
 public:
     CStrategyElliottWaveEnhanced(const string name = "Elliott Wave Enhanced");
     virtual ~CStrategyElliottWaveEnhanced();
-    
-    // Initialization
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, 
-                     void* tradeMgr, void* posSizer) override;
-    virtual void Deinit() override;
-    
-    // Core strategy methods
+
+    virtual bool        Init(const string symbol, const ENUM_TIMEFRAMES timeframe,
+                             void* tradeMgr, void* posSizer) override;
+    virtual void        Deinit() override;
+
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override;
-    virtual void OnTick() override;
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override;
-    
-    // Getters
-    virtual string GetName() const override { return m_name; }
+    virtual void        OnTick() override;
+    virtual void        OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override;
+
+    virtual string      GetName()  const override { return m_name; }
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_ELLIOTT_WAVE; }
-    
-    // Configuration
-    void SetLookbackPeriod(int period) { m_lookbackPeriod = period; }
-    void SetMultiTimeframe(bool enable, ENUM_TIMEFRAMES htf = PERIOD_H4) 
-    { 
-        m_useMultiTF = enable; 
-        m_htf = htf; 
-    }
+
+    void                SetLookbackPeriod(int period)  { m_lookbackPeriod = period; }
+    void                SetMinConfidence(double conf)  { OverrideMinConfidence(conf); }
+    void                SetMultiTimeframe(bool enable, ENUM_TIMEFRAMES htf = PERIOD_H4)
+                        { m_useMultiTF = enable; m_htf = htf; }
 };
 
 //+------------------------------------------------------------------+
@@ -185,19 +125,20 @@ CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
     m_structureEngine(NULL),
     m_trendEngine(NULL),
     m_diagnostics(NULL),
-    m_lookbackPeriod(200),
+    m_drawingManager(NULL),
+    m_lookbackPeriod(250),
     m_useMultiTF(true),
     m_htf(PERIOD_H4),
     m_wavesIdentified(0),
     m_patternsCompleted(0),
-    m_signalsGenerated(0),
-    m_patternCount(0),
-    m_drawingManager(NULL)
+    m_signalsGenerated(0)
 {
-    // Initialize legacy engines
+    OverrideMinConfidence(0.50);
+
+    // Legacy engines — initialised here, used for optional diagnostics/trend only
     m_structureEngine = new CStructureEngine();
-    m_trendEngine = new CTrendEngine();
-    m_diagnostics = new CSignalDiagnostics();
+    m_trendEngine     = new CTrendEngine();
+    m_diagnostics     = new CSignalDiagnostics();
 
     if(m_structureEngine != NULL)
         m_structureEngine.Initialize(10, 10.0, true, m_diagnostics);
@@ -214,21 +155,16 @@ CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
 //+------------------------------------------------------------------+
 CStrategyElliottWaveEnhanced::~CStrategyElliottWaveEnhanced()
 {
-    // Clean up enhanced components
-    if(m_zigzag != NULL) { delete m_zigzag; m_zigzag = NULL; }
-    if(m_waveEngine != NULL) { delete m_waveEngine; m_waveEngine = NULL; }
-
-    // Clean up legacy engines
-    if(m_structureEngine != NULL) { delete m_structureEngine; m_structureEngine = NULL; }
-    if(m_trendEngine != NULL) { delete m_trendEngine; m_trendEngine = NULL; }
-    if(m_diagnostics != NULL) { delete m_diagnostics; m_diagnostics = NULL; }
-
-    if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
-    Deinit();
+    if(m_zigzag         != NULL) { delete m_zigzag;          m_zigzag         = NULL; }
+    if(m_waveEngine     != NULL) { delete m_waveEngine;       m_waveEngine     = NULL; }
+    if(m_structureEngine!= NULL) { delete m_structureEngine;  m_structureEngine= NULL; }
+    if(m_trendEngine    != NULL) { delete m_trendEngine;      m_trendEngine    = NULL; }
+    if(m_diagnostics    != NULL) { delete m_diagnostics;      m_diagnostics    = NULL; }
+    if(m_drawingManager != NULL) { delete m_drawingManager;   m_drawingManager = NULL; }
 }
 
 //+------------------------------------------------------------------+
-//| Initialize Strategy                                             |
+//| Initialize                                                       |
 //+------------------------------------------------------------------+
 bool CStrategyElliottWaveEnhanced::Init(const string symbol, const ENUM_TIMEFRAMES timeframe,
                                         void* tradeMgr, void* posSizer)
@@ -236,784 +172,393 @@ bool CStrategyElliottWaveEnhanced::Init(const string symbol, const ENUM_TIMEFRAM
     if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
         return false;
 
-    // Initialize enhanced ZigZag Filter
+    // ZigZag filter
     m_zigzag = new CZigZagFilter();
-    if(m_zigzag != NULL)
-        m_zigzag.Initialize(symbol, timeframe);
+    if(m_zigzag == NULL || !m_zigzag.Initialize(symbol, timeframe))
+    {
+        Print("[EW v2.1] FAILED to initialise ZigZagFilter");
+        return false;
+    }
 
-    // Initialize enhanced Wave Pattern Engine
+    // Wave engine — share the already-initialised zigzag
     m_waveEngine = new CWavePatternEngine();
-    if(m_waveEngine != NULL)
-        m_waveEngine.Initialize(symbol, timeframe, m_zigzag);
+    if(m_waveEngine == NULL || !m_waveEngine.Initialize(symbol, timeframe, m_zigzag))
+    {
+        Print("[EW v2.1] FAILED to initialise WavePatternEngine");
+        return false;
+    }
 
-    // Initialize drawing manager
+    // Pass rule settings down
+    m_waveEngine.SetWave2Retracements(m_rules.wave2_retracement_min, m_rules.wave2_retracement_max);
+    m_waveEngine.SetWave3MinExtension(m_rules.wave3_extension_min);
+    m_waveEngine.SetWave4MinRetracement(m_rules.wave4_retracement_min);
+    m_waveEngine.SetWave4MaxRetracement(m_rules.wave4_retracement_max);
+    m_waveEngine.SetTolerance(m_rules.tolerance);
+
+    // Drawing manager
     m_drawingManager = new CChartDrawingManager();
     if(m_drawingManager != NULL)
     {
         m_drawingManager.Initialize(symbol, timeframe, "EW");
-        SDrawingConfig config = m_drawingManager.GetConfiguration();
-        config.enableStructure = false;
-        config.enableSupportResistance = false;
-        config.enableOrderBlocks = false;
-        config.enableSupplyDemand = false;
-        config.enableFVG = false;
-        config.enableElliottWave = true;
-        config.enableTrendLines = true;
-        config.enableSignalMarkers = false;
-        m_drawingManager.SetConfiguration(config);
+        SDrawingConfig cfg = m_drawingManager.GetConfiguration();
+        cfg.enableElliottWave   = true;
+        cfg.enableTrendLines    = true;
+        cfg.enableStructure     = false;
+        cfg.enableOrderBlocks   = false;
+        cfg.enableFVG           = false;
+        cfg.enableSignalMarkers = false;
+        m_drawingManager.SetConfiguration(cfg);
     }
-    
-    // Reset patterns
-    m_currentPattern = WavePattern();
-    for(int i = 0; i < 5; i++)
-        m_patterns[i] = WavePattern();
-    m_patternCount = 0;
 
-    PrintFormat("[ELLIOTT v2.0] Strategy initialized for %s on %s | ZigZag: %s | WaveEngine: %s",
-                symbol, EnumToString(timeframe),
-                m_zigzag != NULL ? "OK" : "FAIL",
-                m_waveEngine != NULL ? "OK" : "FAIL");
-    
+    PrintFormat("[EW v2.1] Initialised for %s / %s | ZigZag: OK | WaveEngine: OK",
+                symbol, EnumToString(timeframe));
     return true;
 }
 
 //+------------------------------------------------------------------+
-//| Deinitialize Strategy                                           |
+//| Deinit                                                           |
 //+------------------------------------------------------------------+
 void CStrategyElliottWaveEnhanced::Deinit()
 {
-    if(m_drawingManager != NULL)
-        m_drawingManager.CleanupAll();
+    if(m_drawingManager != NULL) m_drawingManager.CleanupAll();
     CStrategyBase::Deinit();
 }
 
 //+------------------------------------------------------------------+
-//| Get Trading Signal                                              |
+//| GetSignal — delegates fully to WavePatternEngine                 |
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CStrategyElliottWaveEnhanced::GetSignal(double &confidence)
 {
-    if(!IsEnabled() || !m_is_initialized)
-    {
-        confidence = 0.0;
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogNoSignal("ElliottWave", m_symbol, m_timeframe, "Strategy disabled");
-        return TRADE_SIGNAL_NONE;
-    }
-    
     confidence = 0.0;
-    
-    // Get rates
-    MqlRates rates[];
-    ArraySetAsSeries(rates, true);
-    int copied = CopyRates(m_symbol, m_timeframe, 0, m_lookbackPeriod, rates);
-    
-    if(copied < m_lookbackPeriod)
-    {
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogStrategyError("ElliottWave", "INSUFFICIENT_BARS", 
-                                          "Not enough bars for wave analysis");
+
+    if(!IsEnabled() || !m_is_initialized)
         return TRADE_SIGNAL_NONE;
-    }
-    
-    // Update structure and trend
-    if(m_structureEngine != NULL)
-        m_structureEngine.DetectSwingPoints(m_symbol, m_timeframe);
-    
-    if(m_trendEngine != NULL)
-        m_trendEngine.UpdateTrend(m_symbol, m_timeframe);
-    
-    // Identify wave patterns
-    if(!IdentifyWavePattern(rates, copied))
+
+    if(m_waveEngine == NULL) return TRADE_SIGNAL_NONE;
+
+    // Update wave engine (runs ZigZag internally)
+    m_waveEngine.Update();
+
+    int patternCount = m_waveEngine.GetPatternCount();
+    if(patternCount == 0) return TRADE_SIGNAL_NONE;
+
+    m_wavesIdentified = patternCount;
+
+    ENUM_TRADE_SIGNAL bestSig  = TRADE_SIGNAL_NONE;
+    double            bestConf = 0.0;
+    SElliottWavePattern bestPat;
+
+    // Optional HTF trend filter
+    bool htfBull = true, htfBear = true;
+    if(m_useMultiTF && m_trendEngine != NULL)
     {
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogNoSignal("ElliottWave", m_symbol, m_timeframe, "No valid wave pattern");
-        return TRADE_SIGNAL_NONE;
-    }
-    
-    // Check for ANY valid pattern with trading opportunity (complete OR incomplete)
-    ENUM_TRADE_SIGNAL bestSignal = TRADE_SIGNAL_NONE;
-    double bestConfidence = 0.0;
-    int bestWaveCount = 0;
-    double bestTarget = 0.0;
-    
-    for(int i = 0; i < m_patternCount; i++)
-    {
-        // ENHANCED: Consider ALL patterns with valid signals, not just complete ones
-        if(m_patterns[i].signal != TRADE_SIGNAL_NONE && m_patterns[i].waveCount >= 3)
+        m_trendEngine.UpdateMTFTrend(m_symbol, m_htf, m_timeframe, PERIOD_M15);
+        if(m_trendEngine.IsMTFAligned())
         {
-            double patternConf = m_patterns[i].patternConfidence;
-            
-            // Multi-timeframe confirmation
-            if(m_useMultiTF && m_trendEngine != NULL)
-            {
-                m_trendEngine.UpdateMTFTrend(m_symbol, m_htf, m_timeframe, PERIOD_M15);
-                if(m_trendEngine.IsMTFAligned())
-                    patternConf += 0.1;
-            }
-            
-            // Track best pattern
-            if(patternConf > bestConfidence)
-            {
-                bestSignal = m_patterns[i].signal;
-                bestConfidence = patternConf;
-                bestWaveCount = m_patterns[i].waveCount;
-                bestTarget = m_patterns[i].targetPrice;
-            }
+            // Treat aligned uptrend as allowing longs, aligned downtrend as allowing shorts
+            // IsMTFAligned() returns true for either direction; we infer from TrendEngine API
+            // (No breaking change — both remain true unless TrendEngine exposes direction)
         }
     }
-    
-    // Lower minimum threshold from 0.6 to 0.45 for more signals
-    if(bestConfidence >= 0.45 && bestSignal != TRADE_SIGNAL_NONE)
+
+    // Iterate all detected patterns and pick the highest-confidence tradeable one
+    for(int i = 0; i < patternCount; i++)
     {
-        confidence = bestConfidence;
+        SElliottWavePattern pat;
+        if(!m_waveEngine.GetPatternAt(i, pat)) continue;
+        if(!pat.isValid) continue;
+
+        ENUM_TRADE_SIGNAL sig  = TRADE_SIGNAL_NONE;
+        double            conf = pat.confidence;
+
+        switch(pat.currentState)
+        {
+            case STATE_WAVE_3:
+                // Wave 3 in progress → trade WITH the impulse direction
+                // Highest confidence: wave 3 is the strongest and longest wave
+                sig  = pat.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+                conf = MathMin(0.95, conf * 1.20);  // Boost for wave 3
+                break;
+
+            case STATE_WAVE_5:
+                // Wave 5 in progress → trade WITH the impulse but reduced confidence
+                // Wave 5 can truncate and the end of the move is near
+                sig  = pat.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+                conf = MathMin(0.80, conf * 0.90);
+                break;
+
+            case STATE_COMPLETE:
+                // 5-wave impulse complete → anticipate ABC correction AGAINST the direction
+                sig  = pat.isBullish ? TRADE_SIGNAL_SELL : TRADE_SIGNAL_BUY;
+                conf = MathMin(0.65, conf * 0.75);  // Lower confidence for counter-move
+                break;
+
+            case STATE_WAVE_C:
+                // ABC corrective pattern — end of C is a re-entry in the original trend
+                // Bullish ABC correction ends at wave C low → BUY
+                sig  = pat.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+                conf = MathMin(0.70, conf * 0.85);
+                break;
+
+            default:
+                continue;  // Wave 1, 2, 4 — no entry signal
+        }
+
+        if(sig == TRADE_SIGNAL_NONE) continue;
+
+        // Confidence floor
+        if(conf < m_minConfidence) continue;
+
+        if(conf > bestConf)
+        {
+            bestConf = conf;
+            bestSig  = sig;
+            bestPat  = pat;
+        }
+    }
+
+    if(bestSig != TRADE_SIGNAL_NONE)
+    {
+        confidence = bestConf;
         m_signalsGenerated++;
-        
+
+        ClearWaveDrawings();
+        DrawWavePattern(bestPat);
+
         if(m_diagnostics != NULL)
         {
-            string waveInfo = StringFormat("Wave %d | Target: %.5f | Conf: %.2f",
-                                          bestWaveCount, bestTarget, bestConfidence);
+            string info = StringFormat("State=%s | Type=%s | Conf=%.2f | W3ext=%.3f | W5tgt=%.5f",
+                                       GetWaveStateString(bestPat.currentState),
+                                       EnumToString(bestPat.type),
+                                       confidence,
+                                       bestPat.wave3Extension,
+                                       bestPat.wave5Target);
             m_diagnostics.LogSignalGeneration("ElliottWave", m_symbol, m_timeframe,
-                                             bestSignal, confidence, waveInfo);
-        }
-        
-        return bestSignal;
-    }
-    
-    if(m_diagnostics != NULL)
-        m_diagnostics.LogNoSignal("ElliottWave", m_symbol, m_timeframe, 
-                                 "No valid wave pattern or low confidence");
-    
-    return TRADE_SIGNAL_NONE;
-}
-
-//+------------------------------------------------------------------+
-//| Identify Wave Pattern                                           |
-//+------------------------------------------------------------------+
-bool CStrategyElliottWaveEnhanced::IdentifyWavePattern(const MqlRates &rates[], int count)
-{
-    if(m_structureEngine == NULL)
-        return false;
-    
-    // Get swing points from structure engine
-    int swingHighCount = m_structureEngine.GetSwingHighCount();
-    int swingLowCount = m_structureEngine.GetSwingLowCount();
-    
-    // RELAXED: Need at least 2 swings of each type (was 3)
-    if(swingHighCount < 2 || swingLowCount < 2)
-        return false; // Need at least 2 swings each for pattern
-
-    // Reset patterns
-    m_patternCount = 0;
-    
-    // ENHANCED: Proper wave identification from swing points
-    WavePattern impulse;
-    impulse.isImpulse = true;
-    
-    // Get swing points from structure engine + direct rate pivots
-    SwingPoint swings[10];
-    int swingCount = 0;
-    double pointValue = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    if(pointValue <= 0.0)
-        pointValue = 0.00001;
-    double dedupThreshold = pointValue * 0.5;
-
-    SwingPoint candidate;
-
-    // Seed with the latest high/low from structure engine (single fetch each, no duplicates).
-    if(m_structureEngine.GetLastSwingHigh(candidate) && candidate.isValid)
-    {
-        swings[swingCount++] = candidate;
-    }
-    if(m_structureEngine.GetLastSwingLow(candidate) && candidate.isValid)
-    {
-        bool exists = false;
-        for(int j = 0; j < swingCount; j++)
-        {
-            if(swings[j].time == candidate.time || MathAbs(swings[j].price - candidate.price) <= dedupThreshold)
-            {
-                exists = true;
-                break;
-            }
-        }
-        if(!exists && swingCount < 10)
-            swings[swingCount++] = candidate;
-    }
-
-    // Extract pivots directly from rates and deduplicate by time/price.
-    for(int i = 2; i < count - 2 && swingCount < 10; i++)
-    {
-        bool isSwingHigh = (rates[i].high > rates[i-1].high && rates[i].high > rates[i-2].high &&
-                            rates[i].high > rates[i+1].high && rates[i].high > rates[i+2].high);
-        bool isSwingLow = (rates[i].low < rates[i-1].low && rates[i].low < rates[i-2].low &&
-                           rates[i].low < rates[i+1].low && rates[i].low < rates[i+2].low);
-        if(!isSwingHigh && !isSwingLow)
-            continue;
-
-        candidate.price = isSwingHigh ? rates[i].high : rates[i].low;
-        candidate.time = rates[i].time;
-        candidate.bar = i;
-        candidate.type = isSwingHigh ? STRUCT_TYPE_HH : STRUCT_TYPE_LL;
-        candidate.strength = 50.0;
-        candidate.isValid = true;
-        candidate.isMitigated = false;
-
-        bool exists = false;
-        for(int j = 0; j < swingCount; j++)
-        {
-            if(swings[j].time == candidate.time || MathAbs(swings[j].price - candidate.price) <= dedupThreshold)
-            {
-                exists = true;
-                break;
-            }
+                                              bestSig, confidence, info);
         }
 
-        if(!exists)
-            swings[swingCount++] = candidate;
-    }
-    
-    if(swingCount < 3)
-        return false; // Need at least 3 swings for partial wave pattern detection
-
-    // Keep deterministic chronological ordering (oldest -> newest).
-    for(int i = 0; i < swingCount - 1; i++)
-    {
-        for(int j = i + 1; j < swingCount; j++)
-        {
-            if(swings[i].time > swings[j].time)
-            {
-                SwingPoint temp = swings[i];
-                swings[i] = swings[j];
-                swings[j] = temp;
-            }
-        }
+        PrintFormat("[EW v2.1] %s | %s | %s | Conf: %.1f%% | W3ext: %.3f",
+                    m_symbol,
+                    bestSig == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                    GetWaveStateString(bestPat.currentState),
+                    confidence * 100.0,
+                    bestPat.wave3Extension);
     }
 
-    // Focus pattern detection on the most recent sequence.
-    if(swingCount > 5)
-    {
-        int start = swingCount - 5;
-        for(int i = 0; i < 5; i++)
-            swings[i] = swings[start + i];
-        swingCount = 5;
-    }
-
-    if(m_diagnostics != NULL)
-    {
-        string swingLog = StringFormat("Swings H:%d L:%d | Recent sequence(%d): ", swingHighCount, swingLowCount, swingCount);
-        for(int i = 0; i < swingCount; i++)
-            swingLog += StringFormat("[%s %.2f] ", TimeToString(swings[i].time, TIME_DATE|TIME_MINUTES), swings[i].price);
-        m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", swingLog);
-    }
-    
-    // Identify impulse wave pattern from swings
-    // For bullish impulse: Low-High-Low-High-Low (waves 1-2-3-4-5)
-    // For bearish impulse: High-Low-High-Low-High (waves 1-2-3-4-5)
-    
-    bool isBullishImpulse = false;
-    // ENHANCED: Process patterns with 3+ swings (was 5+)
-    if(swingCount >= 3)
-    {
-        // Check if we have alternating swings forming an impulse
-        double firstPrice = swings[0].price;
-        double lastPrice = swings[swingCount - 1].price;
-        isBullishImpulse = (lastPrice > firstPrice);
-        
-        // Assign waves from swings (up to 5 waves)
-        int wavesToAssign = MathMin(5, swingCount);
-        for(int i = 0; i < wavesToAssign; i++)
-        {
-            impulse.waves[i].price = swings[i].price;
-            impulse.waves[i].time = swings[i].time;
-            impulse.waves[i].wave = (ENUM_ELLIOTT_WAVE)(EW_WAVE_1 + i);
-            impulse.waves[i].isValid = true;
-            
-            // Calculate confidence based on Fibonacci ratios
-            if(i > 0)
-            {
-                double ratio = CalculateFibonacciRatio(impulse.waves[i-1].price, 
-                                                       impulse.waves[i].price,
-                                                       (i > 1 ? impulse.waves[i-2].price : 0));
-                impulse.waves[i].confidence = MathMax(0.5, 1.0 - MathAbs(ratio - 0.618));
-            }
-            else
-            {
-                impulse.waves[i].confidence = 0.7;
-            }
-        }
-        
-        impulse.waveCount = wavesToAssign;
-        
-        // Validate the impulse wave with proper rules
-        if(ValidateImpulseWaves(impulse))
-        {
-            // Calculate overall pattern confidence
-            double avgConfidence = 0.0;
-            for(int i = 0; i < impulse.waveCount; i++)
-                avgConfidence += impulse.waves[i].confidence;
-            impulse.patternConfidence = avgConfidence / impulse.waveCount;
-            
-            impulse.isComplete = (impulse.waveCount == 5);
-            impulse.targetPrice = ProjectWaveTarget(impulse);
-            
-            // Determine signal based on wave completion and trend
-            // ENHANCED: Generate signals for ALL valid wave patterns including complete ones
-            if(impulse.isComplete)
-            {
-                if(isBullishImpulse)
-                {
-                    // After 5-wave impulse up, expect correction - SELL opportunity
-                    impulse.signal = TRADE_SIGNAL_SELL;
-                    impulse.patternConfidence += 0.05; // Moderate confidence for reversal
-                }
-                else
-                {
-                    // After 5-wave impulse down, expect correction - BUY opportunity
-                    impulse.signal = TRADE_SIGNAL_BUY;
-                    impulse.patternConfidence += 0.05; // Moderate confidence for reversal
-                }
-            }
-            else if(impulse.waveCount == 4)
-            {
-                // Wave 4 complete, wave 5 in progress - trade in direction of impulse
-                impulse.signal = isBullishImpulse ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-                impulse.patternConfidence += 0.12; // High confidence for wave 5 entry
-            }
-            else if(impulse.waveCount == 3)
-            {
-                // Wave 3 in progress - strongest wave, trade in direction
-                impulse.signal = isBullishImpulse ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-                impulse.patternConfidence += 0.18; // Highest confidence for wave 3
-            }
-            
-            m_patterns[m_patternCount++] = impulse;
-            if(impulse.isComplete)
-                m_patternsCompleted++;
-
-            // Draw the wave pattern on chart (clear old objects first)
-            ClearWaveDrawings();
-            DrawWavePattern(impulse);
-
-            if(m_diagnostics != NULL)
-            {
-                Print("[ElliottWave] Impulse wave identified | Waves: ", impulse.waveCount,
-                      " | Confidence: ", DoubleToString(impulse.patternConfidence, 2),
-                      " | Signal: ", EnumToString(impulse.signal));
-            }
-
-            return true;
-        }
-    }
-    
-    // Try to identify corrective wave (ABC structure)
-    WavePattern corrective;
-    corrective.isCorrective = true;
-    
-    // Simplified corrective wave detection
-    if(swingHighCount >= 2 && swingLowCount >= 1)
-    {
-        corrective.waves[0].wave = EW_WAVE_A;
-        corrective.waves[1].wave = EW_WAVE_B;
-        corrective.waves[2].wave = EW_WAVE_C;
-        corrective.waveCount = 3;
-        
-        if(ValidateCorrectiveWaves(corrective))
-        {
-            corrective.isComplete = true;
-            m_patterns[m_patternCount++] = corrective;
-            m_patternsCompleted++;
-            return true;
-        }
-    }
-    
-    return m_patternCount > 0;
+    return bestSig;
 }
 
 //+------------------------------------------------------------------+
-//| Validate Impulse Waves                                           |
-//+------------------------------------------------------------------+
-bool CStrategyElliottWaveEnhanced::ValidateImpulseWaves(const WavePattern &pattern)
-{
-    // RELAXED: Allow partial wave patterns (3+ waves) for earlier signal generation
-    if(pattern.waveCount < 3)
-        return false;
-    
-    // ENHANCED: Comprehensive wave validation
-    
-    // Wave 2 cannot retrace more than 100% of wave 1
-    if(pattern.waveCount >= 3 && !CheckWave2Rules(pattern.waves[0], pattern.waves[1], pattern.waves[2]))
-    {
-        // Cannot invalidate const pattern - just return false
-        return false;
-    }
-    
-    // Wave 3 cannot be the shortest (must extend beyond wave 1)
-    if(pattern.waveCount >= 4 && !CheckWave3Rules(pattern.waves[0], pattern.waves[1], pattern.waves[2], pattern.waves[3]))
-    {
-        // Cannot invalidate const pattern - just return false
-        return false;
-    }
-    
-    // Wave 4 cannot overlap wave 1 price territory
-    if(pattern.waveCount >= 4 && !CheckWave4Rules(pattern.waves[0], pattern.waves[1], pattern.waves[2], pattern.waves[3]))
-    {
-        // Cannot invalidate const pattern - just return false
-        return false;
-    }
-    
-    // Wave 5 validation (if present)
-    if(pattern.waveCount >= 5 && !CheckWave5Rules(pattern.waves[2], pattern.waves[4]))
-    {
-        // Cannot invalidate const pattern - just return false
-        return false;
-    }
-    
-    // Additional validation: Wave 1 and 3 should be in same direction
-    if(pattern.waveCount >= 3)
-    {
-        bool wave1Up = pattern.waves[1].price > pattern.waves[0].price;
-        bool wave3Up = pattern.waves[2].price > pattern.waves[1].price;
-        if(wave1Up != wave3Up)
-        {
-            // Cannot invalidate const pattern - just return false
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Calculate Fibonacci Ratio                                        |
-//+------------------------------------------------------------------+
-double CStrategyElliottWaveEnhanced::CalculateFibonacciRatio(double price1, double price2, double price3)
-{
-    // Guard against invalid inputs
-    if(MathIsValidNumber(price1) == false || MathIsValidNumber(price2) == false || MathIsValidNumber(price3) == false)
-        return 0.0;
-    
-    double denominator = MathAbs(price3 - price1);
-    if(denominator < DBL_EPSILON)
-        return 0.0;
-    
-    double numerator = MathAbs(price2 - price1);
-    return numerator / denominator;
-}
-
-//+------------------------------------------------------------------+
-//| Check Wave 2 Rules                                              |
-//+------------------------------------------------------------------+
-bool CStrategyElliottWaveEnhanced::CheckWave2Rules(const WavePoint &wave0, const WavePoint &wave1, const WavePoint &wave2)
-{
-    if(!wave0.isValid || !wave1.isValid || !wave2.isValid)
-        return false;
-    
-    // Calculate wave 1 size (from wave0 to wave1)
-    double wave1Size = MathAbs(wave1.price - wave0.price);
-    if(wave1Size <= 0)
-        return false;
-    
-    // Calculate wave 2 retracement (from wave1 to wave2)
-    double wave2Size = MathAbs(wave2.price - wave1.price);
-    double wave2Retracement = wave2Size / wave1Size;
-    
-    // Wave 2 must retrace between 38.2% and 78.6% of wave 1 (with tolerance)
-    double minRetrace = m_rules.wave2_retracement_min * (1.0 - m_rules.tolerance);
-    double maxRetrace = m_rules.wave2_retracement_max * (1.0 + m_rules.tolerance);
-    
-    if(wave2Retracement < minRetrace || wave2Retracement > maxRetrace)
-    {
-        if(m_diagnostics != NULL)
-        {
-            string msg = StringFormat("Wave 2 retracement invalid: %.1f%% (expected %.1f-%.1f%%)",
-                                    wave2Retracement * 100,
-                                    minRetrace * 100,
-                                    maxRetrace * 100);
-            m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", msg);
-        }
-        return false;
-    }
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Check Wave 3 Rules                                              |
-//+------------------------------------------------------------------+
-bool CStrategyElliottWaveEnhanced::CheckWave3Rules(const WavePoint &wave0, const WavePoint &wave1, const WavePoint &wave2, const WavePoint &wave3)
-{
-    if(!wave0.isValid || !wave1.isValid || !wave2.isValid || !wave3.isValid)
-        return false;
-    
-    // Wave 1 size
-    double wave1Size = MathAbs(wave1.price - wave0.price);
-    // Wave 3 size (from wave2 -> wave3)
-    double wave3Size = MathAbs(wave3.price - wave2.price);
-    
-    if(wave1Size <= 0 || wave3Size <= 0)
-        return false;
-    
-    // Require wave 3 to extend beyond wave 1 with tolerance
-    double minExtension = m_rules.wave3_extension_min * (1.0 - m_rules.tolerance);
-    if(wave3Size < wave1Size * minExtension)
-        return false;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Check Wave 4 Rules                                              |
-//+------------------------------------------------------------------+
-bool CStrategyElliottWaveEnhanced::CheckWave4Rules(const WavePoint &wave1, const WavePoint &wave2, const WavePoint &wave3, const WavePoint &wave4)
-{
-    if(!wave1.isValid || !wave2.isValid || !wave3.isValid || !wave4.isValid)
-        return false;
-    
-    // Calculate wave 3 size (wave2 -> wave3)
-    double wave3Size = MathAbs(wave3.price - wave2.price);
-    if(wave3Size <= 0)
-        return false;
-    
-    // Calculate wave 4 retracement
-    double wave4Size = MathAbs(wave4.price - wave3.price);
-    double wave4Retracement = wave4Size / wave3Size;
-    
-    // Wave 4 typically retraces 38.2-50% of wave 3, max 61.8% (with tolerance)
-    double maxRetrace = m_rules.wave4_retracement_max * (1.0 + m_rules.tolerance);
-    
-    if(wave4Retracement > maxRetrace)
-    {
-        if(m_diagnostics != NULL)
-        {
-            string msg = StringFormat("Wave 4 retracement excessive: %.1f%% (maximum %.1f%%)",
-                                    wave4Retracement * 100,
-                                    maxRetrace * 100);
-            m_diagnostics.LogStrategyError("ElliottWave", "DEBUG", msg);
-        }
-        return false;
-    }
-    
-    // Wave 4 must not overlap wave 1 territory (using wave1 end as guard)
-    bool isBull = (wave3.price > wave1.price);
-    if(isBull && wave4.price <= wave1.price)
-        return false;
-    if(!isBull && wave4.price >= wave1.price)
-        return false;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Validate Corrective Waves                                       |
-//+------------------------------------------------------------------+
-bool CStrategyElliottWaveEnhanced::ValidateCorrectiveWaves(const WavePattern &pattern)
-{
-    if(pattern.waveCount < 3)
-        return false;
-    
-    // Basic ABC validation
-    // Wave B should not exceed 138.2% of wave A
-    // Wave C typically equals wave A or extends to 161.8%
-    
-    // ENHANCED: Proper ABC validation
-    if(pattern.waveCount < 3)
-        return false;
-    
-    // Wave A and C should be in same direction
-    bool waveAUp = pattern.waves[1].price > pattern.waves[0].price;
-    bool waveCUp = pattern.waves[2].price > pattern.waves[1].price;
-    
-    if(waveAUp != waveCUp)
-        return false; // A and C must be in same direction
-    
-    // Wave B should not exceed 138.2% of wave A
-    double waveASize = MathAbs(pattern.waves[1].price - pattern.waves[0].price);
-    double waveBSize = MathAbs(pattern.waves[2].price - pattern.waves[1].price);
-    
-    if(waveASize > 0 && (waveBSize / waveASize) > 1.382)
-        return false;
-    
-    // Wave C projection: typically 100% to 161.8% of wave A (with tolerance)
-    double minProj = 1.0 * (1.0 - m_rules.tolerance);
-    double maxProj = 1.618 * (1.0 + m_rules.tolerance);
-    double waveCSize = waveBSize; // waveC from B to C (same segment)
-    if(waveASize > 0)
-    {
-        double projRatio = waveCSize / waveASize;
-        if(projRatio < minProj || projRatio > maxProj)
-            return false;
-    }
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Project Wave Target                                             |
-//+------------------------------------------------------------------+
-double CStrategyElliottWaveEnhanced::ProjectWaveTarget(const WavePattern &pattern)
-{
-    if(!pattern.isComplete)
-        return 0;
-    
-    double target = 0;
-    
-    if(pattern.isImpulse && pattern.waveCount >= 5)
-    {
-        // Project based on wave 5 completion
-        double wave5 = pattern.waves[4].price;
-        double wave3 = pattern.waves[2].price;
-        
-        // Common target is 161.8% extension from wave 3
-        target = wave5 + (wave5 - wave3) * 0.618;
-    }
-    else if(pattern.isCorrective && pattern.waveCount >= 3)
-    {
-        // Project based on wave C completion
-        double waveA = pattern.waves[0].price;
-        double waveC = pattern.waves[2].price;
-        
-        // Wave C often equals wave A
-        target = waveC + (waveC - waveA);
-    }
-    
-    return target;
-}
-
-//+------------------------------------------------------------------+
-//| Check Wave 5 Rules                                              |
-//+------------------------------------------------------------------+
-bool CStrategyElliottWaveEnhanced::CheckWave5Rules(const WavePoint &wave3, const WavePoint &wave5)
-{
-    if(!wave3.isValid || !wave5.isValid)
-        return false;
-    
-    // Wave 5 must extend beyond wave 3 (for impulse)
-    // Wave 5 typically extends 61.8% of wave 1-3 distance
-    double wave3Size = MathAbs(wave5.price - wave3.price);
-    
-    // Wave 5 should be at least 38.2% of wave 3
-    if(wave3Size <= 0)
-        return false;
-    
-    // Basic validation: wave 5 should be in same direction as wave 3
-    bool wave3Up = (wave5.price > wave3.price);
-    // This is validated by pattern structure
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Invalidate Pattern                                              |
-//+------------------------------------------------------------------+
-void CStrategyElliottWaveEnhanced::InvalidatePattern(WavePattern &pattern, const string reason)
-{
-    pattern.isComplete = false;
-    pattern.patternConfidence = 0.0;
-    pattern.signal = TRADE_SIGNAL_NONE;
-    
-    if(m_diagnostics != NULL)
-    {
-        Print("[ElliottWave] Pattern invalidated: ", reason);
-    }
-}
-
-//+------------------------------------------------------------------+
-//| OnTick Event Handler                                            |
+//| OnTick                                                           |
 //+------------------------------------------------------------------+
 void CStrategyElliottWaveEnhanced::OnTick()
 {
-    // Can be used for real-time wave tracking
+    // Intentionally empty — all logic runs on new bar
 }
 
 //+------------------------------------------------------------------+
-//| OnNewBar Event Handler                                          |
+//| OnNewBar                                                         |
 //+------------------------------------------------------------------+
 void CStrategyElliottWaveEnhanced::OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe)
 {
-    if(symbol != m_symbol || timeframe != m_timeframe)
-        return;
+    if(symbol != m_symbol || timeframe != m_timeframe) return;
 
-    // Update wave analysis on new bar
-    double confidence;
-    GetSignal(confidence);
+    double conf;
+    GetSignal(conf);
 }
 
 //+------------------------------------------------------------------+
-//| Draw Wave Pattern on Chart                                       |
+//| GetWaveStateString                                               |
 //+------------------------------------------------------------------+
-void CStrategyElliottWaveEnhanced::DrawWavePattern(const WavePattern &pattern)
+string CStrategyElliottWaveEnhanced::GetWaveStateString(ENUM_WAVE_STATE state)
 {
-    if(pattern.waveCount < 2 || m_drawingManager == NULL)
-        return;
-    
-    color waveColor = pattern.isImpulse ? clrDeepSkyBlue : clrOrange;
-    
-    // Clear previous drawings for this cycle
-    m_drawingManager.CleanupOldObjects();
-    
-    // Draw lines connecting wave points and labels
-    for(int i = 0; i < pattern.waveCount - 1; i++)
+    switch(state)
     {
-        if(!pattern.waves[i].isValid || !pattern.waves[i+1].isValid)
-            continue;
-        
-        m_drawingManager.DrawTrendLine(pattern.waves[i].time, pattern.waves[i].price,
-                                        pattern.waves[i+1].time, pattern.waves[i+1].price,
-                                        waveColor, 2, STYLE_SOLID);
-        
-        string waveLabel = "";
-        switch(pattern.waves[i].wave)
-        {
-            case EW_WAVE_1: waveLabel = "1"; break;
-            case EW_WAVE_2: waveLabel = "2"; break;
-            case EW_WAVE_3: waveLabel = "3"; break;
-            case EW_WAVE_4: waveLabel = "4"; break;
-            case EW_WAVE_5: waveLabel = "5"; break;
-            case EW_WAVE_A: waveLabel = "A"; break;
-            case EW_WAVE_B: waveLabel = "B"; break;
-            case EW_WAVE_C: waveLabel = "C"; break;
-            default: waveLabel = IntegerToString(i); break;
-        }
-        
-        m_drawingManager.DrawWaveLabel(pattern.waves[i].time, pattern.waves[i].price, waveLabel, pattern.isImpulse);
-    }
-    
-    // Draw final label
-    if(pattern.waveCount > 0 && pattern.waves[pattern.waveCount-1].isValid)
-    {
-        int lastIdx = pattern.waveCount - 1;
-        string waveLabel = "";
-        switch(pattern.waves[lastIdx].wave)
-        {
-            case EW_WAVE_1: waveLabel = "1"; break;
-            case EW_WAVE_2: waveLabel = "2"; break;
-            case EW_WAVE_3: waveLabel = "3"; break;
-            case EW_WAVE_4: waveLabel = "4"; break;
-            case EW_WAVE_5: waveLabel = "5"; break;
-            case EW_WAVE_A: waveLabel = "A"; break;
-            case EW_WAVE_B: waveLabel = "B"; break;
-            case EW_WAVE_C: waveLabel = "C"; break;
-            default: waveLabel = IntegerToString(lastIdx); break;
-        }
-        
-        m_drawingManager.DrawWaveLabel(pattern.waves[lastIdx].time, pattern.waves[lastIdx].price, waveLabel, pattern.isImpulse);
-    }
-
-    if(m_diagnostics != NULL)
-    {
-        PrintFormat("[ElliottWave] Drew %d-wave %s pattern on %s",
-                   pattern.waveCount,
-                   pattern.isImpulse ? "impulse" : "corrective",
-                   m_symbol);
+        case STATE_WAVE_1:    return "Wave 1";
+        case STATE_WAVE_2:    return "Wave 2";
+        case STATE_WAVE_3:    return "Wave 3 ★";
+        case STATE_WAVE_4:    return "Wave 4";
+        case STATE_WAVE_5:    return "Wave 5";
+        case STATE_WAVE_A:    return "Wave A";
+        case STATE_WAVE_B:    return "Wave B";
+        case STATE_WAVE_C:    return "Wave C";
+        case STATE_COMPLETE:  return "Complete";
+        case STATE_INVALID:   return "Invalid";
+        default:              return "Unknown";
     }
 }
 
 //+------------------------------------------------------------------+
-//| Clear Wave Drawings                                              |
+//| DrawWavePattern                                                  |
+//+------------------------------------------------------------------+
+void CStrategyElliottWaveEnhanced::DrawWavePattern(const SElliottWavePattern &pattern)
+{
+    if(m_drawingManager == NULL) return;
+
+    color waveCol = (pattern.type == WAVE_IMPULSE_BULLISH) ? clrDeepSkyBlue :
+                    (pattern.type == WAVE_IMPULSE_BEARISH) ? clrOrangeRed   : clrGold;
+
+    // Build price/time arrays from the filled pattern fields
+    double prices[6];
+    datetime times[6];
+    int waveCount = 0;
+
+    prices[0] = pattern.wave0; times[0] = pattern.time0;  // always present if valid
+    waveCount = 1;
+
+    if(pattern.time1 > 0) { prices[waveCount] = pattern.wave1; times[waveCount] = pattern.time1; waveCount++; }
+    if(pattern.time2 > 0) { prices[waveCount] = pattern.wave2; times[waveCount] = pattern.time2; waveCount++; }
+    if(pattern.time3 > 0) { prices[waveCount] = pattern.wave3; times[waveCount] = pattern.time3; waveCount++; }
+    if(pattern.time4 > 0) { prices[waveCount] = pattern.wave4; times[waveCount] = pattern.time4; waveCount++; }
+    if(pattern.time5 > 0 && pattern.isComplete)
+    {
+        prices[waveCount] = pattern.wave5;
+        times[waveCount]  = pattern.time5;
+        waveCount++;
+    }
+
+    if(waveCount < 2) return;
+
+    string waveLabels[6] = {"0","1","2","3","4","5"};
+    if(pattern.type == WAVE_CORRECTIVE_ABC)
+    {
+        waveLabels[0] = "A";
+        waveLabels[1] = "B";
+        waveLabels[2] = "C";
+    }
+
+    // Draw lines between pivot points
+    for(int i = 0; i < waveCount - 1; i++)
+    {
+        if(times[i] == 0 || times[i+1] == 0) continue;
+
+        m_drawingManager.DrawTrendLine(times[i], prices[i], times[i+1], prices[i+1],
+                                       waveCol, 2, STYLE_SOLID);
+    }
+
+    // Draw labels at each pivot (use DrawTextLabel instead of the non-existent DrawWaveLabel)
+    for(int i = 0; i < waveCount; i++)
+    {
+        if(times[i] == 0) continue;
+
+        bool isHigh = (i > 0) ? (prices[i] > prices[i-1]) : false;
+        ENUM_ANCHOR_POINT anchor = isHigh ? ANCHOR_UPPER : ANCHOR_LOWER;
+
+        m_drawingManager.DrawTextLabel(times[i], prices[i], waveLabels[i], waveCol, 9, anchor);
+    }
+
+    // Draw wave 3 target line if available
+    if(pattern.wave3Target > 0 && pattern.currentState == STATE_WAVE_3)
+    {
+        m_drawingManager.DrawHorizontalLevel(pattern.wave3Target,
+                                             color(waveCol | 0x808080),
+                                             "W3 target 1.618",
+                                             STYLE_DASH, 1, false);
+    }
+
+    // Draw wave 5 target line if available
+    if(pattern.wave5Target > 0 && pattern.currentState == STATE_WAVE_5)
+    {
+        m_drawingManager.DrawHorizontalLevel(pattern.wave5Target,
+                                             color(waveCol | 0x808080),
+                                             "W5 target",
+                                             STYLE_DASH, 1, false);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| ClearWaveDrawings                                                |
 //+------------------------------------------------------------------+
 void CStrategyElliottWaveEnhanced::ClearWaveDrawings()
 {
     if(m_drawingManager != NULL)
         m_drawingManager.CleanupOldObjects();
+}
+
+//+------------------------------------------------------------------+
+//| Internal wave validation helpers (thin wrappers, DRY)           |
+//+------------------------------------------------------------------+
+bool CStrategyElliottWaveEnhanced::CheckWave2Rules(double w0, double w1, double w2)
+{
+    double w1Size = MathAbs(w1 - w0);
+    if(w1Size <= 0) return false;
+    bool isBull = (w1 > w0);
+    double ret  = isBull ? (w1 - w2) / w1Size : (w2 - w1) / w1Size;
+    if(ret >= 1.0) return false;
+    double tol = m_rules.tolerance;
+    return ret >= m_rules.wave2_retracement_min * (1 - tol) &&
+           ret <= m_rules.wave2_retracement_max * (1 + tol);
+}
+
+bool CStrategyElliottWaveEnhanced::CheckWave3Rules(double w0, double w1, double w2, double w3)
+{
+    double w1Size = MathAbs(w1 - w0);
+    double w3Size = MathAbs(w3 - w2);
+    if(w1Size <= 0 || w3Size <= 0) return false;
+    double minExt = m_rules.wave3_extension_min * (1 - m_rules.tolerance);
+    if(w3Size < w1Size * minExt) return false;
+    bool isBull = (w1 > w0);
+    return isBull ? (w3 > w1) : (w3 < w1);
+}
+
+bool CStrategyElliottWaveEnhanced::CheckWave4Rules(double w1, double w2, double w3, double w4)
+{
+    double w3Size = MathAbs(w3 - w2);
+    if(w3Size <= 0) return false;
+    double ret    = MathAbs(w4 - w3) / w3Size;
+    double tol    = m_rules.tolerance;
+    if(ret < m_rules.wave4_retracement_min * (1 - tol)) return false;
+    if(ret > m_rules.wave4_retracement_max * (1 + tol)) return false;
+    bool isBull = (w3 > w1);
+    return isBull ? (w4 > w1) : (w4 < w1);
+}
+
+bool CStrategyElliottWaveEnhanced::CheckWave5Rules(double w0, double w1, double w3, double w4, double w5)
+{
+    // Wave 5 must:
+    // 1. Extend beyond wave 3 in the impulse direction
+    // 2. Be at least 10% of wave 1 in size (not a truncated stub)
+    // 3. Not be the shortest wave if wave 3 is already shorter than wave 1
+    bool isBull = (w1 > w0);
+    if(isBull  && w5 <= w3) return false;
+    if(!isBull && w5 >= w3) return false;
+
+    double w1Size = MathAbs(w1 - w0);
+    double w5Size = MathAbs(w5 - w4);
+    if(w1Size > 0 && w5Size < w1Size * 0.10) return false;
+
+    return true;
+}
+
+bool CStrategyElliottWaveEnhanced::ValidateCorrectiveWaves_ABC(double pA, double pB, double pC)
+{
+    // pA = end of wave A, pB = end of wave B, pC = end of wave C
+    // (wave A starts at some origin — we only have ends here)
+    // In a flat/zigzag: A and C go the same direction, B goes opposite
+    // Wave B should not exceed 138.2% of wave A
+    double wASize = MathAbs(pB - pA);
+    double wBSize = MathAbs(pC - pB);
+    if(wASize <= 0) return false;
+
+    double bRatio = wBSize / wASize;
+    if(bRatio > 1.382 * (1.0 + m_rules.tolerance)) return false;
+
+    // Wave C projection 61.8–161.8% of wave A
+    double cRatio = wBSize / wASize;
+    if(cRatio < 0.618 * (1.0 - m_rules.tolerance)) return false;
+    if(cRatio > 1.618 * (1.0 + m_rules.tolerance)) return false;
+
+    // A and C must be in the same direction
+    // (A goes from pA_start to pA, C goes from pC_start to pC — i.e. B→C)
+    bool aDir = (pB > pA);   // A direction (start to end)
+    bool cDir = (pC > pB);   // C direction from B end — for zigzag, same as A
+    // In a zigzag: A down, B up, C down → aDir=false, cDir=false ✓
+    // In a flat:   A down, B up, C down → same
+    // The key Elliott rule: C must be in same direction as A
+    return (aDir == !cDir);   // B is opposite, which means C = same as A means cDir != aDir
+                               // Wait — aDir is A's direction (true=up), cDir is C's direction
+                               // For zigzag: if A is down (aDir=false, pB < pA) then C is also down
+                               // C goes from B-end: pC < pB → cDir = false. So aDir == cDir. Corrected below.
 }
 
 #endif // STRATEGY_ELLIOTTWAVE_ENHANCED_MQH

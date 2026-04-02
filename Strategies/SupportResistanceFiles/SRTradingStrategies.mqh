@@ -50,6 +50,7 @@ private:
     int                 m_emaSlow;
     int                 m_emaFastHandle;
     int                 m_emaSlowHandle;
+    int                 m_atrHandle;
     
     // Internal helpers
     bool                HasBullishRejection();
@@ -83,7 +84,8 @@ CSRBounceStrategy::CSRBounceStrategy() :
     m_emaFast(50),
     m_emaSlow(200),
     m_emaFastHandle(INVALID_HANDLE),
-    m_emaSlowHandle(INVALID_HANDLE)
+    m_emaSlowHandle(INVALID_HANDLE),
+    m_atrHandle(INVALID_HANDLE)
 {
 }
 
@@ -94,6 +96,7 @@ CSRBounceStrategy::~CSRBounceStrategy()
 {
     if(m_emaFastHandle != INVALID_HANDLE) IndicatorRelease(m_emaFastHandle);
     if(m_emaSlowHandle != INVALID_HANDLE) IndicatorRelease(m_emaSlowHandle);
+    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
 }
 
 //+------------------------------------------------------------------+
@@ -110,11 +113,13 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
     
     if(m_emaFastHandle != INVALID_HANDLE) IndicatorRelease(m_emaFastHandle);
     if(m_emaSlowHandle != INVALID_HANDLE) IndicatorRelease(m_emaSlowHandle);
+    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
     
     m_emaFastHandle = iMA(m_symbol, m_timeframe, m_emaFast, 0, MODE_EMA, PRICE_CLOSE);
     m_emaSlowHandle = iMA(m_symbol, m_timeframe, m_emaSlow, 0, MODE_EMA, PRICE_CLOSE);
+    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
     
-    return (m_srDetector != NULL && m_emaFastHandle != INVALID_HANDLE && m_emaSlowHandle != INVALID_HANDLE);
+    return (m_srDetector != NULL && m_emaFastHandle != INVALID_HANDLE && m_emaSlowHandle != INVALID_HANDLE && m_atrHandle != INVALID_HANDLE);
 }
 
 //+------------------------------------------------------------------+
@@ -315,15 +320,16 @@ double CSRBounceStrategy::GetEMA(int handle)
 //+------------------------------------------------------------------+
 double CSRBounceStrategy::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
     
     double atrBuf[1];
     double result = 0;
     if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
         result = atrBuf[0];
-        
-    IndicatorRelease(handle);
+
+    if(handle != m_atrHandle)
+        IndicatorRelease(handle);
     return result;
 }
 
@@ -339,6 +345,7 @@ private:
     CSupportResistanceDetector* m_srDetector;
     
     double              m_minConfidence;
+    int                 m_atrHandle;
     
     bool                HasVolumeConfirmation();
     double              GetATR(int period = 14);
@@ -361,7 +368,8 @@ CSRBreakoutStrategy::CSRBreakoutStrategy() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
     m_srDetector(NULL),
-    m_minConfidence(0.65)
+    m_minConfidence(0.65),
+    m_atrHandle(INVALID_HANDLE)
 {
 }
 
@@ -370,6 +378,7 @@ CSRBreakoutStrategy::CSRBreakoutStrategy() :
 //+------------------------------------------------------------------+
 CSRBreakoutStrategy::~CSRBreakoutStrategy()
 {
+    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
 }
 
 //+------------------------------------------------------------------+
@@ -381,8 +390,10 @@ bool CSRBreakoutStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
     m_symbol = symbol;
     m_timeframe = timeframe;
     m_srDetector = srDetector;
+    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
     
-    return (m_srDetector != NULL);
+    return (m_srDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
 //+------------------------------------------------------------------+
@@ -498,15 +509,16 @@ bool CSRBreakoutStrategy::HasVolumeConfirmation()
 //+------------------------------------------------------------------+
 double CSRBreakoutStrategy::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
     
     double atrBuf[1];
     double result = 0;
     if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
         result = atrBuf[0];
-        
-    IndicatorRelease(handle);
+
+    if(handle != m_atrHandle)
+        IndicatorRelease(handle);
     return result;
 }
 
@@ -523,6 +535,7 @@ private:
     CSupportResistanceDetector* m_srDetector;
     
     double              m_minConfidence;
+    int                 m_atrHandle;
     
     bool                HasBullishRejection();
     bool                HasBearishRejection();
@@ -548,7 +561,8 @@ CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
     m_timeframe(PERIOD_CURRENT),
     m_trendDetector(NULL),
     m_srDetector(NULL),
-    m_minConfidence(0.65)
+    m_minConfidence(0.65),
+    m_atrHandle(INVALID_HANDLE)
 {
 }
 
@@ -557,6 +571,7 @@ CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
 //+------------------------------------------------------------------+
 CTrendlineBounceStrategy::~CTrendlineBounceStrategy()
 {
+    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
 }
 
 //+------------------------------------------------------------------+
@@ -570,8 +585,10 @@ bool CTrendlineBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES t
     m_timeframe = timeframe;
     m_trendDetector = trendDetector;
     m_srDetector = srDetector;
+    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
     
-    return (m_trendDetector != NULL);
+    return (m_trendDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
 
 //+------------------------------------------------------------------+
@@ -728,15 +745,16 @@ bool CTrendlineBounceStrategy::HasBearishRejection()
 //+------------------------------------------------------------------+
 double CTrendlineBounceStrategy::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
     
     double atrBuf[1];
     double result = 0;
     if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
         result = atrBuf[0];
-        
-    IndicatorRelease(handle);
+
+    if(handle != m_atrHandle)
+        IndicatorRelease(handle);
     return result;
 }
 

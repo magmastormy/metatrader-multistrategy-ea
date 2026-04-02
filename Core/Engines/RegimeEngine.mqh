@@ -18,6 +18,9 @@ enum ENUM_REGIME_STATE
 struct SRegimeSnapshot
 {
     bool valid;
+    string readinessClass;
+    bool reuseActive;
+    int stalenessSeconds;
     ENUM_REGIME_STATE state;
     bool compression;
     bool spreadShock;
@@ -34,6 +37,9 @@ struct SRegimeSnapshot
 
     SRegimeSnapshot() :
         valid(false),
+        readinessClass("WARMUP"),
+        reuseActive(false),
+        stalenessSeconds(0),
         state(REGIME_RANGE),
         compression(false),
         spreadShock(false),
@@ -83,6 +89,7 @@ private:
     SRegimeSnapshot m_lastSnapshot;
     int m_consecutiveDataFaults;
     datetime m_lastReuseLogTime;
+    int m_snapshotReuseTtlSeconds;
 
     void ResetHandles()
     {
@@ -104,7 +111,8 @@ private:
         if(barSeconds <= 0)
             barSeconds = 60;
 
-        return MathMax(60, MathMin(900, barSeconds));
+        int boundedBarWindow = MathMax(60, MathMin(900, barSeconds));
+        return MathMin(boundedBarWindow, MathMax(10, m_snapshotReuseTtlSeconds));
     }
 
     bool TryReuseRecentSnapshot(const string symbol,
@@ -130,6 +138,10 @@ private:
                         errorCode);
             m_lastReuseLogTime = nowTime;
         }
+
+        m_lastSnapshot.reuseActive = true;
+        m_lastSnapshot.stalenessSeconds = snapshotAgeSeconds;
+        m_lastSnapshot.readinessClass = "REUSED_SNAPSHOT";
 
         return true;
     }
@@ -274,7 +286,8 @@ public:
         m_lastStateLogTime(0),
         m_lastLoggedState(REGIME_RANGE),
         m_consecutiveDataFaults(0),
-        m_lastReuseLogTime(0)
+        m_lastReuseLogTime(0),
+        m_snapshotReuseTtlSeconds(60)
     {
         ArrayResize(m_spreadSamples, 0);
     }
@@ -310,6 +323,11 @@ public:
         m_lateEntryZScoreLimit = MathMax(0.5, lateEntryZScoreLimit);
     }
 
+    void SetSnapshotReuseTtlSeconds(const int seconds)
+    {
+        m_snapshotReuseTtlSeconds = MathMax(10, seconds);
+    }
+
     bool Update(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
         if(!EnsureHandles(symbol, timeframe))
@@ -321,10 +339,11 @@ public:
 
         int minBars = MathMax(m_bbPeriod + 5, m_atrPeriod + 5);
         if(Bars(symbol, timeframe) < minBars ||
-           BarsCalculated(m_atrHandle) < minBars ||
            BarsCalculated(m_bbHandle) < minBars)
         {
-            NoteDataFault(symbol, timeframe, "WARMUP", 0);
+            m_lastSnapshot.readinessClass = "WARMUP";
+            m_lastSnapshot.reuseActive = false;
+            m_lastSnapshot.stalenessSeconds = 0;
             return TryReuseRecentSnapshot(symbol, timeframe, "WARMUP", 0);
         }
 
@@ -401,6 +420,9 @@ public:
 
         m_consecutiveDataFaults = 0;
         m_lastSnapshot.valid = true;
+        m_lastSnapshot.readinessClass = "HEALTHY";
+        m_lastSnapshot.reuseActive = false;
+        m_lastSnapshot.stalenessSeconds = 0;
         m_lastSnapshot.state = state;
         m_lastSnapshot.compression = compression;
         m_lastSnapshot.spreadShock = spreadShock;

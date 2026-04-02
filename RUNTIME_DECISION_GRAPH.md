@@ -1,7 +1,7 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-03-30
+- Last Updated: 2026-03-31
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
 
@@ -22,8 +22,9 @@ Defines the authoritative runtime decision path and ownership boundaries between
 
 ```mermaid
 flowchart TD
-  A[OnInit] --> B[Initialize trade, risk, managers]
-  B --> B1[Validate symbols + log ACCOUNT-CAPACITY]
+  A[OnInit] --> B[Initialize mandatory trade and risk systems]
+  B --> B0[Initialize optional AI subsystems behind readiness flags]
+  B0 --> B1[Validate symbols + log ACCOUNT-CAPACITY]
   B1 --> B2[Recover TRADE-STATE from history and open positions]
   B2 --> C[Register core and AI strategy adapters]
   C --> D[OnTick or OnTimer ProcessTradingLogic]
@@ -86,10 +87,13 @@ flowchart TD
 ```
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
+- OnInit is two-tiered: mandatory trade/risk/runtime bootstrap remains fatal, while auxiliary AI brain/orchestrator/adaptation modules degrade behind readiness flags and do not abort the EA.
 
 ## Intrabar Policy
 - New-bar and intrabar paths are explicit evaluation modes.
 - Intrabar eligibility respects symbol scope and cadence interval.
+- Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
+- Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
 - Cooldown, total-position, unprotected-position, and per-symbol capacity checks are entry gates, not scan gates; the EA keeps evaluating symbols while blocked from sending.
 - Vote admission into timeframe consistency and quorum uses the pipeline's effective confidence floor for that evaluation, not just the static base pipeline minimum.
@@ -98,10 +102,11 @@ flowchart TD
   - ready live weight = `adjusted live weight x pipeline readinessScore`
   - conviction score = confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
   - per-direction score = `sum(ready live weight x conviction score)` for agreeing live voters
-  - normalized score = `direction score / total ready live weight`
-  - direction passes quorum if `normalized_score >= InpQuorumThreshold`, agreeing voters `>= InpMinLiveVoters`, and ready-live participation stays above `InpConsensusMinReadyWeightRatio`
+  - directional quality = `direction score / direction weight`
+  - support ratio = `direction weight / total ready live weight`
+  - direction passes full quorum if directional quality clears `InpQuorumThreshold`, support clears the scan-mode floor, agreeing voters clear the effective minimum, and ready-live participation stays above `InpConsensusMinReadyWeightRatio`
 - If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
-- Single-voter intrabar output still requires configured minimum confidence.
+- Intrabar can instead admit a tagged `SPARSE_INTRABAR` decision when exactly one direction survives with one voter and readiness/context/cost/support/coverage thresholds all remain strong.
 - Pipeline and validator profiles (confidence + confluence + quality) are configured separately from AI thresholds so non-AI strategies are not gated by AI policy.
 
 ## Strategy Governance Policy
@@ -111,10 +116,22 @@ flowchart TD
 - Default policy:
   - all enabled retained strategies are registered as `PRIMARY_ALPHA` and vote live
   - per-strategy inputs gate registration (disabled strategies are not registered into the pool)
+- Intrabar policy is explicit per strategy:
+  - `LIVE`: full quorum participant during intrabar scans
+  - `PROBE`: evaluated intrabar but only eligible for sparse admission
+  - `OFF`: skipped before pipeline work
 - Governance is continuous, not only binary:
   - closed-trade outcomes update rolling `healthScore`
   - reliability multipliers scale live vote impact without bypassing role/cluster controls
 - Intrabar participation remains explicit: Momentum and Unified ICT are the default intrabar voters, while Fibonacci and Support/Resistance can be opted in for smoke tests via dedicated inputs.
+
+## AI Runtime Path
+- `CNextGenStrategyBrain` now runs in a single local transformer mode; there is no runtime Python/cloud branch.
+- AI adapters avoid same-bar recomputation:
+  - neural votes come from `GetNeuralSignalCached(...)`
+  - transformer and ensemble adapters cache per-bar inference outcomes and reuse them until the bar changes
+- Feature-build or inference failures are cached as `NONE` for the remainder of the bar, preventing repeated failed forward passes on unchanged data.
+- Ensemble confidence is now derived from class probabilities returned by `GetPredictions(...)`, keeping the adapter path aligned with the transformer's classifier output semantics.
 
 ## Regime/Cost Pre-Gate
 - `CRegimeEngine` runs before validator and can veto entries on:
@@ -166,6 +183,8 @@ flowchart TD
 - Startup cooldown recovery emitted as `[TRADE-STATE]`.
 - Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`.
 - Post-quorum nullification emitted as `[CONSENSUS-VETO]` when timeframe consistency or intrabar single-voter safety clears a candidate.
+- Sparse-admission success emitted as `[CONSENSUS-SPARSE]`; near-miss sparse/full-quorum failures emitted as `[CONSENSUS-NEARMISS]`.
+- Scheduler budget and per-symbol backoff are emitted as `[SCAN-BUDGET]` and `[INTRABAR-BACKOFF]`.
 - Ranked approved candidates emitted as `[SCAN-CANDIDATE]`.
 - Final cycle winner emitted as `[SCAN-DECISION]`.
 - Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
@@ -208,6 +227,35 @@ flowchart TD
 - Candidate construction now happens under a capped risk budget from `CUnifiedRiskManager`, so sizing aligns with remaining daily/portfolio headroom before post-size veto.
 - Live execution success now requires a confirmed fill retcode or bounded history confirmation; a raw broker `Buy/Sell(...) == true` no longer qualifies on its own.
 
+## 2026-03-31 AXIOM Runtime Refactor
+- Optional AI bootstrap now degrades cleanly:
+  - NextGen brain failure disables dashboard AI status only
+  - orchestrator failure disables adaptation/weight sync only
+  - AI engine failure disables adaptive engine processing only
+- AI hot paths are now allocation-stable and bar-cached:
+  - NextGen market data uses a ring buffer
+  - uncertainty and NN training histories use ring buffers
+  - transformer/ensemble/NN votes run once per bar instead of once per tick
+- Clean detector ATR paths now reuse cached handles during repeated detection passes rather than creating indicator handles inside hot loops.
+
+## 2026-04-01 Default Runtime Efficiency Path
+- Baseline interpretation step:
+  - `default.log` proved that saved MT5 runtime state can diverge from source defaults
+  - operators should confirm `[EXECUTION-MODE]` and `[CADENCE-CONFIG]` before treating a run as a default baseline
+- Trend-readiness path:
+  - indicator handles available
+  - ATR buffer read succeeds => normal trend/regime evidence
+  - ATR buffer read fails but bounded fallback succeeds => degraded-but-valid evidence with readiness-state logging
+  - fallback fails => reuse/neutral path with explicit degradation, not silent false-ready voting
+- Scan-loop path:
+  - detect new-bar work
+  - compute intrabar selections
+  - emit `[SCAN-BUDGET]` with `active_work`
+  - if `active_work=false`, skip the symbol loop and attribute the idle cycle
+  - otherwise continue through consensus -> validator -> risk -> execution
+- Governance path:
+  - `Support/Resistance` intrabar toggle now preserves probe semantics in manager governance logs and runtime behavior
+
 ## 12. 2026-03-30 Unified ICT Integration
 - `StrategyUnifiedICT` pipeline replaces the prior counting gate with `ScoreConfluences(...)` (max 130 weighted points).
 - Confidence limits are dynamically set by `ComputeEntryConfidence(...)` using MS Break type (CHoCH vs BOS) and `CAMDDetector` Distribution sweeps.
@@ -247,3 +295,23 @@ flowchart TD
 10. `[AI-VOTE]`
 11. `[NO-SIGNAL-ALERT]`
 12. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]`
+
+## 2026-04-01 Strategy Registry + AI Runtime Flow
+- Startup now includes a registry-resolution stage before manager bootstrap:
+  - build curated indicator roster
+  - overlay AI availability
+  - resolve `InpEAMode` to an effective mode
+  - emit `[STRATEGY-REGISTRY]`
+- Manager bootstrap now registers strategies from the registry roster instead of separate indicator vs AI branches.
+- Candidate path now includes a mode-admission checkpoint between consensus and risk:
+  - invalid mode/family combinations are rejected before risk sizing
+  - `AI_ASSISTED` can add `[AI-MODE-BONUS]` to aligned indicator-primary candidates
+- Hybrid cadence now has a bounded keepalive branch when primary intrabar scheduling yields zero selected symbols:
+  - `[SCAN-BUDGET] ... intrabar_keepalive=true`
+- Trend readiness path now distinguishes:
+  - handle invalid
+  - insufficient chart history
+  - partial indicator readiness
+  - MA manual fallback
+  - ATR manual fallback
+  - snapshot reuse

@@ -52,6 +52,7 @@ struct StrategyEntry
     int successCount;
     int failCount;
     double healthScore;
+    double participationScore;
     double avgConfidence;
     ENUM_TRADE_SIGNAL lastSignal;
     double lastSignalConfidence;
@@ -380,6 +381,7 @@ private:
     bool IsStrategyLiveVoter(const int strategyIndex) const;
     void AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated);
     double GetStrategyReliabilityMultiplier(const int strategyIndex) const;
+    double GetStrategyParticipationMultiplier(const int strategyIndex) const;
     double GetStrategyRoleVoteMultiplier(const int strategyIndex) const;
     double CalculateDirectionDiversityScore(const int &strategyIndices[]) const;
     double ClampUnitValue(const double value) const;
@@ -476,6 +478,7 @@ public:
                                        string &clusterTag,
                                        string &clusterCode,
                                        string &contributorsCsv) const;
+    CUnifiedSignalPipeline* GetPipeline() { return m_pipeline; }
     bool GetLastDecisionContext(SConsensusDecisionContext &context) const;
     void GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                          ulong &featureSignals,
@@ -775,6 +778,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
     m_strategies[m_strategyCount].healthScore = 0.75;
+    m_strategies[m_strategyCount].participationScore = 0.75;
     m_strategies[m_strategyCount].avgConfidence = 0;
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
     m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
@@ -848,7 +852,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     int cycleSignalsAfterPipeline = 0;
     int cycleSignalsAfterQuorum = 0;
     int cycleVoteSuppressed = 0;
-    int intrabarEligibleActiveCount = 0;
+    int eligibleLiveVoterCount = 0;
     m_lastCycleSignalsGenerated = 0;
     m_lastCycleSignalsAfterPipeline = 0;
     m_lastCycleSignalAfterQuorum = false;
@@ -860,23 +864,37 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_symbol = symbol;
 
     int buyVotes = 0, sellVotes = 0;
+    int probeBuyVotes = 0, probeSellVotes = 0;
     double buyConviction = 0.0, sellConviction = 0.0;
+    double probeBuyConviction = 0.0, probeSellConviction = 0.0;
     double buyWeightSum = 0.0, sellWeightSum = 0.0;
+    double probeBuyWeightSum = 0.0, probeSellWeightSum = 0.0;
     double buyContextSum = 0.0, sellContextSum = 0.0;
+    double probeBuyContextSum = 0.0, probeSellContextSum = 0.0;
     double buyReadinessSum = 0.0, sellReadinessSum = 0.0;
+    double probeBuyReadinessSum = 0.0, probeSellReadinessSum = 0.0;
     double buyCostSum = 0.0, sellCostSum = 0.0;
+    double probeBuyCostSum = 0.0, probeSellCostSum = 0.0;
     double totalLiveWeight = 0.0;
     double readyLiveWeight = 0.0;
     double quorumMinConfidence = MathMax(0.0, MathMin(1.0, m_pipelineMinConfidence));
     int activeLiveStrategies = 0;
     string buyContributors[];
     string sellContributors[];
+    string probeBuyContributors[];
+    string probeSellContributors[];
     int buyContributorIndices[];
     int sellContributorIndices[];
+    int probeBuyContributorIndices[];
+    int probeSellContributorIndices[];
     ArrayResize(buyContributors, 0);
     ArrayResize(sellContributors, 0);
+    ArrayResize(probeBuyContributors, 0);
+    ArrayResize(probeSellContributors, 0);
     ArrayResize(buyContributorIndices, 0);
     ArrayResize(sellContributorIndices, 0);
+    ArrayResize(probeBuyContributorIndices, 0);
+    ArrayResize(probeSellContributorIndices, 0);
 
     if(m_usePipeline && m_pipeline != NULL)
         m_pipeline.SetIntrabarContext(evalMode == EVAL_MODE_INTRABAR);
@@ -890,35 +908,56 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             continue;
 
         bool liveVoter = IsStrategyLiveVoter(i);
-        bool eligibleForThisEval = liveVoter;
-        if(liveVoter && evalMode == EVAL_MODE_INTRABAR)
+        ENUM_INTRABAR_POLICY intrabarPolicy = GetStrategyIntrabarPolicy(i);
+        bool liveEligibleForThisEval = liveVoter;
+        bool probeEligibleForThisEval = false;
+        bool countInMainFunnel = true;
+        if(evalMode == EVAL_MODE_INTRABAR)
         {
-            if(m_strategies[i].intrabarEligible)
-                intrabarEligibleActiveCount++;
-            else
+            if(intrabarPolicy == INTRABAR_POLICY_OFF)
             {
-                eligibleForThisEval = false;
                 cycleIntrabarNotEligible++;
+                continue;
             }
+
+            if(intrabarPolicy == INTRABAR_POLICY_PROBE)
+            {
+                liveEligibleForThisEval = false;
+                probeEligibleForThisEval = true;
+                countInMainFunnel = false;
+            }
+
+            if(liveVoter && liveEligibleForThisEval)
+                eligibleLiveVoterCount++;
+        }
+        else if(liveVoter)
+        {
+            eligibleLiveVoterCount++;
         }
 
         double strategyWeight = 0.0;
         double adjustedStrategyWeight = 0.0;
-        if(eligibleForThisEval)
+        if(liveVoter)
         {
             strategyWeight = MathMax(0.0, m_strategies[i].weight);
             if(strategyWeight <= 0.0)
                 strategyWeight = 1.0;
             adjustedStrategyWeight = strategyWeight *
                                      GetStrategyRoleVoteMultiplier(i) *
-                                     GetStrategyReliabilityMultiplier(i);
-            totalLiveWeight += adjustedStrategyWeight;
-            activeLiveStrategies++;
+                                     GetStrategyReliabilityMultiplier(i) *
+                                     GetStrategyParticipationMultiplier(i);
+            if(liveEligibleForThisEval)
+            {
+                totalLiveWeight += adjustedStrategyWeight;
+                activeLiveStrategies++;
+            }
         }
 
         double stratConf = 0.0;
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         SPipelineEvidenceSnapshot pipelineEvidence;
+        bool rawNone = false;
+        bool filteredByPipeline = false;
 
         // Get signal (filtered if pipeline enabled)
         if(m_usePipeline && m_pipeline != NULL)
@@ -928,16 +967,19 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                               m_strategies[i].timeframe,
                                               stratConf);
             m_pipeline.GetLastEvidenceSnapshot(pipelineEvidence);
-            bool rawNone = m_pipeline.WasLastSignalRawNone();
-            bool filteredByPipeline = m_pipeline.WasLastSignalFilteredByPipeline();
-            if(rawNone)
-                cycleRawNone++;
-            else
-                cycleSignalsGenerated++;
-            if(filteredByPipeline)
-                cycleFilteredOut++;
-            if(signal != TRADE_SIGNAL_NONE)
-                cycleSignalsAfterPipeline++;
+            rawNone = m_pipeline.WasLastSignalRawNone();
+            filteredByPipeline = m_pipeline.WasLastSignalFilteredByPipeline();
+            if(countInMainFunnel)
+            {
+                if(rawNone)
+                    cycleRawNone++;
+                else
+                    cycleSignalsGenerated++;
+                if(filteredByPipeline)
+                    cycleFilteredOut++;
+                if(signal != TRADE_SIGNAL_NONE)
+                    cycleSignalsAfterPipeline++;
+            }
         }
         else
         {
@@ -950,14 +992,33 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             pipelineEvidence.contextScore = 0.75;
             pipelineEvidence.costScore = 0.75;
             pipelineEvidence.effectiveMinConfidence = quorumMinConfidence;
-            if(signal == TRADE_SIGNAL_NONE)
-                cycleRawNone++;
-            else
+            if(countInMainFunnel)
             {
-                cycleSignalsGenerated++;
-                cycleSignalsAfterPipeline++;
+                if(signal == TRADE_SIGNAL_NONE)
+                    cycleRawNone++;
+                else
+                {
+                    cycleSignalsGenerated++;
+                    cycleSignalsAfterPipeline++;
+                }
             }
         }
+
+        double participationTarget = 0.45;
+        if(signal != TRADE_SIGNAL_NONE)
+            participationTarget = 1.0;
+        else if(filteredByPipeline)
+            participationTarget = 0.65;
+        else if(rawNone)
+            participationTarget = 0.35;
+
+        double previousParticipation = m_strategies[i].participationScore;
+        if(previousParticipation <= 0.0)
+            previousParticipation = 0.75;
+        m_strategies[i].participationScore = MathMax(0.35,
+                                                     MathMin(1.0,
+                                                             (previousParticipation * 0.85) +
+                                                             (participationTarget * 0.15)));
 
         string decisionReasonTag = m_strategies[i].strategy.GetLastDecisionReasonTag();
         if(signal == TRADE_SIGNAL_NONE)
@@ -1002,15 +1063,17 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             signalConfidenceFloor = MathMax(0.0, MathMin(1.0, m_pipeline.GetLastEffectiveMinConfidence()));
         signalConfidenceFloor = MathMax(0.20, signalConfidenceFloor * 0.80);
 
-        if(!liveVoter)
+        if(!liveVoter && !probeEligibleForThisEval)
         {
             if(signal != TRADE_SIGNAL_NONE)
                 cycleVoteSuppressed++;
             continue;
         }
 
-        if(evalMode == EVAL_MODE_INTRABAR && !m_strategies[i].intrabarEligible)
+        if(evalMode == EVAL_MODE_INTRABAR && !liveEligibleForThisEval && !probeEligibleForThisEval)
         {
+            if(signal != TRADE_SIGNAL_NONE)
+                cycleVoteSuppressed++;
             continue;
         }
 
@@ -1018,9 +1081,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         double contextScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.contextScore));
         double costScore = MathMax(0.25, MathMin(1.0, pipelineEvidence.costScore));
         double readyWeightContribution = adjustedStrategyWeight * readinessScore;
-        readyLiveWeight += readyWeightContribution;
+        if(liveVoter && liveEligibleForThisEval)
+            readyLiveWeight += readyWeightContribution;
 
-        if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE && stratConf >= signalConfidenceFloor)
+        if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE && stratConf >= signalConfidenceFloor && (liveEligibleForThisEval || probeEligibleForThisEval))
         {
             m_tfConsistency.AddTimeframeSignal(m_strategies[i].timeframe,
                                                signal,
@@ -1031,34 +1095,70 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         if(signal == TRADE_SIGNAL_BUY && stratConf >= signalConfidenceFloor)
         {
             double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
-            buyVotes++;
-            buyConviction += conviction * readyWeightContribution;
-            buyWeightSum += readyWeightContribution;
-            buyContextSum += contextScore * readyWeightContribution;
-            buyReadinessSum += readinessScore * readyWeightContribution;
-            buyCostSum += costScore * readyWeightContribution;
+            if(liveVoter && liveEligibleForThisEval)
+            {
+                buyVotes++;
+                buyConviction += conviction * readyWeightContribution;
+                buyWeightSum += readyWeightContribution;
+                buyContextSum += contextScore * readyWeightContribution;
+                buyReadinessSum += readinessScore * readyWeightContribution;
+                buyCostSum += costScore * readyWeightContribution;
 
-            int buySize = ArraySize(buyContributors);
-            ArrayResize(buyContributors, buySize + 1);
-            ArrayResize(buyContributorIndices, buySize + 1);
-            buyContributors[buySize] = m_strategies[i].name;
-            buyContributorIndices[buySize] = i;
+                int buySize = ArraySize(buyContributors);
+                ArrayResize(buyContributors, buySize + 1);
+                ArrayResize(buyContributorIndices, buySize + 1);
+                buyContributors[buySize] = m_strategies[i].name;
+                buyContributorIndices[buySize] = i;
+            }
+            else if(probeEligibleForThisEval)
+            {
+                probeBuyVotes++;
+                probeBuyConviction += conviction * readyWeightContribution;
+                probeBuyWeightSum += readyWeightContribution;
+                probeBuyContextSum += contextScore * readyWeightContribution;
+                probeBuyReadinessSum += readinessScore * readyWeightContribution;
+                probeBuyCostSum += costScore * readyWeightContribution;
+
+                int probeBuySize = ArraySize(probeBuyContributors);
+                ArrayResize(probeBuyContributors, probeBuySize + 1);
+                ArrayResize(probeBuyContributorIndices, probeBuySize + 1);
+                probeBuyContributors[probeBuySize] = m_strategies[i].name;
+                probeBuyContributorIndices[probeBuySize] = i;
+            }
         }
         else if(signal == TRADE_SIGNAL_SELL && stratConf >= signalConfidenceFloor)
         {
             double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
-            sellVotes++;
-            sellConviction += conviction * readyWeightContribution;
-            sellWeightSum += readyWeightContribution;
-            sellContextSum += contextScore * readyWeightContribution;
-            sellReadinessSum += readinessScore * readyWeightContribution;
-            sellCostSum += costScore * readyWeightContribution;
+            if(liveVoter && liveEligibleForThisEval)
+            {
+                sellVotes++;
+                sellConviction += conviction * readyWeightContribution;
+                sellWeightSum += readyWeightContribution;
+                sellContextSum += contextScore * readyWeightContribution;
+                sellReadinessSum += readinessScore * readyWeightContribution;
+                sellCostSum += costScore * readyWeightContribution;
 
-            int sellSize = ArraySize(sellContributors);
-            ArrayResize(sellContributors, sellSize + 1);
-            ArrayResize(sellContributorIndices, sellSize + 1);
-            sellContributors[sellSize] = m_strategies[i].name;
-            sellContributorIndices[sellSize] = i;
+                int sellSize = ArraySize(sellContributors);
+                ArrayResize(sellContributors, sellSize + 1);
+                ArrayResize(sellContributorIndices, sellSize + 1);
+                sellContributors[sellSize] = m_strategies[i].name;
+                sellContributorIndices[sellSize] = i;
+            }
+            else if(probeEligibleForThisEval)
+            {
+                probeSellVotes++;
+                probeSellConviction += conviction * readyWeightContribution;
+                probeSellWeightSum += readyWeightContribution;
+                probeSellContextSum += contextScore * readyWeightContribution;
+                probeSellReadinessSum += readinessScore * readyWeightContribution;
+                probeSellCostSum += costScore * readyWeightContribution;
+
+                int probeSellSize = ArraySize(probeSellContributors);
+                ArrayResize(probeSellContributors, probeSellSize + 1);
+                ArrayResize(probeSellContributorIndices, probeSellSize + 1);
+                probeSellContributors[probeSellSize] = m_strategies[i].name;
+                probeSellContributorIndices[probeSellSize] = i;
+            }
         }
 
     }
@@ -1073,104 +1173,268 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_diagSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
     m_diagVoteSuppressed += (ulong)MathMax(0, cycleVoteSuppressed);
 
-    if(activeLiveStrategies == 0)
-    {
-        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
-                    symbol,
-                    0.0,
-                    0.0,
-                    m_quorumThreshold,
-                    buyVotes,
-                    sellVotes,
-                    TradeSignalToString(TRADE_SIGNAL_NONE));
-        m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
-        m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
-        m_lastCycleSignalAfterQuorum = false;
-        m_lastSignalRole = "PRIMARY_ALPHA";
-        m_lastSignalCluster = "NONE";
-        m_lastSignalClusterCode = "N";
-        m_lastDecisionContext.reason = "no_active_live_voters";
-        MaybeLogConsensusDiagnostics(symbol);
-        return TRADE_SIGNAL_NONE;
-    }
-
     double minReadyWeight = totalLiveWeight * m_minReadyWeightRatio;
+    bool readyWeightMet = (readyLiveWeight >= minReadyWeight);
+    double readyCoverage = (totalLiveWeight > 0.0) ? ClampUnitValue(readyLiveWeight / totalLiveWeight) : 0.0;
     double quorumDenominator = (readyLiveWeight > 0.0) ? readyLiveWeight : totalLiveWeight;
     if(quorumDenominator <= 0.0)
         quorumDenominator = 1.0;
 
-    // Conviction model:
-    // score(direction) = adjusted conviction sum / ready-live-weight
-    double buyScore = buyConviction / quorumDenominator;
-    double sellScore = sellConviction / quorumDenominator;
-    buyScore = MathMax(0.0, MathMin(1.0, buyScore));
-    sellScore = MathMax(0.0, MathMin(1.0, sellScore));
+    double buyScore = ClampUnitValue(buyConviction / quorumDenominator);
+    double sellScore = ClampUnitValue(sellConviction / quorumDenominator);
+    double buyDirectionalQuality = (buyWeightSum > 0.0) ? ClampUnitValue(buyConviction / buyWeightSum) : 0.0;
+    double sellDirectionalQuality = (sellWeightSum > 0.0) ? ClampUnitValue(sellConviction / sellWeightSum) : 0.0;
+    double buySupportRatio = (readyLiveWeight > 0.0) ? ClampUnitValue(buyWeightSum / readyLiveWeight) : 0.0;
+    double sellSupportRatio = (readyLiveWeight > 0.0) ? ClampUnitValue(sellWeightSum / readyLiveWeight) : 0.0;
+    double buyAverageReadiness = (buyWeightSum > 0.0) ? ClampUnitValue(buyReadinessSum / buyWeightSum) : 0.0;
+    double sellAverageReadiness = (sellWeightSum > 0.0) ? ClampUnitValue(sellReadinessSum / sellWeightSum) : 0.0;
+    double buyAverageContext = (buyWeightSum > 0.0) ? ClampUnitValue(buyContextSum / buyWeightSum) : 0.0;
+    double sellAverageContext = (sellWeightSum > 0.0) ? ClampUnitValue(sellContextSum / sellWeightSum) : 0.0;
+    double buyAverageCost = (buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0;
+    double sellAverageCost = (sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0;
+    double supportFloor = (evalMode == EVAL_MODE_INTRABAR) ? m_supportFloorIntrabar : m_supportFloorNewBar;
 
-    int minLiveVoters = MathMax(1, m_minQuorum);
-    bool readyWeightMet = (readyLiveWeight >= minReadyWeight);
-    bool buyQuorumMet = (readyWeightMet && buyVotes >= minLiveVoters && buyScore >= m_quorumThreshold);
-    bool sellQuorumMet = (readyWeightMet && sellVotes >= minLiveVoters && sellScore >= m_quorumThreshold);
+    int effectiveMinVoters = MathMax(1, m_minQuorum);
+    if(evalMode == EVAL_MODE_INTRABAR)
+    {
+        int intrabarFloor = MathMax(1, m_intrabarMinQuorum);
+        int eligibleFloor = MathMax(1, eligibleLiveVoterCount);
+        effectiveMinVoters = MathMin(intrabarFloor, eligibleFloor);
+        if(m_intrabarDynamicQuorumEnabled && eligibleLiveVoterCount >= 4 && effectiveMinVoters < 2)
+            effectiveMinVoters = 2;
+    }
+
+    bool buyQuorumMet = (readyWeightMet &&
+                         buyVotes >= effectiveMinVoters &&
+                         buyDirectionalQuality >= m_quorumThreshold &&
+                         buySupportRatio >= supportFloor);
+    bool sellQuorumMet = (readyWeightMet &&
+                          sellVotes >= effectiveMinVoters &&
+                          sellDirectionalQuality >= m_quorumThreshold &&
+                          sellSupportRatio >= supportFloor);
 
     ENUM_TRADE_SIGNAL finalSignal = TRADE_SIGNAL_NONE;
+    ENUM_CONSENSUS_DECISION_CLASS decisionClass = CONSENSUS_DECISION_NONE;
     double finalConfidence = 0.0;
+    double finalConvictionScore = 0.0;
+    double finalDirectionalQuality = 0.0;
+    double finalSupportRatio = 0.0;
+    double finalDirectionalWeight = 0.0;
+    double finalReadinessScore = 0.0;
+    double finalContextScore = 0.0;
+    double finalCostScore = 0.0;
+    double finalStalenessPenalty = 0.0;
     int finalConfluence = 0;
     string selectedContributors[];
     int selectedContributorIndices[];
+    string vetoCode = "";
     string vetoReason = "";
+    bool selectedSparseFromProbe = false;
     ArrayResize(selectedContributors, 0);
     ArrayResize(selectedContributorIndices, 0);
 
-    if(!readyWeightMet)
+    if(activeLiveStrategies <= 0 || totalLiveWeight <= 0.0)
     {
-        vetoReason = StringFormat("ready_weight %.3f < %.3f", readyLiveWeight, minReadyWeight);
+        vetoCode = "no_active_live_voters";
+        vetoReason = "no_active_live_voters";
     }
-
-    if(buyQuorumMet && sellQuorumMet)
+    else if(buyQuorumMet && sellQuorumMet)
     {
         double scoreDelta = MathAbs(buyScore - sellScore);
         if(scoreDelta < m_conflictDeadband)
         {
             cycleQuorumFailed++;
-            vetoReason = StringFormat("dual_direction_deadband | buyScore=%.3f | sellScore=%.3f | deadband=%.3f",
-                                      buyScore, sellScore, m_conflictDeadband);
+            vetoCode = "deadband_conflict";
+            vetoReason = StringFormat("buyScore=%.3f | sellScore=%.3f | deadband=%.3f",
+                                      buyScore,
+                                      sellScore,
+                                      m_conflictDeadband);
         }
-        else if(buyScore > sellScore)
+        else
         {
-            finalSignal = TRADE_SIGNAL_BUY;
-            finalConfluence = buyVotes;
-            finalConfidence = (buyWeightSum > 0.0) ? (buyConviction / buyWeightSum) : 0.0;
-            ArrayCopy(selectedContributors, buyContributors);
-            ArrayCopy(selectedContributorIndices, buyContributorIndices);
-        }
-        else if(sellScore > buyScore)
-        {
-            finalSignal = TRADE_SIGNAL_SELL;
-            finalConfluence = sellVotes;
-            finalConfidence = (sellWeightSum > 0.0) ? (sellConviction / sellWeightSum) : 0.0;
-            ArrayCopy(selectedContributors, sellContributors);
-            ArrayCopy(selectedContributorIndices, sellContributorIndices);
+            finalSignal = (buyScore > sellScore) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
         }
     }
     else if(buyQuorumMet)
     {
         finalSignal = TRADE_SIGNAL_BUY;
-        finalConfluence = buyVotes;
-        finalConfidence = (buyWeightSum > 0.0) ? (buyConviction / buyWeightSum) : 0.0;
-        ArrayCopy(selectedContributors, buyContributors);
-        ArrayCopy(selectedContributorIndices, buyContributorIndices);
     }
     else if(sellQuorumMet)
     {
         finalSignal = TRADE_SIGNAL_SELL;
-        finalConfluence = sellVotes;
-        finalConfidence = (sellWeightSum > 0.0) ? (sellConviction / sellWeightSum) : 0.0;
-        ArrayCopy(selectedContributors, sellContributors);
-        ArrayCopy(selectedContributorIndices, sellContributorIndices);
     }
     else
     {
+        if((buyVotes + sellVotes) <= 0)
+            vetoCode = "zero_voter";
+        else if(!readyWeightMet)
+            vetoCode = "readiness_weight";
+        else if(MathMax(buyDirectionalQuality, sellDirectionalQuality) < m_quorumThreshold)
+            vetoCode = "single_voter_confidence";
+        else if(MathMax(buySupportRatio, sellSupportRatio) < supportFloor)
+            vetoCode = "sparse_support";
+        else
+            vetoCode = "direction_quorum_not_met";
+
         if((buyVotes + sellVotes) > 0)
             cycleQuorumFailed++;
+    }
+
+    if(finalSignal != TRADE_SIGNAL_NONE)
+    {
+        decisionClass = CONSENSUS_DECISION_FULL_QUORUM;
+        if(finalSignal == TRADE_SIGNAL_BUY)
+        {
+            finalConfluence = buyVotes;
+            finalDirectionalQuality = buyDirectionalQuality;
+            finalSupportRatio = buySupportRatio;
+            finalDirectionalWeight = buyWeightSum;
+            finalReadinessScore = (buyWeightSum > 0.0) ? ClampUnitValue(buyReadinessSum / buyWeightSum) : 0.0;
+            finalContextScore = (buyWeightSum > 0.0) ? ClampUnitValue(buyContextSum / buyWeightSum) : 0.0;
+            finalCostScore = (buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0;
+            finalConvictionScore = buyScore;
+            finalConfidence = ClampUnitValue((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25));
+            ArrayCopy(selectedContributors, buyContributors);
+            ArrayCopy(selectedContributorIndices, buyContributorIndices);
+        }
+        else
+        {
+            finalConfluence = sellVotes;
+            finalDirectionalQuality = sellDirectionalQuality;
+            finalSupportRatio = sellSupportRatio;
+            finalDirectionalWeight = sellWeightSum;
+            finalReadinessScore = (sellWeightSum > 0.0) ? ClampUnitValue(sellReadinessSum / sellWeightSum) : 0.0;
+            finalContextScore = (sellWeightSum > 0.0) ? ClampUnitValue(sellContextSum / sellWeightSum) : 0.0;
+            finalCostScore = (sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0;
+            finalConvictionScore = sellScore;
+            finalConfidence = ClampUnitValue((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25));
+            ArrayCopy(selectedContributors, sellContributors);
+            ArrayCopy(selectedContributorIndices, sellContributorIndices);
+        }
+    }
+    else if(evalMode == EVAL_MODE_INTRABAR)
+    {
+        int totalBuyVotesAll = buyVotes + probeBuyVotes;
+        int totalSellVotesAll = sellVotes + probeSellVotes;
+
+        if(totalBuyVotesAll == 1 && totalSellVotesAll == 0)
+        {
+            bool useProbe = (buyVotes == 0 && probeBuyVotes == 1);
+            double sparseDirectionalWeight = useProbe ? probeBuyWeightSum : buyWeightSum;
+            double sparseDirectionalConviction = useProbe ? probeBuyConviction : buyConviction;
+            double sparseDirectionalQuality = (sparseDirectionalWeight > 0.0)
+                                              ? ClampUnitValue(sparseDirectionalConviction / sparseDirectionalWeight)
+                                              : 0.0;
+            double sparseSupportRatio = (readyLiveWeight > 0.0)
+                                        ? ClampUnitValue(sparseDirectionalWeight / readyLiveWeight)
+                                        : 0.0;
+            double sparseReadiness = useProbe
+                                     ? ((probeBuyWeightSum > 0.0) ? ClampUnitValue(probeBuyReadinessSum / probeBuyWeightSum) : 0.0)
+                                     : ((buyWeightSum > 0.0) ? ClampUnitValue(buyReadinessSum / buyWeightSum) : 0.0);
+            double sparseContext = useProbe
+                                   ? ((probeBuyWeightSum > 0.0) ? ClampUnitValue(probeBuyContextSum / probeBuyWeightSum) : 0.0)
+                                   : ((buyWeightSum > 0.0) ? ClampUnitValue(buyContextSum / buyWeightSum) : 0.0);
+            double sparseCost = useProbe
+                                ? ((probeBuyWeightSum > 0.0) ? ClampUnitValue(probeBuyCostSum / probeBuyWeightSum) : 0.0)
+                                : ((buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0);
+
+            if(!readyWeightMet || readyCoverage < m_sparseIntrabarMinReadyCoverage)
+                vetoCode = "readiness_coverage";
+            else if(sparseReadiness < 0.80)
+                vetoCode = "readiness_gate";
+            else if(sparseContext < 0.70)
+                vetoCode = "context_gate";
+            else if(sparseCost < 0.70)
+                vetoCode = "cost_gate";
+            else if(sparseDirectionalQuality < MathMax(m_sparseIntrabarMinQuality, m_intrabarSingleVoterMinConfidence))
+                vetoCode = "single_voter_confidence";
+            else if(sparseSupportRatio < m_sparseIntrabarMinSupportRatio)
+                vetoCode = "sparse_support";
+            else
+            {
+                finalSignal = TRADE_SIGNAL_BUY;
+                decisionClass = CONSENSUS_DECISION_SPARSE_INTRABAR;
+                finalConfluence = 1;
+                finalDirectionalQuality = sparseDirectionalQuality;
+                finalSupportRatio = sparseSupportRatio;
+                finalDirectionalWeight = sparseDirectionalWeight;
+                finalReadinessScore = sparseReadiness;
+                finalContextScore = sparseContext;
+                finalCostScore = sparseCost;
+                finalConvictionScore = ClampUnitValue(sparseDirectionalConviction / quorumDenominator);
+                finalConfidence = ClampUnitValue(((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25)) * m_sparseIntrabarConfidencePenalty);
+                selectedSparseFromProbe = useProbe;
+                if(useProbe)
+                {
+                    ArrayCopy(selectedContributors, probeBuyContributors);
+                    ArrayCopy(selectedContributorIndices, probeBuyContributorIndices);
+                }
+                else
+                {
+                    ArrayCopy(selectedContributors, buyContributors);
+                    ArrayCopy(selectedContributorIndices, buyContributorIndices);
+                }
+            }
+        }
+        else if(totalSellVotesAll == 1 && totalBuyVotesAll == 0)
+        {
+            bool useProbe = (sellVotes == 0 && probeSellVotes == 1);
+            double sparseDirectionalWeight = useProbe ? probeSellWeightSum : sellWeightSum;
+            double sparseDirectionalConviction = useProbe ? probeSellConviction : sellConviction;
+            double sparseDirectionalQuality = (sparseDirectionalWeight > 0.0)
+                                              ? ClampUnitValue(sparseDirectionalConviction / sparseDirectionalWeight)
+                                              : 0.0;
+            double sparseSupportRatio = (readyLiveWeight > 0.0)
+                                        ? ClampUnitValue(sparseDirectionalWeight / readyLiveWeight)
+                                        : 0.0;
+            double sparseReadiness = useProbe
+                                     ? ((probeSellWeightSum > 0.0) ? ClampUnitValue(probeSellReadinessSum / probeSellWeightSum) : 0.0)
+                                     : ((sellWeightSum > 0.0) ? ClampUnitValue(sellReadinessSum / sellWeightSum) : 0.0);
+            double sparseContext = useProbe
+                                   ? ((probeSellWeightSum > 0.0) ? ClampUnitValue(probeSellContextSum / probeSellWeightSum) : 0.0)
+                                   : ((sellWeightSum > 0.0) ? ClampUnitValue(sellContextSum / sellWeightSum) : 0.0);
+            double sparseCost = useProbe
+                                ? ((probeSellWeightSum > 0.0) ? ClampUnitValue(probeSellCostSum / probeSellWeightSum) : 0.0)
+                                : ((sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0);
+
+            if(!readyWeightMet || readyCoverage < m_sparseIntrabarMinReadyCoverage)
+                vetoCode = "readiness_coverage";
+            else if(sparseReadiness < 0.80)
+                vetoCode = "readiness_gate";
+            else if(sparseContext < 0.70)
+                vetoCode = "context_gate";
+            else if(sparseCost < 0.70)
+                vetoCode = "cost_gate";
+            else if(sparseDirectionalQuality < MathMax(m_sparseIntrabarMinQuality, m_intrabarSingleVoterMinConfidence))
+                vetoCode = "single_voter_confidence";
+            else if(sparseSupportRatio < m_sparseIntrabarMinSupportRatio)
+                vetoCode = "sparse_support";
+            else
+            {
+                finalSignal = TRADE_SIGNAL_SELL;
+                decisionClass = CONSENSUS_DECISION_SPARSE_INTRABAR;
+                finalConfluence = 1;
+                finalDirectionalQuality = sparseDirectionalQuality;
+                finalSupportRatio = sparseSupportRatio;
+                finalDirectionalWeight = sparseDirectionalWeight;
+                finalReadinessScore = sparseReadiness;
+                finalContextScore = sparseContext;
+                finalCostScore = sparseCost;
+                finalConvictionScore = ClampUnitValue(sparseDirectionalConviction / quorumDenominator);
+                finalConfidence = ClampUnitValue(((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25)) * m_sparseIntrabarConfidencePenalty);
+                selectedSparseFromProbe = useProbe;
+                if(useProbe)
+                {
+                    ArrayCopy(selectedContributors, probeSellContributors);
+                    ArrayCopy(selectedContributorIndices, probeSellContributorIndices);
+                }
+                else
+                {
+                    ArrayCopy(selectedContributors, sellContributors);
+                    ArrayCopy(selectedContributorIndices, sellContributorIndices);
+                }
+            }
+        }
     }
 
     if(m_tfConsistency != NULL && m_tfConsistency.HasConflicts())
@@ -1178,97 +1442,46 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         double resolvedConfidence = 0.0;
         string reasoning = "";
         ENUM_TRADE_SIGNAL resolvedSignal = m_tfConsistency.ResolveSignals(resolvedConfidence, reasoning);
-        double cappedResolvedConfidence = MathMax(0.0, MathMin(1.0, resolvedConfidence));
 
-        if(resolvedSignal == TRADE_SIGNAL_NONE)
+        if(finalSignal == TRADE_SIGNAL_NONE)
         {
-            if(finalSignal != TRADE_SIGNAL_NONE)
-                cycleQuorumFailed++;
-            if(reasoning != "")
-                vetoReason = "timeframe_conflict -> NONE | " + reasoning;
-            else
-                vetoReason = "timeframe_conflict -> NONE";
+            vetoCode = "timeframe_conflict";
+            vetoReason = (reasoning != "") ? reasoning : "timeframe_conflict";
+        }
+        else if(resolvedSignal == TRADE_SIGNAL_NONE || resolvedSignal != finalSignal)
+        {
+            cycleQuorumFailed++;
+            vetoCode = "timeframe_conflict";
+            vetoReason = (reasoning != "") ? reasoning : "timeframe_conflict";
             finalSignal = TRADE_SIGNAL_NONE;
             finalConfidence = 0.0;
+            finalConvictionScore = 0.0;
+            finalDirectionalQuality = 0.0;
+            finalSupportRatio = 0.0;
+            finalDirectionalWeight = 0.0;
+            finalReadinessScore = 0.0;
+            finalContextScore = 0.0;
+            finalCostScore = 0.0;
             finalConfluence = 0;
             ArrayResize(selectedContributors, 0);
             ArrayResize(selectedContributorIndices, 0);
         }
-        else
+        else if(resolvedConfidence > 0.0)
         {
-            bool resolvedQuorumMet = (resolvedSignal == TRADE_SIGNAL_BUY) ? buyQuorumMet : sellQuorumMet;
-            if(resolvedQuorumMet)
-            {
-                if(resolvedSignal == TRADE_SIGNAL_BUY)
-                {
-                    if(finalSignal != TRADE_SIGNAL_BUY)
-                    {
-                        ArrayCopy(selectedContributors, buyContributors);
-                        ArrayCopy(selectedContributorIndices, buyContributorIndices);
-                        finalConfluence = buyVotes;
-                    }
-                    finalSignal = TRADE_SIGNAL_BUY;
-                }
-                else
-                {
-                    if(finalSignal != TRADE_SIGNAL_SELL)
-                    {
-                        ArrayCopy(selectedContributors, sellContributors);
-                        ArrayCopy(selectedContributorIndices, sellContributorIndices);
-                        finalConfluence = sellVotes;
-                    }
-                    finalSignal = TRADE_SIGNAL_SELL;
-                }
-
-                if(finalSignal != TRADE_SIGNAL_NONE)
-                {
-                    if(finalConfidence <= 0.0)
-                        finalConfidence = cappedResolvedConfidence;
-                    else
-                        finalConfidence = MathMin(finalConfidence, cappedResolvedConfidence);
-                }
-            }
-            else
-            {
-                if(finalSignal != TRADE_SIGNAL_NONE)
-                    cycleQuorumFailed++;
-                if(reasoning != "")
-                    vetoReason = StringFormat("timeframe_resolved_%s_without_direction_quorum | %s",
-                                              TradeSignalToString(resolvedSignal),
-                                              reasoning);
-                else
-                    vetoReason = StringFormat("timeframe_resolved_%s_without_direction_quorum",
-                                              TradeSignalToString(resolvedSignal));
-                finalSignal = TRADE_SIGNAL_NONE;
-                finalConfidence = 0.0;
-                finalConfluence = 0;
-                ArrayResize(selectedContributors, 0);
-                ArrayResize(selectedContributorIndices, 0);
-            }
+            finalConfidence = MathMin(finalConfidence, ClampUnitValue(resolvedConfidence));
         }
-    }
-
-    // Intrabar safety gate: single-voter signal requires stronger confidence.
-    if(finalSignal != TRADE_SIGNAL_NONE &&
-       evalMode == EVAL_MODE_INTRABAR &&
-       finalConfluence == 1 &&
-       finalConfidence < m_intrabarSingleVoterMinConfidence)
-    {
-        cycleQuorumFailed++;
-        vetoReason = StringFormat("intrabar_single_voter_confidence %.2f < %.2f",
-                                  finalConfidence,
-                                  m_intrabarSingleVoterMinConfidence);
-        finalSignal = TRADE_SIGNAL_NONE;
-        finalConfidence = 0.0;
-        finalConfluence = 0;
-        ArrayResize(selectedContributors, 0);
-        ArrayResize(selectedContributorIndices, 0);
     }
 
     m_diagQuorumFailed += (ulong)MathMax(0, cycleQuorumFailed);
 
     if(finalSignal != TRADE_SIGNAL_NONE)
     {
+        if(selectedSparseFromProbe)
+        {
+            cycleSignalsGenerated++;
+            cycleSignalsAfterPipeline++;
+        }
+
         cycleSignalsAfterQuorum = 1;
         m_diagSignalsAfterQuorum += 1;
         confluence = finalConfluence;
@@ -1289,6 +1502,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         m_lastCycleSignalAfterQuorum = true;
         m_lastDecisionContext.symbol = symbol;
         m_lastDecisionContext.signal = finalSignal;
+        m_lastDecisionContext.decisionClass = (int)decisionClass;
+        m_lastDecisionContext.quorumMode = ConsensusDecisionClassToString(decisionClass);
         m_lastDecisionContext.confidence = confidence;
         m_lastDecisionContext.confluence = finalConfluence;
         m_lastDecisionContext.buyScore = buyScore;
@@ -1297,43 +1512,71 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         m_lastDecisionContext.sellSupport = sellWeightSum;
         m_lastDecisionContext.readyLiveWeight = readyLiveWeight;
         m_lastDecisionContext.totalLiveWeight = totalLiveWeight;
-        m_lastDecisionContext.readinessScore = (finalSignal == TRADE_SIGNAL_BUY && buyWeightSum > 0.0)
-                                               ? (buyReadinessSum / buyWeightSum)
-                                               : ((finalSignal == TRADE_SIGNAL_SELL && sellWeightSum > 0.0)
-                                                  ? (sellReadinessSum / sellWeightSum)
-                                                  : 0.0);
-        m_lastDecisionContext.contextScore = (finalSignal == TRADE_SIGNAL_BUY && buyWeightSum > 0.0)
-                                             ? (buyContextSum / buyWeightSum)
-                                             : ((finalSignal == TRADE_SIGNAL_SELL && sellWeightSum > 0.0)
-                                                ? (sellContextSum / sellWeightSum)
-                                                : 0.0);
-        m_lastDecisionContext.costScore = (finalSignal == TRADE_SIGNAL_BUY && buyWeightSum > 0.0)
-                                          ? (buyCostSum / buyWeightSum)
-                                          : ((finalSignal == TRADE_SIGNAL_SELL && sellWeightSum > 0.0)
-                                             ? (sellCostSum / sellWeightSum)
-                                             : 0.0);
+        m_lastDecisionContext.readinessScore = finalReadinessScore;
+        m_lastDecisionContext.contextScore = finalContextScore;
+        m_lastDecisionContext.costScore = finalCostScore;
         m_lastDecisionContext.diversityScore = CalculateDirectionDiversityScore(selectedContributorIndices);
-        m_lastDecisionContext.convictionScore = (finalSignal == TRADE_SIGNAL_BUY) ? buyScore : sellScore;
-        m_lastDecisionContext.reason = StringFormat("ready_weight=%.3f/%.3f | deadband=%.3f | cost=%.2f | contributors=%s",
-                                                    readyLiveWeight,
-                                                    totalLiveWeight,
-                                                    m_conflictDeadband,
-                                                    m_lastDecisionContext.costScore,
+        m_lastDecisionContext.convictionScore = finalConvictionScore;
+        m_lastDecisionContext.directionalQuality = finalDirectionalQuality;
+        m_lastDecisionContext.supportRatio = finalSupportRatio;
+        m_lastDecisionContext.directionalWeight = finalDirectionalWeight;
+        m_lastDecisionContext.readyCoverage = readyCoverage;
+        m_lastDecisionContext.quorumGap = 0.0;
+        m_lastDecisionContext.stalenessPenalty = finalStalenessPenalty;
+        m_lastDecisionContext.eligibleLiveVoterCount = eligibleLiveVoterCount;
+        m_lastDecisionContext.effectiveMinVoters = effectiveMinVoters;
+        m_lastDecisionContext.vetoCode = "";
+        m_lastDecisionContext.reason = StringFormat("mode=%s | quality=%.3f | support=%.3f | readyCoverage=%.3f | contributors=%s",
+                                                    m_lastDecisionContext.quorumMode,
+                                                    finalDirectionalQuality,
+                                                    finalSupportRatio,
+                                                    readyCoverage,
                                                     JoinContributorsWithContext(selectedContributorIndices));
 
-        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | readyWeight=%.3f/%.3f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
+        PrintFormat("[CONSENSUS-QUORUM] %s | class=%s | buyScore=%.3f | sellScore=%.3f | buyQuality=%.3f | sellQuality=%.3f | supportFloor=%.2f | readyWeight=%.3f/%.3f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
                     symbol,
+                    ConsensusDecisionClassToString(decisionClass),
                     buyScore,
                     sellScore,
-                    m_quorumThreshold,
+                    buyDirectionalQuality,
+                    sellDirectionalQuality,
+                    supportFloor,
                     readyLiveWeight,
                     totalLiveWeight,
                     buyVotes,
                     sellVotes,
                     TradeSignalToString(finalSignal));
+        if(decisionClass == CONSENSUS_DECISION_SPARSE_INTRABAR)
+        {
+            PrintFormat("[CONSENSUS-SPARSE] %s | signal=%s | quality=%.3f | support=%.3f | readyCoverage=%.3f | readiness=%.3f | context=%.3f | cost=%.3f | contributors=%s",
+                        symbol,
+                        TradeSignalToString(finalSignal),
+                        finalDirectionalQuality,
+                        finalSupportRatio,
+                        readyCoverage,
+                        finalReadinessScore,
+                        finalContextScore,
+                        finalCostScore,
+                        JoinContributorsWithContext(selectedContributorIndices));
+        }
         MaybeLogConsensusDiagnostics(symbol);
         return finalSignal;
     }
+
+    double bestDirectionalQuality = MathMax(buyDirectionalQuality, sellDirectionalQuality);
+    double bestSupportRatio = MathMax(buySupportRatio, sellSupportRatio);
+    int bestVoterCount = MathMax(buyVotes, sellVotes);
+    bool buyDominant = (buyDirectionalQuality > sellDirectionalQuality) ||
+                       (buyDirectionalQuality == sellDirectionalQuality && buyScore >= sellScore);
+    double dominantReadiness = buyDominant ? buyAverageReadiness : sellAverageReadiness;
+    double dominantContext = buyDominant ? buyAverageContext : sellAverageContext;
+    double dominantCost = buyDominant ? buyAverageCost : sellAverageCost;
+    double quorumGap = MathMax(0.0, m_quorumThreshold - bestDirectionalQuality);
+    quorumGap = MathMax(quorumGap, MathMax(0.0, supportFloor - bestSupportRatio));
+    if(effectiveMinVoters > 0 && bestVoterCount < effectiveMinVoters)
+        quorumGap = MathMax(quorumGap, (double)(effectiveMinVoters - bestVoterCount) / (double)effectiveMinVoters);
+    if(!readyWeightMet && totalLiveWeight > 0.0)
+        quorumGap = MathMax(quorumGap, ClampUnitValue((minReadyWeight - readyLiveWeight) / totalLiveWeight));
 
     confidence = 0;
     confluence = 0;
@@ -1347,29 +1590,67 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_lastCycleSignalAfterQuorum = (cycleSignalsAfterQuorum > 0);
     m_lastDecisionContext.symbol = symbol;
     m_lastDecisionContext.signal = TRADE_SIGNAL_NONE;
+    m_lastDecisionContext.decisionClass = (int)((vetoCode != "") ? CONSENSUS_DECISION_VETOED : CONSENSUS_DECISION_NONE);
+    m_lastDecisionContext.quorumMode = (vetoCode != "") ? "VETOED" : "NONE";
     m_lastDecisionContext.buyScore = buyScore;
     m_lastDecisionContext.sellScore = sellScore;
     m_lastDecisionContext.buySupport = buyWeightSum;
     m_lastDecisionContext.sellSupport = sellWeightSum;
     m_lastDecisionContext.readyLiveWeight = readyLiveWeight;
     m_lastDecisionContext.totalLiveWeight = totalLiveWeight;
+    m_lastDecisionContext.readinessScore = dominantReadiness;
+    m_lastDecisionContext.contextScore = dominantContext;
+    m_lastDecisionContext.costScore = dominantCost;
+    m_lastDecisionContext.convictionScore = MathMax(buyScore, sellScore);
+    m_lastDecisionContext.directionalQuality = bestDirectionalQuality;
+    m_lastDecisionContext.supportRatio = bestSupportRatio;
+    m_lastDecisionContext.directionalWeight = MathMax(buyWeightSum, sellWeightSum);
+    m_lastDecisionContext.readyCoverage = readyCoverage;
+    m_lastDecisionContext.quorumGap = ClampUnitValue(quorumGap);
+    m_lastDecisionContext.stalenessPenalty = 0.0;
+    m_lastDecisionContext.eligibleLiveVoterCount = eligibleLiveVoterCount;
+    m_lastDecisionContext.effectiveMinVoters = effectiveMinVoters;
+    m_lastDecisionContext.vetoCode = (vetoCode != "") ? vetoCode : "direction_quorum_not_met";
     m_lastDecisionContext.costScore = 0.0;
-    m_lastDecisionContext.reason = (vetoReason != "") ? vetoReason : "direction_quorum_not_met";
-    if(vetoReason != "")
+    m_lastDecisionContext.reason = (vetoReason != "") ? vetoReason : m_lastDecisionContext.vetoCode;
+    if((buyVotes + sellVotes + probeBuyVotes + probeSellVotes) > 0 && evalMode == EVAL_MODE_INTRABAR)
     {
-        PrintFormat("[CONSENSUS-VETO] %s | reason=%s | buyScore=%.3f | sellScore=%.3f | buyVoterCount=%d | sellVoterCount=%d",
+        PrintFormat("[CONSENSUS-NEARMISS] %s | veto=%s | buyScore=%.3f | sellScore=%.3f | buyQuality=%.3f | sellQuality=%.3f | buyVotes=%d | sellVotes=%d | probeBuy=%d | probeSell=%d | readyCoverage=%.3f",
                     symbol,
-                    vetoReason,
+                    m_lastDecisionContext.vetoCode,
                     buyScore,
                     sellScore,
+                    buyDirectionalQuality,
+                    sellDirectionalQuality,
+                    buyVotes,
+                    sellVotes,
+                    probeBuyVotes,
+                    probeSellVotes,
+                    readyCoverage);
+    }
+    if(m_lastDecisionContext.reason != "")
+    {
+        PrintFormat("[CONSENSUS-VETO] %s | code=%s | reason=%s | buyScore=%.3f | sellScore=%.3f | buyQuality=%.3f | sellQuality=%.3f | supportFloor=%.2f | readyWeight=%.3f/%.3f | buyVoterCount=%d | sellVoterCount=%d",
+                    symbol,
+                    m_lastDecisionContext.vetoCode,
+                    m_lastDecisionContext.reason,
+                    buyScore,
+                    sellScore,
+                    buyDirectionalQuality,
+                    sellDirectionalQuality,
+                    supportFloor,
+                    readyLiveWeight,
+                    totalLiveWeight,
                     buyVotes,
                     sellVotes);
     }
-        PrintFormat("[CONSENSUS-QUORUM] %s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
-                    symbol,
-                    buyScore,
-                    sellScore,
-                    m_quorumThreshold,
+    PrintFormat("[CONSENSUS-QUORUM] %s | class=%s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | supportFloor=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
+                symbol,
+                m_lastDecisionContext.quorumMode,
+                buyScore,
+                sellScore,
+                m_quorumThreshold,
+                supportFloor,
                 buyVotes,
                 sellVotes,
                 TradeSignalToString(TRADE_SIGNAL_NONE));
@@ -1490,13 +1771,13 @@ string CEnterpriseStrategyManager::GetStrategyReport() const
         int total = m_strategies[i].successCount + m_strategies[i].failCount;
         double winRate = total > 0 ? (double)m_strategies[i].successCount/total*100 : 0;
         
-        report += StringFormat("- %s: %s | Role: %s | Cluster: %s | LiveVote: %s | Trades: %d | Win Rate: %.1f%% | Avg Conf: %.2f\n",
+        report += StringFormat("- %s: %s | Role: %s | Cluster: %s | LiveVote: %s | Trades: %d | Win Rate: %.1f%% | Avg Conf: %.2f | Participation: %.2f\n",
                              m_strategies[i].name,
                              m_strategies[i].enabled ? "ON" : "OFF",
                              StrategyRoleToString((ENUM_STRATEGY_ROLE)m_strategies[i].role),
                              StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster),
                              IsStrategyLiveVoter(i) ? "YES" : "NO",
-                             total, winRate, m_strategies[i].avgConfidence);
+                             total, winRate, m_strategies[i].avgConfidence, m_strategies[i].participationScore);
     }
     
     if(m_pipeline != NULL)
@@ -1850,6 +2131,64 @@ int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
     return -1;
 }
 
+double CEnterpriseStrategyManager::ClampUnitValue(const double value) const
+{
+    if(!MathIsValidNumber(value))
+        return 0.0;
+    return MathMax(0.0, MathMin(1.0, value));
+}
+
+ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetStrategyIntrabarPolicy(const int strategyIndex) const
+{
+    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
+        return INTRABAR_POLICY_OFF;
+
+    int rawPolicy = m_strategies[strategyIndex].intrabarPolicy;
+    if(rawPolicy < (int)INTRABAR_POLICY_OFF || rawPolicy > (int)INTRABAR_POLICY_LIVE)
+        return m_strategies[strategyIndex].intrabarEligible ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF;
+
+    return (ENUM_INTRABAR_POLICY)rawPolicy;
+}
+
+bool CEnterpriseStrategyManager::IsStrategyIntrabarLiveEligible(const int strategyIndex) const
+{
+    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_LIVE);
+}
+
+bool CEnterpriseStrategyManager::IsStrategyIntrabarProbeEligible(const int strategyIndex) const
+{
+    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_PROBE);
+}
+
+double CEnterpriseStrategyManager::CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const
+{
+    int samples = MathMin(ArraySize(strategyIndices), ArraySize(metrics));
+    if(samples <= 0)
+        return 0.0;
+
+    double weightedSum = 0.0;
+    double totalWeight = 0.0;
+    for(int i = 0; i < samples; i++)
+    {
+        int idx = strategyIndices[i];
+        if(idx < 0 || idx >= m_strategyCount)
+            continue;
+
+        double metric = ClampUnitValue(metrics[i]);
+        double weight = MathMax(0.0, m_strategies[idx].weight);
+        if(weight <= 0.0)
+            weight = 1.0;
+
+        weightedSum += (metric * weight);
+        totalWeight += weight;
+    }
+
+    if(totalWeight <= 0.0)
+        return 0.0;
+
+    return ClampUnitValue(weightedSum / totalWeight);
+}
+
 bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) const
 {
     if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
@@ -1873,6 +2212,18 @@ double CEnterpriseStrategyManager::GetStrategyReliabilityMultiplier(const int st
         healthScore = 0.75;
 
     return MathMax(0.55, MathMin(1.15, 0.65 + (0.50 * healthScore)));
+}
+
+double CEnterpriseStrategyManager::GetStrategyParticipationMultiplier(const int strategyIndex) const
+{
+    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
+        return 0.80;
+
+    double participationScore = m_strategies[strategyIndex].participationScore;
+    if(participationScore <= 0.0)
+        participationScore = 0.75;
+
+    return MathMax(0.55, MathMin(1.05, 0.40 + (0.65 * participationScore)));
 }
 
 double CEnterpriseStrategyManager::GetStrategyRoleVoteMultiplier(const int strategyIndex) const
@@ -2079,6 +2430,20 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
         ulong intervalUICTNone = (m_diagUICTNone - m_diagRootBaselineUICTNone);
         ulong intervalUICTNeutralBias = (m_diagUICTNeutralBias - m_diagRootBaselineUICTNeutralBias);
         ulong intervalUICTOtherFilters = (m_diagUICTOtherFilters - m_diagRootBaselineUICTOtherFilters);
+        int liveVoterCount = 0;
+        int dormantLiveCount = 0;
+        double liveParticipationSum = 0.0;
+        for(int i = 0; i < m_strategyCount; i++)
+        {
+            if(!IsStrategyLiveVoter(i))
+                continue;
+
+            liveVoterCount++;
+            liveParticipationSum += m_strategies[i].participationScore;
+            if(m_strategies[i].participationScore < 0.60)
+                dormantLiveCount++;
+        }
+        double avgParticipation = (liveVoterCount > 0) ? ClampUnitValue(liveParticipationSum / liveVoterCount) : 0.0;
 
         ulong reasonTotal = intervalRawNone + intervalFilteredOut + intervalQuorumFailed + intervalIntrabarNotEligible;
         double denom = (reasonTotal > 0) ? (double)reasonTotal : 1.0;
@@ -2139,12 +2504,15 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
                     intervalUICTNone,
                     intervalUICTNeutralBias,
                     intervalUICTOtherFilters);
-        PrintFormat("[CONSENSUS-ROLE] %s | primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u",
+        PrintFormat("[CONSENSUS-ROLE] %s | primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | live_voters=%d | avg_participation=%.2f | dormant_live=%d",
                     symbol,
                     intervalRolePrimarySignals,
                     intervalRoleFeatureSignals,
                     intervalRoleShadowSignals,
-                    intervalVoteSuppressed);
+                    intervalVoteSuppressed,
+                    liveVoterCount,
+                    avgParticipation,
+                    dormantLiveCount);
         PrintFormat("[CONSENSUS-CLUSTER] %s | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
                     symbol,
                     intervalClusterTrendSignals,

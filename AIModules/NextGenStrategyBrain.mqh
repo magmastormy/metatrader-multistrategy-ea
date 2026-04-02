@@ -8,7 +8,6 @@
 #include <Arrays\ArrayDouble.mqh>
 #include <Math\Stat\Math.mqh>
 #include "TransformerBrain.mqh"
-#include "EnsembleMetaLearner.mqh"
 #include "UncertaintyQuantifier.mqh"
 #include "../Core/Utils/Enums.mqh"
 
@@ -21,15 +20,29 @@ private:
     double m_volumeData[];
     double m_indicatorData[];
     int m_maxSequenceLength;
-    int m_currentCount;
+    int m_head;
+    int m_count;
+    bool m_isFull;
+
+    enum { INDICATOR_COUNT = 10 };
+
+    int PhysicalIndex(const int logicalIndex) const
+    {
+        if(!m_isFull)
+            return logicalIndex;
+
+        return (m_head - m_count + logicalIndex + m_maxSequenceLength) % m_maxSequenceLength;
+    }
     
 public:
     CMarketDataProcessor(int maxSeqLen = 100) {
         m_maxSequenceLength = maxSeqLen;
-        m_currentCount = 0;
+        m_head = 0;
+        m_count = 0;
+        m_isFull = false;
         ArrayResize(m_priceData, maxSeqLen);
         ArrayResize(m_volumeData, maxSeqLen);
-        ArrayResize(m_indicatorData, maxSeqLen * 10); // 10 indicators per point
+        ArrayResize(m_indicatorData, maxSeqLen * INDICATOR_COUNT);
         ArrayInitialize(m_priceData, 0.0);
         ArrayInitialize(m_volumeData, 0.0);
         ArrayInitialize(m_indicatorData, 0.0);
@@ -37,91 +50,88 @@ public:
     
     // Add market data point
     bool AddDataPoint(double price, double volume, const double &indicators[]) {
-        // Shift data left
-        if(m_currentCount >= m_maxSequenceLength) {
-            ArrayCopy(m_priceData, m_priceData, 0, 1, m_maxSequenceLength - 1);
-            ArrayCopy(m_volumeData, m_volumeData, 0, 1, m_maxSequenceLength - 1);
-            
-            // Shift indicators (block copy)
-            int indCount = 10;
-            int totalInd = m_maxSequenceLength * indCount;
-            ArrayCopy(m_indicatorData, m_indicatorData, 0, indCount, totalInd - indCount);
-            
-            m_priceData[m_maxSequenceLength - 1] = price;
-            m_volumeData[m_maxSequenceLength - 1] = volume;
-            
-            // Add new indicators
-            int startIdx = (m_maxSequenceLength - 1) * indCount;
-            for(int i = 0; i < indCount && i < ArraySize(indicators); i++) {
-                m_indicatorData[startIdx + i] = indicators[i];
-            }
-        } else {
-            m_priceData[m_currentCount] = price;
-            m_volumeData[m_currentCount] = volume;
-            
-            int startIdx = m_currentCount * 10;
-            for(int i = 0; i < 10 && i < ArraySize(indicators); i++) {
-                m_indicatorData[startIdx + i] = indicators[i];
-            }
-            m_currentCount++;
-        }
-        
+        int writeIndex = m_head;
+        m_priceData[writeIndex] = price;
+        m_volumeData[writeIndex] = volume;
+
+        int indicatorBase = writeIndex * INDICATOR_COUNT;
+        int copyCount = MathMin(ArraySize(indicators), INDICATOR_COUNT);
+        for(int i = 0; i < INDICATOR_COUNT; i++)
+            m_indicatorData[indicatorBase + i] = (i < copyCount) ? indicators[i] : 0.0;
+
+        m_head = (m_head + 1) % m_maxSequenceLength;
+        if(m_count < m_maxSequenceLength)
+            m_count++;
+        if(m_count == m_maxSequenceLength)
+            m_isFull = true;
+
         return true;
     }
     
     // Prepare data for AI models with proper normalization
     bool PrepareModelInput(double &modelInput[], int &sequenceLength) {
-        sequenceLength = m_currentCount;
+        sequenceLength = m_count;
         if(sequenceLength < 10) return false; // Need minimum data
         
-        int featuresPerStep = 12; // price, volume, + 10 indicators
+        int featuresPerStep = 2 + INDICATOR_COUNT;
         ArrayResize(modelInput, sequenceLength * featuresPerStep);
         
         // Calculate price statistics
         double priceMean = 0.0, priceStd = 0.0;
-        for(int i = 0; i < sequenceLength; i++) priceMean += m_priceData[i];
+        for(int i = 0; i < sequenceLength; i++)
+        {
+            int physicalIndex = PhysicalIndex(i);
+            priceMean += m_priceData[physicalIndex];
+        }
         priceMean /= sequenceLength;
         
         for(int i = 0; i < sequenceLength; i++) {
-            double diff = m_priceData[i] - priceMean;
+            int physicalIndex = PhysicalIndex(i);
+            double diff = m_priceData[physicalIndex] - priceMean;
             priceStd += diff * diff;
         }
-        priceStd = MathSqrt(priceStd / sequenceLength);
-        if(priceStd < 0.001) priceStd = 0.001;
+        priceStd = MathSqrt(priceStd / sequenceLength + 1e-9);
         
         // Calculate volume statistics
         double volumeMean = 0.0, volumeStd = 0.0;
-        for(int i = 0; i < sequenceLength; i++) volumeMean += m_volumeData[i];
+        for(int i = 0; i < sequenceLength; i++)
+        {
+            int physicalIndex = PhysicalIndex(i);
+            volumeMean += m_volumeData[physicalIndex];
+        }
         volumeMean /= sequenceLength;
         
         for(int i = 0; i < sequenceLength; i++) {
-            double diff = m_volumeData[i] - volumeMean;
+            int physicalIndex = PhysicalIndex(i);
+            double diff = m_volumeData[physicalIndex] - volumeMean;
             volumeStd += diff * diff;
         }
-        volumeStd = MathSqrt(volumeStd / sequenceLength);
-        if(volumeStd < 0.001) volumeStd = 0.001;
+        volumeStd = MathSqrt(volumeStd / sequenceLength + 1e-9);
         
         // Normalize and fill input
         for(int i = 0; i < sequenceLength; i++) {
+            int physicalIndex = PhysicalIndex(i);
             int baseIdx = i * featuresPerStep;
             
             // Price (Z-score)
-            modelInput[baseIdx] = (m_priceData[i] - priceMean) / priceStd;
+            modelInput[baseIdx] = (m_priceData[physicalIndex] - priceMean) / priceStd;
             
             // Volume (Z-score clamped)
-            double normVol = (m_volumeData[i] - volumeMean) / volumeStd;
+            double normVol = (m_volumeData[physicalIndex] - volumeMean) / volumeStd;
             modelInput[baseIdx + 1] = MathMax(-3.0, MathMin(3.0, normVol));
             
             // Indicators
-            for(int j = 0; j < 10; j++) {
-                int indIdx = i * 10 + j;
-                double val = m_indicatorData[indIdx];
+            int indicatorBase = physicalIndex * INDICATOR_COUNT;
+            for(int j = 0; j < INDICATOR_COUNT; j++) {
+                double val = m_indicatorData[indicatorBase + j];
                 modelInput[baseIdx + 2 + j] = MathMax(-10.0, MathMin(10.0, val));
             }
         }
         
         return true;
     }
+
+    int GetCount() const { return m_count; }
 };
 
 //+------------------------------------------------------------------+
@@ -136,7 +146,6 @@ private:
     
     // AI components
     CTransformerBrain* m_transformerBrain;
-    CEnsembleMetaLearner* m_ensembleSystem;
     CUncertaintyQuantifier* m_uncertaintyQuantifier;
     
     // Performance tracking
@@ -150,10 +159,29 @@ private:
     double m_uncertaintyThreshold;
     bool m_useUncertaintyFiltering;
     
-    // Connection state
-    int m_consecutiveFailures;
-    datetime m_lastFailureTime;
-    bool m_serverCircuitOpen;
+    datetime m_lastDataBarTime;
+    datetime m_cacheBarTime;
+    bool m_hasCachedSignal;
+    SEnhancedTradeSignal m_cachedSignal;
+
+    datetime GetCurrentBarTime() const
+    {
+        if(m_symbol == "")
+            return 0;
+        return iTime(m_symbol, m_timeframe, 0);
+    }
+
+    bool NeedsNewInference(const datetime currentBarTime) const
+    {
+        return (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime);
+    }
+
+    void UpdateSignalCache(const datetime currentBarTime, const SEnhancedTradeSignal &signal)
+    {
+        m_cachedSignal = signal;
+        m_cacheBarTime = currentBarTime;
+        m_hasCachedSignal = true;
+    }
     
 public:
     CNextGenStrategyBrain() {
@@ -162,7 +190,6 @@ public:
         m_symbol = "";
         m_timeframe = PERIOD_CURRENT;
         m_transformerBrain = NULL;
-        m_ensembleSystem = NULL;
         m_uncertaintyQuantifier = NULL;
         m_totalReturn = 0.0;
         m_totalTrades = 0;
@@ -172,16 +199,15 @@ public:
         m_confidenceThreshold = 0.6;
         m_uncertaintyThreshold = 0.4;
         m_useUncertaintyFiltering = true;
-        
-        m_consecutiveFailures = 0;
-        m_lastFailureTime = 0;
-        m_serverCircuitOpen = false;
+
+        m_lastDataBarTime = 0;
+        m_cacheBarTime = 0;
+        m_hasCachedSignal = false;
     }
     
     ~CNextGenStrategyBrain() {
         if(CheckPointer(m_dataProcessor) == POINTER_DYNAMIC) delete m_dataProcessor;
         if(CheckPointer(m_transformerBrain) == POINTER_DYNAMIC) delete m_transformerBrain;
-        if(CheckPointer(m_ensembleSystem) == POINTER_DYNAMIC) delete m_ensembleSystem;
         if(CheckPointer(m_uncertaintyQuantifier) == POINTER_DYNAMIC) delete m_uncertaintyQuantifier;
     }
     // Initialize the AI brain system
@@ -191,14 +217,8 @@ public:
         
         // Initialize Transformer Brain (Local Model)
         if(m_transformerBrain == NULL) {
-            m_transformerBrain = new CTransformerBrain(64, 4, 2, 128, 100); // Lightweight config for EA
+            m_transformerBrain = new CTransformerBrain(64, 4, 2, 128, 50); // Right-sized local model for MT5 runtime
             if(!m_transformerBrain) return false;
-        }
-        
-        // Initialize Ensemble
-        if(m_ensembleSystem == NULL) {
-            m_ensembleSystem = new CEnsembleMetaLearner();
-            if(!m_ensembleSystem) return false;
         }
         
         // Initialize Uncertainty
@@ -207,6 +227,9 @@ public:
             if(!m_uncertaintyQuantifier) return false;
         }
         
+        m_lastDataBarTime = 0;
+        m_cacheBarTime = 0;
+        m_hasCachedSignal = false;
         m_initialized = true;
         Print("[NEXTGEN] AI Strategy Brain initialized for ", brainSymbol);
         return true;
@@ -216,146 +239,72 @@ public:
     bool GenerateSignal(double price, double volume, const double &indicators[], 
                        SEnhancedTradeSignal &signal) {
         if(!m_initialized) return false;
-        
-        // Add new market data
-        m_dataProcessor.AddDataPoint(price, volume, indicators);
-        
-        // Prepare input for AI models
+
+        datetime currentBarTime = GetCurrentBarTime();
+        if(currentBarTime != m_lastDataBarTime)
+        {
+            m_dataProcessor.AddDataPoint(price, volume, indicators);
+            m_lastDataBarTime = currentBarTime;
+        }
+
+        if(!NeedsNewInference(currentBarTime))
+        {
+            signal = m_cachedSignal;
+            return true;
+        }
+
         double modelInput[];
         int sequenceLength;
         if(!m_dataProcessor.PrepareModelInput(modelInput, sequenceLength)) {
             return false;
         }
-        
-        bool serverSuccess = false;
-        
-        // Try Remote Inference (if circuit not open)
-        if(!m_serverCircuitOpen) {
-            if(SendInferenceRequest(modelInput, signal)) {
-                serverSuccess = true;
-                m_consecutiveFailures = 0;
-            } else {
-                m_consecutiveFailures++;
-                if(m_consecutiveFailures > 5) {
-                    m_serverCircuitOpen = true;
-                    m_lastFailureTime = TimeCurrent();
-                    Print("[AI-BRIDGE] Circuit Breaker Open - Switching to Local Mode");
-                }
-            }
-        } else {
-            // Check if we should retry server (every 5 minutes)
-            if(TimeCurrent() - m_lastFailureTime > 300) {
-                m_serverCircuitOpen = false;
-                m_consecutiveFailures = 0;
-            }
+
+        double predictions[];
+        if(!m_transformerBrain.GetPredictions(modelInput, sequenceLength, predictions) || ArraySize(predictions) != 3)
+        {
+            signal.signal = TRADE_SIGNAL_NONE;
+            signal.reasoning = "AI Failure";
+            return false;
         }
-        
-        // Fallback to Local Transformer if server failed or disabled
-        if(!serverSuccess) {
-            double output[];
-            if(m_transformerBrain.Forward(modelInput, output)) {
-                // Interpret output: [0]=Buy, [1]=Sell, [2]=Hold
-                double buyProb = output[0];
-                double sellProb = output[1];
-                double holdProb = output[2];
-                
-                // Softmax normalization
-                double maxVal = MathMax(buyProb, MathMax(sellProb, holdProb));
-                double expBuy = MathExp(buyProb - maxVal);
-                double expSell = MathExp(sellProb - maxVal);
-                double expHold = MathExp(holdProb - maxVal);
-                double sumExp = expBuy + expSell + expHold;
-                
-                buyProb = expBuy / sumExp;
-                sellProb = expSell / sumExp;
-                holdProb = expHold / sumExp;
-                
-                signal.buyProbability = buyProb;
-                signal.sellProbability = sellProb;
-                signal.timestamp = TimeCurrent();
-                signal.reasoning = "Local Transformer Model";
-                
-                if(buyProb > m_confidenceThreshold && buyProb > sellProb && buyProb > holdProb) {
-                    signal.signal = TRADE_SIGNAL_BUY;
-                    signal.confidence = buyProb;
-                } else if(sellProb > m_confidenceThreshold && sellProb > buyProb && sellProb > holdProb) {
-                    signal.signal = TRADE_SIGNAL_SELL;
-                    signal.confidence = sellProb;
-                } else {
-                    signal.signal = TRADE_SIGNAL_NONE;
-                    signal.confidence = holdProb;
-                }
-                
-                // Estimate uncertainty (entropy)
-                double entropy = -(buyProb * MathLog(buyProb + 1e-9) + 
-                                 sellProb * MathLog(sellProb + 1e-9) + 
-                                 holdProb * MathLog(holdProb + 1e-9));
-                signal.uncertainty.uncertainty = entropy / 1.0986; // Normalized by log(3)
-                
-            } else {
-                // Total failure
-                signal.signal = TRADE_SIGNAL_NONE;
-                signal.reasoning = "AI Failure";
-                return false;
-            }
+
+        double noneProb = predictions[0];
+        double buyProb = predictions[1];
+        double sellProb = predictions[2];
+
+        signal.buyProbability = buyProb;
+        signal.sellProbability = sellProb;
+        signal.timestamp = TimeCurrent();
+        signal.reasoning = "Local Transformer";
+        signal.signal = TRADE_SIGNAL_NONE;
+        signal.confidence = noneProb;
+
+        if(buyProb > m_confidenceThreshold && buyProb > sellProb && buyProb > noneProb)
+        {
+            signal.signal = TRADE_SIGNAL_BUY;
+            signal.confidence = buyProb;
         }
-        
+        else if(sellProb > m_confidenceThreshold && sellProb > buyProb && sellProb > noneProb)
+        {
+            signal.signal = TRADE_SIGNAL_SELL;
+            signal.confidence = sellProb;
+        }
+
+        double entropy = -(buyProb * MathLog(buyProb + 1e-9) +
+                           sellProb * MathLog(sellProb + 1e-9) +
+                           noneProb * MathLog(noneProb + 1e-9));
+        signal.uncertainty.uncertainty = entropy / 1.0986;
+        signal.riskAdjustedSize = 1.0 * (1.0 - signal.uncertainty.uncertainty);
+
         // Apply filters
         if(signal.confidence < m_confidenceThreshold) {
             signal.signal = TRADE_SIGNAL_NONE;
             signal.reasoning += " [Low Confidence]";
         }
-        
+
+        UpdateSignalCache(currentBarTime, signal);
         return true;
-    }
-    
-private:
-    // Python AI server integration removed - use C++ AI components only
-    bool SendInferenceRequest(const double &modelInput[], SEnhancedTradeSignal &signal) {
-        // Python bridge removed - this function is deprecated
-        return false;
     }
 
-    // Simple JSON parser for flat response structure
-    bool ParseJSONResponse(string json, SEnhancedTradeSignal &signal) {
-        // Remove braces and cleanup
-        StringReplace(json, "{", "");
-        StringReplace(json, "}", "");
-        StringReplace(json, "\"", "");
-        
-        string parts[];
-        StringSplit(json, ',', parts);
-        
-        for(int i = 0; i < ArraySize(parts); i++) {
-            string pair[];
-            StringSplit(parts[i], ':', pair);
-            
-            if(ArraySize(pair) == 2) {
-                string key = pair[0];
-                string value = pair[1];
-                
-                // Trim whitespace
-                StringTrimLeft(key); StringTrimRight(key);
-                StringTrimLeft(value); StringTrimRight(value);
-                
-                if(key == "signal") {
-                    double sigVal = StringToDouble(value);
-                    if(sigVal > 0.3) signal.signal = TRADE_SIGNAL_BUY;
-                    else if(sigVal < -0.3) signal.signal = TRADE_SIGNAL_SELL;
-                    else signal.signal = TRADE_SIGNAL_NONE;
-                }
-                else if(key == "confidence") signal.confidence = StringToDouble(value);
-                else if(key == "uncertainty") signal.uncertainty.uncertainty = StringToDouble(value);
-                else if(key == "volatility") signal.volatilityFactor = StringToDouble(value);
-                else if(key == "reasoning") signal.reasoning = value;
-            }
-        }
-        
-        signal.timestamp = TimeCurrent();
-        signal.riskAdjustedSize = 1.0 * (1.0 - signal.uncertainty.uncertainty);
-        return true;
-    }
-    
 public:
     // Update performance based on trade results
     bool UpdatePerformance(double tradeReturn, bool isWin, double drawdown = 0.0) {
@@ -430,16 +379,20 @@ public:
         m_uncertaintyQuantifier.GetUncertaintyStats(avgUnc, maxUnc, avgErr, samples);
         return avgUnc;
     }
-    
-    string GetEnsembleStatus()
+
+    bool IsInitialized() const
     {
-        if(m_ensembleSystem == NULL) return "N/A";
-        return (m_serverCircuitOpen ? "LOCAL ONLY" : "HYBRID CLOUD");
+        return m_initialized;
+    }
+    
+    string GetRuntimeMode() const
+    {
+        return "LOCAL_TRANSFORMER";
     }
 
-    // Shutdown alias
-    void Shutdown() {
-        // Cleanup handled by destructor
+    CTransformerBrain* GetTransformerBrain() const
+    {
+        return m_transformerBrain;
     }
 };
 

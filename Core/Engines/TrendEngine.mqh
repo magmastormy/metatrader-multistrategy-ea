@@ -61,6 +61,33 @@ struct TrendState
                   lastUpdate(0) {}
 };
 
+enum ENUM_TREND_READINESS_STATE
+{
+    TREND_READINESS_WARMUP = 0,
+    TREND_READINESS_TRANSIENT_COPY_FAULT = 1,
+    TREND_READINESS_HANDLE_FAULT = 2,
+    TREND_READINESS_REUSED_SNAPSHOT = 3,
+    TREND_READINESS_HEALTHY = 4
+};
+
+struct STrendReadinessSnapshot
+{
+    ENUM_TREND_READINESS_STATE state;
+    bool reuseActive;
+    int stalenessSeconds;
+    datetime lastGoodTime;
+    string reasonTag;
+
+    STrendReadinessSnapshot() :
+        state(TREND_READINESS_WARMUP),
+        reuseActive(false),
+        stalenessSeconds(0),
+        lastGoodTime(0),
+        reasonTag("WARMUP")
+    {
+    }
+};
+
 //+------------------------------------------------------------------+
 //| Multi-Timeframe Trend                                           |
 //+------------------------------------------------------------------+
@@ -112,6 +139,12 @@ private:
     int m_consecutiveReadinessFaults;
     int m_readinessFailureReinitThreshold;
     datetime m_lastReadinessReinitAttemptTime;
+    STrendReadinessSnapshot m_readinessSnapshot;
+    TrendState m_lastGoodTrend;
+    bool m_hasLastGoodTrend;
+    datetime m_lastGoodTrendTime;
+    datetime m_lastReuseLogTime;
+    int m_readinessReuseTtlSeconds;
     
     // Diagnostics
     CSignalDiagnostics* m_diagnostics;
@@ -140,6 +173,27 @@ private:
                              int atrBars,
                              int minBars);
     void MaybeReinitializeIndicatorSet(const string symbol, ENUM_TIMEFRAMES timeframe);
+    void SetReadinessState(const ENUM_TREND_READINESS_STATE state,
+                           const string reasonTag,
+                           const bool reuseActive,
+                           const int stalenessSeconds);
+    int GetReuseWindowSeconds(ENUM_TIMEFRAMES timeframe) const;
+    bool TryReuseLastGoodTrend(const string symbol,
+                               ENUM_TIMEFRAMES timeframe,
+                               const string reasonTag);
+    double CalculateAtrFallback(const string symbol, ENUM_TIMEFRAMES timeframe, const int period) const;
+    bool CalculateEmaFallbackSeries(const string symbol,
+                                    ENUM_TIMEFRAMES timeframe,
+                                    const int period,
+                                    const int count,
+                                    double &output[]) const;
+    bool CopyOrFallbackMA(const string symbol,
+                          ENUM_TIMEFRAMES timeframe,
+                          const int handle,
+                          const int period,
+                          const string reasonTag,
+                          double &output[],
+                          bool &fallbackUsed);
     TrendState CalculateMAs(const string symbol, ENUM_TIMEFRAMES timeframe,
                       double &ma_fast[], double &ma_medium[], double &ma_slow[], double &ma[]);
     double GetTrendStrength(const double &ma_fast[], const double &ma_medium[], const double &ma_slow[]);
@@ -168,6 +222,8 @@ public:
     double GetTrendStrength() const { return m_currentTrend.strength; }
     double GetTrendAngle() const { return m_currentTrend.angle; }
     double GetMomentum() const { return m_currentTrend.momentum; }
+    STrendReadinessSnapshot GetReadinessSnapshot() const { return m_readinessSnapshot; }
+    void SetReadinessReuseTtlSeconds(const int seconds) { m_readinessReuseTtlSeconds = MathMax(10, seconds); }
     
     // Utility methods
     bool IsTrendBullish() const;
@@ -221,6 +277,10 @@ CTrendEngine::CTrendEngine() :
     m_consecutiveReadinessFaults(0),
     m_readinessFailureReinitThreshold(3),
     m_lastReadinessReinitAttemptTime(0),
+    m_hasLastGoodTrend(false),
+    m_lastGoodTrendTime(0),
+    m_lastReuseLogTime(0),
+    m_readinessReuseTtlSeconds(60),
     m_diagnostics(NULL)
 {
 }
@@ -346,6 +406,16 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
                         m_handleMAFast, m_handleMAMedium, m_handleMASlow, m_handleADX, m_handleATR);
             m_lastIndicatorErrorLog = nowTime;
         }
+        SetReadinessState(TREND_READINESS_HANDLE_FAULT, "HANDLE_FAULT", false, 0);
+        RecordReadinessFault(m_indicatorSymbol,
+                             m_indicatorTimeframe,
+                             0,
+                             0,
+                             0,
+                             0,
+                             0,
+                             0,
+                             minBars);
         return false;
     }
 
@@ -356,31 +426,7 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
     int adxBars = BarsCalculated(m_handleADX);
     int atrBars = BarsCalculated(m_handleATR);
 
-    bool hardReadinessFault = (chartBars >= minBars &&
-                               (fastBars <= 0 || medBars <= 0 || slowBars <= 0 ||
-                                adxBars <= 0 || atrBars <= 0));
-    if(hardReadinessFault)
-    {
-        RecordReadinessFault(m_indicatorSymbol,
-                             m_indicatorTimeframe,
-                             chartBars,
-                             fastBars,
-                             medBars,
-                             slowBars,
-                             adxBars,
-                             atrBars,
-                             minBars);
-        return false;
-    }
-
-    m_consecutiveReadinessFaults = 0;
-
-    if(chartBars < minBars ||
-       fastBars < minBars ||
-       medBars < minBars ||
-       slowBars < minBars ||
-       adxBars < minBars ||
-       atrBars < minBars)
+    if(chartBars < minBars)
     {
         datetime nowTime = TimeCurrent();
         if((nowTime - m_lastIndicatorErrorLog) >= 60)
@@ -390,9 +436,32 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
                         chartBars, fastBars, medBars, slowBars, adxBars, atrBars, minBars);
             m_lastIndicatorErrorLog = nowTime;
         }
+        SetReadinessState(TREND_READINESS_WARMUP, "WARMUP", false, 0);
         return false;
     }
 
+    bool partialReady = (fastBars < minBars || medBars < minBars || slowBars < minBars || adxBars < minBars);
+    if(partialReady)
+    {
+        datetime nowTime = TimeCurrent();
+        if((nowTime - m_lastIndicatorErrorLog) >= 30)
+        {
+            PrintFormat("[READINESS-STATE] TrendEngine partial readiness | symbol=%s | timeframe=%s | Bars=%d | MAf=%d | MAm=%d | MAs=%d | ADX=%d | ATR=%d | need=%d",
+                        m_indicatorSymbol,
+                        EnumToString(m_indicatorTimeframe),
+                        chartBars,
+                        fastBars,
+                        medBars,
+                        slowBars,
+                        adxBars,
+                        atrBars,
+                        minBars);
+            m_lastIndicatorErrorLog = nowTime;
+        }
+        SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, "PARTIAL_READY", false, 0);
+    }
+    else
+        SetReadinessState(TREND_READINESS_HEALTHY, "HEALTHY", false, 0);
     return true;
 }
 
@@ -544,6 +613,7 @@ void CTrendEngine::MaybeReinitializeIndicatorSet(const string symbol, ENUM_TIMEF
     if(m_consecutiveReadinessFaults < m_readinessFailureReinitThreshold)
         return;
 
+    int faultsBeforeReset = m_consecutiveReadinessFaults;
     datetime nowTime = TimeCurrent();
     if(m_lastReadinessReinitAttemptTime != 0 && (nowTime - m_lastReadinessReinitAttemptTime) < 30)
         return;
@@ -566,8 +636,145 @@ void CTrendEngine::MaybeReinitializeIndicatorSet(const string symbol, ENUM_TIMEF
     PrintFormat("[TrendEngine][READINESS-FAULT] Indicator set reinitialized for %s %s after %d readiness faults",
                 symbol,
                 EnumToString(timeframe),
-                m_consecutiveReadinessFaults);
+                faultsBeforeReset);
     m_consecutiveReadinessFaults = 0;
+}
+
+void CTrendEngine::SetReadinessState(const ENUM_TREND_READINESS_STATE state,
+                                     const string reasonTag,
+                                     const bool reuseActive,
+                                     const int stalenessSeconds)
+{
+    m_readinessSnapshot.state = state;
+    m_readinessSnapshot.reasonTag = reasonTag;
+    m_readinessSnapshot.reuseActive = reuseActive;
+    m_readinessSnapshot.stalenessSeconds = MathMax(0, stalenessSeconds);
+    if(m_hasLastGoodTrend)
+        m_readinessSnapshot.lastGoodTime = m_lastGoodTrendTime;
+}
+
+int CTrendEngine::GetReuseWindowSeconds(ENUM_TIMEFRAMES timeframe) const
+{
+    int barSeconds = PeriodSeconds(timeframe);
+    if(barSeconds <= 0)
+        barSeconds = 60;
+    return MathMin(MathMax(10, m_readinessReuseTtlSeconds), MathMax(10, barSeconds));
+}
+
+double CTrendEngine::CalculateAtrFallback(const string symbol,
+                                          ENUM_TIMEFRAMES timeframe,
+                                          const int period) const
+{
+    int requiredBars = MathMax(period + 1, 5);
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    int copied = CopyRates(symbol, timeframe, 0, requiredBars, rates);
+    if(copied <= period)
+        return 0.0;
+
+    double trueRangeSum = 0.0;
+    int usable = MathMin(period, copied - 1);
+    for(int i = 0; i < usable; i++)
+    {
+        double rangeHighLow = rates[i].high - rates[i].low;
+        double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
+        double rangeLowClose = MathAbs(rates[i].low - rates[i + 1].close);
+        trueRangeSum += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
+    }
+
+    if(usable <= 0)
+        return 0.0;
+
+    return trueRangeSum / (double)usable;
+}
+
+bool CTrendEngine::CalculateEmaFallbackSeries(const string symbol,
+                                              ENUM_TIMEFRAMES timeframe,
+                                              const int period,
+                                              const int count,
+                                              double &output[]) const
+{
+    if(period <= 0 || count <= 0)
+        return false;
+
+    int requiredBars = MathMax(period + count + 5, count + 5);
+    double closes[];
+    ArraySetAsSeries(closes, true);
+    int copied = CopyClose(symbol, timeframe, 0, requiredBars, closes);
+    if(copied <= (period + count))
+        return false;
+
+    double alpha = 2.0 / ((double)period + 1.0);
+    for(int shift = 0; shift < count; shift++)
+    {
+        double ema = closes[copied - 1];
+        for(int idx = copied - 2; idx >= shift; idx--)
+            ema = (alpha * closes[idx]) + ((1.0 - alpha) * ema);
+        output[shift] = ema;
+    }
+
+    return true;
+}
+
+bool CTrendEngine::CopyOrFallbackMA(const string symbol,
+                                    ENUM_TIMEFRAMES timeframe,
+                                    const int handle,
+                                    const int period,
+                                    const string reasonTag,
+                                    double &output[],
+                                    bool &fallbackUsed)
+{
+    ResetLastError();
+    if(handle != INVALID_HANDLE && CopyBuffer(handle, 0, 0, 5, output) == 5)
+        return true;
+
+    if(CalculateEmaFallbackSeries(symbol, timeframe, period, 5, output))
+    {
+        fallbackUsed = true;
+        SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, reasonTag, false, 0);
+        datetime nowTime = TimeCurrent();
+        if((nowTime - m_lastIndicatorErrorLog) >= 30)
+        {
+            PrintFormat("[READINESS-STATE] TrendEngine MA fallback | symbol=%s | timeframe=%s | period=%d | reason=%s",
+                        symbol,
+                        EnumToString(timeframe),
+                        period,
+                        reasonTag);
+            m_lastIndicatorErrorLog = nowTime;
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool CTrendEngine::TryReuseLastGoodTrend(const string symbol,
+                                         ENUM_TIMEFRAMES timeframe,
+                                         const string reasonTag)
+{
+    if(!m_hasLastGoodTrend || m_lastGoodTrendTime <= 0)
+        return false;
+
+    int stalenessSeconds = (int)MathMax(0, TimeCurrent() - m_lastGoodTrendTime);
+    if(stalenessSeconds > GetReuseWindowSeconds(timeframe))
+        return false;
+
+    m_currentTrend = m_lastGoodTrend;
+    m_currentTrend.lastUpdate = TimeCurrent();
+    SetReadinessState(TREND_READINESS_REUSED_SNAPSHOT, reasonTag, true, stalenessSeconds);
+
+    datetime nowTime = TimeCurrent();
+    if(m_lastReuseLogTime == 0 || (nowTime - m_lastReuseLogTime) >= 30)
+    {
+        PrintFormat("[READINESS-STATE] TrendEngine reuse | symbol=%s | timeframe=%s | reason=%s | age=%d",
+                    symbol,
+                    EnumToString(timeframe),
+                    reasonTag,
+                    stalenessSeconds);
+        m_lastReuseLogTime = nowTime;
+    }
+
+    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -626,12 +833,14 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     plusDI[0] = -1.0;
     minusDI[0] = -1.0;
     atr[0] = 0.0;
+    bool atrFallbackUsed = false;
+    bool maFallbackUsed = false;
     
-    ResetLastError();
-    if(CopyBuffer(m_handleMAFast, 0, 0, 5, ma_fast) != 5 ||
-       CopyBuffer(m_handleMAMedium, 0, 0, 5, ma_medium) != 5 ||
-       CopyBuffer(m_handleMASlow, 0, 0, 5, ma_slow) != 5)
+    if(!CopyOrFallbackMA(symbol, timeframe, m_handleMAFast, m_maPeriodFast, "MA_FAST_FALLBACK", ma_fast, maFallbackUsed) ||
+       !CopyOrFallbackMA(symbol, timeframe, m_handleMAMedium, m_maPeriodMedium, "MA_MEDIUM_FALLBACK", ma_medium, maFallbackUsed) ||
+       !CopyOrFallbackMA(symbol, timeframe, m_handleMASlow, m_maPeriodSlow, "MA_SLOW_FALLBACK", ma_slow, maFallbackUsed))
     {
+        SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, "MA_BUFFER_COPY_FAILED", false, 0);
         datetime nowTime = TimeCurrent();
         if(m_diagnostics != NULL && (nowTime - m_lastIndicatorErrorLog) >= 30)
         {
@@ -641,7 +850,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
                                                        symbol, EnumToString(timeframe), err));
             m_lastIndicatorErrorLog = nowTime;
         }
-        return false;
+        return TryReuseLastGoodTrend(symbol, timeframe, "MA_BUFFER_COPY_FAILED");
     }
     
     bool adxValid = true;
@@ -696,16 +905,37 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     ResetLastError();
     if(CopyBuffer(m_handleATR, 0, 0, 1, atr) != 1)
     {
-        datetime nowTime = TimeCurrent();
-        if(m_diagnostics != NULL && (nowTime - m_lastIndicatorErrorLog) >= 30)
+        int atrCopyErr = GetLastError();
+        double atrFallback = CalculateAtrFallback(symbol, timeframe, 14);
+        if(atrFallback > 0.0)
         {
-            int err = GetLastError();
-            m_diagnostics.LogStrategyError("TrendEngine", "ATR_BUFFER_COPY_FAILED",
-                                          StringFormat("Failed to copy ATR buffer data for %s %s (err=%d)",
-                                                       symbol, EnumToString(timeframe), err));
-            m_lastIndicatorErrorLog = nowTime;
+            atr[0] = atrFallback;
+            atrFallbackUsed = true;
+            SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, "ATR_MANUAL_FALLBACK", false, 0);
+            datetime nowTime = TimeCurrent();
+            if((nowTime - m_lastIndicatorErrorLog) >= 30)
+            {
+                PrintFormat("[READINESS-STATE] TrendEngine ATR fallback | symbol=%s | timeframe=%s | err=%d | atr=%.6f",
+                            symbol,
+                            EnumToString(timeframe),
+                            atrCopyErr,
+                            atrFallback);
+                m_lastIndicatorErrorLog = nowTime;
+            }
         }
-        return false;
+        else
+        {
+            SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, "ATR_BUFFER_COPY_FAILED", false, 0);
+            datetime nowTime = TimeCurrent();
+            if(m_diagnostics != NULL && (nowTime - m_lastIndicatorErrorLog) >= 30)
+            {
+                m_diagnostics.LogStrategyError("TrendEngine", "ATR_BUFFER_COPY_FAILED",
+                                              StringFormat("Failed to copy ATR buffer data for %s %s (err=%d)",
+                                                           symbol, EnumToString(timeframe), atrCopyErr));
+                m_lastIndicatorErrorLog = nowTime;
+            }
+            return TryReuseLastGoodTrend(symbol, timeframe, "ATR_BUFFER_COPY_FAILED");
+        }
     }
     
     double effectiveAdx = adxValid ? adx[0] : 0.0;
@@ -735,6 +965,12 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     
     // Update timestamp
     m_currentTrend.lastUpdate = TimeCurrent();
+    m_lastGoodTrend = m_currentTrend;
+    m_hasLastGoodTrend = true;
+    m_lastGoodTrendTime = m_currentTrend.lastUpdate;
+    m_consecutiveReadinessFaults = 0;
+    if(!atrFallbackUsed && !maFallbackUsed)
+        SetReadinessState(TREND_READINESS_HEALTHY, "HEALTHY", false, 0);
     
     // Log trend update
     if(m_diagnostics != NULL)
@@ -845,6 +1081,10 @@ TrendState CTrendEngine::AnalyzeTrend(const string symbol, ENUM_TIMEFRAMES timef
     
     // Save current state
     TrendState savedState = m_currentTrend;
+    STrendReadinessSnapshot savedReadiness = m_readinessSnapshot;
+    TrendState savedLastGoodTrend = m_lastGoodTrend;
+    bool savedHasLastGood = m_hasLastGoodTrend;
+    datetime savedLastGoodTrendTime = m_lastGoodTrendTime;
     
     // Analyze the timeframe
     if(UpdateTrend(symbol, timeframe))
@@ -854,6 +1094,10 @@ TrendState CTrendEngine::AnalyzeTrend(const string symbol, ENUM_TIMEFRAMES timef
     
     // Restore previous state
     m_currentTrend = savedState;
+    m_readinessSnapshot = savedReadiness;
+    m_lastGoodTrend = savedLastGoodTrend;
+    m_hasLastGoodTrend = savedHasLastGood;
+    m_lastGoodTrendTime = savedLastGoodTrendTime;
     
     return state;
 }
@@ -1101,6 +1345,11 @@ void CTrendEngine::Reset()
     m_lastAdxReinitAttemptTime = 0;
     m_consecutiveReadinessFaults = 0;
     m_lastReadinessReinitAttemptTime = 0;
+    m_readinessSnapshot = STrendReadinessSnapshot();
+    m_lastGoodTrend = TrendState();
+    m_hasLastGoodTrend = false;
+    m_lastGoodTrendTime = 0;
+    m_lastReuseLogTime = 0;
     ReleaseIndicators();
 }
 

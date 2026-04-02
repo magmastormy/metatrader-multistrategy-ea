@@ -5,7 +5,6 @@
 #ifndef __UNCERTAINTY_QUANTIFIER_MQH__
 #define __UNCERTAINTY_QUANTIFIER_MQH__
 
-#include <Arrays\ArrayDouble.mqh>
 #include <Math\Stat\Math.mqh>
 
 //+------------------------------------------------------------------+
@@ -39,13 +38,36 @@ struct SPredictionWithUncertainty {
 //+------------------------------------------------------------------+
 class CUncertaintyQuantifier {
 private:
-    CArrayDouble m_predictionHistory;
-    CArrayDouble m_errorHistory;
-    CArrayDouble m_volatilityHistory;
+    double m_predictionHistory[];
+    double m_errorHistory[];
     
     int m_historySize;
+    int m_predictionHead;
+    int m_predictionCount;
+    int m_errorHead;
+    int m_errorCount;
     double m_confidenceLevel;
     bool m_initialized;
+
+    void RingPush(double &values[], int &head, int &count, const double value)
+    {
+        if(m_historySize <= 0)
+            return;
+
+        values[head] = value;
+        head = (head + 1) % m_historySize;
+        if(count < m_historySize)
+            count++;
+    }
+
+    double RingGet(const double &values[], const int head, const int count, const int logicalIndex) const
+    {
+        if(count <= 0 || logicalIndex < 0 || logicalIndex >= count || m_historySize <= 0)
+            return 0.0;
+
+        int physicalIndex = (head - count + logicalIndex + m_historySize) % m_historySize;
+        return values[physicalIndex];
+    }
     
     // Calculate prediction entropy
     double CalculateEntropy(double buyProb, double sellProb, double holdProb) {
@@ -60,17 +82,18 @@ private:
     
     // Calculate historical volatility
     double CalculateHistoricalVolatility(int lookback = 20) {
-        if(m_predictionHistory.Total() < lookback) return 1.0;
+        if(m_predictionCount < lookback) return 1.0;
         
         double mean = 0.0;
+        int startIndex = m_predictionCount - lookback;
         for(int i = 0; i < lookback; i++) {
-            mean += m_predictionHistory.At(m_predictionHistory.Total() - 1 - i);
+            mean += RingGet(m_predictionHistory, m_predictionHead, m_predictionCount, startIndex + i);
         }
         mean /= lookback;
         
         double variance = 0.0;
         for(int i = 0; i < lookback; i++) {
-            double diff = m_predictionHistory.At(m_predictionHistory.Total() - 1 - i) - mean;
+            double diff = RingGet(m_predictionHistory, m_predictionHead, m_predictionCount, startIndex + i) - mean;
             variance += diff * diff;
         }
         variance /= lookback;
@@ -80,42 +103,44 @@ private:
     
     // Calculate prediction error statistics
     double CalculatePredictionError(int lookback = 50) {
-        if(m_errorHistory.Total() < lookback) return 1.0;
+        if(m_errorCount < lookback) return 1.0;
         
         double meanError = 0.0;
+        int startIndex = m_errorCount - lookback;
         for(int i = 0; i < lookback; i++) {
-            meanError += MathAbs(m_errorHistory.At(m_errorHistory.Total() - 1 - i));
+            meanError += MathAbs(RingGet(m_errorHistory, m_errorHead, m_errorCount, startIndex + i));
         }
         
         return meanError / lookback;
     }
     
 public:
-    CUncertaintyQuantifier(int historySize = 1000, double confidenceLevel = 0.95) {
-        m_historySize = historySize;
+    CUncertaintyQuantifier(int historySize = 500, double confidenceLevel = 0.95) {
+        m_historySize = MathMax(8, historySize);
+        m_predictionHead = 0;
+        m_predictionCount = 0;
+        m_errorHead = 0;
+        m_errorCount = 0;
         m_confidenceLevel = confidenceLevel;
         m_initialized = false;
+
+        ArrayResize(m_predictionHistory, m_historySize);
+        ArrayResize(m_errorHistory, m_historySize);
+        ArrayInitialize(m_predictionHistory, 0.0);
+        ArrayInitialize(m_errorHistory, 0.0);
         
-        Print("[UNCERTAINTY] Quantifier initialized with ", historySize, " history size");
+        Print("[UNCERTAINTY] Quantifier initialized with ", m_historySize, " history size");
     }
     
     // Update prediction history
     bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0) {
-        m_predictionHistory.Add(prediction);
+        RingPush(m_predictionHistory, m_predictionHead, m_predictionCount, prediction);
         
         if(actualOutcome != 0.0) {
             double error = prediction - actualOutcome;
-            m_errorHistory.Add(error);
+            RingPush(m_errorHistory, m_errorHead, m_errorCount, error);
         }
-        
-        // Maintain history size
-        while(m_predictionHistory.Total() > m_historySize) {
-            m_predictionHistory.Delete(0);
-        }
-        while(m_errorHistory.Total() > m_historySize) {
-            m_errorHistory.Delete(0);
-        }
-        
+
         m_initialized = true;
         return true;
     }
@@ -148,7 +173,7 @@ public:
         
         // Prediction error-based uncertainty
         double predictionError = 1.0;
-        if(m_initialized && m_errorHistory.Total() > 10) {
+        if(m_initialized && m_errorCount > 10) {
             predictionError = CalculatePredictionError();
         }
         
@@ -237,7 +262,7 @@ public:
         avgUncertainty = 0.0;
         maxUncertainty = 0.0;
         avgError = 0.0;
-        sampleCount = m_predictionHistory.Total();
+        sampleCount = m_predictionCount;
         
         if(sampleCount == 0) return;
         
@@ -246,11 +271,11 @@ public:
         maxUncertainty = avgUncertainty * 2.0; // Estimate
         
         // Calculate average error
-        if(m_errorHistory.Total() > 0) {
-            for(int i = 0; i < m_errorHistory.Total(); i++) {
-                avgError += MathAbs(m_errorHistory.At(i));
+        if(m_errorCount > 0) {
+            for(int i = 0; i < m_errorCount; i++) {
+                avgError += MathAbs(RingGet(m_errorHistory, m_errorHead, m_errorCount, i));
             }
-            avgError /= m_errorHistory.Total();
+            avgError /= m_errorCount;
         }
     }
     
@@ -277,12 +302,12 @@ public:
 };
 
 // Global uncertainty quantifier
-CUncertaintyQuantifier* g_uncertaintyQuantifier;
+CUncertaintyQuantifier* g_uncertaintyQuantifier = NULL;
 
 //+------------------------------------------------------------------+
 //| Initialize Uncertainty Quantifier                              |
 //+------------------------------------------------------------------+
-bool UncertaintyInit(int historySize = 1000, double confidenceLevel = 0.95) {
+bool UncertaintyInit(int historySize = 500, double confidenceLevel = 0.95) {
     if(g_uncertaintyQuantifier) {
         delete g_uncertaintyQuantifier;
     }

@@ -92,6 +92,10 @@ struct SPipelineEvidenceSnapshot
     ENUM_REGIME_STATE regimeState;
     double spreadToAtrRatio;
     double rangeZScore;
+    string readinessClass;
+    bool reuseActive;
+    int stalenessSeconds;
+    double stalenessPenalty;
     double readinessScore;
     double contextScore;
     double costScore;
@@ -122,6 +126,10 @@ struct SPipelineEvidenceSnapshot
         regimeState = REGIME_RANGE;
         spreadToAtrRatio = 0.0;
         rangeZScore = 0.0;
+        readinessClass = "WARMUP";
+        reuseActive = false;
+        stalenessSeconds = 0;
+        stalenessPenalty = 0.0;
         readinessScore = 0.5;
         contextScore = 0.5;
         costScore = 0.5;
@@ -229,6 +237,7 @@ public:
     CStructureEngine* GetStructureEngine() { return m_structureEngine; }
     CLiquidityEngine* GetLiquidityEngine() { return m_liquidityEngine; }
     CVolatilityEngine* GetVolatilityEngine() { return m_volatilityEngine; }
+    CRegimeEngine* GetRegimeEngine() { return m_regimeEngine; }
 };
 
 //+------------------------------------------------------------------+
@@ -419,7 +428,8 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
         m_lastEvidence.liquiditySweep = m_cachedStructuralEvidence.liquiditySweep;
         m_lastEvidence.priceNearLiquidity = m_cachedStructuralEvidence.priceNearLiquidity;
         m_lastEvidence.contextPrepared = m_cachedStructuralEvidence.contextPrepared;
-        m_lastEvidence.readinessScore = m_cachedStructuralEvidence.readinessScore;
+        RefreshEvidenceFromEngines(symbol);
+        m_lastEvidence.readinessScore = ComputeReadinessScore();
     }
 
     return true;
@@ -427,15 +437,51 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
 
 void CUnifiedSignalPipeline::RefreshEvidenceFromEngines(const string symbol)
 {
+    m_lastEvidence.readinessClass = "WARMUP";
+    m_lastEvidence.reuseActive = false;
+    m_lastEvidence.stalenessSeconds = 0;
+    m_lastEvidence.stalenessPenalty = 0.0;
+
     if(m_trendEngine != NULL && m_lastEvidence.trendReady)
     {
         m_lastEvidence.trend = m_trendEngine.GetCurrentTrend();
         m_lastEvidence.trendStrength = m_trendEngine.GetTrendStrength();
+        STrendReadinessSnapshot trendReadiness = m_trendEngine.GetReadinessSnapshot();
+        if(trendReadiness.state == TREND_READINESS_HEALTHY)
+            m_lastEvidence.readinessClass = "HEALTHY";
+        else if(trendReadiness.state == TREND_READINESS_REUSED_SNAPSHOT)
+            m_lastEvidence.readinessClass = "REUSED_SNAPSHOT";
+        else if(trendReadiness.state == TREND_READINESS_TRANSIENT_COPY_FAULT)
+            m_lastEvidence.readinessClass = "TRANSIENT_COPY_FAULT";
+        else if(trendReadiness.state == TREND_READINESS_HANDLE_FAULT)
+            m_lastEvidence.readinessClass = "HANDLE_FAULT";
+        else
+            m_lastEvidence.readinessClass = "WARMUP";
+        m_lastEvidence.reuseActive = trendReadiness.reuseActive;
+        m_lastEvidence.stalenessSeconds = trendReadiness.stalenessSeconds;
+        m_lastEvidence.stalenessPenalty = MathMin(0.30, (double)trendReadiness.stalenessSeconds / (double)MathMax(10, 2 * 60) * 0.30);
     }
     else
     {
         m_lastEvidence.trend = TREND_NONE;
         m_lastEvidence.trendStrength = 0.0;
+        if(m_trendEngine != NULL)
+        {
+            STrendReadinessSnapshot trendReadiness = m_trendEngine.GetReadinessSnapshot();
+            if(trendReadiness.state == TREND_READINESS_HEALTHY)
+                m_lastEvidence.readinessClass = "HEALTHY";
+            else if(trendReadiness.state == TREND_READINESS_REUSED_SNAPSHOT)
+                m_lastEvidence.readinessClass = "REUSED_SNAPSHOT";
+            else if(trendReadiness.state == TREND_READINESS_TRANSIENT_COPY_FAULT)
+                m_lastEvidence.readinessClass = "TRANSIENT_COPY_FAULT";
+            else if(trendReadiness.state == TREND_READINESS_HANDLE_FAULT)
+                m_lastEvidence.readinessClass = "HANDLE_FAULT";
+            else
+                m_lastEvidence.readinessClass = "WARMUP";
+            m_lastEvidence.reuseActive = trendReadiness.reuseActive;
+            m_lastEvidence.stalenessSeconds = trendReadiness.stalenessSeconds;
+            m_lastEvidence.stalenessPenalty = MathMin(0.30, (double)trendReadiness.stalenessSeconds / (double)MathMax(10, 2 * 60) * 0.30);
+        }
     }
 
     if(m_structureEngine != NULL && m_lastEvidence.structureReady)
@@ -483,10 +529,21 @@ double CUnifiedSignalPipeline::ComputeReadinessScore() const
 {
     double total = 0.0;
     int components = 0;
+    double trendReadinessScore = 0.55;
+    if(m_lastEvidence.readinessClass == "HEALTHY")
+        trendReadinessScore = 1.00;
+    else if(m_lastEvidence.readinessClass == "REUSED_SNAPSHOT")
+        trendReadinessScore = MathMax(0.45, 0.82 - m_lastEvidence.stalenessPenalty);
+    else if(m_lastEvidence.readinessClass == "TRANSIENT_COPY_FAULT")
+        trendReadinessScore = 0.60;
+    else if(m_lastEvidence.readinessClass == "HANDLE_FAULT")
+        trendReadinessScore = 0.35;
+    else if(m_lastEvidence.readinessClass == "WARMUP")
+        trendReadinessScore = 0.55;
 
     if(m_filters.enableTrendFilter)
     {
-        total += m_lastEvidence.trendReady ? 1.0 : 0.55;
+        total += m_lastEvidence.trendReady ? trendReadinessScore : MathMin(trendReadinessScore, 0.65);
         components++;
     }
 
@@ -510,7 +567,7 @@ double CUnifiedSignalPipeline::ComputeReadinessScore() const
 
     if(m_filters.enableRegimeCostGate)
     {
-        total += m_lastEvidence.regimeValid ? 1.0 : 0.70;
+        total += m_lastEvidence.regimeValid ? MathMax(0.70, 1.0 - m_lastEvidence.stalenessPenalty) : 0.70;
         components++;
     }
 
@@ -754,7 +811,8 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     {
         double contextBlend = 0.80 + (0.20 * m_lastEvidence.contextScore);
         double readinessBlend = 0.85 + (0.15 * m_lastEvidence.readinessScore);
-        confidence = MathMax(0.0, MathMin(1.0, confidence * contextBlend * readinessBlend));
+        double stalenessBlend = MathMax(0.70, 1.0 - m_lastEvidence.stalenessPenalty);
+        confidence = MathMax(0.0, MathMin(1.0, confidence * contextBlend * readinessBlend * stalenessBlend));
     }
     
     if(!passed)
@@ -903,6 +961,12 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
     m_lastEvidence.regimeState = snapshot.state;
     m_lastEvidence.spreadToAtrRatio = snapshot.spreadToAtrRatio;
     m_lastEvidence.rangeZScore = snapshot.rangeZScore;
+    if(snapshot.readinessClass != "")
+        m_lastEvidence.readinessClass = snapshot.readinessClass;
+    m_lastEvidence.reuseActive = (m_lastEvidence.reuseActive || snapshot.reuseActive);
+    m_lastEvidence.stalenessSeconds = MathMax(m_lastEvidence.stalenessSeconds, snapshot.stalenessSeconds);
+    m_lastEvidence.stalenessPenalty = MathMax(m_lastEvidence.stalenessPenalty,
+                                              MathMin(0.30, (double)snapshot.stalenessSeconds / (double)MathMax(10, 2 * 60) * 0.30));
 
     string regimeTag = m_regimeEngine.GetStateTag();
     PrintFormat("[COST-GATE] %s | regime=%s | spread_atr=%.4f/%.4f | cooldown=%s | z=%.3f/%.3f",
@@ -934,6 +998,8 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
         regimeBaseScore = 0.84;
     else if(snapshot.state == REGIME_CHAOS)
         regimeBaseScore = 0.62;
+    if(snapshot.reuseActive)
+        regimeBaseScore = MathMin(regimeBaseScore, 0.82);
     m_lastEvidence.costScore = MathMax(0.10, MathMin(1.0, regimeBaseScore - spreadPenalty - zPenalty));
 
     if(snapshot.spreadShockCooldownActive)
