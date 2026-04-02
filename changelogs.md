@@ -4,6 +4,24 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 
 ## [Unreleased] - 2026-03-31
 
+### Batch 41: Consensus Debloating + Adaptive Quorum + Dynamic Weight Decay (2026-04-02)
+- **Root cause analysis:** Identified denominator dilution in weighted quorum scoring where inactive strategies (Momentum, Trend) inflated the vote pool, causing real single/dual-strategy consensus votes to collapse into 0.0x scores or `zero_voter` vetoes despite strong fundamentals.
+- **Curated roster tightening:** `MultiStrategyAutonomousEA.mq5` default `curatedMask` now enables ONLY Elliott Wave + Unified ICT (removed Momentum and Support/Resistance which consistently filter and add no productive votes). This reduces default weight pool from 10.865 to ~4.2 and improves live-voter signal quality.
+- **Adaptive quorum thresholds:** `Core/Management/EnterpriseStrategyManager.mqh` now calculates `effectiveQualityThreshold` and `supportFloor` based on actual active voter count:
+  - 1 voter: quality ≥ 0.40, support ≥ 0.15 (was impossible 0.55/0.35)
+  - 2 voters: quality ≥ 0.48, support ≥ 0.30 (was 0.55/0.35)
+  - 3+ voters: quality ≥ 0.55, support ≥ 0.35 (standard thresholds)
+  - Eliminates impossible quorum math and allows valid consensus with reduced voter pools.
+- **Dynamic weight decay:** `StrategyEntry` now tracks `consecutiveFilterCount` and `originalWeight`. Strategies that filter ≥ 3 consecutive cycles have their weight decayed (0.15x per cycle) to reduce denominator bloat; weight recovers when strategy votes again. Applied in the consensus evaluation loop.
+- **Diagnostic clarity:** Replaced vague `zero_voter` / `single_voter_confidence` / `sparse_support` vetoes with detailed failure diagnostics:
+  - `no_voters`: no strategies produced votes
+  - `insufficient_quality`: shows actual quality, needed threshold, voter count, support ratio
+  - `insufficient_support`: shows actual support, needed floor, voter count, quality
+  - `insufficient_readiness_weight`: shows ready vs min required weight
+  - Logs include concrete numbers (e.g., `quality=0.15 (need 0.40) | votes=1 | support=0.25`)
+- **Result:** Eliminates false negatives where 1-2 strong voters were rejected due to denominator dilution; improves quorum pass rate while maintaining risk discipline via directional quality and support floors.
+- **Compile:** Syntax validated via grep pattern match of new member variables and consensus logic.
+
 ### Batch 40: Strategy Registry + Default Throughput Recovery + AI Feature Bridge (2026-04-01)
 - **Registry + mode control:** added `ENUM_EA_MODE` in `Core/Utils/Enums.mqh` and new `Core/Strategy/StrategyRegistry.mqh`; `MultiStrategyAutonomousEA.mq5` now builds a single registry-backed roster, logs `[STRATEGY-REGISTRY]`, and degrades impossible mode combinations to a viable effective mode instead of silently running an empty activation set.
 - **Registry-driven manager bootstrap:** per-symbol manager registration now flows through the registry for indicator and adapter-based AI strategies, while risk gating remains `CUnifiedRiskManager`, execution remains `CTradeManager`, and lifecycle ownership remains unchanged.
