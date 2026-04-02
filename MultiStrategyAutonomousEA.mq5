@@ -1774,12 +1774,12 @@ void BuildStrategyFlags(bool &strategyFlags[])
         return;
 
     bool curatedMask[7];
-    curatedMask[0] = true;  // Momentum
+    curatedMask[0] = false; // Momentum (consistently filtered, dilutes denominator)
     curatedMask[1] = false; // Trend
     curatedMask[2] = false; // Fibonacci
-    curatedMask[3] = true;  // Elliott Wave
-    curatedMask[4] = true;  // Support/Resistance
-    curatedMask[5] = true;  // Unified ICT
+    curatedMask[3] = true;  // Elliott Wave (reliable primary voter)
+    curatedMask[4] = false; // Support/Resistance (rarely productive)
+    curatedMask[5] = true;  // Unified ICT (reliable secondary voter)
     curatedMask[6] = false; // Candlestick
 
     int enabledBefore = 0;
@@ -1799,8 +1799,8 @@ void BuildStrategyFlags(bool &strategyFlags[])
             enabledAfter++;
     }
 
-    PrintFormat("[CURATION] Curated roster applied (%d -> %d enabled)", enabledBefore, enabledAfter);
-    Print("[CURATION] Lean default profile: Momentum, Elliott Wave, Support/Resistance, Unified ICT");
+    PrintFormat("[CURATION] Lean production-grade roster applied (%d -> %d enabled)", enabledBefore, enabledAfter);
+    Print("[CURATION] Ultra-lean curated profile: Elliott Wave, Unified ICT (removed dilution from Momentum & S/R)");
     Print("[CURATION] Effective runtime strategy set: ", BuildEnabledStrategyList(strategyFlags));
 }
 

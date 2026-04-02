@@ -104,7 +104,13 @@ flowchart TD
   - per-direction score = `sum(ready live weight x conviction score)` for agreeing live voters
   - directional quality = `direction score / direction weight`
   - support ratio = `direction weight / total ready live weight`
-  - direction passes full quorum if directional quality clears `InpQuorumThreshold`, support clears the scan-mode floor, agreeing voters clear the effective minimum, and ready-live participation stays above `InpConsensusMinReadyWeightRatio`
+  - direction passes full quorum if directional quality clears the **adaptive** quorum threshold, support clears the scan-mode floor, agreeing voters clear the effective minimum, and ready-live participation stays above `InpConsensusMinReadyWeightRatio`
+  - **Adaptive quorum thresholds** (Batch 41): consensus now adjusts required directional quality and support floors based on actual active voter count to prevent denominator dilution:
+    - **1 active voter**: directional quality ≥ 0.40, support ≥ 0.15 (was impossible 0.55 / 0.35)
+    - **2 active voters**: directional quality ≥ 0.48, support ≥ 0.30 (was 0.55 / 0.35)
+    - **3+ active voters**: directional quality ≥ 0.55, support ≥ 0.35 (standard `InpQuorumThreshold` / floor inputs)
+    - Eliminates zero-score vetoes for legitimate single/dual-voter consensus by adjusting thresholds to the actual voter pool
+  - **Dynamic weight decay** (Batch 41): strategies that filter ≥ 3 consecutive cycles have their live weight decayed by `m_strategyActivityDecayRate` per additional cycle, reducing the denominator as dormant strategies fall out of contribution; weight recovers when the strategy produces a vote again
 - If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
 - Intrabar can instead admit a tagged `SPARSE_INTRABAR` decision when exactly one direction survives with one voter and readiness/context/cost/support/coverage thresholds all remain strong.
 - Pipeline and validator profiles (confidence + confluence + quality) are configured separately from AI thresholds so non-AI strategies are not gated by AI policy.
@@ -198,6 +204,13 @@ flowchart TD
 - Consensus dominant-cause attribution emitted as `[CONSENSUS-ROOT]`.
 - Strategy-level none-reason attribution emitted as `[CONSENSUS-STRATEGY]`.
 - Heartbeat aggregate consensus snapshots emitted as `[CONSENSUS-SNAPSHOT]`.
+- **Detailed veto diagnostics** (Batch 41): consensus veto messages now explain the exact failure reason with concrete values:
+  - `no_voters`: "No strategies produced votes in this evaluation cycle"
+  - `insufficient_quality`: "quality=0.15 (need 0.40) | votes=1 | support=0.25" (shows actual vs required, voter count, support ratio)
+  - `insufficient_support`: "support=0.25 (need 0.30) | votes=2 | quality=0.48" (shows actual vs required, voter count, quality)
+  - `insufficient_readiness_weight`: "readyWeight=2.15 < minRequired=3.25" (shows ready vs minimum required weight)
+  - `direction_quorum_not_met`: "buy=0.48|0.25 vs sell=0.52|0.30" (shows buy/sell quality and support for comparison)
+  - Eliminates guesswork by always printing the numeric mismatch and failing condition
 - Heartbeat aggregate strategy reject buckets emitted as `[STRATEGY-REJECTS]`.
 - Confidence-threshold source emitted as `[PIPELINE-THRESHOLD]` with tags:
   - `REGIME_RANGE`

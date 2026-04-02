@@ -48,6 +48,7 @@ struct StrategyEntry
     int role;
     int cluster;
     double weight;
+    double originalWeight;              // Track original weight for decay recovery
     ENUM_TIMEFRAMES timeframe;
     int successCount;
     int failCount;
@@ -57,6 +58,7 @@ struct StrategyEntry
     ENUM_TRADE_SIGNAL lastSignal;
     double lastSignalConfidence;
     datetime lastEvaluationTime;
+    int consecutiveFilterCount;         // Count consecutive no-signal cycles for decay
 };
 
 struct SConsensusDecisionContext
@@ -263,7 +265,18 @@ private:
     double m_sparseIntrabarMinSupportRatio;
     double m_sparseIntrabarMinReadyCoverage;
     double m_sparseIntrabarConfidencePenalty;
-    
+
+    // Adaptive quorum settings (adjust thresholds based on active voter count)
+    bool m_adaptiveQuorumEnabled;
+    double m_adaptiveQualityThreshold_1voter;     // Quality threshold for 1 active voter
+    double m_adaptiveSupportFloor_1voter;          // Support floor for 1 active voter
+    double m_adaptiveQualityThreshold_2voters;     // Quality threshold for 2 active voters
+    double m_adaptiveSupportFloor_2voters;         // Support floor for 2 active voters
+    double m_adaptiveQualityThreshold_3plus;       // Quality threshold for 3+ active voters (standard)
+    double m_adaptiveSupportFloor_3plus;           // Support floor for 3+ active voters (standard)
+    double m_strategyActivityDecayRate;            // How fast inactive strategy weight decays (0.0-1.0)
+    int m_strategyInactiveCounterThreshold;        // After N consecutive filters, apply weight decay
+
     // Statistics
     int m_totalSignals;
     int m_successfulSignals;
@@ -550,6 +563,15 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_sparseIntrabarMinSupportRatio(0.20),
     m_sparseIntrabarMinReadyCoverage(0.60),
     m_sparseIntrabarConfidencePenalty(0.92),
+    m_adaptiveQuorumEnabled(true),
+    m_adaptiveQualityThreshold_1voter(0.40),      // 1 voter: 40% quality OK
+    m_adaptiveSupportFloor_1voter(0.15),          // 1 voter: 15% support OK
+    m_adaptiveQualityThreshold_2voters(0.48),     // 2 voters: 48% quality OK
+    m_adaptiveSupportFloor_2voters(0.30),         // 2 voters: 30% support OK
+    m_adaptiveQualityThreshold_3plus(0.55),       // 3+ voters: standard 55% quality
+    m_adaptiveSupportFloor_3plus(0.35),           // 3+ voters: standard 35% support
+    m_strategyActivityDecayRate(0.15),            // Weight decay rate per inactive cycle
+    m_strategyInactiveCounterThreshold(3),        // After 3 filters, start decay
     m_totalSignals(0),
     m_successfulSignals(0),
     m_avgConfidence(0),
@@ -774,6 +796,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].role = (int)role;
     m_strategies[m_strategyCount].cluster = (int)cluster;
     m_strategies[m_strategyCount].weight = weight;
+    m_strategies[m_strategyCount].originalWeight = weight;  // Track for decay recovery
     m_strategies[m_strategyCount].timeframe = resolvedTf;
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
@@ -783,6 +806,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
     m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
     m_strategies[m_strategyCount].lastEvaluationTime = 0;
+    m_strategies[m_strategyCount].consecutiveFilterCount = 0;  // Track filters for weight decay
     
     m_strategyCount++;
     
@@ -1063,6 +1087,28 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             signalConfidenceFloor = MathMax(0.0, MathMin(1.0, m_pipeline.GetLastEffectiveMinConfidence()));
         signalConfidenceFloor = MathMax(0.20, signalConfidenceFloor * 0.80);
 
+        // Dynamic weight decay: track and reduce weight for persistently inactive strategies
+        if(signal == TRADE_SIGNAL_NONE)
+        {
+            m_strategies[i].consecutiveFilterCount++;
+            // Apply weight decay after threshold
+            if(m_strategies[i].consecutiveFilterCount >= m_strategyInactiveCounterThreshold)
+            {
+                double decayedWeight = m_strategies[i].originalWeight *
+                                     (1.0 - (m_strategyActivityDecayRate *
+                                     (double)(m_strategies[i].consecutiveFilterCount - m_strategyInactiveCounterThreshold + 1)));
+                m_strategies[i].weight = MathMax(0.1, MathMin(m_strategies[i].originalWeight, decayedWeight));
+            }
+        }
+        else
+        {
+            // Reset filter counter when strategy produces a vote
+            m_strategies[i].consecutiveFilterCount = 0;
+            // Allow weight recovery toward original
+            m_strategies[i].weight = MathMin(m_strategies[i].weight + (m_strategyActivityDecayRate * 0.05),
+                                            m_strategies[i].originalWeight);
+        }
+
         if(!liveVoter && !probeEligibleForThisEval)
         {
             if(signal != TRADE_SIGNAL_NONE)
@@ -1193,6 +1239,24 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     double buyAverageCost = (buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0;
     double sellAverageCost = (sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0;
     double supportFloor = (evalMode == EVAL_MODE_INTRABAR) ? m_supportFloorIntrabar : m_supportFloorNewBar;
+    double effectiveQualityThreshold = m_quorumThreshold;
+
+    // Adaptive quorum: adjust thresholds based on actual active voter count
+    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) > 0)
+    {
+        int activeVoterCount = buyVotes + sellVotes;
+        if(activeVoterCount == 1)
+        {
+            effectiveQualityThreshold = m_adaptiveQualityThreshold_1voter;
+            supportFloor = m_adaptiveSupportFloor_1voter;
+        }
+        else if(activeVoterCount == 2)
+        {
+            effectiveQualityThreshold = m_adaptiveQualityThreshold_2voters;
+            supportFloor = m_adaptiveSupportFloor_2voters;
+        }
+        // 3+ voters: use original thresholds (already set above)
+    }
 
     int effectiveMinVoters = MathMax(1, m_minQuorum);
     if(evalMode == EVAL_MODE_INTRABAR)
@@ -1206,11 +1270,11 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
     bool buyQuorumMet = (readyWeightMet &&
                          buyVotes >= effectiveMinVoters &&
-                         buyDirectionalQuality >= m_quorumThreshold &&
+                         buyDirectionalQuality >= effectiveQualityThreshold &&
                          buySupportRatio >= supportFloor);
     bool sellQuorumMet = (readyWeightMet &&
                           sellVotes >= effectiveMinVoters &&
-                          sellDirectionalQuality >= m_quorumThreshold &&
+                          sellDirectionalQuality >= effectiveQualityThreshold &&
                           sellSupportRatio >= supportFloor);
 
     ENUM_TRADE_SIGNAL finalSignal = TRADE_SIGNAL_NONE;
@@ -1266,15 +1330,45 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     else
     {
         if((buyVotes + sellVotes) <= 0)
-            vetoCode = "zero_voter";
+        {
+            vetoCode = "no_voters";
+            vetoReason = "No strategies produced votes in this evaluation cycle";
+        }
         else if(!readyWeightMet)
+        {
             vetoCode = "readiness_weight";
-        else if(MathMax(buyDirectionalQuality, sellDirectionalQuality) < m_quorumThreshold)
-            vetoCode = "single_voter_confidence";
-        else if(MathMax(buySupportRatio, sellSupportRatio) < supportFloor)
-            vetoCode = "sparse_support";
+            vetoReason = StringFormat("readyWeight=%.2f < minRequired=%.2f",
+                                      readyLiveWeight, minReadyWeight);
+        }
         else
-            vetoCode = "direction_quorum_not_met";
+        {
+            // Provide detailed diagnostic for partial failures
+            int activeVoterCount = buyVotes + sellVotes;
+            double bestQuality = MathMax(buyDirectionalQuality, sellDirectionalQuality);
+            double bestSupport = MathMax(buySupportRatio, sellSupportRatio);
+
+            if(bestQuality < effectiveQualityThreshold)
+            {
+                vetoCode = "insufficient_quality";
+                vetoReason = StringFormat("quality=%.3f (need %.3f) | votes=%d | support=%.3f",
+                                          bestQuality, effectiveQualityThreshold,
+                                          activeVoterCount, bestSupport);
+            }
+            else if(bestSupport < supportFloor)
+            {
+                vetoCode = "insufficient_support";
+                vetoReason = StringFormat("support=%.3f (need %.3f) | votes=%d | quality=%.3f",
+                                          bestSupport, supportFloor,
+                                          activeVoterCount, bestQuality);
+            }
+            else
+            {
+                vetoCode = "direction_quorum_not_met";
+                vetoReason = StringFormat("buy=%.3f|%.3f vs sell=%.3f|%.3f",
+                                          buyDirectionalQuality, buySupportRatio,
+                                          sellDirectionalQuality, sellSupportRatio);
+            }
+        }
 
         if((buyVotes + sellVotes) > 0)
             cycleQuorumFailed++;

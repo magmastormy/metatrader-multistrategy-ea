@@ -143,8 +143,13 @@ The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also 
 - `CEnsembleMetaLearner` now aggregates model class probabilities via `GetPredictions(...)` and uses container ownership correctly (`CArrayObj::FreeMode(true)`) to avoid double-delete behavior
 - `CNeuralNetworkStrategy`, `CUncertaintyQuantifier`, and `CMarketDataProcessor` now use ring-buffered histories instead of heap churn or `Delete(0)`/array-shift patterns
 
-### 3.3 Curated runtime profile
-Curated mode can restrict runtime active set to a smaller operational profile while preserving full retained implementation in code.
+### 3.3 Curated runtime profile (Batch 41)
+Curated mode restricts runtime active set to a smaller operational profile while preserving full retained implementation in code.
+- **Default curated roster** (Batch 41): Elliott Wave + Unified ICT only
+  - Removed: Momentum (consistently filtered on no-crossover, adds denominator weight without productive votes), Trend (100% filtered on no-entry), Support/Resistance (rarely productive)
+  - Rationale: Eliminates impossible quorum math where 1-2 real votes were rejected because inactive strategies inflated the weight pool; reduces default weight pool from 10.865 to ~4.2
+  - Momentum/Trend/S/R remain in code for manual testing but disabled by curated mask unless explicitly re-enabled
+  - Per-strategy inputs still gate registration and can re-enable any strategy for custom profiles
 
 ### 3.4 Institutional governance roles
 - Strategy registration now includes explicit governance metadata:
@@ -202,11 +207,17 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Quorum is evaluated via normalized weighted conviction pooling:
   - adjusted live weight = `base strategy weight x role multiplier x healthScore reliability multiplier`
   - ready live weight = `adjusted live weight x pipeline readinessScore`
+  - **dynamic weight decay** (Batch 41): strategies filtering ≥ 3 consecutive cycles have weight decayed by `m_strategyActivityDecayRate` per additional filter, reducing denominator bloat; weight recovers when strategy votes
   - per-direction conviction = `sum(ready live weight x conviction_i)` for agreeing live voters
   - conviction is confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
   - directional quality = `direction conviction / direction weight`
   - support ratio = `direction weight / total ready live weight`
-  - direction passes full quorum if `directional_quality >= InpQuorumThreshold`, support ratio clears the new-bar/intrabar floor, agreeing voters clear the effective minimum, and `readyLiveWeight / totalLiveWeight >= InpConsensusMinReadyWeightRatio`
+  - **adaptive quorum thresholds** (Batch 41): direction passes full quorum if:
+    - 1 active voter: `directional_quality >= 0.40`, support ≥ 0.15
+    - 2 active voters: `directional_quality >= 0.48`, support ≥ 0.30
+    - 3+ active voters: `directional_quality >= InpQuorumThreshold (0.55)`, support ≥ scan-mode floor
+    - AND agreeing voters clear the effective minimum AND `readyLiveWeight / totalLiveWeight >= InpConsensusMinReadyWeightRatio`
+  - Adaptive thresholds prevent denominator dilution where inactive strategies inflate the weight pool; single/dual-voter consensus can now pass with proportional thresholds
 - if both directions pass, higher score wins unless the spread is inside the configured conflict deadband, in which case consensus is vetoed to `TRADE_SIGNAL_NONE`
 - intrabar may instead admit a `SPARSE_INTRABAR` decision when exactly one direction has one voter and readiness/context/cost/support/coverage thresholds all remain high
 - Vote admission into quorum reuses the pipeline's effective confidence threshold for that cycle, preventing pipeline-approved relaxed-threshold signals from being dropped before consensus.
@@ -215,6 +226,12 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
   - quorum miss (threshold and/or min voters)
   - intrabar ineligibility
   - filter rejection
+- **Detailed veto diagnostics** (Batch 41): failures emit specific veto codes with numeric evidence:
+  - `no_voters`: no strategies produced votes
+  - `insufficient_quality`: shows actual quality vs required, voter count, support ratio
+  - `insufficient_support`: shows actual support vs required floor, voter count, quality
+  - `insufficient_readiness_weight`: shows ready vs minimum required weight
+  - `direction_quorum_not_met`: shows all four dimensions (buy/sell quality and support)
 - Post-quorum nullification is emitted as `[CONSENSUS-VETO]` when timeframe consistency or the intrabar single-voter floor clears an otherwise qualified candidate.
 
 ### 4.3 Validation
