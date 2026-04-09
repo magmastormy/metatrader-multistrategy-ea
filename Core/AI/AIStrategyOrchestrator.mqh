@@ -13,7 +13,6 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 #include "../../Interfaces/IStrategy.mqh"
-#include "../Signals/SignalDiagnostics.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
 #include "../Signals/HedgingProtection.mqh"
 
@@ -256,7 +255,6 @@ private:
     bool m_initialized;
     
     // Diagnostic systems
-    CSignalDiagnostics* m_diagnostics;
     CTimeframeConsistency* m_tfConsistency;
     CHedgingProtection* m_hedgingProtection;
     
@@ -389,7 +387,6 @@ CAIStrategyOrchestrator::CAIStrategyOrchestrator(void) :
     m_regimeUncertaintyThreshold(0.6),
     m_highConfidenceThreshold(0.8),
     m_initialized(false),
-    m_diagnostics(NULL),
     m_tfConsistency(NULL),
     m_hedgingProtection(NULL)
 {
@@ -442,12 +439,6 @@ CAIStrategyOrchestrator::~CAIStrategyOrchestrator(void)
         LogOrchestrationEvent(ERROR_INFO, "AI Strategy Orchestrator destroyed");
     }
     
-    if(m_diagnostics != NULL)
-    {
-        delete m_diagnostics;
-        m_diagnostics = NULL;
-    }
-    
     if(m_tfConsistency != NULL)
     {
         delete m_tfConsistency;
@@ -482,11 +473,6 @@ bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const i
     m_maxConsecutiveLosses = maxConsecutiveLosses;
     m_initialized = true;
     m_lastUpdate = TimeCurrent();
-    
-    // Initialize diagnostic systems
-    m_diagnostics = new CSignalDiagnostics();
-    if(m_diagnostics != NULL)
-        m_diagnostics.Initialize(1000, 3);
     
     m_tfConsistency = new CTimeframeConsistency();
     if(m_tfConsistency != NULL)

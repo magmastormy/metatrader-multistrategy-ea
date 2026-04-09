@@ -185,8 +185,11 @@ public:
            m_trendHandle == INVALID_HANDLE || m_stateSlowHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
             return RejectSignal("MOMENTUM_INVALID_HANDLES");
 
-        // COOLDOWN: Always enforce at least 60 seconds between signals per symbol
-        if(TimeCurrent() - m_lastSignalTimestamp < 60)
+        // COOLDOWN: Adaptive to chart timeframe — one full bar minimum.
+        // On M1 this is 60s, on M5 it is 300s, on M30 it is 1800s, etc.
+        // Minimum floor of 30s to prevent rapid re-entry on tick noise.
+        int cooldownSeconds = MathMax(30, (int)PeriodSeconds(m_timeframe));
+        if(TimeCurrent() - m_lastSignalTimestamp < cooldownSeconds)
             return RejectSignal("MOMENTUM_COOLDOWN");
 
         if(!m_enableScalping)
@@ -237,8 +240,19 @@ public:
         double trendMA = trendBuffer[0];
         double stateSlowMA = stateSlowBuffer[0];
 
-        bool bullishState = (fastNow > slowNow && slowNow > trendMA && trendMA > stateSlowMA);
-        bool bearishState = (fastNow < slowNow && slowNow < trendMA && trendMA < stateSlowMA);
+        // SOFTENED EMA STACK: Count how many of 3 alignment criteria are met.
+        // Old code required perfect 4-MA waterfall (8>21>50>200) — almost never seen on M1.
+        // New code requires 2-of-3: fast>slow, slow>trend, trend>state.
+        // This allows partial-trend entries on emerging moves.
+        int bullScore = (fastNow > slowNow ? 1 : 0) +
+                        (slowNow > trendMA  ? 1 : 0) +
+                        (trendMA > stateSlowMA ? 1 : 0);
+        int bearScore = (fastNow < slowNow ? 1 : 0) +
+                        (slowNow < trendMA  ? 1 : 0) +
+                        (trendMA < stateSlowMA ? 1 : 0);
+
+        bool bullishState = (bullScore >= 2);
+        bool bearishState = (bearScore >= 2);
         if(!bullishState && !bearishState)
             return RejectSignal("MOMENTUM_STATE_MISALIGNED");
 
@@ -267,7 +281,10 @@ public:
         if(signal == TRADE_SIGNAL_NONE)
             return RejectSignal("MOMENTUM_NO_CROSSOVER");
 
-        if(!compressionState || !volatilityExpansion)
+        // FIX: Old code required BOTH compressionState AND volatilityExpansion simultaneously —
+        // these are near-mutually exclusive (ATR can't be at 24-bar low AND expanding at once).
+        // New logic: pass if EITHER condition is met (compression about to break, OR already breaking).
+        if(!compressionState && !volatilityExpansion)
             return RejectSignal("MOMENTUM_NO_COMPRESSION_BREAK");
 
         if(signal != TRADE_SIGNAL_NONE)

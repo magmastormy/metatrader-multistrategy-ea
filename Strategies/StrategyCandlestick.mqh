@@ -29,10 +29,11 @@ private:
     int               m_totalSignals;
     int               m_successfulSignals;
     double            m_avgConfidence;
+    string            m_lastDecisionReasonTag;
     CChartDrawingManager* m_drawingManager;
     
 public:
-    CStrategyCandlestick() : m_minConfidence(0.60), m_requireTrendAlignment(true), m_enabled(true), m_weight(1.5), m_lastSignalTime(0), m_totalSignals(0), m_successfulSignals(0), m_avgConfidence(0.0), m_drawingManager(NULL) {}
+    CStrategyCandlestick() : m_minConfidence(0.60), m_requireTrendAlignment(true), m_enabled(true), m_weight(1.5), m_lastSignalTime(0), m_totalSignals(0), m_successfulSignals(0), m_avgConfidence(0.0), m_lastDecisionReasonTag("CANDLE_UNSET"), m_drawingManager(NULL) {}
     ~CStrategyCandlestick() { if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; } }
     
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr) override
@@ -42,6 +43,7 @@ public:
         
         if(!m_analyzer.Initialize(symbol, timeframe))
         {
+            m_lastDecisionReasonTag = "CANDLE_INIT_FAILED";
             Print("[CANDLESTICK] Failed to initialize candle analyzer");
             return false;
         }
@@ -65,6 +67,7 @@ public:
         }
         
         PrintFormat("[CANDLESTICK] Strategy initialized for %s on %s", symbol, EnumToString(timeframe));
+        m_lastDecisionReasonTag = "CANDLE_INITIALIZED";
         return true;
     }
     
@@ -72,6 +75,7 @@ public:
     {
         if(m_drawingManager != NULL)
             m_drawingManager.CleanupAll();
+        m_lastDecisionReasonTag = "CANDLE_DEINIT";
     }
     
     virtual void OnNewBar() override
@@ -89,7 +93,14 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
+        m_lastDecisionReasonTag = "CANDLE_UNSET";
         int barIndex = 1;
+
+        if(!m_enabled)
+        {
+            m_lastDecisionReasonTag = "CANDLE_DISABLED";
+            return TRADE_SIGNAL_NONE;
+        }
         
         // Priority 1: Pin Bar (highest single-candle reliability)
         SPinBar pinBar;
@@ -103,9 +114,19 @@ public:
                 RecordPatternSignal(confidence);
                 
                 if(isBullishPin)
+                {
+                    m_lastDecisionReasonTag = "CANDLE_SIGNAL_BUY";
                     return TRADE_SIGNAL_BUY;
+                }
                 else if(pinBar.type == PIN_BAR_BEARISH)
+                {
+                    m_lastDecisionReasonTag = "CANDLE_SIGNAL_SELL";
                     return TRADE_SIGNAL_SELL;
+                }
+            }
+            else
+            {
+                m_lastDecisionReasonTag = "CANDLE_PINBAR_FILTERED";
             }
         }
         
@@ -118,10 +139,17 @@ public:
                 confidence = engulfing.strength;
                 DrawPatternSignal(engulfing.time, engulfing.engulfingClose, engulfing.strength, engulfing.isBullish, "Engulfing");
                 RecordPatternSignal(confidence);
-                
+                m_lastDecisionReasonTag = engulfing.isBullish ? "CANDLE_SIGNAL_BUY" : "CANDLE_SIGNAL_SELL";
                 return engulfing.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
             }
+            else
+            {
+                m_lastDecisionReasonTag = "CANDLE_ENGULFING_FILTERED";
+            }
         }
+
+        if(m_lastDecisionReasonTag == "CANDLE_UNSET")
+            m_lastDecisionReasonTag = "CANDLE_NO_PATTERN";
         
         return TRADE_SIGNAL_NONE;
     }
@@ -201,6 +229,7 @@ public:
         successful = m_successfulSignals;
         accuracy = (m_totalSignals > 0) ? ((double)m_successfulSignals / (double)m_totalSignals) * 100.0 : 0.0;
     }
+    virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     
     virtual ENUM_STRATEGY_TYPE GetType() const override
     {

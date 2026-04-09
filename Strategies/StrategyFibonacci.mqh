@@ -221,12 +221,19 @@ void CStrategyFibonacci::DrawFibLevels()
 ENUM_TRADE_SIGNAL CStrategyFibonacci::GetSignal(double &confidence)
 {
     confidence = 0.0;
+    SetDecisionReasonTag("FIB_UNSET");
 
     if(!m_is_enabled || !m_is_initialized)
+    {
+        SetDecisionReasonTag("FIB_DISABLED_OR_UNINIT");
         return TRADE_SIGNAL_NONE;
+    }
 
     if(m_swingDetector == NULL || m_levelsCalc == NULL || m_confirmation == NULL)
+    {
+        SetDecisionReasonTag("FIB_COMPONENTS_NOT_READY");
         return TRADE_SIGNAL_NONE;
+    }
 
     // Update components
     m_swingDetector.Update();
@@ -250,7 +257,10 @@ ENUM_TRADE_SIGNAL CStrategyFibonacci::GetSignal(double &confidence)
     }
 
     if(!foundSetup)
+    {
+        SetDecisionReasonTag("FIB_NO_SETUP");
         return TRADE_SIGNAL_NONE;
+    }
 
     // We need a specific level for confirmation. Use 61.8% as primary entry
     double entryLevel = setup.fib618;
@@ -259,7 +269,10 @@ ENUM_TRADE_SIGNAL CStrategyFibonacci::GetSignal(double &confidence)
     SFibConfirmation confirm = m_confirmation.GetConfirmation(entryLevel, setup.isBullish);
 
     if(confirm.type == CONFIRM_NONE)
+    {
+        SetDecisionReasonTag("FIB_NO_CONFIRMATION");
         return TRADE_SIGNAL_NONE;
+    }
 
     // Calculate confidence based on setup score and confirmation
     confidence = (setup.overallScore / 100.0) * confirm.strength;
@@ -267,10 +280,14 @@ ENUM_TRADE_SIGNAL CStrategyFibonacci::GetSignal(double &confidence)
 
     // Minimum confidence filter
     if(confidence < m_minConfidence)
+    {
+        SetDecisionReasonTag("FIB_LOW_CONFIDENCE");
         return TRADE_SIGNAL_NONE;
+    }
 
     if(signalType != TRADE_SIGNAL_NONE)
     {
+        SetDecisionReasonTag(signalType == TRADE_SIGNAL_BUY ? "FIB_SIGNAL_BUY" : "FIB_SIGNAL_SELL");
         PrintFormat("[FIB v2.0] %s: %s | Conf: %.1f%% | Level: 61.8%% | %s",
                     m_symbol,
                     signalType == TRADE_SIGNAL_BUY ? "BUY" : "SELL",

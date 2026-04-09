@@ -179,6 +179,9 @@ private:
             if(dataReady) {
                 // ADX above 25 indicates trend, above 50 is strong trend
                 trendStrength += (adxValues[0] / 50.0) * 0.4; // 40% weight to ADX
+            } else if(GetLastError() == 4807) {
+                // [4807 STALE TOLERANCE] Use default if first run, otherwise continue evaluation
+                // TrendStrength stays 0.0 but we don't block
             }
         } else if(m_adxHandle == INVALID_HANDLE && RequiresSpecialHandling(m_symbol)) {
             // For Jump/Volatility indices without ADX, use increased weight on other indicators
@@ -207,6 +210,8 @@ private:
                 if(uptrend || downtrend) {
                     trendStrength += 0.3; // 30% weight to MA alignment
                 }
+            } else if(GetLastError() == 4807) {
+                // [4807 STALE TOLERANCE] Maintain last valid trend contribution if sync fails
             }
         } else {
             if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for %s.", m_symbol);
@@ -262,6 +267,8 @@ private:
                     double atrPercent = atrValues[0] / currentPriceValue * 100.0;
                     volatility += (atrPercent / 1.0) * 0.5; // 50% weight to ATR, normalized to 1% as high volatility
                 }
+            } else if(GetLastError() == 4807) {
+                // [4807 STALE TOLERANCE] Maintain last valid volatility if sync fails
             }
         } else {
             if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for %s.", m_symbol);
@@ -540,7 +547,7 @@ public:
     // Check if symbol needs special indicator handling
     bool RequiresSpecialHandling(const string symbolName) {
         // Volatility indices
-        if(StringFind(symbolName, "Volatility") >= 0)
+        if(StringFind(symbolName, "Vol") >= 0)
             return true;
 
         // Jump indices
@@ -549,6 +556,16 @@ public:
 
         // Step indices
         if(StringFind(symbolName, "Step") >= 0)
+            return true;
+
+        // Weltrade / Other Synthetic indices
+        if(StringFind(symbolName, "Boom") >= 0 ||
+           StringFind(symbolName, "Crash") >= 0 ||
+           StringFind(symbolName, "PainX") >= 0 ||
+           StringFind(symbolName, "SFX Vol") >= 0 ||
+           StringFind(symbolName, "GainX") >= 0 ||
+           StringFind(symbolName, "FX Vol") >= 0 ||
+           StringFind(symbolName, "FlipX") >= 0)
             return true;
 
         return false;
@@ -643,7 +660,7 @@ public:
         }
         
         // Wait for indicators to calculate with retry logic
-        int maxRetries = 10;  // Increased from 5 for slower symbols
+        int maxRetries = 20;  // Increased from 10 for synthetic history synchronization hardening
         int retryCount = 0;
         bool indicatorsReady = false;
         

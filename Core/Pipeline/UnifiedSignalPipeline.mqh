@@ -6,7 +6,6 @@
 #define UNIFIED_SIGNAL_PIPELINE_MQH
 
 #include "../Utils/Enums.mqh"
-#include "../Signals/SignalDiagnostics.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
 #include "../Signals/HedgingProtection.mqh"
 #include "../Engines/TrendEngine.mqh"
@@ -152,8 +151,7 @@ private:
     CVolatilityEngine* m_volatilityEngine;
     CRegimeEngine* m_regimeEngine;
     
-    // Diagnostics & Protection
-    CSignalDiagnostics* m_diagnostics;
+    // Protection / consistency
     CTimeframeConsistency* m_tfConsistency;
     CHedgingProtection* m_hedgingProtection;
     
@@ -249,7 +247,6 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_liquidityEngine(NULL),
     m_volatilityEngine(NULL),
     m_regimeEngine(NULL),
-    m_diagnostics(NULL),
     m_tfConsistency(NULL),
     m_hedgingProtection(NULL),
     m_signalsProcessed(0),
@@ -279,7 +276,6 @@ CUnifiedSignalPipeline::~CUnifiedSignalPipeline()
     if(m_liquidityEngine != NULL) { delete m_liquidityEngine; m_liquidityEngine = NULL; }
     if(m_volatilityEngine != NULL) { delete m_volatilityEngine; m_volatilityEngine = NULL; }
     if(m_regimeEngine != NULL) { delete m_regimeEngine; m_regimeEngine = NULL; }
-    if(m_diagnostics != NULL) { delete m_diagnostics; m_diagnostics = NULL; }
     if(m_tfConsistency != NULL) { delete m_tfConsistency; m_tfConsistency = NULL; }
     if(m_hedgingProtection != NULL) { delete m_hedgingProtection; m_hedgingProtection = NULL; }
 }
@@ -291,13 +287,6 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
 {
     m_filters = settings;
     bool initializationOk = true;
-    
-    // Initialize diagnostics
-    m_diagnostics = new CSignalDiagnostics();
-    if(m_diagnostics != NULL)
-        m_diagnostics.Initialize(1000, 3);
-    else
-        initializationOk = false;
     
     // Initialize consistency checker
     m_tfConsistency = new CTimeframeConsistency();
@@ -316,25 +305,25 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
     // Initialize engines
     m_trendEngine = new CTrendEngine();
     if(m_trendEngine != NULL)
-        m_trendEngine.Initialize(20, 50, 200, 14, m_diagnostics);
+        m_trendEngine.Initialize(20, 50, 200, 14, NULL);
     else
         initializationOk = false;
     
     m_structureEngine = new CStructureEngine();
     if(m_structureEngine != NULL)
-        m_structureEngine.Initialize(10, 10.0, true, m_diagnostics);
+        m_structureEngine.Initialize(10, 10.0, true, NULL);
     else
         initializationOk = false;
     
     m_liquidityEngine = new CLiquidityEngine();
     if(m_liquidityEngine != NULL)
-        m_liquidityEngine.Initialize(10.0, 2, m_diagnostics);
+        m_liquidityEngine.Initialize(10.0, 2, NULL);
     else
         initializationOk = false;
     
     m_volatilityEngine = new CVolatilityEngine();
     if(m_volatilityEngine != NULL)
-        m_volatilityEngine.Initialize(14, 20, m_diagnostics);
+        m_volatilityEngine.Initialize(14, 20, NULL);
     else
         initializationOk = false;
 
@@ -805,14 +794,17 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                                     thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
     }
 
-    // Blend market context and readiness into the surviving confidence rather than using
-    // a second binary gate. This preserves marginal but still-credible votes for consensus.
+    // Preserve post-threshold confidence once a signal survives the pipeline.
+    // Context/readiness/cost already travel downstream as separate evidence inputs,
+    // so reducing confidence here only double-penalizes the same packet in quorum
+    // and validator stages.
     if(passed)
     {
         double contextBlend = 0.80 + (0.20 * m_lastEvidence.contextScore);
         double readinessBlend = 0.85 + (0.15 * m_lastEvidence.readinessScore);
         double stalenessBlend = MathMax(0.70, 1.0 - m_lastEvidence.stalenessPenalty);
-        confidence = MathMax(0.0, MathMin(1.0, confidence * contextBlend * readinessBlend * stalenessBlend));
+        double adjustedConfidence = MathMax(0.0, MathMin(1.0, confidence * contextBlend * readinessBlend * stalenessBlend));
+        confidence = MathMax(confidence, adjustedConfidence);
     }
     
     if(!passed)
@@ -825,13 +817,6 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     else
     {
         m_signalsPassed++;
-        
-        if(m_diagnostics != NULL)
-        {
-            string strategyName = strategy.GetName();
-            string reason = StringFormat("Signal passed all filters | Confidence: %.2f", confidence);
-            m_diagnostics.LogSignalGeneration(strategyName, symbol, timeframe, signal, confidence, reason);
-        }
     }
     
     return signal;
@@ -883,13 +868,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessMTFSignals(IStrategy* &strategi
         double resolvedConf = 0.0;
         string reasoning = "";
         ENUM_TRADE_SIGNAL resolvedSignal = m_tfConsistency.ResolveSignals(resolvedConf, reasoning);
-        
-        if(m_diagnostics != NULL)
-        {
-            string conflictDetails = m_tfConsistency.GetConflictDetails();
-            Print("[Pipeline] MTF conflict resolved: ", conflictDetails);
-        }
-        
+
         finalConfidence = resolvedConf;
         return resolvedSignal;
     }
@@ -969,11 +948,13 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
                                               MathMin(0.30, (double)snapshot.stalenessSeconds / (double)MathMax(10, 2 * 60) * 0.30));
 
     string regimeTag = m_regimeEngine.GetStateTag();
-    PrintFormat("[COST-GATE] %s | regime=%s | spread_atr=%.4f/%.4f | cooldown=%s | z=%.3f/%.3f",
+    PrintFormat("[COST-GATE] %s | regime=%s | spread_atr=%.6f/%.6f | spread=%.5f | atr=%.5f | cooldown=%s | z=%.3f/%.3f",
                 symbol,
                 regimeTag,
                 snapshot.spreadToAtrRatio,
                 m_filters.maxSpreadToAtrRatio,
+                snapshot.spreadPrice,
+                snapshot.atrValue,
                 snapshot.spreadShockCooldownActive ? "true" : "false",
                 snapshot.rangeZScore,
                 m_filters.maxEntryRangeZScore);
@@ -1285,12 +1266,8 @@ bool CUnifiedSignalPipeline::ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal)
 //+------------------------------------------------------------------+
 void CUnifiedSignalPipeline::LogFilterResult(const string filter, bool passed, const string reason)
 {
-    if(m_diagnostics == NULL)
-        return;
-    
-    string status = passed ? "PASSED" : "FAILED";
-    string msg = StringFormat("[Pipeline] %s: %s - %s", filter, status, reason);
-    Print(msg);
+    // Generic per-filter logs are intentionally suppressed here.
+    // Authoritative runtime telemetry is emitted by the manager, validator, and regime/cost gates.
 }
 
 #endif // UNIFIED_SIGNAL_PIPELINE_MQH

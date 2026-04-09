@@ -21,8 +21,20 @@ private:
     CADXPositionSizing*     m_adxSizing;
     // Configuration
     int    m_lastBarProcessed;
+    ENUM_TIMEFRAMES m_effectiveTF; // Auto-resolved: chart TF or M30, whichever is higher
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
+
+    // Resolve the effective analysis timeframe (M30 minimum for trend strategies)
+    ENUM_TIMEFRAMES ResolveEffectiveTF(ENUM_TIMEFRAMES chartTF)
+    {
+        if(chartTF == PERIOD_M1  || chartTF == PERIOD_M2  || chartTF == PERIOD_M3  ||
+           chartTF == PERIOD_M4  || chartTF == PERIOD_M5  || chartTF == PERIOD_M6  ||
+           chartTF == PERIOD_M10 || chartTF == PERIOD_M12 || chartTF == PERIOD_M15 ||
+           chartTF == PERIOD_M20)
+            return PERIOD_M30;
+        return chartTF;
+    }
 
     void LogRejectEvent(const string reasonTag)
     {
@@ -53,6 +65,7 @@ public:
         m_trailingStop(NULL),
         m_adxSizing(NULL),
         m_lastBarProcessed(0),
+        m_effectiveTF(PERIOD_M30),
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0)
     {
@@ -76,35 +89,50 @@ public:
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
-        // Initialize Multi-EMA System (8/21/50/200)
+
+        // Resolve effective analysis TF: Trend strategies need structure that only forms
+        // on M30+. If the trader is on M1-M20, silently step up to M30 for all sub-components.
+        m_effectiveTF = ResolveEffectiveTF(timeframe);
+
+        // Initialize Multi-EMA System (8/21/50/200) on effective TF
         m_emaSystem = new CMultiEMASystem();
-        if(m_emaSystem == NULL || !m_emaSystem.Initialize(symbol, timeframe))
+        if(m_emaSystem == NULL || !m_emaSystem.Initialize(symbol, m_effectiveTF))
         {
             Print("[TREND v2.0] Failed to initialize Multi-EMA System");
             return false;
         }
-        // Initialize Entry Types Engine
+        // Initialize Entry Types Engine on effective TF
         m_entryTypes = new CTrendEntryTypes();
-        if(m_entryTypes == NULL || !m_entryTypes.Initialize(symbol, timeframe, m_emaSystem))
+        if(m_entryTypes == NULL || !m_entryTypes.Initialize(symbol, m_effectiveTF, m_emaSystem))
         {
             Print("[TREND v2.0] Failed to initialize Entry Types");
             return false;
         }
-        // Initialize Trailing Stop System
+        // Initialize Trailing Stop System on effective TF
         m_trailingStop = new CTrendTrailingStop();
-        if(m_trailingStop == NULL || !m_trailingStop.Initialize(symbol, timeframe, m_emaSystem))
+        if(m_trailingStop == NULL || !m_trailingStop.Initialize(symbol, m_effectiveTF, m_emaSystem))
         {
             Print("[TREND v2.0] Failed to initialize Trailing Stop");
             return false;
         }
-        // Initialize ADX Position Sizing
+        // Initialize ADX Position Sizing on effective TF
         m_adxSizing = new CADXPositionSizing();
-        if(m_adxSizing == NULL || !m_adxSizing.Initialize(symbol, timeframe))
+        if(m_adxSizing == NULL || !m_adxSizing.Initialize(symbol, m_effectiveTF))
         {
             Print("[TREND v2.0] Failed to initialize ADX Sizing");
             return false;
         }
-        PrintFormat("[TREND v2.0] Strategy initialized for %s on %s", symbol, EnumToString(timeframe));
+
+        // Scale ADX thresholds by effective TF so faster frames tolerate lower ADX.
+        // M30: noTrend=15, normal at 28 | H1: 18/30 | H4+: 20/35 (original defaults)
+        if(m_effectiveTF == PERIOD_M30)
+            m_adxSizing.SetThresholds(15.0, 20.0, 28.0, 40.0);
+        else if(m_effectiveTF == PERIOD_H1)
+            m_adxSizing.SetThresholds(18.0, 22.0, 30.0, 42.0);
+        // H4 and above keep defaults (20/25/35/45)
+
+        PrintFormat("[TREND v2.0] Strategy initialized for %s | chart=%s | analysis=%s",
+                    symbol, EnumToString(timeframe), EnumToString(m_effectiveTF));
         return true;
     }
     //--- Deinitialization

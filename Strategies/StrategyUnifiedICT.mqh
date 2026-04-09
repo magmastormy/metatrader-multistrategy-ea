@@ -766,6 +766,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     if(result != TRADE_SIGNAL_NONE)
     {
         m_signalsGenerated++;
+        RecordSignal();
         SetDecisionReasonTag(result == TRADE_SIGNAL_BUY ? "UICT_SIGNAL_BUY" : "UICT_SIGNAL_SELL");
         
         PrintFormat("[UICT-EVENT] %s | structure_break=%s | displacement=%s | mitigation=%s | ref=%.5f | event_quality=%.2f",

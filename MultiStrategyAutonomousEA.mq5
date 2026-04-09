@@ -24,14 +24,14 @@ input bool   InpAllowSyntheticOffHours = true;    // Allow synthetic indices to 
 
 //--- Strategy Selection (for testing)
 input group "Strategy Selection"
-input bool InpEnableMomentum = true;         // Enable Momentum Strategy
-input bool InpEnableTrend = true;            // Enable Trend Strategy
-input bool InpEnableFibonacci = true;        // Enable Fibonacci Strategy
+input bool InpEnableMomentum = false;        // Enable Momentum Strategy
+input bool InpEnableTrend = false;           // Enable Trend Strategy
+input bool InpEnableFibonacci = false;       // Enable Fibonacci Strategy
 input bool InpEnableElliottWave = true;      // Enable Elliott Wave Enhanced Strategy
-input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines
-input bool InpEnableUnifiedICT = true;         // Enable Unified ICT Strategy
-input bool InpEnableCandlestick = true;       // Enable Candlestick Patterns Strategy
-input bool InpUseCuratedStrategySet = true;    // Enable curated production strategy subset
+input bool InpEnableSupportResistance = false; // Enable Support/Resistance + Trendlines
+input bool InpEnableUnifiedICT = true;        // Enable Unified ICT Strategy
+input bool InpEnableCandlestick = false;      // Enable Candlestick Patterns Strategy
+input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
 input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained for backward compatibility; all enabled strategies vote live
 
 //--- EA operating mode
@@ -89,13 +89,17 @@ input int InpPipelineSpreadShockCooldownSec = 30;     // Spread shock cooldown w
 input double InpPipelineLateEntryZScoreLimit = 2.50;  // Late-entry outlier z-score veto limit
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
+input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
 input bool InpIntrabarEligibilityFibonacci = false;   // Intrabar eligibility for Fibonacci strategy
+input bool InpIntrabarEligibilityElliottWave = true;  // Intrabar eligibility for Elliott Wave strategy
 input bool InpIntrabarEligibilitySupportResistance = false; // Intrabar eligibility for Support/Resistance strategy
 input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
+input bool InpIntrabarEligibilityCandlestick = true;  // Intrabar eligibility for Candlestick strategy
 input int  InpMaxIntrabarSymbolsPerCycle = 3;         // Max symbols eligible for intrabar evaluation per cycle
+input int  InpMaxSignalEvaluationsPerCycle = 4;       // Max total heavy signal evaluations per cycle across new-bar + intrabar work
 input int  InpIntrabarBackoffMaxSeconds = 60;         // Max per-symbol intrabar backoff interval
 input int  InpReadinessReuseTtlSeconds = 60;          // Max readiness snapshot reuse age in seconds
-input bool InpShadowMode = true;                      // Shadow mode: log virtual trades without sending orders
+input bool InpShadowMode = false;                     // [!] LIVE MODE ACTIVE: Set true for dry-run
 input bool InpEnableNNOnlineTraining = false;         // Enable online NN observation/labeling loop
 input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation (institutional default OFF)
 input bool InpEnableNNPseudoLabeling = false;         // Enable pseudo-labeling when no trade-linked label exists
@@ -105,7 +109,7 @@ input int  InpNNCheckpointEveryLabeled = 10;          // Checkpoint every N newl
 
 //--- Advanced signal validator (post-consensus)
 input group "Signal Validator"
-input int    InpValidatorNewBarMinConfluence    = 2;    // Minimum strategy confluence on new-bar scans
+input int    InpValidatorNewBarMinConfluence    = 1;    // Minimum strategy confluence on new-bar scans
 input double InpValidatorNewBarMinQuality       = 0.68; // Minimum quality score on new-bar scans
 input double InpValidatorNewBarMinConfidence    = 0.50; // Post-consensus confidence floor on new-bar scans
 input int    InpValidatorIntrabarMinConfluence  = 1;    // Minimum strategy confluence on intrabar scans
@@ -125,7 +129,6 @@ input bool InpCloseUnprotectedOnRemediationFailure = true;              // Force
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
 input bool InpUseSignalPipeline = true;        // Use Signal Pipeline
-input bool InpUseOrchestrator = true;          // Legacy flag (trade decisions now governed by EnterpriseManager only)
 input double InpMinTrendStrength = 50.0;       // Minimum Trend Strength
 input double InpMaxVolatility = 3.0;           // Maximum Volatility %
 input bool InpEnableStructureFilter = true;    // Enable Structure Filter
@@ -261,6 +264,7 @@ int g_totalActivePositions = 0;
 string g_activePairs[];
 datetime g_lastSymbolBarTimes[];
 datetime g_lastIntrabarScanTime[];
+bool g_pendingNewBarScans[];
 struct SSymbolScanState
 {
     int consecutiveRawNone;
@@ -468,6 +472,90 @@ void ResetSymbolScanStates(const int size)
     ArrayResize(g_symbolScanStates, size);
     for(int i = 0; i < size; i++)
         g_symbolScanStates[i].Reset();
+
+    ArrayResize(g_pendingNewBarScans, size);
+    for(int i = 0; i < size; i++)
+        g_pendingNewBarScans[i] = false;
+}
+
+bool IsSymbolSchedulerStateAligned()
+{
+    int size = ArraySize(g_activePairs);
+    return (ArraySize(g_lastSymbolBarTimes) == size &&
+            ArraySize(g_lastIntrabarScanTime) == size &&
+            ArraySize(g_pendingNewBarScans) == size &&
+            ArraySize(g_symbolScanStates) == size);
+}
+
+void RebuildSymbolSchedulerState(const string reason)
+{
+    int size = ArraySize(g_activePairs);
+    ArrayResize(g_lastSymbolBarTimes, size);
+    ArrayInitialize(g_lastSymbolBarTimes, 0);
+    ArrayResize(g_lastIntrabarScanTime, size);
+    ArrayInitialize(g_lastIntrabarScanTime, 0);
+    ResetSymbolScanStates(size);
+    PrimePendingNewBarScans(reason);
+
+    PrintFormat("[SCHEDULER-STATE] reason=%s | symbols=%d | last_bar=%d | intrabar=%d | pending=%d | scan_states=%d",
+                reason,
+                size,
+                ArraySize(g_lastSymbolBarTimes),
+                ArraySize(g_lastIntrabarScanTime),
+                ArraySize(g_pendingNewBarScans),
+                ArraySize(g_symbolScanStates));
+}
+
+void PrimePendingNewBarScans(const string reason)
+{
+    int size = ArraySize(g_activePairs);
+    if(size <= 0)
+        return;
+
+    if(ArraySize(g_pendingNewBarScans) != size)
+        ArrayResize(g_pendingNewBarScans, size);
+
+    int primedCount = 0;
+    for(int i = 0; i < size; i++)
+    {
+        if(!g_pendingNewBarScans[i])
+        {
+            g_pendingNewBarScans[i] = true;
+            primedCount++;
+        }
+
+        if(i < ArraySize(g_symbolScanStates))
+        {
+            g_symbolScanStates[i].intrabarBackoffTier = 0;
+            g_symbolScanStates[i].nextEligibleIntrabarTime = 0;
+        }
+
+        if(i < ArraySize(g_lastSymbolBarTimes) && g_lastSymbolBarTimes[i] <= 0)
+        {
+            datetime currentBarTime = iTime(g_activePairs[i], (ENUM_TIMEFRAMES)Period(), 0);
+            if(currentBarTime > 0)
+                g_lastSymbolBarTimes[i] = currentBarTime;
+        }
+    }
+
+    if(primedCount > 0)
+    {
+        PrintFormat("[SCAN-PRIME] reason=%s | symbols=%d | primed=%d",
+                    reason,
+                    size,
+                    primedCount);
+    }
+}
+
+int CountPendingNewBarScans()
+{
+    int total = 0;
+    for(int i = 0; i < ArraySize(g_pendingNewBarScans); i++)
+    {
+        if(g_pendingNewBarScans[i])
+            total++;
+    }
+    return total;
 }
 
 bool IsReadinessRelatedVeto(const string vetoCode)
@@ -635,52 +723,6 @@ void UpdatePerformanceTracking()
 {
     // Delegate to centralized analytics
     performanceAnalytics.UpdateRealTimeMetrics();
-}
-
-//+------------------------------------------------------------------+
-//| Save performance data                                            |
-//+------------------------------------------------------------------+
-void SavePerformanceData()
-{
-    performanceAnalytics.SaveReportToCSV("MultiStrategyEA_Performance.csv");
-}
-
-//+------------------------------------------------------------------+
-//| Check if new bar                                                 |
-//+------------------------------------------------------------------+
-bool IsNewBar(const string symbolParam, const ENUM_TIMEFRAMES timeframe)
-{
-    static string barKeys[];
-    static datetime lastBarTimes[];
-    datetime currentBarTime = iTime(symbolParam, timeframe, 0);
-    string key = symbolParam + "|" + IntegerToString((int)timeframe);
-
-    int keyIndex = -1;
-    for(int i = 0; i < ArraySize(barKeys); i++)
-    {
-        if(barKeys[i] == key)
-        {
-            keyIndex = i;
-            break;
-        }
-    }
-
-    if(keyIndex < 0)
-    {
-        keyIndex = ArraySize(barKeys);
-        ArrayResize(barKeys, keyIndex + 1);
-        ArrayResize(lastBarTimes, keyIndex + 1);
-        barKeys[keyIndex] = key;
-        lastBarTimes[keyIndex] = 0;
-    }
-
-    if(currentBarTime != lastBarTimes[keyIndex])
-    {
-        lastBarTimes[keyIndex] = currentBarTime;
-        return true;
-    }
-
-    return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1551,6 +1593,58 @@ string BuildEnabledStrategyList(const bool &strategyFlags[])
     return enabled;
 }
 
+string GetStrategyIntrabarStatusByIndex(const int index, const bool strategyActive)
+{
+    if(!strategyActive)
+        return "INACTIVE";
+
+    switch(index)
+    {
+        case 0: return InpIntrabarEligibilityMomentum ? "LIVE" : "OFF";
+        case 1: return InpIntrabarEligibilityTrend ? "LIVE" : "OFF";
+        case 2: return InpIntrabarEligibilityFibonacci ? "LIVE" : "OFF";
+        case 3: return InpIntrabarEligibilityElliottWave ? "LIVE" : "OFF";
+        case 4: return InpIntrabarEligibilitySupportResistance ? "LIVE" : "OFF";
+        case 5: return InpIntrabarEligibilityUnifiedICT ? "LIVE" : "OFF";
+        case 6: return InpIntrabarEligibilityCandlestick ? "LIVE" : "OFF";
+        default: return "OFF";
+    }
+}
+
+string BuildIntrabarGovernanceSummary(const bool &strategyFlags[])
+{
+    string summary = "";
+    for(int i = 0; i < 7; i++)
+    {
+        if(i > 0)
+            summary += ",";
+
+        bool strategyActive = (ArraySize(strategyFlags) > i && strategyFlags[i]);
+        string shortName = GetStrategyNameByIndex(i);
+        if(shortName == "Support/Resistance")
+            shortName = "SupportResistance";
+        else if(shortName == "Elliott Wave")
+            shortName = "Elliott";
+
+        summary += shortName + ":" + GetStrategyIntrabarStatusByIndex(i, strategyActive);
+    }
+
+    return summary;
+}
+
+void RegisterStrategyDefinitionIfEnabled(const string name,
+                                         const ENUM_STRATEGY_TYPE type,
+                                         const bool isAI,
+                                         const bool enabled,
+                                         const bool mandatory,
+                                         const double weight)
+{
+    if(!enabled)
+        return;
+
+    g_strategyRegistry.RegisterDefinition(name, type, isAI, true, mandatory, weight);
+}
+
 bool IsAIContributorName(const string strategyName)
 {
     return (strategyName == "Transformer AI" ||
@@ -1573,29 +1667,29 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
     g_strategyRegistry.Reset();
     g_strategyRegistry.SetMode(InpEAMode);
 
-    g_strategyRegistry.RegisterDefinition("Momentum", STRATEGY_MOMENTUM, false,
-                                          (ArraySize(strategyFlags) > 0 && strategyFlags[0]), false, InpWeightMomentum);
-    g_strategyRegistry.RegisterDefinition("Trend", STRATEGY_TREND, false,
-                                          (ArraySize(strategyFlags) > 1 && strategyFlags[1]), false, InpWeightTrend);
-    g_strategyRegistry.RegisterDefinition("Fibonacci", STRATEGY_FIBONACCI, false,
-                                          (ArraySize(strategyFlags) > 2 && strategyFlags[2]), false, InpWeightFibonacci);
-    g_strategyRegistry.RegisterDefinition("Elliott Wave", STRATEGY_ELLIOTT_WAVE, false,
-                                          (ArraySize(strategyFlags) > 3 && strategyFlags[3]), false, InpWeightElliottWave);
-    g_strategyRegistry.RegisterDefinition("Support/Resistance", STRATEGY_SUPPORT_RESISTANCE, false,
-                                          (ArraySize(strategyFlags) > 4 && strategyFlags[4]), false, InpWeightSupportResistance);
-    g_strategyRegistry.RegisterDefinition("Unified ICT", STRATEGY_UNIFIED_ICT, false,
-                                          (ArraySize(strategyFlags) > 5 && strategyFlags[5]), false, InpWeightUnifiedICT);
-    g_strategyRegistry.RegisterDefinition("Candlestick", STRATEGY_CANDLESTICK, false,
-                                          (ArraySize(strategyFlags) > 6 && strategyFlags[6]), false, InpWeightCandlestick);
+    RegisterStrategyDefinitionIfEnabled("Momentum", STRATEGY_MOMENTUM, false,
+                                        (ArraySize(strategyFlags) > 0 && strategyFlags[0]), false, InpWeightMomentum);
+    RegisterStrategyDefinitionIfEnabled("Trend", STRATEGY_TREND, false,
+                                        (ArraySize(strategyFlags) > 1 && strategyFlags[1]), false, InpWeightTrend);
+    RegisterStrategyDefinitionIfEnabled("Fibonacci", STRATEGY_FIBONACCI, false,
+                                        (ArraySize(strategyFlags) > 2 && strategyFlags[2]), false, InpWeightFibonacci);
+    RegisterStrategyDefinitionIfEnabled("Elliott Wave", STRATEGY_ELLIOTT_WAVE, false,
+                                        (ArraySize(strategyFlags) > 3 && strategyFlags[3]), false, InpWeightElliottWave);
+    RegisterStrategyDefinitionIfEnabled("Support/Resistance", STRATEGY_SUPPORT_RESISTANCE, false,
+                                        (ArraySize(strategyFlags) > 4 && strategyFlags[4]), false, InpWeightSupportResistance);
+    RegisterStrategyDefinitionIfEnabled("Unified ICT", STRATEGY_UNIFIED_ICT, false,
+                                        (ArraySize(strategyFlags) > 5 && strategyFlags[5]), false, InpWeightUnifiedICT);
+    RegisterStrategyDefinitionIfEnabled("Candlestick", STRATEGY_CANDLESTICK, false,
+                                        (ArraySize(strategyFlags) > 6 && strategyFlags[6]), false, InpWeightCandlestick);
 
     bool aiBaseEnabled = InpEnableAIMode;
-    g_strategyRegistry.RegisterDefinition("Neural Network AI", STRATEGY_BRAIN, true,
-                                          (aiBaseEnabled && InpEnableNeuralNetwork), false,
-                                          MathMax(0.1, InpAIWeightMultiplier));
-    g_strategyRegistry.RegisterDefinition("Transformer AI", STRATEGY_AI_ENHANCED, true,
-                                          (aiBaseEnabled && InpEnableTransformer), false, 1.10);
-    g_strategyRegistry.RegisterDefinition("Ensemble AI", STRATEGY_AI_ENHANCED, true,
-                                          (aiBaseEnabled && InpEnableEnsemble), false, 1.20);
+    RegisterStrategyDefinitionIfEnabled("Neural Network AI", STRATEGY_BRAIN, true,
+                                        (aiBaseEnabled && InpEnableNeuralNetwork), false,
+                                        MathMax(0.1, InpAIWeightMultiplier));
+    RegisterStrategyDefinitionIfEnabled("Transformer AI", STRATEGY_AI_ENHANCED, true,
+                                        (aiBaseEnabled && InpEnableTransformer), false, 1.10);
+    RegisterStrategyDefinitionIfEnabled("Ensemble AI", STRATEGY_AI_ENHANCED, true,
+                                        (aiBaseEnabled && InpEnableEnsemble), false, 1.20);
 
     ENUM_EA_MODE effectiveMode = ResolveEffectiveEAMode();
     if(effectiveMode != g_strategyRegistry.GetMode())
@@ -1745,15 +1839,21 @@ void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager)
     if(manager == NULL)
         return;
 
-    RegisterIndicatorStrategyByName(manager, "Momentum");
-    RegisterIndicatorStrategyByName(manager, "Trend");
-    RegisterIndicatorStrategyByName(manager, "Fibonacci");
-    RegisterIndicatorStrategyByName(manager, "Elliott Wave");
-    RegisterIndicatorStrategyByName(manager, "Support/Resistance");
-    RegisterIndicatorStrategyByName(manager, "Unified ICT");
-    RegisterIndicatorStrategyByName(manager, "Candlestick");
-    RegisterManagerAIAdapterByName(manager, "Transformer AI");
-    RegisterManagerAIAdapterByName(manager, "Ensemble AI");
+    for(int i = 0; i < g_strategyRegistry.GetDescriptorCount(); i++)
+    {
+        SStrategyDescriptor descriptor;
+        if(!g_strategyRegistry.GetDescriptor(i, descriptor) || !descriptor.modeEnabled)
+            continue;
+
+        if(!descriptor.isAI)
+        {
+            RegisterIndicatorStrategyByName(manager, descriptor.name);
+            continue;
+        }
+
+        if(descriptor.name == "Transformer AI" || descriptor.name == "Ensemble AI")
+            RegisterManagerAIAdapterByName(manager, descriptor.name);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -1773,34 +1873,35 @@ void BuildStrategyFlags(bool &strategyFlags[])
     if(!InpUseCuratedStrategySet)
         return;
 
-    bool curatedMask[7];
-    curatedMask[0] = false; // Momentum (consistently filtered, dilutes denominator)
-    curatedMask[1] = false; // Trend
-    curatedMask[2] = false; // Fibonacci
-    curatedMask[3] = true;  // Elliott Wave (reliable primary voter)
-    curatedMask[4] = false; // Support/Resistance (rarely productive)
-    curatedMask[5] = true;  // Unified ICT (reliable secondary voter)
-    curatedMask[6] = false; // Candlestick
+    bool curatedBaseline[];
+    ArrayResize(curatedBaseline, 7);
+    curatedBaseline[0] = false; // Momentum
+    curatedBaseline[1] = false; // Trend
+    curatedBaseline[2] = false; // Fibonacci
+    curatedBaseline[3] = true;  // Elliott Wave
+    curatedBaseline[4] = false; // Support/Resistance
+    curatedBaseline[5] = true;  // Unified ICT
+    curatedBaseline[6] = false; // Candlestick
 
-    int enabledBefore = 0;
-    int enabledAfter = 0;
+    int enabledCount = 0;
+    int curatedCount = 0;
+    int manualOverrideCount = 0;
     for(int i = 0; i < ArraySize(strategyFlags); i++)
     {
         if(strategyFlags[i])
-            enabledBefore++;
-
-        if(strategyFlags[i] && !curatedMask[i])
-        {
-            strategyFlags[i] = false;
-            Print("[CURATION] Disabled by curated profile: ", GetStrategyNameByIndex(i));
-        }
-
-        if(strategyFlags[i])
-            enabledAfter++;
+            enabledCount++;
+        if(curatedBaseline[i])
+            curatedCount++;
+        if(strategyFlags[i] != curatedBaseline[i])
+            manualOverrideCount++;
     }
 
-    PrintFormat("[CURATION] Lean production-grade roster applied (%d -> %d enabled)", enabledBefore, enabledAfter);
-    Print("[CURATION] Ultra-lean curated profile: Elliott Wave, Unified ICT (removed dilution from Momentum & S/R)");
+    if(manualOverrideCount <= 0)
+        PrintFormat("[CURATION] Curated baseline active (%d enabled)", enabledCount);
+    else
+        PrintFormat("[CURATION] Manual strategy overrides preserved (%d active vs curated baseline %d)", enabledCount, curatedCount);
+
+    Print("[CURATION] Curated baseline recommendation: ", BuildEnabledStrategyList(curatedBaseline));
     Print("[CURATION] Effective runtime strategy set: ", BuildEnabledStrategyList(strategyFlags));
 }
 
@@ -1837,22 +1938,22 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
     if(g_strategyRegistry.IsStrategyActive("Ensemble AI"))
         manager.SetStrategyGovernanceByName("Ensemble AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE, true, false);
 
-    // Intrabar governance for this efficiency batch:
-    // Momentum/LIVE, Unified ICT/LIVE, Fibonacci/PROBE, Support/Resistance/PROBE, all others/OFF.
+    // Intrabar governance contract:
+    // Explicit intrabar eligibility means the strategy participates as a real live voter.
     if(g_strategyRegistry.IsStrategyActive("Momentum"))
         manager.SetStrategyIntrabarPolicyByName("Momentum", InpIntrabarEligibilityMomentum ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Trend"))
-        manager.SetStrategyIntrabarPolicyByName("Trend", INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Trend", InpIntrabarEligibilityTrend ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Fibonacci"))
-        manager.SetStrategyIntrabarPolicyByName("Fibonacci", InpIntrabarEligibilityFibonacci ? INTRABAR_POLICY_PROBE : INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Fibonacci", InpIntrabarEligibilityFibonacci ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Elliott Wave"))
-        manager.SetStrategyIntrabarPolicyByName("Elliott Wave", INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Elliott Wave", InpIntrabarEligibilityElliottWave ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Support/Resistance"))
-        manager.SetStrategyIntrabarPolicyByName("Support/Resistance", InpIntrabarEligibilitySupportResistance ? INTRABAR_POLICY_PROBE : INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Support/Resistance", InpIntrabarEligibilitySupportResistance ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Unified ICT"))
         manager.SetStrategyIntrabarPolicyByName("Unified ICT", InpIntrabarEligibilityUnifiedICT ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Candlestick"))
-        manager.SetStrategyIntrabarPolicyByName("Candlestick", INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Candlestick", InpIntrabarEligibilityCandlestick ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Neural Network AI"))
         manager.SetStrategyIntrabarPolicyByName("Neural Network AI", INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Transformer AI"))
@@ -1860,15 +1961,12 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
     if(g_strategyRegistry.IsStrategyActive("Ensemble AI"))
         manager.SetStrategyIntrabarPolicyByName("Ensemble AI", INTRABAR_POLICY_OFF);
 
-    PrintFormat("[STRATEGY-GOVERNANCE] %s | mode=%s | indicator_role=%s | ai_role=%s | intrabar={Momentum:%s,Fibonacci:%s,SupportResistance:%s,UnifiedICT:%s,AI:OFF} | strategies={%s}",
+    PrintFormat("[STRATEGY-GOVERNANCE] %s | mode=%s | indicator_role=%s | ai_role=%s | intrabar={%s,AI:OFF} | strategies={%s}",
                 symbol,
                 EAModeToString(effectiveMode),
                 indicatorsPrimary ? "PRIMARY_ALPHA" : "CONTEXT_FEATURE",
                 aiPrimary ? "PRIMARY_ALPHA" : "CONTEXT_FEATURE",
-                InpIntrabarEligibilityMomentum ? "LIVE" : "OFF",
-                InpIntrabarEligibilityFibonacci ? "PROBE" : "OFF",
-                InpIntrabarEligibilitySupportResistance ? "PROBE" : "OFF",
-                InpIntrabarEligibilityUnifiedICT ? "LIVE" : "OFF",
+                BuildIntrabarGovernanceSummary(strategyFlags),
                 BuildEnabledStrategyList(strategyFlags));
 }
 
@@ -1879,39 +1977,22 @@ void ApplyStrategyWeights(CEnterpriseStrategyManager* manager,
     if(manager == NULL)
         return;
 
-    if(g_strategyRegistry.IsStrategyActive("Momentum"))
-        manager.UpdateStrategyWeightByName("Momentum", g_strategyRegistry.GetWeightByName("Momentum"));
-    if(g_strategyRegistry.IsStrategyActive("Trend"))
-        manager.UpdateStrategyWeightByName("Trend", g_strategyRegistry.GetWeightByName("Trend"));
-    if(g_strategyRegistry.IsStrategyActive("Fibonacci"))
-        manager.UpdateStrategyWeightByName("Fibonacci", g_strategyRegistry.GetWeightByName("Fibonacci"));
-    if(g_strategyRegistry.IsStrategyActive("Elliott Wave"))
-        manager.UpdateStrategyWeightByName("Elliott Wave", g_strategyRegistry.GetWeightByName("Elliott Wave"));
-    if(g_strategyRegistry.IsStrategyActive("Support/Resistance"))
-        manager.UpdateStrategyWeightByName("Support/Resistance", g_strategyRegistry.GetWeightByName("Support/Resistance"));
-    if(g_strategyRegistry.IsStrategyActive("Unified ICT"))
-        manager.UpdateStrategyWeightByName("Unified ICT", g_strategyRegistry.GetWeightByName("Unified ICT"));
-    if(g_strategyRegistry.IsStrategyActive("Candlestick"))
-        manager.UpdateStrategyWeightByName("Candlestick", g_strategyRegistry.GetWeightByName("Candlestick"));
-    if(g_strategyRegistry.IsStrategyActive("Neural Network AI"))
-        manager.UpdateStrategyWeightByName("Neural Network AI", g_strategyRegistry.GetWeightByName("Neural Network AI"));
-    if(g_strategyRegistry.IsStrategyActive("Transformer AI"))
-        manager.UpdateStrategyWeightByName("Transformer AI", g_strategyRegistry.GetWeightByName("Transformer AI"));
-    if(g_strategyRegistry.IsStrategyActive("Ensemble AI"))
-        manager.UpdateStrategyWeightByName("Ensemble AI", g_strategyRegistry.GetWeightByName("Ensemble AI"));
+    string weightReport = "";
+    for(int i = 0; i < g_strategyRegistry.GetDescriptorCount(); i++)
+    {
+        SStrategyDescriptor descriptor;
+        if(!g_strategyRegistry.GetDescriptor(i, descriptor) || !descriptor.modeEnabled)
+            continue;
 
-    PrintFormat("[STRATEGY-WEIGHTS] %s | Momentum=%.2f | Trend=%.2f | Fibonacci=%.2f | ElliottWave=%.2f | SupportResistance=%.2f | UnifiedICT=%.2f | Candlestick=%.2f | NN=%.2f | Transformer=%.2f | Ensemble=%.2f",
+        manager.UpdateStrategyWeightByName(descriptor.name, descriptor.weight);
+        if(StringLen(weightReport) > 0)
+            weightReport += " | ";
+        weightReport += StringFormat("%s=%.2f", descriptor.name, descriptor.weight);
+    }
+
+    PrintFormat("[STRATEGY-WEIGHTS] %s | %s",
                 symbol,
-                g_strategyRegistry.GetWeightByName("Momentum"),
-                g_strategyRegistry.GetWeightByName("Trend"),
-                g_strategyRegistry.GetWeightByName("Fibonacci"),
-                g_strategyRegistry.GetWeightByName("Elliott Wave"),
-                g_strategyRegistry.GetWeightByName("Support/Resistance"),
-                g_strategyRegistry.GetWeightByName("Unified ICT"),
-                g_strategyRegistry.GetWeightByName("Candlestick"),
-                g_strategyRegistry.GetWeightByName("Neural Network AI"),
-                g_strategyRegistry.GetWeightByName("Transformer AI"),
-                g_strategyRegistry.GetWeightByName("Ensemble AI"));
+                StringLen(weightReport) > 0 ? weightReport : "No active strategy weights");
 }
 
 //+------------------------------------------------------------------+
@@ -2209,6 +2290,7 @@ void ReleaseEnterpriseManagers()
     ArrayResize(g_enterpriseManagerSymbols, 0);
     ArrayResize(g_lastSymbolBarTimes, 0);
     ArrayResize(g_lastIntrabarScanTime, 0);
+    ArrayResize(g_pendingNewBarScans, 0);
     ArrayResize(g_symbolScanStates, 0);
     g_enterpriseManager = NULL;
 }
@@ -2397,7 +2479,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     manager.SetIntrabarDynamicQuorumEnabled(InpIntrabarDynamicQuorumEnabled);
     manager.SetIntrabarSingleVoterMinConfidence(InpIntrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(InpDeadlockAttributionIntervalSec);
-    PrintFormat("[ENTERPRISE-CONFIG] %s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_newbar_conf=%.2f | validator_newbar_confluence=%d | validator_newbar_quality=%.2f | validator_intrabar_conf=%.2f | validator_intrabar_confluence=%d | validator_intrabar_quality=%.2f | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+    PrintFormat("[ENTERPRISE-CONFIG] %s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_mode=EXOGENOUS_ONLY | validator_profile_inputs=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
                 symbol,
                 quorumThreshold,
                 minLiveVoters,
@@ -2427,10 +2509,8 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     int size = ArraySize(g_enterpriseManagers);
     ArrayResize(g_enterpriseManagers, size + 1);
     ArrayResize(g_enterpriseManagerSymbols, size + 1);
-    ArrayResize(g_lastSymbolBarTimes, size + 1);
     g_enterpriseManagers[size] = manager;
     g_enterpriseManagerSymbols[size] = symbol;
-    g_lastSymbolBarTimes[size] = 0;
 
     if(symbol == _Symbol)
         g_enterpriseManager = manager;
@@ -2541,8 +2621,6 @@ int OnInit()
     }
     else
     {
-        if(InpUseOrchestrator)
-            Print("[AI] InpUseOrchestrator is legacy; trade decisions remain manager-governed");
         Print("[AI] Orchestrator disabled (AI mode off)");
     }
 
@@ -2638,14 +2716,14 @@ int OnInit()
         Print("[AI] AIEngine disabled (AI mode off or orchestrator unavailable)");
     }
 
-    // Build strategy flags with optional curated production profile
+    // Build strategy flags with curated defaults as a baseline; explicit enables remain authoritative.
     bool strategyFlags[];
     BuildStrategyFlags(strategyFlags);
     BuildStrategyRegistry(strategyFlags);
     if(InpUseCuratedStrategySet)
     {
-        Print("[CURATION] Strict curated active: manual strategy toggles outside curated set are ignored.");
-        Print("[CURATION] Effective curated roster: ", BuildEnabledStrategyList(strategyFlags));
+        Print("[CURATION] Curated mode is advisory/default-only: explicitly enabled strategies remain active.");
+        Print("[CURATION] Effective runtime roster: ", BuildEnabledStrategyList(strategyFlags));
     }
     PrintFormat("[RUNTIME-FINGERPRINT] Runtime=%s | File=%s | TerminalBuild=%d | Curated=%s | RegistrySize=%d | ActiveProfile=%s | EAMode=%s | ActiveIndicators=%d | ActiveAI=%d",
                 TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
@@ -2657,12 +2735,18 @@ int OnInit()
                 EAModeToString(ResolveEffectiveEAMode()),
                 g_strategyRegistry.GetActiveIndicatorCount(),
                 g_strategyRegistry.GetActiveAICount());
-    PrintFormat("[CADENCE-CONFIG] hybrid=%s | newbar_only=%s | intrabar_seconds=%d | intrabar_budget=%d | chart_only=%s",
+    bool effectiveIntrabarCadence = (InpEnableHybridCadence && !InpSignalScanOnNewBarOnly);
+    PrintFormat("[CADENCE-CONFIG] hybrid=%s | newbar_only=%s | effective_intrabar=%s | intrabar_seconds=%d | intrabar_budget=%d | chart_only=%s",
                 InpEnableHybridCadence ? "true" : "false",
                 InpSignalScanOnNewBarOnly ? "true" : "false",
+                effectiveIntrabarCadence ? "true" : "false",
                 MathMax(1, InpIntrabarScanSeconds),
-                InpEnableHybridCadence ? MathMax(1, InpMaxIntrabarSymbolsPerCycle) : 0,
+                effectiveIntrabarCadence ? MathMax(1, InpMaxIntrabarSymbolsPerCycle) : 0,
                 InpIntrabarChartSymbolOnly ? "true" : "false");
+    if(InpEnableHybridCadence && InpSignalScanOnNewBarOnly)
+    {
+        Print("[CADENCE-WARNING] newbar_only=true disables timed intrabar scans even when intrabar strategy policies are LIVE.");
+    }
 
     // Validate and process trading symbols
     string symbols[];
@@ -2762,10 +2846,6 @@ int OnInit()
         return INIT_FAILED;
     }
 
-    ArrayResize(g_lastIntrabarScanTime, ArraySize(g_activePairs));
-    ArrayInitialize(g_lastIntrabarScanTime, 0);
-    ResetSymbolScanStates(ArraySize(g_activePairs));
-
     Print("[SYMBOLS] ", ArraySize(g_activePairs), " symbols validated and ready for trading");
     LogAccountCapacityDiagnostics();
     g_symbolsToTrade = InpSymbolsToTrade;
@@ -2789,10 +2869,13 @@ int OnInit()
     if(g_enterpriseManager == NULL)
         g_enterpriseManager = g_enterpriseManagers[0];
 
+    RebuildSymbolSchedulerState("post_manager_init");
+
     // Initialize Advanced Signal Validator (shared)
     g_signalValidator = new CAdvancedSignalValidator();
     if(g_signalValidator != NULL)
     {
+        g_signalValidator.SetManagerOwnedAdmission(true);
         g_signalValidator.SetValidationProfiles(MathMax(1, InpValidatorNewBarMinConfluence),
                                                 MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinQuality)),
                                                 MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
@@ -2809,7 +2892,7 @@ int OnInit()
                                                  2.5,
                                                  MathMax(5, InpPipelineSpreadShockCooldownSec));
         g_signalValidator.SetAllowSyntheticOffHours(InpAllowSyntheticOffHours);
-        PrintFormat("[SIGNAL-VALIDATOR] Advanced signal validation enabled | Synthetic Off-Hours: %s | NewBar(conf>=%.2f confluence>=%d quality>=%.2f) | Intrabar(conf>=%.2f confluence>=%d quality>=%.2f)",
+        PrintFormat("[SIGNAL-VALIDATOR] Advanced signal validation enabled | mode=EXOGENOUS_ONLY | Synthetic Off-Hours: %s | profile_inputs_telemetry_only=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f)",
                     InpAllowSyntheticOffHours ? "true" : "false",
                     MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
                     MathMax(1, InpValidatorNewBarMinConfluence),
@@ -3082,14 +3165,20 @@ void ProcessTradingLogic(bool fromTimer)
 
         if(ArraySize(g_enterpriseManagers) > 0)
         {
-            activeStrats = GetTotalActiveStrategyCount();
-            int activeBrainStrats = GetTotalActiveBrainStrategyCount();
-            int activeCoreStrats = MathMax(0, activeStrats - activeBrainStrats);
+            int activeStrategyInstances = GetTotalActiveStrategyCount();
+            int activeBrainStrategyInstances = GetTotalActiveBrainStrategyCount();
+            int activeCoreStrategyInstances = MathMax(0, activeStrategyInstances - activeBrainStrategyInstances);
+            int uniqueActiveStrategies = g_strategyRegistry.GetActiveCount();
+            int uniqueActiveCoreStrategies = g_strategyRegistry.GetActiveIndicatorCount();
+            int uniqueActiveAIStrategies = g_strategyRegistry.GetActiveAICount();
             eaPositions = GetEAPositionCount();  // Count only THIS EA's positions
             int cooldownSecs = g_lastTradeTime > 0 ? (int)(TimeCurrent() - g_lastTradeTime) : 0;
             int managerCount = ArraySize(g_enterpriseManagers);
-            Print("[ENTERPRISE-STATUS] Active strategies: ", activeStrats,
-                  " (Core: ", activeCoreStrats, ", AI: ", activeBrainStrats, ")",
+            activeStrats = activeStrategyInstances;
+            Print("[ENTERPRISE-STATUS] Active strategy instances: ", activeStrategyInstances,
+                  " (Core: ", activeCoreStrategyInstances, ", AI: ", activeBrainStrategyInstances, ")",
+                  " | Unique runtime strategies: ", uniqueActiveStrategies,
+                  " (Core: ", uniqueActiveCoreStrategies, ", AI: ", uniqueActiveAIStrategies, ")",
                   " | Managers: ", managerCount,
                   " | Cooldown: ", cooldownSecs, "s / ", InpMinSecondsBetweenTrades, "s");
             Print("[ENTERPRISE-STATUS] EA Positions: ", eaPositions, " / ", InpMaxPositionsTotal,
@@ -3167,23 +3256,11 @@ void ProcessTradingLogic(bool fromTimer)
 
     // Multi-symbol new-bar processing: each symbol has a dedicated strategy manager.
     bool anyNewBarDetected = false;
-    bool symbolHasNewBar[];
-    ArrayResize(symbolHasNewBar, ArraySize(g_activePairs));
-    for(int i = 0; i < ArraySize(symbolHasNewBar); i++)
-        symbolHasNewBar[i] = false;
 
     if(ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
-        if(ArraySize(g_lastSymbolBarTimes) != ArraySize(g_activePairs))
-        {
-            ArrayResize(g_lastSymbolBarTimes, ArraySize(g_activePairs));
-            ArrayInitialize(g_lastSymbolBarTimes, 0);
-            ArrayResize(g_lastIntrabarScanTime, ArraySize(g_activePairs));
-            ArrayInitialize(g_lastIntrabarScanTime, 0);
-            ResetSymbolScanStates(ArraySize(g_activePairs));
-            for(int i = 0; i < ArraySize(symbolHasNewBar); i++)
-                symbolHasNewBar[i] = true; // First cycle after resize should evaluate immediately
-        }
+        if(!IsSymbolSchedulerStateAligned())
+            RebuildSymbolSchedulerState("runtime_reconcile");
 
         for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
         {
@@ -3196,7 +3273,8 @@ void ProcessTradingLogic(bool fromTimer)
             {
                 g_lastSymbolBarTimes[symIdx] = currentBarTime;
                 anyNewBarDetected = true;
-                symbolHasNewBar[symIdx] = true;
+                if(symIdx < ArraySize(g_pendingNewBarScans))
+                    g_pendingNewBarScans[symIdx] = true;
                 if(symIdx < ArraySize(g_symbolScanStates))
                 {
                     g_symbolScanStates[symIdx].intrabarBackoffTier = 0;
@@ -3257,192 +3335,218 @@ void ProcessTradingLogic(bool fromTimer)
         bool canOpenNewTrades = !(cooldownBlocked || totalPositionLimitBlocked || unprotectedEntryBlocked);
 
         // Evaluate each active symbol through its own symbol-bound enterprise manager.
-            int symbolCount = ArraySize(g_activePairs);
-            int rotationStart = 0;
-            bool intrabarSelected[];
-            ArrayResize(intrabarSelected, symbolCount);
-            for(int selIdx = 0; selIdx < symbolCount; selIdx++)
-                intrabarSelected[selIdx] = false;
+        int symbolCount = ArraySize(g_activePairs);
+        int rotationStart = 0;
+        int signalEvalBudget = MathMax(1, InpMaxSignalEvaluationsPerCycle);
+        bool newBarSelected[];
+        bool intrabarSelected[];
+        ArrayResize(newBarSelected, symbolCount);
+        ArrayResize(intrabarSelected, symbolCount);
+        for(int selIdx = 0; selIdx < symbolCount; selIdx++)
+        {
+            newBarSelected[selIdx] = false;
+            intrabarSelected[selIdx] = false;
+        }
 
-            if(symbolCount > 0)
-            {
-                if(g_symbolEvalStartIndex < 0)
-                    g_symbolEvalStartIndex = 0;
-                rotationStart = g_symbolEvalStartIndex % symbolCount;
-                g_symbolEvalStartIndex = (g_symbolEvalStartIndex + 1) % symbolCount;
-            }
+        if(symbolCount > 0)
+        {
+            if(g_symbolEvalStartIndex < 0)
+                g_symbolEvalStartIndex = 0;
+            rotationStart = g_symbolEvalStartIndex % symbolCount;
+            g_symbolEvalStartIndex = (g_symbolEvalStartIndex + 1) % symbolCount;
+        }
 
-            int intrabarBudget = InpEnableHybridCadence ? MathMax(1, InpMaxIntrabarSymbolsPerCycle) : 0;
-            int intrabarSelectedCount = 0;
-            bool intrabarKeepaliveSelected = false;
-            if(InpEnableHybridCadence)
+        int pendingNewBarCount = CountPendingNewBarScans();
+        int newBarSelectedCount = 0;
+        for(int candidateOffset = 0; candidateOffset < symbolCount && newBarSelectedCount < signalEvalBudget; candidateOffset++)
+        {
+            int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
+            if(candidateIdx >= ArraySize(g_pendingNewBarScans) || !g_pendingNewBarScans[candidateIdx])
+                continue;
+
+            newBarSelected[candidateIdx] = true;
+            newBarSelectedCount++;
+        }
+
+        int remainingEvalBudget = MathMax(0, signalEvalBudget - newBarSelectedCount);
+        bool intrabarCadenceEnabled = (InpEnableHybridCadence && !InpSignalScanOnNewBarOnly);
+        int intrabarBudget = intrabarCadenceEnabled ? MathMin(remainingEvalBudget, MathMax(1, InpMaxIntrabarSymbolsPerCycle)) : 0;
+        int intrabarSelectedCount = 0;
+        bool intrabarKeepaliveSelected = false;
+        if(intrabarCadenceEnabled && intrabarBudget > 0)
+        {
+            int budgetLimit = MathMin(symbolCount, intrabarBudget);
+            for(int pick = 0; pick < budgetLimit; pick++)
             {
-                int budgetLimit = MathMin(symbolCount, intrabarBudget);
-                for(int pick = 0; pick < budgetLimit; pick++)
+                double bestScore = -1000000.0;
+                int bestIdx = -1;
+                for(int candidateOffset = 0; candidateOffset < symbolCount; candidateOffset++)
                 {
-                    double bestScore = -1000000.0;
-                    int bestIdx = -1;
-                    for(int candidateOffset = 0; candidateOffset < symbolCount; candidateOffset++)
+                    int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
+                    if(intrabarSelected[candidateIdx] || newBarSelected[candidateIdx] ||
+                       (candidateIdx < ArraySize(g_pendingNewBarScans) && g_pendingNewBarScans[candidateIdx]))
+                        continue;
+
+                    string candidateSymbol = g_activePairs[candidateIdx];
+                    if(InpIntrabarChartSymbolOnly && candidateSymbol != _Symbol)
+                        continue;
+
+                    double candidateScore = ScoreSymbolForIntrabar(candidateIdx, tickTime);
+                    if(candidateScore > bestScore)
                     {
-                        int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
-                        if(intrabarSelected[candidateIdx] || symbolHasNewBar[candidateIdx])
-                            continue;
-
-                        string candidateSymbol = g_activePairs[candidateIdx];
-                        if(InpIntrabarChartSymbolOnly && candidateSymbol != _Symbol)
-                            continue;
-
-                        double candidateScore = ScoreSymbolForIntrabar(candidateIdx, tickTime);
-                        if(candidateScore > bestScore)
-                        {
-                            bestScore = candidateScore;
-                            bestIdx = candidateIdx;
-                        }
+                        bestScore = candidateScore;
+                        bestIdx = candidateIdx;
                     }
-
-                    if(bestIdx < 0)
-                        break;
-
-                    intrabarSelected[bestIdx] = true;
-                    intrabarSelectedCount++;
                 }
 
-                if(intrabarSelectedCount <= 0 && !anyNewBarDetected && symbolCount > 0)
+                if(bestIdx < 0)
+                    break;
+
+                intrabarSelected[bestIdx] = true;
+                intrabarSelectedCount++;
+            }
+
+            if(intrabarSelectedCount <= 0 && pendingNewBarCount <= 0 && !anyNewBarDetected && symbolCount > 0)
+            {
+                double bestKeepaliveScore = -1000000.0;
+                int keepaliveIdx = -1;
+                for(int candidateOffset = 0; candidateOffset < symbolCount; candidateOffset++)
                 {
-                    double bestKeepaliveScore = -1000000.0;
-                    int keepaliveIdx = -1;
-                    for(int candidateOffset = 0; candidateOffset < symbolCount; candidateOffset++)
+                    int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
+                    if(intrabarSelected[candidateIdx] || newBarSelected[candidateIdx] ||
+                       (candidateIdx < ArraySize(g_pendingNewBarScans) && g_pendingNewBarScans[candidateIdx]))
+                        continue;
+
+                    string candidateSymbol = g_activePairs[candidateIdx];
+                    if(InpIntrabarChartSymbolOnly && candidateSymbol != _Symbol)
+                        continue;
+
+                    double candidateScore = ScoreSymbolForIntrabar(candidateIdx, tickTime, true);
+                    if(candidateScore > bestKeepaliveScore)
                     {
-                        int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
-                        if(intrabarSelected[candidateIdx] || symbolHasNewBar[candidateIdx])
-                            continue;
-
-                        string candidateSymbol = g_activePairs[candidateIdx];
-                        if(InpIntrabarChartSymbolOnly && candidateSymbol != _Symbol)
-                            continue;
-
-                        double candidateScore = ScoreSymbolForIntrabar(candidateIdx, tickTime, true);
-                        if(candidateScore > bestKeepaliveScore)
-                        {
-                            bestKeepaliveScore = candidateScore;
-                            keepaliveIdx = candidateIdx;
-                        }
-                    }
-
-                    if(keepaliveIdx >= 0)
-                    {
-                        intrabarSelected[keepaliveIdx] = true;
-                        intrabarSelectedCount = 1;
-                        intrabarKeepaliveSelected = true;
+                        bestKeepaliveScore = candidateScore;
+                        keepaliveIdx = candidateIdx;
                     }
                 }
-            }
 
-            bool activeScanWork = (anyNewBarDetected || intrabarSelectedCount > 0);
-            if(activeScanWork || (callCount % 60 == 0))
-            {
-                PrintFormat("[SCAN-BUDGET] cycle=%I64u | symbols=%d | intrabar_selected=%d | intrabar_budget=%d | intrabar_keepalive=%s | chart_only=%s | hybrid=%s | newbar_only=%s | active_work=%s",
-                            scanCycleId,
-                            symbolCount,
-                            intrabarSelectedCount,
-                            intrabarBudget,
-                            intrabarKeepaliveSelected ? "true" : "false",
-                            InpIntrabarChartSymbolOnly ? "true" : "false",
-                            InpEnableHybridCadence ? "true" : "false",
-                            InpSignalScanOnNewBarOnly ? "true" : "false",
-                            activeScanWork ? "true" : "false");
-            }
-
-            if(!activeScanWork)
-            {
-                g_hbQuietNoNewBar += (ulong)MathMax(0, symbolCount);
-            }
-            else
-            {
-                for(int scanOffset = 0; scanOffset < symbolCount; scanOffset++)
+                if(keepaliveIdx >= 0)
                 {
-                    int symIdx = (rotationStart + scanOffset) % symbolCount;
-                    string currentSymbol = g_activePairs[symIdx];
-                    CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(currentSymbol);
-                    if(symbolManager == NULL)
-                    {
-                        g_hbQuietMissingManager++;
-                        PrintFormat("[SCAN-SKIP] cycle=%I64u | %s | reason=missing_enterprise_manager",
-                                    scanCycleId,
-                                    currentSymbol);
-                        continue;
-                    }
+                    intrabarSelected[keepaliveIdx] = true;
+                    intrabarSelectedCount = 1;
+                    intrabarKeepaliveSelected = true;
+                }
+            }
+        }
 
-                    bool hasNewBar = symbolHasNewBar[symIdx];
-                    bool runIntrabarScan = (!hasNewBar && symIdx < ArraySize(intrabarSelected) && intrabarSelected[symIdx]);
-                    if(runIntrabarScan)
-                    {
-                        if(symIdx < ArraySize(g_lastIntrabarScanTime))
-                            g_lastIntrabarScanTime[symIdx] = tickTime;
-                        g_hbIntrabarScansExecuted++;
-                    }
+        int deferredNewBarCount = MathMax(0, pendingNewBarCount - newBarSelectedCount);
+        bool activeScanWork = (newBarSelectedCount > 0 || intrabarSelectedCount > 0);
+        if(activeScanWork || (callCount % 60 == 0))
+        {
+            PrintFormat("[SCAN-BUDGET] cycle=%I64u | symbols=%d | pending_newbar=%d | selected_newbar=%d | deferred_newbar=%d | intrabar_selected=%d | eval_budget=%d | intrabar_budget=%d | intrabar_keepalive=%s | chart_only=%s | hybrid=%s | newbar_only=%s | active_work=%s",
+                        scanCycleId,
+                        symbolCount,
+                        pendingNewBarCount,
+                        newBarSelectedCount,
+                        deferredNewBarCount,
+                        intrabarSelectedCount,
+                        signalEvalBudget,
+                        intrabarBudget,
+                        intrabarKeepaliveSelected ? "true" : "false",
+                        InpIntrabarChartSymbolOnly ? "true" : "false",
+                        InpEnableHybridCadence ? "true" : "false",
+                        InpSignalScanOnNewBarOnly ? "true" : "false",
+                        activeScanWork ? "true" : "false");
+        }
 
-                    if(InpSignalScanOnNewBarOnly && !hasNewBar && !runIntrabarScan)
-                    {
-                        g_hbQuietNoNewBar++;
-                        continue;
-                    }
+        if(!activeScanWork)
+        {
+            g_hbQuietNoNewBar += (ulong)MathMax(0, symbolCount);
+        }
+        else
+        {
+            for(int scanOffset = 0; scanOffset < symbolCount; scanOffset++)
+            {
+                int symIdx = (rotationStart + scanOffset) % symbolCount;
+                bool runNewBarScan = (symIdx < ArraySize(newBarSelected) && newBarSelected[symIdx]);
+                bool runIntrabarScan = (!runNewBarScan && symIdx < ArraySize(intrabarSelected) && intrabarSelected[symIdx]);
+                if(!runNewBarScan && !runIntrabarScan)
+                    continue;
 
-                    ENUM_SIGNAL_EVAL_MODE evalMode = runIntrabarScan ? EVAL_MODE_INTRABAR : EVAL_MODE_NEW_BAR;
-                    ENUM_VALIDATION_PROFILE validationProfile = runIntrabarScan ? VALIDATION_PROFILE_INTRABAR : VALIDATION_PROFILE_NEW_BAR;
-                    g_hbScansAttempted++;
+                string currentSymbol = g_activePairs[symIdx];
+                CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(currentSymbol);
+                if(symbolManager == NULL)
+                {
+                    g_hbQuietMissingManager++;
+                    PrintFormat("[SCAN-SKIP] cycle=%I64u | %s | reason=missing_enterprise_manager",
+                                scanCycleId,
+                                currentSymbol);
+                    continue;
+                }
 
-                    // Get signal with confluence tracking (per-symbol analysis)
-                    double confidence = 0;
-                    int confluence = 0;
-                    ENUM_TRADE_SIGNAL enterpriseSignal = symbolManager.GetConsensusSignalForSymbolWithConfluenceMode(
-                        currentSymbol, confidence, confluence, evalMode);
+                if(runIntrabarScan)
+                {
+                    if(symIdx < ArraySize(g_lastIntrabarScanTime))
+                        g_lastIntrabarScanTime[symIdx] = tickTime;
+                    g_hbIntrabarScansExecuted++;
+                }
 
-                    int cycleSignalsGenerated = 0;
-                    int cycleSignalsAfterPipeline = 0;
-                    bool cycleSignalAfterQuorum = false;
-                    symbolManager.GetLastCycleFunnel(cycleSignalsGenerated, cycleSignalsAfterPipeline, cycleSignalAfterQuorum);
-                    g_hbSignalsGenerated += (ulong)MathMax(0, cycleSignalsGenerated);
-                    g_hbSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
-                    if(cycleSignalAfterQuorum)
-                        g_hbSignalsAfterQuorum++;
+                ENUM_SIGNAL_EVAL_MODE evalMode = runIntrabarScan ? EVAL_MODE_INTRABAR : EVAL_MODE_NEW_BAR;
+                ENUM_VALIDATION_PROFILE validationProfile = runIntrabarScan ? VALIDATION_PROFILE_INTRABAR : VALIDATION_PROFILE_NEW_BAR;
+                g_hbScansAttempted++;
 
-                    if(enterpriseSignal == TRADE_SIGNAL_NONE)
-                    {
-                        g_hbNoSignalCount++;
-                        SConsensusDecisionContext noTradeContext;
-                        symbolManager.GetLastDecisionContext(noTradeContext);
-                        UpdateSymbolScanStateAfterDecision(currentSymbol,
-                                                           scanCycleId,
-                                                           symIdx,
-                                                           runIntrabarScan,
-                                                           cycleSignalsGenerated,
-                                                           cycleSignalsAfterPipeline,
-                                                           noTradeContext,
-                                                           tickTime);
-                        PrintFormat("[SCAN-NO-TRADE] cycle=%I64u | %s | mode=%s | class=%s | veto=%s | reason=%s | buy=%.3f | sell=%.3f | quality=%.3f | support=%.3f | readiness=%.3f | context=%.3f | cost=%.3f | ready=%.3f/%.3f | readyCoverage=%.3f | gap=%.3f | voters=%d/%d | confluence=%d",
-                                    scanCycleId,
-                                    currentSymbol,
-                                    (evalMode == EVAL_MODE_INTRABAR) ? "INTRABAR" : "NEW_BAR",
-                                    noTradeContext.quorumMode,
-                                    noTradeContext.vetoCode,
-                                    noTradeContext.reason,
-                                    noTradeContext.buyScore,
-                                    noTradeContext.sellScore,
-                                    noTradeContext.directionalQuality,
-                                    noTradeContext.supportRatio,
-                                    noTradeContext.readinessScore,
-                                    noTradeContext.contextScore,
-                                    noTradeContext.costScore,
-                                    noTradeContext.readyLiveWeight,
-                                    noTradeContext.totalLiveWeight,
-                                    noTradeContext.readyCoverage,
-                                    noTradeContext.quorumGap,
-                                    noTradeContext.eligibleLiveVoterCount,
-                                    noTradeContext.effectiveMinVoters,
-                                    confluence);
-                        continue;
-                    }
+                // Get signal with confluence tracking (per-symbol analysis)
+                double confidence = 0;
+                int confluence = 0;
+                ENUM_TRADE_SIGNAL enterpriseSignal = symbolManager.GetConsensusSignalForSymbolWithConfluenceMode(
+                    currentSymbol, confidence, confluence, evalMode);
+
+                int cycleSignalsGenerated = 0;
+                int cycleSignalsAfterPipeline = 0;
+                bool cycleSignalAfterQuorum = false;
+                symbolManager.GetLastCycleFunnel(cycleSignalsGenerated, cycleSignalsAfterPipeline, cycleSignalAfterQuorum);
+                g_hbSignalsGenerated += (ulong)MathMax(0, cycleSignalsGenerated);
+                g_hbSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
+                if(cycleSignalAfterQuorum)
+                    g_hbSignalsAfterQuorum++;
+                if(runNewBarScan && symIdx < ArraySize(g_pendingNewBarScans))
+                    g_pendingNewBarScans[symIdx] = false;
+
+                if(enterpriseSignal == TRADE_SIGNAL_NONE)
+                {
+                    g_hbNoSignalCount++;
+                    SConsensusDecisionContext noTradeContext;
+                    symbolManager.GetLastDecisionContext(noTradeContext);
+                    UpdateSymbolScanStateAfterDecision(currentSymbol,
+                                                       scanCycleId,
+                                                       symIdx,
+                                                       runIntrabarScan,
+                                                       cycleSignalsGenerated,
+                                                       cycleSignalsAfterPipeline,
+                                                       noTradeContext,
+                                                       tickTime);
+                    PrintFormat("[SCAN-NO-TRADE] cycle=%I64u | %s | mode=%s | class=%s | veto=%s | reason=%s | buy=%.3f | sell=%.3f | quality=%.3f | support=%.3f | readiness=%.3f | context=%.3f | cost=%.3f | ready=%.3f/%.3f | readyCoverage=%.3f | gap=%.3f | voters=%d/%d | confluence=%d",
+                                scanCycleId,
+                                currentSymbol,
+                                (evalMode == EVAL_MODE_INTRABAR) ? "INTRABAR" : "NEW_BAR",
+                                noTradeContext.quorumMode,
+                                noTradeContext.vetoCode,
+                                noTradeContext.reason,
+                                noTradeContext.buyScore,
+                                noTradeContext.sellScore,
+                                noTradeContext.directionalQuality,
+                                noTradeContext.supportRatio,
+                                noTradeContext.readinessScore,
+                                noTradeContext.contextScore,
+                                noTradeContext.costScore,
+                                noTradeContext.readyLiveWeight,
+                                noTradeContext.totalLiveWeight,
+                                noTradeContext.readyCoverage,
+                                noTradeContext.quorumGap,
+                                noTradeContext.eligibleLiveVoterCount,
+                                noTradeContext.effectiveMinVoters,
+                                confluence);
+                    continue;
+                }
 
                     SConsensusDecisionContext decisionContext;
                     symbolManager.GetLastDecisionContext(decisionContext);
@@ -3479,6 +3583,9 @@ void ProcessTradingLogic(bool fromTimer)
                         validationContext.diversityScore = MathMax(0.0, MathMin(1.0, decisionContext.diversityScore));
                         validationContext.costScore = MathMax(0.0, MathMin(1.0, decisionContext.costScore));
                         validationContext.freshnessScore = (evalMode == EVAL_MODE_INTRABAR) ? 0.95 : 1.0;
+                        validationContext.directionalQuality = MathMax(0.0, MathMin(1.0, decisionContext.directionalQuality));
+                        validationContext.supportRatio = MathMax(0.0, MathMin(1.0, decisionContext.supportRatio));
+                        validationContext.effectiveMinVoters = MathMax(0, decisionContext.effectiveMinVoters);
 
                         SSignalValidationResult validation = g_signalValidator.ValidateSignal(
                             currentSymbol, enterpriseSignal, confidence, confluence, atrValue, validationProfile, validationContext);
@@ -3501,16 +3608,16 @@ void ProcessTradingLogic(bool fromTimer)
                         }
 
                         qualityScore = validation.qualityScore;
-                        tradeConfidence = MathMax(0.0, MathMin(1.0, (confidence * 0.60) + (validation.qualityScore * 0.40)));
+                        tradeConfidence = confidence;
                         string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
-                        PrintFormat("[SIGNAL-VALIDATED] cycle=%I64u | %s | signal=%s | consensus=%.2f | trade=%.2f | confluence=%d | quality=%.2f | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
+                        PrintFormat("[SIGNAL-VALIDATED] cycle=%I64u | %s | signal=%s | consensus=%.2f | trade=%.2f | exogenous_quality=%.2f | confluence=%d | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
                                     scanCycleId,
                                     currentSymbol,
                                     signalType,
                                     confidence,
                                     tradeConfidence,
-                                    confluence,
                                     validation.qualityScore,
+                                    confluence,
                                     decisionContext.convictionScore,
                                     decisionContext.readinessScore,
                                     decisionContext.contextScore,
@@ -3978,7 +4085,7 @@ void ProcessTradingLogic(bool fromTimer)
                             symbolNet.ReleasePredictionReservation(predictionId);
 
                         int errorCode = GetLastError();
-                        PrintFormat("[TRADE-ERROR] cycle=%I64u | %s | signal=%s | lot=%.2f | err=%d | retcode=%u | request=%u | retries=%d | note=%s",
+                        PrintFormat("[TRADE-ERROR] cycle=%I64u | %s | signal=%s | lot=%.2f | err=%d | retcode=%u | request=%u | retries=%d | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u | note=%s",
                                     bestCandidate.cycleId,
                                     bestCandidate.symbol,
                                     bestCandidate.signalType,
@@ -3987,6 +4094,10 @@ void ProcessTradingLogic(bool fromTimer)
                                     executionReceipt.retcode,
                                     executionReceipt.requestId,
                                     executionReceipt.retryCount,
+                                    executionReceipt.requestedPrice,
+                                    executionReceipt.averagePrice,
+                                    executionReceipt.slippagePoints,
+                                    executionReceipt.roundTripMs,
                                     executionReceipt.note);
                     }
                     else
@@ -4014,12 +4125,15 @@ void ProcessTradingLogic(bool fromTimer)
                         ulong executionTicket = (executionReceipt.dealTicket > 0) ? executionReceipt.dealTicket :
                                                 ((executionReceipt.orderTicket > 0) ? executionReceipt.orderTicket :
                                                  tradeManager.GetLastTicket());
-                        PrintFormat("[TRADE-SUCCESS] cycle=%I64u | %s | signal=%s | lot=%.2f | price=%.5f | sl=%.5f (%.0f pips) | tp=%.5f (%.0f pips) | ticket=%I64u | request=%u | role=%s | cluster=%s | contributors=%s | ranking=%.3f | note=%s",
+                        PrintFormat("[TRADE-SUCCESS] cycle=%I64u | %s | signal=%s | lot=%.2f | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u | sl=%.5f (%.0f pips) | tp=%.5f (%.0f pips) | ticket=%I64u | request=%u | role=%s | cluster=%s | contributors=%s | ranking=%.3f | note=%s",
                                     bestCandidate.cycleId,
                                     bestCandidate.symbol,
                                     bestCandidate.signalType,
                                     executionReceipt.filledVolume > 0.0 ? executionReceipt.filledVolume : bestCandidate.lotSize,
+                                    executionReceipt.requestedPrice,
                                     executionReceipt.averagePrice,
+                                    executionReceipt.slippagePoints,
+                                    executionReceipt.roundTripMs,
                                     tradeManager.GetLastRequestedStopLoss(),
                                     bestCandidate.stopLossPips,
                                     tradeManager.GetLastRequestedTakeProfit(),
@@ -4031,6 +4145,18 @@ void ProcessTradingLogic(bool fromTimer)
                                     bestCandidate.contributorSummary,
                                     bestCandidate.rankingScore,
                                     executionReceipt.note);
+                        PrintFormat("[TRADE-EXECUTION] cycle=%I64u | %s | request=%u | retcode=%u | partial_fill=%s | requested=%.2f | filled=%.2f | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u",
+                                    bestCandidate.cycleId,
+                                    bestCandidate.symbol,
+                                    executionReceipt.requestId,
+                                    executionReceipt.retcode,
+                                    executionReceipt.partialFill ? "true" : "false",
+                                    executionReceipt.requestedVolume,
+                                    executionReceipt.filledVolume,
+                                    executionReceipt.requestedPrice,
+                                    executionReceipt.averagePrice,
+                                    executionReceipt.slippagePoints,
+                                    executionReceipt.roundTripMs);
 
                         if(aiPredictionRecorded && executionReceipt.requestId > 0)
                             UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);

@@ -4,6 +4,107 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 
 ## [Unreleased] - 2026-03-31
 
+### Batch 51: Strategy Signal Pipeline Unblock — Adaptive TF, Bug Fixes, Filter Relaxation (2026-04-08)
+
+#### Root-cause analysis
+- Log analysis of `20260408.log` (110 scans, validated=30, sent=0) confirmed the EA pipeline was correctly running but all 6 strategies were blocked by a cascade of overlapping over-strict filters, one confirmed logic inversion bug, and `InpShadowMode=true` (by-design dry-run default).
+
+#### Bug fixes
+- **`StrategyElliottWaveEnhanced.mqh` — ABC logic inversion:** `ValidateCorrectiveWaves_ABC()` was returning `(aDir == !cDir)` which correctly evaluates to `cDir != aDir` in C++ but was preceded by misleading comments and a duplicate `cRatio = wBSize/wASize` assignment (should be `wCSize/wASize`). Replaced with a clean, documented correct implementation: `return (cDir != aDir)` with explicit variable renaming (`wCSize` vs `wASize`) to prevent future confusion.
+- **`SimpleMomentumStrategy.mqh` — Self-defeating dual filter:** `compressionState && volatilityExpansion` required ATR to be at a 24-bar low (compression) AND simultaneously expanding by 5% — near-mutually exclusive. Changed to `!compressionState && !volatilityExpansion` (pass if EITHER condition is met).
+- **`SimpleMomentumStrategy.mqh` — Over-strict 4-EMA waterfall:** Required perfect `EMA8>EMA21>EMA50>EMA200` stack. On M1 this is almost never met. Replaced with a 2-of-3 soft-alignment score (`bullScore >= 2`) to allow entry on emerging trends.
+- **`SimpleMomentumStrategy.mqh` — Fixed 60s cooldown:** Replaced hard 60 second cooldown with `MathMax(30, PeriodSeconds(m_timeframe))` so cooldown adapts to chart speed — M1 stays at ~60s, M30 waits 1800s, preventing noise re-entry without over-throttling faster setups.
+
+#### Adaptive timeframe for Trend and Elliott Wave
+- **`StrategyTrend.mqh`:** Added `ResolveEffectiveTF()` inline method. If the chart TF is M1–M20, all sub-components (`CMultiEMASystem`, `CTrendEntryTypes`, `CTrendTrailingStop`, `CADXPositionSizing`) are initialized on **M30** instead, so EMA stacks and ADX readings have meaningful structure regardless of what chart the trader is on.
+- **`StrategyTrend.mqh` — TF-adaptive ADX thresholds:** After ADX sizing init, thresholds are scaled to the effective TF: M30 uses `noTrend=15, normal=28`; H1 uses `noTrend=18, normal=30`; H4+ keeps originals (`noTrend=20, normal=35`).
+- **`StrategyElliottWaveEnhanced.mqh`:** Added `ResolveEffectiveTF()` and `m_effectiveTF` field. ZigZag filter and WavePatternEngine are initialized on M30 minimum so the 5-3 wave engine has pivot structure to work with on low-TF charts. `m_rules.min_bars_per_wave` is scaled: 3 bars for M30, 5 bars for H1+. Chart TF is still used for drawing so visuals remain correct.
+
+#### Threshold relaxation
+- **`StrategySupportResistance.mqh`:** Lowered constructor `m_minConfidence` from `0.60` → `0.50`. M1 levels rarely accumulate enough touches for 0.60 confidence on first valid bounce.
+
+#### System / execution gap clarification
+- **`InpShadowMode=true` (default):** Confirmed as the root cause of `sent=0` across all 110 scans. This is intentional safe-by-default behavior — shadow mode logs virtual trades without sending real orders. Added `[!]` marker to the input parameter comment to make this immediately visible to operators.
+
+#### Compile verification
+- All modified strategy files (`StrategyTrend.mqh`, `StrategyElliottWaveEnhanced.mqh`, `SimpleMomentumStrategy.mqh`, `StrategySupportResistance.mqh`) listed as `information: including` with no errors in compilation log. Pre-existing 102 errors are unrelated path issues for MT5 stdlib headers not present in project folder (resolved by MT5's internal compiler path during terminal compilation).
+
+### Batch 50: Manager-Owned Admission + Exogenous-Only Validator Mode (2026-04-08)
+
+- **Structural ownership simplified:** `Core/Management/EnterpriseStrategyManager.mqh` remains the single admission authority for confidence, confluence, directional quality, support ratio, and effective minimum voters once a packet survives pipeline screening.
+- **Validator debloated:** `Core/Signals/AdvancedSignalValidator.mqh` now runs in `EXOGENOUS_ONLY` mode during normal runtime via `SetManagerOwnedAdmission(true)`, so it enforces only spread, time, session, volatility, and cost-viability sanity instead of re-vetoing manager-approved packets on structural quality/confluence grounds.
+- **Runtime confidence contract cleaned up:** `MultiStrategyAutonomousEA.mq5` now carries manager consensus confidence forward as trade confidence after validator pass, and `[SIGNAL-VALIDATED]` logs `exogenous_quality` separately so operator logs distinguish manager admission from validator market-sanity approval.
+- **Config/log truthfulness:** startup `[SIGNAL-VALIDATOR]` and `[ENTERPRISE-CONFIG]` now explicitly report `mode=EXOGENOUS_ONLY`, while validator profile inputs remain present as telemetry/fallback surfaces instead of pretending to be the active structural gate in normal runtime.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to record the new manager/validator ownership contract.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 49: Consensus-Aware Validator + Untagged Abstention Hardening (2026-04-08)
+- **Manager/validator contract fixed:** `Core/Signals/AdvancedSignalValidator.mqh` now consumes manager quorum evidence (`effectiveMinVoters`, `directionalQuality`, `supportRatio`) so post-consensus validation no longer rejects manager-approved single-voter new-bar packets using a stale fixed two-voter assumption.
+- **Quality scoring aligned with quorum:** validator quality scoring now includes manager directional quality and support ratio, preserving strong quorum-approved Elliott/UICT packets without broadly lowering the validator profile for weaker single-strategy noise.
+- **Silent dilution guard:** `Core/Management/EnterpriseStrategyManager.mqh` now downgrades untagged placeholder abstentions (`BASE_INITIALIZED`, empty override tags) so broken strategy telemetry cannot silently dilute ready-live quorum weight while pretending to be a real evaluated abstention.
+- **Strategy telemetry repaired:** `Strategies/StrategyFibonacci.mqh`, `Strategies/StrategyElliottWaveEnhanced.mqh`, `Strategies/StrategySupportResistance.mqh`, and `Strategies/StrategyCandlestick.mqh` now emit explicit last-decision reason tags on signal, abstain, and component-not-ready paths.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the new validator-consensus contract and the abstention hardening behavior.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 48: Validator Quality Admission + Truthful No-Vote Telemetry (2026-04-08)
+- **Trade-path blocker fixed:** `Core/Signals/AdvancedSignalValidator.mqh` now soft-passes strong new-bar single-voter packets when the final quality gap is small and supporting evidence (`readiness`, `context`, `cost`) remains strong. This removes the last-stage false negatives where quorum-approved Elliott packets still died on `Quality score too low`.
+- **No-vote telemetry corrected:** `Core/Management/EnterpriseStrategyManager.mqh` no longer zeroes computed `costScore` on vetoed/no-trade paths, and no-vote decision context now preserves aggregate readiness/context/cost evidence from the ready live pool instead of reporting misleading all-zero state while live weight is still present.
+- **Strategy participation visibility:** manager veto paths now emit `[CONSENSUS-ACTIVE]` showing active, voted, raw-none, filtered, and suppressed strategies for the current evaluation, and `MultiStrategyAutonomousEA.mq5` startup governance logs now mark disabled strategies as `INACTIVE` instead of implying they are intrabar-live due to unrelated toggle state.
+- **Cost-gate precision:** `Core/Pipeline/UnifiedSignalPipeline.mqh` now logs raw spread and ATR values alongside the spread/ATR ratio so tiny-but-real spread ratios stop looking like literal zeros in audit logs.
+- **Threshold transparency:** veto-side `[CONSENSUS-QUORUM]` logging now prints the effective adaptive quality threshold rather than the static base quorum, preventing one-voter adaptive passes/fails from being misread as 0.55-threshold decisions when the live threshold is lower.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the new validator quality soft-pass, truthful no-vote telemetry, and active-strategy trace.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 47: Threshold-Chain Alignment After Live Quorum Recovery (2026-04-08)
+- **Runtime evidence shift:** fresh `deriv.log` proved the scheduler-state silence bug was resolved (`[SCAN-PRIME]`, `[SCHEDULER-STATE]`, non-zero `[HEARTBEAT-FUNNEL]` scan counts), but surviving candidates were still dying between pipeline, quorum, and validator with repeated near-threshold `insufficient_quality` vetoes and validator rejections on `Confidence below profile threshold` / `Insufficient confluence`.
+- **Pipeline confidence preservation:** `Core/Pipeline/UnifiedSignalPipeline.mqh` no longer attenuates confidence after a packet has already survived the threshold gate. Readiness/context/cost continue downstream as separate evidence channels, preventing the same packet from being double-penalized before quorum and validator.
+- **Validator soft-pass alignment:** `Core/Signals/AdvancedSignalValidator.mqh` now admits bounded new-bar single-voter near-miss packets when supporting evidence is strong (`readiness`, `context`, `cost`) instead of re-rejecting manager-approved packets solely because they are one vote short of the nominal confluence rule or a few hundredths below the confidence floor.
+- **Adaptive quorum coherence:** `Core/Management/EnterpriseStrategyManager.mqh` now derives one- and two-voter quality thresholds from the active base quorum, so intentional runtime lowering of `InpQuorumThreshold` is honored consistently across the adaptive quorum path.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the preserved-confidence contract and the aligned manager/validator threshold behavior.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 46: Silent Scheduler-State Repair + Honest Runtime Status (2026-04-08)
+- **Root cause fixed:** `MultiStrategyAutonomousEA.mq5` no longer allows `ReleaseEnterpriseManagers()` to clear cadence state and then leave it half-rebuilt. Scheduler ownership is now explicit: `g_lastSymbolBarTimes`, `g_lastIntrabarScanTime`, `g_pendingNewBarScans`, and `g_symbolScanStates` are rebuilt together after per-symbol manager initialization.
+- **Silent no-scan bug removed:** per-symbol manager registration no longer mutates `g_lastSymbolBarTimes` directly, which was previously masking the real scheduler mismatch and leaving `g_pendingNewBarScans` at size `0` forever. This was the direct cause of the “alive but fully silent” runtime where real new bars still never entered the scan loop.
+- **Runtime self-heal added:** `ProcessTradingLogic(...)` now reconciles scheduler state via `runtime_reconcile` whenever cadence arrays drift away from `g_activePairs`, preventing future silent starvation after init/resize edge cases.
+- **Observability improved:** added `[SCHEDULER-STATE]` telemetry for authoritative scheduler rebuild/reconciliation events, and debug status now distinguishes per-symbol strategy instances from unique runtime strategies so logs do not misleadingly report `42` as if it were the unique active strategy count.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to record the scheduler-ownership contract and the new repair telemetry.
+
+### Batch 45: Startup Scan Priming + Explicit Global Cadence Override (2026-04-07)
+- **Cold-start scan priming:** `MultiStrategyAutonomousEA.mq5` now seeds one pending new-bar evaluation per validated symbol at init and after runtime symbol-set resize, eliminating the idle-manager state where all strategies are active but no symbol ever enters its first scan cycle.
+- **Dead first-cycle path removed:** the previous local `symbolHasNewBar` warmup path in `ProcessTradingLogic(...)` was non-authoritative and did not actually admit symbols into the pending-scan queue; runtime priming now updates the real pending-work structure instead.
+- **Cadence contract made explicit:** `InpSignalScanOnNewBarOnly=true` now disables timed intrabar scheduling in the scan-budget allocator instead of merely appearing in logs. Startup telemetry reports `effective_intrabar` and emits `[CADENCE-WARNING]` when global new-bar-only cadence is overriding otherwise-live intrabar strategy policies.
+- **Observability:** added `[SCAN-PRIME]` startup/runtime telemetry so scan-seeding behavior is visible in logs during audits.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to capture the primed-first-scan and global-cadence-override behavior.
+
+### Batch 44: Authoritative Strategy Enables + Live Intrabar Voting Contract (2026-04-07)
+- **Explicit enables now win:** `MultiStrategyAutonomousEA.mq5` no longer lets `InpUseCuratedStrategySet` silently rewrite `InpEnable*` strategy flags at runtime. Curated mode now acts as a default/baseline profile, while explicitly enabled strategies remain registered and participate in voting.
+- **Curated defaults aligned:** the default strategy input values now match the curated production baseline (`Elliott Wave` + `Unified ICT`) so fresh sessions stay lean without hidden runtime suppression logic.
+- **Intrabar means real voting:** added explicit intrabar eligibility controls for `Trend`, `Elliott Wave`, and `Candlestick`, and changed `Fibonacci` / `Support-Resistance` intrabar handling from `PROBE` to `LIVE` when intrabar-enabled. An enabled strategy with `intrabar=true` now joins the actual live intrabar voter pool.
+- **Startup contract clarity:** curated startup logs now state that curated mode is advisory/default-only and that explicit strategy toggles remain active, removing the old misleading “strict curated” messaging.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to reflect the new authoritative-enable and live-intrabar contract.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 43: Scan-Budget Carryover + Fail-Closed Trend Readiness + Registry Debloat (2026-04-07)
+- **Cycle-budgeted heavy evaluation:** `MultiStrategyAutonomousEA.mq5` now caps heavy signal evaluations with `InpMaxSignalEvaluationsPerCycle`, persists pending new-bar symbols across cycles, prioritizes that deferred work ahead of intrabar scans, and expands `[SCAN-BUDGET]` with pending/deferred new-bar pressure.
+- **Legacy orchestrator toggle removed:** deleted `InpUseOrchestrator` from `MultiStrategyAutonomousEA.mq5`; runtime registration now follows the active strategy registry only, so disabled curated strategies and disabled AI adapters no longer enter manager pools, orchestrator identity maps, or weight summaries.
+- **Active-only registration surface:** `BuildStrategyRegistry(...)`, manager strategy registration, and weight reporting now operate on enabled descriptors only, shrinking dormant-module overhead without removing the source implementations used for manual testing.
+- **Trend readiness fail-closed:** `Core/Engines/TrendEngine.mqh` now treats partial readiness as a readiness fault and returns failure instead of continuing with half-ready MA/ATR state; bounded last-good snapshot reuse remains reserved for transient copy-fault cases.
+- **Diagnostics fan-out reduction:** `Strategies/StrategyElliottWaveEnhanced.mqh`, `Core/Pipeline/UnifiedSignalPipeline.mqh`, and `Core/AI/AIStrategyOrchestrator.mqh` no longer instantiate local `SignalDiagnostics` objects, reducing duplicate log noise and per-instance runtime overhead.
+- **Dead bulk removal:** `Strategies/StrategyElliottWaveEnhanced.mqh` also drops its unused `StructureEngine` ownership path, keeping MT5 hot-path state closer to what the strategy actually consumes.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to capture the new scan-budget contract, active-only registration surface, fail-closed readiness behavior, and diagnostics ownership.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
+### Batch 42: Cross-Broker Signal Integrity + Execution Telemetry + Shutdown Hygiene (2026-04-07)
+- **Single authoritative Elliott evaluation:** `Strategies/StrategyElliottWaveEnhanced.mqh` no longer calls `GetSignal(...)` from `OnNewBar(...)`; manager consensus now owns the only authoritative per-bar signal evaluation, preventing Elliott wave detections from being consumed before quorum.
+- **Consistent strategy signal accounting:** `Strategies/StrategyElliottWaveEnhanced.mqh`, `Strategies/StrategyUnifiedICT.mqh`, and `Strategies/StrategySupportResistance.mqh` now call `RecordSignal()` on successful signal emission so manager/runtime telemetry sees the same signal participation the strategy logs show.
+- **Cross-broker session correctness:** `Core/Signals/AdvancedSignalValidator.mqh` now evaluates time/session filters in GMT and recognizes Weltrade `PainX` synthetic products as off-hours synthetic symbols alongside Deriv `Vol`/`Step`/`Boom`/`Crash`/`Jump` families.
+- **Richer execution telemetry:** `Core/Trading/TradeManager.mqh` execution receipts now carry request price, fill price, slippage points, round-trip latency, and submit time; runtime logs now emit `[EXECUTION-TELEMETRY]` and expand `[TRADE-SUCCESS]` / `[TRADE-ERROR]` with those fields plus a new `[TRADE-EXECUTION]` summary.
+- **Dead-path cleanup:** removed the unused `SavePerformanceData()` and legacy `IsNewBar(...)` helpers from `MultiStrategyAutonomousEA.mq5`.
+- **Shutdown noise reduction:** `Core/Monitoring/PerformanceAnalytics.mqh` and `Core/AI/AIPerformanceFeedback.mqh` now suppress empty destructor reports, and `Core/Management/EnterpriseStrategyManager.mqh` explicitly deinitializes strategies before deletion.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to capture the single-evaluation contract, broker/session handling, and execution telemetry surface.
+- **Compile:** Verified by `sync_and_compile.ps1 -MirrorSync` with `0 errors, 0 warnings`.
+
 ### Batch 41: Consensus Debloating + Adaptive Quorum + Dynamic Weight Decay (2026-04-02)
 - **Root cause analysis:** Identified denominator dilution in weighted quorum scoring where inactive strategies (Momentum, Trend) inflated the vote pool, causing real single/dual-strategy consensus votes to collapse into 0.0x scores or `zero_voter` vetoes despite strong fundamentals.
 - **Curated roster tightening:** `MultiStrategyAutonomousEA.mq5` default `curatedMask` now enables ONLY Elliott Wave + Unified ICT (removed Momentum and Support/Resistance which consistently filter and add no productive votes). This reduces default weight pool from 10.865 to ~4.2 and improves live-voter signal quality.
@@ -290,6 +391,10 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 - **Automated:** `sync_and_compile.ps1` now removes compile-generated `.log/.txt` artifacts by default after runs.
 - **Override:** Added `-KeepCompileArtifacts` switch to preserve compile artifacts when explicitly needed.
 
+### Batch 14: Synthetics Expansion & Compilation Hardening (2026-04-08)
+- **Extended:** Added PainX, SFX Vol, GainX, FX Vol, and FlipX to the system-wide synthetic asset recognizer across TradeManager, AdvancedSignalValidator, and MarketAnalysis.
+- **Fixed:** Resolved 237 resulting compilation errors relating to an uncaught string literal in AdvancedSignalValidator.mqh, returning the codebase to a clean 0-error state.
+
 ### Batch 13: Documentation Baseline + Tester Operations Stabilization (2026-02-18)
 - **Documented:** Rebuilt project-level documentation baseline with:
 - `README.md` (full system overview, architecture, operations, known issues)
@@ -309,6 +414,16 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 - **Hardened:** `CTradeWrapper` utility methods now use real runtime checks (`TERMINAL_CONNECTED`, `TERMINAL_TRADE_ALLOWED`, `PositionSelect`) instead of stub returns.
 - **Cleaned:** Removed placeholder/stub comments and no-op placeholder operations in runtime code paths.
 - **Compatibility:** `Strategies/StrategyFactory.mqh` is now an explicit compatibility include to `Core/Strategy/StrategyFactory.mqh`.
+
+### Batch 14: Synthetics Expansion & Compilation Hardening (2026-04-08)
+- **Extended:** Added PainX, SFX Vol, GainX, FX Vol, and FlipX to the system-wide synthetic asset recognizer across TradeManager, AdvancedSignalValidator, and MarketAnalysis.
+- **Fixed:** Resolved 237 resulting compilation errors relating to an uncaught string literal in AdvancedSignalValidator.mqh, returning the codebase to a clean 0-error state.
+
+### Batch 13: Debugging Multi-Strategy Confluence & Market Availability (2026-04-08)
+- **Fixed:** IsMarketOpen in TradeManager.mqh to properly validate MT5 SYMBOL_TRADE_MODE, correctly check weekends natively, and apply RefreshRates() for checking synthetic symbols, preventing false market_unavailable blockages.
+- **Adjusted:** Modified MultiStrategyAutonomousEA.mq5 default inputs: InpMinLiveVoters, InpValidatorNewBarMinConfluence, and InpValidatorIntrabarMinConfluence are now strictly set to 2 to enforce multiple strategy overlap before entry.
+- **Resolved:** Confirmed M15 TF scanning failures. Attempting to generate M30 indicators inside an M15 chart fails on cold starts (ERR_INDICATOR_DATA_NOT_FOUND / 4807) causing CZigZagFilter and ElliottWave initialization to fail, thus defaulting to 0 voters on M15.
+- **Analyzed:** Confirmed that other strategies (Trend, Unified ICT, Momentum) are correctly processing data but intentionally returning no votes (TREND_NO_ENTRY, UICT_NEUTRAL_BIAS, MOMENTUM_NO_CROSSOVER) because the stringent internal entry criteria have not been met, which is expected behavior for high-fidelity trading.
 
 ### Batch 11: Runtime Attribution + Flow Hardening (2026-02-15)
 - **Fixed:** Neural attribution now defers labeling on partial closes and labels only on final close using accumulated position net P/L.

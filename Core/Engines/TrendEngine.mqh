@@ -459,6 +459,16 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
             m_lastIndicatorErrorLog = nowTime;
         }
         SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, "PARTIAL_READY", false, 0);
+        RecordReadinessFault(m_indicatorSymbol,
+                             m_indicatorTimeframe,
+                             chartBars,
+                             fastBars,
+                             medBars,
+                             slowBars,
+                             adxBars,
+                             atrBars,
+                             minBars);
+        return false;
     }
     else
         SetReadinessState(TREND_READINESS_HEALTHY, "HEALTHY", false, 0);

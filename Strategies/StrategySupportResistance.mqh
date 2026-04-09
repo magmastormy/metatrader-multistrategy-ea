@@ -97,7 +97,7 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
     m_levelsDetected(0),
     m_trendlinesDetected(0)
 {
-    m_minConfidence = 0.60; // use base class field
+    m_minConfidence = 0.50; // Lowered from 0.60: M1 levels rarely reach 0.60 on first valid touch
 }
 
 //+------------------------------------------------------------------+
@@ -373,9 +373,13 @@ void CStrategySupportResistance::DrawTrendlines()
 ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
 {
     confidence = 0.0;
+    SetDecisionReasonTag("SR_UNSET");
     
     if(!m_is_enabled || !m_is_initialized)
+    {
+        SetDecisionReasonTag("SR_DISABLED_OR_UNINIT");
         return TRADE_SIGNAL_NONE;
+    }
     
     // Update components
     if(m_srDetector != NULL) m_srDetector.Update();
@@ -419,6 +423,8 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
     {
         confidence = bestResult.confidence;
         m_signalsGenerated++;
+        SetDecisionReasonTag(bestResult.signal == TRADE_SIGNAL_BUY ? "SR_SIGNAL_BUY" : "SR_SIGNAL_SELL");
+        RecordSignal();
         
         PrintFormat("[S/R v1.0] %s: %s | Conf: %.1f%% | %s%s",
                    m_symbol,
@@ -426,6 +432,10 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
                    confidence * 100,
                    bestResult.reason,
                    bestResult.hasTrendlineConfluence ? " [+TL Confluence]" : "");
+    }
+    else
+    {
+        SetDecisionReasonTag("SR_NO_SIGNAL");
     }
     
     return bestResult.signal;

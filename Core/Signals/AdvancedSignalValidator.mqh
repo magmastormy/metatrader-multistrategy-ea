@@ -32,6 +32,9 @@ struct SSignalValidationContext
     double diversityScore;
     double costScore;
     double freshnessScore;
+    double directionalQuality;
+    double supportRatio;
+    int effectiveMinVoters;
 
     SSignalValidationContext()
     {
@@ -41,6 +44,9 @@ struct SSignalValidationContext
         diversityScore = 0.5;
         costScore = 0.5;
         freshnessScore = 1.0;
+        directionalQuality = 0.0;
+        supportRatio = 0.0;
+        effectiveMinVoters = 0;
     }
 };
 
@@ -80,6 +86,7 @@ private:
     bool m_enableVolatilityFilter;
     bool m_enableSpreadFilter;
     bool m_allowSyntheticOffHours;    // Allow synthetics to trade 24/7
+    bool m_managerOwnsStructuralAdmission; // When true, validator only enforces exogenous market gates
     SSpreadGateState m_spreadGateStates[];
     
     // Time filter settings
@@ -160,6 +167,7 @@ public:
         m_spreadShockCooldownSec = MathMax(5, spreadShockCooldownSec);
     }
     void SetAllowSyntheticOffHours(bool allow) { m_allowSyntheticOffHours = allow; }
+    void SetManagerOwnedAdmission(bool owned) { m_managerOwnsStructuralAdmission = owned; }
     
     // Main validation function
     SSignalValidationResult ValidateSignal(
@@ -229,6 +237,7 @@ CAdvancedSignalValidator::CAdvancedSignalValidator() :
     m_enableVolatilityFilter(true),
     m_enableSpreadFilter(true),
     m_allowSyntheticOffHours(true),   // Allow synthetics to trade 24/7 by default
+    m_managerOwnsStructuralAdmission(true),
     m_startHour(1),                   // Start at 1 AM
     m_endHour(22),                    // End at 10 PM
     m_avoidNewsHours(true),
@@ -287,39 +296,28 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
         requiredConfidence = m_intrabarMinConfidence;
     }
 
-    // 0. Confidence gate (profile-aware, with bounded soft-margin support)
-    if(confidence < requiredConfidence)
-    {
-        double confidenceGap = requiredConfidence - confidence;
-        bool confidenceSoftPass = (confidenceGap <= 0.08 &&
-                                   context.convictionScore >= 0.62 &&
-                                   context.readinessScore >= 0.58 &&
-                                   context.contextScore >= 0.60);
-        if(!confidenceSoftPass)
-        {
-            result.reason = StringFormat("Confidence below profile threshold: %.2f < %.2f",
-                                        confidence, requiredConfidence);
-            m_signalsRejected++;
-            return result;
-        }
-    }
-    
-    // 1. Check strategy confluence
-    if(strategyConfluence < requiredConfluence)
-    {
-        bool confluenceSoftPass = ((requiredConfluence - strategyConfluence) == 1 &&
-                                   context.convictionScore >= 0.68 &&
-                                   context.diversityScore >= 0.40);
-        if(!confluenceSoftPass)
-        {
-            result.reason = StringFormat("Insufficient confluence: %d < %d strategies", 
-                                        strategyConfluence, requiredConfluence);
-            m_signalsRejected++;
-            return result;
-        }
-    }
-    
-    // 2. Check spread filter
+    int effectiveRequiredConfluence = requiredConfluence;
+    if(context.effectiveMinVoters > 0)
+        effectiveRequiredConfluence = MathMax(1, MathMin(requiredConfluence, context.effectiveMinVoters));
+
+    double supportingEvidence = (MathMax(0.0, MathMin(1.0, context.readinessScore)) +
+                                 MathMax(0.0, MathMin(1.0, context.contextScore)) +
+                                 MathMax(0.0, MathMin(1.0, context.costScore))) / 3.0;
+    bool nearConfluencePacket = (strategyConfluence >= MathMax(1, effectiveRequiredConfluence - 1));
+    bool strongSingleVoterPacket = (profile == VALIDATION_PROFILE_NEW_BAR &&
+                                    strategyConfluence == 1 &&
+                                    effectiveRequiredConfluence == 1 &&
+                                    confidence >= MathMax(0.0, requiredConfidence - 0.05) &&
+                                    context.directionalQuality >= 0.55 &&
+                                    context.supportRatio >= 0.20 &&
+                                    context.readinessScore >= 0.72 &&
+                                    context.contextScore >= 0.70 &&
+                                    context.costScore >= 0.65);
+
+    // Structural signal admission belongs to manager consensus. Validator is
+    // responsible only for exogenous market gates unless legacy mode is re-enabled.
+
+    // 0. Check spread filter
     if(m_enableSpreadFilter)
     {
         string spreadRejectReason = "";
@@ -332,7 +330,7 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
         }
     }
     
-    // 3. Check time filter
+    // 1. Check time filter
     if(m_enableTimeFilter)
     {
         result.passedTimeFilter = CheckTimeFilter(symbol);
@@ -344,7 +342,7 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
         }
     }
     
-    // 4. Check session filter
+    // 2. Check session filter
     if(m_enableSessionFilter)
     {
         result.passedSessionFilter = CheckSessionFilter(symbol);
@@ -356,7 +354,7 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
         }
     }
     
-    // 5. Check volatility filter
+    // 3. Check volatility filter
     if(m_enableVolatilityFilter && atrValue > 0)
     {
         result.passedVolatilityFilter = CheckVolatilityFilter(symbol, atrValue);
@@ -368,25 +366,77 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
         }
     }
     
-    // 6. Calculate quality score
+    // 4. Calculate quality score for telemetry / downstream sizing context
     bool allFiltersPassed = result.passedSpreadFilter && result.passedTimeFilter && 
                            result.passedSessionFilter && result.passedVolatilityFilter;
     
     result.qualityScore = CalculateQualityScore(confidence, strategyConfluence, allFiltersPassed, context);
-    
-    // 7. Final quality check
-    if(result.qualityScore < requiredQuality)
+
+    if(!m_managerOwnsStructuralAdmission)
     {
-        result.reason = StringFormat("Quality score too low: %.2f < %.2f", 
-                                    result.qualityScore, requiredQuality);
-        m_signalsRejected++;
-        return result;
+        if(confidence < requiredConfidence)
+        {
+            double confidenceGap = requiredConfidence - confidence;
+            bool confidenceSoftPass = (confidenceGap <= 0.08 &&
+                                       ((context.convictionScore >= 0.62 &&
+                                         context.readinessScore >= 0.58 &&
+                                         context.contextScore >= 0.60) ||
+                                        (nearConfluencePacket &&
+                                         supportingEvidence >= 0.70 &&
+                                         context.costScore >= 0.65)));
+            if(!confidenceSoftPass)
+            {
+                result.reason = StringFormat("Confidence below profile threshold: %.2f < %.2f",
+                                            confidence, requiredConfidence);
+                m_signalsRejected++;
+                return result;
+            }
+        }
+
+        if(strategyConfluence < effectiveRequiredConfluence)
+        {
+            bool confluenceSoftPass = ((effectiveRequiredConfluence - strategyConfluence) == 1 &&
+                                       ((context.convictionScore >= 0.68 &&
+                                         context.diversityScore >= 0.40) ||
+                                        strongSingleVoterPacket));
+            if(!confluenceSoftPass)
+            {
+                result.reason = StringFormat("Insufficient confluence: %d < %d strategies",
+                                            strategyConfluence, effectiveRequiredConfluence);
+                m_signalsRejected++;
+                return result;
+            }
+        }
+
+        if(result.qualityScore < requiredQuality)
+        {
+            double qualityGap = requiredQuality - result.qualityScore;
+            bool qualitySoftPass = (qualityGap <= 0.08 &&
+                                    ((strongSingleVoterPacket &&
+                                      supportingEvidence >= 0.74 &&
+                                      context.convictionScore >= 0.30 &&
+                                      confidence >= MathMax(0.0, requiredConfidence - 0.02)) ||
+                                     (nearConfluencePacket &&
+                                      supportingEvidence >= 0.80 &&
+                                      context.convictionScore >= 0.40 &&
+                                      confidence >= requiredConfidence)));
+            if(!qualitySoftPass)
+            {
+                result.reason = StringFormat("Quality score too low: %.2f < %.2f",
+                                            result.qualityScore, requiredQuality);
+                m_signalsRejected++;
+                return result;
+            }
+        }
     }
     
     // Signal is valid!
     result.isValid = true;
-    result.reason = StringFormat("VALID | Confluence: %d | Quality: %.2f | Conf: %.2f",
-                                strategyConfluence, result.qualityScore, confidence);
+    result.reason = m_managerOwnsStructuralAdmission
+                    ? StringFormat("VALID_EXOGENOUS | Confluence: %d | Quality: %.2f | Conf: %.2f",
+                                   strategyConfluence, result.qualityScore, confidence)
+                    : StringFormat("VALID | Confluence: %d | Quality: %.2f | Conf: %.2f",
+                                   strategyConfluence, result.qualityScore, confidence);
     m_signalsAccepted++;
     
     return result;
@@ -501,7 +551,7 @@ bool CAdvancedSignalValidator::CheckTimeFilter(const string symbol = "")
         return true;
     
     MqlDateTime dt;
-    TimeToStruct(TimeCurrent(), dt);
+    TimeToStruct(TimeGMT(), dt);
     int currentHour = dt.hour;
     
     // Check trading hours (1 AM - 10 PM GMT by default)
@@ -516,10 +566,10 @@ bool CAdvancedSignalValidator::CheckTimeFilter(const string symbol = "")
             return false;
     }
     
-    // Avoid major news hours (8:30, 10:00, 14:00, 15:30 EST = 13:30, 15:00, 19:00, 20:30 GMT)
+    // Avoid major news hours using absolute GMT time instead of broker-local server time.
     if(m_avoidNewsHours)
     {
-        int gmtHour = dt.hour;  // Assuming server time is GMT
+        int gmtHour = dt.hour;
         if(gmtHour == 13 || gmtHour == 15 || gmtHour == 19 || gmtHour == 20)
         {
             if(dt.min >= 25 && dt.min <= 35)  // 5-minute window around news
@@ -540,8 +590,8 @@ bool CAdvancedSignalValidator::CheckSessionFilter(const string symbol = "")
         return true;
     
     MqlDateTime dt;
-    TimeToStruct(TimeCurrent(), dt);
-    int gmtHour = dt.hour;  // Assuming server time is GMT
+    TimeToStruct(TimeGMT(), dt);
+    int gmtHour = dt.hour;
     
     // Tokyo session: 00:00-09:00 GMT
     if(m_tradeTokyoSession && gmtHour >= 0 && gmtHour < 9)
@@ -565,12 +615,18 @@ bool CAdvancedSignalValidator::IsSyntheticSymbol(const string symbol)
 {
     if(symbol == "" || symbol == NULL) return false;
     
-    // Check for Deriv synthetic indices that trade 24/7
+    // Check for broker-specific synthetic products that trade 24/7 or outside regular FX sessions.
     if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
        StringFind(symbol, "Step") >= 0 ||      // Step Index variants
        StringFind(symbol, "Boom") >= 0 ||      // Boom 1000, Boom 500
        StringFind(symbol, "Crash") >= 0 ||     // Crash 1000, Crash 500
-       StringFind(symbol, "Jump") >= 0)        // Jump 10, Jump 25, etc.
+       StringFind(symbol, "Jump") >= 0 ||      // Jump 10, Jump 25, etc.
+       StringFind(symbol, "PainX") >= 0 ||     // Weltrade synthetic family
+       StringFind(symbol, "Pain ") >= 0 ||     // Additional naming variant
+       StringFind(symbol, "SFX Vol") >= 0 ||
+       StringFind(symbol, "FX Vol") >= 0 ||
+       StringFind(symbol, "GainX") >= 0 ||
+       StringFind(symbol, "FlipX") >= 0)
     {
         return true;
     }
@@ -603,27 +659,28 @@ double CAdvancedSignalValidator::CalculateQualityScore(
 {
     double score = 0.0;
     
-    // Confidence component (25%)
-    score += confidence * 0.25;
+    // Confidence component
+    score += confidence * 0.20;
     
-    // Confluence component (20%)
+    // Confluence component
     double confluenceScore = MathMin(1.0, strategyConfluence / 5.0);
-    score += confluenceScore * 0.20;
+    score += confluenceScore * 0.10;
     
     // Decision-path components from consensus and pipeline evidence.
-    score += MathMax(0.0, MathMin(1.0, context.convictionScore)) * 0.15;
-    score += MathMax(0.0, MathMin(1.0, context.readinessScore)) * 0.10;
-    score += MathMax(0.0, MathMin(1.0, context.contextScore)) * 0.10;
-    score += MathMax(0.0, MathMin(1.0, context.diversityScore)) * 0.10;
-    score += MathMax(0.0, MathMin(1.0, context.freshnessScore)) * 0.05;
+    score += MathMax(0.0, MathMin(1.0, context.convictionScore)) * 0.12;
+    score += MathMax(0.0, MathMin(1.0, context.readinessScore)) * 0.08;
+    score += MathMax(0.0, MathMin(1.0, context.contextScore)) * 0.08;
+    score += MathMax(0.0, MathMin(1.0, context.diversityScore)) * 0.07;
+    score += MathMax(0.0, MathMin(1.0, context.freshnessScore)) * 0.03;
     score += MathMax(0.0, MathMin(1.0, context.costScore)) * 0.05;
+    score += MathMax(0.0, MathMin(1.0, context.directionalQuality)) * 0.15;
+    score += MathMax(0.0, MathMin(1.0, context.supportRatio)) * 0.07;
     
-    // Filter component (10%)
+    // Filter component
     if(passedFilters)
-        score += 0.1;
+        score += 0.05;
     
     return MathMin(1.0, score);
 }
 
 #endif // __ADVANCED_SIGNAL_VALIDATOR_MQH__
-

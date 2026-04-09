@@ -251,7 +251,8 @@ CAIPerformanceFeedback::~CAIPerformanceFeedback(void)
 {
     if(m_initialized)
     {
-        PrintPerformanceReport();
+        if(m_currentMetrics.totalPredictions > 0)
+            PrintPerformanceReport();
         LogFeedback("AI Performance Feedback system destroyed");
     }
 }
