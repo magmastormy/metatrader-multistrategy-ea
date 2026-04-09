@@ -62,7 +62,11 @@ struct STradeExecutionReceipt
     ulong dealTicket;
     double requestedVolume;
     double filledVolume;
+    double requestedPrice;
     double averagePrice;
+    double slippagePoints;
+    ulong roundTripMs;
+    datetime submitTime;
     double stopLoss;
     double takeProfit;
     string symbol;
@@ -79,7 +83,11 @@ struct STradeExecutionReceipt
         dealTicket = 0;
         requestedVolume = 0.0;
         filledVolume = 0.0;
+        requestedPrice = 0.0;
         averagePrice = 0.0;
+        slippagePoints = 0.0;
+        roundTripMs = 0;
+        submitTime = 0;
         stopLoss = 0.0;
         takeProfit = 0.0;
         symbol = "";
@@ -438,63 +446,25 @@ private:
     //+------------------------------------------------------------------+
     bool IsMarketOpen(const string symbolParam)
     {
-        if(!m_symbolInfo.Name(symbolParam))
-            return false;
-            
-        if(!SymbolSelect(symbolParam, true)) {
-            return false;
-        }
+        if(!m_symbolInfo.Name(symbolParam)) return false;
+        if(!SymbolSelect(symbolParam, true)) return false;
+        m_symbolInfo.RefreshRates();
         
-        int syncAttempts = 0;
-        const int maxSyncAttempts = 10;
-        while(syncAttempts < maxSyncAttempts) {
-            if(SymbolInfoInteger(symbolParam, SYMBOL_SELECT)) {
-                break;
-            }
-            syncAttempts++;
-        }
+        long tradeMode = SymbolInfoInteger(symbolParam, SYMBOL_TRADE_MODE);
+        if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY) return false;
         
-        if(syncAttempts >= maxSyncAttempts) {
-            return false;
-        }
-        
-        if(StringFind(symbolParam, "Volatility") >= 0 || StringFind(symbolParam, "Step") >= 0 ||
-           StringFind(symbolParam, "Boom") >= 0 || StringFind(symbolParam, "Crash") >= 0) {
-            
-            for(int i = 0; i < 3; i++) {
-                double bid = m_symbolInfo.Bid();
-                double ask = m_symbolInfo.Ask();
-                double point = m_symbolInfo.Point();
-                
-                if(bid > 0 && ask > 0 && ask > bid && point > 0) {
-                    double spread = (ask - bid) / point;
-                    if(spread > 0 && spread < 1000) {
-                        return true;
-                    }
-                }
-                
-                if(i < 2) {
-                    m_symbolInfo.Refresh();
-                }
-            }
-            return false;
+        bool isSynthetic = (StringFind(symbolParam, "Volatility") >= 0 || StringFind(symbolParam, "Step") >= 0 || StringFind(symbolParam, "Boom") >= 0 || StringFind(symbolParam, "Crash") >= 0 || StringFind(symbolParam, "Jump") >= 0 || StringFind(symbolParam, "PainX") >= 0 || StringFind(symbolParam, "SFX Vol") >= 0 || StringFind(symbolParam, "GainX") >= 0 || StringFind(symbolParam, "FX Vol") >= 0 || StringFind(symbolParam, "FlipX") >= 0);
+        if(isSynthetic) {
+            return (m_symbolInfo.Bid() > 0 && m_symbolInfo.Ask() > 0);
         }
         
         MqlDateTime dt;
         TimeToStruct(TimeCurrent(), dt);
+        if(dt.day_of_week == 0 || dt.day_of_week == 6) return false;
         
-        if(dt.day_of_week == 0 || dt.day_of_week == 6) {
-            return false;
-        }
+        if(m_symbolInfo.Bid() <= 0 || m_symbolInfo.Ask() <= 0) return false;
         
-        double bid = m_symbolInfo.Bid();
-        double ask = m_symbolInfo.Ask();
-        if(bid <= 0 || ask <= 0 || ask <= bid) {
-            return false;
-        }
-        
-        int currentHour = dt.hour;
-        return (currentHour >= 1 && currentHour <= 23);
+        return true;
     }
 
     bool IsTransientTradeRetcode(const uint retcode) const
@@ -1155,8 +1125,11 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastRequestedTakeProfit = takeProfit;
         m_lastExecutionReceipt.stopLoss = stopLoss;
         m_lastExecutionReceipt.takeProfit = takeProfit;
+        m_lastExecutionReceipt.requestedPrice = executionPrice;
+        m_lastExecutionReceipt.submitTime = TimeCurrent();
 
         bool sendAccepted = false;
+        ulong sendStartUs = GetMicrosecondCount();
         if(orderType == ORDER_TYPE_BUY)
         {
             sendAccepted = m_trade.Buy(volume, symbolName, executionPrice, stopLoss, takeProfit, comment);
@@ -1168,6 +1141,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
         MqlTradeResult tradeResult;
         m_trade.Result(tradeResult);
+        ulong sendEndUs = GetMicrosecondCount();
         m_lastTradeResult = tradeResult;
         m_lastExecutionReceipt.retcode = tradeResult.retcode;
         m_lastExecutionReceipt.requestId = tradeResult.request_id;
@@ -1178,6 +1152,11 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastExecutionReceipt.filledVolume = (tradeResult.volume > 0.0) ? tradeResult.volume : 0.0;
         m_lastExecutionReceipt.partialFill = false;
         m_lastExecutionReceipt.note = tradeResult.comment;
+        if(sendEndUs >= sendStartUs)
+            m_lastExecutionReceipt.roundTripMs = (sendEndUs - sendStartUs) / 1000;
+        double pointSize = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+        if(pointSize > 0.0 && m_lastExecutionReceipt.requestedPrice > 0.0 && m_lastExecutionReceipt.averagePrice > 0.0)
+            m_lastExecutionReceipt.slippagePoints = MathAbs(m_lastExecutionReceipt.averagePrice - m_lastExecutionReceipt.requestedPrice) / pointSize;
 
         if(!sendAccepted)
         {
@@ -1248,6 +1227,13 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                         m_lastExecutionReceipt.averagePrice,
                         m_lastExecutionReceipt.retcode,
                         m_lastExecutionReceipt.retryCount);
+            PrintFormat("[EXECUTION-TELEMETRY] %s | requested_price=%.5f | fill_price=%.5f | slippage_points=%.1f | latency_ms=%I64u | submit_time=%s",
+                        symbolName,
+                        m_lastExecutionReceipt.requestedPrice,
+                        m_lastExecutionReceipt.averagePrice,
+                        m_lastExecutionReceipt.slippagePoints,
+                        m_lastExecutionReceipt.roundTripMs,
+                        TimeToString(m_lastExecutionReceipt.submitTime, TIME_DATE | TIME_SECONDS));
             if(!executionConfirmed && !m_lastExecutionReceipt.accepted)
             {
                 PrintFormat("[EXECUTION-UNCONFIRMED] %s | request_id=%u | order=%I64u | deal=%I64u | retcode=%u | note=%s",

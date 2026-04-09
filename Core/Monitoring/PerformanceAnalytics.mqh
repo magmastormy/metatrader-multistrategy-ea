@@ -194,7 +194,8 @@ CPerformanceAnalytics::~CPerformanceAnalytics(void)
 {
     if(m_initialized)
     {
-        PrintPerformanceReport();
+        if(m_totalTrades > 0)
+            PrintPerformanceReport();
         CEnhancedErrorHandler::LogError(ERROR_INFO, "PerformanceAnalytics", "Performance analytics destroyed", 0);
     }
 }

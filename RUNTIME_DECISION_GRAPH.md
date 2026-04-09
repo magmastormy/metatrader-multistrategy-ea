@@ -1,7 +1,7 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-03-31
+- Last Updated: 2026-04-08
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
 
@@ -26,8 +26,10 @@ flowchart TD
   B --> B0[Initialize optional AI subsystems behind readiness flags]
   B0 --> B1[Validate symbols + log ACCOUNT-CAPACITY]
   B1 --> B2[Recover TRADE-STATE from history and open positions]
-  B2 --> C[Register core and AI strategy adapters]
-  C --> D[OnTick or OnTimer ProcessTradingLogic]
+  B2 --> C[Build active-only strategy registry and register enabled core or AI adapters]
+  C --> C0[Initialize per-symbol managers]
+  C0 --> C1[Rebuild scheduler state and prime pending new-bar work for every validated symbol]
+  C1 --> D[OnTick or OnTimer ProcessTradingLogic]
 
   D --> D1{Terminal connected?}
   D1 -->|No| D2[Skip evaluation, wait reconnect]
@@ -36,19 +38,21 @@ flowchart TD
   E -->|Yes| E2[Skip duplicate evaluation]
   E -->|No| E3[Continue]
   E3 --> E3A[Rotate symbol evaluation start index]
-  E3A --> E4{New bar?}
-  E4 -->|Yes| F[Evaluate NEW_BAR mode]
-  E4 -->|No| G{Hybrid intrabar eligible?}
-  G -->|Yes| H[Evaluate INTRABAR mode]
-  G -->|No| I[Skip symbol]
+  E3A --> E3B[Mark pending new-bar symbols and compute cycle evaluation budget]
+  E3B --> E3C[Select pending new-bar work first and spend remaining budget on intrabar work]
+  E3C --> E4{Selected for evaluation this cycle?}
+  E4 -->|No| I[Defer symbol to later cycle]
+  E4 -->|Yes| E5{New-bar selection?}
+  E5 -->|Yes| F[Evaluate NEW_BAR mode]
+  E5 -->|No| G[Evaluate INTRABAR mode]
 
   F --> J[Manager consensus + confluence + timeframe consistency]
-  H --> J
+  G --> J
   J --> J0[Strategy role/cluster governance applied]
   J0 --> J1[Pipeline regime + cost viability gate]
   J1 --> K{Signal NONE?}
   K -->|Yes| L[Increment no-signal telemetry]
-  K -->|No| M[Advanced signal validation]
+  K -->|No| M[Exogenous validation: spread/time/session/volatility/cost]
 
   M --> N{Validator pass?}
   N -->|No| O[Log SIGNAL-REJECTED]
@@ -88,10 +92,17 @@ flowchart TD
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
 - OnInit is two-tiered: mandatory trade/risk/runtime bootstrap remains fatal, while auxiliary AI brain/orchestrator/adaptation modules degrade behind readiness flags and do not abort the EA.
+- Strategy `OnNewBar(...)` handlers are state-refresh only; manager consensus owns the single authoritative `GetSignal(...)` call for each strategy evaluation cycle.
+- Pending new-bar work is durable across cycles: symbols that miss the current evaluation budget stay queued ahead of intrabar work until they are processed.
+- Cold-start cadence is now deterministic: init primes one pending new-bar scan per symbol so the first evaluation does not depend on a later bar transition or delayed series warmup.
+- Cadence scheduler ownership is explicit: `g_lastSymbolBarTimes`, `g_lastIntrabarScanTime`, `g_pendingNewBarScans`, and `g_symbolScanStates` must align with `g_activePairs`; runtime now rebuilds and logs `[SCHEDULER-STATE]` before resuming evaluation if that contract is broken.
+- Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
 
 ## Intrabar Policy
 - New-bar and intrabar paths are explicit evaluation modes.
 - Intrabar eligibility respects symbol scope and cadence interval.
+- `InpSignalScanOnNewBarOnly=true` is a global cadence override: it disables timed intrabar scheduling even when manager governance shows strategies as intrabar `LIVE`.
+- Total heavy evaluations are bounded by `InpMaxSignalEvaluationsPerCycle`; new-bar selections consume the budget first and intrabar only uses the remainder.
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
@@ -110,10 +121,16 @@ flowchart TD
     - **2 active voters**: directional quality ≥ 0.48, support ≥ 0.30 (was 0.55 / 0.35)
     - **3+ active voters**: directional quality ≥ 0.55, support ≥ 0.35 (standard `InpQuorumThreshold` / floor inputs)
     - Eliminates zero-score vetoes for legitimate single/dual-voter consensus by adjusting thresholds to the actual voter pool
+    - Single- and dual-voter quality gates are now clamped against the current base quorum, so lowering `InpQuorumThreshold` intentionally also relaxes the adaptive one-/two-voter path instead of being silently overridden by harder fixed fallback thresholds
   - **Dynamic weight decay** (Batch 41): strategies that filter ≥ 3 consecutive cycles have their live weight decayed by `m_strategyActivityDecayRate` per additional cycle, reducing the denominator as dormant strategies fall out of contribution; weight recovers when the strategy produces a vote again
 - If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
 - Intrabar can instead admit a tagged `SPARSE_INTRABAR` decision when exactly one direction survives with one voter and readiness/context/cost/support/coverage thresholds all remain strong.
-- Pipeline and validator profiles (confidence + confluence + quality) are configured separately from AI thresholds so non-AI strategies are not gated by AI policy.
+- Pipeline confidence policy remains separate from AI thresholds so non-AI strategies are not gated by AI policy.
+- Structural admission is now manager-owned: once manager consensus admits a packet, validator no longer re-judges confidence, confluence, directional quality, or support in normal runtime.
+- Validator now operates in `EXOGENOUS_ONLY` mode during normal runtime, limiting post-consensus checks to spread, time, session, volatility, and cost-viability sanity.
+- Validator profile inputs (confidence + confluence + quality) remain logged and configurable as telemetry/fallback surfaces, but they are no longer a second structural veto authority when manager-owned admission is enabled.
+- Validator still consumes manager quorum evidence (`effectiveMinVoters`, `directionalQuality`, `supportRatio`) so exogenous validation telemetry and any legacy fallback mode stay aligned with the already-authoritative manager decision.
+- Strategy overrides that bypass base-class `GetSignal(...)` must emit explicit last-decision tags; manager now downgrades any remaining placeholder abstentions instead of treating them as fully ready neutral voters.
 
 ## Strategy Governance Policy
 - Manager-level strategy metadata controls live-vote authority:
@@ -122,14 +139,17 @@ flowchart TD
 - Default policy:
   - all enabled retained strategies are registered as `PRIMARY_ALPHA` and vote live
   - per-strategy inputs gate registration (disabled strategies are not registered into the pool)
+  - curated mode is now a baseline/default profile only; explicit strategy enables remain authoritative for runtime registration
 - Intrabar policy is explicit per strategy:
   - `LIVE`: full quorum participant during intrabar scans
   - `PROBE`: evaluated intrabar but only eligible for sparse admission
   - `OFF`: skipped before pipeline work
+- Current runtime mapping promotes intrabar-enabled manual strategies into `LIVE`, so `intrabar=true` means real intrabar voting rather than a hidden probe-only path.
+- Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a separate profile leaves the raw input toggles enabled.
 - Governance is continuous, not only binary:
   - closed-trade outcomes update rolling `healthScore`
   - reliability multipliers scale live vote impact without bypassing role/cluster controls
-- Intrabar participation remains explicit: Momentum and Unified ICT are the default intrabar voters, while Fibonacci and Support/Resistance can be opted in for smoke tests via dedicated inputs.
+- Intrabar participation remains explicit and operator-driven: the curated default starts lean, but any explicitly enabled strategy remains active, and any enabled strategy with intrabar eligibility set to `true` participates as a live intrabar voter.
 
 ## AI Runtime Path
 - `CNextGenStrategyBrain` now runs in a single local transformer mode; there is no runtime Python/cloud branch.
@@ -151,9 +171,11 @@ flowchart TD
   - effective confidence floor
   - soft-threshold pass flag
 - On transient warmup / handle-init / buffer-copy faults, `CRegimeEngine` can reuse a recent valid same-symbol/timeframe snapshot instead of forcing immediate neutral degradation.
+- `CTrendEngine` now fails closed on partial-readiness states rather than continuing with half-ready MA/ATR inputs; bounded last-good snapshot reuse remains reserved for transient copy-fault cases.
 - Repeated regime data faults trigger bounded handle reset and retry eligibility instead of indefinite stale-handle behavior.
 - Pipeline threshold adaptation now also consumes the regime snapshot, so confidence uplift/relaxation is aligned with the same market-state authority that drives the cost gate.
 - Near-threshold signals may survive the pipeline when readiness/context evidence is strong; the gate remains bounded rather than becoming a blanket relaxation.
+- Surviving packets keep their admitted confidence after threshold passage; readiness/context/cost remain separate downstream evidence channels instead of shaving the same packet a second time before quorum and validator.
 - Gate telemetry:
   - `[REGIME-STATE]`
   - `[COST-GATE]`
@@ -182,6 +204,7 @@ flowchart TD
 - Symbol scan order rotates each cycle to reduce first-symbol concentration when only one trade is allowed per cycle.
 - The runtime no longer executes the first valid symbol blindly; it stages `[SCAN-CANDIDATE]` entries and promotes the best `[SCAN-DECISION]` at the end of the cycle.
 - `TradeManager` emits `[EXECUTION-RECEIPT]` with requested/fill size, retcode, request id, and retries; partial fills emit `[FILL-DIFF]`.
+- `TradeManager` also emits `[EXECUTION-TELEMETRY]` with broker request/fill price, slippage points, and round-trip latency; the EA mirrors that into `[TRADE-EXECUTION]`.
 - `UnifiedRiskManager` registers executed risk using fill ratio so daily risk usage matches actual exposure.
 
 ## Diagnostics
@@ -189,8 +212,12 @@ flowchart TD
 - Startup cooldown recovery emitted as `[TRADE-STATE]`.
 - Weighted quorum evaluation emitted as `[CONSENSUS-QUORUM]`.
 - Post-quorum nullification emitted as `[CONSENSUS-VETO]` when timeframe consistency or intrabar single-voter safety clears a candidate.
+- Per-evaluation contributor trace emitted as `[CONSENSUS-ACTIVE]`, listing active, voted, raw-none, filtered, and suppressed strategies for the current symbol evaluation.
 - Sparse-admission success emitted as `[CONSENSUS-SPARSE]`; near-miss sparse/full-quorum failures emitted as `[CONSENSUS-NEARMISS]`.
 - Scheduler budget and per-symbol backoff are emitted as `[SCAN-BUDGET]` and `[INTRABAR-BACKOFF]`.
+- `[SCAN-BUDGET]` now includes `pending_newbar`, `selected_newbar`, `deferred_newbar`, `eval_budget`, and `intrabar_budget` so deferred-work pressure is visible from the log.
+- Startup/runtime priming emits `[SCAN-PRIME]`, and cadence overrides emit `[CADENCE-WARNING]` when global new-bar-only mode suppresses otherwise-live intrabar policy.
+- Scheduler repair emits `[SCHEDULER-STATE]` so silent cadence-array drift is visible immediately in the runtime log.
 - Ranked approved candidates emitted as `[SCAN-CANDIDATE]`.
 - Final cycle winner emitted as `[SCAN-DECISION]`.
 - Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
@@ -221,6 +248,7 @@ flowchart TD
 - Runtime conversion tracking emitted as `[HEARTBEAT-FUNNEL]` and `[CONVERSION-RATES]`.
 - Prolonged no-signal dominance alert emitted as `[NO-SIGNAL-ALERT]`.
 - Regime transient-fault reuse and repeated-fault reset are emitted under `[REGIME-STATE]`.
+- No-vote scans now preserve aggregate readiness/context/cost from the ready live pool instead of zeroing those fields after consensus has already measured them.
 - Trend indicator mature-series readiness faults and bounded set reinitialization are emitted under `[TrendEngine][READINESS-FAULT]`.
 - Strategy-governance telemetry emitted as `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, and heartbeat `[ROLE-CLUSTER]`.
 - Cluster risk telemetry emitted as `[RISK-CLUSTER]` and `[RISK-MUTEX-BLOCK]`.
@@ -228,9 +256,13 @@ flowchart TD
 - Unprotected remediation lifecycle: `[RISK-UNPROTECTED]`
 - External position capacity blocks: `[CAPACITY-EXTERNAL]`
 - Execution receipt telemetry: `[EXECUTION-RECEIPT]`, `[FILL-DIFF]`
+- Execution latency/slippage telemetry: `[EXECUTION-TELEMETRY]`, `[TRADE-EXECUTION]`
 - Per-scan no-trade attribution: `[SCAN-NO-TRADE]`
 - Risk-budget sizing caps: `[RISK-CAP]`
+- `[SIGNAL-VALIDATED]` now reports `exogenous_quality` separately from consensus confidence so logs distinguish manager admission from validator market-sanity pass.
 - Execution preflight and ambiguous broker responses: `[EXECUTION-BLOCKED]`, `[EXECUTION-UNCONFIRMED]`
+- `[COST-GATE]` now prints both raw spread/ATR values and the ratio so tiny non-zero spread conditions are distinguishable from true zero-cost states.
+- Duplicate component-local `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths; manager/runtime logs are the authoritative observability surface.
 
 ## 2026-03-25 Decision-Path Refinement
 - Same-bar structural cache reuse now preserves original engine readiness rather than forcing later scans to assume all engines are ready.
@@ -307,7 +339,7 @@ flowchart TD
 9. `[RISK-UNPROTECTED]` / `[CAPACITY-EXTERNAL]`
 10. `[AI-VOTE]`
 11. `[NO-SIGNAL-ALERT]`
-12. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]`
+12. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]` plus `[TRADE-EXECUTION]` / `[EXECUTION-TELEMETRY]` for live-send broker details
 
 ## 2026-04-01 Strategy Registry + AI Runtime Flow
 - Startup now includes a registry-resolution stage before manager bootstrap:
@@ -328,3 +360,7 @@ flowchart TD
   - MA manual fallback
   - ATR manual fallback
   - snapshot reuse
+
+### Validation Off-Hours Overrides (2026-04-08)
+- Synthetic Expansion: The pipeline incorporates PainX, SFX Vol, GainX, FX Vol, and FlipX as intrinsic 24/7 instruments within IsSyntheticSymbol, explicitly overriding MT5 session blocks and enabling non-stop execution logic for emergent indices.
+

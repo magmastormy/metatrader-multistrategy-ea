@@ -678,6 +678,7 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
     {
         if(m_strategies[i].strategy != NULL)
         {
+            m_strategies[i].strategy.Deinit();
             delete m_strategies[i].strategy;
             m_strategies[i].strategy = NULL;
         }
@@ -901,8 +902,15 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     double probeBuyCostSum = 0.0, probeSellCostSum = 0.0;
     double totalLiveWeight = 0.0;
     double readyLiveWeight = 0.0;
+    double readyContextWeightedSum = 0.0;
+    double readyCostWeightedSum = 0.0;
     double quorumMinConfidence = MathMax(0.0, MathMin(1.0, m_pipelineMinConfidence));
     int activeLiveStrategies = 0;
+    string activeStrategySummary = "";
+    string votedStrategySummary = "";
+    string rawNoneStrategySummary = "";
+    string filteredStrategySummary = "";
+    string suppressedStrategySummary = "";
     string buyContributors[];
     string sellContributors[];
     string probeBuyContributors[];
@@ -930,6 +938,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     {
         if(!m_strategies[i].enabled)
             continue;
+
+        if(StringLen(activeStrategySummary) > 0)
+            activeStrategySummary += ", ";
+        activeStrategySummary += m_strategies[i].name;
 
         bool liveVoter = IsStrategyLiveVoter(i);
         ENUM_INTRABAR_POLICY intrabarPolicy = GetStrategyIntrabarPolicy(i);
@@ -1045,6 +1057,37 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                                              (participationTarget * 0.15)));
 
         string decisionReasonTag = m_strategies[i].strategy.GetLastDecisionReasonTag();
+        bool placeholderNoSignalReason = false;
+        if(signal == TRADE_SIGNAL_NONE &&
+           (decisionReasonTag == "" ||
+            decisionReasonTag == "BASE_INITIALIZED" ||
+            decisionReasonTag == "BASE_UNSET"))
+        {
+            placeholderNoSignalReason = true;
+            decisionReasonTag = filteredByPipeline ? "UNTAGGED_FILTERED" : "UNTAGGED_NO_SIGNAL";
+        }
+        if(signal == TRADE_SIGNAL_NONE)
+        {
+            string noneEntry = m_strategies[i].name;
+            if(filteredByPipeline)
+            {
+                if(decisionReasonTag != "")
+                    noneEntry += "[" + decisionReasonTag + "|PIPELINE]";
+                else
+                    noneEntry += "[PIPELINE]";
+                if(StringLen(filteredStrategySummary) > 0)
+                    filteredStrategySummary += ", ";
+                filteredStrategySummary += noneEntry;
+            }
+            else
+            {
+                if(decisionReasonTag != "")
+                    noneEntry += "[" + decisionReasonTag + "]";
+                if(StringLen(rawNoneStrategySummary) > 0)
+                    rawNoneStrategySummary += ", ";
+                rawNoneStrategySummary += noneEntry;
+            }
+        }
         if(signal == TRADE_SIGNAL_NONE)
         {
             if(m_strategies[i].name == "Momentum")
@@ -1112,23 +1155,64 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         if(!liveVoter && !probeEligibleForThisEval)
         {
             if(signal != TRADE_SIGNAL_NONE)
+            {
                 cycleVoteSuppressed++;
+                string suppressedEntry = StringFormat("%s:%s@%.2f",
+                                                     m_strategies[i].name,
+                                                     TradeSignalToString(signal),
+                                                     stratConf);
+                if(StringLen(suppressedStrategySummary) > 0)
+                    suppressedStrategySummary += ", ";
+                suppressedStrategySummary += suppressedEntry;
+            }
             continue;
         }
 
         if(evalMode == EVAL_MODE_INTRABAR && !liveEligibleForThisEval && !probeEligibleForThisEval)
         {
             if(signal != TRADE_SIGNAL_NONE)
+            {
                 cycleVoteSuppressed++;
+                string suppressedEntry = StringFormat("%s:%s@%.2f",
+                                                     m_strategies[i].name,
+                                                     TradeSignalToString(signal),
+                                                     stratConf);
+                if(StringLen(suppressedStrategySummary) > 0)
+                    suppressedStrategySummary += ", ";
+                suppressedStrategySummary += suppressedEntry;
+            }
             continue;
         }
 
         double readinessScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.readinessScore));
         double contextScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.contextScore));
         double costScore = MathMax(0.25, MathMin(1.0, pipelineEvidence.costScore));
+        if(placeholderNoSignalReason)
+        {
+            // Unclassified no-signal placeholders should not dilute live quorum as if they
+            // had completed a real decision cycle with meaningful readiness evidence.
+            readinessScore = MathMin(readinessScore, 0.15);
+            contextScore = MathMin(contextScore, 0.35);
+            costScore = MathMin(costScore, 0.35);
+        }
         double readyWeightContribution = adjustedStrategyWeight * readinessScore;
         if(liveVoter && liveEligibleForThisEval)
+        {
             readyLiveWeight += readyWeightContribution;
+            readyContextWeightedSum += contextScore * readyWeightContribution;
+            readyCostWeightedSum += costScore * readyWeightContribution;
+        }
+
+        if(signal != TRADE_SIGNAL_NONE)
+        {
+            string votedEntry = StringFormat("%s:%s@%.2f",
+                                             m_strategies[i].name,
+                                             TradeSignalToString(signal),
+                                             stratConf);
+            if(StringLen(votedStrategySummary) > 0)
+                votedStrategySummary += ", ";
+            votedStrategySummary += votedEntry;
+        }
 
         if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE && stratConf >= signalConfidenceFloor && (liveEligibleForThisEval || probeEligibleForThisEval))
         {
@@ -1238,8 +1322,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     double sellAverageContext = (sellWeightSum > 0.0) ? ClampUnitValue(sellContextSum / sellWeightSum) : 0.0;
     double buyAverageCost = (buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0;
     double sellAverageCost = (sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0;
+    double overallReadyContext = (readyLiveWeight > 0.0) ? ClampUnitValue(readyContextWeightedSum / readyLiveWeight) : 0.0;
+    double overallReadyCost = (readyLiveWeight > 0.0) ? ClampUnitValue(readyCostWeightedSum / readyLiveWeight) : 0.0;
     double supportFloor = (evalMode == EVAL_MODE_INTRABAR) ? m_supportFloorIntrabar : m_supportFloorNewBar;
     double effectiveQualityThreshold = m_quorumThreshold;
+    double adaptiveQualityThreshold1 = MathMin(m_adaptiveQualityThreshold_1voter,
+                                               MathMax(0.30, m_quorumThreshold - 0.05));
+    double adaptiveQualityThreshold2 = MathMin(m_adaptiveQualityThreshold_2voters,
+                                               MathMax(0.34, m_quorumThreshold - 0.02));
 
     // Adaptive quorum: adjust thresholds based on actual active voter count
     if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) > 0)
@@ -1247,12 +1337,12 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         int activeVoterCount = buyVotes + sellVotes;
         if(activeVoterCount == 1)
         {
-            effectiveQualityThreshold = m_adaptiveQualityThreshold_1voter;
+            effectiveQualityThreshold = adaptiveQualityThreshold1;
             supportFloor = m_adaptiveSupportFloor_1voter;
         }
         else if(activeVoterCount == 2)
         {
-            effectiveQualityThreshold = m_adaptiveQualityThreshold_2voters;
+            effectiveQualityThreshold = adaptiveQualityThreshold2;
             supportFloor = m_adaptiveSupportFloor_2voters;
         }
         // 3+ voters: use original thresholds (already set above)
@@ -1665,7 +1755,13 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     double dominantReadiness = buyDominant ? buyAverageReadiness : sellAverageReadiness;
     double dominantContext = buyDominant ? buyAverageContext : sellAverageContext;
     double dominantCost = buyDominant ? buyAverageCost : sellAverageCost;
-    double quorumGap = MathMax(0.0, m_quorumThreshold - bestDirectionalQuality);
+    if(bestVoterCount <= 0)
+    {
+        dominantReadiness = readyCoverage;
+        dominantContext = overallReadyContext;
+        dominantCost = overallReadyCost;
+    }
+    double quorumGap = MathMax(0.0, effectiveQualityThreshold - bestDirectionalQuality);
     quorumGap = MathMax(quorumGap, MathMax(0.0, supportFloor - bestSupportRatio));
     if(effectiveMinVoters > 0 && bestVoterCount < effectiveMinVoters)
         quorumGap = MathMax(quorumGap, (double)(effectiveMinVoters - bestVoterCount) / (double)effectiveMinVoters);
@@ -1705,7 +1801,6 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_lastDecisionContext.eligibleLiveVoterCount = eligibleLiveVoterCount;
     m_lastDecisionContext.effectiveMinVoters = effectiveMinVoters;
     m_lastDecisionContext.vetoCode = (vetoCode != "") ? vetoCode : "direction_quorum_not_met";
-    m_lastDecisionContext.costScore = 0.0;
     m_lastDecisionContext.reason = (vetoReason != "") ? vetoReason : m_lastDecisionContext.vetoCode;
     if((buyVotes + sellVotes + probeBuyVotes + probeSellVotes) > 0 && evalMode == EVAL_MODE_INTRABAR)
     {
@@ -1737,13 +1832,20 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                     totalLiveWeight,
                     buyVotes,
                     sellVotes);
+        PrintFormat("[CONSENSUS-ACTIVE] %s | active={%s} | voted={%s} | raw_none={%s} | filtered={%s} | suppressed={%s}",
+                    symbol,
+                    (StringLen(activeStrategySummary) > 0) ? activeStrategySummary : "None",
+                    (StringLen(votedStrategySummary) > 0) ? votedStrategySummary : "None",
+                    (StringLen(rawNoneStrategySummary) > 0) ? rawNoneStrategySummary : "None",
+                    (StringLen(filteredStrategySummary) > 0) ? filteredStrategySummary : "None",
+                    (StringLen(suppressedStrategySummary) > 0) ? suppressedStrategySummary : "None");
     }
     PrintFormat("[CONSENSUS-QUORUM] %s | class=%s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | supportFloor=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
                 symbol,
                 m_lastDecisionContext.quorumMode,
                 buyScore,
                 sellScore,
-                m_quorumThreshold,
+                effectiveQualityThreshold,
                 supportFloor,
                 buyVotes,
                 sellVotes,
