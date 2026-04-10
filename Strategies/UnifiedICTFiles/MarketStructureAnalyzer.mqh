@@ -11,6 +11,8 @@
 #ifndef __UICT_MARKET_STRUCTURE_ANALYZER_MQH__
 #define __UICT_MARKET_STRUCTURE_ANALYZER_MQH__
 
+#include "../../Core/Utils/Instruments.mqh"
+
 //+------------------------------------------------------------------+
 //| BMS Type Enum                                                    |
 //+------------------------------------------------------------------+
@@ -659,13 +661,14 @@ void CMarketStructureAnalyzer::UpdateMultiplexStructure()
 //+------------------------------------------------------------------+
 ENUM_TIMEFRAMES CMarketStructureAnalyzer::GetHigherTF(ENUM_TIMEFRAMES tf)
 {
+    bool syntheticIndex = IsSyntheticIndexSymbolName(m_symbol);
     switch(tf)
     {
-        case PERIOD_M1:  return PERIOD_M15;
-        case PERIOD_M5:  return PERIOD_H1;
-        case PERIOD_M15: return PERIOD_H4;
-        case PERIOD_M30: return PERIOD_H4;
-        case PERIOD_H1:  return PERIOD_D1;
+        case PERIOD_M1:  return syntheticIndex ? PERIOD_M5  : PERIOD_M15;
+        case PERIOD_M5:  return syntheticIndex ? PERIOD_M15 : PERIOD_H1;
+        case PERIOD_M15: return syntheticIndex ? PERIOD_H1  : PERIOD_H4;
+        case PERIOD_M30: return syntheticIndex ? PERIOD_H1  : PERIOD_H4;
+        case PERIOD_H1:  return syntheticIndex ? PERIOD_H4  : PERIOD_D1;
         case PERIOD_H4:  return PERIOD_D1;
         case PERIOD_D1:  return PERIOD_W1;
         default:         return PERIOD_D1;
@@ -677,13 +680,14 @@ ENUM_TIMEFRAMES CMarketStructureAnalyzer::GetHigherTF(ENUM_TIMEFRAMES tf)
 //+------------------------------------------------------------------+
 ENUM_TIMEFRAMES CMarketStructureAnalyzer::GetLowerTF(ENUM_TIMEFRAMES tf)
 {
+    bool syntheticIndex = IsSyntheticIndexSymbolName(m_symbol);
     switch(tf)
     {
         case PERIOD_W1:  return PERIOD_D1;
         case PERIOD_D1:  return PERIOD_H4;
-        case PERIOD_H4:  return PERIOD_H1;
-        case PERIOD_H1:  return PERIOD_M15;
-        case PERIOD_M30: return PERIOD_M5;
+        case PERIOD_H4:  return syntheticIndex ? PERIOD_M30 : PERIOD_H1;
+        case PERIOD_H1:  return syntheticIndex ? PERIOD_M30 : PERIOD_M15;
+        case PERIOD_M30: return syntheticIndex ? PERIOD_M15 : PERIOD_M5;
         case PERIOD_M15: return PERIOD_M5;
         case PERIOD_M5:  return PERIOD_M1;
         default:         return PERIOD_M5;

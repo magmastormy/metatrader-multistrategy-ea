@@ -25,11 +25,20 @@ private:
     datetime m_lastRegimeChange;
     int m_regimeStability; // Counter for regime stability
     
-    // Market metrics tracking
-    double m_trendStrength;
-    double m_volatility;
-    double m_momentum;
-    double m_volumeProfile;
+	    // Market metrics tracking
+	    double m_trendStrength;
+	    double m_volatility;
+	    double m_momentum;
+	    double m_volumeProfile;
+	    double m_lastValidTrendStrength;
+	    double m_lastValidVolatility;
+	    double m_lastValidMomentum;
+	    double m_lastValidAtrValue;
+	    datetime m_lastValidTrendTime;
+	    datetime m_lastValidVolatilityTime;
+	    datetime m_lastValidMomentumTime;
+	    datetime m_lastValidAtrTime;
+	    datetime m_lastMetricReuseLogTime;
     
     // Historical regime data
     ENUM_MARKET_REGIME m_regimeHistory[20];
@@ -88,8 +97,8 @@ private:
     
     // Calculate trend strength using multiple indicators
 
-    // Helper to release all indicator handles
-    void ReleaseAllHandles() {
+	    // Helper to release all indicator handles
+	    void ReleaseAllHandles() {
         // Array of all indicator handles for easier management
         int handles[] = {
             m_maFastHandle, m_maSlowHandle, m_adxHandle, m_atrHandle, m_bbHandle,
@@ -114,8 +123,21 @@ private:
         m_rsiHandle = handles[6];
         m_ma20Handle = handles[7];
         m_ma50Handle = handles[8];
-        m_ma200Handle = handles[9];
-    }
+	        m_ma200Handle = handles[9];
+	    }
+
+	    void ResetMetricCaches()
+	    {
+	        m_lastValidTrendStrength = 0.0;
+	        m_lastValidVolatility = 0.0;
+	        m_lastValidMomentum = 0.0;
+	        m_lastValidAtrValue = 0.0;
+	        m_lastValidTrendTime = 0;
+	        m_lastValidVolatilityTime = 0;
+	        m_lastValidMomentumTime = 0;
+	        m_lastValidAtrTime = 0;
+	        m_lastMetricReuseLogTime = 0;
+	    }
     
     // Check if we're still in warmup period (suppress warnings)
     bool IsInWarmup() const {
@@ -133,29 +155,68 @@ private:
     }
 
     // Ensure indicator handles exist for current symbol/period
-    bool EnsureIndicatorsReady() {
-        if(m_symbol == "" || m_period == PERIOD_CURRENT)
-            return false;
+	    bool EnsureIndicatorsReady() {
+	        if(m_symbol == "" || m_period == PERIOD_CURRENT)
+	            return false;
         // If any core handle is invalid, attempt re-init
         if(m_atrHandle == INVALID_HANDLE || m_ma20Handle == INVALID_HANDLE || m_ma50Handle == INVALID_HANDLE || m_ma200Handle == INVALID_HANDLE)
         {
             if(!InitializeIndicators(m_symbol, m_period))
                 return false;
-        }
-        return true;
-    }
+	        }
+	        return true;
+	    }
 
-    double CalculateTrendStrength() {
-        double trendStrength = 0.0;
-        int adxPeriod = 14;
-        int ma20Period = 20;
-        int ma50Period = 50;
-        int ma200Period = 200;
-        int priceActionBars = 10;
+	    int GetMetricReuseWindowSeconds() const
+	    {
+	        int barSeconds = PeriodSeconds(m_period);
+	        if(barSeconds <= 0)
+	            barSeconds = 60;
+	        return MathMax(60, MathMin(900, barSeconds));
+	    }
 
-        // Attempt re-init if handles invalid
-        if(!EnsureIndicatorsReady())
-        {
+	    bool CanReuseMetric(const datetime metricTime) const
+	    {
+	        return (metricTime > 0 && (TimeCurrent() - metricTime) <= GetMetricReuseWindowSeconds());
+	    }
+
+	    void MaybeLogMetricReuse(const string metricName,
+	                             const string reasonTag,
+	                             const int errorCode,
+	                             const datetime metricTime)
+	    {
+	        if(metricTime <= 0)
+	            return;
+
+	        datetime nowTime = TimeCurrent();
+	        if(m_lastMetricReuseLogTime != 0 && (nowTime - m_lastMetricReuseLogTime) < 30)
+	            return;
+
+	        int ageSeconds = (int)MathMax(0, nowTime - metricTime);
+	        PrintFormat("[MARKET-ANALYSIS] REUSE_LAST_VALID | symbol=%s | timeframe=%s | metric=%s | reason=%s | age=%ds | err=%d",
+	                    m_symbol,
+	                    EnumToString(m_period),
+	                    metricName,
+	                    reasonTag,
+	                    ageSeconds,
+	                    errorCode);
+	        m_lastMetricReuseLogTime = nowTime;
+	    }
+
+	    double CalculateTrendStrength() {
+	        double trendStrength = 0.0;
+	        int adxPeriod = 14;
+	        int ma20Period = 20;
+	        int ma50Period = 50;
+	        int ma200Period = 200;
+	        int priceActionBars = 10;
+	        bool reuseFallback = false;
+	        string reuseReason = "";
+	        int reuseErrorCode = 0;
+
+	        // Attempt re-init if handles invalid
+	        if(!EnsureIndicatorsReady())
+	        {
             if(!IsInWarmup())
                 PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - indicators not initialized for %s.", m_symbol);
             return 0.0;
@@ -176,12 +237,20 @@ private:
                 }
                 attempts++;
             }
-            if(dataReady) {
-                // ADX above 25 indicates trend, above 50 is strong trend
-                trendStrength += (adxValues[0] / 50.0) * 0.4; // 40% weight to ADX
-            } else if(GetLastError() == 4807) {
-                // [4807 STALE TOLERANCE] Use default if first run, otherwise continue evaluation
-                // TrendStrength stays 0.0 but we don't block
+	            if(dataReady) {
+	                // ADX above 25 indicates trend, above 50 is strong trend
+	                trendStrength += (adxValues[0] / 50.0) * 0.4; // 40% weight to ADX
+	            } else {
+	                int errorCode = GetLastError();
+	                if(errorCode == 4807 || errorCode == 4806) {
+	                    // [4807 STALE TOLERANCE] Use default if first run, otherwise continue evaluation
+	                    reuseFallback = true;
+	                    reuseReason = "ADX_BUFFER_COPY_FAILED";
+	                    reuseErrorCode = errorCode;
+	                    if(!IsInWarmup()) PrintFormat("[INFO] CMarketAnalysis::CalculateTrendStrength - 4807 stale data bypass for ADX on %s", m_symbol);
+	                } else if(!IsInWarmup()) {
+	                    PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - ADX data not ready for %s. Error: %d", m_symbol, errorCode);
+	                }
             }
         } else if(m_adxHandle == INVALID_HANDLE && RequiresSpecialHandling(m_symbol)) {
             // For Jump/Volatility indices without ADX, use increased weight on other indicators
@@ -207,11 +276,21 @@ private:
                 bool uptrend = ma20Values[0] > ma50Values[0] && ma50Values[0] > ma200Values[0];
                 bool downtrend = ma20Values[0] < ma50Values[0] && ma50Values[0] < ma200Values[0];
                 
-                if(uptrend || downtrend) {
-                    trendStrength += 0.3; // 30% weight to MA alignment
-                }
-            } else if(GetLastError() == 4807) {
-                // [4807 STALE TOLERANCE] Maintain last valid trend contribution if sync fails
+	                if(uptrend || downtrend) {
+	                    trendStrength += 0.3; // 30% weight to MA alignment
+	                }
+	            } else {
+	                int errorCode = GetLastError();
+	                if(errorCode == 4807 || errorCode == 4806) {
+	                    // [4807 STALE TOLERANCE] Maintain last valid trend contribution if sync fails
+	                    reuseFallback = true;
+	                    if(reuseReason == "")
+	                        reuseReason = "MA_ALIGNMENT_COPY_FAILED";
+	                    reuseErrorCode = errorCode;
+	                    if(!IsInWarmup()) PrintFormat("[INFO] CMarketAnalysis::CalculateTrendStrength - 4807 stale data bypass for MA alignment on %s", m_symbol);
+	                } else if(!IsInWarmup()) {
+	                   PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - MA buffer copy failed for %s. Error: %d", m_symbol, errorCode);
+	                }
             }
         } else {
             if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateTrendStrength - MA data not ready or handles invalid for %s.", m_symbol);
@@ -222,8 +301,8 @@ private:
         ArraySetAsSeries(high, true);
         ArraySetAsSeries(low, true);
         
-        if(CopyHigh(m_symbol, m_period, 0, priceActionBars, high) >= priceActionBars &&
-           CopyLow(m_symbol, m_period, 0, priceActionBars, low) >= priceActionBars) {
+	        if(CopyHigh(m_symbol, m_period, 0, priceActionBars, high) >= priceActionBars &&
+	           CopyLow(m_symbol, m_period, 0, priceActionBars, low) >= priceActionBars) {
             
             // Check for higher highs and higher lows (uptrend)
             bool higherHighs = high[0] > high[2] && high[2] > high[4];
@@ -233,24 +312,47 @@ private:
             bool lowerHighs = high[0] < high[2] && high[2] < high[4];
             bool lowerLows = low[0] < low[2] && low[2] < low[4];
             
-            if((higherHighs && higherLows) || (lowerHighs && lowerLows)) {
-                trendStrength += 0.3; // 30% weight to price action
-            }
-        }
-        
-        // Cap trend strength at 1.0
-        return MathMin(trendStrength, 1.0);
-    }
+	            if((higherHighs && higherLows) || (lowerHighs && lowerLows)) {
+	                trendStrength += 0.3; // 30% weight to price action
+	            }
+	        } else {
+	            int errorCode = GetLastError();
+	            if(errorCode == 4807 || errorCode == 4806)
+	            {
+	                reuseFallback = true;
+	                if(reuseReason == "")
+	                    reuseReason = "PRICE_ACTION_COPY_FAILED";
+	                reuseErrorCode = errorCode;
+	            }
+	        }
+	        
+	        // Cap trend strength at 1.0
+	        trendStrength = MathMin(trendStrength, 1.0);
+	        if(reuseFallback && CanReuseMetric(m_lastValidTrendTime) && m_lastValidTrendStrength > 0.0)
+	        {
+	            MaybeLogMetricReuse("TREND_STRENGTH", reuseReason, reuseErrorCode, m_lastValidTrendTime);
+	            trendStrength = MathMax(trendStrength, m_lastValidTrendStrength);
+	        }
+	        if(MathIsValidNumber(trendStrength) && trendStrength > 0.0)
+	        {
+	            m_lastValidTrendStrength = trendStrength;
+	            m_lastValidTrendTime = TimeCurrent();
+	        }
+	        return trendStrength;
+	    }
     
     // Calculate market volatility using multiple metrics
-    double CalculateVolatility() {
-        double volatility = 0.0;
-        int atrPeriod = 14;
-        int bbPeriod = 20;
+	    double CalculateVolatility() {
+	        double volatility = 0.0;
+	        int atrPeriod = 14;
+	        int bbPeriod = 20;
+	        bool reuseFallback = false;
+	        string reuseReason = "";
+	        int reuseErrorCode = 0;
 
-        // Attempt re-init if handles invalid
-        if(!EnsureIndicatorsReady())
-        {
+	        // Attempt re-init if handles invalid
+	        if(!EnsureIndicatorsReady())
+	        {
             if(!IsInWarmup())
                 PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - indicators not initialized for %s.", m_symbol);
             return 0.0;
@@ -260,15 +362,26 @@ private:
         if(m_atrHandle != INVALID_HANDLE && BarsCalculated(m_atrHandle) > atrPeriod) {
             double atrValues[];
             ArraySetAsSeries(atrValues, true);
-            if(CopyBuffer(m_atrHandle, 0, 0, 3, atrValues) > 0) {
-                // Convert ATR to percentage of price
-                double currentPriceValue = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-                if(currentPriceValue > 0) { // Avoid division by zero
-                    double atrPercent = atrValues[0] / currentPriceValue * 100.0;
-                    volatility += (atrPercent / 1.0) * 0.5; // 50% weight to ATR, normalized to 1% as high volatility
-                }
-            } else if(GetLastError() == 4807) {
-                // [4807 STALE TOLERANCE] Maintain last valid volatility if sync fails
+	            if(CopyBuffer(m_atrHandle, 0, 0, 3, atrValues) > 0) {
+	                // Convert ATR to percentage of price
+	                double currentPriceValue = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+	                if(currentPriceValue > 0) { // Avoid division by zero
+	                    double atrPercent = atrValues[0] / currentPriceValue * 100.0;
+	                    volatility += (atrPercent / 1.0) * 0.5; // 50% weight to ATR, normalized to 1% as high volatility
+	                    m_lastValidAtrValue = atrValues[0];
+	                    m_lastValidAtrTime = TimeCurrent();
+	                }
+	            } else {
+	                int errorCode = GetLastError();
+	                if(errorCode == 4807 || errorCode == 4806) {
+	                    // [4807 STALE TOLERANCE] Maintain last valid volatility if sync fails
+	                    reuseFallback = true;
+	                    reuseReason = "ATR_BUFFER_COPY_FAILED";
+	                    reuseErrorCode = errorCode;
+	                    if(!IsInWarmup()) PrintFormat("[INFO] CMarketAnalysis::CalculateVolatility - 4807 stale data bypass for ATR on %s", m_symbol);
+	                } else if(!IsInWarmup()) {
+	                   PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - ATR buffer copy failed for %s. Error: %d", m_symbol, errorCode);
+	                }
             }
         } else {
             if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - ATR data not ready or handle invalid for %s.", m_symbol);
@@ -282,14 +395,26 @@ private:
             ArraySetAsSeries(lowerValues, true);
             
             // BB: 0=main (middle), 1=upper, 2=lower
-            if(CopyBuffer(m_bbHandle, 1, 0, 3, upperValues) > 0 &&
-               CopyBuffer(m_bbHandle, 0, 0, 3, middleValues) > 0 &&
-               CopyBuffer(m_bbHandle, 2, 0, 3, lowerValues) > 0) {
+	            if(CopyBuffer(m_bbHandle, 1, 0, 3, upperValues) > 0 &&
+	               CopyBuffer(m_bbHandle, 0, 0, 3, middleValues) > 0 &&
+	               CopyBuffer(m_bbHandle, 2, 0, 3, lowerValues) > 0) {
                 
                 if(middleValues[0] > 0) { // Avoid division by zero
-                    double bbWidth = (upperValues[0] - lowerValues[0]) / middleValues[0] * 100.0;
-                    volatility += (bbWidth / 4.0) * 0.3; // 30% weight to BB width, normalized to 4% as high
-                }
+	                    double bbWidth = (upperValues[0] - lowerValues[0]) / middleValues[0] * 100.0;
+	                    volatility += (bbWidth / 4.0) * 0.3; // 30% weight to BB width, normalized to 4% as high
+	                }
+	            } else {
+	                int errorCode = GetLastError();
+	                if(errorCode == 4807 || errorCode == 4806) {
+	                    // [4807 STALE TOLERANCE] Maintain last valid volatility if sync fails
+	                    reuseFallback = true;
+	                    if(reuseReason == "")
+	                        reuseReason = "BB_BUFFER_COPY_FAILED";
+	                    reuseErrorCode = errorCode;
+	                    if(!IsInWarmup()) PrintFormat("[INFO] CMarketAnalysis::CalculateVolatility - 4807 stale data bypass for BB on %s", m_symbol);
+	                } else if(!IsInWarmup()) {
+	                   PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - BB buffer copy failed for %s. Error: %d", m_symbol, errorCode);
+	                }
             }
         } else {
             if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - Bollinger Bands data not ready or handle invalid for %s.", m_symbol);
@@ -301,90 +426,149 @@ private:
         ArraySetAsSeries(low, true);
         int priceRangeBars = 10;
 
-        if(CopyHigh(m_symbol, m_period, 0, priceRangeBars, high) >= priceRangeBars &&
-           CopyLow(m_symbol, m_period, 0, priceRangeBars, low) >= priceRangeBars) {
+	        if(CopyHigh(m_symbol, m_period, 0, priceRangeBars, high) >= priceRangeBars &&
+	           CopyLow(m_symbol, m_period, 0, priceRangeBars, low) >= priceRangeBars) {
             
             // Calculate max range over last 10 bars
             double maxHigh = high[ArrayMaximum(high, 0, priceRangeBars)];
             double minLow = low[ArrayMinimum(low, 0, priceRangeBars)];
             if(minLow > 0) { // Avoid division by zero
-                double rangePercent = (maxHigh - minLow) / minLow * 100.0;
-                volatility += (rangePercent / 2.0) * 0.2; // 20% weight to price range, normalized to 2% as high
-            }
-        } else {
-            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - Price range data not available for %s.", m_symbol);
-        }
-        
-        // Cap volatility at 1.0
-        return MathMin(volatility, 1.0);
-    }
+	                double rangePercent = (maxHigh - minLow) / minLow * 100.0;
+	                volatility += (rangePercent / 2.0) * 0.2; // 20% weight to price range, normalized to 2% as high
+	            }
+	        } else {
+	            int errorCode = GetLastError();
+	            if(errorCode == 4807 || errorCode == 4806)
+	            {
+	                reuseFallback = true;
+	                if(reuseReason == "")
+	                    reuseReason = "PRICE_RANGE_COPY_FAILED";
+	                reuseErrorCode = errorCode;
+	            }
+	            else if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateVolatility - Price range data not available for %s.", m_symbol);
+	        }
+	        
+	        // Cap volatility at 1.0
+	        volatility = MathMin(volatility, 1.0);
+	        if(reuseFallback && CanReuseMetric(m_lastValidVolatilityTime) && m_lastValidVolatility > 0.0)
+	        {
+	            MaybeLogMetricReuse("VOLATILITY", reuseReason, reuseErrorCode, m_lastValidVolatilityTime);
+	            volatility = MathMax(volatility, m_lastValidVolatility);
+	        }
+	        if(MathIsValidNumber(volatility) && volatility > 0.0)
+	        {
+	            m_lastValidVolatility = volatility;
+	            m_lastValidVolatilityTime = TimeCurrent();
+	        }
+	        return volatility;
+	    }
     
     // Calculate market momentum
-    double CalculateMomentum() {
-        double momentum = 0.0;
-        int rsiPeriod = 14;
-        int macdSlowPeriod = 26; // Longest period component of MACD
-        int rocPeriod = 5;
-        int rocBarsNeeded = rocPeriod + 1; // Need at least rocPeriod + 1 bars for ROC calculation
+	    double CalculateMomentum() {
+	        double momentum = 0.0;
+	        int rsiPeriod = 14;
+	        int macdSlowPeriod = 26; // Longest period component of MACD
+	        int rocPeriod = 5;
+	        int rocBarsNeeded = rocPeriod + 1; // Need at least rocPeriod + 1 bars for ROC calculation
+	        bool reuseFallback = false;
+	        string reuseReason = "";
+	        int reuseErrorCode = 0;
 
-        // Use RSI for momentum measurement
-        int rsiCalculated = BarsCalculated(m_rsiHandle);
-        if(m_rsiHandle != INVALID_HANDLE && rsiCalculated >= rsiPeriod) {
-            double rsiValues[];
-            ArraySetAsSeries(rsiValues, true);
-            if(CopyBuffer(m_rsiHandle, 0, 0, 1, rsiValues) > 0) { // Only need current RSI value
-                // RSI deviation from neutral (50)
-                momentum += MathAbs(rsiValues[0] - 50.0) / 50.0 * 0.4; // 40% weight to RSI
-            }
-        } else if(m_rsiHandle != INVALID_HANDLE) {
-            // RSI handle exists but data not ready yet - this is normal during startup
-            // Don't spam warnings during initialization
+	        // Use RSI for momentum measurement
+	        int rsiCalculated = BarsCalculated(m_rsiHandle);
+	        if(m_rsiHandle != INVALID_HANDLE && rsiCalculated >= rsiPeriod) {
+	            double rsiValues[];
+	            ArraySetAsSeries(rsiValues, true);
+	            if(CopyBuffer(m_rsiHandle, 0, 0, 1, rsiValues) > 0) { // Only need current RSI value
+	                // RSI deviation from neutral (50)
+	                momentum += MathAbs(rsiValues[0] - 50.0) / 50.0 * 0.4; // 40% weight to RSI
+	            } else {
+	                int errorCode = GetLastError();
+	                if(errorCode == 4807 || errorCode == 4806)
+	                {
+	                    reuseFallback = true;
+	                    reuseReason = "RSI_BUFFER_COPY_FAILED";
+	                    reuseErrorCode = errorCode;
+	                }
+	            }
+	        } else if(m_rsiHandle != INVALID_HANDLE) {
+	            // RSI handle exists but data not ready yet - this is normal during startup
+	            // Don't spam warnings during initialization
         } else {
             if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - RSI handle invalid for %s.", m_symbol);
         }
         
         // Use MACD for momentum confirmation
         // MACD Buffers: 0 = Main line, 1 = Signal line
-        if(m_macdHandle != INVALID_HANDLE && BarsCalculated(m_macdHandle) >= macdSlowPeriod) {
-            double macdValues[], signalValues[];
-            ArraySetAsSeries(macdValues, true);
-            ArraySetAsSeries(signalValues, true);
-            if(CopyBuffer(m_macdHandle, 0, 0, 1, macdValues) > 0 && // Current MACD value
+	        if(m_macdHandle != INVALID_HANDLE && BarsCalculated(m_macdHandle) >= macdSlowPeriod) {
+	            double macdValues[], signalValues[];
+	            ArraySetAsSeries(macdValues, true);
+	            ArraySetAsSeries(signalValues, true);
+	            if(CopyBuffer(m_macdHandle, 0, 0, 1, macdValues) > 0 && // Current MACD value
                CopyBuffer(m_macdHandle, 1, 0, 1, signalValues) > 0) { // Current Signal value
                 
                 // MACD histogram strength
                 double histogram = MathAbs(macdValues[0] - signalValues[0]);
                 double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
                 if(price > 0) { // Avoid division by zero
-                    double histogramPercent = histogram / price * 1000.0; // Scaled for small values
-                    momentum += MathMin(histogramPercent / 0.5, 1.0) * 0.3; // 30% weight to MACD
-                } else {
-                     PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - Could not get SYMBOL_BID for %s to calculate MACD momentum.", m_symbol);
-                }
-            }
-        } else {
-            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - MACD data not ready or handle invalid for %s.", m_symbol);
-        }
+	                    double histogramPercent = histogram / price * 1000.0; // Scaled for small values
+	                    momentum += MathMin(histogramPercent / 0.5, 1.0) * 0.3; // 30% weight to MACD
+	                } else {
+	                     PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - Could not get SYMBOL_BID for %s to calculate MACD momentum.", m_symbol);
+	                }
+	            } else {
+	                int errorCode = GetLastError();
+	                if(errorCode == 4807 || errorCode == 4806)
+	                {
+	                    reuseFallback = true;
+	                    if(reuseReason == "")
+	                        reuseReason = "MACD_BUFFER_COPY_FAILED";
+	                    reuseErrorCode = errorCode;
+	                }
+	            }
+	        } else {
+	            if(!IsInWarmup()) PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - MACD data not ready or handle invalid for %s.", m_symbol);
+	        }
         
         // Use price momentum (rate of change)
         double close[];
         ArraySetAsSeries(close, true);
-        if(SeriesInfoInteger(m_symbol, m_period, SERIES_BARS_COUNT) >= rocBarsNeeded) { // Check if enough bars exist on chart
-            if(CopyClose(m_symbol, m_period, 0, rocBarsNeeded, close) >= rocBarsNeeded) {
-                if(close[rocPeriod] != 0) { // Avoid division by zero for ROC calculation
-                    double roc = (close[0] - close[rocPeriod]) / close[rocPeriod] * 100.0;
-                    momentum += MathMin(MathAbs(roc) / 1.0, 1.0) * 0.3; // 30% weight to ROC
-                } else {
-                    PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - ROC calculation for %s failed due to zero historical price.", m_symbol);
-                }
-            }
-        } else {
-             PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - Not enough bars for ROC calculation on %s, Period %s. Needed: %d, Available: %d", m_symbol, EnumToString(m_period), rocBarsNeeded, SeriesInfoInteger(m_symbol, m_period, SERIES_BARS_COUNT));
-        }
-        
-        // Cap momentum at 1.0
-        return MathMin(momentum, 1.0);
-    }
+	        if(SeriesInfoInteger(m_symbol, m_period, SERIES_BARS_COUNT) >= rocBarsNeeded) { // Check if enough bars exist on chart
+	            if(CopyClose(m_symbol, m_period, 0, rocBarsNeeded, close) >= rocBarsNeeded) {
+	                if(close[rocPeriod] != 0) { // Avoid division by zero for ROC calculation
+	                    double roc = (close[0] - close[rocPeriod]) / close[rocPeriod] * 100.0;
+	                    momentum += MathMin(MathAbs(roc) / 1.0, 1.0) * 0.3; // 30% weight to ROC
+	                } else {
+	                    PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - ROC calculation for %s failed due to zero historical price.", m_symbol);
+	                }
+	            } else {
+	                int errorCode = GetLastError();
+	                if(errorCode == 4807 || errorCode == 4806)
+	                {
+	                    reuseFallback = true;
+	                    if(reuseReason == "")
+	                        reuseReason = "ROC_COPY_FAILED";
+	                    reuseErrorCode = errorCode;
+	                }
+	            }
+	        } else {
+	             PrintFormat("[WARN] CMarketAnalysis::CalculateMomentum - Not enough bars for ROC calculation on %s, Period %s. Needed: %d, Available: %d", m_symbol, EnumToString(m_period), rocBarsNeeded, SeriesInfoInteger(m_symbol, m_period, SERIES_BARS_COUNT));
+	        }
+	        
+	        // Cap momentum at 1.0
+	        momentum = MathMin(momentum, 1.0);
+	        if(reuseFallback && CanReuseMetric(m_lastValidMomentumTime) && m_lastValidMomentum > 0.0)
+	        {
+	            MaybeLogMetricReuse("MOMENTUM", reuseReason, reuseErrorCode, m_lastValidMomentumTime);
+	            momentum = MathMax(momentum, m_lastValidMomentum);
+	        }
+	        if(MathIsValidNumber(momentum) && momentum > 0.0)
+	        {
+	            m_lastValidMomentum = momentum;
+	            m_lastValidMomentumTime = TimeCurrent();
+	        }
+	        return momentum;
+	    }
     
 public:
     
@@ -410,12 +594,21 @@ public:
         m_previousRegime(MARKET_REGIME_RANGING),
         m_lastRegimeChange(0),
         m_regimeStability(0),
-        m_trendStrength(0.0),
-        m_volatility(0.0),
-        m_momentum(0.0),
-        m_volumeProfile(0.0),
-        m_regimeHistoryCount(0),
-        m_symbol(""),
+	        m_trendStrength(0.0),
+	        m_volatility(0.0),
+	        m_momentum(0.0),
+	        m_volumeProfile(0.0),
+	        m_lastValidTrendStrength(0.0),
+	        m_lastValidVolatility(0.0),
+	        m_lastValidMomentum(0.0),
+	        m_lastValidAtrValue(0.0),
+	        m_lastValidTrendTime(0),
+	        m_lastValidVolatilityTime(0),
+	        m_lastValidMomentumTime(0),
+	        m_lastValidAtrTime(0),
+	        m_lastMetricReuseLogTime(0),
+	        m_regimeHistoryCount(0),
+	        m_symbol(""),
         m_period(PERIOD_CURRENT),
         m_initTime(0),
         m_indicatorsReady(false),
@@ -572,13 +765,15 @@ public:
     }
 
     // Initialize all required indicators for the given symbol and period
-    bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period) {
-        // Track initialization attempt
-        m_initAttempts++;
-        m_lastInitAttempt = TimeCurrent();
-        
-        // Skip Boom/Crash indices - completely incompatible
-        if(StringFind(symbolName, "Boom") >= 0 || StringFind(symbolName, "Crash") >= 0) {
+	    bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period) {
+	        // Track initialization attempt
+	        m_initAttempts++;
+	        m_lastInitAttempt = TimeCurrent();
+	        if(m_symbol != symbolName || m_period != period)
+	            ResetMetricCaches();
+	        
+	        // Skip Boom/Crash indices - completely incompatible
+	        if(StringFind(symbolName, "Boom") >= 0 || StringFind(symbolName, "Crash") >= 0) {
             PrintFormat("[INFO] Skipping indicator initialization for incompatible symbol: %s", symbolName);
             m_indicatorsReady = false;
             return false;
@@ -660,7 +855,7 @@ public:
         }
         
         // Wait for indicators to calculate with retry logic
-        int maxRetries = 20;  // Increased from 10 for synthetic history synchronization hardening
+        int maxRetries = 20;  // Maximum retries for history sync
         int retryCount = 0;
         bool indicatorsReady = false;
         
@@ -794,16 +989,25 @@ public:
     }
 
     // Get current ATR value
-    double GetATRValue() {
-        if(m_atrHandle == INVALID_HANDLE) return 0.0;
-        
-        double atrValues[];
-        ArraySetAsSeries(atrValues, true);
-        if(CopyBuffer(m_atrHandle, 0, 0, 1, atrValues) > 0) {
-            return atrValues[0];
-        }
-        return 0.0;
-    }
+	    double GetATRValue() {
+	        if(m_atrHandle == INVALID_HANDLE) return 0.0;
+	        
+	        double atrValues[];
+	        ArraySetAsSeries(atrValues, true);
+	        ResetLastError();
+	        if(CopyBuffer(m_atrHandle, 0, 0, 1, atrValues) > 0 && atrValues[0] > 0.0) {
+	            m_lastValidAtrValue = atrValues[0];
+	            m_lastValidAtrTime = TimeCurrent();
+	            return atrValues[0];
+	        }
+	        int errorCode = GetLastError();
+	        if((errorCode == 4807 || errorCode == 4806) && CanReuseMetric(m_lastValidAtrTime) && m_lastValidAtrValue > 0.0)
+	        {
+	            MaybeLogMetricReuse("ATR_VALUE", "ATR_VALUE_COPY_FAILED", errorCode, m_lastValidAtrTime);
+	            return m_lastValidAtrValue;
+	        }
+	        return 0.0;
+	    }
 };
 
 const int CMarketAnalysis::WARMUP_SECONDS = 60;

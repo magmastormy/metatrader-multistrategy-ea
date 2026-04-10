@@ -1,8 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-04-08
+- Last Updated: 2026-04-10
 - Scope: Runtime lifecycle and ownership trace
+- Current Batch: 57 - Decision Quality Upgrade (Readiness + Correlation)
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -29,6 +30,7 @@
 - Initialize performance analytics before unified-risk bootstrap.
 - Validate active symbols and emit `[ACCOUNT-CAPACITY]` affordability diagnostics before the first scan.
 - Build the active-only strategy registry, then create per-symbol managers and register only enabled strategies and enabled AI adapters.
+- Build symbol-class-specific strategy flags before manager bootstrap so synthetic symbols can use a leaner live roster than FX without violating per-symbol consensus ownership.
 - Rebuild scheduler state only after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff remain a single aligned authority.
 - Treat curated mode as a baseline/default profile only; explicit strategy enables remain authoritative instead of being rewritten away at runtime.
 - Reconstruct `[TRADE-STATE]` / cooldown timing from EA-owned history and open positions.
@@ -47,7 +49,8 @@
 - Detect new-bar events per symbol.
 - Carry pending new-bar work across cycles and spend the per-cycle heavy-evaluation budget on those symbols before any intrabar work.
 - Run intrabar scans when eligible.
-- Honor the global cadence override: `InpSignalScanOnNewBarOnly=true` disables timed intrabar scheduling even if strategy-level intrabar governance is `LIVE`, and startup emits `[CADENCE-WARNING]` when that override is active.
+- Hybrid cadence is now the default live posture: `InpSignalScanOnNewBarOnly=false` keeps timed intrabar scans active unless operators explicitly force strict new-bar-only mode, and startup still emits `[CADENCE-WARNING]` when that override is active.
+- The default intrabar symbol budget is widened to `4` so live synthetic verification spends more of the available cadence budget each cycle without fully unbounding scan cost.
 - Budget intrabar scans by symbol yield and apply per-symbol backoff after repeated low-yield or readiness-faulted intrabar passes.
 - Emit heartbeat funnel and conversion-rate telemetry at configured diagnostics interval.
 
@@ -59,6 +62,12 @@
 - Manager classifies intrabar strategies as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent.
 - Explicit intrabar eligibility now maps enabled strategies into real `LIVE` intrabar voting, so operator-facing `intrabar=true` settings match the runtime voter pool.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile left the raw input toggles enabled.
+- Symbol-class profiles now shape live participation:
+  - synthetic indices can suppress `Momentum` / `Trend` from the local manager roster when structure-capable strategies are enabled
+  - the same synthetic lean profile keeps `Fibonacci` / `Elliott Wave` / `Support-Resistance` / `Unified ICT` intrabar `LIVE`, while `Candlestick` stays available for new-bar evaluation but is downgraded to intrabar `PROBE`
+  - FX retains the broader balanced roster
+  - synthetic ICT/Elliott higher-timeframe dependencies are lowered from FX-style `H4/D1` expectations to lighter `M15/H1/H4` ladders where appropriate
+- Synthetic lean symbols now also receive dedicated sparse intrabar admission thresholds, so one-voter structure packets are evaluated against profile-aware quality floors instead of the same sparse-quality bar used for broader FX/balanced rosters.
 - **Adaptive quorum thresholds** (Batch 41): manager calculates `effectiveQualityThreshold` and `supportFloor` based on actual active voter count:
   - 1 active voter: directional quality ≥ 0.40, support ≥ 0.15
   - 2 active voters: directional quality ≥ 0.48, support ≥ 0.30
@@ -78,7 +87,9 @@
 - Pipeline preserves admitted confidence after threshold passage instead of attenuating surviving packets a second time before quorum and validator.
 - `CRegimeEngine` may reuse a recent valid same-context snapshot on transient warmup / copy / handle-init faults and performs bounded handle reset after repeated data faults.
 - `CTrendEngine` now fails closed on partial-readiness states instead of pushing half-ready MA/ATR data downstream; it may still reuse a bounded last-good trend snapshot on transient MA/ATR copy faults and emits `[READINESS-STATE]` reuse telemetry.
+- `CTrendEngine` now branches by instrument class: FX keeps ADX-backed trend modeling, while synthetic indices bypass ADX handle creation and derive trend state from MA structure/angle only, removing synthetic-only ADX readiness churn without changing FX behavior.
 - Pipeline threshold adaptation now uses `CRegimeEngine` snapshot state and dedicated non-AI confidence floors instead of AI-threshold coupling.
+- `CMarketAnalysis` now keeps bounded last-valid trend/volatility/momentum/ATR snapshots and reuses them on transient `4806/4807` copy faults instead of silently dropping those metrics to zero.
 - Validation is now split by ownership:
   - manager owns structural admission (`confidence`, `confluence`, directional `quality`, support, effective minimum voters)
   - validator owns only exogenous market sanity (`spread`, `time`, `session`, `volatility`, cost viability) when manager-owned admission mode is enabled
@@ -90,15 +101,22 @@
   - neural votes reuse `GetNeuralSignalCached(...)`
   - transformer and ensemble adapters reuse cached inference results until the bar changes
   - failed feature-build/inference results are cached as `NONE` for the rest of the bar
+- AI adapters now emit explicit decision reason tags on disabled, abstain, feature-fault, inference-fault, and signal paths, removing the old `UNTAGGED_NO_SIGNAL` blind spot from AI-enabled consensus traces.
+- AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator, and the system now respects `InpAIConfidenceThreshold` as the authoritative floor across all modes, eliminating legacy hardcoded confidence caps.
+- AI_ONLY mode is now strict: indicator strategies are filtered out at the strategy registry level, ensuring no indicator-based votes participate when the EA is in AI-primary posture.
+- AI intrabar policy is now explicit instead of globally hard-coded `OFF`: `Neural Network AI`, `Transformer AI`, and `Ensemble AI` each have their own intrabar eligibility input, allowing `AI_ONLY` and `HYBRID` to be tested as real timed intrabar modes.
 - `CNextGenStrategyBrain` now follows a single local-transformer path with ring-buffered market data history and no dead Python/cloud bridge branch.
 - Duplicate component-local `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths so manager/runtime telemetry stays authoritative.
 - Risk gating (pre-size then post-size).
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
+- Portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety.
 - Pipeline confidence gate emits threshold-source metadata and uses bounded weak-regime intrabar uplift.
 - Trend ADX failures degrade to neutral/ranging context with bounded ADX-handle self-heal.
 - ATR stop-distance fallback when indicator read fails.
 - Risk-approved opportunities are staged as ranked candidates across the full symbol scan before shadow or live execution.
 - Live execution captures broker receipt state, price/slippage/latency telemetry, and risk registration scales consumed entry budget by actual fill ratio.
+- Post-entry lifecycle management now scales BE/trailing/partial-close thresholds against original stop distance, eliminating the previous fixed-pip asymmetry where wide-stop synthetic winners were harvested almost immediately while losers still paid the full original stop.
+- Protective stop modifications now validate against executable quote side and retry once with extra cushion on `TRADE_RETCODE_INVALID_STOPS`, reducing live-management churn on fast synthetic symbols.
 - Per-symbol capacity checks include explicit external-position block telemetry.
 
 ### 4. Post-trade path
@@ -123,7 +141,7 @@
 
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[TrendEngine][READINESS-FAULT]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
@@ -294,7 +312,7 @@
 ## 2026-04-07 Scan Budget + Registry + Diagnostics Debloat Trace
 - `MultiStrategyAutonomousEA.mq5` now caps heavy evaluations with `InpMaxSignalEvaluationsPerCycle`, persists pending new-bar symbols across cycles, and spends the cycle budget on deferred new-bar work before intrabar scans.
 - The legacy `InpUseOrchestrator` surface has been removed; runtime registration now follows the active strategy registry only, so disabled curated strategies and disabled AI adapters do not enter manager pools, orchestrator identity maps, or weight summaries.
-- `Core/Engines/TrendEngine.mqh` now treats partial readiness as a fail-closed fault instead of a soft continue path, while preserving bounded last-good reuse for transient copy-fault cases.
+- `CTrendEngine` now distinguishes warmup, transient copy faults, handle faults, partial-readiness faults, and reused snapshots; partial readiness is allowed to proceed when the underlying series is mature, enabling MA/ATR fallback logic to attempt recovery instead of hard-failing, which reduces persistent readiness vetoes on synthetic indices where `BarsCalculated` may lag behind `Bars()`. cases.
 - `Strategies/StrategyElliottWaveEnhanced.mqh`, `Core/Pipeline/UnifiedSignalPipeline.mqh`, and `Core/AI/AIStrategyOrchestrator.mqh` no longer allocate component-local `SignalDiagnostics` sinks; runtime observability is now concentrated in manager/runtime telemetry rather than duplicate per-component logs.
 
 ## 2026-04-01 Strategy Registry + AI Runtime Audit

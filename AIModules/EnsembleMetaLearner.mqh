@@ -14,6 +14,15 @@ class CEnsembleMetaLearner
 private:
     CArrayObj m_models;
     CArrayDouble m_modelWeights;
+    CArrayDouble m_modelPerformanceHistory;
+    CArrayDouble m_modelRecentAccuracy;
+    
+    // Regime detection state
+    double m_atrShort;
+    double m_atrLong;
+    double m_trendStrength;
+    double m_momentum;
+    datetime m_lastRegimeUpdate;
     
 public:
     CEnsembleMetaLearner();
@@ -35,18 +44,33 @@ public:
     // Training helpers
     bool TrainModel(CTransformerBrain* model, const double &data[], int seqLen, int targetClass, double &loss);
     
+    // Advanced regime detection
+    ENUM_MARKET_REGIME DetectMarketRegime(const double &marketData[]);
+    void UpdateRegimeState(const double &marketData[]);
+    
     double GetConfidence() const { return m_lastConfidence; } 
 
 private:
     double m_lastConfidence;
+    double CalculateATR(const double &data[], int period);
+    double CalculateTrendStrength(const double &data[]);
+    double CalculateMomentum(const double &data[], int period);
 };
 
 //+------------------------------------------------------------------+
 //| Constructor                                                     |
 //+------------------------------------------------------------------+
-CEnsembleMetaLearner::CEnsembleMetaLearner() : m_lastConfidence(0.0)
+CEnsembleMetaLearner::CEnsembleMetaLearner() : 
+    m_lastConfidence(0.0),
+    m_atrShort(0.0),
+    m_atrLong(0.0),
+    m_trendStrength(0.0),
+    m_momentum(0.0),
+    m_lastRegimeUpdate(0)
 {
     m_models.FreeMode(true);
+    m_modelPerformanceHistory.Resize(0);
+    m_modelRecentAccuracy.Resize(0);
 }
 
 //+------------------------------------------------------------------+
@@ -106,8 +130,8 @@ bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double 
     double weightedSellSignal = 0.0;
     double totalWeight = 0.0;
     
-    // Get current market regime (simplified - using default)
-    ENUM_MARKET_REGIME activeRegime = MARKET_REGIME_RANGING;
+    // Get current market regime using advanced detection
+    ENUM_MARKET_REGIME activeRegime = DetectMarketRegime(marketData);
     
     // Update model weights based on current regime
     UpdateModelWeights(activeRegime);
@@ -199,28 +223,49 @@ double CEnsembleMetaLearner::CalculateModelWeight(int modelIndex, ENUM_MARKET_RE
     CTransformerBrain* model = dynamic_cast<CTransformerBrain*>(m_models.At(modelIndex));
     if(model == NULL) return 0.0;
     
-    // Base weight from performance score
-    double baseWeight = 0.5; // Default neutral weight
+    // Base weight from performance history
+    double performanceScore = 0.5;
+    if(modelIndex < m_modelPerformanceHistory.Total())
+    {
+        performanceScore = m_modelPerformanceHistory.At(modelIndex);
+    }
     
-    // Regime-specific adjustment (simplified)
+    // Regime-specific adjustment with volatility adaptation
     double regimeMultiplier = 1.0;
+    double volatilityAdjustment = 1.0;
+    
     switch(regime)
     {
         case MARKET_REGIME_TRENDING:
-            regimeMultiplier = 1.2;
+            regimeMultiplier = 1.3; // Favor trending models
+            volatilityAdjustment = (m_atrShort > m_atrLong) ? 0.9 : 1.1;
             break;
         case MARKET_REGIME_VOLATILE:
-            regimeMultiplier = 0.8;
+            regimeMultiplier = 0.7; // Reduce weight in volatile conditions
+            volatilityAdjustment = (m_trendStrength > 0.5) ? 1.2 : 0.8;
             break;
         case MARKET_REGIME_RANGING:
-            regimeMultiplier = 1.0;
+            regimeMultiplier = 1.0; // Neutral for ranging
+            volatilityAdjustment = 1.0;
             break;
         default:
             regimeMultiplier = 1.0;
+            volatilityAdjustment = 1.0;
             break;
     }
     
-    return baseWeight * regimeMultiplier;
+    // Momentum-based dynamic adjustment
+    double momentumAdjustment = 1.0;
+    if(MathAbs(m_momentum) > 0.15)
+    {
+        momentumAdjustment = 1.0 + (MathAbs(m_momentum) * 0.5);
+    }
+    
+    // Combine all factors
+    double finalWeight = performanceScore * regimeMultiplier * volatilityAdjustment * momentumAdjustment;
+    
+    // Ensure weight stays within reasonable bounds
+    return MathMax(0.1, MathMin(2.0, finalWeight));
 }
 
 //+------------------------------------------------------------------+
@@ -243,9 +288,9 @@ bool CEnsembleMetaLearner::TrainEnsemble(const double &marketData[], int seqLen,
         }
     }
     
-    // Update market regime and adjust weights (simplified - using default)
-    ENUM_MARKET_REGIME localCurrentRegime = MARKET_REGIME_RANGING;
-    UpdateModelWeights(localCurrentRegime);
+    // Update market regime and adjust weights using advanced detection
+    ENUM_MARKET_REGIME detectedRegime = DetectMarketRegime(marketData);
+    UpdateModelWeights(detectedRegime);
     
     return success;
 }
@@ -282,23 +327,95 @@ int CEnsembleMetaLearner::GetActiveModelCount() const
 }
 
 //+------------------------------------------------------------------+
-//| Deactivate underperforming models                               |
+//| Deactivate underperforming models with advanced performance metrics|
 //+------------------------------------------------------------------+
 void CEnsembleMetaLearner::DeactivateUnderperformingModels(double threshold)
 {
-    // Simplified implementation - in a real system, this would evaluate performance
-    // and deactivate models below the threshold
+    if(m_models.Total() == 0) return;
+    
+    // Evaluate each model's recent performance
     for(int i = 0; i < m_models.Total(); i++)
     {
         CTransformerBrain* model = dynamic_cast<CTransformerBrain*>(m_models.At(i));
-        if(model != NULL)
+        if(model == NULL) continue;
+        
+        // Calculate performance metrics
+        double currentWeight = m_modelWeights.At(i);
+        double emptyTestData[];
+        ArrayResize(emptyTestData, 0);
+        double performanceScore = EvaluateModelPerformance(model, emptyTestData);
+        
+        // Update performance history
+        if(i >= m_modelPerformanceHistory.Total())
         {
-            // Placeholder for actual deactivation logic
-            double weight = m_modelWeights.At(i);
-            if(weight < threshold)
+            m_modelPerformanceHistory.Resize(i + 1);
+        }
+        m_modelPerformanceHistory.Update(i, performanceScore);
+        
+        // Calculate moving average of recent performance
+        double recentPerformance = 0.0;
+        int historySize = MathMin(10, m_modelPerformanceHistory.Total());
+        for(int j = MathMax(0, i - historySize + 1); j <= i && j < m_modelPerformanceHistory.Total(); j++)
+        {
+            recentPerformance += m_modelPerformanceHistory.At(j);
+        }
+        if(historySize > 0)
+            recentPerformance /= historySize;
+        
+        // Advanced deactivation logic with multiple factors
+        bool shouldDeactivate = false;
+        
+        // Factor 1: Performance below threshold
+        if(recentPerformance < threshold)
+        {
+            shouldDeactivate = true;
+        }
+        
+        // Factor 2: Performance declining over time
+        if(i > 0 && i < m_modelPerformanceHistory.Total())
+        {
+            double previousPerformance = m_modelPerformanceHistory.At(i - 1);
+            if(performanceScore < previousPerformance * 0.8) // 20% decline
             {
-                m_modelWeights.Update(i, 0.0); // Set weight to 0 to effectively deactivate
+                shouldDeactivate = true;
             }
+        }
+        
+        // Factor 3: Volatility-based adjustment (keep more models in volatile conditions)
+        if(m_atrShort > m_atrLong * 1.3 && recentPerformance > threshold * 0.8)
+        {
+            shouldDeactivate = false; // Keep model in volatile conditions even if slightly underperforming
+        }
+        
+        // Apply deactivation with gradual weight reduction instead of hard cutoff
+        if(shouldDeactivate)
+        {
+            double newWeight = currentWeight * 0.5; // Reduce by 50%
+            if(newWeight < 0.05)
+                newWeight = 0.0; // Fully deactivate if very low
+            m_modelWeights.Update(i, newWeight);
+        }
+        else if(currentWeight < 1.0 && recentPerformance > threshold * 1.1)
+        {
+            // Gradually reactivate improving models
+            double newWeight = MathMin(1.0, currentWeight * 1.2);
+            m_modelWeights.Update(i, newWeight);
+        }
+    }
+    
+    // Re-normalize weights after adjustments
+    double totalWeight = 0.0;
+    for(int i = 0; i < m_modelWeights.Total(); i++)
+    {
+        totalWeight += m_modelWeights.At(i);
+    }
+    
+    if(totalWeight > 0)
+    {
+        for(int i = 0; i < m_modelWeights.Total(); i++)
+        {
+            double normalizedWeight = m_modelWeights.At(i) / totalWeight;
+            m_modelWeights.Update(i, normalizedWeight);
         }
     }
 }
@@ -311,4 +428,128 @@ bool CEnsembleMetaLearner::TrainModel(CTransformerBrain* model, const double &da
     if(model == NULL || ArraySize(data) == 0 || seqLen <= 0) return false;
 
     return model.TrainStep(data, targetClass, loss);
+}
+
+//+------------------------------------------------------------------+
+//| Detect market regime using volatility, trend, and momentum         |
+//+------------------------------------------------------------------+
+ENUM_MARKET_REGIME CEnsembleMetaLearner::DetectMarketRegime(const double &marketData[])
+{
+    if(ArraySize(marketData) < 50)
+        return MARKET_REGIME_RANGING;
+    
+    UpdateRegimeState(marketData);
+    
+    // Volatility ratio: short-term ATR / long-term ATR
+    double volatilityRatio = (m_atrLong > 0) ? m_atrShort / m_atrLong : 1.0;
+    
+    // Determine regime based on multiple factors
+    bool isVolatile = (volatilityRatio > 1.5);
+    bool isTrending = (MathAbs(m_trendStrength) > 0.3);
+    bool isMomentumStrong = (MathAbs(m_momentum) > 0.2);
+    
+    if(isVolatile)
+    {
+        return MARKET_REGIME_VOLATILE;
+    }
+    else if(isTrending && isMomentumStrong)
+    {
+        return (m_trendStrength > 0) ? MARKET_REGIME_TRENDING : MARKET_REGIME_RANGING;
+    }
+    
+    return MARKET_REGIME_RANGING;
+}
+
+//+------------------------------------------------------------------+
+//| Update regime detection state variables                            |
+//+------------------------------------------------------------------+
+void CEnsembleMetaLearner::UpdateRegimeState(const double &marketData[])
+{
+    if(ArraySize(marketData) < 50)
+        return;
+    
+    m_atrShort = CalculateATR(marketData, 14);
+    m_atrLong = CalculateATR(marketData, 50);
+    m_trendStrength = CalculateTrendStrength(marketData);
+    m_momentum = CalculateMomentum(marketData, 14);
+    m_lastRegimeUpdate = TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Average True Range for volatility measurement            |
+//+------------------------------------------------------------------+
+double CEnsembleMetaLearner::CalculateATR(const double &data[], int period)
+{
+    if(ArraySize(data) < period + 1)
+        return 0.0;
+    
+    double atr = 0.0;
+    double tr = 0.0;
+    double prevClose = data[0];
+    
+    for(int i = 1; i <= period; i++)
+    {
+        double high = data[i];
+        double low = data[i];
+        double close = data[i];
+        
+        double hl = high - low;
+        double hc = MathAbs(high - prevClose);
+        double lc = MathAbs(low - prevClose);
+        
+        tr = MathMax(hl, MathMax(hc, lc));
+        atr += tr;
+        prevClose = close;
+    }
+    
+    return atr / period;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate trend strength using linear regression slope             |
+//+------------------------------------------------------------------+
+double CEnsembleMetaLearner::CalculateTrendStrength(const double &data[])
+{
+    if(ArraySize(data) < 20)
+        return 0.0;
+    
+    int period = MathMin(20, ArraySize(data) - 1);
+    double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumX2 = 0.0;
+    
+    for(int i = 0; i < period; i++)
+    {
+        sumX += i;
+        sumY += data[i];
+        sumXY += i * data[i];
+        sumX2 += i * i;
+    }
+    
+    double denominator = (period * sumX2) - (sumX * sumX);
+    if(denominator == 0)
+        return 0.0;
+    
+    double slope = ((period * sumXY) - (sumX * sumY)) / denominator;
+    
+    // Normalize slope by average price
+    double avgPrice = sumY / period;
+    double normalizedSlope = (avgPrice > 0) ? slope / avgPrice : 0.0;
+    
+    return normalizedSlope;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate momentum using rate of change                           |
+//+------------------------------------------------------------------+
+double CEnsembleMetaLearner::CalculateMomentum(const double &data[], int period)
+{
+    if(ArraySize(data) < period + 1)
+        return 0.0;
+    
+    double currentPrice = data[0];
+    double pastPrice = data[period];
+    
+    if(pastPrice == 0)
+        return 0.0;
+    
+    return (currentPrice - pastPrice) / pastPrice;
 }

@@ -100,6 +100,9 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     double CalculateCorrelationAdjustedSize(const string symbol, 
                                            const double baseSize);
     
+    // Calculate correlation between two symbols using historical data
+    double CalculateCorrelation(const string symbol1, const string symbol2, int period);
+    
     // Validate position size against account limits
     double ValidatePositionSize(const string symbol, 
                                const double proposedSize);
@@ -810,17 +813,8 @@ double CPositionSizer::CalculatePortfolioCorrelation(const string symbolParam)
             string existingSymbol = PositionGetString(POSITION_SYMBOL);
             if(existingSymbol != symbolParam)
             {
-                // Simplified correlation calculation
-                // In a real implementation, this would use historical price data
-                double correlation = 0.0;
-                
-                // Basic correlation estimation based on symbol pairs
-                if(StringFind(symbolParam, "USD") >= 0 && StringFind(existingSymbol, "USD") >= 0)
-                    correlation = 0.5;
-                else if(StringFind(symbolParam, "EUR") >= 0 && StringFind(existingSymbol, "EUR") >= 0)
-                    correlation = 0.6;
-                else if(StringFind(symbolParam, "GBP") >= 0 && StringFind(existingSymbol, "GBP") >= 0)
-                    correlation = 0.7;
+                // Advanced correlation calculation using historical price data
+                double correlation = CalculateCorrelation(symbolParam, existingSymbol, 50);
                 
                 maxCorrelation = MathMax(maxCorrelation, MathAbs(correlation));
             }
@@ -845,6 +839,86 @@ bool CPositionSizer::ValidateSymbol(const string symbolParam)
     double ask = SymbolInfoDouble(symbolParam, SYMBOL_ASK);
     
     return (bid > 0 && ask > 0);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate correlation between two symbols using historical data     |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateCorrelation(const string symbol1, const string symbol2, int period)
+{
+    if(period < 10) period = 10;
+    if(period > 200) period = 200;
+    
+    // Get historical close prices for both symbols
+    double prices1[];
+    double prices2[];
+    ArrayResize(prices1, period);
+    ArrayResize(prices2, period);
+    
+    int count1 = 0, count2 = 0;
+    for(int i = 0; i < period; i++)
+    {
+        double close1 = iClose(symbol1, PERIOD_CURRENT, i);
+        double close2 = iClose(symbol2, PERIOD_CURRENT, i);
+        
+        if(close1 > 0)
+        {
+            prices1[count1] = close1;
+            count1++;
+        }
+        if(close2 > 0)
+        {
+            prices2[count2] = close2;
+            count2++;
+        }
+    }
+    
+    // Need at least 10 data points for meaningful correlation
+    if(count1 < 10 || count2 < 10)
+        return 0.0;
+    
+    // Use the minimum count
+    int n = MathMin(count1, count2);
+    ArrayResize(prices1, n);
+    ArrayResize(prices2, n);
+    
+    // Calculate means
+    double mean1 = 0.0, mean2 = 0.0;
+    for(int i = 0; i < n; i++)
+    {
+        mean1 += prices1[i];
+        mean2 += prices2[i];
+    }
+    mean1 /= n;
+    mean2 /= n;
+    
+    // Calculate covariance and variances
+    double covariance = 0.0;
+    double variance1 = 0.0;
+    double variance2 = 0.0;
+    
+    for(int i = 0; i < n; i++)
+    {
+        double diff1 = prices1[i] - mean1;
+        double diff2 = prices2[i] - mean2;
+        
+        covariance += diff1 * diff2;
+        variance1 += diff1 * diff1;
+        variance2 += diff2 * diff2;
+    }
+    
+    covariance /= n;
+    variance1 /= n;
+    variance2 /= n;
+    
+    // Calculate correlation coefficient
+    double stdDev1 = MathSqrt(variance1);
+    double stdDev2 = MathSqrt(variance2);
+    
+    if(stdDev1 > 0.0 && stdDev2 > 0.0)
+        return covariance / (stdDev1 * stdDev2);
+    
+    return 0.0;
 }
 
 //+------------------------------------------------------------------+

@@ -10,6 +10,7 @@
 #define TREND_ENGINE_MQH
 
 #include "../Utils/Enums.mqh"
+#include "../Utils/Instruments.mqh"
 #include "../Signals/SignalDiagnostics.mqh"
 
 // Forward declarations
@@ -153,6 +154,7 @@ private:
     bool InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool IndicatorsReadyForRead(int minBars);
     void ReleaseIndicators();
+    bool UsesAdxTrendModel(const string symbol) const;
     bool IsValidAdxDomainValue(const double value) const;
     void RecordAdxFailure(const string symbol,
                           ENUM_TIMEFRAMES timeframe,
@@ -321,10 +323,11 @@ bool CTrendEngine::Initialize(int maFast, int maMedium, int maSlow,
 //+------------------------------------------------------------------+
 bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
+    bool useAdxModel = UsesAdxTrendModel(symbol);
     bool handlesReady = (m_handleMAFast != INVALID_HANDLE &&
                          m_handleMAMedium != INVALID_HANDLE &&
                          m_handleMASlow != INVALID_HANDLE &&
-                         m_handleADX != INVALID_HANDLE &&
+                         (!useAdxModel || m_handleADX != INVALID_HANDLE) &&
                          m_handleATR != INVALID_HANDLE);
     bool contextMatches = (m_indicatorSymbol == symbol && m_indicatorTimeframe == timeframe);
     if(handlesReady && contextMatches)
@@ -365,15 +368,20 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
         return false;
     }
     
-    m_handleADX = iADX(symbol, timeframe, m_adxPeriod);
-    if(m_handleADX == INVALID_HANDLE)
+    if(useAdxModel)
     {
-        ReleaseIndicators();
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogStrategyError("TrendEngine", "ADX_INIT_FAILED",
-                                          "Failed to create ADX indicator");
-        return false;
+        m_handleADX = iADX(symbol, timeframe, m_adxPeriod);
+        if(m_handleADX == INVALID_HANDLE)
+        {
+            ReleaseIndicators();
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("TrendEngine", "ADX_INIT_FAILED",
+                                              "Failed to create ADX indicator");
+            return false;
+        }
     }
+    else
+        m_handleADX = INVALID_HANDLE;
     
     m_handleATR = iATR(symbol, timeframe, 14);
     if(m_handleATR == INVALID_HANDLE)
@@ -392,10 +400,11 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
 
 bool CTrendEngine::IndicatorsReadyForRead(int minBars)
 {
+    bool useAdxModel = UsesAdxTrendModel(m_indicatorSymbol);
     if(m_handleMAFast == INVALID_HANDLE ||
        m_handleMAMedium == INVALID_HANDLE ||
        m_handleMASlow == INVALID_HANDLE ||
-       m_handleADX == INVALID_HANDLE ||
+       (useAdxModel && m_handleADX == INVALID_HANDLE) ||
        m_handleATR == INVALID_HANDLE)
     {
         datetime nowTime = TimeCurrent();
@@ -423,7 +432,7 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
     int fastBars = BarsCalculated(m_handleMAFast);
     int medBars = BarsCalculated(m_handleMAMedium);
     int slowBars = BarsCalculated(m_handleMASlow);
-    int adxBars = BarsCalculated(m_handleADX);
+    int adxBars = useAdxModel ? BarsCalculated(m_handleADX) : -2;
     int atrBars = BarsCalculated(m_handleATR);
 
     if(chartBars < minBars)
@@ -440,7 +449,8 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
         return false;
     }
 
-    bool partialReady = (fastBars < minBars || medBars < minBars || slowBars < minBars || adxBars < minBars);
+    bool partialReady = (fastBars < minBars || medBars < minBars || slowBars < minBars ||
+                         (useAdxModel && adxBars < minBars) || atrBars < minBars);
     if(partialReady)
     {
         datetime nowTime = TimeCurrent();
@@ -468,11 +478,18 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
                              adxBars,
                              atrBars,
                              minBars);
-        return false;
+        // Do not hard-fail on BarsCalculated gaps when the underlying series is mature.
+        // UpdateTrend has bounded MA/ATR fallbacks and reuse logic; allow it to attempt recovery.
+        return true;
     }
     else
         SetReadinessState(TREND_READINESS_HEALTHY, "HEALTHY", false, 0);
     return true;
+}
+
+bool CTrendEngine::UsesAdxTrendModel(const string symbol) const
+{
+    return !IsSyntheticIndexSymbolName(symbol);
 }
 
 bool CTrendEngine::IsValidAdxDomainValue(const double value) const
@@ -828,6 +845,7 @@ void CTrendEngine::ReleaseIndicators()
 //+------------------------------------------------------------------+
 bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
+    bool useAdxModel = UsesAdxTrendModel(symbol);
     // Initialize indicators if needed
     if(!InitializeIndicators(symbol, timeframe))
         return false;
@@ -863,53 +881,58 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         return TryReuseLastGoodTrend(symbol, timeframe, "MA_BUFFER_COPY_FAILED");
     }
     
-    bool adxValid = true;
-    ResetLastError();
-    int adxCopyRet = CopyBuffer(m_handleADX, 0, 0, 1, adx);
-    int plusCopyRet = CopyBuffer(m_handleADX, 1, 0, 1, plusDI);
-    int minusCopyRet = CopyBuffer(m_handleADX, 2, 0, 1, minusDI);
-    int adxCopyErr = GetLastError();
-    if(adxCopyRet != 1 || plusCopyRet != 1 || minusCopyRet != 1)
+    bool adxValid = !useAdxModel;
+    string adxModeLabel = useAdxModel ? "VALID" : "BYPASSED";
+    if(useAdxModel)
     {
-        adxValid = false;
-        RecordAdxFailure(symbol,
-                         timeframe,
-                         "ADX_BUFFER_COPY_FAILED",
-                         adxCopyRet,
-                         plusCopyRet,
-                         minusCopyRet,
-                         adxCopyErr,
-                         adx[0]);
-    }
-    else
-    {
-        m_lastAdxRawValue = adx[0];
-        if(!IsValidAdxDomainValue(adx[0]) ||
-           !IsValidAdxDomainValue(plusDI[0]) ||
-           !IsValidAdxDomainValue(minusDI[0]))
+        ResetLastError();
+        int adxCopyRet = CopyBuffer(m_handleADX, 0, 0, 1, adx);
+        int plusCopyRet = CopyBuffer(m_handleADX, 1, 0, 1, plusDI);
+        int minusCopyRet = CopyBuffer(m_handleADX, 2, 0, 1, minusDI);
+        int adxCopyErr = GetLastError();
+        if(adxCopyRet != 1 || plusCopyRet != 1 || minusCopyRet != 1)
         {
             adxValid = false;
             RecordAdxFailure(symbol,
                              timeframe,
-                             "ADX_VALUE_OUT_OF_RANGE",
+                             "ADX_BUFFER_COPY_FAILED",
                              adxCopyRet,
                              plusCopyRet,
                              minusCopyRet,
-                             0,
+                             adxCopyErr,
                              adx[0]);
         }
-    }
+        else
+        {
+            m_lastAdxRawValue = adx[0];
+            if(!IsValidAdxDomainValue(adx[0]) ||
+               !IsValidAdxDomainValue(plusDI[0]) ||
+               !IsValidAdxDomainValue(minusDI[0]))
+            {
+                adxValid = false;
+                RecordAdxFailure(symbol,
+                                 timeframe,
+                                 "ADX_VALUE_OUT_OF_RANGE",
+                                 adxCopyRet,
+                                 plusCopyRet,
+                                 minusCopyRet,
+                                 0,
+                                 adx[0]);
+            }
+        }
 
-    if(!adxValid)
-    {
-        adx[0] = 0.0;
-        plusDI[0] = 0.0;
-        minusDI[0] = 0.0;
-    }
-    else
-    {
-        m_lastAdxValid = true;
-        m_consecutiveAdxFailures = 0;
+        if(!adxValid)
+        {
+            adx[0] = 0.0;
+            plusDI[0] = 0.0;
+            minusDI[0] = 0.0;
+            adxModeLabel = "DEGRADED";
+        }
+        else
+        {
+            m_lastAdxValid = true;
+            m_consecutiveAdxFailures = 0;
+        }
     }
     
     ResetLastError();
@@ -948,7 +971,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         }
     }
     
-    double effectiveAdx = adxValid ? adx[0] : 0.0;
+    double effectiveAdx = useAdxModel ? (adxValid ? adx[0] : 0.0) : -1.0;
 
     // Calculate trend strength
     m_currentTrend.strength = CalculateTrendStrength(ma_fast, ma_medium, ma_slow, effectiveAdx);
@@ -964,7 +987,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
     
     // Determine trend type
     m_currentTrend.type = DetermineTrendType(m_currentTrend.strength, m_currentTrend.angle, effectiveAdx);
-    if(!adxValid)
+    if(useAdxModel && !adxValid)
         m_currentTrend.type = TREND_RANGING;
     
     // Check acceleration/deceleration
@@ -989,9 +1012,9 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         if(m_currentTrend.type != m_lastLoggedTrendType || (nowTime - m_lastTrendLogTime) >= 300)
         {
             string trendStr = EnumToString(m_currentTrend.type);
-            string msg = StringFormat("Trend: %s | Strength: %.1f | Angle: %.1f | ADX: %.1f | ADXValid: %s",
+            string msg = StringFormat("Trend: %s | Strength: %.1f | Angle: %.1f | ADX: %.1f | ADXMode: %s",
                                       trendStr, m_currentTrend.strength, m_currentTrend.angle, effectiveAdx,
-                                      adxValid ? "true" : "false");
+                                      adxModeLabel);
             Print("[TrendEngine] ", msg);
             m_lastLoggedTrendType = m_currentTrend.type;
             m_lastTrendLogTime = nowTime;
@@ -1119,6 +1142,7 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
                                            double &ma_slow[], double adx)
 {
     double strength = 0;
+    bool useAdxModel = (adx >= 0.0);
     
     // Factor 1: MA alignment (40% weight)
     if(ma_fast[0] > ma_medium[0] && ma_medium[0] > ma_slow[0])
@@ -1141,18 +1165,25 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
         strength += 20;
     }
     
-    // Factor 2: ADX strength (30% weight)
-    if(adx > m_strongTrendThreshold)
+    // Factor 2: ADX strength (30% weight) or synthetic slope proxy
+    if(useAdxModel && adx > m_strongTrendThreshold)
     {
         strength += 30;
     }
-    else if(adx > m_trendThreshold)
+    else if(useAdxModel && adx > m_trendThreshold)
     {
         strength += 20;
     }
-    else
+    else if(useAdxModel)
     {
         strength += 10;
+    }
+    else
+    {
+        double mediumSlopePct = 0.0;
+        if(MathAbs(ma_medium[4]) > 0.0000001)
+            mediumSlopePct = MathAbs((ma_medium[0] - ma_medium[4]) / ma_medium[4]) * 100.0;
+        strength += MathMin(25.0, mediumSlopePct * 150.0);
     }
     
     // Factor 3: MA slope consistency (20% weight)
@@ -1169,6 +1200,14 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
         strength += 20;
     else
         strength += 10;
+
+    if(!useAdxModel)
+    {
+        double spreadPct = 0.0;
+        if(MathAbs(ma_slow[0]) > 0.0000001)
+            spreadPct = MathAbs((ma_fast[0] - ma_slow[0]) / ma_slow[0]) * 100.0;
+        strength += MathMin(15.0, spreadPct * 120.0);
+    }
     
     return MathMin(100.0, strength);
 }
@@ -1225,6 +1264,26 @@ double CTrendEngine::CalculateMomentum(const string symbol, ENUM_TIMEFRAMES time
 //+------------------------------------------------------------------+
 ENUM_TREND_TYPE CTrendEngine::DetermineTrendType(double strength, double angle, double adx)
 {
+    bool useAdxModel = (adx >= 0.0);
+    if(!useAdxModel)
+    {
+        if(strength >= 70.0 && angle > 10.0)
+            return TREND_BULLISH_STRONG;
+        if(strength >= 70.0 && angle < -10.0)
+            return TREND_BEARISH_STRONG;
+        if(strength >= 52.0 && angle > 5.0)
+            return TREND_BULLISH_WEAK;
+        if(strength >= 52.0 && angle < -5.0)
+            return TREND_BEARISH_WEAK;
+        if(strength < 35.0 && MathAbs(angle) < 6.0)
+            return TREND_RANGING;
+        if(strength < 45.0 && MathAbs(angle) > 18.0)
+            return TREND_VOLATILE;
+        if(strength < 50.0)
+            return TREND_TRANSITIONING;
+        return TREND_NONE;
+    }
+
     // Strong trending conditions
     if(adx > m_strongTrendThreshold && strength > 70)
     {

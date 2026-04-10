@@ -186,17 +186,28 @@ public:
         ArrayResize(K, seqLen * m_dModel);
         ArrayResize(V, seqLen * m_dModel);
         
-        // Linear transformations
-        // Note: This is a simplified element-wise simulation of the projection for performance in MQL5
-        // In a full implementation, this would be a matrix multiplication [seqLen x dModel] * [dModel x dModel]
-        // Here we approximate it to keep it fast for real-time usage
-        int wTotal = ArraySize(m_WQ);
+        // Proper matrix multiplication for linear transformations
+        // Q = inputData * WQ^T, K = inputData * WK^T, V = inputData * WV^T
+        // where inputData is [seqLen x dModel] and weights are [dModel x dModel]
         
-        for(int i = 0; i < seqLen * m_dModel; i++) {
-            int wIdx = i % wTotal;
-            Q[i] = inputData[i] * m_WQ[wIdx];
-            K[i] = inputData[i] * m_WK[wIdx];
-            V[i] = inputData[i] * m_WV[wIdx];
+        for(int i = 0; i < seqLen; i++) {
+            for(int j = 0; j < m_dModel; j++) {
+                double qSum = 0.0, kSum = 0.0, vSum = 0.0;
+                
+                // Matrix multiplication: row i of input * column j of weight matrix
+                for(int k = 0; k < m_dModel; k++) {
+                    int inputIdx = i * m_dModel + k;
+                    int weightIdx = k * m_dModel + j;
+                    
+                    qSum += inputData[inputIdx] * m_WQ[weightIdx];
+                    kSum += inputData[inputIdx] * m_WK[weightIdx];
+                    vSum += inputData[inputIdx] * m_WV[weightIdx];
+                }
+                
+                Q[i * m_dModel + j] = qSum;
+                K[i * m_dModel + j] = kSum;
+                V[i * m_dModel + j] = vSum;
+            }
         }
         
         // Apply scaled dot-product attention
@@ -205,13 +216,24 @@ public:
             return false;
         }
         
-        // Output projection
+        // Output projection with proper matrix multiplication
+        // output = attentionOutput * WO^T
         ArrayResize(output, seqLen * m_dModel);
-        int woTotal = ArraySize(m_WO);
-        int attnTotal = ArraySize(attentionOutput);
         
-        for(int i = 0; i < seqLen * m_dModel; i++) {
-            output[i] = attentionOutput[i % attnTotal] * m_WO[i % woTotal];
+        for(int i = 0; i < seqLen; i++) {
+            for(int j = 0; j < m_dModel; j++) {
+                double sum = 0.0;
+                
+                // Matrix multiplication: row i of attention * column j of WO
+                for(int k = 0; k < m_dModel; k++) {
+                    int attnIdx = i * m_dModel + k;
+                    int weightIdx = k * m_dModel + j;
+                    
+                    sum += attentionOutput[attnIdx] * m_WO[weightIdx];
+                }
+                
+                output[i * m_dModel + j] = sum;
+            }
         }
         
         return true;

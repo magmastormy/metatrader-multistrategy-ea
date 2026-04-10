@@ -1506,7 +1506,7 @@ void CAIStrategyOrchestrator::CalculateStrategyMetrics(const int index)
     else
         m_strategies[index].profitFactor = 0.0;
     
-    // Calculate Sharpe ratio (simplified)
+    // Calculate Sharpe ratio using actual trade returns
     m_strategies[index].sharpeRatio = CalculateSharpeRatio(index);
     
     // Update recent win rate
@@ -1572,18 +1572,55 @@ double CAIStrategyOrchestrator::CalculateSharpeRatio(const int index)
 {
     if(index < 0 || index >= m_strategyCount) return 0.0;
     
-    // Simplified Sharpe ratio calculation
     SStrategyPerformance strategy = m_strategies[index];
     
-    if(strategy.totalTrades < 10) return 0.0;
+    // Need at least some recent trades for meaningful calculation
+    if(strategy.recentTradeCount < 5) return 0.0;
     
-    double avgReturn = (strategy.avgProfit * strategy.winRate / 100.0) + 
-                      (strategy.avgLoss * (100.0 - strategy.winRate) / 100.0);
+    // Calculate actual returns from recent trades
+    double returns[];
+    ArrayResize(returns, strategy.recentTradeCount);
     
-    // Simplified standard deviation estimate
-    double stdDev = MathSqrt(strategy.winRate * (100.0 - strategy.winRate) / 100.0);
+    int tradeCount = 0;
+    for(int i = 0; i < 20; i++)
+    {
+        if(strategy.recentTrades[i] != 0.0)
+        {
+            returns[tradeCount] = strategy.recentTrades[i];
+            tradeCount++;
+        }
+    }
     
-    return (stdDev > 0.0) ? avgReturn / stdDev : 0.0;
+    if(tradeCount < 5) return 0.0;
+    
+    // Calculate mean return
+    double meanReturn = 0.0;
+    for(int i = 0; i < tradeCount; i++)
+    {
+        meanReturn += returns[i];
+    }
+    meanReturn /= tradeCount;
+    
+    // Calculate standard deviation of returns
+    double variance = 0.0;
+    for(int i = 0; i < tradeCount; i++)
+    {
+        double diff = returns[i] - meanReturn;
+        variance += diff * diff;
+    }
+    variance /= tradeCount;
+    
+    double stdDev = MathSqrt(variance);
+    
+    // Assume risk-free rate of 0 for trading (or could use a small value like 0.02/252 for daily)
+    double riskFreeRate = 0.0;
+    
+    // Annualize Sharpe ratio (assuming daily trades, multiply by sqrt(252))
+    double sharpe = (stdDev > 0.0) ? (meanReturn - riskFreeRate) / stdDev : 0.0;
+    sharpe *= MathSqrt(252.0);
+    
+    // Return annualized Sharpe ratio
+    return sharpe;
 }
 
 double CAIStrategyOrchestrator::GetRegimeMultiplier(ENUM_MARKET_REGIME regime, const int strategyIndex)

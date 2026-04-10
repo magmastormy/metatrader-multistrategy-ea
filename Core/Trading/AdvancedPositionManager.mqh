@@ -85,6 +85,12 @@ public:
     double GetHighestProfitPips(ulong ticket, SPositionTracker &tracker);
     double NormalizeCloseVolume(const string symbol, const double volume);
     double ResolveMinimumPipDistance(const string symbol, const double configuredPips, const double stopLevelMultiplier = 1.0);
+    double GetInitialRiskPips(const string symbol, const SPositionTracker &tracker);
+    double ResolveRiskAwareTriggerPips(const string symbol,
+                                       const SPositionTracker &tracker,
+                                       const double configuredPips,
+                                       const double stopLevelMultiplier,
+                                       const double riskFraction);
     bool UpdateTracker(ulong ticket, SPositionTracker &tracker);
     double ReconstructInitialVolume(const ulong positionId, const datetime openTime, const string symbol, const double fallbackVolume);
     void RestoreTrackerState(ulong ticket, SPositionTracker &tracker);
@@ -233,7 +239,7 @@ bool CAdvancedPositionManager::ApplyTrailingStop(ulong ticket, SPositionTracker 
     string symbol = PositionGetString(POSITION_SYMBOL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     
-    double trailingStartPips = ResolveMinimumPipDistance(symbol, m_config.trailingStartPips, 1.5);
+    double trailingStartPips = ResolveRiskAwareTriggerPips(symbol, tracker, m_config.trailingStartPips, 1.5, 0.55);
     
     // Only start trailing after minimum profit
     if(currentProfitPips < trailingStartPips)
@@ -250,8 +256,10 @@ bool CAdvancedPositionManager::ApplyTrailingStop(ulong ticket, SPositionTracker 
     
     double newSL = 0.0;
     double stopLevelPips = MathMax((double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL), 10.0);
-    double trailingDistancePips = ResolveMinimumPipDistance(symbol, m_config.trailingDistancePips, 1.2);
-    double trailingStepPips = MathMax(m_config.trailingStepPips, stopLevelPips * 0.25);
+    double trailingDistancePips = ResolveRiskAwareTriggerPips(symbol, tracker, m_config.trailingDistancePips, 1.2, 0.30);
+    double trailingStepPips = ResolveRiskAwareTriggerPips(symbol, tracker, m_config.trailingStepPips, 1.0, 0.08);
+    if(trailingDistancePips < trailingStepPips + (stopLevelPips * 0.25))
+        trailingDistancePips = trailingStepPips + (stopLevelPips * 0.25);
     double trailingDistance = trailingDistancePips * point;
     double trailingStep = trailingStepPips * point;
     
@@ -292,7 +300,7 @@ bool CAdvancedPositionManager::ApplyBreakeven(ulong ticket, SPositionTracker &tr
     double currentProfitPips = GetCurrentProfitPips(ticket);
     string symbol = PositionGetString(POSITION_SYMBOL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-    double breakevenTriggerPips = ResolveMinimumPipDistance(symbol, m_config.breakevenTriggerPips, 1.5);
+    double breakevenTriggerPips = ResolveRiskAwareTriggerPips(symbol, tracker, m_config.breakevenTriggerPips, 1.5, 0.35);
     
     // Only activate after trigger profit
     if(currentProfitPips < breakevenTriggerPips)
@@ -351,8 +359,8 @@ bool CAdvancedPositionManager::ApplyPartialClose(ulong ticket, SPositionTracker 
     double volume = PositionGetDouble(POSITION_VOLUME);
     string symbol = PositionGetString(POSITION_SYMBOL);
     double stopLevelPips = MathMax((double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL), 10.0);
-    double partialClose1Trigger = ResolveMinimumPipDistance(symbol, m_config.partialClose1Pips, 2.0);
-    double partialClose2Trigger = ResolveMinimumPipDistance(symbol, m_config.partialClose2Pips, 3.0);
+    double partialClose1Trigger = ResolveRiskAwareTriggerPips(symbol, tracker, m_config.partialClose1Pips, 2.0, 0.75);
+    double partialClose2Trigger = ResolveRiskAwareTriggerPips(symbol, tracker, m_config.partialClose2Pips, 3.0, 1.25);
     if(partialClose2Trigger < partialClose1Trigger + stopLevelPips)
         partialClose2Trigger = partialClose1Trigger + stopLevelPips;
     
@@ -480,6 +488,35 @@ double CAdvancedPositionManager::ResolveMinimumPipDistance(const string symbol, 
     double brokerFloorPips = MathMax(10.0, stopLevelPoints * multiplier);
     if(effectivePips < brokerFloorPips)
         effectivePips = brokerFloorPips;
+    return effectivePips;
+}
+
+double CAdvancedPositionManager::GetInitialRiskPips(const string symbol, const SPositionTracker &tracker)
+{
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    if(point <= 0.0 || tracker.entryPrice <= 0.0)
+        return 0.0;
+
+    double referenceSL = tracker.initialSL;
+    if(referenceSL <= 0.0 && PositionSelectByTicket(tracker.ticket))
+        referenceSL = PositionGetDouble(POSITION_SL);
+
+    if(referenceSL <= 0.0)
+        return 0.0;
+
+    return MathAbs(tracker.entryPrice - referenceSL) / point;
+}
+
+double CAdvancedPositionManager::ResolveRiskAwareTriggerPips(const string symbol,
+                                                             const SPositionTracker &tracker,
+                                                             const double configuredPips,
+                                                             const double stopLevelMultiplier,
+                                                             const double riskFraction)
+{
+    double effectivePips = ResolveMinimumPipDistance(symbol, configuredPips, stopLevelMultiplier);
+    double initialRiskPips = GetInitialRiskPips(symbol, tracker);
+    if(initialRiskPips > 0.0 && riskFraction > 0.0)
+        effectivePips = MathMax(effectivePips, initialRiskPips * riskFraction);
     return effectivePips;
 }
 

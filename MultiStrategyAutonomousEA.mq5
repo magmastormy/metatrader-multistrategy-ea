@@ -17,21 +17,22 @@ input double InpMaxRiskPerTrade = 2.0;    // Max risk per trade (e.g., 2.0 for 2
 input double InpMaxDailyRisk = 6.0;       // Max daily risk (e.g., 6.0 for 6%)
 input double InpMaxPortfolioRisk = 10.0;   // Max total portfolio risk (e.g., 10.0 for 10%)
 input double InpMaxDrawdown = 15.0;       // Max drawdown (e.g., 15.0 for 15%)
-input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,AUXUSD.0,EURUSD.0";               // Comprehensive test symbols
+input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,Jump 25 Index.0,Jump 50 Index.0,Jump 75 Index.0,Jump 100 Index.0,Volatility 10 (1s) Index.0,Volatility 25 (1s) Index.0,Volatility 50 (1s) Index.0,Volatility 100 (1s) Index.0,EURUSD.0,EURCHF.0,EURJPY.0,AUDUSD.0";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 120;    // Cooldown in seconds between trades
 input int    InpMaxPositionsTotal = 15;           // Global position limit
 input bool   InpAllowSyntheticOffHours = true;    // Allow synthetic indices to trade 24/7 (outside normal forex hours)
 
 //--- Strategy Selection (for testing)
 input group "Strategy Selection"
-input bool InpEnableMomentum = false;        // Enable Momentum Strategy
-input bool InpEnableTrend = false;           // Enable Trend Strategy
-input bool InpEnableFibonacci = false;       // Enable Fibonacci Strategy
+input bool InpEnableMomentum = true;        // Enable Momentum Strategy
+input bool InpEnableTrend = true;           // Enable Trend Strategy
+input bool InpEnableFibonacci = true;       // Enable Fibonacci Strategy
 input bool InpEnableElliottWave = true;      // Enable Elliott Wave Enhanced Strategy
-input bool InpEnableSupportResistance = false; // Enable Support/Resistance + Trendlines
+input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines
 input bool InpEnableUnifiedICT = true;        // Enable Unified ICT Strategy
-input bool InpEnableCandlestick = false;      // Enable Candlestick Patterns Strategy
+input bool InpEnableCandlestick = true;      // Enable Candlestick Patterns Strategy
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
+input bool InpUseSymbolClassProfiles = true;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
 input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained for backward compatibility; all enabled strategies vote live
 
 //--- EA operating mode
@@ -40,7 +41,7 @@ input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID; // Controls whether indicator and
 
 //--- Consensus quorum (weighted)
 input group "Consensus Quorum"
-input double InpQuorumThreshold = 0.55;        // Min normalized weighted score to pass quorum
+input double InpQuorumThreshold = 0.35;        // Min normalized weighted score to pass quorum
 input int    InpMinLiveVoters   = 1;           // Min agreeing live voters (floor safety)
 input double InpConsensusConflictDeadband = 0.05; // Minimum buy/sell score delta required to break directional tie
 input double InpConsensusMinReadyWeightRatio = 0.45; // Minimum ready-live-weight share required before consensus can trade
@@ -66,7 +67,7 @@ input bool InpEnableAIMode = false;            // Enable AI Mode
 input bool InpEnableNeuralNetwork = false;     // Enable Neural Network
 input bool InpEnableTransformer = false;       // Enable Transformer Brain
 input bool InpEnableEnsemble = false;          // Enable Ensemble Learning
-input double InpAIConfidenceThreshold = 0.60;  // AI Confidence Threshold (Increased for better quality)
+input double InpAIConfidenceThreshold = 0.35;  // AI Confidence Threshold (Lowered to enable more signals)
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 
 //--- NN attribution forward-test diagnostics
@@ -82,6 +83,8 @@ input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans
 input bool InpIntrabarDynamicQuorumEnabled = true;    // Legacy (deprecated): retained for backward compatibility; weighted quorum is authoritative
 input double InpPipelineMinConfidence = 0.40;         // Base confidence floor for non-AI pipeline signals (lowered from 0.50 to fix pipeline blocking)
 input double InpIntrabarSingleVoterMinConfidence = 0.55; // Min confidence for single-voter intrabar consensus
+input double InpSyntheticLeanSparseIntrabarMinQuality = 0.38; // Synthetic lean profile min quality for one-voter intrabar admission
+input double InpSyntheticLeanIntrabarSingleVoterMinConfidence = 0.38; // Synthetic lean profile min confidence for one-voter intrabar admission
 input double InpPipelineIntrabarConfidenceCap = 0.05; // Max weak-regime intrabar confidence threshold uplift
 input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microstructure cost gate before validator
 input double InpPipelineMaxSpreadToAtrRatio = 0.25;   // Max spread/ATR ratio allowed by cost gate
@@ -90,21 +93,24 @@ input double InpPipelineLateEntryZScoreLimit = 2.50;  // Late-entry outlier z-sc
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
 input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
-input bool InpIntrabarEligibilityFibonacci = false;   // Intrabar eligibility for Fibonacci strategy
+input bool InpIntrabarEligibilityFibonacci = true;   // Intrabar eligibility for Fibonacci strategy
 input bool InpIntrabarEligibilityElliottWave = true;  // Intrabar eligibility for Elliott Wave strategy
-input bool InpIntrabarEligibilitySupportResistance = false; // Intrabar eligibility for Support/Resistance strategy
+input bool InpIntrabarEligibilitySupportResistance = true; // Intrabar eligibility for Support/Resistance strategy
 input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
 input bool InpIntrabarEligibilityCandlestick = true;  // Intrabar eligibility for Candlestick strategy
-input int  InpMaxIntrabarSymbolsPerCycle = 3;         // Max symbols eligible for intrabar evaluation per cycle
+input bool InpIntrabarEligibilityNeuralNetworkAI = true; // Intrabar eligibility for Neural Network AI
+input bool InpIntrabarEligibilityTransformerAI = true;   // Intrabar eligibility for Transformer AI
+input bool InpIntrabarEligibilityEnsembleAI = true;      // Intrabar eligibility for Ensemble AI
+input int  InpMaxIntrabarSymbolsPerCycle = 4;         // Max symbols eligible for intrabar evaluation per cycle
 input int  InpMaxSignalEvaluationsPerCycle = 4;       // Max total heavy signal evaluations per cycle across new-bar + intrabar work
 input int  InpIntrabarBackoffMaxSeconds = 60;         // Max per-symbol intrabar backoff interval
 input int  InpReadinessReuseTtlSeconds = 60;          // Max readiness snapshot reuse age in seconds
 input bool InpShadowMode = false;                     // [!] LIVE MODE ACTIVE: Set true for dry-run
-input bool InpEnableNNOnlineTraining = false;         // Enable online NN observation/labeling loop
+input bool InpEnableNNOnlineTraining = true;          // Enable online NN observation/labeling loop
 input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation (institutional default OFF)
-input bool InpEnableNNPseudoLabeling = false;         // Enable pseudo-labeling when no trade-linked label exists
-input int  InpNNPseudoLabelBarsAhead = 1;             // Pseudo-label horizon in bars
-input int  InpNNSampleIntervalSeconds = 30;           // Observation sampling interval (seconds)
+input bool InpEnableNNPseudoLabeling = true;          // Enable pseudo-labeling when no trade-linked label exists
+input int  InpNNPseudoLabelBarsAhead = 0;             // Pseudo-label horizon in bars
+input int  InpNNSampleIntervalSeconds = 15;           // Observation sampling interval (seconds)
 input int  InpNNCheckpointEveryLabeled = 10;          // Checkpoint every N newly labeled samples
 
 //--- Advanced signal validator (post-consensus)
@@ -133,7 +139,7 @@ input double InpMinTrendStrength = 50.0;       // Minimum Trend Strength
 input double InpMaxVolatility = 3.0;           // Maximum Volatility %
 input bool InpEnableStructureFilter = true;    // Enable Structure Filter
 input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
-input bool InpSignalScanOnNewBarOnly = true;   // Evaluate fresh entry signals only on new bar
+input bool InpSignalScanOnNewBarOnly = false;  // Evaluate fresh entry signals only on new bar
 input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before risk gate
 input bool InpEnableClusterRiskGovernance = true; // Enable cluster-aware risk mutex/caps in risk gate
 input bool InpEnableClusterMutex = true;          // Block opposing-cluster same-symbol stacking
@@ -1593,25 +1599,282 @@ string BuildEnabledStrategyList(const bool &strategyFlags[])
     return enabled;
 }
 
-string GetStrategyIntrabarStatusByIndex(const int index, const bool strategyActive)
+string BuildRegistryStrategyList(const bool includeIndicators = true,
+                                 const bool includeAI = true,
+                                 const bool activeOnly = true)
 {
-    if(!strategyActive)
-        return "INACTIVE";
+    string strategies = "";
+    for(int i = 0; i < g_strategyRegistry.GetDescriptorCount(); i++)
+    {
+        SStrategyDescriptor descriptor;
+        if(!g_strategyRegistry.GetDescriptor(i, descriptor))
+            continue;
+        if(descriptor.isAI && !includeAI)
+            continue;
+        if(!descriptor.isAI && !includeIndicators)
+            continue;
+        if(activeOnly && !descriptor.modeEnabled)
+            continue;
+        if(!activeOnly && !descriptor.inputEnabled)
+            continue;
 
+        if(StringLen(strategies) > 0)
+            strategies += ", ";
+        strategies += descriptor.name;
+    }
+
+    if(StringLen(strategies) == 0)
+        return "None";
+
+    return strategies;
+}
+
+bool IsIndicatorStrategyModeActive(const int index)
+{
+    string strategyName = GetStrategyNameByIndex(index);
+    if(strategyName == "Unknown")
+        return false;
+    return g_strategyRegistry.IsStrategyActive(strategyName);
+}
+
+string BuildEffectiveRuntimeStrategyListForSymbol(const bool &strategyFlags[])
+{
+    string strategies = "";
+
+    for(int i = 0; i < ArraySize(strategyFlags); i++)
+    {
+        if(!StrategyFlagIsEnabled(strategyFlags, i) || !IsIndicatorStrategyModeActive(i))
+            continue;
+
+        if(StringLen(strategies) > 0)
+            strategies += ", ";
+        strategies += GetStrategyNameByIndex(i);
+    }
+
+    string activeAI = BuildRegistryStrategyList(false, true, true);
+    if(activeAI != "None")
+    {
+        if(StringLen(strategies) > 0)
+            strategies += ", ";
+        strategies += activeAI;
+    }
+
+    if(StringLen(strategies) == 0)
+        return "None";
+
+    return strategies;
+}
+
+int CountEffectiveIndicatorStrategiesForSymbol(const bool &strategyFlags[])
+{
+    int count = 0;
+    for(int i = 0; i < ArraySize(strategyFlags); i++)
+    {
+        if(StrategyFlagIsEnabled(strategyFlags, i) && IsIndicatorStrategyModeActive(i))
+            count++;
+    }
+    return count;
+}
+
+int GetStrategyIndexByName(const string strategyName)
+{
+    if(strategyName == "Momentum")
+        return 0;
+    if(strategyName == "Trend")
+        return 1;
+    if(strategyName == "Fibonacci")
+        return 2;
+    if(strategyName == "Elliott Wave")
+        return 3;
+    if(strategyName == "Support/Resistance")
+        return 4;
+    if(strategyName == "Unified ICT")
+        return 5;
+    if(strategyName == "Candlestick")
+        return 6;
+    return -1;
+}
+
+bool StrategyFlagIsEnabled(const bool &strategyFlags[], const int index)
+{
+    return (index >= 0 && index < ArraySize(strategyFlags) && strategyFlags[index]);
+}
+
+int CountEnabledStrategies(const bool &strategyFlags[])
+{
+    int count = 0;
+    for(int i = 0; i < ArraySize(strategyFlags); i++)
+    {
+        if(strategyFlags[i])
+            count++;
+    }
+    return count;
+}
+
+bool UseSyntheticLeanRosterProfile(const string symbol, const bool &baseStrategyFlags[])
+{
+    if(!InpUseSymbolClassProfiles || !IsSyntheticIndexSymbolName(symbol))
+        return false;
+
+    int preferredSyntheticCount = 0;
+    int preferredIndices[] = {2, 3, 4, 5};
+    for(int i = 0; i < ArraySize(preferredIndices); i++)
+    {
+        if(StrategyFlagIsEnabled(baseStrategyFlags, preferredIndices[i]))
+            preferredSyntheticCount++;
+    }
+
+    return (preferredSyntheticCount > 0);
+}
+
+double ClampConsensusInput(const double value)
+{
+    return MathMax(0.0, MathMin(1.0, value));
+}
+
+double ResolveSparseIntrabarMinQualityForSymbol(const string symbol, const bool &strategyFlags[])
+{
+    if(UseSyntheticLeanRosterProfile(symbol, strategyFlags))
+        return ClampConsensusInput(InpSyntheticLeanSparseIntrabarMinQuality);
+    return ClampConsensusInput(InpSparseIntrabarMinQuality);
+}
+
+double ResolveIntrabarSingleVoterMinConfidenceForSymbol(const string symbol, const bool &strategyFlags[])
+{
+    if(UseSyntheticLeanRosterProfile(symbol, strategyFlags))
+        return ClampConsensusInput(InpSyntheticLeanIntrabarSingleVoterMinConfidence);
+    return ClampConsensusInput(InpIntrabarSingleVoterMinConfidence);
+}
+
+void BuildStrategyFlagsForSymbol(const string symbol,
+                                 const bool &baseStrategyFlags[],
+                                 bool &symbolStrategyFlags[])
+{
+    int size = ArraySize(baseStrategyFlags);
+    ArrayResize(symbolStrategyFlags, size);
+    for(int i = 0; i < size; i++)
+        symbolStrategyFlags[i] = baseStrategyFlags[i];
+
+    if(!UseSyntheticLeanRosterProfile(symbol, baseStrategyFlags))
+        return;
+
+    if(size > 0)
+        symbolStrategyFlags[0] = false;
+    if(size > 1)
+        symbolStrategyFlags[1] = false;
+}
+
+string GetSymbolStrategyProfileLabel(const string symbol, const bool &baseStrategyFlags[])
+{
+    string instrumentClass = GetInstrumentExecutionProfileName(symbol);
+    if(UseSyntheticLeanRosterProfile(symbol, baseStrategyFlags))
+        return instrumentClass + "_LEAN_STRUCTURE";
+    if(IsSyntheticIndexSymbolName(symbol))
+        return instrumentClass + "_MANUAL";
+    if(IsForexPairSymbolName(symbol))
+        return "FOREX_BALANCED";
+    return instrumentClass + "_BALANCED";
+}
+
+ENUM_TIMEFRAMES ResolveStrategyRegistrationTimeframe(const string symbol, const string strategyName)
+{
+    if(InpUseSymbolClassProfiles && IsSyntheticIndexSymbolName(symbol))
+    {
+        if(strategyName == "Unified ICT" && (ENUM_TIMEFRAMES)Period() == PERIOD_M1)
+            return PERIOD_M5;
+    }
+    return PERIOD_CURRENT;
+}
+
+ENUM_STRATEGY_CLUSTER ResolveStrategyClusterForName(const string strategyName)
+{
+    if(strategyName == "Momentum" || strategyName == "Trend")
+        return TREND_CLUSTER;
+    if(strategyName == "Fibonacci" || strategyName == "Support/Resistance")
+        return MEAN_REVERSION_CLUSTER;
+    if(strategyName == "Elliott Wave" || strategyName == "Unified ICT" || strategyName == "Candlestick")
+        return STRUCTURE_CLUSTER;
+    return STRATEGY_CLUSTER_NONE;
+}
+
+ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
+                                                const string strategyName,
+                                                const bool &baseStrategyFlags[])
+{
+    if(UseSyntheticLeanRosterProfile(symbol, baseStrategyFlags))
+    {
+        if(strategyName == "Elliott Wave" || strategyName == "Unified ICT")
+            return PRIMARY_ALPHA;
+        if(strategyName == "Fibonacci" || strategyName == "Support/Resistance" || strategyName == "Candlestick")
+            return CONTEXT_FEATURE;
+    }
+    return PRIMARY_ALPHA;
+}
+
+bool IsSyntheticLeanIntrabarPrimaryIndex(const int index)
+{
+    return (index == 2 || index == 3 || index == 4 || index == 5);
+}
+
+bool IsStrategyIntrabarEnabledByInput(const int index)
+{
     switch(index)
     {
-        case 0: return InpIntrabarEligibilityMomentum ? "LIVE" : "OFF";
-        case 1: return InpIntrabarEligibilityTrend ? "LIVE" : "OFF";
-        case 2: return InpIntrabarEligibilityFibonacci ? "LIVE" : "OFF";
-        case 3: return InpIntrabarEligibilityElliottWave ? "LIVE" : "OFF";
-        case 4: return InpIntrabarEligibilitySupportResistance ? "LIVE" : "OFF";
-        case 5: return InpIntrabarEligibilityUnifiedICT ? "LIVE" : "OFF";
-        case 6: return InpIntrabarEligibilityCandlestick ? "LIVE" : "OFF";
-        default: return "OFF";
+        case 0: return InpIntrabarEligibilityMomentum;
+        case 1: return InpIntrabarEligibilityTrend;
+        case 2: return InpIntrabarEligibilityFibonacci;
+        case 3: return InpIntrabarEligibilityElliottWave;
+        case 4: return InpIntrabarEligibilitySupportResistance;
+        case 5: return InpIntrabarEligibilityUnifiedICT;
+        case 6: return InpIntrabarEligibilityCandlestick;
+        default: return false;
     }
 }
 
-string BuildIntrabarGovernanceSummary(const bool &strategyFlags[])
+ENUM_INTRABAR_POLICY ResolveStrategyIntrabarPolicyForSymbol(const string symbol,
+                                                            const int index,
+                                                            const bool &strategyFlags[])
+{
+    if(!StrategyFlagIsEnabled(strategyFlags, index))
+        return INTRABAR_POLICY_OFF;
+
+    if(!IsStrategyIntrabarEnabledByInput(index))
+        return INTRABAR_POLICY_OFF;
+
+    bool syntheticLeanProfile = UseSyntheticLeanRosterProfile(symbol, strategyFlags);
+    if(syntheticLeanProfile)
+    {
+        if(index == 0 || index == 1)
+            return INTRABAR_POLICY_OFF;
+
+        if(index == 6)
+            return INTRABAR_POLICY_PROBE;
+
+        if(IsSyntheticLeanIntrabarPrimaryIndex(index))
+            return INTRABAR_POLICY_LIVE;
+    }
+
+    return INTRABAR_POLICY_LIVE;
+}
+
+string GetStrategyIntrabarStatusByIndex(const string symbol,
+                                        const int index,
+                                        const bool &strategyFlags[])
+{
+    if(!StrategyFlagIsEnabled(strategyFlags, index))
+        return "INACTIVE";
+    if(!IsIndicatorStrategyModeActive(index))
+        return "MODE_OFF";
+
+    ENUM_INTRABAR_POLICY intrabarPolicy = ResolveStrategyIntrabarPolicyForSymbol(symbol, index, strategyFlags);
+    if(intrabarPolicy == INTRABAR_POLICY_PROBE)
+        return "PROBE";
+    if(intrabarPolicy == INTRABAR_POLICY_LIVE)
+        return "LIVE";
+    return "OFF";
+}
+
+string BuildIntrabarGovernanceSummary(const string symbol, const bool &strategyFlags[])
 {
     string summary = "";
     for(int i = 0; i < 7; i++)
@@ -1619,17 +1882,92 @@ string BuildIntrabarGovernanceSummary(const bool &strategyFlags[])
         if(i > 0)
             summary += ",";
 
-        bool strategyActive = (ArraySize(strategyFlags) > i && strategyFlags[i]);
         string shortName = GetStrategyNameByIndex(i);
         if(shortName == "Support/Resistance")
             shortName = "SupportResistance";
         else if(shortName == "Elliott Wave")
             shortName = "Elliott";
 
-        summary += shortName + ":" + GetStrategyIntrabarStatusByIndex(i, strategyActive);
+        summary += shortName + ":" + GetStrategyIntrabarStatusByIndex(symbol, i, strategyFlags);
     }
 
     return summary;
+}
+
+bool IsAIIntrabarEnabledByInput(const string strategyName)
+{
+    if(strategyName == "Neural Network AI")
+        return InpIntrabarEligibilityNeuralNetworkAI;
+    if(strategyName == "Transformer AI")
+        return InpIntrabarEligibilityTransformerAI;
+    if(strategyName == "Ensemble AI")
+        return InpIntrabarEligibilityEnsembleAI;
+    return false;
+}
+
+ENUM_INTRABAR_POLICY ResolveAIIntrabarPolicyForMode(const string strategyName, const ENUM_EA_MODE effectiveMode)
+{
+    if(!g_strategyRegistry.IsStrategyActive(strategyName) || !IsAIIntrabarEnabledByInput(strategyName))
+        return INTRABAR_POLICY_OFF;
+
+    switch(effectiveMode)
+    {
+        case EA_MODE_AI_ONLY:
+        case EA_MODE_HYBRID:
+        case EA_MODE_AI_ASSISTED:
+        case EA_MODE_INDICATOR_FILTERED:
+            return INTRABAR_POLICY_LIVE;
+        case EA_MODE_INDICATOR_ONLY:
+        default:
+            return INTRABAR_POLICY_OFF;
+    }
+}
+
+string GetAIIntrabarStatusByName(const string strategyName, const ENUM_EA_MODE effectiveMode)
+{
+    if(!g_strategyRegistry.IsStrategyActive(strategyName))
+        return "INACTIVE";
+
+    ENUM_INTRABAR_POLICY intrabarPolicy = ResolveAIIntrabarPolicyForMode(strategyName, effectiveMode);
+    if(intrabarPolicy == INTRABAR_POLICY_PROBE)
+        return "PROBE";
+    if(intrabarPolicy == INTRABAR_POLICY_LIVE)
+        return "LIVE";
+    return "OFF";
+}
+
+string BuildAIIntrabarGovernanceSummary(const ENUM_EA_MODE effectiveMode)
+{
+    string summary = "";
+    string aiNames[] = {"Neural Network AI", "Transformer AI", "Ensemble AI"};
+    string aiLabels[] = {"NeuralAI", "TransformerAI", "EnsembleAI"};
+
+    for(int i = 0; i < ArraySize(aiNames); i++)
+    {
+        if(i > 0)
+            summary += ",";
+        summary += aiLabels[i] + ":" + GetAIIntrabarStatusByName(aiNames[i], effectiveMode);
+    }
+
+    return summary;
+}
+
+double ResolveAIRuntimeVoteThreshold(const ENUM_EA_MODE effectiveMode)
+{
+    return MathMax(0.1, MathMin(1.0, InpAIConfidenceThreshold));
+}
+
+double ResolveAINoneDominanceMargin(const ENUM_EA_MODE effectiveMode)
+{
+    switch(effectiveMode)
+    {
+        case EA_MODE_AI_ONLY:
+            return 0.03;
+        case EA_MODE_HYBRID:
+            return 0.01;
+        default:
+            return 0.0;
+    }
 }
 
 void RegisterStrategyDefinitionIfEnabled(const string name,
@@ -1667,6 +2005,9 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
     g_strategyRegistry.Reset();
     g_strategyRegistry.SetMode(InpEAMode);
 
+    // Only register indicators if not in strict AI_ONLY mode
+    if(InpEAMode != EA_MODE_AI_ONLY)
+    {
     RegisterStrategyDefinitionIfEnabled("Momentum", STRATEGY_MOMENTUM, false,
                                         (ArraySize(strategyFlags) > 0 && strategyFlags[0]), false, InpWeightMomentum);
     RegisterStrategyDefinitionIfEnabled("Trend", STRATEGY_TREND, false,
@@ -1681,6 +2022,8 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 5 && strategyFlags[5]), false, InpWeightUnifiedICT);
     RegisterStrategyDefinitionIfEnabled("Candlestick", STRATEGY_CANDLESTICK, false,
                                         (ArraySize(strategyFlags) > 6 && strategyFlags[6]), false, InpWeightCandlestick);
+
+    }
 
     bool aiBaseEnabled = InpEnableAIMode;
     RegisterStrategyDefinitionIfEnabled("Neural Network AI", STRATEGY_BRAIN, true,
@@ -1756,11 +2099,13 @@ bool EvaluateEAModeCandidateAdmission(const string &contributors[],
             break;
 
         case EA_MODE_HYBRID:
-            if(activeIndicators > 0 && activeAI > 0 && (!hasAIContributor || !hasIndicatorContributor))
+            if(activeIndicators > 0 && !hasIndicatorContributor)
             {
-                rejectReason = "hybrid_mode_alignment_missing";
+                rejectReason = hasAIContributor ? "hybrid_mode_ai_without_indicator" : "hybrid_mode_missing_indicator";
                 return false;
             }
+            if(activeAI > 0 && hasAIContributor && hasIndicatorContributor)
+                confidenceBonus = 0.05;
             break;
 
         case EA_MODE_AI_ASSISTED:
@@ -1790,28 +2135,35 @@ bool EvaluateEAModeCandidateAdmission(const string &contributors[],
     return true;
 }
 
-bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager, const string strategyName)
+bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
+                                     const string symbol,
+                                     const string strategyName,
+                                     const bool &strategyFlags[])
 {
-    if(manager == NULL || !g_strategyRegistry.IsStrategyActive(strategyName))
+    int strategyIndex = GetStrategyIndexByName(strategyName);
+    if(manager == NULL ||
+       !g_strategyRegistry.IsStrategyActive(strategyName) ||
+       !StrategyFlagIsEnabled(strategyFlags, strategyIndex))
         return false;
 
     double strategyWeight = g_strategyRegistry.GetWeightByName(strategyName);
+    ENUM_TIMEFRAMES strategyTf = ResolveStrategyRegistrationTimeframe(symbol, strategyName);
     bool registered = false;
 
     if(strategyName == "Momentum")
-        registered = manager.RegisterStrategy(new CSimpleMomentumStrategy(), strategyName, true, strategyWeight, PERIOD_CURRENT, false);
+        registered = manager.RegisterStrategy(new CSimpleMomentumStrategy(), strategyName, true, strategyWeight, strategyTf, false);
     else if(strategyName == "Trend")
-        registered = manager.RegisterStrategy(new CStrategyTrend(), strategyName, true, strategyWeight, PERIOD_CURRENT, false);
+        registered = manager.RegisterStrategy(new CStrategyTrend(), strategyName, true, strategyWeight, strategyTf, false);
     else if(strategyName == "Fibonacci")
-        registered = manager.RegisterStrategy(new CStrategyFibonacci(), strategyName, true, strategyWeight, PERIOD_CURRENT, false);
+        registered = manager.RegisterStrategy(new CStrategyFibonacci(), strategyName, true, strategyWeight, strategyTf, false);
     else if(strategyName == "Elliott Wave")
-        registered = manager.RegisterStrategy(new CStrategyElliottWaveEnhanced(), strategyName, true, strategyWeight, PERIOD_CURRENT, false);
+        registered = manager.RegisterStrategy(new CStrategyElliottWaveEnhanced(), strategyName, true, strategyWeight, strategyTf, false);
     else if(strategyName == "Support/Resistance")
-        registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, PERIOD_CURRENT, false);
+        registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, strategyTf, false);
     else if(strategyName == "Unified ICT")
-        registered = manager.RegisterStrategy(new CStrategyUnifiedICT(), strategyName, true, strategyWeight, PERIOD_CURRENT, false);
+        registered = manager.RegisterStrategy(new CStrategyUnifiedICT(), strategyName, true, strategyWeight, strategyTf, false);
     else if(strategyName == "Candlestick")
-        registered = manager.RegisterStrategy(new CStrategyCandlestick(), strategyName, true, strategyWeight, PERIOD_CURRENT, false);
+        registered = manager.RegisterStrategy(new CStrategyCandlestick(), strategyName, true, strategyWeight, strategyTf, false);
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_register_failed");
     return registered;
@@ -1834,7 +2186,9 @@ bool RegisterManagerAIAdapterByName(CEnterpriseStrategyManager* manager, const s
     return registered;
 }
 
-void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager)
+void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager,
+                                          const string symbol,
+                                          const bool &strategyFlags[])
 {
     if(manager == NULL)
         return;
@@ -1847,7 +2201,7 @@ void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager)
 
         if(!descriptor.isAI)
         {
-            RegisterIndicatorStrategyByName(manager, descriptor.name);
+            RegisterIndicatorStrategyByName(manager, symbol, descriptor.name, strategyFlags);
             continue;
         }
 
@@ -1902,7 +2256,7 @@ void BuildStrategyFlags(bool &strategyFlags[])
         PrintFormat("[CURATION] Manual strategy overrides preserved (%d active vs curated baseline %d)", enabledCount, curatedCount);
 
     Print("[CURATION] Curated baseline recommendation: ", BuildEnabledStrategyList(curatedBaseline));
-    Print("[CURATION] Effective runtime strategy set: ", BuildEnabledStrategyList(strategyFlags));
+    Print("[CURATION] Effective input-enabled indicator set: ", BuildEnabledStrategyList(strategyFlags));
 }
 
 void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
@@ -1915,59 +2269,67 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
     ENUM_EA_MODE effectiveMode = ResolveEffectiveEAMode();
     bool indicatorsPrimary = (effectiveMode != EA_MODE_AI_ONLY && effectiveMode != EA_MODE_INDICATOR_FILTERED);
     bool aiPrimary = (effectiveMode == EA_MODE_AI_ONLY || effectiveMode == EA_MODE_INDICATOR_FILTERED);
+    bool syntheticLeanProfile = UseSyntheticLeanRosterProfile(symbol, strategyFlags);
+    int activeIndicatorCount = CountEffectiveIndicatorStrategiesForSymbol(strategyFlags);
+    string indicatorRoleLabel = (activeIndicatorCount <= 0) ? "MODE_OFF"
+                                                            : (syntheticLeanProfile ? "SYMBOL_CLASS_MIXED"
+                                                                                    : (indicatorsPrimary ? "PRIMARY_ALPHA" : "CONTEXT_FEATURE"));
 
-    if(g_strategyRegistry.IsStrategyActive("Momentum"))
-        manager.SetStrategyGovernanceByName("Momentum", indicatorsPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, TREND_CLUSTER, true, false);
-    if(g_strategyRegistry.IsStrategyActive("Trend"))
-        manager.SetStrategyGovernanceByName("Trend", indicatorsPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, TREND_CLUSTER, true, false);
-    if(g_strategyRegistry.IsStrategyActive("Fibonacci"))
-        manager.SetStrategyGovernanceByName("Fibonacci", indicatorsPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, MEAN_REVERSION_CLUSTER, true, false);
-    if(g_strategyRegistry.IsStrategyActive("Elliott Wave"))
-        manager.SetStrategyGovernanceByName("Elliott Wave", indicatorsPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRUCTURE_CLUSTER, true, false);
-    if(g_strategyRegistry.IsStrategyActive("Support/Resistance"))
-        manager.SetStrategyGovernanceByName("Support/Resistance", indicatorsPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, MEAN_REVERSION_CLUSTER, true, false);
-    if(g_strategyRegistry.IsStrategyActive("Unified ICT"))
-        manager.SetStrategyGovernanceByName("Unified ICT", indicatorsPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRUCTURE_CLUSTER, true, false);
-    if(g_strategyRegistry.IsStrategyActive("Candlestick"))
-        manager.SetStrategyGovernanceByName("Candlestick", indicatorsPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRUCTURE_CLUSTER, true, false);
+    for(int i = 0; i < 7; i++)
+    {
+        if(!StrategyFlagIsEnabled(strategyFlags, i))
+            continue;
+
+        string strategyName = GetStrategyNameByIndex(i);
+        ENUM_STRATEGY_ROLE role = ResolveStrategyRoleForSymbol(symbol, strategyName, strategyFlags);
+        if(!indicatorsPrimary && role == PRIMARY_ALPHA)
+            role = CONTEXT_FEATURE;
+
+        manager.SetStrategyGovernanceByName(strategyName,
+                                            role,
+                                            ResolveStrategyClusterForName(strategyName),
+                                            true,
+                                            false);
+        manager.SetStrategyIntrabarPolicyByName(strategyName,
+                                                ResolveStrategyIntrabarPolicyForSymbol(symbol, i, strategyFlags));
+    }
 
     if(g_strategyRegistry.IsStrategyActive("Neural Network AI"))
+    {
         manager.SetStrategyGovernanceByName("Neural Network AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE, true, false);
+        manager.SetStrategyConfidenceThresholdByName("Neural Network AI", InpAIConfidenceThreshold);
+    }
     if(g_strategyRegistry.IsStrategyActive("Transformer AI"))
+    {
         manager.SetStrategyGovernanceByName("Transformer AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE, true, false);
+        manager.SetStrategyConfidenceThresholdByName("Transformer AI", InpAIConfidenceThreshold);
+    }
     if(g_strategyRegistry.IsStrategyActive("Ensemble AI"))
+    {
         manager.SetStrategyGovernanceByName("Ensemble AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE, true, false);
+        manager.SetStrategyConfidenceThresholdByName("Ensemble AI", InpAIConfidenceThreshold);
+    }
 
-    // Intrabar governance contract:
-    // Explicit intrabar eligibility means the strategy participates as a real live voter.
-    if(g_strategyRegistry.IsStrategyActive("Momentum"))
-        manager.SetStrategyIntrabarPolicyByName("Momentum", InpIntrabarEligibilityMomentum ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
-    if(g_strategyRegistry.IsStrategyActive("Trend"))
-        manager.SetStrategyIntrabarPolicyByName("Trend", InpIntrabarEligibilityTrend ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
-    if(g_strategyRegistry.IsStrategyActive("Fibonacci"))
-        manager.SetStrategyIntrabarPolicyByName("Fibonacci", InpIntrabarEligibilityFibonacci ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
-    if(g_strategyRegistry.IsStrategyActive("Elliott Wave"))
-        manager.SetStrategyIntrabarPolicyByName("Elliott Wave", InpIntrabarEligibilityElliottWave ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
-    if(g_strategyRegistry.IsStrategyActive("Support/Resistance"))
-        manager.SetStrategyIntrabarPolicyByName("Support/Resistance", InpIntrabarEligibilitySupportResistance ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
-    if(g_strategyRegistry.IsStrategyActive("Unified ICT"))
-        manager.SetStrategyIntrabarPolicyByName("Unified ICT", InpIntrabarEligibilityUnifiedICT ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
-    if(g_strategyRegistry.IsStrategyActive("Candlestick"))
-        manager.SetStrategyIntrabarPolicyByName("Candlestick", InpIntrabarEligibilityCandlestick ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
     if(g_strategyRegistry.IsStrategyActive("Neural Network AI"))
-        manager.SetStrategyIntrabarPolicyByName("Neural Network AI", INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Neural Network AI",
+                                                ResolveAIIntrabarPolicyForMode("Neural Network AI", effectiveMode));
     if(g_strategyRegistry.IsStrategyActive("Transformer AI"))
-        manager.SetStrategyIntrabarPolicyByName("Transformer AI", INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Transformer AI",
+                                                ResolveAIIntrabarPolicyForMode("Transformer AI", effectiveMode));
     if(g_strategyRegistry.IsStrategyActive("Ensemble AI"))
-        manager.SetStrategyIntrabarPolicyByName("Ensemble AI", INTRABAR_POLICY_OFF);
+        manager.SetStrategyIntrabarPolicyByName("Ensemble AI",
+                                                ResolveAIIntrabarPolicyForMode("Ensemble AI", effectiveMode));
 
-    PrintFormat("[STRATEGY-GOVERNANCE] %s | mode=%s | indicator_role=%s | ai_role=%s | intrabar={%s,AI:OFF} | strategies={%s}",
+    PrintFormat("[STRATEGY-GOVERNANCE] %s | class=%s | profile=%s | mode=%s | indicator_role=%s | ai_role=%s | intrabar={%s,%s} | strategies={%s}",
                 symbol,
+                GetInstrumentExecutionProfileName(symbol),
+                GetSymbolStrategyProfileLabel(symbol, strategyFlags),
                 EAModeToString(effectiveMode),
-                indicatorsPrimary ? "PRIMARY_ALPHA" : "CONTEXT_FEATURE",
+                indicatorRoleLabel,
                 aiPrimary ? "PRIMARY_ALPHA" : "CONTEXT_FEATURE",
-                BuildIntrabarGovernanceSummary(strategyFlags),
-                BuildEnabledStrategyList(strategyFlags));
+                BuildIntrabarGovernanceSummary(symbol, strategyFlags),
+                BuildAIIntrabarGovernanceSummary(effectiveMode),
+                BuildEffectiveRuntimeStrategyListForSymbol(strategyFlags));
 }
 
 void ApplyStrategyWeights(CEnterpriseStrategyManager* manager,
@@ -2375,6 +2737,8 @@ bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe
 
     nn.SetOnlineTrainingEnabled(InpEnableNNOnlineTraining);
     nn.SetWeightMutationEnabled(InpEnableNNWeightMutation);
+    nn.SetConfidenceThreshold(InpAIConfidenceThreshold);
+
 
     if(!nn.Initialize(symbol, timeframe))
     {
@@ -2419,6 +2783,10 @@ bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe
 
 bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFlags[])
 {
+    string symbolClass = GetInstrumentExecutionProfileName(symbol);
+    string symbolProfile = GetSymbolStrategyProfileLabel(symbol, strategyFlags);
+    bool syntheticLeanProfile = UseSyntheticLeanRosterProfile(symbol, strategyFlags);
+    SignalFilterSettings filters;
     CEnterpriseStrategyManager* manager = new CEnterpriseStrategyManager();
     if(manager == NULL)
     {
@@ -2436,8 +2804,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
 
     if(InpUseSignalPipeline)
     {
-        SignalFilterSettings filters;
-        filters.enableTrendFilter = true;
+        filters.enableTrendFilter = !(InpUseSymbolClassProfiles && IsSyntheticIndexSymbolName(symbol));
         filters.enableVolatilityFilter = true;
         filters.enableLiquidityFilter = InpEnableLiquidityFilter;
         filters.enableStructureFilter = InpEnableStructureFilter;
@@ -2466,6 +2833,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
 
     int minLiveVoters = MathMax(1, InpMinLiveVoters);
     double quorumThreshold = MathMax(0.0, MathMin(1.0, InpQuorumThreshold));
+    double sparseIntrabarMinQuality = ResolveSparseIntrabarMinQualityForSymbol(symbol, strategyFlags);
+    double sparseIntrabarMinSupportRatio = ClampConsensusInput(InpSparseIntrabarMinSupportRatio);
+    double sparseIntrabarMinReadyCoverage = ClampConsensusInput(InpSparseIntrabarMinReadyCoverage);
+    double intrabarSingleVoterMinConfidence = ResolveIntrabarSingleVoterMinConfidenceForSymbol(symbol, strategyFlags);
     manager.SetMinQuorum(minLiveVoters);
     manager.SetIntrabarMinQuorum(minLiveVoters);
     manager.SetQuorumThreshold(quorumThreshold);
@@ -2473,23 +2844,26 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     manager.SetMinReadyWeightRatio(MathMax(0.10, MathMin(1.0, InpConsensusMinReadyWeightRatio)));
     manager.SetSupportFloors(MathMax(0.05, MathMin(1.0, InpConsensusSupportFloorNewBar)),
                              MathMax(0.05, MathMin(1.0, InpConsensusSupportFloorIntrabar)));
-    manager.SetSparseIntrabarThresholds(MathMax(0.0, MathMin(1.0, InpSparseIntrabarMinQuality)),
-                                        MathMax(0.0, MathMin(1.0, InpSparseIntrabarMinSupportRatio)),
-                                        MathMax(0.0, MathMin(1.0, InpSparseIntrabarMinReadyCoverage)));
+    manager.SetSparseIntrabarThresholds(sparseIntrabarMinQuality,
+                                        sparseIntrabarMinSupportRatio,
+                                        sparseIntrabarMinReadyCoverage);
     manager.SetIntrabarDynamicQuorumEnabled(InpIntrabarDynamicQuorumEnabled);
-    manager.SetIntrabarSingleVoterMinConfidence(InpIntrabarSingleVoterMinConfidence);
+    manager.SetIntrabarSingleVoterMinConfidence(intrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(InpDeadlockAttributionIntervalSec);
-    PrintFormat("[ENTERPRISE-CONFIG] %s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_mode=EXOGENOUS_ONLY | validator_profile_inputs=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_mode=EXOGENOUS_ONLY | validator_profile_inputs=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
                 symbol,
+                symbolClass,
+                symbolProfile,
+                filters.enableTrendFilter ? "true" : "false",
                 quorumThreshold,
                 minLiveVoters,
                 MathMax(0.05, MathMin(1.0, InpConsensusSupportFloorNewBar)),
                 MathMax(0.05, MathMin(1.0, InpConsensusSupportFloorIntrabar)),
-                MathMax(0.0, MathMin(1.0, InpSparseIntrabarMinQuality)),
-                MathMax(0.0, MathMin(1.0, InpSparseIntrabarMinSupportRatio)),
-                MathMax(0.0, MathMin(1.0, InpSparseIntrabarMinReadyCoverage)),
+                sparseIntrabarMinQuality,
+                sparseIntrabarMinSupportRatio,
+                sparseIntrabarMinReadyCoverage,
                 InpIntrabarDynamicQuorumEnabled ? "true" : "false",
-                InpIntrabarSingleVoterMinConfidence,
+                intrabarSingleVoterMinConfidence,
                 MathMax(0.0, MathMin(1.0, InpPipelineMinConfidence)),
                 MathMax(0.0, MathMin(1.0, InpValidatorNewBarMinConfidence)),
                 MathMax(1, InpValidatorNewBarMinConfluence),
@@ -2500,7 +2874,12 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
                 MathMax(10, InpDeadlockAttributionIntervalSec),
                 MathMax(0.0, InpPipelineIntrabarConfidenceCap));
     Print("[CURATION] Effective strategy set for ", symbol, ": ", BuildEnabledStrategyList(strategyFlags));
-    RegisterManagerStrategiesFromRegistry(manager);
+    if(syntheticLeanProfile)
+        PrintFormat("[SYMBOL-PROFILE] %s uses synthetic lean roster: Momentum/Trend suppressed from manager roster; Candlestick remains new-bar active but intrabar PROBE while Fibonacci/Elliott/SupportResistance/UICT stay LIVE | sparse_quality=%.2f | single_voter_min_conf=%.2f",
+                    symbol,
+                    sparseIntrabarMinQuality,
+                    intrabarSingleVoterMinConfidence);
+    RegisterManagerStrategiesFromRegistry(manager, symbol, strategyFlags);
     ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
     ApplyStrategyWeights(manager, symbol, strategyFlags);
 
@@ -2515,7 +2894,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     if(symbol == _Symbol)
         g_enterpriseManager = manager;
 
-    Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies");
+    Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies | profile=", symbolProfile);
     return true;
 }
 
@@ -2856,7 +3235,15 @@ int OnInit()
     int managerInitCount = 0;
     for(int i = 0; i < ArraySize(g_activePairs); i++)
     {
-        if(InitializeEnterpriseManagerForSymbol(g_activePairs[i], strategyFlags))
+        bool symbolStrategyFlags[];
+        BuildStrategyFlagsForSymbol(g_activePairs[i], strategyFlags, symbolStrategyFlags);
+        if(CountEnabledStrategies(symbolStrategyFlags) <= 0)
+        {
+            Print("[ENTERPRISE] Skipping ", g_activePairs[i], " because no strategies remain after symbol-class profiling.");
+            continue;
+        }
+
+        if(InitializeEnterpriseManagerForSymbol(g_activePairs[i], symbolStrategyFlags))
             managerInitCount++;
     }
 

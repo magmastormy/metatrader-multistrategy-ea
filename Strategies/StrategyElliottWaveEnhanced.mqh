@@ -23,6 +23,7 @@
 #define STRATEGY_ELLIOTTWAVE_ENHANCED_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/Instruments.mqh"
 #include "../Core/Visualization/ChartDrawingManager.mqh"
 #include "../Core/Engines/TrendEngine.mqh"
 
@@ -72,10 +73,13 @@ private:
     int                 m_lookbackPeriod;
     bool                m_useMultiTF;
     ENUM_TIMEFRAMES     m_htf;
+    ENUM_TIMEFRAMES     m_ltf;
     ENUM_TIMEFRAMES     m_effectiveTF; // Auto-resolved: chart TF or M30, whichever is higher
 
     // Internal TF resolver
     ENUM_TIMEFRAMES     ResolveEffectiveTF(ENUM_TIMEFRAMES chartTF);
+    ENUM_TIMEFRAMES     ResolveAlignmentHigherTF(const string symbol, ENUM_TIMEFRAMES baseTF);
+    ENUM_TIMEFRAMES     ResolveAlignmentLowerTF(const string symbol, ENUM_TIMEFRAMES baseTF);
 
     // Statistics
     int                 m_wavesIdentified;
@@ -127,6 +131,7 @@ CStrategyElliottWaveEnhanced::CStrategyElliottWaveEnhanced(const string name) :
     m_lookbackPeriod(250),
     m_useMultiTF(true),
     m_htf(PERIOD_H4),
+    m_ltf(PERIOD_M15),
     m_effectiveTF(PERIOD_M30),
     m_wavesIdentified(0),
     m_patternsCompleted(0),
@@ -166,6 +171,45 @@ ENUM_TIMEFRAMES CStrategyElliottWaveEnhanced::ResolveEffectiveTF(ENUM_TIMEFRAMES
     return chartTF;
 }
 
+ENUM_TIMEFRAMES CStrategyElliottWaveEnhanced::ResolveAlignmentHigherTF(const string symbol, ENUM_TIMEFRAMES baseTF)
+{
+    if(!IsSyntheticIndexSymbolName(symbol))
+        return PERIOD_H4;
+
+    switch(baseTF)
+    {
+        case PERIOD_M1:
+        case PERIOD_M5:
+            return PERIOD_M15;
+        case PERIOD_M15:
+        case PERIOD_M30:
+            return PERIOD_H1;
+        case PERIOD_H1:
+            return PERIOD_H4;
+        default:
+            return PERIOD_D1;
+    }
+}
+
+ENUM_TIMEFRAMES CStrategyElliottWaveEnhanced::ResolveAlignmentLowerTF(const string symbol, ENUM_TIMEFRAMES baseTF)
+{
+    if(!IsSyntheticIndexSymbolName(symbol))
+        return PERIOD_M15;
+
+    switch(baseTF)
+    {
+        case PERIOD_H4:
+        case PERIOD_H1:
+            return PERIOD_M30;
+        case PERIOD_M30:
+            return PERIOD_M15;
+        case PERIOD_M15:
+            return PERIOD_M5;
+        default:
+            return PERIOD_M15;
+    }
+}
+
 //+------------------------------------------------------------------+
 //| Destructor                                                       |
 //+------------------------------------------------------------------+
@@ -189,6 +233,8 @@ bool CStrategyElliottWaveEnhanced::Init(const string symbol, const ENUM_TIMEFRAM
     // Resolve effective analysis TF — step up to M30 for low-TF charts so that EW
     // can build meaningful swing pivots regardless of what chart the trader runs.
     m_effectiveTF = ResolveEffectiveTF(timeframe);
+    m_htf = ResolveAlignmentHigherTF(symbol, m_effectiveTF);
+    m_ltf = ResolveAlignmentLowerTF(symbol, m_effectiveTF);
 
     // Scale lookback: if effective TF > chart TF, lookback shrinks proportionally
     // e.g. on M1 chart using M30 analysis: 250 * (1/30) * 60 = still 250 M30 bars
@@ -294,7 +340,7 @@ ENUM_TRADE_SIGNAL CStrategyElliottWaveEnhanced::GetSignal(double &confidence)
     bool htfBull = true, htfBear = true;
     if(m_useMultiTF && m_trendEngine != NULL)
     {
-        m_trendEngine.UpdateMTFTrend(m_symbol, m_htf, m_timeframe, PERIOD_M15);
+        m_trendEngine.UpdateMTFTrend(m_symbol, m_htf, m_effectiveTF, m_ltf);
         if(m_trendEngine.IsMTFAligned())
         {
             // Treat aligned uptrend as allowing longs, aligned downtrend as allowing shorts

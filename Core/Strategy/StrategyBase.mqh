@@ -79,6 +79,8 @@ public:
     virtual datetime GetLastSignalTime(void) const;
     virtual void GetStatistics(int &signals, int &successful, double &accuracy);
     virtual string GetLastDecisionReasonTag(void) const override;
+    virtual void SetConfidenceThreshold(double threshold) override;
+
 
     virtual void Update(void);
 
@@ -324,6 +326,11 @@ void CStrategyBase::RecordSignalOutcome(const bool successful)
 void CStrategyBase::SetDecisionReasonTag(const string tag)
 {
     m_lastDecisionReasonTag = tag;
+}
+
+void CStrategyBase::SetConfidenceThreshold(double threshold)
+{
+    OverrideMinConfidence(threshold);
 }
 
 void CStrategyBase::SetTradeManager(CTradeManager* manager)
