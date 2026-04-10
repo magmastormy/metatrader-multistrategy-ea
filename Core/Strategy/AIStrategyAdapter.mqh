@@ -19,6 +19,8 @@ private:
     ENUM_TIMEFRAMES m_timeframe;
     bool m_enabled;
     double m_weight;
+    datetime m_lastSignalTime;
+    string m_lastDecisionReasonTag;
     
 public:
     CAIStrategyAdapter(CNeuralNetworkStrategy* neuralNet)
@@ -28,6 +30,8 @@ public:
         m_weight = 1.0;
         m_symbol = "";
         m_timeframe = PERIOD_CURRENT;
+        m_lastSignalTime = 0;
+        m_lastDecisionReasonTag = "NNAI_UNSET";
     }
     
     ~CAIStrategyAdapter()
@@ -44,21 +48,41 @@ public:
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
+        m_lastDecisionReasonTag = (m_neuralNet != NULL) ? "NNAI_INITIALIZED" : "NNAI_INIT_FAILED";
         return (m_neuralNet != NULL);
     }
     
-    virtual void Deinit(void) override {}
+    virtual void Deinit(void) override
+    {
+        m_lastDecisionReasonTag = "NNAI_DEINIT";
+    }
     
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         if(!m_enabled || m_neuralNet == NULL)
         {
             confidence = 0.0;
+            m_lastDecisionReasonTag = "NNAI_DISABLED_OR_UNINIT";
             return TRADE_SIGNAL_NONE;
         }
         
         // Use the neural network to get signal
-        return m_neuralNet.GetNeuralSignalCached(confidence);
+        ENUM_TRADE_SIGNAL signal = m_neuralNet.GetNeuralSignalCached(confidence);
+        if(signal == TRADE_SIGNAL_BUY)
+        {
+            m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "NNAI_SIGNAL_BUY";
+        }
+        else if(signal == TRADE_SIGNAL_SELL)
+        {
+            m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "NNAI_SIGNAL_SELL";
+        }
+        else
+        {
+            m_lastDecisionReasonTag = "NNAI_NO_SIGNAL";
+        }
+        return signal;
     }
     
     virtual void OnNewBar(void) override {}
@@ -78,7 +102,8 @@ public:
     
     virtual bool ValidateParameters(void) override { return (m_neuralNet != NULL); }
     
-    virtual datetime GetLastSignalTime(void) const override { return 0; }
+    virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
+    virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {

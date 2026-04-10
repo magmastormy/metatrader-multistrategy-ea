@@ -88,6 +88,100 @@ static const string s_manualInstrumentList[] = {
 
 };
 
+string NormalizeInstrumentSymbolName(const string symbol)
+{
+    string normalized = symbol;
+    StringToUpper(normalized);
+    StringReplace(normalized, ".0", "");
+    return normalized;
+}
+
+bool IsVolatilitySyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "VOLATILITY ") >= 0);
+}
+
+bool IsJumpSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "JUMP ") >= 0);
+}
+
+bool IsStepSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "STEP INDEX") >= 0);
+}
+
+bool IsBoomCrashSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "BOOM ") >= 0 || StringFind(normalized, "CRASH ") >= 0);
+}
+
+bool IsRangeBreakSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "RANGE BREAK ") >= 0);
+}
+
+bool IsPainSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "PAINX ") >= 0 || StringFind(normalized, "PAIN ") >= 0);
+}
+
+bool IsSyntheticIndexSymbolName(const string symbol)
+{
+    return (IsVolatilitySyntheticSymbolName(symbol) ||
+            IsJumpSyntheticSymbolName(symbol) ||
+            IsStepSyntheticSymbolName(symbol) ||
+            IsBoomCrashSyntheticSymbolName(symbol) ||
+            IsRangeBreakSyntheticSymbolName(symbol) ||
+            IsPainSyntheticSymbolName(symbol));
+}
+
+bool IsForexCurrencyCode(const string code)
+{
+    return (code == "USD" || code == "EUR" || code == "GBP" || code == "JPY" ||
+            code == "CHF" || code == "AUD" || code == "NZD" || code == "CAD");
+}
+
+bool IsForexPairSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    StringReplace(normalized, "/", "");
+    StringReplace(normalized, " ", "");
+    StringReplace(normalized, "-", "");
+
+    if(StringLen(normalized) < 6)
+        return false;
+
+    string base = StringSubstr(normalized, 0, 3);
+    string quote = StringSubstr(normalized, 3, 3);
+    return (IsForexCurrencyCode(base) && IsForexCurrencyCode(quote));
+}
+
+string GetInstrumentExecutionProfileName(const string symbol)
+{
+    if(IsVolatilitySyntheticSymbolName(symbol))
+        return "SYNTHETIC_VOLATILITY";
+    if(IsJumpSyntheticSymbolName(symbol))
+        return "SYNTHETIC_JUMP";
+    if(IsStepSyntheticSymbolName(symbol))
+        return "SYNTHETIC_STEP";
+    if(IsBoomCrashSyntheticSymbolName(symbol))
+        return "SYNTHETIC_BOOM_CRASH";
+    if(IsRangeBreakSyntheticSymbolName(symbol))
+        return "SYNTHETIC_RANGE_BREAK";
+    if(IsPainSyntheticSymbolName(symbol))
+        return "SYNTHETIC_PAIN";
+    if(IsForexPairSymbolName(symbol))
+        return "FOREX";
+    return "GENERIC";
+}
+
 // Utility struct to hold discovery results
 struct SInstrumentDirectory
 {

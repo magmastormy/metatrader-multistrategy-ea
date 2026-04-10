@@ -72,6 +72,7 @@ private:
     bool            IsAsianSession();
     bool            IsManipulationWindow();
     bool            IsDistributionWindow();
+    bool            IsDSTActive();
     void            BuildAccumulationRange();
     void            CheckManipulation();
     void            CheckDistributionEntry();
@@ -142,7 +143,11 @@ int CAMDDetector::GetCurrentESTHour()
 {
     MqlDateTime dt;
     TimeToStruct(TimeCurrent(), dt);
-    int estHour = dt.hour - m_brokerGMTOffset - 5;  // GMT-5 EST (simplified)
+    
+    // Calculate DST offset using proper US DST rules
+    int dstOffset = IsDSTActive() ? -4 : -5;  // EDT or EST
+    
+    int estHour = dt.hour - m_brokerGMTOffset + dstOffset;
     while(estHour < 0)  estHour += 24;
     while(estHour >= 24) estHour -= 24;
     return estHour;
@@ -334,8 +339,96 @@ string CAMDDetector::GetPhaseName() const
         case AMD_PHASE_MANIPULATION:    return "Manipulation";
         case AMD_PHASE_DISTRIBUTION:    return "Distribution";
         case AMD_PHASE_POST_DISTRIBUTION: return "Post-Distribution";
-        default:                        return "Unknown";
+        default: return "Unknown";
     }
+}
+
+//+------------------------------------------------------------------+
+//| Check if DST is currently active using US DST rules                  |
+//| DST starts on second Sunday in March at 2:00 AM EST                |
+//| DST ends on first Sunday in November at 2:00 AM EST                |
+//+------------------------------------------------------------------+
+bool CAMDDetector::IsDSTActive()
+{
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    // If outside DST window months, return false
+    if(dt.mon < 3 || dt.mon > 11)
+        return false;
+    if(dt.mon == 3 || dt.mon == 11)
+    {
+        // Need to check specific dates for March and November
+        int day = dt.day;
+        
+        if(dt.mon == 3)
+        {
+            // DST starts on second Sunday in March
+            // Find the second Sunday of the month
+            int secondSunday = 0;
+            int sundayCount = 0;
+            
+            for(int d = 1; d <= 14; d++)
+            {
+                MqlDateTime tempDt;
+                tempDt.year = dt.year;
+                tempDt.mon = 3;
+                tempDt.day = d;
+                tempDt.hour = 0;
+                tempDt.min = 0;
+                tempDt.sec = 0;
+                datetime testTime = StructToTime(tempDt);
+                TimeToStruct(testTime, tempDt);
+                if(tempDt.day_of_week == 0)
+                {
+                    sundayCount++;
+                    if(sundayCount == 2)
+                    {
+                        secondSunday = d;
+                        break;
+                    }
+                }
+            }
+            
+            // DST starts at 2:00 AM EST on second Sunday
+            if(day < secondSunday)
+                return false;
+            if(day == secondSunday && dt.hour < 2)
+                return false;
+        }
+        else if(dt.mon == 11)
+        {
+            // DST ends on first Sunday in November
+            // Find the first Sunday of the month
+            int firstSunday = 0;
+            
+            for(int d = 1; d <= 7; d++)
+            {
+                MqlDateTime tempDt;
+                tempDt.year = dt.year;
+                tempDt.mon = 11;
+                tempDt.day = d;
+                tempDt.hour = 0;
+                tempDt.min = 0;
+                tempDt.sec = 0;
+                datetime testTime = StructToTime(tempDt);
+                TimeToStruct(testTime, tempDt);
+                if(tempDt.day_of_week == 0)
+                {
+                    firstSunday = d;
+                    break;
+                }
+            }
+            
+            // DST ends at 2:00 AM EST on first Sunday
+            if(day > firstSunday)
+                return false;
+            if(day == firstSunday && dt.hour >= 2)
+                return false;
+        }
+    }
+    
+    return true;
 }
 
 #endif // __AMD_DETECTOR_MQH__

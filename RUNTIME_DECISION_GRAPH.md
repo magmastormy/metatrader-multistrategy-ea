@@ -1,9 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-04-08
+- Last Updated: 2026-04-10
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
+- Current Batch: 57 - Decision Quality Upgrade (Readiness + Correlation)
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -96,12 +97,17 @@ flowchart TD
 - Pending new-bar work is durable across cycles: symbols that miss the current evaluation budget stay queued ahead of intrabar work until they are processed.
 - Cold-start cadence is now deterministic: init primes one pending new-bar scan per symbol so the first evaluation does not depend on a later bar transition or delayed series warmup.
 - Cadence scheduler ownership is explicit: `g_lastSymbolBarTimes`, `g_lastIntrabarScanTime`, `g_pendingNewBarScans`, and `g_symbolScanStates` must align with `g_activePairs`; runtime now rebuilds and logs `[SCHEDULER-STATE]` before resuming evaluation if that contract is broken.
+- Per-symbol manager profiles now branch by instrument class before registration: synthetic symbols can use a lean structure-heavy roster and lighter context engines, while FX symbols retain the broader balanced roster.
+- `EA_MODE_HYBRID` is now indicator-led: indicator-backed candidates survive AI abstentions, AI+indicator alignment can add a bounded confidence bonus, and AI-only candidates are still rejected unless the effective mode resolves to an AI-primary contract.
+- `EA_MODE_AI_ONLY` is now strict execution mode when AI adapters are enabled: indicator-based strategies are filtered out of the strategy registry, and AI adapters are the sole tradable family on both new-bar and timed intrabar paths.
+- AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, allowing the EA to propagate the system-wide `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
 - Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
+- `CMarketAnalysis` can now reuse bounded last-valid trend/volatility/momentum/ATR snapshots on transient `4806/4807` data faults, preventing short sync gaps from collapsing upstream market-state evidence to zeros.
 
 ## Intrabar Policy
 - New-bar and intrabar paths are explicit evaluation modes.
 - Intrabar eligibility respects symbol scope and cadence interval.
-- `InpSignalScanOnNewBarOnly=true` is a global cadence override: it disables timed intrabar scheduling even when manager governance shows strategies as intrabar `LIVE`.
+- `InpSignalScanOnNewBarOnly=false` is now the default cadence posture so timed intrabar scheduling stays active during live synthetic verification; setting it back to `true` still acts as a hard global override that disables timed intrabar scheduling even when manager governance shows strategies as intrabar `LIVE`.
 - Total heavy evaluations are bounded by `InpMaxSignalEvaluationsPerCycle`; new-bar selections consume the budget first and intrabar only uses the remainder.
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
@@ -125,12 +131,15 @@ flowchart TD
   - **Dynamic weight decay** (Batch 41): strategies that filter ≥ 3 consecutive cycles have their live weight decayed by `m_strategyActivityDecayRate` per additional cycle, reducing the denominator as dormant strategies fall out of contribution; weight recovers when the strategy produces a vote again
 - If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
 - Intrabar can instead admit a tagged `SPARSE_INTRABAR` decision when exactly one direction survives with one voter and readiness/context/cost/support/coverage thresholds all remain strong.
+- Synthetic lean symbols now use dedicated sparse intrabar thresholds for one-voter admission, so structure-first synthetic rosters are no longer evaluated against the same sparse-quality floor used by broader FX/balanced rosters.
 - Pipeline confidence policy remains separate from AI thresholds so non-AI strategies are not gated by AI policy.
 - Structural admission is now manager-owned: once manager consensus admits a packet, validator no longer re-judges confidence, confluence, directional quality, or support in normal runtime.
 - Validator now operates in `EXOGENOUS_ONLY` mode during normal runtime, limiting post-consensus checks to spread, time, session, volatility, and cost-viability sanity.
 - Validator profile inputs (confidence + confluence + quality) remain logged and configurable as telemetry/fallback surfaces, but they are no longer a second structural veto authority when manager-owned admission is enabled.
 - Validator still consumes manager quorum evidence (`effectiveMinVoters`, `directionalQuality`, `supportRatio`) so exogenous validation telemetry and any legacy fallback mode stay aligned with the already-authoritative manager decision.
 - Strategy overrides that bypass base-class `GetSignal(...)` must emit explicit last-decision tags; manager now downgrades any remaining placeholder abstentions instead of treating them as fully ready neutral voters.
+- Protective lifecycle thresholds are now risk-relative: breakeven, trailing, and partial-close activation must clear both the configured pip floor and a fraction of the trade's original stop distance.
+- Protective stop modifications are validated against executable quote side with extra stop/freeze cushion and one widened retry on `TRADE_RETCODE_INVALID_STOPS`.
 
 ## Strategy Governance Policy
 - Manager-level strategy metadata controls live-vote authority:
@@ -145,11 +154,15 @@ flowchart TD
   - `PROBE`: evaluated intrabar but only eligible for sparse admission
   - `OFF`: skipped before pipeline work
 - Current runtime mapping promotes intrabar-enabled manual strategies into `LIVE`, so `intrabar=true` means real intrabar voting rather than a hidden probe-only path.
+- Synthetic lean profiles are the deliberate exception: `Fibonacci`, `Elliott Wave`, `Support/Resistance`, and `Unified ICT` remain intrabar `LIVE`, `Candlestick` is retained as intrabar `PROBE`, and `Momentum` / `Trend` are removed from the local synthetic manager roster when structure-capable strategies are already enabled.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a separate profile leaves the raw input toggles enabled.
 - Governance is continuous, not only binary:
   - closed-trade outcomes update rolling `healthScore`
   - reliability multipliers scale live vote impact without bypassing role/cluster controls
 - Intrabar participation remains explicit and operator-driven: the curated default starts lean, but any explicitly enabled strategy remains active, and any enabled strategy with intrabar eligibility set to `true` participates as a live intrabar voter.
+- Instrument class now shapes governance:
+  - FX: balanced roster, full trend filter, default higher-timeframe mapping
+  - synthetics: structure-first roster, no ADX-dependent trend engine path, lighter higher-timeframe mapping for ICT/Elliott alignment, and a narrower intrabar live roster to keep M1 synthetic quorum from becoming a 7-strategy noise funnel
 
 ## AI Runtime Path
 - `CNextGenStrategyBrain` now runs in a single local transformer mode; there is no runtime Python/cloud branch.
@@ -158,6 +171,7 @@ flowchart TD
   - transformer and ensemble adapters cache per-bar inference outcomes and reuse them until the bar changes
 - Feature-build or inference failures are cached as `NONE` for the remainder of the bar, preventing repeated failed forward passes on unchanged data.
 - Ensemble confidence is now derived from class probabilities returned by `GetPredictions(...)`, keeping the adapter path aligned with the transformer's classifier output semantics.
+- AI adapters now emit explicit decision reason tags for abstain, disabled, feature-fault, inference-fault, and signal paths so consensus diagnostics can attribute AI silence without falling back to placeholder `UNTAGGED_*` buckets.
 
 ## Regime/Cost Pre-Gate
 - `CRegimeEngine` runs before validator and can veto entries on:
@@ -171,7 +185,7 @@ flowchart TD
   - effective confidence floor
   - soft-threshold pass flag
 - On transient warmup / handle-init / buffer-copy faults, `CRegimeEngine` can reuse a recent valid same-symbol/timeframe snapshot instead of forcing immediate neutral degradation.
-- `CTrendEngine` now fails closed on partial-readiness states rather than continuing with half-ready MA/ATR inputs; bounded last-good snapshot reuse remains reserved for transient copy-fault cases.
+- `CTrendEngine` now allows partial-readiness to proceed when the underlying series is mature, enabling MA/ATR fallback logic to attempt recovery instead of hard-failing, which reduces persistent readiness vetoes on synthetic indices where `BarsCalculated` may lag behind `Bars()`.
 - Repeated regime data faults trigger bounded handle reset and retry eligibility instead of indefinite stale-handle behavior.
 - Pipeline threshold adaptation now also consumes the regime snapshot, so confidence uplift/relaxation is aligned with the same market-state authority that drives the cost gate.
 - Near-threshold signals may survive the pipeline when readiness/context evidence is strong; the gate remains bounded rather than becoming a blanket relaxation.
@@ -193,6 +207,7 @@ flowchart TD
   - same-symbol opposing-cluster mutex
   - max concurrent positions per cluster
   - max projected cluster risk cap
+- Portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
 
 ## Execution Hardening
 - Fill policy is configurable via EA input (`IOC` default).

@@ -32,6 +32,9 @@ private:
     double m_cachedConfidence;
     datetime m_cacheBarTime;
     bool m_hasCachedSignal;
+    string m_lastDecisionReasonTag;
+    double m_minConfidence;
+
 
     bool EnsureModels()
     {
@@ -112,6 +115,8 @@ public:
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
         m_hasCachedSignal = false;
+        m_lastDecisionReasonTag = "ENSEMBLE_UNSET";
+        m_minConfidence = 0.35;
     }
 
     virtual ~CEnsembleAIStrategyAdapter()
@@ -134,12 +139,15 @@ public:
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
         m_hasCachedSignal = false;
-        return EnsureModels();
+        bool modelsReady = EnsureModels();
+        m_lastDecisionReasonTag = modelsReady ? "ENSEMBLE_INITIALIZED" : "ENSEMBLE_INIT_FAILED";
+        return modelsReady;
     }
 
     virtual void Deinit(void) override
     {
         m_hasCachedSignal = false;
+        m_lastDecisionReasonTag = "ENSEMBLE_DEINIT";
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -150,6 +158,7 @@ public:
         if(!m_enabled || !EnsureModels())
         {
             m_noneVotes++;
+            m_lastDecisionReasonTag = "ENSEMBLE_DISABLED_OR_UNINIT";
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
@@ -168,6 +177,7 @@ public:
             if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT))
             {
                 m_noneVotes++;
+                m_lastDecisionReasonTag = "ENSEMBLE_FEATURES_UNAVAILABLE";
                 m_cachedSignal = TRADE_SIGNAL_NONE;
                 m_cachedConfidence = 0.0;
                 m_cacheBarTime = currentBarTime;
@@ -182,6 +192,7 @@ public:
             if(!m_ensemble.ProcessMarketData(inputSequence, ensembleBuy, ensembleSell, ensembleConfidence))
             {
                 m_noneVotes++;
+                m_lastDecisionReasonTag = "ENSEMBLE_INFERENCE_FAILED";
                 m_cachedSignal = TRADE_SIGNAL_NONE;
                 m_cachedConfidence = 0.0;
                 m_cacheBarTime = currentBarTime;
@@ -193,9 +204,9 @@ public:
             double directionalConfidence = MathMax(ensembleBuy, ensembleSell);
             confidence = MathMax(0.0, MathMin(1.0, MathMax(ensembleConfidence, directionalConfidence)));
 
-            if(ensembleBuy > ensembleSell && directionalConfidence >= 0.45)
+            if(ensembleBuy > ensembleSell && directionalConfidence >= m_minConfidence)
                 signal = TRADE_SIGNAL_BUY;
-            else if(ensembleSell > ensembleBuy && directionalConfidence >= 0.45)
+            else if(ensembleSell > ensembleBuy && directionalConfidence >= m_minConfidence)
                 signal = TRADE_SIGNAL_SELL;
 
             m_cachedSignal = signal;
@@ -208,15 +219,18 @@ public:
         {
             m_buyVotes++;
             m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "ENSEMBLE_SIGNAL_BUY";
         }
         else if(signal == TRADE_SIGNAL_SELL)
         {
             m_sellVotes++;
             m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "ENSEMBLE_SIGNAL_SELL";
         }
         else
         {
             m_noneVotes++;
+            m_lastDecisionReasonTag = "ENSEMBLE_NO_SIGNAL";
         }
 
         LogVoteHeartbeat();
@@ -234,6 +248,8 @@ public:
     virtual void SetWeight(const double weight) override { m_weight = weight; }
     virtual bool ValidateParameters(void) override { return true; }
     virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
+    virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
+    virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
 
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {

@@ -9,8 +9,8 @@
 #ifndef __NEURAL_NETWORK_STRATEGY_MQH__
 #define __NEURAL_NETWORK_STRATEGY_MQH__
 
-// Network architecture: 25→15→10→3 (Input→Hidden1→Hidden2→Output)
-//TODO: - Increase architecture, indicators and more to make it bigger and more smart
+// Network architecture: 25→32→16→8→3 (Input→Hidden1→Hidden2→Hidden3→Output)
+// Increased architecture for improved model capacity and learning
 
 #include "../Core/Utils/Enums.mqh"
 #include "../Core/AI/NNModelStorage.mqh"
@@ -71,14 +71,16 @@ class CNeuralNetworkStrategy
 {
 private:
     // Network weights
-    double W1[25][15];       // Input → Hidden1
-    double W2[15][10];       // Hidden1 → Hidden2
-    double W3[10][3];        // Hidden2 → Output
+    double W1[25][32];       // Input → Hidden1
+    double W2[32][16];       // Hidden1 → Hidden2
+    double W3[16][8];        // Hidden2 → Hidden3
+    double W4[8][3];         // Hidden3 → Output
     
     // Biases
-    double B1[15];
-    double B2[10];
-    double B3[3];
+    double B1[32];
+    double B2[16];
+    double B3[8];
+    double B4[3];
     
     // Training configuration
     double m_learningRate;
@@ -126,14 +128,16 @@ private:
     double m_lastTransformerInput[];
     int m_lastTransformerSeqLen;
     datetime m_lastFeatureValidationLogTime;
+    double m_minConfidence;
+
     
 public:
     CNeuralNetworkStrategy() : 
-        m_learningRate(0.001),
+        m_learningRate(0.002),
         m_epoch(0),
         m_lastLoss(0.0),
-        m_minTrainingExamples(20),  // Reduced from 100 for faster startup
-        m_maxTrainingExamples(2000),
+        m_minTrainingExamples(10),  // Reduced from 20 for even faster startup
+        m_maxTrainingExamples(5000),
         m_resultMatchWindowSec(86400),
         m_predictionCounter(0),
         m_symbol(""),
@@ -165,7 +169,9 @@ public:
         m_transformerRef(NULL),
         m_ownsTransformerRef(false),
         m_lastTransformerSeqLen(0),
-        m_lastFeatureValidationLogTime(0)
+        m_lastFeatureValidationLogTime(0),
+        m_minConfidence(0.35)
+
     {
         m_trainHead = 0;
         m_trainCount = 0;
@@ -540,7 +546,13 @@ public:
                     m_checkpointEveryLabeled);
     }
 
+    void SetConfidenceThreshold(double threshold)
+    {
+        m_minConfidence = threshold;
+    }
+
     void TickOnlineLearning()
+
     {
         if(!m_initialized || !m_enableOnlineTraining)
             return;
@@ -553,8 +565,9 @@ public:
     {
         // Xavier initialization for better convergence
         double xavier_input = MathSqrt(2.0 / 25);
-        double xavier_hidden1 = MathSqrt(2.0 / 15);
-        double xavier_hidden2 = MathSqrt(2.0 / 10);
+        double xavier_hidden1 = MathSqrt(2.0 / 32);
+        double xavier_hidden2 = MathSqrt(2.0 / 16);
+        double xavier_hidden3 = MathSqrt(2.0 / 8);
         
         // Local deterministic seeding for reproducibility
         m_randomState = 12345; // Fixed seed
@@ -562,41 +575,53 @@ public:
         // Initialize W1
         for(int i = 0; i < 25; i++)
         {
-            for(int j = 0; j < 15; j++)
+            for(int j = 0; j < 32; j++)
             {
                 W1[i][j] = (GetDeterministicRandom() - 0.5) * 2 * xavier_input;
             }
         }
         
         // Initialize W2
-        for(int i = 0; i < 15; i++)
+        for(int i = 0; i < 32; i++)
         {
-            for(int j = 0; j < 10; j++)
+            for(int j = 0; j < 16; j++)
             {
                 W2[i][j] = (GetDeterministicRandom() - 0.5) * 2 * xavier_hidden1;
             }
         }
         
         // Initialize W3
-        for(int i = 0; i < 10; i++)
+        for(int i = 0; i < 16; i++)
         {
-            for(int j = 0; j < 3; j++)
+            for(int j = 0; j < 8; j++)
             {
                 W3[i][j] = (GetDeterministicRandom() - 0.5) * 2 * xavier_hidden2;
             }
         }
         
+        // Initialize W4
+        for(int i = 0; i < 8; i++)
+        {
+            for(int j = 0; j < 3; j++)
+            {
+                W4[i][j] = (GetDeterministicRandom() - 0.5) * 2 * xavier_hidden3;
+            }
+        }
+        
         // Initialize biases to small values
-        for(int i = 0; i < 15; i++)
+        for(int i = 0; i < 32; i++)
             B1[i] = 0.01;
         
-        for(int i = 0; i < 10; i++)
+        for(int i = 0; i < 16; i++)
             B2[i] = 0.01;
         
-        for(int i = 0; i < 3; i++)
+        for(int i = 0; i < 8; i++)
             B3[i] = 0.01;
         
-        Print("[NEURAL-NET] Network weights initialized with Deterministic Xavier method");
+        for(int i = 0; i < 3; i++)
+            B4[i] = 0.01;
+        
+        Print("[NEURAL-NET] Network weights initialized with Deterministic Xavier method (25→32→16→8→3)");
     }
 
     // Simple LCG for deterministic behavior
@@ -879,13 +904,14 @@ public:
     // Forward propagation
     void ForwardPropagate(const double &inputs[], double &outputs[])
     {
-        double hidden1[15];
-        double hidden2[10];
+        double hidden1[32];
+        double hidden2[16];
+        double hidden3[8];
         
         ArrayResize(outputs, 3);
         
         // Input → Hidden1
-        for(int j = 0; j < 15; j++)
+        for(int j = 0; j < 32; j++)
         {
             hidden1[j] = B1[j];
             for(int i = 0; i < 25; i++)
@@ -896,23 +922,34 @@ public:
         }
         
         // Hidden1 → Hidden2
-        for(int j = 0; j < 10; j++)
+        for(int j = 0; j < 16; j++)
         {
             hidden2[j] = B2[j];
-            for(int i = 0; i < 15; i++)
+            for(int i = 0; i < 32; i++)
             {
                 hidden2[j] += hidden1[i] * W2[i][j];
             }
             hidden2[j] = ReLU(hidden2[j]);
         }
         
-        // Hidden2 → Output
+        // Hidden2 → Hidden3
+        for(int j = 0; j < 8; j++)
+        {
+            hidden3[j] = B3[j];
+            for(int i = 0; i < 16; i++)
+            {
+                hidden3[j] += hidden2[i] * W3[i][j];
+            }
+            hidden3[j] = ReLU(hidden3[j]);
+        }
+        
+        // Hidden3 → Output
         for(int j = 0; j < 3; j++)
         {
-            outputs[j] = B3[j];
-            for(int i = 0; i < 10; i++)
+            outputs[j] = B4[j];
+            for(int i = 0; i < 8; i++)
             {
-                outputs[j] += hidden2[i] * W3[i][j];
+                outputs[j] += hidden3[i] * W4[i][j];
             }
         }
         
@@ -1013,11 +1050,13 @@ public:
         double directionProb = outputs[directionIndex];
         double noneProb = outputs[0];
 
-        double minDirectionalConfidence = 0.60;
-        if(m_enableOnlineTraining && labeledCount < m_minTrainingExamples)
+        double minDirectionalConfidence = m_minConfidence;
+        // Soften threshold slightly during initial exploration/training if not already low
+        if(m_enableOnlineTraining && labeledCount < m_minTrainingExamples && m_minConfidence > 0.45)
             minDirectionalConfidence = 0.45;
 
         if(directionProb < minDirectionalConfidence || directionProb <= noneProb)
+
         {
             datetime now = TimeCurrent();
             if(m_lastSignalLogTime == 0 || (now - m_lastSignalLogTime) >= 15)
@@ -1271,17 +1310,21 @@ public:
         FileWriteInteger(fileHandle, m_checkpointWrites);
 
         for(int i = 0; i < 25; i++)
-            for(int j = 0; j < 15; j++)
+            for(int j = 0; j < 32; j++)
                 FileWriteDouble(fileHandle, W1[i][j]);
-        for(int i = 0; i < 15; i++)
-            for(int j = 0; j < 10; j++)
+        for(int i = 0; i < 32; i++)
+            for(int j = 0; j < 16; j++)
                 FileWriteDouble(fileHandle, W2[i][j]);
-        for(int i = 0; i < 10; i++)
-            for(int j = 0; j < 3; j++)
+        for(int i = 0; i < 16; i++)
+            for(int j = 0; j < 8; j++)
                 FileWriteDouble(fileHandle, W3[i][j]);
-        for(int i = 0; i < 15; i++) FileWriteDouble(fileHandle, B1[i]);
-        for(int i = 0; i < 10; i++) FileWriteDouble(fileHandle, B2[i]);
-        for(int i = 0; i < 3; i++) FileWriteDouble(fileHandle, B3[i]);
+        for(int i = 0; i < 8; i++)
+            for(int j = 0; j < 3; j++)
+                FileWriteDouble(fileHandle, W4[i][j]);
+        for(int i = 0; i < 32; i++) FileWriteDouble(fileHandle, B1[i]);
+        for(int i = 0; i < 16; i++) FileWriteDouble(fileHandle, B2[i]);
+        for(int i = 0; i < 8; i++) FileWriteDouble(fileHandle, B3[i]);
+        for(int i = 0; i < 3; i++) FileWriteDouble(fileHandle, B4[i]);
 
         int sampleCount = ArraySize(sampleIndices);
         FileWriteInteger(fileHandle, sampleCount);
@@ -1649,17 +1692,21 @@ private:
         m_checkpointWrites = FileReadInteger(fileHandle);
 
         for(int i = 0; i < 25; i++)
-            for(int j = 0; j < 15; j++)
+            for(int j = 0; j < 32; j++)
                 W1[i][j] = FileReadDouble(fileHandle);
-        for(int i = 0; i < 15; i++)
-            for(int j = 0; j < 10; j++)
+        for(int i = 0; i < 32; i++)
+            for(int j = 0; j < 16; j++)
                 W2[i][j] = FileReadDouble(fileHandle);
-        for(int i = 0; i < 10; i++)
-            for(int j = 0; j < 3; j++)
+        for(int i = 0; i < 16; i++)
+            for(int j = 0; j < 8; j++)
                 W3[i][j] = FileReadDouble(fileHandle);
-        for(int i = 0; i < 15; i++) B1[i] = FileReadDouble(fileHandle);
-        for(int i = 0; i < 10; i++) B2[i] = FileReadDouble(fileHandle);
-        for(int i = 0; i < 3; i++) B3[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 8; i++)
+            for(int j = 0; j < 3; j++)
+                W4[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 32; i++) B1[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 16; i++) B2[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 8; i++) B3[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 3; i++) B4[i] = FileReadDouble(fileHandle);
 
         int sampleCount = FileReadInteger(fileHandle);
         ClearTrainingData();
@@ -1756,32 +1803,144 @@ private:
     
     void UpdateWeights(const double &inputs[], const double &outputs[], const double &target[], const double sampleWeight)
     {
-        // Simplified weight update (gradient descent on output layer)
-        //TODO: Full implementation would require proper backpropagation through all layers
+        // Full backpropagation through all layers (W1, W2, W3, W4)
         
-        double outputError[3];  // OUTPUT_SIZE
-        for(int i = 0; i < 3; i++)  // OUTPUT_SIZE
+        double scaledRate = m_learningRate * MathMax(0.1, sampleWeight);
+
+        // Forward pass to get intermediate layer values
+        double hidden1[32];
+        double hidden2[16];
+        double hidden3[8];
+        
+        // Input → Hidden1
+        for(int j = 0; j < 32; j++)
+        {
+            hidden1[j] = B1[j];
+            for(int i = 0; i < 25; i++)
+            {
+                hidden1[j] += inputs[i] * W1[i][j];
+            }
+            hidden1[j] = ReLU(hidden1[j]);
+        }
+        
+        // Hidden1 → Hidden2
+        for(int j = 0; j < 16; j++)
+        {
+            hidden2[j] = B2[j];
+            for(int i = 0; i < 32; i++)
+            {
+                hidden2[j] += hidden1[i] * W2[i][j];
+            }
+            hidden2[j] = ReLU(hidden2[j]);
+        }
+        
+        // Hidden2 → Hidden3
+        for(int j = 0; j < 8; j++)
+        {
+            hidden3[j] = B3[j];
+            for(int i = 0; i < 16; i++)
+            {
+                hidden3[j] += hidden2[i] * W3[i][j];
+            }
+            hidden3[j] = ReLU(hidden3[j]);
+        }
+        
+        // Output layer error (cross-entropy derivative)
+        double outputError[3];
+        for(int i = 0; i < 3; i++)
         {
             outputError[i] = outputs[i] - target[i];
         }
         
-        double scaledRate = m_learningRate * MathMax(0.1, sampleWeight);
-
-        // Update output layer weights (W3) and biases (B3)
-        //TODO: This is a simplified version - proper backprop would compute gradients through all layers
-        for(int i = 0; i < 10; i++)
+        // Backpropagate through W4 (Hidden3 → Output)
+        double hidden3Error[8];
+        for(int i = 0; i < 8; i++)
+        {
+            hidden3Error[i] = 0.0;
+            for(int j = 0; j < 3; j++)
+            {
+                hidden3Error[i] += outputError[j] * W4[i][j];
+            }
+            // ReLU derivative
+            hidden3Error[i] *= (hidden3[i] > 0) ? 1.0 : 0.0;
+        }
+        
+        // Update W4 and B4
+        for(int i = 0; i < 8; i++)
         {
             for(int j = 0; j < 3; j++)
             {
-                double gradient = outputError[j];
-                W3[i][j] -= scaledRate * gradient * 0.1; // Scaled down
+                W4[i][j] -= scaledRate * outputError[j] * hidden3[i];
             }
         }
-        
-        // Update biases
         for(int i = 0; i < 3; i++)
         {
-            B3[i] -= scaledRate * outputError[i];
+            B4[i] -= scaledRate * outputError[i];
+        }
+        
+        // Backpropagate through W3 (Hidden2 → Hidden3)
+        double hidden2Error[16];
+        for(int i = 0; i < 16; i++)
+        {
+            hidden2Error[i] = 0.0;
+            for(int j = 0; j < 8; j++)
+            {
+                hidden2Error[i] += hidden3Error[j] * W3[i][j];
+            }
+            // ReLU derivative
+            hidden2Error[i] *= (hidden2[i] > 0) ? 1.0 : 0.0;
+        }
+        
+        // Update W3 and B3
+        for(int i = 0; i < 16; i++)
+        {
+            for(int j = 0; j < 8; j++)
+            {
+                W3[i][j] -= scaledRate * hidden3Error[j] * hidden2[i];
+            }
+        }
+        for(int i = 0; i < 8; i++)
+        {
+            B3[i] -= scaledRate * hidden3Error[i];
+        }
+        
+        // Backpropagate through W2 (Hidden1 → Hidden2)
+        double hidden1Error[32];
+        for(int i = 0; i < 32; i++)
+        {
+            hidden1Error[i] = 0.0;
+            for(int j = 0; j < 16; j++)
+            {
+                hidden1Error[i] += hidden2Error[j] * W2[i][j];
+            }
+            // ReLU derivative
+            hidden1Error[i] *= (hidden1[i] > 0) ? 1.0 : 0.0;
+        }
+        
+        // Update W2 and B2
+        for(int i = 0; i < 32; i++)
+        {
+            for(int j = 0; j < 16; j++)
+            {
+                W2[i][j] -= scaledRate * hidden2Error[j] * hidden1[i];
+            }
+        }
+        for(int i = 0; i < 16; i++)
+        {
+            B2[i] -= scaledRate * hidden2Error[i];
+        }
+        
+        // Backpropagate through W1 (Input → Hidden1)
+        for(int i = 0; i < 25; i++)
+        {
+            for(int j = 0; j < 32; j++)
+            {
+                W1[i][j] -= scaledRate * hidden1Error[j] * inputs[i];
+            }
+        }
+        for(int i = 0; i < 32; i++)
+        {
+            B1[i] -= scaledRate * hidden1Error[i];
         }
     }
     

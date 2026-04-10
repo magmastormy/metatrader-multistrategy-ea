@@ -65,6 +65,9 @@ public:
     // Last cycle decision reason tag for telemetry attribution.
     // Empty string means strategy does not expose a reason.
     virtual string GetLastDecisionReasonTag(void) const { return ""; }
+
+    // Set confidence threshold for the strategy
+    virtual void SetConfidenceThreshold(double threshold) {}
 };
 
 #endif // INTERFACES_ISTRATEGY_MQH

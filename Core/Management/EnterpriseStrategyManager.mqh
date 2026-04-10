@@ -479,6 +479,7 @@ public:
                                      ENUM_STRATEGY_CLUSTER cluster,
                                      const bool liveVotingEnabled,
                                      const bool shadowOnly);
+    bool SetStrategyConfidenceThresholdByName(const string name, const double threshold);
     int GetRegisteredStrategyCount() const { return m_strategyCount; }
     string GetRegisteredStrategyName(const int index) const;
     double GetRegisteredStrategyWeight(const int index) const;
@@ -2105,6 +2106,20 @@ bool CEnterpriseStrategyManager::SetStrategyShadowModeByName(const string name, 
                 name, enabled ? "ENABLED" : "DISABLED");
     return true;
 }
+
+bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
+{
+    int index = FindStrategyIndexByName(name);
+    if(index < 0)
+        return false;
+
+    if(m_strategies[index].strategy == NULL)
+        return false;
+
+    m_strategies[index].strategy.SetConfidenceThreshold(threshold);
+    return true;
+}
+
 
 bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
                                                              ENUM_STRATEGY_ROLE role,

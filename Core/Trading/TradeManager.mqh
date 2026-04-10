@@ -941,6 +941,18 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double minDistance = GetMinimumStopDistance(symbol);
     if(minDistance < point * 10) minDistance = point * 10; // Minimum 10 points fallback
+    double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+    double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+    double referencePrice = positionPrice;
+    if(posType == POSITION_TYPE_BUY && bid > 0.0)
+        referencePrice = bid;
+    else if(posType == POSITION_TYPE_SELL && ask > 0.0)
+        referencePrice = ask;
+
+    double modifyCushion = MathMax(point * 2.0, minDistance * 0.05);
+    double requiredDistance = minDistance + modifyCushion;
+    if(requiredDistance < point * 12.0)
+        requiredDistance = point * 12.0;
 
     double adjustedSL = stopLoss;
     double adjustedTP = takeProfit;
@@ -950,13 +962,13 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     // Auto-normalize SL distance to broker constraints instead of repeatedly skipping.
     if(adjustedSL > 0)
     {
-        double slDistance = MathAbs(positionPrice - adjustedSL);
-        if(slDistance < minDistance)
+        double slDistance = MathAbs(referencePrice - adjustedSL);
+        if(slDistance < requiredDistance)
         {
             if(posType == POSITION_TYPE_BUY)
-                adjustedSL = positionPrice - minDistance - point;
+                adjustedSL = referencePrice - requiredDistance;
             else
-                adjustedSL = positionPrice + minDistance + point;
+                adjustedSL = referencePrice + requiredDistance;
             
             adjustedSL = NormalizeDouble(adjustedSL, digits);
             slAdjusted = true;
@@ -966,13 +978,13 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     // Auto-normalize TP distance to broker constraints instead of repeatedly skipping.
     if(adjustedTP > 0)
     {
-        double tpDistance = MathAbs(positionPrice - adjustedTP);
-        if(tpDistance < minDistance)
+        double tpDistance = MathAbs(referencePrice - adjustedTP);
+        if(tpDistance < requiredDistance)
         {
             if(posType == POSITION_TYPE_BUY)
-                adjustedTP = positionPrice + minDistance + point;
+                adjustedTP = referencePrice + requiredDistance;
             else
-                adjustedTP = positionPrice - minDistance - point;
+                adjustedTP = referencePrice - requiredDistance;
             
             adjustedTP = NormalizeDouble(adjustedTP, digits);
             tpAdjusted = true;
@@ -988,14 +1000,14 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     // Validate SL is on correct side of current price
     if(adjustedSL > 0)
     {
-        if(posType == POSITION_TYPE_BUY && adjustedSL >= positionPrice)
+        if(posType == POSITION_TYPE_BUY && adjustedSL >= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY SL above price: SL=%.5f, Price=%.5f", adjustedSL, positionPrice);
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY SL above executable price: SL=%.5f, Price=%.5f", adjustedSL, referencePrice);
             return false;
         }
-        if(posType == POSITION_TYPE_SELL && adjustedSL <= positionPrice)
+        if(posType == POSITION_TYPE_SELL && adjustedSL <= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL SL below price: SL=%.5f, Price=%.5f", adjustedSL, positionPrice);
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL SL below executable price: SL=%.5f, Price=%.5f", adjustedSL, referencePrice);
             return false;
         }
     }
@@ -1003,14 +1015,14 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     // Validate TP is on correct side of current price
     if(adjustedTP > 0)
     {
-        if(posType == POSITION_TYPE_BUY && adjustedTP <= positionPrice)
+        if(posType == POSITION_TYPE_BUY && adjustedTP <= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY TP below/at price: TP=%.5f, Price=%.5f", adjustedTP, positionPrice);
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY TP below/at executable price: TP=%.5f, Price=%.5f", adjustedTP, referencePrice);
             return false;
         }
-        if(posType == POSITION_TYPE_SELL && adjustedTP >= positionPrice)
+        if(posType == POSITION_TYPE_SELL && adjustedTP >= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL TP above/at price: TP=%.5f, Price=%.5f", adjustedTP, positionPrice);
+            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL TP above/at executable price: TP=%.5f, Price=%.5f", adjustedTP, referencePrice);
             return false;
         }
     }
@@ -1032,8 +1044,8 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
 
     if(slAdjusted || tpAdjusted)
     {
-        PrintFormat("[TRADE-INFO] ModifyPosition normalized stops | Symbol: %s | SL: %.5f | TP: %.5f | MinDistance: %.5f",
-                    symbol, adjustedSL, adjustedTP, minDistance);
+        PrintFormat("[TRADE-INFO] ModifyPosition normalized stops | Symbol: %s | SL: %.5f | TP: %.5f | RequiredDistance: %.5f",
+                    symbol, adjustedSL, adjustedTP, requiredDistance);
     }
 
     if(m_trade.PositionModify(ticket, adjustedSL, adjustedTP))
@@ -1049,6 +1061,57 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
         UpdatePositionState(ticket, adjustedSL, adjustedTP);
         return true;
     }
+
+    if(tradeResult.retcode == TRADE_RETCODE_INVALID_STOPS)
+    {
+        double retryBid = SymbolInfoDouble(symbol, SYMBOL_BID);
+        double retryAsk = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        double retryReferencePrice = referencePrice;
+        if(posType == POSITION_TYPE_BUY && retryBid > 0.0)
+            retryReferencePrice = retryBid;
+        else if(posType == POSITION_TYPE_SELL && retryAsk > 0.0)
+            retryReferencePrice = retryAsk;
+
+        double retryDistance = requiredDistance + MathMax(point * 2.0, requiredDistance * 0.10);
+        double retrySL = adjustedSL;
+        double retryTP = adjustedTP;
+
+        if(retrySL > 0.0)
+        {
+            if(posType == POSITION_TYPE_BUY)
+                retrySL = NormalizeDouble(MathMin(retrySL, retryReferencePrice - retryDistance), digits);
+            else
+                retrySL = NormalizeDouble(MathMax(retrySL, retryReferencePrice + retryDistance), digits);
+        }
+
+        if(retryTP > 0.0)
+        {
+            if(posType == POSITION_TYPE_BUY)
+                retryTP = NormalizeDouble(MathMax(retryTP, retryReferencePrice + retryDistance), digits);
+            else
+                retryTP = NormalizeDouble(MathMin(retryTP, retryReferencePrice - retryDistance), digits);
+        }
+
+        bool retryChanged = (MathAbs(retrySL - adjustedSL) > comparisonTolerance ||
+                             MathAbs(retryTP - adjustedTP) > comparisonTolerance);
+        if(retryChanged)
+        {
+            PrintFormat("[TRADE-INFO] ModifyPosition retry widened stops | Symbol: %s | SL: %.5f | TP: %.5f | RequiredDistance: %.5f",
+                        symbol, retrySL, retryTP, retryDistance);
+            if(m_trade.PositionModify(ticket, retrySL, retryTP))
+            {
+                UpdatePositionState(ticket, retrySL, retryTP);
+                return true;
+            }
+            m_trade.Result(tradeResult);
+            if(tradeResult.retcode == TRADE_RETCODE_NO_CHANGES)
+            {
+                UpdatePositionState(ticket, retrySL, retryTP);
+                return true;
+            }
+        }
+    }
+
     LogTradeError(tradeResult, "ModifyPosition");
 
     return false;

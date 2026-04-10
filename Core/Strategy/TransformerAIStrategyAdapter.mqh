@@ -29,6 +29,9 @@ private:
     double m_cachedConfidence;
     datetime m_cacheBarTime;
     bool m_hasCachedSignal;
+    string m_lastDecisionReasonTag;
+    double m_minConfidence;
+
 
     datetime GetCurrentBarTime() const
     {
@@ -80,6 +83,8 @@ public:
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
         m_hasCachedSignal = false;
+        m_lastDecisionReasonTag = "TRANSFORMER_UNSET";
+        m_minConfidence = 0.35;
     }
 
     virtual ~CTransformerAIStrategyAdapter()
@@ -106,12 +111,14 @@ public:
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
         m_hasCachedSignal = false;
+        m_lastDecisionReasonTag = (m_transformer != NULL) ? "TRANSFORMER_INITIALIZED" : "TRANSFORMER_INIT_FAILED";
         return true;
     }
 
     virtual void Deinit(void) override
     {
         m_hasCachedSignal = false;
+        m_lastDecisionReasonTag = "TRANSFORMER_DEINIT";
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -122,6 +129,7 @@ public:
         if(!m_enabled || m_transformer == NULL)
         {
             m_noneVotes++;
+            m_lastDecisionReasonTag = "TRANSFORMER_DISABLED_OR_UNINIT";
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
@@ -139,6 +147,7 @@ public:
             if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, 8))
             {
                 m_noneVotes++;
+                m_lastDecisionReasonTag = "TRANSFORMER_FEATURES_UNAVAILABLE";
                 UpdateCache(currentBarTime, TRADE_SIGNAL_NONE, 0.0);
                 LogVoteHeartbeat();
                 return TRADE_SIGNAL_NONE;
@@ -148,6 +157,7 @@ public:
             if(!m_transformer.GetPredictions(inputSequence, 8, predictions) || ArraySize(predictions) != 3)
             {
                 m_noneVotes++;
+                m_lastDecisionReasonTag = "TRANSFORMER_INFERENCE_FAILED";
                 UpdateCache(currentBarTime, TRADE_SIGNAL_NONE, 0.0);
                 LogVoteHeartbeat();
                 return TRADE_SIGNAL_NONE;
@@ -160,9 +170,9 @@ public:
             double directionalConfidence = MathMax(pBuy, pSell);
             confidence = MathMax(0.0, MathMin(1.0, directionalConfidence));
 
-            if(pBuy > pSell && pBuy >= pNone && directionalConfidence >= 0.45)
+            if(pBuy > pSell && pBuy >= pNone && directionalConfidence >= m_minConfidence)
                 signal = TRADE_SIGNAL_BUY;
-            else if(pSell > pBuy && pSell >= pNone && directionalConfidence >= 0.45)
+            else if(pSell > pBuy && pSell >= pNone && directionalConfidence >= m_minConfidence)
                 signal = TRADE_SIGNAL_SELL;
 
             UpdateCache(currentBarTime, signal, confidence);
@@ -172,15 +182,18 @@ public:
         {
             m_buyVotes++;
             m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "TRANSFORMER_SIGNAL_BUY";
         }
         else if(signal == TRADE_SIGNAL_SELL)
         {
             m_sellVotes++;
             m_lastSignalTime = TimeCurrent();
+            m_lastDecisionReasonTag = "TRANSFORMER_SIGNAL_SELL";
         }
         else
         {
             m_noneVotes++;
+            m_lastDecisionReasonTag = "TRANSFORMER_NO_SIGNAL";
         }
 
         LogVoteHeartbeat();
@@ -198,6 +211,8 @@ public:
     virtual void SetWeight(const double weight) override { m_weight = weight; }
     virtual bool ValidateParameters(void) override { return (m_transformer != NULL); }
     virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
+    virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
+    virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
 
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {

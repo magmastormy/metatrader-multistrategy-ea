@@ -2,7 +2,61 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-04-10
+
+### Batch 57: Decision Quality Upgrade - Readiness + Correlation (2026-04-10)
+- **TrendEngine readiness hardened:** `CTrendEngine::IndicatorsReadyForRead()` now allows partial readiness to proceed when the underlying series is mature, enabling MA/ATR fallback logic in `UpdateTrend()` to attempt recovery instead of hard-failing. This reduces persistent readiness vetoes on synthetic indices where `BarsCalculated` may lag behind `Bars()`.
+- **Portfolio correlation bounded fallback:** `CPortfolioRiskManager::CalculateSymbolCorrelation()` now returns a bounded fallback correlation (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, instead of a conservative 1.0 that causes hard blocks. This preserves safety while avoiding unnecessary trade blocking when H1 price data is temporarily missing.
+- **Log differentiation:** correlation fallback log now shows the bounded value applied, distinguishing missing-data scenarios from true risk breaches.
+- **Compile:** verified with `./sync_and_compile.ps1 -MirrorSync` (`0 errors, 0 warnings`).
+
+### Batch 56: Unified AI Confidence Thresholding + Strict AI-Only Mode (2026-04-10)
+- **Unified AI Thresholding Interface:** added `SetConfidenceThreshold(double)` to the `IStrategy` interface and implemented it in `CStrategyBase` and all AI strategy adapters (`TransformerAIStrategyAdapter`, `EnsembleAIStrategyAdapter`, `NeuralNetworkStrategy`).
+- **Dynamic Threshold Injection:** `CEnterpriseStrategyManager` now exposes `SetStrategyConfidenceThresholdByName` allowing the EA to propagate the `InpAIConfidenceThreshold` input directly into registered AI strategies.
+- **Strict AI-Only Enforcement:** `MultiStrategyAutonomousEA.mq5` now filters the strategy registry to exclude indicator-based strategies when `InpEAMode == EA_MODE_AI_ONLY`, ensuring the engine runs exclusively on AI votes.
+- **Threshold Resolution Unified:** removed hardcoded confidence caps and switch-case logic in `ResolveAIRuntimeVoteThreshold`; the system now respects `InpAIConfidenceThreshold` as the authoritative floor for AI participation across all modes.
+- **NN Module Alignment:** `CNeuralNetworkStrategy` now correctly honors the unified threshold, replacing previous hardcoded `0.60/0.45` logic.
+- **Governance Updates:** AI governance logs now reflect the effective unified threshold applied during the eval loop.
+- **Compile:** verified with `./sync_and_compile.ps1` (`0 errors, 0 warnings`).
+
 ## [Unreleased] - 2026-03-31
+
+### Batch 55: Explicit Three-Mode Runtime Contract + AI Intrabar Eligibility (2026-04-09)
+- **Three-mode execution contract made real:** `MultiStrategyAutonomousEA.mq5` already exposed `INDICATOR_ONLY`, `AI_ONLY`, and `HYBRID`, but AI adapters were still being forced to intrabar `OFF`. The runtime now supports those postures more honestly: indicator-only, AI-only, and hybrid all have explicit family participation contracts.
+- **AI intrabar is now configurable per adapter:** added `InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, and `InpIntrabarEligibilityEnsembleAI`. AI adapters are no longer hard-wired to intrabar `OFF`; their intrabar policy now follows the effective EA mode plus their individual eligibility inputs.
+- **AI_ONLY is now a full operating mode:** when AI adapters are enabled and `InpEAMode=EA_MODE_AI_ONLY`, the registry filters out indicators and the remaining AI strategies can participate on both new-bar and timed intrabar paths.
+- **Governance logs are now truthful about AI participation:** `[STRATEGY-GOVERNANCE]` no longer appends a blanket `AI:OFF`; it now prints the resolved intrabar status for each AI adapter (`NeuralAI`, `TransformerAI`, `EnsembleAI`) alongside the indicator summary.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the explicit mode contract and AI intrabar eligibility.
+- **Compile:** verified with `./sync_and_compile.ps1 -MirrorSync` (`0 errors, 0 warnings`).
+
+### Batch 54: Hybrid AI Admission Softening + Synthetic Sparse Intrabar Profile + Explicit AI Abstention Tags (2026-04-09)
+- **HYBRID mode no longer hard-requires dual confirmation:** `MultiStrategyAutonomousEA.mq5` now treats `EA_MODE_HYBRID` as indicator-led. Indicator-backed candidates remain admissible when AI abstains, AI+indicator alignment earns a small confidence bonus, and AI-only candidates are rejected with an explicit `hybrid_mode_ai_without_indicator` reason unless the effective runtime mode is AI-primary.
+- **Synthetic lean intrabar gets its own admission profile:** added `InpSyntheticLeanSparseIntrabarMinQuality` and `InpSyntheticLeanIntrabarSingleVoterMinConfidence`, and manager initialization now applies those profile-specific thresholds to synthetic lean symbols instead of forcing one-voter synthetic structure packets through the same sparse intrabar quality floor used by broader FX/balanced rosters.
+- **Enterprise config/logs now show the real profile thresholds:** `[ENTERPRISE-CONFIG]` and `[SYMBOL-PROFILE]` now print the effective sparse quality and single-voter confidence settings actually applied to the symbol, making synthetic-vs-FX admission posture visible in startup telemetry.
+- **AI abstentions are now attributable:** `Core/Strategy/AIStrategyAdapter.mqh`, `Core/Strategy/TransformerAIStrategyAdapter.mqh`, and `Core/Strategy/EnsembleAIStrategyAdapter.mqh` now emit explicit last-decision reason tags (`NNAI_*`, `TRANSFORMER_*`, `ENSEMBLE_*`) for disabled, feature-fault, inference-fault, abstain, and signal paths.
+- **AI adapter lifecycle telemetry improved:** the neural adapter now also tracks `GetLastSignalTime()` correctly instead of always reporting `0`, keeping AI governance/diagnostics consistent with the other adapters.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document the softened HYBRID contract, synthetic sparse profile, and explicit AI abstention tagging.
+- **Compile:** verified with `./sync_and_compile.ps1 -MirrorSync` (`0 errors, 0 warnings`).
+
+### Batch 53: Symbol-Class Runtime Profiles + Intrabar-First Cadence Defaults (2026-04-09)
+- **Symbol-class runtime split added:** `Core/Utils/Instruments.mqh` now exposes reusable symbol-family helpers and profile labels so runtime decisions can distinguish FX from synthetic families (`Volatility`, `Jump`, `Step`, `Boom/Crash`, `Range Break`, `PainX`).
+- **Synthetic roster debloated without deleting strategies:** `MultiStrategyAutonomousEA.mq5` now builds symbol-specific strategy flags. When `InpUseSymbolClassProfiles=true`, synthetic symbols use a lean structure-first manager roster and suppress `Momentum` / `Trend` when structure-capable strategies are already enabled, while FX keeps the broader balanced roster. Manual fallback is preserved when only `Momentum` / `Trend` are enabled.
+- **Synthetic intrabar roster narrowed without losing new-bar coverage:** under the synthetic lean profile, `Fibonacci`, `Elliott Wave`, `Support/Resistance`, and `Unified ICT` remain intrabar `LIVE`, while `Candlestick` stays registered for new-bar decisions but is reduced to intrabar `PROBE` so M1 synthetic quorum is less noisy.
+- **Governance is now symbol-scoped and truthful:** startup `[ENTERPRISE-CONFIG]`, `[SYMBOL-PROFILE]`, and `[STRATEGY-GOVERNANCE]` logs now include instrument class/profile context so operators can see why a synthetic symbol is running a different roster or trend filter posture than FX.
+- **Synthetic higher-timeframe assumptions softened:** `Strategies/UnifiedICTFiles/MarketStructureAnalyzer.mqh` and `Strategies/StrategyElliottWaveEnhanced.mqh` now use lighter higher/lower timeframe ladders for synthetic symbols instead of forcing the same `H4`-heavy structure path used by FX.
+- **Synthetic ADX dependency removed from pipeline context:** `Core/Engines/TrendEngine.mqh` now bypasses ADX-handle creation and ADX-based classification on synthetic symbols, deriving trend state from MA structure/slope instead while retaining the existing ADX-backed model for FX.
+- **Cadence defaults now exercise live intrabar behavior:** `MultiStrategyAutonomousEA.mq5` now defaults `InpSignalScanOnNewBarOnly=false`, so hybrid cadence actually schedules timed intrabar scans during live verification instead of idling between new bars by default.
+- **Intrabar test breadth widened:** `InpMaxIntrabarSymbolsPerCycle` now defaults to `4` so restored timer cadence spends more of each cycle on live synthetic verification instead of leaving unused budget on the table.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to document symbol-class profiles, synthetic trend handling, and the new intrabar-first default cadence.
+- **Compile:** verified with `./sync_and_compile.ps1 -MirrorSync` (`0 errors, 0 warnings`).
+
+### Batch 52: Live Hardening for Wide-Stop Symbols + MarketAnalysis Snapshot Reuse (2026-04-09)
+- **Live defaults aligned with operator workflow:** `MultiStrategyAutonomousEA.mq5` now seeds a broader default symbol roster covering common Deriv synthetic indices plus core FX pairs, keeps `InpShadowMode=false`, and lowers the baseline `InpQuorumThreshold` from `0.55` to `0.35` for the requested live verification phase while leaving `InpMinLiveVoters=1`.
+- **Position lifecycle no longer uses tiny fixed milestones on huge stops:** `Core/Trading/AdvancedPositionManager.mqh` now scales breakeven, trailing-stop, and partial-close triggers against each position's original stop distance. The configured pip values remain broker-floor-aware minimums, but wide-stop synthetic trades must now earn a meaningful fraction of `1R` before lifecycle actions fire.
+- **Protective modify path hardened for live synthetics:** `Core/Trading/TradeManager.mqh` now validates stop modifications against the executable quote side (`Bid` for buys, `Ask` for sells), applies an additional stop/freeze cushion, and retries once with widened levels on `TRADE_RETCODE_INVALID_STOPS` before surfacing failure.
+- **`MarketAnalysis` stale-data tolerance made real:** `Core/Engines/MarketAnalysis.mqh` now keeps bounded last-valid snapshots for trend, volatility, momentum, and ATR. Transient `4806/4807` copy faults now reuse fresh same-context metrics instead of just logging and collapsing to zero/default values.
+- **Docs:** updated `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` to record the live hardening, metric reuse, and risk-relative lifecycle contract.
+- **Compile:** verified with `./sync_and_compile.ps1 -MirrorSync` (`0 errors, 0 warnings`).
 
 ### Batch 51: Strategy Signal Pipeline Unblock — Adaptive TF, Bug Fixes, Filter Relaxation (2026-04-08)
 

@@ -441,7 +441,7 @@ public:
         
         // Could send feedback to external AI here
         if(m_externalAIConnected) {
-            // Future: Send feedback to external ML model
+            // TODO: Future: Send feedback to external ML model
         }
     }
     
@@ -586,13 +586,14 @@ private:
     }
     
     void ProcessExpiredModifications() {
-        // Check and revert expired temporary modifications
-        // Implementation would track bar counts and revert weights
-        datetime nowTime = TimeCurrent();
-        
-        for(int i = m_pendingModCount - 1; i >= 0; i--) {
-            // Simplified expiration check
-            // In production, would track actual bar counts
+        // Simplified expiration check - clear old modifications periodically
+        // In a production system, this would track timestamps properly
+        if(m_pendingModCount > 0) {
+            // Clear modifications if too many accumulate
+            if(m_pendingModCount >= 18) {
+                PrintFormat("[AI-ENGINE] Clearing accumulated modifications");
+                m_pendingModCount = 0;
+            }
         }
     }
 };

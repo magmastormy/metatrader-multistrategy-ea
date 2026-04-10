@@ -392,6 +392,10 @@ double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, c
     const double conservativeCorrelation = 1.0;
     static datetime s_lastCorrelationDataWarn = 0;
 
+    double boundedFallbackCorrelation = 0.65;
+    if(m_maxCorrelation > 0.0)
+        boundedFallbackCorrelation = MathMin(boundedFallbackCorrelation, m_maxCorrelation);
+
     if(symbol1 == "" || symbol2 == "")
         return conservativeCorrelation;
     if(symbol1 == symbol2)
@@ -410,11 +414,11 @@ double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, c
         datetime now = TimeCurrent();
         if(s_lastCorrelationDataWarn == 0 || (now - s_lastCorrelationDataWarn) >= 300)
         {
-            PrintFormat("[PortfolioRisk] Correlation data unavailable for %s/%s - applying conservative block",
-                        symbol1, symbol2);
+            PrintFormat("[PortfolioRisk] Correlation data unavailable for %s/%s - applying bounded fallback %.2f",
+                        symbol1, symbol2, boundedFallbackCorrelation);
             s_lastCorrelationDataWarn = now;
         }
-        return conservativeCorrelation;
+        return boundedFallbackCorrelation;
     }
 
     double returns1[];

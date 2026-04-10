@@ -456,20 +456,31 @@ void CEnhancedErrorHandler::UpdateComponentHealthBySeverity(const string compone
         }
     }
     
-    // Check for error rate limiting
+    // Check for error rate limiting with timestamp-based tracking
     if(severity >= ERROR_WARNING) {
         int recentErrors = 0;
         datetime timeThreshold = TimeCurrent() - 300; // 5 minutes
         
-        // Count recent errors (simplified - in a real implementation, you'd track timestamps)
-        if(m_componentHealth[index].errorCount > 10) {
-            recentErrors = m_componentHealth[index].errorCount / 2; // Simplified
+        // Count recent errors using timestamp-based tracking
+        // Check if last error was within the time window
+        if(m_componentHealth[index].lastError > 0 && 
+           m_componentHealth[index].lastError > timeThreshold) {
+            recentErrors = 1; // At least one recent error
+        }
+        
+        // Additional check based on error count and time since last error
+        if(m_componentHealth[index].errorCount > 0) {
+            datetime timeSinceLastError = TimeCurrent() - m_componentHealth[index].lastError;
+            // If errors are frequent (less than 30 seconds apart), count them as recent
+            if(timeSinceLastError < 30) {
+                recentErrors += m_componentHealth[index].errorCount;
+            }
         }
         
         // If too many errors in a short time, mark as critical
         if(recentErrors > 10) {
             m_componentHealth[index].status = COMPONENT_FAILED;
-            Print("[WARNING] Component ", component, " marked as FAILED due to error rate");
+            Print("[WARNING] Component ", component, " marked as FAILED due to error rate (recent errors: ", recentErrors, ")");
         }
     }
 }
