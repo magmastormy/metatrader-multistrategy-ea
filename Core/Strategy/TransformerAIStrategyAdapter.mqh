@@ -56,10 +56,10 @@ private:
     void LogVoteHeartbeat()
     {
         datetime now = TimeCurrent();
-        if(m_lastVoteLogTime == 0 || (now - m_lastVoteLogTime) >= 60)
+        if(m_lastVoteLogTime == 0 || (now - m_lastVoteLogTime) >= 10) // More frequent heartbeats
         {
-            PrintFormat("[AI-VOTE][Transformer] %s | votes=%I64u | buy=%I64u | sell=%I64u | none=%I64u",
-                        m_symbol, m_voteCount, m_buyVotes, m_sellVotes, m_noneVotes);
+            PrintFormat("[AI-VOTE][Transformer] %s | votes=%I64u | buy=%I64u | sell=%I64u | none=%I64u | conf=%.2f | reason=%s",
+                        m_symbol, m_voteCount, m_buyVotes, m_sellVotes, m_noneVotes, m_cachedConfidence, m_lastDecisionReasonTag);
             m_lastVoteLogTime = now;
         }
     }

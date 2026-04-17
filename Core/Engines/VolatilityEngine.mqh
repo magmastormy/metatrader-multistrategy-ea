@@ -167,7 +167,8 @@ int CVolatilityEngine::GetReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) co
     if(barSeconds <= 0)
         barSeconds = 60;
 
-    return MathMax(60, MathMin(900, barSeconds));
+    // Allow reuse for up to 3 bars, with minimum 60 seconds and maximum 1 hour
+    return MathMax(60, MathMin(3600, barSeconds * 3));
 }
 
 bool CVolatilityEngine::EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
@@ -283,9 +284,15 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     }
 
     int minBars = MathMax(MathMax(m_atrPeriod + 5, m_bbPeriod + 5), m_hvPeriod + 5);
-    if(Bars(symbol, timeframe) < minBars ||
-       BarsCalculated(m_handleBB) < minBars ||
-       BarsCalculated(m_handleStdDev) < minBars)
+    int availableBars = Bars(symbol, timeframe);
+    int calculatedBarsBB = BarsCalculated(m_handleBB);
+    int calculatedBarsATR = BarsCalculated(m_handleATR);
+    int calculatedBarsStdDev = BarsCalculated(m_handleStdDev);
+    
+    if(availableBars < minBars ||
+       calculatedBarsBB < minBars ||
+       calculatedBarsATR < minBars ||
+       calculatedBarsStdDev < minBars)
     {
         NoteDataFault(symbol, timeframe, "WARMUP", 0);
         return TryReuseLastMetrics(symbol, timeframe, "WARMUP", 0);
@@ -302,15 +309,40 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     ArraySetAsSeries(atr, true);
 
     ResetLastError();
+    
+    // HIGH FIX: Validate handles are valid before attempting copy
+    if(m_handleATR == INVALID_HANDLE || m_handleBB == INVALID_HANDLE || m_handleStdDev == INVALID_HANDLE)
+    {
+        NoteDataFault(symbol, timeframe, "INVALID_HANDLE", 0);
+        return TryReuseLastMetrics(symbol, timeframe, "INVALID_HANDLE", 0);
+    }
+
     int atrRet = CopyBuffer(m_handleATR, 0, 0, 2, atr);
     int upperRet = CopyBuffer(m_handleBB, 1, 0, 1, bb_upper);
     int lowerRet = CopyBuffer(m_handleBB, 2, 0, 1, bb_lower);
     int stdDevRet = CopyBuffer(m_handleStdDev, 0, 0, 1, stddev);
     int copyErr = GetLastError();
-    if(atrRet != 2 || upperRet != 1 || lowerRet != 1 || stdDevRet != 1 || atr[0] <= 0.0)
+    
+    // HIGH FIX: Improved error detection with specific failure reasons
+    if(atrRet <= 0)
     {
-        NoteDataFault(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
-        return TryReuseLastMetrics(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
+        NoteDataFault(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+        return TryReuseLastMetrics(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+    }
+    if(upperRet <= 0 || lowerRet <= 0)
+    {
+        NoteDataFault(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+        return TryReuseLastMetrics(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+    }
+    if(stdDevRet <= 0)
+    {
+        NoteDataFault(symbol, timeframe, "STDDEV_BUFFER_COPY_FAILED", copyErr);
+        return TryReuseLastMetrics(symbol, timeframe, "STDDEV_BUFFER_COPY_FAILED", copyErr);
+    }
+    if(atr[0] <= 0.0)
+    {
+        NoteDataFault(symbol, timeframe, "INVALID_ATR_VALUE", 0);
+        return TryReuseLastMetrics(symbol, timeframe, "INVALID_ATR_VALUE", 0);
     }
 
     double price = SymbolInfoDouble(symbol, SYMBOL_BID);

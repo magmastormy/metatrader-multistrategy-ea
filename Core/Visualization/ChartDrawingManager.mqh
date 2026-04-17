@@ -27,13 +27,14 @@ enum ENUM_CHART_COLOR_SCHEME
     COLOR_SCHEME_NEUTRAL = clrGray,
     COLOR_SCHEME_SUPPLY = clrRed,
     COLOR_SCHEME_DEMAND = clrLime,
-    COLOR_SCHEME_ORDERBLOCK_BULL = clrRoyalBlue,
-    COLOR_SCHEME_ORDERBLOCK_BEAR = clrOrangeRed,
-    COLOR_SCHEME_FVG_BULL = clrMediumSeaGreen,
-    COLOR_SCHEME_FVG_BEAR = clrTomato,
-    COLOR_SCHEME_LIQUIDITY = clrGold,
-    COLOR_SCHEME_STRUCTURE_BOS = clrMagenta,
-    COLOR_SCHEME_STRUCTURE_CHOCH = clrOrange,
+    // Reduced intensity colors for better chart visibility
+    COLOR_SCHEME_ORDERBLOCK_BULL = color(clrRoyalBlue | 0x909090),  // Muted blue
+    COLOR_SCHEME_ORDERBLOCK_BEAR = color(clrOrangeRed | 0x909090), // Muted red
+    COLOR_SCHEME_FVG_BULL = color(clrMediumSeaGreen | 0x909090),  // Muted green
+    COLOR_SCHEME_FVG_BEAR = color(clrTomato | 0x909090),          // Muted tomato
+    COLOR_SCHEME_LIQUIDITY = color(clrGold | 0x909090),           // Muted gold
+    COLOR_SCHEME_STRUCTURE_BOS = color(clrMagenta | 0x909090),    // Muted magenta
+    COLOR_SCHEME_STRUCTURE_CHOCH = color(clrOrange | 0x909090),   // Muted orange
     COLOR_SCHEME_ELLIOTT_IMPULSE = clrDeepSkyBlue,
     COLOR_SCHEME_ELLIOTT_CORRECTIVE = clrSalmon,
     COLOR_SCHEME_TEXT_LIGHT = clrWhite,
@@ -156,6 +157,9 @@ public:
     // Text Labels
     bool DrawTextLabel(datetime time, double price, const string text,
                       color textColor = clrWhite, int fontSize = 10, ENUM_ANCHOR_POINT anchor = ANCHOR_CENTER);
+    
+    // Pattern Drawing
+    bool DrawPattern(const string patternName, datetime &time[], double &price[], int pointCount, color patternColor, int width = 1);
     
     // Cleanup & Maintenance
     void CleanupOldObjects();
@@ -872,6 +876,36 @@ bool CChartDrawingManager::DrawTextLabel(datetime time, double price, const stri
     
     m_objectsDrawn++;
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Draw Pattern (Generic polyline for sketches/diagrams)           |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[], double &price[], int pointCount, color patternColor, int width)
+{
+    if(!m_config.enableDrawing || pointCount < 2)
+        return false;
+
+    PrepareSnapshotDraw();
+    
+    bool success = true;
+    for(int i = 0; i < pointCount - 1; i++)
+    {
+        string segName = GenerateObjectName(patternName, IntegerToString(i));
+        if(!ObjectCreate(m_chartID, segName, OBJ_TREND, 0, time[i], price[i], time[i+1], price[i+1]))
+        {
+            success = false;
+            continue;
+        }
+        
+        ObjectSetInteger(m_chartID, segName, OBJPROP_COLOR, patternColor);
+        ObjectSetInteger(m_chartID, segName, OBJPROP_WIDTH, width);
+        ObjectSetInteger(m_chartID, segName, OBJPROP_STYLE, STYLE_SOLID);
+        ObjectSetInteger(m_chartID, segName, OBJPROP_RAY_RIGHT, false);
+        m_objectsDrawn++;
+    }
+    
+    return success;
 }
 
 #endif // CHART_DRAWING_MANAGER_MQH

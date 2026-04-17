@@ -608,10 +608,19 @@ bool CMarketStructureAnalyzer::HasVolume()
     long vol0 = iVolume(m_symbol, m_timeframe, 0);
     long vol1 = iVolume(m_symbol, m_timeframe, 1);
     long avgVol = 0;
+    int validBars = 0;
     
     for(int i = 2; i < 22; i++)
-        avgVol += iVolume(m_symbol, m_timeframe, i);
-    avgVol /= 20;
+    {
+        long vol = iVolume(m_symbol, m_timeframe, i);
+        if(vol > 0)
+        {
+            avgVol += vol;
+            validBars++;
+        }
+    }
+    if(validBars > 0)
+        avgVol /= validBars;
     
     return (vol0 > avgVol * 1.5 || vol1 > avgVol * 1.5);
 }

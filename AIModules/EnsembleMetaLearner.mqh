@@ -5,6 +5,7 @@
 //+------------------------------------------------------------------+
 #include <Object.mqh>
 #include "TransformerBrain.mqh"
+#include "UniversalTransformerService.mqh"
 
 //+------------------------------------------------------------------+
 //| Ensemble Meta Learner Class                                     |
@@ -16,6 +17,8 @@ private:
     CArrayDouble m_modelWeights;
     CArrayDouble m_modelPerformanceHistory;
     CArrayDouble m_modelRecentAccuracy;
+    bool m_usesSharedTransformer;  // Use shared transformer service
+    string m_symbol;               // Symbol for shared service
     
     // Regime detection state
     double m_atrShort;
@@ -23,6 +26,11 @@ private:
     double m_trendStrength;
     double m_momentum;
     datetime m_lastRegimeUpdate;
+    ENUM_MARKET_REGIME m_lastDetectedRegime;
+    
+    // Thompson Sampling state
+    CArrayDouble m_alphas; // Success counts
+    CArrayDouble m_betas;  // Failure counts
     
 public:
     CEnsembleMetaLearner();
@@ -36,6 +44,7 @@ public:
     
     // Model management
     void UpdateModelWeights(ENUM_MARKET_REGIME regime);
+    void UpdateModelPerformance(int modelIndex, double result);
     double CalculateModelWeight(int modelIndex, ENUM_MARKET_REGIME regime);
     double EvaluateModelPerformance(CTransformerBrain* model, const double &testData[]);
     int GetActiveModelCount() const;
@@ -47,6 +56,26 @@ public:
     // Advanced regime detection
     ENUM_MARKET_REGIME DetectMarketRegime(const double &marketData[]);
     void UpdateRegimeState(const double &marketData[]);
+    
+        
+    // Configuration
+    void SetSymbol(const string& symbol) { m_symbol = symbol; }
+    void SetUseSharedTransformer(bool useShared) { m_usesSharedTransformer = useShared; }
+    
+    // Universal Transformer integration
+    bool Initialize(const string& symbol, bool useSharedTransformer = true);
+    bool UpdateEnsemblePerformance(double tradeResult);
+    void GetEnsembleStatus(string& status);
+    
+    // Core methods with shared transformer support
+    bool ProcessWithSharedTransformer(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence);
+    bool CreateInterpretationModels();
+    
+    // Model creation methods
+    CTransformerBrain* CreateShortTermModel();
+    CTransformerBrain* CreateLongTermModel();
+    CTransformerBrain* CreateMediumTermModel();
+    CTransformerBrain* CreateVolatilityFocusedModel();
     
     double GetConfidence() const { return m_lastConfidence; } 
 
@@ -66,11 +95,16 @@ CEnsembleMetaLearner::CEnsembleMetaLearner() :
     m_atrLong(0.0),
     m_trendStrength(0.0),
     m_momentum(0.0),
-    m_lastRegimeUpdate(0)
+    m_lastRegimeUpdate(0),
+    m_lastDetectedRegime(MARKET_REGIME_RANGING),
+    m_usesSharedTransformer(true),
+    m_symbol("")
 {
     m_models.FreeMode(true);
     m_modelPerformanceHistory.Resize(0);
     m_modelRecentAccuracy.Resize(0);
+    m_alphas.Resize(0);
+    m_betas.Resize(0);
 }
 
 //+------------------------------------------------------------------+
@@ -92,6 +126,13 @@ bool CEnsembleMetaLearner::AddModel(CTransformerBrain* model, double initialWeig
     {
         m_modelWeights.Resize(m_models.Total());
         m_modelWeights.Update(m_models.Total() - 1, initialWeight);
+        
+        m_alphas.Resize(m_models.Total());
+        m_alphas.Update(m_models.Total() - 1, 1.0); // Prior: 1 success
+        
+        m_betas.Resize(m_models.Total());
+        m_betas.Update(m_models.Total() - 1, 1.0);  // Prior: 1 failure
+        
         return true;
     }
     
@@ -108,6 +149,8 @@ bool CEnsembleMetaLearner::RemoveModel(int index)
     if(m_models.Delete(index))
     {
         m_modelWeights.Delete(index);
+        m_alphas.Delete(index);
+        m_betas.Delete(index);
         return true;
     }
     
@@ -162,6 +205,10 @@ bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double 
         if(!model.GetPredictions(modelInput, actualSeqLen, predictions) || ArraySize(predictions) != 3)
             continue;
 
+        // AUDIT FIX: Validate prediction values for NaN/invalid before aggregation
+        if(!MathIsValidNumber(predictions[0]) || !MathIsValidNumber(predictions[1]) || !MathIsValidNumber(predictions[2]))
+            continue;
+
         weightedNoneSignal = weightedNoneSignal + (predictions[0] * modelWeight);
         weightedBuySignal = weightedBuySignal + (predictions[1] * modelWeight);
         weightedSellSignal = weightedSellSignal + (predictions[2] * modelWeight);
@@ -175,10 +222,18 @@ bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double 
         ensembleSellSignal = weightedSellSignal / totalWeight;
         double directionalConfidence = MathMax(ensembleBuySignal, ensembleSellSignal);
         confidence = MathMax(0.0, MathMin(1.0, MathMax(directionalConfidence, 1.0 - ensembleNoneSignal)));
+        
+        // Guard against NaN
+        if(confidence != confidence) // NaN check
+            confidence = 0.0;
+            
         m_lastConfidence = confidence;
         return true;
     }
     
+    // Set confidence to 0.0 when no valid signals
+    confidence = 0.0;
+    m_lastConfidence = 0.0;
     return false;
 }
 
@@ -214,6 +269,39 @@ void CEnsembleMetaLearner::UpdateModelWeights(ENUM_MARKET_REGIME regime)
 }
 
 //+------------------------------------------------------------------+
+//| Update model performance based on trade result                  |
+//+------------------------------------------------------------------+
+void CEnsembleMetaLearner::UpdateModelPerformance(int modelIndex, double result)
+{
+    if(modelIndex < 0 || modelIndex >= m_models.Total()) return;
+    
+    // Ensure m_modelRecentAccuracy is sized correctly
+    if(m_modelRecentAccuracy.Total() <= modelIndex)
+    {
+        m_modelRecentAccuracy.Resize(m_models.Total());
+        for(int i = m_modelRecentAccuracy.Total(); i < m_models.Total(); i++)
+            m_modelRecentAccuracy.Update(i, 0.5); // Default to neutral accuracy
+    }
+    
+    // Update accuracy with smoothing (exponential moving average)
+    double alpha = 0.1; // 10% weight to new result
+    double currentAccuracy = m_modelRecentAccuracy.At(modelIndex);
+    double win = (result > 0) ? 1.0 : 0.0;
+    
+    // Thompson update
+    if(win > 0.5)
+        m_alphas.Update(modelIndex, m_alphas.At(modelIndex) + 1.0);
+    else
+        m_betas.Update(modelIndex, m_betas.At(modelIndex) + 1.0);
+        
+    double updatedAccuracy = (alpha * win) + ((1.0 - alpha) * currentAccuracy);
+    m_modelRecentAccuracy.Update(modelIndex, updatedAccuracy);
+    
+    // Periodically re-normalize weights
+    UpdateModelWeights(m_lastDetectedRegime);
+}
+
+//+------------------------------------------------------------------+
 //| Calculate model weight based on performance and regime         |
 //+------------------------------------------------------------------+
 double CEnsembleMetaLearner::CalculateModelWeight(int modelIndex, ENUM_MARKET_REGIME regime)
@@ -228,6 +316,20 @@ double CEnsembleMetaLearner::CalculateModelWeight(int modelIndex, ENUM_MARKET_RE
     if(modelIndex < m_modelPerformanceHistory.Total())
     {
         performanceScore = m_modelPerformanceHistory.At(modelIndex);
+    }
+    
+    // Incorporate recent accuracy (Thompson-lite weighting)
+    if(modelIndex < m_modelRecentAccuracy.Total())
+    {
+        double recentAcc = m_modelRecentAccuracy.At(modelIndex);
+        
+        // Advanced Thompson Sampling Sample: Mean = alpha / (alpha + beta)
+        double a = m_alphas.At(modelIndex);
+        double b = m_betas.At(modelIndex);
+        double thompsonMean = a / (a + b);
+        
+        // Combine history, recent EMA, and Thompson mean
+        performanceScore = (performanceScore * 0.4) + (recentAcc * 0.3) + (thompsonMean * 0.3);
     }
     
     // Regime-specific adjustment with volatility adaptation
@@ -450,14 +552,18 @@ ENUM_MARKET_REGIME CEnsembleMetaLearner::DetectMarketRegime(const double &market
     
     if(isVolatile)
     {
-        return MARKET_REGIME_VOLATILE;
+        m_lastDetectedRegime = MARKET_REGIME_VOLATILE;
     }
     else if(isTrending && isMomentumStrong)
     {
-        return (m_trendStrength > 0) ? MARKET_REGIME_TRENDING : MARKET_REGIME_RANGING;
+        m_lastDetectedRegime = (m_trendStrength > 0) ? MARKET_REGIME_TRENDING : MARKET_REGIME_RANGING;
+    }
+    else
+    {
+        m_lastDetectedRegime = MARKET_REGIME_RANGING;
     }
     
-    return MARKET_REGIME_RANGING;
+    return m_lastDetectedRegime;
 }
 
 //+------------------------------------------------------------------+
@@ -552,4 +658,190 @@ double CEnsembleMetaLearner::CalculateMomentum(const double &data[], int period)
         return 0.0;
     
     return (currentPrice - pastPrice) / pastPrice;
+}
+
+//+------------------------------------------------------------------+
+//| Create differentiated models for true ensemble diversity       |
+//+------------------------------------------------------------------+
+CTransformerBrain* CEnsembleMetaLearner::CreateShortTermModel()
+{
+    // Short-term model: smaller sequence length, faster learning
+    return new CTransformerBrain(32, 2, 1, 64, 20, 0.002); // dModel=32, heads=2, layers=1, seqLen=20, lr=0.002
+}
+
+CTransformerBrain* CEnsembleMetaLearner::CreateLongTermModel()
+{
+    // Long-term model: longer sequence, slower learning
+    return new CTransformerBrain(32, 2, 1, 64, 50, 0.0005); // dModel=32, heads=2, layers=1, seqLen=50, lr=0.0005
+}
+
+CTransformerBrain* CEnsembleMetaLearner::CreateMediumTermModel()
+{
+    // Medium-term model: balanced parameters
+    return new CTransformerBrain(32, 2, 1, 64, 30, 0.001); // dModel=32, heads=2, layers=1, seqLen=30, lr=0.001
+}
+
+CTransformerBrain* CEnsembleMetaLearner::CreateVolatilityFocusedModel()
+{
+    // Volatility-focused model: more heads for pattern detection
+    return new CTransformerBrain(32, 4, 1, 64, 35, 0.0015); // dModel=32, heads=4, layers=1, seqLen=35, lr=0.0015
+}
+
+//+------------------------------------------------------------------+
+//| Create differentiated interpretation models using shared transformer
+//+------------------------------------------------------------------+
+bool CEnsembleMetaLearner::CreateInterpretationModels()
+{
+    if(m_symbol == "") return false;
+    
+    // Ensure symbol is registered with universal transformer service
+    if(!g_universalTransformerService.IsSymbolRegistered(m_symbol))
+    {
+        if(!g_universalTransformerService.RegisterSymbol(m_symbol))
+        {
+            PrintFormat("[ENSEMBLE] ERROR: Failed to register symbol %s with universal transformer", m_symbol);
+            return false;
+        }
+    }
+    
+    // Clear existing models
+    m_models.Clear();
+    m_modelWeights.Resize(0);
+    m_modelPerformanceHistory.Resize(0);
+    m_modelRecentAccuracy.Resize(0);
+    m_alphas.Resize(0);
+    m_betas.Resize(0);
+    
+    // Create different model types for ensemble diversity
+    CTransformerBrain* shortTermModel = CreateShortTermModel();
+    CTransformerBrain* longTermModel = CreateLongTermModel();
+    CTransformerBrain* mediumTermModel = CreateMediumTermModel();
+    CTransformerBrain* volatilityModel = CreateVolatilityFocusedModel();
+    
+    // Add models to ensemble with initial weights
+    bool success = true;
+    if(shortTermModel) success &= AddModel(shortTermModel, 0.25);
+    if(longTermModel) success &= AddModel(longTermModel, 0.25);
+    if(mediumTermModel) success &= AddModel(mediumTermModel, 0.25);
+    if(volatilityModel) success &= AddModel(volatilityModel, 0.25);
+    
+    PrintFormat("[ENSEMBLE] Created %d interpretation models for symbol %s", m_models.Total(), m_symbol);
+    return success;
+}
+
+//+------------------------------------------------------------------+
+//| Process market data using shared transformer service            |
+//+------------------------------------------------------------------+
+bool CEnsembleMetaLearner::ProcessWithSharedTransformer(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence)
+{
+    ensembleBuySignal = 0.0;
+    ensembleSellSignal = 0.0;
+    confidence = 0.0;
+    
+    if(m_symbol == "" || !m_usesSharedTransformer) return false;
+    
+    // Ensure symbol is registered
+    if(!g_universalTransformerService.IsSymbolRegistered(m_symbol))
+    {
+        if(!g_universalTransformerService.RegisterSymbol(m_symbol))
+        {
+            PrintFormat("[ENSEMBLE] ERROR: Failed to register symbol %s", m_symbol);
+            return false;
+        }
+    }
+    
+    // Get symbol features from universal transformer
+    double symbolFeatures[];
+    int seqLen = MathMax(1, ArraySize(marketData) / 64); // Estimate sequence length
+    
+    if(!g_universalTransformerService.GetSymbolFeatures(m_symbol, marketData, seqLen, symbolFeatures))
+    {
+        PrintFormat("[ENSEMBLE] ERROR: Failed to get features for symbol %s", m_symbol);
+        return false;
+    }
+    
+    // Simple ensemble approach using universal transformer features
+    if(ArraySize(symbolFeatures) < 3) return false;
+    
+    // Analyze features for trading signals
+    double buyScore = 0.0, sellScore = 0.0, noneScore = 0.0;
+    
+    // Weight different feature groups
+    for(int i = 0; i < MathMin(32, ArraySize(symbolFeatures)); i++)
+    {
+        if(i < 10) buyScore += symbolFeatures[i];      // Short-term features
+        else if(i < 20) sellScore += symbolFeatures[i]; // Medium-term features
+        else noneScore += symbolFeatures[i];            // Long-term features
+    }
+    
+    // Normalize scores
+    double totalScore = MathAbs(buyScore) + MathAbs(sellScore) + MathAbs(noneScore) + 1e-9;
+    ensembleBuySignal = MathAbs(buyScore) / totalScore;
+    ensembleSellSignal = MathAbs(sellScore) / totalScore;
+    double noneSignal = MathAbs(noneScore) / totalScore;
+    
+    // Calculate confidence
+    confidence = MathMax(ensembleBuySignal, ensembleSellSignal);
+    confidence = MathMax(0.0, MathMin(1.0, confidence));
+    
+    // Guard against NaN
+    if(confidence != confidence) // NaN check
+        confidence = 0.0;
+        
+    m_lastConfidence = confidence;
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Initialize ensemble with shared transformer                     |
+//+------------------------------------------------------------------+
+bool CEnsembleMetaLearner::Initialize(const string& symbol, bool useSharedTransformer)
+{
+    m_symbol = symbol;
+    m_usesSharedTransformer = useSharedTransformer;
+    
+    if(m_usesSharedTransformer)
+    {
+        PrintFormat("[ENSEMBLE] Initializing with Universal Transformer service for symbol: %s", m_symbol);
+        return CreateInterpretationModels();
+    }
+    else
+    {
+        PrintFormat("[ENSEMBLE] Initializing with local models for symbol: %s", m_symbol);
+        return true;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get ensemble status and performance metrics                     |
+//+------------------------------------------------------------------+
+void CEnsembleMetaLearner::GetEnsembleStatus(string& status)
+{
+    status = "[ENSEMBLE] ";
+    status += "Models: " + IntegerToString(GetActiveModelCount()) + " | ";
+    status += "Shared Transformer: " + string(m_usesSharedTransformer ? "YES" : "NO") + " | ";
+    status += "Symbol: " + m_symbol + " | ";
+    status += "Confidence: " + DoubleToString(m_lastConfidence, 3);
+}
+
+//+------------------------------------------------------------------+
+//| Update ensemble performance with trade results                  |
+//+------------------------------------------------------------------+
+bool CEnsembleMetaLearner::UpdateEnsemblePerformance(double tradeResult)
+{
+    // Update performance for all models
+    for(int i = 0; i < m_models.Total(); i++)
+    {
+        UpdateModelPerformance(i, tradeResult);
+    }
+    
+    // Update universal transformer service if using shared transformer
+    if(m_usesSharedTransformer && m_symbol != "")
+    {
+        double performance = (tradeResult > 0) ? 1.0 : 0.0;
+        g_universalTransformerService.UpdateSymbolPerformance(m_symbol, performance);
+    }
+    
+    return true;
 }

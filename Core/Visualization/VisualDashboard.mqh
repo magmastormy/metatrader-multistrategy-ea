@@ -8,6 +8,7 @@
 #include "../Utils/Enums.mqh"
 #include "../../AIModules/NextGenStrategyBrain.mqh"
 #include "../../AIModules/NeuralNetworkStrategy.mqh"
+#include "../Engines/AIEngine.mqh"
 
 //+------------------------------------------------------------------+
 //| Visual Dashboard Class                                           |
@@ -54,7 +55,7 @@ public:
 
     // Update the dashboard with latest data
     void Update(int activeStrats, int totalPositions, double balance, double equity, 
-                CNextGenStrategyBrain* brain, CNeuralNetworkStrategy* nn)
+                CNextGenStrategyBrain* brain, CNeuralNetworkStrategy* nn, CAIEngine* aiEngine = NULL)
     {
         int row = 0;
         
@@ -90,6 +91,17 @@ public:
         }
         DrawLabel("TF_Title", "AI Engine Mode:", row, 0, m_textColor);
         DrawLabel("TF_Status", tfStatus, row++, 1, tfColor);
+
+        // --- External LLM ---
+        string llmStatus = "DISABLED";
+        color llmColor = clrRed;
+        if(aiEngine != NULL && aiEngine.IsExternalLLMEnabled())
+        {
+            llmStatus = "ENABLED";
+            llmColor = clrLime;
+        }
+        DrawLabel("LLM_Title", "External LLM:", row, 0, m_textColor);
+        DrawLabel("LLM_Status", llmStatus, row++, 1, llmColor);
 
         // --- Ensemble Meta-Learner ---
         string ensStatus = "N/A";

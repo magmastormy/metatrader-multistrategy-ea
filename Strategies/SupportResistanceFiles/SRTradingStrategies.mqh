@@ -140,13 +140,14 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     
     if(nearestIdx < 0)
         return result;
-    
+
+    double atr = GetATR(14);
     SSupportResistance nearestLevel;
     if(!m_srDetector.GetLevel(nearestIdx, nearestLevel))
         return result;
-    
+
     double distance = MathAbs(price - nearestLevel.price);
-    double tolerance = 15 * point;
+    double tolerance = (atr > 0) ? (atr * 0.20) : (15 * SymbolInfoDouble(m_symbol, SYMBOL_POINT));
     
     // Must be AT the level
     if(distance > tolerance)
@@ -155,7 +156,7 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
     // Determine if support or resistance
     bool isSupport = (price >= nearestLevel.price);
     
-    double atr = GetATR(14);
+    atr = GetATR(14);
     double atrTargetMultiplier = 2.0; 
     double atrStopMultiplier = 1.0;
     
@@ -421,9 +422,10 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
     if(!m_srDetector.GetLevel(brokenLevelIdx, brokenLevel))
         return result;
     
+    double atr = GetATR(14);
     // Check if price is retesting the broken level
     double retestDistance = MathAbs(price - brokenLevel.price);
-    double retestTolerance = 15 * point;
+    double retestTolerance = (atr > 0) ? (atr * 0.15) : (15 * point);
     
     if(retestDistance > retestTolerance)
         return result; // Not retesting yet
@@ -442,7 +444,7 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
     
     result.confidence = 0.75;
     
-    double atr = GetATR(14);
+    atr = GetATR(14);
     double defaultTarget = (atr > 0) ? (atr * 1.5) : (30 * point);
     double defaultStop = (atr > 0) ? (atr * 0.8) : (15 * point);
 
@@ -618,8 +620,9 @@ SSRSignalResult CTrendlineBounceStrategy::GetSignal()
         // Project trendline to current time
         double projectedPrice = m_trendDetector.ProjectTrendline(trendline, localTime);
         
-        double tolerance = 15 * point;
         double atr = GetATR(14);
+        double tolerance = (atr > 0) ? (atr * 0.20) : (15 * point);
+        
         double targetMult = 2.0;
         double stopMult   = 1.0;
         double defaultTarget = (atr > 0) ? (atr * targetMult) : (40 * point);

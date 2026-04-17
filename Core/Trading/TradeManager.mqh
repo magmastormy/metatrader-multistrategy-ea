@@ -20,6 +20,7 @@
 // Project includes
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
+#include "../Utils/SessionManager.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/PortfolioRiskManager.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
@@ -106,6 +107,7 @@ private:
     CPositionInfo m_positionInfo;            // Position info object
     CSymbolInfo m_symbolInfo;                // Symbol info object
     CHistoryOrderInfo m_historyOrderInfo;    // History order info
+    CSessionManager m_sessionManager;        // Session manager object
     
     // Dependencies (owned externally)
     CPerformanceAnalytics* m_perfAnalytics;  // Performance analytics
@@ -446,25 +448,7 @@ private:
     //+------------------------------------------------------------------+
     bool IsMarketOpen(const string symbolParam)
     {
-        if(!m_symbolInfo.Name(symbolParam)) return false;
-        if(!SymbolSelect(symbolParam, true)) return false;
-        m_symbolInfo.RefreshRates();
-        
-        long tradeMode = SymbolInfoInteger(symbolParam, SYMBOL_TRADE_MODE);
-        if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY) return false;
-        
-        bool isSynthetic = (StringFind(symbolParam, "Volatility") >= 0 || StringFind(symbolParam, "Step") >= 0 || StringFind(symbolParam, "Boom") >= 0 || StringFind(symbolParam, "Crash") >= 0 || StringFind(symbolParam, "Jump") >= 0 || StringFind(symbolParam, "PainX") >= 0 || StringFind(symbolParam, "SFX Vol") >= 0 || StringFind(symbolParam, "GainX") >= 0 || StringFind(symbolParam, "FX Vol") >= 0 || StringFind(symbolParam, "FlipX") >= 0);
-        if(isSynthetic) {
-            return (m_symbolInfo.Bid() > 0 && m_symbolInfo.Ask() > 0);
-        }
-        
-        MqlDateTime dt;
-        TimeToStruct(TimeCurrent(), dt);
-        if(dt.day_of_week == 0 || dt.day_of_week == 6) return false;
-        
-        if(m_symbolInfo.Bid() <= 0 || m_symbolInfo.Ask() <= 0) return false;
-        
-        return true;
+        return m_sessionManager.IsMarketOpen(symbolParam);
     }
 
     bool IsTransientTradeRetcode(const uint retcode) const
@@ -870,11 +854,24 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
         return false;
     
     string symbol = m_positionInfo.Symbol();
+    
+    // Add market open check
+    if(!IsMarketOpen(symbol))
+    {
+        LogTradeOperation("PARTIAL_CLOSE", symbol, (ENUM_ORDER_TYPE)m_positionInfo.Type(), volume, false, 
+                         StringFormat("[SESSION-REJECT] Market closed for %s", symbol));
+        return false;
+    }
+
     double positionVolume = m_positionInfo.Volume();
     
     double normalizedVolume = NormalizeVolume(symbol, volume);
     if(normalizedVolume <= 0 || normalizedVolume >= positionVolume)
+    {
+        LogTradeOperation("PARTIAL_CLOSE", symbol, (ENUM_ORDER_TYPE)m_positionInfo.Type(), volume, false, 
+                         StringFormat("Invalid volume: %.2f (Position: %.2f)", normalizedVolume, positionVolume));
         return false;
+    }
     
     bool result = m_trade.PositionClosePartial(ticket, normalizedVolume);
     
@@ -887,8 +884,9 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
     }
     else
     {
+        int errCode = GetLastError();
         LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, false,
-                          "Partial close failed - " + IntegerToString(GetLastError()));
+                          StringFormat("Partial close failed - %d (%s)", errCode, GetTradeErrorDescription(m_trade.ResultRetcode())));
     }
     
     return result;
@@ -1002,12 +1000,12 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     {
         if(posType == POSITION_TYPE_BUY && adjustedSL >= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY SL above executable price: SL=%.5f, Price=%.5f", adjustedSL, referencePrice);
+            PrintFormat("[TRADE-REJECT] ModifyPosition skipped - BUY SL above executable price: SL=%.5f, Price=%.5f", adjustedSL, referencePrice);
             return false;
         }
         if(posType == POSITION_TYPE_SELL && adjustedSL <= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL SL below executable price: SL=%.5f, Price=%.5f", adjustedSL, referencePrice);
+            PrintFormat("[TRADE-REJECT] ModifyPosition skipped - SELL SL below executable price: SL=%.5f, Price=%.5f", adjustedSL, referencePrice);
             return false;
         }
     }
@@ -1017,12 +1015,12 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     {
         if(posType == POSITION_TYPE_BUY && adjustedTP <= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - BUY TP below/at executable price: TP=%.5f, Price=%.5f", adjustedTP, referencePrice);
+            PrintFormat("[TRADE-REJECT] ModifyPosition skipped - BUY TP below/at executable price: TP=%.5f, Price=%.5f", adjustedTP, referencePrice);
             return false;
         }
         if(posType == POSITION_TYPE_SELL && adjustedTP >= referencePrice)
         {
-            PrintFormat("[TRADE-WARN] ModifyPosition skipped - SELL TP above/at executable price: TP=%.5f, Price=%.5f", adjustedTP, referencePrice);
+            PrintFormat("[TRADE-REJECT] ModifyPosition skipped - SELL TP above/at executable price: TP=%.5f, Price=%.5f", adjustedTP, referencePrice);
             return false;
         }
     }

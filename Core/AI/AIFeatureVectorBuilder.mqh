@@ -18,12 +18,15 @@
 #define TRANSFORMER_DROPOUT_DEFAULT TRANSFORMER_MAX_SEQ_LEN_DEFAULT
 #define TRANSFORMER_LR_A_DEFAULT           0.001
 #define TRANSFORMER_LR_B_DEFAULT          0.0015
-#define FEATURE_VECTOR_SIZE               25
+#define FEATURE_VECTOR_SIZE               50
 #define TEMPORAL_BLEND_CURRENT            0.85
 #define TEMPORAL_BLEND_LAG                0.15
 #define DMODE_BASE_FEATURE_RATIO_WARNING   6
 
 #include "../../IndicatorManager.mqh"
+#include "../Engines/StructureEngine.mqh"
+#include "../../Strategies/UnifiedICTFiles/AdvancedOrderBlocks.mqh"
+#include "../../Strategies/UnifiedICTFiles/ImbalanceDetector.mqh"
 
 class CAIFeatureVectorBuilder
 {
@@ -33,17 +36,63 @@ private:
         if(handle == INVALID_HANDLE)
             return 0.0;
 
+        // Check if handle is ready
+        if(BarsCalculated(handle) < shift + 1)
+            return 0.0;
+
         double value[1];
         if(CopyBuffer(handle, buffer, shift, 1, value) > 0)
+        {
+            if(!MathIsValidNumber(value[0])) return 0.0;
             return value[0];
+        }
 
         return 0.0;
+    }
+
+    static int GetRequiredBarsForTimeframe(ENUM_TIMEFRAMES timeframe)
+    {
+        // AUDIT FIX: Timeframe-aware history check
+        // Higher timeframes need fewer bars, lower timeframes need more
+        switch(timeframe)
+        {
+            case PERIOD_M1:  return 200;  // M1: need more bars for stability
+            case PERIOD_M5:  return 150;
+            case PERIOD_M15: return 100;
+            case PERIOD_M30: return 80;
+            case PERIOD_H1:  return 60;
+            case PERIOD_H4:  return 50;
+            case PERIOD_D1:  return 30;
+            case PERIOD_W1:  return 20;
+            case PERIOD_MN1: return 12;
+            default:         return 50;   // Default for other timeframes
+        }
+    }
+    
+    static bool IsDataReady(const string symbol, const ENUM_TIMEFRAMES timeframe, const int requiredBars)
+    {
+        int available = Bars(symbol, timeframe);
+        if(available < requiredBars)
+        {
+            static datetime lastLog = 0;
+            if(TimeCurrent() - lastLog > 60) {
+                PrintFormat("[AI-DATA] Waiting for history: %s %s | available=%d | required=%d", 
+                            symbol, EnumToString(timeframe), available, requiredBars);
+                lastLog = TimeCurrent();
+            }
+            return false;
+        }
+        
+        if(iTime(symbol, timeframe, requiredBars - 1) <= 0)
+            return false;
+
+        return true;
     }
 
     static double GetNormalizedValue(const double minValue, const double maxValue, const double value)
     {
         double range = maxValue - minValue;
-        if(range == 0.0)
+        if(range <= 1e-9)
             return 0.0;
         return (value - minValue) / range;
     }
@@ -66,6 +115,22 @@ public:
         if(symbol == "" || barShift < 1)
             return false;
 
+        // AUDIT FIX: Timeframe-aware history check instead of fixed 50 bars
+        int requiredBars = GetRequiredBarsForTimeframe(timeframe);
+        if(!IsDataReady(symbol, timeframe, barShift + requiredBars))
+        {
+            static datetime s_lastHistoryLog = 0;
+            datetime now = TimeCurrent();
+            if(s_lastHistoryLog == 0 || (now - s_lastHistoryLog) >= 60)
+            {
+                int available = Bars(symbol, timeframe);
+                PrintFormat("[AI-FEATURE] History not ready for %s %s | available=%d | required=%d | barShift=%d",
+                            symbol, EnumToString(timeframe), available, barShift + requiredBars, barShift);
+                s_lastHistoryLog = now;
+            }
+            return false;
+        }
+
         CIndicatorManager* ind = CIndicatorManager::Instance();
         if(ind == NULL)
             return false;
@@ -73,6 +138,8 @@ public:
         double close = iClose(symbol, timeframe, barShift);
         if(close <= 0.0)
             close = SymbolInfoDouble(symbol, SYMBOL_BID);
+
+        if(close <= 0.0) return false; // Critical failure
 
         double open = iOpen(symbol, timeframe, barShift);
         double high = iHigh(symbol, timeframe, barShift);
@@ -82,19 +149,86 @@ public:
         if(point <= 0.0)
             point = 0.00001;
 
-        double maFast = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 9, 0, MODE_EMA, PRICE_CLOSE), 0, barShift);
-        double maSlow = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE), 0, barShift);
-        double ema200 = GetIndicatorValue(ind.GetMAHandle(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE), 0, barShift);
-        double adx = GetIndicatorValue(ind.GetADXHandle(symbol, timeframe, 14), 0, barShift);
-        double rsi = GetIndicatorValue(ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, barShift);
-        double rsiPrev = GetIndicatorValue(ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, barShift + 1);
-        double atrFast = GetIndicatorValue(ind.GetATRHandle(symbol, timeframe, 14), 0, barShift);
-        double atrSlow = GetIndicatorValue(ind.GetATRHandle(symbol, timeframe, 50), 0, barShift);
-        double bbUpper = GetIndicatorValue(ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE), 1, barShift);
-        double bbLower = GetIndicatorValue(ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE), 2, barShift);
-        double macdMain = GetIndicatorValue(ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE), 0, barShift);
-        double macdSignal = GetIndicatorValue(ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE), 1, barShift);
-        double cci = GetIndicatorValue(ind.GetCCIHandle(symbol, timeframe, 14, PRICE_CLOSE), 0, barShift);
+        // Fetch handles and check readiness
+        int hMaFast = ind.GetMAHandle(symbol, timeframe, 9, 0, MODE_EMA, PRICE_CLOSE);
+        int hMaSlow = ind.GetMAHandle(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE);
+        int hEma200 = ind.GetMAHandle(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
+        int hAdx = ind.GetADXHandle(symbol, timeframe, 14);
+        int hRsi = ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE);
+        int hAtrFast = ind.GetATRHandle(symbol, timeframe, 14);
+        int hAtrSlow = ind.GetATRHandle(symbol, timeframe, 50);
+        int hBands = ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE);
+        int hMacd = ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE);
+        int hCci = ind.GetCCIHandle(symbol, timeframe, 14, PRICE_CLOSE);
+
+        // Tolerant indicator check - check each indicator individually
+        // Use available indicators with sensible defaults for warming ones
+        // Only fail if ALL critical indicators are warming
+        bool ema200Ready = (BarsCalculated(hEma200) >= barShift + 1);
+        bool atrSlowReady = (BarsCalculated(hAtrSlow) >= barShift + 1);
+        bool adxReady = (BarsCalculated(hAdx) >= barShift + 1);
+        bool rsiReady = (BarsCalculated(hRsi) >= barShift + 1);
+
+        bool anyReady = (ema200Ready || atrSlowReady || adxReady || rsiReady);
+        bool allWarming = !anyReady;
+
+        if(allWarming)
+        {
+            static datetime s_lastIndicatorLog = 0;
+            datetime now = TimeCurrent();
+            if(s_lastIndicatorLog == 0 || (now - s_lastIndicatorLog) >= 60)
+            {
+                // [DIAGNOSTIC] Log whether the indicator calculation failed entirely (-1) or is just waiting for history bars
+                PrintFormat("[AI-FEATURE] ALL indicators warming up (or failed) for %s %s | EMA200=%d | ATR50=%d | ADX=%d | RSI=%d | barShift=%d | Skipping AI feature build",
+                            symbol, EnumToString(timeframe),
+                            BarsCalculated(hEma200), BarsCalculated(hAtrSlow),
+                            BarsCalculated(hAdx), BarsCalculated(hRsi), barShift);
+                s_lastIndicatorLog = now;
+            }
+            return false; // Cannot build features if ALL indicators are warming
+        }
+
+        // Log partial indicator readiness (non-blocking diagnostic)
+        static datetime s_lastPartialLog = 0;
+        datetime now = TimeCurrent();
+        if(now - s_lastPartialLog >= 120) // Log every 2 minutes
+        {
+            string readyStatus = StringFormat("EMA200=%s | ATR50=%s | ADX=%s | RSI=%s",
+                                              ema200Ready ? "READY" : "WARMING",
+                                              atrSlowReady ? "READY" : "WARMING",
+                                              adxReady ? "READY" : "WARMING",
+                                              rsiReady ? "READY" : "WARMING");
+            PrintFormat("[AI-FEATURE] Partial indicator readiness for %s %s | %s | Proceeding with available indicators",
+                        symbol, EnumToString(timeframe), readyStatus);
+            s_lastPartialLog = now;
+        }
+
+        double maFast = GetIndicatorValue(hMaFast, 0, barShift);
+        double maSlow = GetIndicatorValue(hMaSlow, 0, barShift);
+        double ema200 = GetIndicatorValue(hEma200, 0, barShift);
+        double adx = GetIndicatorValue(hAdx, 0, barShift);
+        double rsi = GetIndicatorValue(hRsi, 0, barShift);
+        double rsiPrev = GetIndicatorValue(hRsi, 0, barShift + 1);
+        double atrFast = GetIndicatorValue(hAtrFast, 0, barShift);
+        double atrSlow = GetIndicatorValue(hAtrSlow, 0, barShift);
+
+        // Fallback values for warming indicators to provide meaningful features
+        if(!ema200Ready && ema200 <= 0.0)
+            ema200 = close; // Use current price if EMA200 not ready
+        if(!atrSlowReady && atrSlow <= 0.0)
+            atrSlow = atrFast; // Use fast ATR if slow ATR not ready
+        if(!adxReady && adx <= 0.0)
+            adx = 20.0; // Neutral ADX value (moderate trend)
+        if(!rsiReady && rsi <= 0.0)
+        {
+            rsi = 50.0; // Neutral RSI value
+            rsiPrev = 50.0;
+        }
+        double bbUpper = GetIndicatorValue(hBands, 1, barShift);
+        double bbLower = GetIndicatorValue(hBands, 2, barShift);
+        double macdMain = GetIndicatorValue(hMacd, 0, barShift);
+        double macdSignal = GetIndicatorValue(hMacd, 1, barShift);
+        double cci = GetIndicatorValue(hCci, 0, barShift);
 
         // 0-4: Market structure
         features[0] = (maFast > maSlow) ? 1.0 : (maFast < maSlow) ? -1.0 : 0.0;
@@ -151,6 +285,152 @@ public:
         features[23] = (atrSlow > 0.0) ? MathMin(2.0, atrFast / atrSlow) : 1.0;
         features[24] = 1.0;
 
+        // --- Pattern-Specific Features (Features 25-43) ---
+        // 25-29: Higher Highs / Lower Lows Sequences
+        double highs[5], lows[5];
+        int hhCount = 0, llCount = 0;
+        for(int i = 0; i < 5; i++) {
+            highs[i] = iHigh(symbol, timeframe, barShift + i);
+            lows[i] = iLow(symbol, timeframe, barShift + i);
+            if(i > 0) {
+                if(highs[i] > highs[i-1]) hhCount++;
+                if(lows[i] < lows[i-1]) llCount++;
+            }
+        }
+        features[25] = hhCount / 4.0;  // Higher highs ratio
+        features[26] = llCount / 4.0;  // Lower lows ratio
+        features[27] = (highs[0] > highs[4]) ? 1.0 : -1.0;  // Overall trend
+        features[28] = (highs[0] > highs[2]) ? 1.0 : -1.0;  // Recent trend
+        features[29] = (lows[0] < lows[2]) ? 1.0 : -1.0;  // Recent lows trend
+
+        // 30-32: Support/Resistance Touch Counts
+        double supportLevel = iLow(symbol, timeframe, iLowest(symbol, timeframe, MODE_LOW, 20, barShift));
+        double resistanceLevel = iHigh(symbol, timeframe, iHighest(symbol, timeframe, MODE_HIGH, 20, barShift));
+        int supportTouches = 0, resistanceTouches = 0;
+        for(int i = 0; i < 20; i++) {
+            double barLow = iLow(symbol, timeframe, barShift + i);
+            double barHigh = iHigh(symbol, timeframe, barShift + i);
+            if(resistanceLevel > 0 && MathAbs(barHigh - resistanceLevel) / resistanceLevel < 0.005) resistanceTouches++;
+            if(supportLevel > 0 && MathAbs(barLow - supportLevel) / supportLevel < 0.005) supportTouches++;
+        }
+        features[30] = supportTouches / 20.0;
+        features[31] = resistanceTouches / 20.0;
+        features[32] = (resistanceLevel - supportLevel > 0) ? (close - supportLevel) / (resistanceLevel - supportLevel) : 0.5;
+
+        // 33-35: Fibonacci Retracement Level Proximity
+        // AUDIT FIX: Use timeframe-aware swing lookback instead of fixed 50 bars
+        int swingLookback = GetRequiredBarsForTimeframe(timeframe);
+        double swingHigh = iHigh(symbol, timeframe, iHighest(symbol, timeframe, MODE_HIGH, swingLookback, barShift));
+        double swingLow = iLow(symbol, timeframe, iLowest(symbol, timeframe, MODE_LOW, swingLookback, barShift));
+        double fibRange = swingHigh - swingLow;
+        if(fibRange > 0) {
+            double fib382 = swingLow + fibRange * 0.382;
+            double fib500 = swingLow + fibRange * 0.500;
+            double fib618 = swingLow + fibRange * 0.618;
+            features[33] = 1.0 - MathMin(1.0, MathAbs(close - fib382) / fibRange);
+            features[34] = 1.0 - MathMin(1.0, MathAbs(close - fib500) / fibRange);
+            features[35] = 1.0 - MathMin(1.0, MathAbs(close - fib618) / fibRange);
+        }
+
+        // 36-38: Pivot Point Proximity
+        double pivot = (high + low + close) / 3.0;
+        double r1 = 2 * pivot - low;
+        double s1 = 2 * pivot - high;
+        if(pivot > 0) {
+            features[36] = 1.0 - MathMin(1.0, MathAbs(close - pivot) / pivot);
+            features[37] = 1.0 - MathMin(1.0, MathAbs(close - r1) / r1);
+            features[38] = 1.0 - MathMin(1.0, MathAbs(close - s1) / s1);
+        }
+
+        // 39-43: Price Distance from Moving Averages
+        // Cache handles locally to prevent repeated lookups
+        int hMA5 = ind.GetMAHandle(symbol, timeframe, 5, 0, MODE_SMA, PRICE_CLOSE);
+        int hMA10 = ind.GetMAHandle(symbol, timeframe, 10, 0, MODE_SMA, PRICE_CLOSE);
+        int hMA20 = ind.GetMAHandle(symbol, timeframe, 20, 0, MODE_SMA, PRICE_CLOSE);
+        int hMA50 = ind.GetMAHandle(symbol, timeframe, 50, 0, MODE_SMA, PRICE_CLOSE);
+        int hMA100 = ind.GetMAHandle(symbol, timeframe, 100, 0, MODE_SMA, PRICE_CLOSE);
+        
+        double ma5 = GetIndicatorValue(hMA5, 0, barShift);
+        double ma10 = GetIndicatorValue(hMA10, 0, barShift);
+        double ma20 = GetIndicatorValue(hMA20, 0, barShift);
+        double ma50 = GetIndicatorValue(hMA50, 0, barShift);
+        double ma100 = GetIndicatorValue(hMA100, 0, barShift);
+        
+        if(ma5 > 0) features[39] = (close - ma5) / ma5;
+        if(ma10 > 0) features[40] = (close - ma10) / ma10;
+        if(ma20 > 0) features[41] = (close - ma20) / ma20;
+        if(ma50 > 0) features[42] = (close - ma50) / ma50;
+        if(ma100 > 0) features[43] = (close - ma100) / ma100;
+
+        // --- Advanced ICT Features (Features 44-49) ---
+        // 44-45: Order Block Proximity
+        bool obSuccess = true;
+        CAdvancedOrderBlockDetector obDetector;
+        if(obDetector.Initialize(symbol, timeframe))
+        {
+            obDetector.ScanForOrderBlocks(100);
+            int bestBullOB = obDetector.FindBestBullishOB();
+            int bestBearOB = obDetector.FindBestBearishOB();
+            SAdvancedOrderBlock ob;
+            if(bestBullOB >= 0 && obDetector.GetOrderBlock(bestBullOB, ob))
+                features[44] = (ob.top > 0) ? 1.0 - MathMin(1.0, MathAbs(close - ob.top) / ob.top) : 0.0;
+            if(bestBearOB >= 0 && obDetector.GetOrderBlock(bestBearOB, ob))
+                features[45] = (ob.bottom > 0) ? 1.0 - MathMin(1.0, MathAbs(close - ob.bottom) / ob.bottom) : 0.0;
+        }
+        else
+        {
+            obSuccess = false;
+        }
+
+        // 46-47: Fair Value Gap (Imbalance) Proximity
+        bool imbSuccess = true;
+        CImbalanceDetector imbDetector;
+        if(imbDetector.Initialize(symbol, timeframe))
+        {
+            imbDetector.ScanForImbalances(100);
+            int bestBullImb = imbDetector.FindBestBullishImbalance();
+            int bestBearImb = imbDetector.FindBestBearishImbalance();
+            SImbalance imb;
+            if(bestBullImb >= 0 && imbDetector.GetImbalance(bestBullImb, imb))
+                features[46] = (imb.top > 0) ? 1.0 - MathMin(1.0, MathAbs(close - imb.top) / imb.top) : 0.0;
+            if(bestBearImb >= 0 && imbDetector.GetImbalance(bestBearImb, imb))
+                features[47] = (imb.bottom > 0) ? 1.0 - MathMin(1.0, MathAbs(close - imb.bottom) / imb.bottom) : 0.0;
+        }
+        else
+        {
+            imbSuccess = false;
+        }
+
+        // 48-49: Market Structure State (BOS/CHOCH)
+        bool structSuccess = true;
+        CStructureEngine structEngine;
+        if(structEngine.Initialize())
+        {
+            structEngine.DetectSwingPoints(symbol, timeframe);
+            features[48] = structEngine.IsBullishStructure() ? 1.0 : (structEngine.IsBearishStructure() ? -1.0 : 0.0);
+            features[49] = structEngine.GetStructureStrength() / 100.0;
+        }
+        else
+        {
+            structSuccess = false;
+        }
+
+        // Log advanced feature failures (non-blocking, just diagnostic)
+        if(!obSuccess || !imbSuccess || !structSuccess)
+        {
+            static datetime s_lastAdvFeatLog = 0;
+            datetime now = TimeCurrent();
+            if(s_lastAdvFeatLog == 0 || (now - s_lastAdvFeatLog) >= 60)
+            {
+                PrintFormat("[AI-FEATURE] Advanced features partial for %s %s | OB=%s | IMB=%s | STRUCT=%s",
+                            symbol, EnumToString(timeframe),
+                            obSuccess ? "OK" : "FAIL",
+                            imbSuccess ? "OK" : "FAIL",
+                            structSuccess ? "OK" : "FAIL");
+                s_lastAdvFeatLog = now;
+            }
+        }
+
         return true;
     }
 
@@ -196,7 +476,7 @@ public:
             for(int i = 0; i < dModel; i++)
             {
                 int baseIndex = i % baseSize;
-                int prevIndex = (baseIndex + baseSize - 1) % baseSize;
+                int prevIndex = (baseIndex > 0) ? (baseIndex - 1) : (baseSize - 1);
 
                 double currentValue = stepFeatures[baseIndex];
                 double lagValue = stepFeatures[prevIndex];

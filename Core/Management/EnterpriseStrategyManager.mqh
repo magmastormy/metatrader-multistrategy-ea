@@ -8,6 +8,7 @@
 #include "../Pipeline/UnifiedSignalPipeline.mqh"
 #include "../Visualization/DrawingCoordinator.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
+#include "../AI/AIStrategyOrchestrator.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 
 // Retained production strategy inventory (7 kept in codebase)
@@ -47,6 +48,7 @@ struct StrategyEntry
     bool shadowOnly;
     int role;
     int cluster;
+    ENUM_STRATEGY_TIER tier;             // Strategy Tier (Ranking Matrix)
     double weight;
     double originalWeight;              // Track original weight for decay recovery
     ENUM_TIMEFRAMES timeframe;
@@ -61,103 +63,9 @@ struct StrategyEntry
     int consecutiveFilterCount;         // Count consecutive no-signal cycles for decay
 };
 
-struct SConsensusDecisionContext
-{
-    string symbol;
-    ENUM_TRADE_SIGNAL signal;
-    int decisionClass;
-    double confidence;
-    double convictionScore;
-    double buyScore;
-    double sellScore;
-    double buySupport;
-    double sellSupport;
-    double readyLiveWeight;
-    double totalLiveWeight;
-    double readinessScore;
-    double contextScore;
-    double costScore;
-    double diversityScore;
-    double directionalQuality;
-    double supportRatio;
-    double directionalWeight;
-    double readyCoverage;
-    double quorumGap;
-    double stalenessPenalty;
-    int eligibleLiveVoterCount;
-    int effectiveMinVoters;
-    string quorumMode;
-    string vetoCode;
-    int confluence;
-    string reason;
 
-    SConsensusDecisionContext()
-    {
-        symbol = "";
-        signal = TRADE_SIGNAL_NONE;
-        decisionClass = 0;
-        confidence = 0.0;
-        convictionScore = 0.0;
-        buyScore = 0.0;
-        sellScore = 0.0;
-        buySupport = 0.0;
-        sellSupport = 0.0;
-        readyLiveWeight = 0.0;
-        totalLiveWeight = 0.0;
-        readinessScore = 0.0;
-        contextScore = 0.0;
-        costScore = 0.0;
-        diversityScore = 0.0;
-        directionalQuality = 0.0;
-        supportRatio = 0.0;
-        directionalWeight = 0.0;
-        readyCoverage = 0.0;
-        quorumGap = 0.0;
-        stalenessPenalty = 0.0;
-        eligibleLiveVoterCount = 0;
-        effectiveMinVoters = 0;
-        quorumMode = "FULL_QUORUM";
-        vetoCode = "";
-        confluence = 0;
-        reason = "";
-    }
-};
 
-enum ENUM_SIGNAL_EVAL_MODE
-{
-    EVAL_MODE_NEW_BAR = 0,
-    EVAL_MODE_INTRABAR = 1
-};
 
-enum ENUM_STRATEGY_ROLE
-{
-    PRIMARY_ALPHA = 0,
-    CONTEXT_FEATURE = 1,
-    SHADOW_RESEARCH = 2
-};
-
-enum ENUM_STRATEGY_CLUSTER
-{
-    STRATEGY_CLUSTER_NONE = 0,
-    TREND_CLUSTER = 1,
-    MEAN_REVERSION_CLUSTER = 2,
-    STRUCTURE_CLUSTER = 3
-};
-
-enum ENUM_INTRABAR_POLICY
-{
-    INTRABAR_POLICY_OFF = 0,
-    INTRABAR_POLICY_PROBE = 1,
-    INTRABAR_POLICY_LIVE = 2
-};
-
-enum ENUM_CONSENSUS_DECISION_CLASS
-{
-    CONSENSUS_DECISION_NONE = 0,
-    CONSENSUS_DECISION_FULL_QUORUM = 1,
-    CONSENSUS_DECISION_SPARSE_INTRABAR = 2,
-    CONSENSUS_DECISION_VETOED = 3
-};
 
 string StrategyRoleToString(const ENUM_STRATEGY_ROLE role)
 {
@@ -239,8 +147,10 @@ class CEnterpriseStrategyManager
 private:
     CUnifiedSignalPipeline* m_pipeline;
     CTimeframeConsistency* m_tfConsistency;
+    CAIStrategyOrchestrator* m_orchestrator; // Added Orchestrator for tiered validation
     CTradeManager* m_tradeManager;  // CRITICAL FIX: Store for strategy initialization
     CPositionSizer* m_positionSizer; // CRITICAL FIX: Store for strategy initialization
+    CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
     
     StrategyEntry m_strategies[];
     int m_strategyCount;
@@ -416,6 +326,7 @@ public:
     // Strategy management
     bool RegisterStrategy(IStrategy* strategy, const string name, 
                          bool enabled = true, double weight = 1.0,
+                         ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3,
                          ENUM_TIMEFRAMES tf = PERIOD_CURRENT,
                          bool intrabarEligible = false,
                          ENUM_STRATEGY_ROLE role = PRIMARY_ALPHA,
@@ -526,7 +437,11 @@ public:
     int GetActiveStrategyCount() const;
     int GetActiveBrainStrategyCount() const;
     string GetStrategyReport() const;
-    void UpdatePerformance(const string strategyName, bool success);
+    void UpdatePerformance(const string strategyName, double netProfit);
+    
+    // Visualization
+    void SetDrawingManager(CChartDrawingManager* drawingManager) { m_drawingManager = drawingManager; }
+    CChartDrawingManager* GetDrawingManager() { return m_drawingManager; }
     
     // New bar processing - CRITICAL for zone scanning and drawing
     void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
@@ -544,6 +459,7 @@ public:
 CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_pipeline(NULL),
     m_tfConsistency(NULL),
+    m_orchestrator(NULL),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_strategyCount(0),
@@ -696,6 +612,12 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
         delete m_tfConsistency;
         m_tfConsistency = NULL;
     }
+    
+    if(m_orchestrator != NULL)
+    {
+        delete m_orchestrator;
+        m_orchestrator = NULL;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -745,7 +667,16 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     if(m_tfConsistency != NULL)
         m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
     
+    // Initialize Orchestrator
+    if(m_orchestrator != NULL) delete m_orchestrator;
+    m_orchestrator = new CAIStrategyOrchestrator();
+    if(m_orchestrator != NULL)
+    {
+        m_orchestrator.Initialize(0.40, 5); // Default thresholds
+    }
+    
     m_initialized = true;
+    m_drawingManager = NULL;
     
     Print("[EnterpriseStrategyManager] Initialized for ", symbol, " on ", EnumToString(timeframe));
     Print("[EnterpriseStrategyManager] Pipeline: ", m_usePipeline ? "ENABLED" : "DISABLED");
@@ -758,6 +689,7 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
 //+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const string name,
                                                  bool enabled, double weight,
+                                                 ENUM_STRATEGY_TIER tier,
                                                  ENUM_TIMEFRAMES tf,
                                                  bool intrabarEligible,
                                                  ENUM_STRATEGY_ROLE role,
@@ -797,6 +729,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].shadowOnly = shadowOnly;
     m_strategies[m_strategyCount].role = (int)role;
     m_strategies[m_strategyCount].cluster = (int)cluster;
+    m_strategies[m_strategyCount].tier = tier; // Store tier
     m_strategies[m_strategyCount].weight = weight;
     m_strategies[m_strategyCount].originalWeight = weight;  // Track for decay recovery
     m_strategies[m_strategyCount].timeframe = resolvedTf;
@@ -810,10 +743,16 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].lastEvaluationTime = 0;
     m_strategies[m_strategyCount].consecutiveFilterCount = 0;  // Track filters for weight decay
     
+    // Also register with the orchestrator
+    if(m_orchestrator != NULL)
+    {
+        m_orchestrator.AddStrategy(name, tier, weight);
+    }
+    
     m_strategyCount++;
     
     Print("[EnterpriseStrategyManager] Registered strategy: ", name, 
-          " | Enabled: ", enabled, " | Weight: ", weight,
+          " | Enabled: ", enabled, " | Tier: ", (int)tier, " | Weight: ", weight,
           " | Intrabar: ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_strategies[m_strategyCount - 1].intrabarPolicy),
           " | Role: ", StrategyRoleToString(role),
           " | Cluster: ", StrategyClusterToString(cluster),
@@ -979,10 +918,15 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             strategyWeight = MathMax(0.0, m_strategies[i].weight);
             if(strategyWeight <= 0.0)
                 strategyWeight = 1.0;
-            adjustedStrategyWeight = strategyWeight *
+                
+            // Apply Tier Multiplier from Ranking Matrix
+            double tierMultiplier = CRankingMatrix::GetTierMultiplier(m_strategies[i].tier);
+            
+            adjustedStrategyWeight = strategyWeight * tierMultiplier *
                                      GetStrategyRoleVoteMultiplier(i) *
                                      GetStrategyReliabilityMultiplier(i) *
                                      GetStrategyParticipationMultiplier(i);
+                                     
             if(liveEligibleForThisEval)
             {
                 totalLiveWeight += adjustedStrategyWeight;
@@ -1039,6 +983,34 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                     cycleSignalsAfterPipeline++;
                 }
             }
+        }
+        
+        // NEW: Tier-based confidence filtering with Special Confluence Bypass
+        double minTierConf = CRankingMatrix::GetRequiredConfidence(m_strategies[i].tier);
+        
+        // SPECIAL BYPASS: Trend + Fibonacci Reversal Override
+        // If they have "good" confidence (>0.65), they bypass the tier floor 
+        // to ensure reversals are heard even during strong Tier 1 (ICT) moves.
+        bool bypassTierFloor = false;
+        if(m_strategies[i].name == "Trend" || m_strategies[i].name == "Fibonacci")
+        {
+            if(stratConf > 0.65)
+                bypassTierFloor = true;
+        }
+
+        if(signal != TRADE_SIGNAL_NONE && !bypassTierFloor && stratConf < minTierConf)
+        {
+            // Signal suppressed due to low tier-confidence
+            string suppressedEntry = StringFormat("%s:%s@%.2f[TIER-LOW]", 
+                                                 m_strategies[i].name, 
+                                                 TradeSignalToString(signal), 
+                                                 stratConf);
+            if(StringLen(suppressedStrategySummary) > 0)
+                suppressedStrategySummary += ", ";
+            suppressedStrategySummary += suppressedEntry;
+            
+            signal = TRADE_SIGNAL_NONE;
+            cycleVoteSuppressed++;
         }
 
         double participationTarget = 0.45;
@@ -1332,6 +1304,16 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     double adaptiveQualityThreshold2 = MathMin(m_adaptiveQualityThreshold_2voters,
                                                MathMax(0.34, m_quorumThreshold - 0.02));
 
+    // RECOVERY FIX: Pre-adapt quorum for low-voter ecosystems (AI-only mode).
+    // When only 3 or fewer live strategies are registered, the standard 0.35
+    // support floor is mathematically impossible for a single voter to meet.
+    // Scale thresholds based on total registered live voters, not just active voters.
+    if(m_adaptiveQuorumEnabled && activeLiveStrategies > 0 && activeLiveStrategies <= 3 && evalMode != EVAL_MODE_INTRABAR)
+    {
+        supportFloor = m_adaptiveSupportFloor_1voter;    // 0.15 — achievable with 1/3 voters
+        effectiveQualityThreshold = adaptiveQualityThreshold1; // 0.40 — relaxed for sparse consensus
+    }
+
     // Adaptive quorum: adjust thresholds based on actual active voter count
     if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) > 0)
     {
@@ -1350,6 +1332,13 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     }
 
     int effectiveMinVoters = MathMax(1, m_minQuorum);
+    
+    // RECOVERY FIX: Single-voter bypass for AI-only mode ecosystems
+    if(activeLiveStrategies <= 3)
+    {
+        effectiveMinVoters = 1;
+    }
+    
     if(evalMode == EVAL_MODE_INTRABAR)
     {
         int intrabarFloor = MathMax(1, m_intrabarMinQuorum);
@@ -1869,13 +1858,56 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const 
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(const string symbol, ENUM_TIMEFRAMES timeframe, double &confidence)
 {
-    // Legacy compatibility method: the orchestrator path is retired.
-    // Delegate to manager-owned consensus logic and preserve confluence/quorum behavior.
-    int confluence = 0;
-    ENUM_TRADE_SIGNAL signal = GetConsensusSignalForSymbolWithConfluence(symbol, confidence, confluence);
-    if(signal == TRADE_SIGNAL_NONE)
-        ArrayResize(m_lastSignalContributors, 0);
-    return signal;
+    if(!m_initialized || m_strategyCount == 0 || m_orchestrator == NULL)
+        return TRADE_SIGNAL_NONE;
+
+    // 1. Gather votes from all active strategies
+    SEnsembleVote votes[];
+    int activeCount = 0;
+    
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(!m_strategies[i].enabled) continue;
+        
+        double stratConf = 0.0;
+        ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
+        
+        // Use pipeline if enabled, otherwise get raw signal
+        if(m_usePipeline && m_pipeline != NULL)
+        {
+            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy, symbol, m_strategies[i].timeframe, stratConf);
+        }
+        else
+        {
+            signal = m_strategies[i].strategy.GetSignal(stratConf);
+        }
+        
+        // Prepare vote for orchestrator
+        ArrayResize(votes, activeCount + 1);
+        votes[activeCount].strategyName = m_strategies[i].name;
+        votes[activeCount].signal = signal;
+        votes[activeCount].confidence = stratConf;
+        votes[activeCount].weight = m_strategies[i].weight;
+        votes[activeCount].tier = m_strategies[i].tier;
+        votes[activeCount].signalStrength = stratConf; // Using confidence as proxy for quality if not provided
+        votes[activeCount].timestamp = TimeCurrent();
+        votes[activeCount].isValid = true;
+        
+        activeCount++;
+    }
+    
+    if(activeCount == 0) return TRADE_SIGNAL_NONE;
+
+    // 2. Get consensus decision from orchestrator (which uses CTieredSignalValidator)
+    SEnsembleDecision decision = m_orchestrator.GetEnsembleDecision(votes, activeCount);
+    
+    confidence = decision.confidence;
+    m_lastDecisionContext.symbol = symbol;
+    m_lastDecisionContext.signal = decision.finalSignal;
+    m_lastDecisionContext.confidence = decision.confidence;
+    m_lastDecisionContext.reason = decision.decisionReasoning;
+    
+    return decision.finalSignal;
 }
 
 //+------------------------------------------------------------------+
@@ -1885,32 +1917,32 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 {
     int size = ArraySize(flags);
     
-    // 0: Momentum (live primary voter)
-    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, PERIOD_CURRENT, false,
+    // 0: Momentum (live primary voter) - Tier 3
+    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, STRATEGY_TIER_3, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, TREND_CLUSTER, true, false);
     
-    // 1: Trend (live primary voter)
-    if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, PERIOD_CURRENT, false,
+    // 1: Trend (live primary voter) - Tier 2
+    if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, TREND_CLUSTER, true, false);
     
-    // 2: Fibonacci (live primary voter)
-    if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, PERIOD_CURRENT, false,
+    // 2: Fibonacci (live primary voter) - Tier 2
+    if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
     
-    // 3: Elliott Wave (live primary voter)
-    if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0, PERIOD_CURRENT, false,
+    // 3: Elliott Wave (live primary voter) - Tier 1
+    if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
-    // 4: Support/Resistance (live primary voter)
-    if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, PERIOD_CURRENT, false,
+    // 4: Support/Resistance (live primary voter) - Tier 2
+    if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
     
-    // 5: Unified ICT (live primary voter)
-    if(size > 5 && flags[5]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT", true, 2.2, PERIOD_CURRENT, false,
+    // 5: Unified ICT (live primary voter) - Tier 1
+    if(size > 5 && flags[5]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT", true, 2.2, STRATEGY_TIER_1, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
-    // 6: Candlestick (live primary voter)
-    if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, PERIOD_CURRENT, false,
+    // 6: Candlestick (live primary voter) - Tier 2
+    if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
@@ -2845,16 +2877,23 @@ bool CEnterpriseStrategyManager::PopPositionAttribution(const ulong positionId, 
     return true;
 }
 
-void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, bool success)
+void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, double netProfit)
 {
     int idx = FindStrategyIndexByName(strategyName);
     if(idx < 0 || idx >= m_strategyCount)
         return;
 
+    bool success = (netProfit > 0);
     if(success)
         m_strategies[idx].successCount++;
     else
         m_strategies[idx].failCount++;
+
+    // Update Orchestrator performance
+    if(m_orchestrator != NULL)
+    {
+        m_orchestrator.UpdateStrategyPerformance(strategyName, netProfit);
+    }
 
     int totalOutcomes = m_strategies[idx].successCount + m_strategies[idx].failCount;
     if(totalOutcomes <= 0)
@@ -2878,6 +2917,9 @@ void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES t
 {
     if(!m_initialized || m_strategyCount == 0)
         return;
+
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupOldObjects();
 
     datetime barTime = iTime(symbol, timeframe, 0);
     if(barTime <= 0)
@@ -2991,7 +3033,7 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                     {
                         if(contributors[contributorIdx] == "")
                             continue;
-                        UpdatePerformance(contributors[contributorIdx], success);
+                        UpdatePerformance(contributors[contributorIdx], netProfit);
                     }
                 }
 

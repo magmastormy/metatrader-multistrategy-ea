@@ -1,14 +1,16 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-04-10
+- Last Updated: 2026-04-15
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 57 - Decision Quality Upgrade (Readiness + Correlation)
+- Current Batch: 64 - Logical Error Audit & Defensive Programming Hardening
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
 - signal generation and consensus
+- robust session-aware execution
+- adaptive AI thresholding
 - pre-trade risk veto
 - execution
 - post-trade feedback and adaptation
@@ -91,6 +93,32 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - adapt weights and feed updates back to managers
   - remain optional at runtime; orchestration/adaptation failure disables AI adaptation without violating trade/risk/execution ownership
   - avoid duplicate component-local diagnostics so AI observability remains concentrated in `[AI-VOTE]`, manager telemetry, and runtime heartbeat surfaces
+- **Multi-Tier Signal Validation (Batch 60):** Comprehensive validation architecture implemented:
+  - Class: `CTieredSignalValidator` (integrated into orchestrator)
+  - Responsibilities:
+    - Evaluate signals across Tier 1 (Institutional), Tier 2 (Structure), and Tier 3 (Indicators)
+    - Analyze directional conflicts between tiers (e.g., T2/T3 vs T1)
+    - Implement weighted decision-making considering setup quality and tier weights
+    - Track historical accuracy and reliability by tier to inform voting
+    - Provide conflict resolution protocols (e.g., Tier 1 dominance vs Tier 2+3 consensus)
+- **AI Feature Engineering (Batch 58):** Neural network architecture expanded:
+  - Feature vector dimension: 25 → 44 (19 pattern-specific features added)
+  - Weight matrix dimensions: `W1[44][32]` to accommodate expanded input
+  - Pattern-specific features include: Higher Highs/Lower Lows sequences, Support/Resistance touch counts, Fibonacci Retracement proximity, Pivot Point proximity, volume profile features, market structure features
+- **Multi-scale Attention Infrastructure (Batch 58):** Transformer brain enhanced:
+  - Per-head scaling factors (`m_headScales[]`) for differential attention scaling
+  - Per-head time window sizes (`m_headTimeScales[]`) for short/medium/long horizon awareness
+  - Per-head learning rates (`m_headLearningRates[]`) for differential training dynamics
+- **Pattern Classification Head (Batch 58):** 10-class pattern classifier added:
+  - New weight matrices: `m_patternWeights[10][m_dModel]` and biases `m_patternBiases[10]`
+  - Cross-entropy loss training for pattern recognition
+  - Xavier initialization for pattern head weights
+  - Methods: `ComputePatternProbabilities()`, `UpdatePatternHead()`, `GetPatternPredictions()`, `TrainPatternStep()`
+- **External LLM Integration (Batch 58):** Optional external LLM support via `CAIEngine`:
+  - HTTP client for Ollama API communication (`http://localhost:11434/api/generate`)
+  - Configuration flag: `useExternalLLM` in `SAIAdaptiveConfig` (default `false`)
+  - Methods: `QueryExternalLLM()`, `SynthesizeSignals()`, `GenerateTradeExplanation()`, `AssessRisk()`, `ReasonStrategyWeights()`, `ProvideFeedback()`
+  - Runtime control: `ConfigureExternalLLM()`, `SetExternalLLMEnabled(bool)`, `IsExternalLLMEnabled()`
 
 ### 2.5 Risk domain
 - Class: `CUnifiedRiskManager`
@@ -136,6 +164,19 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - indicator handle cache and shared access
   - periodic unused release
   - explicit singleton teardown on deinit
+
+### 2.9 Chart visualization domain (Batch 58)
+- Class: `CChartDrawingManager`
+- Responsibilities:
+  - centralized chart drawing coordination across all strategies
+  - color scheme management with consistent professional palette
+  - drawing configuration per feature type (structure, SR, OB, FVG, etc.)
+  - **Chart Visualization Hardening (Batch 58):**
+    - Elliott Wave strategy draws comprehensive Fib target levels for all waves (W1-W5)
+    - Trend lines use thin dashed style (STYLE_DOT, width 1) with muted colors
+    - ICT drawing colors (OB, FVG, Liquidity, BOS, CHOCH) reduced in intensity using 0x909090 mask
+    - SupportResistance trendlines aligned to thin dashed style for consistency
+    - All chart elements use consistent thin dashed styling for improved clarity
 
 ## 3. Managed Strategies
 

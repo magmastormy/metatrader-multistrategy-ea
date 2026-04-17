@@ -111,7 +111,8 @@ private:
         if(barSeconds <= 0)
             barSeconds = 60;
 
-        int boundedBarWindow = MathMax(60, MathMin(900, barSeconds));
+        // Allow reuse for up to 3 bars, with minimum 60 seconds and maximum 1 hour
+        int boundedBarWindow = MathMax(60, MathMin(3600, barSeconds * 3));
         return MathMin(boundedBarWindow, MathMax(10, m_snapshotReuseTtlSeconds));
     }
 
@@ -338,8 +339,13 @@ public:
         }
 
         int minBars = MathMax(m_bbPeriod + 5, m_atrPeriod + 5);
-        if(Bars(symbol, timeframe) < minBars ||
-           BarsCalculated(m_bbHandle) < minBars)
+        int availableBars = Bars(symbol, timeframe);
+        int calculatedBarsBB = BarsCalculated(m_bbHandle);
+        int calculatedBarsATR = BarsCalculated(m_atrHandle);
+        
+        if(availableBars < minBars ||
+           calculatedBarsBB < minBars ||
+           calculatedBarsATR < minBars)
         {
             m_lastSnapshot.readinessClass = "WARMUP";
             m_lastSnapshot.reuseActive = false;
@@ -352,14 +358,34 @@ public:
         double bbLower[1];
 
         ResetLastError();
+        
+        // HIGH FIX: Validate handles are valid before attempting copy
+        if(m_atrHandle == INVALID_HANDLE || m_bbHandle == INVALID_HANDLE)
+        {
+            NoteDataFault(symbol, timeframe, "INVALID_HANDLE", 0);
+            return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_HANDLE", 0);
+        }
+
         int atrRet = CopyBuffer(m_atrHandle, 0, 0, 1, atr);
         int upperRet = CopyBuffer(m_bbHandle, 1, 0, 1, bbUpper);
         int lowerRet = CopyBuffer(m_bbHandle, 2, 0, 1, bbLower);
         int copyErr = GetLastError();
-        if(atrRet != 1 || upperRet != 1 || lowerRet != 1 || atr[0] <= 0.0)
+        
+        // HIGH FIX: Improved error detection with specific failure reasons
+        if(atrRet <= 0)
         {
-            NoteDataFault(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
-            return TryReuseRecentSnapshot(symbol, timeframe, "BUFFER_COPY_FAILED", copyErr);
+            NoteDataFault(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+            return TryReuseRecentSnapshot(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+        }
+        if(upperRet <= 0 || lowerRet <= 0)
+        {
+            NoteDataFault(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+            return TryReuseRecentSnapshot(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+        }
+        if(atr[0] <= 0.0)
+        {
+            NoteDataFault(symbol, timeframe, "INVALID_ATR_VALUE", 0);
+            return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_ATR_VALUE", 0);
         }
 
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);

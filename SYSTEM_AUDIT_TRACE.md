@@ -1,13 +1,14 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-04-10
+- Last Updated: 2026-04-15
 - Scope: Runtime lifecycle and ownership trace
-- Current Batch: 57 - Decision Quality Upgrade (Readiness + Correlation)
+- Current Batch: 64 - Logical Error Audit & Defensive Programming Hardening
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
 - Symbol decision manager: `Core/Management/EnterpriseStrategyManager.mqh`
+- Multi-tier validator: `Core/Signals/TieredSignalValidator.mqh` (Batch 60)
 - Filter pipeline: `Core/Pipeline/UnifiedSignalPipeline.mqh`
 - AI orchestrator: `Core/AI/AIStrategyOrchestrator.mqh`
 - AI adapters:
@@ -35,6 +36,7 @@
 - Treat curated mode as a baseline/default profile only; explicit strategy enables remain authoritative instead of being rewritten away at runtime.
 - Reconstruct `[TRADE-STATE]` / cooldown timing from EA-owned history and open positions.
 - Register orchestrator strategy identities.
+- Initialize `CTieredSignalValidator` within the orchestrator to manage multi-tier signal hierarchy.
 - Prime one pending new-bar scan per validated symbol so startup cannot produce a fully idle manager fleet with zero first-pass evaluations.
 
 ### 2. Tick/Timer cycle
@@ -76,6 +78,11 @@
   - Adaptive one-/two-voter quality thresholds now respect the current base quorum so user-lowered quorum profiles are not silently re-hardened by stale fixed fallback thresholds.
 - Manager quorum requires directional quality, support-ratio floors, effective min voters, minimum ready-live-weight participation, and conflict-deadband separation.
 - Manager can emit a separate `SPARSE_INTRABAR` decision class for tightly gated one-sided single-voter intrabar packets.
+- **Multi-Tier Signal Validation (Batch 60):**
+  - Votes are processed through `CTieredSignalValidator` for tier-based hierarchy.
+  - **Tiered Evaluation**: Groups strategies into Institutional (T1), Structure (T2), and Indicators (T3).
+  - **Conflict Resolution**: Resolves tier-level contradictions (e.g., T2 agreement overriding T1 weak bias).
+  - **Setup Quality & Reliability**: Integrates setup quality (0-1) and historical accuracy metrics into the final decision weight.
 - **Detailed veto diagnostics** (Batch 41): manager emits specific veto codes with numeric evidence instead of generic `zero_voter` / `single_voter_confidence` placeholders.
 - Manager vote admission now uses the pipeline's effective confidence floor for the current evaluation, avoiding pipeline/quorum drift when regime-aware relaxation is active.
 - Manager live vote influence is modulated by rolling strategy `healthScore` rather than treating every enabled strategy as equally trusted at all times.
@@ -107,6 +114,33 @@
 - AI intrabar policy is now explicit instead of globally hard-coded `OFF`: `Neural Network AI`, `Transformer AI`, and `Ensemble AI` each have their own intrabar eligibility input, allowing `AI_ONLY` and `HYBRID` to be tested as real timed intrabar modes.
 - `CNextGenStrategyBrain` now follows a single local-transformer path with ring-buffered market data history and no dead Python/cloud bridge branch.
 - Duplicate component-local `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths so manager/runtime telemetry stays authoritative.
+- **AI Feature Lifecycle (Batch 58):**
+  - Neural network feature extraction now produces 44-dimensional vectors (25 original + 19 pattern-specific features)
+  - Pattern-specific features include: Higher Highs/Lower Lows sequences, Support/Resistance touch counts, Fibonacci Retracement proximity, Pivot Point proximity, volume profile features, market structure features
+  - Weight matrix dimensions updated to `W1[44][32]` to accommodate expanded input
+  - All array allocations and loop bounds updated consistently to prevent array out of range errors
+  - Training example struct `STrainingExample` now uses `inputs[44]` instead of `inputs[25]`
+  - File I/O for checkpoint save/load updated to handle 44-element feature vectors
+- **External LLM Lifecycle (Batch 58):**
+  - Optional external LLM support via `CAIEngine` with configuration flag `useExternalLLM` (default `false`)
+  - HTTP client for Ollama API communication initialized during `ConfigureExternalLLM()`
+  - External LLM can be toggled at runtime via `SetExternalLLMEnabled(bool)`
+  - Signal synthesis, trade explanation, risk assessment, and strategy weight reasoning methods available when external LLM is enabled
+  - Feedback loop via `ProvideFeedback()` sends trade results to external LLM for learning
+  - External LLM failures are logged but do not abort the EA; system degrades gracefully to internal AI only
+- **Multi-scale Attention Lifecycle (Batch 58):**
+  - Transformer brain now initializes per-head scaling factors, time window sizes, and learning rates
+  - Head-specific parameters enable differential pattern detection across short/medium/long horizons
+- **Pattern Classifier Lifecycle (Batch 58):**
+  - 10-class pattern classifier head initialized with Xavier initialization
+  - Cross-entropy loss training for pattern recognition
+  - Pattern classification runs alongside 3-class BUY/SELL/NONE predictions
+- **Chart Visualization Lifecycle (Batch 58):**
+  - Elliott Wave strategy draws comprehensive Fib target levels for all waves (W1-W5) with multiple ratios
+  - Trend lines use thin dashed style (STYLE_DOT, width 1) with muted colors for cleaner appearance
+  - ICT drawing colors (OB, FVG, Liquidity, BOS, CHOCH) reduced in intensity using 0x909090 color mask
+  - SupportResistance strategy trendlines aligned to thin dashed style for consistency
+  - All chart drawing elements use consistent thin dashed styling for improved clarity
 - Risk gating (pre-size then post-size).
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
 - Portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety.
@@ -123,6 +157,7 @@
 - Transaction callback updates manager/orchestrator performance.
 - Transaction callback records confirmed close results into `PerformanceAnalytics`.
 - NN attribution maps prediction IDs and labels closes (online-training gate controlled).
+- Trade outcome is routed to `CTieredSignalValidator` to update historical accuracy metrics per tier.
 
 ### 5. Housekeeping
 - Position manager lifecycle actions.
@@ -137,10 +172,11 @@
 - Explicit `CIndicatorManager::DestroyInstance()`.
 - Orchestrator report emission is single-source (destructor-owned) to avoid duplicate shutdown reports.
 - **Memory Safety**: AI adapters now properly clean up transformer models in destructors.
-- **Error Handling**: Enhanced validation in feature vector construction and attribution systems.
+- **Error Handling**: Enhanced validation in feature vector construction and attribution systems. Proactive readiness checks (`IsDataReady`) and indicator warmup verification (`BarsCalculated`) prevent invalid feature generation during symbol startup.
 
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
+- Multi-Tier: `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`
 - System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`
@@ -170,6 +206,7 @@
 - Compile artifacts should be auto-cleaned after runs unless explicitly retained.
 - **Code Quality**: Recent fixes address memory leaks, null pointer safety, bounds checking, and standardized constants across AI components.
 - **Compilation**: Verified 0 errors, 0 warnings with all improvements integrated.
+- **Batch 60 Verification**: Multi-tier signal validation architecture confirmed with 0 compilation errors.
 
 ## 2026-03-30 Support/Resistance & Trendline System Overhaul Trace
 - `CTrendlineDetector` and `CSupportResistanceDetector` rewritten to map points cleanly off normalized ATR levels instead of hardcoded minimum pip parameters.
@@ -334,3 +371,23 @@
 - Event: Expanded intrinsic synthetic filtering to PainX, SFX Vol, GainX, FX Vol, and FlipX.
 - Implication: Core systems (AdvancedSignalValidator, TradeManager, MarketAnalysis) bypass native off-hours blocks to sustain execution on decentralized index regimes without false validation drops.
 
+### Batch 64: Logical Error Audit & Defensive Programming Hardening (2026-04-15)
+- **Risk Domain Hardening:** Fixed risk denominator calculation to handle negative balance/equity values in `RiskValidationGate.mqh`, preventing incorrect risk calculations during account drawdown. Added comprehensive parameter validation in `PositionSizer.mqh` for all sizing parameters (atrMultiplier, maxLotSize, minLotSize, correlationAdjustment). Implemented missing `ValidateClusterGovernance` method with proper cluster mutex and concurrent position validation.
+- **Position Management Safety:** Fixed infinite loop risk in `AdvancedPositionManager::NormalizeCloseVolume` by adding iteration limit (100 iterations). Added handling for remaining volume below minimum lot size after partial close. Added validation for trailing stop distance and step to ensure positive values. Added validation for negative time values in time-based exit to ensure open time and max position hours are valid.
+- **Indicator Management:** Increased MAX_INDICATOR_HANDLES from 200 to 500 to support multi-symbol setups. Added timeframe validation in `IsSymbolAvailable` to check if timeframe is within valid range (PERIOD_M1 to PERIOD_MN1). Added paramCount validation in handle methods to ensure correct parameter count is set before creating handles.
+- **AI Module Robustness:** Added NaN validation in feature extraction in `NeuralNetworkStrategy.mqh`. Added handling for empty feature vectors with error logging. Added NaN handling in confidence calculations in `EnsembleMetaLearner.mqh`. Added null prediction handling in aggregation to prevent invalid predictions from affecting ensemble decisions. Cached MA handles in `AIFeatureVectorBuilder.mqh` to prevent duplicate handle creation.
+- **Pipeline & Engine Reliability:** Added error handling for engine initialization failures in `UnifiedSignalPipeline.mqh` with logging for all engines. Added staleness validation in last good trend reuse logic in `TrendEngine.mqh` to prevent reusing trends from different symbol/timeframe contexts. Added symbol/timeframe mismatch validation in evidence caching to invalidate cache if context changed. Reset readiness fault counter on successful trend update.
+- **Signal Validation:** Added input validation for confidence, quality score, and confluence in `AdvancedSignalValidator.mqh`. Added NaN and extreme value handling in quality score calculation. Removed redundant null check in `ValidateCorrelationLimits`.
+- **Entry Point Robustness:** Added error handling for malformed symbol string parsing in `MultiStrategyAutonomousEA.mq5` with validation for empty input, split failure, and invalid symbol format.
+- **Documentation Improvements:** Clarified MAX_RISK_PER_TRADE constant naming with comment explaining percent scale. Added documentation comment for GetRiskDenominator consistency across components.
+- **Compile Verification:** All 34 fixes implemented with minimal, targeted changes preserving existing architecture. Generated comprehensive audit report at `AUDIT_REPORT.md`.
+- **Files Modified:** 13 files across Risk, Trading, AI, Pipeline, Engines, Signals, Utils, and entry point.
+
+### Batch 65: AI Diagnostic Recovery & Trade Activation (2026-04-16)
+- **Root Cause Identified:** Traced lack of single-voter AI-only quorum to hardcoded thresholding, transformer bridge hard failure, and percentage/fraction mismatch in Drawdown and Risk configuration constraints.
+- **Transformer Bridge Robustness:** Made transformer failures soft, utilizing 15 native technical features to sustain NN processing while reporting transformer failure statuses cleanly through `UniversalTransformerService.mqh`.
+- **AI Threshold Adaptability:** Allowed `EnsembleAIStrategyAdapter.mqh` a specialized 0.15 exploration mode gate bridging initial zero-history model executions prior to adaptive training accumulation.
+- **Manager Consensus Safety Net:** Introduced `effectiveMinVoters = 1` into the `CEnterpriseStrategyManager.mqh` logic strictly bounds by AI-only ecosystem footprints (`<= 3` strategies) blocking generic 2-voter hard floors from nullifying AI models.
+- **Synthetic Symbol Volatility Exempted:** Resolved `0.70` ATR percentage checks universally vetoing extreme relative synthetic variations; synthetics now natively pierce volatility filter checks honoring organic Jump/Volatility index mechanics.
+- **Risk Value Unification:** Hardened risk constants from literal `0.10/0.20` mappings to percentage mappings `10.0/20.0` explicitly satisfying percentage-expectant risk modules matching existing system patterns.
+- **Compile Verification:** 0 errors, 0 warnings. Verified compilation via PS scripts confirming stable structure preservation.

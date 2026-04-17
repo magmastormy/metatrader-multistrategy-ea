@@ -9,6 +9,10 @@
 #include <Object.mqh>
 #include <Indicators\Indicator.mqh>
 
+// Maximum number of indicator handles to prevent resource exhaustion
+// Increased to 500 to support multi-symbol setups with multiple indicators per symbol
+#define MAX_INDICATOR_HANDLES 500
+
 // Define indicator types for easier reference
 enum ENUM_INDICATOR_TYPE
 {
@@ -77,9 +81,13 @@ public:
    
    // Find an existing handle
    int               FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[]);
+
+   // Check if a symbol is available and has data
+   bool              IsSymbolAvailable(string symbol, ENUM_TIMEFRAMES tf);
 };
 
 // Initialize static instance pointer
+// NOTE: Singleton pattern is not thread-safe, but this is acceptable in MQL5's single-threaded context
 CIndicatorManager *CIndicatorManager::m_instance = NULL;
 
 //+------------------------------------------------------------------+
@@ -89,8 +97,54 @@ CIndicatorManager *CIndicatorManager::Instance()
 {
    if(m_instance == NULL)
       m_instance = new CIndicatorManager();
-      
+
    return m_instance;
+}
+
+//+------------------------------------------------------------------+
+//| Check if a symbol is available and has data                      |
+//+------------------------------------------------------------------+
+bool CIndicatorManager::IsSymbolAvailable(string symbol, ENUM_TIMEFRAMES tf)
+{
+   if(symbol == "")
+      return false;
+
+   // CRITICAL FIX: Resolve PERIOD_CURRENT (timeframe=0) to actual chart timeframe
+   ENUM_TIMEFRAMES actualTimeframe = tf;
+   if(tf == PERIOD_CURRENT || tf == 0)
+   {
+      actualTimeframe = Period();
+      if(actualTimeframe == 0)
+         actualTimeframe = PERIOD_M15; // Fallback to M15 if unable to resolve
+   }
+
+   // Validate timeframe parameter
+   if(actualTimeframe < PERIOD_M1 || actualTimeframe > PERIOD_MN1)
+   {
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Invalid timeframe %d (resolved from %d) for symbol %s", actualTimeframe, tf, symbol);
+      return false;
+   }
+
+   // Check if symbol exists in Market Watch
+   if(!SymbolInfoInteger(symbol, SYMBOL_VISIBLE))
+   {
+      if(!SymbolSelect(symbol, true))
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Symbol %s not available in Market Watch", symbol);
+         return false;
+      }
+   }
+
+   // Check if symbol has enough bars for the timeframe
+   int bars = iBars(symbol, actualTimeframe);
+   if(bars < 50)
+   {
+      PrintFormat("[INDICATOR-MANAGER] WARNING: Symbol %s %s has only %d bars (need at least 50)",
+                  symbol, EnumToString(actualTimeframe), bars);
+      return false;
+   }
+
+   return true;
 }
 
 //+------------------------------------------------------------------+
@@ -119,8 +173,9 @@ int CIndicatorManager::FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_
       {
          // AUDIT FIX: Actually compare indicator parameters to prevent returning wrong handle
          bool paramsMatch = true;
-         int paramCount = MathMin(ArraySize(params), 5);
-         if(m_handles[i].paramCount != paramCount)
+         // Use stored paramCount for comparison, not array size
+         int paramCount = m_handles[i].paramCount;
+         if(paramCount > ArraySize(params))
             paramsMatch = false;
          for(int p = 0; p < paramCount && paramsMatch; p++)
          {
@@ -193,18 +248,40 @@ int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
 {
    int params[5] = {period, applied_price};
    int handle = FindHandle(INDICATOR_RSI, symbol, tf, params);
-   
+
    if(handle != INVALID_HANDLE)
    {
       AccessHandle(handle);
       return handle;
    }
-   
+
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
    // Create new handle if not found
    handle = iRSI(symbol, tf, period, applied_price);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create RSI handle for %s %s period=%d err=%d",
+                  symbol, EnumToString(tf), period, err);
+   }
    if(handle != INVALID_HANDLE)
    {
       int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60); // Release handles not accessed in the last 60 seconds
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
       ArrayResize(m_handles, size + 1);
       m_handles[size].handle = handle;
       m_handles[size].lastAccess = TimeCurrent();
@@ -215,8 +292,10 @@ int CIndicatorManager::GetRSIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = period;
       m_handles[size].parameters[1] = (int)applied_price;
+      PrintFormat("[INDICATOR-MANAGER] Created RSI handle=%d for %s %s period=%d",
+                  handle, symbol, EnumToString(tf), period);
    }
-   
+
    return handle;
 }
 
@@ -227,18 +306,40 @@ int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period
 {
    int params[5] = {period, ma_shift, ma_method, applied_price};
    int handle = FindHandle(INDICATOR_MA, symbol, tf, params);
-   
+
    if(handle != INVALID_HANDLE)
    {
       AccessHandle(handle);
       return handle;
    }
-   
+
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
    // Create new handle if not found
    handle = iMA(symbol, tf, period, ma_shift, ma_method, applied_price);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create MA handle for %s %s period=%d err=%d",
+                  symbol, EnumToString(tf), period, err);
+   }
    if(handle != INVALID_HANDLE)
    {
       int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60); // Release handles not accessed in the last 60 seconds
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
       ArrayResize(m_handles, size + 1);
       m_handles[size].handle = handle;
       m_handles[size].lastAccess = TimeCurrent();
@@ -251,8 +352,10 @@ int CIndicatorManager::GetMAHandle(string symbol, ENUM_TIMEFRAMES tf, int period
       m_handles[size].parameters[1] = ma_shift;
       m_handles[size].parameters[2] = (int)ma_method;
       m_handles[size].parameters[3] = (int)applied_price;
+      PrintFormat("[INDICATOR-MANAGER] Created MA handle=%d for %s %s period=%d",
+                  handle, symbol, EnumToString(tf), period);
    }
-   
+
    return handle;
 }
 
@@ -263,18 +366,40 @@ int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
 {
    int params[5] = {period};
    int handle = FindHandle(INDICATOR_ATR, symbol, tf, params);
-   
+
    if(handle != INVALID_HANDLE)
    {
       AccessHandle(handle);
       return handle;
    }
-   
+
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
    // Create new handle if not found
    handle = iATR(symbol, tf, period);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create ATR handle for %s %s period=%d err=%d",
+                  symbol, EnumToString(tf), period, err);
+   }
    if(handle != INVALID_HANDLE)
    {
       int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60); // Release handles not accessed in the last 60 seconds
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
       ArrayResize(m_handles, size + 1);
       m_handles[size].handle = handle;
       m_handles[size].lastAccess = TimeCurrent();
@@ -284,8 +409,10 @@ int CIndicatorManager::GetATRHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       m_handles[size].paramCount = 1;
       ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = period;
+      PrintFormat("[INDICATOR-MANAGER] Created ATR handle=%d for %s %s period=%d",
+                  handle, symbol, EnumToString(tf), period);
    }
-   
+
    return handle;
 }
 
@@ -296,18 +423,40 @@ int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast
 {
    int params[5] = {fast_ema_period, slow_ema_period, signal_period, applied_price};
    int handle = FindHandle(INDICATOR_MACD, symbol, tf, params);
-   
+
    if(handle != INVALID_HANDLE)
    {
       AccessHandle(handle);
       return handle;
    }
-   
+
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
    // Create new handle if not found
    handle = iMACD(symbol, tf, fast_ema_period, slow_ema_period, signal_period, applied_price);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create MACD handle for %s %s fast=%d slow=%d err=%d",
+                  symbol, EnumToString(tf), fast_ema_period, slow_ema_period, err);
+   }
    if(handle != INVALID_HANDLE)
    {
       int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60); // Release handles not accessed in the last 60 seconds
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
       ArrayResize(m_handles, size + 1);
       m_handles[size].handle = handle;
       m_handles[size].lastAccess = TimeCurrent();
@@ -320,8 +469,10 @@ int CIndicatorManager::GetMACDHandle(string symbol, ENUM_TIMEFRAMES tf, int fast
       m_handles[size].parameters[1] = slow_ema_period;
       m_handles[size].parameters[2] = signal_period;
       m_handles[size].parameters[3] = (int)applied_price;
+      PrintFormat("[INDICATOR-MANAGER] Created MACD handle=%d for %s %s fast=%d slow=%d",
+                  handle, symbol, EnumToString(tf), fast_ema_period, slow_ema_period);
    }
-   
+
    return handle;
 }
 
@@ -339,10 +490,32 @@ int CIndicatorManager::GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       return handle;
    }
 
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
    handle = iADX(symbol, tf, period);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create ADX handle for %s %s period=%d err=%d",
+                  symbol, EnumToString(tf), period, err);
+   }
    if(handle != INVALID_HANDLE)
    {
       int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60); // Release handles not accessed in the last 60 seconds
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
       ArrayResize(m_handles, size + 1);
       m_handles[size].handle = handle;
       m_handles[size].lastAccess = TimeCurrent();
@@ -352,6 +525,8 @@ int CIndicatorManager::GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       m_handles[size].paramCount = 1;
       ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = period;
+      PrintFormat("[INDICATOR-MANAGER] Created ADX handle=%d for %s %s period=%d",
+                  handle, symbol, EnumToString(tf), period);
    }
 
    return handle;
@@ -372,10 +547,32 @@ int CIndicatorManager::GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int per
       return handle;
    }
 
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
    handle = iBands(symbol, tf, period, shift, deviation, applied_price);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create Bands handle for %s %s period=%d err=%d",
+                  symbol, EnumToString(tf), period, err);
+   }
    if(handle != INVALID_HANDLE)
    {
       int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60); // Release handles not accessed in the last 60 seconds
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
       ArrayResize(m_handles, size + 1);
       m_handles[size].handle = handle;
       m_handles[size].lastAccess = TimeCurrent();
@@ -388,6 +585,8 @@ int CIndicatorManager::GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int per
       m_handles[size].parameters[1] = shift;
       m_handles[size].parameters[2] = scaledDeviation;
       m_handles[size].parameters[3] = (int)applied_price;
+      PrintFormat("[INDICATOR-MANAGER] Created Bands handle=%d for %s %s period=%d",
+                  handle, symbol, EnumToString(tf), period);
    }
 
    return handle;
@@ -407,10 +606,32 @@ int CIndicatorManager::GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       return handle;
    }
 
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
    handle = iCCI(symbol, tf, period, applied_price);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create CCI handle for %s %s period=%d err=%d",
+                  symbol, EnumToString(tf), period, err);
+   }
    if(handle != INVALID_HANDLE)
    {
       int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60); // Release handles not accessed in the last 60 seconds
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
       ArrayResize(m_handles, size + 1);
       m_handles[size].handle = handle;
       m_handles[size].lastAccess = TimeCurrent();
@@ -421,6 +642,8 @@ int CIndicatorManager::GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       ArrayInitialize(m_handles[size].parameters, 0);
       m_handles[size].parameters[0] = period;
       m_handles[size].parameters[1] = (int)applied_price;
+      PrintFormat("[INDICATOR-MANAGER] Created CCI handle=%d for %s %s period=%d",
+                  handle, symbol, EnumToString(tf), period);
    }
 
    return handle;

@@ -127,6 +127,7 @@ struct SAIAdaptiveConfig {
     bool useMarketRegimeAdaptation;   // Adapt to market regime
     bool usePerformanceAdaptation;    // Adapt based on performance
     bool useSentimentAdaptation;      // Adapt based on sentiment (future)
+    bool useExternalLLM;              // Use external LLM for advanced reasoning (default: false)
     
     SAIAdaptiveConfig() {
         enabled = true;
@@ -137,6 +138,7 @@ struct SAIAdaptiveConfig {
         useMarketRegimeAdaptation = true;
         usePerformanceAdaptation = true;
         useSentimentAdaptation = false;
+        useExternalLLM = false;  // Default to not using external LLM
     }
 };
 
@@ -223,6 +225,9 @@ public:
         m_adaptiveConfig = config;
         m_adaptiveModeActive = config.enabled;
         m_initialized = true;
+        
+        // Configure external LLM based on config
+        ConfigureExternalLLM();
         
         LogAI(ERROR_LEVEL_INFO, "AIEngine initialized successfully");
         return true;
@@ -434,15 +439,203 @@ public:
     }
     
     //+------------------------------------------------------------------+
+    //| Configure External LLM based on config flag                       |
+    //+------------------------------------------------------------------+
+    void ConfigureExternalLLM() {
+        if(m_adaptiveConfig.useExternalLLM) {
+            SetExternalAIEndpoint("http://localhost:11434");
+        } else {
+            SetExternalAIEndpoint("");
+        }
+    }
+    
+    //+------------------------------------------------------------------+
+    //| Enable/Disable External LLM                                       |
+    //+------------------------------------------------------------------+
+    void SetExternalLLMEnabled(bool enabled) {
+        m_adaptiveConfig.useExternalLLM = enabled;
+        ConfigureExternalLLM();
+    }
+    
+    //+------------------------------------------------------------------+
+    //| Check if External LLM is enabled                                  |
+    //+------------------------------------------------------------------+
+    bool IsExternalLLMEnabled() const {
+        return m_adaptiveConfig.useExternalLLM;
+    }
+    
+    //+------------------------------------------------------------------+
+    //| Query External LLM                                               |
+    //+------------------------------------------------------------------+
+    bool QueryExternalLLM(const string &prompt, string &llmResponse) {
+        if(!m_externalAIConnected || m_externalAIEndpoint == "") {
+            LogAI(ERROR_LEVEL_WARNING, "External LLM not connected");
+            return false;
+        }
+        
+        // Prepare JSON request for Ollama API
+        string jsonRequest = "{\"model\":\"phi3\",\"prompt\":\"" + prompt + "\",\"stream\":false}";
+        
+        // Create HTTP request
+        uchar request[];
+        uchar responseData[];
+        string resultHeaders;
+        
+        StringToCharArray(jsonRequest, request);
+        ArrayResize(request, ArraySize(request) - 1); // Remove null terminator
+        
+        // Send POST request to Ollama API
+        int timeout = 5000; // 5 second timeout
+        int res = WebRequest("POST", m_externalAIEndpoint + "/api/generate", "Content-Type: application/json", 
+                           timeout, request, responseData, resultHeaders);
+        
+        if(res != -1) {
+            string responseStr = CharArrayToString(responseData, 0, WHOLE_ARRAY, CP_UTF8);
+            
+            // Parse JSON response to extract "response" field
+            int responseStart = StringFind(responseStr, "\"response\":\"");
+            if(responseStart >= 0) {
+                responseStart += 12; // Skip "response":"
+                int responseEnd = StringFind(responseStr, "\"", responseStart);
+                if(responseEnd > responseStart) {
+                    llmResponse = StringSubstr(responseStr, responseStart, responseEnd - responseStart);
+                    LogAI(ERROR_LEVEL_INFO, "External LLM query successful");
+                    return true;
+                }
+            }
+            
+            LogAI(ERROR_LEVEL_WARNING, "Failed to parse external LLM response");
+            return false;
+        } else {
+            LogAI(ERROR_LEVEL_ERROR, "External LLM HTTP request failed");
+            return false;
+        }
+    }
+    
+    //+------------------------------------------------------------------+
     //| Provide Performance Feedback                                     |
     //+------------------------------------------------------------------+
     void ProvideFeedback(ENUM_TRADE_SIGNAL predictedSignal, bool wasCorrect, double profit) {
         UpdatePredictionAccuracy(wasCorrect);
         
-        // Could send feedback to external AI here
+        // Send feedback to external AI
         if(m_externalAIConnected) {
-            // TODO: Future: Send feedback to external ML model
+            string feedbackPrompt = StringFormat("Trade result: %s, Correct: %s, Profit: %.2f. Learn from this outcome.",
+                                                  TradeSignalToString(predictedSignal), wasCorrect ? "Yes" : "No", profit);
+            string llmResponse;
+            QueryExternalLLM(feedbackPrompt, llmResponse);
         }
+    }
+    
+    //+------------------------------------------------------------------+
+    //| Synthesize Signals using External LLM                            |
+    //+------------------------------------------------------------------+
+    bool SynthesizeSignals(const string &signals, const string &regime, string &recommendation, double &confidence) {
+        if(!m_externalAIConnected) {
+            return false;
+        }
+        
+        string prompt = StringFormat("Given these trading signals: %s, with current market regime: %s, recommend a trading action (BUY/SELL/NONE) and provide confidence score (0-1).",
+                                      signals, regime);
+        
+        string llmResponse;
+        if(!QueryExternalLLM(prompt, llmResponse)) {
+            return false;
+        }
+        
+        // Parse response for recommendation and confidence
+        StringToUpper(llmResponse);
+        if(StringFind(llmResponse, "BUY") >= 0) {
+            recommendation = "BUY";
+        } else if(StringFind(llmResponse, "SELL") >= 0) {
+            recommendation = "SELL";
+        } else {
+            recommendation = "NONE";
+        }
+        
+        // Extract confidence score (simple parsing)
+        int confidenceStart = StringFind(llmResponse, "confidence");
+        if(confidenceStart >= 0) {
+            confidenceStart = StringFind(llmResponse, ":", confidenceStart);
+            if(confidenceStart >= 0) {
+                string confidenceStr = StringSubstr(llmResponse, confidenceStart + 1, 4);
+                confidence = StringToDouble(confidenceStr);
+                if(confidence < 0.0 || confidence > 1.0) confidence = 0.5;
+            } else {
+                confidence = 0.5;
+            }
+        } else {
+            confidence = 0.5;
+        }
+        
+        LogAI(ERROR_LEVEL_INFO, "LLM Signal Synthesis: " + recommendation + " @ " + DoubleToString(confidence, 2));
+        return true;
+    }
+    
+    //+------------------------------------------------------------------+
+    //| Generate Trade Explanation using External LLM                     |
+    //+------------------------------------------------------------------+
+    bool GenerateTradeExplanation(const string &signals, const string &decision, string &explanation) {
+        if(!m_externalAIConnected) {
+            explanation = "External LLM not connected";
+            return false;
+        }
+        
+        string prompt = StringFormat("Given these trading signals: %s, and the decision: %s, explain why this trade decision was made in 1-2 sentences.",
+                                      signals, decision);
+        
+        if(!QueryExternalLLM(prompt, explanation)) {
+            explanation = "Failed to get explanation from LLM";
+            return false;
+        }
+        
+        LogAI(ERROR_LEVEL_INFO, "LLM Explanation: " + explanation);
+        return true;
+    }
+    
+    //+------------------------------------------------------------------+
+    //| Assess Risk using External LLM                                   |
+    //+------------------------------------------------------------------+
+    bool AssessRisk(const string &symbol, double entryPrice, double stopLoss, double takeProfit, string &riskReport) {
+        if(!m_externalAIConnected) {
+            riskReport = "External LLM not connected";
+            return false;
+        }
+        
+        double stopLossPct = MathAbs(stopLoss - entryPrice) / entryPrice * 100;
+        double riskRewardRatio = MathAbs(takeProfit - entryPrice) / MathAbs(stopLoss - entryPrice);
+        
+        string prompt = StringFormat("Assess the risk of this trade setup: Symbol %s, Entry %.5f, Stop Loss %.5f (%.2f%%), Take Profit %.5f, Risk:Reward %.2f:1. Provide risk score (0-1) and brief recommendation.",
+                                      symbol, entryPrice, stopLoss, stopLossPct, takeProfit, riskRewardRatio);
+        
+        if(!QueryExternalLLM(prompt, riskReport)) {
+            riskReport = "Failed to get risk assessment from LLM";
+            return false;
+        }
+        
+        LogAI(ERROR_LEVEL_INFO, "LLM Risk Assessment: " + riskReport);
+        return true;
+    }
+    
+    //+------------------------------------------------------------------+
+    //| Reason Strategy Weights using External LLM                        |
+    //+------------------------------------------------------------------+
+    bool ReasonStrategyWeights(const string &regime, const string &currentWeights, string &reasoning) {
+        if(!m_externalAIConnected) {
+            reasoning = "External LLM not connected";
+            return false;
+        }
+        
+        string prompt = StringFormat("Current market regime: %s, Current strategy weights: %s. Suggest optimal strategy weight adjustments for these conditions in 1-2 sentences.",
+                                      regime, currentWeights);
+        
+        if(!QueryExternalLLM(prompt, reasoning)) {
+            reasoning = "Failed to get strategy weight reasoning from LLM";
+            return false;
+        }
+        
+        LogAI(ERROR_LEVEL_INFO, "LLM Strategy Weight Reasoning: " + reasoning);
+        return true;
     }
     
     // Getters

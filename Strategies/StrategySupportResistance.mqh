@@ -349,14 +349,14 @@ void CStrategySupportResistance::DrawTrendlines()
         if(trendline.isBroken)
             lineColor = clrGray;
         
-        ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DASHDOT : STYLE_SOLID;
+        ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DOT : STYLE_DOT;
         
         string nameID = StringFormat("TL_%d", i);
         // In the absence of a proper ID param in drawing mgr wrapper, assume it creates its own.
         // If the wrapper needs unique names, DrawTrendLine might need one, but looking at usage below, it's missing.
         m_drawingManager.DrawTrendLine(trendline.point1Time, trendline.point1Price,
                                         trendline.point2Time, trendline.point2Price,
-                                        lineColor, 2, style);
+                                        lineColor, 1, style);
         
         string label = StringFormat("%s %.0f%% (T:%d)",
                                     trendline.type == TRENDLINE_SUPPORT ? "TL Sup" : "TL Res",

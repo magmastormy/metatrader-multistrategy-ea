@@ -87,10 +87,15 @@ private:
     void LogVoteHeartbeat()
     {
         datetime now = TimeCurrent();
-        if(m_lastVoteLogTime == 0 || (now - m_lastVoteLogTime) >= 60)
+        if(m_lastVoteLogTime == 0 || (now - m_lastVoteLogTime) >= 10) // More frequent heartbeats
         {
-            PrintFormat("[AI-VOTE][Ensemble] %s | votes=%I64u | buy=%I64u | sell=%I64u | none=%I64u | models=%d",
-                        m_symbol, m_voteCount, m_buyVotes, m_sellVotes, m_noneVotes, m_ensemble.GetActiveModelCount());
+            // FIX: Validate confidence before logging to prevent NaN output
+            double logConfidence = m_cachedConfidence;
+            if(!MathIsValidNumber(logConfidence))
+                logConfidence = 0.0;
+                
+            PrintFormat("[AI-VOTE][Ensemble] %s | votes=%I64u | buy=%I64u | sell=%I64u | none=%I64u | models=%d | conf=%.2f | reason=%s",
+                        m_symbol, m_voteCount, m_buyVotes, m_sellVotes, m_noneVotes, m_ensemble.GetActiveModelCount(), logConfidence, m_lastDecisionReasonTag);
             m_lastVoteLogTime = now;
         }
     }
@@ -178,10 +183,8 @@ public:
             {
                 m_noneVotes++;
                 m_lastDecisionReasonTag = "ENSEMBLE_FEATURES_UNAVAILABLE";
-                m_cachedSignal = TRADE_SIGNAL_NONE;
-                m_cachedConfidence = 0.0;
-                m_cacheBarTime = currentBarTime;
-                m_hasCachedSignal = (currentBarTime > 0);
+                // Don't cache failed feature builds - allow retry on next tick
+                m_hasCachedSignal = false;
                 LogVoteHeartbeat();
                 return TRADE_SIGNAL_NONE;
             }
@@ -193,20 +196,33 @@ public:
             {
                 m_noneVotes++;
                 m_lastDecisionReasonTag = "ENSEMBLE_INFERENCE_FAILED";
-                m_cachedSignal = TRADE_SIGNAL_NONE;
-                m_cachedConfidence = 0.0;
-                m_cacheBarTime = currentBarTime;
-                m_hasCachedSignal = (currentBarTime > 0);
+                // Don't cache failed inference - allow retry on next tick
+                m_hasCachedSignal = false;
+                confidence = 0.0; // FIX: Reset confidence to 0.0 on failure
                 LogVoteHeartbeat();
                 return TRADE_SIGNAL_NONE;
             }
 
             double directionalConfidence = MathMax(ensembleBuy, ensembleSell);
             confidence = MathMax(0.0, MathMin(1.0, MathMax(ensembleConfidence, directionalConfidence)));
+            
+            // FIX: Validate confidence is not NaN before using it
+            if(!MathIsValidNumber(confidence))
+            {
+                confidence = 0.0;
+            }
 
-            if(ensembleBuy > ensembleSell && directionalConfidence >= m_minConfidence)
+            // RECOVERY FIX: Exploration-mode threshold for untrained ensemble.
+            // When ensemble has zero trade history, lower the threshold to allow
+            // initial signal generation and enable the learning feedback loop.
+            double effectiveMinConfidence = m_minConfidence;
+            bool isExplorationMode = (m_buyVotes + m_sellVotes == 0);
+            if(isExplorationMode && effectiveMinConfidence > 0.15)
+                effectiveMinConfidence = 0.15;
+
+            if(ensembleBuy > ensembleSell && directionalConfidence >= effectiveMinConfidence)
                 signal = TRADE_SIGNAL_BUY;
-            else if(ensembleSell > ensembleBuy && directionalConfidence >= m_minConfidence)
+            else if(ensembleSell > ensembleBuy && directionalConfidence >= effectiveMinConfidence)
                 signal = TRADE_SIGNAL_SELL;
 
             m_cachedSignal = signal;
@@ -231,8 +247,13 @@ public:
         {
             m_noneVotes++;
             m_lastDecisionReasonTag = "ENSEMBLE_NO_SIGNAL";
+            confidence = 0.0; // FIX: Reset confidence to 0.0 for NO_SIGNAL
         }
 
+        // FIX: Final NaN validation before returning
+        if(!MathIsValidNumber(confidence))
+            confidence = 0.0;
+            
         LogVoteHeartbeat();
         return signal;
     }

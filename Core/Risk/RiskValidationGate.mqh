@@ -49,20 +49,6 @@ struct STradeValidationRequest
     datetime requestTime;             // Request timestamp
 };
 
-//+------------------------------------------------------------------+
-//| Validation Result Structure                                    |
-//+------------------------------------------------------------------+
-struct SValidationResult
-{
-    bool approved;                    // Trade approved/rejected
-    string message;                   // Validation message
-    double adjustedLotSize;           // Adjusted lot size if needed
-    double riskPercent;               // Calculated risk percentage
-    double portfolioRisk;             // Total portfolio risk after trade
-    double correlationRisk;           // Correlation risk factor
-    bool requiresAdjustment;          // Lot size was adjusted
-    ENUM_ERROR_LEVEL severity;        // Message severity level
-};
 
 //+------------------------------------------------------------------+
 //| Risk Validation Gate Class                                    |
@@ -81,6 +67,10 @@ private:
     bool m_clusterMutexEnabled;       // Same-symbol opposing-cluster mutex
     int m_maxConcurrentPerCluster;    // Max open positions per cluster
     double m_maxClusterRiskPercent;   // Max projected risk per cluster
+    
+    // Margin check thresholds (configurable for broker differences)
+    double m_maxFreeMarginUsage;      // Maximum free margin usage percentage (default 0.8 = 80%)
+    double m_minMarginLevel;         // Minimum acceptable margin level (default 200.0 = 200%)
     
     // Audit trail
     bool m_auditLogging;
@@ -106,7 +96,9 @@ public:
     bool Initialize(CPortfolioRiskManager* portfolioRiskManager,
                    const double maxRiskPerTrade = 3.0,  // 🔥 Changed from 2.0 to 3.0 to match EA's InpMaxRiskPerTrade
                    const double maxPortfolioRisk = 10.0,
-                   const double correlationThreshold = 0.7);
+                   const double correlationThreshold = 0.7,
+                   const double maxFreeMarginUsage = 0.8,
+                   const double minMarginLevel = 200.0);
     
     // Main validation function - MUST approve every trade
     SValidationResult ValidateTradeRequest(const STradeValidationRequest &request);
@@ -232,6 +224,8 @@ CRiskValidationGate::CRiskValidationGate() : m_portfolioRiskManager(NULL),
                                            m_clusterMutexEnabled(true),
                                            m_maxConcurrentPerCluster(3),
                                            m_maxClusterRiskPercent(5.0),
+                                           m_maxFreeMarginUsage(0.8),
+                                           m_minMarginLevel(200.0),
                                            m_auditLogging(true),
                                            m_auditLogFile("RiskValidation.log"),
                                            m_validationCount(0),
@@ -262,7 +256,9 @@ CRiskValidationGate::~CRiskValidationGate()
 bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManager,
                                     const double maxRiskPerTrade,
                                     const double maxPortfolioRisk,
-                                    const double correlationThreshold)
+                                    const double correlationThreshold,
+                                    const double maxFreeMarginUsage,
+                                    const double minMarginLevel)
 {
     if(CheckPointer(pPortfolioRiskManager) == POINTER_INVALID)
     {
@@ -291,10 +287,25 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
         return false;
     }
     
+    // Validate margin threshold parameters
+    if(maxFreeMarginUsage <= 0 || maxFreeMarginUsage > 1.0)
+    {
+        CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate", "Invalid max free margin usage", 0);
+        return false;
+    }
+    
+    if(minMarginLevel < 100.0 || minMarginLevel > 1000.0)
+    {
+        CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate", "Invalid min margin level", 0);
+        return false;
+    }
+    
     // Set parameters
     m_maxRiskPerTrade = maxRiskPerTrade;
     m_maxPortfolioRisk = maxPortfolioRisk;
     m_correlationThreshold = correlationThreshold;
+    m_maxFreeMarginUsage = maxFreeMarginUsage;
+    m_minMarginLevel = minMarginLevel;
     
     // Initialize audit logging
     if(m_auditLogging)
@@ -499,10 +510,20 @@ bool CRiskValidationGate::ValidateRiskLimits(const STradeValidationRequest &requ
     double accountBalanceLocal = AccountInfoDouble(ACCOUNT_BALANCE);
     double accountEquityLocal = AccountInfoDouble(ACCOUNT_EQUITY);
     double riskDenominator = 0.0;
+    
+    // Handle negative balance/equity scenarios (margin call, etc.)
+    if(accountBalanceLocal <= 0.0 && accountEquityLocal <= 0.0)
+    {
+        message = "Account in critical state - negative balance and equity";
+        return false;
+    }
+    
     if(accountBalanceLocal > 0.0 && accountEquityLocal > 0.0)
         riskDenominator = MathMin(accountBalanceLocal, accountEquityLocal);
+    else if(accountBalanceLocal > 0.0)
+        riskDenominator = accountBalanceLocal;
     else
-        riskDenominator = MathMax(accountBalanceLocal, accountEquityLocal);
+        riskDenominator = accountEquityLocal;
 
     if(riskDenominator <= 0.0)
     {
@@ -583,7 +604,7 @@ bool CRiskValidationGate::ValidateCorrelationLimits(const STradeValidationReques
     if(CheckPointer(m_portfolioRiskManager) != POINTER_INVALID)
     {
         CPortfolioRiskManager* manager = m_portfolioRiskManager;
-        if(CheckPointer(manager) != POINTER_INVALID && !(*manager).CheckCorrelationLimits(request.symbol))
+        if(!(*manager).CheckCorrelationLimits(request.symbol))
         {
             string correlationReason = (*manager).GetLastBlockReason();
             message = (correlationReason != "") ? correlationReason : "Correlation limit exceeded";
@@ -614,17 +635,19 @@ bool CRiskValidationGate::ValidateMarginRequirements(const STradeValidationReque
     // Check available margin
     double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
     
-    if(marginRequired > freeMargin * 0.8) // Use max 80% of free margin
+    if(marginRequired > freeMargin * m_maxFreeMarginUsage) // Use configurable max free margin usage
     {
-        message = StringFormat("Insufficient margin: required %.2f, available %.2f", marginRequired, freeMargin);
+        message = StringFormat("Insufficient margin: required %.2f, available %.2f (threshold: %.0f%%)", 
+                             marginRequired, freeMargin, m_maxFreeMarginUsage * 100.0);
         return false;
     }
     
     // Check margin level after trade
     double currentMarginLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-    if(currentMarginLevel > 0 && currentMarginLevel < 200.0)
+    if(currentMarginLevel > 0 && currentMarginLevel < m_minMarginLevel)
     {
-        message = StringFormat("Margin level too low: %.2f%%", currentMarginLevel);
+        message = StringFormat("Margin level too low: %.2f%% (threshold: %.0f%%)", 
+                             currentMarginLevel, m_minMarginLevel);
         return false;
     }
     

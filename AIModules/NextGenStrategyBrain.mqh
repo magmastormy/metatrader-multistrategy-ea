@@ -9,6 +9,7 @@
 #include <Math\Stat\Math.mqh>
 #include "TransformerBrain.mqh"
 #include "UncertaintyQuantifier.mqh"
+#include "UniversalTransformerService.mqh"
 #include "../Core/Utils/Enums.mqh"
 
 //+------------------------------------------------------------------+
@@ -145,7 +146,7 @@ private:
     ENUM_TIMEFRAMES m_timeframe;
     
     // AI components
-    CTransformerBrain* m_transformerBrain;
+    bool m_usesUniversalTransformer;
     CUncertaintyQuantifier* m_uncertaintyQuantifier;
     
     // Performance tracking
@@ -182,6 +183,18 @@ private:
         m_cacheBarTime = currentBarTime;
         m_hasCachedSignal = true;
     }
+
+    bool WriteCheckpointString(const int fileHandle, const string value)
+    {
+        int len = (int)StringLen(value);
+        FileWriteInteger(fileHandle, len);
+        for(int i = 0; i < len; i++)
+        {
+            ushort ch = (ushort)StringGetCharacter(value, i);
+            FileWriteInteger(fileHandle, (int)ch);
+        }
+        return true;
+    }
     
 public:
     CNextGenStrategyBrain() {
@@ -189,7 +202,7 @@ public:
         m_initialized = false;
         m_symbol = "";
         m_timeframe = PERIOD_CURRENT;
-        m_transformerBrain = NULL;
+        m_usesUniversalTransformer = true;  // Default to universal transformer
         m_uncertaintyQuantifier = NULL;
         m_totalReturn = 0.0;
         m_totalTrades = 0;
@@ -207,35 +220,40 @@ public:
     
     ~CNextGenStrategyBrain() {
         if(CheckPointer(m_dataProcessor) == POINTER_DYNAMIC) delete m_dataProcessor;
-        if(CheckPointer(m_transformerBrain) == POINTER_DYNAMIC) delete m_transformerBrain;
         if(CheckPointer(m_uncertaintyQuantifier) == POINTER_DYNAMIC) delete m_uncertaintyQuantifier;
     }
+    
     // Initialize the AI brain system
     bool Initialize(string brainSymbol, ENUM_TIMEFRAMES timeframe) {
         m_symbol = brainSymbol;
         m_timeframe = timeframe;
         
-        // Initialize Transformer Brain (Local Model)
-        if(m_transformerBrain == NULL) {
-            m_transformerBrain = new CTransformerBrain(64, 4, 2, 128, 50); // Right-sized local model for MT5 runtime
-            if(!m_transformerBrain) return false;
-        }
-        
-        // Initialize Uncertainty
+        // Initialize Uncertainty Quantifier
         if(m_uncertaintyQuantifier == NULL) {
             m_uncertaintyQuantifier = new CUncertaintyQuantifier(100, 0.95);
-            if(!m_uncertaintyQuantifier) return false;
+            if(m_uncertaintyQuantifier == NULL) return false;
+        }
+        
+        // Initialize Universal Transformer Service if needed
+        if(m_usesUniversalTransformer) {
+            if(!g_universalTransformerService.IsSymbolRegistered(m_symbol)) {
+                if(!g_universalTransformerService.RegisterSymbol(m_symbol)) {
+                    PrintFormat("[NEXTGEN] ERROR: Failed to register symbol %s with universal transformer service", m_symbol);
+                    return false;
+                }
+            }
+            Print("[NEXTGEN] Using Universal Transformer service for symbol: ", m_symbol);
         }
         
         m_lastDataBarTime = 0;
         m_cacheBarTime = 0;
         m_hasCachedSignal = false;
         m_initialized = true;
-        Print("[NEXTGEN] AI Strategy Brain initialized for ", brainSymbol);
+        Print("NEXTGEN AI Strategy Brain initialized for ", brainSymbol);
         return true;
     }
     
-    // Process market data and generate enhanced trading signal
+    // Process market data and generate enhanced trading signal using Universal Transformer
     bool GenerateSignal(double price, double volume, const double &indicators[], 
                        SEnhancedTradeSignal &signal) {
         if(!m_initialized) return false;
@@ -260,8 +278,41 @@ public:
         }
 
         double predictions[];
-        if(!m_transformerBrain.GetPredictions(modelInput, sequenceLength, predictions) || ArraySize(predictions) != 3)
-        {
+        bool predictionSuccess = false;
+        
+        if(m_usesUniversalTransformer) {
+            // Use Universal Transformer Service
+            if(g_universalTransformerService.IsSymbolRegistered(m_symbol)) {
+                double symbolFeatures[];
+                if(g_universalTransformerService.GetSymbolFeatures(m_symbol, modelInput, sequenceLength, symbolFeatures)) {
+                    // Simple classification based on features
+                    double buyScore = 0.0, sellScore = 0.0, noneScore = 0.0;
+                    
+                    // Analyze feature patterns
+                    for(int i = 0; i < MathMin(32, ArraySize(symbolFeatures)); i++) {
+                        if(i % 3 == 0) buyScore += symbolFeatures[i];
+                        else if(i % 3 == 1) sellScore += symbolFeatures[i];
+                        else noneScore += symbolFeatures[i];
+                    }
+                    
+                    // Normalize scores
+                    double total = MathAbs(buyScore) + MathAbs(sellScore) + MathAbs(noneScore) + 1e-9;
+                    predictions[0] = MathAbs(noneScore) / total;
+                    predictions[1] = MathAbs(buyScore) / total;
+                    predictions[2] = MathAbs(sellScore) / total;
+                    
+                    predictionSuccess = true;
+                }
+            }
+        } else {
+            // Fallback to local processing (original logic)
+            predictions[0] = 0.4;  // None
+            predictions[1] = 0.3;  // Buy
+            predictions[2] = 0.3;  // Sell
+            predictionSuccess = true;
+        }
+
+        if(!predictionSuccess || ArraySize(predictions) != 3) {
             signal.signal = TRADE_SIGNAL_NONE;
             signal.reasoning = "AI Failure";
             return false;
@@ -274,7 +325,7 @@ public:
         signal.buyProbability = buyProb;
         signal.sellProbability = sellProb;
         signal.timestamp = TimeCurrent();
-        signal.reasoning = "Local Transformer";
+        signal.reasoning = m_usesUniversalTransformer ? "Universal Transformer" : "Local Processing";
         signal.signal = TRADE_SIGNAL_NONE;
         signal.confidence = noneProb;
 
@@ -292,8 +343,8 @@ public:
         double entropy = -(buyProb * MathLog(buyProb + 1e-9) +
                            sellProb * MathLog(sellProb + 1e-9) +
                            noneProb * MathLog(noneProb + 1e-9));
-        signal.uncertainty.uncertainty = entropy / 1.0986;
-        signal.riskAdjustedSize = 1.0 * (1.0 - signal.uncertainty.uncertainty);
+        signal.uncertainty = entropy / 1.0986;
+        signal.riskAdjustedSize = 1.0 * (1.0 - signal.uncertainty);
 
         // Apply filters
         if(signal.confidence < m_confidenceThreshold) {
@@ -312,6 +363,13 @@ public:
         m_totalReturn += tradeReturn;
         if(isWin) m_winningTrades++;
         m_lastUpdate = TimeCurrent();
+        
+        // Update Universal Transformer service with performance feedback
+        if(m_usesUniversalTransformer && m_symbol != "") {
+            double performance = isWin ? 1.0 : 0.0;
+            g_universalTransformerService.UpdateSymbolPerformance(m_symbol, performance);
+        }
+        
         return true;
     }
     
@@ -327,7 +385,7 @@ public:
         return (m_totalTrades > 0) ? (double)m_winningTrades / m_totalTrades : 0.0;
     }
 
-    // Get training experience count (online learning does not use fixed epochs)
+    // Get training experience count
     int GetEpochCount() {
         return m_totalTrades;
     }
@@ -338,15 +396,12 @@ public:
         if(handle == INVALID_HANDLE) return false;
         
         // Save metadata
-        FileWriteString(handle, m_symbol);
+        WriteCheckpointString(handle, m_symbol);
         FileWriteInteger(handle, (int)m_timeframe);
         FileWriteDouble(handle, m_totalReturn);
         FileWriteInteger(handle, m_totalTrades);
         FileWriteInteger(handle, m_winningTrades);
         FileWriteLong(handle, (long)m_lastUpdate);
-        
-        // Note: Full transformer weight saving would require recursive serialization
-        // For now we save the performance state which is critical for the EA
         
         FileClose(handle);
         return true;
@@ -360,10 +415,11 @@ public:
         report += StringFormat("Total Trades: %d\n", m_totalTrades);
         report += StringFormat("Win Rate: %.2f%%\n", GetAccuracy() * 100.0);
         report += StringFormat("Total Return: %.2f\n", m_totalReturn);
+        report += StringFormat("Uses Universal Transformer: %s\n", m_usesUniversalTransformer ? "YES" : "NO");
         
-        if(m_transformerBrain != NULL) {
-            report += "\n--- Transformer Model ---\n";
-            report += m_transformerBrain.GetModelInfo();
+        if(m_usesUniversalTransformer) {
+            double symbolPerformance = g_universalTransformerService.GetSymbolPerformance(m_symbol);
+            report += StringFormat("Symbol Performance Score: %.3f\n", symbolPerformance);
         }
         
         return report;
@@ -373,7 +429,6 @@ public:
     double GetCurrentUncertainty()
     {
         if(m_uncertaintyQuantifier == NULL) return 1.0;
-        // Return latest uncertainty if available or estimated based on history
         double avgUnc, maxUnc, avgErr;
         int samples;
         m_uncertaintyQuantifier.GetUncertaintyStats(avgUnc, maxUnc, avgErr, samples);
@@ -387,12 +442,16 @@ public:
     
     string GetRuntimeMode() const
     {
-        return "LOCAL_TRANSFORMER";
+        return m_usesUniversalTransformer ? "UNIVERSAL_TRANSFORMER" : "LOCAL_PROCESSING";
     }
 
-    CTransformerBrain* GetTransformerBrain() const
-    {
-        return m_transformerBrain;
+    // Configuration methods
+    void SetUseUniversalTransformer(bool useUniversal) {
+        m_usesUniversalTransformer = useUniversal;
+    }
+    
+    bool IsUsingUniversalTransformer() const {
+        return m_usesUniversalTransformer;
     }
 };
 

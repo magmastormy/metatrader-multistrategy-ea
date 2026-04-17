@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| AI Strategy Orchestrator                                        |
 //| Intelligent strategy management with performance-based adaptation|
 //+------------------------------------------------------------------+
@@ -11,10 +11,13 @@
 #define CORE_AI_STRATEGY_ORCHESTRATOR_MQH
 
 #include "../Utils/Enums.mqh"
+#include "../Utils/EnsembleTypes.mqh"
 #include "../Utils/ErrorHandling.mqh"
+#include "DynamicThresholdManager.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
 #include "../Signals/HedgingProtection.mqh"
+#include "../Signals/TieredSignalValidator.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -39,6 +42,7 @@ struct SStrategyPerformance
     string name;                    // Strategy name
     double weight;                  // Current weight
     bool enabled;                   // Strategy enabled flag
+    ENUM_STRATEGY_TIER tier;        // Strategy tier
     
     // Performance metrics (20-trade rolling window)
     int totalTrades;                // Total trades executed
@@ -126,91 +130,6 @@ struct SStrategyPerformance
 };
 
 //+------------------------------------------------------------------+
-//| Ensemble Voting Structure                                       |
-//+------------------------------------------------------------------+
-struct SEnsembleVote
-{
-    string strategyName;            // Strategy name
-    ENUM_TRADE_SIGNAL signal;      // Strategy signal
-    double confidence;              // Signal confidence
-    double weight;                  // Strategy weight
-    double adjustedWeight;          // Performance-adjusted weight
-    ENUM_MARKET_REGIME regime;      // Current market regime
-    double signalStrength;          // Signal strength (0-1)
-    string reasoning;               // Strategy reasoning
-    datetime timestamp;             // Vote timestamp
-    bool isValid;                   // Vote validity flag
-};
-
-//+------------------------------------------------------------------+
-//| Ensemble Decision Structure                                     |
-//+------------------------------------------------------------------+
-struct SEnsembleDecision
-{
-    ENUM_TRADE_SIGNAL finalSignal;  // Final ensemble decision
-    double confidence;              // Final confidence
-    int totalVotes;                 // Total votes received
-    int validVotes;                 // Valid votes processed
-    double consensusStrength;       // Consensus strength (0-1)
-    string decisionReasoning;       // Decision reasoning
-    datetime decisionTime;          // Decision timestamp
-    
-    // Vote breakdown
-    int buyVotes;                   // Number of buy votes
-    int sellVotes;                  // Number of sell votes
-    int neutralVotes;               // Number of neutral votes
-    double buyWeight;               // Total buy weight
-    double sellWeight;              // Total sell weight
-    
-    // Performance tracking
-    bool wasSuccessful;             // Track if decision was successful
-    double actualOutcome;           // Actual trade outcome
-    datetime outcomeTime;           // Outcome timestamp
-
-    SEnsembleDecision()
-    {
-        finalSignal = TRADE_SIGNAL_NONE;
-        confidence = 0.0;
-        totalVotes = 0;
-        validVotes = 0;
-        consensusStrength = 0.0;
-        decisionReasoning = "";
-        decisionTime = 0;
-
-        buyVotes = 0;
-        sellVotes = 0;
-        neutralVotes = 0;
-        buyWeight = 0.0;
-        sellWeight = 0.0;
-
-        wasSuccessful = false;
-        actualOutcome = 0.0;
-        outcomeTime = 0;
-    }
-
-    SEnsembleDecision(const SEnsembleDecision &other)
-    {
-        finalSignal = other.finalSignal;
-        confidence = other.confidence;
-        totalVotes = other.totalVotes;
-        validVotes = other.validVotes;
-        consensusStrength = other.consensusStrength;
-        decisionReasoning = other.decisionReasoning;
-        decisionTime = other.decisionTime;
-
-        buyVotes = other.buyVotes;
-        sellVotes = other.sellVotes;
-        neutralVotes = other.neutralVotes;
-        buyWeight = other.buyWeight;
-        sellWeight = other.sellWeight;
-
-        wasSuccessful = other.wasSuccessful;
-        actualOutcome = other.actualOutcome;
-        outcomeTime = other.outcomeTime;
-    }
-};
-
-//+------------------------------------------------------------------+
 //| AI Strategy Orchestrator Class                                 |
 //+------------------------------------------------------------------+
 class CAIStrategyOrchestrator : public CEnhancedErrorHandler
@@ -252,6 +171,9 @@ private:
     double m_regimeUncertaintyThreshold;                // Regime uncertainty threshold
     double m_highConfidenceThreshold;                   // High confidence threshold for uncertain regimes
     
+    CDynamicThresholdManager* m_thresholdManager;       // Dynamic threshold manager
+    CTieredSignalValidator* m_tieredValidator;         // Multi-tier signal validator
+    
     bool m_initialized;
     
     // Diagnostic systems
@@ -267,7 +189,7 @@ public:
     bool Initialize(const double minWinRate = 0.40, const int maxConsecutiveLosses = 5);
     
     // Strategy management
-    bool AddStrategy(const string strategyName, const double initialWeight = 1.0);
+    bool AddStrategy(const string strategyName, const ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3, const double initialWeight = 1.0);
     bool RemoveStrategy(const string strategyName);
     bool UpdateStrategyPerformance(const string strategyName, const double tradeResult);
     
@@ -344,7 +266,7 @@ public:
 private:
     // Internal functions
     int FindStrategyIndex(const string strategyName);
-    void InitializeStrategyPerformance(const int index, const string name, const double weight);
+    void InitializeStrategyPerformance(const int index, const string name, const ENUM_STRATEGY_TIER tier, const double weight);
     void CalculateStrategyMetrics(const int index);
     void UpdateRegimePerformance(const int index, ENUM_MARKET_REGIME regime, const double result);
     
@@ -361,8 +283,6 @@ private:
     // Logging
     void LogOrchestrationEvent(const ENUM_ERROR_SEVERITY level, const string message);
 };
-
-//+------------------------------------------------------------------+
 //| Constructor                                                     |
 //+------------------------------------------------------------------+
 CAIStrategyOrchestrator::CAIStrategyOrchestrator(void) :
@@ -371,7 +291,7 @@ CAIStrategyOrchestrator::CAIStrategyOrchestrator(void) :
     m_maxConsecutiveLosses(5),
     m_performanceDecayFactor(0.95),
     m_rollingWindowSize(20),
-    m_minVotingConfidence(0.5),
+    m_minVotingConfidence(0.35), // Restored from 0.5 to legacy 0.35 for higher activity
     m_consensusThreshold(0.6),
     m_useConfidenceWeighting(true),
     m_currentRegime(MARKET_REGIME_UNKNOWN),
@@ -386,6 +306,8 @@ CAIStrategyOrchestrator::CAIStrategyOrchestrator(void) :
     m_disagreementPenalty(0.15),
     m_regimeUncertaintyThreshold(0.6),
     m_highConfidenceThreshold(0.8),
+    m_thresholdManager(NULL),
+    m_tieredValidator(NULL),
     m_initialized(false),
     m_tfConsistency(NULL),
     m_hedgingProtection(NULL)
@@ -445,6 +367,12 @@ CAIStrategyOrchestrator::~CAIStrategyOrchestrator(void)
         m_tfConsistency = NULL;
     }
     
+    if(m_tieredValidator != NULL)
+    {
+        delete m_tieredValidator;
+        m_tieredValidator = NULL;
+    }
+    
     if(m_hedgingProtection != NULL)
     {
         delete m_hedgingProtection;
@@ -474,6 +402,13 @@ bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const i
     m_initialized = true;
     m_lastUpdate = TimeCurrent();
     
+    // Create threshold manager
+    if(m_thresholdManager != NULL) delete m_thresholdManager;
+    m_thresholdManager = new CDynamicThresholdManager(m_minVotingConfidence, 0.25, 0.60);
+    
+    if(m_tieredValidator != NULL) delete m_tieredValidator;
+    m_tieredValidator = new CTieredSignalValidator();
+    
     m_tfConsistency = new CTimeframeConsistency();
     if(m_tfConsistency != NULL)
         m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
@@ -492,7 +427,7 @@ bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const i
 //+------------------------------------------------------------------+
 //| Add Strategy to Orchestrator                                   |
 //+------------------------------------------------------------------+
-bool CAIStrategyOrchestrator::AddStrategy(const string strategyName, const double initialWeight)
+bool CAIStrategyOrchestrator::AddStrategy(const string strategyName, const ENUM_STRATEGY_TIER tier, const double initialWeight)
 {
     if(!m_initialized)
     {
@@ -528,12 +463,12 @@ bool CAIStrategyOrchestrator::AddStrategy(const string strategyName, const doubl
     }
     
     // Initialize strategy performance
-    InitializeStrategyPerformance(m_strategyCount, strategyName, initialWeight);
+    InitializeStrategyPerformance(m_strategyCount, strategyName, tier, initialWeight);
     m_strategyCount++;
     
     LogOrchestrationEvent(ERROR_INFO, 
-                         StringFormat("Strategy added to orchestrator: %s (Weight: %.2f)", 
-                                     strategyName, initialWeight));
+                         StringFormat("Strategy added: %s [Tier %d] (Weight: %.2f)", 
+                                     strategyName, (int)tier, initialWeight));
     
     return true;
 }
@@ -557,7 +492,7 @@ bool CAIStrategyOrchestrator::RemoveStrategy(const string strategyName)
     }
     
     // Clear last entry
-    InitializeStrategyPerformance(m_strategyCount - 1, "", 0.0);
+    InitializeStrategyPerformance(m_strategyCount - 1, "", STRATEGY_TIER_3, 0.0);
     m_strategyCount--;
     
     LogOrchestrationEvent(ERROR_INFO, "Strategy removed from orchestrator: " + strategyName);
@@ -878,35 +813,119 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::GetEnsembleSignal(SEnsembleVote &vote
     for(int i = 0; i < voteCount && i < MAX_STRATEGIES; i++)
     {
         int strategyIndex = FindStrategyIndex(votes[i].strategyName);
-        if(strategyIndex >= 0 && !m_strategies[strategyIndex].temporarilyDisabled && 
-           votes[i].confidence >= m_minVotingConfidence)
+        if(strategyIndex >= 0 && !m_strategies[strategyIndex].temporarilyDisabled)
         {
-            validVotes[validVoteCount] = votes[i];
-            
-            // Apply performance-adjusted weight
-            validVotes[validVoteCount].adjustedWeight = 
-                votes[i].weight * CalculatePerformanceAdjustedWeight(strategyIndex);
-            
-            validVoteCount++;
+            if(votes[i].confidence >= m_minVotingConfidence)
+            {
+                validVotes[validVoteCount] = votes[i];
+                validVotes[validVoteCount].tier = m_strategies[strategyIndex].tier; // Ensure tier is set
+                
+                // Apply performance-adjusted weight
+                validVotes[validVoteCount].adjustedWeight = 
+                    votes[i].weight * CalculatePerformanceAdjustedWeight(strategyIndex);
+                
+                validVoteCount++;
+            }
+            else if(votes[i].signal != TRADE_SIGNAL_NONE)
+            {
+                LogOrchestrationEvent(ERROR_INFO, StringFormat("[VOTE-GATED] %s signal %s rejected: confidence %.2f < threshold %.2f", 
+                                     votes[i].strategyName, EnumToString(votes[i].signal), votes[i].confidence, m_minVotingConfidence));
+            }
         }
     }
     
     if(validVoteCount == 0)
     {
+        // SOFT QUORUM FALLBACK: Check if we have votes that are ALMOST valid (confidence > threshold * 0.8)
+        // and if there is strong agreement among them.
+        int softVoteCount = 0;
+        SEnsembleVote softVotes[MAX_STRATEGIES];
+        double softThreshold = m_minVotingConfidence * 0.85;
+
+        for(int i = 0; i < voteCount && i < MAX_STRATEGIES; i++)
+        {
+            int strategyIndex = FindStrategyIndex(votes[i].strategyName);
+            if(strategyIndex >= 0 && !m_strategies[strategyIndex].temporarilyDisabled && 
+               votes[i].confidence >= softThreshold)
+            {
+                softVotes[softVoteCount] = votes[i];
+                softVotes[softVoteCount].tier = m_strategies[strategyIndex].tier;
+                softVotes[softVoteCount].adjustedWeight = 
+                    votes[i].weight * CalculatePerformanceAdjustedWeight(strategyIndex);
+                softVoteCount++;
+            }
+        }
+
+        if(softVoteCount >= 2) // Need at least two strategies agreeing to trigger soft quorum
+        {
+            double softConfidence = 0;
+            ENUM_TRADE_SIGNAL softSignal = ProcessWeightedVoting(softVotes, softVoteCount, softConfidence);
+            
+            // Calculate consensus strength for the soft signal
+            double consensus = CalculateConsensusStrength(softVotes, softVoteCount, softSignal);
+            
+            if(softSignal != TRADE_SIGNAL_NONE && consensus >= 0.8) // High consensus required for soft quorum
+            {
+                confidence = softConfidence;
+                m_totalEnsembleSignals++;
+                LogOrchestrationEvent(ERROR_INFO, 
+                                     StringFormat("[SOFT-QUORUM-WIN] %s accepted | Conf: %.2f | Cons: %.1f%% | Voters: %d/%d", 
+                                                 (softSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL"), 
+                                                 confidence, consensus * 100, softVoteCount, voteCount));
+                return softSignal;
+            }
+            else if(softVoteCount >= 2)
+            {
+                LogOrchestrationEvent(ERROR_INFO, 
+                                     StringFormat("[SOFT-QUORUM-REJECT] %s | Cons: %.1f%% (min 80%%) | Soft Voters: %d", 
+                                                 (softSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL"), 
+                                                 consensus * 100, softVoteCount));
+            }
+        }
+
         confidence = 0.0;
         return TRADE_SIGNAL_NONE;
+    }
+
+    // SPECIAL CONFLUENCE: Trend + Fibonacci Promotion
+    // If Trend and Fib agree with high confidence, escalate them to Tier 1 weight
+    for(int i = 0; i < validVoteCount; i++)
+    {
+        for(int j = i + 1; j < validVoteCount; j++)
+        {
+            ENUM_STRATEGY_TIER escalatedTier = CRankingMatrix::CheckConfluenceEscalation(
+                validVotes[i].strategyName, validVotes[i].confidence, validVotes[i].signal,
+                validVotes[j].strategyName, validVotes[j].confidence, validVotes[j].signal
+            );
+            
+            if(escalatedTier == STRATEGY_TIER_1)
+            {
+                // Promote both to Tier 1 weight for this decision
+                double t1Mult = CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1);
+                double t2Mult = CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2);
+                double boost = t1Mult / t2Mult;
+                
+                validVotes[i].adjustedWeight *= boost;
+                validVotes[j].adjustedWeight *= boost;
+                
+                LogOrchestrationEvent(ERROR_INFO, 
+                                     StringFormat("[CONFLUENCE-BOOST] Trend + Fibonacci agreement! Escalated to Tier 1 power | Boost: %.2fx", boost));
+            }
+        }
     }
 
     // Require at least two valid voters when ensemble has multiple registered strategies.
     if(validVoteCount == 1 && m_strategyCount > 1)
     {
         confidence = 0.0;
-        LogOrchestrationEvent(ERROR_INFO, "Single-vote ensemble signal rejected (multi-strategy quorum not met)");
+        LogOrchestrationEvent(ERROR_INFO, StringFormat("[QUORUM-REJECT] Single-vote ensemble signal rejected (%s only). Multi-strategy quorum not met.", validVotes[0].strategyName));
         return TRADE_SIGNAL_NONE;
     }
     
     // Process weighted voting
-    ENUM_TRADE_SIGNAL signal = ProcessWeightedVoting(validVotes, validVoteCount, confidence);
+    STieredValidationResult tieredResult = m_tieredValidator.ValidateSignals(validVotes, validVoteCount);
+    ENUM_TRADE_SIGNAL signal = tieredResult.finalSignal;
+    confidence = tieredResult.confidence;
     
     // Record ensemble signal
     if(signal != TRADE_SIGNAL_NONE)
@@ -914,9 +933,9 @@ ENUM_TRADE_SIGNAL CAIStrategyOrchestrator::GetEnsembleSignal(SEnsembleVote &vote
         m_totalEnsembleSignals++;
         
         LogOrchestrationEvent(ERROR_INFO, 
-                             StringFormat("Ensemble signal generated: %s | Confidence: %.2f | Votes: %d", 
+                             StringFormat("Ensemble signal generated: %s | Confidence: %.2f | Votes: %d | Quality: %.2f", 
                                          (signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL"), 
-                                         confidence, validVoteCount));
+                                         confidence, validVoteCount, tieredResult.setupQuality));
     }
     
     return signal;
@@ -1066,6 +1085,7 @@ SEnsembleDecision CAIStrategyOrchestrator::GetEnsembleDecision(SEnsembleVote &vo
             if(strategyIndex >= 0 && !m_strategies[strategyIndex].temporarilyDisabled)
             {
                 validVotes[validVoteCount] = votes[i];
+                validVotes[validVoteCount].tier = m_strategies[strategyIndex].tier; // Ensure tier is set
                 validVotes[validVoteCount].adjustedWeight = 
                     votes[i].weight * CalculatePerformanceAdjustedWeight(strategyIndex);
                 
@@ -1100,28 +1120,30 @@ SEnsembleDecision CAIStrategyOrchestrator::GetEnsembleDecision(SEnsembleVote &vo
         return decision;
     }
     
-    // Process weighted voting with enhanced logic
-    double confidence = 0.0;
-    decision.finalSignal = ProcessWeightedVoting(validVotes, validVoteCount, confidence);
-    decision.confidence = confidence;
+    // Process weighted voting with tiered validator
+    STieredValidationResult tieredRes = m_tieredValidator.ValidateSignals(validVotes, validVoteCount);
     
-    // Calculate consensus strength
-    decision.consensusStrength = CalculateConsensusStrength(validVotes, validVoteCount, decision.finalSignal);
+    decision.finalSignal = tieredRes.finalSignal;
+    decision.confidence = tieredRes.confidence;
+    decision.consensusStrength = tieredRes.consensusScore;
+    
+    // Copy tiered metrics to decision structure
+    decision.tier1Weight = tieredRes.tier1Weight;
+    decision.tier2Weight = tieredRes.tier2Weight;
+    decision.tier3Weight = tieredRes.tier3Weight;
+    decision.tier1Votes = tieredRes.tier1Votes;
+    decision.tier2Votes = tieredRes.tier2Votes;
+    decision.tier3Votes = tieredRes.tier3Votes;
+    decision.setupQuality = tieredRes.setupQuality;
+    decision.reliabilityScore = tieredRes.reliabilityScore;
+    decision.conflictDetected = tieredRes.conflictDetected;
     
     // Enhanced reasoning with agreement/disagreement analysis
-    double agreementLevel = CalculateAgreementLevel(validVotes, validVoteCount, decision.finalSignal);
-    double disagreementLevel = CalculateDisagreementLevel(validVotes, validVoteCount);
-    
-    string reasoningDetails = "";
-    if(agreementLevel >= 0.7)
-        reasoningDetails += StringFormat(" | Strong Agreement: %.1f%%", agreementLevel * 100);
-    if(disagreementLevel > 0.3)
-        reasoningDetails += StringFormat(" | High Disagreement: %.1f%%", disagreementLevel * 100);
+    string reasoningDetails = tieredRes.reason;
     if(IsRegimeUncertain())
-        reasoningDetails += StringFormat(" | Regime Uncertain: %.1f%%", m_regimeConfidence * 100);
+        reasoningDetails += StringFormat(" | [REGIME-UNCERTAIN] Confidence: %.1f%%", m_regimeConfidence * 100);
     
-    decision.decisionReasoning = StringFormat("Ensemble: %d votes, %.1f%% consensus, %.3f confidence%s",
-                                            validVoteCount, decision.consensusStrength * 100, confidence, reasoningDetails);
+    decision.decisionReasoning = reasoningDetails;
     
     // Store decision for tracking
     m_recentDecisions[m_decisionIndex] = decision;
@@ -1129,7 +1151,7 @@ SEnsembleDecision CAIStrategyOrchestrator::GetEnsembleDecision(SEnsembleVote &vo
     if(m_decisionCount < 50) m_decisionCount++;
     
     // Log detailed decision reasoning
-    LogVotingDecisionReasoning(validVotes, validVoteCount, decision.finalSignal, confidence);
+    LogVotingDecisionReasoning(validVotes, validVoteCount, decision.finalSignal, decision.confidence);
     
     // Log the decision summary
     LogEnsembleDecision(decision);
@@ -1448,12 +1470,13 @@ int CAIStrategyOrchestrator::FindStrategyIndex(const string strategyName)
 //+------------------------------------------------------------------+
 //| Initialize Strategy Performance                                 |
 //+------------------------------------------------------------------+
-void CAIStrategyOrchestrator::InitializeStrategyPerformance(const int index, const string name, const double weight)
+void CAIStrategyOrchestrator::InitializeStrategyPerformance(const int index, const string name, const ENUM_STRATEGY_TIER tier, const double weight)
 {
     if(index < 0 || index >= MAX_STRATEGIES) return;
     
     m_strategies[index].name = name;
     m_strategies[index].weight = weight;
+    m_strategies[index].tier = tier;
     m_strategies[index].enabled = true;
     m_strategies[index].totalTrades = 0;
     m_strategies[index].winningTrades = 0;
@@ -1702,19 +1725,19 @@ void CAIStrategyOrchestrator::LogEnsembleDecision(const SEnsembleDecision &decis
     else if(decision.finalSignal == TRADE_SIGNAL_SELL) signalStr = "SELL";
     
     LogOrchestrationEvent(ERROR_INFO, 
-                         StringFormat("Ensemble decision: %s | Confidence: %.2f | Consensus: %.1f%% | Votes: %d/%d valid",
+                         StringFormat("[AI-DECISION] %s | Conf: %.2f | Cons: %.1f%% | Votes: %d/%d valid",
                                      signalStr, decision.confidence, decision.consensusStrength * 100,
                                      decision.validVotes, decision.totalVotes));
     
     LogOrchestrationEvent(ERROR_INFO, 
-                         StringFormat("   Vote Breakdown: BUY=%d (%.2f), SELL=%d (%.2f), NEUTRAL=%d",
+                         StringFormat("   [AI-BREAKDOWN] BUY=%d (%.2f), SELL=%d (%.2f), NEUTRAL=%d",
                                      decision.buyVotes, decision.buyWeight,
                                      decision.sellVotes, decision.sellWeight,
                                      decision.neutralVotes));
     
     if(decision.decisionReasoning != "")
     {
-        LogOrchestrationEvent(ERROR_INFO, "   Reasoning: " + decision.decisionReasoning);
+        LogOrchestrationEvent(ERROR_INFO, "   [AI-REASONING] " + decision.decisionReasoning);
     }
 }
 
@@ -1735,13 +1758,34 @@ void CAIStrategyOrchestrator::UpdateEnsemblePerformance(const SEnsembleDecision 
             // Update overall ensemble performance
             RecordEnsembleResult(outcome > 0.0);
             
+            // Update tiered validator performance
+            if(m_tieredValidator != NULL)
+            {
+                m_tieredValidator.RecordOutcome(m_recentDecisions[i].tier1Votes, 
+                                               m_recentDecisions[i].tier2Votes, 
+                                               m_recentDecisions[i].tier3Votes, 
+                                               outcome > 0.0);
+            }
+            
             // Update accuracy history
             double currentAccuracy = GetEnsembleAccuracy();
             m_ensembleAccuracyHistory[m_accuracyIndex] = currentAccuracy;
             m_accuracyIndex = (m_accuracyIndex + 1) % 20;
             
+            // Update dynamic threshold manager
+            if(m_thresholdManager != NULL)
+            {
+                m_thresholdManager.Update(outcome);
+                double oldThreshold = m_minVotingConfidence;
+                m_minVotingConfidence = m_thresholdManager.GetCurrentThreshold();
+                
+                LogOrchestrationEvent(ERROR_INFO, 
+                                     StringFormat("[ADAPTIVE-THRESHOLD] Threshold updated: %.3f -> %.3f (based on outcome %.2f)", 
+                                                 oldThreshold, m_minVotingConfidence, outcome));
+            }
+            
             LogOrchestrationEvent(ERROR_INFO, 
-                                 StringFormat("Ensemble performance updated: Outcome=%.2f, Success=%s, Accuracy=%.1f%%",
+                                 StringFormat("[AI-PERFORMANCE] Updated: Outcome=%.2f, Success=%s, Accuracy=%.1f%%",
                                              outcome, (outcome > 0.0) ? "YES" : "NO", currentAccuracy));
             break;
         }
@@ -1756,12 +1800,12 @@ void CAIStrategyOrchestrator::LogOrchestrationEvent(const ENUM_ERROR_SEVERITY le
     string prefix = "";
     switch(level)
     {
-        case ERROR_INFO:        prefix = "[ORCHESTRATOR-INFO] "; break;
-        case ERROR_WARNING:     prefix = "[ORCHESTRATOR-WARN] "; break;
-        case ERROR_RECOVERABLE: prefix = "[ORCHESTRATOR-ERROR] "; break;
-        case ERROR_CRITICAL:    prefix = "[ORCHESTRATOR-CRITICAL] "; break;
-        case ERROR_FATAL:       prefix = "[ORCHESTRATOR-FATAL] "; break;
-        default:                prefix = "[ORCHESTRATOR] "; break;
+        case ERROR_INFO:        prefix = "[AI-INFO] "; break;
+        case ERROR_WARNING:     prefix = "[AI-WARN] "; break;
+        case ERROR_RECOVERABLE: prefix = "[AI-ERROR] "; break;
+        case ERROR_CRITICAL:    prefix = "[AI-CRITICAL] "; break;
+        case ERROR_FATAL:       prefix = "[AI-FATAL] "; break;
+        default:                prefix = "[AI] "; break;
     }
     
     Print(prefix + message);

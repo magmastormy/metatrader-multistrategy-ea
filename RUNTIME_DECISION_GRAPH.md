@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-04-10
+- Last Updated: 2026-04-15
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 57 - Decision Quality Upgrade (Readiness + Correlation)
+- Current Batch: 64 - Logical Error Audit & Defensive Programming Hardening
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -12,6 +12,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 ## Ownership Map
 - Orchestration: `MultiStrategyAutonomousEA.mq5`
 - Consensus: `CEnterpriseStrategyManager`
+- Multi-Tier Validation: `CTieredSignalValidator` (Batch 60)
 - Filtering: `CUnifiedSignalPipeline`
 - AI adaptation/weights: `CAIStrategyOrchestrator`
 - Risk veto: `CUnifiedRiskManager`
@@ -51,7 +52,9 @@ flowchart TD
   G --> J
   J --> J0[Strategy role/cluster governance applied]
   J0 --> J1[Pipeline regime + cost viability gate]
-  J1 --> K{Signal NONE?}
+  J1 --> J2[Multi-Tier Signal Validation & Conflict Resolution]
+  J2 --> J3[Weighted Decision considering Setup Quality & Reliability]
+  J3 --> K{Signal NONE?}
   K -->|Yes| L[Increment no-signal telemetry]
   K -->|No| M[Exogenous validation: spread/time/session/volatility/cost]
 
@@ -103,6 +106,20 @@ flowchart TD
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, allowing the EA to propagate the system-wide `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
 - Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
 - `CMarketAnalysis` can now reuse bounded last-valid trend/volatility/momentum/ATR snapshots on transient `4806/4807` data faults, preventing short sync gaps from collapsing upstream market-state evidence to zeros.
+- **Multi-Tier Validation Path (Batch 60):**
+  - **Tiered Evaluation**: Votes are grouped into Tier 1 (Institutional), Tier 2 (Structure), and Tier 3 (Indicators).
+  - **Conflict Resolution**: Logic handles contradictions between tiers (e.g., T2/T3 vs T1) using priority rules and combined weight overrides.
+  - **Setup Quality Weighting**: Signal confidence is modulated by setup quality (0-1) and historical tier-level accuracy.
+  - **Reliability Scoring**: Real-time reliability is calculated based on historical success rates of the contributing tiers.
+- **AI Feature Path Changes (Batch 58):**
+  - Neural network feature extraction now produces 44-dimensional vectors (25 original + 19 pattern-specific features)
+  - Pattern-specific features include: Higher Highs/Lower Lows sequences, Support/Resistance touch counts, Fibonacci Retracement proximity, Pivot Point proximity, volume profile features, market structure features
+  - Weight matrix dimensions updated to `W1[44][32]` to accommodate expanded input
+  - All array allocations and loop bounds updated consistently to prevent array out of range errors
+  - External LLM integration provides optional signal synthesis, trade explanation, risk assessment, and strategy weight reasoning via Ollama API
+  - External LLM is configuration-driven via `useExternalLLM` flag (default `false`) and can be toggled at runtime via `SetExternalLLMEnabled(bool)`
+  - Multi-scale attention infrastructure enables per-head scaling, time window sizes, and learning rates for differential pattern detection
+  - Pattern classifier head provides 10-class pattern classification alongside 3-class BUY/SELL/NONE predictions
 
 ## Intrabar Policy
 - New-bar and intrabar paths are explicit evaluation modes.
@@ -128,6 +145,7 @@ flowchart TD
     - **3+ active voters**: directional quality ≥ 0.55, support ≥ 0.35 (standard `InpQuorumThreshold` / floor inputs)
     - Eliminates zero-score vetoes for legitimate single/dual-voter consensus by adjusting thresholds to the actual voter pool
     - Single- and dual-voter quality gates are now clamped against the current base quorum, so lowering `InpQuorumThreshold` intentionally also relaxes the adaptive one-/two-voter path instead of being silently overridden by harder fixed fallback thresholds
+  - **Single-Voter AI-Only Bypass** (Batch 65): When running with few active registered strategies (3 or fewer, typically AI-only mode), the `effectiveMinVoters` is hardcoded to 1, bypassing the `m_minQuorum` default of 2 to allow single valid AI votes to pass.
   - **Dynamic weight decay** (Batch 41): strategies that filter ≥ 3 consecutive cycles have their live weight decayed by `m_strategyActivityDecayRate` per additional cycle, reducing the denominator as dormant strategies fall out of contribution; weight recovers when the strategy produces a vote again
 - If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
 - Intrabar can instead admit a tagged `SPARSE_INTRABAR` decision when exactly one direction survives with one voter and readiness/context/cost/support/coverage thresholds all remain strong.
@@ -169,6 +187,7 @@ flowchart TD
 - AI adapters avoid same-bar recomputation:
   - neural votes come from `GetNeuralSignalCached(...)`
   - transformer and ensemble adapters cache per-bar inference outcomes and reuse them until the bar changes
+- **Transformer Bridge Fallback** (Batch 65): Neural network execution path gracefully handles transformer encoder failures by zero-padding transformer feature slots and continuing natively with the 15 base technical features instead of aborting the entire forward pass.
 - Feature-build or inference failures are cached as `NONE` for the remainder of the bar, preventing repeated failed forward passes on unchanged data.
 - Ensemble confidence is now derived from class probabilities returned by `GetPredictions(...)`, keeping the adapter path aligned with the transformer's classifier output semantics.
 - AI adapters now emit explicit decision reason tags for abstain, disabled, feature-fault, inference-fault, and signal paths so consensus diagnostics can attribute AI silence without falling back to placeholder `UNTAGGED_*` buckets.

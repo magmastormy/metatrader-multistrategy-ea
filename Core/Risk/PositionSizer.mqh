@@ -87,6 +87,9 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
                                        const double stopLossPips,
                                        const double confidence = 1.0);
     
+    // Calculate base position size according to sizing mode
+    double CalculateBasePositionSize(const string symbol, const double stopLossPips);
+    
     // Calculate position size based on risk percentage (see implementation below)
     double CalculateRiskBasedSize(const string symbol,
                                  const double stopLossPips,
@@ -302,6 +305,43 @@ bool CPositionSizer::SetParameters(const SPositionSizingParams &params)
         return false;
     }
     
+    // AUDIT FIX: Add validation for additional parameters
+    if(params.atrMultiplier <= 0 || params.atrMultiplier > 10.0)
+    {
+        LogError(ERROR_RECOVERABLE, "PositionSizer", 
+                                   StringFormat("Invalid ATR multiplier: %.2f", params.atrMultiplier), 0);
+        return false;
+    }
+    
+    if(params.maxLotSize <= 0 || params.maxLotSize > MAX_LOT_SIZE)
+    {
+        LogError(ERROR_RECOVERABLE, "PositionSizer", 
+                                   StringFormat("Invalid max lot size: %.2f", params.maxLotSize), 0);
+        return false;
+    }
+    
+    if(params.minLotSize <= 0 || params.minLotSize > MAX_LOT_SIZE)
+    {
+        LogError(ERROR_RECOVERABLE, "PositionSizer", 
+                                   StringFormat("Invalid min lot size: %.2f", params.minLotSize), 0);
+        return false;
+    }
+    
+    if(params.minLotSize > params.maxLotSize)
+    {
+        LogError(ERROR_RECOVERABLE, "PositionSizer", 
+                                   StringFormat("Min lot size (%.2f) > Max lot size (%.2f)", 
+                                               params.minLotSize, params.maxLotSize), 0);
+        return false;
+    }
+    
+    if(params.correlationAdjustment <= 0 || params.correlationAdjustment > 2.0)
+    {
+        LogError(ERROR_RECOVERABLE, "PositionSizer", 
+                                   StringFormat("Invalid correlation adjustment: %.2f", params.correlationAdjustment), 0);
+        return false;
+    }
+    
     // Set parameters
     m_params = params;
     m_initialized = true;
@@ -370,6 +410,43 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
     // Update risk metrics
     UpdateRiskMetrics();
     
+    // Calculate base size according to sizing mode
+    double baseSize = CalculateBasePositionSize(symbolParam, stopLossPips);
+    
+    // Apply confidence adjustment
+    if(confidence > 0 && confidence != 1.0)
+    {
+        baseSize *= confidence;
+        LogSizingDecision(symbolParam, baseSize, StringFormat("Confidence adjusted (%.2f)", confidence));
+    }
+    
+    // Apply additional adjustments if enabled
+    if(m_params.useVolatilityAdjustment && m_params.sizingMode != POSITION_SIZE_VOLATILITY)
+    {
+        baseSize = CalculateVolatilityBasedSize(symbolParam, baseSize);
+    }
+    
+    if(m_params.useCorrelationAdjustment && m_params.sizingMode != POSITION_SIZE_CORRELATION)
+    {
+        baseSize = CalculateCorrelationAdjustedSize(symbolParam, baseSize);
+    }
+    
+    // Validate final size
+    double finalSize = ValidatePositionSize(symbolParam, baseSize);
+    
+    // Store for debugging
+    m_lastCalculatedSize = finalSize;
+    m_lastSymbol = symbolParam;
+    m_lastCalculation = TimeCurrent();
+    
+    return finalSize;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate base position size according to sizing mode           |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateBasePositionSize(const string symbolParam, const double stopLossPips)
+{
     double baseSize = 0.0;
     
     // Calculate base size according to sizing mode
@@ -403,33 +480,7 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
             break;
     }
     
-    // Apply confidence adjustment
-    if(confidence > 0 && confidence != 1.0)
-    {
-        baseSize *= confidence;
-        LogSizingDecision(symbolParam, baseSize, StringFormat("Confidence adjusted (%.2f)", confidence));
-    }
-    
-    // Apply additional adjustments if enabled
-    if(m_params.useVolatilityAdjustment && m_params.sizingMode != POSITION_SIZE_VOLATILITY)
-    {
-        baseSize = CalculateVolatilityBasedSize(symbolParam, baseSize);
-    }
-    
-    if(m_params.useCorrelationAdjustment && m_params.sizingMode != POSITION_SIZE_CORRELATION)
-    {
-        baseSize = CalculateCorrelationAdjustedSize(symbolParam, baseSize);
-    }
-    
-    // Validate final size
-    double finalSize = ValidatePositionSize(symbolParam, baseSize);
-    
-    // Store for debugging
-    m_lastCalculatedSize = finalSize;
-    m_lastSymbol = symbolParam;
-    m_lastCalculation = TimeCurrent();
-    
-    return finalSize;
+    return baseSize;
 }
 
 //+------------------------------------------------------------------+
@@ -439,6 +490,20 @@ double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
                                              const double stopLossPips,
                                              const double riskPercent)
 {
+    // Validate stop-loss parameter - must be positive
+    if(stopLossPips <= 0.0)
+    {
+        LogError(ERROR_RECOVERABLE, "PositionSizer", "Invalid stop-loss pips: must be greater than 0", 0);
+        return MIN_LOT_SIZE;
+    }
+    
+    // Validate risk percentage parameter
+    if(riskPercent <= 0.0 || riskPercent > MAX_RISK_PER_TRADE)
+    {
+        LogError(ERROR_RECOVERABLE, "PositionSizer", "Invalid risk percentage: must be between 0 and " + DoubleToString(MAX_RISK_PER_TRADE, 1), 0);
+        return MIN_LOT_SIZE;
+    }
+    
     double riskDenominator = GetRiskDenominator();
     if(riskDenominator <= 0.0)
     {
@@ -649,6 +714,8 @@ double CPositionSizer::GetSymbolPoint(const string symbolParam)
 //+------------------------------------------------------------------+
 //| Account risk denominator                                        |
 //+------------------------------------------------------------------+
+// AUDIT FIX: This implementation must be kept in sync with CPortfolioRiskManager::GetRiskDenominator
+// to ensure consistent risk calculation across all risk components.
 double CPositionSizer::GetRiskDenominator(void)
 {
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
