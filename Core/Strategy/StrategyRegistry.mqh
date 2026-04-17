@@ -25,7 +25,7 @@ struct SStrategyDescriptor
     SStrategyDescriptor()
     {
         name = "";
-        type = STRATEGY_TYPE_CUSTOM;
+        type = (ENUM_STRATEGY_TYPE)STRATEGY_TYPE_CUSTOM;
         isAI = false;
         inputEnabled = false;
         modeEnabled = false;

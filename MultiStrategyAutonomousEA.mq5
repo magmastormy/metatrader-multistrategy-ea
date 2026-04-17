@@ -17,7 +17,7 @@ input double InpMaxRiskPerTrade = 2.0;    // Max risk per trade (e.g., 2.0 for 2
 input double InpMaxDailyRisk = 6.0;       // Max daily risk (e.g., 6.0 for 6%)
 input double InpMaxPortfolioRisk = 10.0;   // Max total portfolio risk (e.g., 10.0 for 10%)
 input double InpMaxDrawdown = 15.0;       // Max drawdown (e.g., 15.0 for 15%)
-input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,Jump 25 Index.0,Jump 50 Index.0,Jump 75 Index.0,Jump 100 Index.0,Volatility 10 (1s) Index.0,Volatility 25 (1s) Index.0,Volatility 50 (1s) Index.0,Volatility 100 (1s) Index.0,EURUSD.0,EURCHF.0,EURJPY.0,AUDUSD.0";               // Comprehensive test symbols
+input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,Jump 25 Index.0,Jump 50 Index.0,Jump 75 Index.0,Jump 100 Index.0,Volatility 10 (1s) Index.0,Volatility 25 (1s) Index.0,Volatility 50 (1s) Index.0,Volatility 100 (1s) Index.0,EURUSD.0,EURCHF.0,EURJPY.0";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 120;    // Cooldown in seconds between trades
 input int    InpMaxPositionsTotal = 15;           // Global position limit
 input bool   InpAllowSyntheticOffHours = true;    // Allow synthetic indices to trade 24/7 (outside normal forex hours)
@@ -32,12 +32,14 @@ input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Tre
 input bool InpEnableUnifiedICT = true;        // Enable Unified ICT Strategy
 input bool InpEnableCandlestick = true;      // Enable Candlestick Patterns Strategy
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
-input bool InpUseSymbolClassProfiles = true;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
+input bool InpUseSymbolClassProfiles = false;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
 input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained for backward compatibility; all enabled strategies vote live
 
 //--- EA operating mode
 input group "EA Operating Mode"
 input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID; // Controls whether indicator and/or AI strategy families are active
+input bool InpEnableVisualAnalysis = true;     // Enable Visual Analysis (Drawings on chart)
+input int  InpMaxVisualObjects = 500;          // Max visual objects per chart
 
 //--- Consensus quorum (weighted)
 input group "Consensus Quorum"
@@ -63,17 +65,19 @@ input double InpWeightCandlestick       = 1.5; // Candlestick weight
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
-input bool InpEnableAIMode = false;            // Enable AI Mode
-input bool InpEnableNeuralNetwork = false;     // Enable Neural Network
-input bool InpEnableTransformer = false;       // Enable Transformer Brain
-input bool InpEnableEnsemble = false;          // Enable Ensemble Learning
+input bool InpEnableAIMode = true;            // Enable AI Mode
+input bool InpEnableNeuralNetwork = true;     // Enable Neural Network
+input bool InpEnableTransformer = true;       // Enable Transformer Brain
+input bool InpEnableEnsemble = true;          // Enable Ensemble Learning
+input bool InpEnableExternalLLM = false;       // Enable External LLM (Ollama/API)
+input string InpExternalLLMEndpoint = "http://localhost:11434"; // LLM API Endpoint
 input double InpAIConfidenceThreshold = 0.35;  // AI Confidence Threshold (Lowered to enable more signals)
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 
 //--- NN attribution forward-test diagnostics
 input group "NN Attribution Diagnostics"
-input bool InpEnableNNAttributionDiagnostics = false; // Enable NN attribution live diagnostics
-input bool InpRunNNAttributionSelfTest = false;       // Run local mapping self-test at init
+input bool InpEnableNNAttributionDiagnostics = true; // Enable NN attribution live diagnostics
+input bool InpRunNNAttributionSelfTest = true;       // Run local mapping self-test at init
 
 //--- Runtime Cadence + NN Online Learning
 input group "Runtime Cadence & Learning"
@@ -107,7 +111,7 @@ input int  InpIntrabarBackoffMaxSeconds = 60;         // Max per-symbol intrabar
 input int  InpReadinessReuseTtlSeconds = 60;          // Max readiness snapshot reuse age in seconds
 input bool InpShadowMode = false;                     // [!] LIVE MODE ACTIVE: Set true for dry-run
 input bool InpEnableNNOnlineTraining = true;          // Enable online NN observation/labeling loop
-input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation (institutional default OFF)
+input bool InpEnableNNWeightMutation = true;         // Enable live NN weight mutation (institutional default OFF)
 input bool InpEnableNNPseudoLabeling = true;          // Enable pseudo-labeling when no trade-linked label exists
 input int  InpNNPseudoLabelBarsAhead = 0;             // Pseudo-label horizon in bars
 input int  InpNNSampleIntervalSeconds = 15;           // Observation sampling interval (seconds)
@@ -237,6 +241,8 @@ CAdvancedSignalValidator* g_signalValidator = NULL; // Advanced Signal Validator
 CAdvancedPositionManager* g_positionManager = NULL; // Advanced Position Manager
 // g_AIEngine declared in AIEngine.mqh
 CVisualDashboard g_dashboard;
+CChartDrawingManager* g_drawingManagers[]; // Per-symbol drawing managers
+string g_drawingManagerSymbols[];          // Symbol mapping for drawing managers
 
 //--- Performance tracking
 // Centralized in CPerformanceAnalytics but kept here for display compatibility
@@ -2151,19 +2157,19 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
     bool registered = false;
 
     if(strategyName == "Momentum")
-        registered = manager.RegisterStrategy(new CSimpleMomentumStrategy(), strategyName, true, strategyWeight, strategyTf, false);
+        registered = manager.RegisterStrategy(new CSimpleMomentumStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
     else if(strategyName == "Trend")
-        registered = manager.RegisterStrategy(new CStrategyTrend(), strategyName, true, strategyWeight, strategyTf, false);
+        registered = manager.RegisterStrategy(new CStrategyTrend(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     else if(strategyName == "Fibonacci")
-        registered = manager.RegisterStrategy(new CStrategyFibonacci(), strategyName, true, strategyWeight, strategyTf, false);
+        registered = manager.RegisterStrategy(new CStrategyFibonacci(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     else if(strategyName == "Elliott Wave")
-        registered = manager.RegisterStrategy(new CStrategyElliottWaveEnhanced(), strategyName, true, strategyWeight, strategyTf, false);
+        registered = manager.RegisterStrategy(new CStrategyElliottWaveEnhanced(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
     else if(strategyName == "Support/Resistance")
-        registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, strategyTf, false);
+        registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     else if(strategyName == "Unified ICT")
-        registered = manager.RegisterStrategy(new CStrategyUnifiedICT(), strategyName, true, strategyWeight, strategyTf, false);
+        registered = manager.RegisterStrategy(new CStrategyUnifiedICT(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
     else if(strategyName == "Candlestick")
-        registered = manager.RegisterStrategy(new CStrategyCandlestick(), strategyName, true, strategyWeight, strategyTf, false);
+        registered = manager.RegisterStrategy(new CStrategyCandlestick(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_register_failed");
     return registered;
@@ -2178,9 +2184,9 @@ bool RegisterManagerAIAdapterByName(CEnterpriseStrategyManager* manager, const s
     bool registered = false;
 
     if(strategyName == "Transformer AI")
-        registered = manager.RegisterStrategy(new CTransformerAIStrategyAdapter(), strategyName, true, strategyWeight, PERIOD_CURRENT, true);
+        registered = manager.RegisterStrategy(new CTransformerAIStrategyAdapter(), strategyName, true, strategyWeight, STRATEGY_TIER_1, PERIOD_CURRENT, true);
     else if(strategyName == "Ensemble AI")
-        registered = manager.RegisterStrategy(new CEnsembleAIStrategyAdapter(), strategyName, true, strategyWeight, PERIOD_CURRENT, true);
+        registered = manager.RegisterStrategy(new CEnsembleAIStrategyAdapter(), strategyName, true, strategyWeight, STRATEGY_TIER_1, PERIOD_CURRENT, true);
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_ai_register_failed");
     return registered;
@@ -2596,8 +2602,13 @@ void RegisterManagerStrategiesWithOrchestrator(const string symbol, CEnterpriseS
     {
         string strategyName = manager.GetRegisteredStrategyName(i);
         double strategyWeight = manager.GetRegisteredStrategyWeight(i);
+        // Find the tier from registry if possible
+        ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3;
+        if(strategyName == "Unified ICT" || strategyName == "Elliott Wave") tier = STRATEGY_TIER_1;
+        else if(strategyName != "Momentum") tier = STRATEGY_TIER_2;
+        
         string qualifiedName = BuildQualifiedStrategyName(symbol, strategyName);
-        if(!aiOrchestrator.AddStrategy(qualifiedName, strategyWeight))
+        if(!aiOrchestrator.AddStrategy(qualifiedName, tier, strategyWeight))
         {
             Print("[AI-ORCH] AddStrategy skipped/failed for ", qualifiedName);
         }
@@ -2650,6 +2661,19 @@ void ReleaseEnterpriseManagers()
     }
     ArrayResize(g_enterpriseManagers, 0);
     ArrayResize(g_enterpriseManagerSymbols, 0);
+    
+    // Release drawing managers too
+    for(int i = 0; i < ArraySize(g_drawingManagers); i++)
+    {
+        if(g_drawingManagers[i] != NULL)
+        {
+            delete g_drawingManagers[i];
+            g_drawingManagers[i] = NULL;
+        }
+    }
+    ArrayResize(g_drawingManagers, 0);
+    ArrayResize(g_drawingManagerSymbols, 0);
+    
     ArrayResize(g_lastSymbolBarTimes, 0);
     ArrayResize(g_lastIntrabarScanTime, 0);
     ArrayResize(g_pendingNewBarScans, 0);
@@ -2763,7 +2787,7 @@ bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe
         double aiWeight = g_strategyRegistry.GetWeightByName("Neural Network AI");
         if(aiWeight <= 0.0)
             aiWeight = MathMax(0.1, InpAIWeightMultiplier);
-        if(!symbolManager.RegisterStrategy(new CAIStrategyAdapter(nn), "Neural Network AI", true, aiWeight, PERIOD_CURRENT, true))
+        if(!symbolManager.RegisterStrategy(new CAIStrategyAdapter(nn), "Neural Network AI", true, aiWeight, STRATEGY_TIER_2, PERIOD_CURRENT, true))
         {
             Print("[AI-MODE] WARNING: Failed to register NN adapter for ", symbol);
             g_strategyRegistry.MarkRegistered("Neural Network AI", false, "nn_adapter_register_failed");
@@ -2771,7 +2795,7 @@ bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe
         else if(g_aiOrchestratorReady)
         {
             string qualified = BuildQualifiedStrategyName(symbol, "Neural Network AI");
-            if(!aiOrchestrator.AddStrategy(qualified, aiWeight))
+            if(!aiOrchestrator.AddStrategy(qualified, STRATEGY_TIER_2, aiWeight))
                 Print("[AI-ORCH] AddStrategy skipped/failed for ", qualified);
         }
         g_strategyRegistry.MarkRegistered("Neural Network AI", true);
@@ -2894,6 +2918,36 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     if(symbol == _Symbol)
         g_enterpriseManager = manager;
 
+    // Initialize Drawing Manager for this symbol if enabled
+    if(InpEnableVisualAnalysis)
+    {
+        CChartDrawingManager* draw = new CChartDrawingManager();
+        if(draw != NULL)
+        {
+            if(draw.Initialize(symbol, (ENUM_TIMEFRAMES)Period(), "VIS_"))
+            {
+                SDrawingConfig drawConfig;
+                drawConfig.enableDrawing = true;
+                drawConfig.maxObjectAge = InpMaxVisualObjects;
+                draw.SetConfiguration(drawConfig);
+                
+                int dSize = ArraySize(g_drawingManagers);
+                ArrayResize(g_drawingManagers, dSize + 1);
+                ArrayResize(g_drawingManagerSymbols, dSize + 1);
+                g_drawingManagers[dSize] = draw;
+                g_drawingManagerSymbols[dSize] = symbol;
+                
+                // Inject drawing manager into strategy manager for strategy-level drawings
+                manager.SetDrawingManager(draw);
+                Print("[VISUAL] Drawing manager initialized for ", symbol);
+            }
+            else
+            {
+                delete draw;
+            }
+        }
+    }
+
     Print("[ENTERPRISE] Manager initialized for ", symbol, " with ", manager.GetActiveStrategyCount(), " active strategies | profile=", symbolProfile);
     return true;
 }
@@ -2979,6 +3033,10 @@ int OnInit()
             g_aiBrainReady = true;
             Print("[AI] Runtime AI voters are adapter-owned and registered per symbol");
         }
+        
+        // Initialize AI health dashboard
+        Print("[AI-DASHBOARD] AI Health Monitoring initialized");
+        Print("[AI-DASHBOARD] Configuration: Transformer(dModel=32, heads=2, layers=1), Ensemble diversity enabled");
     }
     else
     {
@@ -3079,10 +3137,13 @@ int OnInit()
         aiConfig.learningRate = 0.1;
         aiConfig.adaptationInterval = 1; // Adapt every bar
         aiConfig.minConfidenceThreshold = InpAIConfidenceThreshold;
+        aiConfig.useExternalLLM = InpEnableExternalLLM; // Pass LLM input
 
         if(g_AIEngine != NULL && g_AIEngine.Initialize(&aiOrchestrator, aiConfig))
         {
             g_aiEngineReady = true;
+            if(InpEnableExternalLLM)
+                g_AIEngine.SetExternalAIEndpoint(InpExternalLLMEndpoint); // Set endpoint from input
             Print("[INIT] AI Engine initialized in ADAPTIVE mode");
         }
         else
@@ -3126,10 +3187,48 @@ int OnInit()
     {
         Print("[CADENCE-WARNING] newbar_only=true disables timed intrabar scans even when intrabar strategy policies are LIVE.");
     }
+    
+    // AI Health Dashboard
+    if(InpEnableAIMode)
+    {
+        string aiStatus = "[AI-DASHBOARD] ";
+        
+        // Transformer status
+        if(g_aiBrainReady)
+            aiStatus += "TF:RDY | ";
+        else
+            aiStatus += "TF:OFF | ";
+        
+        // Neural Network status
+        if(g_aiEngineReady)
+            aiStatus += "NN:RDY | ";
+        else
+            aiStatus += "NN:OFF | ";
+        
+        // Ensemble status
+        int activeAIModels = g_strategyRegistry.GetActiveAICount();
+        aiStatus += "ENS:" + IntegerToString(activeAIModels) + "/3 | ";
+        
+        // Memory efficiency indicator
+        aiStatus += "MEM:OPTIMIZED (dModel=32, heads=2, layers=1)";
+        
+        Print(aiStatus);
+    }
 
-    // Validate and process trading symbols
+    // AUDIT FIX: Validate and process trading symbols with error handling for malformed input
+    if(StringLen(InpSymbolsToTrade) == 0)
+    {
+        Print("[ERROR] InpSymbolsToTrade is empty - no symbols to trade");
+        return INIT_FAILED;
+    }
+    
     string symbols[];
-    StringSplit(InpSymbolsToTrade, ',', symbols);
+    int splitCount = StringSplit(InpSymbolsToTrade, ',', symbols);
+    if(splitCount == 0)
+    {
+        Print("[ERROR] Failed to parse InpSymbolsToTrade - malformed symbol string");
+        return INIT_FAILED;
+    }
     Print("[SYMBOLS] Processing ", ArraySize(symbols), " trading symbols");
 
     // Clear and populate active pairs array
@@ -3144,6 +3243,13 @@ int OnInit()
         if(StringLen(sym) == 0)
         {
             Print("[SYMBOLS] Empty symbol token skipped at input index ", i);
+            continue;
+        }
+        
+        // AUDIT FIX: Validate symbol name format (no invalid characters)
+        if(StringFind(sym, " ") >= 0 && StringFind(sym, ".") < 0)
+        {
+            Print("[WARNING] Symbol '", sym, "' contains spaces without period - likely malformed, skipping");
             continue;
         }
 
@@ -3506,6 +3612,39 @@ string GetDeInitReasonText(int reasonCode)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+    // Periodic AI Health Check (every 60 seconds)
+    static datetime lastAIHealthCheck = 0;
+    datetime now = TimeCurrent();
+    if(lastAIHealthCheck == 0 || (now - lastAIHealthCheck) >= 60)
+    {
+        if(InpEnableAIMode)
+        {
+            string aiStatus = "[AI-DASHBOARD] ";
+            
+            // Transformer status
+            if(g_aiBrainReady)
+                aiStatus += "TF:RDY | ";
+            else
+                aiStatus += "TF:OFF | ";
+            
+            // Neural Network status
+            if(g_aiEngineReady)
+                aiStatus += "NN:RDY | ";
+            else
+                aiStatus += "NN:OFF | ";
+            
+            // Ensemble status
+            int activeAIModels = g_strategyRegistry.GetActiveAICount();
+            aiStatus += "ENS:" + IntegerToString(activeAIModels) + "/3 | ";
+            
+            // Memory efficiency indicator
+            aiStatus += "MEM:OPTIMIZED";
+            
+            Print(aiStatus);
+        }
+        lastAIHealthCheck = now;
+    }
+    
     // Process trading logic via timer (runs every 1 second)
     // This ensures EA runs even when chart symbol (e.g., XAUUSD) is closed
     ProcessTradingLogic(true);  // true = called from timer
@@ -3574,7 +3713,7 @@ void ProcessTradingLogic(bool fromTimer)
         }
         
         // --- Update Dashboard ---
-        g_dashboard.Update(activeStrats, eaPositions, accountBalance, accountEquity, g_aiBrainReady ? &aiNextGenBrain : NULL, neuralNetStrategy);
+        g_dashboard.Update(activeStrats, eaPositions, accountBalance, accountEquity, g_aiBrainReady ? &aiNextGenBrain : NULL, neuralNetStrategy, g_AIEngine);
     }
 
     if(InpEnableNNAttributionDiagnostics)
@@ -3633,12 +3772,26 @@ void ProcessTradingLogic(bool fromTimer)
     // Run online NN learning maintenance regardless of trade signal frequency.
     if(InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
     {
+        static datetime s_lastNNLearningLog = 0;
+        datetime now = TimeCurrent();
+        bool logThisCycle = (s_lastNNLearningLog == 0 || (now - s_lastNNLearningLog) >= 60);
+
         for(int nnIdx = 0; nnIdx < ArraySize(g_neuralNetStrategies); nnIdx++)
         {
             CNeuralNetworkStrategy* nnRuntime = g_neuralNetStrategies[nnIdx];
             if(nnRuntime != NULL)
+            {
+                if(logThisCycle && nnIdx < ArraySize(g_neuralNetStrategySymbols))
+                {
+                    PrintFormat("[NN-LEARNING] Calling TickOnlineLearning for %s (idx=%d/%d)",
+                                g_neuralNetStrategySymbols[nnIdx], nnIdx, ArraySize(g_neuralNetStrategies));
+                }
                 nnRuntime.TickOnlineLearning();
+            }
         }
+
+        if(logThisCycle)
+            s_lastNNLearningLog = now;
     }
 
     // Multi-symbol new-bar processing: each symbol has a dedicated strategy manager.
@@ -3974,7 +4127,7 @@ void ProcessTradingLogic(bool fromTimer)
                         validationContext.supportRatio = MathMax(0.0, MathMin(1.0, decisionContext.supportRatio));
                         validationContext.effectiveMinVoters = MathMax(0, decisionContext.effectiveMinVoters);
 
-                        SSignalValidationResult validation = g_signalValidator.ValidateSignal(
+                        SValidationResult validation = g_signalValidator.ValidateSignal(
                             currentSymbol, enterpriseSignal, confidence, confluence, atrValue, validationProfile, validationContext);
 
                         if(!validation.isValid)

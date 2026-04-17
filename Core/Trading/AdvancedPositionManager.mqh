@@ -235,6 +235,19 @@ bool CAdvancedPositionManager::ApplyTrailingStop(ulong ticket, SPositionTracker 
 {
     if(!PositionSelectByTicket(ticket)) return false;
     
+    // Validate trailing stop configuration
+    if(m_config.trailingDistancePips <= 0)
+    {
+        Print("[AdvancedPositionManager] ERROR: Invalid trailing distance pips: ", m_config.trailingDistancePips);
+        return false;
+    }
+    
+    if(m_config.trailingStepPips <= 0)
+    {
+        Print("[AdvancedPositionManager] ERROR: Invalid trailing step pips: ", m_config.trailingStepPips);
+        return false;
+    }
+    
     double currentProfitPips = GetCurrentProfitPips(ticket);
     string symbol = PositionGetString(POSITION_SYMBOL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -383,8 +396,19 @@ bool CAdvancedPositionManager::ApplyPartialClose(ulong ticket, SPositionTracker 
        currentProfitPips >= partialClose2Trigger)
     {
         double remainingVolume = PositionGetDouble(POSITION_VOLUME);
+        double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
         double closeVolume = NormalizeCloseVolume(symbol, remainingVolume * m_config.partialClose2Percent / 100.0);
-        if(closeVolume >= SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN))
+        
+        // If remaining volume is very small, close entire position instead
+        if(remainingVolume < minLot * 2.0)
+        {
+            if(m_tradeManager.ClosePosition(ticket, "Close small remainder after partial close"))
+            {
+                tracker.partialClose2Done = true;
+                return true;
+            }
+        }
+        else if(closeVolume >= minLot)
         {
             if(m_tradeManager.ClosePositionPartial(ticket, closeVolume, "Partial Close 2"))
             {
@@ -405,8 +429,28 @@ bool CAdvancedPositionManager::ApplyTimeBasedExit(ulong ticket, SPositionTracker
     if(!m_config.enableTimeBasedExit) return false;
     if(!PositionSelectByTicket(ticket)) return false;
     
+    // AUDIT FIX: Validate time values to prevent negative or invalid calculations
+    if(m_config.maxPositionHours <= 0)
+    {
+        Print("[AdvancedPositionManager] ERROR: Invalid max position hours: ", m_config.maxPositionHours);
+        return false;
+    }
+    
     datetime timeNow = TimeCurrent();
+    if(tracker.openTime <= 0 || tracker.openTime > timeNow)
+    {
+        Print("[AdvancedPositionManager] ERROR: Invalid open time: ", tracker.openTime, ", current time: ", timeNow);
+        return false;
+    }
+    
     int hoursOpen = (int)((timeNow - tracker.openTime) / 3600);
+    
+    // Safety check for negative hours (should not happen with validation above)
+    if(hoursOpen < 0)
+    {
+        Print("[AdvancedPositionManager] WARNING: Negative hours calculated: ", hoursOpen);
+        return false;
+    }
     
     if(hoursOpen >= m_config.maxPositionHours)
     {
@@ -464,10 +508,19 @@ double CAdvancedPositionManager::NormalizeCloseVolume(const string symbol, const
 
     int volumeDigits = 0;
     double stepProbe = stepVol;
-    while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8)
+    int maxIterations = 20; // Safety limit to prevent infinite loop
+    int iterations = 0;
+    while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8 && iterations < maxIterations)
     {
         stepProbe *= 10.0;
         volumeDigits++;
+        iterations++;
+    }
+    
+    // Fallback if loop exceeded iterations
+    if(iterations >= maxIterations)
+    {
+        volumeDigits = 2; // Use safe default
     }
 
     double normalized = MathFloor((volume + 1e-12) / stepVol) * stepVol;

@@ -305,35 +305,66 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
     // Initialize engines
     m_trendEngine = new CTrendEngine();
     if(m_trendEngine != NULL)
-        m_trendEngine.Initialize(20, 50, 200, 14, NULL);
+    {
+        if(!m_trendEngine.Initialize(20, 50, 200, 14, NULL))
+        {
+            Print("[UnifiedSignalPipeline] ERROR: TrendEngine initialization failed");
+            initializationOk = false;
+        }
+    }
     else
         initializationOk = false;
     
     m_structureEngine = new CStructureEngine();
     if(m_structureEngine != NULL)
-        m_structureEngine.Initialize(10, 10.0, true, NULL);
+    {
+        if(!m_structureEngine.Initialize(10, 10.0, true, NULL))
+        {
+            Print("[UnifiedSignalPipeline] ERROR: StructureEngine initialization failed");
+            initializationOk = false;
+        }
+    }
     else
         initializationOk = false;
     
     m_liquidityEngine = new CLiquidityEngine();
     if(m_liquidityEngine != NULL)
-        m_liquidityEngine.Initialize(10.0, 2, NULL);
+    {
+        if(!m_liquidityEngine.Initialize(10.0, 2, NULL))
+        {
+            Print("[UnifiedSignalPipeline] ERROR: LiquidityEngine initialization failed");
+            initializationOk = false;
+        }
+    }
     else
         initializationOk = false;
     
     m_volatilityEngine = new CVolatilityEngine();
     if(m_volatilityEngine != NULL)
-        m_volatilityEngine.Initialize(14, 20, NULL);
+    {
+        if(!m_volatilityEngine.Initialize(14, 20, NULL))
+        {
+            Print("[UnifiedSignalPipeline] ERROR: VolatilityEngine initialization failed");
+            initializationOk = false;
+        }
+    }
     else
         initializationOk = false;
 
     m_regimeEngine = new CRegimeEngine();
     if(m_regimeEngine != NULL)
     {
-        m_regimeEngine.Initialize(14, 20, 2.0, 30, 120);
-        m_regimeEngine.ConfigureCostLimits(m_filters.maxSpreadToAtrRatio,
-                                           m_filters.spreadShockCooldownSeconds,
-                                           m_filters.maxEntryRangeZScore);
+        if(!m_regimeEngine.Initialize(14, 20, 2.0, 30, 120))
+        {
+            Print("[UnifiedSignalPipeline] ERROR: RegimeEngine initialization failed");
+            initializationOk = false;
+        }
+        else
+        {
+            m_regimeEngine.ConfigureCostLimits(m_filters.maxSpreadToAtrRatio,
+                                               m_filters.spreadShockCooldownSeconds,
+                                               m_filters.maxEntryRangeZScore);
+        }
     }
     else
         initializationOk = false;
@@ -385,16 +416,19 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
 
     if(!cacheHit)
     {
+        // Cache miss: Update all engines and refresh evidence
         m_lastEvidence.trendReady = (m_trendEngine != NULL) && m_trendEngine.UpdateTrend(symbol, timeframe);
         m_lastEvidence.structureReady = (m_structureEngine != NULL) && m_structureEngine.DetectSwingPoints(symbol, timeframe);
         m_lastEvidence.liquidityReady = (m_liquidityEngine != NULL) && m_liquidityEngine.DetectLiquidityZones(symbol, timeframe);
         m_lastEvidence.volatilityReady = (m_volatilityEngine != NULL) && m_volatilityEngine.UpdateVolatility(symbol, timeframe);
 
+        // Populate evidence snapshot from engines
         RefreshEvidenceFromEngines(symbol);
         m_lastEvidence.contextPrepared = true;
         m_lastEvidence.readinessScore = ComputeReadinessScore();
+        
+        // Cache the complete evidence snapshot
         m_cachedStructuralEvidence = m_lastEvidence;
-
         m_cachedContextSymbol = symbol;
         m_cachedContextTimeframe = timeframe;
         m_cachedContextBarTime = barTime;
@@ -402,6 +436,15 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
     }
     else
     {
+        // AUDIT FIX: Validate cached evidence matches current symbol/timeframe context
+        if(m_cachedStructuralEvidence.symbol != symbol || m_cachedStructuralEvidence.timeframe != timeframe)
+        {
+            // Context mismatch - invalidate cache and treat as cache miss
+            m_cachedContextPrepared = false;
+            return RefreshStructuralContext(symbol, timeframe);
+        }
+        
+        // Cache hit: Restore complete evidence snapshot from cache
         m_lastEvidence.trendReady = m_cachedStructuralEvidence.trendReady;
         m_lastEvidence.structureReady = m_cachedStructuralEvidence.structureReady;
         m_lastEvidence.liquidityReady = m_cachedStructuralEvidence.liquidityReady;
@@ -417,8 +460,16 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
         m_lastEvidence.liquiditySweep = m_cachedStructuralEvidence.liquiditySweep;
         m_lastEvidence.priceNearLiquidity = m_cachedStructuralEvidence.priceNearLiquidity;
         m_lastEvidence.contextPrepared = m_cachedStructuralEvidence.contextPrepared;
-        RefreshEvidenceFromEngines(symbol);
+        m_lastEvidence.readinessClass = m_cachedStructuralEvidence.readinessClass;
+        m_lastEvidence.reuseActive = m_cachedStructuralEvidence.reuseActive;
+        m_lastEvidence.stalenessSeconds = m_cachedStructuralEvidence.stalenessSeconds;
+        m_lastEvidence.stalenessPenalty = m_cachedStructuralEvidence.stalenessPenalty;
+        
+        // Recompute readiness score based on restored evidence
         m_lastEvidence.readinessScore = ComputeReadinessScore();
+        
+        // Note: We do NOT call RefreshEvidenceFromEngines on cache hit to preserve the cached snapshot
+        // The regime engine is updated separately in ApplyRegimeAndCostGate if needed
     }
 
     return true;
@@ -518,108 +569,231 @@ double CUnifiedSignalPipeline::ComputeReadinessScore() const
 {
     double total = 0.0;
     int components = 0;
+    
+    // Dynamic base readiness score based on readiness class with adaptive staleness handling
     double trendReadinessScore = 0.55;
     if(m_lastEvidence.readinessClass == "HEALTHY")
         trendReadinessScore = 1.00;
     else if(m_lastEvidence.readinessClass == "REUSED_SNAPSHOT")
-        trendReadinessScore = MathMax(0.45, 0.82 - m_lastEvidence.stalenessPenalty);
+        trendReadinessScore = MathMax(0.45, 0.88 - m_lastEvidence.stalenessPenalty);
     else if(m_lastEvidence.readinessClass == "TRANSIENT_COPY_FAULT")
-        trendReadinessScore = 0.60;
+        trendReadinessScore = 0.65;
     else if(m_lastEvidence.readinessClass == "HANDLE_FAULT")
-        trendReadinessScore = 0.35;
+        trendReadinessScore = 0.40;
     else if(m_lastEvidence.readinessClass == "WARMUP")
-        trendReadinessScore = 0.55;
+        trendReadinessScore = 0.58;
 
+    // Trend readiness with strength-based adjustment
     if(m_filters.enableTrendFilter)
     {
-        total += m_lastEvidence.trendReady ? trendReadinessScore : MathMin(trendReadinessScore, 0.65);
+        double trendComponent = m_lastEvidence.trendReady ? trendReadinessScore : MathMin(trendReadinessScore, 0.62);
+        // Boost trend readiness if trend strength is meaningful
+        if(m_lastEvidence.trendReady && m_lastEvidence.trendStrength > 50.0)
+            trendComponent = MathMin(1.0, trendComponent + 0.08);
+        total += trendComponent;
         components++;
     }
 
+    // Structure readiness with strength consideration
     if(m_filters.enableStructureFilter)
     {
-        total += m_lastEvidence.structureReady ? 1.0 : 0.65;
+        double structureComponent = m_lastEvidence.structureReady ? 1.0 : 0.68;
+        // Adjust based on actual structure strength if available
+        if(m_lastEvidence.structureReady && m_lastEvidence.structureStrength > 0.0)
+            structureComponent = MathMin(1.0, 0.85 + (m_lastEvidence.structureStrength / 500.0));
+        total += structureComponent;
         components++;
     }
 
+    // Liquidity readiness with sweep detection bonus
     if(m_filters.enableLiquidityFilter)
     {
-        total += m_lastEvidence.liquidityReady ? 1.0 : 0.70;
+        double liquidityComponent = m_lastEvidence.liquidityReady ? 1.0 : 0.72;
+        // Slight boost if recent liquidity sweep detected (indicates active liquidity analysis)
+        if(m_lastEvidence.liquidityReady && m_lastEvidence.liquiditySweep)
+            liquidityComponent = MathMin(1.0, liquidityComponent + 0.05);
+        total += liquidityComponent;
         components++;
     }
 
+    // Volatility readiness with state-based adjustment
     if(m_filters.enableVolatilityFilter)
     {
-        total += m_lastEvidence.volatilityReady ? 1.0 : 0.55;
+        double volatilityComponent = m_lastEvidence.volatilityReady ? 1.0 : 0.58;
+        // Adjust based on volatility state - extreme volatility may indicate less stable readings
+        if(m_lastEvidence.volatilityReady)
+        {
+            if(m_lastEvidence.volatilityState == VOLATILITY_NORMAL)
+                volatilityComponent = 1.0;
+            else if(m_lastEvidence.volatilityState == VOLATILITY_LOW)
+                volatilityComponent = 0.95;
+            else if(m_lastEvidence.volatilityState == VOLATILITY_HIGH)
+                volatilityComponent = 0.90;
+            else if(m_lastEvidence.volatilityState == VOLATILITY_EXTREME)
+                volatilityComponent = 0.82;
+        }
+        total += volatilityComponent;
         components++;
     }
 
+    // Regime readiness with cost score integration
     if(m_filters.enableRegimeCostGate)
     {
-        total += m_lastEvidence.regimeValid ? MathMax(0.70, 1.0 - m_lastEvidence.stalenessPenalty) : 0.70;
+        double regimeComponent = m_lastEvidence.regimeValid ? MathMax(0.72, 1.0 - m_lastEvidence.stalenessPenalty) : 0.72;
+        // Integrate cost score into regime readiness for more accurate assessment
+        if(m_lastEvidence.regimeValid && m_lastEvidence.costScore > 0.0)
+            regimeComponent = MathMax(0.65, MathMin(1.0, (regimeComponent + m_lastEvidence.costScore) / 2.0));
+        total += regimeComponent;
         components++;
     }
 
     if(components <= 0)
         return 1.0;
 
-    return MathMax(0.0, MathMin(1.0, total / components));
+    double readinessScore = total / components;
+    return MathMax(0.0, MathMin(1.0, readinessScore));
 }
 
 double CUnifiedSignalPipeline::ComputeContextScore(const ENUM_TRADE_SIGNAL signal) const
 {
-    double trendScore = 0.75;
+    // Trend context scoring with granular strength considerations
+    double trendScore = 0.72;
     if(signal == TRADE_SIGNAL_BUY)
     {
         if(m_lastEvidence.trend == TREND_BULLISH_STRONG || m_lastEvidence.trend == TREND_BULLISH_WEAK)
-            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 1.0 : 0.88;
+        {
+            // More nuanced scoring based on trend strength tiers
+            if(m_lastEvidence.trendStrength >= 85.0)
+                trendScore = 1.0;
+            else if(m_lastEvidence.trendStrength >= 70.0)
+                trendScore = 0.94;
+            else if(m_lastEvidence.trendStrength >= 55.0)
+                trendScore = 0.88;
+            else
+                trendScore = 0.82;
+        }
         else if(m_lastEvidence.trend == TREND_BEARISH_STRONG || m_lastEvidence.trend == TREND_BEARISH_WEAK)
-            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 0.45 : 0.65;
+        {
+            // Strong opposing trend penalizes more heavily
+            if(m_lastEvidence.trendStrength >= 85.0)
+                trendScore = 0.38;
+            else if(m_lastEvidence.trendStrength >= 70.0)
+                trendScore = 0.45;
+            else
+                trendScore = 0.58;
+        }
+        else if(m_lastEvidence.trend == TREND_RANGING || m_lastEvidence.trend == TREND_NONE)
+        {
+            // Neutral trend - moderate score for ranging markets
+            trendScore = 0.78;
+        }
     }
     else if(signal == TRADE_SIGNAL_SELL)
     {
         if(m_lastEvidence.trend == TREND_BEARISH_STRONG || m_lastEvidence.trend == TREND_BEARISH_WEAK)
-            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 1.0 : 0.88;
+        {
+            if(m_lastEvidence.trendStrength >= 85.0)
+                trendScore = 1.0;
+            else if(m_lastEvidence.trendStrength >= 70.0)
+                trendScore = 0.94;
+            else if(m_lastEvidence.trendStrength >= 55.0)
+                trendScore = 0.88;
+            else
+                trendScore = 0.82;
+        }
         else if(m_lastEvidence.trend == TREND_BULLISH_STRONG || m_lastEvidence.trend == TREND_BULLISH_WEAK)
-            trendScore = (m_lastEvidence.trendStrength >= 70.0) ? 0.45 : 0.65;
+        {
+            if(m_lastEvidence.trendStrength >= 85.0)
+                trendScore = 0.38;
+            else if(m_lastEvidence.trendStrength >= 70.0)
+                trendScore = 0.45;
+            else
+                trendScore = 0.58;
+        }
+        else if(m_lastEvidence.trend == TREND_RANGING || m_lastEvidence.trend == TREND_NONE)
+        {
+            trendScore = 0.78;
+        }
     }
 
-    double structureScore = 0.72;
+    // Structure context scoring with improved strength integration
+    double structureScore = 0.70;
     if(signal == TRADE_SIGNAL_BUY && m_lastEvidence.bullishStructure)
-        structureScore = 1.0;
+    {
+        // Boost for aligned structure with strength consideration
+        structureScore = MathMin(1.0, 0.92 + (m_lastEvidence.structureStrength / 600.0));
+    }
     else if(signal == TRADE_SIGNAL_SELL && m_lastEvidence.bearishStructure)
-        structureScore = 1.0;
+    {
+        structureScore = MathMin(1.0, 0.92 + (m_lastEvidence.structureStrength / 600.0));
+    }
     else if(m_lastEvidence.structureStrength > 0.0)
-        structureScore = MathMax(0.55, MathMin(0.95, 0.60 + (m_lastEvidence.structureStrength / 250.0)));
+    {
+        // Partial credit for structure presence even if not aligned
+        structureScore = MathMax(0.52, MathMin(0.88, 0.58 + (m_lastEvidence.structureStrength / 300.0)));
+    }
 
-    double liquidityScore = 0.72;
+    // Liquidity context scoring with sweep and proximity considerations
+    double liquidityScore = 0.75;
     if(m_lastEvidence.liquiditySweep)
-        liquidityScore = 0.95;
+        liquidityScore = 0.96; // Strong boost for recent liquidity sweep
     if(m_lastEvidence.priceNearLiquidity)
-        liquidityScore = MathMin(liquidityScore, 0.78);
+        liquidityScore = MathMin(liquidityScore, 0.80); // Slight reduction near untested liquidity
 
-    double volatilityScore = 0.80;
+    // Volatility context scoring with adaptive weighting based on ATR percentage
+    double volatilityScore = 0.78;
     if(m_lastEvidence.volatilityState == VOLATILITY_NORMAL)
         volatilityScore = 1.0;
     else if(m_lastEvidence.volatilityState == VOLATILITY_LOW)
-        volatilityScore = 0.88;
+        volatilityScore = 0.92;
     else if(m_lastEvidence.volatilityState == VOLATILITY_HIGH)
-        volatilityScore = 0.74;
+        volatilityScore = 0.78;
     else if(m_lastEvidence.volatilityState == VOLATILITY_EXTREME)
-        volatilityScore = 0.45;
+        volatilityScore = 0.52;
+    
+    // Additional adjustment based on ATR percentage for fine-tuning
+    if(m_lastEvidence.atrPercent > 0.0)
+    {
+        if(m_lastEvidence.atrPercent < 0.3) // Very low volatility
+            volatilityScore = MathMin(volatilityScore, 0.88);
+        else if(m_lastEvidence.atrPercent > 1.5) // Very high volatility
+            volatilityScore = MathMax(volatilityScore * 0.85, 0.45);
+    }
 
+    // Regime context scoring with enhanced state integration
     double regimeScore = m_lastEvidence.costScore;
     if(!m_lastEvidence.regimeValid)
-        regimeScore = MathMin(regimeScore, 0.72);
-    else if(m_lastEvidence.regimeState == REGIME_BREAKOUT || m_lastEvidence.regimeState == REGIME_TREND)
-        regimeScore = MathMax(regimeScore, 0.92);
-    else if(m_lastEvidence.regimeState == REGIME_RANGE)
-        regimeScore = MathMin(MathMax(regimeScore, 0.75), 0.88);
-    else if(m_lastEvidence.regimeState == REGIME_CHAOS)
-        regimeScore = MathMin(regimeScore, 0.68);
+        regimeScore = MathMin(regimeScore, 0.70);
+    else
+    {
+        if(m_lastEvidence.regimeState == REGIME_BREAKOUT || m_lastEvidence.regimeState == REGIME_TREND)
+            regimeScore = MathMax(regimeScore, 0.94);
+        else if(m_lastEvidence.regimeState == REGIME_RANGE)
+            regimeScore = MathMin(MathMax(regimeScore, 0.78), 0.90);
+        else if(m_lastEvidence.regimeState == REGIME_CHAOS)
+            regimeScore = MathMin(regimeScore, 0.65);
+        
+        // Adjust for readiness class
+        if(m_lastEvidence.readinessClass == "REUSED_SNAPSHOT")
+            regimeScore = MathMax(0.65, regimeScore - m_lastEvidence.stalenessPenalty);
+    }
 
-    double total = trendScore + structureScore + liquidityScore + volatilityScore + regimeScore;
-    return MathMax(0.0, MathMin(1.0, total / 5.0));
+    // Weighted average with trend and structure having higher importance
+    double trendWeight = 1.25;
+    double structureWeight = 1.15;
+    double liquidityWeight = 0.90;
+    double volatilityWeight = 1.05;
+    double regimeWeight = 1.10;
+    
+    double totalWeight = trendWeight + structureWeight + liquidityWeight + volatilityWeight + regimeWeight;
+    double weightedTotal = (trendScore * trendWeight) + 
+                          (structureScore * structureWeight) + 
+                          (liquidityScore * liquidityWeight) + 
+                          (volatilityScore * volatilityWeight) + 
+                          (regimeScore * regimeWeight);
+    
+    double contextScore = weightedTotal / totalWeight;
+    return MathMax(0.0, MathMin(1.0, contextScore));
 }
 
 //+------------------------------------------------------------------+

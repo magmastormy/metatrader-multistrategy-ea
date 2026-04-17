@@ -50,11 +50,6 @@ struct SSignalValidationContext
     }
 };
 
-enum ENUM_VALIDATION_PROFILE
-{
-    VALIDATION_PROFILE_NEW_BAR = 0,
-    VALIDATION_PROFILE_INTRABAR = 1
-};
 
 struct SSpreadGateState
 {
@@ -170,7 +165,7 @@ public:
     void SetManagerOwnedAdmission(bool owned) { m_managerOwnsStructuralAdmission = owned; }
     
     // Main validation function
-    SSignalValidationResult ValidateSignal(
+    SValidationResult ValidateSignal(
         const string symbol,
         ENUM_TRADE_SIGNAL signal,
         double confidence,
@@ -263,7 +258,7 @@ CAdvancedSignalValidator::~CAdvancedSignalValidator()
 //+------------------------------------------------------------------+
 //| Validate Signal                                                  |
 //+------------------------------------------------------------------+
-SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
+SValidationResult CAdvancedSignalValidator::ValidateSignal(
     const string symbol,
     ENUM_TRADE_SIGNAL signal,
     double confidence,
@@ -272,7 +267,7 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     ENUM_VALIDATION_PROFILE profile,
     const SSignalValidationContext &context)
 {
-    SSignalValidationResult result;
+    SValidationResult result;
     result.isValid = false;
     result.qualityScore = 0.0;
     result.reason = "";
@@ -284,6 +279,25 @@ SSignalValidationResult CAdvancedSignalValidator::ValidateSignal(
     result.passedSessionFilter = true;
     
     m_signalsValidated++;
+
+    // Input validation
+    if(confidence < 0.0 || confidence > 1.0)
+    {
+        result.reason = StringFormat("Invalid confidence: %.2f (must be 0-1)", confidence);
+        return result;
+    }
+    
+    if(strategyConfluence < 0)
+    {
+        result.reason = StringFormat("Invalid confluence: %d (must be >= 0)", strategyConfluence);
+        return result;
+    }
+    
+    if(atrValue <= 0.0)
+    {
+        result.reason = StringFormat("Invalid ATR: %.5f (must be > 0)", atrValue);
+        return result;
+    }
 
     int requiredConfluence = m_minStrategyConfluence;
     double requiredQuality = m_minQualityScore;
@@ -613,7 +627,7 @@ bool CAdvancedSignalValidator::CheckSessionFilter(const string symbol = "")
 //+------------------------------------------------------------------+
 bool CAdvancedSignalValidator::IsSyntheticSymbol(const string symbol)
 {
-    if(symbol == "" || symbol == NULL) return false;
+    if(symbol == "") return false;
     
     // Check for broker-specific synthetic products that trade 24/7 or outside regular FX sessions.
     if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
@@ -640,6 +654,11 @@ bool CAdvancedSignalValidator::CheckVolatilityFilter(const string symbol, double
 {
     if(atrValue <= 0) return true;
     
+    // Synthetic indices have naturally extreme ATR relative to price.
+    // Their volatility characteristics are fundamentally different from forex,
+    // so percentage-based ATR filtering produces systematic false rejections.
+    if(IsSyntheticSymbol(symbol)) return true;
+    
     double price = SymbolInfoDouble(symbol, SYMBOL_BID);
     if(price <= 0) return true;
     
@@ -659,28 +678,45 @@ double CAdvancedSignalValidator::CalculateQualityScore(
 {
     double score = 0.0;
     
+    // Validate inputs - handle NaN and extreme values
+    if(!MathIsValidNumber(confidence) || confidence < 0.0 || confidence > 1.0)
+        confidence = 0.0;
+    
     // Confidence component
     score += confidence * 0.20;
     
     // Confluence component
-    double confluenceScore = MathMin(1.0, strategyConfluence / 5.0);
+    double confluenceScore = MathMin(1.0, MathMax(0.0, strategyConfluence / 5.0));
     score += confluenceScore * 0.10;
     
-    // Decision-path components from consensus and pipeline evidence.
-    score += MathMax(0.0, MathMin(1.0, context.convictionScore)) * 0.12;
-    score += MathMax(0.0, MathMin(1.0, context.readinessScore)) * 0.08;
-    score += MathMax(0.0, MathMin(1.0, context.contextScore)) * 0.08;
-    score += MathMax(0.0, MathMin(1.0, context.diversityScore)) * 0.07;
-    score += MathMax(0.0, MathMin(1.0, context.freshnessScore)) * 0.03;
-    score += MathMax(0.0, MathMin(1.0, context.costScore)) * 0.05;
-    score += MathMax(0.0, MathMin(1.0, context.directionalQuality)) * 0.15;
-    score += MathMax(0.0, MathMin(1.0, context.supportRatio)) * 0.07;
+    // Decision-path components from consensus and pipeline evidence with NaN protection
+    double convictionScore = MathIsValidNumber(context.convictionScore) ? context.convictionScore : 0.0;
+    double readinessScore = MathIsValidNumber(context.readinessScore) ? context.readinessScore : 0.0;
+    double contextScore = MathIsValidNumber(context.contextScore) ? context.contextScore : 0.0;
+    double diversityScore = MathIsValidNumber(context.diversityScore) ? context.diversityScore : 0.0;
+    double freshnessScore = MathIsValidNumber(context.freshnessScore) ? context.freshnessScore : 0.0;
+    double costScore = MathIsValidNumber(context.costScore) ? context.costScore : 0.0;
+    double directionalQuality = MathIsValidNumber(context.directionalQuality) ? context.directionalQuality : 0.0;
+    double supportRatio = MathIsValidNumber(context.supportRatio) ? context.supportRatio : 0.0;
+    
+    score += MathMax(0.0, MathMin(1.0, convictionScore)) * 0.12;
+    score += MathMax(0.0, MathMin(1.0, readinessScore)) * 0.08;
+    score += MathMax(0.0, MathMin(1.0, contextScore)) * 0.08;
+    score += MathMax(0.0, MathMin(1.0, diversityScore)) * 0.07;
+    score += MathMax(0.0, MathMin(1.0, freshnessScore)) * 0.03;
+    score += MathMax(0.0, MathMin(1.0, costScore)) * 0.05;
+    score += MathMax(0.0, MathMin(1.0, directionalQuality)) * 0.15;
+    score += MathMax(0.0, MathMin(1.0, supportRatio)) * 0.07;
     
     // Filter component
     if(passedFilters)
         score += 0.05;
     
-    return MathMin(1.0, score);
+    // Ensure final score is valid and in range [0, 1]
+    if(!MathIsValidNumber(score))
+        score = 0.0;
+    
+    return MathMax(0.0, MathMin(1.0, score));
 }
 
 #endif // __ADVANCED_SIGNAL_VALIDATOR_MQH__

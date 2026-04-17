@@ -249,7 +249,7 @@ string CStrategyBase::GetName(void) const
 
 ENUM_STRATEGY_TYPE CStrategyBase::GetType(void) const
 {
-    return STRATEGY_TYPE_CUSTOM;
+    return (ENUM_STRATEGY_TYPE)STRATEGY_TYPE_CUSTOM;
 }
 
 bool CStrategyBase::IsEnabled(void) const

@@ -168,12 +168,13 @@ private:
 	    }
 
 	    int GetMetricReuseWindowSeconds() const
-	    {
-	        int barSeconds = PeriodSeconds(m_period);
-	        if(barSeconds <= 0)
-	            barSeconds = 60;
-	        return MathMax(60, MathMin(900, barSeconds));
-	    }
+    {
+        int barSeconds = PeriodSeconds(m_period);
+        if(barSeconds <= 0)
+            barSeconds = 60;
+        // Allow reuse for up to 3 bars, with minimum 60 seconds and maximum 1 hour
+        return MathMax(60, MathMin(3600, barSeconds * 3));
+    }
 
 	    bool CanReuseMetric(const datetime metricTime) const
 	    {
@@ -231,7 +232,7 @@ private:
             bool dataReady = false;
             while(attempts < 5 && !dataReady)
             {
-                Sleep(50);
+                Sleep(10); // Reduced from 50ms to 10ms to minimize blocking
                 if(CopyBuffer(m_adxHandle, 0, 0, 3, adxValues) > 0) {
                     dataReady = true;
                 }
@@ -876,7 +877,7 @@ public:
             if(!indicatorsReady) {
                 retryCount++;
                 if(retryCount < maxRetries) {
-                    Sleep(200); // Wait 200ms before retry (increased from 100ms)
+                    Sleep(50); // Reduced from 200ms to 50ms to minimize blocking
                 }
             }
         }

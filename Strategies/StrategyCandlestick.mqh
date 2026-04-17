@@ -31,9 +31,12 @@ private:
     double            m_avgConfidence;
     string            m_lastDecisionReasonTag;
     CChartDrawingManager* m_drawingManager;
+    int               m_atrHandle;
+    int               m_ema50Handle;
+    int               m_ema200Handle;
     
 public:
-    CStrategyCandlestick() : m_minConfidence(0.60), m_requireTrendAlignment(true), m_enabled(true), m_weight(1.5), m_lastSignalTime(0), m_totalSignals(0), m_successfulSignals(0), m_avgConfidence(0.0), m_lastDecisionReasonTag("CANDLE_UNSET"), m_drawingManager(NULL) {}
+    CStrategyCandlestick() : m_minConfidence(0.60), m_requireTrendAlignment(true), m_enabled(true), m_weight(1.5), m_lastSignalTime(0), m_totalSignals(0), m_successfulSignals(0), m_avgConfidence(0.0), m_lastDecisionReasonTag("CANDLE_UNSET"), m_drawingManager(NULL), m_atrHandle(INVALID_HANDLE), m_ema50Handle(INVALID_HANDLE), m_ema200Handle(INVALID_HANDLE) {}
     ~CStrategyCandlestick() { if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; } }
     
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr) override
@@ -107,7 +110,7 @@ public:
         if(m_pinBar.DetectPinBar(barIndex, pinBar))
         {
             bool isBullishPin = (pinBar.type == PIN_BAR_BULLISH);
-            if(ValidatePattern(pinBar.nosePrice, isBullishPin))
+            if(ValidatePattern(pinBar.nosePrice, isBullishPin, barIndex))
             {
                 confidence = pinBar.strength;
                 DrawPatternSignal(pinBar.time, pinBar.nosePrice, pinBar.strength, pinBar.type == PIN_BAR_BULLISH, "Pin Bar");
@@ -134,7 +137,7 @@ public:
         SEngulfingPattern engulfing;
         if(m_engulfing.DetectEngulfing(barIndex, engulfing))
         {
-            if(ValidatePattern(engulfing.engulfingClose, engulfing.isBullish))
+            if(ValidatePattern(engulfing.engulfingClose, engulfing.isBullish, barIndex))
             {
                 confidence = engulfing.strength;
                 DrawPatternSignal(engulfing.time, engulfing.engulfingClose, engulfing.strength, engulfing.isBullish, "Engulfing");
@@ -250,46 +253,36 @@ private:
             m_avgConfidence = ((m_avgConfidence * (m_totalSignals - 1)) + signalConfidence) / m_totalSignals;
     }
 
-    bool ValidatePattern(double patternPrice, bool isBullish)
+    bool ValidatePattern(double patternPrice, bool isBullish, int barIndex)
     {
         patternPrice = patternPrice; // Reserved for future location-based validation
+
+        // --- ATR NORMALIZATION CHECK ---
+        if(m_atrHandle != INVALID_HANDLE)
+        {
+            double atrBuffer[1];
+            if(CopyBuffer(m_atrHandle, 0, barIndex, 1, atrBuffer) > 0)
+            {
+                double high = iHigh(m_symbol, m_timeframe, barIndex);
+                double low = iLow(m_symbol, m_timeframe, barIndex);
+                double candleSize = high - low;
+                
+                // ATR Normalization: Candle must be substantial (at least 80% of current ATR)
+                if(candleSize < atrBuffer[0] * 0.8)
+                    return false;
+            }
+        }
+
         if(m_requireTrendAlignment)
         {
-            if(!CheckTrendAlignment(isBullish))
+            if(!CheckTrendAlignment(isBullish, barIndex))
                 return false;
         }
         
         return true;
     }
     
-    bool CheckTrendAlignment(bool isBullish)
-    {
-        int ema50Handle = iMA(m_symbol, m_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
-        int ema200Handle = iMA(m_symbol, m_timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
-        
-        if(ema50Handle == INVALID_HANDLE || ema200Handle == INVALID_HANDLE)
-            return true;
-        
-        double ema50[], ema200[];
-        ArraySetAsSeries(ema50, true);
-        ArraySetAsSeries(ema200, true);
-        
-        if(CopyBuffer(ema50Handle, 0, 1, 1, ema50) <= 0 ||
-           CopyBuffer(ema200Handle, 0, 1, 1, ema200) <= 0)
-        {
-            IndicatorRelease(ema50Handle);
-            IndicatorRelease(ema200Handle);
-            return true;
-        }
-        
-        bool uptrend = (ema50[0] > ema200[0]);
-        bool downtrend = (ema50[0] < ema200[0]);
-        
-        IndicatorRelease(ema50Handle);
-        IndicatorRelease(ema200Handle);
-        
-        return isBullish ? uptrend : downtrend;
-    }
+    bool CheckTrendAlignment(bool isBullish, int barIndex) { if(m_ema50Handle == INVALID_HANDLE || m_ema200Handle == INVALID_HANDLE) return true; double ema50[1], ema200[1]; if(CopyBuffer(m_ema50Handle, 0, barIndex, 1, ema50) <= 0 || CopyBuffer(m_ema200Handle, 0, barIndex, 1, ema200) <= 0) return true; bool uptrend = (ema50[0] > ema200[0]); bool downtrend = (ema50[0] < ema200[0]); return isBullish ? uptrend : downtrend; }
     
     void DrawPatternSignal(datetime time, double price, double strength, bool isBullish, const string patternName)
     {
@@ -303,3 +296,4 @@ private:
         m_drawingManager.DrawTextLabel(time, price, label, textColor, 8, isBullish ? ANCHOR_LOWER : ANCHOR_UPPER);
     }
 };
+

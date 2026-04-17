@@ -274,7 +274,7 @@ bool CStrategyElliottWaveEnhanced::Init(const string symbol, const ENUM_TIMEFRAM
         m_drawingManager.Initialize(symbol, timeframe, "EW");
         SDrawingConfig cfg = m_drawingManager.GetConfiguration();
         cfg.enableElliottWave   = true;
-        cfg.enableTrendLines    = true;
+        cfg.enableTrendLines    = false;  // Disabled - trend lines are randomly drawn/inaccurate
         cfg.enableStructure     = false;
         cfg.enableOrderBlocks   = false;
         cfg.enableFVG           = false;
@@ -510,13 +510,13 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const SElliottWavePattern &pa
         waveLabels[2] = "C";
     }
 
-    // Draw lines between pivot points
+    // Draw thin dashed trend lines between pivot points
     for(int i = 0; i < waveCount - 1; i++)
     {
         if(times[i] == 0 || times[i+1] == 0) continue;
 
         m_drawingManager.DrawTrendLine(times[i], prices[i], times[i+1], prices[i+1],
-                                       waveCol, 2, STYLE_SOLID);
+                                       color(waveCol | 0x808080), 1, STYLE_DOT);
     }
 
     // Draw labels at each pivot (use DrawTextLabel instead of the non-existent DrawWaveLabel)
@@ -530,13 +530,68 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const SElliottWavePattern &pa
         m_drawingManager.DrawTextLabel(times[i], prices[i], waveLabels[i], waveCol, 9, anchor);
     }
 
+    // Draw Fibonacci target levels for all waves
+    if(pattern.wave0 > 0 && pattern.wave1 > 0)
+    {
+        double w1Size = MathAbs(pattern.wave1 - pattern.wave0);
+        bool isBull = (pattern.wave1 > pattern.wave0);
+        
+        // Wave 1 targets (0.618, 1.0, 1.618 extensions)
+        for(int fib = 0; fib < 3; fib++)
+        {
+            double ratio = (fib == 0) ? 0.618 : (fib == 1) ? 1.0 : 1.618;
+            double target = isBull ? pattern.wave0 + w1Size * ratio : pattern.wave0 - w1Size * ratio;
+            string label = "W1 " + DoubleToString(ratio, 3);
+            m_drawingManager.DrawHorizontalLevel(target,
+                                                 color(waveCol | 0x808080),
+                                                 label,
+                                                 STYLE_DOT, 1, false);
+        }
+    }
+
+    if(pattern.wave1 > 0 && pattern.wave2 > 0)
+    {
+        double w2Size = MathAbs(pattern.wave2 - pattern.wave1);
+        bool isBull = (pattern.wave1 > pattern.wave0);
+        
+        // Wave 2 targets (0.382, 0.5, 0.618 retracements)
+        for(int fib = 0; fib < 3; fib++)
+        {
+            double ratio = (fib == 0) ? 0.382 : (fib == 1) ? 0.5 : 0.618;
+            double target = isBull ? pattern.wave1 - w2Size * ratio : pattern.wave1 + w2Size * ratio;
+            string label = "W2 " + DoubleToString(ratio, 3);
+            m_drawingManager.DrawHorizontalLevel(target,
+                                                 color(waveCol | 0x808080),
+                                                 label,
+                                                 STYLE_DOT, 1, false);
+        }
+    }
+
     // Draw wave 3 target line if available
     if(pattern.wave3Target > 0 && pattern.currentState == STATE_WAVE_3)
     {
         m_drawingManager.DrawHorizontalLevel(pattern.wave3Target,
                                              color(waveCol | 0x808080),
                                              "W3 target 1.618",
-                                             STYLE_DASH, 1, false);
+                                             STYLE_DOT, 1, false);
+    }
+
+    // Draw wave 4 targets (0.236, 0.382, 0.5 retracements)
+    if(pattern.wave3 > 0 && pattern.wave4 > 0)
+    {
+        double w3Size = MathAbs(pattern.wave3 - pattern.wave2);
+        bool isBull = (pattern.wave3 > pattern.wave1);
+        
+        for(int fib = 0; fib < 3; fib++)
+        {
+            double ratio = (fib == 0) ? 0.236 : (fib == 1) ? 0.382 : 0.5;
+            double target = isBull ? pattern.wave3 - w3Size * ratio : pattern.wave3 + w3Size * ratio;
+            string label = "W4 " + DoubleToString(ratio, 3);
+            m_drawingManager.DrawHorizontalLevel(target,
+                                                 color(waveCol | 0x808080),
+                                                 label,
+                                                 STYLE_DOT, 1, false);
+        }
     }
 
     // Draw wave 5 target line if available
@@ -545,7 +600,7 @@ void CStrategyElliottWaveEnhanced::DrawWavePattern(const SElliottWavePattern &pa
         m_drawingManager.DrawHorizontalLevel(pattern.wave5Target,
                                              color(waveCol | 0x808080),
                                              "W5 target",
-                                             STYLE_DASH, 1, false);
+                                             STYLE_DOT, 1, false);
     }
 }
 

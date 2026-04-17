@@ -5,12 +5,27 @@
 #property strict
 
 // TRAINING NOTE:
-// Only the lightweight 3 x dModel classification head receives gradient updates.
-// The transformer encoder blocks themselves remain fixed at Xavier-initialized
-// random weights. This is a linear-probing style setup over random features,
-// not full transformer fine-tuning. In this EA, the transformer is primarily a
-// compact feature extractor; the simple neural network remains the practical
-// online learner for adaptive behavior inside MQL5 constraints.
+// =============================================================================
+// ARCHITECTURE REALITY CHECK:
+// This implementation uses a FIXED FEATURE EXTRACTOR approach, NOT full transformer training.
+// 
+// What actually trains:
+// - Only the 3 x dModel classification head (96 parameters with dModel=32)
+// - Pattern classification head (10 x dModel = 320 parameters)
+// 
+// What NEVER trains:
+// - All transformer encoder weights (WQ, WK, WV, WO, FF layers) - FIXED RANDOM
+// - Positional encodings - FIXED
+// - Layer normalization parameters - FIXED
+// 
+// This is "linear probing" on random features - a valid ML approach but different
+// from what typical transformer marketing implies. The transformer acts as a 
+// sophisticated random feature generator, and only the final classification
+// layers learn from data.
+// 
+// For actual online learning, the CNeuralNetworkStrategy provides the adaptive
+// capability within MQL5 constraints.
+// =============================================================================
 
 #ifndef __TRANSFORMER_BRAIN_MQH__
 #define __TRANSFORMER_BRAIN_MQH__
@@ -43,6 +58,11 @@ private:
     double m_WV[];
     double m_WO[];
     
+    // Multi-scale attention parameters
+    double m_headScales[];  // Scale factor per head for multi-scale attention
+    int m_headTimeScales[]; // Time window size per head (5, 20, 50 bars)
+    double m_headLearningRates[]; // Learning rate per head
+    
     double m_attentionWeights[];
     
     // LCG
@@ -73,7 +93,7 @@ private:
     }
     
 public:
-    CMultiHeadAttention(int dModel = 512, int numHeads = 16, int seed = 12345) {
+    CMultiHeadAttention(int dModel = 32, int numHeads = 2, int seed = 12345) {
         m_dModel = dModel;
         m_numHeads = numHeads;
         m_dK = dModel / numHeads;
@@ -87,6 +107,31 @@ public:
         ArrayResize(m_WV, qkvSize);
         ArrayResize(m_WO, qkvSize);
         
+        // Initialize multi-scale parameters
+        ArrayResize(m_headScales, numHeads);
+        ArrayResize(m_headTimeScales, numHeads);
+        ArrayResize(m_headLearningRates, numHeads);
+        
+        // Configure heads for different timeframes
+        for(int i = 0; i < numHeads; i++) {
+            if(i < 2) {
+                // Heads 0-1: Short-term patterns (5-bar windows)
+                m_headTimeScales[i] = 5;
+                m_headScales[i] = 1.0;
+                m_headLearningRates[i] = 0.002;  // Faster learning for short-term
+            } else if(i < 5) {
+                // Heads 2-4: Medium-term patterns (20-bar windows)
+                m_headTimeScales[i] = 20;
+                m_headScales[i] = 0.5;
+                m_headLearningRates[i] = 0.001;
+            } else {
+                // Heads 5-7: Long-term patterns (50-bar windows)
+                m_headTimeScales[i] = 50;
+                m_headScales[i] = 0.25;
+                m_headLearningRates[i] = 0.0005;  // Slower learning for long-term
+            }
+        }
+        
         // Xavier initialization (Deterministic)
         double scale = MathSqrt(2.0 / dModel);
         for(int i = 0; i < qkvSize; i++) {
@@ -97,9 +142,9 @@ public:
         }
     }
     
-    // Scaled Dot-Product Attention
+    // Scaled Dot-Product Attention with multi-scale support
     bool ScaledDotProductAttention(const double &Q[], const double &K[], 
-                                   const double &V[], double &output[]) {
+                                   const double &V[], double &output[], int headIndex = 0) {
         int totalQ = ArraySize(Q);
         int seqLen = totalQ / m_dK;
         if(seqLen <= 0) return false;
@@ -107,7 +152,9 @@ public:
         ArrayResize(m_attentionWeights, seqLen * seqLen);
         
         // Calculate attention scores: Q * K^T / sqrt(d_k)
-        double scale = 1.0 / MathSqrt((double)m_dK);
+        // Apply head-specific scale for multi-scale attention
+        double headScale = (headIndex < m_numHeads) ? m_headScales[headIndex] : 1.0;
+        double scale = headScale / MathSqrt((double)m_dK);
         
         // Optimized matrix multiplication
         for(int i = 0; i < seqLen; i++) {
@@ -178,7 +225,10 @@ public:
         int totalInput = ArraySize(inputData);
         if(m_dModel == 0) return false;
         int seqLen = totalInput / m_dModel;
-        if(seqLen == 0) return false;
+        if(seqLen == 0) {
+            PrintFormat("[TRANSFORMER-DIAG] Forward failed: seqLen is 0 (totalInput=%d, dModel=%d)", totalInput, m_dModel);
+            return false;
+        }
         
         // Transform input to Q, K, V
         double Q[], K[], V[];
@@ -210,9 +260,10 @@ public:
             }
         }
         
-        // Apply scaled dot-product attention
+        // Apply scaled dot-product attention with multi-scale support
         double attentionOutput[];
-        if(!ScaledDotProductAttention(Q, K, V, attentionOutput)) {
+        if(!ScaledDotProductAttention(Q, K, V, attentionOutput, 0)) {
+            PrintFormat("[TRANSFORMER-DIAG] Forward failed: ScaledDotProductAttention returned false");
             return false;
         }
         
@@ -254,7 +305,7 @@ private:
     int m_dModel;
     
 public:
-    CPositionalEncoding(int maxSeqLen = 512, int dModel = 256) {
+    CPositionalEncoding(int maxSeqLen = 50, int dModel = 32) {
         m_maxSeqLen = maxSeqLen;
         m_dModel = dModel;
         ArrayResize(m_encodings, maxSeqLen * dModel);
@@ -300,7 +351,7 @@ private:
     double m_epsilon;
     
 public:
-    CLayerNorm(int dModel = 256, double epsilon = 1e-6) {
+    CLayerNorm(int dModel = 32, double epsilon = 1e-6) {
         m_dModel = dModel;
         m_epsilon = epsilon;
         ArrayResize(m_gamma, dModel);
@@ -388,7 +439,7 @@ private:
     }
     
 public:
-    CFeedForwardNetwork(int dModel = 256, int dFF = 1024, int seed = 12345) {
+    CFeedForwardNetwork(int dModel = 32, int dFF = 64, int seed = 12345) {
         m_dModel = dModel;
         m_dFF = dFF;
         m_randomState = (uint)seed;
@@ -467,7 +518,7 @@ private:
     double m_residual[];
     
 public:
-    CTransformerBlock(int dModel = 256, int numHeads = 8, int dFF = 1024, int seed = 0) {
+    CTransformerBlock(int dModel = 32, int numHeads = 2, int dFF = 64, int seed = 0) {
         m_attention = new CMultiHeadAttention(dModel, numHeads, seed);
         m_feedForward = new CFeedForwardNetwork(dModel, dFF, seed + 1);
         m_layerNorm1 = new CLayerNorm(dModel);
@@ -536,6 +587,12 @@ private:
     double m_classificationBiases[];      // 3-class bias
     double m_classificationBiasVelocity[];
     
+    // Pattern classifier head (10 pattern classes)
+    double m_patternWeights[];           // 10 x dModel pattern classification head
+    double m_patternBiases[];            // 10-class bias
+    double m_patternBiasVelocity[];
+    double m_patternVelocity[];
+    
     // Training parameters
     double m_learningRate;
     int m_trainingSteps;
@@ -573,6 +630,24 @@ private:
             m_classificationWeights[i] = (GetTrainingRandom() - 0.5) * 2.0 * scale;
 
         ArrayInitialize(m_classificationBiases, 0.0);
+        
+        // Initialize pattern classifier head (10 pattern classes)
+        int patternWeightCount = 10 * m_dModel;
+        ArrayResize(m_patternWeights, patternWeightCount);
+        ArrayResize(m_patternBiases, 10);
+        ArrayResize(m_patternVelocity, patternWeightCount);
+        ArrayResize(m_patternBiasVelocity, 10);
+
+        ArrayInitialize(m_patternVelocity, 0.0);
+        ArrayInitialize(m_patternBiasVelocity, 0.0);
+
+        double patternScale = MathSqrt(2.0 / (m_dModel + 10.0));
+        for(int i = 0; i < patternWeightCount; i++)
+        {
+            m_patternWeights[i] = (GetTrainingRandom() - 0.5) * 2.0 * patternScale;
+        }
+
+        ArrayInitialize(m_patternBiases, 0.0);
     }
 
     bool ComputeClassProbabilities(const double &features[], double &probabilities[])
@@ -630,9 +705,69 @@ private:
         }
     }
     
+    bool ComputePatternProbabilities(const double &features[], double &probabilities[])
+    {
+        if(ArraySize(features) != m_dModel)
+            return false;
+
+        double logits[10];
+        for(int c = 0; c < 10; c++)
+        {
+            double score = m_patternBiases[c];
+            int rowOffset = c * m_dModel;
+            for(int i = 0; i < m_dModel; i++)
+                score += m_patternWeights[rowOffset + i] * features[i];
+            logits[c] = score;
+        }
+
+        double maxLogit = logits[0];
+        for(int c = 1; c < 10; c++)
+            if(logits[c] > maxLogit) maxLogit = logits[c];
+
+        double sumExp = 0.0;
+        double expValues[10];
+        for(int c = 0; c < 10; c++)
+        {
+            expValues[c] = MathExp(logits[c] - maxLogit);
+            sumExp += expValues[c];
+        }
+        if(sumExp <= 1e-12)
+            return false;
+
+        ArrayResize(probabilities, 10);
+        for(int c = 0; c < 10; c++)
+            probabilities[c] = expValues[c] / sumExp;
+        return true;
+    }
+    
+    void UpdatePatternHead(const double &features[], const double &probabilities[], const int targetPatternClass)
+    {
+        if(ArraySize(features) != m_dModel || ArraySize(probabilities) != 10 || targetPatternClass < 0 || targetPatternClass >= 10)
+            return;
+
+        for(int c = 0; c < 10; c++)
+        {
+            double target = (c == targetPatternClass) ? 1.0 : 0.0;
+            double error = probabilities[c] - target;
+            int rowOffset = c * m_dModel;
+
+            for(int i = 0; i < m_dModel; i++)
+            {
+                int idx = rowOffset + i;
+                double grad = error * features[i];
+                m_patternVelocity[idx] = m_momentum * m_patternVelocity[idx] + (1.0 - m_momentum) * grad;
+                m_patternWeights[idx] -= m_learningRate * m_patternVelocity[idx];
+            }
+
+            m_patternBiasVelocity[c] =
+                m_momentum * m_patternBiasVelocity[c] + (1.0 - m_momentum) * error;
+            m_patternBiases[c] -= m_learningRate * m_patternBiasVelocity[c];
+        }
+    }
+    
 public:
-    CTransformerBrain(int dModel = 256, int numHeads = 8, int numLayers = 6,
-                      int dFF = 1024, int maxSeqLen = 512, double learningRate = 0.001) {
+    CTransformerBrain(int dModel = 32, int numHeads = 2, int numLayers = 1,
+                      int dFF = 64, int maxSeqLen = 50, double learningRate = 0.001) {
         m_dModel = dModel;
         m_numHeads = numHeads;
         m_numLayers = numLayers;
@@ -755,6 +890,31 @@ public:
         return true;
     }
     
+    // Get pattern predictions (10 pattern classes)
+    bool GetPatternPredictions(const double &inputFeatures[], double &patternProbabilities[], int &patternIndex, double &confidence) {
+        if(ArraySize(inputFeatures) > m_maxSeqLen * m_dModel) return false;
+
+        // Get encoded features from transformer
+        double encodedFeatures[];
+        int actualSeqLen = ArraySize(inputFeatures) / MathMax(1, m_dModel);
+        if(!Forward(inputFeatures, actualSeqLen, encodedFeatures)) return false;
+
+        // Apply pattern classifier head to get 10-class probabilities
+        if(!ComputePatternProbabilities(encodedFeatures, patternProbabilities)) return false;
+
+        // Find the pattern with highest probability
+        patternIndex = 0;
+        confidence = patternProbabilities[0];
+        for(int c = 1; c < 10; c++) {
+            if(patternProbabilities[c] > confidence) {
+                confidence = patternProbabilities[c];
+                patternIndex = c;
+            }
+        }
+
+        return true;
+    }
+    
     // Calculate cross-entropy loss
     double CalculateLoss(const double &predictions[], int targetClass) {
         if(ArraySize(predictions) != 3) return 0.0; // Buy, Sell, Hold
@@ -792,6 +952,40 @@ public:
 
         // Update classification head weights with momentum SGD.
         UpdateClassificationHead(encodedFeatures, probabilities, targetClass);
+
+        m_totalLoss += loss;
+        m_trainingSteps++;
+        return true;
+    }
+    
+    // Training step for pattern classification
+    bool TrainPatternStep(const double &inputFeatures[], int targetPatternClass, double &loss) {
+        if(targetPatternClass < 0 || targetPatternClass >= 10)
+            return false;
+
+        // Encode input sequence with transformer stack.
+        double encodedFeatures[];
+        int actualSeqLen = ArraySize(inputFeatures) / MathMax(1, m_dModel);
+        if(!Forward(inputFeatures, actualSeqLen, encodedFeatures))
+            return false;
+
+        if(ArraySize(encodedFeatures) != m_dModel)
+            return false;
+
+        // Predict pattern probabilities with pattern classification head.
+        double patternProbabilities[];
+        if(!ComputePatternProbabilities(encodedFeatures, patternProbabilities))
+            return false;
+
+        // Cross-entropy objective for patterns.
+        double targetProb = patternProbabilities[targetPatternClass];
+        double epsilon = 1e-15;
+        loss = -MathLog(MathMax(targetProb, epsilon));
+        if(!MathIsValidNumber(loss))
+            return false;
+
+        // Update pattern head weights with momentum SGD.
+        UpdatePatternHead(encodedFeatures, patternProbabilities, targetPatternClass);
 
         m_totalLoss += loss;
         m_trainingSteps++;

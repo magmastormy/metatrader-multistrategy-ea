@@ -274,7 +274,7 @@ public:
     //+------------------------------------------------------------------+
     //| Initialization and cleanup
     //+------------------------------------------------------------------+
-    static bool Initialize(const string logFileName, const ENUM_ERROR_LEVEL minLevel = ERROR_LEVEL_INFO);
+    static bool Initialize(const string logFileName, const ENUM_ERROR_SEVERITY minLevel = ERROR_INFO);
     static void Shutdown();
 
 //+------------------------------------------------------------------+
@@ -666,11 +666,11 @@ void CEnhancedErrorHandler::CleanupOldRetryData()
 //+------------------------------------------------------------------+
 //| Initialize enhanced error handling system                      |
 //+------------------------------------------------------------------+
-bool CEnhancedErrorHandler::Initialize(const string logFileName, const ENUM_ERROR_LEVEL minLevel)
+bool CEnhancedErrorHandler::Initialize(const string logFileName, const ENUM_ERROR_SEVERITY minLevel)
 {
     // Initialize static members
     m_logFile = logFileName;
-    m_minLogLevel = (ENUM_ERROR_SEVERITY)minLevel;
+    m_minLogLevel = minLevel;
     m_loggingEnabled = true;
     m_emergencyMode = false;
     m_gracefulDegradation = true;
@@ -975,6 +975,7 @@ CEnhancedErrorHandler* CEnhancedErrorHandler::GetInstance()
 //+------------------------------------------------------------------+
 //| Static member variable definitions                               |
 //+------------------------------------------------------------------+
+// NOTE: Singleton pattern is not thread-safe, but this is acceptable in MQL5's single-threaded context
 CEnhancedErrorHandler* CEnhancedErrorHandler::m_instance = NULL;
 string CEnhancedErrorHandler::m_logFile = "";
 bool CEnhancedErrorHandler::m_loggingEnabled = false;

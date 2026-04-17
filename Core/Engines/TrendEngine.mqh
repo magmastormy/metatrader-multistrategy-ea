@@ -456,6 +456,7 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
         datetime nowTime = TimeCurrent();
         if((nowTime - m_lastIndicatorErrorLog) >= 30)
         {
+            int logAdxBars = useAdxModel ? adxBars : -1; // Show -1 for disabled instead of -2 sentinel
             PrintFormat("[READINESS-STATE] TrendEngine partial readiness | symbol=%s | timeframe=%s | Bars=%d | MAf=%d | MAm=%d | MAs=%d | ADX=%d | ATR=%d | need=%d",
                         m_indicatorSymbol,
                         EnumToString(m_indicatorTimeframe),
@@ -463,7 +464,7 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
                         fastBars,
                         medBars,
                         slowBars,
-                        adxBars,
+                        logAdxBars,
                         atrBars,
                         minBars);
             m_lastIndicatorErrorLog = nowTime;
@@ -781,6 +782,13 @@ bool CTrendEngine::TryReuseLastGoodTrend(const string symbol,
 {
     if(!m_hasLastGoodTrend || m_lastGoodTrendTime <= 0)
         return false;
+
+    // AUDIT FIX: Validate symbol/timeframe context before reusing last good trend
+    if(m_indicatorSymbol != symbol || m_indicatorTimeframe != timeframe)
+    {
+        // Cannot reuse trend from different symbol/timeframe context
+        return false;
+    }
 
     int stalenessSeconds = (int)MathMax(0, TimeCurrent() - m_lastGoodTrendTime);
     if(stalenessSeconds > GetReuseWindowSeconds(timeframe))

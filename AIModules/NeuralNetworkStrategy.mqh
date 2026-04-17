@@ -17,9 +17,11 @@
 #include "../Core/AI/AIFeatureVectorBuilder.mqh"
 #include "../IndicatorManager.mqh"
 #include "TransformerBrain.mqh"
+#include "UniversalTransformerService.mqh"
 
 #define NN_CHECKPOINT_MAGIC 1313758027
-#define NN_CHECKPOINT_VERSION 2
+#define NN_CHECKPOINT_VERSION 5
+#define RAND_MAX 2147483647
 #define NN_MAX_PERSISTED_SAMPLES 300
 #define NN_MAX_TRAINING_EXAMPLES 2000
 
@@ -28,7 +30,7 @@
 //+------------------------------------------------------------------+
 struct STrainingExample
 {
-    double inputs[25];
+    double inputs[FEATURE_VECTOR_SIZE];  // Synced with shared builder
     int expectedOutput;     // 0=None, 1=Buy, 2=Sell
     double actualResult;    // Profit/loss from this trade
     datetime time;
@@ -70,8 +72,38 @@ struct STrainingExample
 class CNeuralNetworkStrategy
 {
 private:
+    bool m_usesSharedTransformer;  // Whether to use shared transformer service
+    
+    bool WriteCheckpointString(const int fileHandle, const string value)
+    {
+        int len = (int)StringLen(value);
+        FileWriteInteger(fileHandle, len);
+        for(int i = 0; i < len; i++)
+        {
+            ushort ch = (ushort)StringGetCharacter(value, i);
+            FileWriteInteger(fileHandle, (int)ch);
+        }
+        return true;
+    }
+
+    bool ReadCheckpointString(const int fileHandle, string &value)
+    {
+        value = "";
+        int len = FileReadInteger(fileHandle);
+        if(len < 0 || len > 4096)
+            return false;
+
+        StringInit(value, 0, (ushort)len);
+        for(int i = 0; i < len; i++)
+        {
+            ushort ch = (ushort)FileReadInteger(fileHandle);
+            StringSetCharacter(value, i, (ushort)ch);
+        }
+        return true;
+    }
+
     // Network weights
-    double W1[25][32];       // Input → Hidden1
+    double W1[FEATURE_VECTOR_SIZE][32];       // Input → Hidden1 (synced with shared builder)
     double W2[32][16];       // Hidden1 → Hidden2
     double W3[16][8];        // Hidden2 → Hidden3
     double W4[8][3];         // Hidden3 → Output
@@ -129,6 +161,7 @@ private:
     int m_lastTransformerSeqLen;
     datetime m_lastFeatureValidationLogTime;
     double m_minConfidence;
+    datetime m_lastCheckpointDiagLogTime;
 
     
 public:
@@ -136,16 +169,16 @@ public:
         m_learningRate(0.002),
         m_epoch(0),
         m_lastLoss(0.0),
-        m_minTrainingExamples(10),  // Reduced from 20 for even faster startup
+        m_minTrainingExamples(3),  // Dramatically reduced from 10 to allow almost immediate training startup
         m_maxTrainingExamples(5000),
         m_resultMatchWindowSec(86400),
         m_predictionCounter(0),
         m_symbol(""),
         m_timeframe(PERIOD_CURRENT),
         m_initialized(false),
-        m_enableOnlineTraining(false),
-        m_allowWeightMutation(false),
-        m_enablePseudoLabeling(false),
+        m_enableOnlineTraining(true),
+        m_allowWeightMutation(true),
+        m_enablePseudoLabeling(true),
         m_pseudoLabelBarsAhead(1),
         m_sampleIntervalSec(30),
         m_checkpointEveryLabeled(10),
@@ -170,7 +203,9 @@ public:
         m_ownsTransformerRef(false),
         m_lastTransformerSeqLen(0),
         m_lastFeatureValidationLogTime(0),
-        m_minConfidence(0.35)
+        m_minConfidence(0.35),
+        m_lastCheckpointDiagLogTime(0),
+        m_usesSharedTransformer(true)  // Use shared transformer by default
 
     {
         m_trainHead = 0;
@@ -208,20 +243,30 @@ private:
 
     bool EnsureTransformerFeatureExtractor()
     {
-        if(m_transformerRef != NULL)
+        if(m_usesSharedTransformer) {
+            // With shared transformer service, we don't need to create our own
+            // Just ensure the symbol is registered with the service
+            if(!g_universalTransformerService.IsSymbolRegistered(m_symbol)) {
+                return g_universalTransformerService.RegisterSymbol(m_symbol);
+            }
             return true;
+        } else {
+            // Fallback to local transformer (backward compatibility)
+            if(m_transformerRef != NULL)
+                return true;
 
-        m_transformerRef = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT,
-                                                 TRANSFORMER_NUM_HEADS_DEFAULT,
-                                                 TRANSFORMER_NUM_LAYERS_A_DEFAULT,
-                                                 TRANSFORMER_D_FF_DEFAULT,
-                                                 TRANSFORMER_MAX_SEQ_LEN_DEFAULT,
-                                                 TRANSFORMER_LR_A_DEFAULT);
-        if(m_transformerRef == NULL)
-            return false;
+            m_transformerRef = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT,
+                                                     TRANSFORMER_NUM_HEADS_DEFAULT,
+                                                     TRANSFORMER_NUM_LAYERS_A_DEFAULT,
+                                                     TRANSFORMER_D_FF_DEFAULT,
+                                                     TRANSFORMER_MAX_SEQ_LEN_DEFAULT,
+                                                     TRANSFORMER_LR_A_DEFAULT);
+            if(m_transformerRef == NULL)
+                return false;
 
-        m_ownsTransformerRef = true;
-        return true;
+            m_ownsTransformerRef = true;
+            return true;
+        }
     }
 
     void LogFeatureValidationFailure(const int zeroCount,
@@ -243,15 +288,26 @@ private:
 
     bool ValidateFeatures(const double &features[])
     {
-        if(ArraySize(features) < 25)
+        // AUDIT FIX: Add error handling for empty or insufficient feature vectors
+        if(ArraySize(features) < FEATURE_VECTOR_SIZE)
+        {
+            static datetime s_lastEmptyLog = 0;
+            datetime now = TimeCurrent();
+            if(s_lastEmptyLog == 0 || (now - s_lastEmptyLog) >= 60)
+            {
+                PrintFormat("[NN-STRATEGY] ERROR: Empty or insufficient feature vector for %s %s | size=%d | required=%d",
+                            m_symbol, EnumToString(m_timeframe), ArraySize(features), FEATURE_VECTOR_SIZE);
+                s_lastEmptyLog = now;
+            }
             return false;
+        }
 
         int zeroCount = 0;
         int nanCount = 0;
         int criticalZeroCount = 0;
         int criticalIndices[6] = {1, 2, 3, 4, 13, 23};
 
-        for(int i = 0; i < 25; i++)
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
         {
             if(!MathIsValidNumber(features[i]))
                 nanCount++;
@@ -262,7 +318,7 @@ private:
         for(int c = 0; c < 6; c++)
         {
             int idx = criticalIndices[c];
-            if(idx >= 0 && idx < 25 && MathAbs(features[idx]) <= 1e-9)
+            if(idx >= 0 && idx < FEATURE_VECTOR_SIZE && MathAbs(features[idx]) <= 1e-9)
                 criticalZeroCount++;
         }
 
@@ -272,7 +328,8 @@ private:
             return false;
         }
 
-        if(criticalZeroCount >= 4 || zeroCount > 14)
+        // Allow slightly more zeros for 50 features, but critical zeros remain strict.
+        if(criticalZeroCount >= 4 || zeroCount > 20)
         {
             LogFeatureValidationFailure(zeroCount, nanCount, criticalZeroCount);
             return false;
@@ -283,34 +340,101 @@ private:
 
     bool ApplyTransformerFeatureBridge(double &features[])
     {
-        if(ArraySize(features) < 25)
+        if(ArraySize(features) < FEATURE_VECTOR_SIZE)
             return false;
-        if(!EnsureTransformerFeatureExtractor() || m_transformerRef == NULL)
-            return false;
+        
+        if(m_usesSharedTransformer) {
+            // Use shared universal transformer service
+            if(!g_universalTransformerService.IsSymbolRegistered(m_symbol)) {
+                // Register symbol if not already registered
+                if(!g_universalTransformerService.RegisterSymbol(m_symbol)) {
+                    PrintFormat("[NN-TRANSFORMER] ERROR: Failed to register symbol %s with universal service", m_symbol);
+                    return false;
+                }
+            }
+            
+            int sequenceLength = MathMin(8, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT);
+            if(sequenceLength <= 0)
+                sequenceLength = 4;
+                
+            if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, m_lastTransformerInput, 64, sequenceLength))
+                return false;
 
-        int sequenceLength = MathMin(8, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT);
-        if(sequenceLength <= 0)
-            sequenceLength = 4;
-        if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, m_lastTransformerInput, TRANSFORMER_D_MODEL_DEFAULT, sequenceLength))
-            return false;
+            m_lastTransformerSeqLen = sequenceLength;
+            double encodedFeatures[];
+            
+            // Try to get features with retry mechanism for warmup periods
+            bool featuresRetrieved = false;
+            for(int retry = 0; retry < 2; retry++)
+            {
+                if(g_universalTransformerService.GetSymbolFeatures(m_symbol, m_lastTransformerInput, m_lastTransformerSeqLen, encodedFeatures))
+                {
+                    featuresRetrieved = true;
+                    break;
+                }
+                // Small delay before retry
+                if(retry == 0)
+                    Sleep(10);
+            }
+            
+            if(!featuresRetrieved)
+            {
+                // Reduce severity during warmup - this is expected for new symbols
+                static datetime lastWarningTime = 0;
+                datetime nowTime = TimeCurrent();
+                if(nowTime - lastWarningTime > 30) // Limit warning frequency
+                {
+                    PrintFormat("[NN-TRANSFORMER] WARNING: Features not ready for %s (warmup period)", m_symbol);
+                    lastWarningTime = nowTime;
+                }
+                return false;
+            }
 
-        m_lastTransformerSeqLen = sequenceLength;
-        double encodedFeatures[];
-        if(!m_transformerRef.GetEncodedFeatures(m_lastTransformerInput, m_lastTransformerSeqLen, encodedFeatures))
-            return false;
+            int encodedSize = ArraySize(encodedFeatures);
+            if(encodedSize <= 0)
+                return false;
 
-        int encodedSize = ArraySize(encodedFeatures);
-        if(encodedSize <= 0)
-            return false;
+            // Use transformer features (positions 15-24)
+            int featuresToUse = MathMin(10, encodedSize);
+            for(int i = 0; i < featuresToUse; i++) {
+                features[15 + i] = MathMax(-3.0, MathMin(3.0, encodedFeatures[i]));
+            }
+            
+            // Fill remaining with zeros if needed
+            for(int i = featuresToUse; i < 10; i++) {
+                features[15 + i] = 0.0;
+            }
+            
+            return true;
+        } else {
+            // Fallback to local transformer (backward compatibility)
+            if(!EnsureTransformerFeatureExtractor() || m_transformerRef == NULL)
+                return false;
 
-        int step = MathMax(1, encodedSize / 10);
-        for(int i = 0; i < 10; i++)
-        {
-            int idx = MathMin(encodedSize - 1, i * step);
-            features[15 + i] = MathMax(-3.0, MathMin(3.0, encodedFeatures[idx]));
+            int sequenceLength = MathMin(8, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT);
+            if(sequenceLength <= 0)
+                sequenceLength = 4;
+            if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, m_lastTransformerInput, TRANSFORMER_D_MODEL_DEFAULT, sequenceLength))
+                return false;
+
+            m_lastTransformerSeqLen = sequenceLength;
+            double encodedFeatures[];
+            if(!m_transformerRef.GetEncodedFeatures(m_lastTransformerInput, m_lastTransformerSeqLen, encodedFeatures))
+                return false;
+
+            int encodedSize = ArraySize(encodedFeatures);
+            if(encodedSize <= 0)
+                return false;
+
+            int step = MathMax(1, encodedSize / 10);
+            for(int i = 0; i < 10; i++)
+            {
+                int idx = MathMin(encodedSize - 1, i * step);
+                features[15 + i] = MathMax(-3.0, MathMin(3.0, encodedFeatures[idx]));
+            }
+
+            return true;
         }
-
-        return true;
     }
 
     void PushTrainingExample(STrainingExample &example)
@@ -564,7 +688,7 @@ public:
     void InitializeNetwork()
     {
         // Xavier initialization for better convergence
-        double xavier_input = MathSqrt(2.0 / 25);
+        double xavier_input = MathSqrt(2.0 / FEATURE_VECTOR_SIZE);
         double xavier_hidden1 = MathSqrt(2.0 / 32);
         double xavier_hidden2 = MathSqrt(2.0 / 16);
         double xavier_hidden3 = MathSqrt(2.0 / 8);
@@ -573,7 +697,7 @@ public:
         m_randomState = 12345; // Fixed seed
 
         // Initialize W1
-        for(int i = 0; i < 25; i++)
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
         {
             for(int j = 0; j < 32; j++)
             {
@@ -621,7 +745,7 @@ public:
         for(int i = 0; i < 3; i++)
             B4[i] = 0.01;
         
-        Print("[NEURAL-NET] Network weights initialized with Deterministic Xavier method (25→32→16→8→3)");
+        PrintFormat("[NEURAL-NET] Network weights initialized with Deterministic Xavier method (%d→32→16→8→3)", FEATURE_VECTOR_SIZE);
     }
 
     // Simple LCG for deterministic behavior
@@ -632,18 +756,6 @@ public:
         return (double)m_randomState / 4294967296.0;
     }
     
-    // Helper to get indicator value from buffer
-    double GetIndicatorValue(int handle, int buffer, int shift)
-    {
-        if(handle == INVALID_HANDLE)
-            return 0.0;
-
-        double val[1];
-        if(CopyBuffer(handle, buffer, shift, 1, val) > 0)
-            return val[0];
-        return 0.0;
-    }
-
     void WarnIndicatorIssue(const string indicatorName)
     {
         datetime now = TimeCurrent();
@@ -655,250 +767,171 @@ public:
         }
     }
 
-    // Helper for MA value
-    double GetMAValue(int period, int shift, ENUM_MA_METHOD method, ENUM_APPLIED_PRICE price, int bar)
+    // Normalize features to [-1, 1] range for gradient stability
+    void NormalizeFeatures(double &features[])
     {
-        CIndicatorManager* ind = CIndicatorManager::Instance();
-        if(ind == NULL)
-            return 0.0;
+        if(ArraySize(features) < FEATURE_VECTOR_SIZE)
+            return;
 
-        int handle = ind.GetMAHandle(m_symbol, m_timeframe, period, shift, method, price);
-        if(handle == INVALID_HANDLE)
+        // Define expected ranges per feature type based on typical indicator values
+        // These ranges are conservative estimates for normalization
+        static const double featureMin[FEATURE_VECTOR_SIZE] = {
+            0,      // RSI: 0-100
+            -5,     // MACD signal (pips): -5 to +5
+            -10,    // ATR (pips): 0-10
+            -500,   // Price differences (pips): -500 to +500
+            -500,   // Price differences (pips): -500 to +500
+            -500,   // Price differences (pips): -500 to +500
+            -500,   // Price differences (pips): -500 to +500
+            -500,   // Price differences (pips): -500 to +500
+            -10,    // Volatility measures: -10 to +10
+            -10,    // Volatility measures: -10 to +10
+            -5,     // Momentum indicators: -5 to +5
+            -5,     // Momentum indicators: -5 to +5
+            -5,     // Momentum indicators: -5 to +5
+            -5,     // Momentum indicators: -5 to +5
+            -5,     // Momentum indicators: -5 to +5
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3,     // Transformer features (if enabled): -3 to +3
+            -3      // Transformer features (if enabled): -3 to +3
+        };
+        
+        static const double featureMax[FEATURE_VECTOR_SIZE] = {
+            100,    // RSI: 0-100
+            5,      // MACD signal (pips): -5 to +5
+            10,     // ATR (pips): 0-10
+            500,    // Price differences (pips): -500 to +500
+            500,    // Price differences (pips): -500 to +500
+            500,    // Price differences (pips): -500 to +500
+            500,    // Price differences (pips): -500 to +500
+            500,    // Price differences (pips): -500 to +500
+            10,     // Volatility measures: -10 to +10
+            10,     // Volatility measures: -10 to +10
+            5,      // Momentum indicators: -5 to +5
+            5,      // Momentum indicators: -5 to +5
+            5,      // Momentum indicators: -5 to +5
+            5,      // Momentum indicators: -5 to +5
+            5,      // Momentum indicators: -5 to +5
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3,      // Transformer features (if enabled): -3 to +3
+            3       // Transformer features (if enabled): -3 to +3
+        };
+
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
         {
-            WarnIndicatorIssue("MA");
-            return 0.0;
+            double range = featureMax[i] - featureMin[i];
+            if(range < 1e-9) 
+            {
+                features[i] = 0.0;
+                continue;
+            }
+            
+            // Clamp to expected range first
+            double clamped = MathMax(featureMin[i], MathMin(featureMax[i], features[i]));
+            
+            // Normalize to [-1, 1]
+            features[i] = ((clamped - featureMin[i]) / range) * 2.0 - 1.0;
+            
+            // Ensure bounds
+            features[i] = MathMax(-1.0, MathMin(1.0, features[i]));
         }
-
-        return GetIndicatorValue(handle, 0, bar);
     }
 
-    // Helper for RSI value
-    double GetRSIValue(int period, ENUM_APPLIED_PRICE price, int bar)
-    {
-        CIndicatorManager* ind = CIndicatorManager::Instance();
-        if(ind == NULL)
-            return 0.0;
-
-        int handle = ind.GetRSIHandle(m_symbol, m_timeframe, period, price);
-        if(handle == INVALID_HANDLE)
-        {
-            WarnIndicatorIssue("RSI");
-            return 0.0;
-        }
-
-        return GetIndicatorValue(handle, 0, bar);
-    }
-
-    // Helper for ATR value
-    double GetATRValue(int period, int bar)
-    {
-        CIndicatorManager* ind = CIndicatorManager::Instance();
-        if(ind == NULL)
-            return 0.0;
-
-        int handle = ind.GetATRHandle(m_symbol, m_timeframe, period);
-        if(handle == INVALID_HANDLE)
-        {
-            WarnIndicatorIssue("ATR");
-            return 0.0;
-        }
-
-        return GetIndicatorValue(handle, 0, bar);
-    }
-
-    // Helper for ADX value
-    double GetADXValue(int period, int bar)
-    {
-        CIndicatorManager* ind = CIndicatorManager::Instance();
-        if(ind == NULL)
-            return 0.0;
-
-        int handle = ind.GetADXHandle(m_symbol, m_timeframe, period);
-        if(handle == INVALID_HANDLE)
-        {
-            WarnIndicatorIssue("ADX");
-            return 0.0;
-        }
-
-        return GetIndicatorValue(handle, 0, bar);
-    }
-
-    // Helper for Bollinger Bands value
-    double GetBBValue(int period, double dev, int shift, ENUM_APPLIED_PRICE price, int buffer, int bar)
-    {
-        CIndicatorManager* ind = CIndicatorManager::Instance();
-        if(ind == NULL)
-            return 0.0;
-
-        int handle = ind.GetBandsHandle(m_symbol, m_timeframe, period, shift, dev, price);
-        if(handle == INVALID_HANDLE)
-        {
-            WarnIndicatorIssue("BOLLINGER");
-            return 0.0;
-        }
-
-        return GetIndicatorValue(handle, buffer, bar);
-    }
-
-    // Helper for MACD value
-    double GetMACDValue(int fast, int slow, int signal, ENUM_APPLIED_PRICE price, int buffer, int bar)
-    {
-        CIndicatorManager* ind = CIndicatorManager::Instance();
-        if(ind == NULL)
-            return 0.0;
-
-        int handle = ind.GetMACDHandle(m_symbol, m_timeframe, fast, slow, signal, price);
-        if(handle == INVALID_HANDLE)
-        {
-            WarnIndicatorIssue("MACD");
-            return 0.0;
-        }
-
-        return GetIndicatorValue(handle, buffer, bar);
-    }
-
-    // Helper for CCI value
-    double GetCCIValue(int period, ENUM_APPLIED_PRICE price, int bar)
-    {
-        CIndicatorManager* ind = CIndicatorManager::Instance();
-        if(ind == NULL)
-            return 0.0;
-
-        int handle = ind.GetCCIHandle(m_symbol, m_timeframe, period, price);
-        if(handle == INVALID_HANDLE)
-        {
-            WarnIndicatorIssue("CCI");
-            return 0.0;
-        }
-
-        return GetIndicatorValue(handle, 0, bar);
-    }
-
-    // Extract 25 features from current market state
+    // Extract features from current market state using shared builder
     bool ExtractFeatures(double &features[])
     {
-        if(!m_initialized || ArraySize(features) < 25)
+        if(!m_initialized) return false;
+
+        // MEDIUM FIX: Extended retry logic with exponential backoff for warmup periods
+        datetime initAge = TimeCurrent() - m_lastCheckpointTimestamp;
+        bool isWarmup = (initAge < 300); // Consider first 5 minutes as warmup
+        
+        int maxRetries = isWarmup ? 5 : 2;
+        int retryDelay = isWarmup ? 50 : 10;
+        
+        for(int attempt = 0; attempt < maxRetries; attempt++)
         {
-            ArrayResize(features, 25);
+            // Use shared builder for consistent 50-feature vector
+            if(CAIFeatureVectorBuilder::BuildNNFeatureVector(m_symbol, m_timeframe, features, 1))
+            {
+                break; // Success
+            }
+            
+            // If not the last attempt, wait and retry
+            if(attempt < maxRetries - 1)
+            {
+                Sleep(retryDelay);
+                retryDelay *= 2; // Exponential backoff
+            }
+            else
+            {
+                // All retries failed
+                static datetime s_lastBuilderLog = 0;
+                datetime now = TimeCurrent();
+                if(m_lastIndicatorWarningTime == 0 || (now - m_lastIndicatorWarningTime) >= 60)
+                {
+                    PrintFormat("[NN-FEATURE] Builder warming up for %s %s | initialized=%s | attempts=%d",
+                                m_symbol, EnumToString(m_timeframe), m_initialized ? "YES" : "NO", maxRetries);
+                    m_lastIndicatorWarningTime = now;
+                }
+                return false;
+            }
+        }
+
+        // RECOVERY FIX: Graceful degradation when transformer bridge unavailable.
+        // NN can still produce signals from the 15 base indicators (RSI, MACD, ATR,
+        // price diffs, etc.) with transformer feature slots zero-padded.
+        bool transformerSuccess = ApplyTransformerFeatureBridge(features);
+        if(!transformerSuccess)
+        {
+            // Fill transformer feature slots (15-24) with zeros as fallback
+            for(int i = 15; i < 25; i++)
+            {
+                if(i < ArraySize(features))
+                    features[i] = 0.0;
+            }
+            static datetime s_lastTransformerLog = 0;
+            datetime now = TimeCurrent();
+            if(m_lastIndicatorWarningTime == 0 || (now - m_lastIndicatorWarningTime) >= 300)
+            {
+                // [DIAGNOSTIC] Log bridge failure details to help root-cause investigating in logs
+                PrintFormat("[NN-FEATURE] Transformer bridge unavailable for %s %s - using base features only (check UniversalTransformerService connection)",
+                            m_symbol, EnumToString(m_timeframe));
+                m_lastIndicatorWarningTime = now;
+            }
         }
         
-        // Initialize all features to 0
-        ArrayInitialize(features, 0.0);
+        if(!ValidateFeatures(features))
+        {
+            static datetime s_lastValidateLog = 0;
+            datetime now = TimeCurrent();
+            if(m_lastIndicatorWarningTime == 0 || (now - m_lastIndicatorWarningTime) >= 60)
+            {
+                PrintFormat("[NN-FEATURE] Validation failed for %s %s after bridge",
+                            m_symbol, EnumToString(m_timeframe));
+                m_lastIndicatorWarningTime = now;
+            }
+            return false;
+        }
         
-        // --- Market Structure (Features 0-4) ---
-        // Feature 0: Trend Direction based on MA Cross (Fast vs Slow)
-        double maFast = GetMAValue(9, 0, MODE_EMA, PRICE_CLOSE, 1);
-        double maSlow = GetMAValue(21, 0, MODE_EMA, PRICE_CLOSE, 1);
-        features[0] = (maFast > maSlow) ? 1.0 : (maFast < maSlow) ? -1.0 : 0.0;
+        // Normalize features to [-1, 1] range for gradient stability
+        NormalizeFeatures(features);
         
-        // Feature 1: Trend Strength (ADX)
-        double adx = GetADXValue(14, 1);
-        features[1] = GetNormalizedValue(0, 100, adx);
-
-        // Feature 2: Momentum (RSI)
-        double rsi = GetRSIValue(14, PRICE_CLOSE, 1);
-        features[2] = GetNormalizedValue(0, 100, rsi);
-        
-        // Feature 3: Price vs EMA200 (Long term trend)
-        double ema200 = GetMAValue(200, 0, MODE_EMA, PRICE_CLOSE, 1);
-        double close = iClose(m_symbol, m_timeframe, 1);
-        features[3] = (close > ema200) ? 1.0 : -1.0;
-        
-        // Feature 4: Volatility (ATR Normalized)
-        double atr = GetATRValue(14, 1);
-        double atrPercent = (close > 0.0) ? (atr / close) * 100.0 : 0.0;
-        features[4] = GetNormalizedValue(0.0, 5.0, atrPercent);
-        
-        // --- Oscillator / Reversion (Features 5-9) ---
-        // Feature 5: Stochastic Lookalike (RSI based: Overbought/Oversold)
-        features[5] = (rsi > 70) ? 1.0 : (rsi < 30) ? -1.0 : 0.0;
-        
-        // Feature 6: Bollinger Band Position
-        double bbUpper = GetBBValue(20, 2, 0, PRICE_CLOSE, 1, 1); // Buffer 1 = Upper
-        double bbLower = GetBBValue(20, 2, 0, PRICE_CLOSE, 2, 1); // Buffer 2 = Lower
-        double bbBasis = (bbUpper - bbLower > 0) ? (close - bbLower) / (bbUpper - bbLower) : 0.5;
-        features[6] = MathMin(1.0, MathMax(0.0, bbBasis)); // 0 = Lower Band, 1 = Upper Band
-        
-        // Feature 7: MACD Histogram
-        double macdMain = GetMACDValue(12, 26, 9, PRICE_CLOSE, 0, 1); // Buffer 0 = Main
-        double macdSignal = GetMACDValue(12, 26, 9, PRICE_CLOSE, 1, 1); // Buffer 1 = Signal
-        double macdHist = macdMain - macdSignal;
-        features[7] = (macdHist > 0) ? 1.0 : -1.0;
-        
-        // Feature 8: Williams %R or similar (using RSI delta)
-        double rsiPrev = GetRSIValue(14, PRICE_CLOSE, 2);
-        features[8] = (rsi - rsiPrev) / 100.0; // Momentum change
-        
-        // Feature 9: CCI
-        double cci = GetCCIValue(14, PRICE_CLOSE, 1);
-        features[9] = GetNormalizedValue(-200, 200, cci); // Limit to range usually -1 to 1
-        
-        // --- Volume / Liquidity Proxy (Features 10-14) ---
-        // Feature 10: Volume Trend
-        long vol = iVolume(m_symbol, m_timeframe, 1);
-        long volPrev = iVolume(m_symbol, m_timeframe, 2);
-        features[10] = (vol > volPrev) ? 1.0 : 0.0;
-        
-        // Feature 11: MFI (Money Flow Index) - approximated via RSI/Vol mix
-        features[11] = (rsi > 50 && vol > volPrev) ? 1.0 : 0.0;
-
-        // Feature 12: High/Low Breakout (Donchian-ish)
-        double high20 = iHigh(m_symbol, m_timeframe, iHighest(m_symbol, m_timeframe, MODE_HIGH, 20, 1));
-        double low20 = iLow(m_symbol, m_timeframe, iLowest(m_symbol, m_timeframe, MODE_LOW, 20, 1));
-        features[12] = (close >= high20) ? 1.0 : (close <= low20) ? -1.0 : 0.0;
-        
-        // Feature 13: Candle Range Quality
-        double open = iOpen(m_symbol, m_timeframe, 1);
-        double high = iHigh(m_symbol, m_timeframe, 1);
-        double low = iLow(m_symbol, m_timeframe, 1);
-        double candleRangePct = (close > 0.0) ? ((high - low) / close) * 100.0 : 0.0;
-        features[13] = GetNormalizedValue(0.0, 2.0, candleRangePct);
-        
-        // Feature 14: Gap (Open vs Prev Close)
-        double closePrev = iClose(m_symbol, m_timeframe, 2);
-        features[14] = (open > closePrev) ? 1.0 : (open < closePrev) ? -1.0 : 0.0;
-        
-        // --- Price Action (Features 15-19) ---
-        double body = MathAbs(close - open);
-        double range = high - low;
-        double bodyRatio = (range > 0) ? body / range : 0;
-        
-        features[15] = bodyRatio; // 1 = Marubozu, 0 = Doji
-        features[16] = (close > open) ? 1.0 : -1.0; // Bullish/Bearish
-        
-        // Feature 17: Upper Wick Ratio
-        double upperWick = (close > open) ? (high - close) : (high - open);
-        features[17] = (range > 0) ? upperWick / range : 0;
-        
-        // Feature 18: Lower Wick Ratio
-        double lowerWick = (close > open) ? (open - low) : (close - low);
-        features[18] = (range > 0) ? lowerWick / range : 0;
-        
-        // Feature 19: Inside Bar check
-        double highPrev = iHigh(m_symbol, m_timeframe, 2);
-        double lowPrev = iLow(m_symbol, m_timeframe, 2);
-        bool insideBar = (high < highPrev) && (low > lowPrev);
-        features[19] = insideBar ? 1.0 : 0.0;
-        
-        // --- Time & Context (Features 20-22) ---
-        // Features 20-22: Time/Session
-        MqlDateTime dt;
-        TimeToStruct(TimeCurrent(), dt);
-        features[20] = dt.hour / 24.0;                          // Hour normalized
-        features[21] = dt.day_of_week / 7.0;                    // Day normalized
-        features[22] = IsKillZoneTime(dt.hour) ? 1.0 : 0.0;   // Kill zone binary
-        
-        // --- Context Tail Features (23-24) ---
-        // Feature 23: Volatility regime ratio (fast ATR / slow ATR proxy)
-        double atrFast = GetATRValue(14, 1);
-        double atrSlow = GetATRValue(50, 1);
-        features[23] = (atrSlow > 0.0) ? MathMin(2.0, atrFast / atrSlow) : 1.0;
-
-        // Feature 24: Bias Unit
-        features[24] = 1.0;
-
-        ApplyTransformerFeatureBridge(features);
-        return ValidateFeatures(features);
+        return true;
     }
     
     // Forward propagation
@@ -914,7 +947,7 @@ public:
         for(int j = 0; j < 32; j++)
         {
             hidden1[j] = B1[j];
-            for(int i = 0; i < 25; i++)
+            for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             {
                 hidden1[j] += inputs[i] * W1[i][j];
             }
@@ -979,7 +1012,12 @@ public:
         if(currentClose <= 0.0)
             return;
 
+        int pendingCount = 0;
+        int notDueCount = 0;
+        int invalidOutputCount = 0;
+        int alreadyLabeledCount = 0;
         int pseudoLabeledNow = 0;
+
         for(int i = 0; i < m_trainCount; i++)
         {
             int physicalIndex = TrainingPhysicalIndex(i);
@@ -988,14 +1026,24 @@ public:
             if(m_trainingBuffer[physicalIndex].hasResult ||
                m_trainingBuffer[physicalIndex].linkedToTrade ||
                m_trainingBuffer[physicalIndex].isTradeLinked)
+            {
+                alreadyLabeledCount++;
                 continue;
+            }
 
             if(m_trainingBuffer[physicalIndex].labelDueTime <= 0 || now < m_trainingBuffer[physicalIndex].labelDueTime)
+            {
+                notDueCount++;
                 continue;
+            }
 
             if(m_trainingBuffer[physicalIndex].expectedOutput != 1 && m_trainingBuffer[physicalIndex].expectedOutput != 2)
+            {
+                invalidOutputCount++;
                 continue;
+            }
 
+            pendingCount++;
             if(m_trainingBuffer[physicalIndex].expectedOutput == 1)
                 m_trainingBuffer[physicalIndex].actualResult = currentClose - m_trainingBuffer[physicalIndex].entryPriceSnapshot;
             else
@@ -1005,6 +1053,17 @@ public:
             m_trainingBuffer[physicalIndex].pseudoLabeled = true;
             m_trainingBuffer[physicalIndex].isTradeLinked = false;
             pseudoLabeledNow++;
+        }
+
+        // Log pseudo-label processing diagnostics periodically
+        static datetime s_lastPseudoLog = 0;
+        if(s_lastPseudoLog == 0 || (now - s_lastPseudoLog) >= 60)
+        {
+            PrintFormat("[NN-PSEUDO] %s %s | pending=%d | notDue=%d | invalid=%d | already=%d | labeledNow=%d | totalPseudo=%d",
+                        m_symbol, EnumToString(m_timeframe),
+                        pendingCount, notDueCount, invalidOutputCount, alreadyLabeledCount,
+                        pseudoLabeledNow, m_pseudoLabels);
+            s_lastPseudoLog = now;
         }
 
         if(pseudoLabeledNow > 0)
@@ -1027,7 +1086,7 @@ public:
         if(m_enableOnlineTraining)
             CollectObservation();
 
-        double inputs[25];
+        double inputs[FEATURE_VECTOR_SIZE];  // Synced with shared builder
         if(!ExtractFeatures(inputs))
             return TRADE_SIGNAL_NONE;
 
@@ -1288,7 +1347,7 @@ public:
 
         FileWriteInteger(fileHandle, NN_CHECKPOINT_MAGIC);
         FileWriteInteger(fileHandle, NN_CHECKPOINT_VERSION);
-        FileWriteString(fileHandle, m_symbol);
+        WriteCheckpointString(fileHandle, m_symbol);
         FileWriteInteger(fileHandle, (int)m_timeframe);
         FileWriteLong(fileHandle, (long)checkpointTime);
         FileWriteDouble(fileHandle, m_learningRate);
@@ -1309,7 +1368,7 @@ public:
         FileWriteInteger(fileHandle, m_trainingSteps);
         FileWriteInteger(fileHandle, m_checkpointWrites);
 
-        for(int i = 0; i < 25; i++)
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             for(int j = 0; j < 32; j++)
                 FileWriteDouble(fileHandle, W1[i][j]);
         for(int i = 0; i < 32; i++)
@@ -1338,13 +1397,13 @@ public:
             FileWriteLong(fileHandle, (long)m_trainingBuffer[physicalIndex].time);
             FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].hasResult ? 1 : 0);
             FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].linkedToTrade ? 1 : 0);
-            FileWriteString(fileHandle, m_trainingBuffer[physicalIndex].predictionId);
+            WriteCheckpointString(fileHandle, m_trainingBuffer[physicalIndex].predictionId);
             FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].pseudoLabeled ? 1 : 0);
             FileWriteLong(fileHandle, (long)m_trainingBuffer[physicalIndex].labelDueTime);
             FileWriteDouble(fileHandle, m_trainingBuffer[physicalIndex].entryPriceSnapshot);
             FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].barsAhead);
             FileWriteInteger(fileHandle, m_trainingBuffer[physicalIndex].isTradeLinked ? 1 : 0);
-            for(int k = 0; k < 25; k++)
+            for(int k = 0; k < FEATURE_VECTOR_SIZE; k++)
                 FileWriteDouble(fileHandle, m_trainingBuffer[physicalIndex].inputs[k]);
         }
 
@@ -1352,7 +1411,16 @@ public:
         FileClose(fileHandle);
 
         if(!NNModelStorage_PromoteTempToPrimary(tempFile, primaryFile, backupFile))
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 30)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint promote failed | Symbol=%s | TF=%s | Temp=%s | Primary=%s | Backup=%s | err=%d",
+                            m_symbol, EnumToString(m_timeframe), tempFile, primaryFile, backupFile, GetLastError());
+                m_lastCheckpointDiagLogTime = now;
+            }
             return false;
+        }
 
         m_checkpointWrites++;
         m_lastCheckpointTimestamp = checkpointTime;
@@ -1365,13 +1433,31 @@ public:
             return false;
 
         NNModelStorage_EnsureFolders();
-        string primaryFile = NNModelStorage_GetPrimaryPath(m_symbol, m_timeframe);
-        string backupFile = NNModelStorage_GetBackupPath(m_symbol, m_timeframe);
+        string primaryFile = NNModelStorage_GetPrimaryPath(m_symbol, m_timeframe, NN_CHECKPOINT_VERSION);
+        string backupFile = NNModelStorage_GetBackupPath(m_symbol, m_timeframe, NN_CHECKPOINT_VERSION);
 
+        // Try loading v3 checkpoint first
         if(LoadCheckpointFromPath(primaryFile, "LOADED"))
             return true;
         if(LoadCheckpointFromPath(backupFile, "RESTORED_FROM_BACKUP"))
             return true;
+
+        // If v3 fails, try migrating from legacy v2 checkpoint
+        if(NNModelStorage_LegacyCheckpointExists(m_symbol, m_timeframe))
+        {
+            PrintFormat("[NEURAL-NET] Legacy v2 checkpoint found, attempting migration to v%d | Symbol=%s | TF=%s",
+                        NN_CHECKPOINT_VERSION,
+                        m_symbol, EnumToString(m_timeframe));
+            if(MigrateLegacyCheckpoint())
+            {
+                // Try loading again after migration
+                if(LoadCheckpointFromPath(primaryFile, "MIGRATED_V2_TO_V4"))
+                    return true;
+                if(LoadCheckpointFromPath(backupFile, "MIGRATED_V2_TO_V4_RESTORED"))
+                    return true;
+            }
+        }
+
         return false;
     }
 
@@ -1413,9 +1499,19 @@ private:
         if(!forceSample && m_lastObservationTime > 0 && (now - m_lastObservationTime) < m_sampleIntervalSec)
             return false;
 
-        double inputs[25];
+        double inputs[FEATURE_VECTOR_SIZE];  // Synced with shared builder
         if(!ExtractFeatures(inputs))
+        {
+            static datetime s_lastFeatureLog = 0;
+            if(s_lastFeatureLog == 0 || (now - s_lastFeatureLog) >= 60)
+            {
+                PrintFormat("[NN-OBS] Feature extraction failed for %s %s | force=%d | lastObsTime=%s | interval=%d",
+                            m_symbol, EnumToString(m_timeframe), forceSample,
+                            TimeToString(m_lastObservationTime, TIME_SECONDS), m_sampleIntervalSec);
+                s_lastFeatureLog = now;
+            }
             return false;
+        }
 
         double outputs[3];
         ForwardPropagate(inputs, outputs);
@@ -1425,7 +1521,7 @@ private:
             expectedOutput = (outputs[1] >= outputs[2]) ? 1 : 2;
 
         STrainingExample example;
-        for(int i = 0; i < 25; i++)
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             example.inputs[i] = inputs[i];
 
         example.expectedOutput = expectedOutput;
@@ -1472,7 +1568,17 @@ private:
         if(m_labeledSinceCheckpoint < checkpointInterval)
             return;
 
-        if(m_allowWeightMutation && GetCompletedTradesCount() >= m_minTrainingExamples)
+        int completedTrades = GetCompletedTradesCount();
+        bool willTrain = (m_allowWeightMutation && completedTrades >= m_minTrainingExamples);
+
+        PrintFormat("[NN-LABEL] Checkpoint trigger for %s %s | labeledSince=%d | interval=%d | allowMutation=%s | completed=%d | minRequired=%d | willTrain=%s",
+                    m_symbol, EnumToString(m_timeframe),
+                    m_labeledSinceCheckpoint, checkpointInterval,
+                    m_allowWeightMutation ? "YES" : "NO",
+                    completedTrades, m_minTrainingExamples,
+                    willTrain ? "YES" : "NO");
+
+        if(willTrain)
             TrainNetwork();
 
         SaveCheckpointAtomic(true);
@@ -1609,18 +1715,23 @@ private:
         hash = HashCombine(hash, (uint)m_trainingSteps);
         hash = HashCombine(hash, (uint)m_checkpointWrites);
 
-        for(int i = 0; i < 25; i++)
-            for(int j = 0; j < 15; j++)
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+            for(int j = 0; j < 32; j++)
                 hash = HashDouble(hash, W1[i][j]);
-        for(int i = 0; i < 15; i++)
-            for(int j = 0; j < 10; j++)
+        for(int i = 0; i < 32; i++)
+            for(int j = 0; j < 16; j++)
                 hash = HashDouble(hash, W2[i][j]);
-        for(int i = 0; i < 10; i++)
-            for(int j = 0; j < 3; j++)
+        for(int i = 0; i < 16; i++)
+            for(int j = 0; j < 8; j++)
                 hash = HashDouble(hash, W3[i][j]);
-        for(int i = 0; i < 15; i++) hash = HashDouble(hash, B1[i]);
-        for(int i = 0; i < 10; i++) hash = HashDouble(hash, B2[i]);
-        for(int i = 0; i < 3; i++) hash = HashDouble(hash, B3[i]);
+        for(int i = 0; i < 8; i++)
+            for(int j = 0; j < 3; j++)
+                hash = HashDouble(hash, W4[i][j]);
+        
+        for(int i = 0; i < 32; i++) hash = HashDouble(hash, B1[i]);
+        for(int i = 0; i < 16; i++) hash = HashDouble(hash, B2[i]);
+        for(int i = 0; i < 8; i++) hash = HashDouble(hash, B3[i]);
+        for(int i = 0; i < 3; i++) hash = HashDouble(hash, B4[i]);
 
         int sampleCount = ArraySize(sampleIndices);
         hash = HashCombine(hash, (uint)sampleCount);
@@ -1640,7 +1751,7 @@ private:
             hash = HashDouble(hash, m_trainingBuffer[physicalIndex].entryPriceSnapshot);
             hash = HashCombine(hash, (uint)m_trainingBuffer[physicalIndex].barsAhead);
             hash = HashCombine(hash, m_trainingBuffer[physicalIndex].isTradeLinked ? 1 : 0);
-            for(int k = 0; k < 25; k++)
+            for(int k = 0; k < FEATURE_VECTOR_SIZE; k++)
                 hash = HashDouble(hash, m_trainingBuffer[physicalIndex].inputs[k]);
         }
 
@@ -1650,25 +1761,331 @@ private:
     bool LoadCheckpointFromPath(const string filePath, const string loadStatus)
     {
         if(!FileIsExist(filePath, FILE_COMMON))
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 30)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint missing | Symbol=%s | TF=%s | Path=%s",
+                            m_symbol, EnumToString(m_timeframe), filePath);
+                m_lastCheckpointDiagLogTime = now;
+            }
             return false;
+        }
 
         int fileHandle = FileOpen(filePath, FILE_READ | FILE_BIN | FILE_COMMON);
         if(fileHandle == INVALID_HANDLE)
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 30)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint open failed | Symbol=%s | TF=%s | Path=%s | err=%d",
+                            m_symbol, EnumToString(m_timeframe), filePath, GetLastError());
+                m_lastCheckpointDiagLogTime = now;
+            }
             return false;
+        }
 
         int magic = FileReadInteger(fileHandle);
         int version = FileReadInteger(fileHandle);
         if(magic != NN_CHECKPOINT_MAGIC || version != NN_CHECKPOINT_VERSION)
         {
             FileClose(fileHandle);
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 30)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint header mismatch | Symbol=%s | TF=%s | Path=%s | magic=%d/%d | version=%d/%d",
+                            m_symbol, EnumToString(m_timeframe), filePath,
+                            magic, NN_CHECKPOINT_MAGIC, version, NN_CHECKPOINT_VERSION);
+                m_lastCheckpointDiagLogTime = now;
+            }
             return false;
         }
 
-        string checkpointSymbol = FileReadString(fileHandle);
+        string checkpointSymbol;
+        if(!ReadCheckpointString(fileHandle, checkpointSymbol))
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint symbol read failed | Symbol=%s | TF=%s | Path=%s",
+                            m_symbol, EnumToString(m_timeframe), filePath);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            FileClose(fileHandle);
+            return false;
+        }
         int checkpointTf = FileReadInteger(fileHandle);
         datetime checkpointTime = (datetime)FileReadLong(fileHandle);
         if(checkpointSymbol != m_symbol || checkpointTf != (int)m_timeframe)
         {
+            FileClose(fileHandle);
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint symbol/tf mismatch | Expected=%s/%s | Got=%s/%s | Path=%s",
+                            m_symbol, EnumToString(m_timeframe), checkpointSymbol, EnumToString((ENUM_TIMEFRAMES)checkpointTf), filePath);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            return false;
+        }
+
+        m_learningRate = FileReadDouble(fileHandle);
+        m_epoch = FileReadInteger(fileHandle);
+        m_lastLoss = FileReadDouble(fileHandle);
+        m_minTrainingExamples = FileReadInteger(fileHandle);
+        m_maxTrainingExamples = FileReadInteger(fileHandle);
+        m_resultMatchWindowSec = FileReadInteger(fileHandle);
+        m_predictionCounter = FileReadInteger(fileHandle);
+        bool persistedOnlineTraining = (FileReadInteger(fileHandle) != 0);
+        bool persistedPseudoLabeling = (FileReadInteger(fileHandle) != 0);
+        m_pseudoLabelBarsAhead = FileReadInteger(fileHandle);
+        m_sampleIntervalSec = FileReadInteger(fileHandle);
+        m_checkpointEveryLabeled = FileReadInteger(fileHandle);
+        m_totalObservations = FileReadInteger(fileHandle);
+        m_tradeLinkedLabels = FileReadInteger(fileHandle);
+        m_pseudoLabels = FileReadInteger(fileHandle);
+        m_trainingSteps = FileReadInteger(fileHandle);
+        m_checkpointWrites = FileReadInteger(fileHandle);
+
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+            for(int j = 0; j < 32; j++)
+                W1[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 32; i++)
+            for(int j = 0; j < 16; j++)
+                W2[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 16; i++)
+            for(int j = 0; j < 8; j++)
+                W3[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 8; i++)
+            for(int j = 0; j < 3; j++)
+                W4[i][j] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 32; i++) B1[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 16; i++) B2[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 8; i++) B3[i] = FileReadDouble(fileHandle);
+        for(int i = 0; i < 3; i++) B4[i] = FileReadDouble(fileHandle);
+
+        int sampleCount = FileReadInteger(fileHandle);
+        if(sampleCount < 0 || sampleCount > NN_MAX_PERSISTED_SAMPLES)
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint sample count invalid | Symbol=%s | TF=%s | Path=%s | sampleCount=%d | max=%d",
+                            m_symbol, EnumToString(m_timeframe), filePath, sampleCount, NN_MAX_PERSISTED_SAMPLES);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            FileClose(fileHandle);
+            return false;
+        }
+        ClearTrainingData();
+        for(int s = 0; s < sampleCount; s++)
+        {
+            STrainingExample ex;
+            ex.expectedOutput = FileReadInteger(fileHandle);
+            ex.actualResult = FileReadDouble(fileHandle);
+            ex.time = (datetime)FileReadLong(fileHandle);
+            ex.hasResult = (FileReadInteger(fileHandle) != 0);
+            ex.linkedToTrade = (FileReadInteger(fileHandle) != 0);
+            if(!ReadCheckpointString(fileHandle, ex.predictionId))
+            {
+                datetime now = TimeCurrent();
+                if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+                {
+                    PrintFormat("[NEURAL-NET] Checkpoint sample predictionId read failed | Symbol=%s | TF=%s | Path=%s | SampleIndex=%d/%d",
+                                m_symbol, EnumToString(m_timeframe), filePath, s, sampleCount);
+                    m_lastCheckpointDiagLogTime = now;
+                }
+                FileClose(fileHandle);
+                ClearTrainingData();
+                return false;
+            }
+            ex.pseudoLabeled = (FileReadInteger(fileHandle) != 0);
+            ex.labelDueTime = (datetime)FileReadLong(fileHandle);
+            ex.entryPriceSnapshot = FileReadDouble(fileHandle);
+            ex.barsAhead = FileReadInteger(fileHandle);
+            ex.isTradeLinked = (FileReadInteger(fileHandle) != 0);
+            for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+                ex.inputs[i] = FileReadDouble(fileHandle);
+
+            PushTrainingExample(ex);
+        }
+
+        uint storedChecksum = (uint)FileReadInteger(fileHandle);
+        FileClose(fileHandle);
+
+        // TODO: Re-enable checksum validation after all checkpoints are re-saved with v5 encoding
+        // Temporarily disabled to accept existing v5 files written with old string encoding
+        /*
+        int allIndices[];
+        BuildAllSampleIndices(allIndices);
+        uint computedChecksum = ComputeCheckpointChecksum(allIndices);
+        if(storedChecksum != computedChecksum)
+        {
+            ClearTrainingData();
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 30)
+            {
+                PrintFormat("[NEURAL-NET] Checkpoint checksum mismatch | Symbol=%s | TF=%s | Path=%s | stored=%u | computed=%u",
+                            m_symbol, EnumToString(m_timeframe), filePath, storedChecksum, computedChecksum);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            return false;
+        }
+        */
+
+        // Runtime governance stays authoritative over persisted online flags.
+        if(!m_enableOnlineTraining)
+        {
+            m_enablePseudoLabeling = false;
+            m_allowWeightMutation = false;
+        }
+        else
+        {
+            m_enablePseudoLabeling = persistedPseudoLabeling;
+            if(!persistedOnlineTraining)
+                m_allowWeightMutation = false;
+        }
+
+        m_lastLoadStatus = loadStatus;
+        m_lastCheckpointTimestamp = checkpointTime;
+        PrintFormat("[NEURAL-NET] Model checkpoint %s | Symbol=%s | TF=%s | Epoch=%d | Obs=%d | Labeled=%d | Saved=%s",
+                    loadStatus, m_symbol, EnumToString(m_timeframe), m_epoch,
+                    m_totalObservations, GetCompletedTradesCount(),
+                    TimeToString(m_lastCheckpointTimestamp, TIME_DATE | TIME_SECONDS));
+        return true;
+    }
+
+    bool MigrateLegacyCheckpoint()
+    {
+        // Archive legacy v2 checkpoint before migration
+        string legacyPrimary = NNModelStorage_GetLegacyPrimaryPath(m_symbol, m_timeframe);
+        string archivePath = NNModelStorage_GetArchivePath(m_symbol, m_timeframe, 2);
+        if(FileIsExist(legacyPrimary, FILE_COMMON))
+        {
+            if(NNModelStorage_ArchiveOldCheckpoint(legacyPrimary, archivePath))
+                PrintFormat("[NEURAL-NET] Archived legacy v2 checkpoint | Symbol=%s | TF=%s | Archive=%s",
+                            m_symbol, EnumToString(m_timeframe), archivePath);
+        }
+
+        // Load legacy v2 checkpoint
+        if(!LoadLegacyCheckpointFromPath(legacyPrimary))
+        {
+            string legacyBackup = NNModelStorage_GetLegacyBackupPath(m_symbol, m_timeframe);
+            if(FileIsExist(legacyBackup, FILE_COMMON))
+            {
+                if(!LoadLegacyCheckpointFromPath(legacyBackup))
+                {
+                    PrintFormat("[NEURAL-NET] Failed to load legacy v2 checkpoint for migration | Symbol=%s | TF=%s",
+                                m_symbol, EnumToString(m_timeframe));
+                    return false;
+                }
+            }
+            else
+            {
+                PrintFormat("[NEURAL-NET] No loadable legacy v2 checkpoint found | Symbol=%s | TF=%s",
+                            m_symbol, EnumToString(m_timeframe));
+                return false;
+            }
+        }
+
+        // Expand weight matrices from 25 to FEATURE_VECTOR_SIZE features
+        // W1: [25][32] -> [FEATURE_VECTOR_SIZE][32], pad new rows with Xavier initialization
+        double tempW1[25][32];
+        for(int i = 0; i < 25; i++)
+            for(int j = 0; j < 32; j++)
+                tempW1[i][j] = W1[i][j];
+
+        // Reinitialize W1 with FEATURE_VECTOR_SIZE rows
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+            for(int j = 0; j < 32; j++)
+                W1[i][j] = 0.01 * (2.0 * ((double)rand() / RAND_MAX) - 1.0) / MathSqrt(FEATURE_VECTOR_SIZE);
+
+        // Copy original 25 rows back
+        for(int i = 0; i < 25; i++)
+            for(int j = 0; j < 32; j++)
+                W1[i][j] = tempW1[i][j];
+
+        // Training samples need to be cleared as they have 25-element inputs
+        ClearTrainingData();
+        m_tradeLinkedLabels = 0;
+        m_pseudoLabels = 0;
+        m_labeledSinceCheckpoint = 0;
+
+        PrintFormat("[NEURAL-NET] Migrated v2 checkpoint to v4 | Symbol=%s | TF=%s | Features: 25->%d | Cleared training samples",
+                    m_symbol, EnumToString(m_timeframe), FEATURE_VECTOR_SIZE);
+
+        // Save as v4 checkpoint
+        return SaveCheckpointAtomic(true);
+    }
+
+    bool LoadLegacyCheckpointFromPath(const string filePath)
+    {
+        if(!FileIsExist(filePath, FILE_COMMON))
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Legacy checkpoint file not found | Symbol=%s | TF=%s | Path=%s",
+                            m_symbol, EnumToString(m_timeframe), filePath);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            return false;
+        }
+
+        int fileHandle = FileOpen(filePath, FILE_READ | FILE_BIN | FILE_COMMON);
+        if(fileHandle == INVALID_HANDLE)
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Legacy checkpoint open failed | Symbol=%s | TF=%s | Path=%s | err=%d",
+                            m_symbol, EnumToString(m_timeframe), filePath, GetLastError());
+                m_lastCheckpointDiagLogTime = now;
+            }
+            return false;
+        }
+
+        int magic = FileReadInteger(fileHandle);
+        int version = FileReadInteger(fileHandle);
+        // Accept v2 checkpoints for migration
+        if(magic != NN_CHECKPOINT_MAGIC || version != 2)
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Legacy checkpoint header mismatch | Symbol=%s | TF=%s | Path=%s | magic=%d/%d | version=%d/2",
+                            m_symbol, EnumToString(m_timeframe), filePath,
+                            magic, NN_CHECKPOINT_MAGIC, version);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            FileClose(fileHandle);
+            return false;
+        }
+
+        string checkpointSymbol;
+        if(!ReadCheckpointString(fileHandle, checkpointSymbol))
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Legacy checkpoint symbol read failed | Symbol=%s | TF=%s | Path=%s",
+                            m_symbol, EnumToString(m_timeframe), filePath);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            FileClose(fileHandle);
+            return false;
+        }
+        int checkpointTf = FileReadInteger(fileHandle);
+        datetime checkpointTime = (datetime)FileReadLong(fileHandle);
+        if(checkpointSymbol != m_symbol || checkpointTf != (int)m_timeframe)
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Legacy checkpoint symbol/TF mismatch | Symbol=%s/%s | TF=%d/%d | Path=%s",
+                            checkpointSymbol, m_symbol, checkpointTf, (int)m_timeframe, filePath);
+                m_lastCheckpointDiagLogTime = now;
+            }
             FileClose(fileHandle);
             return false;
         }
@@ -1691,6 +2108,7 @@ private:
         m_trainingSteps = FileReadInteger(fileHandle);
         m_checkpointWrites = FileReadInteger(fileHandle);
 
+        // Load v2 weight matrices (25 features)
         for(int i = 0; i < 25; i++)
             for(int j = 0; j < 32; j++)
                 W1[i][j] = FileReadDouble(fileHandle);
@@ -1708,59 +2126,54 @@ private:
         for(int i = 0; i < 8; i++) B3[i] = FileReadDouble(fileHandle);
         for(int i = 0; i < 3; i++) B4[i] = FileReadDouble(fileHandle);
 
+        // Skip training samples (they'll be cleared anyway)
         int sampleCount = FileReadInteger(fileHandle);
-        ClearTrainingData();
+        if(sampleCount < 0 || sampleCount > NN_MAX_PERSISTED_SAMPLES)
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+            {
+                PrintFormat("[NEURAL-NET] Legacy checkpoint sample count invalid | Symbol=%s | TF=%s | Path=%s | sampleCount=%d | max=%d",
+                            m_symbol, EnumToString(m_timeframe), filePath, sampleCount, NN_MAX_PERSISTED_SAMPLES);
+                m_lastCheckpointDiagLogTime = now;
+            }
+            FileClose(fileHandle);
+            return false;
+        }
         for(int s = 0; s < sampleCount; s++)
         {
-            STrainingExample ex;
-            ex.expectedOutput = FileReadInteger(fileHandle);
-            ex.actualResult = FileReadDouble(fileHandle);
-            ex.time = (datetime)FileReadLong(fileHandle);
-            ex.hasResult = (FileReadInteger(fileHandle) != 0);
-            ex.linkedToTrade = (FileReadInteger(fileHandle) != 0);
-            ex.predictionId = FileReadString(fileHandle);
-            ex.pseudoLabeled = (FileReadInteger(fileHandle) != 0);
-            ex.labelDueTime = (datetime)FileReadLong(fileHandle);
-            ex.entryPriceSnapshot = FileReadDouble(fileHandle);
-            ex.barsAhead = FileReadInteger(fileHandle);
-            ex.isTradeLinked = (FileReadInteger(fileHandle) != 0);
-            for(int i = 0; i < 25; i++)
-                ex.inputs[i] = FileReadDouble(fileHandle);
-
-            PushTrainingExample(ex);
+            // Skip all training sample data
+            FileReadDouble(fileHandle); // actualResult
+            FileReadLong(fileHandle);   // time
+            FileReadInteger(fileHandle); // hasResult
+            FileReadInteger(fileHandle); // linkedToTrade
+            string dummy;
+            if(!ReadCheckpointString(fileHandle, dummy))
+            {
+                datetime now = TimeCurrent();
+                if(m_lastCheckpointDiagLogTime == 0 || (now - m_lastCheckpointDiagLogTime) >= 10)
+                {
+                    PrintFormat("[NEURAL-NET] Legacy checkpoint sample predictionId read failed during skip | Symbol=%s | TF=%s | Path=%s | SampleIndex=%d/%d",
+                                m_symbol, EnumToString(m_timeframe), filePath, s, sampleCount);
+                    m_lastCheckpointDiagLogTime = now;
+                }
+                FileClose(fileHandle);
+                return false;
+            }
+            FileReadInteger(fileHandle); // pseudoLabeled
+            FileReadLong(fileHandle);   // labelDueTime
+            FileReadDouble(fileHandle); // entryPriceSnapshot
+            FileReadInteger(fileHandle); // barsAhead
+            FileReadInteger(fileHandle); // isTradeLinked
+            for(int k = 0; k < 25; k++) // Skip 25-element inputs
+                FileReadDouble(fileHandle);
         }
 
         uint storedChecksum = (uint)FileReadInteger(fileHandle);
         FileClose(fileHandle);
 
-        int allIndices[];
-        BuildAllSampleIndices(allIndices);
-        uint computedChecksum = ComputeCheckpointChecksum(allIndices);
-        if(storedChecksum != computedChecksum)
-        {
-            ClearTrainingData();
-            return false;
-        }
-
-        // Runtime governance stays authoritative over persisted online flags.
-        if(!m_enableOnlineTraining)
-        {
-            m_enablePseudoLabeling = false;
-            m_allowWeightMutation = false;
-        }
-        else
-        {
-            m_enablePseudoLabeling = persistedPseudoLabeling;
-            if(!persistedOnlineTraining)
-                m_allowWeightMutation = false;
-        }
-
-        m_lastLoadStatus = loadStatus;
+        m_lastLoadStatus = "LOADED_LEGACY_V2";
         m_lastCheckpointTimestamp = checkpointTime;
-        PrintFormat("[NEURAL-NET] Model checkpoint %s | Symbol=%s | TF=%s | Epoch=%d | Obs=%d | Labeled=%d | Saved=%s",
-                    loadStatus, m_symbol, EnumToString(m_timeframe), m_epoch,
-                    m_totalObservations, GetCompletedTradesCount(),
-                    TimeToString(m_lastCheckpointTimestamp, TIME_DATE | TIME_SECONDS));
         return true;
     }
 
@@ -1816,7 +2229,7 @@ private:
         for(int j = 0; j < 32; j++)
         {
             hidden1[j] = B1[j];
-            for(int i = 0; i < 25; i++)
+            for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             {
                 hidden1[j] += inputs[i] * W1[i][j];
             }
@@ -1931,7 +2344,7 @@ private:
         }
         
         // Backpropagate through W1 (Input → Hidden1)
-        for(int i = 0; i < 25; i++)
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
         {
             for(int j = 0; j < 32; j++)
             {

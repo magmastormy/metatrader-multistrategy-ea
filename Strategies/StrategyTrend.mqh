@@ -171,6 +171,10 @@ public:
         // Check if ADX allows trading (trend strength filter)
         if(!m_adxSizing.ShouldTrade())
             return RejectSignal("TREND_ADX_FILTERED");
+            
+        // Regime Lockout: Ensure directional clarity (pDI vs mDI separation)
+        if(!m_adxSizing.IsDirectionallyClear())
+            return RejectSignal("TREND_REGIME_CHOP_LOCKOUT");
         // Get best entry signal from all entry types
         STrendEntrySignal bestEntry = m_entryTypes.GetBestEntry();
         if(bestEntry.direction == TRADE_SIGNAL_NONE)

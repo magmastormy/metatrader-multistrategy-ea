@@ -64,6 +64,7 @@ public:
     double              GetAdjustedRiskPercent();
     double              CalculateLotSize(double entryPrice, double stopLossPrice);
     bool                ShouldTrade();
+    bool                IsDirectionallyClear();
     
     // Getters
     ENUM_ADX_TIER       GetCurrentTier();
@@ -199,6 +200,32 @@ string CADXPositionSizing::GetTierName()
 bool CADXPositionSizing::ShouldTrade()
 {
     return (GetADX() >= m_noTrendThreshold);
+}
+
+//+------------------------------------------------------------------+
+//| Is Directionally Clear (Regime Lockout)                          |
+//+------------------------------------------------------------------+
+bool CADXPositionSizing::IsDirectionallyClear()
+{
+    if(m_adxHandle == INVALID_HANDLE) return false;
+    
+    double pDI[1], mDI[1], adxMain[1];
+    if(CopyBuffer(m_adxHandle, 0, 0, 1, adxMain) <= 0 ||
+       CopyBuffer(m_adxHandle, 1, 0, 1, pDI) <= 0 ||
+       CopyBuffer(m_adxHandle, 2, 0, 1, mDI) <= 0)
+    {
+        return false;
+    }
+    
+    // ADX must be above minimum threshold
+    if(adxMain[0] < m_noTrendThreshold) return false;
+    
+    // There must be a clear separation between bulls (+DI) and bears (-DI).
+    // Tangled DI lines mean high-volatility chop (ranging trap).
+    double diSpread = MathAbs(pDI[0] - mDI[0]);
+    if(diSpread < 5.0) return false; // Chop zone lockout
+    
+    return true;
 }
 
 //+------------------------------------------------------------------+

@@ -1,13 +1,19 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-04-10
-- Status: Batch 57 - Decision Quality Upgrade (Readiness + Correlation)
+- Last Updated: 2026-04-15
+- Status: Batch 64 - Logical Error Audit & Defensive Programming Hardening
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
-Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, unified risk authority, and AI-assisted strategy voters (Neural Network, Transformer, Ensemble) integrated into the runtime consensus path.
+Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters (Neural Network, Transformer, Ensemble) integrated into the runtime consensus path.
 
 ## System Snapshot
+- **Logical Error Audit & Defensive Programming (Batch 64):** Comprehensive autonomous audit identified and fixed 34 logical errors across CRITICAL, HIGH, MEDIUM, and LOW priority levels. Enhancements include robust risk validation with negative balance/equity handling, comprehensive parameter validation, NaN handling throughout AI modules, MA handle caching, timeframe-aware history checks, and improved error logging for debugging.
+- **Multi-Tier Signal Validation (Batch 60):** Comprehensive validation architecture evaluates signals across Tier 1 (Institutional), Tier 2 (Structure), and Tier 3 (Indicators).
+- **AI Feature Robustness:** Improved feature vector stability with proactive history readiness checks and indicator warmup verification, eliminating "Feature validation failed" errors during startup.
+- **Directional Conflict Resolution:** Sophisticated logic resolves contradictions between tiers (e.g., T2/T3 vs T1) with configurable weights and consensus overrides.
+- **Weighted Decision-Making:** Final voting considers setup quality (signal strength) and tier-based reliability scores rather than simply defaulting to the highest tier.
+- **Tier-Specific Performance Metrics:** Historical accuracy is tracked for each tier (T1, T2, T3) to inform reliability-weighted decisions.
 - Per-symbol strategy managers generate consensus signals.
 - Hybrid cadence supports new-bar and intrabar scanning.
 - Heavy evaluation work is cycle-budgeted (`InpMaxSignalEvaluationsPerCycle`), with pending new-bar symbols carried forward ahead of any intrabar work.
@@ -23,6 +29,12 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Runtime registry is active-only: disabled strategies and disabled AI adapters are not registered into managers, weight pools, or orchestrator identity sets.
 - Retired standalone strategy artifacts and their commented stubs are removed from runtime sources.
 - Legacy `Config/StrategyConfig.mqh` (removed-strategy config surface) has been deleted from runtime inventory.
+- **Chart Visualization Hardening (Batch 58):** Enhanced chart drawing clarity and accuracy:
+  - Elliott Wave strategy now draws comprehensive Fib target levels for all waves (W1-W5) with multiple ratios (0.382, 0.5, 0.618, 1.0, 1.618)
+  - Elliott Wave trend lines changed from solid thick to thin dashed (STYLE_DOT, width 1) with muted colors for cleaner appearance
+  - SupportResistance strategy trendlines aligned to thin dashed style (STYLE_DOT, width 1) for consistency
+  - ICT drawing colors (Order Blocks, FVGs, Liquidity, BOS, CHOCH) reduced in intensity using 0x909090 color mask for better chart visibility
+  - All chart drawing elements now use consistent thin dashed styling for improved clarity
 
 ## Core Architecture
 - Entrypoint: `MultiStrategyAutonomousEA.mq5`
@@ -114,6 +126,27 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Ensemble aggregation now consumes model class probabilities via `GetPredictions(...)`, so BUY/SELL confidence is derived from the classifier outputs rather than reused latent transformer features.
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, and the EA propagates the `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
 - Per-component `SignalDiagnostics` fan-out has been reduced: Elliott, the unified pipeline, and the orchestrator no longer instantiate duplicate diagnostics sinks, leaving manager/runtime telemetry as the authoritative runtime record.
+- **AI Feature Engineering Expansion (Batch 58):** Neural network feature vector expanded from 25 to 44 features:
+  - Pattern-specific features (features 25-43): Higher Highs/Lower Lows sequences, Support/Resistance touch counts, Fibonacci Retracement proximity, Pivot Point proximity, volume profile features, market structure features
+  - Weight matrix dimensions updated to `W1[44][32]` to accommodate 44 input features
+  - All array allocations and loop bounds updated consistently to prevent array out of range errors
+- **Multi-scale Attention Infrastructure (Batch 58):** Transformer brain now supports head-specific parameters for multi-scale attention:
+  - Per-head scaling factors (`m_headScales[]`)
+  - Per-head time window sizes (`m_headTimeScales[]`) for short/medium/long horizons
+  - Per-head learning rates (`m_headLearningRates[]`) for differential training
+- **Pattern Classifier Head (Batch 58):** 10-class pattern classification alongside 3-class BUY/SELL/NONE:
+  - New weight matrices: `m_patternWeights[10][m_dModel]` and biases `m_patternBiases[10]`
+  - Cross-entropy loss training for pattern recognition
+  - Xavier initialization for pattern head weights
+- **External LLM Integration (Batch 58):** Optional external LLM (Ollama/Phi-3-mini) support:
+  - HTTP client for Ollama API communication (`http://localhost:11434/api/generate`)
+  - Signal synthesis via external LLM reasoning
+  - Trade explanation generation for human-readable decisions
+  - Risk assessment via external LLM analysis
+  - Strategy weight reasoning explanations
+  - Feedback loop to external LLM for learning
+  - Configuration-driven activation via `useExternalLLM` flag (default `false`)
+  - Runtime methods: `ConfigureExternalLLM()`, `SetExternalLLMEnabled(bool)`, `IsExternalLLMEnabled()`
 
 ### Telemetry
 - `[HEARTBEAT]`: global runtime counters.

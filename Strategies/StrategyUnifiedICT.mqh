@@ -13,6 +13,7 @@
 #define __STRATEGY_UNIFIED_ICT_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Core/Utils/RankingMatrix.mqh"
 
 // Unified ICT Component Files
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
@@ -94,6 +95,37 @@ struct SICTEntrySetup
                       ceLevelEntry(0), ceLevelTP1(0),
                       lot1Pct(0.50), lot2Pct(0.30), lot3Pct(0.20),
                       breakevenPrice(0) {}
+    
+    // Copy constructor to fix assignment operator warnings
+    SICTEntrySetup(const SICTEntrySetup &other)
+    {
+        entryType = other.entryType;
+        aoiTop = other.aoiTop;
+        aoiBottom = other.aoiBottom;
+        aoiMidpoint = other.aoiMidpoint;
+        htf = other.htf;
+        ltf = other.ltf;
+        htfBMS = other.htfBMS;
+        ltfBMS = other.ltfBMS;
+        htfTrendConfirmed = other.htfTrendConfirmed;
+        ltfTrendConfirmed = other.ltfTrendConfirmed;
+        entryPrice = other.entryPrice;
+        stopLoss = other.stopLoss;
+        takeProfit1 = other.takeProfit1;
+        takeProfit2 = other.takeProfit2;
+        takeProfit3 = other.takeProfit3;
+        riskReward = other.riskReward;
+        confluenceScore = other.confluenceScore;
+        confluenceCount = other.confluenceCount;
+        confidence = other.confidence;
+        reason = other.reason;
+        ceLevelEntry = other.ceLevelEntry;
+        ceLevelTP1 = other.ceLevelTP1;
+        lot1Pct = other.lot1Pct;
+        lot2Pct = other.lot2Pct;
+        lot3Pct = other.lot3Pct;
+        breakevenPrice = other.breakevenPrice;
+    }
 };
 
 //+------------------------------------------------------------------+
@@ -595,9 +627,30 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
                             "[UICT] Filtered: Event tuple missing structure break");
     if(!(hasDisplacementEvent && hasMitigationRetestEvent))
         return RejectSignal("UICT_EVENT_TUPLE_INCOMPLETE",
-                            StringFormat("[UICT] Filtered: Event tuple incomplete (disp=%s, retest=%s)",
-                                         hasDisplacementEvent ? "true" : "false",
-                                         hasMitigationRetestEvent ? "true" : "false"));
+                             StringFormat("[UICT] Filtered: Event tuple incomplete (disp=%s, retest=%s)",
+                                          hasDisplacementEvent ? "true" : "false",
+                                          hasMitigationRetestEvent ? "true" : "false"));
+    
+    // --- VOLUME CONFIRMATION ---
+    double volBuffer[11];
+    if(CopyBuffer(iVolumes(m_symbol, m_timeframe, VOLUME_TICK), 0, 1, 11, volBuffer) < 11)
+    {
+        // Fallback if handle logic is complex, just use iVolume
+        long v0 = iVolume(m_symbol, m_timeframe, 0);
+        long v1 = iVolume(m_symbol, m_timeframe, 1);
+        long vSum = 0;
+        for(int i=2; i<12; i++) vSum += iVolume(m_symbol, m_timeframe, i);
+        if(v1 < (vSum/10) * 1.1) 
+            return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
+    }
+    else
+    {
+        long v1 = (long)volBuffer[0]; // bar 1
+        long vSum = 0;
+        for(int i=1; i<11; i++) vSum += (long)volBuffer[i];
+        if(v1 < (vSum/10) * 1.1)
+             return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
+    }
     
     // Get best entry setup
     SICTEntrySetup bestEntry;
@@ -636,7 +689,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     {
         return RejectSignal("UICT_CONFLUENCE_GATE",
                             StringFormat("[UICT] Filtered: Confluence gate failed (cnt=%d, score=%.1f/130 = %.1f%%)",
-                                         bestEntry.confluenceCount, gateScore, gateScorePct));
+                                         bestEntry.confluenceCount, (double)gateScore, (double)gateScorePct));
     }
     
     // Validate Market Maker setup
@@ -651,7 +704,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     if(!IsPriceAtMajorPOI(currentPrice))
     {
         return RejectSignal("UICT_NOT_AT_MAJOR_POI",
-                            StringFormat("[UICT] Filtered: Price %.5f not at major POI", currentPrice));
+                            StringFormat("[UICT] Filtered: Price %.5f not at major POI", (double)currentPrice));
     }
 
     // COUNTER-TREND SCOUT: Allow reversals targeting HTF zones
@@ -1040,52 +1093,67 @@ SICTEntrySetup CStrategyUnifiedICT::CreateFullJustificationEntry()
 }
 
 //+------------------------------------------------------------------+
-//| Score Confluences — P3-A Weighted Scoring                        |
+//| Score Confluences — P3-A Weighted Scoring with Tier-based Ranking|
 //+------------------------------------------------------------------+
-// Max possible score = 30+20+20+15+15+10+10+10 = 130 points
 double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
 {
     double score = 0;
-
-    // 1. Order Block at price — 30 pts (ICT primary entry vehicle)
-    if(HasOrderBlockConfluence(price, bullish))
-        score += 30.0;
-
-    // 2. FVG/Imbalance at price — 20 pts (displacement evidence)
-    if(HasImbalanceConfluence(price, bullish))
-        score += 20.0;
-
-    // 3. Liquidity sweep confirmed — 20 pts (market maker pattern)
+    
+    // TIER 1: Institutional / Liquidity (Multiplier 2.5)
+    double t1_base = 10.0;
+    
+    // 1. Liquidity sweep confirmed (ICT primary reversal driver)
     if(HasLiquidityConfluence(price))
-        score += 20.0;
+        score += t1_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 25.0
 
-    // 4. OTE zone — 15 pts (Fibonacci entry precision)
+    // 2. AMD phase alignment (Institutional cycle)
+    if(HasAMDPhaseConfluence(bullish))
+        score += t1_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 25.0
+
+    // 3. NDOG/NWOG gap zone (Institutional gaps)
+    if(HasGapConfluence(price))
+        score += (t1_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 12.5
+
+    // 4. Institutional Level (Round numbers)
+    if(IsAtInstitutionalLevel(price))
+        score += (t1_base * 0.4) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 10.0
+
+
+    // TIER 2: Market Structure (Multiplier 1.5)
+    double t2_base = 10.0;
+
+    // 5. Order Block at price (Primary entry vehicle)
+    if(HasOrderBlockConfluence(price, bullish))
+        score += t2_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 15.0
+
+    // 6. FVG/Imbalance at price (Displacement evidence)
+    if(HasImbalanceConfluence(price, bullish))
+        score += t2_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 15.0
+
+    // 7. BMS/CHoCH alignment (Structure break)
+    if(m_structureAnalyzer != NULL && m_structureAnalyzer.HasStructureBreak())
+        score += (t2_base * 0.8) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 12.0
+
+
+    // TIER 3: Indicators / Oscillators (Multiplier 0.8)
+    double t3_base = 10.0;
+
+    // 8. OTE zone (Fibonacci entry precision)
     if(m_premiumDiscount != NULL)
     {
-        if(bullish && m_premiumDiscount.IsInBullishOTE(price))  score += 15.0;
-        if(!bullish && m_premiumDiscount.IsInBearishOTE(price)) score += 15.0;
+        if(bullish && m_premiumDiscount.IsInBullishOTE(price))  score += t3_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 8.0
+        if(!bullish && m_premiumDiscount.IsInBearishOTE(price)) score += t3_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 8.0
     }
 
-    // 5. Kill Zone (or Silver Bullet) — 15 pts (time-based probability)
-    if(m_killZones != NULL)
-    {
-        if(m_killZones.IsSilverBullet())    score += 15.0;  // Silver Bullet = max
-        else if(m_killZones.IsInKillZone()) score += 10.0;  // Regular kill zone
-    }
-
-    // 6. Premium/Discount zone alignment — 10 pts
+    // 9. Premium/Discount zone alignment
     if(HasPremiumDiscountConfluence(price, bullish))
-        score += 10.0;
+        score += t3_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 8.0
 
-    // 7. NDOG/NWOG gap zone — 10 pts (P2-A)
-    if(HasGapConfluence(price))
-        score += 10.0;
+    // 10. Kill Zone (Time-based filter)
+    if(m_killZones != NULL && m_killZones.IsInKillZone())
+        score += (t3_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 4.0
 
-    // 8. AMD phase alignment — 10 pts (P2-B)
-    if(HasAMDPhaseConfluence(bullish))
-        score += 10.0;
-
-    return score;  // 0-130
+    return score; // 0-~140+
 }
 
 //+------------------------------------------------------------------+
@@ -1094,9 +1162,9 @@ double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
 int CStrategyUnifiedICT::CountConfluences(double price, bool bullish)
 {
     double score = ScoreConfluences(price, bullish);
-    // Estimate count: each confluence averages ~16.25 pts, so /16 gives rough count
-    int count = (int)MathFloor(score / 16.0);
-    return MathMax(0, MathMin(count, 8));
+    // Adjust estimate for new weighted scoring (max ~140, average confluence ~14)
+    int count = (int)MathFloor(score / 14.0);
+    return MathMax(0, MathMin(count, 10));
 }
 
 //+------------------------------------------------------------------+
@@ -1126,20 +1194,21 @@ double CStrategyUnifiedICT::ComputeEntryConfidence(const SICTEntrySetup &entry, 
 {
     double conf = 0.35;  // Base
 
-    // Structure break type bonus
+    // Structure break type bonus (Tier 2)
     if(m_structureAnalyzer != NULL)
     {
+        double multiplier = CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2);
         if(m_structureAnalyzer.WasLastBreakCHoCH())
-            conf += 0.20;  // CHoCH = reversal signal = higher confidence for entries
+            conf += 0.15 * multiplier;  // 0.225
         else if(m_structureAnalyzer.WasLastBreakBOS())
-            conf += 0.12;  // BOS = continuation
+            conf += 0.08 * multiplier;  // 0.12
     }
 
-    // Confluence score contribution (max 0.25 from score)
-    double scoreNorm = MathMin(1.0, entry.confluenceScore / 130.0);
-    conf += scoreNorm * 0.25;
+    // Confluence score contribution (max 0.30 from score)
+    double scoreNorm = MathMin(1.0, entry.confluenceScore / 140.0);
+    conf += scoreNorm * 0.30;
 
-    // Entry type bonus
+    // Entry type bonus (Setup quality)
     switch(entry.entryType)
     {
         case ICT_ENTRY_FULL_JUSTIFICATION: conf += 0.10; break;
@@ -1148,20 +1217,19 @@ double CStrategyUnifiedICT::ComputeEntryConfidence(const SICTEntrySetup &entry, 
         default: break;
     }
 
-    // Kill zone / Silver Bullet bonus
+    // Kill zone / Silver Bullet bonus (Tier 3)
     if(m_killZones != NULL)
     {
-        if(m_killZones.IsSilverBullet())    conf += 0.06;
-        else if(m_killZones.IsInKillZone()) conf += 0.03;
+        double multiplier = CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3);
+        if(m_killZones.IsSilverBullet())    conf += 0.08 * multiplier; // 0.064
+        else if(m_killZones.IsInKillZone()) conf += 0.04 * multiplier; // 0.032
     }
 
-    // AMD Distribution phase bonus
-    if(HasAMDPhaseConfluence(bullish)) conf += 0.05;
-
-    // CHoCH with AMD sweep = highest-confidence ICT setup
+    // TIER 1 Bonus: AMD + CHoCH synergy
     bool choch = (m_structureAnalyzer != NULL && m_structureAnalyzer.WasLastBreakCHoCH());
     bool amd   = HasAMDPhaseConfluence(bullish);
-    if(choch && amd) conf += 0.05;  // Bonus for full AMD + CHoCH confirmation
+    if(choch && amd) 
+        conf += 0.05 * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 0.125
 
     return MathMin(0.95, MathMax(0.0, conf));
 }
@@ -1595,6 +1663,11 @@ bool CStrategyUnifiedICT::ValidatePriceRejection(ENUM_TRADE_SIGNAL signal)
     double body = MathAbs(close1 - open1);
     double range = high1 - low1;
     if(range <= 0) return false;
+    
+    // --- ATR NORMALIZATION ---
+    double atr = (m_structureAnalyzer != NULL) ? m_structureAnalyzer.GetATR(14) : 0.0;
+    if(atr > 0 && range < (atr * 0.7)) 
+        return false; // Rejection candle too small relative to volatility
     
     if(signal == TRADE_SIGNAL_BUY)
     {
