@@ -10,6 +10,7 @@
 #include "../Monitoring/PerformanceAnalytics.mqh"
 #include "PortfolioRiskManager.mqh"
 #include "RiskValidationGate.mqh"
+#include "VirtualPosition.mqh"
 
 //+------------------------------------------------------------------+
 //| Unified risk configuration                                       |
@@ -40,6 +41,7 @@ struct SUnifiedRiskSnapshot
     double dailyEntryRiskUsedPercent;      // Cumulative accepted entry risk intents
     double dailyMarkToMarketLossPercent;   // Equity loss vs daily baseline
     double openExposureRiskPercent;        // Current stop-defined portfolio exposure
+    double virtualReservedRiskPercent;     // Scan-time reserved candidate risk
     double maxDailyRiskPercent;
     double portfolioRiskPercent;
     double currentDrawdownPercent;
@@ -52,6 +54,7 @@ struct SUnifiedRiskSnapshot
     int gateValidationCount;
     int gateApprovedCount;
     int gateRejectedCount;
+    int virtualReservationCount;
     bool conservativeMode;
     bool emergencyMode;
 };
@@ -65,6 +68,7 @@ private:
     SUnifiedRiskConfig m_config;
     CRiskValidationGate m_validationGate;
     CPortfolioRiskManager m_portfolioRiskManager;
+    CVirtualPositionBook m_virtualPositionBook;
     CPerformanceAnalytics* m_performanceAnalytics;
 
     double m_activeRiskPerTradePercent;
@@ -91,6 +95,11 @@ public:
                                     const int maxConcurrentPerCluster,
                                     const double maxClusterRiskPercent,
                                     const bool enableMutex);
+    bool ReserveVirtualPosition(const string ownerTag,
+                                const STradeValidationRequest &request,
+                                const double riskPercent);
+    void ReleaseVirtualPosition(const string ownerTag);
+    void ClearVirtualPositions();
 
     // Register accepted risk usage only after successful execution.
     void RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio = 1.0);
@@ -99,6 +108,8 @@ public:
     double GetRecommendedRiskPerTradePercent(const double requestedRiskPercent = 0.0);
     double GetRemainingDailyRiskPercent();
     double GetRemainingPortfolioRiskPercent();
+    double GetReservedVirtualRiskPercent() const;
+    int GetVirtualReservationCount() const;
     SUnifiedRiskSnapshot GetSnapshot();
     bool HasUnprotectedPositions();
     int GetUnprotectedPositionCount();
@@ -109,7 +120,7 @@ private:
     double ClampRiskPercent(const double value) const;
     double CalculateDailyMarkToMarketLossPercent();
     double GetCurrentOpenExposureRiskPercent();
-    double GetEffectiveDailyRiskUsedPercent();
+    double GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent = 0.0);
 };
 
 //+------------------------------------------------------------------+
@@ -193,6 +204,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
 
     m_activeRiskPerTradePercent = ClampRiskPercent(m_config.baseRiskPerTradePercent);
     m_dailyRiskUsedPercent = 0.0;
+    m_virtualPositionBook.Clear();
     m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     if(m_dailyStartEquity <= 0.0)
         m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -261,7 +273,9 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
 
     CheckAndResetDailyLimits();
 
-    double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent();
+    double reservedRisk = GetReservedVirtualRiskPercent();
+    double openExposureRisk = GetCurrentOpenExposureRiskPercent();
+    double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent(reservedRisk);
     if(effectiveDailyRisk >= m_config.maxDailyRiskPercent)
     {
         result.message = StringFormat("Daily risk budget exhausted: %.2f%% / %.2f%%",
@@ -270,11 +284,29 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         return result;
     }
 
+    if(m_virtualPositionBook.HasOpposingReservation(request.symbol, request.clusterCode, request.orderType))
+    {
+        result.message = StringFormat("Virtual reservation conflict on %s (opposing candidate already reserved)",
+                                      request.symbol);
+        result.severity = ERROR_LEVEL_WARNING;
+        return result;
+    }
+
     result = m_validationGate.ValidateTradeRequest(request);
     if(!result.approved)
         return result;
 
-    double projectedDailyRisk = effectiveDailyRisk + MathMax(0.0, result.riskPercent);
+    double projectedPortfolioRisk = openExposureRisk + reservedRisk + MathMax(0.0, result.riskPercent);
+    if(projectedPortfolioRisk > m_config.maxPortfolioRiskPercent)
+    {
+        result.approved = false;
+        result.severity = ERROR_LEVEL_WARNING;
+        result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
+                                      phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
+        return result;
+    }
+
+    double projectedDailyRisk = GetEffectiveDailyRiskUsedPercent(reservedRisk + MathMax(0.0, result.riskPercent));
     if(projectedDailyRisk > m_config.maxDailyRiskPercent)
     {
         result.approved = false;
@@ -295,6 +327,55 @@ void CUnifiedRiskManager::ConfigureClusterGovernance(const bool enabled,
                                                 maxConcurrentPerCluster,
                                                 maxClusterRiskPercent,
                                                 enableMutex);
+}
+
+bool CUnifiedRiskManager::ReserveVirtualPosition(const string ownerTag,
+                                                 const STradeValidationRequest &request,
+                                                 const double riskPercent)
+{
+    if(!m_initialized)
+        return false;
+
+    bool reserved = m_virtualPositionBook.Reserve(ownerTag,
+                                                  request.symbol,
+                                                  request.orderType,
+                                                  request.strategyCluster,
+                                                  request.clusterCode,
+                                                  request.lotSize,
+                                                  riskPercent);
+    if(reserved)
+    {
+        PrintFormat("[RISK-VIRTUAL] reserve | owner=%s | symbol=%s | lot=%.2f | risk=%.2f | cluster=%s",
+                    ownerTag,
+                    request.symbol,
+                    request.lotSize,
+                    riskPercent,
+                    request.strategyCluster);
+    }
+    return reserved;
+}
+
+void CUnifiedRiskManager::ReleaseVirtualPosition(const string ownerTag)
+{
+    int before = m_virtualPositionBook.GetReservationCount();
+    m_virtualPositionBook.ClearOwner(ownerTag);
+    int after = m_virtualPositionBook.GetReservationCount();
+    if(before != after)
+    {
+        PrintFormat("[RISK-VIRTUAL] release | owner=%s | remaining=%d",
+                    ownerTag,
+                    after);
+    }
+}
+
+void CUnifiedRiskManager::ClearVirtualPositions()
+{
+    int count = m_virtualPositionBook.GetReservationCount();
+    if(count <= 0)
+        return;
+
+    m_virtualPositionBook.Clear();
+    Print("[RISK-VIRTUAL] clear | remaining=0");
 }
 
 //+------------------------------------------------------------------+
@@ -319,7 +400,7 @@ void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &val
 //+------------------------------------------------------------------+
 double CUnifiedRiskManager::GetRemainingDailyRiskPercent()
 {
-    double remaining = m_config.maxDailyRiskPercent - GetEffectiveDailyRiskUsedPercent();
+    double remaining = m_config.maxDailyRiskPercent - GetEffectiveDailyRiskUsedPercent(GetReservedVirtualRiskPercent());
     if(remaining < 0.0)
         return 0.0;
     return remaining;
@@ -335,8 +416,9 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     if(m_portfolioRiskManager.IsEmergencyMode() || HasUnprotectedPositions())
         return 0.0;
 
-    double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent();
-    double openExposureRisk = GetCurrentOpenExposureRiskPercent();
+    double reservedRisk = GetReservedVirtualRiskPercent();
+    double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent(reservedRisk);
+    double openExposureRisk = GetCurrentOpenExposureRiskPercent() + reservedRisk;
     double remainingDailyRisk = MathMax(0.0, m_config.maxDailyRiskPercent - effectiveDailyRisk);
     double remainingPortfolioRisk = MathMax(0.0, m_config.maxPortfolioRiskPercent - openExposureRisk);
     double recommended = (requestedRiskPercent > 0.0) ? requestedRiskPercent : m_activeRiskPerTradePercent;
@@ -402,10 +484,20 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
 
 double CUnifiedRiskManager::GetRemainingPortfolioRiskPercent()
 {
-    double remaining = m_config.maxPortfolioRiskPercent - GetCurrentOpenExposureRiskPercent();
+    double remaining = m_config.maxPortfolioRiskPercent - (GetCurrentOpenExposureRiskPercent() + GetReservedVirtualRiskPercent());
     if(remaining < 0.0)
         return 0.0;
     return remaining;
+}
+
+double CUnifiedRiskManager::GetReservedVirtualRiskPercent() const
+{
+    return m_virtualPositionBook.GetReservedRiskPercent();
+}
+
+int CUnifiedRiskManager::GetVirtualReservationCount() const
+{
+    return m_virtualPositionBook.GetReservationCount();
 }
 
 //+------------------------------------------------------------------+
@@ -420,11 +512,11 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     snapshot.dailyEntryRiskUsedPercent = MathMax(0.0, m_dailyRiskUsedPercent);
     snapshot.dailyMarkToMarketLossPercent = CalculateDailyMarkToMarketLossPercent();
     snapshot.openExposureRiskPercent = GetCurrentOpenExposureRiskPercent();
-    snapshot.dailyRiskUsedPercent = MathMax(snapshot.dailyEntryRiskUsedPercent,
-                                            MathMax(snapshot.dailyMarkToMarketLossPercent,
-                                                    snapshot.openExposureRiskPercent));
+    snapshot.virtualReservedRiskPercent = GetReservedVirtualRiskPercent();
+    snapshot.dailyRiskUsedPercent = GetEffectiveDailyRiskUsedPercent(snapshot.virtualReservedRiskPercent);
     snapshot.maxDailyRiskPercent = m_config.maxDailyRiskPercent;
-    snapshot.portfolioRiskPercent = snapshot.openExposureRiskPercent;
+    snapshot.portfolioRiskPercent = snapshot.openExposureRiskPercent + snapshot.virtualReservedRiskPercent;
+    snapshot.virtualReservationCount = GetVirtualReservationCount();
     snapshot.emergencyMode = m_portfolioRiskManager.IsEmergencyMode();
     snapshot.conservativeMode = m_conservativeMode;
 
@@ -499,11 +591,12 @@ double CUnifiedRiskManager::GetCurrentOpenExposureRiskPercent()
 //+------------------------------------------------------------------+
 //| Effective daily risk usage (entry-budget + mark-to-market loss)  |
 //+------------------------------------------------------------------+
-double CUnifiedRiskManager::GetEffectiveDailyRiskUsedPercent()
+double CUnifiedRiskManager::GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent)
 {
-    double effective = MathMax(0.0, m_dailyRiskUsedPercent);
+    double additionalRisk = MathMax(0.0, additionalRiskPercent);
+    double effective = MathMax(0.0, m_dailyRiskUsedPercent + additionalRisk);
     effective = MathMax(effective, CalculateDailyMarkToMarketLossPercent());
-    effective = MathMax(effective, GetCurrentOpenExposureRiskPercent());
+    effective = MathMax(effective, GetCurrentOpenExposureRiskPercent() + additionalRisk);
     return effective;
 }
 

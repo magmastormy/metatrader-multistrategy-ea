@@ -2,6 +2,46 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-04-20
+
+### Batch 68: Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations (2026-04-20)
+
+#### Root Cause
+The earlier upgrade pass had closed most of the blueprint, but several high-value items were still either missing from runtime control flow or only partially wired:
+- The offline ONNX path existed, but the repo still needed a concrete MT5-export-to-training pipeline and a real embedded model artifact instead of a placeholder mentality.
+- `StrategyUnifiedICT` had Silver Bullet / Judas / SMT coverage, but institutional reference levels, anchored VWAP, cumulative-delta pressure, advanced order-block variants, and kill-zone-scaled stop logic were not all participating in the same live scoring / POI / stop path.
+- Elliott Wave had wave-personality scoring, but no harmonic cross-validation against the projected wave-5 target.
+- The EA ranked candidates across symbols, but the current best candidate was not reserving risk inside the unified-risk contract while later symbols were still being scanned, which meant end-of-cycle ranking could temporarily ignore already-claimed scan-time budget.
+
+#### Implementation Summary
+**Real ONNX build + export pipeline:**
+- Added `Python/export_mt5_cache.py` to generate aligned training data from MT5 cache history and completed the offline pipeline under `Python/` (`data_pipeline.py`, `models.py`, `train_model.py`, `validate_model.py`).
+- Added `TrainingDataExporter.mq5` plus `TrainingDataExporter.ini` and embedded a real trained `Resources/model.onnx` into the EA resource surface.
+- Added repo-owned shadow validation harness files `shadow_session.set` and `shadow_session_mt5_tester.ini`.
+
+**Unified ICT completion:**
+- Added `Strategies/UnifiedICTFiles/AnchoredVWAP.mqh` and `Strategies/UnifiedICTFiles/CumulativeDelta.mqh`.
+- Extended `LiquidityDetector.mqh` with monthly/quarterly highs-lows plus NY midnight and quarterly open references.
+- Extended `AdvancedOrderBlocks.mqh` with propulsion, rejection, and vacuum block detection and integrated those variants into active OB lookup, validation, mitigation, and selection.
+- Updated `StrategyUnifiedICT.mqh` so anchored VWAP, cumulative-delta pressure, institutional reference levels, and session-volatility-scaled ATR stops all feed the live decision path.
+- `CICTPositionSizer.mqh` now computes a half-Kelly cap from recent symbol-specific EA close history before sizing.
+
+**Elliott Wave cross-validation:**
+- Added `Strategies/ElliottWaveFiles/HarmonicScanner.mqh`.
+- Updated `WavePatternEngine.mqh` so harmonic PRZ proximity can lift Elliott confidence when the harmonic completion zone aligns with the projected wave-5 target.
+
+**Risk / execution architecture:**
+- Added `Core/Risk/VirtualPosition.mqh` and integrated a `CVirtualPositionBook` into `CUnifiedRiskManager`.
+- Updated `UnifiedRiskManager.mqh` so virtual reservations count toward projected daily and portfolio usage, and emit `[RISK-VIRTUAL]` telemetry.
+- Updated `MultiStrategyAutonomousEA.mq5` so the cycle-best candidate is reserved inside unified risk while later symbols are still being ranked, then released after the cycle winner is executed or discarded.
+
+#### Validation Evidence
+- Compile verification succeeded with `sync_and_compile.ps1 -MirrorSync` after the final fixes:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 2 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+- The embedded ONNX resource now compiles as a real model payload (`g_onnxModel[3542293]`).
+- A shadow tester dispatch was attempted on 2026-04-20 using `shadow_session_mt5_tester.ini`, but in this environment MetaTester only started services and did not produce a fresh EA pass with new `[HEARTBEAT]`, `[CONSENSUS-DIAG]`, `[AI-VOTE]`, or `[SHADOW-TRADE]` evidence. Runtime-log confirmation for this batch is therefore still pending.
+
 ## [Unreleased] - 2026-04-17
 
 ### Batch 67: AI Training Guardrails, External LLM Runtime Telemetry & Risk Pressure Control (2026-04-17)

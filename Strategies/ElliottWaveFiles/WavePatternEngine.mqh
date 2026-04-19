@@ -24,6 +24,7 @@
 #define __ELLIOTT_WAVE_PATTERN_ENGINE_MQH__
 
 #include "ZigZagFilter.mqh"
+#include "HarmonicScanner.mqh"
 
 //+------------------------------------------------------------------+
 //| Wave Type Enum                                                   |
@@ -121,6 +122,7 @@ private:
     ENUM_TIMEFRAMES         m_timeframe;
 
     CZigZagFilter*          m_zigzag;
+    CHarmonicScanner*       m_harmonicScanner;
     bool                    m_ownZigZag;
 
     SElliottWavePattern     m_patterns[];
@@ -142,6 +144,9 @@ private:
     bool                    ValidateWave5(double w0, double w1, double w3, double w4, double w5, bool isBull);
     void                    CalculateWave3Targets(SElliottWavePattern &p);
     void                    CalculateWave5Targets(SElliottWavePattern &p);
+    double                  CalculateAverageVolume(int barIndex, int window);
+    double                  GetRSIValue(int shift);
+    double                  ScoreWavePersonality(const SElliottWavePattern &pattern);
     void                    ScorePattern(SElliottWavePattern &pattern);
     bool                    TryScanFromOffset(int pivotOffset, int zigzagCount);
     bool                    ScanABC();
@@ -187,6 +192,7 @@ CWavePatternEngine::CWavePatternEngine() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
     m_zigzag(NULL),
+    m_harmonicScanner(NULL),
     m_ownZigZag(false),
     m_patternCount(0),
     m_maxPatterns(8),
@@ -235,6 +241,13 @@ bool CWavePatternEngine::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     ArrayResize(m_patterns, 0);
     m_patternCount = 0;
 
+    m_harmonicScanner = new CHarmonicScanner();
+    if(m_harmonicScanner != NULL && !m_harmonicScanner.Initialize(symbol, timeframe, m_zigzag))
+    {
+        delete m_harmonicScanner;
+        m_harmonicScanner = NULL;
+    }
+
     return (m_zigzag != NULL);
 }
 
@@ -247,6 +260,11 @@ void CWavePatternEngine::Deinit()
     {
         delete m_zigzag;
         m_zigzag = NULL;
+    }
+    if(m_harmonicScanner != NULL)
+    {
+        delete m_harmonicScanner;
+        m_harmonicScanner = NULL;
     }
     ArrayFree(m_patterns);
 }
@@ -372,6 +390,78 @@ void CWavePatternEngine::CalculateWave5Targets(SElliottWavePattern &p)
     p.wave5Target     = p.wave5Target_100;   // Primary (equal to wave 1 from wave 4)
 }
 
+double CWavePatternEngine::CalculateAverageVolume(int barIndex, int window)
+{
+    long totalVolume = 0;
+    int count = 0;
+    for(int i = barIndex; i < barIndex + window; i++)
+    {
+        long volume = iVolume(m_symbol, m_timeframe, i);
+        if(volume > 0)
+        {
+            totalVolume += volume;
+            count++;
+        }
+    }
+    return (count > 0) ? ((double)totalVolume / (double)count) : 0.0;
+}
+
+double CWavePatternEngine::GetRSIValue(int shift)
+{
+    int handle = iRSI(m_symbol, m_timeframe, 14, PRICE_CLOSE);
+    if(handle == INVALID_HANDLE)
+        return 50.0;
+
+    double values[];
+    ArraySetAsSeries(values, true);
+    double rsi = 50.0;
+    if(CopyBuffer(handle, 0, shift, 1, values) > 0)
+        rsi = values[0];
+    IndicatorRelease(handle);
+    return rsi;
+}
+
+double CWavePatternEngine::ScoreWavePersonality(const SElliottWavePattern &pattern)
+{
+    double score = 0.0;
+    int wave1Shift = (pattern.time1 > 0) ? iBarShift(m_symbol, m_timeframe, pattern.time1) : -1;
+    int wave3Shift = (pattern.time3 > 0) ? iBarShift(m_symbol, m_timeframe, pattern.time3) : -1;
+    int wave5Shift = -1;
+    if(pattern.currentState == STATE_WAVE_5 || pattern.isComplete)
+        wave5Shift = (pattern.time5 > 0) ? iBarShift(m_symbol, m_timeframe, pattern.time5) : 0;
+
+    if(wave1Shift >= 0)
+    {
+        double avgVol = CalculateAverageVolume(wave1Shift + 1, 30);
+        double wave1Vol = (double)iVolume(m_symbol, m_timeframe, wave1Shift);
+        if(avgVol > 0.0 && wave1Vol < avgVol)
+            score += 4.0;
+    }
+
+    if(wave3Shift >= 0)
+    {
+        double avgVol = CalculateAverageVolume(wave3Shift + 1, 30);
+        double wave3Vol = (double)iVolume(m_symbol, m_timeframe, wave3Shift);
+        double wave3Rsi = GetRSIValue(wave3Shift);
+        if(avgVol > 0.0 && wave3Vol > avgVol * 1.5)
+            score += 6.0;
+        if((pattern.isBullish && wave3Rsi >= 60.0) || (!pattern.isBullish && wave3Rsi <= 40.0))
+            score += 6.0;
+    }
+
+    if(wave3Shift >= 0 && wave5Shift >= 0)
+    {
+        double wave3Rsi = GetRSIValue(wave3Shift);
+        double wave5Rsi = GetRSIValue(wave5Shift);
+        if(pattern.isBullish && pattern.wave5 > pattern.wave3 && wave5Rsi < wave3Rsi)
+            score += 8.0;
+        if(!pattern.isBullish && pattern.wave5 < pattern.wave3 && wave5Rsi > wave3Rsi)
+            score += 8.0;
+    }
+
+    return score;
+}
+
 //+------------------------------------------------------------------+
 //| Score Pattern  (0–100, normalised to 0–1 as confidence)         |
 //+------------------------------------------------------------------+
@@ -410,6 +500,27 @@ void CWavePatternEngine::ScorePattern(SElliottWavePattern &pattern)
     if(pattern.currentState == STATE_WAVE_3) score += 15.0;
     else if(pattern.currentState == STATE_WAVE_5) score += 10.0;
     else if(pattern.currentState == STATE_WAVE_4) score += 5.0;
+
+    // ── Wave personality bonus (volume / momentum / divergence) ──
+    score += ScoreWavePersonality(pattern);
+
+    // Harmonic PRZ overlap with projected wave-5 target.
+    if(m_harmonicScanner != NULL && pattern.wave5Target > 0.0)
+    {
+        SHarmonicPattern harmonic;
+        if(m_harmonicScanner.FindBestHarmonic(pattern.isBullish, harmonic))
+        {
+            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            if(point <= 0.0)
+                point = 0.00001;
+
+            double harmonicMid = (harmonic.przLow + harmonic.przHigh) * 0.5;
+            double tolerance = MathMax(MathAbs(pattern.wave1 - pattern.wave0) * 0.35, point * 50.0);
+            double diff = MathAbs(harmonicMid - pattern.wave5Target);
+            if(diff <= tolerance)
+                score += 15.0 * (1.0 - (diff / tolerance)) * MathMax(0.50, harmonic.confidence);
+        }
+    }
 
     pattern.confidence = MathMin(100.0, score) / 100.0;
 }
@@ -485,6 +596,9 @@ bool CWavePatternEngine::TryScanFromOffset(int pivotOffset, int zigzagCount)
         p.currentState = STATE_WAVE_5;
         p.type         = isBull ? WAVE_IMPULSE_BULLISH : WAVE_IMPULSE_BEARISH;
         p.isValid      = true;
+        p.wave5        = lastPrice;
+        p.time5        = iTime(m_symbol, m_timeframe, 0);
+        p.wave5Extension = w1Size > 0 ? MathAbs(lastPrice - p.wave4) / w1Size : 0.0;
 
         // Check if wave 5 is complete using live price
         if(ValidateWave5(p.wave0, p.wave1, p.wave3, p.wave4, lastPrice, isBull))
@@ -583,6 +697,8 @@ void CWavePatternEngine::ScanPatterns()
     if(m_zigzag == NULL) return;
 
     m_zigzag.Update(250);
+    if(m_harmonicScanner != NULL)
+        m_harmonicScanner.Update();
 
     ArrayResize(m_patterns, 0);
     m_patternCount = 0;

@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-04-17
+- Last Updated: 2026-04-20
 - Scope: Runtime lifecycle and ownership trace
-- Current Batch: 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
+- Current Batch: 68 - Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -51,6 +51,7 @@
 - Self-reconcile cadence scheduler state if any scheduler array drifts away from the active symbol set before new-bar detection.
 - Detect new-bar events per symbol.
 - Carry pending new-bar work across cycles and spend the per-cycle heavy-evaluation budget on those symbols before any intrabar work.
+- Reserve the cycle-best candidate as a virtual position inside `CUnifiedRiskManager` while scan-time ranking is still active, then release that reservation after the cycle winner is executed or discarded.
 - Run intrabar scans when eligible.
 - Hybrid cadence is now the default live posture: `InpSignalScanOnNewBarOnly=false` keeps timed intrabar scans active unless operators explicitly force strict new-bar-only mode, and startup still emits `[CADENCE-WARNING]` when that override is active.
 - The default intrabar symbol budget is widened to `4` so live synthetic verification spends more of the available cadence budget each cycle without fully unbounding scan cost.
@@ -115,8 +116,12 @@
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator, and the system now respects `InpAIConfidenceThreshold` as the authoritative floor across all modes, eliminating legacy hardcoded confidence caps.
 - AI_ONLY mode is now strict: indicator strategies are filtered out at the strategy registry level, ensuring no indicator-based votes participate when the EA is in AI-primary posture.
 - When configured indicator families are filtered out by `AI_ONLY`, runtime now emits `[MODE-MASK]` so those sessions are not misread as "indicator strategies voted badly."
-- AI intrabar policy is now explicit instead of globally hard-coded `OFF`: `Neural Network AI`, `Transformer AI`, and `Ensemble AI` each have their own intrabar eligibility input, allowing `AI_ONLY` and `HYBRID` to be tested as real timed intrabar modes.
-- `CNextGenStrategyBrain` now follows a single local-transformer path with ring-buffered market data history and no dead Python/cloud bridge branch.
+- The ONNX runtime path is now repository-native: `Resources/model.onnx` is embedded into the EA, `COnnxAIStrategyAdapter` participates in symbol-scoped manager consensus, and `COnnxBrain` can arm a shadow handle for hot-swap evaluation from Common files.
+- The offline ONNX training/export pipeline now lives under `Python/`, aligned to the same 55-feature contract used by `CAIFeatureVectorBuilder`.
+- `StrategyUnifiedICT` now treats institutional references as first-class runtime inputs: monthly/quarterly highs-lows, NY midnight/quarter opens, anchored VWAP, cumulative-delta pressure, and propulsion/rejection/vacuum order-block variants all feed the same scoring, POI, and stop/TP path instead of existing as detached helpers.
+- `CICTPositionSizer` now includes half-Kelly sizing caps from recent symbol-specific EA close history, and Elliott Wave confidence can now gain a harmonic PRZ cross-validation bonus through `CHarmonicScanner`.
+- AI intrabar policy is now explicit instead of globally hard-coded `OFF`: `Neural Network AI`, `Transformer AI`, `Ensemble AI`, and `ONNX AI` each have their own intrabar eligibility input, allowing `AI_ONLY` and `HYBRID` to be tested as real timed intrabar modes.
+- `CNextGenStrategyBrain` now follows a single local-transformer path with direct `CAIFeatureVectorBuilder` sourcing and no dead Python/cloud bridge branch.
 - Duplicate component-local `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths so manager/runtime telemetry stays authoritative.
 - **AI Feature Lifecycle (Batch 58):**
   - Neural network feature extraction now produces 44-dimensional vectors (25 original + 19 pattern-specific features)
@@ -147,6 +152,7 @@
   - SupportResistance strategy trendlines aligned to thin dashed style for consistency
   - All chart drawing elements use consistent thin dashed styling for improved clarity
 - Risk gating (pre-size then post-size).
+- Drawdown-aware size tapering now happens between those two phases: the raw `CPositionSizer` output is scaled by `CAIStrategyOrchestrator::GetDrawdownMultiplier()`, then the adjusted lot is re-submitted to unified risk for final approval.
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
 - Portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety.
 - Recommended per-trade risk is now pressure-throttled before the final hard cap as daily and portfolio utilization rise, producing `[RISK-THROTTLE]` evidence ahead of a hard veto.
@@ -183,7 +189,7 @@
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
 - Multi-Tier: `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`, `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`

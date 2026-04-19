@@ -7,3 +7,12 @@ SR_Trendline_Implementation_Spec.md
 # Documentation is intentionally versioned.
 # Keep markdown/text system docs tracked.
 *.log
+*.ini
+*.set
+*\pycache__\
+*.pyo
+*.pyc
+*.pyd
+*.csv
+*.onnx
+*.h5

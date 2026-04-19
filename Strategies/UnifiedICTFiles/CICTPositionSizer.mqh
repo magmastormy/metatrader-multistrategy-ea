@@ -40,6 +40,12 @@ private:
     void            UpdateWeeklyTracking();
     double          GetTickValue();
     double          GetTickSize();
+    bool            LoadClosedTradeStats(const int lookbackTrades,
+                                         int &sampleCount,
+                                         int &wins,
+                                         int &losses,
+                                         double &avgWin,
+                                         double &avgLoss);
 
 public:
                     CICTPositionSizer();
@@ -65,6 +71,7 @@ public:
 
     // Getters
     double          GetRiskPct()          const { return m_riskPctPerTrade; }
+    double          GetKellyRiskPct(const int lookbackTrades = 50);
     double          GetDailyPnL()         const { return m_dailyPnL; }
     double          GetWeeklyPnL()        const { return m_weeklyPnL; }
     double          GetDailyDDUsedPct()   const;
@@ -171,7 +178,12 @@ double CICTPositionSizer::CalculateLotSize(double entryPrice, double stopLossPri
     }
 
     double balance   = AccountInfoDouble(ACCOUNT_BALANCE);
-    double riskAmount = balance * (m_riskPctPerTrade / 100.0);
+    double effectiveRiskPct = m_riskPctPerTrade;
+    double kellyRiskPct = GetKellyRiskPct(50);
+    if(kellyRiskPct > 0.0)
+        effectiveRiskPct = MathMin(effectiveRiskPct, kellyRiskPct);
+
+    double riskAmount = balance * (effectiveRiskPct / 100.0);
 
     double tickSize  = GetTickSize();
     double tickValue = GetTickValue();
@@ -201,10 +213,104 @@ double CICTPositionSizer::CalculateLotSize(double entryPrice, double stopLossPri
     // Clamp to min/max
     rawLots = MathMax(m_minLotSize, MathMin(rawLots, m_maxLotSize));
 
-    PrintFormat("[ICT-SIZER] Lots=%.2f | Risk=$%.2f | SL=%.5f pts | TickVal=%.5f | Balance=%.2f",
-                rawLots, riskAmount, slDistance, tickValue, balance);
+    PrintFormat("[ICT-SIZER] Lots=%.2f | Risk=$%.2f | RiskPct=%.2f | KellyCap=%.2f | SL=%.5f pts | TickVal=%.5f | Balance=%.2f",
+                rawLots, riskAmount, effectiveRiskPct, kellyRiskPct, slDistance, tickValue, balance);
 
     return rawLots;
+}
+
+bool CICTPositionSizer::LoadClosedTradeStats(const int lookbackTrades,
+                                             int &sampleCount,
+                                             int &wins,
+                                             int &losses,
+                                             double &avgWin,
+                                             double &avgLoss)
+{
+    sampleCount = 0;
+    wins = 0;
+    losses = 0;
+    avgWin = 0.0;
+    avgLoss = 0.0;
+
+    if(m_symbol == "" || lookbackTrades <= 0)
+        return false;
+
+    if(!HistorySelect(0, TimeCurrent()))
+        return false;
+
+    double grossWin = 0.0;
+    double grossLoss = 0.0;
+    int totalDeals = HistoryDealsTotal();
+
+    for(int i = totalDeals - 1; i >= 0 && sampleCount < lookbackTrades; i--)
+    {
+        ulong dealTicket = HistoryDealGetTicket(i);
+        if(dealTicket == 0)
+            continue;
+
+        if(HistoryDealGetString(dealTicket, DEAL_SYMBOL) != m_symbol)
+            continue;
+
+        long entryType = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+        if(entryType != DEAL_ENTRY_OUT && entryType != DEAL_ENTRY_OUT_BY)
+            continue;
+
+        long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
+        if(reason != DEAL_REASON_EXPERT)
+            continue;
+
+        double netPnl = HistoryDealGetDouble(dealTicket, DEAL_PROFIT) +
+                        HistoryDealGetDouble(dealTicket, DEAL_SWAP) +
+                        HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+        if(!MathIsValidNumber(netPnl) || MathAbs(netPnl) < 0.01)
+            continue;
+
+        sampleCount++;
+        if(netPnl > 0.0)
+        {
+            wins++;
+            grossWin += netPnl;
+        }
+        else
+        {
+            losses++;
+            grossLoss += MathAbs(netPnl);
+        }
+    }
+
+    if(wins > 0)
+        avgWin = grossWin / (double)wins;
+    if(losses > 0)
+        avgLoss = grossLoss / (double)losses;
+
+    return (sampleCount > 0);
+}
+
+double CICTPositionSizer::GetKellyRiskPct(const int lookbackTrades)
+{
+    int sampleCount = 0;
+    int wins = 0;
+    int losses = 0;
+    double avgWin = 0.0;
+    double avgLoss = 0.0;
+
+    if(!LoadClosedTradeStats(lookbackTrades, sampleCount, wins, losses, avgWin, avgLoss))
+        return 0.0;
+
+    if(sampleCount < 12 || wins <= 0 || losses <= 0 || avgWin <= 0.0 || avgLoss <= 0.0)
+        return 0.0;
+
+    double winRate = (double)wins / (double)sampleCount;
+    double payoffRatio = avgWin / avgLoss;
+    if(payoffRatio <= 0.0)
+        return 0.0;
+
+    double kellyFraction = winRate - ((1.0 - winRate) / payoffRatio);
+    if(kellyFraction <= 0.0)
+        return 0.0;
+
+    double halfKellyPct = kellyFraction * 50.0;
+    return MathMax(0.0, MathMin(m_riskPctPerTrade, halfKellyPct));
 }
 
 //+------------------------------------------------------------------+

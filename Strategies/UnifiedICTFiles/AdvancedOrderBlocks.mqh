@@ -22,7 +22,13 @@ enum ENUM_ORDER_BLOCK_TYPE
     OB_CONTINUATION_BULL,
     OB_CONTINUATION_BEAR,
     OB_BREAKER_BULL,
-    OB_BREAKER_BEAR
+    OB_BREAKER_BEAR,
+    OB_PROPULSION_BULL,
+    OB_PROPULSION_BEAR,
+    OB_REJECTION_BULL,
+    OB_REJECTION_BEAR,
+    OB_VACUUM_BULL,
+    OB_VACUUM_BEAR
 };
 
 //+------------------------------------------------------------------+
@@ -90,6 +96,10 @@ private:
     double              FindOldLow(int startBar, int endBar);
     double              FindOldHigh(int startBar, int endBar);
     int                 FindImpulseStart(bool bullish, int lookback = 30);  // P1-A helper
+    double              GetATRValue(int period = 14);
+    long                GetAverageVolume(int startBar, int window);
+    bool                IsBullishType(const ENUM_ORDER_BLOCK_TYPE type) const;
+    bool                IsBearishType(const ENUM_ORDER_BLOCK_TYPE type) const;
     
 public:
                         CAdvancedOrderBlockDetector();
@@ -110,6 +120,12 @@ public:
     // Breaker Block Detection
     bool                DetectBullishBreakerBlock(SAdvancedOrderBlock &ob);
     bool                DetectBearishBreakerBlock(SAdvancedOrderBlock &ob);
+    bool                DetectBullishPropulsionBlock(SAdvancedOrderBlock &ob);
+    bool                DetectBearishPropulsionBlock(SAdvancedOrderBlock &ob);
+    bool                DetectBullishRejectionBlock(SAdvancedOrderBlock &ob);
+    bool                DetectBearishRejectionBlock(SAdvancedOrderBlock &ob);
+    bool                DetectBullishVacuumBlock(SAdvancedOrderBlock &ob);
+    bool                DetectBearishVacuumBlock(SAdvancedOrderBlock &ob);
     
     // Validation
     bool                ValidateOrderBlock(SAdvancedOrderBlock &ob);
@@ -227,6 +243,110 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_orderBlocks[m_obCount] = bearBreaker;
         m_obCount++;
     }
+
+    SAdvancedOrderBlock bullPropulsion;
+    if(DetectBullishPropulsionBlock(bullPropulsion))
+    {
+        ArrayResize(m_orderBlocks, m_obCount + 1);
+        m_orderBlocks[m_obCount] = bullPropulsion;
+        m_obCount++;
+    }
+
+    SAdvancedOrderBlock bearPropulsion;
+    if(DetectBearishPropulsionBlock(bearPropulsion))
+    {
+        ArrayResize(m_orderBlocks, m_obCount + 1);
+        m_orderBlocks[m_obCount] = bearPropulsion;
+        m_obCount++;
+    }
+
+    SAdvancedOrderBlock bullRejection;
+    if(DetectBullishRejectionBlock(bullRejection))
+    {
+        ArrayResize(m_orderBlocks, m_obCount + 1);
+        m_orderBlocks[m_obCount] = bullRejection;
+        m_obCount++;
+    }
+
+    SAdvancedOrderBlock bearRejection;
+    if(DetectBearishRejectionBlock(bearRejection))
+    {
+        ArrayResize(m_orderBlocks, m_obCount + 1);
+        m_orderBlocks[m_obCount] = bearRejection;
+        m_obCount++;
+    }
+
+    SAdvancedOrderBlock bullVacuum;
+    if(DetectBullishVacuumBlock(bullVacuum))
+    {
+        ArrayResize(m_orderBlocks, m_obCount + 1);
+        m_orderBlocks[m_obCount] = bullVacuum;
+        m_obCount++;
+    }
+
+    SAdvancedOrderBlock bearVacuum;
+    if(DetectBearishVacuumBlock(bearVacuum))
+    {
+        ArrayResize(m_orderBlocks, m_obCount + 1);
+        m_orderBlocks[m_obCount] = bearVacuum;
+        m_obCount++;
+    }
+}
+
+double CAdvancedOrderBlockDetector::GetATRValue(int period)
+{
+    int atrHandle = iATR(m_symbol, m_timeframe, period);
+    if(atrHandle == INVALID_HANDLE)
+        return 0.0;
+
+    double atrBuf[];
+    ArraySetAsSeries(atrBuf, true);
+    double atr = 0.0;
+    if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)
+        atr = atrBuf[0];
+    IndicatorRelease(atrHandle);
+    return atr;
+}
+
+long CAdvancedOrderBlockDetector::GetAverageVolume(int startBar, int window)
+{
+    if(window <= 0)
+        return 0;
+
+    long volumeSum = 0;
+    int samples = 0;
+    int totalBars = iBars(m_symbol, m_timeframe);
+    for(int i = startBar; i < startBar + window && i < totalBars; i++)
+    {
+        long volume = iVolume(m_symbol, m_timeframe, i);
+        if(volume <= 0)
+            continue;
+
+        volumeSum += volume;
+        samples++;
+    }
+
+    return (samples > 0) ? (volumeSum / samples) : 0;
+}
+
+bool CAdvancedOrderBlockDetector::IsBullishType(const ENUM_ORDER_BLOCK_TYPE type) const
+{
+    return (type == OB_SOURCE_BULLISH ||
+            type == OB_CONTINUATION_BULL ||
+            type == OB_BREAKER_BULL ||
+            type == OB_PROPULSION_BULL ||
+            type == OB_REJECTION_BULL ||
+            type == OB_VACUUM_BULL);
+}
+
+bool CAdvancedOrderBlockDetector::IsBearishType(const ENUM_ORDER_BLOCK_TYPE type) const
+{
+    return (type == OB_SOURCE_BEARISH ||
+            type == OB_CONTINUATION_BEAR ||
+            type == OB_BREAKER_BEAR ||
+            type == OB_PROPULSION_BEAR ||
+            type == OB_REJECTION_BEAR ||
+            type == OB_VACUUM_BEAR);
 }
 
 //+------------------------------------------------------------------+
@@ -640,6 +760,342 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
     return true;
 }
 
+bool CAdvancedOrderBlockDetector::DetectBullishPropulsionBlock(SAdvancedOrderBlock &ob)
+{
+    double atr = GetATRValue(14);
+    if(atr <= 0.0)
+        return false;
+
+    int totalBars = iBars(m_symbol, m_timeframe);
+    int bestBar = -1;
+    double bestScore = 0.0;
+
+    for(int i = 1; i < 30 && i < totalBars - 10; i++)
+    {
+        double open = iOpen(m_symbol, m_timeframe, i);
+        double close = iClose(m_symbol, m_timeframe, i);
+        double high = iHigh(m_symbol, m_timeframe, i);
+        double low = iLow(m_symbol, m_timeframe, i);
+        double range = high - low;
+        double body = close - open;
+
+        if(body <= 0.0 || range <= 0.0)
+            continue;
+        if(body < atr * 0.40 || (body / range) < 0.60)
+            continue;
+
+        double priorHigh = -DBL_MAX;
+        for(int j = i + 1; j <= i + 8 && j < totalBars; j++)
+            priorHigh = MathMax(priorHigh, iHigh(m_symbol, m_timeframe, j));
+        if(close <= priorHigh)
+            continue;
+
+        double breakoutScore = (close - priorHigh) / atr;
+        if(breakoutScore > bestScore)
+        {
+            bestScore = breakoutScore;
+            bestBar = i;
+        }
+    }
+
+    if(bestBar < 0)
+        return false;
+
+    ob.type = OB_PROPULSION_BULL;
+    ob.time = iTime(m_symbol, m_timeframe, bestBar);
+    ob.open = iOpen(m_symbol, m_timeframe, bestBar);
+    ob.close = iClose(m_symbol, m_timeframe, bestBar);
+    ob.top = MathMax(ob.open, ob.close);
+    ob.bottom = MathMin(ob.open, ob.close);
+    ob.midpoint = (ob.top + ob.bottom) / 2.0;
+    ob.ce = ob.midpoint;
+    ob.bodySize = MathAbs(ob.close - ob.open);
+    ob.range = iHigh(m_symbol, m_timeframe, bestBar) - iLow(m_symbol, m_timeframe, bestBar);
+    ob.bodyPercent = (ob.range > 0.0) ? (ob.bodySize / ob.range) : 0.0;
+    ob.strength = MathMin(1.0, 0.72 + MathMin(0.22, bestScore * 0.12));
+    ob.timeframe = m_timeframe;
+    ob.isFresh = true;
+    ob.atSupportResistance = IsNearResistanceLevel(ob.top);
+    return true;
+}
+
+bool CAdvancedOrderBlockDetector::DetectBearishPropulsionBlock(SAdvancedOrderBlock &ob)
+{
+    double atr = GetATRValue(14);
+    if(atr <= 0.0)
+        return false;
+
+    int totalBars = iBars(m_symbol, m_timeframe);
+    int bestBar = -1;
+    double bestScore = 0.0;
+
+    for(int i = 1; i < 30 && i < totalBars - 10; i++)
+    {
+        double open = iOpen(m_symbol, m_timeframe, i);
+        double close = iClose(m_symbol, m_timeframe, i);
+        double high = iHigh(m_symbol, m_timeframe, i);
+        double low = iLow(m_symbol, m_timeframe, i);
+        double range = high - low;
+        double body = open - close;
+
+        if(body <= 0.0 || range <= 0.0)
+            continue;
+        if(body < atr * 0.40 || (body / range) < 0.60)
+            continue;
+
+        double priorLow = DBL_MAX;
+        for(int j = i + 1; j <= i + 8 && j < totalBars; j++)
+            priorLow = MathMin(priorLow, iLow(m_symbol, m_timeframe, j));
+        if(close >= priorLow)
+            continue;
+
+        double breakoutScore = (priorLow - close) / atr;
+        if(breakoutScore > bestScore)
+        {
+            bestScore = breakoutScore;
+            bestBar = i;
+        }
+    }
+
+    if(bestBar < 0)
+        return false;
+
+    ob.type = OB_PROPULSION_BEAR;
+    ob.time = iTime(m_symbol, m_timeframe, bestBar);
+    ob.open = iOpen(m_symbol, m_timeframe, bestBar);
+    ob.close = iClose(m_symbol, m_timeframe, bestBar);
+    ob.top = MathMax(ob.open, ob.close);
+    ob.bottom = MathMin(ob.open, ob.close);
+    ob.midpoint = (ob.top + ob.bottom) / 2.0;
+    ob.ce = ob.midpoint;
+    ob.bodySize = MathAbs(ob.close - ob.open);
+    ob.range = iHigh(m_symbol, m_timeframe, bestBar) - iLow(m_symbol, m_timeframe, bestBar);
+    ob.bodyPercent = (ob.range > 0.0) ? (ob.bodySize / ob.range) : 0.0;
+    ob.strength = MathMin(1.0, 0.72 + MathMin(0.22, bestScore * 0.12));
+    ob.timeframe = m_timeframe;
+    ob.isFresh = true;
+    ob.atSupportResistance = IsNearSupportLevel(ob.bottom);
+    return true;
+}
+
+bool CAdvancedOrderBlockDetector::DetectBullishRejectionBlock(SAdvancedOrderBlock &ob)
+{
+    int totalBars = iBars(m_symbol, m_timeframe);
+    int bestBar = -1;
+    double bestRatio = 0.0;
+    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    for(int i = 1; i < 25 && i < totalBars; i++)
+    {
+        double open = iOpen(m_symbol, m_timeframe, i);
+        double close = iClose(m_symbol, m_timeframe, i);
+        double high = iHigh(m_symbol, m_timeframe, i);
+        double low = iLow(m_symbol, m_timeframe, i);
+        double body = MathAbs(close - open);
+        if(body <= point)
+            continue;
+
+        double lowerWick = MathMin(open, close) - low;
+        double wickRatio = lowerWick / body;
+        if(wickRatio < 3.0)
+            continue;
+
+        bool nearKeyLevel = IsNearSupportLevel(low) || FindMostRecentSwingLow(12) >= 0;
+        if(!nearKeyLevel)
+            continue;
+
+        if(wickRatio > bestRatio)
+        {
+            bestRatio = wickRatio;
+            bestBar = i;
+        }
+    }
+
+    if(bestBar < 0)
+        return false;
+
+    ob.type = OB_REJECTION_BULL;
+    ob.time = iTime(m_symbol, m_timeframe, bestBar);
+    ob.open = iOpen(m_symbol, m_timeframe, bestBar);
+    ob.close = iClose(m_symbol, m_timeframe, bestBar);
+    ob.top = MathMin(ob.open, ob.close);
+    ob.bottom = iLow(m_symbol, m_timeframe, bestBar);
+    ob.midpoint = (ob.top + ob.bottom) / 2.0;
+    ob.ce = ob.midpoint;
+    ob.bodySize = MathAbs(ob.close - ob.open);
+    ob.range = iHigh(m_symbol, m_timeframe, bestBar) - iLow(m_symbol, m_timeframe, bestBar);
+    ob.bodyPercent = (ob.range > 0.0) ? (ob.bodySize / ob.range) : 0.0;
+    ob.strength = MathMin(1.0, 0.70 + MathMin(0.20, (bestRatio - 3.0) * 0.05));
+    ob.timeframe = m_timeframe;
+    ob.shadowUsedForSL = true;
+    ob.isFresh = true;
+    ob.atSupportResistance = true;
+    return true;
+}
+
+bool CAdvancedOrderBlockDetector::DetectBearishRejectionBlock(SAdvancedOrderBlock &ob)
+{
+    int totalBars = iBars(m_symbol, m_timeframe);
+    int bestBar = -1;
+    double bestRatio = 0.0;
+    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    for(int i = 1; i < 25 && i < totalBars; i++)
+    {
+        double open = iOpen(m_symbol, m_timeframe, i);
+        double close = iClose(m_symbol, m_timeframe, i);
+        double high = iHigh(m_symbol, m_timeframe, i);
+        double low = iLow(m_symbol, m_timeframe, i);
+        double body = MathAbs(close - open);
+        if(body <= point)
+            continue;
+
+        double upperWick = high - MathMax(open, close);
+        double wickRatio = upperWick / body;
+        if(wickRatio < 3.0)
+            continue;
+
+        bool nearKeyLevel = IsNearResistanceLevel(high) || FindMostRecentSwingHigh(12) >= 0;
+        if(!nearKeyLevel)
+            continue;
+
+        if(wickRatio > bestRatio)
+        {
+            bestRatio = wickRatio;
+            bestBar = i;
+        }
+    }
+
+    if(bestBar < 0)
+        return false;
+
+    ob.type = OB_REJECTION_BEAR;
+    ob.time = iTime(m_symbol, m_timeframe, bestBar);
+    ob.open = iOpen(m_symbol, m_timeframe, bestBar);
+    ob.close = iClose(m_symbol, m_timeframe, bestBar);
+    ob.top = iHigh(m_symbol, m_timeframe, bestBar);
+    ob.bottom = MathMax(ob.open, ob.close);
+    ob.midpoint = (ob.top + ob.bottom) / 2.0;
+    ob.ce = ob.midpoint;
+    ob.bodySize = MathAbs(ob.close - ob.open);
+    ob.range = iHigh(m_symbol, m_timeframe, bestBar) - iLow(m_symbol, m_timeframe, bestBar);
+    ob.bodyPercent = (ob.range > 0.0) ? (ob.bodySize / ob.range) : 0.0;
+    ob.strength = MathMin(1.0, 0.70 + MathMin(0.20, (bestRatio - 3.0) * 0.05));
+    ob.timeframe = m_timeframe;
+    ob.shadowUsedForSL = true;
+    ob.isFresh = true;
+    ob.atSupportResistance = true;
+    return true;
+}
+
+bool CAdvancedOrderBlockDetector::DetectBullishVacuumBlock(SAdvancedOrderBlock &ob)
+{
+    double atr = GetATRValue(14);
+    if(atr <= 0.0)
+        return false;
+
+    int totalBars = iBars(m_symbol, m_timeframe);
+    int bestBar = -1;
+    double bestVoidRatio = 0.0;
+
+    for(int i = 1; i < 30 && i < totalBars; i++)
+    {
+        double open = iOpen(m_symbol, m_timeframe, i);
+        double close = iClose(m_symbol, m_timeframe, i);
+        double high = iHigh(m_symbol, m_timeframe, i);
+        double low = iLow(m_symbol, m_timeframe, i);
+        double range = high - low;
+        long barVolume = iVolume(m_symbol, m_timeframe, i);
+        long avgVolume = GetAverageVolume(i + 1, 20);
+        if(close <= open || range <= (atr * 1.5) || avgVolume <= 0)
+            continue;
+        if((double)barVolume >= ((double)avgVolume * 0.30))
+            continue;
+
+        double voidRatio = ((double)avgVolume - (double)barVolume) / (double)avgVolume;
+        if(voidRatio > bestVoidRatio)
+        {
+            bestVoidRatio = voidRatio;
+            bestBar = i;
+        }
+    }
+
+    if(bestBar < 0)
+        return false;
+
+    ob.type = OB_VACUUM_BULL;
+    ob.time = iTime(m_symbol, m_timeframe, bestBar);
+    ob.open = iOpen(m_symbol, m_timeframe, bestBar);
+    ob.close = iClose(m_symbol, m_timeframe, bestBar);
+    ob.top = iHigh(m_symbol, m_timeframe, bestBar);
+    ob.bottom = iLow(m_symbol, m_timeframe, bestBar);
+    ob.midpoint = (ob.top + ob.bottom) / 2.0;
+    ob.ce = ob.midpoint;
+    ob.bodySize = MathAbs(ob.close - ob.open);
+    ob.range = ob.top - ob.bottom;
+    ob.bodyPercent = (ob.range > 0.0) ? (ob.bodySize / ob.range) : 0.0;
+    ob.strength = MathMin(1.0, 0.68 + MathMin(0.25, bestVoidRatio * 0.30));
+    ob.timeframe = m_timeframe;
+    ob.isFresh = true;
+    return true;
+}
+
+bool CAdvancedOrderBlockDetector::DetectBearishVacuumBlock(SAdvancedOrderBlock &ob)
+{
+    double atr = GetATRValue(14);
+    if(atr <= 0.0)
+        return false;
+
+    int totalBars = iBars(m_symbol, m_timeframe);
+    int bestBar = -1;
+    double bestVoidRatio = 0.0;
+
+    for(int i = 1; i < 30 && i < totalBars; i++)
+    {
+        double open = iOpen(m_symbol, m_timeframe, i);
+        double close = iClose(m_symbol, m_timeframe, i);
+        double high = iHigh(m_symbol, m_timeframe, i);
+        double low = iLow(m_symbol, m_timeframe, i);
+        double range = high - low;
+        long barVolume = iVolume(m_symbol, m_timeframe, i);
+        long avgVolume = GetAverageVolume(i + 1, 20);
+        if(close >= open || range <= (atr * 1.5) || avgVolume <= 0)
+            continue;
+        if((double)barVolume >= ((double)avgVolume * 0.30))
+            continue;
+
+        double voidRatio = ((double)avgVolume - (double)barVolume) / (double)avgVolume;
+        if(voidRatio > bestVoidRatio)
+        {
+            bestVoidRatio = voidRatio;
+            bestBar = i;
+        }
+    }
+
+    if(bestBar < 0)
+        return false;
+
+    ob.type = OB_VACUUM_BEAR;
+    ob.time = iTime(m_symbol, m_timeframe, bestBar);
+    ob.open = iOpen(m_symbol, m_timeframe, bestBar);
+    ob.close = iClose(m_symbol, m_timeframe, bestBar);
+    ob.top = iHigh(m_symbol, m_timeframe, bestBar);
+    ob.bottom = iLow(m_symbol, m_timeframe, bestBar);
+    ob.midpoint = (ob.top + ob.bottom) / 2.0;
+    ob.ce = ob.midpoint;
+    ob.bodySize = MathAbs(ob.close - ob.open);
+    ob.range = ob.top - ob.bottom;
+    ob.bodyPercent = (ob.range > 0.0) ? (ob.bodySize / ob.range) : 0.0;
+    ob.strength = MathMin(1.0, 0.68 + MathMin(0.25, bestVoidRatio * 0.30));
+    ob.timeframe = m_timeframe;
+    ob.isFresh = true;
+    return true;
+}
+
 //+------------------------------------------------------------------+
 //| Validate Order Block                                             |
 //+------------------------------------------------------------------+
@@ -654,7 +1110,7 @@ bool CAdvancedOrderBlockDetector::ValidateOrderBlock(SAdvancedOrderBlock &ob)
         
         double close = iClose(m_symbol, m_timeframe, i);
         
-        if(ob.type == OB_SOURCE_BULLISH || ob.type == OB_CONTINUATION_BULL || ob.type == OB_BREAKER_BULL)
+        if(IsBullishType(ob.type))
         {
             if(close > ob.top)
             {
@@ -691,9 +1147,7 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
         ob.ce = (ob.top + ob.bottom) / 2.0;
 
     // Determine OB direction
-    bool isBullishOB = (ob.type == OB_SOURCE_BULLISH ||
-                        ob.type == OB_CONTINUATION_BULL ||
-                        ob.type == OB_BREAKER_BULL);
+    bool isBullishOB = IsBullishType(ob.type);
 
     ob.mitigationLevel = isBullishOB ? ob.bottom : ob.top;
 
@@ -904,9 +1358,7 @@ int CAdvancedOrderBlockDetector::FindBestBullishOB()
     {
         if(m_orderBlocks[i].isMitigated) continue;
         
-        if(m_orderBlocks[i].type == OB_SOURCE_BULLISH ||
-           m_orderBlocks[i].type == OB_CONTINUATION_BULL ||
-           m_orderBlocks[i].type == OB_BREAKER_BULL)
+        if(IsBullishType(m_orderBlocks[i].type))
         {
             if(m_orderBlocks[i].strength > bestStrength)
             {
@@ -931,9 +1383,7 @@ int CAdvancedOrderBlockDetector::FindBestBearishOB()
     {
         if(m_orderBlocks[i].isMitigated) continue;
         
-        if(m_orderBlocks[i].type == OB_SOURCE_BEARISH ||
-           m_orderBlocks[i].type == OB_CONTINUATION_BEAR ||
-           m_orderBlocks[i].type == OB_BREAKER_BEAR)
+        if(IsBearishType(m_orderBlocks[i].type))
         {
             if(m_orderBlocks[i].strength > bestStrength)
             {

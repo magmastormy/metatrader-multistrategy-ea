@@ -7,6 +7,8 @@
 #property version   "1.00"
 #property strict
 
+#resource "Resources\\model.onnx" as uchar g_onnxModel[]
+
 #include "Core\Utils\Enums.mqh"
 
 //--- Input parameters (Fixed compilation errors)
@@ -69,10 +71,12 @@ input bool InpEnableAIMode = true;            // Enable AI Mode
 input bool InpEnableNeuralNetwork = true;     // Enable Neural Network
 input bool InpEnableTransformer = true;       // Enable Transformer Brain
 input bool InpEnableEnsemble = true;          // Enable Ensemble Learning
+input bool InpEnableOnnxAI = true;            // Enable ONNX runtime model voting
 input bool InpEnableExternalLLM = false;       // Enable External LLM (Ollama/API)
 input string InpExternalLLMEndpoint = "http://localhost:11434"; // LLM API Endpoint
 input double InpAIConfidenceThreshold = 0.35;  // AI Confidence Threshold (Lowered to enable more signals)
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
+input double InpAIDrawdownSizingLimit = 0.20;  // Drawdown fraction used for AI lot tapering
 
 //--- NN attribution forward-test diagnostics
 input group "NN Attribution Diagnostics"
@@ -105,6 +109,7 @@ input bool InpIntrabarEligibilityCandlestick = true;  // Intrabar eligibility fo
 input bool InpIntrabarEligibilityNeuralNetworkAI = true; // Intrabar eligibility for Neural Network AI
 input bool InpIntrabarEligibilityTransformerAI = true;   // Intrabar eligibility for Transformer AI
 input bool InpIntrabarEligibilityEnsembleAI = true;      // Intrabar eligibility for Ensemble AI
+input bool InpIntrabarEligibilityOnnxAI = true;          // Intrabar eligibility for ONNX AI
 input int  InpMaxIntrabarSymbolsPerCycle = 4;         // Max symbols eligible for intrabar evaluation per cycle
 input int  InpMaxSignalEvaluationsPerCycle = 4;       // Max total heavy signal evaluations per cycle across new-bar + intrabar work
 input int  InpIntrabarBackoffMaxSeconds = 60;         // Max per-symbol intrabar backoff interval
@@ -191,6 +196,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "Core\Strategy\AIStrategyAdapter.mqh"
 #include "Core\Strategy\TransformerAIStrategyAdapter.mqh"
 #include "Core\Strategy\EnsembleAIStrategyAdapter.mqh"
+#include "Core\Strategy\OnnxAIStrategyAdapter.mqh"
 #include "Core\Strategy\StrategyRegistry.mqh"
 #include "Core\Visualization\VisualDashboard.mqh"
 
@@ -207,7 +213,6 @@ CUnifiedRiskManager unifiedRiskManager;
 CPerformanceAnalytics performanceAnalytics;
 CAIPerformanceFeedback aiFeedback;
 CAIStrategyOrchestrator aiOrchestrator;
-CUtilities utilities;
 
 CNextGenStrategyBrain aiNextGenBrain;
 CNeuralNetworkStrategy* neuralNetStrategy = NULL;
@@ -1634,6 +1639,41 @@ bool ApproveTradeByUnifiedRisk(const STradeValidationRequest &request,
     return true;
 }
 
+void PopulateTradeRequestFromCandidate(const SApprovedTradeCandidate &candidate,
+                                       STradeValidationRequest &request)
+{
+    request.symbol = candidate.symbol;
+    request.orderType = candidate.orderType;
+    request.lotSize = candidate.lotSize;
+    request.stopLossPips = candidate.stopLossPips;
+    request.takeProfitPips = candidate.takeProfitPips;
+    request.confidence = candidate.tradeConfidence;
+    request.strategy = "EnterpriseConsensus";
+    request.reasoning = StringFormat("reserved_candidate | role=%s | cluster=%s | contributors=%s | ranking=%.3f",
+                                     candidate.strategyRoleTag,
+                                     candidate.strategyClusterTag,
+                                     candidate.contributorSummary,
+                                     candidate.rankingScore);
+    request.strategyRole = candidate.strategyRoleTag;
+    request.strategyCluster = candidate.strategyClusterTag;
+    request.clusterCode = candidate.strategyClusterCode;
+    request.contributorContext = candidate.contributorSummary;
+    request.requestTime = TimeCurrent();
+}
+
+bool ApproveAndReserveVirtualCandidate(const SApprovedTradeCandidate &candidate,
+                                       const string ownerTag,
+                                       const ulong cycleId,
+                                       SValidationResult &reserveResult)
+{
+    STradeValidationRequest reserveRequest;
+    PopulateTradeRequestFromCandidate(candidate, reserveRequest);
+    if(!ApproveTradeByUnifiedRisk(reserveRequest, "candidate-reserve", reserveResult, cycleId))
+        return false;
+
+    return unifiedRiskManager.ReserveVirtualPosition(ownerTag, reserveRequest, reserveResult.riskPercent);
+}
+
 //+------------------------------------------------------------------+
 //| Strategy-name helper                                             |
 //+------------------------------------------------------------------+
@@ -1974,6 +2014,8 @@ bool IsAIIntrabarEnabledByInput(const string strategyName)
         return InpIntrabarEligibilityTransformerAI;
     if(strategyName == "Ensemble AI")
         return InpIntrabarEligibilityEnsembleAI;
+    if(strategyName == "ONNX AI")
+        return InpIntrabarEligibilityOnnxAI;
     return false;
 }
 
@@ -2011,8 +2053,8 @@ string GetAIIntrabarStatusByName(const string strategyName, const ENUM_EA_MODE e
 string BuildAIIntrabarGovernanceSummary(const ENUM_EA_MODE effectiveMode)
 {
     string summary = "";
-    string aiNames[] = {"Neural Network AI", "Transformer AI", "Ensemble AI"};
-    string aiLabels[] = {"NeuralAI", "TransformerAI", "EnsembleAI"};
+    string aiNames[] = {"Neural Network AI", "Transformer AI", "Ensemble AI", "ONNX AI"};
+    string aiLabels[] = {"NeuralAI", "TransformerAI", "EnsembleAI", "OnnxAI"};
 
     for(int i = 0; i < ArraySize(aiNames); i++)
     {
@@ -2059,7 +2101,8 @@ bool IsAIContributorName(const string strategyName)
 {
     return (strategyName == "Transformer AI" ||
             strategyName == "Ensemble AI" ||
-            strategyName == "Neural Network AI");
+            strategyName == "Neural Network AI" ||
+            strategyName == "ONNX AI");
 }
 
 bool ContributorsIncludeIndicator(const string &contributors[])
@@ -2105,6 +2148,8 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (aiBaseEnabled && InpEnableTransformer), false, 1.10);
     RegisterStrategyDefinitionIfEnabled("Ensemble AI", STRATEGY_AI_ENHANCED, true,
                                         (aiBaseEnabled && InpEnableEnsemble), false, 1.20);
+    RegisterStrategyDefinitionIfEnabled("ONNX AI", STRATEGY_AI_ENHANCED, true,
+                                        (aiBaseEnabled && InpEnableOnnxAI), false, 2.00);
 
     ENUM_EA_MODE effectiveMode = ResolveEffectiveEAMode();
     if(effectiveMode != g_strategyRegistry.GetMode())
@@ -2253,6 +2298,8 @@ bool RegisterManagerAIAdapterByName(CEnterpriseStrategyManager* manager, const s
         registered = manager.RegisterStrategy(new CTransformerAIStrategyAdapter(), strategyName, true, strategyWeight, STRATEGY_TIER_1, PERIOD_CURRENT, true);
     else if(strategyName == "Ensemble AI")
         registered = manager.RegisterStrategy(new CEnsembleAIStrategyAdapter(), strategyName, true, strategyWeight, STRATEGY_TIER_1, PERIOD_CURRENT, true);
+    else if(strategyName == "ONNX AI")
+        registered = manager.RegisterStrategy(new COnnxAIStrategyAdapter(g_onnxModel), strategyName, true, strategyWeight, STRATEGY_TIER_1, PERIOD_CURRENT, true);
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_ai_register_failed");
     return registered;
@@ -2277,7 +2324,7 @@ void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager,
             continue;
         }
 
-        if(descriptor.name == "Transformer AI" || descriptor.name == "Ensemble AI")
+        if(descriptor.name == "Transformer AI" || descriptor.name == "Ensemble AI" || descriptor.name == "ONNX AI")
             RegisterManagerAIAdapterByName(manager, descriptor.name);
     }
 }
@@ -2381,6 +2428,11 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
         manager.SetStrategyGovernanceByName("Ensemble AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE, true, false);
         manager.SetStrategyConfidenceThresholdByName("Ensemble AI", InpAIConfidenceThreshold);
     }
+    if(g_strategyRegistry.IsStrategyActive("ONNX AI"))
+    {
+        manager.SetStrategyGovernanceByName("ONNX AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE, true, false);
+        manager.SetStrategyConfidenceThresholdByName("ONNX AI", InpAIConfidenceThreshold);
+    }
 
     if(g_strategyRegistry.IsStrategyActive("Neural Network AI"))
         manager.SetStrategyIntrabarPolicyByName("Neural Network AI",
@@ -2391,6 +2443,9 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
     if(g_strategyRegistry.IsStrategyActive("Ensemble AI"))
         manager.SetStrategyIntrabarPolicyByName("Ensemble AI",
                                                 ResolveAIIntrabarPolicyForMode("Ensemble AI", effectiveMode));
+    if(g_strategyRegistry.IsStrategyActive("ONNX AI"))
+        manager.SetStrategyIntrabarPolicyByName("ONNX AI",
+                                                ResolveAIIntrabarPolicyForMode("ONNX AI", effectiveMode));
 
     PrintFormat("[STRATEGY-GOVERNANCE] %s | class=%s | profile=%s | mode=%s | indicator_role=%s | ai_role=%s | intrabar={%s,%s} | strategies={%s}",
                 symbol,
@@ -3115,7 +3170,7 @@ int OnInit()
     // Initialize shared orchestrator only for optional AI adaptation modules.
     if(InpEnableAIMode)
     {
-        if(!aiOrchestrator.Initialize(0.4, 5))
+        if(!aiOrchestrator.Initialize(0.4, 5, InpAIDrawdownSizingLimit))
         {
             Print("[INIT] WARNING: AI Strategy Orchestrator failed to initialize - adaptation disabled");
         }
@@ -3285,7 +3340,7 @@ int OnInit()
         
         // Ensemble status
         int activeAIModels = g_strategyRegistry.GetActiveAICount();
-        aiStatus += "ENS:" + IntegerToString(activeAIModels) + "/3 | ";
+        aiStatus += "ENS:" + IntegerToString(activeAIModels) + "/4 | ";
         
         // Memory efficiency indicator
         aiStatus += "MEM:OPTIMIZED (dModel=32, heads=2, layers=1)";
@@ -3518,7 +3573,8 @@ int OnInit()
 
         Print("[AI-MODE] AI Mode enabled | Mode: ", EAModeToString(ResolveEffectiveEAMode()),
               " | NN: ", InpEnableNeuralNetwork, " | Transformer: ", InpEnableTransformer,
-              " | Ensemble: ", InpEnableEnsemble, " | Threshold: ", InpAIConfidenceThreshold,
+              " | Ensemble: ", InpEnableEnsemble, " | ONNX: ", InpEnableOnnxAI,
+              " | Threshold: ", InpAIConfidenceThreshold,
               " | NN Managers: ", nnInitCount,
               " | NN Online: ", InpEnableNNOnlineTraining,
               " | NN WeightMutation: ", InpEnableNNWeightMutation,
@@ -3713,7 +3769,7 @@ void OnTimer()
             
             // Ensemble status
             int activeAIModels = g_strategyRegistry.GetActiveAICount();
-            aiStatus += "ENS:" + IntegerToString(activeAIModels) + "/3 | ";
+            aiStatus += "ENS:" + IntegerToString(activeAIModels) + "/4 | ";
             
             // Memory efficiency indicator
             aiStatus += "MEM:OPTIMIZED";
@@ -3949,6 +4005,8 @@ void ProcessTradingLogic(bool fromTimer)
         SApprovedTradeCandidate bestCandidate;
         ulong scanCycleId = ++g_scanCycleSequence;
         datetime tickTime = TimeCurrent();
+        string bestReservationOwner = "scan_best_candidate";
+        unifiedRiskManager.ClearVirtualPositions();
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
         bool cooldownBlocked = (secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0);
         bool unprotectedEntryBlocked = unprotectedPositionsActive;
@@ -4544,6 +4602,18 @@ void ProcessTradingLogic(bool fromTimer)
 
                             // Calculate optimal lot size
                             double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, tradeConfidence);
+                            double drawdownMultiplier = aiOrchestrator.GetDrawdownMultiplier();
+                            if(drawdownMultiplier < 0.999)
+                            {
+                                double unadjustedLot = lotSize;
+                                lotSize = positionSizer.NormalizeVolume(currentSymbol, lotSize * drawdownMultiplier);
+                                PrintFormat("[POSITION-SIZE-DRAWDOWN] cycle=%I64u | %s | base=%.3f | multiplier=%.3f | adjusted=%.3f",
+                                            scanCycleId,
+                                            currentSymbol,
+                                            unadjustedLot,
+                                            drawdownMultiplier,
+                                            lotSize);
+                            }
 
                             // Update request with actual lot size and re-validate
                             tradeReq.lotSize = lotSize;
@@ -4605,7 +4675,32 @@ void ProcessTradingLogic(bool fromTimer)
                                             replaceBestCandidate ? "true" : "false");
 
                                 if(replaceBestCandidate)
-                                    bestCandidate = candidate;
+                                {
+                                    SApprovedTradeCandidate previousBest = bestCandidate;
+                                    bool hadPreviousBest = previousBest.valid;
+                                    if(hadPreviousBest)
+                                        unifiedRiskManager.ReleaseVirtualPosition(bestReservationOwner);
+
+                                    SValidationResult reserveResult;
+                                    if(ApproveAndReserveVirtualCandidate(candidate, bestReservationOwner, scanCycleId, reserveResult))
+                                    {
+                                        candidate.riskResult = reserveResult;
+                                        bestCandidate = candidate;
+                                    }
+                                    else if(hadPreviousBest)
+                                    {
+                                        SValidationResult restoreResult;
+                                        if(ApproveAndReserveVirtualCandidate(previousBest, bestReservationOwner, scanCycleId, restoreResult))
+                                        {
+                                            previousBest.riskResult = restoreResult;
+                                            bestCandidate = previousBest;
+                                        }
+                                        else
+                                        {
+                                            bestCandidate = SApprovedTradeCandidate();
+                                        }
+                                    }
+                                }
                             }
                             else
                             {
@@ -4783,6 +4878,12 @@ void ProcessTradingLogic(bool fromTimer)
                             UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
                     }
                 }
+
+                unifiedRiskManager.ReleaseVirtualPosition(bestReservationOwner);
+            }
+            else
+            {
+                unifiedRiskManager.ReleaseVirtualPosition(bestReservationOwner);
             }
     }
 

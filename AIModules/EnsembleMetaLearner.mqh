@@ -1,847 +1,754 @@
 //+------------------------------------------------------------------+
-//|                                                  EnsembleMetaLearner.mqh |
-//|                        Copyright 2023, MetaQuotes Software Corp. |
-//|                                             https://www.mql5.com |
+//| EnsembleMetaLearner.mqh                                          |
+//| HMM regime-aware transformer ensemble with Kelly reweighting      |
 //+------------------------------------------------------------------+
-#include <Object.mqh>
+#property strict
+
+#ifndef __ENSEMBLE_META_LEARNER_MQH__
+#define __ENSEMBLE_META_LEARNER_MQH__
+
+#include <Arrays/ArrayObj.mqh>
 #include "TransformerBrain.mqh"
 #include "UniversalTransformerService.mqh"
 
-//+------------------------------------------------------------------+
-//| Ensemble Meta Learner Class                                     |
-//+------------------------------------------------------------------+
+#define HMM_STATES 4
+#define HMM_OBS 3
+#define ENSEMBLE_ROLLING_WINDOW 60
+#define REGIME_NAMES_COUNT 4
+
+class CMarkovRegimeDetector
+{
+private:
+    double m_A[HMM_STATES][HMM_STATES];
+    double m_B[HMM_STATES][HMM_OBS];
+    double m_pi[HMM_STATES];
+    int    m_lastRegime;
+
+public:
+    void Init()
+    {
+        double A[HMM_STATES][HMM_STATES] = {
+            {0.70, 0.05, 0.20, 0.05},
+            {0.05, 0.70, 0.20, 0.05},
+            {0.10, 0.10, 0.75, 0.05},
+            {0.10, 0.10, 0.20, 0.60}
+        };
+        double B[HMM_STATES][HMM_OBS] = {
+            {0.50, 0.40, 0.10},
+            {0.50, 0.40, 0.10},
+            {0.65, 0.30, 0.05},
+            {0.10, 0.30, 0.60}
+        };
+        for(int i = 0; i < HMM_STATES; i++)
+        {
+            for(int j = 0; j < HMM_STATES; j++)
+                m_A[i][j] = A[i][j];
+            for(int j = 0; j < HMM_OBS; j++)
+                m_B[i][j] = B[i][j];
+        }
+        for(int i = 0; i < HMM_STATES; i++)
+            m_pi[i] = 1.0 / (double)HMM_STATES;
+        m_lastRegime = 2;
+    }
+
+    void Update(const double atrRatio, const double trendStrength)
+    {
+        int obs = 1;
+        if(atrRatio < 0.85)
+            obs = 0;
+        else if(atrRatio >= 1.35 || MathAbs(trendStrength) > 0.005)
+            obs = 2;
+
+        double newPi[HMM_STATES];
+        double scale = 0.0;
+        for(int j = 0; j < HMM_STATES; j++)
+        {
+            double sum = 0.0;
+            for(int i = 0; i < HMM_STATES; i++)
+                sum += m_pi[i] * m_A[i][j];
+            newPi[j] = sum * m_B[j][obs];
+            scale += newPi[j];
+        }
+
+        if(scale > 0.0)
+        {
+            for(int j = 0; j < HMM_STATES; j++)
+                m_pi[j] = newPi[j] / scale;
+        }
+    }
+
+    int MostLikely() const
+    {
+        int best = 0;
+        for(int i = 1; i < HMM_STATES; i++)
+        {
+            if(m_pi[i] > m_pi[best])
+                best = i;
+        }
+        return best;
+    }
+
+    double Prob(const int state) const
+    {
+        if(state < 0 || state >= HMM_STATES)
+            return 0.0;
+        return m_pi[state];
+    }
+
+    bool Changed()
+    {
+        int current = MostLikely();
+        bool changed = (current != m_lastRegime);
+        m_lastRegime = current;
+        return changed;
+    }
+
+    int LastRegime() const
+    {
+        return m_lastRegime;
+    }
+
+    ENUM_MARKET_REGIME ToEnum() const
+    {
+        int current = MostLikely();
+        if(current <= 1)
+            return MARKET_REGIME_TRENDING;
+        if(current == 2)
+            return MARKET_REGIME_RANGING;
+        return MARKET_REGIME_VOLATILE;
+    }
+
+    void GetProbabilities(double &out[])
+    {
+        ArrayResize(out, HMM_STATES);
+        for(int i = 0; i < HMM_STATES; i++)
+            out[i] = m_pi[i];
+    }
+};
+
+class CRegimeRepository
+{
+private:
+    bool   m_hasSaved[REGIME_NAMES_COUNT];
+    string m_names[REGIME_NAMES_COUNT];
+
+    string PathFor(const int regime, const int modelIndex)
+    {
+        return StringFormat("RegimeCheckpoints\\%s_model_%d.bin", m_names[regime], modelIndex);
+    }
+
+public:
+    void Init()
+    {
+        m_names[0] = "TrendUp";
+        m_names[1] = "TrendDown";
+        m_names[2] = "Ranging";
+        m_names[3] = "Volatile";
+        for(int i = 0; i < REGIME_NAMES_COUNT; i++)
+            m_hasSaved[i] = false;
+    }
+
+    void Deinit() {}
+
+    void OnRegimeChange(const int oldR, const int newR, CArrayObj &models)
+    {
+        if(oldR >= 0 && oldR < REGIME_NAMES_COUNT)
+        {
+            bool savedAny = false;
+            for(int i = 0; i < models.Total(); i++)
+            {
+                CTransformerBrain* model = (CTransformerBrain*)models.At(i);
+                if(model != NULL && model.SaveHeadState(PathFor(oldR, i)))
+                    savedAny = true;
+            }
+            if(savedAny)
+                m_hasSaved[oldR] = true;
+        }
+
+        if(newR >= 0 && newR < REGIME_NAMES_COUNT && m_hasSaved[newR])
+        {
+            for(int i = 0; i < models.Total(); i++)
+            {
+                CTransformerBrain* model = (CTransformerBrain*)models.At(i);
+                if(model != NULL)
+                    model.LoadHeadState(PathFor(newR, i));
+            }
+        }
+    }
+};
+
 class CEnsembleMetaLearner
 {
 private:
-    CArrayObj m_models;
-    CArrayDouble m_modelWeights;
-    CArrayDouble m_modelPerformanceHistory;
-    CArrayDouble m_modelRecentAccuracy;
-    bool m_usesSharedTransformer;  // Use shared transformer service
-    string m_symbol;               // Symbol for shared service
-    
-    // Regime detection state
-    double m_atrShort;
-    double m_atrLong;
-    double m_trendStrength;
-    double m_momentum;
-    datetime m_lastRegimeUpdate;
-    ENUM_MARKET_REGIME m_lastDetectedRegime;
-    
-    // Thompson Sampling state
-    CArrayDouble m_alphas; // Success counts
-    CArrayDouble m_betas;  // Failure counts
-    
+    CArrayObj            m_models;
+    bool                 m_usesSharedTransformer;
+    string               m_symbol;
+    double               m_lastConfidence;
+    double               m_atrShort;
+    double               m_atrLong;
+    double               m_trendStrength;
+    double               m_momentum;
+    datetime             m_lastRegimeUpdate;
+    ENUM_MARKET_REGIME   m_lastDetectedRegime;
+    CMarkovRegimeDetector m_hmm;
+    CRegimeRepository     m_regimeRepo;
+    double               m_modelWeights[];
+    double               m_modelPerformanceHistory[];
+    double               m_modelRecentAccuracy[];
+    double               m_modelWinRate[];
+    double               m_modelAvgWin[];
+    double               m_modelAvgLoss[];
+    int                  m_modelRollHead[];
+    int                  m_modelRollCount[];
+    double               m_modelRollResults[][ENSEMBLE_ROLLING_WINDOW];
+    int                  m_lastModelSignal[];
+    double               m_lastModelConfidence[];
+    int                  m_resolvedTradeCount;
+
+    double ClampValue(const double value, const double minValue, const double maxValue)
+    {
+        return MathMax(minValue, MathMin(maxValue, value));
+    }
+
+    void EnsureModelArrays()
+    {
+        int total = m_models.Total();
+        ArrayResize(m_modelWeights, total);
+        ArrayResize(m_modelPerformanceHistory, total);
+        ArrayResize(m_modelRecentAccuracy, total);
+        ArrayResize(m_modelWinRate, total);
+        ArrayResize(m_modelAvgWin, total);
+        ArrayResize(m_modelAvgLoss, total);
+        ArrayResize(m_modelRollHead, total);
+        ArrayResize(m_modelRollCount, total);
+        ArrayResize(m_modelRollResults, total);
+        ArrayResize(m_lastModelSignal, total);
+        ArrayResize(m_lastModelConfidence, total);
+
+        for(int i = 0; i < total; i++)
+        {
+            if(i >= ArraySize(m_modelPerformanceHistory) || m_modelPerformanceHistory[i] == 0.0)
+                m_modelPerformanceHistory[i] = 0.5;
+            if(m_modelRecentAccuracy[i] <= 0.0)
+                m_modelRecentAccuracy[i] = 0.5;
+            if(m_modelWinRate[i] <= 0.0)
+                m_modelWinRate[i] = 0.5;
+            if(m_modelAvgWin[i] <= 0.0)
+                m_modelAvgWin[i] = 1.0;
+            if(m_modelAvgLoss[i] <= 0.0)
+                m_modelAvgLoss[i] = 1.0;
+            if(m_modelWeights[i] <= 0.0)
+                m_modelWeights[i] = (total > 0) ? (1.0 / (double)total) : 0.0;
+            for(int j = 0; j < ENSEMBLE_ROLLING_WINDOW; j++)
+                m_modelRollResults[i][j] = 0.0;
+        }
+    }
+
+    double CalculateATR(const double &data[], const int period)
+    {
+        if(ArraySize(data) < period + 2)
+            return 0.0;
+
+        double sum = 0.0;
+        for(int i = 1; i <= period; i++)
+        {
+            double current = data[i - 1];
+            double previous = data[i];
+            sum += MathAbs(current - previous);
+        }
+        return sum / (double)period;
+    }
+
+    double CalculateTrendStrength(const double &data[])
+    {
+        if(ArraySize(data) < 20)
+            return 0.0;
+
+        int period = MathMin(20, ArraySize(data) - 1);
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double sumXY = 0.0;
+        double sumX2 = 0.0;
+        for(int i = 0; i < period; i++)
+        {
+            sumX += i;
+            sumY += data[i];
+            sumXY += (double)i * data[i];
+            sumX2 += (double)i * (double)i;
+        }
+        double denom = (period * sumX2) - (sumX * sumX);
+        if(MathAbs(denom) <= 1e-9)
+            return 0.0;
+        double slope = ((period * sumXY) - (sumX * sumY)) / denom;
+        double avgPrice = sumY / (double)period;
+        return (avgPrice > 1e-9) ? (slope / avgPrice) : 0.0;
+    }
+
+    double CalculateMomentum(const double &data[], const int period)
+    {
+        if(ArraySize(data) < period + 1 || data[period] == 0.0)
+            return 0.0;
+        return (data[0] - data[period]) / data[period];
+    }
+
+    void RecomputeRollingStats(const int modelIndex)
+    {
+        if(modelIndex < 0 || modelIndex >= ArraySize(m_modelRollResults))
+            return;
+
+        int count = m_modelRollCount[modelIndex];
+        if(count <= 0)
+        {
+            m_modelWinRate[modelIndex] = 0.5;
+            m_modelAvgWin[modelIndex] = 1.0;
+            m_modelAvgLoss[modelIndex] = 1.0;
+            return;
+        }
+
+        int wins = 0;
+        double sumWin = 0.0;
+        double sumLoss = 0.0;
+        int lossCount = 0;
+
+        for(int i = 0; i < count; i++)
+        {
+            double value = m_modelRollResults[modelIndex][i];
+            if(value > 0.0)
+            {
+                wins++;
+                sumWin += value;
+            }
+            else if(value < 0.0)
+            {
+                sumLoss += MathAbs(value);
+                lossCount++;
+            }
+        }
+
+        m_modelWinRate[modelIndex] = (double)wins / (double)count;
+        m_modelAvgWin[modelIndex] = (wins > 0) ? (sumWin / (double)wins) : 1.0;
+        m_modelAvgLoss[modelIndex] = (lossCount > 0) ? (sumLoss / (double)lossCount) : 1.0;
+    }
+
 public:
-    CEnsembleMetaLearner();
-    ~CEnsembleMetaLearner();
-    
-    // Core methods
-    bool AddModel(CTransformerBrain* model, double initialWeight = 1.0);
-    bool RemoveModel(int index);
-    bool ProcessMarketData(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence);
-    bool TrainEnsemble(const double &marketData[], int seqLen, int targetClass);
-    
-    // Model management
-    void UpdateModelWeights(ENUM_MARKET_REGIME regime);
-    void UpdateModelPerformance(int modelIndex, double result);
-    double CalculateModelWeight(int modelIndex, ENUM_MARKET_REGIME regime);
-    double EvaluateModelPerformance(CTransformerBrain* model, const double &testData[]);
-    int GetActiveModelCount() const;
-    void DeactivateUnderperformingModels(double threshold = 0.3);
-    
-    // Training helpers
-    bool TrainModel(CTransformerBrain* model, const double &data[], int seqLen, int targetClass, double &loss);
-    
-    // Advanced regime detection
-    ENUM_MARKET_REGIME DetectMarketRegime(const double &marketData[]);
-    void UpdateRegimeState(const double &marketData[]);
-    
-        
-    // Configuration
-    void SetSymbol(const string& symbol) { m_symbol = symbol; }
-    void SetUseSharedTransformer(bool useShared) { m_usesSharedTransformer = useShared; }
-    
-    // Universal Transformer integration
-    bool Initialize(const string& symbol, bool useSharedTransformer = true);
-    bool UpdateEnsemblePerformance(double tradeResult);
-    void GetEnsembleStatus(string& status);
-    
-    // Core methods with shared transformer support
-    bool ProcessWithSharedTransformer(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence);
-    bool CreateInterpretationModels();
-    
-    // Model creation methods
-    CTransformerBrain* CreateShortTermModel();
-    CTransformerBrain* CreateLongTermModel();
-    CTransformerBrain* CreateMediumTermModel();
-    CTransformerBrain* CreateVolatilityFocusedModel();
-    
-    double GetConfidence() const { return m_lastConfidence; } 
-
-private:
-    double m_lastConfidence;
-    double CalculateATR(const double &data[], int period);
-    double CalculateTrendStrength(const double &data[]);
-    double CalculateMomentum(const double &data[], int period);
-};
-
-//+------------------------------------------------------------------+
-//| Constructor                                                     |
-//+------------------------------------------------------------------+
-CEnsembleMetaLearner::CEnsembleMetaLearner() : 
-    m_lastConfidence(0.0),
-    m_atrShort(0.0),
-    m_atrLong(0.0),
-    m_trendStrength(0.0),
-    m_momentum(0.0),
-    m_lastRegimeUpdate(0),
-    m_lastDetectedRegime(MARKET_REGIME_RANGING),
-    m_usesSharedTransformer(true),
-    m_symbol("")
-{
-    m_models.FreeMode(true);
-    m_modelPerformanceHistory.Resize(0);
-    m_modelRecentAccuracy.Resize(0);
-    m_alphas.Resize(0);
-    m_betas.Resize(0);
-}
-
-//+------------------------------------------------------------------+
-//| Destructor                                                      |
-//+------------------------------------------------------------------+
-CEnsembleMetaLearner::~CEnsembleMetaLearner()
-{
-    m_models.Clear();
-}
-
-//+------------------------------------------------------------------+
-//| Add model to ensemble                                          |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::AddModel(CTransformerBrain* model, double initialWeight)
-{
-    if(model == NULL) return false;
-    
-    if(m_models.Add(dynamic_cast<CObject*>(model)))
+    CEnsembleMetaLearner()
     {
-        m_modelWeights.Resize(m_models.Total());
-        m_modelWeights.Update(m_models.Total() - 1, initialWeight);
-        
-        m_alphas.Resize(m_models.Total());
-        m_alphas.Update(m_models.Total() - 1, 1.0); // Prior: 1 success
-        
-        m_betas.Resize(m_models.Total());
-        m_betas.Update(m_models.Total() - 1, 1.0);  // Prior: 1 failure
-        
+        m_models.FreeMode(true);
+        m_usesSharedTransformer = true;
+        m_symbol = "";
+        m_lastConfidence = 0.0;
+        m_atrShort = 0.0;
+        m_atrLong = 0.0;
+        m_trendStrength = 0.0;
+        m_momentum = 0.0;
+        m_lastRegimeUpdate = 0;
+        m_lastDetectedRegime = MARKET_REGIME_RANGING;
+        m_resolvedTradeCount = 0;
+        m_hmm.Init();
+        m_regimeRepo.Init();
+    }
+
+    virtual ~CEnsembleMetaLearner()
+    {
+        m_models.Clear();
+    }
+
+    bool AddModel(CTransformerBrain* model, const double initialWeight = 1.0)
+    {
+        if(model == NULL)
+            return false;
+        if(!m_models.Add(model))
+            return false;
+
+        EnsureModelArrays();
+        int index = m_models.Total() - 1;
+        m_modelWeights[index] = initialWeight;
+        m_modelPerformanceHistory[index] = 0.5;
+        m_modelRecentAccuracy[index] = 0.5;
+        m_modelWinRate[index] = 0.5;
+        m_modelAvgWin[index] = 1.0;
+        m_modelAvgLoss[index] = 1.0;
+        m_modelRollHead[index] = 0;
+        m_modelRollCount[index] = 0;
+        m_lastModelSignal[index] = 0;
+        m_lastModelConfidence[index] = 0.0;
         return true;
     }
-    
-    return false;
-}
 
-//+------------------------------------------------------------------+
-//| Remove model from ensemble                                     |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::RemoveModel(int index)
-{
-    if(index < 0 || index >= m_models.Total()) return false;
-
-    if(m_models.Delete(index))
+    bool RemoveModel(const int index)
     {
-        m_modelWeights.Delete(index);
-        m_alphas.Delete(index);
-        m_betas.Delete(index);
+        if(index < 0 || index >= m_models.Total())
+            return false;
+        if(!m_models.Delete(index))
+            return false;
+
+        EnsureModelArrays();
         return true;
     }
-    
-    return false;
-}
 
-//+------------------------------------------------------------------+
-//| Process market data through ensemble                           |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::ProcessMarketData(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence)
-{
-    ensembleBuySignal = 0.0;
-    ensembleSellSignal = 0.0;
-    confidence = 0.0;
-    
-    if(m_models.Total() == 0) return false;
-    
-    double weightedNoneSignal = 0.0;
-    double weightedBuySignal = 0.0;
-    double weightedSellSignal = 0.0;
-    double totalWeight = 0.0;
-    
-    // Get current market regime using advanced detection
-    ENUM_MARKET_REGIME activeRegime = DetectMarketRegime(marketData);
-    
-    // Update model weights based on current regime
-    UpdateModelWeights(activeRegime);
-    
-    // Calculate ensemble signals
-    for(int i = 0; i < m_models.Total(); i++)
+    void UpdateKellyWeights()
     {
-        CTransformerBrain* model = dynamic_cast<CTransformerBrain*>(m_models.At(i));
-        if(model == NULL) continue;
-        
-        double modelWeight = m_modelWeights.At(i);
-        if(modelWeight < 0.01) continue;
-        
-        int dModel = model.GetModelDimension();
-        int maxSeqLen = model.GetMaxSequenceLength();
-        int totalFeatures = ArraySize(marketData);
-        int availableSeqLen = (dModel > 0) ? (totalFeatures / dModel) : 0;
-        int actualSeqLen = MathMin(availableSeqLen, maxSeqLen);
-        if(dModel <= 0 || actualSeqLen <= 0)
-            continue;
+        int total = m_models.Total();
+        if(total <= 0)
+            return;
 
-        double modelInput[];
-        int startOffset = MathMax(0, totalFeatures - (actualSeqLen * dModel));
-        ArrayResize(modelInput, actualSeqLen * dModel);
-        ArrayCopy(modelInput, marketData, 0, startOffset, actualSeqLen * dModel);
+        double totalPos = 0.0;
+        double kf[];
+        ArrayResize(kf, total);
+        for(int i = 0; i < total; i++)
+        {
+            double p = ClampValue(m_modelWinRate[i], 0.01, 0.99);
+            double b = (m_modelAvgLoss[i] > 1e-9) ? (m_modelAvgWin[i] / m_modelAvgLoss[i]) : 1.0;
+            double f = (p * (b + 1.0) - 1.0) / (b + 1e-9);
+            kf[i] = MathMax(0.0, f) * 0.5;
+            totalPos += kf[i];
+        }
 
-        double predictions[];
-        if(!model.GetPredictions(modelInput, actualSeqLen, predictions) || ArraySize(predictions) != 3)
-            continue;
-
-        // AUDIT FIX: Validate prediction values for NaN/invalid before aggregation
-        if(!MathIsValidNumber(predictions[0]) || !MathIsValidNumber(predictions[1]) || !MathIsValidNumber(predictions[2]))
-            continue;
-
-        weightedNoneSignal = weightedNoneSignal + (predictions[0] * modelWeight);
-        weightedBuySignal = weightedBuySignal + (predictions[1] * modelWeight);
-        weightedSellSignal = weightedSellSignal + (predictions[2] * modelWeight);
-        totalWeight = totalWeight + modelWeight;
+        for(int i = 0; i < total; i++)
+            m_modelWeights[i] = (totalPos > 0.0) ? (kf[i] / totalPos) : (1.0 / (double)total);
     }
-    
-    if(totalWeight > 0)
+
+    bool ProcessMarketData(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence)
     {
-        double ensembleNoneSignal = weightedNoneSignal / totalWeight;
-        ensembleBuySignal = weightedBuySignal / totalWeight;
-        ensembleSellSignal = weightedSellSignal / totalWeight;
-        double directionalConfidence = MathMax(ensembleBuySignal, ensembleSellSignal);
-        confidence = MathMax(0.0, MathMin(1.0, MathMax(directionalConfidence, 1.0 - ensembleNoneSignal)));
-        
-        // Guard against NaN
-        if(confidence != confidence) // NaN check
-            confidence = 0.0;
-            
+        ensembleBuySignal = 0.0;
+        ensembleSellSignal = 0.0;
+        confidence = 0.0;
+
+        if(m_models.Total() <= 0)
+            return false;
+
+        EnsureModelArrays();
+        ENUM_MARKET_REGIME activeRegime = DetectMarketRegime(marketData);
+        UpdateModelWeights(activeRegime);
+
+        double totalWeight = 0.0;
+        double noneWeight = 0.0;
+        for(int i = 0; i < m_models.Total(); i++)
+        {
+            CTransformerBrain* model = (CTransformerBrain*)m_models.At(i);
+            if(model == NULL)
+                continue;
+
+            int dModel = model.GetModelDimension();
+            int maxSeqLen = model.GetMaxSequenceLength();
+            if(dModel <= 0)
+                continue;
+
+            int availableSeqLen = ArraySize(marketData) / dModel;
+            int actualSeqLen = MathMin(availableSeqLen, maxSeqLen);
+            if(actualSeqLen <= 0)
+                continue;
+
+            double modelInput[];
+            ArrayResize(modelInput, actualSeqLen * dModel);
+            int startOffset = MathMax(0, ArraySize(marketData) - (actualSeqLen * dModel));
+            ArrayCopy(modelInput, marketData, 0, startOffset, actualSeqLen * dModel);
+
+            double predictions[];
+            if(!model.GetPredictions(modelInput, actualSeqLen, predictions) || ArraySize(predictions) != 3)
+                continue;
+
+            double modelWeight = m_modelWeights[i];
+            totalWeight += modelWeight;
+            noneWeight += predictions[0] * modelWeight;
+            ensembleBuySignal += predictions[1] * modelWeight;
+            ensembleSellSignal += predictions[2] * modelWeight;
+
+            int signal = 0;
+            if(predictions[1] > predictions[2] && predictions[1] > predictions[0])
+                signal = 1;
+            else if(predictions[2] > predictions[1] && predictions[2] > predictions[0])
+                signal = -1;
+            m_lastModelSignal[i] = signal;
+            m_lastModelConfidence[i] = MathMax(predictions[1], predictions[2]);
+        }
+
+        if(totalWeight <= 0.0)
+            return false;
+
+        ensembleBuySignal /= totalWeight;
+        ensembleSellSignal /= totalWeight;
+        double ensembleNone = noneWeight / totalWeight;
+        confidence = MathMax(0.0, MathMin(1.0, MathMax(MathMax(ensembleBuySignal, ensembleSellSignal), 1.0 - ensembleNone)));
         m_lastConfidence = confidence;
         return true;
     }
-    
-    // Set confidence to 0.0 when no valid signals
-    confidence = 0.0;
-    m_lastConfidence = 0.0;
-    return false;
-}
 
-//+------------------------------------------------------------------+
-//| Update model weights based on market regime                      |
-//+------------------------------------------------------------------+
-void CEnsembleMetaLearner::UpdateModelWeights(ENUM_MARKET_REGIME regime)
-{
-    if(m_models.Total() == 0) return;
-    
-    // Calculate raw weights
-    for(int i = 0; i < m_models.Total(); i++)
+    bool TrainEnsemble(const double &marketData[], const int seqLen, const int targetClass)
     {
-        double weight = CalculateModelWeight(i, regime);
-        m_modelWeights.Update(i, weight);
-    }
-    
-    // Normalize weights
-    double totalWeight = 0.0;
-    for(int i = 0; i < m_modelWeights.Total(); i++)
-    {
-        totalWeight += m_modelWeights.At(i);
-    }
-    
-    if(totalWeight > 0)
-    {
-        for(int i = 0; i < m_modelWeights.Total(); i++)
+        bool anySuccess = false;
+        for(int i = 0; i < m_models.Total(); i++)
         {
-            double normalizedWeight = m_modelWeights.At(i) / totalWeight;
-            m_modelWeights.Update(i, normalizedWeight);
+            CTransformerBrain* model = (CTransformerBrain*)m_models.At(i);
+            double loss = 0.0;
+            if(model != NULL && TrainModel(model, marketData, seqLen, targetClass, loss))
+                anySuccess = true;
         }
+        UpdateModelWeights(m_lastDetectedRegime);
+        return anySuccess;
     }
-}
 
-//+------------------------------------------------------------------+
-//| Update model performance based on trade result                  |
-//+------------------------------------------------------------------+
-void CEnsembleMetaLearner::UpdateModelPerformance(int modelIndex, double result)
-{
-    if(modelIndex < 0 || modelIndex >= m_models.Total()) return;
-    
-    // Ensure m_modelRecentAccuracy is sized correctly
-    if(m_modelRecentAccuracy.Total() <= modelIndex)
+    void UpdateModelWeights(const ENUM_MARKET_REGIME regime)
     {
-        m_modelRecentAccuracy.Resize(m_models.Total());
-        for(int i = m_modelRecentAccuracy.Total(); i < m_models.Total(); i++)
-            m_modelRecentAccuracy.Update(i, 0.5); // Default to neutral accuracy
-    }
-    
-    // Update accuracy with smoothing (exponential moving average)
-    double alpha = 0.1; // 10% weight to new result
-    double currentAccuracy = m_modelRecentAccuracy.At(modelIndex);
-    double win = (result > 0) ? 1.0 : 0.0;
-    
-    // Thompson update
-    if(win > 0.5)
-        m_alphas.Update(modelIndex, m_alphas.At(modelIndex) + 1.0);
-    else
-        m_betas.Update(modelIndex, m_betas.At(modelIndex) + 1.0);
-        
-    double updatedAccuracy = (alpha * win) + ((1.0 - alpha) * currentAccuracy);
-    m_modelRecentAccuracy.Update(modelIndex, updatedAccuracy);
-    
-    // Periodically re-normalize weights
-    UpdateModelWeights(m_lastDetectedRegime);
-}
+        EnsureModelArrays();
+        int total = m_models.Total();
+        if(total <= 0)
+            return;
 
-//+------------------------------------------------------------------+
-//| Calculate model weight based on performance and regime         |
-//+------------------------------------------------------------------+
-double CEnsembleMetaLearner::CalculateModelWeight(int modelIndex, ENUM_MARKET_REGIME regime)
-{
-    if(modelIndex < 0 || modelIndex >= m_models.Total()) return 0.0;
-    
-    CTransformerBrain* model = dynamic_cast<CTransformerBrain*>(m_models.At(modelIndex));
-    if(model == NULL) return 0.0;
-    
-    // Base weight from performance history
-    double performanceScore = 0.5;
-    if(modelIndex < m_modelPerformanceHistory.Total())
-    {
-        performanceScore = m_modelPerformanceHistory.At(modelIndex);
-    }
-    
-    // Incorporate recent accuracy (Thompson-lite weighting)
-    if(modelIndex < m_modelRecentAccuracy.Total())
-    {
-        double recentAcc = m_modelRecentAccuracy.At(modelIndex);
-        
-        // Advanced Thompson Sampling Sample: Mean = alpha / (alpha + beta)
-        double a = m_alphas.At(modelIndex);
-        double b = m_betas.At(modelIndex);
-        double thompsonMean = a / (a + b);
-        
-        // Combine history, recent EMA, and Thompson mean
-        performanceScore = (performanceScore * 0.4) + (recentAcc * 0.3) + (thompsonMean * 0.3);
-    }
-    
-    // Regime-specific adjustment with volatility adaptation
-    double regimeMultiplier = 1.0;
-    double volatilityAdjustment = 1.0;
-    
-    switch(regime)
-    {
-        case MARKET_REGIME_TRENDING:
-            regimeMultiplier = 1.3; // Favor trending models
-            volatilityAdjustment = (m_atrShort > m_atrLong) ? 0.9 : 1.1;
-            break;
-        case MARKET_REGIME_VOLATILE:
-            regimeMultiplier = 0.7; // Reduce weight in volatile conditions
-            volatilityAdjustment = (m_trendStrength > 0.5) ? 1.2 : 0.8;
-            break;
-        case MARKET_REGIME_RANGING:
-            regimeMultiplier = 1.0; // Neutral for ranging
-            volatilityAdjustment = 1.0;
-            break;
-        default:
-            regimeMultiplier = 1.0;
-            volatilityAdjustment = 1.0;
-            break;
-    }
-    
-    // Momentum-based dynamic adjustment
-    double momentumAdjustment = 1.0;
-    if(MathAbs(m_momentum) > 0.15)
-    {
-        momentumAdjustment = 1.0 + (MathAbs(m_momentum) * 0.5);
-    }
-    
-    // Combine all factors
-    double finalWeight = performanceScore * regimeMultiplier * volatilityAdjustment * momentumAdjustment;
-    
-    // Ensure weight stays within reasonable bounds
-    return MathMax(0.1, MathMin(2.0, finalWeight));
-}
-
-//+------------------------------------------------------------------+
-//| Train ensemble on market data                                   |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::TrainEnsemble(const double &marketData[], int seqLen, int targetClass)
-{
-    if(m_models.Total() == 0) return false;
-    
-    bool success = false;
-    for(int i = 0; i < m_models.Total(); i++)
-    {
-        CTransformerBrain* model = dynamic_cast<CTransformerBrain*>(m_models.At(i));
-        if(model == NULL) continue;
-        
-        double loss = 0.0;
-        if(TrainModel(model, marketData, seqLen, targetClass, loss))
+        double sum = 0.0;
+        for(int i = 0; i < total; i++)
         {
-            success = true;
+            double weight = CalculateModelWeight(i, regime);
+            m_modelWeights[i] = MathMax(0.01, weight);
+            sum += m_modelWeights[i];
         }
+        if(sum <= 0.0)
+            sum = 1.0;
+        for(int i = 0; i < total; i++)
+            m_modelWeights[i] /= sum;
     }
-    
-    // Update market regime and adjust weights using advanced detection
-    ENUM_MARKET_REGIME detectedRegime = DetectMarketRegime(marketData);
-    UpdateModelWeights(detectedRegime);
-    
-    return success;
-}
 
-//+------------------------------------------------------------------+
-//| Evaluate model performance                                       |
-//+------------------------------------------------------------------+
-double CEnsembleMetaLearner::EvaluateModelPerformance(CTransformerBrain* model, const double &testData[])
-{
-    if(model == NULL || ArraySize(testData) == 0) return 0.0;
-    
-    double predictions[];
-    if(model.GetPredictions(testData, predictions) && ArraySize(predictions) == 3)
+    void UpdateModelPerformance(const int modelIndex, const double result)
+    {
+        if(modelIndex < 0 || modelIndex >= m_models.Total())
+            return;
+
+        double emaAlpha = 0.10;
+        double win = (result > 0.0) ? 1.0 : 0.0;
+        m_modelRecentAccuracy[modelIndex] =
+            (emaAlpha * win) + ((1.0 - emaAlpha) * m_modelRecentAccuracy[modelIndex]);
+        m_modelPerformanceHistory[modelIndex] =
+            (0.15 * ClampValue(0.5 + result, 0.0, 1.0)) + (0.85 * m_modelPerformanceHistory[modelIndex]);
+
+        int slot = m_modelRollHead[modelIndex] % ENSEMBLE_ROLLING_WINDOW;
+        m_modelRollResults[modelIndex][slot] = result;
+        m_modelRollHead[modelIndex]++;
+        if(m_modelRollCount[modelIndex] < ENSEMBLE_ROLLING_WINDOW)
+            m_modelRollCount[modelIndex]++;
+        RecomputeRollingStats(modelIndex);
+    }
+
+    double CalculateModelWeight(const int modelIndex, const ENUM_MARKET_REGIME regime)
+    {
+        if(modelIndex < 0 || modelIndex >= m_models.Total())
+            return 0.0;
+
+        double performance = m_modelPerformanceHistory[modelIndex];
+        double accuracy = m_modelRecentAccuracy[modelIndex];
+        double winRate = m_modelWinRate[modelIndex];
+
+        double regimeMultiplier = 1.0;
+        if(regime == MARKET_REGIME_TRENDING)
+            regimeMultiplier = (modelIndex == 0) ? 1.15 : 1.05;
+        else if(regime == MARKET_REGIME_VOLATILE)
+            regimeMultiplier = (modelIndex == m_models.Total() - 1) ? 1.20 : 0.95;
+
+        double momentumBoost = 1.0 + MathMin(0.25, MathAbs(m_momentum) * 0.5);
+        return MathMax(0.05, (performance * 0.40 + accuracy * 0.30 + winRate * 0.30) * regimeMultiplier * momentumBoost);
+    }
+
+    double EvaluateModelPerformance(CTransformerBrain* model, const double &testData[])
+    {
+        if(model == NULL)
+            return 0.0;
+        double predictions[];
+        if(!model.GetPredictions(testData, predictions) || ArraySize(predictions) != 3)
+            return 0.0;
         return MathMax(predictions[1], predictions[2]);
-    
-    return 0.0;
-}
+    }
 
-//+------------------------------------------------------------------+
-//| Get active model count                                          |
-//+------------------------------------------------------------------+
-int CEnsembleMetaLearner::GetActiveModelCount() const
-{
-    int count = 0;
-    for(int i = 0; i < m_models.Total(); i++)
+    int GetActiveModelCount() const
     {
-        CTransformerBrain* model = dynamic_cast<CTransformerBrain*>(m_models.At(i));
-        if(model != NULL)
+        return m_models.Total();
+    }
+
+    void DeactivateUnderperformingModels(const double threshold = 0.3)
+    {
+        for(int i = 0; i < ArraySize(m_modelWeights); i++)
         {
-            count++;
+            if(m_modelRecentAccuracy[i] < threshold)
+                m_modelWeights[i] = MathMax(0.01, m_modelWeights[i] * 0.5);
         }
     }
-    return count;
-}
 
-//+------------------------------------------------------------------+
-//| Deactivate underperforming models with advanced performance metrics|
-//+------------------------------------------------------------------+
-void CEnsembleMetaLearner::DeactivateUnderperformingModels(double threshold)
-{
-    if(m_models.Total() == 0) return;
-    
-    // Evaluate each model's recent performance
-    for(int i = 0; i < m_models.Total(); i++)
+    bool TrainModel(CTransformerBrain* model, const double &data[], const int seqLen, const int targetClass, double &loss)
     {
-        CTransformerBrain* model = dynamic_cast<CTransformerBrain*>(m_models.At(i));
-        if(model == NULL) continue;
-        
-        // Calculate performance metrics
-        double currentWeight = m_modelWeights.At(i);
-        double emptyTestData[];
-        ArrayResize(emptyTestData, 0);
-        double performanceScore = EvaluateModelPerformance(model, emptyTestData);
-        
-        // Update performance history
-        if(i >= m_modelPerformanceHistory.Total())
+        if(model == NULL)
+            return false;
+        return model.TrainStep(data, targetClass, loss);
+    }
+
+    ENUM_MARKET_REGIME DetectMarketRegimeLegacy(const double &marketData[])
+    {
+        if(ArraySize(marketData) < 50)
+            return MARKET_REGIME_RANGING;
+
+        double atrRatio = (m_atrLong > 1e-9) ? (m_atrShort / (m_atrLong + 1e-9)) : 1.0;
+        if(atrRatio > 1.5)
+            return MARKET_REGIME_VOLATILE;
+        if(MathAbs(m_trendStrength) > 0.003)
+            return MARKET_REGIME_TRENDING;
+        return MARKET_REGIME_RANGING;
+    }
+
+    ENUM_MARKET_REGIME DetectMarketRegime(const double &marketData[])
+    {
+        UpdateRegimeState(marketData);
+        return m_hmm.ToEnum();
+    }
+
+    void UpdateRegimeState(const double &marketData[])
+    {
+        if(ArraySize(marketData) < 60)
+            return;
+
+        m_atrShort = CalculateATR(marketData, 14);
+        m_atrLong = CalculateATR(marketData, 50);
+        m_trendStrength = CalculateTrendStrength(marketData);
+        m_momentum = CalculateMomentum(marketData, 14);
+        m_lastRegimeUpdate = TimeCurrent();
+
+        double atrRatio = (m_atrLong > 1e-9) ? (m_atrShort / (m_atrLong + 1e-9)) : 1.0;
+        int oldRegime = m_hmm.LastRegime();
+        m_hmm.Update(atrRatio, m_trendStrength);
+        if(m_hmm.Changed())
         {
-            m_modelPerformanceHistory.Resize(i + 1);
-        }
-        m_modelPerformanceHistory.Update(i, performanceScore);
-        
-        // Calculate moving average of recent performance
-        double recentPerformance = 0.0;
-        int historySize = MathMin(10, m_modelPerformanceHistory.Total());
-        for(int j = MathMax(0, i - historySize + 1); j <= i && j < m_modelPerformanceHistory.Total(); j++)
-        {
-            recentPerformance += m_modelPerformanceHistory.At(j);
-        }
-        if(historySize > 0)
-            recentPerformance /= historySize;
-        
-        // Advanced deactivation logic with multiple factors
-        bool shouldDeactivate = false;
-        
-        // Factor 1: Performance below threshold
-        if(recentPerformance < threshold)
-        {
-            shouldDeactivate = true;
-        }
-        
-        // Factor 2: Performance declining over time
-        if(i > 0 && i < m_modelPerformanceHistory.Total())
-        {
-            double previousPerformance = m_modelPerformanceHistory.At(i - 1);
-            if(performanceScore < previousPerformance * 0.8) // 20% decline
+            int newRegime = m_hmm.LastRegime();
+            m_regimeRepo.OnRegimeChange(oldRegime, newRegime, m_models);
+
+            for(int i = 0; i < m_models.Total(); i++)
             {
-                shouldDeactivate = true;
+                CTransformerBrain* model = (CTransformerBrain*)m_models.At(i);
+                if(model == NULL)
+                    continue;
+
+                double fisherApprox[];
+                model.GetRecentFisherApprox(fisherApprox);
+                model.AnchorEWC(fisherApprox);
             }
         }
-        
-        // Factor 3: Volatility-based adjustment (keep more models in volatile conditions)
-        if(m_atrShort > m_atrLong * 1.3 && recentPerformance > threshold * 0.8)
-        {
-            shouldDeactivate = false; // Keep model in volatile conditions even if slightly underperforming
-        }
-        
-        // Apply deactivation with gradual weight reduction instead of hard cutoff
-        if(shouldDeactivate)
-        {
-            double newWeight = currentWeight * 0.5; // Reduce by 50%
-            if(newWeight < 0.05)
-                newWeight = 0.0; // Fully deactivate if very low
-            m_modelWeights.Update(i, newWeight);
-        }
-        else if(currentWeight < 1.0 && recentPerformance > threshold * 1.1)
-        {
-            // Gradually reactivate improving models
-            double newWeight = MathMin(1.0, currentWeight * 1.2);
-            m_modelWeights.Update(i, newWeight);
-        }
+
+        m_lastDetectedRegime = m_hmm.ToEnum();
     }
-    
-    // Re-normalize weights after adjustments
-    double totalWeight = 0.0;
-    for(int i = 0; i < m_modelWeights.Total(); i++)
+
+    void SetSymbol(const string &symbol)
     {
-        totalWeight += m_modelWeights.At(i);
+        m_symbol = symbol;
     }
-    
-    if(totalWeight > 0)
+
+    void SetUseSharedTransformer(const bool useShared)
     {
-        for(int i = 0; i < m_modelWeights.Total(); i++)
-        {
-            double normalizedWeight = m_modelWeights.At(i) / totalWeight;
-            m_modelWeights.Update(i, normalizedWeight);
-        }
+        m_usesSharedTransformer = useShared;
     }
-}
 
-//+------------------------------------------------------------------+
-//| Train individual model                                          |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::TrainModel(CTransformerBrain* model, const double &data[], int seqLen, int targetClass, double &loss)
-{
-    if(model == NULL || ArraySize(data) == 0 || seqLen <= 0) return false;
-
-    return model.TrainStep(data, targetClass, loss);
-}
-
-//+------------------------------------------------------------------+
-//| Detect market regime using volatility, trend, and momentum         |
-//+------------------------------------------------------------------+
-ENUM_MARKET_REGIME CEnsembleMetaLearner::DetectMarketRegime(const double &marketData[])
-{
-    if(ArraySize(marketData) < 50)
-        return MARKET_REGIME_RANGING;
-    
-    UpdateRegimeState(marketData);
-    
-    // Volatility ratio: short-term ATR / long-term ATR
-    double volatilityRatio = (m_atrLong > 0) ? m_atrShort / m_atrLong : 1.0;
-    
-    // Determine regime based on multiple factors
-    bool isVolatile = (volatilityRatio > 1.5);
-    bool isTrending = (MathAbs(m_trendStrength) > 0.3);
-    bool isMomentumStrong = (MathAbs(m_momentum) > 0.2);
-    
-    if(isVolatile)
+    bool Initialize(const string &symbol, const bool useSharedTransformer = true)
     {
-        m_lastDetectedRegime = MARKET_REGIME_VOLATILE;
-    }
-    else if(isTrending && isMomentumStrong)
-    {
-        m_lastDetectedRegime = (m_trendStrength > 0) ? MARKET_REGIME_TRENDING : MARKET_REGIME_RANGING;
-    }
-    else
-    {
-        m_lastDetectedRegime = MARKET_REGIME_RANGING;
-    }
-    
-    return m_lastDetectedRegime;
-}
-
-//+------------------------------------------------------------------+
-//| Update regime detection state variables                            |
-//+------------------------------------------------------------------+
-void CEnsembleMetaLearner::UpdateRegimeState(const double &marketData[])
-{
-    if(ArraySize(marketData) < 50)
-        return;
-    
-    m_atrShort = CalculateATR(marketData, 14);
-    m_atrLong = CalculateATR(marketData, 50);
-    m_trendStrength = CalculateTrendStrength(marketData);
-    m_momentum = CalculateMomentum(marketData, 14);
-    m_lastRegimeUpdate = TimeCurrent();
-}
-
-//+------------------------------------------------------------------+
-//| Calculate Average True Range for volatility measurement            |
-//+------------------------------------------------------------------+
-double CEnsembleMetaLearner::CalculateATR(const double &data[], int period)
-{
-    if(ArraySize(data) < period + 1)
-        return 0.0;
-    
-    double atr = 0.0;
-    double tr = 0.0;
-    double prevClose = data[0];
-    
-    for(int i = 1; i <= period; i++)
-    {
-        double high = data[i];
-        double low = data[i];
-        double close = data[i];
-        
-        double hl = high - low;
-        double hc = MathAbs(high - prevClose);
-        double lc = MathAbs(low - prevClose);
-        
-        tr = MathMax(hl, MathMax(hc, lc));
-        atr += tr;
-        prevClose = close;
-    }
-    
-    return atr / period;
-}
-
-//+------------------------------------------------------------------+
-//| Calculate trend strength using linear regression slope             |
-//+------------------------------------------------------------------+
-double CEnsembleMetaLearner::CalculateTrendStrength(const double &data[])
-{
-    if(ArraySize(data) < 20)
-        return 0.0;
-    
-    int period = MathMin(20, ArraySize(data) - 1);
-    double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumX2 = 0.0;
-    
-    for(int i = 0; i < period; i++)
-    {
-        sumX += i;
-        sumY += data[i];
-        sumXY += i * data[i];
-        sumX2 += i * i;
-    }
-    
-    double denominator = (period * sumX2) - (sumX * sumX);
-    if(denominator == 0)
-        return 0.0;
-    
-    double slope = ((period * sumXY) - (sumX * sumY)) / denominator;
-    
-    // Normalize slope by average price
-    double avgPrice = sumY / period;
-    double normalizedSlope = (avgPrice > 0) ? slope / avgPrice : 0.0;
-    
-    return normalizedSlope;
-}
-
-//+------------------------------------------------------------------+
-//| Calculate momentum using rate of change                           |
-//+------------------------------------------------------------------+
-double CEnsembleMetaLearner::CalculateMomentum(const double &data[], int period)
-{
-    if(ArraySize(data) < period + 1)
-        return 0.0;
-    
-    double currentPrice = data[0];
-    double pastPrice = data[period];
-    
-    if(pastPrice == 0)
-        return 0.0;
-    
-    return (currentPrice - pastPrice) / pastPrice;
-}
-
-//+------------------------------------------------------------------+
-//| Create differentiated models for true ensemble diversity       |
-//+------------------------------------------------------------------+
-CTransformerBrain* CEnsembleMetaLearner::CreateShortTermModel()
-{
-    // Short-term model: smaller sequence length, faster learning
-    return new CTransformerBrain(32, 2, 1, 64, 20, 0.002); // dModel=32, heads=2, layers=1, seqLen=20, lr=0.002
-}
-
-CTransformerBrain* CEnsembleMetaLearner::CreateLongTermModel()
-{
-    // Long-term model: longer sequence, slower learning
-    return new CTransformerBrain(32, 2, 1, 64, 50, 0.0005); // dModel=32, heads=2, layers=1, seqLen=50, lr=0.0005
-}
-
-CTransformerBrain* CEnsembleMetaLearner::CreateMediumTermModel()
-{
-    // Medium-term model: balanced parameters
-    return new CTransformerBrain(32, 2, 1, 64, 30, 0.001); // dModel=32, heads=2, layers=1, seqLen=30, lr=0.001
-}
-
-CTransformerBrain* CEnsembleMetaLearner::CreateVolatilityFocusedModel()
-{
-    // Volatility-focused model: more heads for pattern detection
-    return new CTransformerBrain(32, 4, 1, 64, 35, 0.0015); // dModel=32, heads=4, layers=1, seqLen=35, lr=0.0015
-}
-
-//+------------------------------------------------------------------+
-//| Create differentiated interpretation models using shared transformer
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::CreateInterpretationModels()
-{
-    if(m_symbol == "") return false;
-    
-    // Ensure symbol is registered with universal transformer service
-    if(!g_universalTransformerService.IsSymbolRegistered(m_symbol))
-    {
-        if(!g_universalTransformerService.RegisterSymbol(m_symbol))
-        {
-            PrintFormat("[ENSEMBLE] ERROR: Failed to register symbol %s with universal transformer", m_symbol);
-            return false;
-        }
-    }
-    
-    // Clear existing models
-    m_models.Clear();
-    m_modelWeights.Resize(0);
-    m_modelPerformanceHistory.Resize(0);
-    m_modelRecentAccuracy.Resize(0);
-    m_alphas.Resize(0);
-    m_betas.Resize(0);
-    
-    // Create different model types for ensemble diversity
-    CTransformerBrain* shortTermModel = CreateShortTermModel();
-    CTransformerBrain* longTermModel = CreateLongTermModel();
-    CTransformerBrain* mediumTermModel = CreateMediumTermModel();
-    CTransformerBrain* volatilityModel = CreateVolatilityFocusedModel();
-    
-    // Add models to ensemble with initial weights
-    bool success = true;
-    if(shortTermModel) success &= AddModel(shortTermModel, 0.25);
-    if(longTermModel) success &= AddModel(longTermModel, 0.25);
-    if(mediumTermModel) success &= AddModel(mediumTermModel, 0.25);
-    if(volatilityModel) success &= AddModel(volatilityModel, 0.25);
-    
-    PrintFormat("[ENSEMBLE] Created %d interpretation models for symbol %s", m_models.Total(), m_symbol);
-    return success;
-}
-
-//+------------------------------------------------------------------+
-//| Process market data using shared transformer service            |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::ProcessWithSharedTransformer(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence)
-{
-    ensembleBuySignal = 0.0;
-    ensembleSellSignal = 0.0;
-    confidence = 0.0;
-    
-    if(m_symbol == "" || !m_usesSharedTransformer) return false;
-    
-    // Ensure symbol is registered
-    if(!g_universalTransformerService.IsSymbolRegistered(m_symbol))
-    {
-        if(!g_universalTransformerService.RegisterSymbol(m_symbol))
-        {
-            PrintFormat("[ENSEMBLE] ERROR: Failed to register symbol %s", m_symbol);
-            return false;
-        }
-    }
-    
-    // Get symbol features from universal transformer
-    double symbolFeatures[];
-    int seqLen = MathMax(1, ArraySize(marketData) / 64); // Estimate sequence length
-    
-    if(!g_universalTransformerService.GetSymbolFeatures(m_symbol, marketData, seqLen, symbolFeatures))
-    {
-        PrintFormat("[ENSEMBLE] ERROR: Failed to get features for symbol %s", m_symbol);
-        return false;
-    }
-    
-    // Simple ensemble approach using universal transformer features
-    if(ArraySize(symbolFeatures) < 3) return false;
-    
-    // Analyze features for trading signals
-    double buyScore = 0.0, sellScore = 0.0, noneScore = 0.0;
-    
-    // Weight different feature groups
-    for(int i = 0; i < MathMin(32, ArraySize(symbolFeatures)); i++)
-    {
-        if(i < 10) buyScore += symbolFeatures[i];      // Short-term features
-        else if(i < 20) sellScore += symbolFeatures[i]; // Medium-term features
-        else noneScore += symbolFeatures[i];            // Long-term features
-    }
-    
-    // Normalize scores
-    double totalScore = MathAbs(buyScore) + MathAbs(sellScore) + MathAbs(noneScore) + 1e-9;
-    ensembleBuySignal = MathAbs(buyScore) / totalScore;
-    ensembleSellSignal = MathAbs(sellScore) / totalScore;
-    double noneSignal = MathAbs(noneScore) / totalScore;
-    
-    // Calculate confidence
-    confidence = MathMax(ensembleBuySignal, ensembleSellSignal);
-    confidence = MathMax(0.0, MathMin(1.0, confidence));
-    
-    // Guard against NaN
-    if(confidence != confidence) // NaN check
-        confidence = 0.0;
-        
-    m_lastConfidence = confidence;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Initialize ensemble with shared transformer                     |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::Initialize(const string& symbol, bool useSharedTransformer)
-{
-    m_symbol = symbol;
-    m_usesSharedTransformer = useSharedTransformer;
-    
-    if(m_usesSharedTransformer)
-    {
-        PrintFormat("[ENSEMBLE] Initializing with Universal Transformer service for symbol: %s", m_symbol);
-        return CreateInterpretationModels();
-    }
-    else
-    {
-        PrintFormat("[ENSEMBLE] Initializing with local models for symbol: %s", m_symbol);
+        m_symbol = symbol;
+        m_usesSharedTransformer = useSharedTransformer;
+        if(m_usesSharedTransformer)
+            return CreateInterpretationModels();
         return true;
     }
-}
 
-//+------------------------------------------------------------------+
-//| Get ensemble status and performance metrics                     |
-//+------------------------------------------------------------------+
-void CEnsembleMetaLearner::GetEnsembleStatus(string& status)
-{
-    status = "[ENSEMBLE] ";
-    status += "Models: " + IntegerToString(GetActiveModelCount()) + " | ";
-    status += "Shared Transformer: " + string(m_usesSharedTransformer ? "YES" : "NO") + " | ";
-    status += "Symbol: " + m_symbol + " | ";
-    status += "Confidence: " + DoubleToString(m_lastConfidence, 3);
-}
+    bool UpdateEnsemblePerformance(const double tradeResult)
+    {
+        EnsureModelArrays();
+        if(m_models.Total() <= 0)
+            return false;
 
-//+------------------------------------------------------------------+
-//| Update ensemble performance with trade results                  |
-//+------------------------------------------------------------------+
-bool CEnsembleMetaLearner::UpdateEnsemblePerformance(double tradeResult)
-{
-    // Update performance for all models
-    for(int i = 0; i < m_models.Total(); i++)
-    {
-        UpdateModelPerformance(i, tradeResult);
+        double direction = 0.0;
+        if(tradeResult > 0.0)
+            direction = 1.0;
+        else if(tradeResult < 0.0)
+            direction = -1.0;
+
+        for(int i = 0; i < m_models.Total(); i++)
+        {
+            double signedResult = 0.0;
+            if(direction != 0.0 && m_lastModelSignal[i] != 0)
+            {
+                signedResult = ((double)m_lastModelSignal[i] == direction) ?
+                               MathAbs(tradeResult) : -MathAbs(tradeResult);
+            }
+            UpdateModelPerformance(i, signedResult);
+        }
+
+        m_resolvedTradeCount++;
+        if((m_resolvedTradeCount % 10) == 0)
+            UpdateKellyWeights();
+
+        if(m_usesSharedTransformer && m_symbol != "")
+            g_universalTransformerService.UpdateSymbolPerformance(m_symbol, tradeResult > 0.0 ? 1.0 : 0.0);
+        return true;
     }
-    
-    // Update universal transformer service if using shared transformer
-    if(m_usesSharedTransformer && m_symbol != "")
+
+    void GetEnsembleStatus(string &status)
     {
-        double performance = (tradeResult > 0) ? 1.0 : 0.0;
-        g_universalTransformerService.UpdateSymbolPerformance(m_symbol, performance);
+        status = StringFormat("[ENSEMBLE] models=%d | conf=%.3f | regime=%s | symbol=%s",
+                              m_models.Total(),
+                              m_lastConfidence,
+                              EnumToString(m_lastDetectedRegime),
+                              m_symbol);
     }
-    
-    return true;
-}
+
+    bool ProcessWithSharedTransformer(const double &marketData[], double &ensembleBuySignal, double &ensembleSellSignal, double &confidence)
+    {
+        return ProcessMarketData(marketData, ensembleBuySignal, ensembleSellSignal, confidence);
+    }
+
+    CTransformerBrain* CreateShortTermModel()
+    {
+        return new CTransformerBrain(32, 4, 2, 96, 20, 0.0008);
+    }
+
+    CTransformerBrain* CreateLongTermModel()
+    {
+        return new CTransformerBrain(32, 4, 2, 96, 60, 0.0005);
+    }
+
+    CTransformerBrain* CreateMediumTermModel()
+    {
+        return new CTransformerBrain(32, 4, 2, 96, 40, 0.0007);
+    }
+
+    CTransformerBrain* CreateVolatilityFocusedModel()
+    {
+        return new CTransformerBrain(32, 8, 2, 128, 30, 0.0009);
+    }
+
+    bool CreateInterpretationModels()
+    {
+        m_models.Clear();
+        ArrayResize(m_modelWeights, 0);
+        ArrayResize(m_modelPerformanceHistory, 0);
+        ArrayResize(m_modelRecentAccuracy, 0);
+        ArrayResize(m_modelWinRate, 0);
+        ArrayResize(m_modelAvgWin, 0);
+        ArrayResize(m_modelAvgLoss, 0);
+        ArrayResize(m_modelRollHead, 0);
+        ArrayResize(m_modelRollCount, 0);
+        ArrayResize(m_modelRollResults, 0);
+        ArrayResize(m_lastModelSignal, 0);
+        ArrayResize(m_lastModelConfidence, 0);
+
+        bool ok = true;
+        ok &= AddModel(CreateShortTermModel(), 0.25);
+        ok &= AddModel(CreateMediumTermModel(), 0.25);
+        ok &= AddModel(CreateLongTermModel(), 0.25);
+        ok &= AddModel(CreateVolatilityFocusedModel(), 0.25);
+        UpdateKellyWeights();
+        return ok;
+    }
+
+    double GetConfidence() const
+    {
+        return m_lastConfidence;
+    }
+
+    void GetRegimeProbabilities(double &out[])
+    {
+        m_hmm.GetProbabilities(out);
+    }
+};
+
+#endif // __ENSEMBLE_META_LEARNER_MQH__
