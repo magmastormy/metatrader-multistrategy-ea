@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-04-15
+- Last Updated: 2026-04-17
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 64 - Logical Error Audit & Defensive Programming Hardening
+- Current Batch: 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -23,6 +23,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - File: `MultiStrategyAutonomousEA.mq5`
 - Responsibilities:
   - initialize mandatory runtime subsystems first and isolate optional AI/bootstrap failures behind readiness flags
+  - initialize the shared universal transformer service before optional AI brains register symbols, and keep the service lazy-safe for late callers
   - validate active symbols and emit startup account-capacity diagnostics before live execution
   - rebuild cadence scheduler state as one unit after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff cannot drift out of sync
   - reconstruct cooldown/trade-timing state from EA-owned open positions and deal history on startup
@@ -35,6 +36,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - rank approved candidates across symbols before execution
   - own the non-AI confidence policy inputs for pipeline and manager admission stages
   - adapt per-symbol runtime profiles (strategy roster, intrabar policy, and context posture) by instrument class when symbol-class profiles are enabled
+  - emit explicit mode-mask diagnostics when indicator profile entries remain configured but the effective runtime mode filters them out of the active registry
   - coordinate validator/risk/execution path
   - handle runtime telemetry and deinitialization
 
@@ -71,6 +73,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - apply symbol-class-aware context posture so synthetic indices can bypass FX-style ADX trend assumptions while FX keeps full trend filtering
   - apply trend/volatility/liquidity/structure/confidence filters
   - apply deterministic regime + cost viability pre-gate via `CRegimeEngine`
+  - recover ATR/Bollinger inputs from raw `CopyRates(...)` data when volatility/regime indicator buffers fault or warm slowly despite mature price history
   - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass`, readiness class, reuse/staleness flags)
   - allow bounded soft-threshold promotion when near-threshold confidence is supported by strong readiness/context evidence
   - preserve confidence after threshold admission instead of attenuating surviving packets a second time before quorum/validator stages
@@ -89,8 +92,11 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - Responsibilities:
   - register qualified strategy identities (`symbol::name`)
   - register only enabled AI adapters; dormant adapter definitions stay out of runtime identity and weighting surfaces
+  - keep the shared transformer encoder bootstrap idempotent so indirect callers cannot observe a registered symbol against an uninitialized encoder
   - maintain performance and weight state
   - adapt weights and feed updates back to managers
+  - gate neural weight mutation behind real trade-linked labels so pseudo-label accumulation alone cannot drive online weight drift
+  - capture throttled external-LLM reasoning during adaptation when enabled and keep that path fully observable through `[EXT-LLM]`
   - remain optional at runtime; orchestration/adaptation failure disables AI adaptation without violating trade/risk/execution ownership
   - avoid duplicate component-local diagnostics so AI observability remains concentrated in `[AI-VOTE]`, manager telemetry, and runtime heartbeat surfaces
 - **Multi-Tier Signal Validation (Batch 60):** Comprehensive validation architecture implemented:
@@ -119,6 +125,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - Configuration flag: `useExternalLLM` in `SAIAdaptiveConfig` (default `false`)
   - Methods: `QueryExternalLLM()`, `SynthesizeSignals()`, `GenerateTradeExplanation()`, `AssessRisk()`, `ReasonStrategyWeights()`, `ProvideFeedback()`
   - Runtime control: `ConfigureExternalLLM()`, `SetExternalLLMEnabled(bool)`, `IsExternalLLMEnabled()`
+  - Runtime observability: `[EXT-LLM]` now covers init, endpoint config, query start/success/failure, reasoning capture, feedback, and shutdown so "enabled but unused" states are visible from logs
 
 ### 2.5 Risk domain
 - Class: `CUnifiedRiskManager`
@@ -133,6 +140,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - expose unprotected-position state for runtime remediation workflows
   - executed-risk registration after successful synchronous sends, scaled by actual fill ratio
   - portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
+  - progressively throttle recommended per-trade risk as daily and portfolio utilization rise, instead of waiting for the final hard-cap stage
 
 ### 2.6 Execution domain
 - Class: `CTradeManager`
@@ -164,6 +172,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - indicator handle cache and shared access
   - periodic unused release
   - explicit singleton teardown on deinit
+  - remain the first ATR source for validator/execution sizing, with raw-rate fallback in the EA entry path when a direct ATR handle read misses
 
 ### 2.9 Chart visualization domain (Batch 58)
 - Class: `CChartDrawingManager`

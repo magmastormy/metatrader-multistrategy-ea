@@ -167,6 +167,62 @@ private:
         }
     }
 
+    bool BuildFallbackIndicators(const string symbol,
+                                 const ENUM_TIMEFRAMES timeframe,
+                                 double &atrValue,
+                                 double &bbUpperValue,
+                                 double &bbLowerValue) const
+    {
+        atrValue = 0.0;
+        bbUpperValue = 0.0;
+        bbLowerValue = 0.0;
+
+        int requiredBars = MathMax(m_bbPeriod + 3, m_atrPeriod + 3);
+        MqlRates rates[];
+        ArraySetAsSeries(rates, true);
+        int copied = CopyRates(symbol, timeframe, 0, requiredBars, rates);
+        if(copied < requiredBars)
+            return false;
+
+        int atrWindow = MathMin(m_atrPeriod, copied - 2);
+        if(atrWindow <= 0)
+            return false;
+
+        double atrSum = 0.0;
+        for(int i = 0; i < atrWindow; i++)
+        {
+            double rangeHighLow = rates[i].high - rates[i].low;
+            double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
+            double rangeLowClose = MathAbs(rates[i].low - rates[i + 1].close);
+            atrSum += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
+        }
+        atrValue = atrSum / (double)atrWindow;
+
+        int bbWindow = MathMin(m_bbPeriod, copied);
+        if(bbWindow <= 1)
+            return false;
+
+        double mean = 0.0;
+        for(int j = 0; j < bbWindow; j++)
+            mean += rates[j].close;
+        mean /= (double)bbWindow;
+
+        double variance = 0.0;
+        for(int k = 0; k < bbWindow; k++)
+        {
+            double diff = rates[k].close - mean;
+            variance += diff * diff;
+        }
+        variance /= (double)bbWindow;
+        double stdDev = MathSqrt(MathMax(0.0, variance));
+        bbUpperValue = mean + (m_bbDeviation * stdDev);
+        bbLowerValue = mean - (m_bbDeviation * stdDev);
+
+        return (MathIsValidNumber(atrValue) && atrValue > 0.0 &&
+                MathIsValidNumber(bbUpperValue) &&
+                MathIsValidNumber(bbLowerValue));
+    }
+
     bool EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
         bool handlesReady = (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE);
@@ -331,11 +387,20 @@ public:
 
     bool Update(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
+        double atrValue = 0.0;
+        double bbUpperValue = 0.0;
+        double bbLowerValue = 0.0;
+        bool usedFallback = false;
+
         if(!EnsureHandles(symbol, timeframe))
         {
             int handleErr = GetLastError();
-            NoteDataFault(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
-            return TryReuseRecentSnapshot(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
+            if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
+            {
+                NoteDataFault(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
+                return TryReuseRecentSnapshot(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
+            }
+            usedFallback = true;
         }
 
         int minBars = MathMax(m_bbPeriod + 5, m_atrPeriod + 5);
@@ -343,49 +408,78 @@ public:
         int calculatedBarsBB = BarsCalculated(m_bbHandle);
         int calculatedBarsATR = BarsCalculated(m_atrHandle);
         
-        if(availableBars < minBars ||
-           calculatedBarsBB < minBars ||
-           calculatedBarsATR < minBars)
+        if(!usedFallback &&
+           (availableBars < minBars ||
+            calculatedBarsBB < minBars ||
+            calculatedBarsATR < minBars))
         {
             m_lastSnapshot.readinessClass = "WARMUP";
             m_lastSnapshot.reuseActive = false;
             m_lastSnapshot.stalenessSeconds = 0;
-            return TryReuseRecentSnapshot(symbol, timeframe, "WARMUP", 0);
+            if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
+                return TryReuseRecentSnapshot(symbol, timeframe, "WARMUP", 0);
+            usedFallback = true;
         }
 
-        double atr[1];
-        double bbUpper[1];
-        double bbLower[1];
+        if(!usedFallback)
+        {
+            ResetLastError();
 
-        ResetLastError();
-        
-        // HIGH FIX: Validate handles are valid before attempting copy
-        if(m_atrHandle == INVALID_HANDLE || m_bbHandle == INVALID_HANDLE)
-        {
-            NoteDataFault(symbol, timeframe, "INVALID_HANDLE", 0);
-            return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_HANDLE", 0);
-        }
+            // HIGH FIX: Validate handles are valid before attempting copy
+            if(m_atrHandle == INVALID_HANDLE || m_bbHandle == INVALID_HANDLE)
+            {
+                if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
+                {
+                    NoteDataFault(symbol, timeframe, "INVALID_HANDLE", 0);
+                    return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_HANDLE", 0);
+                }
+                usedFallback = true;
+            }
 
-        int atrRet = CopyBuffer(m_atrHandle, 0, 0, 1, atr);
-        int upperRet = CopyBuffer(m_bbHandle, 1, 0, 1, bbUpper);
-        int lowerRet = CopyBuffer(m_bbHandle, 2, 0, 1, bbLower);
-        int copyErr = GetLastError();
-        
-        // HIGH FIX: Improved error detection with specific failure reasons
-        if(atrRet <= 0)
-        {
-            NoteDataFault(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
-            return TryReuseRecentSnapshot(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
-        }
-        if(upperRet <= 0 || lowerRet <= 0)
-        {
-            NoteDataFault(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
-            return TryReuseRecentSnapshot(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
-        }
-        if(atr[0] <= 0.0)
-        {
-            NoteDataFault(symbol, timeframe, "INVALID_ATR_VALUE", 0);
-            return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_ATR_VALUE", 0);
+            if(!usedFallback)
+            {
+                double atr[1];
+                double bbUpper[1];
+                double bbLower[1];
+                int atrRet = CopyBuffer(m_atrHandle, 0, 0, 1, atr);
+                int upperRet = CopyBuffer(m_bbHandle, 1, 0, 1, bbUpper);
+                int lowerRet = CopyBuffer(m_bbHandle, 2, 0, 1, bbLower);
+                int copyErr = GetLastError();
+
+                if(atrRet <= 0)
+                {
+                    if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
+                    {
+                        NoteDataFault(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+                        return TryReuseRecentSnapshot(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+                    }
+                    usedFallback = true;
+                }
+                else if(upperRet <= 0 || lowerRet <= 0)
+                {
+                    if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
+                    {
+                        NoteDataFault(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+                        return TryReuseRecentSnapshot(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+                    }
+                    usedFallback = true;
+                }
+                else if(atr[0] <= 0.0)
+                {
+                    if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
+                    {
+                        NoteDataFault(symbol, timeframe, "INVALID_ATR_VALUE", 0);
+                        return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_ATR_VALUE", 0);
+                    }
+                    usedFallback = true;
+                }
+                else
+                {
+                    atrValue = atr[0];
+                    bbUpperValue = bbUpper[0];
+                    bbLowerValue = bbLower[0];
+                }
+            }
         }
 
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -423,8 +517,8 @@ public:
         if(m_lastSpreadShockTime > 0)
             cooldownActive = ((TimeCurrent() - m_lastSpreadShockTime) <= m_spreadShockCooldownSeconds);
 
-        double bbWidth = MathMax(0.0, bbUpper[0] - bbLower[0]);
-        double bbWidthAtrRatio = (atr[0] > 0.0) ? (bbWidth / atr[0]) : 0.0;
+        double bbWidth = MathMax(0.0, bbUpperValue - bbLowerValue);
+        double bbWidthAtrRatio = (atrValue > 0.0) ? (bbWidth / atrValue) : 0.0;
         bool compression = (bbWidthAtrRatio > 0.0 && bbWidthAtrRatio <= m_compressionRatioThreshold);
 
         double zScore = 0.0;
@@ -432,7 +526,7 @@ public:
             zScore = 0.0;
 
         bool lateEntryOutlier = (MathAbs(zScore) >= m_lateEntryZScoreLimit);
-        double spreadToAtr = (atr[0] > 0.0) ? (spreadPrice / atr[0]) : 0.0;
+        double spreadToAtr = (atrValue > 0.0) ? (spreadPrice / atrValue) : 0.0;
 
         ENUM_REGIME_STATE state = REGIME_TREND;
         if(cooldownActive || spreadToAtr > (m_maxSpreadToAtrRatio * 1.5))
@@ -446,7 +540,7 @@ public:
 
         m_consecutiveDataFaults = 0;
         m_lastSnapshot.valid = true;
-        m_lastSnapshot.readinessClass = "HEALTHY";
+        m_lastSnapshot.readinessClass = usedFallback ? "FALLBACK_RATES" : "HEALTHY";
         m_lastSnapshot.reuseActive = false;
         m_lastSnapshot.stalenessSeconds = 0;
         m_lastSnapshot.state = state;
@@ -454,7 +548,7 @@ public:
         m_lastSnapshot.spreadShock = spreadShock;
         m_lastSnapshot.spreadShockCooldownActive = cooldownActive;
         m_lastSnapshot.lateEntryOutlier = lateEntryOutlier;
-        m_lastSnapshot.atrValue = atr[0];
+        m_lastSnapshot.atrValue = atrValue;
         m_lastSnapshot.bbWidth = bbWidth;
         m_lastSnapshot.bbWidthAtrRatio = bbWidthAtrRatio;
         m_lastSnapshot.spreadPrice = spreadPrice;
@@ -477,6 +571,16 @@ public:
                         bbWidthAtrRatio);
             m_lastLoggedState = state;
             m_lastStateLogTime = now;
+        }
+
+        if(usedFallback && (m_lastFaultLogTime == 0 || (now - m_lastFaultLogTime) >= 30))
+        {
+            PrintFormat("[REGIME-STATE] FALLBACK_RATES | symbol=%s | timeframe=%s | atr=%.5f | bb_width=%.5f",
+                        symbol,
+                        EnumToString(timeframe),
+                        m_lastSnapshot.atrValue,
+                        m_lastSnapshot.bbWidth);
+            m_lastFaultLogTime = now;
         }
 
         return true;

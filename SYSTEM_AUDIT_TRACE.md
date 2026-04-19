@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-04-15
+- Last Updated: 2026-04-17
 - Scope: Runtime lifecycle and ownership trace
-- Current Batch: 64 - Logical Error Audit & Defensive Programming Hardening
+- Current Batch: 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -28,6 +28,7 @@
 - Reject unsupported non-hedging account models before runtime ownership is established.
 - Apply execution safety controls (fill mode, slippage, protective modify cooldown) before trade-manager bootstrap.
 - Initialize optional AI subsystems conditionally by flags and convert failures into readiness-state degradation instead of fatal startup aborts.
+- Bootstrap the shared universal transformer service before AI brains/adapters start symbol registration, while keeping the service lazy-safe for indirect runtime callers.
 - Initialize performance analytics before unified-risk bootstrap.
 - Validate active symbols and emit `[ACCOUNT-CAPACITY]` affordability diagnostics before the first scan.
 - Build the active-only strategy registry, then create per-symbol managers and register only enabled strategies and enabled AI adapters.
@@ -41,7 +42,7 @@
 
 ### 2. Tick/Timer cycle
 - Run `ProcessTradingLogic`.
-- Maintain NN learning cycle.
+- Maintain NN learning cycle with explicit mutation-gate evaluation so pseudo labels can update health metrics without automatically mutating weights.
 - Enforce terminal connectivity gate before signal evaluation.
 - Enforce deterministic second-level signal evaluation separation between tick/timer events.
 - Run deterministic unprotected-position remediation sweep before entry evaluation.
@@ -93,7 +94,8 @@
 - Pipeline and validator both support bounded soft-pass behavior for near-threshold candidates when the broader evidence profile is strong.
 - Pipeline preserves admitted confidence after threshold passage instead of attenuating surviving packets a second time before quorum and validator.
 - `CRegimeEngine` may reuse a recent valid same-context snapshot on transient warmup / copy / handle-init faults and performs bounded handle reset after repeated data faults.
-- `CTrendEngine` now fails closed on partial-readiness states instead of pushing half-ready MA/ATR data downstream; it may still reuse a bounded last-good trend snapshot on transient MA/ATR copy faults and emits `[READINESS-STATE]` reuse telemetry.
+- `CVolatilityEngine` and `CRegimeEngine` now recover ATR/Bollinger inputs from raw rates when indicator buffers fault against mature series, preventing the pipeline from degrading to zero ATR during transient `BB_BUFFER_COPY_FAILED` / warmup loops.
+- `CTrendEngine` now allows mature-series partial-readiness to proceed so bounded MA/ATR fallback logic can attempt recovery; it may still reuse a bounded last-good trend snapshot on transient MA/ATR copy faults and emits `[READINESS-STATE]` reuse telemetry.
 - `CTrendEngine` now branches by instrument class: FX keeps ADX-backed trend modeling, while synthetic indices bypass ADX handle creation and derive trend state from MA structure/angle only, removing synthetic-only ADX readiness churn without changing FX behavior.
 - Pipeline threshold adaptation now uses `CRegimeEngine` snapshot state and dedicated non-AI confidence floors instead of AI-threshold coupling.
 - `CMarketAnalysis` now keeps bounded last-valid trend/volatility/momentum/ATR snapshots and reuses them on transient `4806/4807` copy faults instead of silently dropping those metrics to zero.
@@ -104,6 +106,7 @@
 - Validator still consumes manager quorum facts (`effectiveMinVoters`, `directionalQuality`, `supportRatio`) together with conviction/readiness/context/cost evidence so exogenous validation telemetry stays aligned with the already-authoritative manager decision.
 - Strategy overrides that bypass base-class `GetSignal(...)` now emit explicit decision tags, and manager defensively downgrades any remaining placeholder abstentions so they cannot silently dilute ready-live quorum math.
 - Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
+- Final validator ATR acquisition now resolves from the shared indicator handle first and then a raw-rate ATR fallback, preventing transient copy misses from forcing `Invalid ATR: 0.00000` vetoes on otherwise-valid packets.
 - AI vote generation is same-bar cached:
   - neural votes reuse `GetNeuralSignalCached(...)`
   - transformer and ensemble adapters reuse cached inference results until the bar changes
@@ -111,6 +114,7 @@
 - AI adapters now emit explicit decision reason tags on disabled, abstain, feature-fault, inference-fault, and signal paths, removing the old `UNTAGGED_NO_SIGNAL` blind spot from AI-enabled consensus traces.
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator, and the system now respects `InpAIConfidenceThreshold` as the authoritative floor across all modes, eliminating legacy hardcoded confidence caps.
 - AI_ONLY mode is now strict: indicator strategies are filtered out at the strategy registry level, ensuring no indicator-based votes participate when the EA is in AI-primary posture.
+- When configured indicator families are filtered out by `AI_ONLY`, runtime now emits `[MODE-MASK]` so those sessions are not misread as "indicator strategies voted badly."
 - AI intrabar policy is now explicit instead of globally hard-coded `OFF`: `Neural Network AI`, `Transformer AI`, and `Ensemble AI` each have their own intrabar eligibility input, allowing `AI_ONLY` and `HYBRID` to be tested as real timed intrabar modes.
 - `CNextGenStrategyBrain` now follows a single local-transformer path with ring-buffered market data history and no dead Python/cloud bridge branch.
 - Duplicate component-local `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths so manager/runtime telemetry stays authoritative.
@@ -128,6 +132,7 @@
   - Signal synthesis, trade explanation, risk assessment, and strategy weight reasoning methods available when external LLM is enabled
   - Feedback loop via `ProvideFeedback()` sends trade results to external LLM for learning
   - External LLM failures are logged but do not abort the EA; system degrades gracefully to internal AI only
+  - Adaptation now performs throttled external reasoning capture when enabled, and the full lifecycle is surfaced under `[EXT-LLM]` telemetry instead of remaining a silent helper path
 - **Multi-scale Attention Lifecycle (Batch 58):**
   - Transformer brain now initializes per-head scaling factors, time window sizes, and learning rates
   - Head-specific parameters enable differential pattern detection across short/medium/long horizons
@@ -144,6 +149,7 @@
 - Risk gating (pre-size then post-size).
 - Risk gate now evaluates cluster governance (mutex + caps) using request context and open-position cluster tags.
 - Portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety.
+- Recommended per-trade risk is now pressure-throttled before the final hard cap as daily and portfolio utilization rise, producing `[RISK-THROTTLE]` evidence ahead of a hard veto.
 - Pipeline confidence gate emits threshold-source metadata and uses bounded weak-regime intrabar uplift.
 - Trend ADX failures degrade to neutral/ranging context with bounded ADX-handle self-heal.
 - ATR stop-distance fallback when indicator read fails.
@@ -161,7 +167,7 @@
 
 ### 5. Housekeeping
 - Position manager lifecycle actions.
-- Periodic telemetry logs.
+- Periodic telemetry logs, including `[AI-FEEDBACK]` performance summaries for adaptive-training health.
 - Indicator cache release policy.
 - Shutdown now emits `[TERMINATION-SNAPSHOT]` with final heartbeat counters before deinit cleanup.
 
@@ -177,9 +183,9 @@
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
 - Multi-Tier: `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
-- AI: `[AI-VOTE]`, `[NN-HEALTH]`
+- AI: `[AI-VOTE]`, `[NN-HEALTH]`, `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
 
 ## 2026-03-31 AXIOM Refactor Trace

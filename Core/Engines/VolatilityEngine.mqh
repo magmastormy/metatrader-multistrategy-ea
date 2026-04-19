@@ -91,6 +91,17 @@ private:
     void NoteDataFault(const string symbol, const ENUM_TIMEFRAMES timeframe, const string reasonTag, const int errorCode);
     int GetReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) const;
     void MaybeLogState(const string symbol, const ENUM_TIMEFRAMES timeframe);
+    bool BuildFallbackMetrics(const string symbol,
+                              const ENUM_TIMEFRAMES timeframe,
+                              double &atrCurrent,
+                              double &atrPrevious,
+                              double &bbUpper,
+                              double &bbLower,
+                              double &stdDevValue) const;
+    bool ApplyFallbackMetrics(const string symbol,
+                              const ENUM_TIMEFRAMES timeframe,
+                              const string reasonTag,
+                              const int errorCode);
     
 public:
     CVolatilityEngine();
@@ -274,11 +285,156 @@ void CVolatilityEngine::MaybeLogState(const string symbol, const ENUM_TIMEFRAMES
     m_lastStateLogTime = nowTime;
 }
 
+bool CVolatilityEngine::BuildFallbackMetrics(const string symbol,
+                                             const ENUM_TIMEFRAMES timeframe,
+                                             double &atrCurrent,
+                                             double &atrPrevious,
+                                             double &bbUpper,
+                                             double &bbLower,
+                                             double &stdDevValue) const
+{
+    atrCurrent = 0.0;
+    atrPrevious = 0.0;
+    bbUpper = 0.0;
+    bbLower = 0.0;
+    stdDevValue = 0.0;
+
+    int requiredBars = MathMax(MathMax(m_atrPeriod + 3, m_bbPeriod + 3), m_hvPeriod + 3);
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    int copied = CopyRates(symbol, timeframe, 0, requiredBars, rates);
+    if(copied < requiredBars)
+        return false;
+
+    int atrWindow = MathMin(m_atrPeriod, copied - 2);
+    if(atrWindow <= 0)
+        return false;
+
+    double atrSumCurrent = 0.0;
+    double atrSumPrevious = 0.0;
+    for(int i = 0; i < atrWindow; i++)
+    {
+        double rangeHighLow = rates[i].high - rates[i].low;
+        double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
+        double rangeLowClose = MathAbs(rates[i].low - rates[i + 1].close);
+        atrSumCurrent += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
+    }
+    for(int j = 1; j <= atrWindow; j++)
+    {
+        double rangeHighLow = rates[j].high - rates[j].low;
+        double rangeHighClose = MathAbs(rates[j].high - rates[j + 1].close);
+        double rangeLowClose = MathAbs(rates[j].low - rates[j + 1].close);
+        atrSumPrevious += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
+    }
+
+    atrCurrent = atrSumCurrent / (double)atrWindow;
+    atrPrevious = atrSumPrevious / (double)atrWindow;
+
+    int bbWindow = MathMin(m_bbPeriod, copied);
+    if(bbWindow <= 1)
+        return false;
+
+    double bbMean = 0.0;
+    for(int bbIdx = 0; bbIdx < bbWindow; bbIdx++)
+        bbMean += rates[bbIdx].close;
+    bbMean /= (double)bbWindow;
+
+    double bbVariance = 0.0;
+    for(int bbVarIdx = 0; bbVarIdx < bbWindow; bbVarIdx++)
+    {
+        double diff = rates[bbVarIdx].close - bbMean;
+        bbVariance += diff * diff;
+    }
+    bbVariance /= (double)bbWindow;
+    double bbStdDev = MathSqrt(MathMax(0.0, bbVariance));
+    bbUpper = bbMean + (m_bbDeviation * bbStdDev);
+    bbLower = bbMean - (m_bbDeviation * bbStdDev);
+
+    int hvWindow = MathMin(m_hvPeriod, copied);
+    if(hvWindow <= 1)
+        return false;
+
+    double hvMean = 0.0;
+    for(int hvIdx = 0; hvIdx < hvWindow; hvIdx++)
+        hvMean += rates[hvIdx].close;
+    hvMean /= (double)hvWindow;
+
+    double hvVariance = 0.0;
+    for(int hvVarIdx = 0; hvVarIdx < hvWindow; hvVarIdx++)
+    {
+        double diff = rates[hvVarIdx].close - hvMean;
+        hvVariance += diff * diff;
+    }
+    hvVariance /= (double)hvWindow;
+    stdDevValue = MathSqrt(MathMax(0.0, hvVariance));
+
+    return (MathIsValidNumber(atrCurrent) && atrCurrent > 0.0 &&
+            MathIsValidNumber(atrPrevious) &&
+            MathIsValidNumber(bbUpper) &&
+            MathIsValidNumber(bbLower) &&
+            MathIsValidNumber(stdDevValue));
+}
+
+bool CVolatilityEngine::ApplyFallbackMetrics(const string symbol,
+                                             const ENUM_TIMEFRAMES timeframe,
+                                             const string reasonTag,
+                                             const int errorCode)
+{
+    double atrCurrent = 0.0;
+    double atrPrevious = 0.0;
+    double bbUpper = 0.0;
+    double bbLower = 0.0;
+    double stdDevValue = 0.0;
+    if(!BuildFallbackMetrics(symbol, timeframe, atrCurrent, atrPrevious, bbUpper, bbLower, stdDevValue))
+        return false;
+
+    double price = SymbolInfoDouble(symbol, SYMBOL_BID);
+    if(price <= 0.0)
+        price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+    if(price <= 0.0)
+        price = iClose(symbol, timeframe, 0);
+    if(price <= 0.0)
+        return false;
+
+    m_metrics.atr = atrCurrent;
+    m_metrics.atrPercent = (atrCurrent / price) * 100.0;
+    m_metrics.bollinger_width = MathMax(0.0, bbUpper - bbLower);
+    m_metrics.historical_volatility = MathMax(0.0, stdDevValue);
+    m_metrics.relative_volatility = (m_metrics.historical_volatility > 0.0)
+                                    ? (m_metrics.atr / m_metrics.historical_volatility)
+                                    : 1.0;
+    m_metrics.state = DetermineState(m_metrics.atrPercent);
+    m_metrics.isExpanding = atrCurrent > atrPrevious * 1.1;
+    m_metrics.isContracting = atrCurrent < atrPrevious * 0.9;
+    m_metrics.lastUpdate = TimeCurrent();
+
+    m_lastValidMetrics = m_metrics;
+    m_consecutiveDataFaults = 0;
+
+    datetime nowTime = TimeCurrent();
+    if(m_lastFaultLogTime == 0 || (nowTime - m_lastFaultLogTime) >= 30)
+    {
+        PrintFormat("[VOLATILITY-FAULT] FALLBACK_RATES | symbol=%s | timeframe=%s | reason=%s | err=%d | atr=%.5f | atr_pct=%.2f",
+                    symbol,
+                    EnumToString(timeframe),
+                    reasonTag,
+                    errorCode,
+                    m_metrics.atr,
+                    m_metrics.atrPercent);
+        m_lastFaultLogTime = nowTime;
+    }
+
+    MaybeLogState(symbol, timeframe);
+    return true;
+}
+
 bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     if(!EnsureHandles(symbol, timeframe))
     {
         int handleErr = GetLastError();
+        if(ApplyFallbackMetrics(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr))
+            return true;
         NoteDataFault(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
         return TryReuseLastMetrics(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
     }
@@ -294,6 +450,8 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
        calculatedBarsATR < minBars ||
        calculatedBarsStdDev < minBars)
     {
+        if(ApplyFallbackMetrics(symbol, timeframe, "WARMUP", 0))
+            return true;
         NoteDataFault(symbol, timeframe, "WARMUP", 0);
         return TryReuseLastMetrics(symbol, timeframe, "WARMUP", 0);
     }
@@ -313,6 +471,8 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     // HIGH FIX: Validate handles are valid before attempting copy
     if(m_handleATR == INVALID_HANDLE || m_handleBB == INVALID_HANDLE || m_handleStdDev == INVALID_HANDLE)
     {
+        if(ApplyFallbackMetrics(symbol, timeframe, "INVALID_HANDLE", 0))
+            return true;
         NoteDataFault(symbol, timeframe, "INVALID_HANDLE", 0);
         return TryReuseLastMetrics(symbol, timeframe, "INVALID_HANDLE", 0);
     }
@@ -326,21 +486,29 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     // HIGH FIX: Improved error detection with specific failure reasons
     if(atrRet <= 0)
     {
+        if(ApplyFallbackMetrics(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr))
+            return true;
         NoteDataFault(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
         return TryReuseLastMetrics(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
     }
     if(upperRet <= 0 || lowerRet <= 0)
     {
+        if(ApplyFallbackMetrics(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr))
+            return true;
         NoteDataFault(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
         return TryReuseLastMetrics(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
     }
     if(stdDevRet <= 0)
     {
+        if(ApplyFallbackMetrics(symbol, timeframe, "STDDEV_BUFFER_COPY_FAILED", copyErr))
+            return true;
         NoteDataFault(symbol, timeframe, "STDDEV_BUFFER_COPY_FAILED", copyErr);
         return TryReuseLastMetrics(symbol, timeframe, "STDDEV_BUFFER_COPY_FAILED", copyErr);
     }
     if(atr[0] <= 0.0)
     {
+        if(ApplyFallbackMetrics(symbol, timeframe, "INVALID_ATR_VALUE", 0))
+            return true;
         NoteDataFault(symbol, timeframe, "INVALID_ATR_VALUE", 0);
         return TryReuseLastMetrics(symbol, timeframe, "INVALID_ATR_VALUE", 0);
     }
