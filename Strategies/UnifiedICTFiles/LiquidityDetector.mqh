@@ -25,7 +25,13 @@ enum ENUM_UICT_LIQUIDITY_TYPE
     UICT_LIQ_DAILY_HIGH,
     UICT_LIQ_DAILY_LOW,
     UICT_LIQ_WEEKLY_HIGH,
-    UICT_LIQ_WEEKLY_LOW
+    UICT_LIQ_WEEKLY_LOW,
+    UICT_LIQ_MONTHLY_HIGH,
+    UICT_LIQ_MONTHLY_LOW,
+    UICT_LIQ_MIDNIGHT_OPEN,
+    UICT_LIQ_QUARTERLY_OPEN,
+    UICT_LIQ_QUARTERLY_HIGH,
+    UICT_LIQ_QUARTERLY_LOW
 };
 
 //+------------------------------------------------------------------+
@@ -68,6 +74,23 @@ private:
     bool                IsAtPsychologicalLevel(double price);
     long                GetAverageVolume(int bars);
     double              CalculateLiquidityStrength(int bar1, int bar2);
+    void                AddLiquidityLevel(const ENUM_UICT_LIQUIDITY_TYPE type,
+                                          const datetime time,
+                                          const double price,
+                                          const double strength,
+                                          const ENUM_TIMEFRAMES timeframe,
+                                          const bool engineered = false);
+    void                DetectInstitutionalLevels();
+    bool                IsUSDSTime(const datetime when) const;
+    datetime            BuildNewYorkTimestampGMT(const int year,
+                                                 const int mon,
+                                                 const int day,
+                                                 const int hour,
+                                                 const int minute,
+                                                 const int second) const;
+    double              FindTimeRangeExtreme(const datetime startTime,
+                                             const datetime endTime,
+                                             const bool wantHigh) const;
     
 public:
                         CLiquidityDetector();
@@ -143,6 +166,7 @@ void CLiquidityDetector::Update()
     DetectEqualHighsLows(500);  // Expanded from 50 for historical memory
     DetectSwingLiquidity(500);  // Expanded from 50 for historical memory
     DetectTimeframeLiquidity();
+    DetectInstitutionalLevels();
     
     // Check for sweeps
     for(int i = 0; i < m_poolCount; i++)
@@ -278,53 +302,191 @@ void CLiquidityDetector::DetectSwingLiquidity(int lookback)
 //+------------------------------------------------------------------+
 void CLiquidityDetector::DetectTimeframeLiquidity()
 {
-    // Daily high/low
     double dailyHigh = iHigh(m_symbol, PERIOD_D1, 1);
     double dailyLow = iLow(m_symbol, PERIOD_D1, 1);
-    
-    if(dailyHigh > 0)
-    {
-        ArrayResize(m_liquidityPools, m_poolCount + 1);
-        m_liquidityPools[m_poolCount].type = UICT_LIQ_DAILY_HIGH;
-        m_liquidityPools[m_poolCount].price = dailyHigh;
-        m_liquidityPools[m_poolCount].strength = 0.85;
-        m_liquidityPools[m_poolCount].timeframe = PERIOD_D1;
-        m_poolCount++;
-    }
-    
-    if(dailyLow > 0)
-    {
-        ArrayResize(m_liquidityPools, m_poolCount + 1);
-        m_liquidityPools[m_poolCount].type = UICT_LIQ_DAILY_LOW;
-        m_liquidityPools[m_poolCount].price = dailyLow;
-        m_liquidityPools[m_poolCount].strength = 0.85;
-        m_liquidityPools[m_poolCount].timeframe = PERIOD_D1;
-        m_poolCount++;
-    }
-    
-    // Weekly high/low
     double weeklyHigh = iHigh(m_symbol, PERIOD_W1, 1);
     double weeklyLow = iLow(m_symbol, PERIOD_W1, 1);
-    
-    if(weeklyHigh > 0)
+
+    AddLiquidityLevel(UICT_LIQ_DAILY_HIGH,  iTime(m_symbol, PERIOD_D1, 1), dailyHigh, 0.85, PERIOD_D1);
+    AddLiquidityLevel(UICT_LIQ_DAILY_LOW,   iTime(m_symbol, PERIOD_D1, 1), dailyLow,  0.85, PERIOD_D1);
+    AddLiquidityLevel(UICT_LIQ_WEEKLY_HIGH, iTime(m_symbol, PERIOD_W1, 1), weeklyHigh, 0.90, PERIOD_W1);
+    AddLiquidityLevel(UICT_LIQ_WEEKLY_LOW,  iTime(m_symbol, PERIOD_W1, 1), weeklyLow,  0.90, PERIOD_W1);
+}
+
+void CLiquidityDetector::AddLiquidityLevel(const ENUM_UICT_LIQUIDITY_TYPE type,
+                                           const datetime time,
+                                           const double price,
+                                           const double strength,
+                                           const ENUM_TIMEFRAMES timeframe,
+                                           const bool engineered)
+{
+    if(price <= 0.0)
+        return;
+
+    ArrayResize(m_liquidityPools, m_poolCount + 1);
+    m_liquidityPools[m_poolCount] = SLiquidityPool();
+    m_liquidityPools[m_poolCount].type = type;
+    m_liquidityPools[m_poolCount].time = time;
+    m_liquidityPools[m_poolCount].price = price;
+    m_liquidityPools[m_poolCount].touchCount = 1;
+    m_liquidityPools[m_poolCount].strength = strength;
+    m_liquidityPools[m_poolCount].timeframe = timeframe;
+    m_liquidityPools[m_poolCount].isEngineered = engineered;
+    m_poolCount++;
+}
+
+bool CLiquidityDetector::IsUSDSTime(const datetime when) const
+{
+    MqlDateTime dt;
+    TimeToStruct(when, dt);
+    int year = dt.year;
+
+    MqlDateTime marchStart;
+    marchStart.year = year;
+    marchStart.mon = 3;
+    marchStart.day = 1;
+    marchStart.hour = 2;
+    marchStart.min = 0;
+    marchStart.sec = 0;
+    datetime marchStartTime = StructToTime(marchStart);
+    MqlDateTime marchProbe;
+    TimeToStruct(marchStartTime, marchProbe);
+    int marchDow = marchProbe.day_of_week;
+    int firstSundayMarch = (marchDow == 0) ? 1 : (8 - marchDow);
+    int secondSundayMarch = firstSundayMarch + 7;
+
+    MqlDateTime dstStartStruct = marchStart;
+    dstStartStruct.day = secondSundayMarch;
+    datetime dstStart = StructToTime(dstStartStruct);
+
+    MqlDateTime novemberStart;
+    novemberStart.year = year;
+    novemberStart.mon = 11;
+    novemberStart.day = 1;
+    novemberStart.hour = 2;
+    novemberStart.min = 0;
+    novemberStart.sec = 0;
+    datetime novemberStartTime = StructToTime(novemberStart);
+    MqlDateTime novemberProbe;
+    TimeToStruct(novemberStartTime, novemberProbe);
+    int novemberDow = novemberProbe.day_of_week;
+    int firstSundayNovember = (novemberDow == 0) ? 1 : (8 - novemberDow);
+
+    MqlDateTime dstEndStruct = novemberStart;
+    dstEndStruct.day = firstSundayNovember;
+    datetime dstEnd = StructToTime(dstEndStruct);
+
+    return (when >= dstStart && when < dstEnd);
+}
+
+datetime CLiquidityDetector::BuildNewYorkTimestampGMT(const int year,
+                                                      const int mon,
+                                                      const int day,
+                                                      const int hour,
+                                                      const int minute,
+                                                      const int second) const
+{
+    MqlDateTime nyStruct;
+    nyStruct.year = year;
+    nyStruct.mon = mon;
+    nyStruct.day = day;
+    nyStruct.hour = hour;
+    nyStruct.min = minute;
+    nyStruct.sec = second;
+
+    datetime approxGmt = StructToTime(nyStruct) + (5 * 3600);
+    int offset = IsUSDSTime(approxGmt) ? -4 : -5;
+    return StructToTime(nyStruct) - (offset * 3600);
+}
+
+double CLiquidityDetector::FindTimeRangeExtreme(const datetime rangeStartTime,
+                                                const datetime rangeEndTime,
+                                                const bool wantHigh) const
+{
+    int olderShift = iBarShift(m_symbol, PERIOD_D1, rangeStartTime, false);
+    int recentShift = iBarShift(m_symbol, PERIOD_D1, rangeEndTime, false);
+    if(olderShift < 0 || recentShift < 0)
+        return 0.0;
+
+    if(recentShift > olderShift)
     {
-        ArrayResize(m_liquidityPools, m_poolCount + 1);
-        m_liquidityPools[m_poolCount].type = UICT_LIQ_WEEKLY_HIGH;
-        m_liquidityPools[m_poolCount].price = weeklyHigh;
-        m_liquidityPools[m_poolCount].strength = 0.90;
-        m_liquidityPools[m_poolCount].timeframe = PERIOD_W1;
-        m_poolCount++;
+        int tmp = recentShift;
+        recentShift = olderShift;
+        olderShift = tmp;
     }
-    
-    if(weeklyLow > 0)
+
+    double extreme = wantHigh ? -DBL_MAX : DBL_MAX;
+    for(int i = recentShift; i <= olderShift; i++)
     {
-        ArrayResize(m_liquidityPools, m_poolCount + 1);
-        m_liquidityPools[m_poolCount].type = UICT_LIQ_WEEKLY_LOW;
-        m_liquidityPools[m_poolCount].price = weeklyLow;
-        m_liquidityPools[m_poolCount].strength = 0.90;
-        m_liquidityPools[m_poolCount].timeframe = PERIOD_W1;
-        m_poolCount++;
+        double value = wantHigh ? iHigh(m_symbol, PERIOD_D1, i) : iLow(m_symbol, PERIOD_D1, i);
+        if(value <= 0.0)
+            continue;
+
+        if(wantHigh)
+            extreme = MathMax(extreme, value);
+        else
+            extreme = MathMin(extreme, value);
     }
+
+    if(wantHigh && extreme <= -DBL_MAX / 2.0)
+        return 0.0;
+    if(!wantHigh && extreme >= DBL_MAX / 2.0)
+        return 0.0;
+
+    return extreme;
+}
+
+void CLiquidityDetector::DetectInstitutionalLevels()
+{
+    AddLiquidityLevel(UICT_LIQ_MONTHLY_HIGH, iTime(m_symbol, PERIOD_MN1, 1), iHigh(m_symbol, PERIOD_MN1, 1), 0.92, PERIOD_MN1, true);
+    AddLiquidityLevel(UICT_LIQ_MONTHLY_LOW,  iTime(m_symbol, PERIOD_MN1, 1), iLow(m_symbol, PERIOD_MN1, 1),  0.92, PERIOD_MN1, true);
+
+    datetime nowGmt = TimeGMT();
+    int offset = IsUSDSTime(nowGmt) ? -4 : -5;
+    datetime nowNy = nowGmt + (offset * 3600);
+    MqlDateTime nyNow;
+    TimeToStruct(nowNy, nyNow);
+
+    datetime midnightGmt = BuildNewYorkTimestampGMT(nyNow.year, nyNow.mon, nyNow.day, 0, 0, 0);
+    int midnightShift = iBarShift(m_symbol, PERIOD_M15, midnightGmt, false);
+    if(midnightShift >= 0)
+    {
+        AddLiquidityLevel(UICT_LIQ_MIDNIGHT_OPEN,
+                          iTime(m_symbol, PERIOD_M15, midnightShift),
+                          iOpen(m_symbol, PERIOD_M15, midnightShift),
+                          0.88,
+                          PERIOD_M15,
+                          true);
+    }
+
+    int quarterStartMonth = ((nyNow.mon - 1) / 3) * 3 + 1;
+    datetime quarterOpenGmt = BuildNewYorkTimestampGMT(nyNow.year, quarterStartMonth, 1, 0, 0, 0);
+    int quarterOpenShift = iBarShift(m_symbol, PERIOD_D1, quarterOpenGmt, false);
+    if(quarterOpenShift >= 0)
+    {
+        AddLiquidityLevel(UICT_LIQ_QUARTERLY_OPEN,
+                          iTime(m_symbol, PERIOD_D1, quarterOpenShift),
+                          iOpen(m_symbol, PERIOD_D1, quarterOpenShift),
+                          0.95,
+                          PERIOD_D1,
+                          true);
+    }
+
+    int prevQuarterMonth = quarterStartMonth - 3;
+    int prevQuarterYear = nyNow.year;
+    if(prevQuarterMonth <= 0)
+    {
+        prevQuarterMonth += 12;
+        prevQuarterYear--;
+    }
+
+    datetime prevQuarterStartGmt = BuildNewYorkTimestampGMT(prevQuarterYear, prevQuarterMonth, 1, 0, 0, 0);
+    datetime prevQuarterEndGmt = quarterOpenGmt - 60;
+    double quarterHigh = FindTimeRangeExtreme(prevQuarterStartGmt, prevQuarterEndGmt, true);
+    double quarterLow = FindTimeRangeExtreme(prevQuarterStartGmt, prevQuarterEndGmt, false);
+
+    AddLiquidityLevel(UICT_LIQ_QUARTERLY_HIGH, prevQuarterStartGmt, quarterHigh, 0.95, PERIOD_D1, true);
+    AddLiquidityLevel(UICT_LIQ_QUARTERLY_LOW,  prevQuarterStartGmt, quarterLow,  0.95, PERIOD_D1, true);
 }
 
 //+------------------------------------------------------------------+
@@ -346,7 +508,8 @@ bool CLiquidityDetector::DetectLiquiditySweep(SLiquidityPool &pool)
         double close = iClose(m_symbol, m_timeframe, i);
         
         if(pool.type == UICT_LIQ_EQUAL_HIGHS || pool.type == UICT_LIQ_SWING_HIGH ||
-           pool.type == UICT_LIQ_DAILY_HIGH || pool.type == UICT_LIQ_WEEKLY_HIGH)
+           pool.type == UICT_LIQ_DAILY_HIGH || pool.type == UICT_LIQ_WEEKLY_HIGH ||
+           pool.type == UICT_LIQ_MONTHLY_HIGH || pool.type == UICT_LIQ_QUARTERLY_HIGH)
         {
             // Check if swept above
             if(high > pool.price + tolerance)
@@ -362,7 +525,8 @@ bool CLiquidityDetector::DetectLiquiditySweep(SLiquidityPool &pool)
             }
         }
         else if(pool.type == UICT_LIQ_EQUAL_LOWS || pool.type == UICT_LIQ_SWING_LOW ||
-                pool.type == UICT_LIQ_DAILY_LOW || pool.type == UICT_LIQ_WEEKLY_LOW)
+                pool.type == UICT_LIQ_DAILY_LOW || pool.type == UICT_LIQ_WEEKLY_LOW ||
+                pool.type == UICT_LIQ_MONTHLY_LOW || pool.type == UICT_LIQ_QUARTERLY_LOW)
         {
             // Check if swept below
             if(low < pool.price - tolerance)
@@ -398,7 +562,9 @@ bool CLiquidityDetector::HasRecentSweep(bool &isBuyside)
                 isBuyside = (m_liquidityPools[i].type == UICT_LIQ_EQUAL_HIGHS ||
                             m_liquidityPools[i].type == UICT_LIQ_SWING_HIGH ||
                             m_liquidityPools[i].type == UICT_LIQ_DAILY_HIGH ||
-                            m_liquidityPools[i].type == UICT_LIQ_WEEKLY_HIGH);
+                            m_liquidityPools[i].type == UICT_LIQ_WEEKLY_HIGH ||
+                            m_liquidityPools[i].type == UICT_LIQ_MONTHLY_HIGH ||
+                            m_liquidityPools[i].type == UICT_LIQ_QUARTERLY_HIGH);
                 return true;
             }
         }

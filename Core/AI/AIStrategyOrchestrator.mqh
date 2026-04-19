@@ -170,7 +170,9 @@ private:
     double m_disagreementPenalty;                       // Confidence penalty for disagreement
     double m_regimeUncertaintyThreshold;                // Regime uncertainty threshold
     double m_highConfidenceThreshold;                   // High confidence threshold for uncertain regimes
-    
+    double m_peakEquity;                                // Peak equity used for drawdown-aware sizing
+    double m_maxDrawdownLimit;                          // Drawdown fraction for lot-size tapering
+
     CDynamicThresholdManager* m_thresholdManager;       // Dynamic threshold manager
     CTieredSignalValidator* m_tieredValidator;         // Multi-tier signal validator
     
@@ -186,7 +188,7 @@ public:
     ~CAIStrategyOrchestrator(void);
     
     // Initialization
-    bool Initialize(const double minWinRate = 0.40, const int maxConsecutiveLosses = 5);
+    bool Initialize(const double minWinRate = 0.40, const int maxConsecutiveLosses = 5, const double maxDrawdownLimit = 0.20);
     
     // Strategy management
     bool AddStrategy(const string strategyName, const ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3, const double initialWeight = 1.0);
@@ -246,6 +248,8 @@ public:
     void SetCurrentRegime(ENUM_MARKET_REGIME regime, double confidence);
     ENUM_MARKET_REGIME GetCurrentMarketRegime(void) const { return m_currentRegime; }
     void SetMinConfidenceThreshold(double threshold) { m_minVotingConfidence = threshold; }
+    void SetMaxDrawdownLimit(const double limit) { m_maxDrawdownLimit = MathMax(0.05, MathMin(0.95, limit)); }
+    double GetDrawdownMultiplier(void);
     
     // Task 3.4 configuration methods
     void SetAgreementBonus(const double bonus) { m_agreementBonus = MathMax(0.0, MathMin(0.5, bonus)); }
@@ -306,6 +310,8 @@ CAIStrategyOrchestrator::CAIStrategyOrchestrator(void) :
     m_disagreementPenalty(0.15),
     m_regimeUncertaintyThreshold(0.6),
     m_highConfidenceThreshold(0.8),
+    m_peakEquity(0.0),
+    m_maxDrawdownLimit(0.20),
     m_thresholdManager(NULL),
     m_tieredValidator(NULL),
     m_initialized(false),
@@ -383,7 +389,7 @@ CAIStrategyOrchestrator::~CAIStrategyOrchestrator(void)
 //+------------------------------------------------------------------+
 //| Initialize Orchestrator                                         |
 //+------------------------------------------------------------------+
-bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const int maxConsecutiveLosses = 5)
+bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const int maxConsecutiveLosses = 5, const double maxDrawdownLimit = 0.20)
 {
     if(!ValidateWinRateThreshold(minWinRate))
     {
@@ -399,6 +405,10 @@ bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const i
     
     m_minWinRateThreshold = minWinRate;
     m_maxConsecutiveLosses = maxConsecutiveLosses;
+    m_maxDrawdownLimit = MathMax(0.05, MathMin(0.95, maxDrawdownLimit));
+    m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(m_peakEquity <= 0.0)
+        m_peakEquity = AccountInfoDouble(ACCOUNT_BALANCE);
     m_initialized = true;
     m_lastUpdate = TimeCurrent();
     
@@ -418,10 +428,38 @@ bool CAIStrategyOrchestrator::Initialize(const double minWinRate = 0.40, const i
         m_hedgingProtection.Initialize(HEDGING_MODE_PREVENT, false);
     
     LogOrchestrationEvent(ERROR_INFO, 
-                         StringFormat("AI Strategy Orchestrator initialized - Min Win Rate: %.1f%%, Max Consecutive Losses: %d", 
-                                     m_minWinRateThreshold * 100, m_maxConsecutiveLosses));
+                         StringFormat("AI Strategy Orchestrator initialized - Min Win Rate: %.1f%%, Max Consecutive Losses: %d, Drawdown Limit: %.2f",
+                                     m_minWinRateThreshold * 100, m_maxConsecutiveLosses, m_maxDrawdownLimit));
     
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Drawdown-aware lot multiplier                                    |
+//+------------------------------------------------------------------+
+double CAIStrategyOrchestrator::GetDrawdownMultiplier(void)
+{
+    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(eq <= 0.0)
+        eq = AccountInfoDouble(ACCOUNT_BALANCE);
+
+    if(eq <= 0.0)
+        return 1.0;
+
+    if(eq > m_peakEquity)
+        m_peakEquity = eq;
+
+    if(m_peakEquity <= 0.0)
+        return 1.0;
+
+    double ratio = eq / (m_peakEquity + 1e-9);
+    double floorLevel = 1.0 - MathMax(0.05, MathMin(0.95, m_maxDrawdownLimit));
+    if(ratio >= 1.0)
+        return 1.0;
+    if(ratio <= floorLevel)
+        return 0.1;
+
+    return MathMax(0.1, MathMin(1.0, (ratio - floorLevel) / (1.0 - floorLevel)));
 }
 
 //+------------------------------------------------------------------+

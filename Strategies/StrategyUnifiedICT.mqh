@@ -32,6 +32,9 @@
 #include "UnifiedICTFiles/CICTPositionSizer.mqh"
 #include "UnifiedICTFiles/SessionGapDetector.mqh"
 #include "UnifiedICTFiles/AMDDetector.mqh"
+#include "UnifiedICTFiles/SMTDivergenceScanner.mqh"
+#include "UnifiedICTFiles/AnchoredVWAP.mqh"
+#include "UnifiedICTFiles/CumulativeDelta.mqh"
 
 //+------------------------------------------------------------------+
 //| Entry Type Enum                                                  |
@@ -147,6 +150,9 @@ private:
     CICTPositionSizer*          m_ictPositionSizer;
     CSessionGapDetector*        m_gapDetector;
     CAMDDetector*               m_amdDetector;
+    CSMTDivergenceScanner*      m_smtScanner;
+    CAnchoredVWAP*              m_anchoredVWAP;
+    CCumulativeDelta*           m_cumulativeDelta;
     
     // Configuration
     double                      m_minConfluenceScore;
@@ -199,6 +205,8 @@ private:
     SICTEntrySetup              CreateJustificationEntry();
     SICTEntrySetup              CreateRiskWithJustEntry();
     SICTEntrySetup              CreateFullJustificationEntry();
+    SICTEntrySetup              CreateSilverBulletEntry();
+    SICTEntrySetup              CreateJudasSwingEntry();
     
     // Confluence — P3-A weighted scoring
     double                      ScoreConfluences(double price, bool bullish);   // Returns 0-130 weighted score
@@ -209,6 +217,9 @@ private:
     bool                        HasPremiumDiscountConfluence(double price, bool bullish);
     bool                        HasGapConfluence(double price);                 // P2-A: NDOG/NWOG
     bool                        HasAMDPhaseConfluence(bool bullish);            // P2-B: AMD
+    bool                        HasSMTConfluence(bool bullish, double &strength);
+    bool                        HasAnchoredVWAPConfluence(double price, bool bullish);
+    bool                        HasCumulativeDeltaConfluence(bool bullish);
 
     // P3-B: Dynamic confidence
     double                      ComputeEntryConfidence(const SICTEntrySetup &entry, bool bullish);
@@ -221,6 +232,19 @@ private:
     bool                        ValidatePriceRejection(ENUM_TRADE_SIGNAL signal); // Candle confirmation
     bool                        ResolveDirectionalBias(bool &bullish) const;
     string                      BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const;
+    datetime                    ResolveInstitutionalAnchorTime() const;
+    double                      GetKillZoneVolatilityMultiplier() const;
+    bool                        IsBullishOrderBlockType(const ENUM_ORDER_BLOCK_TYPE type) const;
+    bool                        IsBearishOrderBlockType(const ENUM_ORDER_BLOCK_TYPE type) const;
+    bool                        BuildImbalanceDrivenEntry(const bool bullish,
+                                                          const string reason,
+                                                          const double stopAnchor,
+                                                          const double targetPrice,
+                                                          const double confidenceBoost,
+                                                          SICTEntrySetup &entry);
+    double                      ResolveOpposingLiquidityTarget(const double referencePrice, const bool bullish);
+    bool                        IsUSDSTime(const datetime when) const;
+    int                         GetCurrentNewYorkHour() const;
     
     // Trade Management
     double                      CalculateStopLoss(SICTEntrySetup &entry, ENUM_TRADE_SIGNAL signal);
@@ -242,6 +266,9 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_ictPositionSizer(NULL),
     m_gapDetector(NULL),
     m_amdDetector(NULL),
+    m_smtScanner(NULL),
+    m_anchoredVWAP(NULL),
+    m_cumulativeDelta(NULL),
     m_minConfluenceScore(45.0),
     m_minConfluences(4),
     m_requireKillZone(false),
@@ -285,6 +312,9 @@ void CStrategyUnifiedICT::Cleanup()
     if(m_ictPositionSizer != NULL) { delete m_ictPositionSizer; m_ictPositionSizer = NULL; }
     if(m_gapDetector != NULL)   { delete m_gapDetector;   m_gapDetector   = NULL; }
     if(m_amdDetector != NULL)   { delete m_amdDetector;   m_amdDetector   = NULL; }
+    if(m_smtScanner != NULL)    { delete m_smtScanner;    m_smtScanner    = NULL; }
+    if(m_anchoredVWAP != NULL)  { delete m_anchoredVWAP;  m_anchoredVWAP  = NULL; }
+    if(m_cumulativeDelta != NULL) { delete m_cumulativeDelta; m_cumulativeDelta = NULL; }
 }
 
 string CStrategyUnifiedICT::BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const
@@ -311,6 +341,234 @@ bool CStrategyUnifiedICT::ResolveDirectionalBias(bool &bullish) const
         return false;
 
     bullish = isBullish;
+    return true;
+}
+
+bool CStrategyUnifiedICT::IsUSDSTime(const datetime when) const
+{
+    MqlDateTime dt;
+    TimeToStruct(when, dt);
+
+    if(dt.mon < 3 || dt.mon > 11)
+        return false;
+    if(dt.mon > 3 && dt.mon < 11)
+        return true;
+
+    MqlDateTime probe;
+    probe.year = dt.year;
+    probe.hour = 0;
+    probe.min = 0;
+    probe.sec = 0;
+
+    if(dt.mon == 3)
+    {
+        int secondSunday = 0;
+        int sundayCount = 0;
+        probe.mon = 3;
+        for(int d = 1; d <= 14; d++)
+        {
+            probe.day = d;
+            datetime testTime = StructToTime(probe);
+            TimeToStruct(testTime, probe);
+            if(probe.day_of_week == 0)
+            {
+                sundayCount++;
+                if(sundayCount == 2)
+                {
+                    secondSunday = d;
+                    break;
+                }
+            }
+        }
+        if(dt.day < secondSunday)
+            return false;
+        if(dt.day == secondSunday && dt.hour < 2)
+            return false;
+        return true;
+    }
+
+    int firstSunday = 0;
+    probe.mon = 11;
+    for(int d = 1; d <= 7; d++)
+    {
+        probe.day = d;
+        datetime testTime = StructToTime(probe);
+        TimeToStruct(testTime, probe);
+        if(probe.day_of_week == 0)
+        {
+            firstSunday = d;
+            break;
+        }
+    }
+    if(dt.day > firstSunday)
+        return false;
+    if(dt.day == firstSunday && dt.hour >= 2)
+        return false;
+    return true;
+}
+
+int CStrategyUnifiedICT::GetCurrentNewYorkHour() const
+{
+    datetime gmtNow = TimeGMT();
+    MqlDateTime gmtStruct;
+    TimeToStruct(gmtNow, gmtStruct);
+
+    int offset = IsUSDSTime(gmtNow) ? -4 : -5;
+    int nyHour = gmtStruct.hour + offset;
+    while(nyHour < 0)
+        nyHour += 24;
+    while(nyHour >= 24)
+        nyHour -= 24;
+    return nyHour;
+}
+
+double CStrategyUnifiedICT::ResolveOpposingLiquidityTarget(const double referencePrice, const bool bullish)
+{
+    if(m_liquidityDetector == NULL)
+        return 0.0;
+
+    int idx = m_liquidityDetector.FindNearestLiquidity(referencePrice, bullish);
+    if(idx < 0)
+        return 0.0;
+
+    SLiquidityPool pool;
+    if(!m_liquidityDetector.GetPool(idx, pool))
+        return 0.0;
+    return pool.price;
+}
+
+datetime CStrategyUnifiedICT::ResolveInstitutionalAnchorTime() const
+{
+    datetime midnightAnchor = 0;
+    datetime quarterlyAnchor = 0;
+
+    if(m_liquidityDetector != NULL)
+    {
+        for(int i = 0; i < m_liquidityDetector.GetPoolCount(); i++)
+        {
+            SLiquidityPool pool;
+            if(!m_liquidityDetector.GetPool(i, pool))
+                continue;
+
+            if(pool.type == UICT_LIQ_MIDNIGHT_OPEN && pool.time > midnightAnchor)
+                midnightAnchor = pool.time;
+            else if(pool.type == UICT_LIQ_QUARTERLY_OPEN && pool.time > quarterlyAnchor)
+                quarterlyAnchor = pool.time;
+        }
+    }
+
+    if(midnightAnchor > 0)
+        return midnightAnchor;
+    if(quarterlyAnchor > 0)
+        return quarterlyAnchor;
+
+    datetime dayAnchor = iTime(m_symbol, PERIOD_D1, 0);
+    if(dayAnchor > 0)
+        return dayAnchor;
+
+    return iTime(m_symbol, m_timeframe, 12);
+}
+
+double CStrategyUnifiedICT::GetKillZoneVolatilityMultiplier() const
+{
+    if(m_killZones == NULL)
+        return 1.0;
+
+    double multiplier = MathMax(0.50, m_killZones.GetSessionVolatilityMultiplier());
+    if(m_killZones.IsSilverBullet())
+        multiplier = MathMax(multiplier, 1.35);
+    return multiplier;
+}
+
+bool CStrategyUnifiedICT::IsBullishOrderBlockType(const ENUM_ORDER_BLOCK_TYPE type) const
+{
+    return (type == OB_SOURCE_BULLISH ||
+            type == OB_CONTINUATION_BULL ||
+            type == OB_BREAKER_BULL ||
+            type == OB_PROPULSION_BULL ||
+            type == OB_REJECTION_BULL ||
+            type == OB_VACUUM_BULL);
+}
+
+bool CStrategyUnifiedICT::IsBearishOrderBlockType(const ENUM_ORDER_BLOCK_TYPE type) const
+{
+    return (type == OB_SOURCE_BEARISH ||
+            type == OB_CONTINUATION_BEAR ||
+            type == OB_BREAKER_BEAR ||
+            type == OB_PROPULSION_BEAR ||
+            type == OB_REJECTION_BEAR ||
+            type == OB_VACUUM_BEAR);
+}
+
+bool CStrategyUnifiedICT::HasSMTConfluence(bool bullish, double &strength)
+{
+    strength = 0.0;
+    if(m_smtScanner == NULL)
+        return false;
+
+    SSMTDivergence divergence;
+    if(!m_smtScanner.Scan(divergence))
+        return false;
+
+    bool aligns = (bullish && !divergence.isBearish) || (!bullish && divergence.isBearish);
+    if(!aligns)
+        return false;
+
+    strength = MathMax(0.0, MathMin(1.0, divergence.divergenceStrength));
+    return true;
+}
+
+bool CStrategyUnifiedICT::BuildImbalanceDrivenEntry(const bool bullish,
+                                                    const string reason,
+                                                    const double stopAnchor,
+                                                    const double targetPrice,
+                                                    const double confidenceBoost,
+                                                    SICTEntrySetup &entry)
+{
+    entry = SICTEntrySetup();
+    if(m_imbalanceDetector == NULL || m_structureAnalyzer == NULL)
+        return false;
+
+    int imbIdx = bullish ? m_imbalanceDetector.FindBestBullishImbalance()
+                         : m_imbalanceDetector.FindBestBearishImbalance();
+    if(imbIdx < 0)
+        return false;
+
+    SImbalance imb;
+    if(!m_imbalanceDetector.GetImbalance(imbIdx, imb))
+        return false;
+    if(imb.hasRebalanced || imb.isInverse || imb.isBullish != bullish)
+        return false;
+
+    entry.entryType = ICT_ENTRY_FULL_JUSTIFICATION;
+    entry.aoiTop = imb.top;
+    entry.aoiBottom = imb.bottom;
+    entry.aoiMidpoint = imb.midpoint;
+    entry.ceLevelEntry = (imb.ce > 0.0) ? imb.ce : imb.midpoint;
+    entry.entryPrice = entry.ceLevelEntry;
+    entry.confluenceScore = ScoreConfluences(entry.entryPrice, bullish) + 12.0;
+    entry.confluenceCount = MathMax(m_minConfluences, CountConfluences(entry.entryPrice, bullish) + 1);
+    entry.reason = reason;
+    entry.confidence = MathMin(0.95, ComputeEntryConfidence(entry, bullish) + confidenceBoost);
+
+    double atr = m_structureAnalyzer.GetATR(14);
+    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+    double volatilityMultiplier = GetKillZoneVolatilityMultiplier();
+    double buffer = (atr > 0.0) ? atr * 0.12 * volatilityMultiplier : point * 30.0 * volatilityMultiplier;
+    double fallbackStop = (atr > 0.0) ? atr * 1.5 * volatilityMultiplier : point * 120.0 * volatilityMultiplier;
+
+    if(bullish)
+        entry.stopLoss = (stopAnchor > 0.0) ? (stopAnchor - buffer) : (entry.entryPrice - fallbackStop);
+    else
+        entry.stopLoss = (stopAnchor > 0.0) ? (stopAnchor + buffer) : (entry.entryPrice + fallbackStop);
+
+    CalculateTakeProfits(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
+    if(targetPrice > 0.0)
+        entry.takeProfit1 = targetPrice;
+
+    entry.breakevenPrice = entry.entryPrice;
     return true;
 }
 
@@ -385,6 +643,19 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
     if(m_amdDetector != NULL)
         m_amdDetector.Initialize(symbol, timeframe, 2);
 
+    // P2-C: SMT divergence scanner
+    m_smtScanner = new CSMTDivergenceScanner();
+    if(m_smtScanner != NULL)
+        m_smtScanner.Initialize(symbol, timeframe, 80);
+
+    m_anchoredVWAP = new CAnchoredVWAP();
+    if(m_anchoredVWAP != NULL)
+        m_anchoredVWAP.Initialize(symbol, timeframe);
+
+    m_cumulativeDelta = new CCumulativeDelta();
+    if(m_cumulativeDelta != NULL)
+        m_cumulativeDelta.Initialize(symbol, timeframe);
+
     // Chart Drawing Manager - initialized but drawing done in DrawElements
     m_drawingManager = new CChartDrawingManager();
     if(m_drawingManager != NULL)
@@ -422,6 +693,9 @@ void CStrategyUnifiedICT::OnTick()
 {
     if(!m_is_enabled)
         return;
+
+    if(m_cumulativeDelta != NULL)
+        m_cumulativeDelta.UpdateTick();
 
     if(!m_drawOnChartSymbolOnly || StringLen(m_drawPrefix) == 0)
         return;
@@ -517,8 +791,7 @@ void CStrategyUnifiedICT::DrawElements()
             totalOb++;
             
             string name = StringFormat("%sOB_%d", m_drawPrefix, i);
-            color obColor = (ob.type == OB_SOURCE_BULLISH || ob.type == OB_CONTINUATION_BULL || ob.type == OB_BREAKER_BULL) 
-                           ? clrDodgerBlue : clrCrimson;
+            color obColor = IsBullishOrderBlockType(ob.type) ? clrDodgerBlue : clrCrimson;
             
             if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
             
@@ -656,6 +929,15 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     SICTEntrySetup bestEntry;
     bestEntry.entryType = ICT_ENTRY_NONE;
     bestEntry.confidence = 0;
+
+    // Special ICT sequences first
+    SICTEntrySetup judasEntry = CreateJudasSwingEntry();
+    if(judasEntry.entryType != ICT_ENTRY_NONE && judasEntry.confidence > bestEntry.confidence)
+        bestEntry = judasEntry;
+
+    SICTEntrySetup silverBulletEntry = CreateSilverBulletEntry();
+    if(silverBulletEntry.entryType != ICT_ENTRY_NONE && silverBulletEntry.confidence > bestEntry.confidence)
+        bestEntry = silverBulletEntry;
     
     // Try Full Justification entry first (highest probability)
     SICTEntrySetup fullJust = CreateFullJustificationEntry();
@@ -878,7 +1160,111 @@ bool CStrategyUnifiedICT::RefreshComponentsForCurrentBar()
     if(m_obDetector != NULL)
         m_obsDetected = m_obDetector.GetOBCount();
 
+    if(m_cumulativeDelta != NULL)
+    {
+        m_cumulativeDelta.PrimeFromRecentBars(12);
+        m_cumulativeDelta.UpdateTick();
+    }
+
+    if(m_anchoredVWAP != NULL)
+    {
+        datetime anchorTime = ResolveInstitutionalAnchorTime();
+        if(anchorTime > 0)
+            m_anchoredVWAP.SetAnchor(anchorTime);
+        m_anchoredVWAP.Update();
+    }
+
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Create Silver Bullet Entry                                        |
+//+------------------------------------------------------------------+
+SICTEntrySetup CStrategyUnifiedICT::CreateSilverBulletEntry()
+{
+    SICTEntrySetup entry;
+    if(m_killZones == NULL || m_liquidityDetector == NULL || m_structureAnalyzer == NULL)
+        return entry;
+    if(!m_killZones.IsSilverBullet())
+        return entry;
+
+    bool sweepBuyside = false;
+    if(!m_liquidityDetector.HasRecentSweep(sweepBuyside))
+        return entry;
+
+    bool bullish = !sweepBuyside;
+    SStructuralPoint swingPoint;
+    bool hasSwing = bullish ? m_structureAnalyzer.GetLastSwingLow(swingPoint)
+                            : m_structureAnalyzer.GetLastSwingHigh(swingPoint);
+    if(!hasSwing)
+        return entry;
+
+    double stopAnchor = swingPoint.price;
+    int sweptIdx = m_liquidityDetector.FindSweptLiquidity();
+    if(sweptIdx >= 0)
+    {
+        SLiquidityPool sweptPool;
+        if(m_liquidityDetector.GetPool(sweptIdx, sweptPool) && sweptPool.price > 0.0)
+            stopAnchor = sweptPool.price;
+    }
+
+    double targetPrice = ResolveOpposingLiquidityTarget(SymbolInfoDouble(m_symbol, SYMBOL_BID), bullish);
+    if(!BuildImbalanceDrivenEntry(bullish,
+                                  "Silver Bullet sweep + FVG",
+                                  stopAnchor,
+                                  targetPrice,
+                                  0.10,
+                                  entry))
+    {
+        return SICTEntrySetup();
+    }
+
+    entry.reason = "Silver Bullet - " + m_killZones.GetSilverBulletName();
+    return entry;
+}
+
+//+------------------------------------------------------------------+
+//| Create Judas Swing Entry                                          |
+//+------------------------------------------------------------------+
+SICTEntrySetup CStrategyUnifiedICT::CreateJudasSwingEntry()
+{
+    SICTEntrySetup entry;
+    if(m_amdDetector == NULL)
+        return entry;
+
+    int nyHour = GetCurrentNewYorkHour();
+    if(nyHour < 0 || nyHour >= 5)
+        return entry;
+
+    SAMDState state = m_amdDetector.GetState();
+    if(!state.liquiditySwept)
+        return entry;
+    if(state.phase == AMD_PHASE_DISTRIBUTION || state.phase == AMD_PHASE_POST_DISTRIBUTION)
+        return entry;
+    if(m_amdDetector.GetConfidence() < 0.60)
+        return entry;
+
+    bool bullish = false;
+    if(state.isBullishManipulation)
+        bullish = true;
+    else if(state.isBearishManipulation)
+        bullish = false;
+    else
+        return entry;
+
+    double targetPrice = bullish ? state.accumulationHigh : state.accumulationLow;
+    if(!BuildImbalanceDrivenEntry(bullish,
+                                  "Judas Swing manipulation + FVG",
+                                  state.manipulationLevel,
+                                  targetPrice,
+                                  0.12,
+                                  entry))
+    {
+        return SICTEntrySetup();
+    }
+
+    entry.reason = "Judas Swing entry";
+    return entry;
 }
 
 //+------------------------------------------------------------------+
@@ -1098,6 +1484,7 @@ SICTEntrySetup CStrategyUnifiedICT::CreateFullJustificationEntry()
 double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
 {
     double score = 0;
+    double smtStrength = 0.0;
     
     // TIER 1: Institutional / Liquidity (Multiplier 2.5)
     double t1_base = 10.0;
@@ -1118,6 +1505,14 @@ double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
     if(IsAtInstitutionalLevel(price))
         score += (t1_base * 0.4) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 10.0
 
+    // 5. Anchored VWAP around institutional anchor
+    if(HasAnchoredVWAPConfluence(price, bullish))
+        score += (t1_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 12.5
+
+    // 6. SMT divergence (cross-symbol confirmation)
+    if(HasSMTConfluence(bullish, smtStrength))
+        score += (t1_base * 0.6) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1) * MathMax(0.50, smtStrength);
+
 
     // TIER 2: Market Structure (Multiplier 1.5)
     double t2_base = 10.0;
@@ -1133,6 +1528,10 @@ double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
     // 7. BMS/CHoCH alignment (Structure break)
     if(m_structureAnalyzer != NULL && m_structureAnalyzer.HasStructureBreak())
         score += (t2_base * 0.8) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 12.0
+
+    // 8. Cumulative delta / order-flow proxy
+    if(HasCumulativeDeltaConfluence(bullish))
+        score += (t2_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 7.5
 
 
     // TIER 3: Indicators / Oscillators (Multiplier 0.8)
@@ -1187,6 +1586,34 @@ bool CStrategyUnifiedICT::HasAMDPhaseConfluence(bool bullish)
     else         return m_amdDetector.IsSweepBearish();   // Fake up, true DOWN
 }
 
+bool CStrategyUnifiedICT::HasAnchoredVWAPConfluence(double price, bool bullish)
+{
+    if(m_anchoredVWAP == NULL || !m_anchoredVWAP.IsReady())
+        return false;
+
+    if(m_anchoredVWAP.IsNearVWAP(price, 1.0))
+        return true;
+
+    if(bullish)
+        return (price >= m_anchoredVWAP.GetBand1Down() && price <= m_anchoredVWAP.GetVWAP());
+
+    return (price <= m_anchoredVWAP.GetBand1Up() && price >= m_anchoredVWAP.GetVWAP());
+}
+
+bool CStrategyUnifiedICT::HasCumulativeDeltaConfluence(bool bullish)
+{
+    if(m_cumulativeDelta == NULL || !m_cumulativeDelta.IsReady())
+        return false;
+
+    double pressure = m_cumulativeDelta.GetBuyPressure();
+    double normalizedDelta = m_cumulativeDelta.GetNormalizedDelta();
+
+    if(bullish)
+        return (pressure >= 0.56 && normalizedDelta >= 0.05);
+
+    return (pressure <= 0.44 && normalizedDelta <= -0.05);
+}
+
 //+------------------------------------------------------------------+
 //| Compute Entry Confidence — P3-B Dynamic Confidence Model        |
 //+------------------------------------------------------------------+
@@ -1231,6 +1658,16 @@ double CStrategyUnifiedICT::ComputeEntryConfidence(const SICTEntrySetup &entry, 
     if(choch && amd) 
         conf += 0.05 * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 0.125
 
+    double smtStrength = 0.0;
+    if(HasSMTConfluence(bullish, smtStrength))
+        conf += 0.05 * smtStrength;
+
+    if(HasAnchoredVWAPConfluence(entry.entryPrice, bullish))
+        conf += 0.04;
+
+    if(HasCumulativeDeltaConfluence(bullish))
+        conf += 0.04;
+
     return MathMin(0.95, MathMax(0.0, conf));
 }
 
@@ -1250,9 +1687,9 @@ bool CStrategyUnifiedICT::HasOrderBlockConfluence(double price, bool bullish)
     if(!m_obDetector.GetOrderBlock(obIdx, ob)) return false;
     
     if(bullish)
-        return (ob.type == OB_SOURCE_BULLISH || ob.type == OB_CONTINUATION_BULL || ob.type == OB_BREAKER_BULL);
-    else
-        return (ob.type == OB_SOURCE_BEARISH || ob.type == OB_CONTINUATION_BEAR || ob.type == OB_BREAKER_BEAR);
+        return IsBullishOrderBlockType(ob.type);
+
+    return IsBearishOrderBlockType(ob.type);
 }
 
 //+------------------------------------------------------------------+
@@ -1304,14 +1741,39 @@ bool CStrategyUnifiedICT::HasPremiumDiscountConfluence(double price, bool bullis
 //+------------------------------------------------------------------+
 bool CStrategyUnifiedICT::IsAtInstitutionalLevel(double price)
 {
-    // FIX: Scale-aware institutional level detection using Point and price units
-    double roundLevel = 0;
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+    if(point <= 0.0)
+        point = 0.00001;
+
+    double atr = (m_structureAnalyzer != NULL) ? m_structureAnalyzer.GetATR(14) : 0.0;
+    double tolerance = (atr > 0.0) ? atr * 0.10 : point * 25.0;
+
+    if(m_liquidityDetector != NULL)
+    {
+        for(int i = 0; i < m_liquidityDetector.GetPoolCount(); i++)
+        {
+            SLiquidityPool pool;
+            if(!m_liquidityDetector.GetPool(i, pool))
+                continue;
+
+            bool institutionalType =
+                (pool.type == UICT_LIQ_MONTHLY_HIGH ||
+                 pool.type == UICT_LIQ_MONTHLY_LOW ||
+                 pool.type == UICT_LIQ_MIDNIGHT_OPEN ||
+                 pool.type == UICT_LIQ_QUARTERLY_OPEN ||
+                 pool.type == UICT_LIQ_QUARTERLY_HIGH ||
+                 pool.type == UICT_LIQ_QUARTERLY_LOW);
+
+            if(institutionalType && MathAbs(pool.price - price) <= tolerance)
+                return true;
+        }
+    }
+
+    if(m_anchoredVWAP != NULL && m_anchoredVWAP.IsReady() && m_anchoredVWAP.IsNearVWAP(price, 1.0))
+        return true;
+
     // Calculate distance to nearest "round" level
     // Round levels are usually 500, 1000, 2000 points depending on instrument
-    double step = (StringFind(m_symbol, "Volatility") >= 0) ? 10.0 : 0.0050; // Dynamic step
-    
     // For Synthetic Indices like Volatility 75, we look at integer levels
     if(StringFind(m_symbol, "Volatility") >= 0)
     {
@@ -1340,6 +1802,8 @@ bool CStrategyUnifiedICT::IsAtInstitutionalLevel(double price)
 bool CStrategyUnifiedICT::ValidateMarketMakerSetup(SICTEntrySetup &entry)
 {
     int validationScore = 0;
+    bool bullish = false;
+    ResolveDirectionalBias(bullish);
     
     // Check 1: At institutional level
     if(IsAtInstitutionalLevel(entry.entryPrice))
@@ -1355,8 +1819,13 @@ bool CStrategyUnifiedICT::ValidateMarketMakerSetup(SICTEntrySetup &entry)
         validationScore += 3;
     
     // Check 4: Has Order Block
-    if(HasOrderBlockConfluence(entry.entryPrice, m_structureAnalyzer.IsBullish()))
+    if(HasOrderBlockConfluence(entry.entryPrice, bullish))
         validationScore += 2;
+
+    if(HasAnchoredVWAPConfluence(entry.entryPrice, bullish))
+        validationScore += 1;
+    if(HasCumulativeDeltaConfluence(bullish))
+        validationScore += 1;
     
     // Need 5+ points for valid setup (relaxed from 7)
     return (validationScore >= 5);
@@ -1368,8 +1837,9 @@ bool CStrategyUnifiedICT::ValidateMarketMakerSetup(SICTEntrySetup &entry)
 double CStrategyUnifiedICT::CalculateStopLoss(SICTEntrySetup &entry, ENUM_TRADE_SIGNAL signal)
 {
     double atr = m_structureAnalyzer.GetATR(14);
-    double buffer = (atr > 0) ? atr * 0.1 : 5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    double defaultSl = (atr > 0) ? atr * 1.5 : 30 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    double sessionMultiplier = GetKillZoneVolatilityMultiplier();
+    double buffer = (atr > 0) ? atr * 0.1 * sessionMultiplier : 5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT) * sessionMultiplier;
+    double defaultSl = (atr > 0) ? atr * 1.5 * sessionMultiplier : 30 * SymbolInfoDouble(m_symbol, SYMBOL_POINT) * sessionMultiplier;
     double stopLoss = 0;
     
     if(signal == TRADE_SIGNAL_BUY)
@@ -1464,9 +1934,7 @@ void CStrategyUnifiedICT::CalculateTakeProfits(SICTEntrySetup &entry, ENUM_TRADE
             if(!m_obDetector.GetOrderBlock(i, ob)) continue;
             if(ob.isMitigated) continue;
 
-            bool isBullishOB = (ob.type == OB_SOURCE_BULLISH ||
-                                ob.type == OB_CONTINUATION_BULL ||
-                                ob.type == OB_BREAKER_BULL);
+            bool isBullishOB = IsBullishOrderBlockType(ob.type);
             bool isOpposing  = (isBuy ? !isBullishOB : isBullishOB);
             if(!isOpposing) continue;
 
@@ -1588,6 +2056,9 @@ bool CStrategyUnifiedICT::IsPriceAtMajorPOI(double price)
         if(m_premiumDiscount.IsInBullishOTE(price) || m_premiumDiscount.IsInBearishOTE(price))
             return true;
     }
+
+    if(m_anchoredVWAP != NULL && m_anchoredVWAP.IsReady() && m_anchoredVWAP.IsNearVWAP(price, 1.0))
+        return true;
     
     return false;
 }

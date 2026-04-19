@@ -1,0 +1,10 @@
+torch==2.3.0
+onnx==1.16.0
+onnxruntime==1.18.0
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.4.2
+einops==0.7.0
+scipy==1.13.0
+optuna==3.6.1
+matplotlib==3.8.4

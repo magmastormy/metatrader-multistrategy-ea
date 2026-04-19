@@ -1,13 +1,14 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-04-17
-- Status: Batch 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
+- Last Updated: 2026-04-20
+- Status: Batch 68 - Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters (Neural Network, Transformer, Ensemble) integrated into the runtime consensus path.
 
 ## System Snapshot
+- **Institutional ICT Completion + Real ONNX Asset (Batch 68):** The repository now ships a real embedded `Resources/model.onnx` trained from MT5 cache-derived data, a repo-owned export/train/validate toolchain under `Python/`, and a `TrainingDataExporter.mq5` tester harness for regenerating datasets. On the strategy side, `StrategyUnifiedICT` now uses institutional liquidity references (monthly/quarterly highs-lows, NY midnight open), anchored VWAP, cumulative-delta pressure, Silver Bullet/Judas/SMT timing, advanced propulsion/rejection/vacuum block variants, and kill-zone-scaled ATR stop placement instead of placeholder or partially wired logic. Elliott Wave confidence now cross-checks harmonic PRZ alignment, and the EA scan loop now reserves best-candidate virtual risk inside `CUnifiedRiskManager` so later candidates cannot silently double-spend the same portfolio budget during ranking.
 - **AI Training Guardrails & External LLM Runtime Telemetry (Batch 67):** Re-read runtime logs showed the neural path was training almost entirely on pseudo labels while `trade_labels=0`, the external LLM path was configured but effectively silent beyond init, and the reviewed "indicator weakness" sessions were actually `AI_ONLY` runs with indicators intentionally inactive. The EA now blocks weight mutation until enough real trade-linked labels exist, emits explicit `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`, and `[MODE-MASK]` diagnostics, and exercises a throttled external-LLM reasoning path during adaptation instead of leaving the client dormant.
 - **Runtime Readiness Recovery (Batch 66):** Fixed a live AI/runtime gap where the shared transformer service could be referenced before encoder bootstrap, added raw-rate ATR/Bollinger fallbacks in `CVolatilityEngine` and `CRegimeEngine` for transient `4806`-style buffer faults, and hardened the final validator ATR path so approved packets are not re-poisoned by `Invalid ATR: 0.00000`.
 - **Logical Error Audit & Defensive Programming (Batch 64):** Comprehensive autonomous audit identified and fixed 34 logical errors across CRITICAL, HIGH, MEDIUM, and LOW priority levels. Enhancements include robust risk validation with negative balance/equity handling, comprehensive parameter validation, NaN handling throughout AI modules, MA handle caching, timeframe-aware history checks, and improved error logging for debugging.
@@ -88,6 +89,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Strategy governance is now continuous rather than purely binary: role/cluster metadata still exists, but live vote impact is modulated by rolling `healthScore` and reliability multipliers instead of treating every enabled strategy as equally trusted at all times.
 - Strategy overrides that bypass `CStrategyBase::GetSignal(...)` now emit explicit last-decision tags (`FIB_*`, `EW_*`, `SR_*`, `CANDLE_*`), eliminating the misleading repeated `BASE_INITIALIZED` placeholder in consensus diagnostics.
 - The runtime now scans the full symbol set, stages all risk-approved candidates, ranks them by quality/conviction/context/readiness/cost/diversity, and only then selects the best trade for the cycle.
+- The cycle-best candidate is now reserved as a virtual position inside `CUnifiedRiskManager` while the scan is still running, so later candidates are evaluated against remaining daily/portfolio budget instead of ignoring already-claimed scan-time risk.
 - Validator time/session checks now use absolute GMT time and recognize Weltrade `PainX` synthetic symbols as off-hours synthetic products alongside Deriv `Vol`/`Step`/`Jump` families.
 - Live execution now produces an execution receipt (`requested`, `filled`, `request_price`, `fill_price`, `slippage_points`, `latency_ms`, `retcode`, `requestId`, retries) and daily risk usage is registered against actual fill ratio instead of always charging the requested size.
 - `CMarketAnalysis` now reuses bounded last-valid `trend`, `volatility`, `momentum`, and `ATR` snapshots on transient `4806/4807` copy faults instead of collapsing those metrics to zero during short synchronization gaps.
@@ -113,7 +115,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
   - `INDICATOR_ONLY`: only indicator strategies can generate tradable candidates
   - `AI_ONLY`: only AI adapters can generate tradable candidates; indicator strategies are filtered from the registry.
   - `HYBRID`: indicators and AI can both participate, with indicators remaining the admission anchor.
-- AI intrabar participation is no longer hard-disabled globally. `Neural Network AI`, `Transformer AI`, and `Ensemble AI` each have explicit intrabar eligibility inputs, so `AI_ONLY` can now run as a full timed intrabar mode instead of being limited to new-bar AI voting.
+- AI intrabar participation is no longer hard-disabled globally. `Neural Network AI`, `Transformer AI`, `Ensemble AI`, and `ONNX AI` each have explicit intrabar eligibility inputs, so `AI_ONLY` can now run as a full timed intrabar mode instead of being limited to new-bar AI voting.
 - AI registration is active-only: disabled adapters are not instantiated into managers or orchestrator identity maps, and the legacy `InpUseOrchestrator` control surface has been removed.
 - Neural online learning is now guarded against pseudo-label-only drift: loss can still be evaluated on labeled samples, but weight mutation remains locked until enough real trade-linked labels exist and represent a meaningful share of the completed labeled set.
 - AI bootstrap is now explicitly fail-soft:
@@ -121,14 +123,18 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
   - NextGen brain, orchestrator, and AI engine initialize only when enabled
   - failures disable adaptation/dashboard AI features without aborting the EA
 - `CNextGenStrategyBrain` now runs as a local-only transformer path (`LOCAL_TRANSFORMER`); the removed Python/cloud bridge is no longer part of runtime control flow.
+- ONNX voting is now integrated as a symbol-scoped strategy adapter (`COnnxAIStrategyAdapter`) registered through enterprise managers, preserving manager-owned consensus instead of adding a competing EA-level vote path.
+- The repository now includes an aligned offline ONNX surface under `Python/` plus an embedded `Resources/model.onnx` payload for training, export, validation, and runtime deployment.
+- The embedded ONNX payload is now a real trained model generated from MT5 cache exports, not a placeholder asset, and the repo includes `Python/export_mt5_cache.py`, `Python/train_model.py`, `Python/validate_model.py`, `TrainingDataExporter.mq5`, and `shadow_session_mt5_tester.ini` to reproduce the offline/runtime flow.
 - AI vote paths are now bar-cached:
   - Neural adapter calls `GetNeuralSignalCached(...)`
   - Transformer and Ensemble adapters cache per-bar inference results and cache `NONE` on failed feature-build/inference for the rest of the bar
 - AI adapters now emit explicit last-decision reason tags on abstain and signal paths (`NNAI_*`, `TRANSFORMER_*`, `ENSEMBLE_*`) so `[CONSENSUS-ACTIVE]` no longer collapses silent AI abstentions into `UNTAGGED_NO_SIGNAL`.
 - AI data paths are allocation-stable:
-  - NextGen market data uses ring buffers instead of per-update array shifts
+  - `CNextGenStrategyBrain` now builds transformer inputs directly from `CAIFeatureVectorBuilder`; the redundant `CMarketDataProcessor` wrapper has been removed from runtime flow
   - uncertainty history uses ring buffers instead of `Delete(0)` churn
   - NN training samples use a fixed-size struct ring buffer instead of per-sample heap allocation
+- Feature engineering is now standardized on a 55-feature contract shared by neural, transformer, ensemble, ONNX, and Python export paths.
 - Per-symbol strategy names are registered into orchestrator using `<symbol>::<strategy>` naming.
 - Weight adaptation is synchronized back into manager strategy weights.
 - Ensemble aggregation now consumes model class probabilities via `GetPredictions(...)`, so BUY/SELL confidence is derived from the classifier outputs rather than reused latent transformer features.
@@ -185,6 +191,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[INTRABAR-BACKOFF]`: per-symbol backoff tier transitions after repeated low-yield intrabar scans.
 - `[RISK-CONTRACT]`: authoritative pre-trade risk rejection reason with preserved portfolio veto detail.
 - `[RISK-THROTTLE]`: progressive pre-cap risk reduction when daily or portfolio utilization enters elevated pressure bands.
+- `[RISK-VIRTUAL]`: reservation/release lifecycle for scan-time virtual positions held inside unified risk before the final cycle winner is executed or discarded.
 - `[AI-VOTE]`: adapter liveness and vote counts.
 - `[AI-FEEDBACK]`: periodic adaptive-training and retraining status summary.
 - `[NN-MUTATION]`: neural online-learning mutation gate state (`LOCKED` vs `UNLOCKED`) with trade-label vs pseudo-label evidence.
@@ -237,10 +244,8 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Mitigation: use stable tester start symbol (`EURUSD.0`) and include synthetics only where broker history is available.
 
 ## Active Config Files
-- `shadow_session_open.ini`
-- `shadow_session.ini`
+- `TrainingDataExporter.ini`
 - `shadow_session_mt5_tester.ini`
-- `shadow_session_inputs.ini`
 - `shadow_session.set`
 
 ## Code Quality & Safety
@@ -249,7 +254,8 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Constants**: Standardized configuration constants eliminate magic numbers throughout the codebase
 - **Hot-path efficiency**: AI inference is bounded to once per bar per adapter, heavy symbol evaluations are cycle-budgeted with clean carry-over, detector ATR reads are cached where safe, and ring-buffered histories remove repeated O(n) shifts from AI paths
 - **Telemetry discipline**: duplicate per-component `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths so operator-visible logs stay concentrated in manager/runtime telemetry
-- **Compilation**: Maintains 0 errors, 0 warnings with continuous integration verification
+- **Compilation**: Current implementation batch compiles with 0 errors; remaining warnings are legacy repo warnings outside the new ONNX/AI integration surface.
+- **Runtime validation harness**: the repo now contains a tester-owned shadow harness (`shadow_session_mt5_tester.ini` + `shadow_session.set`). A fresh CLI tester dispatch was attempted on 2026-04-20, but this environment only started MetaTester services and did not produce a new EA pass with fresh `[HEARTBEAT]` / `[AI-VOTE]` / `[SHADOW-TRADE]` evidence, so live shadow-log confirmation is still pending even though compilation succeeded.
 
 ## AXIOM Refactor Update (2026-03-31)
 - **Dead-path removal**: removed the obsolete NextGen Python/cloud branch and stale no-op AI lifecycle hooks so runtime behavior is single-path and easier to audit.
@@ -264,6 +270,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Mark-to-market daily budgeting**: Daily risk usage now tracks max of entry budget, equity drawdown from daily baseline, and open portfolio stop risk.
 - **Execution resilience**: Fill mode is configurable (IOC default), transient broker retcodes are retried with bounded backoff, and protective SL/TP updates support emergency bypass.
 - **AI governance lock-down**: NN online training, pseudo-labeling, and weight mutation are disabled by default and cannot bypass unified risk controls.
+- **Drawdown-adaptive sizing**: Sized lots are now tapered against peak-equity drawdown before the post-size unified-risk approval, reducing exposure without bypassing the single risk authority.
 - **Unprotected position remediation**: Runtime now attempts deterministic SL restoration for EA-owned unprotected positions, with bounded retries and forced-close fallback after configured attempts.
 - **Operator risk clarity**: Heartbeat now emits `[RISK-BUDGET]` split telemetry (`entry`, `mtm`, `open_exposure`, `effective`) to distinguish daily budget consumption vs exposure cap pressure.
 - **Symbol fairness controls**: Per-cycle symbol evaluation now rotates start index to neutralize deterministic first-symbol bias under one-trade-per-cycle behavior.

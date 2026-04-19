@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-04-17
+- Last Updated: 2026-04-20
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
+- Current Batch: 68 - Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -72,7 +72,7 @@ flowchart TD
   U --> V[UnifiedRisk post-size validation]
   V --> W{Pass?}
   W -->|No| T
-  W -->|Yes| X[Stage ranked candidate]
+  W -->|Yes| X[Stage ranked candidate and reserve virtual risk if it becomes best-so-far]
 
   X --> X1{More symbols?}
   X1 -->|Yes| E4
@@ -107,6 +107,7 @@ flowchart TD
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, allowing the EA to propagate the system-wide `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
 - Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
 - `CMarketAnalysis` can now reuse bounded last-valid trend/volatility/momentum/ATR snapshots on transient `4806/4807` data faults, preventing short sync gaps from collapsing upstream market-state evidence to zeros.
+- The scan loop now reserves the current best candidate inside `CUnifiedRiskManager` while later symbols are still being evaluated, so projected daily and portfolio utilization remain authoritative during end-of-cycle ranking.
 - **Multi-Tier Validation Path (Batch 60):**
   - **Tiered Evaluation**: Votes are grouped into Tier 1 (Institutional), Tier 2 (Structure), and Tier 3 (Indicators).
   - **Conflict Resolution**: Logic handles contradictions between tiers (e.g., T2/T3 vs T1) using priority rules and combined weight overrides.
@@ -190,12 +191,14 @@ flowchart TD
 - Neural online learning now separates "fit diagnostics" from "weight mutation": labeled samples can still contribute loss metrics, but weight updates remain locked until enough completed trade-linked labels exist to prevent pseudo-label-only drift.
 - AI adapters avoid same-bar recomputation:
   - neural votes come from `GetNeuralSignalCached(...)`
-  - transformer and ensemble adapters cache per-bar inference outcomes and reuse them until the bar changes
-- **Transformer Bridge Fallback** (Batch 65): Neural network execution path gracefully handles transformer encoder failures by zero-padding transformer feature slots and continuing natively with the 15 base technical features instead of aborting the entire forward pass.
+  - transformer, ensemble, and ONNX adapters cache per-bar inference outcomes and reuse them until the bar changes
+- `CNextGenStrategyBrain` and the AI adapters now source runtime features directly from the shared 55-feature `CAIFeatureVectorBuilder`, so the old `CMarketDataProcessor` wrapper is no longer in the live inference path.
+- ONNX participation is manager-owned, not EA-side parallel voting: `COnnxAIStrategyAdapter` registers per symbol, consumes the embedded `Resources/model.onnx`, and can shadow-load a replacement model before promotion.
 - Feature-build or inference failures are cached as `NONE` for the remainder of the bar, preventing repeated failed forward passes on unchanged data.
 - Ensemble confidence is now derived from class probabilities returned by `GetPredictions(...)`, keeping the adapter path aligned with the transformer's classifier output semantics.
 - AI adapters now emit explicit decision reason tags for abstain, disabled, feature-fault, inference-fault, and signal paths so consensus diagnostics can attribute AI silence without falling back to placeholder `UNTAGGED_*` buckets.
 - `CAIEngine` now logs init, configuration, query lifecycle, feedback, and shutdown events under `[EXT-LLM]`, and `ProcessAdaptation()` can perform throttled external reasoning capture when the feature is enabled.
+- The offline/on-disk training surface now lives in `Python/` (`data_pipeline.py`, `models.py`, `train_model.py`, `validate_model.py`), and it exports the same 55-feature / 3-class ONNX model that the runtime expects.
 
 ## Regime/Cost Pre-Gate
 - `CRegimeEngine` runs before validator and can veto entries on:
@@ -228,6 +231,7 @@ flowchart TD
 - Any open position without stop-loss protection is treated as a hard veto state.
 - Runtime performs deterministic unprotected-position remediation (restore SL, then force-close EA-owned positions after bounded failed attempts).
 - Risk validation remains two-phase (`pre-size`, `post-size`) through unified authority.
+- Lot sizing is now drawdown-adaptive before the post-size recheck: `CAIStrategyOrchestrator::GetDrawdownMultiplier()` tapers size against peak-equity drawdown, and the adjusted size still must pass `CUnifiedRiskManager`.
 - Operator telemetry now splits daily budget components: `entry`, `mtm`, `open_exposure`, `effective`.
 - Risk gate now enforces cluster governance:
   - same-symbol opposing-cluster mutex
@@ -383,7 +387,7 @@ flowchart TD
 6. `[PIPELINE-THRESHOLD]` / `[REGIME-STATE]` / `[TrendEngine][READINESS-FAULT]`
 7. `[SIGNAL-REJECTED]`
 8. `[RISK-BUDGET]`
-9. `[RISK-UNPROTECTED]` / `[CAPACITY-EXTERNAL]`
+9. `[RISK-UNPROTECTED]` / `[CAPACITY-EXTERNAL]` / `[RISK-VIRTUAL]`
 10. `[AI-VOTE]`
 11. `[NO-SIGNAL-ALERT]`
 12. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]` plus `[TRADE-EXECUTION]` / `[EXECUTION-TELEMETRY]` for live-send broker details

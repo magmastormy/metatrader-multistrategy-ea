@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-04-17
+- Last Updated: 2026-04-20
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
+- Current Batch: 68 - Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -34,6 +34,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - self-heal cadence scheduler state at runtime if any scheduler array drifts away from the active symbol set
   - dispatch per-symbol evaluations
   - rank approved candidates across symbols before execution
+  - reserve and release the cycle-best candidate as a virtual position inside unified risk while scan-time ranking is still in progress
   - own the non-AI confidence policy inputs for pipeline and manager admission stages
   - adapt per-symbol runtime profiles (strategy roster, intrabar policy, and context posture) by instrument class when symbol-class profiles are enabled
   - emit explicit mode-mask diagnostics when indicator profile entries remain configured but the effective runtime mode filters them out of the active registry
@@ -141,6 +142,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - executed-risk registration after successful synchronous sends, scaled by actual fill ratio
   - portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
   - progressively throttle recommended per-trade risk as daily and portfolio utilization rise, instead of waiting for the final hard-cap stage
+  - maintain a scan-time `CVirtualPositionBook` so cycle-best reservations count against projected daily and portfolio usage before the final execution winner is sent
 
 ### 2.6 Execution domain
 - Class: `CTradeManager`
@@ -205,6 +207,7 @@ The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also 
 - Neural Network adapter (`CAIStrategyAdapter`)
 - Transformer adapter (`CTransformerAIStrategyAdapter`)
 - Ensemble adapter (`CEnsembleAIStrategyAdapter`)
+- ONNX adapter (`COnnxAIStrategyAdapter`)
 - Registration is registry-driven and active-only: disabled adapters are not instantiated into managers or orchestrator identity sets, and the legacy `InpUseOrchestrator` toggle has been removed.
 
 **Memory Safety**: All AI adapters implement RAII patterns with proper cleanup of transformer models and comprehensive error handling. Constants are used throughout to eliminate magic numbers.
@@ -213,9 +216,12 @@ The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also 
 - feature-build/inference failures are cached as `NONE` for the rest of the bar to avoid hot-loop retries on unchanged data
 - `CNextGenStrategyBrain` now runs as a local-only transformer path and exposes dashboard-safe readiness/runtime-mode state instead of legacy cloud/hybrid labels
 - `CEnsembleMetaLearner` now aggregates model class probabilities via `GetPredictions(...)` and uses container ownership correctly (`CArrayObj::FreeMode(true)`) to avoid double-delete behavior
-- `CNeuralNetworkStrategy`, `CUncertaintyQuantifier`, and `CMarketDataProcessor` now use ring-buffered histories instead of heap churn or `Delete(0)`/array-shift patterns
+- `CNextGenStrategyBrain` now builds its inference tensors directly from `CAIFeatureVectorBuilder`, and the redundant `CMarketDataProcessor` layer has been removed from runtime execution
+- `CNeuralNetworkStrategy` and `CUncertaintyQuantifier` use ring-buffered histories instead of heap churn or `Delete(0)`/array-shift patterns
 - All three AI adapters now expose explicit last-decision reason tags on abstain and signal paths, eliminating manager-side `UNTAGGED_NO_SIGNAL` blind spots during AI-enabled audits
 - All AI strategy adapters implement a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator
+- The feature contract is now unified at 55 engineered inputs shared by the MQL runtime and the offline `Python/` ONNX training/export pipeline
+- `Resources/model.onnx` is embedded as an EA resource, and `COnnxBrain` supports shadow-handle hot-swap promotion from a Common-files update path
 
 ### 3.3 Curated runtime profile (Batch 41)
 Curated mode restricts runtime active set to a smaller operational profile while preserving full retained implementation in code.
@@ -238,7 +244,7 @@ Curated mode restricts runtime active set to a smaller operational profile while
 - `EA_MODE_HYBRID` is indicator-led by design: indicator-backed candidates remain admissible when AI abstains, AI corroboration is additive, and AI-only packets are rejected unless the effective runtime mode is AI-primary.
 - `EA_MODE_AI_ONLY` is now a strict operating mode: when `InpEAMode=EA_MODE_AI_ONLY`, indicator strategies are filtered from the strategy registry at startup, ensuring the engine runs exclusively on AI votes.
 - AI adapters can be the sole tradable family on both new-bar and timed intrabar paths when enabled.
-- AI intrabar participation is strategy-scoped (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`) instead of being hard-forced `OFF` at governance time.
+- AI intrabar participation is strategy-scoped (`InpIntrabarEligibilityNeuralNetworkAI`, `InpIntrabarEligibilityTransformerAI`, `InpIntrabarEligibilityEnsembleAI`, `InpIntrabarEligibilityOnnxAI`) instead of being hard-forced `OFF` at governance time.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile leaves the raw input toggles set.
 - Symbol-class governance now exists above raw enable flags:
   - FX symbols keep the full enabled roster unless manually disabled
@@ -254,10 +260,12 @@ Curated mode restricts runtime active set to a smaller operational profile while
 The `StrategyUnifiedICT` module operates as a dedicated institutional-flow container with strict rule adherence:
 - **FVG & Order Block Models:** detection is strictly gap-based (no body color/size filters), and mitigation requires a full boundary close, not just midpoint touches. Source order blocks are dynamically anchored to 3-bar displacement impulses.
 - **Session Context:** `CSessionGapDetector` tracks NDOG/NWOG opening gaps and fill percentages. `CICTKillZones` enforces Silver Bullet windows. `CAMDDetector` defines Accumulation/Manipulation/Distribution phase sweeps to time structural reversals.
+- **Institutional References & Order Flow:** `CLiquidityDetector` now injects monthly/quarterly highs-lows plus NY midnight and quarterly opens, `CAnchoredVWAP` anchors to the latest institutional reference, and `CCumulativeDelta` contributes directional pressure confirmation into POI scoring.
+- **Advanced Block Taxonomy:** `CAdvancedOrderBlockDetector` now includes propulsion, rejection, and vacuum blocks in the same order-block contract used by entry selection, mitigation checks, chart drawing, and TP targeting.
 - **Confluence Scoring:** Replaces flat array counting with a weighted 0-130 point scale (`ScoreConfluences(...)`). Highest weights are given to Order Block presence (30pts) and FVG/Sweeps (20pts).
 - **Dynamic Confidence:** `ComputeEntryConfidence(...)` generates probabilistic confidence scalars dynamically using Market Structure break types (CHoCH = high, BOS = mid) combined with AMD Distribution phase alignment.
 - **Institutional TP Hierarchy:** `CalculateTakeProfits(...)` bypasses fixed Risk:Reward scaling. Targets are structurally anchored (TP1 = Opposing FVG CE, TP2 = Opposing OB CE, TP3 = Unswept Liquidity).
-- **Position Scaling:** `CICTPositionSizer` governs trade volume using an equity-aware point distance formula and enforces hard trailing daily/weekly portfolio drawdown guards.
+- **Position Scaling:** `CICTPositionSizer` governs trade volume using an equity-aware point distance formula, half-Kelly caps from recent symbol-specific closed-deal stats, and hard daily/weekly drawdown guards.
 
 ### 3.6 Support/Resistance & Trendline Architecture
 The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, non-repainting framework optimized for look-ahead safety and chart performance:
@@ -413,6 +421,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - No-vote telemetry now preserves aggregate readiness/context/cost from the ready live pool, and `[COST-GATE]` prints both spread/ATR ratio and raw spread/ATR values so tiny-but-real spread ratios do not look like dead zeros.
 - No-signal deadlock alerting: `[NO-SIGNAL-ALERT]`
 - Cluster risk governance tracing: `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
+- Virtual reservation tracing: `[RISK-VIRTUAL]`
 - AI liveness: `[AI-VOTE]`
 - confirmed deals: `[TRADE-CONFIRMED]`
 - Shadow actions: `[SHADOW-TRADE]`
@@ -438,10 +447,8 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - shadow mode toggle
 
 ### 8.2 Tester profiles
-- `shadow_session_open.ini`
-- `shadow_session.ini`
+- `TrainingDataExporter.ini`
 - `shadow_session_mt5_tester.ini`
-- `shadow_session_inputs.ini`
 - `shadow_session.set`
 
 ## 9. Lifecycle Safety
