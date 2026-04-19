@@ -264,6 +264,13 @@ private:
         }
         m_lastCacheCleanup = now;
     }
+
+    bool EnsureServiceInitialized() {
+        if(m_universalEncoder != NULL)
+            return true;
+
+        return Initialize();
+    }
     
 public:
     CUniversalTransformerService() {
@@ -282,6 +289,9 @@ public:
     }
     
     bool Initialize() {
+        if(m_universalEncoder != NULL)
+            return true;
+
         Print("[UNIVERSAL-TRANSFORMER] Initializing centralized AI service...");
         
         // Create single universal encoder with optimized parameters
@@ -305,9 +315,17 @@ public:
     }
     
     bool RegisterSymbol(const string& symbol) {
-        if(symbol == "" || FindSymbolHeadIndex(symbol) >= 0) {
+        if(symbol == "") {
             return false;
         }
+
+        if(!EnsureServiceInitialized()) {
+            PrintFormat("[UNIVERSAL-TRANSFORMER] ERROR: Service initialization failed while registering %s", symbol);
+            return false;
+        }
+
+        if(FindSymbolHeadIndex(symbol) >= 0)
+            return true;
         
         ENUM_SYMBOL_CLASS symbolClass = ClassifySymbol(symbol);
         
@@ -336,9 +354,16 @@ public:
                           const double& marketData[],
                           int seqLen,
                           double& symbolFeatures[]) {
-        if(m_universalEncoder == NULL || symbol == "" || seqLen <= 0) {
+        if(symbol == "" || seqLen <= 0) {
             return false;
         }
+
+        if(!EnsureServiceInitialized()) {
+            return false;
+        }
+
+        if(!IsSymbolRegistered(symbol) && !RegisterSymbol(symbol))
+            return false;
         
         // Check cache first
         int cacheIndex = FindCacheEntry(symbol);

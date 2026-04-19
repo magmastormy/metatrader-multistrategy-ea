@@ -73,6 +73,7 @@ private:
     datetime m_lastDailyReset;
     bool m_initialized;
     bool m_conservativeMode;
+    datetime m_lastPressureLogTime;
 
 public:
     CUnifiedRiskManager();
@@ -121,7 +122,8 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_dailyStartEquity(0.0),
     m_lastDailyReset(0),
     m_initialized(false),
-    m_conservativeMode(false)
+    m_conservativeMode(false),
+    m_lastPressureLogTime(0)
 {
     m_config.baseRiskPerTradePercent = 1.0;
     m_config.minRiskPerTradePercent = 0.1;
@@ -333,13 +335,67 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     if(m_portfolioRiskManager.IsEmergencyMode() || HasUnprotectedPositions())
         return 0.0;
 
+    double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent();
+    double openExposureRisk = GetCurrentOpenExposureRiskPercent();
+    double remainingDailyRisk = MathMax(0.0, m_config.maxDailyRiskPercent - effectiveDailyRisk);
+    double remainingPortfolioRisk = MathMax(0.0, m_config.maxPortfolioRiskPercent - openExposureRisk);
     double recommended = (requestedRiskPercent > 0.0) ? requestedRiskPercent : m_activeRiskPerTradePercent;
     recommended = MathMin(recommended, m_activeRiskPerTradePercent);
-    recommended = MathMin(recommended, GetRemainingDailyRiskPercent());
-    recommended = MathMin(recommended, GetRemainingPortfolioRiskPercent());
+    recommended = MathMin(recommended, remainingDailyRisk);
+    recommended = MathMin(recommended, remainingPortfolioRisk);
 
     if(recommended <= 0.0)
         return 0.0;
+
+    double pressureMultiplier = 1.0;
+    double dailyUtilization = (m_config.maxDailyRiskPercent > 0.0) ? (effectiveDailyRisk / m_config.maxDailyRiskPercent) : 0.0;
+    double portfolioUtilization = (m_config.maxPortfolioRiskPercent > 0.0) ? (openExposureRisk / m_config.maxPortfolioRiskPercent) : 0.0;
+
+    if(dailyUtilization >= 0.90)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.25);
+    else if(dailyUtilization >= 0.75)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.45);
+    else if(dailyUtilization >= 0.50)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.70);
+
+    if(portfolioUtilization >= 0.85)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.30);
+    else if(portfolioUtilization >= 0.70)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.55);
+    else if(portfolioUtilization >= 0.50)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.80);
+
+    if(m_conservativeMode)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.80);
+
+    recommended *= pressureMultiplier;
+    recommended = MathMin(recommended, remainingDailyRisk);
+    recommended = MathMin(recommended, remainingPortfolioRisk);
+
+    if(recommended <= 0.0)
+        return 0.0;
+
+    if(pressureMultiplier < 0.999)
+    {
+        datetime now = TimeCurrent();
+        if(m_lastPressureLogTime == 0 || (now - m_lastPressureLogTime) >= 60)
+        {
+            PrintFormat("[RISK-THROTTLE] requested=%.2f | active=%.2f | recommended=%.2f | pressure=%.2f | daily_used=%.2f/%.2f | portfolio_used=%.2f/%.2f | conservative=%s",
+                        requestedRiskPercent > 0.0 ? requestedRiskPercent : m_activeRiskPerTradePercent,
+                        m_activeRiskPerTradePercent,
+                        recommended,
+                        pressureMultiplier,
+                        effectiveDailyRisk,
+                        m_config.maxDailyRiskPercent,
+                        openExposureRisk,
+                        m_config.maxPortfolioRiskPercent,
+                        m_conservativeMode ? "true" : "false");
+            m_lastPressureLogTime = now;
+        }
+    }
+
+    if(recommended < m_config.minRiskPerTradePercent)
+        return recommended;
 
     return ClampRiskPercent(recommended);
 }

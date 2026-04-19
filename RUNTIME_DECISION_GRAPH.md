@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-04-15
+- Last Updated: 2026-04-17
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 64 - Logical Error Audit & Defensive Programming Hardening
+- Current Batch: 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -25,7 +25,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 ```mermaid
 flowchart TD
   A[OnInit] --> B[Initialize mandatory trade and risk systems]
-  B --> B0[Initialize optional AI subsystems behind readiness flags]
+  B --> B0[Initialize optional AI subsystems and shared transformer service behind readiness flags]
   B0 --> B1[Validate symbols + log ACCOUNT-CAPACITY]
   B1 --> B2[Recover TRADE-STATE from history and open positions]
   B2 --> C[Build active-only strategy registry and register enabled core or AI adapters]
@@ -56,7 +56,7 @@ flowchart TD
   J2 --> J3[Weighted Decision considering Setup Quality & Reliability]
   J3 --> K{Signal NONE?}
   K -->|Yes| L[Increment no-signal telemetry]
-  K -->|No| M[Exogenous validation: spread/time/session/volatility/cost]
+  K -->|No| M[Resolve ATR then run exogenous validation: spread/time/session/volatility/cost]
 
   M --> N{Validator pass?}
   N -->|No| O[Log SIGNAL-REJECTED]
@@ -91,7 +91,7 @@ flowchart TD
   AD --> AF[NN attribution mapping and labeling]
 
   D --> AG[Position manager lifecycle actions]
-  D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG]
+  D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG, AI-FEEDBACK]
 ```
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
@@ -103,6 +103,7 @@ flowchart TD
 - Per-symbol manager profiles now branch by instrument class before registration: synthetic symbols can use a lean structure-heavy roster and lighter context engines, while FX symbols retain the broader balanced roster.
 - `EA_MODE_HYBRID` is now indicator-led: indicator-backed candidates survive AI abstentions, AI+indicator alignment can add a bounded confidence bonus, and AI-only candidates are still rejected unless the effective mode resolves to an AI-primary contract.
 - `EA_MODE_AI_ONLY` is now strict execution mode when AI adapters are enabled: indicator-based strategies are filtered out of the strategy registry, and AI adapters are the sole tradable family on both new-bar and timed intrabar paths.
+- When `EA_MODE_AI_ONLY` filters configured indicator families out of the active registry, runtime now emits `[MODE-MASK]` so operators can distinguish "inactive by mode" from "active but underperforming."
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, allowing the EA to propagate the system-wide `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
 - Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
 - `CMarketAnalysis` can now reuse bounded last-valid trend/volatility/momentum/ATR snapshots on transient `4806/4807` data faults, preventing short sync gaps from collapsing upstream market-state evidence to zeros.
@@ -118,6 +119,7 @@ flowchart TD
   - All array allocations and loop bounds updated consistently to prevent array out of range errors
   - External LLM integration provides optional signal synthesis, trade explanation, risk assessment, and strategy weight reasoning via Ollama API
   - External LLM is configuration-driven via `useExternalLLM` flag (default `false`) and can be toggled at runtime via `SetExternalLLMEnabled(bool)`
+  - External LLM reasoning is now a live, throttled adaptation-time path with explicit `[EXT-LLM]` query and status telemetry instead of a silent helper surface
   - Multi-scale attention infrastructure enables per-head scaling, time window sizes, and learning rates for differential pattern detection
   - Pattern classifier head provides 10-class pattern classification alongside 3-class BUY/SELL/NONE predictions
 
@@ -184,6 +186,8 @@ flowchart TD
 
 ## AI Runtime Path
 - `CNextGenStrategyBrain` now runs in a single local transformer mode; there is no runtime Python/cloud branch.
+- The shared universal transformer service is now initialized at startup and remains lazy-safe for late callers, preventing registered-symbol / missing-encoder drift in the AI feature path.
+- Neural online learning now separates "fit diagnostics" from "weight mutation": labeled samples can still contribute loss metrics, but weight updates remain locked until enough completed trade-linked labels exist to prevent pseudo-label-only drift.
 - AI adapters avoid same-bar recomputation:
   - neural votes come from `GetNeuralSignalCached(...)`
   - transformer and ensemble adapters cache per-bar inference outcomes and reuse them until the bar changes
@@ -191,12 +195,14 @@ flowchart TD
 - Feature-build or inference failures are cached as `NONE` for the remainder of the bar, preventing repeated failed forward passes on unchanged data.
 - Ensemble confidence is now derived from class probabilities returned by `GetPredictions(...)`, keeping the adapter path aligned with the transformer's classifier output semantics.
 - AI adapters now emit explicit decision reason tags for abstain, disabled, feature-fault, inference-fault, and signal paths so consensus diagnostics can attribute AI silence without falling back to placeholder `UNTAGGED_*` buckets.
+- `CAIEngine` now logs init, configuration, query lifecycle, feedback, and shutdown events under `[EXT-LLM]`, and `ProcessAdaptation()` can perform throttled external reasoning capture when the feature is enabled.
 
 ## Regime/Cost Pre-Gate
 - `CRegimeEngine` runs before validator and can veto entries on:
   - spread-shock cooldown
   - spread/ATR ratio breach
   - late-entry z-score outlier
+- `CVolatilityEngine` and `CRegimeEngine` now synthesize ATR/Bollinger inputs from raw rates when mature-series indicator buffers fault, preserving pipeline evidence instead of degrading to zero ATR context.
 - `UnifiedSignalPipeline` caches structural context per symbol/timeframe/bar and carries forward evidence scores:
   - `readinessScore`
   - `contextScore`
@@ -204,6 +210,7 @@ flowchart TD
   - effective confidence floor
   - soft-threshold pass flag
 - On transient warmup / handle-init / buffer-copy faults, `CRegimeEngine` can reuse a recent valid same-symbol/timeframe snapshot instead of forcing immediate neutral degradation.
+- Final validator ATR acquisition now uses indicator-handle read first and raw-rate ATR as fallback, preventing `Invalid ATR: 0.00000` from re-vetoing a packet after consensus already succeeded.
 - `CTrendEngine` now allows partial-readiness to proceed when the underlying series is mature, enabling MA/ATR fallback logic to attempt recovery instead of hard-failing, which reduces persistent readiness vetoes on synthetic indices where `BarsCalculated` may lag behind `Bars()`.
 - Repeated regime data faults trigger bounded handle reset and retry eligibility instead of indefinite stale-handle behavior.
 - Pipeline threshold adaptation now also consumes the regime snapshot, so confidence uplift/relaxation is aligned with the same market-state authority that drives the cost gate.
@@ -227,6 +234,7 @@ flowchart TD
   - max concurrent positions per cluster
   - max projected cluster risk cap
 - Portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
+- Recommended per-trade risk is now progressively throttled as daily and portfolio utilization rise, producing `[RISK-THROTTLE]` before the final hard-cap path is reached.
 
 ## Execution Hardening
 - Fill policy is configurable via EA input (`IOC` default).
@@ -254,6 +262,11 @@ flowchart TD
 - Scheduler repair emits `[SCHEDULER-STATE]` so silent cadence-array drift is visible immediately in the runtime log.
 - Ranked approved candidates emitted as `[SCAN-CANDIDATE]`.
 - Final cycle winner emitted as `[SCAN-DECISION]`.
+- Mode-filtered indicator absence emitted as `[MODE-MASK]`.
+- External LLM lifecycle and reasoning emitted as `[EXT-LLM]`.
+- Adaptive-training summary emitted as `[AI-FEEDBACK]`.
+- Neural online-learning mutation gate state emitted as `[NN-MUTATION]`.
+- Pre-cap pressure-based risk reduction emitted as `[RISK-THROTTLE]`.
 - Consensus reason counters emitted as `[CONSENSUS-DIAG]`:
   - `raw_none`
   - `filtered_out`

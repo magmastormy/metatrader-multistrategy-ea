@@ -2,6 +2,87 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-04-17
+
+### Batch 67: AI Training Guardrails, External LLM Runtime Telemetry & Risk Pressure Control (2026-04-17)
+
+#### Root Cause
+The deeper log review exposed four separate but related gaps:
+- Neural online learning was active, but the supplied sessions showed repeated `[NN-HEALTH] ... trade_labels=0 | pseudo_labels=...` while `[NN-PSEUDO]` and `[NEURAL-NET] Pseudo labels processed` kept increasing. That meant the model could continue drifting on pseudo labels without enough real trade-linked supervision.
+- The "external LLM" path had almost no runtime evidence in the supplied logs beyond `[INIT] AI Engine initialized in ADAPTIVE mode`, even though the codebase exposed LLM helper methods. Root cause: the external client was mostly dormant in the live adaptation path and had no dedicated telemetry.
+- The reviewed "indicator weakness" sessions were actually `EA_MODE_AI_ONLY` runs. Logs showed `EAMode=AI_ONLY | ActiveIndicators=0 | ActiveAI=3` and repeated `[CONSENSUS-ACTIVE] ... active={Transformer AI, Ensemble AI, Neural Network AI}`, so indicators were not participating in those sessions at all.
+- Capital control was only reacting late through hard caps like `[RISK-CAP] ... daily_remaining=0.08`, instead of progressively reducing risk earlier as budget pressure increased.
+
+#### Implementation Summary
+**AI Training Guardrails (1):**
+- `AIModules/NeuralNetworkStrategy.mqh` now distinguishes trade-linked labels from pseudo labels and blocks weight mutation until enough real completed trade labels exist.
+- Added richer health and mutation diagnostics so runtime now reports whether neural mutation is `LOCKED` or `UNLOCKED`, together with the trade/pseudo composition driving that decision.
+- Training can still compute loss on labeled samples for diagnostics, but pseudo-label accumulation alone no longer mutates network weights.
+
+**External LLM Runtime Activation & Telemetry (2):**
+- `Core/Engines/AIEngine.mqh` now logs explicit `[EXT-LLM]` events for init, config, query start/success/failure, strategy-weight reasoning, feedback, and shutdown.
+- `ProcessAdaptation()` now performs a throttled external-LLM reasoning capture when the feature is enabled, making the external path a real observable runtime participant instead of a silent helper surface.
+- Endpoint configuration now preserves an explicitly configured external endpoint rather than always overwriting it with the localhost default.
+
+**Mode-Mask and Training Visibility (3):**
+- `MultiStrategyAutonomousEA.mq5` now emits `[EXT-LLM]` startup configuration telemetry, `[MODE-MASK]` when configured indicator families are inactive because the effective runtime mode is `AI_ONLY`, and periodic `[AI-FEEDBACK]` summaries during the adaptation loop.
+- This makes it immediately visible from logs whether indicators were actually allowed to participate and whether adaptive retraining is doing anything meaningful.
+
+**Finance / Risk Management (4):**
+- `Core/Risk/UnifiedRiskManager.mqh` now progressively throttles recommended per-trade risk as daily and portfolio utilization rise, instead of waiting until the final hard-cap phase.
+- Added `[RISK-THROTTLE]` telemetry so operators can distinguish gradual budget pressure from a hard veto or cap.
+
+#### Validation Evidence
+- Root-cause evidence came from the supplied logs:
+  - `AI_only_1.log`
+  - `AI_only_2.log`
+  - `AI_with_ExternalLLM.log`
+- Compile verification succeeded after the code changes with `sync_and_compile.ps1 -MirrorSync`:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+- Documentation was synchronized after the compile pass.
+- A fresh MT5 runtime session has not yet been captured after this batch, so live confirmation of the new `[EXT-LLM]`, `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[MODE-MASK]`, and `[RISK-THROTTLE]` tags is still pending.
+
+### Batch 66: Runtime Readiness Recovery & AI Service Hardening (2026-04-17)
+
+#### Root Cause
+Fresh runtime logs exposed three coupled failures in the active AI-only / AI-assisted path:
+- `[NN-FEATURE] Transformer bridge unavailable ...` showed the shared universal transformer service was being used through symbol registration before its encoder had actually been initialized.
+- `[REGIME-STATE] BB_BUFFER_COPY_FAILED` and `[VOLATILITY-FAULT] BB_BUFFER_COPY_FAILED` repeated on mature symbols, which starved the pipeline of ATR/Bollinger evidence even though price history was available.
+- The final validator path performed a fresh ATR `CopyBuffer(...)` and converted misses into `atrValue=0.0`, producing downstream vetoes like `[SIGNAL-REJECTED] ... Invalid ATR: 0.00000`.
+
+#### Implementation Summary
+**AI Service Bootstrap (1):**
+- `AIModules/UniversalTransformerService.mqh` now self-initializes lazily, makes `Initialize()` idempotent, and treats already-registered symbols as a success path instead of a failure mode.
+- `MultiStrategyAutonomousEA.mq5` now explicitly initializes the shared transformer service during AI bootstrap so the live EA path no longer depends on the example integration to create the encoder.
+
+**Runtime Readiness Recovery (2):**
+- `Core/Engines/VolatilityEngine.mqh` now derives ATR, Bollinger width, and standard-deviation inputs directly from raw `CopyRates(...)` data whenever indicator handles are warming, missing, or returning transient buffer-copy faults.
+- `Core/Engines/RegimeEngine.mqh` now derives ATR/Bollinger inputs from raw rates on the same class of faults, preserving regime/cost-gate context instead of degrading to zero-valued ATR state.
+
+**Validator ATR Hardening (3):**
+- `MultiStrategyAutonomousEA.mq5` now resolves validator ATR by trying the shared indicator handle first and then falling back to a raw-rate ATR calculation before handing the packet to `CAdvancedSignalValidator`.
+- Added `[ATR-FALLBACK]` telemetry so validator-side recovery is visible in runtime logs.
+
+#### Validation Evidence
+- Root-cause evidence came from the supplied logs:
+  - `AI_only_1.log`
+  - `AI_only_2.log`
+  - `AI_with_ExternalLLM.log`
+- Compile verification succeeded with `sync_and_compile.ps1 -MirrorSync`:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+- Compile artifact cleanup completed successfully after the build.
+
+#### Files Modified
+1. `AIModules/UniversalTransformerService.mqh`
+2. `Core/Engines/VolatilityEngine.mqh`
+3. `Core/Engines/RegimeEngine.mqh`
+4. `MultiStrategyAutonomousEA.mq5`
+5. `README.md`
+6. `SYSTEM_STRUCTURE.md`
+7. `RUNTIME_DECISION_GRAPH.md`
+8. `SYSTEM_AUDIT_TRACE.md`
+9. `changelogs.md`
+
 ## [Unreleased] - 2026-04-16
 
 ### Batch 65: AI Diagnostic Recovery & Trade Activation (2026-04-16)

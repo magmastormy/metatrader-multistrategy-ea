@@ -162,6 +162,7 @@ private:
     datetime m_lastFeatureValidationLogTime;
     double m_minConfidence;
     datetime m_lastCheckpointDiagLogTime;
+    datetime m_lastMutationGateLogTime;
 
     
 public:
@@ -205,6 +206,7 @@ public:
         m_lastFeatureValidationLogTime(0),
         m_minConfidence(0.35),
         m_lastCheckpointDiagLogTime(0),
+        m_lastMutationGateLogTime(0),
         m_usesSharedTransformer(true)  // Use shared transformer by default
 
     {
@@ -1229,6 +1231,14 @@ public:
         if(labeledCount < m_minTrainingExamples)
             return;
 
+        int tradeLinkedCompleted = 0;
+        int pseudoCompleted = 0;
+        string mutationReason = "";
+        bool canMutateWeights = CanMutateWeights(labeledCount,
+                                                 tradeLinkedCompleted,
+                                                 pseudoCompleted,
+                                                 mutationReason);
+
         const int maxSamplesPerCycle = 256;
         const int epochsPerCycle = 2;
 
@@ -1266,7 +1276,7 @@ public:
                 double loss = CalculateLoss(outputs, target);
                 epochLoss += (loss * sampleWeight);
                 processed++;
-                if(m_allowWeightMutation)
+                if(canMutateWeights)
                     UpdateWeights(m_trainingBuffer[physicalIndex].inputs, outputs, target, sampleWeight);
             }
 
@@ -1282,23 +1292,27 @@ public:
         if(processedTotal > 0)
         {
             m_lastLoss = aggregatedLoss / epochsPerCycle;
-            if(m_allowWeightMutation)
+            if(canMutateWeights)
             {
                 m_trainingSteps++;
+                LogMutationGate(true,
+                                labeledCount,
+                                tradeLinkedCompleted,
+                                pseudoCompleted,
+                                "mutation_ready",
+                                m_lastLoss);
                 PrintFormat("[NEURAL-NET] Training step complete | Epoch=%d | Loss=%.6f | Labeled=%d | TrainedSamples=%d",
                             m_epoch, m_lastLoss, labeledCount, processedTotal);
                 SaveCheckpointAtomic(false);
             }
             else
             {
-                static datetime s_lastMutationDisabledLog = 0;
-                datetime now = TimeCurrent();
-                if(s_lastMutationDisabledLog == 0 || (now - s_lastMutationDisabledLog) >= 300)
-                {
-                    PrintFormat("[NEURAL-NET] Weight mutation disabled | Symbol=%s | Labeled=%d | LastLoss=%.6f",
-                                m_symbol, labeledCount, m_lastLoss);
-                    s_lastMutationDisabledLog = now;
-                }
+                LogMutationGate(false,
+                                labeledCount,
+                                tradeLinkedCompleted,
+                                pseudoCompleted,
+                                mutationReason,
+                                m_lastLoss);
             }
         }
     }
@@ -1562,6 +1576,108 @@ private:
         return pending;
     }
 
+    int CountTradeLinkedCompletedSamples()
+    {
+        int count = 0;
+        for(int i = 0; i < m_trainCount; i++)
+        {
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(!m_trainingBuffer[physicalIndex].hasResult)
+                continue;
+            if(m_trainingBuffer[physicalIndex].isTradeLinked)
+                count++;
+        }
+        return count;
+    }
+
+    int CountPseudoCompletedSamples()
+    {
+        int count = 0;
+        for(int i = 0; i < m_trainCount; i++)
+        {
+            int physicalIndex = TrainingPhysicalIndex(i);
+            if(physicalIndex < 0)
+                continue;
+            if(!m_trainingBuffer[physicalIndex].hasResult)
+                continue;
+            if(m_trainingBuffer[physicalIndex].pseudoLabeled)
+                count++;
+        }
+        return count;
+    }
+
+    bool CanMutateWeights(const int totalLabeled,
+                          int &tradeLinkedCompleted,
+                          int &pseudoCompleted,
+                          string &reason)
+    {
+        tradeLinkedCompleted = CountTradeLinkedCompletedSamples();
+        pseudoCompleted = CountPseudoCompletedSamples();
+        reason = "ready";
+
+        if(!m_allowWeightMutation)
+        {
+            reason = "mutation_disabled";
+            return false;
+        }
+
+        if(totalLabeled <= 0)
+        {
+            reason = "no_labeled_samples";
+            return false;
+        }
+
+        if(tradeLinkedCompleted <= 0)
+        {
+            reason = "no_trade_labels";
+            return false;
+        }
+
+        const int minTradeLabelsForMutation = 5;
+        if(tradeLinkedCompleted < minTradeLabelsForMutation)
+        {
+            reason = StringFormat("trade_labels_%d_below_min_%d",
+                                  tradeLinkedCompleted, minTradeLabelsForMutation);
+            return false;
+        }
+
+        double tradeShare = (double)tradeLinkedCompleted / (double)MathMax(1, totalLabeled);
+        if(tradeLinkedCompleted < 12 && totalLabeled >= 15 && tradeShare < 0.20)
+        {
+            reason = StringFormat("trade_share_%.2f_below_min_0.20", tradeShare);
+            return false;
+        }
+
+        return true;
+    }
+
+    void LogMutationGate(const bool unlocked,
+                         const int totalLabeled,
+                         const int tradeLinkedCompleted,
+                         const int pseudoCompleted,
+                         const string reason,
+                         const double lossValue)
+    {
+        datetime now = TimeCurrent();
+        if(!unlocked && m_lastMutationGateLogTime > 0 && (now - m_lastMutationGateLogTime) < 300)
+            return;
+
+        double tradeShare = (totalLabeled > 0) ? ((double)tradeLinkedCompleted / (double)totalLabeled) : 0.0;
+        PrintFormat("[NN-MUTATION] %s | Symbol=%s | TF=%s | Labeled=%d | Trade=%d | Pseudo=%d | TradeShare=%.2f | Loss=%.6f | Reason=%s",
+                    unlocked ? "UNLOCKED" : "LOCKED",
+                    m_symbol,
+                    EnumToString(m_timeframe),
+                    totalLabeled,
+                    tradeLinkedCompleted,
+                    pseudoCompleted,
+                    tradeShare,
+                    lossValue,
+                    reason);
+        m_lastMutationGateLogTime = now;
+    }
+
     void HandleNewLabeledData()
     {
         int checkpointInterval = MathMax(1, m_checkpointEveryLabeled);
@@ -1569,13 +1685,25 @@ private:
             return;
 
         int completedTrades = GetCompletedTradesCount();
-        bool willTrain = (m_allowWeightMutation && completedTrades >= m_minTrainingExamples);
+        int tradeLinkedCompleted = 0;
+        int pseudoCompleted = 0;
+        string mutationReason = "";
+        bool mutationReady = CanMutateWeights(completedTrades,
+                                              tradeLinkedCompleted,
+                                              pseudoCompleted,
+                                              mutationReason);
+        bool willTrain = (completedTrades >= m_minTrainingExamples);
 
-        PrintFormat("[NN-LABEL] Checkpoint trigger for %s %s | labeledSince=%d | interval=%d | allowMutation=%s | completed=%d | minRequired=%d | willTrain=%s",
+        PrintFormat("[NN-LABEL] Checkpoint trigger for %s %s | labeledSince=%d | interval=%d | allowMutation=%s | completed=%d | trade=%d | pseudo=%d | minRequired=%d | mutation=%s | reason=%s | willTrain=%s",
                     m_symbol, EnumToString(m_timeframe),
                     m_labeledSinceCheckpoint, checkpointInterval,
                     m_allowWeightMutation ? "YES" : "NO",
-                    completedTrades, m_minTrainingExamples,
+                    completedTrades,
+                    tradeLinkedCompleted,
+                    pseudoCompleted,
+                    m_minTrainingExamples,
+                    mutationReady ? "READY" : "LOCKED",
+                    mutationReason,
                     willTrain ? "YES" : "NO");
 
         if(willTrain)

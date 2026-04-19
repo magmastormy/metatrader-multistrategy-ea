@@ -174,10 +174,49 @@ private:
     // External AI connection state
     bool m_externalAIConnected;
     string m_externalAIEndpoint;
+    int m_externalLLMQueryCount;
+    int m_externalLLMSuccessCount;
+    int m_externalLLMFailureCount;
+    datetime m_lastExternalLLMLogTime;
+    datetime m_lastExternalReasoningTime;
+    string m_lastExternalLLMPhase;
+    string m_lastExternalReasoning;
     
     // Log AI event
     void LogAI(ENUM_ERROR_LEVEL level, string message) {
         CEnhancedErrorHandler::LogError((ENUM_ERROR_SEVERITY)level, "AIEngine", message, 0);
+    }
+
+    void LogExternalLLM(const string phase, const string detail, const bool force = false) {
+        datetime now = TimeCurrent();
+        if(!force &&
+           phase == m_lastExternalLLMPhase &&
+           m_lastExternalLLMLogTime > 0 &&
+           (now - m_lastExternalLLMLogTime) < 30)
+        {
+            return;
+        }
+
+        PrintFormat("[EXT-LLM] %s | enabled=%s | connected=%s | endpoint=%s | queries=%d | ok=%d | fail=%d | %s",
+                    phase,
+                    m_adaptiveConfig.useExternalLLM ? "true" : "false",
+                    m_externalAIConnected ? "true" : "false",
+                    m_externalAIEndpoint,
+                    m_externalLLMQueryCount,
+                    m_externalLLMSuccessCount,
+                    m_externalLLMFailureCount,
+                    detail);
+        m_lastExternalLLMPhase = phase;
+        m_lastExternalLLMLogTime = now;
+    }
+
+    string EscapeJson(const string &value) {
+        string escaped = value;
+        StringReplace(escaped, "\\", "\\\\");
+        StringReplace(escaped, "\"", "\\\"");
+        StringReplace(escaped, "\r", " ");
+        StringReplace(escaped, "\n", "\\n");
+        return escaped;
     }
     
     // Calculate prediction accuracy
@@ -204,6 +243,13 @@ public:
         m_correctPredictions = 0;
         m_externalAIConnected = false;
         m_externalAIEndpoint = "";
+        m_externalLLMQueryCount = 0;
+        m_externalLLMSuccessCount = 0;
+        m_externalLLMFailureCount = 0;
+        m_lastExternalLLMLogTime = 0;
+        m_lastExternalReasoningTime = 0;
+        m_lastExternalLLMPhase = "";
+        m_lastExternalReasoning = "";
     }
     
     // Destructor
@@ -211,6 +257,10 @@ public:
         if(m_initialized) {
             LogAI(ERROR_LEVEL_INFO, StringFormat("AIEngine shutdown - Queries: %d, Accuracy: %.2f%%", 
                   m_queryCount, m_predictionAccuracy * 100));
+            LogExternalLLM("SHUTDOWN",
+                           StringFormat("reasoning_cached=%s",
+                                        (m_lastExternalReasoning != "") ? "true" : "false"),
+                           true);
         }
     }
     
@@ -228,6 +278,11 @@ public:
         
         // Configure external LLM based on config
         ConfigureExternalLLM();
+        LogExternalLLM("INIT",
+                       m_adaptiveConfig.useExternalLLM ?
+                       "runtime role=adaptation_reasoning_telemetry" :
+                       "disabled by config",
+                       true);
         
         LogAI(ERROR_LEVEL_INFO, "AIEngine initialized successfully");
         return true;
@@ -424,6 +479,10 @@ public:
         if(m_adaptiveConfig.usePerformanceAdaptation) {
             AdaptToPerformance();
         }
+
+        if(m_adaptiveConfig.useExternalLLM) {
+            MaybeCaptureExternalReasoning();
+        }
         
         // Process expired temporary weight modifications
         ProcessExpiredModifications();
@@ -435,7 +494,9 @@ public:
     void SetExternalAIEndpoint(const string &endpoint) {
         m_externalAIEndpoint = endpoint;
         m_externalAIConnected = (endpoint != "");
-        LogAI(ERROR_LEVEL_INFO, "External AI endpoint set: " + endpoint);
+        LogExternalLLM("CONFIG",
+                       (endpoint != "") ? ("endpoint set to " + endpoint) : "endpoint cleared",
+                       true);
     }
     
     //+------------------------------------------------------------------+
@@ -443,7 +504,10 @@ public:
     //+------------------------------------------------------------------+
     void ConfigureExternalLLM() {
         if(m_adaptiveConfig.useExternalLLM) {
-            SetExternalAIEndpoint("http://localhost:11434");
+            if(m_externalAIEndpoint == "")
+                SetExternalAIEndpoint("http://localhost:11434");
+            else
+                SetExternalAIEndpoint(m_externalAIEndpoint);
         } else {
             SetExternalAIEndpoint("");
         }
@@ -469,12 +533,14 @@ public:
     //+------------------------------------------------------------------+
     bool QueryExternalLLM(const string &prompt, string &llmResponse) {
         if(!m_externalAIConnected || m_externalAIEndpoint == "") {
-            LogAI(ERROR_LEVEL_WARNING, "External LLM not connected");
+            m_externalLLMFailureCount++;
+            LogExternalLLM("QUERY-SKIP", "not connected");
             return false;
         }
         
         // Prepare JSON request for Ollama API
-        string jsonRequest = "{\"model\":\"phi3\",\"prompt\":\"" + prompt + "\",\"stream\":false}";
+        string escapedPrompt = EscapeJson(prompt);
+        string jsonRequest = "{\"model\":\"phi3\",\"prompt\":\"" + escapedPrompt + "\",\"stream\":false}";
         
         // Create HTTP request
         uchar request[];
@@ -486,6 +552,9 @@ public:
         
         // Send POST request to Ollama API
         int timeout = 5000; // 5 second timeout
+        m_externalLLMQueryCount++;
+        LogExternalLLM("QUERY-START",
+                       StringFormat("prompt_len=%d", StringLen(prompt)));
         int res = WebRequest("POST", m_externalAIEndpoint + "/api/generate", "Content-Type: application/json", 
                            timeout, request, responseData, resultHeaders);
         
@@ -499,15 +568,25 @@ public:
                 int responseEnd = StringFind(responseStr, "\"", responseStart);
                 if(responseEnd > responseStart) {
                     llmResponse = StringSubstr(responseStr, responseStart, responseEnd - responseStart);
-                    LogAI(ERROR_LEVEL_INFO, "External LLM query successful");
+                    m_externalLLMSuccessCount++;
+                    LogExternalLLM("QUERY-SUCCESS",
+                                   StringFormat("http=%d | response_len=%d", res, StringLen(llmResponse)),
+                                   true);
                     return true;
                 }
             }
             
-            LogAI(ERROR_LEVEL_WARNING, "Failed to parse external LLM response");
+            m_externalLLMFailureCount++;
+            LogExternalLLM("QUERY-PARSE-FAIL",
+                           StringFormat("http=%d | body_len=%d", res, StringLen(responseStr)),
+                           true);
             return false;
         } else {
-            LogAI(ERROR_LEVEL_ERROR, "External LLM HTTP request failed");
+            int err = GetLastError();
+            m_externalLLMFailureCount++;
+            LogExternalLLM("QUERY-HTTP-FAIL",
+                           StringFormat("err=%d", err),
+                           true);
             return false;
         }
     }
@@ -524,6 +603,12 @@ public:
                                                   TradeSignalToString(predictedSignal), wasCorrect ? "Yes" : "No", profit);
             string llmResponse;
             QueryExternalLLM(feedbackPrompt, llmResponse);
+            LogExternalLLM("FEEDBACK",
+                           StringFormat("signal=%s | correct=%s | profit=%.2f",
+                                        TradeSignalToString(predictedSignal),
+                                        wasCorrect ? "true" : "false",
+                                        profit),
+                           true);
         }
     }
     
@@ -634,6 +719,8 @@ public:
             return false;
         }
         
+        m_lastExternalReasoning = reasoning;
+        LogExternalLLM("STRATEGY-WEIGHTS", "reasoning captured", true);
         LogAI(ERROR_LEVEL_INFO, "LLM Strategy Weight Reasoning: " + reasoning);
         return true;
     }
@@ -736,6 +823,37 @@ private:
         }
         
         return response;
+    }
+
+    void MaybeCaptureExternalReasoning() {
+        if(!m_adaptiveConfig.useExternalLLM)
+            return;
+
+        datetime now = TimeCurrent();
+        if(m_lastExternalReasoningTime > 0 && (now - m_lastExternalReasoningTime) < 600)
+            return;
+
+        m_lastExternalReasoningTime = now;
+
+        if(m_orchestrator == NULL) {
+            LogExternalLLM("REASONING-SKIP", "orchestrator unavailable", true);
+            return;
+        }
+
+        string regime = EnumToString(m_orchestrator.GetCurrentMarketRegime());
+        string currentWeights = m_orchestrator.GetStrategyWeightsJSON();
+        if(currentWeights == "") {
+            LogExternalLLM("REASONING-SKIP", "strategy weights unavailable", true);
+            return;
+        }
+
+        string reasoning = "";
+        if(ReasonStrategyWeights(regime, currentWeights, reasoning)) {
+            m_lastExternalReasoning = reasoning;
+            LogExternalLLM("REASONING", "strategy-weight commentary captured", true);
+        } else {
+            LogExternalLLM("REASONING-FAIL", "strategy-weight commentary unavailable", true);
+        }
     }
     
     // Adaptation helpers

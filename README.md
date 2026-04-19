@@ -1,13 +1,15 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-04-15
-- Status: Batch 64 - Logical Error Audit & Defensive Programming Hardening
+- Last Updated: 2026-04-17
+- Status: Batch 67 - AI Training Guardrails, External LLM Telemetry & Risk Pressure Control
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters (Neural Network, Transformer, Ensemble) integrated into the runtime consensus path.
 
 ## System Snapshot
+- **AI Training Guardrails & External LLM Runtime Telemetry (Batch 67):** Re-read runtime logs showed the neural path was training almost entirely on pseudo labels while `trade_labels=0`, the external LLM path was configured but effectively silent beyond init, and the reviewed "indicator weakness" sessions were actually `AI_ONLY` runs with indicators intentionally inactive. The EA now blocks weight mutation until enough real trade-linked labels exist, emits explicit `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`, and `[MODE-MASK]` diagnostics, and exercises a throttled external-LLM reasoning path during adaptation instead of leaving the client dormant.
+- **Runtime Readiness Recovery (Batch 66):** Fixed a live AI/runtime gap where the shared transformer service could be referenced before encoder bootstrap, added raw-rate ATR/Bollinger fallbacks in `CVolatilityEngine` and `CRegimeEngine` for transient `4806`-style buffer faults, and hardened the final validator ATR path so approved packets are not re-poisoned by `Invalid ATR: 0.00000`.
 - **Logical Error Audit & Defensive Programming (Batch 64):** Comprehensive autonomous audit identified and fixed 34 logical errors across CRITICAL, HIGH, MEDIUM, and LOW priority levels. Enhancements include robust risk validation with negative balance/equity handling, comprehensive parameter validation, NaN handling throughout AI modules, MA handle caching, timeframe-aware history checks, and improved error logging for debugging.
 - **Multi-Tier Signal Validation (Batch 60):** Comprehensive validation architecture evaluates signals across Tier 1 (Institutional), Tier 2 (Structure), and Tier 3 (Indicators).
 - **AI Feature Robustness:** Improved feature vector stability with proactive history readiness checks and indicator warmup verification, eliminating "Feature validation failed" errors during startup.
@@ -64,6 +66,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Curated mode now acts as the default baseline profile rather than a runtime suppressor: fresh defaults stay lean (`Elliott Wave` + `Unified ICT`), but any strategy you explicitly enable remains active and participates in voting.
 - Intrabar eligibility now means real intrabar voting, with symbol-class-aware exceptions: on balanced FX profiles an enabled intrabar strategy votes live, while synthetic lean profiles keep `Fibonacci`/`Elliott Wave`/`Support-Resistance`/`Unified ICT` as `LIVE`, leave `Candlestick` as intrabar `PROBE`, and remove `Momentum`/`Trend` from the local synthetic manager roster when structure-capable strategies are already enabled.
 - Startup governance logs now distinguish active vs inactive strategies in the intrabar summary, so disabled strategies no longer appear as intrabar `LIVE` simply because their input toggle is true in a different profile.
+- `AI_ONLY` sessions now emit a `[MODE-MASK]` explanation when indicator-profile entries remain configured in inputs but are intentionally absent from the active registry, preventing false conclusions that indicator families were "participating badly" when they were actually mode-filtered out.
 - Symbol-class governance is now explicit: when `InpUseSymbolClassProfiles=true`, synthetic symbols use a lean structure-first roster and suppress `Momentum` / `Trend` when structure-capable strategies are already enabled, while FX symbols keep the broader balanced roster.
 - Synthetic lean profiles now also keep intrabar cadence intentionally narrower than the FX path: `Candlestick` remains available for new-bar decisions but no longer bloats synthetic intrabar quorum, and the default intrabar symbol budget is raised to `4` so live synthetic tests use the restored timer cadence more fully.
 - Synthetic lean profiles now also use their own sparse intrabar admission thresholds (`InpSyntheticLeanSparseIntrabarMinQuality`, `InpSyntheticLeanIntrabarSingleVoterMinConfidence`) so one-voter synthetic structure signals are not forced through the same FX-style quality floor as broader balanced rosters.
@@ -90,10 +93,14 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `CMarketAnalysis` now reuses bounded last-valid `trend`, `volatility`, `momentum`, and `ATR` snapshots on transient `4806/4807` copy faults instead of collapsing those metrics to zero during short synchronization gaps.
 - `CAdvancedPositionManager` now treats configured breakeven, trailing, and partial-close pip values as floors, then scales them against the position's original stop distance so wide-stop synthetic trades are no longer managed with tiny fixed pip milestones.
 - `CTradeManager::ModifyPosition(...)` now validates protective stops against the executable quote side (`Bid` for buys, `Ask` for sells), applies an extra freeze/stops cushion, and performs one widened retry on `TRADE_RETCODE_INVALID_STOPS`.
+- The shared universal transformer service is now initialized eagerly during AI bootstrap and lazily inside the service itself, preventing symbol registration from succeeding while the encoder is still absent.
+- `CVolatilityEngine` and `CRegimeEngine` now synthesize ATR/Bollinger context from raw rates when indicator buffers transiently fail, so pipeline evidence remains populated instead of collapsing to zero ATR during repeated `BB_BUFFER_COPY_FAILED` loops.
+- Final validator ATR resolution now falls back to a raw-rate ATR calculation when the direct handle read misses, preventing otherwise-approved packets from being rejected solely because a fresh ATR copy returned zero.
 - Post-quorum nullification now emits `[CONSENSUS-VETO]` so timeframe-resolution and single-voter safety drops are visible without inferring them from a `signal=NONE` quorum line.
 - `CRegimeEngine` can temporarily reuse its most recent valid same-context snapshot on transient warmup / `CopyBuffer` / handle-init faults, and self-resets handles after repeated data faults.
 - `CTrendEngine` now distinguishes warmup, transient copy faults, handle faults, partial-readiness faults, and reused snapshots; partial readiness is allowed to proceed when the underlying series is mature, enabling MA/ATR fallback logic to attempt recovery instead of hard-failing, which reduces persistent readiness vetoes on synthetic indices where `BarsCalculated` may lag behind `Bars()`.
 - `CPortfolioRiskManager::CalculateSymbolCorrelation()` now returns a bounded fallback correlation (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, instead of a conservative 1.0 that causes hard blocks, preserving safety while avoiding unnecessary trade blocking when H1 price data is temporarily missing.
+- `CUnifiedRiskManager` now applies progressive pressure throttling before the hard cap is reached, scaling recommended per-trade risk down as daily and portfolio utilization rise and emitting `[RISK-THROTTLE]` instead of waiting until the remaining budget is nearly zero.
 - Shutdown report noise is reduced: performance and AI feedback reports only print when they have real trade/prediction data, and manager teardown now explicitly deinitializes strategies before deleting them.
 
 ### AI participation
@@ -108,6 +115,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
   - `HYBRID`: indicators and AI can both participate, with indicators remaining the admission anchor.
 - AI intrabar participation is no longer hard-disabled globally. `Neural Network AI`, `Transformer AI`, and `Ensemble AI` each have explicit intrabar eligibility inputs, so `AI_ONLY` can now run as a full timed intrabar mode instead of being limited to new-bar AI voting.
 - AI registration is active-only: disabled adapters are not instantiated into managers or orchestrator identity maps, and the legacy `InpUseOrchestrator` control surface has been removed.
+- Neural online learning is now guarded against pseudo-label-only drift: loss can still be evaluated on labeled samples, but weight mutation remains locked until enough real trade-linked labels exist and represent a meaningful share of the completed labeled set.
 - AI bootstrap is now explicitly fail-soft:
   - trade/risk/manager initialization remains mandatory
   - NextGen brain, orchestrator, and AI engine initialize only when enabled
@@ -125,6 +133,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Weight adaptation is synchronized back into manager strategy weights.
 - Ensemble aggregation now consumes model class probabilities via `GetPredictions(...)`, so BUY/SELL confidence is derived from the classifier outputs rather than reused latent transformer features.
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, and the EA propagates the `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
+- `CAIEngine` now treats external LLM usage as an observable runtime path instead of a dormant helper surface: initialization, endpoint configuration, query start/success/failure, strategy-weight reasoning, feedback, and shutdown all emit explicit `[EXT-LLM]` telemetry, and adaptation now performs a throttled external reasoning capture when the feature is enabled.
 - Per-component `SignalDiagnostics` fan-out has been reduced: Elliott, the unified pipeline, and the orchestrator no longer instantiate duplicate diagnostics sinks, leaving manager/runtime telemetry as the authoritative runtime record.
 - **AI Feature Engineering Expansion (Batch 58):** Neural network feature vector expanded from 25 to 44 features:
   - Pattern-specific features (features 25-43): Higher Highs/Lower Lows sequences, Support/Resistance touch counts, Fibonacci Retracement proximity, Pivot Point proximity, volume profile features, market structure features
@@ -175,7 +184,12 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[ENTERPRISE-BLOCKED]`: approved signal suppressed by cooldown, capacity, or protection gates before risk/execution.
 - `[INTRABAR-BACKOFF]`: per-symbol backoff tier transitions after repeated low-yield intrabar scans.
 - `[RISK-CONTRACT]`: authoritative pre-trade risk rejection reason with preserved portfolio veto detail.
+- `[RISK-THROTTLE]`: progressive pre-cap risk reduction when daily or portfolio utilization enters elevated pressure bands.
 - `[AI-VOTE]`: adapter liveness and vote counts.
+- `[AI-FEEDBACK]`: periodic adaptive-training and retraining status summary.
+- `[NN-MUTATION]`: neural online-learning mutation gate state (`LOCKED` vs `UNLOCKED`) with trade-label vs pseudo-label evidence.
+- `[EXT-LLM]`: external LLM config, runtime query lifecycle, reasoning, feedback, and shutdown telemetry.
+- `[MODE-MASK]`: explicit notice that configured indicator families are inactive because the effective runtime mode filtered them from the registry.
 - `[SHADOW-TRADE]`: shadow execution events.
 - `[TRADE-CONFIRMED]`: confirmed deal lifecycle events from `OnTradeTransaction`.
 - `[EXECUTION-RECEIPT]`: broker execution receipt including requested/fill volume, retcode, and retry count.
@@ -187,6 +201,8 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Validator soft-pass now aligns with manager-approved single-voter new-bar packets when supporting evidence is strong, reducing false negatives where consensus passed but validator re-rejected the same packet for near-threshold confidence/confluence.
 - No-vote/no-trade telemetry now preserves aggregate readiness/context/cost evidence from the ready live pool instead of zeroing those fields after the manager already computed them.
 - `[REGIME-STATE]`: regime state, transient-fault reuse (`REUSE_LAST_VALID`), and repeated-fault handle self-heal (`HANDLE_RESET`).
+- `[REGIME-STATE]` and `[VOLATILITY-FAULT]` now also emit `FALLBACK_RATES` when raw-price recovery replaces a failed indicator-buffer read.
+- `[ATR-FALLBACK]`: raw-rate ATR recovery when validator-side handle reads are temporarily unavailable.
 - `[TrendEngine][READINESS-FAULT]`: mature-series indicator readiness fault with bounded indicator-set reinitialization.
 - `[READINESS-STATE]`: bounded trend snapshot reuse event with symbol, timeframe, and reuse age.
 - `[HEARTBEAT-FUNNEL]`: conversion funnel counters (`signals_generated` -> `shadow_or_live_sent`).
@@ -374,4 +390,3 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 
 ## Synthetic Assets Expansion (v2.0 Update)
 - Native 24/7 continuous trading execution is inherently supported across modern synthetics: Step Index, Jump 10, PainX, SFX Vol, GainX, FX Vol, and FlipX.
-

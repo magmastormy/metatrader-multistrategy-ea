@@ -479,6 +479,72 @@ double CalculateCandidateRankingScore(const SApprovedTradeCandidate &candidate)
     return MathMax(0.0, MathMin(1.0, score));
 }
 
+double CalculateAtrFromRates(const string symbol, const ENUM_TIMEFRAMES timeframe, const int period, const int shift = 0)
+{
+    if(symbol == "" || period <= 0 || shift < 0)
+        return 0.0;
+
+    int requiredBars = MathMax(period + shift + 2, shift + 3);
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    int copied = CopyRates(symbol, timeframe, 0, requiredBars, rates);
+    if(copied <= (shift + period))
+        return 0.0;
+
+    double trueRangeSum = 0.0;
+    int usable = 0;
+    for(int i = shift; i < (shift + period) && (i + 1) < copied; i++)
+    {
+        double rangeHighLow = rates[i].high - rates[i].low;
+        double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
+        double rangeLowClose = MathAbs(rates[i].low - rates[i + 1].close);
+        trueRangeSum += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
+        usable++;
+    }
+
+    if(usable <= 0)
+        return 0.0;
+
+    return trueRangeSum / (double)usable;
+}
+
+bool TryResolveAtrValue(const string symbol, const ENUM_TIMEFRAMES timeframe, const int period, double &atrValue)
+{
+    atrValue = 0.0;
+
+    CIndicatorManager* indManager = CIndicatorManager::Instance();
+    int atrHandle = INVALID_HANDLE;
+    if(indManager != NULL)
+        atrHandle = indManager.GetATRHandle(symbol, timeframe, period);
+
+    double atr[];
+    ArraySetAsSeries(atr, true);
+    if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0 && atr[0] > 0.0)
+    {
+        atrValue = atr[0];
+        return true;
+    }
+
+    atrValue = CalculateAtrFromRates(symbol, timeframe, period, 0);
+    if(atrValue > 0.0)
+    {
+        static datetime s_lastAtrFallbackLogTime = 0;
+        datetime now = TimeCurrent();
+        if(s_lastAtrFallbackLogTime == 0 || (now - s_lastAtrFallbackLogTime) >= 30)
+        {
+            PrintFormat("[ATR-FALLBACK] %s %s | period=%d | atr=%.5f",
+                        symbol,
+                        EnumToString(timeframe),
+                        period,
+                        atrValue);
+            s_lastAtrFallbackLogTime = now;
+        }
+        return true;
+    }
+
+    return false;
+}
+
 void ResetSymbolScanStates(const int size)
 {
     ArrayResize(g_symbolScanStates, size);
@@ -3024,6 +3090,9 @@ int OnInit()
     {
         Print("[AI] Initializing AI subsystems...");
 
+        if(!g_universalTransformerService.Initialize())
+            Print("[AI] WARNING: Universal transformer service failed to initialize - shared transformer features may be unavailable");
+
         if(!aiNextGenBrain.Initialize(Symbol(), Period()))
         {
             Print("[INIT] WARNING: NextGen AI Brain failed to initialize - dashboard AI brain disabled");
@@ -3145,6 +3214,9 @@ int OnInit()
             if(InpEnableExternalLLM)
                 g_AIEngine.SetExternalAIEndpoint(InpExternalLLMEndpoint); // Set endpoint from input
             Print("[INIT] AI Engine initialized in ADAPTIVE mode");
+            PrintFormat("[EXT-LLM] config=%s | endpoint=%s | runtime_role=adaptation_reasoning_telemetry | trade_gating=false",
+                        InpEnableExternalLLM ? "enabled" : "disabled",
+                        InpEnableExternalLLM ? InpExternalLLMEndpoint : "n/a");
         }
         else
         {
@@ -3175,6 +3247,12 @@ int OnInit()
                 EAModeToString(ResolveEffectiveEAMode()),
                 g_strategyRegistry.GetActiveIndicatorCount(),
                 g_strategyRegistry.GetActiveAICount());
+    if(ResolveEffectiveEAMode() == EA_MODE_AI_ONLY && g_strategyRegistry.GetActiveIndicatorCount() == 0)
+    {
+        PrintFormat("[MODE-MASK] Indicator profile entries are configured (%s) but inactive because effective mode is %s",
+                    BuildEnabledStrategyList(strategyFlags),
+                    EAModeToString(ResolveEffectiveEAMode()));
+    }
     bool effectiveIntrabarCadence = (InpEnableHybridCadence && !InpSignalScanOnNewBarOnly);
     PrintFormat("[CADENCE-CONFIG] hybrid=%s | newbar_only=%s | effective_intrabar=%s | intrabar_seconds=%d | intrabar_budget=%d | chart_only=%s",
                 InpEnableHybridCadence ? "true" : "false",
@@ -3836,6 +3914,18 @@ void ProcessTradingLogic(bool fromTimer)
             SyncOrchestratorWeightsToManagers();
         }
 
+        if(g_aiFeedbackReady)
+        {
+            static datetime s_lastAIFeedbackMaintenance = 0;
+            datetime now = TimeCurrent();
+            if(s_lastAIFeedbackMaintenance == 0 || (now - s_lastAIFeedbackMaintenance) >= 300)
+            {
+                aiFeedback.CheckAutomaticRetraining();
+                PrintFormat("[AI-FEEDBACK] %s", aiFeedback.GetPerformanceSummary());
+                s_lastAIFeedbackMaintenance = now;
+            }
+        }
+
         if(callCount % 100 == 0)
             Print("[DRAWINGS] OnNewBar processed for all managed symbols");
     }
@@ -4099,17 +4189,8 @@ void ProcessTradingLogic(bool fromTimer)
                                                        decisionContext,
                                                        tickTime);
 
-                    CIndicatorManager* indManager = CIndicatorManager::Instance();
-                    int atrHandle = INVALID_HANDLE;
-                    if(indManager != NULL)
-                        atrHandle = indManager.GetATRHandle(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14);
-
-                    double atr[];
-                    ArraySetAsSeries(atr, true);
                     double atrValue = 0.0;
-                    bool atrReady = (atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 0, 1, atr) > 0 && atr[0] > 0.0);
-                    if(atrReady)
-                        atrValue = atr[0];
+                    bool atrReady = TryResolveAtrValue(currentSymbol, (ENUM_TIMEFRAMES)Period(), 14, atrValue);
 
                     bool signalApproved = false;
                     double qualityScore = confidence;
