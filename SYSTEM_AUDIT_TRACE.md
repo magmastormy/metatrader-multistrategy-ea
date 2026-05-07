@@ -1,23 +1,24 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-04-20
+- Last Updated: 2026-04-27
 - Scope: Runtime lifecycle and ownership trace
-- Current Batch: 68 - Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations
+- Current Batch: 76 - AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
 - Symbol decision manager: `Core/Management/EnterpriseStrategyManager.mqh`
 - Multi-tier validator: `Core/Signals/TieredSignalValidator.mqh` (Batch 60)
 - Filter pipeline: `Core/Pipeline/UnifiedSignalPipeline.mqh`
-- AI orchestrator: `Core/AI/AIStrategyOrchestrator.mqh`
+- AI runtime control: `Core/Engines/AIEngine.mqh`
 - AI adapters:
   - `Core/Strategy/AIStrategyAdapter.mqh`
   - `Core/Strategy/TransformerAIStrategyAdapter.mqh`
   - `Core/Strategy/EnsembleAIStrategyAdapter.mqh`
+  - `Core/Strategy/OnnxAIStrategyAdapter.mqh`
 - Risk authority: `Core/Risk/UnifiedRiskManager.mqh`
 - Execution authority: `Core/Trading/TradeManager.mqh`
-- Position authority: `Core/Trading/AdvancedPositionManager.mqh`
+- Position authority: EA lifecycle loop via `CTradeManager::ManageAllPositions(...)`
 
 ## Runtime Lifecycle
 
@@ -28,24 +29,31 @@
 - Reject unsupported non-hedging account models before runtime ownership is established.
 - Apply execution safety controls (fill mode, slippage, protective modify cooldown) before trade-manager bootstrap.
 - Initialize optional AI subsystems conditionally by flags and convert failures into readiness-state degradation instead of fatal startup aborts.
+- Emit `[AI-TOPOLOGY]` so MT5-native voters, ONNX live voting, Python bridge expectations, and external LLM reasoning posture are visible from init logs.
 - Bootstrap the shared universal transformer service before AI brains/adapters start symbol registration, while keeping the service lazy-safe for indirect runtime callers.
+- Load ONNX scaler parameters from Common files when available so runtime normalization stays aligned with Python training.
 - Initialize performance analytics before unified-risk bootstrap.
 - Validate active symbols and emit `[ACCOUNT-CAPACITY]` affordability diagnostics before the first scan.
+- Reject symbols with extreme spreads (>1000 points) during symbol validation to prevent wasted evaluation cycles.
 - Build the active-only strategy registry, then create per-symbol managers and register only enabled strategies and enabled AI adapters.
 - Build symbol-class-specific strategy flags before manager bootstrap so synthetic symbols can use a leaner live roster than FX without violating per-symbol consensus ownership.
 - Rebuild scheduler state only after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff remain a single aligned authority.
 - Treat curated mode as a baseline/default profile only; explicit strategy enables remain authoritative instead of being rewritten away at runtime.
 - Reconstruct `[TRADE-STATE]` / cooldown timing from EA-owned history and open positions.
-- Register orchestrator strategy identities.
-- Initialize `CTieredSignalValidator` within the orchestrator to manage multi-tier signal hierarchy.
+- Initialize `CTieredSignalValidator` and manager-side AI voting surfaces for multi-tier signal hierarchy.
 - Prime one pending new-bar scan per validated symbol so startup cannot produce a fully idle manager fleet with zero first-pass evaluations.
 
 ### 2. Tick/Timer cycle
-- Run `ProcessTradingLogic`.
+- Run `ProcessTickSafetyLoop()` on every tick.
+- Run `ProcessTradingLogic()` on timer cadence as the heavy evaluation owner.
 - Maintain NN learning cycle with explicit mutation-gate evaluation so pseudo labels can update health metrics without automatically mutating weights.
 - Enforce terminal connectivity gate before signal evaluation.
-- Enforce deterministic second-level signal evaluation separation between tick/timer events.
+- Enforce deterministic separation between the tick-owned safety loop and the timer-owned heavy scan loop.
 - Run deterministic unprotected-position remediation sweep before entry evaluation.
+- Refresh runtime equity/drawdown metrics on both safety and timer paths.
+- Manage open positions once per second through `tradeManager.ManageAllPositions(...)`.
+- Gate the generic EA-level lifecycle manager behind `InpEnablePositionLifecycleManager` so hidden tiny-point breakeven/trailing logic cannot prematurely close wider-structure trades by default.
+- Detect synthetic-index tick-rate spikes and, on alarm, flatten positions plus activate a temporary trading pause.
 - Keep symbol evaluation active during cooldown/capacity veto windows so blocked-entry behavior remains observable.
 - Rotate symbol evaluation start index each cycle to reduce fixed-order concentration.
 - Self-reconcile cadence scheduler state if any scheduler array drifts away from the active symbol set before new-bar detection.
@@ -108,6 +116,7 @@
 - Strategy overrides that bypass base-class `GetSignal(...)` now emit explicit decision tags, and manager defensively downgrades any remaining placeholder abstentions so they cannot silently dilute ready-live quorum math.
 - Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
 - Final validator ATR acquisition now resolves from the shared indicator handle first and then a raw-rate ATR fallback, preventing transient copy misses from forcing `Invalid ATR: 0.00000` vetoes on otherwise-valid packets.
+- Final EA admission also applies ATR-ratio crisis gating (`ATR14/ATR50`) so volatility shocks can reject or down-scale otherwise valid entries before risk sizing.
 - AI vote generation is same-bar cached:
   - neural votes reuse `GetNeuralSignalCached(...)`
   - transformer and ensemble adapters reuse cached inference results until the bar changes
@@ -116,8 +125,14 @@
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator, and the system now respects `InpAIConfidenceThreshold` as the authoritative floor across all modes, eliminating legacy hardcoded confidence caps.
 - AI_ONLY mode is now strict: indicator strategies are filtered out at the strategy registry level, ensuring no indicator-based votes participate when the EA is in AI-primary posture.
 - When configured indicator families are filtered out by `AI_ONLY`, runtime now emits `[MODE-MASK]` so those sessions are not misread as "indicator strategies voted badly."
+- Python-side AI semantics are now explicitly separated in runtime docs and logs:
+  - ONNX is the only Python-trained live-voter path currently wired into manager consensus
+  - Python bridge endpoint inputs are telemetry/expectation surfaces only
+  - external LLM remains a reasoning/adaptation sidecar, not a direct voter
 - The ONNX runtime path is now repository-native: `Resources/model.onnx` is embedded into the EA, `COnnxAIStrategyAdapter` participates in symbol-scoped manager consensus, and `COnnxBrain` can arm a shadow handle for hot-swap evaluation from Common files.
 - The offline ONNX training/export pipeline now lives under `Python/`, aligned to the same 55-feature contract used by `CAIFeatureVectorBuilder`.
+- `CPipelineScaler` now bridges Python `StandardScaler` exports into MQL runtime inference, and `TrainingDataExporter.mq5` can export the same 55 features for parity validation through `Python/feature_crosscheck.py`.
+- The Python stack now also includes CPCV validation, IC-gated promotion, DER++ replay helpers, LightGBM/stacker training, regime/turbulence utilities, and a ZMQ bridge surface for deeper AI upgrade phases.
 - `StrategyUnifiedICT` now treats institutional references as first-class runtime inputs: monthly/quarterly highs-lows, NY midnight/quarter opens, anchored VWAP, cumulative-delta pressure, and propulsion/rejection/vacuum order-block variants all feed the same scoring, POI, and stop/TP path instead of existing as detached helpers.
 - `CICTPositionSizer` now includes half-Kelly sizing caps from recent symbol-specific EA close history, and Elliott Wave confidence can now gain a harmonic PRZ cross-validation bonus through `CHarmonicScanner`.
 - AI intrabar policy is now explicit instead of globally hard-coded `OFF`: `Neural Network AI`, `Transformer AI`, `Ensemble AI`, and `ONNX AI` each have their own intrabar eligibility input, allowing `AI_ONLY` and `HYBRID` to be tested as real timed intrabar modes.
@@ -172,7 +187,8 @@
 - Trade outcome is routed to `CTieredSignalValidator` to update historical accuracy metrics per tier.
 
 ### 5. Housekeeping
-- Position manager lifecycle actions.
+- Position manager lifecycle actions (check market hours before closure/modification, block only when SYMBOL_TRADE_MODE_DISABLED).
+- Tick safety / synthetic spike telemetry and trading-pause lifecycle logs are emitted outside the heavy scan path.
 - Periodic telemetry logs, including `[AI-FEEDBACK]` performance summaries for adaptive-training health.
 - Indicator cache release policy.
 - Shutdown now emits `[TERMINATION-SNAPSHOT]` with final heartbeat counters before deinit cleanup.
@@ -189,7 +205,7 @@
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
 - Multi-Tier: `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SPIKE-ALARM]`, `[SPIKE-PAUSE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`, `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
@@ -403,3 +419,8 @@
 - **Synthetic Symbol Volatility Exempted:** Resolved `0.70` ATR percentage checks universally vetoing extreme relative synthetic variations; synthetics now natively pierce volatility filter checks honoring organic Jump/Volatility index mechanics.
 - **Risk Value Unification:** Hardened risk constants from literal `0.10/0.20` mappings to percentage mappings `10.0/20.0` explicitly satisfying percentage-expectant risk modules matching existing system patterns.
 - **Compile Verification:** 0 errors, 0 warnings. Verified compilation via PS scripts confirming stable structure preservation.
+- Batch 73 audit note:
+  - Added two new manager-registered Tier-1 structure strategies: `CUnicornModelStrategy` and `CPowerOfThreeStrategy`.
+  - Integrated `CISD` and `Turtle Soup` directly into the Unified ICT support stack.
+  - Widened the canonical AI feature contract from 55 to 57 features; Python training now consumes exported MT5 feature columns when available so tick-derived features remain parity-safe.
+  - Batch 74 contract reconciliation removed the stale `CAdvancedPositionManager` ownership claim from repo governance docs. The authoritative lifecycle owner is the EA safety loop in `MultiStrategyAutonomousEA.mq5`, which delegates active lifecycle handling through `CTradeManager::ManageAllPositions(...)` while preserving unified pre-trade veto and trade-manager execution ownership.

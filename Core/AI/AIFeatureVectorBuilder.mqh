@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| AIFeatureVectorBuilder.mqh                                       |
-//| Canonical 55-feature AI input builder for NN / ONNX / sequence   |
+//| Canonical 57-feature AI input builder for NN / ONNX / sequence   |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -19,7 +19,7 @@
 #define TRANSFORMER_DROPOUT_DEFAULT TRANSFORMER_MAX_SEQ_LEN_DEFAULT
 #define TRANSFORMER_LR_A_DEFAULT           0.001
 #define TRANSFORMER_LR_B_DEFAULT          0.0015
-#define FEATURE_VECTOR_SIZE               55
+#define FEATURE_VECTOR_SIZE               57
 #define TEMPORAL_BLEND_CURRENT            0.85
 #define TEMPORAL_BLEND_LAG                0.15
 #define DMODE_BASE_FEATURE_RATIO_WARNING   6
@@ -177,7 +177,9 @@ private:
             sumSq += diff * diff;
             count++;
         }
-        return (count > 1) ? MathSqrt(sumSq / (double)(count - 1) + 1e-9) : 0.0;
+        // Match the Python training pipeline's population standard deviation (ddof=0)
+        // so feature cross-checks do not drift between offline and MT5 runtime.
+        return (count > 0) ? MathSqrt(sumSq / (double)count + 1e-9) : 0.0;
     }
 
     static double ComputeRollingZScoreClose(const string symbol, const ENUM_TIMEFRAMES timeframe, const int shift, const int period)
@@ -344,6 +346,129 @@ private:
         return (current - mean) / stddev;
     }
 
+    static bool IsSyntheticSpikeProfileSymbol(const string symbol)
+    {
+        return (StringFind(symbol, "Volatility") >= 0 ||
+                StringFind(symbol, "Boom") >= 0 ||
+                StringFind(symbol, "Crash") >= 0 ||
+                StringFind(symbol, "Step") >= 0 ||
+                StringFind(symbol, "Jump") >= 0 ||
+                StringFind(symbol, "PainX") >= 0 ||
+                StringFind(symbol, "Pain ") >= 0 ||
+                StringFind(symbol, "GainX") >= 0 ||
+                StringFind(symbol, "FlipX") >= 0 ||
+                StringFind(symbol, "FX Vol") >= 0);
+    }
+
+    static double ResolveTickVolume(const MqlTick &tick)
+    {
+        if(tick.volume_real > 0.0)
+            return tick.volume_real;
+        return (double)MathMax(0, (long)tick.volume);
+    }
+
+    static double ResolveTickTradePrice(const MqlTick &tick)
+    {
+        if(tick.last > 0.0)
+            return tick.last;
+        if(tick.bid > 0.0 && tick.ask > 0.0)
+            return (tick.bid + tick.ask) * 0.5;
+        if(tick.bid > 0.0)
+            return tick.bid;
+        if(tick.ask > 0.0)
+            return tick.ask;
+        return 0.0;
+    }
+
+    static double ComputeOrderFlowImbalance(const string symbol, const int lookbackTicks = 128)
+    {
+        MqlTick ticks[];
+        int copied = CopyTicks(symbol, ticks, COPY_TICKS_ALL, 0, lookbackTicks);
+        if(copied <= 1)
+            return 0.0;
+
+        double ofi = 0.0;
+        for(int i = 1; i < copied; i++)
+        {
+            double bidDelta = ticks[i].bid - ticks[i - 1].bid;
+            double askDelta = ticks[i].ask - ticks[i - 1].ask;
+            double volNow = ResolveTickVolume(ticks[i]);
+            double volPrev = ResolveTickVolume(ticks[i - 1]);
+
+            double eBid = 0.0;
+            if(bidDelta > 0.0)
+                eBid = volNow;
+            else if(MathAbs(bidDelta) <= 1e-9)
+                eBid = volNow - volPrev;
+            else
+                eBid = -volPrev;
+
+            double eAsk = 0.0;
+            if(askDelta < 0.0)
+                eAsk = volNow;
+            else if(MathAbs(askDelta) <= 1e-9)
+                eAsk = volNow - volPrev;
+            else
+                eAsk = -volPrev;
+
+            ofi += (eBid - eAsk);
+        }
+
+        double scaled = ofi / 1000.0;
+        double tanhApprox = (MathExp(2.0 * scaled) - 1.0) / (MathExp(2.0 * scaled) + 1.0 + 1e-9);
+        return ClampValue(tanhApprox, -1.0, 1.0);
+    }
+
+    static double ComputeTimeSinceLastSpikeNormalized(const string symbol, const int lookbackTicks = 256)
+    {
+        if(!IsSyntheticSpikeProfileSymbol(symbol))
+            return 1.0;
+
+        MqlTick ticks[];
+        int copied = CopyTicks(symbol, ticks, COPY_TICKS_ALL, 0, lookbackTicks);
+        if(copied <= 2)
+            return 1.0;
+
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        if(point <= 0.0)
+            point = 0.00001;
+
+        double baseline = 0.0;
+        int baselineCount = 0;
+        for(int i = 1; i < copied; i++)
+        {
+            double currPrice = ResolveTickTradePrice(ticks[i]);
+            double prevPrice = ResolveTickTradePrice(ticks[i - 1]);
+            if(currPrice <= 0.0 || prevPrice <= 0.0)
+                continue;
+
+            baseline += MathAbs(currPrice - prevPrice);
+            baselineCount++;
+        }
+
+        double avgMove = (baselineCount > 0) ? (baseline / (double)baselineCount) : 0.0;
+        double spikeThreshold = MathMax(point * 10.0, avgMove * 5.0);
+        if(spikeThreshold <= 0.0)
+            spikeThreshold = point * 10.0;
+
+        for(int i = copied - 1; i >= 1; i--)
+        {
+            double currPrice = ResolveTickTradePrice(ticks[i]);
+            double prevPrice = ResolveTickTradePrice(ticks[i - 1]);
+            if(currPrice <= 0.0 || prevPrice <= 0.0)
+                continue;
+
+            double move = MathAbs(currPrice - prevPrice);
+            if(move >= spikeThreshold)
+            {
+                int ticksSinceSpike = copied - 1 - i;
+                return ClampValue((double)ticksSinceSpike / (double)MathMax(1, copied - 1), 0.0, 1.0);
+            }
+        }
+
+        return 1.0;
+    }
+
 public:
     static bool BuildNNFeatureVector(const string symbol,
                                      const ENUM_TIMEFRAMES timeframe,
@@ -490,6 +615,8 @@ public:
         features[52] = (atr50 > 1e-9) ? ((close - ema100) / (atr50 + 1e-9)) : 0.0;
         features[53] = ComputeRollingZScoreVolume(symbol, timeframe, barShift, 50);
         features[54] = (atr14 > 1e-9) ? (atr50 / (atr14 + 1e-9)) : 0.0;
+        features[55] = ComputeOrderFlowImbalance(symbol, 128);
+        features[56] = ComputeTimeSinceLastSpikeNormalized(symbol, 256);
 
         for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             features[i] = SanitizeFeature(features[i]);

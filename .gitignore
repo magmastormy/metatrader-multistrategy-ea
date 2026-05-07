@@ -9,10 +9,16 @@ SR_Trendline_Implementation_Spec.md
 *.log
 *.ini
 *.set
-*\pycache__\
+__pycache__/
 *.pyo
 *.pyc
 *.pyd
 *.csv
 *.onnx
 *.h5
+ai_upgrade_one.md
+ai_upgrade_two.md
+debloat.md
+.windsurf/
+.trunk/
+.joycode/

@@ -55,6 +55,20 @@ struct SLiquidityPool
                       strength(0.5), timeframe(PERIOD_CURRENT), isEngineered(false) {}
 };
 
+struct STurtleSoupSignal
+{
+    bool detected;
+    bool bullish;
+    double referencePrice;
+    double sweepPrice;
+    double reclaimClose;
+    datetime eventTime;
+    double confidence;
+
+    STurtleSoupSignal() : detected(false), bullish(false), referencePrice(0.0),
+                          sweepPrice(0.0), reclaimClose(0.0), eventTime(0), confidence(0.0) {}
+};
+
 //+------------------------------------------------------------------+
 //| Liquidity Detector Class                                         |
 //+------------------------------------------------------------------+
@@ -108,6 +122,7 @@ public:
     // Sweep Detection
     bool                DetectLiquiditySweep(SLiquidityPool &pool);
     bool                HasRecentSweep(bool &isBuyside);
+    bool                DetectTurtleSoup(STurtleSoupSignal &signal, const int maxBarsAgo = 3);
     
     // Getters
     int                 GetPoolCount() const { return m_poolCount; }
@@ -570,6 +585,69 @@ bool CLiquidityDetector::HasRecentSweep(bool &isBuyside)
         }
     }
     
+    return false;
+}
+
+bool CLiquidityDetector::DetectTurtleSoup(STurtleSoupSignal &signal, const int maxBarsAgo)
+{
+    signal = STurtleSoupSignal();
+    int limit = MathMax(1, maxBarsAgo);
+    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    for(int i = 0; i < m_poolCount; i++)
+    {
+        SLiquidityPool pool = m_liquidityPools[i];
+        if(pool.price <= 0.0)
+            continue;
+
+        bool poolIsHigh =
+            (pool.type == UICT_LIQ_EQUAL_HIGHS || pool.type == UICT_LIQ_SWING_HIGH ||
+             pool.type == UICT_LIQ_DAILY_HIGH || pool.type == UICT_LIQ_WEEKLY_HIGH ||
+             pool.type == UICT_LIQ_MONTHLY_HIGH || pool.type == UICT_LIQ_QUARTERLY_HIGH);
+        bool poolIsLow =
+            (pool.type == UICT_LIQ_EQUAL_LOWS || pool.type == UICT_LIQ_SWING_LOW ||
+             pool.type == UICT_LIQ_DAILY_LOW || pool.type == UICT_LIQ_WEEKLY_LOW ||
+             pool.type == UICT_LIQ_MONTHLY_LOW || pool.type == UICT_LIQ_QUARTERLY_LOW);
+        if(!poolIsHigh && !poolIsLow)
+            continue;
+
+        for(int shift = 1; shift <= limit; shift++)
+        {
+            double high = iHigh(m_symbol, m_timeframe, shift);
+            double low = iLow(m_symbol, m_timeframe, shift);
+            double close = iClose(m_symbol, m_timeframe, shift);
+            double open = iOpen(m_symbol, m_timeframe, shift);
+            if(high <= 0.0 || low <= 0.0)
+                continue;
+
+            if(poolIsHigh && high > (pool.price + point) && close < pool.price && close < open)
+            {
+                signal.detected = true;
+                signal.bullish = false;
+                signal.referencePrice = pool.price;
+                signal.sweepPrice = high;
+                signal.reclaimClose = close;
+                signal.eventTime = iTime(m_symbol, m_timeframe, shift);
+                signal.confidence = MathMin(0.95, 0.60 + pool.strength * 0.25 + ((high - pool.price) / (10.0 * point)) * 0.05);
+                return true;
+            }
+
+            if(poolIsLow && low < (pool.price - point) && close > pool.price && close > open)
+            {
+                signal.detected = true;
+                signal.bullish = true;
+                signal.referencePrice = pool.price;
+                signal.sweepPrice = low;
+                signal.reclaimClose = close;
+                signal.eventTime = iTime(m_symbol, m_timeframe, shift);
+                signal.confidence = MathMin(0.95, 0.60 + pool.strength * 0.25 + ((pool.price - low) / (10.0 * point)) * 0.05);
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 

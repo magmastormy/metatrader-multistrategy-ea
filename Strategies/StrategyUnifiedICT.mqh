@@ -218,6 +218,7 @@ private:
     bool                        HasGapConfluence(double price);                 // P2-A: NDOG/NWOG
     bool                        HasAMDPhaseConfluence(bool bullish);            // P2-B: AMD
     bool                        HasSMTConfluence(bool bullish, double &strength);
+    bool                        HasCISDConfluence(bool bullish);
     bool                        HasAnchoredVWAPConfluence(double price, bool bullish);
     bool                        HasCumulativeDeltaConfluence(bool bullish);
 
@@ -991,6 +992,14 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
 
     // COUNTER-TREND SCOUT: Allow reversals targeting HTF zones
     bool htfAligned = m_structureAnalyzer.IsHTFAligned(isBullish);
+    bool oppositeCISD = (m_structureAnalyzer != NULL) &&
+                        (isBullish ? m_structureAnalyzer.HasRecentBearishCISD(3)
+                                   : m_structureAnalyzer.HasRecentBullishCISD(3));
+    if(oppositeCISD)
+    {
+        return RejectSignal("UICT_OPPOSITE_CISD_ACTIVE",
+                            "[UICT] Filtered: Opposing CISD warns against current delivery direction");
+    }
 
     if(!htfAligned)
     {
@@ -1496,6 +1505,10 @@ double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
     // 2. AMD phase alignment (Institutional cycle)
     if(HasAMDPhaseConfluence(bullish))
         score += t1_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 25.0
+
+    // 2b. CISD early-delivery shift
+    if(HasCISDConfluence(bullish))
+        score += (t1_base * 0.35) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 8.75
 
     // 3. NDOG/NWOG gap zone (Institutional gaps)
     if(HasGapConfluence(price))
@@ -2061,6 +2074,13 @@ bool CStrategyUnifiedICT::IsPriceAtMajorPOI(double price)
         return true;
     
     return false;
+}
+
+bool CStrategyUnifiedICT::HasCISDConfluence(bool bullish)
+{
+    if(m_structureAnalyzer == NULL)
+        return false;
+    return m_structureAnalyzer.IsCISD(bullish ? POSITION_TYPE_BUY : POSITION_TYPE_SELL, 1);
 }
 
 //+------------------------------------------------------------------+

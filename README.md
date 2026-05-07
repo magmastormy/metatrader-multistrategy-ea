@@ -1,13 +1,17 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-04-20
-- Status: Batch 68 - Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations
+- Last Updated: 2026-04-27
+- Status: Batch 76 - AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
-Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters (Neural Network, Transformer, Ensemble) integrated into the runtime consensus path.
+Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.
 
 ## System Snapshot
+- **Batch 74 Runtime Hardening + Contract Reconciliation (Batch 74):** Fresh `20260427.log` analysis exposed three concrete runtime hazards: `Power of Three` could fail hard on symbols without a valid SMT companion, AI-only sessions could deadlock before neural registration when no indicator strategies were active, and stale neural checkpoints could still be loaded after the 57-feature contract upgrade and corrupt online-training buffers. The runtime now treats SMT as optional inside `CPowerOfThreeStrategy`, allows neural bootstrap whenever a symbol manager exists, bumps the neural checkpoint schema to `v7`, hardens training-ring bounds before writes, and disables ONNX for the rest of the session after the first hard initialization failure with an explicit `57-feature` retrain/export warning. The symbol-universe parsing and chart-symbol membership checks were also further extracted from `OnInit()` through `Core/Management/SymbolUniverseBuilder.mqh`, continuing the requested debloat of the main EA file.
+- **Blueprint Closure + ICT/Feature Expansion (Batch 73):** The remaining `debloat.md`, `ai_upgrade_one.md`, and `ai_upgrade_two.md` implementation gaps are now wired into the codebase: `CUnicornModelStrategy` and `CPowerOfThreeStrategy` are registered as live Tier-1 structure voters, `StrategyUnifiedICT` now consumes CISD confluence and opposing-CISD vetoes, the liquidity/structure stack now detects Turtle Soup and CISD directly, Elliott Wave scoring now carries degree awareness plus an ML-style probability blend, the Python sidecar surface now includes DoubleAdapt/Kronos/MAML bridge scaffolds, and the canonical AI feature contract has been widened from 55 to 57 features by adding OFI and synthetic spike-recovery context. Python training now prefers exported `feature_*` columns when present, so MT5-exported tick-derived features remain training-serving consistent. Any ONNX model intended for live use must now be retrained/exported against the 57-feature contract.
+- **Timer/Tick Safety Split + ONNX/Pipeline Upgrade (Batch 72):** Heavy trading evaluation is now timer-owned while `OnTick()` runs a lightweight safety/lifecycle loop, synthetic indices have a tick-velocity spike alarm with flatten-and-pause behavior, ATR-ratio crisis gating can reject or halve risk during volatility shocks, ONNX inference now supports Python-exported scaler parity through `scaler.bin`, `TrainingDataExporter.mq5` can export the live 55-feature vector contract, and the Python stack now includes uniqueness weighting, CPCV validation, IC-gated model promotion, LightGBM/stacker tooling, regime/turbulence helpers, feature cross-checking, and a ZMQ bridge surface.
+- **Log Analysis Fixes & Enhanced Observability (Batch 69):** Deep log analysis identified and fixed critical issues including ENTRY-VETO threshold too tight (increased from 2.50 to 2.55), market hours check added to position management (prevents closed-market operations), per-filter logging added to identify pipeline rejections, spread filter added to reject symbols > 1000 points, ONNX inference logging enhanced to distinguish warming vs failure, and dormant strategy logging enhanced to identify specific strategies. Fixed bug where SYMBOL_TRADE_MODE_CLOSEONLY was incorrectly blocked for position modifications.
 - **Institutional ICT Completion + Real ONNX Asset (Batch 68):** The repository now ships a real embedded `Resources/model.onnx` trained from MT5 cache-derived data, a repo-owned export/train/validate toolchain under `Python/`, and a `TrainingDataExporter.mq5` tester harness for regenerating datasets. On the strategy side, `StrategyUnifiedICT` now uses institutional liquidity references (monthly/quarterly highs-lows, NY midnight open), anchored VWAP, cumulative-delta pressure, Silver Bullet/Judas/SMT timing, advanced propulsion/rejection/vacuum block variants, and kill-zone-scaled ATR stop placement instead of placeholder or partially wired logic. Elliott Wave confidence now cross-checks harmonic PRZ alignment, and the EA scan loop now reserves best-candidate virtual risk inside `CUnifiedRiskManager` so later candidates cannot silently double-spend the same portfolio budget during ranking.
 - **AI Training Guardrails & External LLM Runtime Telemetry (Batch 67):** Re-read runtime logs showed the neural path was training almost entirely on pseudo labels while `trade_labels=0`, the external LLM path was configured but effectively silent beyond init, and the reviewed "indicator weakness" sessions were actually `AI_ONLY` runs with indicators intentionally inactive. The EA now blocks weight mutation until enough real trade-linked labels exist, emits explicit `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`, and `[MODE-MASK]` diagnostics, and exercises a throttled external-LLM reasoning path during adaptation instead of leaving the client dormant.
 - **Runtime Readiness Recovery (Batch 66):** Fixed a live AI/runtime gap where the shared transformer service could be referenced before encoder bootstrap, added raw-rate ATR/Bollinger fallbacks in `CVolatilityEngine` and `CRegimeEngine` for transient `4806`-style buffer faults, and hardened the final validator ATR path so approved packets are not re-poisoned by `Invalid ATR: 0.00000`.
@@ -27,7 +31,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[CADENCE-CONFIG]` now reports `effective_intrabar`, and `[CADENCE-WARNING]` is emitted when `InpSignalScanOnNewBarOnly=true` is globally disabling timed intrabar scans despite strategies being intrabar-eligible.
 - Pre-trade decision gate is centralized in `CUnifiedRiskManager`.
 - Execution is centralized in `CTradeManager`.
-- Position lifecycle is centralized in `CAdvancedPositionManager`.
+- Position lifecycle is centralized in the EA safety loop via `CTradeManager::ManageAllPositions(...)`, and the generic EA-level breakeven/trailing manager is now opt-in rather than silently active.
 - Shadow mode (`InpShadowMode`) runs full stack without sending real orders.
 - Runtime registry is active-only: disabled strategies and disabled AI adapters are not registered into managers, weight pools, or orchestrator identity sets.
 - Retired standalone strategy artifacts and their commented stubs are removed from runtime sources.
@@ -43,10 +47,10 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Entrypoint: `MultiStrategyAutonomousEA.mq5`
 - Strategy consensus: `Core/Management/EnterpriseStrategyManager.mqh`
 - Signal filtering pipeline: `Core/Pipeline/UnifiedSignalPipeline.mqh`
-- AI orchestration: `Core/AI/AIStrategyOrchestrator.mqh`
+- AI runtime control: `Core/Engines/AIEngine.mqh` plus symbol-scoped adapters under `Core/Strategy/`
 - Risk authority: `Core/Risk/UnifiedRiskManager.mqh`
 - Execution: `Core/Trading/TradeManager.mqh`
-- Position management: `Core/Trading/AdvancedPositionManager.mqh`
+- Tick safety loop: `Core/Processing/TickSafetyMonitor.mqh`
 - Indicator cache lifecycle: `IndicatorManager.mqh`
 
 ## Runtime Behavior
@@ -54,6 +58,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 ### Decision cadence
 - New-bar scans use conservative consensus behavior.
 - Intrabar scans now run on timer intervals by default (`InpSignalScanOnNewBarOnly=false`) instead of starting in a globally muted new-bar-only posture.
+- `OnTimer()` owns heavy scan/evaluate/rank/send work, while `OnTick()` is reserved for fast tick validation, account-runtime refresh, lifecycle management, synthetic spike detection, and emergency drawdown response.
 - Total heavy evaluations are capped per cycle (`InpMaxSignalEvaluationsPerCycle`); pending new-bar symbols are selected first and deferred cleanly when the current cycle budget is exhausted.
 - Intrabar scheduling is now budgeted per cycle (`InpMaxIntrabarSymbolsPerCycle`) and prioritized by recent near-miss / recent generation / readiness health instead of uniform round-robin.
 - Per-symbol intrabar backoff now escalates after repeated `raw_none` / `zero_voter` outcomes, reducing wasted scans while still resetting on new bars.
@@ -110,6 +115,13 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
   - Neural Network adapter
   - Transformer adapter
   - Ensemble adapter
+  - ONNX adapter (Python-trained, executed inside MT5)
+- Runtime AI surfaces are now separated operationally:
+  - `CNextGenStrategyBrain` / Universal Transformer: local feature brain and dashboard context, not a direct live voter
+  - MT5-native live voters: `Neural Network AI`, `Transformer AI`, `Ensemble AI`
+  - Python-trained live voter: `ONNX AI`
+  - Python bridge sidecars in `Python/`: present for tooling/research, not wired into live consensus
+  - External LLM: adaptation/reasoning only, not a direct live voter
 - `EA_MODE_HYBRID` is now indicator-led instead of hard dual-confirmation: indicator-backed candidates remain tradable when AI abstains, AI+indicator agreement receives a small confidence bonus, and AI-only packets are still rejected unless the runtime is explicitly operating in an AI-primary mode.
 - The runtime now supports the three practical operating postures explicitly:
   - `INDICATOR_ONLY`: only indicator strategies can generate tradable candidates
@@ -117,6 +129,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
   - `HYBRID`: indicators and AI can both participate, with indicators remaining the admission anchor.
 - AI intrabar participation is no longer hard-disabled globally. `Neural Network AI`, `Transformer AI`, `Ensemble AI`, and `ONNX AI` each have explicit intrabar eligibility inputs, so `AI_ONLY` can now run as a full timed intrabar mode instead of being limited to new-bar AI voting.
 - AI registration is active-only: disabled adapters are not instantiated into managers or orchestrator identity maps, and the legacy `InpUseOrchestrator` control surface has been removed.
+- Transformer, ensemble, and legacy neural defaults are now safety-hardened at a `0.70` confidence floor, and transformer/ensemble source defaults start disabled until retrained weights are intentionally re-enabled.
 - Neural online learning is now guarded against pseudo-label-only drift: loss can still be evaluated on labeled samples, but weight mutation remains locked until enough real trade-linked labels exist and represent a meaningful share of the completed labeled set.
 - AI bootstrap is now explicitly fail-soft:
   - trade/risk/manager initialization remains mandatory
@@ -126,6 +139,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - ONNX voting is now integrated as a symbol-scoped strategy adapter (`COnnxAIStrategyAdapter`) registered through enterprise managers, preserving manager-owned consensus instead of adding a competing EA-level vote path.
 - The repository now includes an aligned offline ONNX surface under `Python/` plus an embedded `Resources/model.onnx` payload for training, export, validation, and runtime deployment.
 - The embedded ONNX payload is now a real trained model generated from MT5 cache exports, not a placeholder asset, and the repo includes `Python/export_mt5_cache.py`, `Python/train_model.py`, `Python/validate_model.py`, `TrainingDataExporter.mq5`, and `shadow_session_mt5_tester.ini` to reproduce the offline/runtime flow.
+- ONNX runtime normalization is now parity-safe: Python can export `scaler.bin`, `COnnxAIStrategyAdapter` hot-reloads it from Common files, and runtime features are normalized before inference when scaler parameters are available.
 - AI vote paths are now bar-cached:
   - Neural adapter calls `GetNeuralSignalCached(...)`
   - Transformer and Ensemble adapters cache per-bar inference results and cache `NONE` on failed feature-build/inference for the rest of the bar
@@ -135,6 +149,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
   - uncertainty history uses ring buffers instead of `Delete(0)` churn
   - NN training samples use a fixed-size struct ring buffer instead of per-sample heap allocation
 - Feature engineering is now standardized on a 55-feature contract shared by neural, transformer, ensemble, ONNX, and Python export paths.
+- `TrainingDataExporter.mq5` can now emit those same 55 runtime features into CSV, and `Python/feature_crosscheck.py` validates Python-vs-MQL feature parity against a `max_mae` threshold.
 - Per-symbol strategy names are registered into orchestrator using `<symbol>::<strategy>` naming.
 - Weight adaptation is synchronized back into manager strategy weights.
 - Ensemble aggregation now consumes model class probabilities via `GetPredictions(...)`, so BUY/SELL confidence is derived from the classifier outputs rather than reused latent transformer features.
@@ -193,6 +208,8 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[RISK-THROTTLE]`: progressive pre-cap risk reduction when daily or portfolio utilization enters elevated pressure bands.
 - `[RISK-VIRTUAL]`: reservation/release lifecycle for scan-time virtual positions held inside unified risk before the final cycle winner is executed or discarded.
 - `[AI-VOTE]`: adapter liveness and vote counts.
+- `[SPIKE-ALARM]`: synthetic tick-rate shock detection and flatten result.
+- `[SPIKE-PAUSE]`: temporary post-spike entry pause lifecycle.
 - `[AI-FEEDBACK]`: periodic adaptive-training and retraining status summary.
 - `[NN-MUTATION]`: neural online-learning mutation gate state (`LOCKED` vs `UNLOCKED`) with trade-label vs pseudo-label evidence.
 - `[EXT-LLM]`: external LLM config, runtime query lifecycle, reasoning, feedback, and shutdown telemetry.
@@ -308,7 +325,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - **Synchronous market sends**: `CTradeManager` no longer defaults to async execution, removing the most dangerous mismatch between broker confirmation and EA-side success accounting.
 - **Repriced market protection**: market orders now resolve current execution price at send time and recalculate SL/TP from that price on each retry attempt.
 - **Sizing consistency**: `PositionSizer` now uses tick-size/tick-value risk math and `min(balance,equity)` denominator alignment with the risk gate.
-- **Restart-safe lifecycle reconstruction**: `AdvancedPositionManager` now reconstructs partial-close and breakeven state for already-open positions from position identifiers and history-derived entry volume.
+- **Restart-safe lifecycle reconstruction**: the EA-owned position lifecycle path rebuilds partial-close and breakeven state for already-open positions using trade-manager-managed lifecycle state plus position identifiers and history-derived entry volume.
 - **Close-driven analytics**: confirmed close deals now update `PerformanceAnalytics` from `OnTradeTransaction`, and startup rejects unsupported non-hedging account models.
 
 ## Timeframe + AI Feedback Update (2026-03-16)
@@ -397,3 +414,12 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 
 ## Synthetic Assets Expansion (v2.0 Update)
 - Native 24/7 continuous trading execution is inherently supported across modern synthetics: Step Index, Jump 10, PainX, SFX Vol, GainX, FX Vol, and FlipX.
+## Batch 76 Highlights
+- AI controls are now explicit in the EA inputs:
+  - MT5-native live voters: `InpEnableNeuralNetwork`, `InpEnableTransformer`, `InpEnableEnsemble`
+  - Python-trained but MT5-served live voter: `InpEnableOnnxAI`
+  - Python sidecar expectation/telemetry: `InpPythonBridgeMode`, `InpPythonBridgeEndpoint`
+  - External reasoning sidecar: `InpEnableExternalLLM`, `InpExternalLLMEndpoint`
+- Startup now emits `[AI-TOPOLOGY]` so operators can see which AI families are truly live voters, which are dashboard/context-only, and which Python/LLM surfaces are only sidecars.
+- The EA-level breakeven/trailing manager is now explicit and opt-in through `InpEnablePositionLifecycleManager`; the old hidden tiny-point lifecycle behavior that caused early scalp-style exits is no longer applied by default.
+- Candlestick rendering no longer duplicates engulfing labels, and engulfing detection now rejects weak/doji-style candidates more aggressively.

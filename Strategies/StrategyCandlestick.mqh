@@ -290,10 +290,6 @@ private:
             return;
         
         m_drawingManager.DrawEntrySignal(time, price, isBullish, strength, "Candlestick", patternName);
-        
-        color textColor = isBullish ? clrLime : clrRed;
-        string label = StringFormat("%s\nConf: %.0f%%", patternName, strength * 100.0);
-        m_drawingManager.DrawTextLabel(time, price, label, textColor, 8, isBullish ? ANCHOR_LOWER : ANCHOR_UPPER);
     }
 };
 

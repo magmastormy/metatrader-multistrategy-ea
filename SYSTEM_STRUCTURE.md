@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-04-20
+- Last Updated: 2026-04-27
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 68 - Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations
+- Current Batch: 76 - AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -25,8 +25,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - initialize mandatory runtime subsystems first and isolate optional AI/bootstrap failures behind readiness flags
   - initialize the shared universal transformer service before optional AI brains register symbols, and keep the service lazy-safe for late callers
   - validate active symbols and emit startup account-capacity diagnostics before live execution
+  - reject symbols with extreme spreads (>1000 points) during symbol validation to prevent wasted evaluation cycles
   - rebuild cadence scheduler state as one unit after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff cannot drift out of sync
   - reconstruct cooldown/trade-timing state from EA-owned open positions and deal history on startup
+  - keep `OnTimer()` as the single heavy-evaluation owner and keep `OnTick()` constrained to safety/lifecycle work
   - maintain cadence loops (new-bar/intrabar)
   - budget heavy signal evaluations across both new-bar and intrabar paths via `InpMaxSignalEvaluationsPerCycle`, carrying deferred new-bar symbols forward to later cycles
   - budget intrabar scans by symbol yield instead of blindly scanning the whole intrabar universe every cycle
@@ -35,9 +37,12 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - dispatch per-symbol evaluations
   - rank approved candidates across symbols before execution
   - reserve and release the cycle-best candidate as a virtual position inside unified risk while scan-time ranking is still in progress
+  - detect synthetic-index tick-velocity spikes and trigger flatten-plus-pause protection
+  - register the `Unicorn Model` and `Power of Three` ICT expansion strategies as manager-owned Tier-1 participants
   - own the non-AI confidence policy inputs for pipeline and manager admission stages
   - adapt per-symbol runtime profiles (strategy roster, intrabar policy, and context posture) by instrument class when symbol-class profiles are enabled
   - emit explicit mode-mask diagnostics when indicator profile entries remain configured but the effective runtime mode filters them out of the active registry
+  - emit explicit AI topology diagnostics so MT5-native voters, Python-trained ONNX runtime voting, Python sidecar expectations, and external LLM reasoning are not conflated
   - coordinate validator/risk/execution path
   - handle runtime telemetry and deinitialization
 
@@ -66,6 +71,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - expose per-cycle funnel snapshots and interval consensus diagnostics snapshots
   - emit consensus diagnostics
   - retain last-contributor context for attribution
+  - host the new ICT expansion modules (`CUnicornModelStrategy`, `CPowerOfThreeStrategy`) alongside existing `Unified ICT`
 
 ### 2.3 Pipeline domain
 - Class: `CUnifiedSignalPipeline`
@@ -85,21 +91,38 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - apply bounded weak-regime intrabar confidence threshold uplift (`min(base+cap, base*multiplier)`) using `CRegimeEngine` snapshot state as the authority
   - emit threshold-source telemetry (`[PIPELINE-THRESHOLD]`)
   - emit regime/cost veto telemetry (`[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`)
+
+### 2.4 Shared AI feature contract
+- Class: `CAIFeatureVectorBuilder`
+- The canonical runtime/training feature width is now `57`.
+- Features `0..54` remain the original OHLCV/indicator-derived contract.
+- Feature `55` adds tick-level Order Flow Imbalance (OFI) context.
+- Feature `56` adds synthetic spike-recovery context (`time since last spike`, normalized) for synthetic-style symbols and defaults to `1.0` elsewhere.
+- `TrainingDataExporter.mq5` can export the full 57-feature contract directly.
+- `Python/data_pipeline.py` now prefers exported `feature_*` columns when present, preserving parity for tick-derived features that cannot be reconstructed faithfully from OHLCV alone.
   - normalize decision hygiene before final consensus acceptance without hot-path hedging neutralization
   - keep runtime diagnostics authoritative in the manager/runtime layer rather than spinning local `SignalDiagnostics` sinks per pipeline instance
 
 ### 2.4 AI adaptation domain
-- Class: `CAIStrategyOrchestrator`
+- Runtime owner: `CAIEngine`
+- Strategy-vote owners: symbol-scoped adapters in `Core/Strategy/`
 - Responsibilities:
-  - register qualified strategy identities (`symbol::name`)
   - register only enabled AI adapters; dormant adapter definitions stay out of runtime identity and weighting surfaces
   - keep the shared transformer encoder bootstrap idempotent so indirect callers cannot observe a registered symbol against an uninitialized encoder
-  - maintain performance and weight state
-  - adapt weights and feed updates back to managers
+  - maintain AI runtime configuration, telemetry, and adaptation state
+  - adapt weights and feed updates back to managers through the current runtime control path
   - gate neural weight mutation behind real trade-linked labels so pseudo-label accumulation alone cannot drive online weight drift
   - capture throttled external-LLM reasoning during adaptation when enabled and keep that path fully observable through `[EXT-LLM]`
   - remain optional at runtime; orchestration/adaptation failure disables AI adaptation without violating trade/risk/execution ownership
   - avoid duplicate component-local diagnostics so AI observability remains concentrated in `[AI-VOTE]`, manager telemetry, and runtime heartbeat surfaces
+  - enforce a `0.70` minimum runtime confidence floor for the hardened AI defaults
+  - reload Python-exported ONNX scaler parameters (`scaler.bin`) before inference when updated in Common files
+  - make runtime topology explicit:
+    - `CNextGenStrategyBrain` / Universal Transformer = local feature brain, not a direct live voter
+    - `Neural Network AI`, `Transformer AI`, `Ensemble AI` = MT5-native live-voter families
+    - `ONNX AI` = Python-trained model executed inside MT5 as a live voter
+    - `InpPythonBridgeMode` / `InpPythonBridgeEndpoint` = operator telemetry for sidecar expectations only; not a live consensus bridge today
+    - external LLM = reasoning/adaptation sidecar only, not a direct live voter
 - **Multi-Tier Signal Validation (Batch 60):** Comprehensive validation architecture implemented:
   - Class: `CTieredSignalValidator` (integrated into orchestrator)
   - Responsibilities:
@@ -158,14 +181,21 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - perform one widened retry on `TRADE_RETCODE_INVALID_STOPS` before surfacing a protective-modification failure
   - emergency-aware protective modification flow
   - expose execution receipt status (`requestId`, retcode, requested/fill volume, request/fill price, slippage points, round-trip latency, retry count, avg fill price) for post-send handling
+  - check market hours before position closure/modification (blocks only when `SYMBOL_TRADE_MODE_DISABLED`, allows `SYMBOL_TRADE_MODE_CLOSEONLY`)
 
 ### 2.7 Position lifecycle domain
-- Class: `CAdvancedPositionManager`
+- Owner: `MultiStrategyAutonomousEA.mq5` safety/timer lifecycle loop using `CTradeManager::ManageAllPositions(...)`
+- The generic EA-level breakeven/trailing lifecycle is now operator-controlled through:
+  - `InpEnablePositionLifecycleManager`
+  - `InpLifecycleBreakevenBufferPoints`
+  - `InpLifecycleTrailingDistancePoints`
+  - `InpLifecycleTrailingStepPoints`
+- Default posture is disabled to avoid hidden scalp-style exits overriding wider structural trade intent.
 - Responsibilities:
   - trailing/BE/partial-close lifecycle handling
   - scale breakeven, trailing, and partial-close triggers against original stop distance so lifecycle behavior stays proportional across FX and wide-stop synthetic symbols
   - treat configured pip values as broker-floor-aware minimums instead of absolute fixed thresholds
-  - reconstruct lifecycle milestones for already-open positions after restart
+  - run from the lightweight safety loop once per second instead of inside the heavy symbol-scan path
   - managed by EA magic scope
 
 ### 2.8 Shared indicator domain
@@ -222,6 +252,7 @@ The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also 
 - All AI strategy adapters implement a unified `SetConfidenceThreshold(double)` interface for dynamic authoritative thresholding from the EA orchestrator
 - The feature contract is now unified at 55 engineered inputs shared by the MQL runtime and the offline `Python/` ONNX training/export pipeline
 - `Resources/model.onnx` is embedded as an EA resource, and `COnnxBrain` supports shadow-handle hot-swap promotion from a Common-files update path
+- `CPipelineScaler` keeps the ONNX feature normalization path aligned with Python `StandardScaler` exports and can hot-reload updated scaler parameters without restarting the EA
 
 ### 3.3 Curated runtime profile (Batch 41)
 Curated mode restricts runtime active set to a smaller operational profile while preserving full retained implementation in code.

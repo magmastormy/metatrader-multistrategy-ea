@@ -165,6 +165,9 @@ public:
     void                UpdateMultiplexStructure();
     bool                IsValidMultiplexSetup(ENUM_TRADE_SIGNAL &signal);
     bool                IsHTFAligned(bool bullish);
+    bool                IsCISD(const ENUM_POSITION_TYPE direction, const int barShift = 1);
+    bool                HasRecentBullishCISD(const int maxBarsAgo = 3);
+    bool                HasRecentBearishCISD(const int maxBarsAgo = 3);
     
     // Getters
     SMarketStructure    GetStructure() const { return m_structure; }
@@ -802,6 +805,71 @@ bool CMarketStructureAnalyzer::IsHTFAligned(bool bullish)
         return m_htf.isBullish;
     else
         return m_htf.isBearish;
+}
+
+bool CMarketStructureAnalyzer::IsCISD(const ENUM_POSITION_TYPE direction, const int barShift)
+{
+    int totalBars = iBars(m_symbol, m_timeframe);
+    if(totalBars <= barShift + 2)
+        return false;
+
+    double open0 = iOpen(m_symbol, m_timeframe, barShift);
+    double close0 = iClose(m_symbol, m_timeframe, barShift);
+    double high0 = iHigh(m_symbol, m_timeframe, barShift);
+    double low0 = iLow(m_symbol, m_timeframe, barShift);
+
+    double open1 = iOpen(m_symbol, m_timeframe, barShift + 1);
+    double close1 = iClose(m_symbol, m_timeframe, barShift + 1);
+    double high1 = iHigh(m_symbol, m_timeframe, barShift + 1);
+    double low1 = iLow(m_symbol, m_timeframe, barShift + 1);
+
+    double open2 = iOpen(m_symbol, m_timeframe, barShift + 2);
+    double close2 = iClose(m_symbol, m_timeframe, barShift + 2);
+
+    bool candle1Bullish = (close1 > open1);
+    bool candle1Bearish = (close1 < open1);
+    bool candle0Bullish = (close0 > open0);
+    bool candle0Bearish = (close0 < open0);
+
+    if(direction == POSITION_TYPE_BUY)
+    {
+        bool reclaimBody = (close0 > open1 && close0 > close1);
+        bool deliveryShift = (low0 >= low1 && high0 >= high1);
+        bool priorPressure = candle1Bearish || close2 < open2;
+        return (candle0Bullish && reclaimBody && deliveryShift && priorPressure);
+    }
+
+    if(direction == POSITION_TYPE_SELL)
+    {
+        bool reclaimBody = (close0 < open1 && close0 < close1);
+        bool deliveryShift = (high0 <= high1 && low0 <= low1);
+        bool priorPressure = candle1Bullish || close2 > open2;
+        return (candle0Bearish && reclaimBody && deliveryShift && priorPressure);
+    }
+
+    return false;
+}
+
+bool CMarketStructureAnalyzer::HasRecentBullishCISD(const int maxBarsAgo)
+{
+    int limit = MathMax(1, maxBarsAgo);
+    for(int shift = 1; shift <= limit; shift++)
+    {
+        if(IsCISD(POSITION_TYPE_BUY, shift))
+            return true;
+    }
+    return false;
+}
+
+bool CMarketStructureAnalyzer::HasRecentBearishCISD(const int maxBarsAgo)
+{
+    int limit = MathMax(1, maxBarsAgo);
+    for(int shift = 1; shift <= limit; shift++)
+    {
+        if(IsCISD(POSITION_TYPE_SELL, shift))
+            return true;
+    }
+    return false;
 }
 
 //+------------------------------------------------------------------+

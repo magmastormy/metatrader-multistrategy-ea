@@ -2,6 +2,216 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-04-27
+
+### Batch 76: AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup (2026-04-27)
+
+#### Root Cause
+Fresh `20260427.log` review plus operator feedback exposed three usability/runtime gaps that were still hurting real operation: the EA inputs did not clearly distinguish MT5-native AI families from Python-trained ONNX voting, Python bridge sidecars, and external LLM reasoning; the EA still contained a hidden generic `ManageAllPositions(20,15,5)` lifecycle path that behaved like an always-on mini scalper and closed trades too early; and candlestick engulfing visualization was drawing duplicate labels while accepting overly weak patterns.
+
+#### Implementation Summary
+- **AI control surface clarified:** `Core/Utils/Enums.mqh` now defines `ENUM_PYTHON_BRIDGE_MODE`, `MultiStrategyAutonomousEA.mq5` adds `InpPythonBridgeMode` and `InpPythonBridgeEndpoint`, and startup now emits `[AI-TOPOLOGY]` lines that explicitly separate:
+  - MT5-native live voters (`Neural Network AI`, `Transformer AI`, `Ensemble AI`)
+  - Python-trained live voting via `ONNX AI`
+  - `CNextGenStrategyBrain` / Universal Transformer as local feature/dashboard context only
+  - Python sidecar bridge inputs as operator telemetry/expectation surfaces only
+  - external LLM as reasoning/adaptation only, not a direct live voter
+- **Premature lifecycle exits removed from default posture:** `MultiStrategyAutonomousEA.mq5` now makes the generic EA-level breakeven/trailing loop opt-in through `InpEnablePositionLifecycleManager`, `InpLifecycleBreakevenBufferPoints`, `InpLifecycleTrailingDistancePoints`, and `InpLifecycleTrailingStepPoints`. The prior hardcoded `20/15/5` point lifecycle behavior is no longer silently active by default.
+- **Candlestick duplicate-label bug fixed:** `Strategies/StrategyCandlestick.mqh` now relies on `DrawEntrySignal(...)` alone and no longer draws a second text label for the same candlestick event.
+- **Engulfing detection tightened:** `Strategies/CandlestickFiles/EngulfingDetector.mqh` now rejects dojis, requires stronger ATR/body participation, uses small tolerance-aware engulf checks, and filters weak wick/body profiles before accepting engulfing patterns.
+
+#### Validation Evidence
+- `20260427.log` confirmed the active AI roster that motivated the topology clarification:
+  - live AI families were `Neural Network AI` plus `ONNX AI`
+  - `Transformer AI` and `Ensemble AI` remained inactive by default
+  - ONNX was still session-disabled after failing the `57-feature` contract check
+- `python -m compileall Python` completed successfully on 2026-04-27 after the control-surface and candlestick fixes.
+- `./sync_and_compile.ps1 -MirrorSync` completed successfully on 2026-04-27:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+
+### Batch 75: Indicators+AI Log Remediation & Runtime Sanity Hardening (2026-04-27)
+
+#### Root Cause
+Fresh `indicators_and_ai.log` runs showed three subtle but important runtime problems that were not compile-visible: ATR values could arrive in inconsistent units between direct-handle and raw-rates paths, zero-weight AI strategies were still being treated as live contributors inside several manager weighting/diagnostic paths, and the lightweight position-lifecycle breakeven path used incorrect sell-side conditions plus a stale symbol reference during stop adjustment.
+
+#### Implementation Summary
+- **ATR sanity guard added:** `MultiStrategyAutonomousEA.mq5` now cross-checks direct ATR-handle values against a raw-rates fallback and automatically prefers the fallback when the two diverge by an implausible ratio, emitting bounded `[ATR-SANITY]` diagnostics instead of letting impossible `ATR14/ATR50` combinations poison the exogenous crisis gate.
+- **Zero-weight AI now means zero live vote:** `Core/Management/EnterpriseStrategyManager.mqh` no longer silently upgrades `0.0` strategy weights to `1.0` in live-weight, role, cluster, or weighted-metric paths, and AI governance in `MultiStrategyAutonomousEA.mq5` now marks zero-weight AI families as non-live-voting. This keeps Transformer/Ensemble diagnostics available while making consensus behavior match the configured weights.
+- **Sell-side breakeven lifecycle fixed:** `Core/Trading/TradeManager.mqh` now uses proper buy/sell breakeven-needed conditions inside `ManageAllPositions(...)` and stops referencing an unrelated `m_positionInfo` symbol when constructing the sell-side spread cushion.
+
+#### Validation Evidence
+- Root-caused from `indicators_and_ai.log`:
+  - repeated impossible ATR crisis rejections such as `EURCHF.0 | ATR14 331.37314 / ATR50 0.00041`
+  - governance/live-vote logs showing zero-weight `Transformer AI` and `Ensemble AI` still participating as live runtime contributors
+  - repeated position-modify `invalid stops` noise during lifecycle management on synthetic positions
+
+### Batch 74: Log-Driven Runtime Hardening, Debloat Follow-Through & Contract Reconciliation (2026-04-27)
+
+#### Root Cause
+Fresh `20260427.log` sessions exposed several post-blueprint runtime failures that compilation alone could not prove away: `CPowerOfThreeStrategy` failed initialization on symbols without a usable SMT pair, AI-only sessions could end up with zero active strategies because neural bootstrap still required an already-populated indicator manager roster, stale neural checkpoints from the old feature width could still be loaded after the `57-feature` contract migration, and repo governance/docs still described position-lifecycle ownership using a superseded `CAdvancedPositionManager` contract.
+
+#### Implementation Summary
+- **Power of Three no longer hard-fails on missing SMT context:** `Strategies/CPowerOfThreeStrategy.mqh` now treats SMT as optional signal confluence instead of a fatal prerequisite, allowing the strategy to initialize on synthetic or broker-specific symbol rosters that do not expose a valid correlation companion.
+- **AI-only bootstrap deadlock removed:** `MultiStrategyAutonomousEA.mq5` now allows neural registration whenever a symbol-scoped enterprise manager exists, and per-symbol manager creation no longer refuses to start solely because indicator strategies were profiled out while AI adapters remain active.
+- **ONNX failure containment improved:** an ONNX initialization failure now disables ONNX for the rest of the current EA session and records an explicit `57-feature` retrain/export requirement instead of repeating the same noisy hard-failure path across every symbol.
+- **Neural checkpoint safety upgraded:** `AIModules/NeuralNetworkStrategy.mqh` now bumps `NN_CHECKPOINT_VERSION` to `7` for the widened feature contract and hardens ring-buffer bounds before online-training writes, preventing stale checkpoint state from triggering `array out of range` faults.
+- **Further main-file debloat:** symbol-universe membership checks are now centralized in `Core/Management/SymbolUniverseBuilder.mqh`, removing another slice of `OnInit()` symbol hygiene from `MultiStrategyAutonomousEA.mq5`.
+- **Contract/docs reconciled:** `AGENTS.md`, `README.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, and `SYSTEM_AUDIT_TRACE.md` now reflect the actual runtime lifecycle owner: the EA loop plus `CTradeManager::ManageAllPositions(...)`.
+
+#### Validation Evidence
+- Log-root-caused issues were mapped from `20260427.log` before patching:
+  - `Strategy Power of Three initialization failed. Skipping registration.`
+  - `array out of range in 'NeuralNetworkStrategy.mqh'`
+  - repeated ONNX initialization faults ending in model-unavailable diagnostics
+  - AI-only zero-strategy startup path ending with `[CRITICAL] No active strategies registered.`
+- `python -m compileall Python` completed successfully on 2026-04-27 after the runtime-hardening changes.
+- `./sync_and_compile.ps1 -MirrorSync` completed successfully on 2026-04-27:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+
+### Batch 73: Remaining Debloat/AI Blueprint Closure (2026-04-27)
+
+#### Root Cause
+After the previous cleanup pass, the codebase compiled cleanly but still had several blueprint gaps: the requested Unicorn / Power-of-Three ICT modules were not yet live in runtime registration, CISD/Turtle Soup coverage was incomplete, Elliott Wave still lacked the requested degree/probability blend in the final signal path, and the AI feature stack still stopped at 55 features without the OFI / synthetic-spike additions described in `ai_upgrade_one.md`.
+
+#### Implementation Summary
+- **Tier-1 ICT expansion complete:** Added and registered `Strategies/CUnicornModelStrategy.mqh` and `Strategies/CPowerOfThreeStrategy.mqh` in both `MultiStrategyAutonomousEA.mq5` and `Core/Management/EnterpriseStrategyManager.mqh`.
+- **Unified ICT support stack upgraded:** `MarketStructureAnalyzer.mqh` now implements `IsCISD(...)` plus recent bullish/bearish CISD helpers, `LiquidityDetector.mqh` now detects Turtle Soup reclamation patterns, and `StrategyUnifiedICT.mqh` now applies opposite-CISD vetoes and CISD confluence bonuses.
+- **Elliott Wave scoring upgraded:** `WavePatternEngine.mqh` now carries explicit wave degree (`minor`, `intermediate`, `primary`) plus an ML-style label-probability score blended into final confidence; `StrategyElliottWaveEnhanced.mqh` surfaces the degree in decision reasoning.
+- **Python bridge surface completed:** Added `doubleadapt_bridge.py`, `kronos_bridge.py`, and `maml_ppo_bridge.py`, then extended `zmq_server.py` to expose `doubleadapt` and `maml_ppo` request modes in addition to the ensemble surface.
+- **Canonical feature contract widened to 57:** `CAIFeatureVectorBuilder` now appends OFI and normalized synthetic spike-recovery context, `TrainingDataExporter.mq5` exports the widened feature set automatically, and the Python stack (`data_pipeline.py`, `models.py`, `doubleadapt_bridge.py`, `zmq_server.py`) now follows the 57-feature contract. `data_pipeline.py` prefers exported `feature_*` columns when present so tick-derived features are trained from MT5-authored values instead of lossy OHLCV reconstruction.
+- **Parity checker adjusted for mixed feature domains:** `feature_crosscheck.py` now compares the shared OHLCV-derived feature prefix while explicitly tolerating extra MT5-only tick features at the tail of the exported matrix.
+
+#### Validation Evidence
+- `python -m compileall Python` completed successfully on 2026-04-27 after the 57-feature upgrade.
+- `./sync_and_compile.ps1 -MirrorSync` completed successfully on 2026-04-27:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+- Compile artifact cleanup completed automatically after the MT5 build.
+- No fresh live or shadow runtime logs were collected in this session by request; runtime verification remains a follow-up step for the user.
+
+### Batch 72: Timer/Tick Safety Split, ONNX Scaler Parity & Python AI Pipeline Upgrade (2026-04-27)
+
+#### Root Cause
+The debloat and AI-upgrade blueprints still had several live gaps even after the earlier cleanup phases: heavy trade evaluation could still run from the tick path, synthetic-index shock protection was missing, the ONNX runtime path still lacked training-time scaler parity, the exporter could not emit the live feature contract for Python cross-checking, and the Python stack did not yet cover the requested uniqueness-weighting, CPCV gating, IC-based promotion, ensemble rebuild tooling, or bridge/regime utilities.
+
+#### Implementation Summary
+- **Timer-owned heavy path / tick-owned safety path:** `OnTick()` now runs `ProcessTickSafetyLoop()` for fast tick validation, runtime metric refresh, unprotected-position remediation, open-position lifecycle management, synthetic spike checks, and emergency drawdown handling. `OnTimer()` remains the owner of `ProcessTradingLogic(...)` for heavy symbol evaluation, ranking, and send decisions.
+- **Synthetic spike and volatility emergency controls:** Added tick-velocity spike detection for synthetic symbols, flatten-and-pause behavior (`[SPIKE-ALARM]`, `[SPIKE-PAUSE]`), and ATR-ratio crisis gating in the final admission path (`ATR14/ATR50 > 2.0` rejects, `> 1.5` halves proposed risk and emits `[RISK-VOL-GATE]`).
+- **AI runtime hardening:** Raised the effective AI runtime confidence floor to `0.70`, changed transformer/ensemble/neural defaults to the hardened posture, and added `CPipelineScaler` so `COnnxAIStrategyAdapter` can load and hot-reload Python-exported `scaler.bin` normalization parameters before inference.
+- **Training/serving parity tooling:** `TrainingDataExporter.mq5` can now optionally export the runtime 55-feature vector contract, calls `CIndicatorManager::DestroyInstance()` on shutdown, and works with the new `Python/feature_crosscheck.py` parity validator. `CAIFeatureVectorBuilder` rolling standard deviation logic was aligned to Python `ddof=0`.
+- **Python AI upgrade surface:** Rebuilt `Python/data_pipeline.py`, `Python/train_model.py`, and `Python/validate_model.py` around uniqueness weighting, weighted datasets/loss, forward returns, scaler export, CPCV, PSR, and IC-gated promotion. Added `derpp_buffer.py`, `regime_detector.py`, `turbulence.py`, `train.py`, `cpcv_eval.py`, `train_lgbm.py`, `train_stacker.py`, `feature_crosscheck.py`, and `zmq_server.py`. Updated `requirements.txt` accordingly.
+
+#### Validation Evidence
+- `python -m compileall Python` completed successfully on 2026-04-27.
+- `./sync_and_compile.ps1 -MirrorSync` completed successfully on 2026-04-27:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 1 warning` on the first pass, then warning clean-up applied
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+- Compile artifact cleanup completed automatically after the MT5 build.
+- Fresh live runtime logs were not captured in this session, so post-change `[AI-VOTE]`, `[SPIKE-ALARM]`, `[SPIKE-PAUSE]`, and `[HEARTBEAT]` evidence is still pending runtime verification.
+
+### Batch 71: Phase 1 Risk Consolidation (Debloat) (2026-04-24)
+
+#### Root Cause
+Under the original architecture, `CTradeManager` contained overlapping, redundant risk management checks (`CheckDailyLimits`, `IsTradeAllowed`, `CheckMarginRequirements`, `CheckCorrelationLimits`) that duplicated efforts managed by `CRiskValidationGate` and `CUnifiedRiskManager`. This spread the "veto authority" across execution and risk domains, violating the principle of singular risk authority.
+
+#### Implementation Summary
+- **Purged CTradeManager Risk Logic:** Removed `m_maxDailyLoss`, `m_dailyLoss`, `m_dailyResetTime`, and `m_externalRiskAuthority` from `TradeManager.mqh`.
+- **Deleted Methods:** Deleted `CheckDailyLimits()`, `CheckMarginRequirements()`, `CheckCorrelationLimits()`, and `IsTradeAllowed()`.
+- **Refactored Execution Pathway:** Stripped limits checking from `ValidateTradeRequest()` (leaving only basic syntax/terminal safety) and completely removed the `IsTradeAllowed` block from `OpenPosition()`.
+- **Migrated Unique Correlation Logic:** Ported the explicit "max 3 positions on the same base currency" logic into `CRiskValidationGate::ValidateCorrelationLimits`.
+- **Exposed Configuration:** Added `input int InpMaxPositionsSameBase = 3;` in `MultiStrategyAutonomousEA.mq5` and plumbed it down through `SUnifiedRiskConfig` to control the migrated logic dynamically.
+
+#### Validation Evidence
+- Project compiles 100% cleanly (0 errors, 0 warnings).
+- Execution layer (`CTradeManager`) is now wholly dependent on `CUnifiedRiskManager` for risk approval, adhering properly to the single veto authority invariant.
+### Batch 70: Phase 0 Emergency Cleanup (Debloat) (2026-04-23)
+
+#### Root Cause
+As defined in the `debloat.md` blueprint, Phase 0 targets completely dead code, orphaned declarations, and unused forward-declarations to reduce line counts and cognitive load. After auditing the blueprint claims against the current codebase state, it was discovered that many originally flagged "dead stubs" had already been implemented. The true dead code was narrowed down and removed.
+
+#### Implementation Summary
+- **Dead Method Declarations:** Removed `EnableAllStrategies()`, `DisableAllStrategies()`, and `GetFilteredSignal()` from `EnterpriseStrategyManager.mqh`. These were declared in the header but lacked implementation bodies and were never called.
+- **Dead Predictor Declarations:** Removed local instance definitions of `CHedgingProtection` from `UnifiedSignalPipeline.mqh` and `AIStrategyOrchestrator.mqh` that were allocated but completely unused.
+- **Dead Forward Declarations:** Removed `class CModeManager;` from 21 separate header files (`TimeframeConsistency.mqh`, `UnifiedRiskManager.mqh`, `PortfolioRiskManager.mqh`, `UnifiedSignalPipeline.mqh`, `MarketAnalysis.mqh`, `RegimeEngine.mqh`, `TrendEngine.mqh`, `VolatilityEngine.mqh`, `StructureEngine.mqh`, `LiquidityEngine.mqh`, `EnterpriseStrategyManager.mqh`, `AdvancedSignalValidator.mqh`, `RiskValidationGate.mqh`, `PositionSizer.mqh`, `TradeManager.mqh`, `AdvancedPositionManager.mqh`, `SignalDiagnostics.mqh`, `HedgingProtection.mqh`, `PerformanceAnalytics.mqh`, `AIStrategyOrchestrator.mqh`, `AIEngine.mqh`). `CModeManager` is an unimplemented concept that never existed.
+
+#### Validation Evidence
+- Compilation completed successfully with 0 errors, 0 warnings.
+- Removal was purely restricted to unused headers, forward declarations, and unused variable allocations, meaning 0 risk to runtime executing paths.
+
+## [Unreleased] - 2026-04-21
+
+### Batch 69: Log Analysis Fixes & Enhanced Observability (2026-04-21)
+
+#### Root Cause
+Deep log analysis of MultiStrategyAutonomousEA runtime logs identified several issues affecting system stability and diagnostic clarity:
+- ENTRY-VETO threshold too tight (2.50) was rejecting valid trades with z-scores very close to the limit
+- Position operations (closure/modification) were attempted during market closed hours, causing error spam
+- Pipeline filter rejections lacked per-filter logging, making debugging difficult
+- AI strategy duplicate registration warnings were logged as ERROR_WARNING when this is expected behavior
+- Symbols with extreme spreads (e.g., SFX Vol 60 with 9876 points) were not filtered during initialization
+- Empty symbol tokens in configuration lacked clear guidance for users
+- ONNX inference failures and model warmup were not distinguished in logging
+- Dormant strategies were counted but not identified, making investigation difficult
+
+#### Implementation Summary
+**ENTRY-VETO threshold adjustment:**
+- Increased `InpPipelineLateEntryZScoreLimit` from 2.50 to 2.55 in `MultiStrategyAutonomousEA.mq5`
+- Allows trades with z-scores between 2.50-2.55 to pass during BREAKOUT regime
+
+**Market hours check for position management:**
+- Added `SYMBOL_TRADE_MODE` check to `ClosePosition()` in `TradeManager.mqh` (lines 821-830)
+- Added `SYMBOL_TRADE_MODE` check to `ModifyPosition()` in `TradeManager.mqh` (lines 945-954)
+- **Bug Fix:** Only blocks when `SYMBOL_TRADE_MODE_DISABLED` (no trading), allows `SYMBOL_TRADE_MODE_CLOSEONLY` (allows closing/modifying positions)
+
+**Per-filter logging enhancement:**
+- Modified `ApplySignalFilters()` in `UnifiedSignalPipeline.mqh` (lines 893-941)
+- Added `LogFilterResult()` calls for each filter (TrendFilter, VolatilityFilter, LiquidityFilter, StructureFilter, TimeFilter)
+- Logs now identify which specific filter caused signal rejection
+
+**AI strategy duplicate registration logging:**
+- Changed log level from `ERROR_WARNING` to `ERROR_INFO` in `AIStrategyOrchestrator.mqh` (line 521)
+- Added clarification text "(duplicate registration skipped)"
+- The duplicate check already existed and was working correctly
+
+**Spread filter for symbol validation:**
+- Added spread validation in `MultiStrategyAutonomousEA.mq5` (lines 3436-3442)
+- Rejects symbols with spread > 1000 points during symbol initialization
+- Prevents wasted evaluation cycles on extreme-spread instruments
+
+**Symbol list validation enhancement:**
+- Enhanced empty symbol warning in `MultiStrategyAutonomousEA.mq5` (line 3378)
+- Added guidance to check `InpSymbolsToTrade` parameter for empty entries
+
+**ONNX inference logging enhancement:**
+- Split ONNX failure/warming check in `OnnxAIStrategyAdapter.mqh` (lines 138-156)
+- Distinguishes between `ONNX_INFERENCE_FAILED` (actual inference error) and `ONNX_WARMING_UP` (model still warming up)
+- Enables targeted troubleshooting for ONNX issues
+
+**Dormant strategy logging enhancement:**
+- Added dormant strategy tracking in `EnterpriseStrategyManager.mqh` (lines 2709-2723)
+- Logs specific strategy names and participation scores for dormant strategies
+- Updated `CONSENSUS-ROLE` log to include `dormant_strategies` field (line 2786)
+
+#### Validation Evidence
+- Compile verification succeeded with `sync_and_compile.ps1 -MirrorSync`:
+  - `MultiStrategyAutonomousEA.mq5`: 0 errors, 0 warnings
+  - `TrainingDataExporter.mq5`: 0 errors, 0 warnings
+- Bug review identified and fixed market hours check logic error (SYMBOL_TRADE_MODE_CLOSEONLY should be allowed)
+- All changes maintain existing architecture ownership boundaries
+- No runtime invariants violated
+
+#### Rollback Notes
+- ENTRY-VETO threshold change: revert `InpPipelineLateEntryZScoreLimit` to 2.50
+- Market hours check: remove lines 821-830 and 945-954 from TradeManager.mqh
+- Per-filter logging: remove LogFilterResult calls from UnifiedSignalPipeline.mqh
+- AI strategy log level: revert ERROR_INFO to ERROR_WARNING in AIStrategyOrchestrator.mqh
+- Spread filter: remove lines 3436-3442 from MultiStrategyAutonomousEA.mq5
+- Symbol validation: revert line 3378 in MultiStrategyAutonomousEA.mq5
+- ONNX logging: revert OnnxAIStrategyAdapter.mqh lines 138-156 to original single-check logic
+- Dormant strategy logging: remove lines 2709-2723 and revert line 2786 in EnterpriseStrategyManager.mqh
+
 ## [Unreleased] - 2026-04-20
 
 ### Batch 68: Institutional ICT Completion, Real ONNX Asset & Virtual Risk Reservations (2026-04-20)

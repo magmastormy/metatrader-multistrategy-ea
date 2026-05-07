@@ -23,6 +23,7 @@ struct SUnifiedRiskConfig
     double maxDailyRiskPercent;
     double maxPortfolioRiskPercent;
     double correlationThreshold;
+    int maxPositionsSameBase;
     double drawdownWarningPercent;
     double drawdownCriticalPercent;
     int adaptationMinTrades;
@@ -194,7 +195,8 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     if(!m_validationGate.Initialize(&m_portfolioRiskManager,
                                     m_config.maxRiskPerTradePercent,
                                     m_config.maxPortfolioRiskPercent,
-                                    m_config.correlationThreshold))
+                                    m_config.correlationThreshold,
+                                    m_config.maxPositionsSameBase))
     {
         Print("[RISK-UNIFIED] Failed to initialize validation gate");
         return false;

@@ -20,7 +20,6 @@ class CEnhancedErrorHandler;
 class CUtilities;
 class CHedgingProtection;
 class CMarketAnalysis;
-class CModeManager;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
@@ -28,7 +27,6 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CAIStrategyOrchestrator;
 
 class CStrategyBase : public IStrategy
 {

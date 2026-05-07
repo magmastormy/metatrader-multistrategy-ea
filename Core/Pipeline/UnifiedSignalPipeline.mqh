@@ -7,7 +7,6 @@
 
 #include "../Utils/Enums.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
-#include "../Signals/HedgingProtection.mqh"
 #include "../Engines/TrendEngine.mqh"
 #include "../Engines/StructureEngine.mqh"
 #include "../Engines/LiquidityEngine.mqh"
@@ -18,9 +17,7 @@
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
-class CHedgingProtection;
 class CMarketAnalysis;
-class CModeManager;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
@@ -28,7 +25,6 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CAIStrategyOrchestrator;
 
 //+------------------------------------------------------------------+
 //| Signal Filter Settings                                          |
@@ -40,6 +36,11 @@ struct SignalFilterSettings
     bool enableLiquidityFilter;
     bool enableStructureFilter;
     bool enableTimeFilter;
+    bool enableSessionFilter;
+    bool allowSyntheticOffHours;
+    bool tradeLondonSession;
+    bool tradeNewYorkSession;
+    bool tradeTokyoSession;
     double minConfidence;
     double intrabarConfidenceCap;
     bool enableRegimeCostGate;
@@ -55,6 +56,11 @@ struct SignalFilterSettings
         enableLiquidityFilter(true),
         enableStructureFilter(true),
         enableTimeFilter(false),
+        enableSessionFilter(false),
+        allowSyntheticOffHours(true),
+        tradeLondonSession(true),
+        tradeNewYorkSession(true),
+        tradeTokyoSession(true),
         minConfidence(0.40),
         intrabarConfidenceCap(0.05),
         enableRegimeCostGate(true),
@@ -153,7 +159,6 @@ private:
     
     // Protection / consistency
     CTimeframeConsistency* m_tfConsistency;
-    CHedgingProtection* m_hedgingProtection;
     
     // Settings
     SignalFilterSettings m_filters;
@@ -186,7 +191,13 @@ private:
     bool ApplyVolatilityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
     bool ApplyLiquidityFilter(ENUM_TRADE_SIGNAL &signal, double &confidence, const string symbol);
     bool ApplyStructureFilter(ENUM_TRADE_SIGNAL &signal, double &confidence);
-    bool ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal);
+    bool ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal, const string symbol = "");
+    bool ApplySessionFilter(const string symbol = "");
+    bool IsSyntheticSymbol(const string symbol);
+    double CalculateQualityScore(double confidence, int confluence, bool passedFilters,
+                                   double convictionScore, double readinessScore, double contextScore,
+                                   double diversityScore, double costScore, double directionalQuality,
+                                   double supportRatio);
     bool ApplyRegimeAndCostGate(const string symbol,
                                 ENUM_TIMEFRAMES timeframe,
                                 ENUM_TRADE_SIGNAL &signal,
@@ -248,7 +259,6 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_volatilityEngine(NULL),
     m_regimeEngine(NULL),
     m_tfConsistency(NULL),
-    m_hedgingProtection(NULL),
     m_signalsProcessed(0),
     m_signalsFiltered(0),
     m_signalsPassed(0),
@@ -277,7 +287,6 @@ CUnifiedSignalPipeline::~CUnifiedSignalPipeline()
     if(m_volatilityEngine != NULL) { delete m_volatilityEngine; m_volatilityEngine = NULL; }
     if(m_regimeEngine != NULL) { delete m_regimeEngine; m_regimeEngine = NULL; }
     if(m_tfConsistency != NULL) { delete m_tfConsistency; m_tfConsistency = NULL; }
-    if(m_hedgingProtection != NULL) { delete m_hedgingProtection; m_hedgingProtection = NULL; }
 }
 
 //+------------------------------------------------------------------+
@@ -290,73 +299,98 @@ bool CUnifiedSignalPipeline::Initialize(SignalFilterSettings &settings)
     
     // Initialize consistency checker
     m_tfConsistency = new CTimeframeConsistency();
-    if(m_tfConsistency != NULL)
-        m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
-    else
+    if(m_tfConsistency == NULL)
+    {
+        Print("[UnifiedSignalPipeline] ERROR: TimeframeConsistency allocation failed");
         initializationOk = false;
-    
-    // Initialize hedging protection
-    m_hedgingProtection = new CHedgingProtection();
-    if(m_hedgingProtection != NULL)
-        m_hedgingProtection.Initialize(HEDGING_MODE_PREVENT, false);
-    else
+    }
+    else if(!m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false))
+    {
+        Print("[UnifiedSignalPipeline] ERROR: TimeframeConsistency initialization failed");
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
         initializationOk = false;
+    }
     
     // Initialize engines
     m_trendEngine = new CTrendEngine();
-    if(m_trendEngine != NULL)
+    if(m_trendEngine == NULL)
     {
-        if(!m_trendEngine.Initialize(20, 50, 200, 14, NULL))
+        Print("[UnifiedSignalPipeline] ERROR: TrendEngine allocation failed");
+        initializationOk = false;
+    }
+    else if(!m_trendEngine.Initialize(20, 50, 200, 14, NULL))
+    {
+        Print("[UnifiedSignalPipeline] ERROR: TrendEngine initialization failed");
+        delete m_trendEngine;
+        m_trendEngine = NULL;
+        initializationOk = false;
+    }
+
+    if(initializationOk)
+    {
+        m_structureEngine = new CStructureEngine();
+        if(m_structureEngine == NULL)
         {
-            Print("[UnifiedSignalPipeline] ERROR: TrendEngine initialization failed");
+            Print("[UnifiedSignalPipeline] ERROR: StructureEngine allocation failed");
             initializationOk = false;
         }
-    }
-    else
-        initializationOk = false;
-    
-    m_structureEngine = new CStructureEngine();
-    if(m_structureEngine != NULL)
-    {
-        if(!m_structureEngine.Initialize(10, 10.0, true, NULL))
+        else if(!m_structureEngine.Initialize(10, 10.0, true, NULL))
         {
             Print("[UnifiedSignalPipeline] ERROR: StructureEngine initialization failed");
+            delete m_structureEngine;
+            m_structureEngine = NULL;
             initializationOk = false;
         }
     }
-    else
-        initializationOk = false;
-    
-    m_liquidityEngine = new CLiquidityEngine();
-    if(m_liquidityEngine != NULL)
+
+    if(initializationOk)
     {
-        if(!m_liquidityEngine.Initialize(10.0, 2, NULL))
+        m_liquidityEngine = new CLiquidityEngine();
+        if(m_liquidityEngine == NULL)
+        {
+            Print("[UnifiedSignalPipeline] ERROR: LiquidityEngine allocation failed");
+            initializationOk = false;
+        }
+        else if(!m_liquidityEngine.Initialize(10.0, 2, NULL))
         {
             Print("[UnifiedSignalPipeline] ERROR: LiquidityEngine initialization failed");
+            delete m_liquidityEngine;
+            m_liquidityEngine = NULL;
             initializationOk = false;
         }
     }
-    else
-        initializationOk = false;
-    
-    m_volatilityEngine = new CVolatilityEngine();
-    if(m_volatilityEngine != NULL)
+
+    if(initializationOk)
     {
-        if(!m_volatilityEngine.Initialize(14, 20, NULL))
+        m_volatilityEngine = new CVolatilityEngine();
+        if(m_volatilityEngine == NULL)
+        {
+            Print("[UnifiedSignalPipeline] ERROR: VolatilityEngine allocation failed");
+            initializationOk = false;
+        }
+        else if(!m_volatilityEngine.Initialize(14, 20, NULL))
         {
             Print("[UnifiedSignalPipeline] ERROR: VolatilityEngine initialization failed");
+            delete m_volatilityEngine;
+            m_volatilityEngine = NULL;
             initializationOk = false;
         }
     }
-    else
-        initializationOk = false;
 
-    m_regimeEngine = new CRegimeEngine();
-    if(m_regimeEngine != NULL)
+    if(initializationOk)
     {
-        if(!m_regimeEngine.Initialize(14, 20, 2.0, 30, 120))
+        m_regimeEngine = new CRegimeEngine();
+        if(m_regimeEngine == NULL)
+        {
+            Print("[UnifiedSignalPipeline] ERROR: RegimeEngine allocation failed");
+            initializationOk = false;
+        }
+        else if(!m_regimeEngine.Initialize(14, 20, 2.0, 30, 120))
         {
             Print("[UnifiedSignalPipeline] ERROR: RegimeEngine initialization failed");
+            delete m_regimeEngine;
+            m_regimeEngine = NULL;
             initializationOk = false;
         }
         else
@@ -848,19 +882,64 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     }
     
     if(m_filters.enableTrendFilter)
-        passed = passed && ApplyTrendFilter(signal, confidence);
+    {
+        bool trendPassed = ApplyTrendFilter(signal, confidence);
+        if(!trendPassed)
+        {
+            passed = false;
+            LogFilterResult("TrendFilter", false, "Trend strength below minimum threshold");
+        }
+    }
     
     if(m_filters.enableVolatilityFilter)
-        passed = passed && ApplyVolatilityFilter(signal, confidence);
+    {
+        bool volPassed = ApplyVolatilityFilter(signal, confidence);
+        if(!volPassed)
+        {
+            passed = false;
+            LogFilterResult("VolatilityFilter", false, "Volatility outside acceptable range");
+        }
+    }
     
     if(m_filters.enableLiquidityFilter)
-        passed = passed && ApplyLiquidityFilter(signal, confidence, symbol);
+    {
+        bool liqPassed = ApplyLiquidityFilter(signal, confidence, symbol);
+        if(!liqPassed)
+        {
+            passed = false;
+            LogFilterResult("LiquidityFilter", false, "Insufficient liquidity");
+        }
+    }
     
     if(m_filters.enableStructureFilter)
-        passed = passed && ApplyStructureFilter(signal, confidence);
+    {
+        bool structPassed = ApplyStructureFilter(signal, confidence);
+        if(!structPassed)
+        {
+            passed = false;
+            LogFilterResult("StructureFilter", false, "Market structure misalignment");
+        }
+    }
     
     if(m_filters.enableTimeFilter)
-        passed = passed && ApplyTimeFilter(signal);
+    {
+        bool timePassed = ApplyTimeFilter(signal, symbol);
+        if(!timePassed)
+        {
+            passed = false;
+            LogFilterResult("TimeFilter", false, "Time-based filter rejection");
+        }
+    }
+    
+    if(m_filters.enableSessionFilter)
+    {
+        bool sessionPassed = ApplySessionFilter(symbol);
+        if(!sessionPassed)
+        {
+            passed = false;
+            LogFilterResult("SessionFilter", false, "Session-based filter rejection");
+        }
+    }
 
     m_lastEvidence.contextScore = ComputeContextScore(signal);
     m_lastEvidence.readinessScore = ComputeReadinessScore();
@@ -968,7 +1047,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                                     thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
     }
 
-    // Preserve post-threshold confidence once a signal survives the pipeline.
+    // Note: Preserve post-threshold confidence once a signal survives the pipeline.
     // Context/readiness/cost already travel downstream as separate evidence inputs,
     // so reducing confidence here only double-penalizes the same packet in quorum
     // and validator stages.
@@ -1410,18 +1489,62 @@ bool CUnifiedSignalPipeline::ApplyStructureFilter(ENUM_TRADE_SIGNAL &signal, dou
 }
 
 //+------------------------------------------------------------------+
+//| Check if Symbol is Synthetic Index                               |
+//+------------------------------------------------------------------+
+bool CUnifiedSignalPipeline::IsSyntheticSymbol(const string symbol)
+{
+    if(symbol == "") return false;
+    
+    // Check for broker-specific synthetic products that trade 24/7 or outside regular FX sessions.
+    if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
+       StringFind(symbol, "Step") >= 0 ||      // Step Index variants
+       StringFind(symbol, "Boom") >= 0 ||      // Boom 1000, Boom 500
+       StringFind(symbol, "Crash") >= 0 ||     // Crash 1000, Crash 500
+       StringFind(symbol, "Jump") >= 0 ||      // Jump 10, Jump 25, etc.
+       StringFind(symbol, "PainX") >= 0 ||     // Weltrade synthetic family
+       StringFind(symbol, "Pain ") >= 0 ||     // Additional naming variant
+       StringFind(symbol, "SFX Vol") >= 0 ||
+       StringFind(symbol, "FX Vol") >= 0 ||
+       StringFind(symbol, "GainX") >= 0 ||
+       StringFind(symbol, "FlipX") >= 0)
+    {
+        return true;
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
 //| Apply Time Filter                                               |
 //+------------------------------------------------------------------+
-bool CUnifiedSignalPipeline::ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal)
+bool CUnifiedSignalPipeline::ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal, const string symbol)
 {
-    MqlDateTime dt;
-    TimeToStruct(TimeCurrent(), dt);
+    // If synthetic indices and off-hours allowed, bypass time filter
+    if(m_filters.allowSyntheticOffHours && IsSyntheticSymbol(symbol))
+        return true;
     
-    // Skip Asian session (example: 22:00 - 07:00 GMT)
-    if(dt.hour >= 22 || dt.hour < 7)
+    MqlDateTime dt;
+    TimeToStruct(TimeGMT(), dt);
+    int currentHour = dt.hour;
+    
+    // Check trading hours (1 AM - 10 PM GMT by default)
+    int startHour = 1;
+    int endHour = 22;
+    
+    if(startHour <= endHour)
     {
-        LogFilterResult("TimeFilter", false, "Asian session - trading disabled");
-        return false;
+        if(currentHour < startHour || currentHour >= endHour)
+        {
+            LogFilterResult("TimeFilter", false, StringFormat("Outside trading hours: %d:00 GMT", currentHour));
+            return false;
+        }
+    }
+    else  // Overnight hours (e.g., 22 to 2)
+    {
+        if(currentHour < startHour && currentHour >= endHour)
+        {
+            LogFilterResult("TimeFilter", false, StringFormat("Outside trading hours: %d:00 GMT", currentHour));
+            return false;
+        }
     }
     
     // Skip weekends
@@ -1436,12 +1559,93 @@ bool CUnifiedSignalPipeline::ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal)
 }
 
 //+------------------------------------------------------------------+
+//| Apply Session Filter                                             |
+//+------------------------------------------------------------------+
+bool CUnifiedSignalPipeline::ApplySessionFilter(const string symbol)
+{
+    // If synthetic indices and off-hours allowed, bypass session filter
+    if(m_filters.allowSyntheticOffHours && IsSyntheticSymbol(symbol))
+        return true;
+    
+    if(!m_filters.enableSessionFilter)
+        return true;
+    
+    MqlDateTime dt;
+    TimeToStruct(TimeGMT(), dt);
+    int gmtHour = dt.hour;
+    
+    // Tokyo session: 00:00-09:00 GMT
+    if(m_filters.tradeTokyoSession && gmtHour >= 0 && gmtHour < 9)
+        return true;
+    
+    // London session: 08:00-17:00 GMT
+    if(m_filters.tradeLondonSession && gmtHour >= 8 && gmtHour < 17)
+        return true;
+    
+    // New York session: 13:00-22:00 GMT
+    if(m_filters.tradeNewYorkSession && gmtHour >= 13 && gmtHour < 22)
+        return true;
+    
+    LogFilterResult("SessionFilter", false, StringFormat("Not in active trading session: %d:00 GMT", gmtHour));
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Quality Score                                          |
+//+------------------------------------------------------------------+
+double CUnifiedSignalPipeline::CalculateQualityScore(double confidence, int confluence, bool passedFilters,
+                                                      double convictionScore, double readinessScore, double contextScore,
+                                                      double diversityScore, double costScore, double directionalQuality,
+                                                      double supportRatio)
+{
+    double score = 0.0;
+    
+    // Validate inputs - handle NaN and extreme values
+    if(!MathIsValidNumber(confidence) || confidence < 0.0 || confidence > 1.0)
+        confidence = 0.0;
+    
+    // Confidence component
+    score += confidence * 0.20;
+    
+    // Confluence component
+    double confluenceScore = MathMin(1.0, MathMax(0.0, confluence / 5.0));
+    score += confluenceScore * 0.10;
+    
+    // Decision-path components with NaN protection
+    convictionScore = MathIsValidNumber(convictionScore) ? convictionScore : 0.0;
+    readinessScore = MathIsValidNumber(readinessScore) ? readinessScore : 0.0;
+    contextScore = MathIsValidNumber(contextScore) ? contextScore : 0.0;
+    diversityScore = MathIsValidNumber(diversityScore) ? diversityScore : 0.0;
+    costScore = MathIsValidNumber(costScore) ? costScore : 0.0;
+    directionalQuality = MathIsValidNumber(directionalQuality) ? directionalQuality : 0.0;
+    supportRatio = MathIsValidNumber(supportRatio) ? supportRatio : 0.0;
+    
+    score += MathMax(0.0, MathMin(1.0, convictionScore)) * 0.12;
+    score += MathMax(0.0, MathMin(1.0, readinessScore)) * 0.08;
+    score += MathMax(0.0, MathMin(1.0, contextScore)) * 0.08;
+    score += MathMax(0.0, MathMin(1.0, diversityScore)) * 0.07;
+    score += MathMax(0.0, MathMin(1.0, costScore)) * 0.05;
+    score += MathMax(0.0, MathMin(1.0, directionalQuality)) * 0.15;
+    score += MathMax(0.0, MathMin(1.0, supportRatio)) * 0.07;
+    
+    // Filter component
+    if(passedFilters)
+        score += 0.05;
+    
+    // Ensure final score is valid and in range [0, 1]
+    if(!MathIsValidNumber(score))
+        score = 0.0;
+    
+    return MathMax(0.0, MathMin(1.0, score));
+}
+
+//+------------------------------------------------------------------+
 //| Log Filter Result                                               |
 //+------------------------------------------------------------------+
 void CUnifiedSignalPipeline::LogFilterResult(const string filter, bool passed, const string reason)
 {
-    // Generic per-filter logs are intentionally suppressed here.
-    // Authoritative runtime telemetry is emitted by the manager, validator, and regime/cost gates.
+    // Note: Generic per-filter logs are intentionally suppressed here.
+    // Note: Authoritative runtime telemetry is emitted by the manager, validator, and regime/cost gates.
 }
 
 #endif // UNIFIED_SIGNAL_PIPELINE_MQH

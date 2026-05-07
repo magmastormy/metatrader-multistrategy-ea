@@ -37,15 +37,33 @@ public:
         SCandleProperties previous = m_analyzer.AnalyzeCandle(barIndex + 1);
         
         double atr = m_analyzer.GetATR(14);
-        if(current.body < atr * 0.3 || previous.body < atr * 0.2)
+        if(current.isDoji || previous.isDoji)
             return false;
+
+        if(atr <= 0.0)
+            return false;
+
+        if(current.body < atr * 0.35 || previous.body < atr * 0.20)
+            return false;
+
+        if(current.bodyRatio < 0.55 || previous.bodyRatio < 0.35)
+            return false;
+
+        double bodyRatio = current.body / MathMax(previous.body, 0.000001);
+        if(bodyRatio < 1.10)
+            return false;
+
+        double tolerance = MathMax(_Point * 2.0, atr * 0.02);
         
         // BULLISH ENGULFING
         if(current.isBullish && previous.isBearish)
         {
-            if(current.open <= previous.close &&
+            if(current.open <= (previous.close + tolerance) &&
+               current.close >= (previous.open - tolerance) &&
                current.close > previous.open &&
-               current.body > previous.body)
+               current.body > previous.body &&
+               current.lowerWickRatio <= 0.35 &&
+               previous.upperWickRatio <= 0.55)
             {
                 pattern.isBullish = true;
                 pattern.time = current.time;
@@ -63,9 +81,12 @@ public:
         // BEARISH ENGULFING
         else if(current.isBearish && previous.isBullish)
         {
-            if(current.open >= previous.close &&
+            if(current.open >= (previous.close - tolerance) &&
+               current.close <= (previous.open + tolerance) &&
                current.close < previous.open &&
-               current.body > previous.body)
+               current.body > previous.body &&
+               current.upperWickRatio <= 0.35 &&
+               previous.lowerWickRatio <= 0.55)
             {
                 pattern.isBullish = false;
                 pattern.time = current.time;
@@ -129,6 +150,9 @@ private:
         
         if(current.upperWickRatio < 0.15 && current.lowerWickRatio < 0.15)
             strength += 0.10;
+
+        if(current.bodyRatio >= 0.70)
+            strength += 0.05;
         
         return MathMin(1.0, strength);
     }

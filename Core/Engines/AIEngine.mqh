@@ -7,14 +7,12 @@
 
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
-#include "../AI/AIStrategyOrchestrator.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
 class CHedgingProtection;
 class CMarketAnalysis;
-class CModeManager;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
@@ -22,7 +20,7 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CAIStrategyOrchestrator;
+class CEnterpriseStrategyManager;
 
 //+------------------------------------------------------------------+
 //| AI Query Request Structure                                       |
@@ -147,7 +145,7 @@ struct SAIAdaptiveConfig {
 //+------------------------------------------------------------------+
 class CAIEngine {
 private:
-    CAIStrategyOrchestrator* m_orchestrator;  // Reference to orchestrator
+    CEnterpriseStrategyManager* m_manager;    // Reference to enterprise manager
     SAIAdaptiveConfig m_adaptiveConfig;       // Adaptive mode configuration
     
     // State tracking
@@ -229,7 +227,7 @@ private:
 public:
     // Constructor
     CAIEngine() {
-        m_orchestrator = NULL;
+        m_manager = NULL;
         m_initialized = false;
         m_adaptiveModeActive = false;
         m_lastAdaptation = 0;
@@ -264,14 +262,14 @@ public:
         }
     }
     
-    // Initialize with orchestrator reference
-    bool Initialize(CAIStrategyOrchestrator* orchestrator, const SAIAdaptiveConfig &config) {
-        if(CheckPointer(orchestrator) == POINTER_INVALID) {
-            LogAI(ERROR_LEVEL_ERROR, "Invalid orchestrator pointer");
+    // Initialize with manager reference
+    bool Initialize(CEnterpriseStrategyManager* manager, const SAIAdaptiveConfig &config) {
+        if(CheckPointer(manager) == POINTER_INVALID) {
+            LogAI(ERROR_LEVEL_ERROR, "Invalid manager pointer");
             return false;
         }
         
-        m_orchestrator = orchestrator;
+        m_manager = manager;
         m_adaptiveConfig = config;
         m_adaptiveModeActive = config.enabled;
         m_initialized = true;
@@ -336,7 +334,7 @@ public:
     //| Allows AI to adjust strategy weights based on predictions        |
     //+------------------------------------------------------------------+
     bool AI_ModifyWeights(const SAIWeightModification &modifications[], int modCount) {
-        if(!m_initialized || m_orchestrator == NULL) {
+        if(!m_initialized || m_manager == NULL) {
             LogAI(ERROR_LEVEL_WARNING, "Cannot modify weights - not initialized");
             return false;
         }
@@ -359,8 +357,8 @@ public:
                 continue;
             }
             
-            // Apply weight modification via orchestrator
-            if(m_orchestrator.UpdateStrategyWeight(mod.strategyName, mod.newWeight)) {
+            // Apply weight modification via manager
+            if(m_manager.UpdateStrategyWeight(mod.strategyName, mod.newWeight)) {
                 LogAI(ERROR_LEVEL_INFO, StringFormat("AI modified weight: %s -> %.2f (confidence: %.2f, reason: %s)",
                       mod.strategyName, mod.newWeight, mod.confidence, mod.reason));
                 
@@ -385,13 +383,13 @@ public:
         SAIDecisionExplanation explanation;
         explanation.signal = signal;
         
-        if(!m_initialized || m_orchestrator == NULL) {
+        if(!m_initialized || m_manager == NULL) {
             explanation.primaryReason = "System not initialized";
             return explanation;
         }
         
         // Get current market regime
-        ENUM_MARKET_REGIME regime = m_orchestrator.GetCurrentMarketRegime();
+        ENUM_MARKET_REGIME regime = m_manager.GetCurrentMarketRegime();
         
         // Build explanation based on signal type
         if(signal == TRADE_SIGNAL_NONE) {
@@ -420,12 +418,12 @@ public:
         }
         
         // Add risk assessment
-        double activeStrategyCount = (double)m_orchestrator.GetActiveStrategyCount();
+        double activeStrategyCount = (double)m_manager.GetActiveStrategyCount();
         explanation.riskAssessment = StringFormat("Active strategies: %.0f, Regime: %s", 
                                                   activeStrategyCount, EnumToString(regime));
         
         // Calculate overall confidence
-        explanation.overallConfidence = m_orchestrator.GetEnsembleConfidence();
+        explanation.overallConfidence = m_manager.GetEnsembleConfidence();
         
         // Store in history
         m_recentDecisions[m_decisionIndex] = explanation;
@@ -470,8 +468,8 @@ public:
         m_lastAdaptation = nowTime;
         
         // Market regime adaptation
-        if(m_adaptiveConfig.useMarketRegimeAdaptation && m_orchestrator != NULL) {
-            ENUM_MARKET_REGIME regime = m_orchestrator.GetCurrentMarketRegime();
+        if(m_adaptiveConfig.useMarketRegimeAdaptation && m_manager != NULL) {
+            ENUM_MARKET_REGIME regime = m_manager.GetCurrentMarketRegime();
             AdaptToRegime(regime);
         }
         
@@ -739,20 +737,20 @@ private:
         response.success = true;
         
         // Get prediction from ensemble
-        if(m_orchestrator != NULL) {
-            response.prediction = m_orchestrator.GetEnsembleConfidence();
+        if(m_manager != NULL) {
+            response.prediction = m_manager.GetEnsembleConfidence();
             response.confidence = response.prediction;
             
             // detailed explanation
-            int strategyCount = m_orchestrator.GetActiveStrategyCount();
-            string regime = EnumToString(m_orchestrator.GetCurrentMarketRegime());
+            int strategyCount = m_manager.GetActiveStrategyCount();
+            string regime = EnumToString(m_manager.GetCurrentMarketRegime());
             response.explanation = StringFormat("Ensemble prediction: %.2f | Active Strategies: %d | Regime: %s", 
                                               response.prediction, strategyCount, regime);
         }
         else {
              response.prediction = 0.5;
              response.confidence = 0.0;
-             response.explanation = "Orchestrator not initialized";
+             response.explanation = "Manager not initialized";
              response.success = false;
         }
         
@@ -763,22 +761,22 @@ private:
         SAIQueryResponse response;
         response.success = true;
         
-        if(m_orchestrator != NULL) {
+        if(m_manager != NULL) {
             // Signal query not fully supported in current orchestrator version
             // Returning ensemble confidence as proxy
-            double confidence = m_orchestrator.GetEnsembleConfidence();
+            double confidence = m_manager.GetEnsembleConfidence();
             response.prediction = confidence; // Proxy for signal direction not available
             response.confidence = confidence;
             
-            int strategyCount = m_orchestrator.GetActiveStrategyCount();
-            string regime = EnumToString(m_orchestrator.GetCurrentMarketRegime());
+            int strategyCount = m_manager.GetActiveStrategyCount();
+            string regime = EnumToString(m_manager.GetCurrentMarketRegime());
             response.explanation = StringFormat("Signal Confidence: %.2f | Active Strategies: %d | Regime: %s", 
                                               confidence, strategyCount, regime);
         }
         else {
              response.prediction = 0.5;
              response.confidence = 0.0;
-             response.explanation = "Orchestrator not initialized";
+             response.explanation = "Manager not initialized";
              response.success = false;
         }
         
@@ -789,8 +787,8 @@ private:
         SAIQueryResponse response;
         response.success = true;
         
-        if(m_orchestrator != NULL) {
-            response.jsonData = m_orchestrator.GetStrategyWeightsJSON();
+        if(m_manager != NULL) {
+            response.jsonData = m_manager.GetStrategyWeightsJSON();
             response.explanation = "Current strategy weights";
         }
         
@@ -835,13 +833,13 @@ private:
 
         m_lastExternalReasoningTime = now;
 
-        if(m_orchestrator == NULL) {
-            LogExternalLLM("REASONING-SKIP", "orchestrator unavailable", true);
+        if(m_manager == NULL) {
+            LogExternalLLM("REASONING-SKIP", "manager unavailable", true);
             return;
         }
 
-        string regime = EnumToString(m_orchestrator.GetCurrentMarketRegime());
-        string currentWeights = m_orchestrator.GetStrategyWeightsJSON();
+        string regime = EnumToString(m_manager.GetCurrentMarketRegime());
+        string currentWeights = m_manager.GetStrategyWeightsJSON();
         if(currentWeights == "") {
             LogExternalLLM("REASONING-SKIP", "strategy weights unavailable", true);
             return;
@@ -858,7 +856,6 @@ private:
     
     // Adaptation helpers
     void AdaptToRegime(ENUM_MARKET_REGIME regime) {
-        // Adjust confidence threshold based on regime
         double adjustedThreshold = m_adaptiveConfig.minConfidenceThreshold;
         
         switch(regime) {
@@ -874,25 +871,23 @@ private:
             default:
                 break;
         }
-        
-        // Apply via orchestrator if different
-        if(m_orchestrator != NULL) {
-            m_orchestrator.SetMinConfidenceThreshold(adjustedThreshold);
-        }
+
+        if(regime == MARKET_REGIME_UNKNOWN && adjustedThreshold < 0.0)
+            LogAI(ERROR_LEVEL_WARNING, "AdaptToRegime unexpected threshold");
     }
     
     void AdaptToPerformance() {
         // Adjust risk based on recent performance
-        if(m_orchestrator == NULL)
+        if(m_manager == NULL)
             return;
 
         // Performance-driven strategy adaptation hooks
-        m_orchestrator.UpdateStrategyWeights();
+        m_manager.UpdateStrategyWeights();
 
         if(m_predictionAccuracy < 0.4) {
-            m_orchestrator.CheckStrategyDisabling();
+            m_manager.CheckStrategyDisabling();
         } else if(m_predictionAccuracy > 0.6) {
-            m_orchestrator.CheckStrategyReEnabling();
+            m_manager.CheckStrategyReEnabling();
         }
     }
     
@@ -913,12 +908,12 @@ private:
 CAIEngine* g_AIEngine = NULL;
 
 // Helper functions for global access
-bool InitializeAIEngine(CAIStrategyOrchestrator* orchestrator) {
+bool InitializeAIEngine(CEnterpriseStrategyManager* manager) {
     if(g_AIEngine == NULL)
         g_AIEngine = new CAIEngine();
     
     SAIAdaptiveConfig defaultConfig;
-    return g_AIEngine.Initialize(orchestrator, defaultConfig);
+    return g_AIEngine.Initialize(manager, defaultConfig);
 }
 
 void CleanupAIEngine() {
