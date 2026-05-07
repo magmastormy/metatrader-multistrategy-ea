@@ -5,11 +5,14 @@
 #property strict
 #property version "1.00"
 
+#include "Core\AI\AIFeatureVectorBuilder.mqh"
+
 input string          InpExportSymbols   = "EURUSD.0,GBPUSD.0,USDJPY.0,XAUUSD.0,BTCUSD.0,AUDUSD.0";
 input ENUM_TIMEFRAMES InpExportTimeframe = PERIOD_H1;
 input datetime        InpFromDate        = D'2024.01.01 00:00:00';
 input datetime        InpToDate          = D'2026.04.20 00:00:00';
 input string          InpOutputFile      = "AITraining_OHLCV_H1.csv";
+input bool            InpExportFeatureVectors = false;
 
 string TrimString(string value)
 {
@@ -44,14 +47,27 @@ bool ExportSymbolHistory(const int fileHandle,
     int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
     for(int i = 0; i < copied; i++)
     {
-        FileWrite(fileHandle,
-                  symbol,
-                  TimeToString(rates[i].time, TIME_DATE | TIME_SECONDS),
-                  DoubleToString(rates[i].open, digits),
-                  DoubleToString(rates[i].high, digits),
-                  DoubleToString(rates[i].low, digits),
-                  DoubleToString(rates[i].close, digits),
-                  (long)rates[i].tick_volume);
+        string row = StringFormat("%s,%s,%s,%s,%s,%s,%I64d",
+                                  symbol,
+                                  TimeToString(rates[i].time, TIME_DATE | TIME_SECONDS),
+                                  DoubleToString(rates[i].open, digits),
+                                  DoubleToString(rates[i].high, digits),
+                                  DoubleToString(rates[i].low, digits),
+                                  DoubleToString(rates[i].close, digits),
+                                  (long)rates[i].tick_volume);
+
+        if(InpExportFeatureVectors)
+        {
+            int shift = iBarShift(symbol, timeframe, rates[i].time, false);
+            double features[];
+            if(shift < 1 || !CAIFeatureVectorBuilder::BuildNNFeatureVector(symbol, timeframe, features, shift))
+                continue;
+
+            for(int f = 0; f < ArraySize(features); f++)
+                row += StringFormat(",%.10f", features[f]);
+        }
+
+        FileWriteString(fileHandle, row + "\r\n");
         rowsWritten++;
     }
 
@@ -78,7 +94,13 @@ int OnInit()
         return INIT_FAILED;
     }
 
-    FileWrite(fileHandle, "symbol", "date", "open", "high", "low", "close", "volume");
+    string header = "symbol,date,open,high,low,close,volume";
+    if(InpExportFeatureVectors)
+    {
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+            header += StringFormat(",feature_%02d", i);
+    }
+    FileWriteString(fileHandle, header + "\r\n");
 
     string rawSymbols[];
     int symbolCount = StringSplit(InpExportSymbols, ',', rawSymbols);
@@ -93,6 +115,7 @@ int OnInit()
     }
 
     FileClose(fileHandle);
+    CIndicatorManager::DestroyInstance();
 
     PrintFormat("[TRAIN-EXPORT] Completed | symbols=%d | rows=%d | file=%s",
                 symbolCount, rowsWritten, InpOutputFile);

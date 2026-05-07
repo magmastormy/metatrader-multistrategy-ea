@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-N_FEATURES = 55
+N_FEATURES = 57
 N_CLASSES = 3
 
 

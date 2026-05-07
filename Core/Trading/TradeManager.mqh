@@ -36,7 +36,6 @@ class CEnhancedErrorHandler;
 class CUtilities;
 class CHedgingProtection;
 class CMarketAnalysis;
-class CModeManager;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
@@ -44,7 +43,6 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CAIStrategyOrchestrator;
 
 // Trade execution settings
 #define MAX_TRADE_RETRIES 4
@@ -143,10 +141,6 @@ private:
     
     // Safety mechanisms
     bool m_emergencyStop;                    // Emergency stop flag
-    double m_maxDailyLoss;                   // Maximum daily loss limit (in account currency)
-    double m_dailyLoss;                      // Current daily loss
-    datetime m_dailyResetTime;               // Daily reset timestamp
-    bool m_externalRiskAuthority;            // External module owns risk veto when true
     
     // Trade execution state
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
@@ -621,10 +615,6 @@ public:
         m_orderFillMode(ORDER_FILLING_IOC),
         m_minModifyIntervalSec(5),
         m_emergencyStop(false),
-        m_maxDailyLoss(0.0),
-        m_dailyLoss(0.0),
-        m_dailyResetTime(0),
-        m_externalRiskAuthority(false),
         m_pendingOrderCount(0),
         m_stateCount(0),
         m_totalTrades(0),
@@ -639,7 +629,6 @@ public:
         m_trade.SetDeviationInPoints(m_slippage);
         m_trade.SetAsyncMode(m_useAsyncMode);
         m_symbolInfo.Name(Symbol());
-        ResetDailyMetricsIfNeeded();
         ZeroMemory(m_positionStates);
     }
     
@@ -652,8 +641,6 @@ public:
     // Set trading parameters
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_trade.SetDeviationInPoints(m_slippage); }
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
-    void SetMaxDailyLoss(const double maxLoss) { m_maxDailyLoss = maxLoss; }
-    void SetExternalRiskAuthority(const bool enabled) { m_externalRiskAuthority = enabled; }
     void SetOrderFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_orderFillMode = mode; }
     void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
     
@@ -688,7 +675,6 @@ public:
     double NormalizeVolume(const string symbol, const double volume);
     double CalculateStopLoss(const string symbol, const ENUM_ORDER_TYPE orderType, const double price, const double stopLossPips);
     double CalculateTakeProfit(const string symbol, const ENUM_ORDER_TYPE orderType, const double price, const double takeProfitPips);
-    bool ValidateSymbol(const string symbol);
     ulong GetLastTicket() const { return (m_lastTradeResult.order > 0) ? m_lastTradeResult.order : m_trade.ResultOrder(); }
     double GetLastRequestedPrice() const { return m_lastRequestedPrice; }
     double GetLastRequestedStopLoss() const { return m_lastRequestedStopLoss; }
@@ -703,18 +689,9 @@ public:
 
 private:
     // Internal helper functions
-    bool ValidateAndAdjustStopLevels(const string symbol, const double entryPrice, double &sl, double &tp, const int direction);
-    bool ValidateVolume(const string symbolName, const double volume);
-    bool ValidatePrice(const string symbolName, const double price);
-    bool ValidateStopLevels(const string symbolParam, const double price, const double stopLoss, const double takeProfit);
     bool NormalizeAndValidateStops(const string symbol, const ENUM_ORDER_TYPE orderType, const double price, const double tp, double &slOut, double &tpOut, string &errorMsg);
-    bool ValidateTradeRequest(const string symbol, const ENUM_ORDER_TYPE orderType, const double volume, const double price);
     bool IsOrderTypeAllowedForSymbol(const string symbolName, const ENUM_ORDER_TYPE orderType, string &reason);
-    bool CheckDailyLimits();
-    bool IsTradeAllowed(const string symbol, const double volume, const ENUM_ORDER_TYPE orderType = ORDER_TYPE_BUY);
     double CalculatePositionRisk(const string symbolParam, const double volume, const double stopLossPips);
-    bool CheckMarginRequirements(const string symbolParam, const double volume, const ENUM_ORDER_TYPE orderType = ORDER_TYPE_BUY);
-    bool CheckCorrelationLimits(const string symbolName);
     double GetCurrentExecutionPrice(const string symbolName, const ENUM_ORDER_TYPE orderType);
     double GetMinimumStopDistance(const string symbolName);
     bool ExecuteMarketOrder(const string symbol, const ENUM_ORDER_TYPE orderType,
@@ -723,7 +700,6 @@ private:
                            const double takeProfitPips,
                            const string comment);
 
-    void ResetDailyMetricsIfNeeded();
     void UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin);
     
     // Logging
@@ -752,9 +728,6 @@ bool CTradeManager::Initialize(const uint magicNumber,
     m_lastRequestedStopLoss = 0.0;
     m_lastRequestedTakeProfit = 0.0;
     m_lastExecutionReceipt = STradeExecutionReceipt();
-    
-    m_dailyResetTime = TimeCurrent();
-    m_dailyLoss = 0.0;
     
     return true;
 }
@@ -817,6 +790,18 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
     }
     
     string localSymbol = m_positionInfo.Symbol();
+    
+    // Check if market is open for trading
+    // SYMBOL_TRADE_MODE_CLOSEONLY allows closing positions, so we allow it
+    // SYMBOL_TRADE_MODE_DISABLED means no trading at all
+    ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(localSymbol, SYMBOL_TRADE_MODE);
+    if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
+    {
+        PrintFormat("[POSITION-MANAGEMENT] Skipping position closure for %s - trading disabled (trade mode: %s)", 
+                    localSymbol, EnumToString(tradeMode));
+        return false;
+    }
+    
     ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)m_positionInfo.Type();
     double volume = m_positionInfo.Volume();
     double profit = m_positionInfo.Profit();
@@ -827,9 +812,6 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
     {
         LogTradeOperation("CLOSE", localSymbol, orderType, volume, true,
                          StringFormat("Profit: %.2f, Reason: %s", profit, reason));
-        
-        if(profit < 0)
-            m_dailyLoss += MathAbs(profit);
             
         UpdatePerformanceMetrics(ticket, profit, profit > 0);
     }
@@ -929,6 +911,17 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
 
     // Get position details for stop level validation
     string symbol = PositionGetString(POSITION_SYMBOL);
+    
+    // Check if market is open for trading
+    // SYMBOL_TRADE_MODE_CLOSEONLY allows modifying existing positions, so we allow it
+    // SYMBOL_TRADE_MODE_DISABLED means no trading at all
+    ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE);
+    if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
+    {
+        PrintFormat("[POSITION-MANAGEMENT] Skipping position modification for %s ticket=%d - trading disabled (trade mode: %s)", 
+                    symbol, ticket, EnumToString(tradeMode));
+        return false;
+    }
     double positionPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
     double currentSL = PositionGetDouble(POSITION_SL);
     double currentTP = PositionGetDouble(POSITION_TP);
@@ -1412,71 +1405,6 @@ double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_O
     return NormalizePrice(symbolParam, takeProfit);
 }
 
-//+------------------------------------------------------------------+
-//| Validate Symbol                                                |
-//+------------------------------------------------------------------+
-bool CTradeManager::ValidateSymbol(const string symbolParam)
-{
-    if(StringLen(symbolParam) == 0)
-    {
-        return false;
-    }
-    
-    if(!SymbolSelect(symbolParam, true))
-    {
-        return false;
-    }
-    
-    ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbolParam, SYMBOL_TRADE_MODE);
-    if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
-    {
-        return false;
-    }
-
-    double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-    double volumeStep = SymbolInfoDouble(symbolParam, SYMBOL_VOLUME_STEP);
-    if(point <= 0.0 || volumeStep <= 0.0)
-        return false;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Validate Volume                                                |
-//+------------------------------------------------------------------+
-bool CTradeManager::ValidateVolume(const string symbolName, const double volume)
-{
-    double minVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MIN);
-    double maxVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MAX);
-    
-    if(volume < minVolume || volume > maxVolume)
-    {
-        return false;
-    }
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Validate Price                                                 |
-//+------------------------------------------------------------------+
-bool CTradeManager::ValidatePrice(const string symbolName, const double price)
-{
-    if(price <= 0)
-    {
-        return false;
-    }
-    
-    double bid = SymbolInfoDouble(symbolName, SYMBOL_BID);
-    double ask = SymbolInfoDouble(symbolName, SYMBOL_ASK);
-    
-    if(bid <= 0 || ask <= 0)
-    {
-        return false;
-    }
-    
-    return true;
-}
 
 //+------------------------------------------------------------------+
 //| Check whether symbol trade mode supports requested order type    |
@@ -1549,36 +1477,6 @@ double CTradeManager::GetMinimumStopDistance(const string symbolName)
     return (double)requiredPoints * point;
 }
 
-//+------------------------------------------------------------------+
-//| Validate Stop Levels                                          |
-//+------------------------------------------------------------------+
-bool CTradeManager::ValidateStopLevels(const string symbolParam, const double price,
-                                      const double stopLoss, const double takeProfit)
-{
-    double minDistance = GetMinimumStopDistance(symbolParam);
-    
-    bool valid = true;
-    
-    if(stopLoss > 0)
-    {
-        double slDistance = MathAbs(price - stopLoss);
-        if(slDistance < minDistance)
-        {
-            valid = false;
-        }
-    }
-    
-    if(takeProfit > 0)
-    {
-        double tpDistance = MathAbs(takeProfit - price);
-        if(tpDistance < minDistance)
-        {
-            valid = false;
-        }
-    }
-    
-    return valid;
-}
 
 //+------------------------------------------------------------------+
 //| Log Trade Operation                                            |
@@ -1671,70 +1569,7 @@ double CTradeManager::CalculatePositionRisk(const string symbolParam, const doub
     return volume * riskPerLot;
 }
 
-//+------------------------------------------------------------------+
-//| Check Margin Requirements                                      |
-//+------------------------------------------------------------------+
-bool CTradeManager::CheckMarginRequirements(const string symbolParam, const double volume, const ENUM_ORDER_TYPE orderType)
-{
-    double currentPrice = (orderType == ORDER_TYPE_SELL) ?
-                         SymbolInfoDouble(symbolParam, SYMBOL_BID) :
-                         SymbolInfoDouble(symbolParam, SYMBOL_ASK);
-    if(currentPrice <= 0.0)
-        return false;
 
-    double marginRequired = 0.0;
-    if(!OrderCalcMargin(orderType, symbolParam, volume, currentPrice, marginRequired))
-        return false;
-
-    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-    
-    if(marginRequired <= 0) return false;
-    
-    if(marginRequired > (freeMargin * 0.8)) return false;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Check Correlation Limits                                       |
-//+------------------------------------------------------------------+
-bool CTradeManager::CheckCorrelationLimits(const string symbolName)
-{
-    int sameBaseCount = 0;
-    string symbolBase = StringSubstr(symbolName, 0, 3);
-    
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        if(PositionSelectByTicket(PositionGetTicket(i)))
-        {
-            if(PositionGetInteger(POSITION_MAGIC) == m_magicNumber)
-            {
-                string posSymbol = PositionGetString(POSITION_SYMBOL);
-                if(StringFind(posSymbol, symbolBase) >= 0)
-                    sameBaseCount++;
-            }
-        }
-    }
-    
-    if(sameBaseCount >= 3) return false;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Reset Daily Metrics If Needed                                   |
-//+------------------------------------------------------------------+
-void CTradeManager::ResetDailyMetricsIfNeeded()
-{
-    MqlDateTime dt;
-    TimeToStruct(TimeCurrent(), dt);
-    
-    if(m_dailyResetTime == 0 || (dt.hour == 0 && TimeCurrent() - m_dailyResetTime > 3600))
-    {
-        m_dailyLoss = 0.0;
-        m_dailyResetTime = TimeCurrent();
-    }
-}
 
 //+------------------------------------------------------------------+
 //| Update Performance Metrics                                      |
@@ -1769,119 +1604,6 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
     m_lastTradeTime = m_stats.lastTradeTime;
 }
 
-//+------------------------------------------------------------------+
-//| Validate and Adjust Stop Levels                                 |
-//+------------------------------------------------------------------+
-bool CTradeManager::ValidateAndAdjustStopLevels(const string symbolName, const double price,
-                                               double &stopLoss, double &takeProfit, const int direction)
-{
-    double minStopLevel = GetMinimumStopDistance(symbolName);
-    double spread = (int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD) * SymbolInfoDouble(symbolName, SYMBOL_POINT);
-    
-    if(direction > 0) // Buy position
-    {
-        if(stopLoss > 0 && (price - stopLoss) < minStopLevel)
-        {
-            stopLoss = price - minStopLevel - spread;
-        }
-        if(takeProfit > 0 && (takeProfit - price) < minStopLevel)
-        {
-            takeProfit = price + minStopLevel + spread;
-        }
-    }
-    else // Sell position
-    {
-        if(stopLoss > 0 && (stopLoss - price) < minStopLevel)
-        {
-            stopLoss = price + minStopLevel + spread;
-        }
-        if(takeProfit > 0 && (price - takeProfit) < minStopLevel)
-        {
-            takeProfit = price - minStopLevel - spread;
-        }
-    }
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Validate trade request                                             |
-//+------------------------------------------------------------------+
-bool CTradeManager::ValidateTradeRequest(const string symbolName, const ENUM_ORDER_TYPE orderType,
-                                        const double volume, const double price)
-{
-    if(!ValidateSymbol(symbolName)) return false;
-    if(!ValidateVolume(symbolName, volume)) return false;
-    if(!ValidatePrice(symbolName, price)) return false;
-
-    string tradeModeReason = "";
-    if(!IsOrderTypeAllowedForSymbol(symbolName, orderType, tradeModeReason))
-    {
-        LogError("Trade request rejected: " + tradeModeReason, symbolName);
-        return false;
-    }
-
-    if(!CheckMarginRequirements(symbolName, volume, orderType)) return false;
-    if(!m_externalRiskAuthority && !CheckCorrelationLimits(symbolName)) return false;
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Check daily trading limits                                         |
-//+------------------------------------------------------------------+
-bool CTradeManager::CheckDailyLimits(void)
-{
-    datetime localCurrentTime = TimeCurrent();
-    MqlDateTime dt;
-    TimeToStruct(localCurrentTime, dt);
-    
-    static int lastCheckedDay = -1;
-    if(dt.day != lastCheckedDay)
-    {
-        m_dailyLoss = 0.0;
-        lastCheckedDay = dt.day;
-    }
-    
-    double maxDailyLoss = m_maxDailyLoss;
-    if(maxDailyLoss <= 0.0)
-        maxDailyLoss = AccountInfoDouble(ACCOUNT_BALANCE) * 0.05;
-
-    if(m_dailyLoss >= maxDailyLoss)
-    {
-        PrintFormat("[TRADE-LIMIT] Daily loss limit reached: %.2f / %.2f", m_dailyLoss, maxDailyLoss);
-        return false;
-    }
-    
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Is Trade Allowed                                                 |
-//+------------------------------------------------------------------+
-bool CTradeManager::IsTradeAllowed(const string symbolName, const double volume, const ENUM_ORDER_TYPE orderType)
-{
-    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) return false;
-    if(!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)) return false;
-    
-    if(!ValidateSymbol(symbolName)) return false;
-    string tradeModeReason = "";
-    if(!IsOrderTypeAllowedForSymbol(symbolName, orderType, tradeModeReason))
-    {
-        LogError("Trade blocked: " + tradeModeReason, symbolName);
-        return false;
-    }
-    if(!ValidateVolume(symbolName, volume)) return false;
-    if(!CheckMarginRequirements(symbolName, volume, orderType)) return false;
-    if(!m_externalRiskAuthority)
-    {
-        if(!CheckCorrelationLimits(symbolName)) return false;
-        if(!CheckDailyLimits()) return false;
-    }
-    if(m_emergencyStop) return false;
-    
-    return true;
-}
 
 //+------------------------------------------------------------------+
 //| Log Trade Error                                                  |
@@ -1940,13 +1662,19 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                     profitPoints = (openPrice - currentPriceValue) / SymbolInfoDouble(symbolName, SYMBOL_POINT);
                 }
                 
-                if(profitPoints >= breakevenBuffer && stopLoss < openPrice)
+                bool breakevenNeeded = false;
+                if(type == POSITION_TYPE_BUY)
+                    breakevenNeeded = (profitPoints >= breakevenBuffer && (stopLoss == 0.0 || stopLoss < openPrice));
+                else
+                    breakevenNeeded = (profitPoints >= breakevenBuffer && (stopLoss == 0.0 || stopLoss > openPrice));
+
+                if(breakevenNeeded)
                 {
                     double newStopLoss = openPrice;
                     if(type == POSITION_TYPE_SELL)
                     {
-                        int spread = (int)SymbolInfoInteger(m_positionInfo.Symbol(), SYMBOL_SPREAD);
-                        newStopLoss = openPrice + spread * SymbolInfoDouble(m_positionInfo.Symbol(), SYMBOL_POINT);
+                        int spread = (int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD);
+                        newStopLoss = openPrice + spread * SymbolInfoDouble(symbolName, SYMBOL_POINT);
                     }
                     
                     ModifyPosition(ticket, newStopLoss, takeProfit);
@@ -2036,18 +1764,6 @@ bool CTradeManager::OpenPosition(const string symbol,
     if(validationPrice <= 0.0)
         validationPrice = GetCurrentExecutionPrice(symbol, orderType);
     
-    // Validate trade request
-    if(!ValidateTradeRequest(symbol, orderType, normalizedVolume, validationPrice))
-    {
-        return false;
-    }
-    
-    // Check if trade is allowed
-    if(!IsTradeAllowed(symbol, normalizedVolume, orderType))
-    {
-        return false;
-    }
-
     // Execute the order using the freshest price available at send time.
     return ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
 }

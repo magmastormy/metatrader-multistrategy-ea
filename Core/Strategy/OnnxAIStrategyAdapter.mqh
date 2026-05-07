@@ -10,6 +10,7 @@
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../AIModules/OnnxBrain.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
+#include "../AI/PipelineScaler.mqh"
 
 class COnnxAIStrategyAdapter : public IStrategy
 {
@@ -27,6 +28,9 @@ private:
     double          m_cachedConfidence;
     string          m_lastDecisionReasonTag;
     double          m_minConfidence;
+    CPipelineScaler m_scaler;
+    string          m_scalerWatchPath;
+    datetime        m_lastScalerCheckTime;
     ulong           m_voteCount;
     ulong           m_buyVotes;
     ulong           m_sellVotes;
@@ -59,7 +63,9 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_lastDecisionReasonTag = "ONNX_UNSET";
-        m_minConfidence = 0.35;
+        m_minConfidence = 0.70;
+        m_scalerWatchPath = "EAModels\\ONNX\\scaler.bin";
+        m_lastScalerCheckTime = 0;
         m_voteCount = 0;
         m_buyVotes = 0;
         m_sellVotes = 0;
@@ -82,6 +88,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_barCounter = 0;
+        m_lastScalerCheckTime = 0;
 
         if(!m_brain.Init(m_modelBuffer))
         {
@@ -90,6 +97,9 @@ public:
         }
 
         m_brain.SetWatchPath("EAModels\\ONNX\\model_update.onnx", 100);
+        if(m_scaler.LoadParams(m_scalerWatchPath, true))
+            PrintFormat("[ONNX] Loaded scaler parameters | features=%d | path=%s",
+                        m_scaler.GetFeatureCount(), m_scalerWatchPath);
         m_lastDecisionReasonTag = "ONNX_INITIALIZED";
         return true;
     }
@@ -130,15 +140,44 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
+        datetime now = TimeCurrent();
+        if(m_lastScalerCheckTime == 0 || (now - m_lastScalerCheckTime) >= 10)
+        {
+            if(m_scaler.MaybeReload(m_scalerWatchPath, true))
+                PrintFormat("[ONNX] Reloaded scaler parameters | features=%d | path=%s",
+                            m_scaler.GetFeatureCount(), m_scalerWatchPath);
+            m_lastScalerCheckTime = now;
+        }
+
+        if(m_scaler.IsLoaded() && !m_scaler.Apply(features))
+        {
+            m_noneVotes++;
+            m_lastDecisionReasonTag = "ONNX_SCALER_APPLY_FAILED";
+            LogVoteHeartbeat();
+            return TRADE_SIGNAL_NONE;
+        }
+
         m_brain.PushFeatures(features, ArraySize(features));
         m_barCounter++;
         if((m_barCounter % 10) == 0)
             m_brain.CheckForModelUpdate(features, ArraySize(features));
 
-        if(!m_brain.RunInference() || !m_brain.IsReady())
+        // Distinguish between model warming up and actual inference failure
+        bool inferenceRan = m_brain.RunInference();
+        bool modelReady = m_brain.IsReady();
+        
+        if(!inferenceRan)
         {
             m_noneVotes++;
-            m_lastDecisionReasonTag = "ONNX_WARMING_OR_INFERENCE_FAILED";
+            m_lastDecisionReasonTag = "ONNX_INFERENCE_FAILED";
+            LogVoteHeartbeat();
+            return TRADE_SIGNAL_NONE;
+        }
+        
+        if(!modelReady)
+        {
+            m_noneVotes++;
+            m_lastDecisionReasonTag = "ONNX_WARMING_UP";
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }

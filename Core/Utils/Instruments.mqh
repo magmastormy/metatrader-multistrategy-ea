@@ -13,7 +13,6 @@ class CEnhancedErrorHandler;
 class CUtilities;
 class CHedgingProtection;
 class CMarketAnalysis;
-class CModeManager;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
@@ -21,7 +20,6 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CAIStrategyOrchestrator;
 
 // Manual list (Mode A) - Optimized for Deriv broker compatibility
 // NOTE: Removed duplicates, preferring .0 suffix for Deriv symbols

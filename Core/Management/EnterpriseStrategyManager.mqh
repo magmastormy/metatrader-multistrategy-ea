@@ -8,7 +8,6 @@
 #include "../Pipeline/UnifiedSignalPipeline.mqh"
 #include "../Visualization/DrawingCoordinator.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
-#include "../AI/AIStrategyOrchestrator.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 
 // Retained production strategy inventory (7 kept in codebase)
@@ -19,13 +18,14 @@
 #include "../../Strategies/StrategySupportResistance.mqh"
 #include "../../Strategies/StrategyUnifiedICT.mqh"
 #include "../../Strategies/StrategyCandlestick.mqh"
+#include "../../Strategies/CUnicornModelStrategy.mqh"
+#include "../../Strategies/CPowerOfThreeStrategy.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
 class CHedgingProtection;
 class CMarketAnalysis;
-class CModeManager;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
@@ -61,6 +61,35 @@ struct StrategyEntry
     double lastSignalConfidence;
     datetime lastEvaluationTime;
     int consecutiveFilterCount;         // Count consecutive no-signal cycles for decay
+
+    // Performance metrics ported from AISO
+    int totalTrades;
+    int winningTrades;
+    double winRate;
+    double avgProfit;
+    double avgLoss;
+    double profitFactor;
+    double sharpeRatio;
+    
+    // Recent performance tracking (20-trade rolling window)
+    double recentTrades[20];
+    int recentTradeIndex;
+    int recentTradeCount;
+    double recentWinRate;
+    
+    // Consecutive performance tracking
+    int consecutiveLosses;
+    int maxConsecutiveLosses;
+    int consecutiveWins;
+    
+    // Adaptation flags
+    bool temporarilyDisabled;       
+    datetime disabledUntil;         
+    datetime lastUpdate;            
+    
+    // Market regime performance
+    double regimePerformance[5];    
+    int regimeTrades[5];            
 };
 
 
@@ -147,7 +176,6 @@ class CEnterpriseStrategyManager
 private:
     CUnifiedSignalPipeline* m_pipeline;
     CTimeframeConsistency* m_tfConsistency;
-    CAIStrategyOrchestrator* m_orchestrator; // Added Orchestrator for tiered validation
     CTradeManager* m_tradeManager;  // CRITICAL FIX: Store for strategy initialization
     CPositionSizer* m_positionSizer; // CRITICAL FIX: Store for strategy initialization
     CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
@@ -186,6 +214,13 @@ private:
     double m_adaptiveSupportFloor_3plus;           // Support floor for 3+ active voters (standard)
     double m_strategyActivityDecayRate;            // How fast inactive strategy weight decays (0.0-1.0)
     int m_strategyInactiveCounterThreshold;        // After N consecutive filters, apply weight decay
+
+    // Ported Orchestrator Parameters
+    double m_minWinRateThreshold;                       // Minimum win rate (default 40%)
+    int m_maxConsecutiveLosses_Limit;                   // Max consecutive losses (default 5)
+    double m_performanceDecayFactor;                    // Performance decay factor
+    int m_rollingWindowSize;                            // Rolling window size (default 20)
+    double m_maxDrawdownLimit;                          // Drawdown fraction for lot-size tapering (internal param)
 
     // Statistics
     int m_totalSignals;
@@ -335,8 +370,6 @@ public:
                          bool shadowOnly = false);
     bool EnableStrategy(const string name);
     bool DisableStrategy(const string name);
-    void EnableAllStrategies();
-    void DisableAllStrategies();
     
     // Signal generation
     ENUM_TRADE_SIGNAL GetConsensusSignal(double &confidence);
@@ -344,8 +377,6 @@ public:
     ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
-    ENUM_TRADE_SIGNAL GetOrchestratedSignal(const string symbol, ENUM_TIMEFRAMES timeframe, double &confidence);
-    ENUM_TRADE_SIGNAL GetFilteredSignal(IStrategy* strategy, double &confidence);
     
     // Configuration
     void SetPipelineFilters(SignalFilterSettings &settings);
@@ -438,6 +469,33 @@ public:
     int GetActiveBrainStrategyCount() const;
     string GetStrategyReport() const;
     void UpdatePerformance(const string strategyName, double netProfit);
+
+    // Manager-owned orchestration/adaptation API (AISO consolidation)
+    bool UpdateStrategyWeight(const string strategyName, const double newWeight)
+    {
+        return UpdateStrategyWeightByName(strategyName, newWeight);
+    }
+    double GetEnsembleConfidence() const
+    {
+        return MathMax(0.0, MathMin(1.0, m_lastDecisionContext.confidence));
+    }
+    ENUM_MARKET_REGIME GetCurrentMarketRegime() const
+    {
+        return MARKET_REGIME_UNKNOWN;
+    }
+    string GetStrategyWeightsJSON() const;
+    void UpdateStrategyWeights();
+    void CheckStrategyDisabling();
+    void CheckStrategyReEnabling();
+    
+    // Ported adaptation helpers
+    double CalculateRecentWinRate(const int index);
+    double CalculateSharpeRatio(const int index);
+    void UpdateRegimePerformance(const int index, int regime, const double result);
+    void CalculateStrategyMetrics(const int index);
+    bool ShouldDisableStrategy(const int index);
+    bool ShouldReEnableStrategy(const int index);
+    void UpdateRecentPerformance(const int index, const double result);
     
     // Visualization
     void SetDrawingManager(CChartDrawingManager* drawingManager) { m_drawingManager = drawingManager; }
@@ -459,7 +517,6 @@ public:
 CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_pipeline(NULL),
     m_tfConsistency(NULL),
-    m_orchestrator(NULL),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_strategyCount(0),
@@ -489,6 +546,11 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_adaptiveSupportFloor_3plus(0.35),           // 3+ voters: standard 35% support
     m_strategyActivityDecayRate(0.15),            // Weight decay rate per inactive cycle
     m_strategyInactiveCounterThreshold(3),        // After 3 filters, start decay
+    m_minWinRateThreshold(0.40),
+    m_maxConsecutiveLosses_Limit(5),
+    m_performanceDecayFactor(0.95),
+    m_rollingWindowSize(20),
+    m_maxDrawdownLimit(0.20),
     m_totalSignals(0),
     m_successfulSignals(0),
     m_avgConfidence(0),
@@ -612,12 +674,6 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
         delete m_tfConsistency;
         m_tfConsistency = NULL;
     }
-    
-    if(m_orchestrator != NULL)
-    {
-        delete m_orchestrator;
-        m_orchestrator = NULL;
-    }
 }
 
 //+------------------------------------------------------------------+
@@ -664,15 +720,17 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     }
 
     m_tfConsistency = new CTimeframeConsistency();
-    if(m_tfConsistency != NULL)
-        m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false);
-    
-    // Initialize Orchestrator
-    if(m_orchestrator != NULL) delete m_orchestrator;
-    m_orchestrator = new CAIStrategyOrchestrator();
-    if(m_orchestrator != NULL)
+    if(m_tfConsistency == NULL)
     {
-        m_orchestrator.Initialize(0.40, 5); // Default thresholds
+        Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency allocation failed for ", symbol);
+        return false;
+    }
+    if(!m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false))
+    {
+        Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency initialization failed for ", symbol);
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
+        return false;
     }
     
     m_initialized = true;
@@ -743,11 +801,27 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].lastEvaluationTime = 0;
     m_strategies[m_strategyCount].consecutiveFilterCount = 0;  // Track filters for weight decay
     
-    // Also register with the orchestrator
-    if(m_orchestrator != NULL)
-    {
-        m_orchestrator.AddStrategy(name, tier, weight);
-    }
+    // Performance metrics ported from AISO
+    m_strategies[m_strategyCount].totalTrades = 0;
+    m_strategies[m_strategyCount].winningTrades = 0;
+    m_strategies[m_strategyCount].winRate = 0.0;
+    m_strategies[m_strategyCount].avgProfit = 0.0;
+    m_strategies[m_strategyCount].avgLoss = 0.0;
+    m_strategies[m_strategyCount].profitFactor = 0.0;
+    m_strategies[m_strategyCount].sharpeRatio = 0.0;
+    m_strategies[m_strategyCount].recentTradeIndex = 0;
+    m_strategies[m_strategyCount].recentTradeCount = 0;
+    m_strategies[m_strategyCount].recentWinRate = 0.0;
+    m_strategies[m_strategyCount].consecutiveLosses = 0;
+    m_strategies[m_strategyCount].maxConsecutiveLosses = 0;
+    m_strategies[m_strategyCount].consecutiveWins = 0;
+    m_strategies[m_strategyCount].temporarilyDisabled = false;
+    m_strategies[m_strategyCount].disabledUntil = 0;
+    m_strategies[m_strategyCount].lastUpdate = 0;
+    
+    ArrayInitialize(m_strategies[m_strategyCount].recentTrades, 0.0);
+    ArrayInitialize(m_strategies[m_strategyCount].regimePerformance, 0.0);
+    ArrayInitialize(m_strategies[m_strategyCount].regimeTrades, 0);
     
     m_strategyCount++;
     
@@ -917,7 +991,11 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         {
             strategyWeight = MathMax(0.0, m_strategies[i].weight);
             if(strategyWeight <= 0.0)
-                strategyWeight = 1.0;
+            {
+                liveEligibleForThisEval = false;
+                probeEligibleForThisEval = false;
+                countInMainFunnel = false;
+            }
                 
             // Apply Tier Multiplier from Ranking Matrix
             double tierMultiplier = CRankingMatrix::GetTierMultiplier(m_strategies[i].tier);
@@ -1411,8 +1489,20 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     {
         if((buyVotes + sellVotes) <= 0)
         {
-            vetoCode = "no_voters";
-            vetoReason = "No strategies produced votes in this evaluation cycle";
+            if(cycleSignalsGenerated > 0 || cycleSignalsAfterPipeline > 0 || cycleFilteredOut > 0)
+            {
+                vetoCode = "pipeline_filtered_all";
+                vetoReason = StringFormat("All candidate signals were filtered/suppressed before quorum | generated=%d | after_pipeline=%d | filtered_out=%d | suppressed=%d",
+                                          cycleSignalsGenerated,
+                                          cycleSignalsAfterPipeline,
+                                          cycleFilteredOut,
+                                          cycleVoteSuppressed);
+            }
+            else
+            {
+                vetoCode = "no_voters";
+                vetoReason = "No strategies produced votes in this evaluation cycle";
+            }
         }
         else if(!readyWeightMet)
         {
@@ -1854,63 +1944,6 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const 
 }
 
 //+------------------------------------------------------------------+
-//| Get Orchestrated Signal                                         |
-//+------------------------------------------------------------------+
-ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetOrchestratedSignal(const string symbol, ENUM_TIMEFRAMES timeframe, double &confidence)
-{
-    if(!m_initialized || m_strategyCount == 0 || m_orchestrator == NULL)
-        return TRADE_SIGNAL_NONE;
-
-    // 1. Gather votes from all active strategies
-    SEnsembleVote votes[];
-    int activeCount = 0;
-    
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(!m_strategies[i].enabled) continue;
-        
-        double stratConf = 0.0;
-        ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
-        
-        // Use pipeline if enabled, otherwise get raw signal
-        if(m_usePipeline && m_pipeline != NULL)
-        {
-            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy, symbol, m_strategies[i].timeframe, stratConf);
-        }
-        else
-        {
-            signal = m_strategies[i].strategy.GetSignal(stratConf);
-        }
-        
-        // Prepare vote for orchestrator
-        ArrayResize(votes, activeCount + 1);
-        votes[activeCount].strategyName = m_strategies[i].name;
-        votes[activeCount].signal = signal;
-        votes[activeCount].confidence = stratConf;
-        votes[activeCount].weight = m_strategies[i].weight;
-        votes[activeCount].tier = m_strategies[i].tier;
-        votes[activeCount].signalStrength = stratConf; // Using confidence as proxy for quality if not provided
-        votes[activeCount].timestamp = TimeCurrent();
-        votes[activeCount].isValid = true;
-        
-        activeCount++;
-    }
-    
-    if(activeCount == 0) return TRADE_SIGNAL_NONE;
-
-    // 2. Get consensus decision from orchestrator (which uses CTieredSignalValidator)
-    SEnsembleDecision decision = m_orchestrator.GetEnsembleDecision(votes, activeCount);
-    
-    confidence = decision.confidence;
-    m_lastDecisionContext.symbol = symbol;
-    m_lastDecisionContext.signal = decision.finalSignal;
-    m_lastDecisionContext.confidence = decision.confidence;
-    m_lastDecisionContext.reason = decision.decisionReasoning;
-    
-    return decision.finalSignal;
-}
-
-//+------------------------------------------------------------------+
 //| Auto-register Strategies                                        |
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
@@ -1943,6 +1976,14 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     
     // 6: Candlestick (live primary voter) - Tier 2
     if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
+    // 7: Unicorn Model (live primary voter) - Tier 1
+    if(size > 7 && flags[7]) RegisterStrategy(new CUnicornModelStrategy(), "Unicorn Model", true, 2.4, STRATEGY_TIER_1, PERIOD_CURRENT, false,
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
+    // 8: Power of Three / ICT 2025 (live primary voter) - Tier 1
+    if(size > 8 && flags[8]) RegisterStrategy(new CPowerOfThreeStrategy(), "Power of Three", true, 2.3, STRATEGY_TIER_1, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
@@ -2050,10 +2091,87 @@ void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settin
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxLosses)
 {
-    double clampedWinRate = MathMax(0.0, MathMin(1.0, minWinRate));
-    int clampedMaxLosses = MathMax(1, maxLosses);
-    PrintFormat("[EnterpriseStrategyManager] SetOrchestratorMode ignored (manager-only governance mode) | Requested MinWinRate=%.2f | MaxConsecutiveLosses=%d",
-                clampedWinRate, clampedMaxLosses);
+    m_minWinRateThreshold = MathMax(0.0, MathMin(1.0, minWinRate));
+    m_maxConsecutiveLosses_Limit = MathMax(1, maxLosses);
+    PrintFormat("[EnterpriseStrategyManager] Adaptation thresholds updated | MinWinRate=%.2f | MaxConsecutiveLosses=%d",
+                m_minWinRateThreshold,
+                m_maxConsecutiveLosses_Limit);
+}
+
+string CEnterpriseStrategyManager::GetStrategyWeightsJSON() const
+{
+    string json = "{";
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        string key = m_strategies[i].name;
+        StringReplace(key, "\\", "\\\\");
+        StringReplace(key, "\"", "\\\"");
+        json += StringFormat("\"%s\":%.4f", key, m_strategies[i].weight);
+        if(i < (m_strategyCount - 1))
+            json += ",";
+    }
+    json += "}";
+    return json;
+}
+
+void CEnterpriseStrategyManager::UpdateStrategyWeights()
+{
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(m_strategies[i].strategy == NULL)
+            continue;
+
+        // Performance-adaptive weight scaling using recent win rate.
+        // This is intentionally conservative and bounded to prevent destabilizing consensus.
+        double base = m_strategies[i].originalWeight > 0.0 ? m_strategies[i].originalWeight : m_strategies[i].weight;
+        double wr = MathMax(0.0, MathMin(1.0, m_strategies[i].recentWinRate));
+        double scale = 0.75 + (wr - 0.50); // 0.25..1.25 around 50% win rate
+        scale = MathMax(0.50, MathMin(1.50, scale));
+        double newWeight = MathMax(0.0, MathMin(10.0, base * scale));
+
+        m_strategies[i].weight = newWeight;
+        m_strategies[i].strategy.SetWeight(newWeight);
+    }
+}
+
+void CEnterpriseStrategyManager::CheckStrategyDisabling()
+{
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(!m_strategies[i].enabled)
+            continue;
+
+        if(ShouldDisableStrategy(i))
+        {
+            m_strategies[i].temporarilyDisabled = true;
+            m_strategies[i].disabledUntil = TimeCurrent() + 3600;
+            m_strategies[i].enabled = false;
+            PrintFormat("[Enterprise-Adaptation] Strategy %s disabled by governance | recent_winrate=%.2f | losses=%d",
+                        m_strategies[i].name,
+                        m_strategies[i].recentWinRate,
+                        m_strategies[i].consecutiveLosses);
+        }
+    }
+}
+
+void CEnterpriseStrategyManager::CheckStrategyReEnabling()
+{
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(m_strategies[i].enabled)
+            continue;
+        if(!m_strategies[i].temporarilyDisabled)
+            continue;
+
+        if(ShouldReEnableStrategy(i))
+        {
+            m_strategies[i].temporarilyDisabled = false;
+            m_strategies[i].disabledUntil = 0;
+            m_strategies[i].enabled = true;
+            PrintFormat("[Enterprise-Adaptation] Strategy %s re-enabled after cooldown",
+                        m_strategies[i].name);
+        }
+    }
 }
 
 bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, const double weight)
@@ -2420,7 +2538,7 @@ double CEnterpriseStrategyManager::CalculateAverageStrategyMetric(const int &str
         double metric = ClampUnitValue(metrics[i]);
         double weight = MathMax(0.0, m_strategies[idx].weight);
         if(weight <= 0.0)
-            weight = 1.0;
+            continue;
 
         weightedSum += (metric * weight);
         totalWeight += weight;
@@ -2576,7 +2694,7 @@ ENUM_STRATEGY_ROLE CEnterpriseStrategyManager::ResolveDominantRole(const int &st
 
         double weight = MathMax(0.0, m_strategies[idx].weight);
         if(weight <= 0.0)
-            weight = 1.0;
+            continue;
         roleWeights[role] += weight;
     }
 
@@ -2609,7 +2727,7 @@ ENUM_STRATEGY_CLUSTER CEnterpriseStrategyManager::ResolveDominantCluster(const i
 
         double weight = MathMax(0.0, m_strategies[idx].weight);
         if(weight <= 0.0)
-            weight = 1.0;
+            continue;
         clusterWeights[cluster] += weight;
     }
 
@@ -2676,6 +2794,7 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
         int liveVoterCount = 0;
         int dormantLiveCount = 0;
         double liveParticipationSum = 0.0;
+        string dormantStrategies = "";
         for(int i = 0; i < m_strategyCount; i++)
         {
             if(!IsStrategyLiveVoter(i))
@@ -2684,7 +2803,12 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
             liveVoterCount++;
             liveParticipationSum += m_strategies[i].participationScore;
             if(m_strategies[i].participationScore < 0.60)
+            {
                 dormantLiveCount++;
+                if(dormantStrategies != "")
+                    dormantStrategies += ", ";
+                dormantStrategies += m_strategies[i].name + "(" + DoubleToString(m_strategies[i].participationScore, 2) + ")";
+            }
         }
         double avgParticipation = (liveVoterCount > 0) ? ClampUnitValue(liveParticipationSum / liveVoterCount) : 0.0;
 
@@ -2747,7 +2871,7 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
                     intervalUICTNone,
                     intervalUICTNeutralBias,
                     intervalUICTOtherFilters);
-        PrintFormat("[CONSENSUS-ROLE] %s | primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | live_voters=%d | avg_participation=%.2f | dormant_live=%d",
+        PrintFormat("[CONSENSUS-ROLE] %s | primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | live_voters=%d | avg_participation=%.2f | dormant_live=%d | dormant_strategies=%s",
                     symbol,
                     intervalRolePrimarySignals,
                     intervalRoleFeatureSignals,
@@ -2755,7 +2879,8 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
                     intervalVoteSuppressed,
                     liveVoterCount,
                     avgParticipation,
-                    dormantLiveCount);
+                    dormantLiveCount,
+                    dormantStrategies);
         PrintFormat("[CONSENSUS-CLUSTER] %s | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
                     symbol,
                     intervalClusterTrendSignals,
@@ -2884,29 +3009,168 @@ void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, do
         return;
 
     bool success = (netProfit > 0);
+    
+    // Update trade counts
+    m_strategies[idx].totalTrades++;
     if(success)
+    {
         m_strategies[idx].successCount++;
+        m_strategies[idx].winningTrades++;
+        m_strategies[idx].consecutiveWins++;
+        m_strategies[idx].consecutiveLosses = 0;
+
+        // Maintain rolling average profit per winning trade
+        int wins = m_strategies[idx].winningTrades;
+        if(wins > 0)
+        {
+            double prevTotalProfit = m_strategies[idx].avgProfit * (wins - 1);
+            m_strategies[idx].avgProfit = (prevTotalProfit + netProfit) / wins;
+        }
+    }
     else
+    {
         m_strategies[idx].failCount++;
+        m_strategies[idx].consecutiveLosses++;
+        m_strategies[idx].consecutiveWins = 0;
 
-    // Update Orchestrator performance
-    if(m_orchestrator != NULL)
-    {
-        m_orchestrator.UpdateStrategyPerformance(strategyName, netProfit);
+        // Maintain rolling average loss magnitude per losing trade
+        int losses = m_strategies[idx].totalTrades - m_strategies[idx].winningTrades;
+        if(losses > 0)
+        {
+            double absLoss = MathAbs(netProfit);
+            double prevTotalLoss = m_strategies[idx].avgLoss * (losses - 1);
+            m_strategies[idx].avgLoss = (prevTotalLoss + absLoss) / losses;
+        }
+        
+        // Update max consecutive losses
+        if(m_strategies[idx].consecutiveLosses > m_strategies[idx].maxConsecutiveLosses)
+        {
+            m_strategies[idx].maxConsecutiveLosses = m_strategies[idx].consecutiveLosses;
+        }
     }
 
+    // Update recent performance (rolling window)
+    UpdateRecentPerformance(idx, netProfit);
+    
+    // Update regime-specific performance (placeholder for now, can be expanded)
+    // UpdateRegimePerformance(idx, m_currentRegime, netProfit); 
+    
+    // Recalculate metrics (WinRate, ProfitFactor, Sharpe)
+    CalculateStrategyMetrics(idx);
+    
+    // Health score update (original ESM logic blended with AISO metrics)
     int totalOutcomes = m_strategies[idx].successCount + m_strategies[idx].failCount;
-    if(totalOutcomes <= 0)
+    if(totalOutcomes > 0)
     {
-        m_strategies[idx].healthScore = 0.75;
-        return;
+        double realizedWinRate = (double)m_strategies[idx].successCount / (double)totalOutcomes;
+        double sampleTrust = MathMin(1.0, (double)totalOutcomes / 20.0);
+        double prior = 0.55;
+        double blendedWinRate = (prior * (1.0 - sampleTrust)) + (realizedWinRate * sampleTrust);
+        m_strategies[idx].healthScore = MathMax(0.35, MathMin(1.0, blendedWinRate));
     }
+    
+    m_strategies[idx].lastUpdate = TimeCurrent();
 
-    double realizedWinRate = (double)m_strategies[idx].successCount / (double)totalOutcomes;
-    double sampleTrust = MathMin(1.0, (double)totalOutcomes / 20.0);
-    double prior = 0.55;
-    double blendedWinRate = (prior * (1.0 - sampleTrust)) + (realizedWinRate * sampleTrust);
-    m_strategies[idx].healthScore = MathMax(0.35, MathMin(1.0, blendedWinRate));
+    // Check if strategy needs to be disabled
+    if(ShouldDisableStrategy(idx))
+    {
+        m_strategies[idx].temporarilyDisabled = true;
+        m_strategies[idx].disabledUntil = TimeCurrent() + 3600; // Disable for 1 hour
+        PrintFormat("[Enterprise-Adaptation] Strategy %s DISABLED due to poor performance (WinRate: %.2f, Losses: %d)", 
+                    strategyName, m_strategies[idx].winRate, m_strategies[idx].consecutiveLosses);
+    }
+}
+
+void CEnterpriseStrategyManager::UpdateRecentPerformance(const int index, const double result)
+{
+    if(index < 0 || index >= m_strategyCount)
+        return;
+    
+    // Add to circular buffer
+    m_strategies[index].recentTrades[m_strategies[index].recentTradeIndex] = result;
+    m_strategies[index].recentTradeIndex = (m_strategies[index].recentTradeIndex + 1) % m_rollingWindowSize;
+    
+    if(m_strategies[index].recentTradeCount < m_rollingWindowSize)
+        m_strategies[index].recentTradeCount++;
+}
+
+double CEnterpriseStrategyManager::CalculateRecentWinRate(const int index)
+{
+    if(index < 0 || index >= m_strategyCount) return 0.0;
+    if(m_strategies[index].recentTradeCount == 0) return 0.0;
+    
+    int wins = 0;
+    for(int i = 0; i < m_strategies[index].recentTradeCount; i++)
+    {
+        if(m_strategies[index].recentTrades[i] > 0.0) wins++;
+    }
+    
+    return (double)wins / m_strategies[index].recentTradeCount;
+}
+
+double CEnterpriseStrategyManager::CalculateSharpeRatio(const int index)
+{
+    if(index < 0 || index >= m_strategyCount) return 0.0;
+    if(m_strategies[index].recentTradeCount < 5) return 0.0;
+    
+    double sum = 0;
+    for(int i = 0; i < m_strategies[index].recentTradeCount; i++)
+        sum += m_strategies[index].recentTrades[i];
+    
+    double mean = sum / m_strategies[index].recentTradeCount;
+    
+    double sq_sum = 0;
+    for(int i = 0; i < m_strategies[index].recentTradeCount; i++)
+        sq_sum += MathPow(m_strategies[index].recentTrades[i] - mean, 2);
+    
+    double stdev = MathSqrt(sq_sum / m_strategies[index].recentTradeCount);
+    if(stdev == 0) return 0;
+    
+    return mean / stdev;
+}
+
+void CEnterpriseStrategyManager::CalculateStrategyMetrics(const int index)
+{
+    if(index < 0 || index >= m_strategyCount) return;
+    
+    // Calculate win rate
+    if(m_strategies[index].totalTrades > 0)
+        m_strategies[index].winRate = ((double)m_strategies[index].winningTrades / m_strategies[index].totalTrades);
+    
+    // Calculate profit factor
+    if(m_strategies[index].avgLoss > 0.0)
+        m_strategies[index].profitFactor = m_strategies[index].avgProfit / m_strategies[index].avgLoss;
+    else if(m_strategies[index].avgProfit > 0.0)
+        m_strategies[index].profitFactor = 2.0;
+    else
+        m_strategies[index].profitFactor = 0.0;
+    
+    m_strategies[index].sharpeRatio = CalculateSharpeRatio(index);
+    m_strategies[index].recentWinRate = CalculateRecentWinRate(index);
+}
+
+bool CEnterpriseStrategyManager::ShouldDisableStrategy(const int index)
+{
+    if(index < 0 || index >= m_strategyCount) return false;
+    
+    // Only check if we have enough trades
+    if(m_strategies[index].totalTrades < 10) return false;
+    
+    // Disable if win rate is too low
+    if(m_strategies[index].recentWinRate < m_minWinRateThreshold) return true;
+    
+    // Disable if consecutive losses are too high
+    if(m_strategies[index].consecutiveLosses >= m_maxConsecutiveLosses_Limit) return true;
+    
+    return false;
+}
+
+bool CEnterpriseStrategyManager::ShouldReEnableStrategy(const int index)
+{
+    if(index < 0 || index >= m_strategyCount) return false;
+    if(!m_strategies[index].temporarilyDisabled) return true;
+    
+    return (TimeCurrent() >= m_strategies[index].disabledUntil);
 }
 
 //+------------------------------------------------------------------+

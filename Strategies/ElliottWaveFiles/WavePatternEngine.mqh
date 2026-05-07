@@ -55,6 +55,13 @@ enum ENUM_WAVE_STATE
     STATE_INVALID
 };
 
+enum ENUM_WAVE_DEGREE
+{
+    WAVE_DEGREE_MINOR = 0,
+    WAVE_DEGREE_INTERMEDIATE,
+    WAVE_DEGREE_PRIMARY
+};
+
 //+------------------------------------------------------------------+
 //| Elliott Wave Pattern Structure                                   |
 //+------------------------------------------------------------------+
@@ -95,6 +102,8 @@ struct SElliottWavePattern
     bool                isValid;
     bool                isComplete;
     double              confidence;         // 0.0 – 1.0
+    double              mlProbabilityScore; // Optional ML-style probability scorer (0.0 – 1.0)
+    ENUM_WAVE_DEGREE    degree;
     string              invalidReason;
 
     // Primary projection (used by strategy)
@@ -108,7 +117,7 @@ struct SElliottWavePattern
         wave2Retracement(0), wave3Extension(0), wave4Retracement(0), wave5Extension(0),
         wave3Target_127(0), wave3Target_162(0), wave3Target_200(0), wave3Target_262(0),
         wave5Target_62(0),  wave5Target_100(0), wave5Target_162(0),
-        isValid(false), isComplete(false), confidence(0),
+        isValid(false), isComplete(false), confidence(0), mlProbabilityScore(0), degree(WAVE_DEGREE_MINOR),
         invalidReason(""), wave3Target(0), wave5Target(0) {}
 };
 
@@ -147,6 +156,8 @@ private:
     double                  CalculateAverageVolume(int barIndex, int window);
     double                  GetRSIValue(int shift);
     double                  ScoreWavePersonality(const SElliottWavePattern &pattern);
+    ENUM_WAVE_DEGREE        DetermineWaveDegree(const SElliottWavePattern &pattern);
+    double                  ScoreWaveLabelProbability(const SElliottWavePattern &pattern);
     void                    ScorePattern(SElliottWavePattern &pattern);
     bool                    TryScanFromOffset(int pivotOffset, int zigzagCount);
     bool                    ScanABC();
@@ -462,12 +473,56 @@ double CWavePatternEngine::ScoreWavePersonality(const SElliottWavePattern &patte
     return score;
 }
 
+ENUM_WAVE_DEGREE CWavePatternEngine::DetermineWaveDegree(const SElliottWavePattern &pattern)
+{
+    int barSpan = 0;
+    int startShift = iBarShift(m_symbol, m_timeframe, pattern.time0, false);
+    int endShift = iBarShift(m_symbol, m_timeframe, pattern.time4 > 0 ? pattern.time4 : pattern.time3, false);
+    if(startShift >= 0 && endShift >= 0)
+        barSpan = MathAbs(startShift - endShift);
+
+    double moveSize = MathAbs(pattern.wave4 - pattern.wave0);
+    double atr = SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 100.0;
+    if(pattern.wave3 > 0.0 && pattern.wave2 > 0.0)
+        atr = MathMax(atr, MathAbs(pattern.wave3 - pattern.wave2) * 0.25);
+
+    if(barSpan >= 140 || moveSize >= atr * 12.0 || m_timeframe >= PERIOD_H4)
+        return WAVE_DEGREE_PRIMARY;
+    if(barSpan >= 55 || moveSize >= atr * 5.0 || m_timeframe >= PERIOD_H1)
+        return WAVE_DEGREE_INTERMEDIATE;
+    return WAVE_DEGREE_MINOR;
+}
+
+double CWavePatternEngine::ScoreWaveLabelProbability(const SElliottWavePattern &pattern)
+{
+    double score = 0.50;
+
+    if(pattern.wave2Retracement >= 0.382 && pattern.wave2Retracement <= 0.786)
+        score += 0.08;
+    if(pattern.wave3Extension >= 1.272 && pattern.wave3Extension <= 2.618)
+        score += 0.10;
+    if(pattern.wave4Retracement >= 0.236 && pattern.wave4Retracement <= 0.618)
+        score += 0.08;
+    if(pattern.currentState == STATE_WAVE_3)
+        score += 0.08;
+    if(pattern.currentState == STATE_WAVE_5 || pattern.isComplete)
+        score += 0.05;
+    if(pattern.degree == WAVE_DEGREE_PRIMARY)
+        score += 0.06;
+    else if(pattern.degree == WAVE_DEGREE_INTERMEDIATE)
+        score += 0.03;
+
+    score += MathMin(0.10, ScoreWavePersonality(pattern) / 100.0);
+    return MathMax(0.0, MathMin(0.99, score));
+}
+
 //+------------------------------------------------------------------+
 //| Score Pattern  (0–100, normalised to 0–1 as confidence)         |
 //+------------------------------------------------------------------+
 void CWavePatternEngine::ScorePattern(SElliottWavePattern &pattern)
 {
     double score = 40.0;   // Base
+    pattern.degree = DetermineWaveDegree(pattern);
 
     // ── Wave 2 retracement quality ──
     double w2R = pattern.wave2Retracement;
@@ -501,6 +556,9 @@ void CWavePatternEngine::ScorePattern(SElliottWavePattern &pattern)
     else if(pattern.currentState == STATE_WAVE_5) score += 10.0;
     else if(pattern.currentState == STATE_WAVE_4) score += 5.0;
 
+    if(pattern.degree == WAVE_DEGREE_PRIMARY) score += 8.0;
+    else if(pattern.degree == WAVE_DEGREE_INTERMEDIATE) score += 4.0;
+
     // ── Wave personality bonus (volume / momentum / divergence) ──
     score += ScoreWavePersonality(pattern);
 
@@ -522,7 +580,9 @@ void CWavePatternEngine::ScorePattern(SElliottWavePattern &pattern)
         }
     }
 
-    pattern.confidence = MathMin(100.0, score) / 100.0;
+    pattern.mlProbabilityScore = ScoreWaveLabelProbability(pattern);
+    double blendedScore = MathMin(100.0, score) / 100.0;
+    pattern.confidence = MathMin(0.99, (blendedScore * 0.75) + (pattern.mlProbabilityScore * 0.25));
 }
 
 //+------------------------------------------------------------------+

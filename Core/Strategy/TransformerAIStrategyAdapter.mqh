@@ -84,7 +84,7 @@ public:
         m_cacheBarTime = 0;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "TRANSFORMER_UNSET";
-        m_minConfidence = 0.35;
+        m_minConfidence = 0.70;
     }
 
     virtual ~CTransformerAIStrategyAdapter()

@@ -54,7 +54,12 @@ private:
         if(ArraySize(buffer) <= 0)
             return false;
 
+        // Note: CUDA initialization failures are from external ONNX Runtime library.
+        // The library falls back to CPU automatically; per-session gating higher up
+        // avoids repeating this path for every symbol after the first hard failure.
+        Print("[ONNX] Initializing with default backend (may attempt CUDA, will fallback to CPU)...");
         handle = OnnxCreateFromBuffer(buffer, ONNX_DEFAULT);
+        
         if(handle == INVALID_HANDLE)
             return false;
 
@@ -150,7 +155,8 @@ public:
         Deinit();
         if(!InitHandleFromBuffer(modelBuffer, m_handle))
         {
-            PrintFormat("[ONNX] Model unavailable or invalid | err=%d", GetLastError());
+            PrintFormat("[ONNX] Model unavailable or invalid | err=%d | expected_shape=[1,%d,%d] | note=re-export ONNX after the 57-feature contract upgrade",
+                        GetLastError(), ONNX_SEQ_LEN, ONNX_FEAT_DIM);
             return false;
         }
 

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-04-12
+- Last Updated: 2026-04-27
 - Scope: Agent workflow contract for this repository
 
 ## 1. Mission
@@ -21,7 +21,7 @@ Maintain and evolve `metatrader-multistrategy-ea` with production-safe disciplin
 ## 3. Non-Negotiable Technical Invariants
 1. All trade entries must pass `CUnifiedRiskManager` pre-trade gating.
 2. Runtime execution must remain `CTradeManager`-owned.
-3. Position lifecycle must remain `CAdvancedPositionManager`-owned.
+3. Position lifecycle must remain EA-loop-owned via `MultiStrategyAutonomousEA.mq5` calling `CTradeManager::ManageAllPositions(...)`.
 4. Strategy decisioning must remain symbol-scoped manager consensus.
 5. `CIndicatorManager::DestroyInstance()` must be called on deinit.
 

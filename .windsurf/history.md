@@ -1,5 +1,20 @@
 # Action History
 
+## 2026-04-12
+- **Action:** Fixed memory leaks in AI and Pipeline initialization paths
+- **Files Modified:**
+  - `Core/AI/AIStrategyOrchestrator.mqh` - Added deletion of m_thresholdManager in destructor, added proper error handling and cleanup for CTimeframeConsistency and CHedgingProtection initialization
+  - `Core/Management/EnterpriseStrategyManager.mqh` - Added proper error handling and cleanup for CTimeframeConsistency and CAIStrategyOrchestrator initialization
+  - `Core/Pipeline/UnifiedSignalPipeline.mqh` - Added proper error handling and cleanup for CTimeframeConsistency, CHedgingProtection, and all engine (Trend, Structure, Liquidity, Volatility, Regime) initializations
+  - `AIModules/OnnxBrain.mqh` - Added comment explaining CUDA spam is external (ONNX Runtime library), cannot be suppressed from MQL code
+- **Root Causes:**
+  - CDynamicThresholdManager: Missing delete in AIStrategyOrchestrator destructor (11 leaked objects)
+  - CTimeframeConsistency/CHedgingProtection: No cleanup on allocation/initialization failure (could leak on early return)
+  - Pipeline engines: No cleanup on initialization failure (could leak on early return)
+  - ONNX CUDA spam: External library behavior, not fixable in MQL code
+- **Outcome:** All memory leak paths now have proper cleanup on failure
+- **Notes:** EA self-removal issue already fixed in previous session (RiskValidationGate pointer validation)
+
 ## [2025-01-XX HH:MM] Fix INVALID_CONFIDENCE and Invalid Stops Errors
 - **Action:** Fixed three critical issues in EA
 - **Files Modified:**

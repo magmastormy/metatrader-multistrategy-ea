@@ -88,6 +88,7 @@ private:
 
     // Helpers
     string              GetWaveStateString(ENUM_WAVE_STATE state);
+    string              GetWaveDegreeString(ENUM_WAVE_DEGREE degree);
     void                DrawWavePattern(const SElliottWavePattern &pattern);
     void                ClearWaveDrawings();
 
@@ -418,7 +419,7 @@ ENUM_TRADE_SIGNAL CStrategyElliottWaveEnhanced::GetSignal(double &confidence)
         PrintFormat("[EW v2.1] %s | %s | %s | Conf: %.1f%% | W3ext: %.3f",
                     m_symbol,
                     bestSig == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                    GetWaveStateString(bestPat.currentState),
+                    GetWaveStateString(bestPat.currentState) + " | " + GetWaveDegreeString(bestPat.degree),
                     confidence * 100.0,
                     bestPat.wave3Extension);
     }
@@ -468,6 +469,17 @@ string CStrategyElliottWaveEnhanced::GetWaveStateString(ENUM_WAVE_STATE state)
         case STATE_COMPLETE:  return "Complete";
         case STATE_INVALID:   return "Invalid";
         default:              return "Unknown";
+    }
+}
+
+string CStrategyElliottWaveEnhanced::GetWaveDegreeString(ENUM_WAVE_DEGREE degree)
+{
+    switch(degree)
+    {
+        case WAVE_DEGREE_MINOR: return "Minor";
+        case WAVE_DEGREE_INTERMEDIATE: return "Intermediate";
+        case WAVE_DEGREE_PRIMARY: return "Primary";
+        default: return "UnknownDegree";
     }
 }
 

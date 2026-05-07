@@ -19,7 +19,6 @@ class CEnhancedErrorHandler;
 class CUtilities;
 class CHedgingProtection;
 class CMarketAnalysis;
-class CModeManager;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
@@ -27,7 +26,6 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CAIStrategyOrchestrator;
 
 //+------------------------------------------------------------------+
 //| Trade Request Validation Structure                             |
@@ -62,6 +60,7 @@ private:
     double m_maxRiskPerTrade;         // Maximum risk per trade (3%)
     double m_maxPortfolioRisk;        // Maximum total portfolio risk (10%)
     double m_correlationThreshold;    // Correlation blocking threshold (0.7)
+    int m_maxPositionsSameBase;       // Max positions with the same base currency
     double m_emergencyRiskOverride;   // Emergency risk override (5%)
     bool m_clusterGovernanceEnabled;  // Cluster-level risk governance
     bool m_clusterMutexEnabled;       // Same-symbol opposing-cluster mutex
@@ -97,6 +96,7 @@ public:
                    const double maxRiskPerTrade = 3.0,  // 🔥 Changed from 2.0 to 3.0 to match EA's InpMaxRiskPerTrade
                    const double maxPortfolioRisk = 10.0,
                    const double correlationThreshold = 0.7,
+                   const int maxPositionsSameBase = 3,
                    const double maxFreeMarginUsage = 0.8,
                    const double minMarginLevel = 200.0);
     
@@ -175,7 +175,7 @@ private:
 double CRiskValidationGate::GetPortfolioRiskValue() const
 {
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
-    if(CheckPointer(manager) == POINTER_INVALID)
+    if(manager == NULL)
         return 0.0;
     return (*manager).GetPortfolioRisk();
 }
@@ -183,7 +183,7 @@ double CRiskValidationGate::GetPortfolioRiskValue() const
 bool CRiskValidationGate::PortfolioAllowsTrade(const string symbolParam, const double lotSize) const
 {
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
-    if(CheckPointer(manager) == POINTER_INVALID)
+    if(manager == NULL)
         return true;
     return (*manager).IsTradeAllowed(symbolParam, lotSize);
 }
@@ -191,7 +191,7 @@ bool CRiskValidationGate::PortfolioAllowsTrade(const string symbolParam, const d
 bool CRiskValidationGate::PortfolioCorrelationAllowed(const string symbolParam) const
 {
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
-    if(CheckPointer(manager) == POINTER_INVALID)
+    if(manager == NULL)
         return true;
     return (*manager).CheckCorrelationLimits(symbolParam);
 }
@@ -199,7 +199,7 @@ bool CRiskValidationGate::PortfolioCorrelationAllowed(const string symbolParam) 
 bool CRiskValidationGate::PortfolioEmergencyActive() const
 {
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
-    if(CheckPointer(manager) == POINTER_INVALID)
+    if(manager == NULL)
         return false;
     return (*manager).IsEmergencyMode();
 }
@@ -207,7 +207,7 @@ bool CRiskValidationGate::PortfolioEmergencyActive() const
 bool CRiskValidationGate::PortfolioHasUnprotectedPositions() const
 {
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
-    if(CheckPointer(manager) == POINTER_INVALID)
+    if(manager == NULL)
         return false;
     return (*manager).HasUnprotectedPositions();
 }
@@ -219,6 +219,7 @@ CRiskValidationGate::CRiskValidationGate() : m_portfolioRiskManager(NULL),
                                            m_maxRiskPerTrade(2.0),
                                            m_maxPortfolioRisk(10.0),
                                            m_correlationThreshold(0.7),
+                                           m_maxPositionsSameBase(3),
                                            m_emergencyRiskOverride(5.0),
                                            m_clusterGovernanceEnabled(true),
                                            m_clusterMutexEnabled(true),
@@ -257,10 +258,11 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
                                     const double maxRiskPerTrade,
                                     const double maxPortfolioRisk,
                                     const double correlationThreshold,
+                                    const int maxPositionsSameBase,
                                     const double maxFreeMarginUsage,
                                     const double minMarginLevel)
 {
-    if(CheckPointer(pPortfolioRiskManager) == POINTER_INVALID)
+    if(pPortfolioRiskManager == NULL)
     {
         CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate", "Invalid portfolio risk manager pointer", 0);
         return false;
@@ -269,7 +271,7 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
     m_portfolioRiskManager = pPortfolioRiskManager;
     
     // Validate parameters
-    if(maxRiskPerTrade <= 0 || maxRiskPerTrade > 10.0)
+    if(maxRiskPerTrade <= 0 || maxRiskPerTrade > 100.0)
     {
         CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate", "Invalid max risk per trade", 0);
         return false;
@@ -304,6 +306,7 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
     m_maxRiskPerTrade = maxRiskPerTrade;
     m_maxPortfolioRisk = maxPortfolioRisk;
     m_correlationThreshold = correlationThreshold;
+    m_maxPositionsSameBase = maxPositionsSameBase;
     m_maxFreeMarginUsage = maxFreeMarginUsage;
     m_minMarginLevel = minMarginLevel;
     
@@ -540,13 +543,6 @@ bool CRiskValidationGate::ValidateRiskLimits(const STradeValidationRequest &requ
         return false;
     }
     
-    // Emergency risk override check
-    if(riskPercent > m_emergencyRiskOverride)
-    {
-        message = StringFormat("Risk %.2f%% exceeds emergency override %.2f%%", riskPercent, m_emergencyRiskOverride);
-        return false;
-    }
-    
     return true;
 }
 
@@ -593,6 +589,27 @@ bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &r
 //+------------------------------------------------------------------+
 bool CRiskValidationGate::ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk)
 {
+    // Check same base currency limit
+    int sameBaseCount = 0;
+    string symbolBase = StringSubstr(request.symbol, 0, 3);
+    
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        if(PositionSelectByTicket(PositionGetTicket(i)))
+        {
+            string posSymbol = PositionGetString(POSITION_SYMBOL);
+            if(StringFind(posSymbol, symbolBase) >= 0)
+                sameBaseCount++;
+        }
+    }
+    
+    if(sameBaseCount >= m_maxPositionsSameBase)
+    {
+        message = StringFormat("Too many positions on base %s (>= %d)", symbolBase, m_maxPositionsSameBase);
+        correlationRisk = 1.0;
+        return false;
+    }
+
     correlationRisk = CalculateCorrelationRisk(request.symbol);
 
     if(correlationRisk > m_correlationThreshold)

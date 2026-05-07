@@ -14,7 +14,7 @@
 #include "MetaLabeler.mqh"
 
 #define NN_CHECKPOINT_MAGIC 1313758027
-#define NN_CHECKPOINT_VERSION 6
+#define NN_CHECKPOINT_VERSION 7
 #define NN_MAX_PERSISTED_SAMPLES 300
 #define NN_MAX_TRAINING_EXAMPLES 2000
 #define NN_MIN_NORMALIZATION_SAMPLES 30
@@ -731,8 +731,19 @@ private:
 
     void PushTrainingExample(const STrainingExample &example)
     {
-        m_trainingBuffer[m_trainHead] = example;
-        m_trainHead = (m_trainHead + 1) % NN_MAX_TRAINING_EXAMPLES;
+        if(NN_MAX_TRAINING_EXAMPLES <= 0)
+            return;
+
+        if(m_trainHead < 0 || m_trainHead >= NN_MAX_TRAINING_EXAMPLES)
+            m_trainHead = ((m_trainHead % NN_MAX_TRAINING_EXAMPLES) + NN_MAX_TRAINING_EXAMPLES) % NN_MAX_TRAINING_EXAMPLES;
+        if(m_trainCount < 0)
+            m_trainCount = 0;
+        if(m_trainCount > NN_MAX_TRAINING_EXAMPLES)
+            m_trainCount = NN_MAX_TRAINING_EXAMPLES;
+
+        int writeIndex = m_trainHead;
+        m_trainingBuffer[writeIndex] = example;
+        m_trainHead = (writeIndex + 1) % NN_MAX_TRAINING_EXAMPLES;
         if(m_trainCount < NN_MAX_TRAINING_EXAMPLES)
             m_trainCount++;
     }
@@ -772,6 +783,8 @@ private:
         double currentHigh = iHigh(m_symbol, m_timeframe, 1);
         double currentLow = iLow(m_symbol, m_timeframe, 1);
 
+        int resolvedThisPass = 0;
+
         for(int i = 0; i < m_barrierCount; i++)
         {
             if(m_barrierBuffer[i].resolved || m_barrierBuffer[i].signalClass == 0)
@@ -803,9 +816,15 @@ private:
             m_conformal.AddScore(1.0 - m_barrierBuffer[i].signalConfidence);
             m_conformal.UpdateACI(label > 0);
             m_metaLabeler.AddSample(m_barrierBuffer[i].metaInput, label > 0 ? 1 : 0);
+            resolvedThisPass++;
         }
 
         m_lastResolvedBarTime = closedBarTime;
+
+        if(resolvedThisPass > 0 && m_checkpointEveryLabeled > 0 && m_labeledSinceCheckpoint >= m_checkpointEveryLabeled)
+        {
+            TrainNetwork();
+        }
     }
 
     bool CollectObservationInternal(const bool linkedToTrade,
@@ -1104,7 +1123,7 @@ public:
         m_barrierCount = 0;
         m_barrierK = 1.5;
         m_barrierVertBars = 20;
-        m_minConfidence = 0.35;
+        m_minConfidence = 0.70;
         m_lastObservationTime = 0;
         m_lastSignalLogTime = 0;
         m_lastCheckpointTimestamp = 0;
@@ -1343,7 +1362,7 @@ public:
 
         int maxSamples = MathMin(m_trainCount, 256);
         int start = MathMax(0, m_trainCount - maxSamples);
-        double totalLoss = 0.0;
+        double epochLoss = 0.0;
         int processed = 0;
 
         for(int epochIter = 0; epochIter < 2; epochIter++)
@@ -1353,7 +1372,7 @@ public:
                 int idx = (m_trainHead - m_trainCount + logical + NN_MAX_TRAINING_EXAMPLES) % NN_MAX_TRAINING_EXAMPLES;
                 double outputs[];
                 ForwardPropagate(m_trainingBuffer[idx].inputs, outputs);
-                totalLoss += CalculateLoss(outputs, m_trainingBuffer[idx].labelClass);
+                epochLoss += CalculateLoss(outputs, m_trainingBuffer[idx].labelClass);
                 BackpropagateAndUpdate(m_trainingBuffer[idx].inputs, m_trainingBuffer[idx].labelClass);
                 processed++;
             }
@@ -1362,7 +1381,7 @@ public:
 
         if(processed > 0)
         {
-            m_lastLoss = totalLoss / (double)processed;
+            m_lastLoss = epochLoss / (double)processed;
             m_trainingSteps++;
             PrintFormat("[NEURAL-NET] Train step | epoch=%d | loss=%.6f | samples=%d | lr=%.8f | resolved=%I64d",
                         m_epoch, m_lastLoss, processed, GetCyclicLR(), m_resolvedLabelCount);

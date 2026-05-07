@@ -94,6 +94,16 @@ enum ENUM_EA_MODE
 };
 
 //+------------------------------------------------------------------+
+//| Python bridge telemetry mode                                     |
+//+------------------------------------------------------------------+
+enum ENUM_PYTHON_BRIDGE_MODE
+{
+    PYTHON_BRIDGE_OFF = 0,        // No Python sidecar expectations
+    PYTHON_BRIDGE_OBSERVE = 1,    // Log configured Python sidecar topology only
+    PYTHON_BRIDGE_REQUIRED = 2    // Operator expects Python sidecar to be part of workflow
+};
+
+//+------------------------------------------------------------------+
 //| Error Level Enumeration                                        |
 //+------------------------------------------------------------------+
 enum ENUM_ERROR_LEVEL
@@ -223,7 +233,6 @@ enum ENUM_POSITION_SIZING_MODE
 
 // Performance Monitoring Constants
 #define MIN_TRADES_FOR_STATS 10         // Minimum trades for statistics
-#define DRAWDOWN_WARNING 10.0           // Warning drawdown level (10%)
 #define MAX_CONSECUTIVE_LOSSES 5        // Maximum consecutive losses
 
 // Risk Level Constants
