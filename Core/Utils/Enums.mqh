@@ -209,11 +209,11 @@ enum ENUM_RISK_LEVEL
 #define DEFAULT_SLIPPAGE 3              // Default slippage in points
 
 // Risk Management Constants
-#define MIN_ACCOUNT_BALANCE 100.0       // Minimum account balance
-#define DRAWDOWN_CRITICAL 20.0           // Critical drawdown level (20%)
-#define DRAWDOWN_WARNING 10.0           // Warning drawdown level (10%)
+#define MIN_ACCOUNT_BALANCE 1.0         // Minimum account balance (lowered for micro-account testing)
+#define DRAWDOWN_CRITICAL 100.0           // Critical drawdown level (increased to 100% for max risk)
+#define DRAWDOWN_WARNING 70.0            // Warning drawdown level (increased for consistency)
 #define MAX_RISK_PER_TRADE 100.0        // Maximum risk per trade as percentage (e.g., 3.0 = 3%, 100.0 = 100%)
-#define MAX_TOTAL_RISK 10.0              // Maximum total portfolio risk (10%)
+#define MAX_TOTAL_RISK 100.0             // Maximum total portfolio risk (increased to 100%)
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 
 // Position Sizing Enumeration

@@ -277,7 +277,7 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
         return false;
     }
     
-    if(maxPortfolioRisk <= 0 || maxPortfolioRisk > 50.0)
+    if(maxPortfolioRisk <= 0 || maxPortfolioRisk > 100.0)
     {
         CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate", "Invalid max portfolio risk", 0);
         return false;

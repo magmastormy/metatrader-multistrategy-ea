@@ -56,7 +56,8 @@ public:
                                 StringFind(sym, "Boom") >= 0 || StringFind(sym, "Crash") >= 0 ||
                                 StringFind(sym, "Jump") >= 0 || StringFind(sym, "PainX") >= 0 ||
                                 StringFind(sym, "Pain ") >= 0 || StringFind(sym, "GainX") >= 0 ||
-                                StringFind(sym, "FlipX") >= 0 || StringFind(sym, "FX Vol") >= 0);
+                                StringFind(sym, "FlipX") >= 0 || StringFind(sym, "FX Vol") >= 0 ||
+                                StringFind(sym, "SwitchX") >= 0);
 
             if(StringFind(sym, " ") >= 0 && StringFind(sym, ".") < 0 && !isSynthetic)
             {

@@ -15,21 +15,18 @@
 input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
 input bool InpUseEnhancedRisk = true;      // Enable adaptive sizing inside unified risk manager
-input double InpMaxRiskPerTrade = 2.0;    // Max risk per trade (e.g., 2.0 for 2%)
-input double InpMaxDailyRisk = 6.0;       // Max daily risk (e.g., 6.0 for 6%)
-input double InpMaxPortfolioRisk = 10.0;   // Max total portfolio risk (e.g., 10.0 for 10%)
-input double InpMaxDrawdown = 15.0;       // Max drawdown (e.g., 15.0 for 15%)
-input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,Jump 25 Index.0,Jump 50 Index.0,Jump 75 Index.0,Jump 100 Index.0,Volatility 10 (1s) Index.0,Volatility 25 (1s) Index.0,Volatility 50 (1s) Index.0,Volatility 100 (1s) Index.0,EURUSD.0,EURCHF.0,EURJPY.0";               // Comprehensive test symbols
-input int    InpMinSecondsBetweenTrades = 120;    // Cooldown in seconds between trades
-input int    InpMaxPositionsTotal = 15;           // Global position limit
-input bool   InpAllowSyntheticOffHours = true;    // Allow synthetic indices to trade 24/7 (outside normal forex hours)
-
-//--- Strategy Selection (for testing)
+input double InpMaxRiskPerTrade = 0.75;   // Max risk per trade; authority gate can scale this down
+input double InpMaxDailyRisk = 3.0;       // Max daily risk
+input double InpMaxPortfolioRisk = 6.0;    // Max total portfolio risk
+input double InpMaxDrawdown = 10.0;       // Max drawdown
+input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,Jump 25 Index.0,Jump 50 Index.0,Jump 75 Index.0,Jump 100 Index.0,Volatility 10 (1s) Index.0,Volatility 25 (1s) Index.0,Volatility 50 (1s) Index.0,Volatility 100 (1s) Index.0,SFX Vol 20.0,FX Vol 40.0,SwitchX 1200.0,EURUSD.0,EURCHF.0,EURJPY.0";               // Comprehensive test symbols
+input int    InpMinSecondsBetweenTrades = 45;     // Cooldown in seconds between trades
+input int    InpMaxPositionsTotal = 8;            // Global position limit under authority gate
 input group "Strategy Selection"
 input bool InpEnableMomentum = true;        // Enable Momentum Strategy
 input bool InpEnableTrend = true;           // Enable Trend Strategy
 input bool InpEnableFibonacci = true;       // Enable Fibonacci Strategy
-input bool InpEnableElliottWave = true;      // Enable Elliott Wave Enhanced Strategy
+input bool InpEnableElliottWave = true;      // Enabled as a contributor; live authority is evidence-gated
 input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines
 input bool InpEnableUnifiedICT = true;        // Enable Unified ICT Strategy
 input bool InpEnableCandlestick = true;      // Enable Candlestick Patterns Strategy
@@ -47,22 +44,23 @@ input int  InpMaxVisualObjects = 500;          // Max visual objects per chart
 
 //--- Consensus quorum (weighted)
 input group "Consensus Quorum"
-input double InpQuorumThreshold = 0.35;        // Min normalized weighted score to pass quorum
-input int    InpMinLiveVoters   = 1;           // Min agreeing live voters (floor safety)
+input double InpQuorumThreshold = 0.55;        // Min normalized weighted score to pass quorum
+input int    InpMinLiveVoters   = 2;           // Min agreeing live voters (floor safety)
 input double InpConsensusConflictDeadband = 0.05; // Minimum buy/sell score delta required to break directional tie
-input double InpConsensusMinReadyWeightRatio = 0.25; // Minimum ready-live-weight share required before consensus can trade (Relaxed from 0.45)
-input double InpConsensusSupportFloorNewBar = 0.35;   // Min support ratio required for full new-bar quorum
-input double InpConsensusSupportFloorIntrabar = 0.20; // Min support ratio required for full intrabar quorum
-input double InpSparseIntrabarMinQuality = 0.62;      // Min directional quality for sparse intrabar admission
-input double InpSparseIntrabarMinSupportRatio = 0.20; // Min support ratio for sparse intrabar admission
-input double InpSparseIntrabarMinReadyCoverage = 0.60; // Min ready-live coverage for sparse intrabar admission
+input double InpConsensusMinReadyWeightRatio = 0.50; // Minimum ready-live-weight share required before consensus can trade
+input double InpConsensusSupportFloorNewBar = 0.45;   // Min support ratio required for full new-bar quorum
+input double InpConsensusSupportFloorIntrabar = 0.40; // Min support ratio required for full intrabar quorum
+input bool   InpAllowSparseIntrabarSingleVoter = false; // Disable one-voter live intrabar admission
+input double InpSparseIntrabarMinQuality = 0.85;      // Min directional quality for sparse intrabar admission
+input double InpSparseIntrabarMinSupportRatio = 0.40; // Min support ratio for sparse intrabar admission
+input double InpSparseIntrabarMinReadyCoverage = 0.85; // Min ready-live coverage for sparse intrabar admission
 
 //--- Strategy weights (used in weighted quorum)
 input group "Strategy Weights"
 input double InpWeightMomentum          = 1.0; // Momentum weight
 input double InpWeightTrend             = 1.2; // Trend weight
 input double InpWeightFibonacci         = 1.2; // Fibonacci weight
-input double InpWeightElliottWave       = 2.0; // Elliott Wave weight
+input double InpWeightElliottWave       = 1.0; // Elliott Wave contributes, but Elliott-only live trades are blocked
 input double InpWeightSupportResistance = 1.5; // Support/Resistance weight
 input double InpWeightUnifiedICT        = 2.2; // Unified ICT weight (slightly higher precision)
 input double InpWeightCandlestick       = 1.5; // Candlestick weight
@@ -71,7 +69,7 @@ input double InpWeightPowerOfThree      = 2.3; // Power of Three / ICT 2025 weig
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
-input bool InpEnableAIMode = true;            // Master AI runtime gate for all AI families
+input bool InpEnableAIMode = true;            // Master AI runtime gate for AI families
 input bool InpEnableNeuralNetwork = true;     // MT5-native Neural Network live voter
 input bool InpEnableTransformer = false;      // MT5-native Transformer live voter (disabled until retrained)
 input bool InpEnableEnsemble = false;         // MT5-native Ensemble live voter (disabled until retrained)
@@ -84,6 +82,24 @@ input double InpAIConfidenceThreshold = 0.70;  // AI Confidence Threshold (raise
 input double InpAIWeightMultiplier = 1.0;      // AI Weight Multiplier
 input double InpAIDrawdownSizingLimit = 0.20;  // Drawdown fraction used for AI lot tapering
 
+//--- Live authority gate
+input group "Live Authority Gate"
+input bool   InpEnableLiveAuthorityGate = true;       // Route candidates through AI/strategy live-authority logic
+input bool   InpAllowAIWarmStartLive = true;          // Allow high-quality AI/ONNX signals live while evidence is building
+input bool   InpAllowHybridAIStandalone = true;       // Allow high-confidence AI-only packets in HYBRID mode
+input double InpAIStandaloneMinConfidence = 0.65;     // Min confidence for AI-only HYBRID admission
+input int    InpAuthorityMinSamples = 12;             // Forward-trial samples before promotion/demotion is decisive
+input int    InpAuthorityTrialHorizonSeconds = 900;   // Max forward-trial horizon for shadow/live authority evidence
+input int    InpAuthorityMaxTrackedTrials = 256;      // Max active authority trials
+input double InpAuthorityMinExpectancyR = 0.03;       // Min average R for promoted live authority
+input double InpAuthorityMinProfitFactor = 1.10;      // Min profit factor for promoted live authority
+input double InpAuthorityMinCostScore = 0.68;         // Min execution-cost evidence score for live send
+input double InpAuthorityMinReadinessScore = 0.62;    // Min readiness evidence score for live send
+input double InpAuthorityMinContextScore = 0.58;      // Min context evidence score for live send
+input double InpAIBootstrapRiskMultiplier = 0.50;     // Risk scale for warm-start AI/ONNX authority
+input double InpAIPromotedRiskMultiplier = 1.00;      // Risk scale for promoted AI/ONNX authority
+input double InpNonAIPromotedRiskMultiplier = 0.65;   // Risk scale for promoted non-AI authority
+
 //--- NN attribution forward-test diagnostics
 input group "NN Attribution Diagnostics"
 input bool InpEnableNNAttributionDiagnostics = true; // Enable NN attribution live diagnostics
@@ -92,23 +108,23 @@ input bool InpRunNNAttributionSelfTest = true;       // Run local mapping self-t
 //--- Runtime Cadence + NN Online Learning
 input group "Runtime Cadence & Learning"
 input bool InpEnableHybridCadence = true;             // Enable hybrid cadence (new-bar + timed intrabar scans)
-input int  InpIntrabarScanSeconds = 10;               // Intrabar scan interval in seconds
+input int  InpIntrabarScanSeconds = 5;                // Intrabar scan interval in seconds
 input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans to chart symbol
 input bool InpIntrabarDynamicQuorumEnabled = true;    // Legacy (deprecated): retained for backward compatibility; weighted quorum is authoritative
-input double InpPipelineMinConfidence = 0.40;         // Base confidence floor for non-AI pipeline signals (lowered from 0.50 to fix pipeline blocking)
-input double InpIntrabarSingleVoterMinConfidence = 0.55; // Min confidence for single-voter intrabar consensus
-input double InpSyntheticLeanSparseIntrabarMinQuality = 0.38; // Synthetic lean profile min quality for one-voter intrabar admission
-input double InpSyntheticLeanIntrabarSingleVoterMinConfidence = 0.38; // Synthetic lean profile min confidence for one-voter intrabar admission
+input double InpPipelineMinConfidence = 0.55;         // Base confidence floor for non-AI pipeline signals
+input double InpIntrabarSingleVoterMinConfidence = 0.95; // Min confidence for single-voter intrabar consensus
+input double InpSyntheticLeanSparseIntrabarMinQuality = 0.85; // Synthetic lean profile min quality for one-voter intrabar admission
+input double InpSyntheticLeanIntrabarSingleVoterMinConfidence = 0.95; // Synthetic lean profile min confidence for one-voter intrabar admission
 input double InpPipelineIntrabarConfidenceCap = 0.05; // Max weak-regime intrabar confidence threshold uplift
 input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microstructure cost gate before validator
-input double InpPipelineMaxSpreadToAtrRatio = 0.25;   // Max spread/ATR ratio allowed by cost gate
-input int InpPipelineSpreadShockCooldownSec = 30;     // Spread shock cooldown window
-input double InpPipelineLateEntryZScoreLimit = 2.55;  // Late-entry outlier z-score veto limit
+input double InpPipelineMaxSpreadToAtrRatio = 0.10;   // Max spread/ATR ratio allowed by cost gate
+input int InpPipelineSpreadShockCooldownSec = 90;     // Spread shock cooldown window
+input double InpPipelineLateEntryZScoreLimit = 1.75;  // Late-entry outlier z-score veto limit
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
 input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
 input bool InpIntrabarEligibilityFibonacci = true;   // Intrabar eligibility for Fibonacci strategy
-input bool InpIntrabarEligibilityElliottWave = true;  // Intrabar eligibility for Elliott Wave strategy
+input bool InpIntrabarEligibilityElliottWave = false; // Intrabar eligibility for Elliott Wave strategy
 input bool InpIntrabarEligibilitySupportResistance = true; // Intrabar eligibility for Support/Resistance strategy
 input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
 input bool InpIntrabarEligibilityCandlestick = true;  // Intrabar eligibility for Candlestick strategy
@@ -118,31 +134,33 @@ input bool InpIntrabarEligibilityNeuralNetworkAI = true; // Intrabar eligibility
 input bool InpIntrabarEligibilityTransformerAI = true;   // Intrabar eligibility for Transformer AI
 input bool InpIntrabarEligibilityEnsembleAI = true;      // Intrabar eligibility for Ensemble AI
 input bool InpIntrabarEligibilityOnnxAI = true;          // Intrabar eligibility for ONNX AI
-input int  InpMaxIntrabarSymbolsPerCycle = 4;         // Max symbols eligible for intrabar evaluation per cycle
-input int  InpMaxSignalEvaluationsPerCycle = 4;       // Max total heavy signal evaluations per cycle across new-bar + intrabar work
+input int  InpMaxIntrabarSymbolsPerCycle = 6;         // Max symbols eligible for intrabar evaluation per cycle
+input int  InpMaxSignalEvaluationsPerCycle = 8;       // Max total heavy signal evaluations per cycle across new-bar + intrabar work
 input int  InpIntrabarBackoffMaxSeconds = 60;         // Max per-symbol intrabar backoff interval
 input int  InpReadinessReuseTtlSeconds = 60;          // Max readiness snapshot reuse age in seconds
-input bool InpShadowMode = false;                     // [!] LIVE MODE ACTIVE: Set true for dry-run
+input bool InpShadowMode = false;                     // Global dry-run override; live authority gate still controls candidates
 input bool InpEnableNNOnlineTraining = true;          // Enable online NN observation/labeling loop
-input bool InpEnableNNWeightMutation = true;         // Enable live NN weight mutation (institutional default OFF)
-input bool InpEnableNNPseudoLabeling = true;          // Enable pseudo-labeling when no trade-linked label exists
+input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation
+input bool InpEnableNNPseudoLabeling = false;         // Enable pseudo-labeling when no trade-linked label exists
 input int  InpNNPseudoLabelBarsAhead = 0;             // Pseudo-label horizon in bars
 input int  InpNNSampleIntervalSeconds = 15;           // Observation sampling interval (seconds)
 input int  InpNNCheckpointEveryLabeled = 10;          // Checkpoint every N newly labeled samples
 
 //--- Advanced signal validator (post-consensus)
 input group "Signal Validator"
-input int    InpValidatorNewBarMinConfluence    = 1;    // Minimum strategy confluence on new-bar scans
-input double InpValidatorNewBarMinQuality       = 0.68; // Minimum quality score on new-bar scans
-input double InpValidatorNewBarMinConfidence    = 0.50; // Post-consensus confidence floor on new-bar scans
-input int    InpValidatorIntrabarMinConfluence  = 1;    // Minimum strategy confluence on intrabar scans
-input double InpValidatorIntrabarMinQuality     = 0.75; // Minimum quality score on intrabar scans
-input double InpValidatorIntrabarMinConfidence  = 0.55; // Post-consensus confidence floor on intrabar scans
+input int    InpValidatorNewBarMinConfluence    = 2;    // Minimum strategy confluence on new-bar scans
+input double InpValidatorNewBarMinQuality       = 0.72; // Minimum quality score on new-bar scans
+input double InpValidatorNewBarMinConfidence    = 0.60; // Post-consensus confidence floor on new-bar scans
+input int    InpValidatorIntrabarMinConfluence  = 2;    // Minimum strategy confluence on intrabar scans
+input double InpValidatorIntrabarMinQuality     = 0.82; // Minimum quality score on intrabar scans
+input double InpValidatorIntrabarMinConfidence  = 0.65; // Post-consensus confidence floor on intrabar scans
 
 //--- Execution & Emergency Controls
 input group "Execution Safety"
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
 input int InpTradeSlippagePoints = 10;                                  // Max slippage in points
+input double InpMaxEntrySpreadPoints = 150.0;                            // Hard pre-send spread limit in points; <=0 disables
+input double InpMaxEntryDriftPoints = 15.0;                              // Hard drift from signal price before send; <=0 disables
 input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
 input bool InpEnablePositionLifecycleManager = false;                   // EA-managed breakeven/trailing lifecycle (opt-in; disabled to avoid premature closes)
 input double InpLifecycleBreakevenBufferPoints = 120.0;                 // Profit buffer in points before breakeven becomes eligible
@@ -157,13 +175,14 @@ input int InpSyntheticSpikePauseSeconds = 30;                           // Tradi
 
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
-input bool InpUseSignalPipeline = true;        // Use Signal Pipeline
+input bool InpUseSignalPipeline =      true;        // Use Signal Pipeline
+input bool InpAllowSyntheticOffHours = true;        // Allow trading on synthetic symbols during off-chart hours
 input double InpMinTrendStrength = 50.0;       // Minimum Trend Strength
 input double InpMaxVolatility = 3.0;           // Maximum Volatility %
 input bool InpEnableStructureFilter = true;    // Enable Structure Filter
 input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 input bool InpSignalScanOnNewBarOnly = false;  // Evaluate fresh entry signals only on new bar
-input int  InpPortfolioMaxPositionsPerSymbol = 2; // EA-side precheck before risk gate
+input int  InpPortfolioMaxPositionsPerSymbol = 1; // EA-side precheck before risk gate
 input int  InpMaxPositionsSameBase = 3;        // Max positions with the same base currency (e.g. 3)
 input bool InpEnableClusterRiskGovernance = true; // Enable cluster-aware risk mutex/caps in risk gate
 input bool InpEnableClusterMutex = true;          // Block opposing-cluster same-symbol stacking
@@ -444,6 +463,12 @@ struct SApprovedTradeCandidate
     string strategyClusterCode;
     string contributorSummary;
     bool hasAIContributor;
+    bool hasONNXContributor;
+    bool hasIndicatorContributor;
+    bool hasElliottContributor;
+    bool liveAuthorityAllowed;
+    double liveAuthorityRiskMultiplier;
+    string liveAuthorityReason;
     ulong cycleId;
     SValidationResult riskResult;
 
@@ -478,6 +503,12 @@ struct SApprovedTradeCandidate
         strategyClusterCode = "N";
         contributorSummary = "";
         hasAIContributor = false;
+        hasONNXContributor = false;
+        hasIndicatorContributor = false;
+        hasElliottContributor = false;
+        liveAuthorityAllowed = false;
+        liveAuthorityRiskMultiplier = 0.0;
+        liveAuthorityReason = "";
         cycleId = 0;
         riskResult.approved = false;
         riskResult.message = "";
@@ -489,6 +520,80 @@ struct SApprovedTradeCandidate
         riskResult.severity = ERROR_LEVEL_INFO;
     }
 };
+
+struct SLiveAuthorityStats
+{
+    int samples;
+    int wins;
+    int losses;
+    int consecutiveLosses;
+    double netR;
+    double grossWinR;
+    double grossLossR;
+    double equityR;
+    double peakEquityR;
+    double maxDrawdownR;
+    datetime lastUpdate;
+
+    SLiveAuthorityStats()
+    {
+        samples = 0;
+        wins = 0;
+        losses = 0;
+        consecutiveLosses = 0;
+        netR = 0.0;
+        grossWinR = 0.0;
+        grossLossR = 0.0;
+        equityR = 0.0;
+        peakEquityR = 0.0;
+        maxDrawdownR = 0.0;
+        lastUpdate = 0;
+    }
+};
+
+struct SLiveAuthorityTrial
+{
+    bool active;
+    bool liveSent;
+    string symbol;
+    ENUM_TRADE_SIGNAL signal;
+    double entryPrice;
+    double stopLossPoints;
+    double takeProfitPoints;
+    datetime startTime;
+    datetime expiryTime;
+    bool hasAI;
+    bool hasONNX;
+    bool hasIndicator;
+    bool hasElliott;
+    string contributors;
+    string authorityReason;
+
+    SLiveAuthorityTrial()
+    {
+        active = false;
+        liveSent = false;
+        symbol = "";
+        signal = TRADE_SIGNAL_NONE;
+        entryPrice = 0.0;
+        stopLossPoints = 0.0;
+        takeProfitPoints = 0.0;
+        startTime = 0;
+        expiryTime = 0;
+        hasAI = false;
+        hasONNX = false;
+        hasIndicator = false;
+        hasElliott = false;
+        contributors = "";
+        authorityReason = "";
+    }
+};
+
+SLiveAuthorityStats g_authorityAIStats;
+SLiveAuthorityStats g_authorityONNXStats;
+SLiveAuthorityStats g_authorityIndicatorStats;
+SLiveAuthorityStats g_authorityElliottStats;
+SLiveAuthorityTrial g_authorityTrials[];
 
 double CalculateCandidateRankingScore(const SApprovedTradeCandidate &candidate)
 {
@@ -995,44 +1100,6 @@ double EstimateMinimumLotMarginRequirement(const string symbol)
     return -1.0;
 }
 
-void LogAccountCapacityDiagnostics()
-{
-    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-    int affordableSymbolCount = 0;
-
-    for(int i = 0; i < ArraySize(g_activePairs); i++)
-    {
-        string symbol = g_activePairs[i];
-        double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-        double minMargin = EstimateMinimumLotMarginRequirement(symbol);
-
-        if(minMargin < 0.0)
-        {
-            PrintFormat("[ACCOUNT-CAPACITY] %s | min_lot=%.2f | free_margin=%.2f | est_margin=unavailable | affordable=unknown",
-                        symbol,
-                        minLot,
-                        freeMargin);
-            continue;
-        }
-
-        bool affordable = (freeMargin >= minMargin);
-        if(affordable)
-            affordableSymbolCount++;
-
-        PrintFormat("[ACCOUNT-CAPACITY] %s | min_lot=%.2f | free_margin=%.2f | est_margin=%.2f | affordable=%s",
-                    symbol,
-                    minLot,
-                    freeMargin,
-                    minMargin,
-                    affordable ? "true" : "false");
-    }
-
-    if(!InpShadowMode && ArraySize(g_activePairs) > 0 && affordableSymbolCount <= 0)
-    {
-        PrintFormat("[ACCOUNT-CAPACITY] WARNING | free_margin=%.2f cannot support the minimum lot on any configured symbol",
-                    freeMargin);
-    }
-}
 
 int FindUnprotectedTrackerIndex(const ulong ticket)
 {
@@ -1474,6 +1541,38 @@ bool ContributorsIncludeAI(const string &contributors[])
         }
     }
     return false;
+}
+
+bool ContributorsIncludeName(const string &contributors[], const string contributorName)
+{
+    for(int i = 0; i < ArraySize(contributors); i++)
+    {
+        if(contributors[i] == contributorName)
+            return true;
+    }
+    return false;
+}
+
+bool ContributorsIncludeONNX(const string &contributors[])
+{
+    return ContributorsIncludeName(contributors, "ONNX AI");
+}
+
+bool ContributorsIncludeElliott(const string &contributors[])
+{
+    return ContributorsIncludeName(contributors, "Elliott Wave");
+}
+
+int CountNonElliottIndicatorContributors(const string &contributors[])
+{
+    int count = 0;
+    for(int i = 0; i < ArraySize(contributors); i++)
+    {
+        if(contributors[i] == "" || contributors[i] == "Elliott Wave" || IsAIContributorName(contributors[i]))
+            continue;
+        count++;
+    }
+    return count;
 }
 
 int FindPredictionPositionIndex(const ulong positionId)
@@ -1984,49 +2083,6 @@ string PythonBridgeModeToString(const ENUM_PYTHON_BRIDGE_MODE mode)
     }
 }
 
-void LogAIRuntimeTopology()
-{
-    if(g_aiTopologyLogged)
-        return;
-
-    string mt5Voters = BuildRegistryStrategyList(false, true, true);
-    string indicatorFamilies = BuildRegistryStrategyList(true, false, true);
-    string pythonRole = InpEnableOnnxAI ?
-                        "Python-trained ONNX model is served inside MT5 as a live voter" :
-                        "No Python-trained live voter is currently active";
-    string bridgeRole = "Python bridge sidecars are not wired into live consensus; endpoint is operator telemetry only";
-    string llmRole = InpEnableExternalLLM ?
-                     "External LLM enabled for reasoning/adaptation only (not a live voter)" :
-                     "External LLM disabled";
-    string nextGenRole = g_aiBrainReady ?
-                         "NextGen/Universal Transformer is available as local feature brain/dashboard context" :
-                         "NextGen/Universal Transformer unavailable";
-
-    PrintFormat("[AI-TOPOLOGY] ai_mode=%s | effective_mode=%s | mt5_live_voters=%s | indicator_families=%s",
-                InpEnableAIMode ? "true" : "false",
-                EAModeToString(ResolveEffectiveEAMode()),
-                mt5Voters,
-                indicatorFamilies);
-    PrintFormat("[AI-TOPOLOGY] native_nn=%s | native_transformer=%s | native_ensemble=%s | onnx=%s | python_bridge_mode=%s | python_bridge_endpoint=%s",
-                InpEnableNeuralNetwork ? "enabled" : "disabled",
-                InpEnableTransformer ? "enabled" : "disabled",
-                InpEnableEnsemble ? "enabled" : "disabled",
-                InpEnableOnnxAI ? "enabled" : "disabled",
-                PythonBridgeModeToString(InpPythonBridgeMode),
-                InpPythonBridgeEndpoint);
-    PrintFormat("[AI-TOPOLOGY] nextgen_role=%s | python_role=%s | python_bridge=%s | ext_llm=%s",
-                nextGenRole,
-                pythonRole,
-                bridgeRole,
-                llmRole);
-
-    if(InpPythonBridgeMode == PYTHON_BRIDGE_REQUIRED && !InpEnableOnnxAI)
-    {
-        Print("[PY-BRIDGE] REQUIRED mode is set, but no live Python-served voter is active. Enable ONNX after exporting a compatible model if you want Python-trained inference in runtime consensus.");
-    }
-
-    g_aiTopologyLogged = true;
-}
 
 void LogPositionLifecycleConfig()
 {
@@ -2469,9 +2525,11 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (aiBaseEnabled && InpEnableNeuralNetwork), false,
                                         MathMax(0.1, InpAIWeightMultiplier));
     RegisterStrategyDefinitionIfEnabled("Transformer AI", STRATEGY_AI_ENHANCED, true,
-                                        (aiBaseEnabled && InpEnableTransformer), false, 0.0);
+                                        (aiBaseEnabled && InpEnableTransformer), false,
+                                        MathMax(0.1, InpAIWeightMultiplier));
     RegisterStrategyDefinitionIfEnabled("Ensemble AI", STRATEGY_AI_ENHANCED, true,
-                                        (aiBaseEnabled && InpEnableEnsemble), false, 0.0);
+                                        (aiBaseEnabled && InpEnableEnsemble), false,
+                                        MathMax(0.1, InpAIWeightMultiplier));
     RegisterStrategyDefinitionIfEnabled("ONNX AI", STRATEGY_AI_ENHANCED, true,
                                         (aiBaseEnabled && InpEnableOnnxAI), false, 2.00);
 
@@ -2508,7 +2566,44 @@ ENUM_EA_MODE ResolveEffectiveEAMode()
     return configuredMode;
 }
 
+void LogAIRuntimeTopology()
+{
+    ENUM_EA_MODE effectiveMode = ResolveEffectiveEAMode();
+    PrintFormat("[RUNTIME-FINGERPRINT] Runtime=%s | File=%s | TerminalBuild=%d | Curated=%s | RegistrySize=%d | ActiveProfile=%s | EAMode=%s | HybridStandalone=%s | StandaloneThreshold=%.2f | Indicators=%d | AI=%d",
+                TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS), 
+                __FILE__, (int)TerminalInfoInteger(TERMINAL_BUILD),
+                InpUseCuratedStrategySet ? "true" : "false",
+                g_strategyRegistry.GetDescriptorCount(),
+                GetInstrumentExecutionProfileName(_Symbol),
+                EAModeToString(effectiveMode),
+                InpAllowHybridAIStandalone ? "true" : "false",
+                InpAIStandaloneMinConfidence,
+                g_strategyRegistry.GetActiveIndicatorCount(),
+                g_strategyRegistry.GetActiveAICount());
+    g_aiTopologyLogged = true;
+}
+
+void LogAccountCapacityDiagnostics()
+{
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double marginRequired = 0;
+    
+    if(price <= 0) price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    if(price <= 0) price = 1.0;
+
+    if(!OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, minLot, price, marginRequired))
+        marginRequired = price * minLot / 100.0;
+
+    PrintFormat("[ACCOUNT-CAPACITY-INIT] balance=%.2f | free_margin=%.2f | min_lot_margin=%.2f | capacity=%s",
+                balance, freeMargin, marginRequired, 
+                (freeMargin > marginRequired) ? "OK" : "INSUFFICIENT");
+}
+
 bool EvaluateEAModeCandidateAdmission(const string &contributors[],
+                                      const double candidateConfidence,
                                       string &rejectReason,
                                       double &confidenceBonus)
 {
@@ -2542,6 +2637,18 @@ bool EvaluateEAModeCandidateAdmission(const string &contributors[],
         case EA_MODE_HYBRID:
             if(activeIndicators > 0 && !hasIndicatorContributor)
             {
+                if(hasAIContributor && InpAllowHybridAIStandalone && candidateConfidence >= InpAIStandaloneMinConfidence)
+                {
+                    PrintFormat("[HYBRID-GATE] AI-standalone ADMITTED | conf=%.3f >= threshold=%.3f | standalone_enabled=true",
+                                candidateConfidence, InpAIStandaloneMinConfidence);
+                    confidenceBonus = 0.02;
+                    break;
+                }
+                PrintFormat("[HYBRID-GATE] AI-standalone REJECTED | conf=%.3f threshold=%.3f standalone_enabled=%s hasAI=%s hasIndicator=%s",
+                            candidateConfidence, InpAIStandaloneMinConfidence,
+                            InpAllowHybridAIStandalone ? "true" : "false",
+                            hasAIContributor ? "true" : "false",
+                            hasIndicatorContributor ? "true" : "false");
                 rejectReason = hasAIContributor ? "hybrid_mode_ai_without_indicator" : "hybrid_mode_missing_indicator";
                 return false;
             }
@@ -2574,6 +2681,349 @@ bool EvaluateEAModeCandidateAdmission(const string &contributors[],
     }
 
     return true;
+}
+
+double AuthorityProfitFactor(const SLiveAuthorityStats &stats)
+{
+    if(stats.grossLossR <= 0.0)
+        return (stats.grossWinR > 0.0) ? 99.0 : 0.0;
+    return stats.grossWinR / stats.grossLossR;
+}
+
+double AuthorityExpectancyR(const SLiveAuthorityStats &stats)
+{
+    if(stats.samples <= 0)
+        return 0.0;
+    return stats.netR / (double)stats.samples;
+}
+
+bool AuthorityStatsPromoted(const SLiveAuthorityStats &stats)
+{
+    if(stats.samples < MathMax(1, InpAuthorityMinSamples))
+        return false;
+    return (AuthorityExpectancyR(stats) >= InpAuthorityMinExpectancyR &&
+            AuthorityProfitFactor(stats) >= InpAuthorityMinProfitFactor &&
+            stats.consecutiveLosses < 3);
+}
+
+string AuthorityStatsSummary(const string family, const SLiveAuthorityStats &stats)
+{
+    return StringFormat("%s samples=%d winrate=%.1f%% expR=%.3f pf=%.2f ddR=%.2f consecLoss=%d",
+                        family,
+                        stats.samples,
+                        stats.samples > 0 ? (100.0 * (double)stats.wins / (double)stats.samples) : 0.0,
+                        AuthorityExpectancyR(stats),
+                        AuthorityProfitFactor(stats),
+                        stats.maxDrawdownR,
+                        stats.consecutiveLosses);
+}
+
+void UpdateAuthorityStats(SLiveAuthorityStats &stats, const double outcomeR)
+{
+    stats.samples++;
+    stats.netR += outcomeR;
+    stats.equityR += outcomeR;
+    if(stats.equityR > stats.peakEquityR)
+        stats.peakEquityR = stats.equityR;
+    stats.maxDrawdownR = MathMax(stats.maxDrawdownR, stats.peakEquityR - stats.equityR);
+
+    if(outcomeR > 0.0)
+    {
+        stats.wins++;
+        stats.grossWinR += outcomeR;
+        stats.consecutiveLosses = 0;
+    }
+    else
+    {
+        stats.losses++;
+        stats.grossLossR += MathAbs(outcomeR);
+        stats.consecutiveLosses++;
+    }
+    stats.lastUpdate = TimeCurrent();
+}
+
+bool ResolveLiveAuthority(const string symbol,
+                          const bool hasAI,
+                          const bool hasONNX,
+                          const bool hasIndicator,
+                          const bool hasElliott,
+                          const int nonElliottIndicatorCount,
+                          const int confluence,
+                          const double tradeConfidence,
+                          const double qualityScore,
+                          const double convictionScore,
+                          const double contextScore,
+                          const double readinessScore,
+                          const double costScore,
+                          const string contributors,
+                          string &reason,
+                          double &riskMultiplier)
+{
+    reason = "LIVE_AUTHORITY_DISABLED";
+    riskMultiplier = 1.0;
+    if(!InpEnableLiveAuthorityGate)
+        return true;
+
+    if(costScore < InpAuthorityMinCostScore)
+    {
+        reason = StringFormat("AUTHORITY_COST_GATE cost=%.2f need=%.2f", costScore, InpAuthorityMinCostScore);
+        riskMultiplier = 0.0;
+        return false;
+    }
+    if(readinessScore < InpAuthorityMinReadinessScore)
+    {
+        reason = StringFormat("AUTHORITY_READINESS_GATE readiness=%.2f need=%.2f", readinessScore, InpAuthorityMinReadinessScore);
+        riskMultiplier = 0.0;
+        return false;
+    }
+    if(contextScore < InpAuthorityMinContextScore)
+    {
+        reason = StringFormat("AUTHORITY_CONTEXT_GATE context=%.2f need=%.2f", contextScore, InpAuthorityMinContextScore);
+        riskMultiplier = 0.0;
+        return false;
+    }
+
+    if(hasAI)
+    {
+        string family = hasONNX ? "ONNX" : "AI";
+        int familySamples = hasONNX ? g_authorityONNXStats.samples : g_authorityAIStats.samples;
+        bool mature = (familySamples >= MathMax(1, InpAuthorityMinSamples));
+        bool promoted = hasONNX ? AuthorityStatsPromoted(g_authorityONNXStats) : AuthorityStatsPromoted(g_authorityAIStats);
+        string familyStats = hasONNX ? AuthorityStatsSummary(family, g_authorityONNXStats)
+                                     : AuthorityStatsSummary(family, g_authorityAIStats);
+
+        if(promoted)
+        {
+            riskMultiplier = MathMax(0.10, InpAIPromotedRiskMultiplier);
+            reason = StringFormat("%s_PROMOTED | %s", family, familyStats);
+            return true;
+        }
+
+        if(mature)
+        {
+            reason = StringFormat("%s_DEMOTED_TO_SHADOW | %s", family, familyStats);
+            riskMultiplier = 0.0;
+            return false;
+        }
+
+        if(InpAllowAIWarmStartLive &&
+           tradeConfidence >= InpAIStandaloneMinConfidence &&
+           qualityScore >= 0.70 &&
+           convictionScore >= 0.45)
+        {
+            riskMultiplier = MathMax(0.10, InpAIBootstrapRiskMultiplier);
+            reason = StringFormat("%s_WARM_START_LIVE | conf=%.2f quality=%.2f samples=%d/%d contributors=%s",
+                                  family,
+                                  tradeConfidence,
+                                  qualityScore,
+                                  familySamples,
+                                  MathMax(1, InpAuthorityMinSamples),
+                                  contributors);
+            return true;
+        }
+
+        if(hasIndicator && confluence >= 2 && tradeConfidence >= 0.68)
+        {
+            riskMultiplier = MathMax(0.10, MathMax(InpAIBootstrapRiskMultiplier, InpNonAIPromotedRiskMultiplier));
+            reason = StringFormat("%s_WITH_INDICATOR_CONFLUENCE | conf=%.2f confluence=%d contributors=%s",
+                                  family,
+                                  tradeConfidence,
+                                  confluence,
+                                  contributors);
+            return true;
+        }
+
+        reason = StringFormat("%s_RESEARCH_SHADOW | conf=%.2f quality=%.2f samples=%d/%d contributors=%s",
+                              family,
+                              tradeConfidence,
+                              qualityScore,
+                              familySamples,
+                              MathMax(1, InpAuthorityMinSamples),
+                              contributors);
+        riskMultiplier = 0.0;
+        return false;
+    }
+
+    if(hasElliott && nonElliottIndicatorCount <= 0)
+    {
+        reason = StringFormat("ELLIOTT_ONLY_RESEARCH_SHADOW | %s", AuthorityStatsSummary("Elliott", g_authorityElliottStats));
+        riskMultiplier = 0.0;
+        return false;
+    }
+
+    bool indicatorPromoted = AuthorityStatsPromoted(g_authorityIndicatorStats);
+    if(confluence >= MathMax(2, InpMinLiveVoters) &&
+       nonElliottIndicatorCount >= 2 &&
+       (indicatorPromoted || g_authorityIndicatorStats.samples < MathMax(1, InpAuthorityMinSamples)) &&
+       tradeConfidence >= 0.62 &&
+       qualityScore >= 0.70)
+    {
+        riskMultiplier = MathMax(0.10, InpNonAIPromotedRiskMultiplier);
+        reason = indicatorPromoted
+                 ? StringFormat("INDICATOR_PROMOTED | %s", AuthorityStatsSummary("Indicator", g_authorityIndicatorStats))
+                 : StringFormat("INDICATOR_WARM_START | samples=%d/%d confluence=%d contributors=%s",
+                                g_authorityIndicatorStats.samples,
+                                MathMax(1, InpAuthorityMinSamples),
+                                confluence,
+                                contributors);
+        return true;
+    }
+
+    reason = StringFormat("UNPROVEN_RESEARCH_SHADOW | confluence=%d non_elliott=%d contributors=%s",
+                          confluence,
+                          nonElliottIndicatorCount,
+                          contributors);
+    riskMultiplier = 0.0;
+    return false;
+}
+
+int ResolveAuthorityTrialSlot()
+{
+    int size = ArraySize(g_authorityTrials);
+    int maxTrials = MathMax(1, InpAuthorityMaxTrackedTrials);
+    for(int i = 0; i < size; i++)
+    {
+        if(!g_authorityTrials[i].active)
+            return i;
+    }
+    if(size < maxTrials)
+    {
+        ArrayResize(g_authorityTrials, size + 1);
+        return size;
+    }
+
+    int oldest = 0;
+    datetime oldestTime = g_authorityTrials[0].startTime;
+    for(int i = 1; i < size; i++)
+    {
+        if(g_authorityTrials[i].startTime < oldestTime)
+        {
+            oldest = i;
+            oldestTime = g_authorityTrials[i].startTime;
+        }
+    }
+    return oldest;
+}
+
+void RegisterLiveAuthorityTrial(const SApprovedTradeCandidate &candidate,
+                                const bool liveSent,
+                                const string authorityReason)
+{
+    if(!InpEnableLiveAuthorityGate || !candidate.valid || candidate.stopLossPips <= 0.0 || candidate.entryPrice <= 0.0)
+        return;
+
+    int slot = ResolveAuthorityTrialSlot();
+    if(slot < 0)
+        return;
+
+    SLiveAuthorityTrial trial;
+    trial.active = true;
+    trial.liveSent = liveSent;
+    trial.symbol = candidate.symbol;
+    trial.signal = candidate.signal;
+    trial.entryPrice = candidate.entryPrice;
+    trial.stopLossPoints = candidate.stopLossPips;
+    trial.takeProfitPoints = candidate.takeProfitPips;
+    trial.startTime = TimeCurrent();
+    trial.expiryTime = trial.startTime + MathMax(60, InpAuthorityTrialHorizonSeconds);
+    trial.hasAI = candidate.hasAIContributor;
+    trial.hasONNX = candidate.hasONNXContributor;
+    trial.hasIndicator = candidate.hasIndicatorContributor;
+    trial.hasElliott = candidate.hasElliottContributor;
+    trial.contributors = candidate.contributorSummary;
+    trial.authorityReason = authorityReason;
+    g_authorityTrials[slot] = trial;
+
+    PrintFormat("[AUTHORITY-TRIAL] %s | %s | live=%s | conf=%.2f | stop=%.1f | tp=%.1f | horizon=%ds | reason=%s | contributors=%s",
+                candidate.symbol,
+                candidate.signalType,
+                liveSent ? "true" : "false",
+                candidate.tradeConfidence,
+                candidate.stopLossPips,
+                candidate.takeProfitPips,
+                MathMax(60, InpAuthorityTrialHorizonSeconds),
+                authorityReason,
+                candidate.contributorSummary);
+}
+
+void CompleteAuthorityTrial(const int index, const double outcomeR, const string closeReason)
+{
+    if(index < 0 || index >= ArraySize(g_authorityTrials) || !g_authorityTrials[index].active)
+        return;
+
+    SLiveAuthorityTrial trial = g_authorityTrials[index];
+    if(trial.hasAI)
+        UpdateAuthorityStats(g_authorityAIStats, outcomeR);
+    if(trial.hasONNX)
+        UpdateAuthorityStats(g_authorityONNXStats, outcomeR);
+    if(trial.hasIndicator)
+        UpdateAuthorityStats(g_authorityIndicatorStats, outcomeR);
+    if(trial.hasElliott)
+        UpdateAuthorityStats(g_authorityElliottStats, outcomeR);
+
+    PrintFormat("[AUTHORITY-RESULT] %s | signal=%s | live=%s | outcomeR=%.3f | reason=%s | trial_reason=%s | contributors=%s | AI={%s} | ONNX={%s} | IND={%s} | EW={%s}",
+                trial.symbol,
+                TradeSignalToString(trial.signal),
+                trial.liveSent ? "true" : "false",
+                outcomeR,
+                closeReason,
+                trial.authorityReason,
+                trial.contributors,
+                AuthorityStatsSummary("AI", g_authorityAIStats),
+                AuthorityStatsSummary("ONNX", g_authorityONNXStats),
+                AuthorityStatsSummary("Indicator", g_authorityIndicatorStats),
+                AuthorityStatsSummary("Elliott", g_authorityElliottStats));
+
+    g_authorityTrials[index].active = false;
+}
+
+void UpdateLiveAuthorityTrials()
+{
+    if(!InpEnableLiveAuthorityGate)
+        return;
+
+    datetime now = TimeCurrent();
+    for(int i = 0; i < ArraySize(g_authorityTrials); i++)
+    {
+        if(!g_authorityTrials[i].active)
+            continue;
+
+        SLiveAuthorityTrial trial = g_authorityTrials[i];
+        double point = SymbolInfoDouble(trial.symbol, SYMBOL_POINT);
+        if(point <= 0.0)
+            point = 0.00001;
+
+        MqlTick tick;
+        if(!SymbolInfoTick(trial.symbol, tick) || tick.bid <= 0.0 || tick.ask <= 0.0)
+            continue;
+
+        double currentPrice = (trial.signal == TRADE_SIGNAL_BUY) ? tick.bid : tick.ask;
+        double favorablePoints = 0.0;
+        if(trial.signal == TRADE_SIGNAL_BUY)
+            favorablePoints = (currentPrice - trial.entryPrice) / point;
+        else if(trial.signal == TRADE_SIGNAL_SELL)
+            favorablePoints = (trial.entryPrice - currentPrice) / point;
+        else
+            continue;
+
+        double stopPoints = MathMax(1.0, trial.stopLossPoints);
+        double targetPoints = MathMax(stopPoints * 0.50, trial.takeProfitPoints);
+        if(favorablePoints >= targetPoints)
+        {
+            CompleteAuthorityTrial(i, targetPoints / stopPoints, "target_reached");
+            continue;
+        }
+        if(favorablePoints <= -stopPoints)
+        {
+            CompleteAuthorityTrial(i, -1.0, "stop_reached");
+            continue;
+        }
+        if(now >= trial.expiryTime)
+        {
+            double outcomeR = MathMax(-1.0, MathMin(targetPoints / stopPoints, favorablePoints / stopPoints));
+            CompleteAuthorityTrial(i, outcomeR, "horizon_expired");
+        }
+    }
 }
 
 bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
@@ -2694,7 +3144,7 @@ void BuildStrategyFlags(bool &strategyFlags[])
     curatedBaseline[0] = false; // Momentum
     curatedBaseline[1] = false; // Trend
     curatedBaseline[2] = false; // Fibonacci
-    curatedBaseline[3] = true;  // Elliott Wave
+    curatedBaseline[3] = true;  // Elliott Wave can contribute; live send remains authority-gated
     curatedBaseline[4] = false; // Support/Resistance
     curatedBaseline[5] = true;  // Unified ICT
     curatedBaseline[6] = false; // Candlestick
@@ -2749,7 +3199,6 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
         ENUM_STRATEGY_ROLE role = ResolveStrategyRoleForSymbol(symbol, strategyName, strategyFlags);
         if(!indicatorsPrimary && role == PRIMARY_ALPHA)
             role = CONTEXT_FEATURE;
-
         manager.SetStrategyGovernanceByName(strategyName,
                                             role,
                                             ResolveStrategyClusterForName(strategyName),
@@ -3296,10 +3745,11 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     manager.SetSparseIntrabarThresholds(sparseIntrabarMinQuality,
                                         sparseIntrabarMinSupportRatio,
                                         sparseIntrabarMinReadyCoverage);
+    manager.SetAllowSparseIntrabarSingleVoter(InpAllowSparseIntrabarSingleVoter);
     manager.SetIntrabarDynamicQuorumEnabled(InpIntrabarDynamicQuorumEnabled);
     manager.SetIntrabarSingleVoterMinConfidence(intrabarSingleVoterMinConfidence);
     manager.SetConsensusDiagnosticsIntervalSeconds(InpDeadlockAttributionIntervalSec);
-    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_mode=EXOGENOUS_ONLY | validator_profile_inputs=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
+    PrintFormat("[ENTERPRISE-CONFIG] %s | class=%s | profile=%s | trend_filter=%s | quorum_threshold=%.2f | min_live_voters=%d | support_floor_newbar=%.2f | support_floor_intrabar=%.2f | sparse_single_voter=%s | sparse_quality=%.2f | sparse_support=%.2f | sparse_ready=%.2f | intrabar_dynamic_quorum_input=%s | single_voter_min_conf=%.2f | pipeline_min_conf=%.2f | validator_mode=EXOGENOUS_ONLY | validator_profile_inputs=newbar(conf>=%.2f confluence>=%d quality>=%.2f) intrabar(conf>=%.2f confluence>=%d quality>=%.2f) | deadlock_diag_interval=%ds | intrabar_conf_cap=%.2f",
                 symbol,
                 symbolClass,
                 symbolProfile,
@@ -3308,6 +3758,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
                 minLiveVoters,
                 MathMax(0.05, MathMin(1.0, InpConsensusSupportFloorNewBar)),
                 MathMax(0.05, MathMin(1.0, InpConsensusSupportFloorIntrabar)),
+                InpAllowSparseIntrabarSingleVoter ? "true" : "false",
                 sparseIntrabarMinQuality,
                 sparseIntrabarMinSupportRatio,
                 sparseIntrabarMinReadyCoverage,
@@ -3396,8 +3847,15 @@ int OnInit()
         return INIT_FAILED;
     }
 
+    if(AccountInfoDouble(ACCOUNT_BALANCE) < MIN_ACCOUNT_BALANCE)
+    {
+        Alert("[CRITICAL] Insufficient account balance for safe operation!");
+        return INIT_FAILED;
+    }
+
     tradeManager.SetOrderFillMode(InpOrderFillingMode);
     tradeManager.SetSlippage((uint)MathMax(1, InpTradeSlippagePoints));
+    tradeManager.SetExecutionCostLimits(InpMaxEntrySpreadPoints, InpMaxEntryDriftPoints);
     tradeManager.SetProtectiveModifyCooldownSeconds(InpProtectiveModifyCooldownSec);
     if(!tradeManager.Initialize((uint)InpMagicNumber, "MultiStrategyAutonomousEA"))
     {
@@ -3463,32 +3921,7 @@ int OnInit()
         Print("[AI-DASHBOARD] AI Health Monitoring initialized");
         Print("[AI-DASHBOARD] Configuration: Transformer(dModel=32, heads=2, layers=1), Ensemble diversity enabled");
     }
-    else
-    {
-        Print("[AI] AI Mode disabled - skipping AI subsystem initialization");
-    }
-
-    // Initialize unified risk authority (single risk contract)
-    SUnifiedRiskConfig unifiedRiskConfig;
-    unifiedRiskConfig.baseRiskPerTradePercent = InpMaxRiskPerTrade;
-    unifiedRiskConfig.minRiskPerTradePercent = MathMax(0.1, InpMaxRiskPerTrade * 0.5);
-    unifiedRiskConfig.maxRiskPerTradePercent = MathMin(MAX_RISK_PER_TRADE, InpMaxRiskPerTrade);
-    unifiedRiskConfig.maxDailyRiskPercent = InpMaxDailyRisk;
-    unifiedRiskConfig.maxPortfolioRiskPercent = InpMaxPortfolioRisk;
-    unifiedRiskConfig.correlationThreshold = CorrelationThreshold;
-    unifiedRiskConfig.maxPositionsSameBase = InpMaxPositionsSameBase;
-    unifiedRiskConfig.drawdownWarningPercent = MathMax(3.0, InpMaxDrawdown * 0.5);
-    unifiedRiskConfig.drawdownCriticalPercent = InpMaxDrawdown;
-    unifiedRiskConfig.adaptationMinTrades = 20;
-    unifiedRiskConfig.enableAdaptiveSizing = InpUseEnhancedRisk;
-    unifiedRiskConfig.enableAuditLogging = true;
-    unifiedRiskConfig.auditLogFile = "UnifiedRiskValidation.log";
-
-    if(!performanceAnalytics.Initialize())
-    {
-        Print("[CRITICAL] PerformanceAnalytics failed to initialize!");
-        return INIT_FAILED;
-    }
+    
     Print("[INIT] PerformanceAnalytics initialized");
 
     // FIX: Initialize AI Performance Feedback for prediction tracking (Phase 2, Task 3)
@@ -3502,6 +3935,22 @@ int OnInit()
         Print("[INIT] AIPerformanceFeedback initialized for AI model adaptation");
     }
 
+    // Populate unified risk configuration from inputs
+    SUnifiedRiskConfig unifiedRiskConfig;
+    unifiedRiskConfig.baseRiskPerTradePercent = InpMaxRiskPerTrade;
+    unifiedRiskConfig.minRiskPerTradePercent  = 0.1;
+    unifiedRiskConfig.maxRiskPerTradePercent  = MathMax(InpMaxRiskPerTrade, 100.0); // Allow high risk up to 100%
+    unifiedRiskConfig.maxDailyRiskPercent     = InpMaxDailyRisk;
+    unifiedRiskConfig.maxPortfolioRiskPercent = InpMaxPortfolioRisk;
+    unifiedRiskConfig.correlationThreshold    = 0.7;
+    unifiedRiskConfig.maxPositionsSameBase    = InpMaxPositionsSameBase;
+    unifiedRiskConfig.drawdownWarningPercent  = InpMaxDrawdown * 0.7;
+    unifiedRiskConfig.drawdownCriticalPercent = InpMaxDrawdown;
+    unifiedRiskConfig.adaptationMinTrades     = 10;
+    unifiedRiskConfig.enableAdaptiveSizing    = InpUseEnhancedRisk;
+    unifiedRiskConfig.enableAuditLogging      = true;
+    unifiedRiskConfig.auditLogFile            = "risk_audit_" + _Symbol + ".log";
+
     if(!unifiedRiskManager.Initialize(unifiedRiskConfig, &performanceAnalytics))
     {
         Print("[CRITICAL] UnifiedRiskManager failed to initialize!");
@@ -3512,6 +3961,9 @@ int OnInit()
                                                   MathMax(0.1, InpRiskMaxClusterExposurePct),
                                                   InpEnableClusterMutex);
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
+    
+    // Log initial account capacity diagnostics
+    LogAccountCapacityDiagnostics();
 
     // Initialize PositionSizer before enterprise managers
     SPositionSizingParams sizingParams;
@@ -3553,23 +4005,6 @@ int OnInit()
     if(InpUseCuratedStrategySet)
     {
         Print("[CURATION] Curated mode is advisory/default-only: explicitly enabled strategies remain active.");
-        Print("[CURATION] Effective runtime roster: ", BuildEnabledStrategyList(strategyFlags));
-    }
-    PrintFormat("[RUNTIME-FINGERPRINT] Runtime=%s | File=%s | TerminalBuild=%d | Curated=%s | RegistrySize=%d | ActiveProfile=%s | EAMode=%s | ActiveIndicators=%d | ActiveAI=%d",
-                TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
-                __FILE__,
-                (int)TerminalInfoInteger(TERMINAL_BUILD),
-                InpUseCuratedStrategySet ? "true" : "false",
-                g_strategyRegistry.GetDescriptorCount(),
-                BuildEnabledStrategyList(strategyFlags),
-                EAModeToString(ResolveEffectiveEAMode()),
-                g_strategyRegistry.GetActiveIndicatorCount(),
-                g_strategyRegistry.GetActiveAICount());
-    if(ResolveEffectiveEAMode() == EA_MODE_AI_ONLY && g_strategyRegistry.GetActiveIndicatorCount() == 0)
-    {
-        PrintFormat("[MODE-MASK] Indicator profile entries are configured (%s) but inactive because effective mode is %s",
-                    BuildEnabledStrategyList(strategyFlags),
-                    EAModeToString(ResolveEffectiveEAMode()));
     }
     bool effectiveIntrabarCadence = (InpEnableHybridCadence && !InpSignalScanOnNewBarOnly);
     PrintFormat("[CADENCE-CONFIG] hybrid=%s | newbar_only=%s | effective_intrabar=%s | intrabar_seconds=%d | intrabar_budget=%d | chart_only=%s",
@@ -4004,6 +4439,7 @@ void ProcessTradingLogic(bool fromTimer)
     // Refresh unified risk state (daily reset + adaptive risk level)
     unifiedRiskManager.RefreshRuntimeState();
     RefreshAccountRuntimeMetrics();
+    UpdateLiveAuthorityTrials();
 
     // Deterministic remediation loop for unprotected-position veto states.
     AttemptUnprotectedPositionRemediation();
@@ -4550,15 +4986,49 @@ void ProcessTradingLogic(bool fromTimer)
                                     currentSymbol, stopLossPips);
                     }
 
-                    double takeProfitPips = stopLossPips * 2.0;  // 2:1 RR ratio
+                    int stopLevelPts = (int)SymbolInfoInteger(currentSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+                    MqlTick costTick;
+                    double currentSpreadPoints = 0.0;
+                    if(SymbolInfoTick(currentSymbol, costTick) && costTick.ask > costTick.bid && pointValue > 0.0)
+                        currentSpreadPoints = (costTick.ask - costTick.bid) / pointValue;
 
-                    // Clamp SL/TP to reasonable bounds based on price percentage
-                    // Min SL: 0.5% of price, Max SL: 3.0% of price (tighter for safety)
-                    double minSlPips = (entryPrice * 0.005) / pointValue;
-                    double maxSlPips = (entryPrice * 0.03) / pointValue;
+                    // Scalp stabilization: never inflate a short-horizon setup into a 0.5%-3% swing envelope.
+                    // Stops are bounded by broker constraints, live spread, and ATR; trades with too much cost
+                    // relative to reward are rejected below.
+                    double minSlPips = MathMax(8.0, MathMax((double)stopLevelPts * 1.50, currentSpreadPoints * 3.0));
+                    double maxSlPips = (entryPrice * (isSynthetic ? 0.010 : 0.003)) / pointValue;
+                    if(maxSlPips < minSlPips)
+                        maxSlPips = minSlPips;
 
                     stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
-                    takeProfitPips = MathMin(stopLossPips * 2.0, maxSlPips * 2.0);
+                    double takeProfitPips = MathMin(stopLossPips * 1.50, maxSlPips * 1.50);
+
+                    if(currentSpreadPoints > 0.0 && takeProfitPips > 0.0 && currentSpreadPoints / takeProfitPips > 0.15)
+                    {
+                        g_hbValidatorRejects++;
+                        PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=execution_cost_reward spread_points=%.1f tp_points=%.1f cost_ratio=%.3f max=0.150",
+                                    scanCycleId,
+                                    currentSymbol,
+                                    currentSpreadPoints,
+                                    takeProfitPips,
+                                    currentSpreadPoints / takeProfitPips);
+                        continue;
+                    }
+
+                    // Account capacity early check
+                    double minLot = SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN);
+                    double marginRequired = 0;
+                    if(!OrderCalcMargin(orderType, currentSymbol, minLot, entryPrice, marginRequired))
+                        marginRequired = entryPrice * minLot / 100.0; // Fallback 1:100
+
+                    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+                    if(freeMargin < marginRequired)
+                    {
+                        g_hbSizingRejects++;
+                        PrintFormat("[ACCOUNT-CAPACITY] %s | min_lot=%.2f | free_margin=%.2f | req_margin=%.2f | reason=insufficient_for_min_lot",
+                                    currentSymbol, minLot, freeMargin, marginRequired);
+                        continue;
+                    }
 
                     double requestedRisk = unifiedRiskManager.GetActiveRiskPerTradePercent();
                     if(requestedRisk <= 0.0)
@@ -4611,6 +5081,9 @@ void ProcessTradingLogic(bool fromTimer)
                     symbolManager.GetLastSignalContributors(contributorsList);
                     bool hasAIContributor = ContributorsIncludeAI(contributorsList);
                     bool hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
+                    bool hasONNXContributor = ContributorsIncludeONNX(contributorsList);
+                    bool hasElliottContributor = ContributorsIncludeElliott(contributorsList);
+                    int nonElliottIndicatorContributors = CountNonElliottIndicatorContributors(contributorsList);
 
                     if(contributorSummary == "")
                     {
@@ -4626,7 +5099,7 @@ void ProcessTradingLogic(bool fromTimer)
 
                     string modeRejectReason = "";
                     double modeConfidenceBonus = 0.0;
-                    if(!EvaluateEAModeCandidateAdmission(contributorsList, modeRejectReason, modeConfidenceBonus))
+                    if(!EvaluateEAModeCandidateAdmission(contributorsList, tradeConfidence, modeRejectReason, modeConfidenceBonus))
                     {
                         g_hbValidatorRejects++;
                         PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=%s | mode=%s | contributors=%s | conf=%.2f",
@@ -4652,6 +5125,39 @@ void ProcessTradingLogic(bool fromTimer)
                                     hasIndicatorContributor ? "true" : "false",
                                     hasAIContributor ? "true" : "false");
                     }
+
+                    string liveAuthorityReason = "";
+                    double liveAuthorityRiskMultiplier = 1.0;
+                    bool liveAuthorityAllowed = ResolveLiveAuthority(currentSymbol,
+                                                                     hasAIContributor,
+                                                                     hasONNXContributor,
+                                                                     hasIndicatorContributor,
+                                                                     hasElliottContributor,
+                                                                     nonElliottIndicatorContributors,
+                                                                     confluence,
+                                                                     tradeConfidence,
+                                                                     qualityScore,
+                                                                     decisionContext.convictionScore,
+                                                                     decisionContext.contextScore,
+                                                                     decisionContext.readinessScore,
+                                                                     decisionContext.costScore,
+                                                                     contributorSummary,
+                                                                     liveAuthorityReason,
+                                                                     liveAuthorityRiskMultiplier);
+                    double authorityBaseRisk = proposedRisk;
+                    double authoritySizingMultiplier = liveAuthorityAllowed
+                                                       ? MathMax(0.10, liveAuthorityRiskMultiplier)
+                                                       : MathMax(0.10, InpAIBootstrapRiskMultiplier * 0.50);
+                    proposedRisk *= authoritySizingMultiplier;
+                    PrintFormat("[LIVE-AUTHORITY] cycle=%I64u | %s | live_allowed=%s | global_shadow=%s | risk=%.2f->%.2f | mult=%.2f | reason=%s",
+                                scanCycleId,
+                                currentSymbol,
+                                liveAuthorityAllowed ? "true" : "false",
+                                InpShadowMode ? "true" : "false",
+                                authorityBaseRisk,
+                                proposedRisk,
+                                authoritySizingMultiplier,
+                                liveAuthorityReason);
 
                     // Unified risk manager is the only pre-trade veto contract.
                     STradeValidationRequest tradeReq;
@@ -4757,6 +5263,12 @@ tradeReq.lotSize = lotSize;
                                 candidate.strategyClusterCode = strategyClusterCode;
                                 candidate.contributorSummary = contributorSummary;
                                 candidate.hasAIContributor = hasAIContributor;
+                                candidate.hasONNXContributor = hasONNXContributor;
+                                candidate.hasIndicatorContributor = hasIndicatorContributor;
+                                candidate.hasElliottContributor = hasElliottContributor;
+                                candidate.liveAuthorityAllowed = liveAuthorityAllowed;
+                                candidate.liveAuthorityRiskMultiplier = liveAuthorityRiskMultiplier;
+                                candidate.liveAuthorityReason = liveAuthorityReason;
                                 candidate.cycleId = scanCycleId;
                                 candidate.riskResult = riskResult;
                                 candidate.rankingScore = CalculateCandidateRankingScore(candidate);
@@ -4819,7 +5331,7 @@ tradeReq.lotSize = lotSize;
 
             if(bestCandidate.valid)
             {
-                PrintFormat("[SCAN-DECISION] cycle=%I64u | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | diversity=%.2f | confluence=%d | contributors=%s",
+                PrintFormat("[SCAN-DECISION] cycle=%I64u | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | diversity=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | contributors=%s",
                             bestCandidate.cycleId,
                             bestCandidate.symbol,
                             bestCandidate.signalType,
@@ -4831,11 +5343,14 @@ tradeReq.lotSize = lotSize;
                             bestCandidate.costScore,
                             bestCandidate.diversityScore,
                             bestCandidate.confluence,
+                            bestCandidate.liveAuthorityAllowed ? "true" : "false",
+                            bestCandidate.liveAuthorityReason,
                             bestCandidate.contributorSummary);
 
+                bool executeAsShadow = (InpShadowMode || (InpEnableLiveAuthorityGate && !bestCandidate.liveAuthorityAllowed));
                 datetime aiPredictionTime = 0;
                 bool aiPredictionRecorded = false;
-                if(!InpShadowMode && g_aiFeedbackReady && bestCandidate.hasAIContributor)
+                if(!executeAsShadow && g_aiFeedbackReady && bestCandidate.hasAIContributor)
                 {
                     aiPredictionTime = TimeCurrent();
                     aiFeedback.RecordPrediction(bestCandidate.symbol,
@@ -4847,12 +5362,14 @@ tradeReq.lotSize = lotSize;
                     aiPredictionRecorded = (aiPredictionTime > 0);
                 }
 
-                if(InpShadowMode)
+                if(executeAsShadow)
                 {
                     g_hbShadowTrades++;
                     g_hbSignalsSent++;
-                    g_lastTradeTime = tickTime;
-                    PrintFormat("[SHADOW-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                    if(InpShadowMode)
+                        g_lastTradeTime = tickTime;
+                    RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
+                    PrintFormat("[SHADOW-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
                                 bestCandidate.cycleId,
                                 bestCandidate.symbol,
                                 bestCandidate.signalType,
@@ -4864,6 +5381,8 @@ tradeReq.lotSize = lotSize;
                                 bestCandidate.readinessScore,
                                 bestCandidate.costScore,
                                 bestCandidate.confluence,
+                                bestCandidate.liveAuthorityAllowed ? "true" : "false",
+                                bestCandidate.liveAuthorityReason,
                                 bestCandidate.strategyRoleTag,
                                 bestCandidate.strategyClusterTag,
                                 bestCandidate.contributorSummary,
@@ -4927,6 +5446,7 @@ tradeReq.lotSize = lotSize;
                         g_hbSignalsSent++;
                         unifiedRiskManager.RegisterExecutedTradeRisk(bestCandidate.riskResult, fillRatio);
                         g_lastTradeTime = tickTime;
+                        RegisterLiveAuthorityTrial(bestCandidate, true, bestCandidate.liveAuthorityReason);
 
                         if(fillRatio < 0.999)
                         {

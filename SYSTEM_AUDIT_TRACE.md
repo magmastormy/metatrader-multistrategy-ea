@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-04-27
+- Last Updated: 2026-05-13
 - Scope: Runtime lifecycle and ownership trace
-- Current Batch: 76 - AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup
+- Current Batch: 80 - Fix Hardcoded Zero Weights for Experimental AI Families
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -26,8 +26,10 @@
 - Validate terminal and trading permissions.
 - Initialize mandatory execution/risk/runtime systems.
 - Emit explicit `[EXECUTION-MODE]` startup telemetry for shadow vs live posture.
+- Start from live-capable authority-gated defaults: AI/ONNX enabled, global live execution allowed, high-confidence AI/ONNX warm-start enabled, two-voter ordinary quorum, and sparse one-voter intrabar admission disabled.
 - Reject unsupported non-hedging account models before runtime ownership is established.
 - Apply execution safety controls (fill mode, slippage, protective modify cooldown) before trade-manager bootstrap.
+- Apply hard execution-cost controls (max pre-send spread and max signal-price drift) before trade-manager bootstrap.
 - Initialize optional AI subsystems conditionally by flags and convert failures into readiness-state degradation instead of fatal startup aborts.
 - Emit `[AI-TOPOLOGY]` so MT5-native voters, ONNX live voting, Python bridge expectations, and external LLM reasoning posture are visible from init logs.
 - Bootstrap the shared universal transformer service before AI brains/adapters start symbol registration, while keeping the service lazy-safe for indirect runtime callers.
@@ -39,6 +41,7 @@
 - Build symbol-class-specific strategy flags before manager bootstrap so synthetic symbols can use a leaner live roster than FX without violating per-symbol consensus ownership.
 - Rebuild scheduler state only after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff remain a single aligned authority.
 - Treat curated mode as a baseline/default profile only; explicit strategy enables remain authoritative instead of being rewritten away at runtime.
+- Registered AI strategies (Neural Network, Transformer, Ensemble, ONNX) now receive non-zero weights from `InpAIWeightMultiplier` during registry bootstrap, ensuring they can participate in live voting when enabled instead of being suppressed by zero weight.
 - Reconstruct `[TRADE-STATE]` / cooldown timing from EA-owned history and open positions.
 - Initialize `CTieredSignalValidator` and manager-side AI voting surfaces for multi-tier signal hierarchy.
 - Prime one pending new-bar scan per validated symbol so startup cannot produce a fully idle manager fleet with zero first-pass evaluations.
@@ -63,6 +66,7 @@
 - Run intrabar scans when eligible.
 - Hybrid cadence is now the default live posture: `InpSignalScanOnNewBarOnly=false` keeps timed intrabar scans active unless operators explicitly force strict new-bar-only mode, and startup still emits `[CADENCE-WARNING]` when that override is active.
 - The default intrabar symbol budget is widened to `4` so live synthetic verification spends more of the available cadence budget each cycle without fully unbounding scan cost.
+- Batch 78 raises intrabar cadence/throughput further (`5s` scans, wider per-cycle budgets) so the EA behaves like a faster automated system while still preserving execution-cost and authority gates.
 - Budget intrabar scans by symbol yield and apply per-symbol backoff after repeated low-yield or readiness-faulted intrabar passes.
 - Emit heartbeat funnel and conversion-rate telemetry at configured diagnostics interval.
 
@@ -87,7 +91,7 @@
   - Prevents impossible quorum math where inactive strategies inflated weight pool and rejected legitimate votes.
   - Adaptive one-/two-voter quality thresholds now respect the current base quorum so user-lowered quorum profiles are not silently re-hardened by stale fixed fallback thresholds.
 - Manager quorum requires directional quality, support-ratio floors, effective min voters, minimum ready-live-weight participation, and conflict-deadband separation.
-- Manager can emit a separate `SPARSE_INTRABAR` decision class for tightly gated one-sided single-voter intrabar packets.
+- Manager can emit a separate `SPARSE_INTRABAR` decision class only when `InpAllowSparseIntrabarSingleVoter=true`; the default posture keeps this off and routes high-confidence AI-only packets through the live-authority gate instead.
 - **Multi-Tier Signal Validation (Batch 60):**
   - Votes are processed through `CTieredSignalValidator` for tier-based hierarchy.
   - **Tiered Evaluation**: Groups strategies into Institutional (T1), Structure (T2), and Indicators (T3).
@@ -101,7 +105,7 @@
 - Pipeline now includes deterministic regime/cost viability gate before validator.
 - Pipeline caches structural engine state once per symbol/timeframe/bar and carries a shared evidence snapshot (`readiness`, `context`, `cost`, readiness class, reuse/staleness`) forward through consensus and validation.
 - Pipeline and validator both support bounded soft-pass behavior for near-threshold candidates when the broader evidence profile is strong.
-- Pipeline preserves admitted confidence after threshold passage instead of attenuating surviving packets a second time before quorum and validator.
+- Pipeline attenuates admitted confidence after threshold passage using readiness/context/staleness evidence so weak packets cannot preserve inflated confidence downstream.
 - `CRegimeEngine` may reuse a recent valid same-context snapshot on transient warmup / copy / handle-init faults and performs bounded handle reset after repeated data faults.
 - `CVolatilityEngine` and `CRegimeEngine` now recover ATR/Bollinger inputs from raw rates when indicator buffers fault against mature series, preventing the pipeline from degrading to zero ATR during transient `BB_BUFFER_COPY_FAILED` / warmup loops.
 - `CTrendEngine` now allows mature-series partial-readiness to proceed so bounded MA/ATR fallback logic can attempt recovery; it may still reuse a bounded last-good trend snapshot on transient MA/ATR copy faults and emits `[READINESS-STATE]` reuse telemetry.
@@ -115,6 +119,7 @@
 - Validator still consumes manager quorum facts (`effectiveMinVoters`, `directionalQuality`, `supportRatio`) together with conviction/readiness/context/cost evidence so exogenous validation telemetry stays aligned with the already-authoritative manager decision.
 - Strategy overrides that bypass base-class `GetSignal(...)` now emit explicit decision tags, and manager defensively downgrades any remaining placeholder abstentions so they cannot silently dilute ready-live quorum math.
 - Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
+- Live authority is applied per candidate before live send: `[LIVE-AUTHORITY]` decides live vs candidate-level shadow and scales risk; `[AUTHORITY-TRIAL]` records forward evidence; `[AUTHORITY-RESULT]` updates AI/ONNX/indicator/Elliott family statistics for promotion or demotion.
 - Final validator ATR acquisition now resolves from the shared indicator handle first and then a raw-rate ATR fallback, preventing transient copy misses from forcing `Invalid ATR: 0.00000` vetoes on otherwise-valid packets.
 - Final EA admission also applies ATR-ratio crisis gating (`ATR14/ATR50`) so volatility shocks can reject or down-scale otherwise valid entries before risk sizing.
 - AI vote generation is same-bar cached:
@@ -176,6 +181,7 @@
 - ATR stop-distance fallback when indicator read fails.
 - Risk-approved opportunities are staged as ranked candidates across the full symbol scan before shadow or live execution.
 - Live execution captures broker receipt state, price/slippage/latency telemetry, and risk registration scales consumed entry budget by actual fill ratio.
+- Live execution now blocks before send when quote spread or signal-price drift exceeds configured hard limits, emitting `[EXECUTION-BLOCKED]`.
 - Post-entry lifecycle management now scales BE/trailing/partial-close thresholds against original stop distance, eliminating the previous fixed-pip asymmetry where wide-stop synthetic winners were harvested almost immediately while losers still paid the full original stop.
 - Protective stop modifications now validate against executable quote side and retry once with extra cushion on `TRADE_RETCODE_INVALID_STOPS`, reducing live-management churn on fast synthetic symbols.
 - Per-symbol capacity checks include explicit external-position block telemetry.
@@ -205,7 +211,7 @@
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
 - Multi-Tier: `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SPIKE-ALARM]`, `[SPIKE-PAUSE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, `[AUTHORITY-RESULT]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[EXECUTION-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SPIKE-ALARM]`, `[SPIKE-PAUSE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`, `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
@@ -423,4 +429,9 @@
   - Added two new manager-registered Tier-1 structure strategies: `CUnicornModelStrategy` and `CPowerOfThreeStrategy`.
   - Integrated `CISD` and `Turtle Soup` directly into the Unified ICT support stack.
   - Widened the canonical AI feature contract from 55 to 57 features; Python training now consumes exported MT5 feature columns when available so tick-derived features remain parity-safe.
-  - Batch 74 contract reconciliation removed the stale `CAdvancedPositionManager` ownership claim from repo governance docs. The authoritative lifecycle owner is the EA safety loop in `MultiStrategyAutonomousEA.mq5`, which delegates active lifecycle handling through `CTradeManager::ManageAllPositions(...)` while preserving unified pre-trade veto and trade-manager execution ownership.
+
+### Batch 79: Weltrade Environment Consolidation & Micro-Account Support (2026-05-13)
+- **Environment Discovery:** Hardened `sync_and_compile.ps1` to detect and prioritize `C:\Program Files\MT5 Weltrade` as the root directory, ensuring that `MetaEditor64.exe` and the standard MQL5 includes are mapped from the operator's active installation.
+- **Risk Floor Lowering:** Adjusted `MIN_ACCOUNT_BALANCE` in `Core/Utils/Enums.mqh` from `$100.0` to `$1.0`. This modification allows the `RiskValidationGate` to process trades on $10 micro-accounts while still preserving a safety floor for margin calculation.
+- **Aggressive-Ready Configuration:** Confirmed that `maxRiskPerTradePercent` is initialized to `100.0` in the EA orchestrator, allowing users to manually override conservative risk (0.75%) with aggressive settings (5-10%) suitable for $10 test accounts.
+- **Validation:** Clean synchronization and compilation of `MultiStrategyAutonomousEA.mq5` and `TrainingDataExporter.mq5` to the Weltrade environment with 0 errors and 0 warnings.

@@ -1047,17 +1047,16 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
                                     thresholdReasonTag, confidence, baseMinConfidence, effectiveMinConfidence));
     }
 
-    // Note: Preserve post-threshold confidence once a signal survives the pipeline.
-    // Context/readiness/cost already travel downstream as separate evidence inputs,
-    // so reducing confidence here only double-penalizes the same packet in quorum
-    // and validator stages.
+    // Profitability audit fix: context/readiness/staleness must be allowed to
+    // reduce confidence. Preserving the pre-adjusted score lets weak evidence
+    // pass downstream as fake certainty.
     if(passed)
     {
         double contextBlend = 0.80 + (0.20 * m_lastEvidence.contextScore);
         double readinessBlend = 0.85 + (0.15 * m_lastEvidence.readinessScore);
         double stalenessBlend = MathMax(0.70, 1.0 - m_lastEvidence.stalenessPenalty);
         double adjustedConfidence = MathMax(0.0, MathMin(1.0, confidence * contextBlend * readinessBlend * stalenessBlend));
-        confidence = MathMax(confidence, adjustedConfidence);
+        confidence = adjustedConfidence;
     }
     
     if(!passed)

@@ -178,8 +178,8 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
         // Get free margin
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
         
-        // Safety check - ensure we have at least 20% buffer
-        if(marginRequired > freeMargin * 0.8)
+        // Safety check - ensure we have at least 5% buffer (instead of 20%)
+        if(marginRequired > freeMargin * 0.95)
         {
             LogError(ERROR_WARNING, "PositionSizer", "Insufficient margin. Required: " + 
                      DoubleToString(marginRequired, 2) + 
@@ -620,9 +620,9 @@ double CPositionSizer::ValidatePositionSize(const string symbolParam,
     double marginRequired = CalculateMarginRequirement(symbolParam, validatedSize);
     double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
     
-    if(marginRequired > freeMargin * 0.8) // Use max 80% of free margin
+    if(marginRequired > freeMargin * 0.95) // Use max 95% of free margin
     {
-        double safeSize = (freeMargin * 0.8) / (marginRequired / validatedSize);
+        double safeSize = (freeMargin * 0.95) / (marginRequired / validatedSize);
         validatedSize = MathMax(MIN_LOT_SIZE, safeSize);
         LogSizingDecision(symbolParam, validatedSize, "Adjusted for margin requirements");
     }
@@ -678,8 +678,8 @@ double CPositionSizer::CalculateMaxSafeSize(const string symbolParam)
     if(marginRequired <= 0 || freeMargin <= 0)
         return MIN_LOT_SIZE;
     
-    // Use maximum 50% of free margin for safety
-    double maxSize = (freeMargin * 0.5) / marginRequired;
+    // Use maximum 90% of free margin for safety
+    double maxSize = (freeMargin * 0.9) / marginRequired;
     
     return MathMax(MIN_LOT_SIZE, MathMin(maxSize, MAX_LOT_SIZE));
 }

@@ -1,13 +1,15 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-04-27
-- Status: Batch 76 - AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup
+- Last Updated: 2026-05-13
+- Status: Batch 80 - Fix Hardcoded Zero Weights for Experimental AI Families
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.
 
 ## System Snapshot
+- **Fix Hardcoded Zero Weights for Experimental AI Families (Batch 80):** Resolves the issue where `Transformer AI` and `Ensemble AI` were generating signals but were excluded from live voting due to 0.0 weights. These strategies now receive non-zero weights from `InpAIWeightMultiplier` during registry bootstrap, ensuring they can participate in consensus voting when enabled.
+- **Adaptive Live Authority Gate & AI/ONNX Warm-Start (Batch 78):** Source defaults are live-capable again, with AI/ONNX enabled and `InpShadowMode=false`, but candidate execution is controlled by `InpEnableLiveAuthorityGate`. High-confidence AI/ONNX packets can warm-start live at scaled risk while the EA records forward R evidence through `[AUTHORITY-TRIAL]` and `[AUTHORITY-RESULT]`; mature families are promoted when expectancy/profit-factor thresholds pass and demoted to shadow when they fail. Elliott Wave can contribute to consensus, but Elliott-only packets stay research/shadow unless independent evidence and confluence earn live authority. Intrabar cadence is faster (`5s`) with larger scan budgets, while hard spread/drift and cost/reward gates remain in front of execution.
 - **Batch 74 Runtime Hardening + Contract Reconciliation (Batch 74):** Fresh `20260427.log` analysis exposed three concrete runtime hazards: `Power of Three` could fail hard on symbols without a valid SMT companion, AI-only sessions could deadlock before neural registration when no indicator strategies were active, and stale neural checkpoints could still be loaded after the 57-feature contract upgrade and corrupt online-training buffers. The runtime now treats SMT as optional inside `CPowerOfThreeStrategy`, allows neural bootstrap whenever a symbol manager exists, bumps the neural checkpoint schema to `v7`, hardens training-ring bounds before writes, and disables ONNX for the rest of the session after the first hard initialization failure with an explicit `57-feature` retrain/export warning. The symbol-universe parsing and chart-symbol membership checks were also further extracted from `OnInit()` through `Core/Management/SymbolUniverseBuilder.mqh`, continuing the requested debloat of the main EA file.
 - **Blueprint Closure + ICT/Feature Expansion (Batch 73):** The remaining `debloat.md`, `ai_upgrade_one.md`, and `ai_upgrade_two.md` implementation gaps are now wired into the codebase: `CUnicornModelStrategy` and `CPowerOfThreeStrategy` are registered as live Tier-1 structure voters, `StrategyUnifiedICT` now consumes CISD confluence and opposing-CISD vetoes, the liquidity/structure stack now detects Turtle Soup and CISD directly, Elliott Wave scoring now carries degree awareness plus an ML-style probability blend, the Python sidecar surface now includes DoubleAdapt/Kronos/MAML bridge scaffolds, and the canonical AI feature contract has been widened from 55 to 57 features by adding OFI and synthetic spike-recovery context. Python training now prefers exported `feature_*` columns when present, so MT5-exported tick-derived features remain training-serving consistent. Any ONNX model intended for live use must now be retrained/exported against the 57-feature contract.
 - **Timer/Tick Safety Split + ONNX/Pipeline Upgrade (Batch 72):** Heavy trading evaluation is now timer-owned while `OnTick()` runs a lightweight safety/lifecycle loop, synthetic indices have a tick-velocity spike alarm with flatten-and-pause behavior, ATR-ratio crisis gating can reject or halve risk during volatility shocks, ONNX inference now supports Python-exported scaler parity through `scaler.bin`, `TrainingDataExporter.mq5` can export the live 55-feature vector contract, and the Python stack now includes uniqueness weighting, CPCV validation, IC-gated model promotion, LightGBM/stacker tooling, regime/turbulence helpers, feature cross-checking, and a ZMQ bridge surface.
@@ -32,7 +34,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Pre-trade decision gate is centralized in `CUnifiedRiskManager`.
 - Execution is centralized in `CTradeManager`.
 - Position lifecycle is centralized in the EA safety loop via `CTradeManager::ManageAllPositions(...)`, and the generic EA-level breakeven/trailing manager is now opt-in rather than silently active.
-- Shadow mode (`InpShadowMode`) runs full stack without sending real orders.
+- Shadow mode (`InpShadowMode`) remains a global dry-run override. Normal source defaults are live-capable, but the live-authority gate can shadow individual unproven candidates without disabling the whole EA.
 - Runtime registry is active-only: disabled strategies and disabled AI adapters are not registered into managers, weight pools, or orchestrator identity sets.
 - Retired standalone strategy artifacts and their commented stubs are removed from runtime sources.
 - Legacy `Config/StrategyConfig.mqh` (removed-strategy config surface) has been deleted from runtime inventory.
@@ -69,7 +71,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Post-trade cooldown, total-position caps, unprotected-position vetoes, and per-symbol capacity now pause entry only; signal generation and validator telemetry continue running while the EA is blocked from sending.
 - Validator spread-shock state is symbol-scoped, so one symbol's transient spread event no longer poisons validator spread decisions on the rest of the portfolio.
 - Quorum uses normalized weighted conviction pooling (`InpQuorumThreshold`, `InpMinLiveVoters`, per-strategy weights, readiness participation, rolling strategy health) instead of binary voter counts.
-- Curated mode now acts as the default baseline profile rather than a runtime suppressor: fresh defaults stay lean (`Elliott Wave` + `Unified ICT`), but any strategy you explicitly enable remains active and participates in voting.
+- Curated mode now acts as the default baseline profile rather than a runtime suppressor: fresh defaults keep Elliott Wave available as a contributor, but candidate-level live authority blocks Elliott-only execution until evidence/confluence justify it.
 - Intrabar eligibility now means real intrabar voting, with symbol-class-aware exceptions: on balanced FX profiles an enabled intrabar strategy votes live, while synthetic lean profiles keep `Fibonacci`/`Elliott Wave`/`Support-Resistance`/`Unified ICT` as `LIVE`, leave `Candlestick` as intrabar `PROBE`, and remove `Momentum`/`Trend` from the local synthetic manager roster when structure-capable strategies are already enabled.
 - Startup governance logs now distinguish active vs inactive strategies in the intrabar summary, so disabled strategies no longer appear as intrabar `LIVE` simply because their input toggle is true in a different profile.
 - `AI_ONLY` sessions now emit a `[MODE-MASK]` explanation when indicator-profile entries remain configured in inputs but are intentionally absent from the active registry, preventing false conclusions that indicator families were "participating badly" when they were actually mode-filtered out.
@@ -78,11 +80,11 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - Synthetic lean profiles now also use their own sparse intrabar admission thresholds (`InpSyntheticLeanSparseIntrabarMinQuality`, `InpSyntheticLeanIntrabarSingleVoterMinConfidence`) so one-voter synthetic structure signals are not forced through the same FX-style quality floor as broader balanced rosters.
 - Synthetic profiles also use lighter higher-timeframe structure ladders and bypass ADX-dependent trend modeling inside `CTrendEngine`, which removes repeated synthetic-only readiness churn without changing FX trend behavior.
 - Full quorum now requires both directional quality and directional support ratio (`InpConsensusSupportFloorNewBar`, `InpConsensusSupportFloorIntrabar`), not just a single pooled score.
-- Intrabar can admit a tightly gated `SPARSE_INTRABAR` decision class for one-sided single-voter packets when readiness, context, cost, support, and ready-coverage all remain strong.
+- Intrabar sparse one-voter admission is disabled by default (`InpAllowSparseIntrabarSingleVoter=false`); high-confidence AI-only HYBRID packets instead use the explicit live-authority path (`InpAllowHybridAIStandalone`, `InpAIStandaloneMinConfidence`).
 - Non-AI strategy throughput is controlled by dedicated pipeline confidence inputs and manager-owned quorum/admission logic instead of the AI threshold (`InpPipelineMinConfidence`, `InpValidatorNewBarMinConfidence`, `InpValidatorIntrabarMinConfidence`, `InpValidator*MinConfluence`, `InpValidator*MinQuality`).
 - Consensus vote admission now reuses the pipeline's effective confidence floor for the current evaluation, so regime-relaxed pipeline passes are not discarded before quorum.
 - Pipeline engine work is now cached per symbol/timeframe/bar and converted into a shared evidence snapshot (`readiness`, `context`, `cost`), reducing duplicate hot-path indicator/structure churn across strategies.
-- Pipeline no longer attenuates surviving signal confidence after threshold admission; confidence, readiness, context, and cost now travel as separate evidence channels instead of being double-penalized before quorum.
+- Pipeline now allows readiness/context/staleness evidence to reduce surviving signal confidence; weak evidence can no longer preserve pre-adjusted confidence as fake certainty.
 - `StrategyElliottWaveEnhanced::OnNewBar(...)` now refreshes state only; the manager-owned consensus pass is the single authoritative `GetSignal(...)` call for the bar, preventing pre-consumed Elliott signals from disappearing before quorum.
 - Strategy registration now follows the live registry only: disabled curated modules and disabled AI adapters stay compiled in source but do not participate in manager registration, weight accounting, or orchestrator naming.
 - Pipeline still supports bounded soft-pass behavior for near-threshold signals when readiness, context, and conviction are strong, so more valid trades survive to manager consensus without widening bad-signal admission.
@@ -218,6 +220,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[TRADE-CONFIRMED]`: confirmed deal lifecycle events from `OnTradeTransaction`.
 - `[EXECUTION-RECEIPT]`: broker execution receipt including requested/fill volume, retcode, and retry count.
 - `[EXECUTION-TELEMETRY]`: broker request/fill price, slippage points, and round-trip latency.
+- `[EXECUTION-BLOCKED]`: hard pre-send market/quote/spread/drift rejection in `CTradeManager`.
 - `[TRADE-EXECUTION]`: cycle-level live execution summary including fill ratio, request/fill price, slippage, and latency.
 - `[FILL-DIFF]`: partial-fill delta between requested and executed size.
 - `[PIPELINE-THRESHOLD]`: confidence-threshold source (`REGIME_RANGE`, `REGIME_TREND_RELAX`, `REGIME_BREAKOUT_RELAX`, `REGIME_CHAOS`, `REGIME_ENGINE_WARMUP`) with effective values.
@@ -247,7 +250,7 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 4. Start symbol: `EURUSD.0`.
 5. Period: `M1`.
 6. Load inputs from `shadow_session.set`.
-7. Keep `InpShadowMode=true` during burn-in.
+7. Keep `InpEnableLiveAuthorityGate=true`; use `InpShadowMode=true` only for full dry-run sessions.
 8. Start and monitor logs.
 
 ## Known Issues and Mitigations

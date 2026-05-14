@@ -2,6 +2,83 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-05-13
+
+### Batch 80: Fix Hardcoded Zero Weights for Experimental AI Families (2026-05-13)
+
+#### Root Cause
+Operator reported that in `AI_ONLY` mode, the EA was not trading and AI models appeared inactive. Log analysis revealed that while the AI strategies (Transformer AI, Ensemble AI) were successfully generating signals (e.g., `Ensemble AI` generating `SELL` with 0.98 confidence), their votes were entirely suppressed and excluded from the quorum (`suppressed={Ensemble AI:SELL@0.81}`). This occurred because `Transformer AI` and `Ensemble AI` had their weights hard-coded to `0.0` inside `BuildStrategyRegistry()`, causing the Enterprise Strategy Manager to flag them as `!liveVoters`. Since Neural Network was returning `NONE` and ONNX failed to load, all candidate signals were vetoed with `pipeline_filtered_all`.
+
+#### Implementation Summary
+- **AI Weight Activation:** Replaced the hard-coded `0.0` weights for `Transformer AI` and `Ensemble AI` in `MultiStrategyAutonomousEA.mq5` with `MathMax(0.1, InpAIWeightMultiplier)`. 
+- When the operator manually enables these "experimental" models via inputs (`InpEnableTransformer=true` / `InpEnableEnsemble=true`), they will now carry the global AI explicit weight multiplier and be eligible to pass signals through the live voting quorum instead of being silently suppressed.
+
+#### Validation Evidence
+- Compilation verified with `sync_and_compile.ps1` (0 errors, 0 warnings).
+- Confirmed that with fixed weights, AI model signals will pass the `liveVoter` checks in `EnterpriseStrategyManager.mqh`.
+
+### Batch 79: Weltrade Environment Consolidation & Micro-Account Support (2026-05-13)
+
+#### Root Cause
+Operator transition to a Weltrade-specific MT5 environment required script-level alignment for synchronization and compilation. Additionally, the $10 micro-account testing use case was blocked by a legacy $100 minimum account balance floor.
+
+#### Implementation Summary
+- **Weltrade Environment Alignment:** Updated `sync_and_compile.ps1` to prioritize `C:\Program Files\MT5 Weltrade\MetaEditor64.exe` and added specifically detected include/executable candidates to the discovery logic.
+- **Micro-Account Support ($1.00 Floor):** Lowered `MIN_ACCOUNT_BALANCE` in `Core/Utils/Enums.mqh` from `100.0` to `1.0`. This allows the `RiskValidationGate` to process trades on $10 micro-accounts while still maintaining a safety floor for 0.01 lot margin requirements.
+- **Documentation Sync:** Updated `SYSTEM_AUDIT_TRACE.md` and `README.md` to reflect the environment change and micro-account capability.
+
+#### Validation Evidence
+- `./sync_and_compile.ps1 -MirrorSync` completed successfully on 2026-05-13:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+  - Automated detection of Weltrade MetaEditor and Include paths confirmed.
+
+## [78] - 2026-05-07
+
+### Batch 78: Adaptive Live Authority Gate & AI/ONNX Warm-Start (2026-05-07)
+
+#### Root Cause
+Operator feedback clarified that the prior proof-mode hardening was too blunt: historical AI/ONNX runs had already shown meaningful profitability, and a permanent global shadow-only posture would remove the system's strongest live edge instead of managing it intelligently.
+
+#### Implementation Summary
+- **Live trading restored under authority control:** `InpShadowMode` now defaults to `false`, AI mode / Neural Network / ONNX defaults are enabled, and risk defaults are raised to live-capable but still governed levels (`0.75%` per trade, `3%` daily, `6%` portfolio).
+- **Adaptive live-authority gate added:** `InpEnableLiveAuthorityGate` controls candidate-level live vs shadow routing. Every selected candidate now emits `[LIVE-AUTHORITY]` with the live decision, risk multiplier, and reason.
+- **AI/ONNX warm-start path:** high-confidence AI/ONNX candidates can trade live at scaled bootstrap risk while the system builds forward evidence; mature AI/ONNX families are promoted when expectancy/profit-factor thresholds pass and demoted to shadow when they fail.
+- **Forward R evidence loop:** `[AUTHORITY-TRIAL]` records live and shadow candidates, then `[AUTHORITY-RESULT]` resolves target/stop/horizon outcomes and updates AI, ONNX, indicator, and Elliott family statistics.
+- **Hybrid AI standalone admission:** high-confidence AI-only packets can pass HYBRID mode through `InpAllowHybridAIStandalone` / `InpAIStandaloneMinConfidence`, instead of being rejected just because indicators abstained.
+- **Elliott is no longer globally muted, but not trusted blindly:** Elliott Wave can contribute to consensus again; Elliott-only candidates remain shadow/research unless authority evidence and independent confluence justify live execution.
+- **Higher-frequency posture restored:** intrabar scans now default to `5s`, with wider per-cycle intrabar and total signal-evaluation budgets. Global cooldown is reduced to `45s`, while one-position-per-symbol and execution-cost gates remain active.
+
+#### Validation Evidence
+- `./sync_and_compile.ps1 -MirrorSync -MetaTraderRoot 'C:\Program Files\MT5 Weltrade'` completed successfully on 2026-05-07:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+  - compile artifact cleanup removed generated temporary files
+
+### Batch 77: Profitability Triage, Proof-Mode Defaults & Execution Cost Gating (2026-05-07)
+
+#### Root Cause
+Live audit of `20260427.log`, `indicators_and_ai.log`, and runtime code showed that the EA was not failing from a minor parameter issue. It was sending live trades from an unsafe proof surface: one-voter sparse intrabar packets, Elliott Wave dominance without non-repainting edge proof, enabled AI paths without live predictive evidence, oversized risk defaults, scalp signals inflated into swing-sized stop envelopes, and execution telemetry showing slippage/latency large enough to destroy scalping expectancy.
+
+#### Implementation Summary
+- **Proof-mode defaults:** `MultiStrategyAutonomousEA.mq5` now defaults to `InpShadowMode=true`, `0.25%` risk per trade, `1%` daily risk, `3%` portfolio risk, `3` max total positions, and `1` max position per symbol.
+- **Unproven alpha disabled:** AI mode, neural voting, ONNX voting, neural online learning, neural mutation, and pseudo-labeling now default off. Elliott Wave now defaults off and is forced shadow-only/live-voting disabled even if manually enabled.
+- **Consensus hardened:** default quorum now requires two live voters, stronger support/ready-weight floors, disabled sparse one-voter intrabar admission, and no low-voter bypass unless the operator explicitly sets the minimum voter floor to `1`.
+- **Scalp geometry fixed:** final admission no longer clamps stop distance to `0.5%` of price; stop/target geometry is bounded by broker stop level, spread, ATR, and a hard spread-to-reward rejection.
+- **Execution preflight hardened:** `CTradeManager` now supports hard pre-send quote-spread and signal-price drift gates and emits `[EXECUTION-BLOCKED]` before any stale/expensive order send.
+- **Pipeline certainty corrected:** `CUnifiedSignalPipeline` now lets readiness/context/staleness attenuation reduce admitted confidence instead of preserving inflated pre-adjusted confidence.
+
+#### Validation Evidence
+- Code changes are mapped to the audit evidence:
+  - live logs showed large slippage/latency (`[EXECUTION-TELEMETRY]`)
+  - live trades showed Elliott Wave and sparse/low-confluence contributors
+  - current defaults still enabled AI/ONNX and live send
+  - stop sizing used a 0.5%-3.0% price clamp unsuitable for scalping
+- `./sync_and_compile.ps1 -MirrorSync -MetaTraderRoot 'C:\Program Files\MT5 Weltrade'` completed successfully on 2026-05-07:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+  - compile artifact cleanup removed generated temporary files
+
 ## [Unreleased] - 2026-04-27
 
 ### Batch 76: AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup (2026-04-27)
@@ -730,7 +807,7 @@ Comprehensive autonomous audit identified 34 logical errors across the codebase 
 
 ### Batch 41: Consensus Debloating + Adaptive Quorum + Dynamic Weight Decay (2026-04-02)
 - **Root cause analysis:** Identified denominator dilution in weighted quorum scoring where inactive strategies (Momentum, Trend) inflated the vote pool, causing real single/dual-strategy consensus votes to collapse into 0.0x scores or `zero_voter` vetoes despite strong fundamentals.
-- **Curated roster tightening:** `MultiStrategyAutonomousEA.mq5` default `curatedMask` now enables ONLY Elliott Wave + Unified ICT (removed Momentum and Support/Resistance which consistently filter and add no productive votes). This reduces default weight pool from 10.865 to ~4.2 and improves live-voter signal quality.
+- **Curated roster tightening:** `MultiStrategyAutonomousEA.mq5` default `curatedMask` enabled only Elliott Wave + Unified ICT at the time (removed Momentum and Support/Resistance which consistently filtered and added no productive votes). This historical Batch 41 recommendation is superseded by Batch 77, which disables Elliott Wave live voting after profitability audit.
 - **Adaptive quorum thresholds:** `Core/Management/EnterpriseStrategyManager.mqh` now calculates `effectiveQualityThreshold` and `supportFloor` based on actual active voter count:
   - 1 voter: quality ≥ 0.40, support ≥ 0.15 (was impossible 0.55/0.35)
   - 2 voters: quality ≥ 0.48, support ≥ 0.30 (was 0.55/0.35)

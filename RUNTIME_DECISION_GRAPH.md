@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-04-27
+- Last Updated: 2026-05-13
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 76 - AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup
+- Current Batch: 80 - Fix Hardcoded Zero Weights for Experimental AI Families
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -15,6 +15,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Multi-Tier Validation: `CTieredSignalValidator` (Batch 60)
 - Filtering: `CUnifiedSignalPipeline`
 - AI adaptation/weights: `CAIEngine` + symbol-scoped AI adapters
+- Live authority: `MultiStrategyAutonomousEA.mq5` candidate authority gate
 - Risk veto: `CUnifiedRiskManager`
 - Execution: `CTradeManager`
 - Position lifecycle: `MultiStrategyAutonomousEA.mq5` + `CTradeManager::ManageAllPositions(...)`
@@ -90,30 +91,36 @@ flowchart TD
   X --> X1{More symbols?}
   X1 -->|Yes| E4
   X1 -->|No| X2[Select top-ranked candidate]
-  X2 --> X3{Shadow mode?}
+  X2 --> X2A[Resolve LIVE-AUTHORITY and authority risk scale]
+  X2A --> X2B[Register/maintain authority forward trials]
+  X2B --> X3{Global shadow or candidate lacks live authority?}
 
-  X3 -->|Yes| Y[Log SHADOW-TRADE]
-  X3 -->|No| Z[TradeManager OpenPosition]
+  X3 -->|Yes| Y[Log SHADOW-TRADE + AUTHORITY-TRIAL]
+  X3 -->|No| Z0[TradeManager hard spread/drift preflight]
+  Z0 -->|Fail| AB
+  Z0 -->|Pass| Z[TradeManager OpenPosition]
 
   Z --> AA{Execution success?}
   AA -->|No| AB[Trade error path]
-  AA -->|Yes| AC[Register executed risk by fill ratio + cooldown]
+  AA -->|Yes| AC[Register executed risk by fill ratio + cooldown + AUTHORITY-TRIAL]
 
   AC --> AD[OnTradeTransaction feedback]
   AD --> AE[Manager and orchestrator performance updates]
   AD --> AF[NN attribution mapping and labeling]
 
-  D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG, AI-FEEDBACK]
+  D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG, AI-FEEDBACK, AUTHORITY-RESULT]
 ```
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
 - OnInit is two-tiered: mandatory trade/risk/runtime bootstrap remains fatal, while auxiliary AI brain/orchestrator/adaptation modules degrade behind readiness flags and do not abort the EA.
 - Strategy `OnNewBar(...)` handlers are state-refresh only; manager consensus owns the single authoritative `GetSignal(...)` call for each strategy evaluation cycle.
 - Pending new-bar work is durable across cycles: symbols that miss the current evaluation budget stay queued ahead of intrabar work until they are processed.
-- Cold-start cadence is now deterministic: init primes one pending new-bar scan per symbol so the first evaluation does not depend on a later bar transition or delayed series warmup.
-- Cadence scheduler ownership is explicit: `g_lastSymbolBarTimes`, `g_lastIntrabarScanTime`, `g_pendingNewBarScans`, and `g_symbolScanStates` must align with `g_activePairs`; runtime now rebuilds and logs `[SCHEDULER-STATE]` before resuming evaluation if that contract is broken.
+- Cold-start cadence is now deterministic:
+  - validate active symbols and emit startup account-capacity diagnostics before live execution
+  - build the active-only strategy registry and register only enabled strategies and enabled AI adapters, ensuring experimental AI families (Transformer, Ensemble) receive non-zero weights from the AI multiplier during registry bootstrap to allow live participation
+  - rebuild cadence scheduler state as one unit after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff cannot drift out of sync with `g_activePairs`; runtime now rebuilds and logs `[SCHEDULER-STATE]` before resuming evaluation if that contract is broken.
 - Per-symbol manager profiles now branch by instrument class before registration: synthetic symbols can use a lean structure-heavy roster and lighter context engines, while FX symbols retain the broader balanced roster.
-- `EA_MODE_HYBRID` is now indicator-led: indicator-backed candidates survive AI abstentions, AI+indicator alignment can add a bounded confidence bonus, and AI-only candidates are still rejected unless the effective mode resolves to an AI-primary contract.
+- `EA_MODE_HYBRID` is indicator-led for ordinary packets, but high-confidence AI-only packets can pass through `InpAllowHybridAIStandalone` and then must satisfy the live-authority gate.
 - `EA_MODE_AI_ONLY` is now strict execution mode when AI adapters are enabled: indicator-based strategies are filtered out of the strategy registry, and AI adapters are the sole tradable family on both new-bar and timed intrabar paths.
 - When `EA_MODE_AI_ONLY` filters configured indicator families out of the active registry, runtime now emits `[MODE-MASK]` so operators can distinguish "inactive by mode" from "active but underperforming."
 - Runtime startup now emits `[AI-TOPOLOGY]` to distinguish:
@@ -127,6 +134,7 @@ flowchart TD
 - Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
 - `CMarketAnalysis` can now reuse bounded last-valid trend/volatility/momentum/ATR snapshots on transient `4806/4807` data faults, preventing short sync gaps from collapsing upstream market-state evidence to zeros.
 - The scan loop now reserves the current best candidate inside `CUnifiedRiskManager` while later symbols are still being evaluated, so projected daily and portfolio utilization remain authoritative during end-of-cycle ranking.
+- Batch 78 source defaults are live-capable (`InpShadowMode=false`) while `InpEnableLiveAuthorityGate=true` shadows individual unproven candidates and promotes/demotes families from forward R evidence.
 - Synthetic-symbol safety now includes a tick-velocity shock detector that can flatten positions and pause new entries for `InpSyntheticSpikePauseSeconds`.
 - **Multi-Tier Validation Path (Batch 60):**
   - **Tiered Evaluation**: Votes are grouped into Tier 1 (Institutional), Tier 2 (Structure), and Tier 3 (Indicators).
@@ -168,10 +176,10 @@ flowchart TD
     - **3+ active voters**: directional quality ≥ 0.55, support ≥ 0.35 (standard `InpQuorumThreshold` / floor inputs)
     - Eliminates zero-score vetoes for legitimate single/dual-voter consensus by adjusting thresholds to the actual voter pool
     - Single- and dual-voter quality gates are now clamped against the current base quorum, so lowering `InpQuorumThreshold` intentionally also relaxes the adaptive one-/two-voter path instead of being silently overridden by harder fixed fallback thresholds
-  - **Single-Voter AI-Only Bypass** (Batch 65): When running with few active registered strategies (3 or fewer, typically AI-only mode), the `effectiveMinVoters` is hardcoded to 1, bypassing the `m_minQuorum` default of 2 to allow single valid AI votes to pass.
+  - **Single-voter hardening** (Batch 77/78): low-voter ecosystems no longer bypass `InpMinLiveVoters` unless the configured floor is explicitly `1`; AI-only HYBRID packets use the explicit live-authority gate instead of hidden quorum bypass.
   - **Dynamic weight decay** (Batch 41): strategies that filter ≥ 3 consecutive cycles have their live weight decayed by `m_strategyActivityDecayRate` per additional cycle, reducing the denominator as dormant strategies fall out of contribution; weight recovers when the strategy produces a vote again
 - If both directions qualify inside the configured deadband, consensus is vetoed instead of forcing a weak winner.
-- Intrabar can instead admit a tagged `SPARSE_INTRABAR` decision when exactly one direction survives with one voter and readiness/context/cost/support/coverage thresholds all remain strong.
+- Intrabar sparse one-voter admission is disabled by default through `InpAllowSparseIntrabarSingleVoter=false`; high-confidence AI-only packets are handled by live authority, not sparse admission.
 - Synthetic lean symbols now use dedicated sparse intrabar thresholds for one-voter admission, so structure-first synthetic rosters are no longer evaluated against the same sparse-quality floor used by broader FX/balanced rosters.
 - Pipeline confidence policy remains separate from AI thresholds so non-AI strategies are not gated by AI policy.
 - Structural admission is now manager-owned: once manager consensus admits a packet, validator no longer re-judges confidence, confluence, directional quality, or support in normal runtime.
@@ -196,6 +204,7 @@ flowchart TD
   - `PROBE`: evaluated intrabar but only eligible for sparse admission
   - `OFF`: skipped before pipeline work
 - Current runtime mapping promotes intrabar-enabled manual strategies into `LIVE`, so `intrabar=true` means real intrabar voting rather than a hidden probe-only path.
+- Elliott Wave can contribute to consensus, but Elliott-only packets are candidate-level shadow unless authority evidence and independent confluence justify live send.
 - Synthetic lean profiles are the deliberate exception: `Fibonacci`, `Elliott Wave`, `Support/Resistance`, and `Unified ICT` remain intrabar `LIVE`, `Candlestick` is retained as intrabar `PROBE`, and `Momentum` / `Trend` are removed from the local synthetic manager roster when structure-capable strategies are already enabled.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a separate profile leaves the raw input toggles enabled.
 - Governance is continuous, not only binary:
@@ -441,4 +450,8 @@ flowchart TD
 - Batch 73 update:
   - `Unicorn Model` and `Power of Three` now enter the same manager-owned consensus path as other indicator strategies.
   - `StrategyUnifiedICT` now applies recent opposite-CISD vetoes before admission and adds CISD as a positive confluence score.
-  - The shared AI feature contract is now 57-wide, with OFI and synthetic spike-recovery features appended before Python scaling / ONNX inference.
+
+- Batch 79 update:
+  - Account floor in `RiskValidationGate` lowered to `$1.00` to support $10 micro-account testing.
+  - Runtime `maxRiskPerTradePercent` set to `100.0` to permit aggressive overrides when necessary.
+  - Environment alignment for Weltrade MT5 installation in build/sync pipeline.
