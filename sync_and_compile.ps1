@@ -1,5 +1,5 @@
 param(
-[string]$MetaTraderRoot = "C:\Program Files\MetaTrader 5",
+[string]$MetaTraderRoot = "C:\Program Files\MT5 Weltrade",
 [string]$ProjectRoot,
 [switch]$SkipSync,
 [switch]$MirrorSync,
@@ -244,6 +244,7 @@ return 0
 
 $metaEditorCandidates = @(
 Join-Path -Path $MetaTraderRoot -ChildPath "MetaEditor64.exe"
+"C:\Program Files\MT5 Weltrade\MetaEditor64.exe",
 "C:\Program Files\MetaTrader 5\MetaEditor64.exe",
 "C:\Program Files (x86)\MetaTrader 5\MetaEditor.exe",
 "C:\Program Files\MetaTrader 5\MetaEditor.exe"
@@ -259,6 +260,7 @@ $terminalIncludePath = Resolve-TerminalIncludePath `
     -AppDataRoot (Join-Path $env:APPDATA "MetaQuotes\Terminal") `
     -AdditionalCandidates @(
         (Join-Path $MetaTraderRoot "MQL5\Include"),
+        "C:\Program Files\MT5 Weltrade\MQL5\Include",
         "C:\Program Files\MetaTrader 5\MQL5\Include",
         "C:\Program Files (x86)\MetaTrader 5\MQL5\Include"
     )

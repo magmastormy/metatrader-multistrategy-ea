@@ -154,7 +154,7 @@ def cusum_filter(
     s_pos, s_neg = 0.0, 0.0
     for i in range(1, len(close)):
         ret = float(np.log(close[i] / (close[i - 1] + 1e-12)))
-        thresh = max(1e-8, threshold_multiplier * float(atr[i]))
+        thresh = max(1e-8, threshold_multiplier * (float(atr[i]) / (float(close[i]) + 1e-9)))
         s_pos = max(0.0, s_pos + ret)
         s_neg = min(0.0, s_neg + ret)
         if s_pos > thresh:

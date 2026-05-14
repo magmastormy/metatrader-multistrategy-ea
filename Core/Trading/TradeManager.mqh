@@ -121,6 +121,8 @@ private:
     bool m_useAsyncMode;                     // Use asynchronous order execution
     ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
     int m_minModifyIntervalSec;              // Minimum interval between routine stop updates
+    double m_maxEntrySpreadPoints;           // Hard quote-spread gate before market send
+    double m_maxEntryDriftPoints;            // Hard drift gate between signal price and send price
     
     // Trade tracking and statistics
     struct TradeStats {
@@ -486,6 +488,7 @@ private:
     bool ValidateExecutionPreflight(const string symbolName,
                                     const ENUM_ORDER_TYPE orderType,
                                     const double executionPrice,
+                                    const double requestedPrice,
                                     string &reason)
     {
         reason = "";
@@ -519,6 +522,26 @@ private:
         }
 
         double spread = ask - bid;
+        double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+        if(point <= 0.0)
+            point = 0.00001;
+        double spreadPoints = spread / point;
+        if(m_maxEntrySpreadPoints > 0.0 && spreadPoints > m_maxEntrySpreadPoints)
+        {
+            reason = StringFormat("spread_points %.1f exceeds %.1f", spreadPoints, m_maxEntrySpreadPoints);
+            return false;
+        }
+
+        if(m_maxEntryDriftPoints > 0.0 && requestedPrice > 0.0)
+        {
+            double driftPoints = MathAbs(executionPrice - requestedPrice) / point;
+            if(driftPoints > m_maxEntryDriftPoints)
+            {
+                reason = StringFormat("entry_drift_points %.1f exceeds %.1f", driftPoints, m_maxEntryDriftPoints);
+                return false;
+            }
+        }
+
         double minStopDistance = GetMinimumStopDistance(symbolName);
         double spreadHardLimit = MathMax(minStopDistance * 2.0, executionPrice * 0.0015);
         if(spread > spreadHardLimit)
@@ -614,6 +637,8 @@ public:
         m_useAsyncMode(false),
         m_orderFillMode(ORDER_FILLING_IOC),
         m_minModifyIntervalSec(5),
+        m_maxEntrySpreadPoints(0.0),
+        m_maxEntryDriftPoints(0.0),
         m_emergencyStop(false),
         m_pendingOrderCount(0),
         m_stateCount(0),
@@ -643,6 +668,11 @@ public:
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
     void SetOrderFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_orderFillMode = mode; }
     void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
+    void SetExecutionCostLimits(const double maxEntrySpreadPoints, const double maxEntryDriftPoints)
+    {
+        m_maxEntrySpreadPoints = MathMax(0.0, maxEntrySpreadPoints);
+        m_maxEntryDriftPoints = MathMax(0.0, maxEntryDriftPoints);
+    }
     
     // Main trading functions
     bool OpenPosition(const string symbol,
@@ -1145,7 +1175,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         }
 
         string preflightReason = "";
-        if(!ValidateExecutionPreflight(symbolName, orderType, executionPrice, preflightReason))
+        if(!ValidateExecutionPreflight(symbolName, orderType, executionPrice, requestedPrice, preflightReason))
         {
             m_lastExecutionReceipt.accepted = false;
             m_lastExecutionReceipt.retryCount = retryCount;

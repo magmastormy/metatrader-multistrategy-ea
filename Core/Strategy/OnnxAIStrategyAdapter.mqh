@@ -162,22 +162,21 @@ public:
         if((m_barCounter % 10) == 0)
             m_brain.CheckForModelUpdate(features, ArraySize(features));
 
-        // Distinguish between model warming up and actual inference failure
-        bool inferenceRan = m_brain.RunInference();
-        bool modelReady = m_brain.IsReady();
-        
-        if(!inferenceRan)
-        {
-            m_noneVotes++;
-            m_lastDecisionReasonTag = "ONNX_INFERENCE_FAILED";
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-        
-        if(!modelReady)
+        // Gate on readiness FIRST (buffer not yet full = warmup, not an error).
+        // Only attempt inference once the rolling window is full; a failure
+        // after that is a genuine OnnxRun / handle error.
+        if(!m_brain.IsReady())
         {
             m_noneVotes++;
             m_lastDecisionReasonTag = "ONNX_WARMING_UP";
+            LogVoteHeartbeat();
+            return TRADE_SIGNAL_NONE;
+        }
+
+        if(!m_brain.RunInference())
+        {
+            m_noneVotes++;
+            m_lastDecisionReasonTag = "ONNX_INFERENCE_FAILED";
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }

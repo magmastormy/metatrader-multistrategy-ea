@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-04-27
+- Last Updated: 2026-05-07
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 76 - AI Control Surface Clarification, Lifecycle Safety & Candlestick Cleanup
+- Current Batch: 80 - Fix Hardcoded Zero Weights for Experimental AI Families
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -15,7 +15,10 @@ Provide autonomous, multi-strategy trade decisions with clear ownership boundari
 - execution
 - post-trade feedback and adaptation
 
-The system prioritizes deterministic control flow, explicit diagnostics, and shadow-first rollout capability.
+The system prioritizes deterministic control flow, explicit diagnostics, live-capable AI/ONNX execution, and candidate-level shadow fallback when a signal family loses authority.
+
+- Batch 78 replaces global proof-only posture with an adaptive live-authority gate. AI/ONNX can warm-start live at scaled risk, all candidate families collect forward R evidence, and mature families are promoted or demoted from live execution based on expectancy/profit-factor thresholds.
+- Batch 80 resolves the AI-only inactivity issue by ensuring experimental AI families (Transformer, Ensemble) receive non-zero weights from the AI multiplier during registry bootstrap, rather than being hard-coded to 0.0.
 
 ## 2. Top-Level Runtime Topology
 
@@ -44,6 +47,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - emit explicit mode-mask diagnostics when indicator profile entries remain configured but the effective runtime mode filters them out of the active registry
   - emit explicit AI topology diagnostics so MT5-native voters, Python-trained ONNX runtime voting, Python sidecar expectations, and external LLM reasoning are not conflated
   - coordinate validator/risk/execution path
+  - enforce live-authority source defaults: AI/ONNX enabled, global live execution allowed, candidate-level shadow fallback for unproven packets, one position per symbol, and no one-voter sparse intrabar admission
   - handle runtime telemetry and deinitialization
 
 ### 2.2 Per-symbol strategy domain
@@ -61,7 +65,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
 - modulate live vote influence by role multiplier and rolling strategy `healthScore`
 - compute conviction using pipeline evidence (`readiness`, `context`, `cost`) rather than raw confidence alone
 - require both directional quality and support-ratio floors before full quorum can pass
-- allow a separately tagged `SPARSE_INTRABAR` lane for tightly gated one-sided single-voter packets
+- keep one-voter sparse intrabar admission disabled by default; the tagged `SPARSE_INTRABAR` lane is an explicit opt-in proof surface only
+- allow high-confidence AI-only HYBRID packets through the explicit live-authority path instead of the sparse one-voter path
 - apply symbol-profile-specific sparse intrabar thresholds so synthetic lean rosters can admit strong one-voter structure packets without lowering the same single-voter floor for FX and broader balanced rosters
 - require minimum ready-live-weight participation and conflict deadband before directional selection
 - admit votes using the active pipeline confidence floor for that evaluation (including regime-relaxed thresholds)
@@ -83,7 +88,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - recover ATR/Bollinger inputs from raw `CopyRates(...)` data when volatility/regime indicator buffers fault or warm slowly despite mature price history
   - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass`, readiness class, reuse/staleness flags)
   - allow bounded soft-threshold promotion when near-threshold confidence is supported by strong readiness/context evidence
-  - preserve confidence after threshold admission instead of attenuating surviving packets a second time before quorum/validator stages
+  - attenuate surviving signal confidence by context/readiness/staleness after threshold admission so weak evidence cannot carry fake certainty into quorum/validator stages
   - tolerate transient regime data faults by reusing a recent same-context valid snapshot when safe
   - allow trend partial-readiness to proceed when the underlying series is mature, enabling MA/ATR fallback logic to attempt recovery instead of hard-failing, which reduces persistent readiness vetoes on synthetic indices where `BarsCalculated` may lag behind `Bars()`
   - tolerate transient trend MA/ATR copy faults by reusing a bounded last-good trend snapshot instead of forcing full indicator-set churn
@@ -173,6 +178,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - convert approved intent into actual order send
   - run synchronous market execution by default
   - enforce execution-level safety checks
+  - block stale or expensive market sends with hard pre-send spread and signal-price drift gates
   - configurable broker fill policy (IOC/FOK/RETURN)
   - bounded retries for transient broker retcodes
   - single bounded retry behavior for `LOCKED` / `FROZEN` retcodes
@@ -182,6 +188,16 @@ The system prioritizes deterministic control flow, explicit diagnostics, and sha
   - emergency-aware protective modification flow
   - expose execution receipt status (`requestId`, retcode, requested/fill volume, request/fill price, slippage points, round-trip latency, retry count, avg fill price) for post-send handling
   - check market hours before position closure/modification (blocks only when `SYMBOL_TRADE_MODE_DISABLED`, allows `SYMBOL_TRADE_MODE_CLOSEONLY`)
+
+### 2.6.1 Live authority domain
+- Owner: `MultiStrategyAutonomousEA.mq5`
+- Responsibilities:
+  - decide whether each risk-approved candidate is live-send eligible or candidate-level shadow-only
+  - warm-start high-confidence AI/ONNX candidates at scaled risk while evidence is still building
+  - track forward R outcomes for AI, ONNX, indicator, and Elliott contributor families
+  - promote mature families when samples, expectancy, profit factor, and loss-streak gates pass
+  - demote mature families to shadow when forward evidence degrades
+  - emit `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, and `[AUTHORITY-RESULT]` telemetry for every authority decision lifecycle
 
 ### 2.7 Position lifecycle domain
 - Owner: `MultiStrategyAutonomousEA.mq5` safety/timer lifecycle loop using `CTradeManager::ManageAllPositions(...)`
@@ -254,14 +270,12 @@ The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also 
 - `Resources/model.onnx` is embedded as an EA resource, and `COnnxBrain` supports shadow-handle hot-swap promotion from a Common-files update path
 - `CPipelineScaler` keeps the ONNX feature normalization path aligned with Python `StandardScaler` exports and can hot-reload updated scaler parameters without restarting the EA
 
-### 3.3 Curated runtime profile (Batch 41)
-Curated mode restricts runtime active set to a smaller operational profile while preserving full retained implementation in code.
-- **Default curated roster** (Batch 41): Elliott Wave + Unified ICT only
-  - Removed: Momentum (consistently filtered on no-crossover, adds denominator weight without productive votes), Trend (100% filtered on no-entry), Support/Resistance (rarely productive)
-  - Rationale: Eliminates impossible quorum math where 1-2 real votes were rejected because inactive strategies inflated the weight pool; reduces default weight pool from 10.865 to ~4.2
-  - Fresh input defaults now match that curated baseline so new sessions stay lean without hidden runtime rewrites
-  - Explicit per-strategy enable flags override the curated baseline and remain authoritative for registration and voting
-  - Disabled strategies are not registered into managers/orchestrator by default, so dormant code stays available for testing without inflating runtime weight pools, scan time, or duplicate logs
+### 3.3 Curated runtime profile
+Curated mode is now a baseline recommendation while live-authority defaults decide whether a candidate can actually send.
+- **Default authority roster** (Batch 78): AI/ONNX and retained indicator strategies can contribute; ordinary live trades require quorum, while high-confidence AI/ONNX packets can use the explicit authority gate.
+- Earlier Batch 41 work reduced denominator bloat by recommending a lean roster; Batch 78 keeps that lesson but avoids globally muting profitable AI/ONNX paths.
+- Explicit per-strategy enable flags still control registration, but Elliott-only execution is candidate-level shadow unless evidence/confluence earns authority.
+- Disabled strategies are not registered into managers/orchestrator by default, so dormant code stays available for testing without inflating runtime weight pools, scan time, or duplicate logs.
 
 ### 3.4 Institutional governance roles
 - Strategy registration now includes explicit governance metadata:

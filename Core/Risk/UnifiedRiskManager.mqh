@@ -168,15 +168,15 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     m_performanceAnalytics = perfAnalytics;
 
     if(m_config.maxRiskPerTradePercent <= 0.0)
-        m_config.maxRiskPerTradePercent = 2.0;
+        m_config.maxRiskPerTradePercent = 100.0; // Increased from 2.0 to support high-risk configurations requested by user
     if(m_config.minRiskPerTradePercent <= 0.0)
         m_config.minRiskPerTradePercent = 0.1;
     if(m_config.baseRiskPerTradePercent <= 0.0)
         m_config.baseRiskPerTradePercent = m_config.maxRiskPerTradePercent;
     if(m_config.maxDailyRiskPercent <= 0.0)
-        m_config.maxDailyRiskPercent = 6.0;
+        m_config.maxDailyRiskPercent = 100.0; // Increased fallback for max risk
     if(m_config.maxPortfolioRiskPercent <= 0.0)
-        m_config.maxPortfolioRiskPercent = 10.0;
+        m_config.maxPortfolioRiskPercent = 100.0; // Increased fallback for max risk
     if(m_config.correlationThreshold <= 0.0 || m_config.correlationThreshold > 1.0)
         m_config.correlationThreshold = 0.7;
     if(m_config.adaptationMinTrades < 5)

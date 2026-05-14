@@ -203,6 +203,7 @@ private:
     double m_sparseIntrabarMinSupportRatio;
     double m_sparseIntrabarMinReadyCoverage;
     double m_sparseIntrabarConfidencePenalty;
+    bool m_allowSparseIntrabarSingleVoter;
 
     // Adaptive quorum settings (adjust thresholds based on active voter count)
     bool m_adaptiveQuorumEnabled;
@@ -407,6 +408,7 @@ public:
         m_sparseIntrabarMinSupportRatio = MathMax(0.0, MathMin(1.0, minSupportRatio));
         m_sparseIntrabarMinReadyCoverage = MathMax(0.0, MathMin(1.0, minReadyCoverage));
     }
+    void SetAllowSparseIntrabarSingleVoter(const bool enabled) { m_allowSparseIntrabarSingleVoter = enabled; }
     void SetConsensusDiagnosticsIntervalSeconds(const int seconds) { m_diagLogIntervalSec = MathMax(10, seconds); }
     int  GetMinQuorum() const { return m_minQuorum; }
     bool UpdateStrategyWeightByName(const string name, const double weight);
@@ -537,6 +539,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_sparseIntrabarMinSupportRatio(0.20),
     m_sparseIntrabarMinReadyCoverage(0.60),
     m_sparseIntrabarConfidencePenalty(0.92),
+    m_allowSparseIntrabarSingleVoter(false),
     m_adaptiveQuorumEnabled(true),
     m_adaptiveQualityThreshold_1voter(0.40),      // 1 voter: 40% quality OK
     m_adaptiveSupportFloor_1voter(0.15),          // 1 voter: 15% support OK
@@ -1411,8 +1414,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
     int effectiveMinVoters = MathMax(1, m_minQuorum);
     
-    // RECOVERY FIX: Single-voter bypass for AI-only mode ecosystems
-    if(activeLiveStrategies <= 3)
+    // Single-voter quorum is only allowed when the configured live-voter floor permits it.
+    if(activeLiveStrategies <= 3 && m_minQuorum <= 1)
     {
         effectiveMinVoters = 1;
     }
@@ -1420,8 +1423,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     if(evalMode == EVAL_MODE_INTRABAR)
     {
         int intrabarFloor = MathMax(1, m_intrabarMinQuorum);
-        int eligibleFloor = MathMax(1, eligibleLiveVoterCount);
-        effectiveMinVoters = MathMin(intrabarFloor, eligibleFloor);
+        effectiveMinVoters = intrabarFloor;
         if(m_intrabarDynamicQuorumEnabled && eligibleLiveVoterCount >= 4 && effectiveMinVoters < 2)
             effectiveMinVoters = 2;
     }
@@ -1576,7 +1578,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             ArrayCopy(selectedContributorIndices, sellContributorIndices);
         }
     }
-    else if(evalMode == EVAL_MODE_INTRABAR)
+    else if(evalMode == EVAL_MODE_INTRABAR && m_allowSparseIntrabarSingleVoter)
     {
         int totalBuyVotesAll = buyVotes + probeBuyVotes;
         int totalSellVotesAll = sellVotes + probeSellVotes;
