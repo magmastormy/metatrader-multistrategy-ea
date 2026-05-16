@@ -19,7 +19,7 @@ input double InpMaxRiskPerTrade = 0.75;   // Max risk per trade; authority gate 
 input double InpMaxDailyRisk = 3.0;       // Max daily risk
 input double InpMaxPortfolioRisk = 6.0;    // Max total portfolio risk
 input double InpMaxDrawdown = 10.0;       // Max drawdown
-input string InpSymbolsToTrade = "Step Index.0,Jump 10 Index.0,Jump 25 Index.0,Jump 50 Index.0,Jump 75 Index.0,Jump 100 Index.0,Volatility 10 (1s) Index.0,Volatility 25 (1s) Index.0,Volatility 50 (1s) Index.0,Volatility 100 (1s) Index.0,SFX Vol 20.0,FX Vol 40.0,SwitchX 1200.0,EURUSD.0,EURCHF.0,EURJPY.0";               // Comprehensive test symbols
+input string InpSymbolsToTrade = "SFX Vol 20,FX Vol 40,SwitchX 1200,PainX 400,PainX 600";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 45;     // Cooldown in seconds between trades
 input int    InpMaxPositionsTotal = 8;            // Global position limit under authority gate
 input group "Strategy Selection"
@@ -117,9 +117,9 @@ input double InpSyntheticLeanSparseIntrabarMinQuality = 0.85; // Synthetic lean 
 input double InpSyntheticLeanIntrabarSingleVoterMinConfidence = 0.95; // Synthetic lean profile min confidence for one-voter intrabar admission
 input double InpPipelineIntrabarConfidenceCap = 0.05; // Max weak-regime intrabar confidence threshold uplift
 input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microstructure cost gate before validator
-input double InpPipelineMaxSpreadToAtrRatio = 0.10;   // Max spread/ATR ratio allowed by cost gate
+input double InpPipelineMaxSpreadToAtrRatio = 0.25;   // Max spread/ATR ratio allowed by cost gate
 input int InpPipelineSpreadShockCooldownSec = 90;     // Spread shock cooldown window
-input double InpPipelineLateEntryZScoreLimit = 1.75;  // Late-entry outlier z-score veto limit
+input double InpPipelineLateEntryZScoreLimit = 2.50;  // Late-entry outlier z-score veto limit
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
 input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
@@ -158,9 +158,9 @@ input double InpValidatorIntrabarMinConfidence  = 0.65; // Post-consensus confid
 //--- Execution & Emergency Controls
 input group "Execution Safety"
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
-input int InpTradeSlippagePoints = 10;                                  // Max slippage in points
-input double InpMaxEntrySpreadPoints = 150.0;                            // Hard pre-send spread limit in points; <=0 disables
-input double InpMaxEntryDriftPoints = 15.0;                              // Hard drift from signal price before send; <=0 disables
+input int InpTradeSlippagePoints = 20;                                  // Max slippage in points
+input double InpMaxEntrySpreadPoints = 300.0;                            // Hard pre-send spread limit in points; <=0 disables
+input double InpMaxEntryDriftPoints = 25.0;                              // Hard drift from signal price before send; <=0 disables
 input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
 input bool InpEnablePositionLifecycleManager = false;                   // EA-managed breakeven/trailing lifecycle (opt-in; disabled to avoid premature closes)
 input double InpLifecycleBreakevenBufferPoints = 120.0;                 // Profit buffer in points before breakeven becomes eligible

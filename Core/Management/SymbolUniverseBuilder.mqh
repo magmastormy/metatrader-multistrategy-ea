@@ -52,17 +52,25 @@ public:
                 continue;
             }
 
-            bool isSynthetic = (StringFind(sym, "Vol") >= 0  || StringFind(sym, "Step") >= 0 ||
-                                StringFind(sym, "Boom") >= 0 || StringFind(sym, "Crash") >= 0 ||
-                                StringFind(sym, "Jump") >= 0 || StringFind(sym, "PainX") >= 0 ||
-                                StringFind(sym, "Pain ") >= 0 || StringFind(sym, "GainX") >= 0 ||
-                                StringFind(sym, "FlipX") >= 0 || StringFind(sym, "FX Vol") >= 0 ||
-                                StringFind(sym, "SwitchX") >= 0);
+            string symUpper = sym;
+            StringToUpper(symUpper);
+
+            bool isSynthetic = (StringFind(symUpper, "VOL") >= 0  || StringFind(symUpper, "STEP") >= 0 ||
+                                StringFind(symUpper, "BOOM") >= 0 || StringFind(symUpper, "CRASH") >= 0 ||
+                                StringFind(symUpper, "JUMP") >= 0 || StringFind(symUpper, "PAINX") >= 0 ||
+                                StringFind(symUpper, "PAIN ") >= 0 || StringFind(symUpper, "GAINX") >= 0 ||
+                                StringFind(symUpper, "FLIPX") >= 0 || StringFind(symUpper, "FX VOL") >= 0 ||
+                                StringFind(symUpper, "SWITCHX") >= 0);
 
             if(StringFind(sym, " ") >= 0 && StringFind(sym, ".") < 0 && !isSynthetic)
             {
-                Print("[WARNING] Symbol '", sym, "' contains spaces without period - likely malformed, skipping");
-                continue;
+                // AUDIT: Synthetic symbols often have spaces (e.g., "SFX Vol 20", "SwitchX 1200")
+                // If it's synthetic but contains a space, we should still allow it if it's select-able
+                if(!isSynthetic)
+                {
+                    Print("[WARNING] Symbol '", sym, "' contains spaces without period - likely malformed, skipping");
+                    continue;
+                }
             }
 
             if(!SymbolSelect(sym, true))
