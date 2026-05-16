@@ -43,8 +43,19 @@ private:
 
         long ishape[] = {1, ONNX_SEQ_LEN, ONNX_FEAT_DIM};
         long oshape[] = {1, ONNX_N_CLASSES};
-        if(!OnnxSetInputShape(handle, 0, ishape) || !OnnxSetOutputShape(handle, 0, oshape))
+        
+        if(!OnnxSetInputShape(handle, 0, ishape))
+        {
+            PrintFormat("[ONNX] ERROR: Failed to set input shape [1,%d,%d]. Check model compatibility.", ONNX_SEQ_LEN, ONNX_FEAT_DIM);
             return false;
+        }
+        
+        if(!OnnxSetOutputShape(handle, 0, oshape))
+        {
+            PrintFormat("[ONNX] ERROR: Failed to set output shape [1,%d]. Check model classes.", ONNX_N_CLASSES);
+            return false;
+        }
+        
         return true;
     }
 

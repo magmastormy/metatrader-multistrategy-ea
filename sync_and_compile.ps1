@@ -1,5 +1,6 @@
 param(
-[string]$MetaTraderRoot = "C:\Program Files\MT5 Weltrade",
+[string]$MetaTraderRoot = "C:\Users\Administrator\AppData\Roaming\MetaQuotes\Terminal\CF89AB30ACB6DA0DBA14DA647C3517F8",
+[string]$Destination,
 [string]$ProjectRoot,
 [switch]$SkipSync,
 [switch]$MirrorSync,
@@ -286,7 +287,16 @@ else {
     Write-Host "Terminal include seeding skipped (use -SeedTerminalIncludes to enable)." -ForegroundColor Gray
 }
 
-$targetDir = Join-Path $MetaTraderRoot "MQL5\Experts\metatrader-multistrategy-ea"
+$targetDir = if ([string]::IsNullOrWhiteSpace($Destination)) {
+    Join-Path $MetaTraderRoot "MQL5\Experts\metatrader-multistrategy-ea"
+} else {
+    $Destination
+}
+
+if ($Destination -and -not $Destination.Contains("metatrader-multistrategy-ea")) {
+    $targetDir = Join-Path $Destination "metatrader-multistrategy-ea"
+}
+
 $compileDir = $ProjectRoot
 
 if (-not $SkipSync) {
