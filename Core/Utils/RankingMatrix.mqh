@@ -30,10 +30,10 @@ public:
     {
         switch(tier)
         {
-            case STRATEGY_TIER_1: return 0.30; // Tier 1 needs less confidence to be taken seriously (high inherent value)
-            case STRATEGY_TIER_2: return 0.50; 
-            case STRATEGY_TIER_3: return 0.70; // Tier 3 needs high confluence to be taken seriously
-            default: return 0.50;
+            case STRATEGY_TIER_1: return 0.25; // Reduced from 0.30
+            case STRATEGY_TIER_2: return 0.45; // Reduced from 0.50
+            case STRATEGY_TIER_3: return 0.62; // Tier 3 needs high confluence to be taken seriously (Reduced from 0.70)
+            default: return 0.45;
         }
     }
 

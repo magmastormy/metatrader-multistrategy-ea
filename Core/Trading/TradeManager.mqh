@@ -695,9 +695,11 @@ public:
     // Position management
     void ManageAllPositions(const double breakevenBuffer = 20.0,
                            const double trailingDistance = 50.0,
-                           const double trailingStep = 10.0);
+                           const double trailingStep = 10.0,
+                           const bool useATRTrailing = false,
+                           const double atrMultiplier = 2.0);
     
-    bool SetTrailingStop(const ulong ticket, const double distance, const double step);
+    bool SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR = false, const double atrMult = 2.0);
     bool MoveToBreakeven(const ulong ticket, const double buffer);
     
     // Helper functions
@@ -1666,7 +1668,9 @@ void CTradeManager::LogTradeError(const MqlTradeResult &result, const string ope
 //+------------------------------------------------------------------+
 void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                                        const double trailingDistance,
-                                       const double trailingStep)
+                                       const double trailingStep,
+                                       const bool useATRTrailing,
+                                       const double atrMultiplier)
 {
     for(int i = PositionsTotal() - 1; i >= 0; i--)
     {
@@ -1711,9 +1715,9 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                 }
             }
             
-            if(trailingDistance > 0 && trailingStep > 0)
+            if(useATRTrailing || (trailingDistance > 0 && trailingStep > 0))
             {
-                SetTrailingStop(ticket, trailingDistance, trailingStep);
+                SetTrailingStop(ticket, trailingDistance, trailingStep, useATRTrailing, atrMultiplier);
             }
         }
     }
@@ -1722,9 +1726,9 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
 //+------------------------------------------------------------------+
 //| Set Trailing Stop                                               |
 //+------------------------------------------------------------------+
-bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, const double step)
+bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR, const double atrMult)
 {
-    if(ticket <= 0 || distance <= 0 || step <= 0) return false;
+    if(ticket <= 0) return false;
     if(!PositionSelectByTicket(ticket)) return false;
     
     string symbolName = PositionGetString(POSITION_SYMBOL);
@@ -1736,20 +1740,41 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
     double newStopLoss = 0;
     
-    if(type == POSITION_TYPE_BUY)
+    if(useATR)
     {
-        double minStopLoss = currentPriceValue - distance * point;
-        if(currentStopLoss < minStopLoss - step * point)
+        double atr = CalculateATR(symbolName, PERIOD_CURRENT, 14);
+        if(atr <= 0) return false;
+        
+        if(type == POSITION_TYPE_BUY)
         {
-            newStopLoss = minStopLoss;
+            double atrStop = currentPriceValue - (atr * atrMult);
+            if(currentStopLoss < atrStop - (atr * 0.1)) // 10% of ATR step
+                newStopLoss = atrStop;
+        }
+        else
+        {
+            double atrStop = currentPriceValue + (atr * atrMult);
+            if(currentStopLoss > atrStop + (atr * 0.1) || currentStopLoss == 0)
+                newStopLoss = atrStop;
         }
     }
-    else
+    else if(distance > 0 && step > 0)
     {
-        double maxStopLoss = currentPriceValue + distance * point;
-        if(currentStopLoss > maxStopLoss + step * point || currentStopLoss == 0)
+        if(type == POSITION_TYPE_BUY)
         {
-            newStopLoss = maxStopLoss;
+            double minStopLoss = currentPriceValue - distance * point;
+            if(currentStopLoss < minStopLoss - step * point)
+            {
+                newStopLoss = minStopLoss;
+            }
+        }
+        else
+        {
+            double maxStopLoss = currentPriceValue + distance * point;
+            if(currentStopLoss > maxStopLoss + step * point || currentStopLoss == 0)
+            {
+                newStopLoss = maxStopLoss;
+            }
         }
     }
     

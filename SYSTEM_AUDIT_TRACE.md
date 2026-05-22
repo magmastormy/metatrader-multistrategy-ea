@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-05-13
-- Scope: Runtime lifecycle and ownership trace
-- Current Batch: 80 - Fix Hardcoded Zero Weights for Experimental AI Families
+- Last Updated: 2026-05-21
+- Scope: End-to-end lifecycle and logic traces
+- Current Batch: 82 - Strategic Signal Participation, Adaptive Exits & ATR-Based Holding
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -20,6 +20,12 @@
 - Execution authority: `Core/Trading/TradeManager.mqh`
 - Position authority: EA lifecycle loop via `CTradeManager::ManageAllPositions(...)`
 
+## Current Runtime Evidence
+- `20260517.log` proves `INDICATOR_ONLY` and `AI_ASSISTED` sessions were truly active, not merely misread `AI_ONLY` runs.
+- Indicator-only funnel evidence: `signals_generated=78`, `signals_after_pipeline=26`, `signals_after_quorum=0`; primary productive families were `Fibonacci` and `Support/Resistance`, while Unified ICT, Unicorn, Power of Three, Candlestick, Momentum, and Trend mostly abstained or filtered.
+- AI-assisted funnel evidence: `signals_generated=16`, `signals_after_pipeline=8`, `signals_after_quorum=0`; Neural returned `NNAI_NO_SIGNAL` and ONNX stayed in `ONNX_WARMING_UP`, so AI added little predictive value in that sample and still had to be discounted as infrastructure abstention.
+- The current code batch targets the observed failure surface directly: expose pipeline kill reasons, discount non-contributing denominator weight, and allow scalp/intrabar strategies to run on configured lower timeframes when attached to higher-timeframe charts.
+
 ## Runtime Lifecycle
 
 ### 1. OnInit
@@ -32,12 +38,14 @@
 - Apply hard execution-cost controls (max pre-send spread and max signal-price drift) before trade-manager bootstrap.
 - Initialize optional AI subsystems conditionally by flags and convert failures into readiness-state degradation instead of fatal startup aborts.
 - Emit `[AI-TOPOLOGY]` so MT5-native voters, ONNX live voting, Python bridge expectations, and external LLM reasoning posture are visible from init logs.
+- Emit `[RUNTIME-FINGERPRINT]` with requested and effective EA mode so active logs can distinguish `AI_ONLY` mode filtering from real indicator/hybrid underperformance.
 - Bootstrap the shared universal transformer service before AI brains/adapters start symbol registration, while keeping the service lazy-safe for indirect runtime callers.
 - Load ONNX scaler parameters from Common files when available so runtime normalization stays aligned with Python training.
 - Initialize performance analytics before unified-risk bootstrap.
 - Validate active symbols and emit `[ACCOUNT-CAPACITY]` affordability diagnostics before the first scan.
 - Reject symbols with extreme spreads (>1000 points) during symbol validation to prevent wasted evaluation cycles.
 - Build the active-only strategy registry, then create per-symbol managers and register only enabled strategies and enabled AI adapters.
+- Resolve strategy-specific registration timeframes during manager bootstrap so configured scalp/intrabar modules can evaluate a lower timeframe than the attached chart when appropriate.
 - Build symbol-class-specific strategy flags before manager bootstrap so synthetic symbols can use a leaner live roster than FX without violating per-symbol consensus ownership.
 - Rebuild scheduler state only after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff remain a single aligned authority.
 - Treat curated mode as a baseline/default profile only; explicit strategy enables remain authoritative instead of being rewritten away at runtime.
@@ -55,6 +63,7 @@
 - Run deterministic unprotected-position remediation sweep before entry evaluation.
 - Refresh runtime equity/drawdown metrics on both safety and timer paths.
 - Manage open positions once per second through `tradeManager.ManageAllPositions(...)`.
+- **Batch 82**: Triggers `ManageOpenPositionsIfNeeded` -> `SignalReversalExit` (SRE) checks -> `PositionLifecycleManager` (ATR Trailing/BE).
 - Gate the generic EA-level lifecycle manager behind `InpEnablePositionLifecycleManager` so hidden tiny-point breakeven/trailing logic cannot prematurely close wider-structure trades by default.
 - Detect synthetic-index tick-rate spikes and, on alarm, flatten positions plus activate a temporary trading pause.
 - Keep symbol evaluation active during cooldown/capacity veto windows so blocked-entry behavior remains observable.
@@ -74,7 +83,11 @@
 - Manager consensus + confluence.
 - Strategy `OnNewBar(...)` prepares per-bar state only; consensus owns the single authoritative `GetSignal(...)` invocation so bar-scoped signal state is not consumed twice.
 - Manager applies role/cluster governance and evaluates quorum via normalized weighted conviction pooling.
-- **Dynamic weight decay** (Batch 41): strategies filtering ≥ 3 consecutive cycles have live weight decayed to reduce denominator bloat; weight recovers when strategy votes again.
+- **Batch 82**: Relaxed strategy internal filters (ICT confluences 4->2, Trend minimum TF M30->M15, SR confidence 0.50->0.45).
+- **USP Filter Logic**: Confidence bypass for neutral trends lowered to 0.82; opposing trend hard veto increased to 90 strength.
+- **Authority Gate**: Solo indicator signals promoted to live if Confidence >= 0.78 and Quality >= 0.82.
+- **Dynamic weight decay** (Batch 82): strategies filtering ≥ 15 consecutive cycles have live weight decayed by 5% rate; weight recovers when strategy votes again.
+- Manager reduces denominator weight by contribution class before support-ratio math: infrastructure/warmup abstentions, pipeline-filtered packets, and ordinary raw-none cycles no longer count as full neutral voters against the few strategies that actually produced direction.
 - Manager classifies intrabar strategies as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent.
 - Explicit intrabar eligibility now maps enabled strategies into real `LIVE` intrabar voting, so operator-facing `intrabar=true` settings match the runtime voter pool.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a different profile left the raw input toggles enabled.
@@ -84,7 +97,7 @@
   - FX retains the broader balanced roster
   - synthetic ICT/Elliott higher-timeframe dependencies are lowered from FX-style `H4/D1` expectations to lighter `M15/H1/H4` ladders where appropriate
 - Synthetic lean symbols now also receive dedicated sparse intrabar admission thresholds, so one-voter structure packets are evaluated against profile-aware quality floors instead of the same sparse-quality bar used for broader FX/balanced rosters.
-- **Adaptive quorum thresholds** (Batch 41): manager calculates `effectiveQualityThreshold` and `supportFloor` based on actual active voter count:
+- **Adaptive quorum thresholds** (Batch 82): manager calculates `effectiveQualityThreshold` and `supportFloor` based on actual active voter count:
   - 1 active voter: directional quality ≥ 0.40, support ≥ 0.15
   - 2 active voters: directional quality ≥ 0.48, support ≥ 0.30
   - 3+ active voters: directional quality ≥ standard threshold, support ≥ scan-mode floor
@@ -97,12 +110,15 @@
   - **Tiered Evaluation**: Groups strategies into Institutional (T1), Structure (T2), and Indicators (T3).
   - **Conflict Resolution**: Resolves tier-level contradictions (e.g., T2 agreement overriding T1 weak bias).
   - **Setup Quality & Reliability**: Integrates setup quality (0-1) and historical accuracy metrics into the final decision weight.
-- **Detailed veto diagnostics** (Batch 41): manager emits specific veto codes with numeric evidence instead of generic `zero_voter` / `single_voter_confidence` placeholders.
+- **Batch 82**: Lowered confidence floors for all tiers (Tier 3: 0.62, Tier 2: 0.45, Tier 1: 0.25).
+- **Detailed veto diagnostics** (Batch 82): manager emits specific veto codes with numeric evidence.
 - Manager vote admission now uses the pipeline's effective confidence floor for the current evaluation, avoiding pipeline/quorum drift when regime-aware relaxation is active.
 - Manager live vote influence is modulated by rolling strategy `healthScore` rather than treating every enabled strategy as equally trusted at all times.
 - Manager emits consensus root-cause attribution snapshots for no-signal diagnostics.
 - Manager emits strategy-level none-reason attribution for core curated contributors.
+- Manager downgrades warmup, unavailable, invalid-handle, initialization, scaler, feature, and inference abstentions before ready-live-weight math so infrastructure faults do not look like useful strategy participation.
 - Pipeline now includes deterministic regime/cost viability gate before validator.
+- Pipeline now retains the rejecting filter name/reason and exposes it in manager summaries for filtered abstentions, making indicator-only and hybrid no-signal runs diagnosable from logs.
 - Pipeline caches structural engine state once per symbol/timeframe/bar and carries a shared evidence snapshot (`readiness`, `context`, `cost`, readiness class, reuse/staleness`) forward through consensus and validation.
 - Pipeline and validator both support bounded soft-pass behavior for near-threshold candidates when the broader evidence profile is strong.
 - Pipeline attenuates admitted confidence after threshold passage using readiness/context/staleness evidence so weak packets cannot preserve inflated confidence downstream.
@@ -118,6 +134,7 @@
 - Validator profile inputs still exist by scan mode (new-bar vs intrabar), but in normal runtime they are telemetry/fallback surfaces rather than a second structural veto layer.
 - Validator still consumes manager quorum facts (`effectiveMinVoters`, `directionalQuality`, `supportRatio`) together with conviction/readiness/context/cost evidence so exogenous validation telemetry stays aligned with the already-authoritative manager decision.
 - Strategy overrides that bypass base-class `GetSignal(...)` now emit explicit decision tags, and manager defensively downgrades any remaining placeholder abstentions so they cannot silently dilute ready-live quorum math.
+- `Momentum` can now be configured for scalp-continuation signals via `InpEnableMomentumScalping` and `InpMomentumScalpCooldownSeconds`; `InpMomentumScalpTimeframe` can register it on a lower timeframe than the attached chart. `InpCandlestickIntrabarTimeframe` provides the same lower-timeframe registration control for intrabar candlestick participation. These controls change only signal production cadence and leave risk ownership, execution ownership, and lifecycle ownership unchanged.
 - Entry gates (cooldown, total-position cap, unprotected-position veto, per-symbol capacity) now apply after validation and before unified risk so approved-but-blocked signals are still logged.
 - Live authority is applied per candidate before live send: `[LIVE-AUTHORITY]` decides live vs candidate-level shadow and scales risk; `[AUTHORITY-TRIAL]` records forward evidence; `[AUTHORITY-RESULT]` updates AI/ONNX/indicator/Elliott family statistics for promotion or demotion.
 - Final validator ATR acquisition now resolves from the shared indicator handle first and then a raw-rate ATR fallback, preventing transient copy misses from forcing `Invalid ATR: 0.00000` vetoes on otherwise-valid packets.
@@ -381,7 +398,7 @@
   - compile verification finished cleanly with `0 errors, 0 warnings`
 
 ## 2026-04-07 Scan Budget + Registry + Diagnostics Debloat Trace
-- `MultiStrategyAutonomousEA.mq5` now caps heavy evaluations with `InpMaxSignalEvaluationsPerCycle`, persists pending new-bar symbols across cycles, and spends the cycle budget on deferred new-bar work before intrabar scans.
+- `MultiStrategyAutonomousEA.mq5` now caps heavy evaluations with `InpMaxSignalEvaluationsPerCycle`, persists pending new-bar symbols across cycles, and spends the cycle budget on deferred new-bar work on those symbols before any intrabar work.
 - The legacy `InpUseOrchestrator` surface has been removed; runtime registration now follows the active strategy registry only, so disabled curated strategies and disabled AI adapters do not enter manager pools, orchestrator identity maps, or weight summaries.
 - `CTrendEngine` now distinguishes warmup, transient copy faults, handle faults, partial-readiness faults, and reused snapshots; partial readiness is allowed to proceed when the underlying series is mature, enabling MA/ATR fallback logic to attempt recovery instead of hard-failing, which reduces persistent readiness vetoes on synthetic indices where `BarsCalculated` may lag behind `Bars()`. cases.
 - `Strategies/StrategyElliottWaveEnhanced.mqh`, `Core/Pipeline/UnifiedSignalPipeline.mqh`, and `Core/AI/AIStrategyOrchestrator.mqh` no longer allocate component-local `SignalDiagnostics` sinks; runtime observability is now concentrated in manager/runtime telemetry rather than duplicate per-component logs.

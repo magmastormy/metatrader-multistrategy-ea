@@ -174,6 +174,8 @@ private:
     bool m_lastRegimeSnapshotValid;
     ENUM_REGIME_STATE m_lastRegimeState;
     double m_lastEffectiveMinConfidence;
+    string m_lastFilterName;
+    string m_lastFilterReason;
     SPipelineEvidenceSnapshot m_lastEvidence;
     SPipelineEvidenceSnapshot m_cachedStructuralEvidence;
     string m_cachedContextSymbol;
@@ -234,6 +236,8 @@ public:
     bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
     string GetLastEvaluatedSymbol() const { return m_lastEvaluatedSymbol; }
     double GetLastEffectiveMinConfidence() const { return m_lastEffectiveMinConfidence; }
+    string GetLastFilterName() const { return m_lastFilterName; }
+    string GetLastFilterReason() const { return m_lastFilterReason; }
     void GetLastEvidenceSnapshot(SPipelineEvidenceSnapshot &snapshot) const { snapshot = m_lastEvidence; }
     double GetFilterRate() const 
     { 
@@ -269,6 +273,8 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_lastRegimeSnapshotValid(false),
     m_lastRegimeState(REGIME_RANGE),
     m_lastEffectiveMinConfidence(0.40),
+    m_lastFilterName(""),
+    m_lastFilterReason(""),
     m_cachedContextSymbol(""),
     m_cachedContextTimeframe(PERIOD_CURRENT),
     m_cachedContextBarTime(0),
@@ -845,6 +851,8 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     m_lastRegimeSnapshotValid = false;
     m_lastRegimeState = REGIME_RANGE;
     m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, m_filters.minConfidence));
+    m_lastFilterName = "";
+    m_lastFilterReason = "";
 
     if(strategy == NULL)
     {
@@ -1282,10 +1290,10 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     double trendStrength = m_trendEngine.GetTrendStrength();
     
     // Only bypass trend alignment in neutral/ranging regimes for truly exceptional confidence.
-    if(confidence > 0.90 && (trend == TREND_RANGING || trend == TREND_NONE))
+    if(confidence > 0.82 && (trend == TREND_RANGING || trend == TREND_NONE))
     {
         LogFilterResult("TrendFilter", true, 
-                       StringFormat("BYPASSED - Exceptional confidence in neutral trend (%.2f) | Trend: %s", 
+                       StringFormat("BYPASSED - High confidence in neutral trend (%.2f) | Trend: %s", 
                                   confidence, EnumToString(trend)));
         return true;
     }
@@ -1294,14 +1302,14 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
     // Only reject if there's a STRONG opposing trend
     bool strongOpposingTrend = false;
     
-    if(signal == TRADE_SIGNAL_BUY && m_trendEngine.IsTrendBearish() && trendStrength > 70)
+    if(signal == TRADE_SIGNAL_BUY && m_trendEngine.IsTrendBearish() && trendStrength > 75)
         strongOpposingTrend = true;
-    else if(signal == TRADE_SIGNAL_SELL && m_trendEngine.IsTrendBullish() && trendStrength > 70)
+    else if(signal == TRADE_SIGNAL_SELL && m_trendEngine.IsTrendBullish() && trendStrength > 75)
         strongOpposingTrend = true;
     
     if(strongOpposingTrend)
     {
-        if(trendStrength >= 85.0)
+        if(trendStrength >= 90.0) // Increased from 85.0
         {
             LogFilterResult("TrendFilter", false, 
                            StringFormat("Hard opposing trend veto: %s (%.1f)", 
@@ -1309,7 +1317,7 @@ bool CUnifiedSignalPipeline::ApplyTrendFilter(ENUM_TRADE_SIGNAL &signal, double 
             return false;
         }
 
-        confidence *= 0.72;
+        confidence *= 0.85; // Relaxed from 0.72
         confidence = MathMin(1.0, MathMax(0.0, confidence));
         LogFilterResult("TrendFilter", true,
                        StringFormat("Opposing trend attenuated: %s (%.1f)", EnumToString(trend), trendStrength));
@@ -1505,7 +1513,9 @@ bool CUnifiedSignalPipeline::IsSyntheticSymbol(const string symbol)
        StringFind(symbol, "SFX Vol") >= 0 ||
        StringFind(symbol, "FX Vol") >= 0 ||
        StringFind(symbol, "GainX") >= 0 ||
-       StringFind(symbol, "FlipX") >= 0)
+       StringFind(symbol, "FlipX") >= 0 ||
+       StringFind(symbol, "Synth") >= 0 ||
+       StringFind(symbol, "Index") >= 0)
     {
         return true;
     }
@@ -1525,8 +1535,8 @@ bool CUnifiedSignalPipeline::ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal, const st
     TimeToStruct(TimeGMT(), dt);
     int currentHour = dt.hour;
     
-    // Check trading hours (1 AM - 10 PM GMT by default)
-    int startHour = 1;
+    // Check trading hours (0 AM - 10 PM GMT: Allowing Asia session)
+    int startHour = 0;
     int endHour = 22;
     
     if(startHour <= endHour)
@@ -1606,8 +1616,11 @@ double CUnifiedSignalPipeline::CalculateQualityScore(double confidence, int conf
     // Confidence component
     score += confidence * 0.20;
     
-    // Confluence component
-    double confluenceScore = MathMin(1.0, MathMax(0.0, confluence / 5.0));
+    // Confluence component (Biased scale to avoid punishing solo high-quality signals)
+    double confluenceScore = 0.0;
+    if(confluence == 1) confluenceScore = 0.50;      // Solo signal starts with decent baseline
+    else if(confluence == 2) confluenceScore = 0.80;
+    else if(confluence >= 3) confluenceScore = 1.0;
     score += confluenceScore * 0.10;
     
     // Decision-path components with NaN protection
@@ -1643,6 +1656,20 @@ double CUnifiedSignalPipeline::CalculateQualityScore(double confidence, int conf
 //+------------------------------------------------------------------+
 void CUnifiedSignalPipeline::LogFilterResult(const string filter, bool passed, const string reason)
 {
+    if(passed)
+        return;
+
+    if(StringLen(m_lastFilterName) > 0)
+        m_lastFilterName += "+";
+    m_lastFilterName += filter;
+
+    if(StringLen(reason) > 0)
+    {
+        if(StringLen(m_lastFilterReason) > 0)
+            m_lastFilterReason += "; ";
+        m_lastFilterReason += reason;
+    }
+
     // Note: Generic per-filter logs are intentionally suppressed here.
     // Note: Authoritative runtime telemetry is emitted by the manager, validator, and regime/cost gates.
 }

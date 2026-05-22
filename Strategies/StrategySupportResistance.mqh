@@ -97,7 +97,7 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
     m_levelsDetected(0),
     m_trendlinesDetected(0)
 {
-    m_minConfidence = 0.50; // Lowered from 0.60: M1 levels rarely reach 0.60 on first valid touch
+    m_minConfidence = 0.45; // Reduced from 0.50 to allow more M1/M5 level participation
 }
 
 //+------------------------------------------------------------------+

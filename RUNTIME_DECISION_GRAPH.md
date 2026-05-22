@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-05-13
+- Last Updated: 2026-05-21
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 80 - Fix Hardcoded Zero Weights for Experimental AI Families
+- Current Batch: 82 - Strategic Signal Participation, Adaptive Exits & ATR-Based Holding
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -32,7 +32,7 @@ flowchart TD
   B1A -->|Yes| B1B[Reject symbol - extreme spread]
   B1A -->|No| B2
   B1 --> B2[Recover TRADE-STATE from history and open positions]
-  B2 --> C[Build active-only strategy registry and register enabled core or AI adapters]
+  B2 --> C[Build active-only strategy registry, resolve strategy timeframes, and register enabled core or AI adapters]
   C --> C0[Initialize per-symbol managers]
   C0 --> C1[Rebuild scheduler state and prime pending new-bar work for every validated symbol]
   C1 --> D0[OnTick ProcessTickSafetyLoop]
@@ -49,8 +49,17 @@ flowchart TD
 
   D --> D1{Terminal connected?}
   D1 -->|No| D2[Skip evaluation, wait reconnect]
-  D1 -->|Yes| D3[Remediate unprotected positions]
-  D3 --> E{Signal eval second already used?}
+  D1 -->|Yes| D_MGMT[ManageOpenPositionsIfNeeded]
+  D_MGMT --> D_EXIT{SignalReversalExit Enabled?}
+  D_EXIT -- Yes --> D_REV[Check Consensus Reversal]
+  D_REV --> D_CONF{Reversal > 0.58 Conf?}
+  D_CONF -- Yes --> D_PROFIT{Profit Guard Pass?}
+  D_PROFIT -- Yes --> D_ZONE{Last Stand Zone?}
+  D_ZONE -- No --> D_CLOSE[Close Position]
+  D_EXIT -- No --> D_LIFECYCLE[PositionLifecycleManager]
+  D_LIFECYCLE --> D_ATR[ATR-Based Trailing/BE]
+  D_CLOSE --> D_LIFECYCLE
+  D_ATR --> E{Signal eval second already used?}
   E -->|Yes| E2[Skip duplicate evaluation]
   E -->|No| E3[Continue]
   E3 --> E3A[Rotate symbol evaluation start index]
@@ -65,7 +74,7 @@ flowchart TD
   F --> J[Manager consensus + confluence + timeframe consistency]
   G --> J
   J --> J0[Strategy role/cluster governance applied]
-  J0 --> J1[Pipeline regime + cost viability gate]
+  J0 --> J1[Pipeline regime + cost viability gate + filter attribution]
   J1 --> J2[Multi-Tier Signal Validation & Conflict Resolution]
   J2 --> J3[Weighted Decision considering Setup Quality & Reliability]
   J3 --> K{Signal NONE?}
@@ -120,6 +129,7 @@ flowchart TD
   - build the active-only strategy registry and register only enabled strategies and enabled AI adapters, ensuring experimental AI families (Transformer, Ensemble) receive non-zero weights from the AI multiplier during registry bootstrap to allow live participation
   - rebuild cadence scheduler state as one unit after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff cannot drift out of sync with `g_activePairs`; runtime now rebuilds and logs `[SCHEDULER-STATE]` before resuming evaluation if that contract is broken.
 - Per-symbol manager profiles now branch by instrument class before registration: synthetic symbols can use a lean structure-heavy roster and lighter context engines, while FX symbols retain the broader balanced roster.
+- `[RUNTIME-FINGERPRINT]` now reports both `RequestedMode` and effective `EAMode`; `20260515.log` / `20260516.log` style `AI_ONLY` sessions should not be read as indicator or hybrid evidence. `20260517.log` confirms actual `INDICATOR_ONLY` and `AI_ASSISTED` participation, but those sessions died after pipeline/quorum rather than from missing registration.
 - `EA_MODE_HYBRID` is indicator-led for ordinary packets, but high-confidence AI-only packets can pass through `InpAllowHybridAIStandalone` and then must satisfy the live-authority gate.
 - `EA_MODE_AI_ONLY` is now strict execution mode when AI adapters are enabled: indicator-based strategies are filtered out of the strategy registry, and AI adapters are the sole tradable family on both new-bar and timed intrabar paths.
 - When `EA_MODE_AI_ONLY` filters configured indicator families out of the active registry, runtime now emits `[MODE-MASK]` so operators can distinguish "inactive by mode" from "active but underperforming."
@@ -132,6 +142,10 @@ flowchart TD
 - AI strategy adapters now support a unified `SetConfidenceThreshold(double)` interface, allowing the EA to propagate the system-wide `InpAIConfidenceThreshold` authoritative floor directly into the strategy evaluation loop, eliminating legacy hardcoded confidence caps.
 - The effective AI runtime floor is now clamped to at least `0.70`, and transformer/ensemble defaults start disabled until intentionally retrained/re-enabled.
 - Strategy and AI registration is active-only: disabled modules remain compiled in source but do not enter manager pools, orchestrator identity maps, or denominator math.
+- Pipeline-filtered strategies now surface the rejecting filter chain in consensus summaries, and warmup/unavailable infrastructure abstentions are discounted before ready-live-weight math.
+- Consensus denominator math now discounts abstention classes before support ratios are calculated: infrastructure/warmup abstentions carry minimal denominator weight, pipeline-filtered packets carry partial weight, and ordinary raw-none cycles carry reduced weight instead of drowning the few strategies that actually generated direction.
+- `Momentum` can run a configured scalp-continuation lane with short wall-clock cooldown while retaining the same consensus, validation, risk, and execution path as all other entries.
+- `Momentum` and `Candlestick` can register on explicit lower timeframes (`InpMomentumScalpTimeframe`, `InpCandlestickIntrabarTimeframe`) when the attached chart timeframe is higher, so timed intrabar scans can evaluate faster bars instead of repeatedly asking H1 logic for scalp entries.
 - `CMarketAnalysis` can now reuse bounded last-valid trend/volatility/momentum/ATR snapshots on transient `4806/4807` data faults, preventing short sync gaps from collapsing upstream market-state evidence to zeros.
 - The scan loop now reserves the current best candidate inside `CUnifiedRiskManager` while later symbols are still being evaluated, so projected daily and portfolio utilization remain authoritative during end-of-cycle ranking.
 - Batch 78 source defaults are live-capable (`InpShadowMode=false`) while `InpEnableLiveAuthorityGate=true` shadows individual unproven candidates and promotes/demotes families from forward R evidence.
@@ -164,7 +178,8 @@ flowchart TD
 - Vote admission into timeframe consistency and quorum uses the pipeline's effective confidence floor for that evaluation, not just the static base pipeline minimum.
 - Quorum uses normalized weighted conviction pooling (intrabar eligibility defines the active live-voter pool for intrabar scans):
   - adjusted live weight = `base strategy weight x role multiplier x healthScore reliability multiplier`
-  - ready live weight = `adjusted live weight x pipeline readinessScore`
+  - denominator weight = adjusted live weight reduced by abstention class (`raw-none`, `pipeline-filtered`, `infrastructure/warmup`, or other neutral)
+  - ready live weight = `denominator weight x pipeline readinessScore`
   - conviction score = confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
   - per-direction score = `sum(ready live weight x conviction score)` for agreeing live voters
   - directional quality = `direction score / direction weight`

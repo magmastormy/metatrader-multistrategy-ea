@@ -1,3 +1,10 @@
+.kiro
+.joycode
+.sixth
+.trunk
+.windsurf
+.vscode
+.trae
 *.ps1
 *.ex5
 Documentation/
@@ -22,3 +29,9 @@ debloat.md
 .windsurf/
 .trunk/
 .joycode/
+enterprise_components_audit.md
+Audit.md
+Mqh_AI_audit.md
+*.ex5
+Strategy_audit_trace.md
+visualization_audit.md

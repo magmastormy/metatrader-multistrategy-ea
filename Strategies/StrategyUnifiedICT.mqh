@@ -270,8 +270,8 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_smtScanner(NULL),
     m_anchoredVWAP(NULL),
     m_cumulativeDelta(NULL),
-    m_minConfluenceScore(45.0),
-    m_minConfluences(4),
+    m_minConfluenceScore(35.0),
+    m_minConfluences(2),
     m_requireKillZone(false),
     m_requireOTE(false),
     m_allowCounterTrendScout(true),
@@ -897,9 +897,19 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     }
 
     if(!hasStructureBreakEvent)
+    {
+        // RELAXED: Allow displacement-only entries if structure was recently broken (within 5 bars)
+        if(m_structureAnalyzer != NULL && m_structureAnalyzer.HasBMS(5))
+            hasStructureBreakEvent = true;
+    }
+
+    if(!hasStructureBreakEvent)
         return RejectSignal("UICT_EVENT_NO_STRUCTURE_BREAK",
                             "[UICT] Filtered: Event tuple missing structure break");
-    if(!(hasDisplacementEvent && hasMitigationRetestEvent))
+
+    // RELAXED: Require Displacement OR Mitigation, not both. 
+    // This allows aggressive entries on momentum (displacement) or conservative entries on retest (mitigation).
+    if(!hasDisplacementEvent && !hasMitigationRetestEvent)
         return RejectSignal("UICT_EVENT_TUPLE_INCOMPLETE",
                              StringFormat("[UICT] Filtered: Event tuple incomplete (disp=%s, retest=%s)",
                                           hasDisplacementEvent ? "true" : "false",
@@ -907,6 +917,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     
     // --- VOLUME CONFIRMATION ---
     double volBuffer[11];
+    double volThreshold = 1.0; // Reduced from 1.1: Just needs to be above average
     if(CopyBuffer(iVolumes(m_symbol, m_timeframe, VOLUME_TICK), 0, 1, 11, volBuffer) < 11)
     {
         // Fallback if handle logic is complex, just use iVolume
@@ -914,7 +925,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         long v1 = iVolume(m_symbol, m_timeframe, 1);
         long vSum = 0;
         for(int i=2; i<12; i++) vSum += iVolume(m_symbol, m_timeframe, i);
-        if(v1 < (vSum/10) * 1.1) 
+        if(v1 < (vSum/10) * volThreshold) 
             return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
     }
     else
@@ -922,7 +933,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         long v1 = (long)volBuffer[0]; // bar 1
         long vSum = 0;
         for(int i=1; i<11; i++) vSum += (long)volBuffer[i];
-        if(v1 < (vSum/10) * 1.1)
+        if(v1 < (vSum/10) * volThreshold)
              return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
     }
     
