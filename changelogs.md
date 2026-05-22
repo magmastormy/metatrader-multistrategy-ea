@@ -2,7 +2,52 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
-## [Unreleased] - 2026-05-13
+## [Unreleased] - 2026-05-21
+
+### Batch 82: Strategic Signal Participation, Adaptive Exits & ATR-Based Holding (2026-05-21)
+
+#### Root Cause
+Analysis of runtime behavior and code logic identified a "technical glass ceiling" that was suppressing strategy signals in favor of AI. Indicator-based strategies were hindered by aggressive weight decay (losing influence after just 3 bars of silence), strict confluence requirements (minimum 2 voters hard-coded in multiple layers), punitive quality scoring for solo signals, and restrictive pipeline filters (Trend, Spread/ATR, and Time gates). Additionally, the absence of sophisticated exit logic forced trades to either hit Take Profit or Stop Loss, missing opportunities to capture partial trends or cut failing setups early.
+
+#### Implementation Summary
+- **Relaxed Signal Pipeline:** Softened weight decay (15-bar threshold, 5% rate) and lowered tier confidence floors (Tier 3: 0.70 -> 0.62). Solo high-quality signals can now pass the live authority gate (Confidence >= 0.78, Quality >= 0.82).
+- **Strategy Logic Optimization:** Reduced internal filters for `StrategyUnifiedICT` (confluences 4->2, displacement OR mitigation), `StrategyTrend` (minimum TF M30 -> M15), and `StrategySupportResistance` (confidence floor 0.50 -> 0.45).
+- **Smart Signal Reversal Exit (SRE):** Implemented high-speed reversal monitoring with:
+  - **Profit Guard**: Prevents SRE from closing winners, ensuring trend capture.
+  - **Structural Invalidation**: Bails regardless of profit if Tier-1 structure trends flip.
+  - **Breathing Room**: 45s immunity window and 25% SL noise floor to prevent noise-based exits.
+  - **Last Stand Zone**: Disables SRE when price is >82% into SL, preserving the recovery chance.
+- **Dynamic Position Management:** Upgraded `CTradeManager` with ATR-based trailing stop support and enabled the EA-level lifecycle manager by default for scalping support.
+- **Adaptive Risk Throttling:** Raised global risk utilization thresholds from 50% to 70%, allowing the EA to scale into winning sessions before pressure multipliers activate.
+- **Enhanced Synthetic Support:** Expanded synthetic instrument detection and opened trading hours to include GMT 0 to allow Asia session participation.
+
+#### Validation Evidence
+- Compilation verified with `sync_and_compile.ps1` (0 errors, 0 warnings).
+- Strategy-level unit tests for ICT and Trend logic relaxation pass internally.
+- SRE logic confirmed to respect Profit Guard and Last Stand boundaries in code walkthrough.
+
+## [2026-05-17] Batch 81 - Indicator/Hybrid Signal Transparency, Abstention-Aware Quorum & Scalp Participation
+
+#### Root Cause
+Operator reported that indicator-only and indicator+AI operation produced no actionable signals, while the EA looked active but not trustworthy as a trading system. Review of `20260515.log` and `20260516.log` showed those earlier sessions were actually `AI_ONLY` (`Indicators=0 | AI=4`), so they could not prove indicator-mode runtime behavior. The new `20260517.log` did prove real `INDICATOR_ONLY` and `AI_ASSISTED` participation, but both modes died after generation: indicator-only reached `signals_generated=78`, `signals_after_pipeline=26`, `signals_after_quorum=0`; AI-assisted reached `signals_generated=16`, `signals_after_pipeline=8`, `signals_after_quorum=0`. Productive votes came mostly from Fibonacci, Support/Resistance, Candlestick, and Elliott, while Unified ICT, Unicorn, Power of Three, Trend, Momentum, Neural, and warming ONNX mostly abstained or filtered. The real bug was not only missing signals; it was denominator math and timeframe usage making weak/non-participating modules drown the few useful producers.
+
+#### Implementation Summary
+- **Mode Fingerprint Clarity:** `[RUNTIME-FINGERPRINT]` now logs both `RequestedMode` and effective `EAMode`, so `AI_ONLY` evidence cannot be mistaken for failed indicator or hybrid participation.
+- **Pipeline Filter Attribution:** `CUnifiedSignalPipeline` now retains the last rejecting filter name/reason, and `CEnterpriseStrategyManager` includes that filter chain in filtered strategy summaries such as `PIPELINE:ConfidenceFilter` or `PIPELINE:RegimeCostGate`.
+- **Infrastructure Abstention Downgrade:** Warmup/unavailable/init/feature/scaler/inference abstentions are downgraded before ready-live-weight math so dead or warming adapters do not dilute consensus as if they completed meaningful analysis.
+- **Momentum Scalp Control Surface:** Added `InpEnableMomentumScalping` and `InpMomentumScalpCooldownSeconds`; `CSimpleMomentumStrategy` can now emit continuation scalp signals on short wall-clock cooldowns, and low-volume continuation is admitted only during volatility expansion with a confidence penalty.
+- **Abstention-Aware Quorum Denominator:** `CEnterpriseStrategyManager` now computes denominator weight from actual contribution class: infrastructure/warmup abstentions are minimal, pipeline-filtered packets are partial, raw-none cycles are reduced, and only real signals keep full adjusted live weight.
+- **Lower-Timeframe Scalp/Intrabar Registration:** Added `InpMomentumScalpTimeframe` and `InpCandlestickIntrabarTimeframe`; when configured below the attached chart timeframe, Momentum and Candlestick register on that lower timeframe so timed scans are no longer repeatedly asking H1 closed-bar logic to scalp.
+
+#### Validation Evidence
+- `20260515.log` / `20260516.log` review confirmed the supplied sessions were `AI_ONLY`, not indicator/hybrid runtime evidence.
+- `20260517.log` review confirmed real `INDICATOR_ONLY` and `AI_ASSISTED` execution, with non-zero generation but zero post-quorum candidates in both modes.
+- The same log showed AI-assisted did not add usable edge in that sample: Neural returned `NNAI_NO_SIGNAL`, ONNX stayed `ONNX_WARMING_UP`, and the indicator families still supplied the only tradable-direction evidence.
+- Existing logs confirmed non-zero `[AI-VOTE]` / `[SHADOW-TRADE]` activity, ONNX CUDA/warmup/no-signal behavior, hard spread pre-send vetoes, and live-authority shadow routing.
+- `./sync_and_compile.ps1 -MirrorSync` completed successfully on 2026-05-17:
+  - `MultiStrategyAutonomousEA.mq5`: `0 errors, 0 warnings`
+  - `TrainingDataExporter.mq5`: `0 errors, 0 warnings`
+- Fresh post-change indicator-only and AI-assisted shadow runtime logs are still required to validate the new denominator and lower-timeframe registration behavior under `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[SIGNAL-REJECTED]`, `[AI-VOTE]`, and `[SHADOW-TRADE]`.
 
 ### Batch 80: Fix Hardcoded Zero Weights for Experimental AI Families (2026-05-13)
 

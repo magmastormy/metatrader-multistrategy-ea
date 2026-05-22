@@ -24,6 +24,7 @@ private:
     double  m_lastDiff;
     datetime m_lastSignalBar;      // Track last bar where signal was generated
     bool     m_enableScalping;     // Allow rapid signals
+    int      m_scalpCooldownSeconds;
     double   m_minTrendStrength;   // Minimum trend strength for trades
     double   m_minVolatility;      // Minimum volatility threshold
     double   m_atrThresholdMult;   // Dynamic threshold multiplier
@@ -116,6 +117,7 @@ public:
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0),
         m_enableScalping(false),
+        m_scalpCooldownSeconds(20),
         m_minTrendStrength(0.55),
         m_minVolatility(0.0005),
         m_atrThresholdMult(0.15),
@@ -140,6 +142,7 @@ public:
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0),
         m_enableScalping(false),      // SCALPING MODE: Disabled by default
+        m_scalpCooldownSeconds(20),
         m_minTrendStrength(0.55),    // TREND FILTER: 55% minimum trend alignment
         m_minVolatility(0.0005),     // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
         m_atrThresholdMult(0.20),    // ADAPTIVE FILTER: Crossover gap must exceed 20% of ATR
@@ -151,6 +154,12 @@ public:
     virtual ~CSimpleMomentumStrategy()
     {
         Deinit();
+    }
+
+    void SetScalpingMode(const bool enabled, const int cooldownSeconds = 20)
+    {
+        m_enableScalping = enabled;
+        m_scalpCooldownSeconds = MathMax(5, cooldownSeconds);
     }
 
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
@@ -201,10 +210,12 @@ public:
            m_trendHandle == INVALID_HANDLE || m_stateSlowHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
             return RejectSignal("MOMENTUM_INVALID_HANDLES");
 
-        // COOLDOWN: Adaptive to chart timeframe — one full bar minimum.
-        // On M1 this is 60s, on M5 it is 300s, on M30 it is 1800s, etc.
-        // Minimum floor of 30s to prevent rapid re-entry on tick noise.
-        int cooldownSeconds = MathMax(30, (int)PeriodSeconds(m_timeframe));
+        // Conservative mode waits one full bar; scalping mode uses a short wall-clock
+        // cooldown while portfolio/risk caps still prevent uncontrolled stacking.
+        int timeframeSeconds = MathMax(30, (int)PeriodSeconds(m_timeframe));
+        int cooldownSeconds = timeframeSeconds;
+        if(m_enableScalping)
+            cooldownSeconds = MathMax(5, MathMin(m_scalpCooldownSeconds, timeframeSeconds));
         if(TimeCurrent() - m_lastSignalTimestamp < cooldownSeconds)
             return RejectSignal("MOMENTUM_COOLDOWN");
 
@@ -318,8 +329,11 @@ public:
         if(signal == TRADE_SIGNAL_NONE)
             return RejectSignal("MOMENTUM_NO_CROSSOVER");
 
-        // Confirm crossover structure using advanced metrics
-        if(!volumeConfirmed)
+        bool scalpExpansionBypass = (m_enableScalping && volatilityExpansion);
+
+        // Confirm crossover structure using advanced metrics. Scalp mode can admit
+        // expansion without the volume bump, but it pays a confidence penalty below.
+        if(!volumeConfirmed && !scalpExpansionBypass)
             return RejectSignal("MOMENTUM_LOW_VOLUME_BREAK");
             
         if(signal == TRADE_SIGNAL_BUY && rsi > 72.0)
@@ -346,7 +360,8 @@ public:
             double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.5));
             double expansionConfidence = MathMin(1.0, atrWindow[0] / MathMax(atrWindow[1], m_minVolatility));
             double stateConfidence = 1.0;
-            confidence = (momentumConfidence * 0.55) + (expansionConfidence * 0.30) + (stateConfidence * 0.15);
+            double volumeConfidence = volumeConfirmed ? 1.0 : 0.86;
+            confidence = ((momentumConfidence * 0.55) + (expansionConfidence * 0.30) + (stateConfidence * 0.15)) * volumeConfidence;
             confidence = MathMin(1.0, MathMax(0.0, confidence));
             
             m_lastSignalBar = iTime(m_symbol, m_timeframe, 1);

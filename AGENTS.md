@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-04-27
+- Last Updated: 2026-05-21
 - Scope: Agent workflow contract for this repository
 
 ## 1. Mission

@@ -44,12 +44,12 @@ input int  InpMaxVisualObjects = 500;          // Max visual objects per chart
 
 //--- Consensus quorum (weighted)
 input group "Consensus Quorum"
-input double InpQuorumThreshold = 0.55;        // Min normalized weighted score to pass quorum
-input int    InpMinLiveVoters   = 2;           // Min agreeing live voters (floor safety)
+input double InpQuorumThreshold = 0.48;        // Min normalized weighted score to pass quorum (relaxed from 0.55)
+input int    InpMinLiveVoters   = 1;           // Min agreeing live voters (relaxed from 2)
 input double InpConsensusConflictDeadband = 0.05; // Minimum buy/sell score delta required to break directional tie
-input double InpConsensusMinReadyWeightRatio = 0.50; // Minimum ready-live-weight share required before consensus can trade
-input double InpConsensusSupportFloorNewBar = 0.45;   // Min support ratio required for full new-bar quorum
-input double InpConsensusSupportFloorIntrabar = 0.40; // Min support ratio required for full intrabar quorum
+input double InpConsensusMinReadyWeightRatio = 0.40; // Min ready-live-weight share (relaxed from 0.50)
+input double InpConsensusSupportFloorNewBar = 0.20;   // Min support ratio (relaxed from 0.45 to allow solo)
+input double InpConsensusSupportFloorIntrabar = 0.15; // Min support ratio (relaxed from 0.40 to allow solo)
 input bool   InpAllowSparseIntrabarSingleVoter = false; // Disable one-voter live intrabar admission
 input double InpSparseIntrabarMinQuality = 0.85;      // Min directional quality for sparse intrabar admission
 input double InpSparseIntrabarMinSupportRatio = 0.40; // Min support ratio for sparse intrabar admission
@@ -93,9 +93,9 @@ input int    InpAuthorityTrialHorizonSeconds = 900;   // Max forward-trial horiz
 input int    InpAuthorityMaxTrackedTrials = 256;      // Max active authority trials
 input double InpAuthorityMinExpectancyR = 0.03;       // Min average R for promoted live authority
 input double InpAuthorityMinProfitFactor = 1.10;      // Min profit factor for promoted live authority
-input double InpAuthorityMinCostScore = 0.68;         // Min execution-cost evidence score for live send
-input double InpAuthorityMinReadinessScore = 0.62;    // Min readiness evidence score for live send
-input double InpAuthorityMinContextScore = 0.58;      // Min context evidence score for live send
+input double InpAuthorityMinCostScore = 0.50;         // Min execution-cost evidence score (relaxed from 0.68)
+input double InpAuthorityMinReadinessScore = 0.52;    // Min readiness evidence score (relaxed from 0.62)
+input double InpAuthorityMinContextScore   = 0.48;    // Min context evidence score (relaxed from 0.58)
 input double InpAIBootstrapRiskMultiplier = 0.50;     // Risk scale for warm-start AI/ONNX authority
 input double InpAIPromotedRiskMultiplier = 1.00;      // Risk scale for promoted AI/ONNX authority
 input double InpNonAIPromotedRiskMultiplier = 0.65;   // Risk scale for promoted non-AI authority
@@ -117,10 +117,14 @@ input double InpSyntheticLeanSparseIntrabarMinQuality = 0.85; // Synthetic lean 
 input double InpSyntheticLeanIntrabarSingleVoterMinConfidence = 0.95; // Synthetic lean profile min confidence for one-voter intrabar admission
 input double InpPipelineIntrabarConfidenceCap = 0.05; // Max weak-regime intrabar confidence threshold uplift
 input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microstructure cost gate before validator
-input double InpPipelineMaxSpreadToAtrRatio = 0.25;   // Max spread/ATR ratio allowed by cost gate
+input double InpPipelineMaxSpreadToAtrRatio = 0.50;   // Max spread/ATR ratio (relaxed from 0.25)
 input int InpPipelineSpreadShockCooldownSec = 90;     // Spread shock cooldown window
-input double InpPipelineLateEntryZScoreLimit = 2.50;  // Late-entry outlier z-score veto limit
+input double InpPipelineLateEntryZScoreLimit = 4.00;  // Late-entry z-score limit (relaxed from 2.50)
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
+input bool InpEnableMomentumScalping = true;          // Allow momentum continuation scalp signals between crossover events
+input int  InpMomentumScalpCooldownSeconds = 20;      // Minimum seconds between momentum scalp signals
+input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5; // Lower timeframe used by Momentum when chart TF is higher
+input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5; // Lower timeframe used by Candlestick when chart TF is higher
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
 input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
 input bool InpIntrabarEligibilityFibonacci = true;   // Intrabar eligibility for Fibonacci strategy
@@ -148,24 +152,33 @@ input int  InpNNCheckpointEveryLabeled = 10;          // Checkpoint every N newl
 
 //--- Advanced signal validator (post-consensus)
 input group "Signal Validator"
-input int    InpValidatorNewBarMinConfluence    = 2;    // Minimum strategy confluence on new-bar scans
-input double InpValidatorNewBarMinQuality       = 0.72; // Minimum quality score on new-bar scans
-input double InpValidatorNewBarMinConfidence    = 0.60; // Post-consensus confidence floor on new-bar scans
-input int    InpValidatorIntrabarMinConfluence  = 2;    // Minimum strategy confluence on intrabar scans
-input double InpValidatorIntrabarMinQuality     = 0.82; // Minimum quality score on intrabar scans
-input double InpValidatorIntrabarMinConfidence  = 0.65; // Post-consensus confidence floor on intrabar scans
+input int    InpValidatorNewBarMinConfluence    = 1;    // Minimum strategy confluence (relaxed from 2)
+input double InpValidatorNewBarMinQuality       = 0.68; // Minimum quality score (relaxed from 0.72)
+input double InpValidatorNewBarMinConfidence    = 0.55; // Post-consensus confidence floor (relaxed from 0.60)
+input int    InpValidatorIntrabarMinConfluence  = 1;    // Minimum strategy confluence (relaxed from 2)
+input double InpValidatorIntrabarMinQuality     = 0.75; // Minimum quality score (relaxed from 0.82)
+input double InpValidatorIntrabarMinConfidence  = 0.60; // Post-consensus confidence floor (relaxed from 0.65)
 
 //--- Execution & Emergency Controls
 input group "Execution Safety"
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
-input int InpTradeSlippagePoints = 20;                                  // Max slippage in points
-input double InpMaxEntrySpreadPoints = 300.0;                            // Hard pre-send spread limit in points; <=0 disables
+input int InpTradeSlippagePoints = 50;                                  // Max slippage (relaxed from 20)
+input double InpMaxEntrySpreadPoints = 1500.0;                            // Hard pre-send spread limit (relaxed from 300)
 input double InpMaxEntryDriftPoints = 25.0;                              // Hard drift from signal price before send; <=0 disables
 input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
-input bool InpEnablePositionLifecycleManager = false;                   // EA-managed breakeven/trailing lifecycle (opt-in; disabled to avoid premature closes)
+input bool InpEnableSignalReversalExit = true;                 // Close position immediately if primary strategy signals reversal
+input double InpSignalReversalMinConfidence = 0.58;             // Min confidence to trigger a reversal exit
+input bool InpSignalReversalProfitGuard = true;                // Only allow reversal exit if trade is currently in loss
+input double InpSignalReversalMinLossR = 0.25;                  // Min loss (fraction of SL) before bailing (Cut early)
+input double InpSignalReversalMaxLossR = 0.82;                  // Max loss (fraction of SL) after which SRE is disabled (Last Stand Zone)
+input int    InpSignalReversalMinTimeSec = 45;                  // Min seconds to hold trade before SRE can fire
+input bool InpEnableStructuralInvalidation = true;             // Always exit if ICT/Structure trend flips
+input bool InpEnablePositionLifecycleManager = true;                   // EA-managed breakeven/trailing lifecycle (Enabled for scalping support)
 input double InpLifecycleBreakevenBufferPoints = 120.0;                 // Profit buffer in points before breakeven becomes eligible
 input double InpLifecycleTrailingDistancePoints = 300.0;                // Trailing stop distance in points once activated
 input double InpLifecycleTrailingStepPoints = 120.0;                    // Minimum favorable move between trailing updates
+input bool   InpLifecycleUseATRTrailing = true;                         // Use dynamic ATR-based trailing for scalping
+input double InpLifecycleATRMultiplier = 2.5;                           // ATR multiplier for trailing distance
 input bool InpEmergencyFlattenAllAccountPositions = true;               // Flatten account-wide positions on emergency stop
 input int InpUnprotectedRemediationIntervalSec = 15;                    // Seconds between unprotected-position remediation sweeps
 input int InpUnprotectedMaxRestoreAttempts = 3;                         // Max stop-restore attempts before forced close
@@ -1299,6 +1312,108 @@ void ManageOpenPositionsIfNeeded()
     if(PositionsTotal() <= 0)
         return;
 
+    // --- Signal Reversal Exit (High Speed Scalp Logic) ---
+    if(InpEnableSignalReversalExit)
+    {
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+            string sym = PositionGetString(POSITION_SYMBOL);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            
+            CEnterpriseStrategyManager* manager = GetEnterpriseManagerForSymbol(sym);
+            if(manager == NULL) continue;
+
+            double confidence = 0;
+            int confluence = 0;
+            // Use INTRABAR mode for fast reversal detection
+            ENUM_TRADE_SIGNAL currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(sym, confidence, confluence, EVAL_MODE_INTRABAR);
+            
+            bool reversalDetected = false;
+            bool isBuy = (type == POSITION_TYPE_BUY);
+            bool opposingSignal = (isBuy && currentSignal == TRADE_SIGNAL_SELL) || (!isBuy && currentSignal == TRADE_SIGNAL_BUY);
+            
+            if(opposingSignal)
+            {
+                double currentProfit = PositionGetDouble(POSITION_PROFIT);
+                bool inLoss = (currentProfit < 0);
+                
+                // --- BREATHING ROOM CHECKS ---
+                datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+                int durationSec = (int)(TimeCurrent() - openTime);
+                
+                double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                double slPrice = PositionGetDouble(POSITION_SL);
+                double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+                double slDistance = MathAbs(openPrice - slPrice);
+                double currentDrawdown = MathAbs(openPrice - currentPrice);
+                
+                // Calculate loss as fraction of SL distance (R-value)
+                double lossR = (slDistance > 0) ? (currentDrawdown / slDistance) : 0.0;
+                
+                bool hasBreathingRoom = (durationSec < InpSignalReversalMinTimeSec);
+                bool isMinorNoise = (inLoss && lossR < InpSignalReversalMinLossR);
+                bool isLastStandZone = (inLoss && lossR > InpSignalReversalMaxLossR);
+                
+                // 1. High Confidence Reversal
+                if(confidence >= InpSignalReversalMinConfidence)
+                {
+                    // "No-Man's Land" Protection: If we are already 82% of the way to SL, 
+                    // we disable SRE. At this point, the saving is too small (e.g. 10 pips) 
+                    // compared to the risk of exiting right before a bounce.
+                    if(isLastStandZone)
+                    {
+                        // Log once to explain why we aren't closing
+                        static datetime lastLastStandLog = 0;
+                        if(TimeCurrent() - lastLastStandLog > 60)
+                        {
+                            PrintFormat("[SRE-LAST-STAND] %s | ignoring reversal signal | lossR=%.2f exceeds %.2f | Let hard SL decide", sym, lossR, InpSignalReversalMaxLossR);
+                            lastLastStandLog = TimeCurrent();
+                        }
+                    }
+                    else
+                    {
+                        // Only bail if we've exhausted our breathing room AND the loss is meaningful
+                        // OR if it's a massive move (lossR > 0.5) regardless of time
+                        if(!hasBreathingRoom || lossR > 0.50)
+                        {
+                            if(!InpSignalReversalProfitGuard || (inLoss && !isMinorNoise))
+                                reversalDetected = true;
+                        }
+                    }
+                }
+                
+                // 2. Structural Invalidation (Emergency Exit)
+                // If ICT/Structure flips, we bail regardless of ProfitGuard, but still respect a tiny noise floor
+                if(InpEnableStructuralInvalidation && !reversalDetected)
+                {
+                    SConsensusDecisionContext context;
+                    if(manager.GetLastDecisionContext(context))
+                    {
+                        if(context.dominantCluster == STRUCTURE_CLUSTER && confidence >= 0.45)
+                        {
+                            if(lossR > 0.10 || !inLoss) // Respect a 10% SL noise floor for structural bails
+                            {
+                                PrintFormat("[STRUCTURAL-EXIT] %s | trend invalidated | conf=%.2f | lossR=%.2f", sym, confidence, lossR);
+                                reversalDetected = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if(reversalDetected)
+            {
+                PrintFormat("[SCALP-EXIT] Reversal detected on %s | type=%s | signal=%s | conf=%.2f",
+                            sym, EnumToString(type), EnumToString(currentSignal), confidence);
+                tradeManager.ClosePosition(ticket, "Signal Reversal");
+            }
+        }
+    }
+
     if(!InpEnablePositionLifecycleManager)
         return;
 
@@ -1308,7 +1423,9 @@ void ManageOpenPositionsIfNeeded()
     {
         tradeManager.ManageAllPositions(InpLifecycleBreakevenBufferPoints,
                                         InpLifecycleTrailingDistancePoints,
-                                        InpLifecycleTrailingStepPoints);
+                                        InpLifecycleTrailingStepPoints,
+                                        InpLifecycleUseATRTrailing,
+                                        InpLifecycleATRMultiplier);
         s_lastPositionManageTime = nowManage;
     }
 }
@@ -2250,10 +2367,31 @@ string GetSymbolStrategyProfileLabel(const string symbol, const bool &baseStrate
 
 ENUM_TIMEFRAMES ResolveStrategyRegistrationTimeframe(const string symbol, const string strategyName)
 {
+    ENUM_TIMEFRAMES chartTf = (ENUM_TIMEFRAMES)Period();
+    int chartSeconds = PeriodSeconds(chartTf);
+
+    if(strategyName == "Momentum" &&
+       InpEnableMomentumScalping &&
+       InpMomentumScalpTimeframe != PERIOD_CURRENT)
+    {
+        int scalpSeconds = PeriodSeconds(InpMomentumScalpTimeframe);
+        if(scalpSeconds > 0 && (chartSeconds <= 0 || scalpSeconds < chartSeconds))
+            return InpMomentumScalpTimeframe;
+    }
+
+    if(strategyName == "Candlestick" &&
+       InpIntrabarEligibilityCandlestick &&
+       InpCandlestickIntrabarTimeframe != PERIOD_CURRENT)
+    {
+        int candleSeconds = PeriodSeconds(InpCandlestickIntrabarTimeframe);
+        if(candleSeconds > 0 && (chartSeconds <= 0 || candleSeconds < chartSeconds))
+            return InpCandlestickIntrabarTimeframe;
+    }
+
     if(InpUseSymbolClassProfiles && IsSyntheticIndexSymbolName(symbol))
     {
-    if((strategyName == "Unified ICT" || strategyName == "Unicorn Model" || strategyName == "Power of Three") &&
-       (ENUM_TIMEFRAMES)Period() == PERIOD_M1)
+        if((strategyName == "Unified ICT" || strategyName == "Unicorn Model" || strategyName == "Power of Three") &&
+           chartTf == PERIOD_M1)
             return PERIOD_M5;
     }
     return PERIOD_CURRENT;
@@ -2569,12 +2707,13 @@ ENUM_EA_MODE ResolveEffectiveEAMode()
 void LogAIRuntimeTopology()
 {
     ENUM_EA_MODE effectiveMode = ResolveEffectiveEAMode();
-    PrintFormat("[RUNTIME-FINGERPRINT] Runtime=%s | File=%s | TerminalBuild=%d | Curated=%s | RegistrySize=%d | ActiveProfile=%s | EAMode=%s | HybridStandalone=%s | StandaloneThreshold=%.2f | Indicators=%d | AI=%d",
+    PrintFormat("[RUNTIME-FINGERPRINT] Runtime=%s | File=%s | TerminalBuild=%d | Curated=%s | RegistrySize=%d | ActiveProfile=%s | RequestedMode=%s | EAMode=%s | HybridStandalone=%s | StandaloneThreshold=%.2f | Indicators=%d | AI=%d",
                 TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS), 
                 __FILE__, (int)TerminalInfoInteger(TERMINAL_BUILD),
                 InpUseCuratedStrategySet ? "true" : "false",
                 g_strategyRegistry.GetDescriptorCount(),
                 GetInstrumentExecutionProfileName(_Symbol),
+                EAModeToString(InpEAMode),
                 EAModeToString(effectiveMode),
                 InpAllowHybridAIStandalone ? "true" : "false",
                 InpAIStandaloneMinConfidence,
@@ -2852,20 +2991,31 @@ bool ResolveLiveAuthority(const string symbol,
     }
 
     bool indicatorPromoted = AuthorityStatsPromoted(g_authorityIndicatorStats);
-    if(confluence >= MathMax(2, InpMinLiveVoters) &&
-       nonElliottIndicatorCount >= 2 &&
-       (indicatorPromoted || g_authorityIndicatorStats.samples < MathMax(1, InpAuthorityMinSamples)) &&
-       tradeConfidence >= 0.62 &&
-       qualityScore >= 0.70)
+    bool highQualitySolo = (confluence >= 1 && tradeConfidence >= 0.78 && qualityScore >= 0.82);
+    
+    if((confluence >= MathMax(1, InpMinLiveVoters) || highQualitySolo) &&
+       nonElliottIndicatorCount >= 1 &&
+       (indicatorPromoted || g_authorityIndicatorStats.samples < MathMax(1, InpAuthorityMinSamples) || highQualitySolo) &&
+       tradeConfidence >= (highQualitySolo ? 0.75 : 0.60) &&
+       qualityScore >= (highQualitySolo ? 0.80 : 0.68))
     {
         riskMultiplier = MathMax(0.10, InpNonAIPromotedRiskMultiplier);
-        reason = indicatorPromoted
-                 ? StringFormat("INDICATOR_PROMOTED | %s", AuthorityStatsSummary("Indicator", g_authorityIndicatorStats))
-                 : StringFormat("INDICATOR_WARM_START | samples=%d/%d confluence=%d contributors=%s",
-                                g_authorityIndicatorStats.samples,
-                                MathMax(1, InpAuthorityMinSamples),
-                                confluence,
-                                contributors);
+        if(highQualitySolo && confluence == 1)
+        {
+            reason = StringFormat("INDICATOR_SOLO_HIGH_QUALITY | conf=%.2f quality=%.2f contributors=%s",
+                                  tradeConfidence, qualityScore, contributors);
+            riskMultiplier *= 0.80; // Slight risk reduction for solo indicator trades
+        }
+        else
+        {
+            reason = indicatorPromoted
+                     ? StringFormat("INDICATOR_PROMOTED | %s", AuthorityStatsSummary("Indicator", g_authorityIndicatorStats))
+                     : StringFormat("INDICATOR_WARM_START | samples=%d/%d confluence=%d contributors=%s",
+                                    g_authorityIndicatorStats.samples,
+                                    MathMax(1, InpAuthorityMinSamples),
+                                    confluence,
+                                    contributors);
+        }
         return true;
     }
 
@@ -3042,7 +3192,12 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
     bool registered = false;
 
     if(strategyName == "Momentum")
-        registered = manager.RegisterStrategy(new CSimpleMomentumStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
+    {
+        CSimpleMomentumStrategy* momentumStrategy = new CSimpleMomentumStrategy();
+        if(momentumStrategy != NULL)
+            momentumStrategy.SetScalpingMode(InpEnableMomentumScalping, InpMomentumScalpCooldownSeconds);
+        registered = manager.RegisterStrategy(momentumStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
+    }
     else if(strategyName == "Trend")
         registered = manager.RegisterStrategy(new CStrategyTrend(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     else if(strategyName == "Fibonacci")

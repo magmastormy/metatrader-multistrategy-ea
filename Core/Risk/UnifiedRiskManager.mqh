@@ -435,19 +435,19 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     double dailyUtilization = (m_config.maxDailyRiskPercent > 0.0) ? (effectiveDailyRisk / m_config.maxDailyRiskPercent) : 0.0;
     double portfolioUtilization = (m_config.maxPortfolioRiskPercent > 0.0) ? (openExposureRisk / m_config.maxPortfolioRiskPercent) : 0.0;
 
-    if(dailyUtilization >= 0.90)
+    if(dailyUtilization >= 0.95)
         pressureMultiplier = MathMin(pressureMultiplier, 0.25);
-    else if(dailyUtilization >= 0.75)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.45);
-    else if(dailyUtilization >= 0.50)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.70);
-
-    if(portfolioUtilization >= 0.85)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.30);
-    else if(portfolioUtilization >= 0.70)
-        pressureMultiplier = MathMin(pressureMultiplier, 0.55);
-    else if(portfolioUtilization >= 0.50)
+    else if(dailyUtilization >= 0.85)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.50);
+    else if(dailyUtilization >= 0.70)
         pressureMultiplier = MathMin(pressureMultiplier, 0.80);
+
+    if(portfolioUtilization >= 0.92)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.30);
+    else if(portfolioUtilization >= 0.80)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.60);
+    else if(portfolioUtilization >= 0.65)
+        pressureMultiplier = MathMin(pressureMultiplier, 0.85);
 
     if(m_conservativeMode)
         pressureMultiplier = MathMin(pressureMultiplier, 0.80);

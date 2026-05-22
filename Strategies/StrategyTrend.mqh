@@ -25,14 +25,13 @@ private:
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
 
-    // Resolve the effective analysis timeframe (M30 minimum for trend strategies)
+    // Resolve the effective analysis timeframe (M15 minimum for trend strategies)
     ENUM_TIMEFRAMES ResolveEffectiveTF(ENUM_TIMEFRAMES chartTF)
     {
         if(chartTF == PERIOD_M1  || chartTF == PERIOD_M2  || chartTF == PERIOD_M3  ||
            chartTF == PERIOD_M4  || chartTF == PERIOD_M5  || chartTF == PERIOD_M6  ||
-           chartTF == PERIOD_M10 || chartTF == PERIOD_M12 || chartTF == PERIOD_M15 ||
-           chartTF == PERIOD_M20)
-            return PERIOD_M30;
+           chartTF == PERIOD_M10 || chartTF == PERIOD_M12)
+            return PERIOD_M15;
         return chartTF;
     }
 
@@ -124,8 +123,10 @@ public:
         }
 
         // Scale ADX thresholds by effective TF so faster frames tolerate lower ADX.
-        // M30: noTrend=15, normal at 28 | H1: 18/30 | H4+: 20/35 (original defaults)
-        if(m_effectiveTF == PERIOD_M30)
+        // M15: noTrend=12, normal at 25 | M30: 15/28 | H1: 18/30 | H4+: 20/35 (original defaults)
+        if(m_effectiveTF == PERIOD_M15)
+            m_adxSizing.SetThresholds(12.0, 18.0, 25.0, 38.0);
+        else if(m_effectiveTF == PERIOD_M30)
             m_adxSizing.SetThresholds(15.0, 20.0, 28.0, 40.0);
         else if(m_effectiveTF == PERIOD_H1)
             m_adxSizing.SetThresholds(18.0, 22.0, 30.0, 42.0);

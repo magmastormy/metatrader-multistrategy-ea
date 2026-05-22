@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-05-07
+- Last Updated: 2026-05-21
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 80 - Fix Hardcoded Zero Weights for Experimental AI Families
+- Current Batch: 82 - Strategic Signal Participation, Adaptive Exits & ATR-Based Holding
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -19,6 +19,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 
 - Batch 78 replaces global proof-only posture with an adaptive live-authority gate. AI/ONNX can warm-start live at scaled risk, all candidate families collect forward R evidence, and mature families are promoted or demoted from live execution based on expectancy/profit-factor thresholds.
 - Batch 80 resolves the AI-only inactivity issue by ensuring experimental AI families (Transformer, Ensemble) receive non-zero weights from the AI multiplier during registry bootstrap, rather than being hard-coded to 0.0.
+- Batch 81 makes indicator/hybrid no-signal diagnosis falsifiable and changes the math that was suppressing real producers: runtime fingerprints include requested vs effective EA mode, pipeline-filtered abstentions expose the actual filter chain in manager summaries, infrastructure/raw-none/filtered abstentions no longer inflate the live denominator at full weight, and `Momentum` / `Candlestick` have lower-timeframe scalp/intrabar registration controls.
+- Batch 82 removes the "AI-Only" bias by relaxing strategy and consensus filters: softened weight decay (15 bars threshold, 5% rate), lowered tier confidence floors (Tier 3 to 0.62), and enabled high-quality solo strategy signals for live trading. It also introduces "Smart SRE" with Profit Guard and Structural Invalidation, and upgrades the lifecycle manager with dynamic ATR-based trailing stops.
 
 ## 2. Top-Level Runtime Topology
 
@@ -43,8 +45,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - detect synthetic-index tick-velocity spikes and trigger flatten-plus-pause protection
   - register the `Unicorn Model` and `Power of Three` ICT expansion strategies as manager-owned Tier-1 participants
   - own the non-AI confidence policy inputs for pipeline and manager admission stages
+  - resolve strategy registration timeframes per strategy so scalp/intrabar modules can use lower timeframes than the attached chart when explicitly configured
   - adapt per-symbol runtime profiles (strategy roster, intrabar policy, and context posture) by instrument class when symbol-class profiles are enabled
   - emit explicit mode-mask diagnostics when indicator profile entries remain configured but the effective runtime mode filters them out of the active registry
+  - emit runtime fingerprints with both requested and effective EA mode so `AI_ONLY` logs cannot be mistaken for failed indicator/hybrid participation
   - emit explicit AI topology diagnostics so MT5-native voters, Python-trained ONNX runtime voting, Python sidecar expectations, and external LLM reasoning are not conflated
   - coordinate validator/risk/execution path
   - enforce live-authority source defaults: AI/ONNX enabled, global live execution allowed, candidate-level shadow fallback for unproven packets, one position per symbol, and no one-voter sparse intrabar admission
@@ -64,6 +68,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - classify intrabar strategy participation as `OFF`, `PROBE`, or `LIVE` before pipeline work is spent
 - modulate live vote influence by role multiplier and rolling strategy `healthScore`
 - compute conviction using pipeline evidence (`readiness`, `context`, `cost`) rather than raw confidence alone
+- compute live denominator weight from the strategy's actual contribution class so raw-none cycles, pipeline-filtered packets, and warmup/unavailable infrastructure abstentions do not pretend to be full support evidence
+- downgrade warmup/unavailable/infrastructure abstentions before ready-live-weight math so a dead or warming adapter does not pretend to be useful consensus evidence
 - require both directional quality and support-ratio floors before full quorum can pass
 - keep one-voter sparse intrabar admission disabled by default; the tagged `SPARSE_INTRABAR` lane is an explicit opt-in proof surface only
 - allow high-confidence AI-only HYBRID packets through the explicit live-authority path instead of the sparse one-voter path
@@ -87,6 +93,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - apply deterministic regime + cost viability pre-gate via `CRegimeEngine`
   - recover ATR/Bollinger inputs from raw `CopyRates(...)` data when volatility/regime indicator buffers fault or warm slowly despite mature price history
   - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass`, readiness class, reuse/staleness flags)
+  - retain the last rejecting filter name and reason for manager-level no-signal summaries
   - allow bounded soft-threshold promotion when near-threshold confidence is supported by strong readiness/context evidence
   - attenuate surviving signal confidence by context/readiness/staleness after threshold admission so weak evidence cannot carry fake certainty into quorum/validator stages
   - tolerate transient regime data faults by reusing a recent same-context valid snapshot when safe
@@ -202,11 +209,20 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 ### 2.7 Position lifecycle domain
 - Owner: `MultiStrategyAutonomousEA.mq5` safety/timer lifecycle loop using `CTradeManager::ManageAllPositions(...)`
 - The generic EA-level breakeven/trailing lifecycle is now operator-controlled through:
-  - `InpEnablePositionLifecycleManager`
+  - `InpEnablePositionLifecycleManager` (Enabled by default in Batch 82)
   - `InpLifecycleBreakevenBufferPoints`
   - `InpLifecycleTrailingDistancePoints`
   - `InpLifecycleTrailingStepPoints`
-- Default posture is disabled to avoid hidden scalp-style exits overriding wider structural trade intent.
+  - `InpLifecycleUseATRTrailing` (Dynamic ATR-based trailing)
+  - `InpLifecycleATRMultiplier` (ATR breathing room)
+- **Signal Reversal Exit (SRE)**: (Batch 82) High-speed exit monitoring:
+  - `InpEnableSignalReversalExit`: Close on trend flip
+  - `InpSignalReversalMinConfidence`: Noise filter for exit signals (0.58)
+  - `InpSignalReversalProfitGuard`: Never close winners via SRE
+  - `InpEnableStructuralInvalidation`: Bail if ICT/Structure trend flips
+  - `InpSignalReversalMinLossR` / `InpSignalReversalMaxLossR`: Define the "Professional Exit Zone" (25% to 82% of SL)
+  - `InpSignalReversalMinTimeSec`: Initial immunity window (45s)
+- Default posture is enabled for scalping support.
 - Responsibilities:
   - trailing/BE/partial-close lifecycle handling
   - scale breakeven, trailing, and partial-close triggers against original stop distance so lifecycle behavior stays proportional across FX and wide-stop synthetic symbols
@@ -239,12 +255,15 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 
 ### 3.1 Core retained set
 - Momentum
+  - Optional scalp-continuation mode is configured by `InpEnableMomentumScalping` and `InpMomentumScalpCooldownSeconds`; it shortens cooldown only for momentum itself and still sends every entry through manager consensus, unified risk, and trade-manager execution.
+  - Optional scalp timeframe registration is configured by `InpMomentumScalpTimeframe`; when this is lower than the attached chart timeframe, Momentum evaluates on that lower timeframe instead of waiting on the chart bar cadence.
 - Trend
 - Fibonacci
 - Elliott Wave
 - Support/Resistance
 - Unified ICT
 - Candlestick
+  - Optional intrabar timeframe registration is configured by `InpCandlestickIntrabarTimeframe`; when this is lower than the attached chart timeframe and candlestick intrabar eligibility is enabled, Candlestick evaluates its own lower-timeframe bar stream.
 
 Retired standalone strategy families (RSI, Mean Reversion, Swing, Volatility, MACD, Bollinger, Ichimoku, Harmonic, legacy SMC wrapper) are removed from active runtime inventory.
 The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also been removed to avoid stale retired-strategy references.
@@ -349,13 +368,14 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final consensus acceptance.
 - Quorum is evaluated via normalized weighted conviction pooling:
   - adjusted live weight = `base strategy weight x role multiplier x healthScore reliability multiplier`
-  - ready live weight = `adjusted live weight x pipeline readinessScore`
-  - **dynamic weight decay** (Batch 41): strategies filtering ≥ 3 consecutive cycles have weight decayed by `m_strategyActivityDecayRate` per additional filter, reducing denominator bloat; weight recovers when strategy votes
+  - denominator weight = adjusted live weight reduced by contribution class (`raw-none`, `pipeline-filtered`, `infrastructure/warmup`, or other neutral)
+  - ready live weight = `denominator weight x pipeline readinessScore`
+  - **dynamic weight decay** (Batch 82): strategies filtering ≥ 15 consecutive cycles have weight decayed by 5% rate per additional filter, reducing denominator bloat; weight recovers when strategy votes
   - per-direction conviction = `sum(ready live weight x conviction_i)` for agreeing live voters
   - conviction is confidence shaped by pipeline `contextScore`, `readinessScore`, and `costScore`
   - directional quality = `direction conviction / direction weight`
   - support ratio = `direction weight / total ready live weight`
-  - **adaptive quorum thresholds** (Batch 41): direction passes full quorum if:
+  - **adaptive quorum thresholds** (Batch 82): direction passes full quorum if:
     - 1 active voter: `directional_quality >= 0.40`, support ≥ 0.15
     - 2 active voters: `directional_quality >= 0.48`, support ≥ 0.30
     - 3+ active voters: `directional_quality >= InpQuorumThreshold (0.55)`, support ≥ scan-mode floor
@@ -369,7 +389,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
   - quorum miss (threshold and/or min voters)
   - intrabar ineligibility
   - filter rejection
-- **Detailed veto diagnostics** (Batch 41): failures emit specific veto codes with numeric evidence:
+- **Detailed veto diagnostics** (Batch 82): failures emit specific veto codes with numeric evidence:
   - `no_voters`: no strategies produced votes
   - `insufficient_quality`: shows actual quality vs required, voter count, support ratio
   - `insufficient_support`: shows actual support vs required floor, voter count, quality

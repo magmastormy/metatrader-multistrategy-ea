@@ -168,6 +168,23 @@ string TradeSignalToString(const ENUM_TRADE_SIGNAL signal)
     }
 }
 
+bool IsInfrastructureNoSignalReasonTag(const string reasonTag)
+{
+    if(reasonTag == "")
+        return false;
+
+    return (StringFind(reasonTag, "_WARMING_UP") >= 0 ||
+            StringFind(reasonTag, "_UNAVAILABLE") >= 0 ||
+            StringFind(reasonTag, "_DISABLED_OR_UNAVAILABLE") >= 0 ||
+            StringFind(reasonTag, "_DISABLED_OR_UNINIT") >= 0 ||
+            StringFind(reasonTag, "_INVALID_HANDLES") >= 0 ||
+            StringFind(reasonTag, "_INIT_FAILED") >= 0 ||
+            StringFind(reasonTag, "_FEATURES_UNAVAILABLE") >= 0 ||
+            StringFind(reasonTag, "_SCALER_APPLY_FAILED") >= 0 ||
+            StringFind(reasonTag, "_INFERENCE_FAILED") >= 0 ||
+            StringFind(reasonTag, "_MODEL_UNAVAILABLE") >= 0);
+}
+
 //+------------------------------------------------------------------+
 //| Enterprise Strategy Manager Class                               |
 //+------------------------------------------------------------------+
@@ -542,13 +559,13 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_allowSparseIntrabarSingleVoter(false),
     m_adaptiveQuorumEnabled(true),
     m_adaptiveQualityThreshold_1voter(0.40),      // 1 voter: 40% quality OK
-    m_adaptiveSupportFloor_1voter(0.15),          // 1 voter: 15% support OK
+    m_adaptiveSupportFloor_1voter(0.12),          // 1 voter: 12% support OK (relaxed from 0.15)
     m_adaptiveQualityThreshold_2voters(0.48),     // 2 voters: 48% quality OK
-    m_adaptiveSupportFloor_2voters(0.30),         // 2 voters: 30% support OK
+    m_adaptiveSupportFloor_2voters(0.25),         // 2 voters: 25% support OK (relaxed from 0.30)
     m_adaptiveQualityThreshold_3plus(0.55),       // 3+ voters: standard 55% quality
     m_adaptiveSupportFloor_3plus(0.35),           // 3+ voters: standard 35% support
-    m_strategyActivityDecayRate(0.15),            // Weight decay rate per inactive cycle
-    m_strategyInactiveCounterThreshold(3),        // After 3 filters, start decay
+    m_strategyActivityDecayRate(0.05),            // Weight decay rate per inactive cycle (reduced from 0.15)
+    m_strategyInactiveCounterThreshold(15),        // After 15 filters, start decay (increased from 3)
     m_minWinRateThreshold(0.40),
     m_maxConsecutiveLosses_Limit(5),
     m_performanceDecayFactor(0.95),
@@ -830,6 +847,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     
     Print("[EnterpriseStrategyManager] Registered strategy: ", name, 
           " | Enabled: ", enabled, " | Tier: ", (int)tier, " | Weight: ", weight,
+          " | TF: ", EnumToString(resolvedTf),
           " | Intrabar: ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_strategies[m_strategyCount - 1].intrabarPolicy),
           " | Role: ", StrategyRoleToString(role),
           " | Cluster: ", StrategyClusterToString(cluster),
@@ -1010,7 +1028,6 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                      
             if(liveEligibleForThisEval)
             {
-                totalLiveWeight += adjustedStrategyWeight;
                 activeLiveStrategies++;
             }
         }
@@ -1020,6 +1037,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         SPipelineEvidenceSnapshot pipelineEvidence;
         bool rawNone = false;
         bool filteredByPipeline = false;
+        string pipelineFilterName = "";
+        string pipelineFilterReason = "";
 
         // Get signal (filtered if pipeline enabled)
         if(m_usePipeline && m_pipeline != NULL)
@@ -1031,6 +1050,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             m_pipeline.GetLastEvidenceSnapshot(pipelineEvidence);
             rawNone = m_pipeline.WasLastSignalRawNone();
             filteredByPipeline = m_pipeline.WasLastSignalFilteredByPipeline();
+            pipelineFilterName = m_pipeline.GetLastFilterName();
+            pipelineFilterReason = m_pipeline.GetLastFilterReason();
             if(countInMainFunnel)
             {
                 if(rawNone)
@@ -1120,15 +1141,27 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             placeholderNoSignalReason = true;
             decisionReasonTag = filteredByPipeline ? "UNTAGGED_FILTERED" : "UNTAGGED_NO_SIGNAL";
         }
+        bool infrastructureNoSignalReason = (signal == TRADE_SIGNAL_NONE &&
+                                             IsInfrastructureNoSignalReasonTag(decisionReasonTag));
         if(signal == TRADE_SIGNAL_NONE)
         {
             string noneEntry = m_strategies[i].name;
             if(filteredByPipeline)
             {
+                string pipelineFilterTag = "PIPELINE";
+                if(pipelineFilterName != "")
+                    pipelineFilterTag = "PIPELINE:" + pipelineFilterName;
+                if(pipelineFilterReason != "")
+                {
+                    string pipelineReasonSnippet = pipelineFilterReason;
+                    if(StringLen(pipelineReasonSnippet) > 72)
+                        pipelineReasonSnippet = StringSubstr(pipelineReasonSnippet, 0, 72) + "...";
+                    pipelineFilterTag += ":" + pipelineReasonSnippet;
+                }
                 if(decisionReasonTag != "")
-                    noneEntry += "[" + decisionReasonTag + "|PIPELINE]";
+                    noneEntry += "[" + decisionReasonTag + "|" + pipelineFilterTag + "]";
                 else
-                    noneEntry += "[PIPELINE]";
+                    noneEntry += "[" + pipelineFilterTag + "]";
                 if(StringLen(filteredStrategySummary) > 0)
                     filteredStrategySummary += ", ";
                 filteredStrategySummary += noneEntry;
@@ -1241,17 +1274,31 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         double readinessScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.readinessScore));
         double contextScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.contextScore));
         double costScore = MathMax(0.25, MathMin(1.0, pipelineEvidence.costScore));
-        if(placeholderNoSignalReason)
+        double denominatorWeight = adjustedStrategyWeight;
+        if(signal == TRADE_SIGNAL_NONE)
         {
-            // Unclassified no-signal placeholders should not dilute live quorum as if they
-            // had completed a real decision cycle with meaningful readiness evidence.
+            if(placeholderNoSignalReason || infrastructureNoSignalReason)
+                denominatorWeight *= 0.15;
+            else if(filteredByPipeline)
+                denominatorWeight *= 0.55;
+            else if(rawNone)
+                denominatorWeight *= 0.35;
+            else
+                denominatorWeight *= 0.50;
+        }
+
+        if(placeholderNoSignalReason || infrastructureNoSignalReason)
+        {
+            // Unclassified or infrastructure no-signal states should not dilute live quorum
+            // as if they had completed a real decision cycle with meaningful evidence.
             readinessScore = MathMin(readinessScore, 0.15);
             contextScore = MathMin(contextScore, 0.35);
             costScore = MathMin(costScore, 0.35);
         }
-        double readyWeightContribution = adjustedStrategyWeight * readinessScore;
+        double readyWeightContribution = denominatorWeight * readinessScore;
         if(liveVoter && liveEligibleForThisEval)
         {
+            totalLiveWeight += denominatorWeight;
             readyLiveWeight += readyWeightContribution;
             readyContextWeightedSum += contextScore * readyWeightContribution;
             readyCostWeightedSum += costScore * readyWeightContribution;
