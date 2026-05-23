@@ -8,6 +8,7 @@
 
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Core/Visualization/DrawingCoordinator.mqh"
+#include "../Core/Visualization/ChartDrawingManager.mqh"
 
 // Enhanced Fibonacci Strategy Component Files
 #include "FibonacciFiles/FibSwingDetector.mqh"
@@ -24,10 +25,13 @@ private:
     CFibSwingDetector*      m_swingDetector;
     CFibLevelsCalculator*   m_levelsCalc;
     CFibConfirmation*       m_confirmation;
+    CChartDrawingManager*   m_drawingManager;
 
     // Configuration
     int    m_lastBarProcessed;
     string m_drawPrefix;
+    int    m_symbolDigits;
+    string GetPriceFormatString() const;
 
 public:
     CStrategyFibonacci(const string name = "Fibonacci v2.0", int magic = 0);
@@ -57,8 +61,10 @@ CStrategyFibonacci::CStrategyFibonacci(const string name, int magic) :
     m_swingDetector(NULL),
     m_levelsCalc(NULL),
     m_confirmation(NULL),
+    m_drawingManager(NULL),
     m_lastBarProcessed(0),
-    m_drawPrefix("FIB_")
+    m_drawPrefix("FIB_"),
+    m_symbolDigits(5)  // Default to 5-digit precision
 {
 }
 
@@ -78,6 +84,7 @@ void CStrategyFibonacci::Cleanup()
     if(m_swingDetector != NULL) { delete m_swingDetector; m_swingDetector = NULL; }
     if(m_levelsCalc != NULL) { delete m_levelsCalc; m_levelsCalc = NULL; }
     if(m_confirmation != NULL) { delete m_confirmation; m_confirmation = NULL; }
+    if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
 }
 
 string CStrategyFibonacci::BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const
@@ -99,6 +106,10 @@ bool CStrategyFibonacci::Init(const string symbol, const ENUM_TIMEFRAMES timefra
         return false;
 
     m_drawPrefix = BuildDrawPrefix(symbol, timeframe);
+    
+    // Get symbol precision for display formatting
+    m_symbolDigits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+    PrintFormat("[FIB v2.0] Symbol %s has %d digits for price precision", symbol, m_symbolDigits);
 
     // Initialize Swing Detector
     m_swingDetector = new CFibSwingDetector();
@@ -124,6 +135,22 @@ bool CStrategyFibonacci::Init(const string symbol, const ENUM_TIMEFRAMES timefra
         return false;
     }
 
+    // Initialize Drawing Manager
+    m_drawingManager = new CChartDrawingManager();
+    if(m_drawingManager != NULL)
+    {
+        m_drawingManager.Initialize(symbol, timeframe, "FIB");
+        SDrawingConfig config = m_drawingManager.GetConfiguration();
+        config.enableDrawing = true;
+        config.enableSupportResistance = true;
+        config.enableTrendLines = false;
+        config.enableStructure = false;
+        config.enableOrderBlocks = false;
+        config.enableFVG = false;
+        config.enableSignalMarkers = false;
+        m_drawingManager.SetConfiguration(config);
+    }
+
     PrintFormat("[FIB v2.0] Strategy initialized for %s on %s", symbol, EnumToString(timeframe));
     return true;
 }
@@ -133,7 +160,8 @@ bool CStrategyFibonacci::Init(const string symbol, const ENUM_TIMEFRAMES timefra
 //+------------------------------------------------------------------+
 void CStrategyFibonacci::Deinit()
 {
-    ObjectsDeleteAll(0, m_drawPrefix);
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupAll();
     Cleanup();
     CStrategyBase::Deinit();
 }
@@ -167,9 +195,23 @@ void CStrategyFibonacci::OnNewBar(const string symbol, const ENUM_TIMEFRAMES tim
             m_levelsCalc.CalculateMultipleSetups(m_swingDetector);
     }
 
+    // Regular cleanup to prevent object accumulation
+    if(m_drawingManager != NULL)
+        m_drawingManager.CleanupOldObjects();
+
     // Draw Fibonacci levels
     if(MQLInfoInteger(MQL_VISUAL_MODE))
         DrawFibLevels();
+}
+
+//+------------------------------------------------------------------+
+//| Get Price Format String based on symbol digits                    |
+//+------------------------------------------------------------------+
+string CStrategyFibonacci::GetPriceFormatString() const
+{
+    // Return format string based on symbol digit count
+    // Example: digits=5 -> "%.5f", digits=3 -> "%.3f"
+    return StringFormat("%%.%df", m_symbolDigits);
 }
 
 //+------------------------------------------------------------------+
@@ -177,41 +219,29 @@ void CStrategyFibonacci::OnNewBar(const string symbol, const ENUM_TIMEFRAMES tim
 //+------------------------------------------------------------------+
 void CStrategyFibonacci::DrawFibLevels()
 {
-    if(m_levelsCalc == NULL) return;
-
-    CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
-    if(drawingCoordinator != NULL)
-        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, m_drawPrefix);
-    else
-        ObjectsDeleteAll(0, m_drawPrefix);
+    if(m_levelsCalc == NULL || m_drawingManager == NULL) return;
 
     SFibSetup setup;
-    // Try to get best bullish setup first, then bearish for drawing
     if(!m_levelsCalc.GetBestBullishSetup(setup))
         if(!m_levelsCalc.GetBestBearishSetup(setup))
             return;
+    
+    string priceFormat = GetPriceFormatString();
 
-    // Draw retracement levels from the best setup
     for(int i = 0; i < setup.levelCount; i++)
     {
         SFibLevel level = setup.levels[i];
-        string name = StringFormat("%s%s_%.3f", m_drawPrefix, setup.isBullish ? "BULL" : "BEAR", level.ratio);
         color clr = clrGray;
 
         if(level.ratio == 0.618) clr = clrGold;
         else if(level.ratio == 0.500) clr = clrGoldenrod;
         else if(level.ratio == 0.382) clr = clrDarkGoldenrod;
-        else if(level.ratio > 1.0) clr = clrDodgerBlue; // Extensions
+        else if(level.ratio > 1.0) clr = clrDodgerBlue;
 
-        if(ObjectFind(0, name) >= 0)
-            ObjectDelete(0, name);
-
-        ObjectCreate(0, name, OBJ_HLINE, 0, 0, level.price);
-        ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
-        ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
-        ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
-        ObjectSetString(0, name, OBJPROP_TEXT,
-            StringFormat("%.1f%% (%.5f)", level.ratio * 100, level.price));
+        string priceText = StringFormat(priceFormat, level.price);
+        string label = StringFormat("%s%% (%s)", level.name, priceText);
+        
+        m_drawingManager.DrawHorizontalLevel(level.price, clr, label, STYLE_DOT, 1, true);
     }
 }
 
@@ -287,11 +317,15 @@ ENUM_TRADE_SIGNAL CStrategyFibonacci::GetSignal(double &confidence)
 
     if(signalType != TRADE_SIGNAL_NONE)
     {
+        string priceFormat = GetPriceFormatString();
+        string entryPriceText = StringFormat(priceFormat, entryLevel);
+        
         SetDecisionReasonTag(signalType == TRADE_SIGNAL_BUY ? "FIB_SIGNAL_BUY" : "FIB_SIGNAL_SELL");
-        PrintFormat("[FIB v2.0] %s: %s | Conf: %.1f%% | Level: 61.8%% | %s",
+        PrintFormat("[FIB v2.0] %s: %s | Conf: %.1f%% | Level: 61.8%% (%s) | %s",
                     m_symbol,
                     signalType == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
                     confidence * 100,
+                    entryPriceText,
                     confirm.description);
         
         RecordSignal();

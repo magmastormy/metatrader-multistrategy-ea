@@ -247,8 +247,9 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
         m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
     }
     
+    // Regular cleanup to prevent object accumulation
     if(m_drawingManager != NULL)
-        m_drawingManager.CleanupAll();
+        m_drawingManager.CleanupOldObjects();
     
     DrawLevels();
     DrawTrendlines();
@@ -351,9 +352,6 @@ void CStrategySupportResistance::DrawTrendlines()
         
         ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DOT : STYLE_DOT;
         
-        string nameID = StringFormat("TL_%d", i);
-        // In the absence of a proper ID param in drawing mgr wrapper, assume it creates its own.
-        // If the wrapper needs unique names, DrawTrendLine might need one, but looking at usage below, it's missing.
         m_drawingManager.DrawTrendLine(trendline.point1Time, trendline.point1Price,
                                         trendline.point2Time, trendline.point2Price,
                                         lineColor, 1, style);

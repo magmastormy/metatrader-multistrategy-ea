@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-05-21
+- Last Updated: 2026-05-23
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 82 - Strategic Signal Participation, Adaptive Exits & ATR-Based Holding
+- Current Batch: 90 - Visualization System Audit Fixes
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -21,6 +21,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - Batch 80 resolves the AI-only inactivity issue by ensuring experimental AI families (Transformer, Ensemble) receive non-zero weights from the AI multiplier during registry bootstrap, rather than being hard-coded to 0.0.
 - Batch 81 makes indicator/hybrid no-signal diagnosis falsifiable and changes the math that was suppressing real producers: runtime fingerprints include requested vs effective EA mode, pipeline-filtered abstentions expose the actual filter chain in manager summaries, infrastructure/raw-none/filtered abstentions no longer inflate the live denominator at full weight, and `Momentum` / `Candlestick` have lower-timeframe scalp/intrabar registration controls.
 - Batch 82 removes the "AI-Only" bias by relaxing strategy and consensus filters: softened weight decay (15 bars threshold, 5% rate), lowered tier confidence floors (Tier 3 to 0.62), and enabled high-quality solo strategy signals for live trading. It also introduces "Smart SRE" with Profit Guard and Structural Invalidation, and upgrades the lifecycle manager with dynamic ATR-based trailing stops.
+- Batch 90 fixes visualization system vulnerabilities: hardcoded chart ID 0 in StrategyUnifiedICT caused cross-chart contamination; StrategyUnifiedICT/StrategyFibonacci bypassed CChartDrawingManager; no global object counter for MT5 1000-object limit; excessive object retention with maxObjectAge=500; debug logging ran in production; bitwise OR colors caused inconsistent rendering; no coordinate validation for invalid time/price values. All strategies now use CChartDrawingManager with per-strategy object limits, global count alerts at 800/900/950, coordinate validation, explicit RGB colors, and periodic cleanup with maxObjectAge=150. Drawing statistics added to VisualDashboard.
 
 ## 2. Top-Level Runtime Topology
 
@@ -178,6 +179,11 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
   - progressively throttle recommended per-trade risk as daily and portfolio utilization rise, instead of waiting for the final hard-cap stage
   - maintain a scan-time `CVirtualPositionBook` so cycle-best reservations count against projected daily and portfolio usage before the final execution winner is sent
+- **Module 4 Hardening (Batch 85):**
+  - Safe default risk limits (2% per trade, 6% daily, 10% portfolio) when config values are invalid
+  - Currency-aware position sizing via `CPositionSizer::CalculateRiskPerLot()` conversion
+  - 20% margin buffer (uses max 80% of free margin) for volatile period safety
+  - Volatility adjustment uses minimum price threshold to prevent exaggerated ratios on low-priced symbols
 
 ### 2.6 Execution domain
 - Class: `CTradeManager`
@@ -195,6 +201,14 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - emergency-aware protective modification flow
   - expose execution receipt status (`requestId`, retcode, requested/fill volume, request/fill price, slippage points, round-trip latency, retry count, avg fill price) for post-send handling
   - check market hours before position closure/modification (blocks only when `SYMBOL_TRADE_MODE_DISABLED`, allows `SYMBOL_TRADE_MODE_CLOSEONLY`)
+- **Batch 87 Module 5 Execution Hardening:**
+  - Dynamic slippage adjustment based on ATR volatility (configurable percentage, min/max bounds)
+  - Order fill mode selection based on spread and volatility conditions (IOC vs FOK)
+  - Execution quality metrics tracking (total/filled/partial/rejected orders, slippage, latency, spread costs)
+  - Smart order routing that analyzes historical performance and adjusts parameters
+  - Unified position state management via `CPositionStateManager`
+  - Configurable synthetic spike detection confirmation window (default: 2 consecutive windows)
+  - `GenerateExecutionQualityReport()` for detailed execution analytics
 
 ### 2.6.1 Live authority domain
 - Owner: `MultiStrategyAutonomousEA.mq5`
@@ -238,7 +252,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - explicit singleton teardown on deinit
   - remain the first ATR source for validator/execution sizing, with raw-rate fallback in the EA entry path when a direct ATR handle read misses
 
-### 2.9 Chart visualization domain (Batch 58)
+### 2.9 Chart visualization domain (Batch 58, Batch 86, Batch 90)
 - Class: `CChartDrawingManager`
 - Responsibilities:
   - centralized chart drawing coordination across all strategies
@@ -250,6 +264,68 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
     - ICT drawing colors (OB, FVG, Liquidity, BOS, CHOCH) reduced in intensity using 0x909090 mask
     - SupportResistance trendlines aligned to thin dashed style for consistency
     - All chart elements use consistent thin dashed styling for improved clarity
+  - **Module 7 - Chart Object Limit Enforcement (Batch 86):**
+    - Added `m_maxObjects` member (default: 900) to prevent MT5's 1000 object limit violation
+    - Implemented `CheckObjectLimitAndCleanup()` with LRU (oldest-first) deletion strategy
+    - Integrated cleanup check before drawing operations in `PrepareSnapshotDraw()`
+    - Added `SetMaxObjects()` method for configuration via `InpMaxVisualObjects` parameter
+    - Class: `CDrawingCoordinator` now manages global object tracking with `CheckGlobalObjectLimitAndCleanup()`
+    - StrategyUnifiedICT updated to check object limits before drawing order blocks and imbalances
+  - **Visualization System Audit Fixes (Batch 90):**
+    - Fixed hardcoded chart ID 0 in StrategyUnifiedICT that caused cross-chart contamination
+    - Converted StrategyUnifiedICT to use CChartDrawingManager (DrawOrderBlock, DrawFVG)
+    - Converted StrategyFibonacci to use CChartDrawingManager (DrawHorizontalLevel)
+    - Added m_chartID member to strategies initialized with ChartID()
+    - Added global object counter with tiered alerts (800=warning, 900=critical, 950=emergency)
+    - Implemented periodic logging of object counts with `[DRAWING-STATS]` telemetry
+    - Reduced maxObjectAge from 500 to 150 bars for faster cleanup of stale objects
+    - Added coordinate validation (ValidateTime, ValidatePrice, ValidateCoordinates)
+    - Validates time > 0, time <= current + 1 day, price > 0, reasonable price range
+    - Replaced bitwise OR color operations with explicit RGB values
+    - Colors: ORDERBLOCK_BULL (0x8787CC), ORDERBLOCK_BEAR (0xCC6B6B), FVG_BULL (0x6BAB8A), FVG_BEAR (0xCC786B), LIQUIDITY (0xCCBC6B), STRUCTURE_BOS (0xCC6BCC), STRUCTURE_CHOCH (0xCC986B)
+    - Wrapped debug logging in `if(m_config.enableDebugMode)`
+    - Added SafeObjectsDeleteAll with verification of deletion counts and discrepancy logging
+    - Added per-strategy object limit enforcement (maxObjectsPerStrategy)
+    - Added dirty-flag optimization (m_isDirty, SetDirty, IsDirty, ShouldRedraw)
+    - Added LogStatistics() method for periodic drawing metrics logging
+    - Integrated drawing statistics into VisualDashboard showing global/per-strategy counts
+    - Added UpdateDrawingStats() and DrawLabelAt() to VisualDashboard
+
+### 2.10 Regime Detection Robustness (Batch 86)
+- Class: `CRegimeEngine`
+- Enhancements:
+  - Added `regimeConfidence` (0.0-1.0) to track detection confidence level
+  - Added `regimeStabilityBars` to track consecutive bars in same regime state
+  - Added `confirmedState` requiring 3+ bars stability before confirming regime change
+  - Enhanced `[REGIME-STATE]` logging to include confidence and stability metrics
+  - Prevents rapid regime flipping and reduces overfitting to noisy market data
+
+### 2.11 Volatility Engine Validation (Batch 86)
+- Class: `CVolatilityEngine`
+- Enhancements:
+  - Added `ValidateAtrCalculation()` test function for runtime ATR verification
+  - Validates boundary conditions and array access safety
+  - Emits `[ATR-VALIDATE]` telemetry with validation results
+
+### 2.12 Python Bridge Integration (Batch 85)
+- Class: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
+- Files: `Python/zmq_server.py`, `Core/Utils/Enums.mqh`
+- Responsibilities:
+  - HTTP-based communication with Python server (FastAPI on `http://127.0.0.1:8000`)
+  - Connection management (state tracking: `DISCONNECTED`, `CONNECTING`, `CONNECTED`, `ERROR`)
+  - Request timeout handling (configurable via `InpPythonBridgeRequestTimeoutMs`)
+  - Heartbeat monitoring with configurable interval (`InpPythonBridgeHeartbeatTimeoutSec`)
+  - Reconnection logic with exponential backoff (configurable max attempts and backoff)
+  - Message serialization validation (JSON structure validation)
+  - Version compatibility check (requires server version `1.0.0+`)
+  - Health monitoring dashboard with real-time telemetry
+  - Local AI fallback mode when bridge is unavailable
+- HTTP Endpoints in Python server (`Python/zmq_server.py`):
+  - `POST /predict`: Get predictions from ensemble/dual-adapt/maml-ppo models
+  - `GET /health`: Check server health status
+  - `GET /heartbeat`: Periodic health check (updates last heartbeat timestamp)
+  - `GET /version`: Get server version information
+- Observability: Emits `[PYTHON-BRIDGE-DASHBOARD]` telemetry with connection state, version, and request stats
 
 ## 3. Managed Strategies
 
@@ -491,6 +567,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - confirmed deals: `[TRADE-CONFIRMED]`
 - Shadow actions: `[SHADOW-TRADE]`
 - Execution outcomes: `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
+- Python bridge health: `[PYTHON-BRIDGE-DASHBOARD]`
 
 ### 7.2 Primary operational KPIs
 - no-signal ratio

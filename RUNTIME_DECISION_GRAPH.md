@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-05-21
+- Last Updated: 2026-05-23
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 82 - Strategic Signal Participation, Adaptive Exits & ATR-Based Holding
+- Current Batch: 90 - Visualization System Audit Fixes
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -20,6 +20,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Execution: `CTradeManager`
 - Position lifecycle: `MultiStrategyAutonomousEA.mq5` + `CTradeManager::ManageAllPositions(...)`
 - Indicator cache lifecycle: `CIndicatorManager`
+- Python bridge integration: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
 
 ## End-to-End Flow
 
@@ -32,7 +33,8 @@ flowchart TD
   B1A -->|Yes| B1B[Reject symbol - extreme spread]
   B1A -->|No| B2
   B1 --> B2[Recover TRADE-STATE from history and open positions]
-  B2 --> C[Build active-only strategy registry, resolve strategy timeframes, and register enabled core or AI adapters]
+  B2 --> B3[Initialize Python Bridge (if enabled) + check version compatibility]
+  B3 --> C[Build active-only strategy registry, resolve strategy timeframes, and register enabled core or AI adapters]
   C --> C0[Initialize per-symbol managers]
   C0 --> C1[Rebuild scheduler state and prime pending new-bar work for every validated symbol]
   C1 --> D0[OnTick ProcessTickSafetyLoop]
@@ -117,7 +119,7 @@ flowchart TD
   AD --> AE[Manager and orchestrator performance updates]
   AD --> AF[NN attribution mapping and labeling]
 
-  D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG, AI-FEEDBACK, AUTHORITY-RESULT]
+  D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG, AI-FEEDBACK, AUTHORITY-RESULT, PYTHON-BRIDGE-DASHBOARD]
 ```
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
@@ -251,8 +253,14 @@ flowchart TD
   - spread-shock cooldown
   - spread/ATR ratio breach
   - late-entry z-score outlier
+- **Module 7 Enhancements:**
+  - Regime detection now tracks confidence (`regimeConfidence`: 0.0-1.0) and stability (`regimeStabilityBars`)
+  - `confirmedState` requires 3+ consecutive bars in same state before confirming regime change
+  - Prevents rapid regime flipping and reduces overfitting to noisy market data
+  - Enhanced `[REGIME-STATE]` logging includes: `state`, `confirmed`, `confidence`, `stable_bars`
 - The final EA admission path adds a second ATR-ratio safety contract: `ATR14/ATR50 > 2.0` rejects new trades and `> 1.5` halves proposed risk.
 - `CVolatilityEngine` and `CRegimeEngine` now synthesize ATR/Bollinger inputs from raw rates when mature-series indicator buffers fault, preserving pipeline evidence instead of degrading to zero ATR context.
+- `CVolatilityEngine` now includes `ValidateAtrCalculation()` for runtime ATR verification with `[ATR-VALIDATE]` telemetry.
 - `UnifiedSignalPipeline` caches structural context per symbol/timeframe/bar and carries forward evidence scores:
   - `readinessScore`
   - `contextScore`
@@ -267,12 +275,55 @@ flowchart TD
 - Near-threshold signals may survive the pipeline when readiness/context evidence is strong; the gate remains bounded rather than becoming a blanket relaxation.
 - Surviving packets keep their admitted confidence after threshold passage; readiness/context/cost remain separate downstream evidence channels instead of shaving the same packet a second time before quorum and validator.
 - Gate telemetry:
-  - `[REGIME-STATE]`
+  - `[REGIME-STATE]` (now includes confidence and stability metrics)
   - `[COST-GATE]`
   - `[ENTRY-VETO]`
   - `[PIPELINE-THRESHOLD]`
+  - `[ATR-VALIDATE]` (new in Batch 86)
+
+## Module 8 Python Bridge Integration
+- **Batch 85 Implementation**: Complete overhaul of Python bridge reliability
+  - **Connection timeout handling**: Added configurable HTTP request timeout (default 5000 ms) to `CPythonBridge`; Python server uses ZMQ poller with 5‑second timeout
+  - **Reconnection logic with exponential backoff**: Implemented `AttemptReconnect()` with backoff from 2 s to max 30 s, configurable max attempts
+  - **Heartbeat monitoring**: Periodic heartbeat checks via `/heartbeat` endpoint, configurable interval, tracks last heartbeat timestamp
+  - **Local fallback mode**: If Python server is unavailable, bridge automatically falls back to local AI mode to avoid runtime failures
+  - **Message serialization validation**: Added JSON structure validation before response parsing to prevent corrupted data issues
+  - **Version compatibility check**: Added `/version` endpoint to Python server (returns `1.0.0`), bridge validates compatibility during `OnInit()`
+  - **Health monitoring dashboard**: Real-time telemetry via `[PYTHON-BRIDGE-DASHBOARD]` with connection state, version, and request stats (total, success, error counts)
+  - **HTTP server integration**: Added FastAPI HTTP server on port 8000 to `Python/zmq_server.py` (since MQL5 lacks native ZMQ support), endpoints:
+    - `POST /predict`: Get predictions from ensemble/dual-adapt/maml-ppo models
+    - `GET /health`: Check server health
+    - `GET /heartbeat`: Periodic heartbeat
+    - `GET /version`: Get version info
+  - **Input parameters**: Added to `MultiStrategyAutonomousEA.mq5` for endpoint, timeout, heartbeat interval, max reconnect attempts, and backoff duration
+
+## Visualization System Audit Fixes (Batch 90)
+- **Batch 90 Implementation**: Complete overhaul of chart object management and visualization safety:
+  - **Fixed hardcoded chart ID**: StrategyUnifiedICT used chart ID 0, causing cross-chart contamination; added `m_chartID` member initialized with `ChartID()`
+  - **Standardized drawing pattern**: StrategyUnifiedICT now uses `CChartDrawingManager` methods (`DrawOrderBlock`, `DrawFVG`) instead of direct MT5 API calls; StrategyFibonacci now uses `DrawHorizontalLevel`
+  - **Global object counter**: Added `m_globalObjectCount`, `m_lastAlertLevel`, `m_lastCountLogTime` to `CDrawingCoordinator`; tiered alerts at 800 (warning), 900 (critical), 950 (emergency)
+  - **Periodic cleanup**: Reduced `maxObjectAge` from 500 to 150 bars; added 5-minute cleanup interval in StrategyUnifiedICT::OnTick calling `CleanupOldObjects()`; StrategyFibonacci and StrategySupportResistance also call periodic cleanup
+  - **Debug logging**: Wrapped debug logging in `CChartDrawingManager` behind `m_config.enableDebugMode` flag
+  - **Color consistency**: Replaced bitwise OR color operations with explicit RGB values
+  - **Coordinate validation**: Added `ValidateTime`, `ValidatePrice`, and `ValidateCoordinates` methods; validates time > 0, time <= current + 1 day, price > 0, reasonable price ranges
+  - **Safe deletion**: Added `SafeObjectsDeleteAll` with verification of deletion counts and discrepancy logging
+  - **Per-strategy limits**: Added per-strategy object limit enforcement with `maxObjectsPerStrategy`
+  - **Dirty-flag optimization**: Added `m_isDirty`, `SetDirty`, `IsDirty`, `ShouldRedraw` for performance optimization
+  - **Statistics dashboard**: Integrated drawing statistics into `VisualDashboard` showing global/per-strategy counts, alert level
+
+- **Telemetry additions**:
+  - `[DRAWING-STATS]`: Periodic drawing statistics logging
+  - `[DRAW-COORD]`: Drawing coordinator telemetry
+  - Drawing statistics panel on VisualDashboard
 
 ## Risk Hardening
+- **Module 4 Risk Management Fixes (Batch 85):**
+  - Critical risk constants corrected: `MAX_RISK_PER_TRADE` (100.0 → 2.0%), `MAX_TOTAL_RISK` (100.0 → 10.0%)
+  - Safe default risk limits: 2% per trade, 6% daily, 10% portfolio when config values are invalid
+  - Currency-aware position sizing via `CPositionSizer::CalculateRiskPerLot()` conversion
+  - 20% margin buffer (uses max 80% of free margin) for volatile period safety
+  - Volatility adjustment uses minimum price threshold to prevent exaggerated ratios on low-priced symbols
+  - Enhanced emergency drawdown stop with volatility checks and warnings
 - Daily budget gate uses effective daily risk:
   - max(executed entry risk, mark-to-market equity loss from daily baseline, current open portfolio stop risk).
 - Any open position without stop-loss protection is treated as a hard veto state.

@@ -210,10 +210,10 @@ enum ENUM_RISK_LEVEL
 
 // Risk Management Constants
 #define MIN_ACCOUNT_BALANCE 1.0         // Minimum account balance (lowered for micro-account testing)
-#define DRAWDOWN_CRITICAL 100.0           // Critical drawdown level (increased to 100% for max risk)
-#define DRAWDOWN_WARNING 70.0            // Warning drawdown level (increased for consistency)
-#define MAX_RISK_PER_TRADE 100.0        // Maximum risk per trade as percentage (e.g., 3.0 = 3%, 100.0 = 100%)
-#define MAX_TOTAL_RISK 100.0             // Maximum total portfolio risk (increased to 100%)
+#define DRAWDOWN_CRITICAL 10.0           // Critical drawdown level
+#define DRAWDOWN_WARNING 5.0            // Warning drawdown level
+#define MAX_RISK_PER_TRADE 2.0        // Maximum risk per trade as percentage
+#define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 
 // Position Sizing Enumeration
@@ -282,6 +282,7 @@ struct SConsensusDecisionContext
     string vetoCode;                // Veto reason code
     int confluence;                 // Number of concurring strategies
     string reason;                  // Decision reason
+    ENUM_STRATEGY_CLUSTER dominantCluster; // Dominant cluster for this decision
     
     // Default constructor
     SConsensusDecisionContext() :
@@ -311,7 +312,8 @@ struct SConsensusDecisionContext
         quorumMode("FULL_QUORUM"),
         vetoCode(""),
         confluence(0),
-        reason("")
+        reason(""),
+        dominantCluster(STRATEGY_CLUSTER_NONE)
     {}
     
     // Copy constructor
@@ -342,7 +344,8 @@ struct SConsensusDecisionContext
         quorumMode(other.quorumMode),
         vetoCode(other.vetoCode),
         confluence(other.confluence),
-        reason(other.reason)
+        reason(other.reason),
+        dominantCluster(other.dominantCluster)
     {}
     
     // Assignment operator
@@ -375,6 +378,7 @@ struct SConsensusDecisionContext
         vetoCode = other.vetoCode;
         confluence = other.confluence;
         reason = other.reason;
+        dominantCluster = other.dominantCluster;
     }
 };
 
@@ -535,6 +539,7 @@ struct SPerformanceMetrics
     double averageLoss;           // Average losing trade
     double profitFactor;          // Profit factor
     double sharpeRatio;           // Sharpe ratio
+    double sharpeRatioWithRiskFree; // Sharpe ratio with risk-free rate
     double maxDrawdown;           // Maximum drawdown
     double recoveryFactor;        // Recovery factor
 };

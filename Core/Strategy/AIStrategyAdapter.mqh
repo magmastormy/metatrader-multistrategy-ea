@@ -22,6 +22,11 @@ private:
     datetime m_lastSignalTime;
     string m_lastDecisionReasonTag;
     
+    bool IsValidConfidence(const double conf) const
+    {
+        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+    }
+    
 public:
     CAIStrategyAdapter(CNeuralNetworkStrategy* neuralNet)
     {
@@ -68,6 +73,21 @@ public:
         
         // Use the neural network to get signal
         ENUM_TRADE_SIGNAL signal = m_neuralNet.GetNeuralSignalCached(confidence);
+        
+        // Validate confidence value
+        if(!IsValidConfidence(confidence))
+        {
+            static datetime s_lastInvalidLog = 0;
+            if(s_lastInvalidLog == 0 || (TimeCurrent() - s_lastInvalidLog) >= 300)
+            {
+                PrintFormat("[AI-ADAPTER] Invalid confidence value: %.10f", confidence);
+                s_lastInvalidLog = TimeCurrent();
+            }
+            confidence = 0.0;
+            m_lastDecisionReasonTag = "NNAI_INVALID_CONFIDENCE";
+            return TRADE_SIGNAL_NONE;
+        }
+        
         if(signal == TRADE_SIGNAL_BUY)
         {
             m_lastSignalTime = TimeCurrent();

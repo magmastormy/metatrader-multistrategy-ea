@@ -41,17 +41,26 @@ private:
     double              m_strongMultiplier;     // 1.3x for strong trends
     double              m_veryStrongMultiplier; // 1.5x for very strong
     
-    // ADX thresholds
+    // ADX thresholds (configurable via inputs)
     double              m_noTrendThreshold;     // Below this = no trade
-    double              m_weakThreshold;        // 20-25
-    double              m_normalThreshold;      // 25-35
-    double              m_strongThreshold;      // 35-45
+    double              m_weakThreshold;        // Weak trend threshold
+    double              m_normalThreshold;      // Normal trend threshold
+    double              m_strongThreshold;      // Strong trend threshold
     
     // Internal methods
     double              GetADX();
     ENUM_ADX_TIER       GetADXTier(double adx);
     
 public:
+    //+------------------------------------------------------------------+
+    //| Input Parameters - Standardized ADX Thresholds                    |
+    //| Rationale:                                                      |
+    //|   ADX < 20: No trend - range-bound market, avoid entries         |
+    //|   ADX 20-25: Weak trend - low conviction, use half position size  |
+    //|   ADX 25-30: Normal trend - acceptable strength, full size        |
+    //|   ADX 30-40: Strong trend - high conviction, 1.3x size           |
+    //|   ADX > 40: Very strong trend - maximum conviction, 1.5x size     |
+    //+------------------------------------------------------------------+
                         CADXPositionSizing();
                        ~CADXPositionSizing();
     
@@ -78,7 +87,7 @@ public:
 };
 
 //+------------------------------------------------------------------+
-//| Constructor                                                      |
+//| Constructor - Uses input parameters for standardized thresholds  |
 //+------------------------------------------------------------------+
 CADXPositionSizing::CADXPositionSizing() :
     m_symbol(""),
@@ -89,10 +98,11 @@ CADXPositionSizing::CADXPositionSizing() :
     m_normalMultiplier(1.0),
     m_strongMultiplier(1.3),
     m_veryStrongMultiplier(1.5),
+// Initialize from standardized thresholds (hardcoded for .mqh compatibility)
     m_noTrendThreshold(20.0),
     m_weakThreshold(25.0),
-    m_normalThreshold(35.0),
-    m_strongThreshold(45.0)
+    m_normalThreshold(30.0),
+    m_strongThreshold(40.0)
 {
 }
 
@@ -177,7 +187,7 @@ ENUM_ADX_TIER CADXPositionSizing::GetCurrentTier()
 }
 
 //+------------------------------------------------------------------+
-//| Get Tier Name                                                    |
+//| Get Tier Name - Dynamic based on configured thresholds            |
 //+------------------------------------------------------------------+
 string CADXPositionSizing::GetTierName()
 {
@@ -185,12 +195,18 @@ string CADXPositionSizing::GetTierName()
     
     switch(tier)
     {
-        case ADX_NO_TREND:      return "No Trend (< 20)";
-        case ADX_WEAK_TREND:    return "Weak Trend (20-25)";
-        case ADX_NORMAL_TREND:  return "Normal Trend (25-35)";
-        case ADX_STRONG_TREND:  return "Strong Trend (35-45)";
-        case ADX_VERY_STRONG:   return "Very Strong (> 45)";
-        default:                return "Unknown";
+        case ADX_NO_TREND:      
+            return StringFormat("No Trend (< %.0f)", m_noTrendThreshold);
+        case ADX_WEAK_TREND:    
+            return StringFormat("Weak Trend (%.0f-%.0f)", m_noTrendThreshold, m_weakThreshold);
+        case ADX_NORMAL_TREND:  
+            return StringFormat("Normal Trend (%.0f-%.0f)", m_weakThreshold, m_normalThreshold);
+        case ADX_STRONG_TREND:  
+            return StringFormat("Strong Trend (%.0f-%.0f)", m_normalThreshold, m_strongThreshold);
+        case ADX_VERY_STRONG:   
+            return StringFormat("Very Strong (> %.0f)", m_strongThreshold);
+        default:                
+            return "Unknown";
     }
 }
 

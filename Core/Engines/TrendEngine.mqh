@@ -723,20 +723,68 @@ bool CTrendEngine::CalculateEmaFallbackSeries(const string symbol,
     if(period <= 0 || count <= 0)
         return false;
 
-    int requiredBars = MathMax(period + count + 5, count + 5);
+    // Need sufficient bars for SMA initialization + EMA stabilization
+    int requiredBars = MathMax(period * 3, period + count + 10);
     double closes[];
     ArraySetAsSeries(closes, true);
     int copied = CopyClose(symbol, timeframe, 0, requiredBars, closes);
-    if(copied <= (period + count))
+    if(copied < period + count)
         return false;
 
-    double alpha = 2.0 / ((double)period + 1.0);
-    for(int shift = 0; shift < count; shift++)
+    // Allocate output array
+    if(ArraySize(output) != count)
     {
-        double ema = closes[copied - 1];
-        for(int idx = copied - 2; idx >= shift; idx--)
-            ema = (alpha * closes[idx]) + ((1.0 - alpha) * ema);
-        output[shift] = ema;
+        if(ArrayResize(output, count) < 0)
+            return false;
+    }
+
+    // Correct EMA alpha: 2 / (period + 1)
+    double alpha = 2.0 / ((double)period + 1.0);
+    double invAlpha = 1.0 - alpha;
+
+    // Initialize with SMA for first 'period' bars (stable starting point)
+    double smaSum = 0.0;
+    for(int i = 0; i < period; i++)
+        smaSum += closes[i];
+    double ema = smaSum / (double)period;
+
+    // Calculate EMA forward through the series
+    // closes[0] = most recent, closes[copied-1] = oldest
+    for(int i = 0; i < copied; i++)
+    {
+        ema = (alpha * closes[i]) + (invAlpha * ema);
+
+        // Store results where output[0] = most recent EMA
+        // output index maps: output[0] = EMA at closes[0] (most recent)
+        int outputIdx = i;  // Will be offset from end when we collect output
+    }
+
+    // Now collect the 'count' most recent EMA values into output array
+    // We need to recalculate to get the last 'count' values properly
+    // Reset EMA to SMA and recalculate
+    smaSum = 0.0;
+    for(int i = 0; i < period; i++)
+        smaSum += closes[i];
+    ema = smaSum / (double)period;
+
+    // Calculate all EMAs, storing the last 'count' values
+    double emaBuffer[];
+    ArrayResize(emaBuffer, copied);
+    for(int i = 0; i < copied; i++)
+    {
+        ema = (alpha * closes[i]) + (invAlpha * ema);
+        emaBuffer[i] = ema;
+    }
+
+    // Copy the 'count' most recent EMAs to output
+    // emaBuffer[0] = EMA at closes[0] (most recent)
+    // emaBuffer[copied-1] = EMA at closes[copied-1] (oldest)
+    for(int i = 0; i < count; i++)
+    {
+        if(i < copied)
+            output[i] = emaBuffer[i];
+        else
+            output[i] = 0.0;
     }
 
     return true;
@@ -1150,20 +1198,39 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
     double strength = 0;
     bool useAdxModel = (adx >= 0.0);
     
+    // Validate MA arrays have sufficient data
+    if(ArraySize(ma_fast) < 5 || ArraySize(ma_medium) < 5 || ArraySize(ma_slow) < 5)
+    {
+        Print("[TrendEngine][WARN] Insufficient MA data for trend strength calculation");
+        return 0.0;
+    }
+    
     // Factor 1: MA alignment (40% weight)
-    if(ma_fast[0] > ma_medium[0] && ma_medium[0] > ma_slow[0])
+    // Use epsilon to prevent division by zero with small values
+    double fastMedDiff = ma_fast[0] - ma_medium[0];
+    double medSlowDiff = ma_medium[0] - ma_slow[0];
+    double slowValue = MathAbs(ma_slow[0]);
+    double smallEpsilon = 0.0000001;
+    
+    if(fastMedDiff > smallEpsilon && medSlowDiff > smallEpsilon)
     {
         // Perfect bullish alignment
         strength += 40;
-        double separation = ((ma_fast[0] - ma_slow[0]) / ma_slow[0]) * 100;
-        strength += MathMin(10, separation); // Up to 10 additional points for separation
+        if(slowValue > smallEpsilon)
+        {
+            double separation = ((ma_fast[0] - ma_slow[0]) / slowValue) * 100.0;
+            strength += MathMin(10.0, separation); // Up to 10 additional points for separation
+        }
     }
-    else if(ma_fast[0] < ma_medium[0] && ma_medium[0] < ma_slow[0])
+    else if(fastMedDiff < -smallEpsilon && medSlowDiff < -smallEpsilon)
     {
         // Perfect bearish alignment
         strength += 40;
-        double separation = ((ma_slow[0] - ma_fast[0]) / ma_slow[0]) * 100;
-        strength += MathMin(10, separation); // Up to 10 additional points for separation
+        if(slowValue > smallEpsilon)
+        {
+            double separation = ((ma_slow[0] - ma_fast[0]) / slowValue) * 100.0;
+            strength += MathMin(10.0, separation); // Up to 10 additional points for separation
+        }
     }
     else
     {
@@ -1187,8 +1254,9 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
     else
     {
         double mediumSlopePct = 0.0;
-        if(MathAbs(ma_medium[4]) > 0.0000001)
-            mediumSlopePct = MathAbs((ma_medium[0] - ma_medium[4]) / ma_medium[4]) * 100.0;
+        double mediumValue = MathAbs(ma_medium[4]);
+        if(mediumValue > smallEpsilon)
+            mediumSlopePct = MathAbs((ma_medium[0] - ma_medium[4]) / mediumValue) * 100.0;
         strength += MathMin(25.0, mediumSlopePct * 150.0);
     }
     
@@ -1196,7 +1264,10 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
     bool consistentSlope = true;
     for(int i = 1; i < 5; i++)
     {
-        if((ma_fast[i-1] - ma_fast[i]) * (ma_medium[i-1] - ma_medium[i]) < 0)
+        double fastDelta = ma_fast[i-1] - ma_fast[i];
+        double mediumDelta = ma_medium[i-1] - ma_medium[i];
+        // Check if slopes have same direction (both positive or both negative)
+        if(fastDelta * mediumDelta < 0)
         {
             consistentSlope = false;
             break;
@@ -1207,15 +1278,17 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
     else
         strength += 10;
 
+    // Factor 4: MA spread (additional 15% for non-ADX mode)
     if(!useAdxModel)
     {
         double spreadPct = 0.0;
-        if(MathAbs(ma_slow[0]) > 0.0000001)
-            spreadPct = MathAbs((ma_fast[0] - ma_slow[0]) / ma_slow[0]) * 100.0;
+        if(slowValue > smallEpsilon)
+            spreadPct = MathAbs((ma_fast[0] - ma_slow[0]) / slowValue) * 100.0;
         strength += MathMin(15.0, spreadPct * 120.0);
     }
     
-    return MathMin(100.0, strength);
+    // Clamp to valid range
+    return MathMax(0.0, MathMin(100.0, strength));
 }
 
 //+------------------------------------------------------------------+
@@ -1223,18 +1296,31 @@ double CTrendEngine::CalculateTrendStrength(double &ma_fast[], double &ma_medium
 //+------------------------------------------------------------------+
 double CTrendEngine::CalculateTrendAngle(double &ma[], int period)
 {
-    if(period < 2)
+    // Validate inputs
+    if(ArraySize(ma) < 2 || period < 2)
         return 0;
     
-    // Calculate percentage change instead of raw slope
-    // This normalizes across different price scales (BTC vs forex)
-    double avgPrice = (ma[0] + ma[period-1]) / 2.0;
-    if(avgPrice <= 0)
+    // Ensure period doesn't exceed array bounds
+    int effectivePeriod = MathMin(period, ArraySize(ma) - 1);
+    if(effectivePeriod < 2)
+        return 0;
+    
+    // Calculate average price for normalization
+    double avgPrice = 0.0;
+    double oldestValue = ma[effectivePeriod];
+    double newestValue = ma[0];
+    
+    // Validate values are valid numbers
+    if(!MathIsValidNumber(oldestValue) || !MathIsValidNumber(newestValue))
+        return 0;
+    
+    avgPrice = (newestValue + oldestValue) / 2.0;
+    if(avgPrice <= 0 || !MathIsValidNumber(avgPrice))
         return 0;
     
     // Calculate slope as percentage change per bar
-    double pctChange = ((ma[0] - ma[period-1]) / avgPrice) * 100.0;
-    double slopePerBar = pctChange / period;
+    double pctChange = ((newestValue - oldestValue) / avgPrice) * 100.0;
+    double slopePerBar = pctChange / effectivePeriod;
     
     // Scale factor to get meaningful angles (0.1% per bar = ~45 degrees)
     double scaledSlope = slopePerBar * 10.0;
@@ -1244,6 +1330,10 @@ double CTrendEngine::CalculateTrendAngle(double &ma[], int period)
     
     // Convert to angle in degrees
     double angle = MathArctan(scaledSlope) * 180.0 / M_PI;
+    
+    // Final validation
+    if(!MathIsValidNumber(angle))
+        return 0;
     
     return angle;
 }

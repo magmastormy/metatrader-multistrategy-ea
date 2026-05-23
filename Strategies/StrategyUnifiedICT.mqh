@@ -173,6 +173,7 @@ private:
     bool                        m_drawOnChartSymbolOnly;
     datetime                    m_lastDrawLogTime;
     datetime                    m_lastDrawRecoveryCheck;
+    long                        m_chartID;               // Chart ID for drawing operations
     
 public:
                                 CStrategyUnifiedICT(const string name = "Unified ICT v1.0", int magic = 0);
@@ -285,7 +286,8 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_drawPrefix(""),
     m_drawOnChartSymbolOnly(false),
     m_lastDrawLogTime(0),
-    m_lastDrawRecoveryCheck(0)
+    m_lastDrawRecoveryCheck(0),
+    m_chartID(0)
 {
 }
 
@@ -583,6 +585,7 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
 
     m_drawPrefix = BuildDrawPrefix(symbol, timeframe);
     m_drawOnChartSymbolOnly = (symbol == _Symbol && timeframe == (ENUM_TIMEFRAMES)Period());
+    m_chartID = ChartID();
     
     // Initialize Market Structure Analyzer
     m_structureAnalyzer = new CMarketStructureAnalyzer();
@@ -682,7 +685,7 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
 void CStrategyUnifiedICT::Deinit()
 {
     if(StringLen(m_drawPrefix) > 0)
-        ObjectsDeleteAll(0, m_drawPrefix);
+        ObjectsDeleteAll(m_chartID, m_drawPrefix);
     Cleanup();
     CStrategyBase::Deinit();
 }
@@ -707,11 +710,20 @@ void CStrategyUnifiedICT::OnTick()
 
     m_lastDrawRecoveryCheck = nowTime;
 
+    // Regular cleanup of old objects (every 5 minutes)
+    static datetime lastCleanupTime = 0;
+    if(nowTime - lastCleanupTime >= 300) // 5 minutes
+    {
+        if(m_drawingManager != NULL)
+            m_drawingManager.CleanupOldObjects();
+        lastCleanupTime = nowTime;
+    }
+
     bool hasActiveObjects = false;
-    int totalObjects = ObjectsTotal(0, 0, -1);
+    int totalObjects = ObjectsTotal(m_chartID, 0, -1);
     for(int i = totalObjects - 1; i >= 0; i--)
     {
-        string objName = ObjectName(0, i, 0, -1);
+        string objName = ObjectName(m_chartID, i, 0, -1);
         if(StringFind(objName, m_drawPrefix) == 0)
         {
             hasActiveObjects = true;
@@ -770,11 +782,9 @@ void CStrategyUnifiedICT::DrawElements()
     if(!m_drawOnChartSymbolOnly || StringLen(m_drawPrefix) == 0)
         return;
 
-    CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
-    if(drawingCoordinator != NULL)
-        drawingCoordinator.PreparePrefixForCurrentBar(ChartID(), m_symbol, m_timeframe, m_drawPrefix);
-    else if(StringLen(m_drawPrefix) > 0)
-        ObjectsDeleteAll(0, m_drawPrefix);
+    // Use CChartDrawingManager for all drawing operations
+    if(m_drawingManager == NULL)
+        return;
 
     int totalOb = 0;
     int drawnOb = 0;
@@ -791,21 +801,15 @@ void CStrategyUnifiedICT::DrawElements()
             if(ob.isMitigated) continue;
             totalOb++;
             
-            string name = StringFormat("%sOB_%d", m_drawPrefix, i);
-            color obColor = IsBullishOrderBlockType(ob.type) ? clrDodgerBlue : clrCrimson;
+            bool isBullish = IsBullishOrderBlockType(ob.type);
+            string uniqueId = StringFormat("%d_%s", i, EnumToString(ob.type));
             
-            if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
-            
-            ObjectCreate(0, name, OBJ_RECTANGLE, 0, ob.time, ob.top, TimeCurrent(), ob.bottom);
-            ObjectSetInteger(0, name, OBJPROP_COLOR, obColor);
-            ObjectSetInteger(0, name, OBJPROP_FILL, true);
-            ObjectSetInteger(0, name, OBJPROP_BACK, false);
-            ObjectSetString(0, name, OBJPROP_TOOLTIP, StringFormat("%s | Str: %.0f%%", EnumToString(ob.type), ob.strength * 100));
-            drawnOb++;
+            if(m_drawingManager.DrawOrderBlock(ob.time, TimeCurrent(), ob.top, ob.bottom, isBullish, ob.strength, uniqueId))
+                drawnOb++;
         }
     }
     
-    // Draw Imbalances
+    // Draw Imbalances (FVGs)
     if(m_imbalanceDetector != NULL)
     {
         for(int i = 0; i < m_imbalanceDetector.GetImbalanceCount(); i++)
@@ -815,21 +819,12 @@ void CStrategyUnifiedICT::DrawElements()
             if(imb.hasRebalanced) continue;
             totalFvg++;
             
-            string name = StringFormat("%sFVG_%d", m_drawPrefix, i);
-            color fvgColor = imb.isBullish ? clrGreen : clrRed;
+            string uniqueId = StringFormat("%d", i);
             
-            if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
-            
-            ObjectCreate(0, name, OBJ_RECTANGLE, 0, imb.time, imb.top, TimeCurrent(), imb.bottom);
-            ObjectSetInteger(0, name, OBJPROP_COLOR, fvgColor);
-            ObjectSetInteger(0, name, OBJPROP_FILL, true);
-            ObjectSetInteger(0, name, OBJPROP_BACK, false);
-            ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
-            drawnFvg++;
+            if(m_drawingManager.DrawFVG(imb.time, TimeCurrent(), imb.top, imb.bottom, imb.isBullish, true, uniqueId))
+                drawnFvg++;
         }
     }
-
-    ChartRedraw(0);
 
     datetime nowTime = TimeCurrent();
     if(nowTime - m_lastDrawLogTime >= 60)

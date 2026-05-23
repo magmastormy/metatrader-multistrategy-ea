@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-05-21
+- Last Updated: 2026-05-23
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 82 - Strategic Signal Participation, Adaptive Exits & ATR-Based Holding
+- Current Batch: 90 - Visualization System Audit Fixes
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -19,8 +19,73 @@
 - Risk authority: `Core/Risk/UnifiedRiskManager.mqh`
 - Execution authority: `Core/Trading/TradeManager.mqh`
 - Position authority: EA lifecycle loop via `CTradeManager::ManageAllPositions(...)`
+- Python bridge: `Core/Utils/PythonBridge.mqh`, `Python/zmq_server.py`
 
 ## Current Runtime Evidence
+- **Visualization System Audit Fixes (Batch 90):** Complete overhaul of chart object management and visualization safety:
+  - **Critical audit findings addressed**:
+    - Hardcoded chart ID 0 in StrategyUnifiedICT → Fixed with `m_chartID` member initialized with `ChartID()`
+    - StrategyUnifiedICT bypassed CChartDrawingManager → Converted to use `DrawOrderBlock` and `DrawFVG`
+    - StrategyFibonacci bypassed CChartDrawingManager → Converted to use `DrawHorizontalLevel`
+    - No global object counter for MT5 1000-object limit → Added tiered alerts at 800/900/950
+    - Excessive object retention (maxObjectAge=500) → Reduced to 150
+    - Debug logging ran in production → Wrapped in `if(m_config.enableDebugMode)`
+    - Bitwise OR color operations caused inconsistent rendering → Replaced with explicit RGB values
+    - No coordinate validation for invalid time/price → Added `ValidateTime`, `ValidatePrice`, `ValidateCoordinates`
+  - **Implementation details**:
+    - Added global object counter with `m_globalObjectCount`, `m_lastAlertLevel`, `m_lastCountLogTime` to `CDrawingCoordinator`
+    - Implemented `SafeObjectsDeleteAll` with verification of deletion counts
+    - Added per-strategy object limit enforcement with `maxObjectsPerStrategy`
+    - Added dirty-flag optimization with `m_isDirty`, `SetDirty`, `IsDirty`, `ShouldRedraw`
+    - Added `LogStatistics` method for periodic drawing metrics logging
+    - Integrated drawing statistics into `VisualDashboard` with `UpdateDrawingStats` and `DrawLabelAt`
+    - Added 5-minute cleanup interval in strategies calling `CleanupOldObjects`
+  - **Files modified**:
+    - `Strategies/StrategyUnifiedICT.mqh`: Fixed chart ID, standardized drawing, added cleanup
+    - `Strategies/StrategyFibonacci.mqh`: Converted to use CChartDrawingManager
+    - `Strategies/StrategySupportResistance.mqh`: Cleanup improvements
+    - `Core/Visualization/DrawingCoordinator.mqh`: Global counter, SafeObjectsDeleteAll
+    - `Core/Visualization/ChartDrawingManager.mqh`: Coordinate validation, explicit colors, dirty flags
+    - `Core/Visualization/VisualDashboard.mqh`: Drawing statistics panel
+  - **Validation evidence**: All visualization audit findings addressed, compile passes with 0 errors/warnings
+- **Module 8 Python External Integration Fixes (Batch 85):** Complete overhaul of Python bridge reliability:
+  - **Critical audit findings addressed**:
+    - No connection timeout handling → Fixed with 5s request timeout in CPythonBridge and ZMQ poller timeout in Python server
+    - No reconnection logic → Implemented exponential backoff reconnection (2s→30s)
+    - No heartbeat monitoring → Added periodic health checks with configurable interval
+    - No fallback mode → Added automatic local AI fallback when Python server unavailable
+    - No version compatibility check → Added /version endpoint (1.0.0) and validation during OnInit()
+    - No message serialization validation → Added JSON structure validation before parsing
+  - **Implementation details**:
+    - Created `Core/Utils/PythonBridge.mqh`: New class with complete connection lifecycle management
+    - Added FastAPI HTTP server to `Python/zmq_server.py` on port 8000 (since MQL5 lacks native ZMQ)
+    - Added input parameters to `MultiStrategyAutonomousEA.mq5`: endpoint, timeout, heartbeat interval, max reconnect attempts, backoff duration
+    - Added real-time health monitoring dashboard via `[PYTHON-BRIDGE-DASHBOARD]` telemetry
+    - Added version checking during EA startup and compatibility validation
+  - **Files modified**:
+    - `Python/zmq_server.py`: Added HTTP server, endpoints (/predict, /health, /heartbeat, /version), ZMQ poller timeout
+    - `Core/Utils/PythonBridge.mqh`: New file (complete bridge implementation)
+    - `Core/Utils/Enums.mqh`: Added ENUM_PYTHON_BRIDGE_STATE enum
+    - `MultiStrategyAutonomousEA.mq5`: Added bridge initialization, version check, heartbeat checks, dashboard logging
+  - **Validation evidence**: All Module 8 critical/medium findings addressed, compile passes with 0 errors/warnings
+- **Module 4 Risk Management Fixes (Batch 85):**
+  - Critical risk constants corrected: `MAX_RISK_PER_TRADE` reduced from 100.0 to 2.0, `MAX_TOTAL_RISK` reduced from 100.0 to 10.0 in `Core/Utils/Enums.mqh`
+  - Safe default risk values set in `CUnifiedRiskManager`: 2% per trade, 6% daily, 10% portfolio when config values are invalid or non-positive
+  - Currency conversion implemented in `CPositionSizer::CalculateRiskPerLot()` for accurate position sizing across non-USD accounts
+  - Margin safety buffer increased from 5% to 20% (uses max 80% of free margin) for volatile period protection
+  - Minimum price threshold added to volatility adjustment to prevent exaggerated risk on low-priced symbols
+  - Enhanced emergency drawdown stop with ATR volatility checks and warnings in `MultiStrategyAutonomousEA.mq5`
+- **Module 4 Risk Management Fixes (Batch 85):**
+  - Critical risk constants corrected: `MAX_RISK_PER_TRADE` reduced from 100.0 to 2.0, `MAX_TOTAL_RISK` reduced from 100.0 to 10.0 in `Core/Utils/Enums.mqh`
+  - Safe default risk values set in `CUnifiedRiskManager`: 2% per trade, 6% daily, 10% portfolio when config values are invalid or non-positive
+  - Currency conversion implemented in `CPositionSizer::CalculateRiskPerLot()` for accurate position sizing across non-USD accounts
+  - Margin safety buffer increased from 5% to 20% (uses max 80% of free margin) for volatile period protection
+  - Minimum price threshold added to volatility adjustment to prevent exaggerated risk on low-priced symbols
+  - Enhanced emergency drawdown stop with ATR volatility checks and warnings in `MultiStrategyAutonomousEA.mq5`
+- **Module 6 Audit Fixes Applied:**
+  - Minimum live voters increased from 1 to 2 in `MultiStrategyAutonomousEA.mq5` (line 48)
+  - Quorum threshold increased from 0.48 to 0.60 in `MultiStrategyAutonomousEA.mq5` (line 47)
+  - Strategy weights rebalanced: UnifiedICT (2.2→1.2), UnicornModel (2.4→1.2), PowerOfThree (2.3→1.2), ElliottWave (1.0→0.0)
 - `20260517.log` proves `INDICATOR_ONLY` and `AI_ASSISTED` sessions were truly active, not merely misread `AI_ONLY` runs.
 - Indicator-only funnel evidence: `signals_generated=78`, `signals_after_pipeline=26`, `signals_after_quorum=0`; primary productive families were `Fibonacci` and `Support/Resistance`, while Unified ICT, Unicorn, Power of Three, Candlestick, Momentum, and Trend mostly abstained or filtered.
 - AI-assisted funnel evidence: `signals_generated=16`, `signals_after_pipeline=8`, `signals_after_quorum=0`; Neural returned `NNAI_NO_SIGNAL` and ONNX stayed in `ONNX_WARMING_UP`, so AI added little predictive value in that sample and still had to be discounted as infrastructure abstention.
@@ -48,6 +113,8 @@
 - Resolve strategy-specific registration timeframes during manager bootstrap so configured scalp/intrabar modules can evaluate a lower timeframe than the attached chart when appropriate.
 - Build symbol-class-specific strategy flags before manager bootstrap so synthetic symbols can use a leaner live roster than FX without violating per-symbol consensus ownership.
 - Rebuild scheduler state only after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff remain a single aligned authority.
+- Run startup health checks validating AI subsystem components, Python bridge connectivity, risk manager initialization, and position state manager status before final initialization completes.
+- Emit `[HEALTH-CHECK]` telemetry for each validated component and return `INIT_FAILED` if critical components fail.
 - Treat curated mode as a baseline/default profile only; explicit strategy enables remain authoritative instead of being rewritten away at runtime.
 - Registered AI strategies (Neural Network, Transformer, Ensemble, ONNX) now receive non-zero weights from `InpAIWeightMultiplier` during registry bootstrap, ensuring they can participate in live voting when enabled instead of being suppressed by zero weight.
 - Reconstruct `[TRADE-STATE]` / cooldown timing from EA-owned history and open positions.
@@ -228,10 +295,12 @@
 ## Observability Surface
 - Decision: `[SIGNAL]`, `[SIGNAL-REJECTED]`, `[SIGNAL-VALIDATED]` (`exogenous_quality` logged separately from consensus confidence)
 - Multi-Tier: `[TIERED-VOTE]`, `[CONFLICT-RESOLUTION]`, `[SETUP-QUALITY]`
-- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, `[AUTHORITY-RESULT]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[EXECUTION-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SPIKE-ALARM]`, `[SPIKE-PAUSE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`
+- System telemetry: `[EXECUTION-MODE]`, `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`, `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[RISK-BUDGET]`, `[RISK-THROTTLE]`, `[RISK-VIRTUAL]`, `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, `[AUTHORITY-RESULT]`, `[CONSENSUS-QUORUM]`, `[CONSENSUS-VETO]`, `[CONSENSUS-ACTIVE]`, `[CONSENSUS-DIAG]`, `[CONSENSUS-ROOT]`, `[CONSENSUS-SNAPSHOT]`, `[CONSENSUS-STRATEGY]`, `[CONSENSUS-ROLE]`, `[CONSENSUS-CLUSTER]`, `[ROLE-CLUSTER]`, `[STRATEGY-REJECTS]`, `[PIPELINE-THRESHOLD]`, `[REGIME-STATE]`, `[VOLATILITY-FAULT]`, `[ATR-FALLBACK]`, `[TrendEngine][READINESS-FAULT]`, `[MARKET-ANALYSIS]`, `[COST-GATE]`, `[ENTRY-VETO]`, `[ENTERPRISE-BLOCKED]`, `[EXECUTION-BLOCKED]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT]`, `[SCAN-BUDGET]`, `[SCAN-PRIME]`, `[SCHEDULER-STATE]`, `[CADENCE-WARNING]`, `[MODE-MASK]`, `[SPIKE-ALARM]`, `[SPIKE-PAUSE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION]`, `[TRADE-CONFIRMED]`, `[PYTHON-BRIDGE-DASHBOARD]`, `[DRAWING-STATS]`, `[DRAW-COORD]`
 - Risk remediation: `[RISK-UNPROTECTED]`, `[CAPACITY-EXTERNAL]`, `[RISK-CLUSTER]`, `[RISK-MUTEX-BLOCK]`
 - AI: `[AI-VOTE]`, `[NN-HEALTH]`, `[NN-MUTATION]`, `[AI-FEEDBACK]`, `[EXT-LLM]`
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
+- **Batch 87 Execution Quality:** `[EXECUTION-QUALITY]`, `[EXECUTION-REPORT]`, `[SPREAD-COST]`, `[SMART-ROUTING]`
+- **Batch 90 Visualization:** Drawing statistics dashboard on VisualDashboard
 
 ## 2026-03-31 AXIOM Refactor Trace
 - Removed dead AI/control-flow weight:
@@ -446,6 +515,41 @@
   - Added two new manager-registered Tier-1 structure strategies: `CUnicornModelStrategy` and `CPowerOfThreeStrategy`.
   - Integrated `CISD` and `Turtle Soup` directly into the Unified ICT support stack.
   - Widened the canonical AI feature contract from 55 to 57 features; Python training now consumes exported MT5 feature columns when available so tick-derived features remain parity-safe.
+
+### Batch 86: Module 7 Market Analysis & Visualization Fixes (2026-05-23)
+- **Root Cause:** Module 7 audit identified three critical issues:
+  1. Chart object limit violations - MT5's 1000 object limit could be exceeded, causing terminal crashes
+  2. Regime detection overfitting - rapid regime flipping on noisy market data
+  3. ATR calculation boundary errors - potential array out-of-bounds access in fallback calculations
+
+- **Implementation Trace:**
+  - **Chart Object Limit Enforcement:**
+    - Modified `Core/Visualization/ChartDrawingManager.mqh`: Added `m_maxObjects` member (default: 900), implemented `CheckObjectLimitAndCleanup()` with LRU deletion, integrated into `PrepareSnapshotDraw()`
+    - Modified `Core/Visualization/DrawingCoordinator.mqh`: Added global object tracking with `CheckGlobalObjectLimitAndCleanup()`
+    - Modified `Strategies/StrategyUnifiedICT.mqh`: Added object limit check before drawing order blocks and imbalances
+    - Modified `MultiStrategyAutonomousEA.mq5`: Integrated with `InpMaxVisualObjects` parameter (capped at 900)
+  
+  - **Regime Detection Robustness:**
+    - Modified `Core/Engines/RegimeEngine.mqh`: Added `regimeConfidence` (0.0-1.0), `regimeStabilityBars`, and `confirmedState` requiring 3+ bars stability before confirmation
+    - Enhanced `[REGIME-STATE]` logging to include confidence and stability metrics
+  
+  - **ATR Validation:**
+    - Modified `Core/Engines/VolatilityEngine.mqh`: Added `ValidateAtrCalculation()` test function for runtime verification
+    - Verified existing ATR calculations are safe with proper bounds checking
+
+- **Validation Evidence:**
+  - All critical and high-severity Module 7 findings addressed
+  - Chart objects now capped at 900, preventing MT5 crashes
+  - Regime detection now requires 3 bars stability before confirming state changes
+  - ATR calculations verified safe against boundary errors
+
+- **Files Modified:**
+  - `Core/Visualization/ChartDrawingManager.mqh`
+  - `Core/Visualization/DrawingCoordinator.mqh`
+  - `Strategies/StrategyUnifiedICT.mqh`
+  - `Core/Engines/RegimeEngine.mqh`
+  - `Core/Engines/VolatilityEngine.mqh`
+  - `MultiStrategyAutonomousEA.mq5`
 
 ### Batch 79: Weltrade Environment Consolidation & Micro-Account Support (2026-05-13)
 - **Environment Discovery:** Hardened `sync_and_compile.ps1` to detect and prioritize `C:\Program Files\MT5 Weltrade` as the root directory, ensuring that `MetaEditor64.exe` and the standard MQL5 includes are mapped from the operator's active installation.

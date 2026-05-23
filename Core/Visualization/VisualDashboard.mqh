@@ -153,6 +153,79 @@ public:
         ChartRedraw();
     }
 
+    //+------------------------------------------------------------------+
+    //| Update drawing statistics section                                 |
+    //+------------------------------------------------------------------+
+    void UpdateDrawingStats(int globalObjectCount, int maxObjects, int alertLevel,
+                           int fibonacciObjects, int supportResObjects, int ictObjects)
+    {
+        int row = 0;
+        int startX = 800;
+        
+        // --- Drawing Stats Header ---
+        DrawLabelAt("Draw_Title", "CHART OBJECTS", startX, m_y + (row++ * m_rowHeight), m_headerColor);
+        DrawLabelAt("Draw_Sep", "--------------------", startX, m_y + (row++ * m_rowHeight), clrGray);
+
+        // --- Global Object Count ---
+        string globalText = (string)globalObjectCount + "/" + (string)maxObjects;
+        color globalColor = clrWhite;
+        if(globalObjectCount >= 950)
+            globalColor = clrRed;
+        else if(globalObjectCount >= 900)
+            globalColor = clrOrange;
+        else if(globalObjectCount >= 800)
+            globalColor = clrYellow;
+        else
+            globalColor = clrLime;
+        
+        DrawLabelAt("Draw_Global", "Total: " + globalText, startX, m_y + (row++ * m_rowHeight), globalColor);
+
+        // --- Alert Level ---
+        string alertText = "NORMAL";
+        color alertColor = clrLime;
+        if(alertLevel >= 3) { alertText = "EMERGENCY"; alertColor = clrRed; }
+        else if(alertLevel >= 2) { alertText = "CRITICAL"; alertColor = clrOrangeRed; }
+        else if(alertLevel >= 1) { alertText = "WARNING"; alertColor = clrYellow; }
+        
+        DrawLabelAt("Draw_Alert", "Alert: " + alertText, startX, m_y + (row++ * m_rowHeight), alertColor);
+
+        // --- Per-Strategy Breakdown ---
+        DrawLabelAt("Draw_Sep2", "--------------------", startX, m_y + (row++ * m_rowHeight), clrGray);
+        DrawLabelAt("Draw_FIB", "Fibonacci: " + (string)fibonacciObjects, startX, m_y + (row++ * m_rowHeight), m_textColor);
+        DrawLabelAt("Draw_SR", "S/R: " + (string)supportResObjects, startX, m_y + (row++ * m_rowHeight), m_textColor);
+        DrawLabelAt("Draw_ICT", "ICT: " + (string)ictObjects, startX, m_y + (row++ * m_rowHeight), m_textColor);
+
+        // --- Health Warning ---
+        if(globalObjectCount >= 900)
+        {
+            string warning = "DRAWING LIMITED";
+            DrawLabelAt("Draw_Warning", warning, startX, m_y + (row++ * m_rowHeight), clrOrangeRed);
+        }
+
+        ChartRedraw();
+    }
+
+    //+------------------------------------------------------------------+
+    //| Draw label at specific position                                    |
+    //+------------------------------------------------------------------+
+    void DrawLabelAt(string name, string text, int x, int y, color clr)
+    {
+        string objName = m_prefix + name;
+        if(ObjectFind(0, objName) < 0)
+        {
+            ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0);
+        }
+        
+        ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
+        ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+        ObjectSetString(0, objName, OBJPROP_TEXT, text);
+        ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
+        ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, m_fontSize);
+        ObjectSetString(0, objName, OBJPROP_FONT, m_fontName);
+        ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+    }
+
 private:
     void DrawLabel(string name, string text, int row, int col, color clr)
     {

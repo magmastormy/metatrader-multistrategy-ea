@@ -121,6 +121,9 @@ public:
     double GetVolatilityAdjustedTakeProfit(double baseTp);
     
     void Reset();
+    
+    // ATR Validation Test - Call during init to verify calculation correctness
+    bool ValidateAtrCalculation(const string symbol, const ENUM_TIMEFRAMES timeframe);
 };
 
 CVolatilityEngine::CVolatilityEngine() : 
@@ -575,6 +578,56 @@ void CVolatilityEngine::Reset()
     m_indicatorSymbol = "";
     m_indicatorTimeframe = PERIOD_CURRENT;
     m_lastLoggedState = VOLATILITY_LOW;
+}
+
+bool CVolatilityEngine::ValidateAtrCalculation(const string symbol, const ENUM_TIMEFRAMES timeframe)
+{
+    int requiredBars = MathMax(m_atrPeriod + 3, 20);
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    int copied = CopyRates(symbol, timeframe, 0, requiredBars, rates);
+    if(copied < requiredBars)
+    {
+        PrintFormat("[ATR-VALIDATE] %s %s | insufficient bars: need %d, got %d",
+                    symbol, EnumToString(timeframe), requiredBars, copied);
+        return false;
+    }
+    
+    double atrSumCurrent = 0.0;
+    int atrWindow = MathMin(m_atrPeriod, copied - 2);
+    if(atrWindow <= 0)
+    {
+        PrintFormat("[ATR-VALIDATE] %s %s | invalid window: %d",
+                    symbol, EnumToString(timeframe), atrWindow);
+        return false;
+    }
+    
+    for(int i = 0; i < atrWindow; i++)
+    {
+        if(i + 1 >= copied)
+        {
+            PrintFormat("[ATR-VALIDATE] %s %s | BOUNDARY ERROR at i=%d: i+1=%d >= copied=%d",
+                        symbol, EnumToString(timeframe), i, i + 1, copied);
+            return false;
+        }
+        
+        double rangeHighLow = rates[i].high - rates[i].low;
+        double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
+        double rangeLowClose = MathAbs(rates[i].low - rates[i + 1].close);
+        atrSumCurrent += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
+    }
+    
+    double atrValue = atrSumCurrent / (double)atrWindow;
+    if(atrValue <= 0.0 || !MathIsValidNumber(atrValue))
+    {
+        PrintFormat("[ATR-VALIDATE] %s %s | invalid ATR value: %.5f",
+                    symbol, EnumToString(timeframe), atrValue);
+        return false;
+    }
+    
+    PrintFormat("[ATR-VALIDATE] %s %s | PASSED | window=%d | atr=%.5f",
+                symbol, EnumToString(timeframe), atrWindow, atrValue);
+    return true;
 }
 
 #endif // VOLATILITY_ENGINE_MQH

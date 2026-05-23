@@ -31,6 +31,36 @@ private:
     bool m_hasCachedSignal;
     string m_lastDecisionReasonTag;
     double m_minConfidence;
+    bool m_ownsTransformer;  // Track ownership for proper cleanup
+    
+    bool IsValidConfidence(const double conf) const
+    {
+        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+    }
+
+    bool BuildFeaturesFailed(const string symbol, const ENUM_TIMEFRAMES tf, double &input[])
+    {
+        bool success = CAIFeatureVectorBuilder::BuildTransformerInput(symbol, tf, input, TRANSFORMER_D_MODEL_DEFAULT, 8);
+        if(!success)
+        {
+            m_noneVotes++;
+            m_lastDecisionReasonTag = "TRANSFORMER_FEATURES_UNAVAILABLE";
+            // Don't cache failed feature builds - allow retry on next tick
+            m_hasCachedSignal = false;
+            LogVoteHeartbeat();
+        }
+        return !success;
+    }
+    
+    bool InferenceFailed()
+    {
+        m_noneVotes++;
+        m_lastDecisionReasonTag = "TRANSFORMER_INFERENCE_FAILED";
+        // Don't cache failed inference - allow retry on next tick
+        m_hasCachedSignal = false;
+        LogVoteHeartbeat();
+        return true;
+    }
 
 
     datetime GetCurrentBarTime() const
@@ -67,8 +97,8 @@ private:
 public:
     CTransformerAIStrategyAdapter()
     {
-        // Runtime-lean transformer profile; per-symbol instance owned by adapter.
-        m_transformer = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
+        m_transformer = NULL;
+        m_ownsTransformer = true;  // Default: adapter owns the transformer
         m_symbol = "";
         m_timeframe = PERIOD_CURRENT;
         m_enabled = true;
@@ -86,14 +116,26 @@ public:
         m_lastDecisionReasonTag = "TRANSFORMER_UNSET";
         m_minConfidence = 0.70;
     }
-
+    
+    void SetSharedTransformer(CTransformerBrain* transformer)
+    {
+        // Only delete if we own the current transformer
+        if(m_ownsTransformer && m_transformer != NULL)
+        {
+            delete m_transformer;
+        }
+        m_transformer = transformer;
+        m_ownsTransformer = false;  // Now using shared transformer
+    }
+    
     virtual ~CTransformerAIStrategyAdapter()
     {
-        if(m_transformer != NULL)
+        if(m_ownsTransformer && m_transformer != NULL)
         {
             delete m_transformer;
             m_transformer = NULL;
         }
+        // If shared, don't delete - let the owner handle cleanup
     }
 
     virtual bool Init(const string symbol,
@@ -148,7 +190,8 @@ public:
             {
                 m_noneVotes++;
                 m_lastDecisionReasonTag = "TRANSFORMER_FEATURES_UNAVAILABLE";
-                UpdateCache(currentBarTime, TRADE_SIGNAL_NONE, 0.0);
+                // Don't cache failed feature builds - allow retry on next tick
+                m_hasCachedSignal = false;
                 LogVoteHeartbeat();
                 return TRADE_SIGNAL_NONE;
             }
@@ -158,7 +201,8 @@ public:
             {
                 m_noneVotes++;
                 m_lastDecisionReasonTag = "TRANSFORMER_INFERENCE_FAILED";
-                UpdateCache(currentBarTime, TRADE_SIGNAL_NONE, 0.0);
+                // Don't cache failed inference - allow retry on next tick
+                m_hasCachedSignal = false;
                 LogVoteHeartbeat();
                 return TRADE_SIGNAL_NONE;
             }
@@ -168,6 +212,18 @@ public:
             double pSell = predictions[2];
 
             double directionalConfidence = MathMax(pBuy, pSell);
+            
+            // Validate prediction values
+            if(!IsValidConfidence(pNone) || !IsValidConfidence(pBuy) || !IsValidConfidence(pSell))
+            {
+                m_noneVotes++;
+                m_lastDecisionReasonTag = "TRANSFORMER_INVALID_PREDICTION";
+                // Don't cache invalid predictions - allow retry on next tick
+                m_hasCachedSignal = false;
+                LogVoteHeartbeat();
+                return TRADE_SIGNAL_NONE;
+            }
+            
             confidence = MathMax(0.0, MathMin(1.0, directionalConfidence));
 
             if(pBuy > pSell && pBuy >= pNone && directionalConfidence >= m_minConfidence)

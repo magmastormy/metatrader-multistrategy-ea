@@ -193,12 +193,13 @@ class CEnterpriseStrategyManager
 private:
     CUnifiedSignalPipeline* m_pipeline;
     CTimeframeConsistency* m_tfConsistency;
-    CTradeManager* m_tradeManager;  // CRITICAL FIX: Store for strategy initialization
+    CTradeManager* m_tradeManager;   // CRITICAL FIX: Store for strategy initialization
     CPositionSizer* m_positionSizer; // CRITICAL FIX: Store for strategy initialization
     CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
     
     StrategyEntry m_strategies[];
     int m_strategyCount;
+    int m_maxStrategies; // Max strategy limit
     
     string m_symbol;
     ENUM_TIMEFRAMES m_baseTimeframe;
@@ -426,6 +427,15 @@ public:
         m_sparseIntrabarMinReadyCoverage = MathMax(0.0, MathMin(1.0, minReadyCoverage));
     }
     void SetAllowSparseIntrabarSingleVoter(const bool enabled) { m_allowSparseIntrabarSingleVoter = enabled; }
+    
+    // Quorum preset profiles
+    enum ENUM_QUORUM_PROFILE
+    {
+        QUORUM_CONSERVATIVE,
+        QUORUM_BALANCED,
+        QUORUM_AGGRESSIVE
+    };
+    void ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile);
     void SetConsensusDiagnosticsIntervalSeconds(const int seconds) { m_diagLogIntervalSec = MathMax(10, seconds); }
     int  GetMinQuorum() const { return m_minQuorum; }
     bool UpdateStrategyWeightByName(const string name, const double weight);
@@ -539,6 +549,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_strategyCount(0),
+    m_maxStrategies(20),
     m_managedMagic(0),
     m_initialized(false),
     m_usePipeline(true),
@@ -777,6 +788,14 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
 {
     if(strategy == NULL || !m_initialized)
         return false;
+        
+    // Prevent unbounded strategy growth
+    if(m_strategyCount >= m_maxStrategies)
+    {
+        Print("[EnterpriseStrategyManager] ERROR: Max strategy limit reached (", m_maxStrategies, ")");
+        delete strategy;
+        return false;
+    }
     
     // Initialize strategy with VALID pointers
     ENUM_TIMEFRAMES resolvedTf = (tf == PERIOD_CURRENT ? m_baseTimeframe : tf);
@@ -3378,6 +3397,95 @@ bool CEnterpriseStrategyManager::IsPositionIdStillOpen(const ulong positionId) c
     }
 
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Apply Quorum Profile                                             |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
+{
+    string profileName;
+    
+    switch(profile)
+    {
+        case QUORUM_CONSERVATIVE:
+            // Conservative: High thresholds, more voters required
+            m_minQuorum = 3;
+            m_intrabarMinQuorum = 2;
+            m_quorumThreshold = 0.70;
+            m_pipelineMinConfidence = 0.50;
+            m_intrabarSingleVoterMinConfidence = 0.80;
+            m_minReadyWeightRatio = 0.60;
+            m_supportFloorNewBar = 0.40;
+            m_supportFloorIntrabar = 0.35;
+            m_sparseIntrabarMinQuality = 0.85;
+            m_sparseIntrabarMinSupportRatio = 0.80;
+            m_sparseIntrabarMinReadyCoverage = 0.70;
+            m_allowSparseIntrabarSingleVoter = false;
+            
+            // Adaptive quorum settings
+            m_adaptiveQualityThreshold_1voter = 0.90;
+            m_adaptiveSupportFloor_1voter = 0.80;
+            m_adaptiveQualityThreshold_2voters = 0.80;
+            m_adaptiveSupportFloor_2voters = 0.70;
+            m_adaptiveQualityThreshold_3plus = 0.70;
+            m_adaptiveSupportFloor_3plus = 0.60;
+            profileName = "CONSERVATIVE";
+            break;
+            
+        case QUORUM_BALANCED:
+            // Balanced: Moderate thresholds
+            m_minQuorum = 2;
+            m_intrabarMinQuorum = 1;
+            m_quorumThreshold = 0.55;
+            m_pipelineMinConfidence = 0.40;
+            m_intrabarSingleVoterMinConfidence = 0.65;
+            m_minReadyWeightRatio = 0.40;
+            m_supportFloorNewBar = 0.30;
+            m_supportFloorIntrabar = 0.25;
+            m_sparseIntrabarMinQuality = 0.65;
+            m_sparseIntrabarMinSupportRatio = 0.55;
+            m_sparseIntrabarMinReadyCoverage = 0.50;
+            m_allowSparseIntrabarSingleVoter = true;
+            
+            // Adaptive quorum settings
+            m_adaptiveQualityThreshold_1voter = 0.75;
+            m_adaptiveSupportFloor_1voter = 0.60;
+            m_adaptiveQualityThreshold_2voters = 0.65;
+            m_adaptiveSupportFloor_2voters = 0.50;
+            m_adaptiveQualityThreshold_3plus = 0.55;
+            m_adaptiveSupportFloor_3plus = 0.40;
+            profileName = "BALANCED";
+            break;
+            
+        case QUORUM_AGGRESSIVE:
+            // Aggressive: Lower thresholds, more signals passed
+            m_minQuorum = 1;
+            m_intrabarMinQuorum = 1;
+            m_quorumThreshold = 0.40;
+            m_pipelineMinConfidence = 0.30;
+            m_intrabarSingleVoterMinConfidence = 0.50;
+            m_minReadyWeightRatio = 0.25;
+            m_supportFloorNewBar = 0.20;
+            m_supportFloorIntrabar = 0.15;
+            m_sparseIntrabarMinQuality = 0.50;
+            m_sparseIntrabarMinSupportRatio = 0.40;
+            m_sparseIntrabarMinReadyCoverage = 0.35;
+            m_allowSparseIntrabarSingleVoter = true;
+            
+            // Adaptive quorum settings
+            m_adaptiveQualityThreshold_1voter = 0.60;
+            m_adaptiveSupportFloor_1voter = 0.40;
+            m_adaptiveQualityThreshold_2voters = 0.50;
+            m_adaptiveSupportFloor_2voters = 0.35;
+            m_adaptiveQualityThreshold_3plus = 0.40;
+            m_adaptiveSupportFloor_3plus = 0.30;
+            profileName = "AGGRESSIVE";
+            break;
+    }
+    
+    PrintFormat("[QUORUM-PROFILE] Applied %s profile | minQuorum=%d | quorumThreshold=%.2f | pipelineMinConfidence=%.2f",
+                profileName, m_minQuorum, m_quorumThreshold, m_pipelineMinConfidence);
 }
 
 #endif // ENTERPRISE_STRATEGY_MANAGER_MQH

@@ -37,6 +37,11 @@ private:
     ulong           m_noneVotes;
     datetime        m_lastVoteLogTime;
     int             m_barCounter;
+    
+    bool IsValidConfidence(const double conf) const
+    {
+        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+    }
 
     void LogVoteHeartbeat()
     {
@@ -183,6 +188,16 @@ public:
 
         int onnxSignal = m_brain.GetSignal();
         confidence = m_brain.GetConfidence();
+        
+        // Validate confidence value
+        if(!IsValidConfidence(confidence))
+        {
+            m_noneVotes++;
+            m_lastDecisionReasonTag = "ONNX_INVALID_CONFIDENCE";
+            LogVoteHeartbeat();
+            return TRADE_SIGNAL_NONE;
+        }
+        
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         if(onnxSignal == 2 && confidence >= m_minConfidence)
             signal = TRADE_SIGNAL_BUY;

@@ -124,6 +124,28 @@ private:
     double m_maxEntrySpreadPoints;           // Hard quote-spread gate before market send
     double m_maxEntryDriftPoints;            // Hard drift gate between signal price and send price
     
+    // Dynamic slippage settings
+    bool m_enableDynamicSlippage;            // Enable ATR-based dynamic slippage
+    double m_dynamicSlippageAtrPercent;      // Slippage as percentage of ATR
+    uint m_dynamicSlippageMinPoints;         // Minimum slippage in points
+    uint m_dynamicSlippageMaxMultiplier;     // Maximum slippage as multiplier of base
+    int m_dynamicSlippageAtrPeriod;          // ATR period for volatility calculation
+    uint m_baseSlippage;                     // Base slippage before dynamic adjustment
+    
+    // Execution quality metrics
+    struct ExecutionQualityMetrics {
+        int totalOrders;                     // Total orders submitted
+        int filledOrders;                    // Successfully filled orders
+        int partialFills;                    // Partially filled orders
+        int rejectedOrders;                  // Rejected orders
+        double totalSlippagePoints;          // Cumulative slippage in points
+        double totalSpreadCost;              // Cumulative spread cost
+        double totalLatencyMs;               // Cumulative execution latency
+        double maxSlippagePoints;            // Maximum slippage observed
+        double maxLatencyMs;                 // Maximum latency observed
+        datetime lastUpdateTime;             // Last metrics update time
+    } m_execMetrics;
+    
     // Trade tracking and statistics
     struct TradeStats {
         int totalTrades;                     // Total trades executed
@@ -325,7 +347,12 @@ private:
         for(int i = m_stateCount - 1; i >= 0; i--) {
             // Check if position still exists
             if(!PositionSelectByTicket(m_positionStates[i].ticket)) {
-                // Position closed, remove from state tracking
+                int errCode = GetLastError();
+                if(errCode != 0 && errCode != 4001) {
+                    PrintFormat("[TRADE-MGR] PositionSelectByTicket failed in cleanup | ticket=%I64u | err=%d",
+                                m_positionStates[i].ticket, errCode);
+                }
+                // Position closed or not found, remove from state tracking
                 for(int j = i; j < m_stateCount - 1; j++) {
                     m_positionStates[j] = m_positionStates[j + 1];
                 }
@@ -342,8 +369,14 @@ private:
         int index = FindPositionState(ticket);
         if(index == -1) return true; // New position, modification needed
 
-        if(!PositionSelectByTicket(ticket))
+        if(!PositionSelectByTicket(ticket)) {
+            int errCode = GetLastError();
+            if(errCode != 0 && errCode != 4001) {
+                PrintFormat("[TRADE-MGR] PositionSelectByTicket failed in IsModificationNeeded | ticket=%I64u | err=%d",
+                            ticket, errCode);
+            }
             return false;
+        }
 
         string positionSymbol = PositionGetString(POSITION_SYMBOL);
         ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
@@ -474,6 +507,40 @@ private:
         if(symbolParam == "")
             return;
 
+        // Analyze market conditions to choose appropriate fill mode
+        bool useIOC = true;
+        
+        // Get spread for the symbol
+        double spreadPoints = (double)SymbolInfoInteger(symbolParam, SYMBOL_SPREAD);
+        double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
+        
+        // Get ATR volatility to assess market conditions
+        double volatilityMultiplier = 1.0;
+        if(m_marketAnalysis != NULL)
+        {
+            double atr = m_marketAnalysis.GetATR(symbolParam, 14);
+            if(atr > 0.0)
+            {
+                double atrPoints = atr / point;
+                // If spread is very high relative to volatility, use FOK to avoid partial fills at bad prices
+                if(spreadPoints > atrPoints * 0.5)
+                {
+                    useIOC = false; // Use FOK in high spread/volatility conditions
+                }
+            }
+        }
+        
+        // Choose fill mode based on analysis
+        if(useIOC)
+        {
+            m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+        }
+        else
+        {
+            m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+        }
+        
+        // Fallback to symbol default or base mode if needed
         if(!m_trade.SetTypeFillingBySymbol(symbolParam))
             m_trade.SetTypeFilling(m_orderFillMode);
     }
@@ -639,6 +706,12 @@ public:
         m_minModifyIntervalSec(5),
         m_maxEntrySpreadPoints(0.0),
         m_maxEntryDriftPoints(0.0),
+        m_enableDynamicSlippage(true),
+        m_dynamicSlippageAtrPercent(0.20),
+        m_dynamicSlippageMinPoints(10),
+        m_dynamicSlippageMaxMultiplier(10),
+        m_dynamicSlippageAtrPeriod(14),
+        m_baseSlippage(10),
         m_emergencyStop(false),
         m_pendingOrderCount(0),
         m_stateCount(0),
@@ -655,6 +728,7 @@ public:
         m_trade.SetAsyncMode(m_useAsyncMode);
         m_symbolInfo.Name(Symbol());
         ZeroMemory(m_positionStates);
+        ZeroMemory(m_execMetrics);
     }
     
     // Destructor
@@ -664,14 +738,90 @@ public:
     bool Initialize(const uint magicNumber = 12345, const string expertName = "MultiStrategyEA");
     
     // Set trading parameters
-    void SetSlippage(const uint slippage) { m_slippage = slippage; m_trade.SetDeviationInPoints(m_slippage); }
+    void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); }
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
     void SetOrderFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_orderFillMode = mode; }
     void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
+    
+    // Set dynamic slippage configuration
+    void SetDynamicSlippageConfig(const bool enable, const double atrPercent, const uint minPoints, 
+                                   const uint maxMultiplier, const int atrPeriod)
+    {
+        m_enableDynamicSlippage = enable;
+        m_dynamicSlippageAtrPercent = MathMax(0.05, MathMin(0.5, atrPercent));
+        m_dynamicSlippageMinPoints = MathMax(1, minPoints);
+        m_dynamicSlippageMaxMultiplier = MathMax(1, maxMultiplier);
+        m_dynamicSlippageAtrPeriod = MathMax(1, atrPeriod);
+    }
+    
     void SetExecutionCostLimits(const double maxEntrySpreadPoints, const double maxEntryDriftPoints)
     {
         m_maxEntrySpreadPoints = MathMax(0.0, maxEntrySpreadPoints);
         m_maxEntryDriftPoints = MathMax(0.0, maxEntryDriftPoints);
+    }
+
+    // Calculate dynamic slippage based on ATR volatility
+    uint GetDynamicSlippage(const string symbol)
+    {
+        // If dynamic slippage is disabled, return base slippage
+        if(!m_enableDynamicSlippage)
+        {
+            return m_baseSlippage;
+        }
+
+        // Default to base slippage if no market analysis
+        if(m_marketAnalysis == NULL)
+        {
+            return m_baseSlippage;
+        }
+
+        double atrValue = m_marketAnalysis.GetATR(symbol, m_dynamicSlippageAtrPeriod);
+        if(atrValue <= 0.0)
+        {
+            return m_baseSlippage;
+        }
+
+        // Convert ATR to points
+        double pointValue = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        if(pointValue <= 0.0)
+        {
+            pointValue = m_symbolInfo.Point();
+        }
+        if(pointValue <= 0.0)
+        {
+            return m_baseSlippage;
+        }
+        
+        double atrPoints = atrValue / pointValue;
+
+        // Calculate dynamic slippage as percentage of ATR
+        uint dynamicSlippage = (uint)MathRound(atrPoints * m_dynamicSlippageAtrPercent);
+
+        // Clamp to configurable bounds
+        uint minSlippage = MathMax(m_dynamicSlippageMinPoints, m_baseSlippage);
+        uint maxSlippage = m_baseSlippage * m_dynamicSlippageMaxMultiplier;
+        
+        // Clamp using conditional since MathMin/MathMax don't work directly with uint cast
+        double clamped = dynamicSlippage;
+        if(clamped < (double)minSlippage) clamped = (double)minSlippage;
+        if(clamped > (double)maxSlippage) clamped = (double)maxSlippage;
+        return (uint)clamped;
+    }
+
+    // Update and apply dynamic slippage for a symbol
+    void UpdateDynamicSlippage(const string symbol)
+    {
+        if(!m_enableDynamicSlippage)
+        {
+            return;
+        }
+        
+        uint dynamicSlippage = GetDynamicSlippage(symbol);
+        if(dynamicSlippage != m_slippage)
+        {
+            m_slippage = dynamicSlippage;
+            m_trade.SetDeviationInPoints(m_slippage);
+        }
     }
     
     // Main trading functions
@@ -718,6 +868,248 @@ public:
     // Statistics
     void GetTradeStatistics(int &total, int &successful, int &failed, double &successRate);
     void ResetStatistics(void);
+    
+    // Execution quality metrics
+    void GetExecutionQualityMetrics(int &totalOrders, int &filledOrders, int &partialFills, int &rejectedOrders,
+                                     double &avgSlippagePoints, double &avgLatencyMs, double &fillRate)
+    {
+        totalOrders = m_execMetrics.totalOrders;
+        filledOrders = m_execMetrics.filledOrders;
+        partialFills = m_execMetrics.partialFills;
+        rejectedOrders = m_execMetrics.rejectedOrders;
+        
+        if(m_execMetrics.filledOrders > 0)
+        {
+            avgSlippagePoints = m_execMetrics.totalSlippagePoints / m_execMetrics.filledOrders;
+            avgLatencyMs = m_execMetrics.totalLatencyMs / m_execMetrics.filledOrders;
+        }
+        else
+        {
+            avgSlippagePoints = 0.0;
+            avgLatencyMs = 0.0;
+        }
+        
+        if(m_execMetrics.totalOrders > 0)
+        {
+            fillRate = (double)m_execMetrics.filledOrders / m_execMetrics.totalOrders * 100.0;
+        }
+        else
+        {
+            fillRate = 0.0;
+        }
+    }
+    
+    void GetExecutionQualitySummary(string &summary)
+    {
+        int total, filled, partial, rejected;
+        double avgSlippage, avgLatency, fillRate;
+        GetExecutionQualityMetrics(total, filled, partial, rejected, avgSlippage, avgLatency, fillRate);
+        
+        summary = StringFormat("[EXECUTION-QUALITY] Total: %d | Filled: %d | Partial: %d | Rejected: %d | "
+                              "Fill Rate: %.1f%% | Avg Slippage: %.1f pts | Avg Latency: %.0f ms | "
+                              "Max Slippage: %.1f pts | Max Latency: %.0f ms",
+                              total, filled, partial, rejected, fillRate, avgSlippage, avgLatency,
+                              m_execMetrics.maxSlippagePoints, m_execMetrics.maxLatencyMs);
+    }
+    
+    void ResetExecutionMetrics()
+    {
+        ZeroMemory(m_execMetrics);
+    }
+    
+    // Generate detailed execution quality report
+    void GenerateExecutionQualityReport()
+    {
+        Print("========== EXECUTION QUALITY REPORT ==========");
+        PrintFormat("Report Generated: %s", TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
+        
+        if(m_execMetrics.totalOrders == 0)
+        {
+            Print("[EXECUTION-REPORT] No orders executed yet.");
+            Print("==============================================");
+            return;
+        }
+        
+        // Order statistics
+        double fillRate = (double)m_execMetrics.filledOrders / m_execMetrics.totalOrders * 100.0;
+        double partialRate = m_execMetrics.filledOrders > 0 ? 
+                            (double)m_execMetrics.partialFills / m_execMetrics.filledOrders * 100.0 : 0.0;
+        double rejectRate = (double)m_execMetrics.rejectedOrders / m_execMetrics.totalOrders * 100.0;
+        
+        Print("--- Order Statistics ---");
+        PrintFormat("Total Orders:      %d", m_execMetrics.totalOrders);
+        PrintFormat("Filled Orders:     %d (%.1f%%)", m_execMetrics.filledOrders, fillRate);
+        PrintFormat("Partial Fills:     %d (%.1f%% of filled)", m_execMetrics.partialFills, partialRate);
+        PrintFormat("Rejected Orders:   %d (%.1f%%)", m_execMetrics.rejectedOrders, rejectRate);
+        
+        // Slippage statistics
+        Print("--- Slippage Analysis ---");
+        if(m_execMetrics.filledOrders > 0)
+        {
+            double avgSlippage = m_execMetrics.totalSlippagePoints / m_execMetrics.filledOrders;
+            PrintFormat("Average Slippage:  %.1f points", avgSlippage);
+            PrintFormat("Maximum Slippage:  %.1f points", m_execMetrics.maxSlippagePoints);
+            PrintFormat("Total Slippage:    %.1f points", m_execMetrics.totalSlippagePoints);
+        }
+        else
+        {
+            Print("No slippage data available.");
+        }
+        
+        // Latency statistics
+        Print("--- Latency Analysis ---");
+        if(m_execMetrics.filledOrders > 0 && m_execMetrics.totalLatencyMs > 0)
+        {
+            double avgLatency = m_execMetrics.totalLatencyMs / m_execMetrics.filledOrders;
+            PrintFormat("Average Latency:   %.0f ms", avgLatency);
+            PrintFormat("Maximum Latency:   %.0f ms", m_execMetrics.maxLatencyMs);
+            PrintFormat("Total Latency:     %.0f ms", m_execMetrics.totalLatencyMs);
+        }
+        else
+        {
+            Print("No latency data available.");
+        }
+        
+        // Spread cost analysis
+        Print("--- Spread Cost Analysis ---");
+        PrintFormat("Total Spread Cost: %.2f %s", m_execMetrics.totalSpreadCost, 
+                    AccountInfoString(ACCOUNT_CURRENCY));
+        if(m_execMetrics.filledOrders > 0)
+        {
+            double avgSpreadCost = m_execMetrics.totalSpreadCost / m_execMetrics.filledOrders;
+            PrintFormat("Average Spread Cost: %.2f %s per trade", avgSpreadCost,
+                        AccountInfoString(ACCOUNT_CURRENCY));
+        }
+        
+        // Dynamic slippage status
+        Print("--- Dynamic Slippage Status ---");
+        PrintFormat("Enabled:           %s", m_enableDynamicSlippage ? "Yes" : "No");
+        PrintFormat("ATR Percentage:    %.0f%%", m_dynamicSlippageAtrPercent * 100);
+        PrintFormat("Min Slippage:      %d points", m_dynamicSlippageMinPoints);
+        PrintFormat("Max Multiplier:    %dx", m_dynamicSlippageMaxMultiplier);
+        PrintFormat("Current Slippage:  %d points", m_slippage);
+        
+        Print("==============================================");
+    }
+    
+    // Smart order routing - analyze execution history and recommend optimal parameters
+    struct SSmartOrderParams {
+        uint recommendedSlippage;
+        ENUM_ORDER_TYPE_FILLING recommendedFillMode;
+        bool shouldTrade;
+        string reason;
+    };
+    
+    SSmartOrderParams AnalyzeAndRecommendOrderParams(const string symbol)
+    {
+        SSmartOrderParams params;
+        params.recommendedSlippage = m_baseSlippage;
+        params.recommendedFillMode = m_orderFillMode;
+        params.shouldTrade = true;
+        params.reason = "";
+        
+        // Check if we have enough execution history
+        if(m_execMetrics.totalOrders < 5)
+        {
+            params.reason = "Insufficient execution history for analysis";
+            return params;
+        }
+        
+        // Calculate fill rate
+        double fillRate = (double)m_execMetrics.filledOrders / m_execMetrics.totalOrders;
+        
+        // Calculate average slippage
+        double avgSlippage = 0.0;
+        if(m_execMetrics.filledOrders > 0)
+        {
+            avgSlippage = m_execMetrics.totalSlippagePoints / m_execMetrics.filledOrders;
+        }
+        
+        // Calculate average latency
+        double avgLatency = 0.0;
+        if(m_execMetrics.filledOrders > 0 && m_execMetrics.totalLatencyMs > 0)
+        {
+            avgLatency = m_execMetrics.totalLatencyMs / m_execMetrics.filledOrders;
+        }
+        
+        // Get current spread
+        long currentSpread = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+        
+        // Decision logic based on execution history
+        
+        // If fill rate is low, recommend more conservative parameters
+        if(fillRate < 0.8)
+        {
+            params.recommendedSlippage = (uint)MathMax(m_baseSlippage * 2, avgSlippage * 1.5);
+            params.recommendedFillMode = ORDER_FILLING_FOK;
+            params.reason = StringFormat("Low fill rate (%.1f%%), increasing slippage to %d", 
+                                        fillRate * 100, params.recommendedSlippage);
+        }
+        // If slippage is high, increase tolerance
+        else if(avgSlippage > m_baseSlippage * 2)
+        {
+            params.recommendedSlippage = (uint)(avgSlippage * 1.2);
+            params.reason = StringFormat("High avg slippage (%.1f pts), increasing tolerance to %d",
+                                        avgSlippage, params.recommendedSlippage);
+        }
+        // If latency is high, use IOC to avoid stale orders
+        else if(avgLatency > 500)
+        {
+            params.recommendedFillMode = ORDER_FILLING_IOC;
+            params.reason = StringFormat("High latency (%.0f ms), using IOC fill mode", avgLatency);
+        }
+        // If spread is very high, consider not trading
+        else if(currentSpread > m_maxEntrySpreadPoints)
+        {
+            params.shouldTrade = false;
+            params.reason = StringFormat("Spread too high (%d pts > %.0f limit)", 
+                                        currentSpread, m_maxEntrySpreadPoints);
+        }
+        // If partial fills are common, use FOK
+        else if(m_execMetrics.filledOrders > 0 && 
+                (double)m_execMetrics.partialFills / m_execMetrics.filledOrders > 0.2)
+        {
+            params.recommendedFillMode = ORDER_FILLING_FOK;
+            params.reason = "High partial fill rate, using FOK mode";
+        }
+        else
+        {
+            params.reason = "Execution quality acceptable, using standard parameters";
+        }
+        
+        return params;
+    }
+    
+    // Apply smart order routing recommendations
+    bool ApplySmartOrderRouting(const string symbol)
+    {
+        SSmartOrderParams params = AnalyzeAndRecommendOrderParams(symbol);
+        
+        if(!params.shouldTrade)
+        {
+            PrintFormat("[SMART-ROUTING] NOT TRADING: %s", params.reason);
+            return false;
+        }
+        
+        // Apply recommended slippage
+        if(params.recommendedSlippage != m_slippage)
+        {
+            m_slippage = params.recommendedSlippage;
+            m_trade.SetDeviationInPoints(m_slippage);
+            PrintFormat("[SMART-ROUTING] Adjusted slippage to %d pts: %s", 
+                       m_slippage, params.reason);
+        }
+        
+        // Apply recommended fill mode
+        if(params.recommendedFillMode != m_orderFillMode)
+        {
+            m_trade.SetTypeFilling(params.recommendedFillMode);
+            PrintFormat("[SMART-ROUTING] Changed fill mode to %d: %s",
+                       params.recommendedFillMode, params.reason);
+        }
+        
+        return true;
+    }
 
 private:
     // Internal helper functions
@@ -740,6 +1132,89 @@ private:
     // Logic helpers
     bool ShouldMoveToBreakeven(const ulong ticket, const double buffer);
     bool ShouldUpdateTrailingStop(const ulong ticket, const double distance, const double step);
+    
+    // Execution metrics update
+    void UpdateExecutionMetrics(const STradeExecutionReceipt &receipt)
+    {
+        m_execMetrics.totalOrders++;
+        
+        if(receipt.accepted)
+        {
+            m_execMetrics.filledOrders++;
+            
+            if(receipt.partialFill)
+            {
+                m_execMetrics.partialFills++;
+            }
+            
+            // Track slippage
+            if(receipt.slippagePoints > 0.0)
+            {
+                m_execMetrics.totalSlippagePoints += receipt.slippagePoints;
+                if(receipt.slippagePoints > m_execMetrics.maxSlippagePoints)
+                {
+                    m_execMetrics.maxSlippagePoints = receipt.slippagePoints;
+                }
+            }
+            
+            // Track latency
+            if(receipt.roundTripMs > 0)
+            {
+                m_execMetrics.totalLatencyMs += (double)receipt.roundTripMs;
+                if((double)receipt.roundTripMs > m_execMetrics.maxLatencyMs)
+                {
+                    m_execMetrics.maxLatencyMs = (double)receipt.roundTripMs;
+                }
+            }
+            
+            // Track spread cost
+            double spreadCost = CalculateSpreadCost(receipt.symbol, receipt.filledVolume);
+            if(spreadCost > 0.0)
+            {
+                m_execMetrics.totalSpreadCost += spreadCost;
+            }
+        }
+        else
+        {
+            m_execMetrics.rejectedOrders++;
+        }
+        
+        m_execMetrics.lastUpdateTime = TimeCurrent();
+    }
+    
+    // Calculate spread cost for a trade
+    double CalculateSpreadCost(const string symbol, const double volume)
+    {
+        if(symbol == "" || volume <= 0.0)
+            return 0.0;
+            
+        double spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+        
+        if(point <= 0.0 || tickSize <= 0.0)
+            return 0.0;
+            
+        // Spread cost = spread_points * point * volume * (tick_value / tick_size)
+        double spreadCostPoints = spread * point;
+        double valuePerPoint = tickValue / tickSize;
+        double spreadCost = spreadCostPoints * volume * valuePerPoint;
+        
+        return spreadCost;
+    }
+    
+    // Log spread cost analytics
+    void LogSpreadCostAnalytics(const string symbol, const double volume)
+    {
+        double spreadCost = CalculateSpreadCost(symbol, volume);
+        double spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        double spreadPips = spread * point / 0.0001; // Convert to pips
+        
+        PrintFormat("[SPREAD-COST] %s | Spread: %.1f pips | Volume: %.2f | Cost: %.2f %s",
+                    symbol, spreadPips, volume, spreadCost, AccountInfoString(ACCOUNT_CURRENCY));
+    }
 };
 
 //+------------------------------------------------------------------+
@@ -1165,6 +1640,9 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     {
         ApplyFillingModeForSymbol(symbolName);
 
+        // Update dynamic slippage based on current volatility
+        UpdateDynamicSlippage(symbolName);
+
         double executionPrice = GetCurrentExecutionPrice(symbolName, orderType);
         if(executionPrice <= 0.0)
         {
@@ -1341,6 +1819,9 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
     if(!executionConfirmed)
         m_lastExecutionReceipt.retryCount = retryCount;
+    
+    // Update execution quality metrics
+    UpdateExecutionMetrics(m_lastExecutionReceipt);
     
     return executionConfirmed;
 }

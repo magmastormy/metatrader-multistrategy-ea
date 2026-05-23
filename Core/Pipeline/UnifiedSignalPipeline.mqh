@@ -27,6 +27,17 @@ class CTradeManager;
 class CPerformanceAnalytics;
 
 //+------------------------------------------------------------------+
+//| Filter Preset Types                                             |
+//+------------------------------------------------------------------+
+enum ENUM_FILTER_PRESET
+{
+    FILTER_PRESET_CONSERVATIVE,
+    FILTER_PRESET_BALANCED,
+    FILTER_PRESET_AGGRESSIVE,
+    FILTER_PRESET_CUSTOM
+};
+
+//+------------------------------------------------------------------+
 //| Signal Filter Settings                                          |
 //+------------------------------------------------------------------+
 struct SignalFilterSettings
@@ -183,6 +194,15 @@ private:
     datetime m_cachedContextBarTime;
     bool m_cachedContextPrepared;
     
+    // Engine health tracking
+    bool m_trendEngineHealthy;
+    bool m_structureEngineHealthy;
+    bool m_liquidityEngineHealthy;
+    bool m_volatilityEngineHealthy;
+    bool m_regimeEngineHealthy;
+    datetime m_lastHealthCheckTime;
+    int m_healthCheckIntervalBars;
+    
     // Internal methods
     void ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool RefreshStructuralContext(const string symbol, ENUM_TIMEFRAMES timeframe);
@@ -207,6 +227,10 @@ private:
                                 string &vetoReasonTag);
     void LogFilterResult(const string filter, bool passed, const string reason);
     
+    // Health monitoring
+    void CheckEngineHealth(const string symbol);
+    bool IsEngineHealthy() const;
+    
 public:
     CUnifiedSignalPipeline();
     ~CUnifiedSignalPipeline();
@@ -227,6 +251,7 @@ public:
     void SetFilters(SignalFilterSettings &settings);
     SignalFilterSettings GetFilters() const { return m_filters; }
     void SetIntrabarContext(const bool intrabarContext) { m_intrabarContext = intrabarContext; }
+    void ApplyFilterPreset(ENUM_FILTER_PRESET preset);
     
     // Statistics
     int GetSignalsProcessed() const { return m_signalsProcessed; }
@@ -234,6 +259,11 @@ public:
     int GetSignalsPassed() const { return m_signalsPassed; }
     bool WasLastSignalRawNone() const { return m_lastRawSignalNone; }
     bool WasLastSignalFilteredByPipeline() const { return m_lastFilteredByPipeline; }
+    
+    // Health monitoring
+    void PerformHealthCheck(const string symbol);
+    bool IsPipelineHealthy() const;
+    string GetEngineHealthStatus() const;
     string GetLastEvaluatedSymbol() const { return m_lastEvaluatedSymbol; }
     double GetLastEffectiveMinConfidence() const { return m_lastEffectiveMinConfidence; }
     string GetLastFilterName() const { return m_lastFilterName; }
@@ -278,7 +308,14 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_cachedContextSymbol(""),
     m_cachedContextTimeframe(PERIOD_CURRENT),
     m_cachedContextBarTime(0),
-    m_cachedContextPrepared(false)
+    m_cachedContextPrepared(false),
+    m_trendEngineHealthy(false),
+    m_structureEngineHealthy(false),
+    m_liquidityEngineHealthy(false),
+    m_volatilityEngineHealthy(false),
+    m_regimeEngineHealthy(false),
+    m_lastHealthCheckTime(0),
+    m_healthCheckIntervalBars(100)
 {
 }
 
@@ -449,10 +486,29 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
     if(barTime <= 0)
         barTime = TimeCurrent();
 
+    const int MAX_CACHE_STALENESS_BARS = 5;
+    bool cacheStale = false;
+    
+    if(m_cachedContextPrepared)
+    {
+        datetime currentBar = iTime(symbol, timeframe, 0);
+        datetime cachedBar = m_cachedContextBarTime;
+        int barsDiff = (int)((currentBar - cachedBar) / PeriodSeconds(timeframe));
+        cacheStale = (barsDiff >= MAX_CACHE_STALENESS_BARS);
+    }
+
     bool cacheHit = (m_cachedContextPrepared &&
+                     !cacheStale &&
                      m_cachedContextSymbol == symbol &&
                      m_cachedContextTimeframe == timeframe &&
                      m_cachedContextBarTime == barTime);
+    
+    if(cacheStale && m_cachedContextPrepared)
+    {
+        PrintFormat("[PIPELINE-CACHE] Symbol=%s | Cache stale (%d bars old), invalidating", symbol, 
+                    (int)((iTime(symbol, timeframe, 0) - m_cachedContextBarTime) / PeriodSeconds(timeframe)));
+        m_cachedContextPrepared = false;
+    }
 
     if(!cacheHit)
     {
@@ -1672,6 +1728,156 @@ void CUnifiedSignalPipeline::LogFilterResult(const string filter, bool passed, c
 
     // Note: Generic per-filter logs are intentionally suppressed here.
     // Note: Authoritative runtime telemetry is emitted by the manager, validator, and regime/cost gates.
+}
+
+//+------------------------------------------------------------------+
+//| Check Engine Health (private)                                    |
+//+------------------------------------------------------------------+
+void CUnifiedSignalPipeline::CheckEngineHealth(const string symbol)
+{
+    m_trendEngineHealthy = (m_trendEngine != NULL);
+    m_structureEngineHealthy = (m_structureEngine != NULL);
+    m_liquidityEngineHealthy = (m_liquidityEngine != NULL);
+    m_volatilityEngineHealthy = (m_volatilityEngine != NULL);
+    m_regimeEngineHealthy = (m_regimeEngine != NULL);
+    
+    if(m_trendEngine != NULL)
+        m_trendEngineHealthy = m_trendEngine.IsReady();
+    
+    if(m_structureEngine != NULL)
+        m_structureEngineHealthy = m_structureEngine.IsReady();
+    
+    if(m_liquidityEngine != NULL)
+        m_liquidityEngineHealthy = m_liquidityEngine.IsReady();
+    
+    if(m_volatilityEngine != NULL)
+        m_volatilityEngineHealthy = m_volatilityEngine.IsReady();
+    
+    if(m_regimeEngine != NULL)
+        m_regimeEngineHealthy = m_regimeEngine.IsReady();
+    
+    m_lastHealthCheckTime = TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+//| Is Engine Healthy (private)                                      |
+//+------------------------------------------------------------------+
+bool CUnifiedSignalPipeline::IsEngineHealthy() const
+{
+    return m_trendEngineHealthy && m_structureEngineHealthy && 
+           m_liquidityEngineHealthy && m_volatilityEngineHealthy && 
+           m_regimeEngineHealthy;
+}
+
+//+------------------------------------------------------------------+
+//| Perform Health Check (public)                                    |
+//+------------------------------------------------------------------+
+void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
+{
+    CheckEngineHealth(symbol);
+    
+    string status = GetEngineHealthStatus();
+    PrintFormat("[PIPELINE-HEALTH] Symbol=%s | Status=%s | Trend=%s | Structure=%s | Liquidity=%s | Volatility=%s | Regime=%s",
+                symbol,
+                IsPipelineHealthy() ? "HEALTHY" : "DEGRADED",
+                m_trendEngineHealthy ? "OK" : "FAIL",
+                m_structureEngineHealthy ? "OK" : "FAIL",
+                m_liquidityEngineHealthy ? "OK" : "FAIL",
+                m_volatilityEngineHealthy ? "OK" : "FAIL",
+                m_regimeEngineHealthy ? "OK" : "FAIL");
+}
+
+//+------------------------------------------------------------------+
+//| Is Pipeline Healthy (public)                                     |
+//+------------------------------------------------------------------+
+bool CUnifiedSignalPipeline::IsPipelineHealthy() const
+{
+    return IsEngineHealthy();
+}
+
+//+------------------------------------------------------------------+
+//| Get Engine Health Status (public)                               |
+//+------------------------------------------------------------------+
+string CUnifiedSignalPipeline::GetEngineHealthStatus() const
+{
+    if(IsEngineHealthy())
+        return "ALL_ENGINES_HEALTHY";
+    
+    string status = "DEGRADED:";
+    if(!m_trendEngineHealthy) status += " TREND";
+    if(!m_structureEngineHealthy) status += " STRUCTURE";
+    if(!m_liquidityEngineHealthy) status += " LIQUIDITY";
+    if(!m_volatilityEngineHealthy) status += " VOLATILITY";
+    if(!m_regimeEngineHealthy) status += " REGIME";
+    
+    return status;
+}
+
+//+------------------------------------------------------------------+
+//| Apply Filter Preset (public)                                    |
+//+------------------------------------------------------------------+
+void CUnifiedSignalPipeline::ApplyFilterPreset(ENUM_FILTER_PRESET preset)
+{
+    switch(preset)
+    {
+        case FILTER_PRESET_CONSERVATIVE:
+            m_filters.enableTrendFilter = true;
+            m_filters.enableVolatilityFilter = true;
+            m_filters.enableLiquidityFilter = true;
+            m_filters.enableStructureFilter = true;
+            m_filters.enableTimeFilter = true;
+            m_filters.enableSessionFilter = true;
+            m_filters.minConfidence = 0.70;
+            m_filters.intrabarConfidenceCap = 0.03;
+            m_filters.enableRegimeCostGate = true;
+            m_filters.maxSpreadToAtrRatio = 0.15;
+            m_filters.spreadShockCooldownSeconds = 60;
+            m_filters.maxEntryRangeZScore = 1.50;
+            m_filters.maxVolatility = 1.5;
+            m_filters.minTrendStrength = 70;
+            Print("[UnifiedSignalPipeline] Applied CONSERVATIVE filter preset");
+            break;
+        
+        case FILTER_PRESET_BALANCED:
+            m_filters.enableTrendFilter = true;
+            m_filters.enableVolatilityFilter = true;
+            m_filters.enableLiquidityFilter = true;
+            m_filters.enableStructureFilter = true;
+            m_filters.enableTimeFilter = false;
+            m_filters.enableSessionFilter = false;
+            m_filters.minConfidence = 0.40;
+            m_filters.intrabarConfidenceCap = 0.05;
+            m_filters.enableRegimeCostGate = true;
+            m_filters.maxSpreadToAtrRatio = 0.25;
+            m_filters.spreadShockCooldownSeconds = 30;
+            m_filters.maxEntryRangeZScore = 2.50;
+            m_filters.maxVolatility = 3.0;
+            m_filters.minTrendStrength = 50;
+            Print("[UnifiedSignalPipeline] Applied BALANCED filter preset");
+            break;
+        
+        case FILTER_PRESET_AGGRESSIVE:
+            m_filters.enableTrendFilter = false;
+            m_filters.enableVolatilityFilter = false;
+            m_filters.enableLiquidityFilter = false;
+            m_filters.enableStructureFilter = false;
+            m_filters.enableTimeFilter = false;
+            m_filters.enableSessionFilter = false;
+            m_filters.minConfidence = 0.20;
+            m_filters.intrabarConfidenceCap = 0.10;
+            m_filters.enableRegimeCostGate = false;
+            m_filters.maxSpreadToAtrRatio = 0.50;
+            m_filters.spreadShockCooldownSeconds = 10;
+            m_filters.maxEntryRangeZScore = 4.00;
+            m_filters.maxVolatility = 5.0;
+            m_filters.minTrendStrength = 20;
+            Print("[UnifiedSignalPipeline] Applied AGGRESSIVE filter preset");
+            break;
+        
+        default:
+            Print("[UnifiedSignalPipeline] Custom preset, using default settings");
+            break;
+    }
 }
 
 #endif // UNIFIED_SIGNAL_PIPELINE_MQH

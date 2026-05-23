@@ -20,23 +20,22 @@
 //+------------------------------------------------------------------+
 enum ENUM_CHART_COLOR_SCHEME
 {
-    COLOR_SCHEME_BULLISH_PRIMARY = clrDodgerBlue,
-    COLOR_SCHEME_BULLISH_SECONDARY = clrCornflowerBlue,
-    COLOR_SCHEME_BEARISH_PRIMARY = clrCrimson,
-    COLOR_SCHEME_BEARISH_SECONDARY = clrIndianRed,
-    COLOR_SCHEME_NEUTRAL = clrGray,
-    COLOR_SCHEME_SUPPLY = clrRed,
-    COLOR_SCHEME_DEMAND = clrLime,
-    // Reduced intensity colors for better chart visibility
-    COLOR_SCHEME_ORDERBLOCK_BULL = color(clrRoyalBlue | 0x909090),  // Muted blue
-    COLOR_SCHEME_ORDERBLOCK_BEAR = color(clrOrangeRed | 0x909090), // Muted red
-    COLOR_SCHEME_FVG_BULL = color(clrMediumSeaGreen | 0x909090),  // Muted green
-    COLOR_SCHEME_FVG_BEAR = color(clrTomato | 0x909090),          // Muted tomato
-    COLOR_SCHEME_LIQUIDITY = color(clrGold | 0x909090),           // Muted gold
-    COLOR_SCHEME_STRUCTURE_BOS = color(clrMagenta | 0x909090),    // Muted magenta
-    COLOR_SCHEME_STRUCTURE_CHOCH = color(clrOrange | 0x909090),   // Muted orange
-    COLOR_SCHEME_ELLIOTT_IMPULSE = clrDeepSkyBlue,
-    COLOR_SCHEME_ELLIOTT_CORRECTIVE = clrSalmon,
+    COLOR_SCHEME_BULLISH_PRIMARY = clrLightSkyBlue,
+    COLOR_SCHEME_BULLISH_SECONDARY = clrPowderBlue,
+    COLOR_SCHEME_BEARISH_PRIMARY = clrLightCoral,
+    COLOR_SCHEME_BEARISH_SECONDARY = clrMistyRose,
+    COLOR_SCHEME_NEUTRAL = clrGainsboro,
+    COLOR_SCHEME_SUPPLY = clrSalmon,
+    COLOR_SCHEME_DEMAND = clrPaleGreen,
+    COLOR_SCHEME_ORDERBLOCK_BULL = color(0xC8C8E8),  // Light periwinkle blue
+    COLOR_SCHEME_ORDERBLOCK_BEAR = color(0xE8B8B8),  // Light dusty rose
+    COLOR_SCHEME_FVG_BULL = color(0xB8E8D0),         // Light mint green
+    COLOR_SCHEME_FVG_BEAR = color(0xE8C8B8),           // Light peach
+    COLOR_SCHEME_LIQUIDITY = color(0xE8E0B8),          // Light cream/gold
+    COLOR_SCHEME_STRUCTURE_BOS = color(0xE8C0E8),      // Light lavender
+    COLOR_SCHEME_STRUCTURE_CHOCH = color(0xE8D0B8),    // Light apricot
+    COLOR_SCHEME_ELLIOTT_IMPULSE = clrLightBlue,
+    COLOR_SCHEME_ELLIOTT_CORRECTIVE = clrLightSalmon,
     COLOR_SCHEME_TEXT_LIGHT = clrWhite,
     COLOR_SCHEME_TEXT_DARK = clrBlack
 };
@@ -59,6 +58,7 @@ struct SDrawingConfig
     bool enableDebugMode;         // Developer-level visuals
     bool cleanupOldObjects;       // Auto-cleanup obsolete objects
     int maxObjectAge;             // Max age in bars before cleanup
+    int maxObjectsPerStrategy;    // Max objects allowed per strategy
     
     SDrawingConfig()
     {
@@ -74,7 +74,8 @@ struct SDrawingConfig
         enableSignalMarkers = true;
         enableDebugMode = false;
         cleanupOldObjects = true;
-        maxObjectAge = 500;
+        maxObjectAge = 150; // Reduced from 500 to prevent excessive object retention
+        maxObjectsPerStrategy = 150; // Max objects per strategy
     }
 };
 
@@ -90,11 +91,17 @@ private:
     long m_chartID;                   // Chart ID
     string m_symbol;                  // Symbol
     ENUM_TIMEFRAMES m_timeframe;      // Timeframe
+    int m_maxObjects;                 // Max objects for this manager (default 900)
     
     // Statistics
     int m_objectsDrawn;
     int m_objectsDeleted;
     datetime m_lastCleanup;
+    
+    // Dirty flag optimization
+    bool m_isDirty;                   // Flag indicating data has changed
+    datetime m_lastDirtyTime;         // Last time dirty flag was set
+    int m_lastBarDrawn;               // Last bar number when drawing occurred
     
     // Helper methods
     string GenerateObjectName(const string objectType, const string uniqueId);
@@ -102,6 +109,10 @@ private:
     void PrepareSnapshotDraw();
     bool IsObjectOld(const string objName, int maxAge);
     void DeleteOldObjects(const string prefix, int maxAge);
+    bool CheckObjectLimitAndCleanup();
+    bool ValidateCoordinates(datetime time1, datetime time2, double price1, double price2);
+    bool ValidateTime(datetime time);
+    bool ValidatePrice(double price);
     
 public:
     CChartDrawingManager();
@@ -110,6 +121,7 @@ public:
     // Initialization
     bool Initialize(const string symbol, ENUM_TIMEFRAMES tf, const string prefix = "");
     void SetConfiguration(const SDrawingConfig &config) { m_config = config; }
+    void SetMaxObjects(const int maxObjects) { m_maxObjects = MathMax(100, maxObjects); }
     SDrawingConfig GetConfiguration() const { return m_config; }
     
     // Structure Drawing (HH/HL/LH/LL, BOS, CHOCH)
@@ -175,6 +187,18 @@ public:
     void EnableDebugMode(bool enable) { m_config.enableDebugMode = enable; }
     bool IsDebugMode() const { return m_config.enableDebugMode; }
     string GetPrefix() const { return m_prefix; }
+    
+    // Dirty flag optimization
+    void SetDirty(bool dirty = true) { m_isDirty = dirty; m_lastDirtyTime = TimeCurrent(); }
+    bool IsDirty() const { return m_isDirty; }
+    bool ShouldRedraw();
+    
+    // Statistics logging
+    void LogStatistics();
+    
+    // Object limit checking
+    int GetCurrentObjectCount();
+    bool IsObjectLimitReached();
 };
 
 //+------------------------------------------------------------------+
@@ -185,9 +209,13 @@ CChartDrawingManager::CChartDrawingManager() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
     m_prefix("CHART_"),
+    m_maxObjects(900), // Stay under MT5's 1000 limit
     m_objectsDrawn(0),
     m_objectsDeleted(0),
-    m_lastCleanup(0)
+    m_lastCleanup(0),
+    m_isDirty(true),
+    m_lastDirtyTime(0),
+    m_lastBarDrawn(-1)
 {
 }
 
@@ -299,12 +327,40 @@ string CChartDrawingManager::GenerateObjectName(const string objectType, const s
 
 //+------------------------------------------------------------------+
 //| Enforce per-bar immutable snapshot lifecycle by prefix           |
+//|                                                                   |
+//| LIFECYCLE DOCUMENTATION:                                         |
+//| 1. Called at start of every drawing operation                     |
+//| 2. Checks per-strategy object limits (maxObjectsPerStrategy)     |
+//| 3. Enforces global MT5 1000-object limit via CheckObjectLimit    |
+//| 4. Coordinates with DrawingCoordinator for prefix management      |
+//|                                                                   |
+//| IMPORTANT: This method MUST be called before ANY drawing.         |
+//| Failure to call will bypass object limit enforcement.             |
+//|                                                                   |
+//| COORDINATOR BEHAVIOR:                                            |
+//| - PreparePrefixForCurrentBar() deletes ALL objects with prefix  |
+//| - This is INTENTIONALLY destructive - it's a per-bar snapshot    |
+//| - Ensures no stale objects from previous bars remain              |
+//| - Safe to call multiple times (deduplicates by bar time)          |
 //+------------------------------------------------------------------+
 void CChartDrawingManager::PrepareSnapshotDraw()
 {
-    CDrawingCoordinator* coordinator = GetDrawingCoordinator();
-    if(coordinator != NULL)
-        coordinator.PreparePrefixForCurrentBar(m_chartID, m_symbol, m_timeframe, m_prefix);
+    // Check per-strategy object limit before drawing
+    if(IsObjectLimitReached())
+    {
+        // Limit reached - skip drawing and trigger cleanup
+        CleanupOldObjects();
+        if(m_config.enableDebugMode)
+            PrintFormat("[ChartDrawing] Skipping draw - per-strategy limit reached (%s)", m_prefix);
+        return;
+    }
+    
+    CheckObjectLimitAndCleanup();
+    CDrawingCoordinator* coordPtr = GetDrawingCoordinator();
+    if(coordPtr != NULL)
+    {
+        bool result = coordPtr.PreparePrefixForCurrentBar(m_chartID, m_symbol, m_timeframe, m_prefix);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -443,14 +499,24 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
 {
     if(!m_config.enableDrawing)
     {
-        Print("[ChartDrawing] Drawing disabled - skipping zone: ", label);
+        if(m_config.enableDebugMode)
+            Print("[ChartDrawing] Drawing disabled - skipping zone: ", label);
+        return false;
+    }
+
+    // Validate coordinates
+    if(!ValidateCoordinates(timeStart, timeEnd, priceLow, priceHigh))
+    {
+        if(m_config.enableDebugMode)
+            Print("[ChartDrawing] Invalid coordinates for zone: ", label);
         return false;
     }
 
     PrepareSnapshotDraw();
     
     string objName = GenerateObjectName("ZONE", label + "_" + TimeToString(timeStart));
-    Print("[ChartDrawing] Drawing zone: ", objName, " | Price: ", priceLow, "-", priceHigh);
+    if(m_config.enableDebugMode)
+        Print("[ChartDrawing] Drawing zone: ", objName, " | Price: ", priceLow, "-", priceHigh);
     
     // Draw rectangle
     ObjectCreate(m_chartID, objName, OBJ_RECTANGLE, 0, timeStart, priceHigh, timeEnd, priceLow);
@@ -579,6 +645,17 @@ bool CChartDrawingManager::DrawEntrySignal(datetime time, double price, bool isB
 
 //+------------------------------------------------------------------+
 //| Cleanup Old Objects                                             |
+//|                                                                   |
+//| WHEN TO CALL:                                                    |
+//| - In OnNewBar() for regular incremental cleanup                  |
+//| - In OnTick() for time-based cleanup (e.g., every 5 minutes)     |
+//| - In Deinit() for complete cleanup                               |
+//|                                                                   |
+//| BEHAVIOR:                                                        |
+//| - Only runs if cleanupOldObjects config is enabled                |
+//| - Rate-limited to once per minute (prevents excessive calls)      |
+//| - Deletes objects older than maxObjectAge bars                    |
+//| - Uses prefix to scope cleanup to this manager's objects          |
 //+------------------------------------------------------------------+
 void CChartDrawingManager::CleanupOldObjects()
 {
@@ -656,6 +733,65 @@ void CChartDrawingManager::CleanupByPrefix(const string prefix)
 //+------------------------------------------------------------------+
 //| Delete Object                                                    |
 //+------------------------------------------------------------------+
+bool CChartDrawingManager::CheckObjectLimitAndCleanup()
+{
+    int totalObjects = ObjectsTotal(m_chartID);
+    if(totalObjects < m_maxObjects)
+        return true;
+    
+    // Need to clean up oldest objects
+    int objectsToDelete = totalObjects - (m_maxObjects - 100); // Keep buffer of 100
+    
+    // Collect objects by time (oldest first)
+    struct ObjectInfo
+    {
+        string name;
+        datetime time;
+    };
+    ObjectInfo objects[];
+    int count = 0;
+    
+    for(int i = 0; i < ObjectsTotal(m_chartID); i++)
+    {
+        string name = ObjectName(m_chartID, i);
+        if(StringFind(name, m_prefix) == 0)
+        {
+            datetime time = (datetime)ObjectGetInteger(m_chartID, name, OBJPROP_TIME);
+            ArrayResize(objects, count + 1);
+            objects[count].name = name;
+            objects[count].time = time;
+            count++;
+        }
+    }
+    
+    // Sort by time (oldest first)
+    for(int i = 0; i < count - 1; i++)
+    {
+        for(int j = i + 1; j < count; j++)
+        {
+            if(objects[i].time > objects[j].time)
+            {
+                ObjectInfo temp = objects[i];
+                objects[i] = objects[j];
+                objects[j] = temp;
+            }
+        }
+    }
+    
+    // Delete oldest objects
+    int deleted = 0;
+    for(int i = 0; i < count && deleted < objectsToDelete; i++)
+    {
+        if(ObjectDelete(m_chartID, objects[i].name))
+        {
+            m_objectsDeleted++;
+            deleted++;
+        }
+    }
+    
+    return true;
+}
+
 void CChartDrawingManager::DeleteObject(const string objName)
 {
     if(ObjectFind(m_chartID, objName) >= 0)
@@ -906,6 +1042,164 @@ bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[
     }
     
     return success;
+}
+
+//+------------------------------------------------------------------+
+//| Validate time value                                              |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::ValidateTime(datetime time)
+{
+    return (time > 0 && time <= TimeCurrent() + 86400); // Valid time range
+}
+
+//+------------------------------------------------------------------+
+//| Validate price value                                             |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::ValidatePrice(double price)
+{
+    if(price <= 0)
+        return false;
+    
+    // Check for NaN or infinity using MQL5 built-in checks
+    if(price != price || MathAbs(price) > 1e308)
+        return false;
+    
+    // Check for reasonable price range (0.00001 to 1000000)
+    return (price >= 0.00001 && price <= 1000000.0);
+}
+
+//+------------------------------------------------------------------+
+//| Validate coordinates for drawing                                 |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::ValidateCoordinates(datetime time1, datetime time2, double price1, double price2)
+{
+    if(!ValidateTime(time1))
+    {
+        if(m_config.enableDebugMode)
+            Print("[ChartDrawing] Invalid time1: ", time1);
+        return false;
+    }
+    
+    if(!ValidateTime(time2))
+    {
+        if(m_config.enableDebugMode)
+            Print("[ChartDrawing] Invalid time2: ", time2);
+        return false;
+    }
+    
+    if(!ValidatePrice(price1))
+    {
+        if(m_config.enableDebugMode)
+            Print("[ChartDrawing] Invalid price1: ", price1);
+        return false;
+    }
+    
+    if(!ValidatePrice(price2))
+    {
+        if(m_config.enableDebugMode)
+            Print("[ChartDrawing] Invalid price2: ", price2);
+        return false;
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Check if redraw is needed (dirty flag optimization)              |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::ShouldRedraw()
+{
+    if(!m_config.enableDrawing)
+        return false;
+    
+    int currentBar = iBarShift(m_symbol, m_timeframe, TimeCurrent());
+    
+    // Force redraw if dirty flag is set
+    if(m_isDirty)
+    {
+        m_isDirty = false;
+        m_lastBarDrawn = currentBar;
+        return true;
+    }
+    
+    // Force redraw if bar has changed since last draw
+    if(currentBar != m_lastBarDrawn)
+    {
+        m_lastBarDrawn = currentBar;
+        return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Log drawing statistics                                           |
+//+------------------------------------------------------------------+
+void CChartDrawingManager::LogStatistics()
+{
+    int currentObjects = ObjectsTotal(m_chartID);
+    int ourObjects = 0;
+    
+    // Count objects with our prefix
+    for(int i = 0; i < currentObjects; i++)
+    {
+        string objName = ObjectName(m_chartID, i);
+        if(StringFind(objName, m_prefix) == 0)
+            ourObjects++;
+    }
+    
+    PrintFormat("[ChartDrawing] Stats | Symbol: %s | TF: %s | Prefix: %s",
+                m_symbol, EnumToString(m_timeframe), m_prefix);
+    PrintFormat("[ChartDrawing] Stats | Objects Drawn: %d | Objects Deleted: %d",
+                m_objectsDrawn, m_objectsDeleted);
+    PrintFormat("[ChartDrawing] Stats | Current Managed Objects: %d | Total Chart Objects: %d",
+                ourObjects, currentObjects);
+    PrintFormat("[ChartDrawing] Stats | Max Age: %d bars | Dirty: %s | Last Cleanup: %s",
+                m_config.maxObjectAge, m_isDirty ? "Yes" : "No", TimeToString(m_lastCleanup));
+}
+
+//+------------------------------------------------------------------+
+//| Get current count of objects managed by this manager             |
+//+------------------------------------------------------------------+
+int CChartDrawingManager::GetCurrentObjectCount()
+{
+    int count = 0;
+    int totalObjects = ObjectsTotal(m_chartID);
+    
+    for(int i = 0; i < totalObjects; i++)
+    {
+        string objName = ObjectName(m_chartID, i);
+        if(StringFind(objName, m_prefix) == 0)
+            count++;
+    }
+    
+    return count;
+}
+
+//+------------------------------------------------------------------+
+//| Check if per-strategy object limit is reached                    |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::IsObjectLimitReached()
+{
+    int currentCount = GetCurrentObjectCount();
+    
+    if(currentCount >= m_config.maxObjectsPerStrategy)
+    {
+        if(m_config.enableDebugMode)
+            PrintFormat("[ChartDrawing] Object limit reached: %d/%d (strategy: %s)",
+                       currentCount, m_config.maxObjectsPerStrategy, m_prefix);
+        return true;
+    }
+    
+    // Warn at 80% of limit
+    if(currentCount >= m_config.maxObjectsPerStrategy * 0.8)
+    {
+        if(m_config.enableDebugMode)
+            PrintFormat("[ChartDrawing] Object limit approaching: %d/%d (strategy: %s)",
+                       currentCount, m_config.maxObjectsPerStrategy, m_prefix);
+    }
+    
+    return false;
 }
 
 #endif // CHART_DRAWING_MANAGER_MQH

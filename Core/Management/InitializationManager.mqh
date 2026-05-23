@@ -15,7 +15,7 @@
 #include "../Visualization/VisualDashboard.mqh"
 
 //+------------------------------------------------------------------+
-//| Initialization Manager Class                                       |
+//| Initialization Manager Class                                     |
 //+------------------------------------------------------------------+
 class CInitializationManager
 {
@@ -34,6 +34,11 @@ private:
     bool m_aiFeedbackReady;
     bool m_dashboardReady;
     
+    // Timeout and retry tracking
+    datetime m_initStartTime;
+    int m_maxRetries;
+    int m_retryDelayMs;
+    
 public:
     CInitializationManager();
     ~CInitializationManager();
@@ -45,6 +50,9 @@ public:
     bool InitializePerformanceAnalytics();
     bool InitializeAIPerformanceFeedback(int historySize);
     bool InitializeDashboard();
+    
+    // Link performance analytics to risk manager after initialization
+    void LinkPerformanceAnalyticsToRiskManager();
     
     // Accessors
     CTradeManager* GetTradeManager() { return m_tradeManager; }
@@ -81,7 +89,10 @@ CInitializationManager::CInitializationManager() :
     m_positionSizerReady(false),
     m_performanceAnalyticsReady(false),
     m_aiFeedbackReady(false),
-    m_dashboardReady(false)
+    m_dashboardReady(false),
+    m_initStartTime(0),
+    m_maxRetries(3),
+    m_retryDelayMs(5000)
 {
 }
 
@@ -105,7 +116,8 @@ bool CInitializationManager::InitializeTradeManager(uint magicNumber, const stri
     m_tradeManager = new CTradeManager();
     if(m_tradeManager == NULL)
     {
-        Print("[INIT-ERROR] Failed to allocate TradeManager");
+        PrintFormat("[INIT-ERROR] Failed to allocate TradeManager | Error=%d", GetLastError());
+        RollbackPartialInitialization();
         return false;
     }
     
@@ -115,9 +127,10 @@ bool CInitializationManager::InitializeTradeManager(uint magicNumber, const stri
     
     if(!m_tradeManager.Initialize(magicNumber, eaName))
     {
-        Print("[INIT-ERROR] Failed to initialize TradeManager");
+        PrintFormat("[INIT-ERROR] Failed to initialize TradeManager | Error=%d", GetLastError());
         delete m_tradeManager;
         m_tradeManager = NULL;
+        RollbackPartialInitialization();
         return false;
     }
     
@@ -134,24 +147,20 @@ bool CInitializationManager::InitializeRiskManager(SUnifiedRiskConfig& config, C
     if(m_riskManager != NULL)
         return true; // Already initialized
     
-    if(analytics == NULL)
-    {
-        Print("[INIT-ERROR] PerformanceAnalytics required for RiskManager initialization");
-        return false;
-    }
-    
     m_riskManager = new CUnifiedRiskManager();
     if(m_riskManager == NULL)
     {
-        Print("[INIT-ERROR] Failed to allocate RiskManager");
+        PrintFormat("[INIT-ERROR] Failed to allocate RiskManager | Error=%d", GetLastError());
+        RollbackPartialInitialization();
         return false;
     }
     
     if(!m_riskManager.Initialize(config, analytics))
     {
-        Print("[INIT-ERROR] Failed to initialize RiskManager");
+        PrintFormat("[INIT-ERROR] Failed to initialize RiskManager | Error=%d", GetLastError());
         delete m_riskManager;
         m_riskManager = NULL;
+        RollbackPartialInitialization();
         return false;
     }
     
@@ -263,6 +272,74 @@ bool CInitializationManager::InitializeDashboard()
     m_dashboardReady = true;
     Print("[INIT] Dashboard initialized");
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Link Performance Analytics to Risk Manager                       |
+//+------------------------------------------------------------------+
+void CInitializationManager::LinkPerformanceAnalyticsToRiskManager()
+{
+    if(m_riskManager != NULL && m_performanceAnalytics != NULL)
+    {
+        m_riskManager.SetPerformanceAnalytics(m_performanceAnalytics);
+        Print("[INIT] Performance analytics linked to risk manager");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Rollback Partial Initialization                                  |
+//+------------------------------------------------------------------+
+void CInitializationManager::RollbackPartialInitialization()
+{
+    Print("[INIT] Rolling back partial initialization to prevent state corruption");
+    
+    if(m_dashboard != NULL && m_dashboardReady)
+    {
+        delete m_dashboard;
+        m_dashboard = NULL;
+        m_dashboardReady = false;
+        Print("[INIT-ROLLBACK] Dashboard released");
+    }
+    
+    if(m_aiFeedback != NULL && m_aiFeedbackReady)
+    {
+        delete m_aiFeedback;
+        m_aiFeedback = NULL;
+        m_aiFeedbackReady = false;
+        Print("[INIT-ROLLBACK] AIPerformanceFeedback released");
+    }
+    
+    if(m_performanceAnalytics != NULL && m_performanceAnalyticsReady)
+    {
+        delete m_performanceAnalytics;
+        m_performanceAnalytics = NULL;
+        m_performanceAnalyticsReady = false;
+        Print("[INIT-ROLLBACK] PerformanceAnalytics released");
+    }
+    
+    if(m_positionSizer != NULL && m_positionSizerReady)
+    {
+        delete m_positionSizer;
+        m_positionSizer = NULL;
+        m_positionSizerReady = false;
+        Print("[INIT-ROLLBACK] PositionSizer released");
+    }
+    
+    if(m_riskManager != NULL && m_riskManagerReady)
+    {
+        delete m_riskManager;
+        m_riskManager = NULL;
+        m_riskManagerReady = false;
+        Print("[INIT-ROLLBACK] RiskManager released");
+    }
+    
+    if(m_tradeManager != NULL && m_tradeManagerReady)
+    {
+        delete m_tradeManager;
+        m_tradeManager = NULL;
+        m_tradeManagerReady = false;
+        Print("[INIT-ROLLBACK] TradeManager released");
+    }
 }
 
 //+------------------------------------------------------------------+

@@ -32,6 +32,14 @@ private:
     int    m_bufHead;
     int    m_bufCount;
     int    m_bufMax;
+    
+    // Early stopping parameters
+    double m_lossHistory[];
+    int    m_lossHead;
+    int    m_lossCount;
+    int    m_earlyStoppingPatience;
+    double m_earlyStoppingThreshold;
+    int    m_consecutiveNoImprovement;
 
     double Sigmoid(const double value) const
     {
@@ -68,6 +76,40 @@ private:
         param -= lr * ((mHat / (MathSqrt(vHat) + eps)) + (wd * param));
     }
 
+    void ClipGradients(double &gradW1[][ML_H1], double &gradB1[], 
+                      double &gradW2[][ML_OUT], double &gradB2[],
+                      const double maxNorm = 1.0) const
+    {
+        double norm = 0.0;
+        
+        for(int i = 0; i < ML_INPUT; i++)
+            for(int j = 0; j < ML_H1; j++)
+                norm += gradW1[i][j] * gradW1[i][j];
+        for(int j = 0; j < ML_H1; j++)
+            norm += gradB1[j] * gradB1[j];
+        for(int i = 0; i < ML_H1; i++)
+            for(int j = 0; j < ML_OUT; j++)
+                norm += gradW2[i][j] * gradW2[i][j];
+        for(int j = 0; j < ML_OUT; j++)
+            norm += gradB2[j] * gradB2[j];
+        
+        norm = MathSqrt(norm);
+        if(norm > maxNorm && norm > 1e-12)
+        {
+            double scale = maxNorm / norm;
+            for(int i = 0; i < ML_INPUT; i++)
+                for(int j = 0; j < ML_H1; j++)
+                    gradW1[i][j] *= scale;
+            for(int j = 0; j < ML_H1; j++)
+                gradB1[j] *= scale;
+            for(int i = 0; i < ML_H1; i++)
+                for(int j = 0; j < ML_OUT; j++)
+                    gradW2[i][j] *= scale;
+            for(int j = 0; j < ML_OUT; j++)
+                gradB2[j] *= scale;
+        }
+    }
+
     void TrainStep(const int steps, const int batch)
     {
         double lr = 1e-3;
@@ -75,11 +117,14 @@ private:
         double beta2 = 0.999;
         double eps = 1e-8;
         double wd = 1e-4;
+        double clipNorm = 1.0;
 
         double gradW1[ML_INPUT][ML_H1];
         double gradB1[ML_H1];
         double gradW2[ML_H1][ML_OUT];
         double gradB2[ML_OUT];
+        double totalLoss = 0.0;
+        int lossCount = 0;
 
         for(int iter = 0; iter < steps; iter++)
         {
@@ -119,6 +164,12 @@ private:
                 double pProfit = Sigmoid(logits[1] - logits[0]);
                 double target = (m_bufY[idx] > 0) ? 1.0 : 0.0;
                 double dProfit = pProfit - target;
+                
+                // Calculate binary cross-entropy loss
+                double eps = 1e-15;
+                double loss = -target * MathLog(MathMax(pProfit, eps)) - (1.0 - target) * MathLog(MathMax(1.0 - pProfit, eps));
+                totalLoss += loss;
+                lossCount++;
                 double dOut[ML_OUT];
                 dOut[1] = dProfit;
                 dOut[0] = -dProfit;
@@ -150,6 +201,10 @@ private:
             }
 
             m_step++;
+            
+            // Apply gradient clipping to prevent exploding gradients
+            ClipGradients(gradW1, gradB1, gradW2, gradB2, clipNorm);
+            
             double invBatch = 1.0 / (double)effectiveBatch;
             for(int i = 0; i < ML_INPUT; i++)
             {
@@ -178,6 +233,13 @@ private:
                                  gradB2[j] * invBatch, lr, beta1, beta2, eps, wd);
             }
         }
+        
+        // Record average loss for early stopping
+        if(lossCount > 0)
+        {
+            double avgLoss = totalLoss / (double)lossCount;
+            RecordLoss(avgLoss);
+        }
     }
 
 public:
@@ -204,6 +266,15 @@ public:
         m_bufHead = 0;
         m_bufCount = 0;
         m_step = 0;
+        
+        // Initialize early stopping parameters
+        ArrayResize(m_lossHistory, 20);
+        ArrayInitialize(m_lossHistory, 0.0);
+        m_lossHead = 0;
+        m_lossCount = 0;
+        m_earlyStoppingPatience = 10;
+        m_earlyStoppingThreshold = 1e-4;
+        m_consecutiveNoImprovement = 0;
 
         MathSrand((int)(TimeLocal() % 2147483647));
         double scale1 = MathSqrt(2.0 / (double)ML_INPUT);
@@ -285,6 +356,39 @@ public:
         return Predict(inp) >= thresh;
     }
 
+    bool ShouldStopEarly() const
+    {
+        if(m_lossCount < m_earlyStoppingPatience)
+            return false;
+        
+        // Calculate average loss over patience window
+        double recentAvg = 0.0;
+        double olderAvg = 0.0;
+        int patience = m_earlyStoppingPatience;
+        
+        for(int i = 0; i < patience; i++)
+        {
+            int recentIdx = (m_lossHead - 1 - i + ArraySize(m_lossHistory)) % ArraySize(m_lossHistory);
+            int olderIdx = (m_lossHead - 1 - patience - i + ArraySize(m_lossHistory)) % ArraySize(m_lossHistory);
+            recentAvg += m_lossHistory[recentIdx];
+            olderAvg += m_lossHistory[olderIdx];
+        }
+        
+        recentAvg /= (double)patience;
+        olderAvg /= (double)patience;
+        
+        // If recent loss is not improving, stop early
+        return (olderAvg - recentAvg) < m_earlyStoppingThreshold;
+    }
+
+    void RecordLoss(const double loss)
+    {
+        m_lossHistory[m_lossHead] = loss;
+        m_lossHead = (m_lossHead + 1) % ArraySize(m_lossHistory);
+        if(m_lossCount < ArraySize(m_lossHistory))
+            m_lossCount++;
+    }
+
     void AddSample(const double &inp[], const int label)
     {
         if(ArraySize(inp) < ML_INPUT)
@@ -298,7 +402,7 @@ public:
         if(m_bufCount < m_bufMax)
             m_bufCount++;
 
-        if(m_bufCount >= 50)
+        if(m_bufCount >= 50 && !ShouldStopEarly())
             TrainStep(8, 12);
     }
 };

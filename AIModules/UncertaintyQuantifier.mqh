@@ -51,8 +51,41 @@ private:
 
     void RingPush(double &values[], int &head, int &count, const double value)
     {
+        // Validate all parameters before accessing array
         if(m_historySize <= 0)
+        {
+            static datetime s_lastLog = 0;
+            if(s_lastLog == 0 || (TimeCurrent() - s_lastLog) >= 300)
+            {
+                Print("[UNCERTAINTY] ERROR: RingPush called with invalid historySize=", m_historySize);
+                s_lastLog = TimeCurrent();
+            }
             return;
+        }
+
+        int arrSize = ArraySize(values);
+        if(arrSize <= 0)
+        {
+            static datetime s_lastLog2 = 0;
+            if(s_lastLog2 == 0 || (TimeCurrent() - s_lastLog2) >= 300)
+            {
+                Print("[UNCERTAINTY] ERROR: RingPush called with empty array");
+                s_lastLog2 = TimeCurrent();
+            }
+            return;
+        }
+
+        // Validate head index is within bounds
+        if(head < 0 || head >= arrSize)
+        {
+            static datetime s_lastLog3 = 0;
+            if(s_lastLog3 == 0 || (TimeCurrent() - s_lastLog3) >= 300)
+            {
+                PrintFormat("[UNCERTAINTY] ERROR: RingPush head=%d out of bounds [0,%d]", head, arrSize - 1);
+                s_lastLog3 = TimeCurrent();
+            }
+            head = 0;  // Reset to safe value
+        }
 
         values[head] = value;
         head = (head + 1) % m_historySize;
