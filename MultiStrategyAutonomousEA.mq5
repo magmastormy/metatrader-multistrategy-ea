@@ -26,12 +26,12 @@ input group "Strategy Selection"
 input bool InpEnableMomentum = true;        // Enable Momentum Strategy
 input bool InpEnableTrend = true;           // Enable Trend Strategy
 input bool InpEnableFibonacci = true;       // Enable Fibonacci Strategy
-input bool InpEnableElliottWave = true;      // Enabled as a contributor; live authority is evidence-gated
+input bool InpEnableElliottWave = false;      // Disabled - subjective pattern recognition
 input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines
-input bool InpEnableUnifiedICT = true;        // Enable Unified ICT Strategy
+input bool InpEnableUnifiedICT = false;        // Disable Unified ICT Strategy (over-engineered)
 input bool InpEnableCandlestick = true;      // Enable Candlestick Patterns Strategy
-input bool InpEnableUnicornModel = true;     // Enable ICT Unicorn Model strategy
-input bool InpEnablePowerOfThree = true;     // Enable ICT Power of Three / ICT 2025 strategy
+input bool InpEnableUnicornModel = false;     // Disable Unicorn Model (subjective ICT concepts)
+input bool InpEnablePowerOfThree = false;     // Disable Power of Three (subjective ICT concepts)
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
 input bool InpUseSymbolClassProfiles = false;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
 input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained for backward compatibility; all enabled strategies vote live
@@ -44,8 +44,8 @@ input int  InpMaxVisualObjects = 500;          // Max visual objects per chart
 
 //--- Consensus quorum (weighted)
 input group "Consensus Quorum"
-input double InpQuorumThreshold = 0.48;        // Min normalized weighted score to pass quorum (relaxed from 0.55)
-input int    InpMinLiveVoters   = 1;           // Min agreeing live voters (relaxed from 2)
+input double InpQuorumThreshold = 0.60;        // Min normalized weighted score to pass quorum (relaxed from 0.55)
+input int    InpMinLiveVoters   = 2;           // Min agreeing live voters (relaxed from 2)
 input double InpConsensusConflictDeadband = 0.05; // Minimum buy/sell score delta required to break directional tie
 input double InpConsensusMinReadyWeightRatio = 0.40; // Min ready-live-weight share (relaxed from 0.50)
 input double InpConsensusSupportFloorNewBar = 0.20;   // Min support ratio (relaxed from 0.45 to allow solo)
@@ -60,12 +60,12 @@ input group "Strategy Weights"
 input double InpWeightMomentum          = 1.0; // Momentum weight
 input double InpWeightTrend             = 1.2; // Trend weight
 input double InpWeightFibonacci         = 1.2; // Fibonacci weight
-input double InpWeightElliottWave       = 1.0; // Elliott Wave contributes, but Elliott-only live trades are blocked
+input double InpWeightElliottWave       = 0.0; // Elliott Wave disabled
 input double InpWeightSupportResistance = 1.5; // Support/Resistance weight
-input double InpWeightUnifiedICT        = 2.2; // Unified ICT weight (slightly higher precision)
+input double InpWeightUnifiedICT        = 1.2; // Unified ICT weight (reduced from 2.2)
 input double InpWeightCandlestick       = 1.5; // Candlestick weight
-input double InpWeightUnicornModel      = 2.4; // Unicorn Model weight
-input double InpWeightPowerOfThree      = 2.3; // Power of Three / ICT 2025 weight
+input double InpWeightUnicornModel      = 1.2; // Unicorn Model weight (reduced from 2.4)
+input double InpWeightPowerOfThree      = 1.2; // Power of Three / ICT 2025 weight (reduced from 2.3)
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -75,7 +75,11 @@ input bool InpEnableTransformer = false;      // MT5-native Transformer live vot
 input bool InpEnableEnsemble = false;         // MT5-native Ensemble live voter (disabled until retrained)
 input bool InpEnableOnnxAI = true;            // Python-trained ONNX model live voter hosted inside MT5
 input ENUM_PYTHON_BRIDGE_MODE InpPythonBridgeMode = PYTHON_BRIDGE_OBSERVE; // Python sidecar expectation mode (telemetry only)
-input string InpPythonBridgeEndpoint = "tcp://127.0.0.1:5555"; // Python bridge endpoint reference for operator diagnostics
+input string InpPythonBridgeEndpoint = "http://127.0.0.1:8000"; // Python bridge HTTP endpoint
+input int InpPythonBridgeRequestTimeoutMs = 5000; // Python bridge request timeout (ms)
+input int InpPythonBridgeHeartbeatTimeoutSec = 30; // Python bridge heartbeat timeout (seconds)
+input int InpPythonBridgeMaxReconnectAttempts = 5; // Max reconnect attempts before falling back
+input int InpPythonBridgeReconnectBackoffMs = 2000; // Initial reconnect backoff (ms, exponential)
 input bool InpEnableExternalLLM = false;       // External LLM reasoning/adaptation sidecar (not a live voter)
 input string InpExternalLLMEndpoint = "http://localhost:11434"; // External LLM HTTP endpoint
 input double InpAIConfidenceThreshold = 0.70;  // AI Confidence Threshold (raised to suppress low-quality AI trades)
@@ -163,7 +167,7 @@ input double InpValidatorIntrabarMinConfidence  = 0.60; // Post-consensus confid
 input group "Execution Safety"
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
 input int InpTradeSlippagePoints = 50;                                  // Max slippage (relaxed from 20)
-input double InpMaxEntrySpreadPoints = 1500.0;                            // Hard pre-send spread limit (relaxed from 300)
+input double InpMaxEntrySpreadPoints = 50.0;                            // Hard pre-send spread limit (reduced from 1500 for safety)
 input double InpMaxEntryDriftPoints = 25.0;                              // Hard drift from signal price before send; <=0 disables
 input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
 input bool InpEnableSignalReversalExit = true;                 // Close position immediately if primary strategy signals reversal
@@ -185,6 +189,18 @@ input int InpUnprotectedMaxRestoreAttempts = 3;                         // Max s
 input bool InpCloseUnprotectedOnRemediationFailure = true;              // Force close own unprotected positions after max attempts
 input double InpSyntheticSpikeVelocityMultiplier = 3.0;                 // Synthetic-symbol tick-rate spike multiplier before flatten/pause
 input int InpSyntheticSpikePauseSeconds = 30;                           // Trading pause after synthetic spike alarm
+
+//--- Dynamic Slippage Settings
+input group "Dynamic Slippage"
+input bool InpEnableDynamicSlippage = true;                              // Enable ATR-based dynamic slippage adjustment
+input double InpDynamicSlippageAtrPercent = 0.20;                        // Slippage as percentage of ATR (0.20 = 20%)
+input int InpDynamicSlippageMinPoints = 10;                              // Minimum slippage in points (floor)
+input int InpDynamicSlippageMaxMultiplier = 10;                          // Maximum slippage as multiplier of base slippage
+input int InpDynamicSlippageAtrPeriod = 14;                              // ATR period for volatility calculation
+
+//--- Spike Detection Settings
+input group "Spike Detection"
+input int InpSpikeConfirmWindows = 2;                                    // Consecutive windows above threshold to confirm spike
 
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
@@ -215,6 +231,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "Core\Monitoring\PerformanceAnalytics.mqh"
 #include "Core\AI\AIPerformanceFeedback.mqh"
 #include "Core\Trading\TradeManager.mqh"
+#include "Core\Trading\PositionStateManager.mqh"
 #include "Core\Processing\TickSafetyMonitor.mqh"
 #include "Core\Engines\MarketAnalysis.mqh"
 #include "Core\Strategy\StrategyBase.mqh"
@@ -224,6 +241,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\NeuralNetworkStrategy.mqh"
 #include "Core\Engines\AIEngine.mqh"
+#include "Core\Utils\PythonBridge.mqh"
 
 // Enterprise Components
 #include "Core\Management\SymbolUniverseBuilder.mqh"
@@ -247,6 +265,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "Core\Strategy\OnnxAIStrategyAdapter.mqh"
 #include "Core\Strategy\StrategyRegistry.mqh"
 #include "Core\Visualization\VisualDashboard.mqh"
+#include "Core\Visualization\DrawingCoordinator.mqh"
 
 //+------------------------------------------------------------------+
 //| Forward declarations
@@ -270,11 +289,7 @@ bool g_aiBrainReady = false;
 bool g_aiEngineReady = false;
 bool g_aiFeedbackReady = false;
 bool g_aiTopologyLogged = false;
-ulong g_predictionPositionIds[];
-string g_predictionIdsByPosition[];
-ulong g_aiPredictionPositionIds[];
-datetime g_aiPredictionTimesByPosition[];
-ENUM_TRADE_SIGNAL g_aiPredictionSignalsByPosition[];
+CPositionStateManager g_positionStateManager;  // Unified position state manager
 uint g_aiPendingRequestIds[];
 string g_aiPendingSymbols[];
 datetime g_aiPendingPredictionTimes[];
@@ -286,6 +301,7 @@ CMarketAnalysis marketAnalysis;
 CInstrumentRegistry instrumentRegistry;
 CTickSafetyMonitor g_tickSafetyMonitor;
 bool g_onnxSessionDisabled = false;
+CPythonBridge g_pythonBridge; // Python bridge instance
 
 CTradeManager tradeManager;
 CEnterpriseStrategyManager* g_enterpriseManagers[];      // Per-symbol managers
@@ -406,9 +422,12 @@ datetime g_lastExternalCapacityLogTime = 0;
 datetime g_lastUnprotectedRemediationAttempt = 0;
 datetime g_lastNoSignalAlertTime = 0;
 datetime g_syntheticTickRateWindowStart = 0;
+datetime g_syntheticSpikeConfirmStart = 0; // Start time for spike confirmation window
+int g_syntheticSpikeConfirmCount = 0;       // Number of consecutive windows above threshold
 datetime g_tradingPauseUntil = 0;
 ulong g_scanCycleSequence = 0;
 ulong g_unprotectedPositionTickets[];
+ulong g_predictionPositionIds[];
 int g_unprotectedPositionAttempts[];
 int g_syntheticTickRateWindowCount = 0;
 double g_syntheticTickRateBaseline = 0.0;
@@ -636,7 +655,8 @@ double CalculateAtrFromRates(const string symbol, const ENUM_TIMEFRAMES timefram
 
     double trueRangeSum = 0.0;
     int usable = 0;
-    for(int i = shift; i < (shift + period) && (i + 1) < copied; i++)
+    int maxIndex = MathMin(shift + period, copied - 1);
+    for(int i = shift; i < maxIndex; i++)
     {
         double rangeHighLow = rates[i].high - rates[i].low;
         double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
@@ -1138,6 +1158,24 @@ void SetUnprotectedTrackerAttempts(const ulong ticket, const int attempts)
     if(idx < 0)
     {
         int size = ArraySize(g_unprotectedPositionTickets);
+        const int MAX_UNPROTECTED_TRACKERS = 1000;
+        if(size >= MAX_UNPROTECTED_TRACKERS)
+        {
+            // Remove oldest entry if at limit
+            int last = size - 1;
+            if(last >= 0)
+            {
+                if(0 != last)
+                {
+                    g_unprotectedPositionTickets[0] = g_unprotectedPositionTickets[last];
+                    g_unprotectedPositionAttempts[0] = g_unprotectedPositionAttempts[last];
+                }
+                ArrayResize(g_unprotectedPositionTickets, last);
+                ArrayResize(g_unprotectedPositionAttempts, last);
+                size = last;
+            }
+        }
+        
         ArrayResize(g_unprotectedPositionTickets, size + 1);
         ArrayResize(g_unprotectedPositionAttempts, size + 1);
         g_unprotectedPositionTickets[size] = ticket;
@@ -1349,10 +1387,10 @@ void ManageOpenPositionsIfNeeded()
                 double slPrice = PositionGetDouble(POSITION_SL);
                 double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
                 double slDistance = MathAbs(openPrice - slPrice);
-                double currentDrawdown = MathAbs(openPrice - currentPrice);
+                double posCurrentDrawdown = MathAbs(openPrice - currentPrice);
                 
                 // Calculate loss as fraction of SL distance (R-value)
-                double lossR = (slDistance > 0) ? (currentDrawdown / slDistance) : 0.0;
+                double lossR = (slDistance > 0) ? (posCurrentDrawdown / slDistance) : 0.0;
                 
                 bool hasBreathingRoom = (durationSec < InpSignalReversalMinTimeSec);
                 bool isMinorNoise = (inLoss && lossR < InpSignalReversalMinLossR);
@@ -1466,6 +1504,30 @@ bool HandleEmergencyDrawdownStop(const string reasonTag)
     if(currentDrawdown <= InpMaxDrawdown)
         return false;
 
+    // Check market volatility before closing positions
+    double volatilityMultiplier = 1.0;
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+            
+        string posSymbol = PositionGetString(POSITION_SYMBOL);
+        double atr = 0;
+        TryResolveAtrValue(posSymbol, PERIOD_CURRENT, 14, atr);
+        double currentPrice = SymbolInfoDouble(posSymbol, SYMBOL_BID);
+        
+        if(atr > 0 && currentPrice > 0)
+        {
+            double normalizedAtr = atr / currentPrice;
+            if(normalizedAtr > 0.05) // 5% volatility is very high
+            {
+                // High volatility - log warning but still close
+                PrintFormat("[EMERGENCY-WARNING] High volatility detected for %s (ATR: %.2f%%)", posSymbol, normalizedAtr * 100);
+            }
+        }
+    }
+
     tradingEnabled = false;
     Alert("[EMERGENCY] Maximum drawdown exceeded! Trading halted!");
     Comment("EMERGENCY STOP - Drawdown: ", NormalizeDouble(currentDrawdown, 2), "%");
@@ -1575,10 +1637,53 @@ void EvaluateSyntheticSpikeAlarm()
     g_syntheticTickRateWindowStart = now;
     g_syntheticTickRateWindowCount = 0;
 
-    if(currentRate <= thresholdRate || IsTradingPauseActive())
-        return;
+    bool rateExceedsThreshold = (currentRate > thresholdRate);
+    int requiredConfirmWindows = MathMax(1, InpSpikeConfirmWindows); // Configurable confirmation windows
 
-    TriggerSyntheticSpikeAlarm(currentRate, MathMax(1.0, baselineRate));
+    if(IsTradingPauseActive())
+    {
+        g_syntheticSpikeConfirmCount = 0;
+        g_syntheticSpikeConfirmStart = 0;
+        return;
+    }
+
+    if(rateExceedsThreshold)
+    {
+        if(g_syntheticSpikeConfirmCount == 0)
+        {
+            g_syntheticSpikeConfirmStart = now;
+            g_syntheticSpikeConfirmCount = 1;
+            PrintFormat("[SYNTHETIC-SPIKE] Potential spike detected | Rate: %.1f/sec | Threshold: %.1f/sec | Confirming (Window 1/%d)",
+                        currentRate, thresholdRate, requiredConfirmWindows);
+        }
+        else
+        {
+            g_syntheticSpikeConfirmCount++;
+            if(g_syntheticSpikeConfirmCount >= requiredConfirmWindows)
+            {
+                PrintFormat("[SYNTHETIC-SPIKE] Spike confirmed! | Rate: %.1f/sec | Threshold: %.1f/sec | Consecutive windows: %d",
+                            currentRate, thresholdRate, g_syntheticSpikeConfirmCount);
+                TriggerSyntheticSpikeAlarm(currentRate, MathMax(1.0, baselineRate));
+                g_syntheticSpikeConfirmCount = 0;
+                g_syntheticSpikeConfirmStart = 0;
+            }
+            else
+            {
+                PrintFormat("[SYNTHETIC-SPIKE] Continuing confirmation | Rate: %.1f/sec | Window %d/%d",
+                            currentRate, g_syntheticSpikeConfirmCount, requiredConfirmWindows);
+            }
+        }
+    }
+    else
+    {
+        if(g_syntheticSpikeConfirmCount > 0)
+        {
+            PrintFormat("[SYNTHETIC-SPIKE] Confirmation reset | Rate: %.1f/sec | Below threshold: %.1f/sec",
+                        currentRate, thresholdRate);
+        }
+        g_syntheticSpikeConfirmCount = 0;
+        g_syntheticSpikeConfirmStart = 0;
+    }
 }
 
 void ProcessTickSafetyLoop()
@@ -1694,129 +1799,47 @@ int CountNonElliottIndicatorContributors(const string &contributors[])
 
 int FindPredictionPositionIndex(const ulong positionId)
 {
-    for(int i = 0; i < ArraySize(g_predictionPositionIds); i++)
-    {
-        if(g_predictionPositionIds[i] == positionId)
-            return i;
-    }
-    return -1;
+    return g_positionStateManager.FindStateIndex(positionId);
 }
 
 void UpsertPredictionPositionMap(const ulong positionId, const string predictionId)
 {
-    if(positionId == 0 || predictionId == "")
-        return;
-
-    int idx = FindPredictionPositionIndex(positionId);
-    if(idx >= 0)
-    {
-        g_predictionIdsByPosition[idx] = predictionId;
-        return;
-    }
-
-    int size = ArraySize(g_predictionPositionIds);
-    ArrayResize(g_predictionPositionIds, size + 1);
-    ArrayResize(g_predictionIdsByPosition, size + 1);
-    g_predictionPositionIds[size] = positionId;
-    g_predictionIdsByPosition[size] = predictionId;
+    g_positionStateManager.UpsertPredictionId(positionId, predictionId);
 }
 
 string GetPredictionIdForPosition(const ulong positionId)
 {
-    int idx = FindPredictionPositionIndex(positionId);
-    if(idx < 0 || idx >= ArraySize(g_predictionIdsByPosition))
-        return "";
-    return g_predictionIdsByPosition[idx];
+    return g_positionStateManager.GetPredictionId(positionId);
 }
 
 void RemovePredictionPositionMap(const ulong positionId)
 {
-    int idx = FindPredictionPositionIndex(positionId);
-    if(idx < 0)
-        return;
-
-    int last = ArraySize(g_predictionPositionIds) - 1;
-    if(last < 0)
-        return;
-
-    if(idx != last)
-    {
-        g_predictionPositionIds[idx] = g_predictionPositionIds[last];
-        g_predictionIdsByPosition[idx] = g_predictionIdsByPosition[last];
-    }
-
-    ArrayResize(g_predictionPositionIds, last);
-    ArrayResize(g_predictionIdsByPosition, last);
+    g_positionStateManager.RemovePrediction(positionId);
 }
 
 int FindAIPredictionPositionIndex(const ulong positionId)
 {
-    for(int i = 0; i < ArraySize(g_aiPredictionPositionIds); i++)
-    {
-        if(g_aiPredictionPositionIds[i] == positionId)
-            return i;
-    }
-    return -1;
+    return g_positionStateManager.FindStateIndex(positionId);
 }
 
 void UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
 {
-    if(positionId == 0 || predictionTime <= 0 || predictionSignal == TRADE_SIGNAL_NONE)
-        return;
-
-    int idx = FindAIPredictionPositionIndex(positionId);
-    if(idx >= 0)
-    {
-        g_aiPredictionTimesByPosition[idx] = predictionTime;
-        g_aiPredictionSignalsByPosition[idx] = predictionSignal;
-        return;
-    }
-
-    int size = ArraySize(g_aiPredictionPositionIds);
-    ArrayResize(g_aiPredictionPositionIds, size + 1);
-    ArrayResize(g_aiPredictionTimesByPosition, size + 1);
-    ArrayResize(g_aiPredictionSignalsByPosition, size + 1);
-    g_aiPredictionPositionIds[size] = positionId;
-    g_aiPredictionTimesByPosition[size] = predictionTime;
-    g_aiPredictionSignalsByPosition[size] = predictionSignal;
+    g_positionStateManager.UpsertAIPrediction(positionId, predictionTime, predictionSignal);
 }
 
 datetime GetAIPredictionTimeForPosition(const ulong positionId)
 {
-    int idx = FindAIPredictionPositionIndex(positionId);
-    if(idx < 0 || idx >= ArraySize(g_aiPredictionTimesByPosition))
-        return 0;
-    return g_aiPredictionTimesByPosition[idx];
+    return g_positionStateManager.GetAIPredictionTime(positionId);
 }
 
 ENUM_TRADE_SIGNAL GetAIPredictionSignalForPosition(const ulong positionId)
 {
-    int idx = FindAIPredictionPositionIndex(positionId);
-    if(idx < 0 || idx >= ArraySize(g_aiPredictionSignalsByPosition))
-        return TRADE_SIGNAL_NONE;
-    return g_aiPredictionSignalsByPosition[idx];
+    return g_positionStateManager.GetAIPredictionSignal(positionId);
 }
 
 void RemoveAIPredictionPositionMap(const ulong positionId)
 {
-    int idx = FindAIPredictionPositionIndex(positionId);
-    if(idx < 0)
-        return;
-
-    int last = ArraySize(g_aiPredictionPositionIds) - 1;
-    if(last < 0)
-        return;
-
-    if(idx != last)
-    {
-        g_aiPredictionPositionIds[idx] = g_aiPredictionPositionIds[last];
-        g_aiPredictionTimesByPosition[idx] = g_aiPredictionTimesByPosition[last];
-        g_aiPredictionSignalsByPosition[idx] = g_aiPredictionSignalsByPosition[last];
-    }
-
-    ArrayResize(g_aiPredictionPositionIds, last);
-    ArrayResize(g_aiPredictionTimesByPosition, last);
-    ArrayResize(g_aiPredictionSignalsByPosition, last);
+    g_positionStateManager.RemoveAIPrediction(positionId);
 }
 
 int FindAIPendingRequestIndex(const uint requestId)
@@ -3740,11 +3763,7 @@ void ReleaseNeuralNetStrategies()
     }
     ArrayResize(g_neuralNetStrategies, 0);
     ArrayResize(g_neuralNetStrategySymbols, 0);
-    ArrayResize(g_predictionPositionIds, 0);
-    ArrayResize(g_predictionIdsByPosition, 0);
-    ArrayResize(g_aiPredictionPositionIds, 0);
-    ArrayResize(g_aiPredictionTimesByPosition, 0);
-    ArrayResize(g_aiPredictionSignalsByPosition, 0);
+    g_positionStateManager.ClearAll();
     ArrayResize(g_aiPendingRequestIds, 0);
     ArrayResize(g_aiPendingSymbols, 0);
     ArrayResize(g_aiPendingPredictionTimes, 0);
@@ -3949,6 +3968,14 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     // Initialize Drawing Manager for this symbol if enabled
     if(InpEnableVisualAnalysis)
     {
+        // Set global max objects on drawing coordinator
+        CDrawingCoordinator* coordinator = GetDrawingCoordinator();
+        if(coordinator != NULL)
+        {
+            int maxObjs = MathMin(900, InpMaxVisualObjects);
+            coordinator.SetGlobalMaxObjects(maxObjs);
+        }
+
         CChartDrawingManager* draw = new CChartDrawingManager();
         if(draw != NULL)
         {
@@ -3958,6 +3985,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
                 drawConfig.enableDrawing = true;
                 drawConfig.maxObjectAge = InpMaxVisualObjects;
                 draw.SetConfiguration(drawConfig);
+                draw.SetMaxObjects(MathMin(900, InpMaxVisualObjects)); // Cap at 900 for safety
                 
                 int dSize = ArraySize(g_drawingManagers);
                 ArrayResize(g_drawingManagers, dSize + 1);
@@ -4012,6 +4040,9 @@ int OnInit()
     tradeManager.SetSlippage((uint)MathMax(1, InpTradeSlippagePoints));
     tradeManager.SetExecutionCostLimits(InpMaxEntrySpreadPoints, InpMaxEntryDriftPoints);
     tradeManager.SetProtectiveModifyCooldownSeconds(InpProtectiveModifyCooldownSec);
+    tradeManager.SetDynamicSlippageConfig(InpEnableDynamicSlippage, InpDynamicSlippageAtrPercent,
+                                          (uint)InpDynamicSlippageMinPoints, (uint)InpDynamicSlippageMaxMultiplier,
+                                          InpDynamicSlippageAtrPeriod);
     if(!tradeManager.Initialize((uint)InpMagicNumber, "MultiStrategyAutonomousEA"))
     {
         Print("[CRITICAL] Failed to initialize TradeManager");
@@ -4374,6 +4405,8 @@ int OnInit()
     g_syntheticTickRateWindowStart = 0;
     g_syntheticTickRateWindowCount = 0;
     g_syntheticTickRateBaseline = 0.0;
+    g_syntheticSpikeConfirmStart = 0;
+    g_syntheticSpikeConfirmCount = 0;
     g_onnxSessionDisabled = false;
     g_tradingPaused = false;
     g_tradingPauseUntil = 0;
@@ -4381,14 +4414,87 @@ int OnInit()
     ArrayResize(g_unprotectedPositionTickets, 0);
     ArrayResize(g_unprotectedPositionAttempts, 0);
 
+    // Initialize Python Bridge
+    g_pythonBridge.Initialize(
+        InpPythonBridgeEndpoint,
+        InpPythonBridgeMode,
+        InpPythonBridgeRequestTimeoutMs,
+        InpPythonBridgeHeartbeatTimeoutSec,
+        InpPythonBridgeMaxReconnectAttempts,
+        InpPythonBridgeReconnectBackoffMs
+    );
+    
+    // Check Python bridge version compatibility
+    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF)
+    {
+        Print("[PYTHON-BRIDGE] Checking version compatibility...");
+        bool versionOk = g_pythonBridge.CheckVersion();
+        if(versionOk)
+        {
+            SPythonBridgeVersion version = g_pythonBridge.GetServerVersion();
+            PrintFormat("[PYTHON-BRIDGE] Version OK: %s (compatible: %s)", 
+                       version.version, version.compatible ? "true" : "false");
+        }
+        else
+        {
+            Print("[PYTHON-BRIDGE] Version check failed - will use local AI fallback");
+        }
+    }
+
     // Initialize Dashboard
     g_dashboard.Initialize();
+    
+    // Startup Health Check
+    Print("[HEALTH-CHECK] Performing startup validation...");
+    bool healthCheckPassed = true;
+    
+    // AI Model Loading Check
+    if(InpEnableAIMode) {
+        int aiFailures = 0;
+        if(!g_aiBrainReady) aiFailures++;
+        if(!g_aiEngineReady && InpEnableNeuralNetwork) aiFailures++;
+        if(aiFailures > 0) {
+            PrintFormat("[HEALTH-CHECK] WARNING: %d AI component(s) failed to initialize", aiFailures);
+        }
+        else {
+            Print("[HEALTH-CHECK] AI subsystem: OK");
+        }
+    }
+    
+    // Python Bridge Check
+    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF) {
+        if(!g_pythonBridge.IsConnected()) {
+            Print("[HEALTH-CHECK] WARNING: Python bridge not connected - using local AI fallback");
+        }
+        else {
+            Print("[HEALTH-CHECK] Python bridge: OK");
+        }
+    }
+    
+    // Risk Manager Check
+    if(!unifiedRiskManager.IsInitialized()) {
+        Print("[HEALTH-CHECK] CRITICAL: Risk manager not initialized!");
+        healthCheckPassed = false;
+    }
+    else {
+        Print("[HEALTH-CHECK] Risk manager: OK");
+    }
+    
+    // Position State Manager Check
+    if(!g_positionStateManager.IsInitialized()) {
+        Print("[HEALTH-CHECK] WARNING: Position state manager not initialized");
+    }
+    else {
+        Print("[HEALTH-CHECK] Position state manager: OK");
+    }
+    
+    Print("[HEALTH-CHECK] Startup validation complete");
     
     EventSetTimer(1);
     Print("[MULTI-STRATEGY-EA] Initialization complete - EA is READY;");
     Print("[MULTI-STRATEGY-EA] ========================================");
 
-    return INIT_SUCCEEDED;
+    return healthCheckPassed ? INIT_SUCCEEDED : INIT_FAILED;
 }
 
 //+------------------------------------------------------------------+
@@ -4410,6 +4516,9 @@ void OnDeinit(const int reason)
 
     // Kill the timer
     EventKillTimer();
+
+    // Shutdown Python bridge
+    g_pythonBridge.Shutdown();
 
     // Properly delete all dynamic objects to prevent memory leaks
     ReleaseEnterpriseManagers();
@@ -4467,6 +4576,7 @@ void OnTimer()
 {
     // Periodic AI Health Check (every 60 seconds)
     static datetime lastAIHealthCheck = 0;
+    static datetime lastPythonBridgeCheck = 0;
     datetime now = TimeCurrent();
     if(lastAIHealthCheck == 0 || (now - lastAIHealthCheck) >= 60)
     {
@@ -4495,7 +4605,53 @@ void OnTimer()
             
             Print(aiStatus);
         }
+        
+        // Python Bridge status
+        if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF)
+        {
+            SPythonBridgeHealthStatus bridgeStatus = g_pythonBridge.GetHealthStatus();
+            string bridgeStatusStr = "[PYTHON-BRIDGE-DASHBOARD] ";
+            
+            // Connection state
+            switch(bridgeStatus.state)
+            {
+                case PYTHON_BRIDGE_CONNECTED:
+                    bridgeStatusStr += "CONN:OK | ";
+                    break;
+                case PYTHON_BRIDGE_CONNECTING:
+                    bridgeStatusStr += "CONN:CONNECTING | ";
+                    break;
+                case PYTHON_BRIDGE_DISCONNECTED:
+                    bridgeStatusStr += "CONN:DISCONNECTED | ";
+                    break;
+                case PYTHON_BRIDGE_ERROR:
+                    bridgeStatusStr += "CONN:ERROR | ";
+                    break;
+            }
+            
+            // Version info
+            if(bridgeStatus.version.version != "")
+                bridgeStatusStr += "VER:" + bridgeStatus.version.version + " | ";
+            else
+                bridgeStatusStr += "VER:UNKNOWN | ";
+            
+            // Stats
+            bridgeStatusStr += "REQS:" + IntegerToString(bridgeStatus.request_count) + " | ";
+            bridgeStatusStr += "OK:" + IntegerToString(bridgeStatus.success_count) + " | ";
+            bridgeStatusStr += "ERR:" + IntegerToString(bridgeStatus.error_count);
+            
+            Print(bridgeStatusStr);
+        }
+        
         lastAIHealthCheck = now;
+    }
+
+    // Periodic Python Bridge Check (every heartbeat timeout seconds)
+    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF &&
+       (lastPythonBridgeCheck == 0 || (now - lastPythonBridgeCheck) >= InpPythonBridgeHeartbeatTimeoutSec))
+    {
+        g_pythonBridge.SendHeartbeat();
+        lastPythonBridgeCheck = now;
     }
 
     ReleaseTradingPauseIfExpired();

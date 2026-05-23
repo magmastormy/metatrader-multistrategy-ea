@@ -7,8 +7,35 @@
 
 #include "../Utils/Instruments.mqh"
 
+struct SSymbolValidationConfig
+{
+    long maxSpreadPoints;          // Maximum allowed spread in points
+    long minDailyVolumeLots;       // Minimum daily volume in lots
+    bool enableVolumeCheck;        // Enable/disable volume liquidity check
+};
+
 class CSymbolUniverseBuilder
 {
+private:
+    static bool HasSimilarSymbol(const string &activePairs[], const string symbol)
+    {
+        string symUpper = symbol;
+        StringToUpper(symUpper);
+        
+        for(int i = 0; i < ArraySize(activePairs); i++)
+        {
+            string existingUpper = activePairs[i];
+            StringToUpper(existingUpper);
+            
+            if(StringFind(symUpper, existingUpper) >= 0 || StringFind(existingUpper, symUpper) >= 0)
+            {
+                if(symUpper != existingUpper)
+                    return true;
+            }
+        }
+        return false;
+    }
+
 public:
     static bool ContainsSymbol(const string &activePairs[], const string symbol)
     {
@@ -20,7 +47,8 @@ public:
         return false;
     }
 
-    static bool Build(const string rawSymbols, string &activePairs[])
+    static bool Build(const string rawSymbols, string &activePairs[], 
+                      const SSymbolValidationConfig &config = {500, 1000, true})
     {
         ArrayResize(activePairs, 0);
 
@@ -39,6 +67,8 @@ public:
         }
 
         Print("[SYMBOLS] Processing ", ArraySize(symbols), " trading symbols");
+        PrintFormat("[SYMBOLS] Validation config: maxSpread=%d points, minVolume=%d lots, volumeCheck=%s",
+                    config.maxSpreadPoints, config.minDailyVolumeLots, config.enableVolumeCheck ? "ENABLED" : "DISABLED");
 
         for(int i = 0; i < ArraySize(symbols); i++)
         {
@@ -64,8 +94,6 @@ public:
 
             if(StringFind(sym, " ") >= 0 && StringFind(sym, ".") < 0 && !isSynthetic)
             {
-                // AUDIT: Synthetic symbols often have spaces (e.g., "SFX Vol 20", "SwitchX 1200")
-                // If it's synthetic but contains a space, we should still allow it if it's select-able
                 if(!isSynthetic)
                 {
                     Print("[WARNING] Symbol '", sym, "' contains spaces without period - likely malformed, skipping");
@@ -87,7 +115,7 @@ public:
             }
             if(symbolTradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
             {
-                Print("[WARNING] Symbol ", sym, " is close-only - skipping");
+                Print("[WARNING] Symbol ", sym, " is close-only - cannot open new positions, only close existing - skipping");
                 continue;
             }
             if(SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP) <= 0.0)
@@ -102,11 +130,28 @@ public:
                 continue;
             }
 
-            long spread = SymbolInfoInteger(sym, SYMBOL_SPREAD);
-            if(spread > 1000)
+            if(HasSimilarSymbol(activePairs, sym))
             {
-                PrintFormat("[SYMBOLS] Symbol %s rejected - extreme spread %d points exceeds maximum threshold (1000 points)", sym, spread);
+                Print("[WARNING] Symbol ", sym, " has similar symbol already in list - consider reviewing");
+            }
+
+            long spread = SymbolInfoInteger(sym, SYMBOL_SPREAD);
+            if(spread > config.maxSpreadPoints)
+            {
+                PrintFormat("[SYMBOLS] Symbol %s rejected - spread %d points exceeds maximum threshold (%d points)", 
+                            sym, spread, config.maxSpreadPoints);
                 continue;
+            }
+
+            if(config.enableVolumeCheck)
+            {
+                double volume24h = SymbolInfoDouble(sym, SYMBOL_VOLUME);
+                if(volume24h < config.minDailyVolumeLots)
+                {
+                    PrintFormat("[SYMBOLS] Symbol %s rejected - low liquidity (%.0f lots/24h < %d lots minimum)", 
+                                sym, volume24h, config.minDailyVolumeLots);
+                    continue;
+                }
             }
 
             int size = ArraySize(activePairs);
@@ -119,6 +164,8 @@ public:
             Print("  - Max Lot: ", SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX));
             Print("  - Lot Step: ", SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP));
             Print("  - Contract Size: ", SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE));
+            if(config.enableVolumeCheck)
+                Print("  - 24h Volume: ", SymbolInfoDouble(sym, SYMBOL_VOLUME), " lots");
         }
 
         return (ArraySize(activePairs) > 0);

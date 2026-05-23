@@ -232,6 +232,185 @@ struct SBarrierEntry
     }
 };
 
+class CNeuralOptimizer
+{
+private:
+    double m_adamM[];
+    double m_adamV[];
+    long   m_adamStep;
+    double m_adamBeta1;
+    double m_adamBeta2;
+    double m_adamEps;
+    double m_adamWD;
+    double m_adamLR;
+
+public:
+    void Init(const int paramCount)
+    {
+        if(paramCount <= 0) return;
+        
+        int currentSizeM = ArraySize(m_adamM);
+        int currentSizeV = ArraySize(m_adamV);
+        
+        if(currentSizeM != paramCount)
+            ArrayResize(m_adamM, paramCount);
+        if(currentSizeV != paramCount)
+            ArrayResize(m_adamV, paramCount);
+        
+        ArrayInitialize(m_adamM, 0.0);
+        ArrayInitialize(m_adamV, 0.0);
+        m_adamStep = 0;
+        m_adamBeta1 = 0.9;
+        m_adamBeta2 = 0.999;
+        m_adamEps = 1e-8;
+        m_adamWD = 1e-4;
+        m_adamLR = 3e-4;
+    }
+    
+    double GetCyclicLR() const
+    {
+        int cycleLen = 1000;
+        double progress = (double)(m_adamStep % cycleLen) / (double)cycleLen;
+        return m_adamLR * (0.1 + 0.9 * 0.5 * (1.0 + MathCos(M_PI * progress)));
+    }
+    
+    void Update(double &param, const int paramIndex, const double grad)
+    {
+        m_adamM[paramIndex] = m_adamBeta1 * m_adamM[paramIndex] + (1.0 - m_adamBeta1) * grad;
+        m_adamV[paramIndex] = m_adamBeta2 * m_adamV[paramIndex] + (1.0 - m_adamBeta2) * grad * grad;
+        double mHat = m_adamM[paramIndex] / (1.0 - MathPow(m_adamBeta1, (double)m_adamStep));
+        double vHat = m_adamV[paramIndex] / (1.0 - MathPow(m_adamBeta2, (double)m_adamStep));
+        double lr = GetCyclicLR();
+        param -= lr * ((mHat / (MathSqrt(vHat) + m_adamEps)) + (m_adamWD * param));
+        m_adamStep++;
+    }
+    
+    long GetStep() const { return m_adamStep; }
+    void SetStep(const long step) { m_adamStep = step; }
+    
+    void GetState(double &adamM[], double &adamV[])
+    {
+        ArrayResize(adamM, ArraySize(m_adamM));
+        ArrayResize(adamV, ArraySize(m_adamV));
+        ArrayCopy(adamM, m_adamM);
+        ArrayCopy(adamV, m_adamV);
+    }
+    
+    void SetState(const double &adamM[], const double &adamV[])
+    {
+        int size = MathMin(ArraySize(adamM), ArraySize(m_adamM));
+        ArrayResize(m_adamM, size);
+        ArrayResize(m_adamV, size);
+        ArrayCopy(m_adamM, adamM, 0, 0, size);
+        ArrayCopy(m_adamV, adamV, 0, 0, size);
+    }
+};
+
+class CNeuralCore
+{
+public:
+    static void ReLU(double &values[], const int size)
+    {
+        for(int i = 0; i < size; i++)
+            values[i] = MathMax(0.0, values[i]);
+    }
+    
+    static double ReLUDerivative(const double value)
+    {
+        return (value > 0.0) ? 1.0 : 0.0;
+    }
+    
+    static void Softmax(double &values[], const int size, const double temperature = 1.0)
+    {
+        double maxVal = values[0];
+        for(int i = 1; i < size; i++)
+            maxVal = MathMax(maxVal, values[i]);
+
+        double safeTemp = MathMax(1e-6, temperature);
+        double sum = 0.0;
+        for(int i = 0; i < size; i++)
+        {
+            values[i] = MathExp((values[i] - maxVal) / safeTemp);
+            sum += values[i];
+        }
+        if(sum <= 1e-12)
+            sum = 1.0;
+        for(int i = 0; i < size; i++)
+            values[i] /= sum;
+    }
+    
+    static void ClipGradients(double &gradW1[][], double &gradB1[], 
+                              double &gradW2[][], double &gradB2[],
+                              const double maxNorm = 1.0)
+    {
+        double norm = 0.0;
+        
+        for(int i = 0; i < ArrayRange(gradW1, 0); i++)
+            for(int j = 0; j < ArrayRange(gradW1, 1); j++)
+                norm += gradW1[i][j] * gradW1[i][j];
+        for(int j = 0; j < ArraySize(gradB1); j++)
+            norm += gradB1[j] * gradB1[j];
+        for(int i = 0; i < ArrayRange(gradW2, 0); i++)
+            for(int j = 0; j < ArrayRange(gradW2, 1); j++)
+                norm += gradW2[i][j] * gradW2[i][j];
+        for(int j = 0; j < ArraySize(gradB2); j++)
+            norm += gradB2[j] * gradB2[j];
+        
+        norm = MathSqrt(norm);
+        if(norm > maxNorm && norm > 1e-12)
+        {
+            double scale = maxNorm / norm;
+            for(int i = 0; i < ArrayRange(gradW1, 0); i++)
+                for(int j = 0; j < ArrayRange(gradW1, 1); j++)
+                    gradW1[i][j] *= scale;
+            for(int j = 0; j < ArraySize(gradB1); j++)
+                gradB1[j] *= scale;
+            for(int i = 0; i < ArrayRange(gradW2, 0); i++)
+                for(int j = 0; j < ArrayRange(gradW2, 1); j++)
+                    gradW2[i][j] *= scale;
+            for(int j = 0; j < ArraySize(gradB2); j++)
+                gradB2[j] *= scale;
+        }
+    }
+};
+
+class CBarrierLabelResolver
+{
+public:
+    static int ResolveLabel(const double upperBarrier, const double lowerBarrier, 
+                           const double exitPrice, const double entryPrice,
+                           const datetime expiryTime, const datetime currentTime)
+    {
+        if(exitPrice <= 0.0 || entryPrice <= 0.0)
+            return 0;
+        
+        double upperDist = MathAbs(upperBarrier - entryPrice);
+        double lowerDist = MathAbs(entryPrice - lowerBarrier);
+        
+        if(upperDist < lowerDist)
+            return 2;
+        else if(lowerDist < upperDist)
+            return 1;
+        else
+            return 0;
+    }
+    
+    static double CalculateBarrierRatio(const double upperBarrier, const double lowerBarrier, const double entryPrice)
+    {
+        if(entryPrice <= 0.0)
+            return 1.0;
+        
+        double upperDist = MathAbs(upperBarrier - entryPrice);
+        double lowerDist = MathAbs(entryPrice - lowerBarrier);
+        double totalDist = upperDist + lowerDist;
+        
+        if(totalDist <= 0.0)
+            return 1.0;
+        
+        return upperDist / totalDist;
+    }
+};
+
 class CNeuralNetworkStrategy
 {
 private:
@@ -257,6 +436,7 @@ private:
     double m_featureM2[];
     long   m_featureCount;
     bool   m_normalizationReady;
+    double m_normalizationDecay;  // EMA decay factor for adaptive normalization
 
     STrainingExample m_trainingBuffer[NN_MAX_TRAINING_EXAMPLES];
     int              m_trainHead;
@@ -380,8 +560,21 @@ private:
     void InitOptimizer()
     {
         int total = TotalParamCount();
-        ArrayResize(m_adamM, total);
-        ArrayResize(m_adamV, total);
+        if(total <= 0)
+        {
+            PrintFormat("[NEURAL-NET] ERROR: InitOptimizer called with invalid param count=%d", total);
+            return;
+        }
+
+        // Only resize if current size doesn't match required size
+        int currentSizeM = ArraySize(m_adamM);
+        int currentSizeV = ArraySize(m_adamV);
+        
+        if(currentSizeM != total)
+            ArrayResize(m_adamM, total);
+        if(currentSizeV != total)
+            ArrayResize(m_adamV, total);
+        
         ArrayInitialize(m_adamM, 0.0);
         ArrayInitialize(m_adamV, 0.0);
         m_adamStep = 0;
@@ -412,13 +605,23 @@ private:
     void UpdateNormalizationStats(const double &rawFeatures[], const int size)
     {
         m_featureCount++;
+        
+        // Use EMA decay for adaptive normalization
+        // This allows the normalization statistics to adapt to changing market conditions
+        double alpha = m_normalizationDecay;
+        
         for(int i = 0; i < size; i++)
         {
             double delta = rawFeatures[i] - m_featureMean[i];
-            m_featureMean[i] += delta / (double)m_featureCount;
+            
+            // Update mean with EMA
+            m_featureMean[i] = (1.0 - alpha) * m_featureMean[i] + alpha * rawFeatures[i];
+            
+            // Update variance with Welford's algorithm combined with EMA
             double delta2 = rawFeatures[i] - m_featureMean[i];
-            m_featureM2[i] += delta * delta2;
+            m_featureM2[i] = (1.0 - alpha) * m_featureM2[i] + alpha * delta * delta2;
         }
+        
         if(m_featureCount >= NN_MIN_NORMALIZATION_SAMPLES)
             m_normalizationReady = true;
     }
@@ -476,16 +679,17 @@ private:
         return MathMax(0.0, value);
     }
 
-    void Softmax(double &values[], const int size) const
+    void Softmax(double &values[], const int size, const double temperature = 1.0) const
     {
         double maxVal = values[0];
         for(int i = 1; i < size; i++)
             maxVal = MathMax(maxVal, values[i]);
 
+        double safeTemp = MathMax(1e-6, temperature);
         double sum = 0.0;
         for(int i = 0; i < size; i++)
         {
-            values[i] = MathExp(values[i] - maxVal);
+            values[i] = MathExp((values[i] - maxVal) / safeTemp);
             sum += values[i];
         }
         if(sum <= 1e-12)
@@ -1148,6 +1352,7 @@ public:
         ArrayInitialize(m_featureM2, 0.0);
         m_featureCount = 0;
         m_normalizationReady = false;
+        m_normalizationDecay = 0.001;  // EMA decay factor (small value for slow adaptation)
         for(int i = 0; i < NN_MAX_TRAINING_EXAMPLES; i++)
             m_trainingBuffer[i].Reset();
         for(int i = 0; i < NN_MAX_PERSISTED_SAMPLES; i++)

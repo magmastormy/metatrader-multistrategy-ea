@@ -21,6 +21,52 @@ enum ENUM_SYMBOL_CLASS {
 };
 
 //+------------------------------------------------------------------+
+//| ITransformerEncoder Interface - Allows swapping implementations   |
+//+------------------------------------------------------------------+
+interface ITransformerEncoder {
+    bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[]);
+    bool SaveHeadState(const string &path);
+    bool LoadHeadState(const string &path);
+    int GetDModel() const;
+    int GetNumHeads() const;
+    int GetNumLayers() const;
+};
+
+class CTransformerBrainAsEncoder : public ITransformerEncoder {
+private:
+    CTransformerBrain* m_transformer;
+public:
+    CTransformerBrainAsEncoder(CTransformerBrain* transformer) { m_transformer = transformer; }
+    bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[]) {
+        return m_transformer.GetPredictions(inputSequence, seqLen, outputs);
+    }
+    bool SaveHeadState(const string &path) { return m_transformer.SaveHeadState(path); }
+    bool LoadHeadState(const string &path) { return m_transformer.LoadHeadState(path); }
+    int GetDModel() const { return m_transformer.GetDModel(); }
+    int GetNumHeads() const { return m_transformer.GetNumHeads(); }
+    int GetNumLayers() const { return m_transformer.GetNumLayers(); }
+};
+
+class CDummyTransformerEncoder : public ITransformerEncoder {
+private:
+    int m_dModel;
+public:
+    CDummyTransformerEncoder(const int dModel = 32) { m_dModel = dModel; }
+    bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[]) {
+        ArrayResize(outputs, 3);
+        outputs[0] = 0.33;
+        outputs[1] = 0.33;
+        outputs[2] = 0.34;
+        return true;
+    }
+    bool SaveHeadState(const string &path) { return true; }
+    bool LoadHeadState(const string &path) { return true; }
+    int GetDModel() const { return m_dModel; }
+    int GetNumHeads() const { return 4; }
+    int GetNumLayers() const { return 2; }
+};
+
+//+------------------------------------------------------------------+
 //| Symbol Adaptation Head - Lightweight symbol-specific processing  |
 //+------------------------------------------------------------------+
 class CSymbolAdaptationHead : public CObject
@@ -197,7 +243,9 @@ struct SSymbolFeatureCache {
 //+------------------------------------------------------------------+
 class CUniversalTransformerService {
 private:
-    CTransformerBrain* m_universalEncoder;     // Single shared transformer
+    ITransformerEncoder* m_encoder;             // Interface for encoder implementation
+    bool m_ownsEncoder;                         // Track if service owns encoder
+    CTransformerBrain* m_universalEncoder;      // Backward compat - legacy direct access
     CArrayObj m_symbolAdaptationHeads;         // Per-symbol adaptation heads
     CArrayString m_registeredSymbols;          // Registered symbols
     SSymbolFeatureCache m_featureCache[20];    // Cache for recent features
@@ -274,12 +322,18 @@ private:
     
 public:
     CUniversalTransformerService() {
+        m_encoder = NULL;
+        m_ownsEncoder = false;
         m_universalEncoder = NULL;
         m_cacheSize = 0;
         m_lastCacheCleanup = 0;
     }
     
     ~CUniversalTransformerService() {
+        if(m_ownsEncoder && m_encoder != NULL) {
+            delete m_encoder;
+            m_encoder = NULL;
+        }
         if(m_universalEncoder != NULL) {
             delete m_universalEncoder;
             m_universalEncoder = NULL;
@@ -287,6 +341,15 @@ public:
         m_symbolAdaptationHeads.Clear();
         m_registeredSymbols.Clear();
     }
+    
+    void SetEncoder(ITransformerEncoder* encoder, const bool takeOwnership = false) {
+        if(m_ownsEncoder && m_encoder != NULL)
+            delete m_encoder;
+        m_encoder = encoder;
+        m_ownsEncoder = takeOwnership;
+    }
+    
+    ITransformerEncoder* GetEncoder() const { return m_encoder; }
     
     bool Initialize() {
         if(m_universalEncoder != NULL)

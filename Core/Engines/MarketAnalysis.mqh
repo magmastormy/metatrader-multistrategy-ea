@@ -990,10 +990,20 @@ public:
     }
 
     // Get current ATR value
-	    double GetATRValue() {
-	        if(m_atrHandle == INVALID_HANDLE) return 0.0;
-	        
-	        double atrValues[];
+    double GetATRValue();
+    
+    // Get ATR value for a specific symbol and period
+    double GetATR(const string symbol, int period);
+};
+
+//+------------------------------------------------------------------+
+//| Get current ATR value                                            |
+//+------------------------------------------------------------------+
+double CMarketAnalysis::GetATRValue()
+{
+        if(m_atrHandle == INVALID_HANDLE) return 0.0;
+        
+        double atrValues[];
 	        ArraySetAsSeries(atrValues, true);
 	        ResetLastError();
 	        if(CopyBuffer(m_atrHandle, 0, 0, 1, atrValues) > 0 && atrValues[0] > 0.0) {
@@ -1009,7 +1019,16 @@ public:
 	        }
 	        return 0.0;
 	    }
-};
+
+//+------------------------------------------------------------------+
+//| Get ATR value for a specific symbol and period                   |
+//+------------------------------------------------------------------+
+double CMarketAnalysis::GetATR(const string symbol, int period)
+{
+    // For now, return the current ATR value
+    // In a more complete implementation, this could handle multiple symbols
+    return GetATRValue();
+}
 
 const int CMarketAnalysis::WARMUP_SECONDS = 60;
 const int CMarketAnalysis::INIT_RETRY_SECONDS = 300;

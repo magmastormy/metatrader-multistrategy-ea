@@ -160,6 +160,7 @@ public:
     // BMS Detection
     ENUM_BMS_TYPE       DetectBMS();
     bool                HasStructureBreak();
+    bool                HasBMS(int maxBarsAgo = 5);
     
     // Multiplex Structure
     void                UpdateMultiplexStructure();
@@ -573,6 +574,18 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
     }
 
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Has BMS (Break of Market Structure) within specified bars        |
+//+------------------------------------------------------------------+
+bool CMarketStructureAnalyzer::HasBMS(int maxBarsAgo)
+{
+    if(m_structure.lastBMSType == BMS_NONE)
+        return false;
+    
+    datetime thresholdTime = iTime(m_symbol, m_timeframe, maxBarsAgo);
+    return (m_structure.lastBMSTime >= thresholdTime);
 }
 
 //+------------------------------------------------------------------+

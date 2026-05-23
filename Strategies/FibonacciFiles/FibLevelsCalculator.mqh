@@ -89,10 +89,12 @@ private:
     
     // Configuration
     double              m_levelTolerance;   // Pips tolerance for level tests
+    double              m_pricePrecision;   // Symbol-specific price precision
     
     // Internal methods
     void                InitializeRatios();
     void                CalculateLevels(SFibSetup &setup);
+    double              RoundToPrecision(double price);
     void                ScoreSetup(SFibSetup &setup);
     void                CheckLevelTests(SFibSetup &setup);
     
@@ -142,7 +144,8 @@ CFibLevelsCalculator::CFibLevelsCalculator() :
     m_timeframe(PERIOD_CURRENT),
     m_setupCount(0),
     m_maxSetups(10),
-    m_levelTolerance(10.0)
+    m_levelTolerance(10.0),
+    m_pricePrecision(0.00001)  // Default to 5-digit precision
 {
     ArrayResize(m_setups, 0);
     InitializeRatios();
@@ -186,7 +189,46 @@ bool CFibLevelsCalculator::Initialize(const string symbol, ENUM_TIMEFRAMES timef
     ArrayResize(m_setups, 0);
     m_setupCount = 0;
     
+    // Calculate symbol-specific price precision based on digit count
+    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+    switch(digits)
+    {
+        case 2:
+            m_pricePrecision = 0.01;      // Standard pairs (EURUSD, etc.)
+            break;
+        case 3:
+            m_pricePrecision = 0.001;     // JPY pairs (USDJPY, EURJPY, etc.)
+            break;
+        case 4:
+            m_pricePrecision = 0.0001;    // 4-digit brokers
+            break;
+        case 5:
+            m_pricePrecision = 0.00001;    // 5-digit brokers (4 decimal places)
+            break;
+        case 6:
+            m_pricePrecision = 0.000001;   // 6-digit brokers (JPY 3-digit)
+            break;
+        default:
+            m_pricePrecision = 0.00001;    // Default fallback
+            break;
+    }
+    
+    PrintFormat("[FIB-CALC] Symbol: %s | Digits: %d | Precision: %.6f", 
+                symbol, digits, m_pricePrecision);
+    
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Round Price to Symbol Precision                                   |
+//+------------------------------------------------------------------+
+double CFibLevelsCalculator::RoundToPrecision(double price)
+{
+    if(price <= 0 || m_pricePrecision <= 0)
+        return price;
+    
+    // Round to the appropriate decimal places based on precision
+    return MathRound(price / m_pricePrecision) * m_pricePrecision;
 }
 
 //+------------------------------------------------------------------+
@@ -210,17 +252,17 @@ void CFibLevelsCalculator::CalculateLevels(SFibSetup &setup)
     if(setup.isBullish)
     {
         // Bullish: measure from low to high, retracements below high
-        setup.fib236 = setup.swingHigh - (range * 0.236);
-        setup.fib382 = setup.swingHigh - (range * 0.382);
-        setup.fib500 = setup.swingHigh - (range * 0.500);
-        setup.fib618 = setup.swingHigh - (range * 0.618);
-        setup.fib786 = setup.swingHigh - (range * 0.786);
+        setup.fib236 = RoundToPrecision(setup.swingHigh - (range * 0.236));
+        setup.fib382 = RoundToPrecision(setup.swingHigh - (range * 0.382));
+        setup.fib500 = RoundToPrecision(setup.swingHigh - (range * 0.500));
+        setup.fib618 = RoundToPrecision(setup.swingHigh - (range * 0.618));
+        setup.fib786 = RoundToPrecision(setup.swingHigh - (range * 0.786));
         
         // Extensions above high
-        setup.ext1272 = setup.swingHigh + (range * 0.272);
-        setup.ext1618 = setup.swingHigh + (range * 0.618);
-        setup.ext2000 = setup.swingHigh + (range * 1.000);
-        setup.ext2618 = setup.swingHigh + (range * 1.618);
+        setup.ext1272 = RoundToPrecision(setup.swingHigh + (range * 0.272));
+        setup.ext1618 = RoundToPrecision(setup.swingHigh + (range * 0.618));
+        setup.ext2000 = RoundToPrecision(setup.swingHigh + (range * 1.000));
+        setup.ext2618 = RoundToPrecision(setup.swingHigh + (range * 1.618));
         
         // Add all levels to array
         ArrayResize(setup.levels, 9);
@@ -257,17 +299,17 @@ void CFibLevelsCalculator::CalculateLevels(SFibSetup &setup)
     else
     {
         // Bearish: measure from high to low, retracements above low
-        setup.fib236 = setup.swingLow + (range * 0.236);
-        setup.fib382 = setup.swingLow + (range * 0.382);
-        setup.fib500 = setup.swingLow + (range * 0.500);
-        setup.fib618 = setup.swingLow + (range * 0.618);
-        setup.fib786 = setup.swingLow + (range * 0.786);
+        setup.fib236 = RoundToPrecision(setup.swingLow + (range * 0.236));
+        setup.fib382 = RoundToPrecision(setup.swingLow + (range * 0.382));
+        setup.fib500 = RoundToPrecision(setup.swingLow + (range * 0.500));
+        setup.fib618 = RoundToPrecision(setup.swingLow + (range * 0.618));
+        setup.fib786 = RoundToPrecision(setup.swingLow + (range * 0.786));
         
         // Extensions below low
-        setup.ext1272 = setup.swingLow - (range * 0.272);
-        setup.ext1618 = setup.swingLow - (range * 0.618);
-        setup.ext2000 = setup.swingLow - (range * 1.000);
-        setup.ext2618 = setup.swingLow - (range * 1.618);
+        setup.ext1272 = RoundToPrecision(setup.swingLow - (range * 0.272));
+        setup.ext1618 = RoundToPrecision(setup.swingLow - (range * 0.618));
+        setup.ext2000 = RoundToPrecision(setup.swingLow - (range * 1.000));
+        setup.ext2618 = RoundToPrecision(setup.swingLow - (range * 1.618));
         
         // Add all levels to array
         ArrayResize(setup.levels, 9);

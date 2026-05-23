@@ -1,8 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-05-21
+- Last Updated: 2026-05-23
 - Scope: Agent workflow contract for this repository
+- Latest Batch: Module 2 - Strategy Engine Fixes (Batch 88)
 
 ## 1. Mission
 Maintain and evolve `metatrader-multistrategy-ea` with production-safe discipline:
@@ -70,6 +71,7 @@ After any strategy/risk/execution change, verify:
 - `[SIGNAL-REJECTED]`
 - `[AI-VOTE]` (if AI enabled)
 - `[SHADOW-TRADE]` or live trade result logs
+- `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
 
 ## 7. Compile and Artifact Hygiene
 - Compilation helpers may create temporary `.log/.txt` artifacts.

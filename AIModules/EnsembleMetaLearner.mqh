@@ -23,6 +23,10 @@ private:
     double m_B[HMM_STATES][HMM_OBS];
     double m_pi[HMM_STATES];
     int    m_lastRegime;
+    int    m_transitionCount[HMM_STATES][HMM_STATES];
+    int    m_stateVisitCount[HMM_STATES];
+    bool   m_learningEnabled;
+    double m_learningRate;
 
 public:
     void Init()
@@ -49,6 +53,55 @@ public:
         for(int i = 0; i < HMM_STATES; i++)
             m_pi[i] = 1.0 / (double)HMM_STATES;
         m_lastRegime = 2;
+        
+        // Initialize transition learning
+        for(int i = 0; i < HMM_STATES; i++)
+        {
+            for(int j = 0; j < HMM_STATES; j++)
+                m_transitionCount[i][j] = 0;
+            m_stateVisitCount[i] = 0;
+        }
+        m_learningEnabled = true;
+        m_learningRate = 0.01;
+    }
+    
+    void SetLearningEnabled(const bool enabled)
+    {
+        m_learningEnabled = enabled;
+    }
+    
+    void SetLearningRate(const double rate)
+    {
+        m_learningRate = MathMax(0.001, MathMin(0.1, rate));
+    }
+    
+    void UpdateTransitionMatrix()
+    {
+        if(!m_learningEnabled)
+            return;
+        
+        for(int i = 0; i < HMM_STATES; i++)
+        {
+            if(m_stateVisitCount[i] == 0)
+                continue;
+            
+            for(int j = 0; j < HMM_STATES; j++)
+            {
+                double observed = (double)m_transitionCount[i][j] / (double)m_stateVisitCount[i];
+                m_A[i][j] = (1.0 - m_learningRate) * m_A[i][j] + m_learningRate * observed;
+            }
+            
+            // Normalize row to ensure valid probability distribution
+            double rowSum = 0.0;
+            for(int j = 0; j < HMM_STATES; j++)
+                rowSum += m_A[i][j];
+            
+            if(rowSum > 1e-12)
+            {
+                for(int j = 0; j < HMM_STATES; j++)
+                    m_A[i][j] /= rowSum;
+            }
+        }
     }
 
     void Update(const double atrRatio, const double trendStrength)
@@ -74,6 +127,24 @@ public:
         {
             for(int j = 0; j < HMM_STATES; j++)
                 m_pi[j] = newPi[j] / scale;
+        }
+        
+        // Track state transitions for learning
+        if(m_learningEnabled)
+        {
+            int currentRegime = MostLikely();
+            m_transitionCount[m_lastRegime][currentRegime]++;
+            m_stateVisitCount[m_lastRegime]++;
+            m_lastRegime = currentRegime;
+            
+            // Update transition matrix periodically
+            static int updateCounter = 0;
+            updateCounter++;
+            if(updateCounter >= 100)
+            {
+                UpdateTransitionMatrix();
+                updateCounter = 0;
+            }
         }
     }
 

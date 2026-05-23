@@ -1,13 +1,82 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-05-21
-- Status: Batch 82 - Strategic Signal Participation, Adaptive Exits & ATR-Based Holding
+- Last Updated: 2026-05-23
+- Status: Batch 90 - Visualization System Audit Fixes
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.
 
 ## System Snapshot
+- **Visualization System Audit Fixes (Batch 90):** Comprehensive chart object management and visualization safety improvements:
+  - Fixed hardcoded chart ID 0 in StrategyUnifiedICT that caused cross-chart contamination
+  - Converted StrategyUnifiedICT to use CChartDrawingManager instead of direct MT5 API calls
+  - Converted StrategyFibonacci to use CChartDrawingManager for consistent drawing pattern
+  - Added global object counter with tiered alert thresholds (800 warning, 900 critical, 950 emergency)
+  - Implemented periodic logging of object counts with drawing statistics dashboard
+  - Reduced maxObjectAge from 500 to 150 bars to prevent excessive object accumulation
+  - Added coordinate validation (valid time/price, no NaN/Infinity, reasonable ranges)
+  - Replaced bitwise OR color operations with explicit RGB values for consistent rendering
+  - Wrapped debug logging in CChartDrawingManager behind enableDebugMode flag
+  - Added SafeObjectsDeleteAll with verification of deletion counts
+  - Added per-strategy object limit enforcement and dirty-flag optimization
+  - Integrated drawing statistics into VisualDashboard showing global/per-strategy counts
+
+- **Module 6 Consensus & Decision Logic Fixes (Batch 89):** Critical consensus safety improvements:
+  - Raised minimum live voters from 1 to 2, preventing single-strategy decisions
+  - Increased quorum threshold from 48% to 60% for stronger consensus requirements
+  - Rebalanced strategy weights: ICT strategies (UnifiedICT, UnicornModel, PowerOfThree) reduced from 2.2-2.4 to 1.2
+  - Disabled Elliott Wave from consensus voting (weight = 0.0) due to unreliability
+  - Ensures multi-strategy consensus system functions as intended
+- **Module 2 Strategy Engine Fixes (Batch 88):** Comprehensive strategy reliability improvements:
+  - Disabled unreliable strategies: Elliott Wave, Unified ICT (2,199 lines), Unicorn Model, Power of Three
+  - Simplified Momentum strategy from 7 to 4 indicators (-43% complexity)
+  - Fixed EMA calculation bugs in TrendEngine.mqh causing false trend identification
+  - Standardized ADX thresholds across all timeframes (20/25/30/40)
+  - Implemented symbol-specific Fibonacci precision (JPY: 0.001, Standard: 0.01, 5-digit: 0.00001)
+  - Added crossover validation with hysteresis to prevent false signals
+  - Reduced ICT strategy weights from 2.2-2.4 → 1.2 (-48% reduction)
+  - Added timeframe validation for scalping mode (M1-M15 range)
+- **Module 5 Execution & Order Management Fixes (Batch 87):** Comprehensive execution hardening:
+  - Reduced maximum spread limit from 1500 to 50 points for safer trading
+  - Created unified `CPositionStateManager` replacing multiple unsynchronized arrays
+  - Implemented dynamic slippage adjustment based on ATR volatility
+  - Added configurable dynamic slippage parameters (ATR %, min/max bounds)
+  - Enhanced synthetic spike detection with configurable confirmation window (default: 2 windows)
+  - Added execution quality metrics tracking (fill rate, slippage, latency, spread costs)
+  - Implemented smart order routing based on execution history
+  - Added comprehensive execution quality reporting with `GenerateExecutionQualityReport()`
+  - New file: `Core/Trading/PositionStateManager.mqh` (unified position state tracking)
+- **Module 7 Market Analysis & Visualization Fixes (Batch 86):** Comprehensive fixes for visualization and market analysis robustness:
+  - Added chart object limit enforcement (900 object cap) to prevent MT5 terminal crashes
+  - Implemented LRU cleanup strategy for chart objects
+  - Enhanced regime detection with confidence tracking and stability requirements (3 bars)
+  - Added `confirmedState` to prevent rapid regime flipping on noisy data
+  - Added ATR validation test function for runtime verification
+  - Updated StrategyUnifiedICT to respect object limits before drawing
+- **Module 4 Risk Management Fixes (Batch 85):** Critical risk management hardening:
+  - Fixed critical risk constants: `MAX_RISK_PER_TRADE` from 100.0 → 2.0%, `MAX_TOTAL_RISK` from 100.0 → 10.0%
+  - Set safe default risk values in `CUnifiedRiskManager`: 2% per trade, 6% daily, 10% portfolio
+  - Added currency conversion in `CPositionSizer` for accurate position sizing across non-USD accounts
+  - Increased margin safety buffer from 5% to 20% (max 80% of free margin used)
+  - Added minimum price threshold to volatility adjustment to prevent exaggerated risk on low-priced symbols
+  - Enhanced emergency drawdown stop with volatility checks and warnings
+- **Module 8 Python External Integration Fixes (Batch 85):** Comprehensive fixes for Python bridge reliability:
+  - Added ZMQ connection timeout handling (5s request timeout) to prevent indefinite hangs
+  - Implemented reconnection logic with exponential backoff (2s → max 30s) and configurable max attempts
+  - Added heartbeat monitoring with configurable timeout (default 30s)
+  - Implemented local AI fallback mode when Python bridge is unavailable
+  - Added message serialization validation (JSON structure validation)
+  - Added version compatibility check (requires v1.0.0+)
+  - Added comprehensive health monitoring dashboard with real-time status logging
+  - Added startup validation check for Python bridge connectivity
+  - Added HTTP server endpoint (`http://127.0.0.1:8000`) with FastAPI for MQL5 compatibility (MQL5 lacks native ZMQ support)
+  - New endpoints: `/predict`, `/health`, `/heartbeat`, `/version`
+  - New files: `Core/Utils/PythonBridge.mqh` (MQL5 bridge class)
+- **Module 1 Architecture & Core Infrastructure Fixes (Batch 84):** Addresses critical infrastructure issues identified in the Module 1 audit:
+  - Added bounds checking to `CPositionStateManager` with `MAX_STATES = 500` constant to prevent memory exhaustion
+  - Added comprehensive error checking for `PositionSelectByTicket()` calls in `CTradeManager` with detailed error logging
+  - Implemented startup health checks in `OnInit()` to validate AI subsystem, Python bridge, risk manager, and position state manager initialization
 - **Strategic Signal Participation, Adaptive Exits & ATR-Based Holding (Batch 82):** `20260521.log` (planned) focuses on removing the "AI-Only" bias by relaxing restrictive strategy and consensus filters. Strategy weight decay was softened (inactivity threshold 3 -> 15 bars, decay 15% -> 5%), tier-based confidence floors were lowered (Tier 3: 0.70 -> 0.62), and the system now permits solo strategy signals to trade live when exceeding a high-quality threshold. A new "Smart SRE" (Signal Reversal Exit) logic was implemented with a `ProfitGuard` (never close winners via reversal), `Structural Invalidation` (bail on true trend flips), and a `Last Stand` zone (disable reversal exits when >82% into SL). Position management was upgraded to include dynamic ATR-based trailing stops, and global risk throttling was softened to allow scaling into winning days.
 - **Indicator/Hybrid Signal Transparency, Abstention-Aware Quorum & Scalp Participation (Batch 81):** `20260515.log` and `20260516.log` showed `AI_ONLY` runtime fingerprints rather than indicator/hybrid participation, so startup telemetry now prints both requested and effective EA mode. The new `20260517.log` indicator-only and AI-assisted sessions proved the modes were active, but generation was dying after pipeline/quorum (`INDICATOR_ONLY`: `78 -> 26 -> 0`, `AI_ASSISTED`: `16 -> 8 -> 0`) while dormant strategies and warming AI adapters inflated the denominator. Pipeline-filtered strategies now carry the rejecting filter name/reason into consensus summaries, raw-none / filtered / infrastructure abstentions are discounted before support math, and `Momentum` / `Candlestick` can register on a lower scalp/intrabar timeframe when the chart timeframe is higher.
 - **Fix Hardcoded Zero Weights for Experimental AI Families (Batch 80):** Resolves the issue where `Transformer AI` and `Ensemble AI` were generating signals but were excluded from live voting due to 0.0 weights. These strategies now receive non-zero weights from `InpAIWeightMultiplier` during registry bootstrap, ensuring they can participate in consensus voting when enabled.
@@ -230,6 +299,10 @@ Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal managemen
 - `[EXECUTION-BLOCKED]`: hard pre-send market/quote/spread/drift rejection in `CTradeManager`.
 - `[TRADE-EXECUTION]`: cycle-level live execution summary including fill ratio, request/fill price, slippage, and latency.
 - `[FILL-DIFF]`: partial-fill delta between requested and executed size.
+- `[EXECUTION-QUALITY]`: execution quality summary (total orders, fill rate, slippage, latency).
+- `[EXECUTION-REPORT]`: detailed execution quality report with comprehensive analytics.
+- `[SPREAD-COST]`: per-trade spread cost analysis in account currency.
+- `[SMART-ROUTING]`: smart order routing decisions and parameter adjustments.
 - `[PIPELINE-THRESHOLD]`: confidence-threshold source (`REGIME_RANGE`, `REGIME_TREND_RELAX`, `REGIME_BREAKOUT_RELAX`, `REGIME_CHAOS`, `REGIME_ENGINE_WARMUP`) with effective values.
 - `[COST-GATE]` now prints ratio plus raw spread and ATR, reducing false “all zeros” interpretations when the ratio is simply very small.
 - Validator soft-pass now aligns with manager-approved single-voter new-bar packets when supporting evidence is strong, reducing false negatives where consensus passed but validator re-rejected the same packet for near-threshold confidence/confluence.

@@ -18,13 +18,21 @@ private:
     double m_minFreeMarginPercent;
     double m_minMarginLevel;
     bool m_emergencyStop;
+    datetime m_emergencyStopTime;
+    int m_emergencyStopDuration;
+    datetime m_lastValidTickTime;
+    int m_maxTickGapSeconds;
     
 public:
     CTickSafetyMonitor() :
         m_maxSpreadPoints(50.0),
         m_minFreeMarginPercent(20.0),
         m_minMarginLevel(200.0),
-        m_emergencyStop(false)
+        m_emergencyStop(false),
+        m_emergencyStopTime(0),
+        m_emergencyStopDuration(300), // 5 minutes default
+        m_lastValidTickTime(0),
+        m_maxTickGapSeconds(60) // 1 minute max gap
     {
     }
     
@@ -34,7 +42,8 @@ public:
     void SetMaxSpreadPoints(double spread) { m_maxSpreadPoints = spread; }
     void SetMinFreeMarginPercent(double percent) { m_minFreeMarginPercent = percent; }
     void SetMinMarginLevel(double level) { m_minMarginLevel = level; }
-    void SetEmergencyStop(bool stop) { m_emergencyStop = stop; }
+    void SetEmergencyStop(bool stop, int durationSeconds = 300);
+    void SetMaxTickGapSeconds(int seconds) { m_maxTickGapSeconds = seconds; }
     
     // Safety checks
     bool IsSpreadAcceptable(const string symbol);
@@ -44,6 +53,7 @@ public:
     
     // Tick validation
     bool ValidateTick(const string symbol, MqlTick &tick);
+    bool HasTickGap();
 };
 
 //+------------------------------------------------------------------+
@@ -51,19 +61,11 @@ public:
 //+------------------------------------------------------------------+
 bool CTickSafetyMonitor::IsSpreadAcceptable(const string symbol)
 {
-    CSymbolInfo symbolInfo;
-    if(!symbolInfo.Name(symbol))
+    long spreadPoints = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+    if(spreadPoints == -1)
         return false;
     
-    symbolInfo.RefreshRates();
-    double spread = symbolInfo.Spread();
-    double point = symbolInfo.Point();
-    
-    if(point <= 0)
-        return false;
-    
-    double spreadPoints = spread / point;
-    return (spreadPoints <= m_maxSpreadPoints);
+    return ((double)spreadPoints <= m_maxSpreadPoints);
 }
 
 //+------------------------------------------------------------------+
@@ -78,11 +80,35 @@ bool CTickSafetyMonitor::IsMarginHealthy()
     if(equity <= 0)
         return false;
     
-    double freeMarginPercent = (freeMargin / equity) * 100.0;
+    // Calculate used margin including pending orders
+    double usedMargin = accountInfo.Margin();
+    int totalOrders = OrdersTotal();
+    double pendingMargin = 0.0;
+    
+    for(int i = totalOrders - 1; i >= 0; i--)
+    {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if(OrderType() == OP_BUY || OrderType() == OP_SELL)
+            {
+                pendingMargin += accountInfo.MarginUsed();
+            }
+        }
+    }
+    
+    double totalMarginUsed = usedMargin + pendingMargin;
+    double freeMarginAfterPending = equity - totalMarginUsed;
+    
+    double freeMarginPercent = (freeMarginAfterPending / equity) * 100.0;
     if(freeMarginPercent < m_minFreeMarginPercent)
         return false;
     
-    double marginLevel = accountInfo.MarginLevel();
+    double marginLevel = 0.0;
+    if(totalMarginUsed > 0)
+        marginLevel = (equity / totalMarginUsed) * 100.0;
+    else
+        marginLevel = accountInfo.MarginLevel();
+    
     if(marginLevel < m_minMarginLevel)
         return false;
     
@@ -94,6 +120,14 @@ bool CTickSafetyMonitor::IsMarginHealthy()
 //+------------------------------------------------------------------+
 bool CTickSafetyMonitor::IsTradingAllowed()
 {
+    // Auto-reset emergency stop after duration
+    if(m_emergencyStop && TimeCurrent() > m_emergencyStopTime + m_emergencyStopDuration)
+    {
+        m_emergencyStop = false;
+        m_emergencyStopTime = 0;
+        Print("[TickSafetyMonitor] Emergency stop auto-reset after ", m_emergencyStopDuration, " seconds");
+    }
+    
     if(m_emergencyStop)
         return false;
     
@@ -104,6 +138,39 @@ bool CTickSafetyMonitor::IsTradingAllowed()
         return false;
     
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Set emergency stop with duration                                  |
+//+------------------------------------------------------------------+
+void CTickSafetyMonitor::SetEmergencyStop(bool stop, int durationSeconds = 300)
+{
+    m_emergencyStop = stop;
+    if(stop)
+    {
+        m_emergencyStopTime = TimeCurrent();
+        m_emergencyStopDuration = durationSeconds;
+        Print("[TickSafetyMonitor] Emergency stop activated for ", durationSeconds, " seconds");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check for tick gap                                               |
+//+------------------------------------------------------------------+
+bool CTickSafetyMonitor::HasTickGap()
+{
+    if(m_lastValidTickTime == 0)
+        return false;
+    
+    int gapSeconds = (int)(TimeCurrent() - m_lastValidTickTime);
+    if(gapSeconds > m_maxTickGapSeconds)
+    {
+        PrintFormat("[TickSafetyMonitor] Tick gap detected: %d seconds > max allowed %d seconds",
+                    gapSeconds, m_maxTickGapSeconds);
+        return true;
+    }
+    
+    return false;
 }
 
 //+------------------------------------------------------------------+
@@ -124,6 +191,9 @@ bool CTickSafetyMonitor::ValidateTick(const string symbol, MqlTick &tick)
     int tickAgeSeconds = (int)MathMax(0, TimeCurrent() - tickTime);
     if(tickAgeSeconds > 30)
         return false;
+    
+    // Update last valid tick time
+    m_lastValidTickTime = tickTime;
     
     return true;
 }

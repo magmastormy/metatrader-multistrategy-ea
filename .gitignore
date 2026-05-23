@@ -35,3 +35,6 @@ Mqh_AI_audit.md
 *.ex5
 Strategy_audit_trace.md
 visualization_audit.md
+frontend.md
+agent_modules/
+.windsurf

@@ -122,15 +122,13 @@ public:
             return false;
         }
 
-        // Scale ADX thresholds by effective TF so faster frames tolerate lower ADX.
-        // M15: noTrend=12, normal at 25 | M30: 15/28 | H1: 18/30 | H4+: 20/35 (original defaults)
-        if(m_effectiveTF == PERIOD_M15)
-            m_adxSizing.SetThresholds(12.0, 18.0, 25.0, 38.0);
-        else if(m_effectiveTF == PERIOD_M30)
-            m_adxSizing.SetThresholds(15.0, 20.0, 28.0, 40.0);
-        else if(m_effectiveTF == PERIOD_H1)
-            m_adxSizing.SetThresholds(18.0, 22.0, 30.0, 42.0);
-        // H4 and above keep defaults (20/25/35/45)
+        // Note: ADX thresholds are now standardized across all timeframes
+        // using the InpADXNoTrendThreshold, InpADXWeakThreshold, InpADXNormalThreshold,
+        // and InpADXStrongThreshold input parameters in ADXPositionSizing.mqh.
+        // This resolves the arbitrariness issue where different timeframes had
+        // different hardcoded thresholds without empirical validation.
+        // Rationale: ADX measures trend strength uniformly across timeframes.
+        // Default thresholds: NoTrend<20, Weak<25, Normal<30, Strong<40.
 
         PrintFormat("[TREND v2.0] Strategy initialized for %s | chart=%s | analysis=%s",
                     symbol, EnumToString(timeframe), EnumToString(m_effectiveTF));

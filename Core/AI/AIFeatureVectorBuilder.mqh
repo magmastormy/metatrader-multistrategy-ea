@@ -65,6 +65,20 @@ private:
 
     static bool EnsureBars(const string symbol, const ENUM_TIMEFRAMES timeframe, const int barShift, const int requiredLookback)
     {
+        // Enforce minimum bar shift of 1 to prevent look-ahead bias
+        // Using shift=0 would access the current incomplete bar's close price
+        if(barShift < 1)
+        {
+            static datetime s_lastShiftLog = 0;
+            datetime now = TimeCurrent();
+            if(s_lastShiftLog == 0 || (now - s_lastShiftLog) >= 300)
+            {
+                PrintFormat("[AI-FEATURE] WARNING: barShift=%d < 1, using barShift=1 to prevent look-ahead bias", barShift);
+                s_lastShiftLog = now;
+            }
+            return false;
+        }
+
         int requiredBars = barShift + requiredLookback + 5;
         int availableBars = Bars(symbol, timeframe);
         if(availableBars < requiredBars)

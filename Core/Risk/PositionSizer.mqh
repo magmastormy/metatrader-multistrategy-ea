@@ -178,8 +178,8 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
         // Get free margin
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
         
-        // Safety check - ensure we have at least 5% buffer (instead of 20%)
-        if(marginRequired > freeMargin * 0.95)
+        // Safety check - ensure we have at least 20% buffer
+        if(marginRequired > freeMargin * 0.80)
         {
             LogError(ERROR_WARNING, "PositionSizer", "Insufficient margin. Required: " + 
                      DoubleToString(marginRequired, 2) + 
@@ -552,8 +552,10 @@ double CPositionSizer::CalculateVolatilityBasedSize(const string symbolParam,
         return baseSize;
     }
     
-    // Calculate volatility ratio (normalized ATR)
-    double volatilityRatio = atr / currentPriceVal;
+    // Calculate volatility ratio with minimum price threshold to avoid exaggeration for low-priced symbols
+    double minPriceThreshold = 0.01; // Minimum price to use for normalization
+    double normalizedPrice = MathMax(currentPriceVal, minPriceThreshold);
+    double volatilityRatio = atr / normalizedPrice;
     
     // Adjust size inversely to volatility
     double volatilityAdjustment = 1.0 / (1.0 + volatilityRatio * m_params.atrMultiplier);
@@ -620,9 +622,9 @@ double CPositionSizer::ValidatePositionSize(const string symbolParam,
     double marginRequired = CalculateMarginRequirement(symbolParam, validatedSize);
     double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
     
-    if(marginRequired > freeMargin * 0.95) // Use max 95% of free margin
+    if(marginRequired > freeMargin * 0.80) // Use max 80% of free margin
     {
-        double safeSize = (freeMargin * 0.95) / (marginRequired / validatedSize);
+        double safeSize = (freeMargin * 0.80) / (marginRequired / validatedSize);
         validatedSize = MathMax(MIN_LOT_SIZE, safeSize);
         LogSizingDecision(symbolParam, validatedSize, "Adjusted for margin requirements");
     }
@@ -736,12 +738,38 @@ double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const doubl
     double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
     double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
+    string profitCurrency = SymbolInfoString(symbolParam, SYMBOL_CURRENCY_PROFIT);
+    string accountCurrency = AccountInfoString(ACCOUNT_CURRENCY);
 
     if(tickValue <= 0.0 || tickSize <= 0.0 || point <= 0.0)
         return 0.0;
 
     double stopDistancePrice = stopLossPips * point;
-    return (stopDistancePrice / tickSize) * tickValue;
+    double riskPerLot = (stopDistancePrice / tickSize) * tickValue;
+
+    // Convert to account currency if needed
+    if(profitCurrency != accountCurrency)
+    {
+        string conversionSymbol = profitCurrency + accountCurrency;
+        if(!SymbolSelect(conversionSymbol, true))
+        {
+            conversionSymbol = accountCurrency + profitCurrency;
+            if(SymbolSelect(conversionSymbol, true))
+            {
+                double conversionRate = SymbolInfoDouble(conversionSymbol, SYMBOL_BID);
+                if(conversionRate > 0)
+                    riskPerLot /= conversionRate;
+            }
+        }
+        else
+        {
+            double conversionRate = SymbolInfoDouble(conversionSymbol, SYMBOL_BID);
+            if(conversionRate > 0)
+                riskPerLot *= conversionRate;
+        }
+    }
+
+    return riskPerLot;
 }
 
 //+------------------------------------------------------------------+

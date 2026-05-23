@@ -34,6 +34,12 @@ private:
     bool m_hasCachedSignal;
     string m_lastDecisionReasonTag;
     double m_minConfidence;
+    bool m_ownsModels;  // Track ownership to prevent double-delete
+    
+    bool IsValidConfidence(const double conf) const
+    {
+        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+    }
 
 
     bool EnsureModels()
@@ -81,6 +87,7 @@ private:
         }
 
         m_modelsInitialized = true;
+        m_ownsModels = true;  // Mark adapter as owner since we created the models
         return true;
     }
 
@@ -122,15 +129,40 @@ public:
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "ENSEMBLE_UNSET";
         m_minConfidence = 0.70;
+        m_ownsModels = false;
     }
 
     virtual ~CEnsembleAIStrategyAdapter()
     {
-        // FIX: Ensemble owns the models (m_modelA, m_modelB), so we don't delete them here
-        // The ensemble destructor will handle cleanup to prevent double-delete
-        // Just clear the references
-        m_modelA = NULL;
-        m_modelB = NULL;
+        // Clean up models if this adapter owns them
+        // The ensemble's m_models.FreeMode(true) setting means it will also try to delete
+        // models when cleared, so we need to ensure we only delete if we own them
+        // and haven't already passed ownership to the ensemble
+        if(m_ownsModels)
+        {
+            // Remove models from ensemble first to prevent double-delete
+            m_ensemble.RemoveModel(m_ensemble.GetActiveModelCount() - 1);
+            if(m_ensemble.GetActiveModelCount() > 0)
+                m_ensemble.RemoveModel(m_ensemble.GetActiveModelCount() - 1);
+            
+            // Now safely delete the models
+            if(m_modelA != NULL)
+            {
+                delete m_modelA;
+                m_modelA = NULL;
+            }
+            if(m_modelB != NULL)
+            {
+                delete m_modelB;
+                m_modelB = NULL;
+            }
+        }
+        else
+        {
+            // Ensemble owns the models, just clear references
+            m_modelA = NULL;
+            m_modelB = NULL;
+        }
     }
 
     virtual bool Init(const string symbol,
@@ -206,10 +238,15 @@ public:
             double directionalConfidence = MathMax(ensembleBuy, ensembleSell);
             confidence = MathMax(0.0, MathMin(1.0, MathMax(ensembleConfidence, directionalConfidence)));
             
-            // FIX: Validate confidence is not NaN before using it
-            if(!MathIsValidNumber(confidence))
+            // Validate confidence value
+            if(!IsValidConfidence(confidence))
             {
+                m_noneVotes++;
+                m_lastDecisionReasonTag = "ENSEMBLE_INVALID_CONFIDENCE";
+                m_hasCachedSignal = false;
                 confidence = 0.0;
+                LogVoteHeartbeat();
+                return TRADE_SIGNAL_NONE;
             }
 
             // RECOVERY FIX: Exploration-mode threshold for untrained ensemble.

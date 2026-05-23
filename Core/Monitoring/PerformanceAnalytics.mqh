@@ -29,6 +29,8 @@ class CPerformanceAnalytics;
 //+------------------------------------------------------------------+
 //| Performance Analytics Class                                    |
 //+------------------------------------------------------------------+
+#define MAX_TRADES 1000
+
 class CPerformanceAnalytics : public CEnhancedErrorHandler
 {
 private:
@@ -45,21 +47,25 @@ private:
     double m_winRate;
     double m_profitFactor;
     double m_sharpeRatio;
+    double m_sharpeRatioWithRiskFree; // Sharpe ratio with risk-free rate
     double m_maxDrawdown;
     double m_recoveryFactor;
     double m_averageWin;
     double m_averageLoss;
+    double m_riskFreeRate; // Configurable risk-free rate
     
-    // Tracking arrays
+    // Tracking arrays - circular buffer
     double m_dailyReturns[];
     double m_equityCurve[];
     datetime m_tradeTimes[];
     double m_recentReturns[20];  // Last 20 trade returns for rolling metrics
+    int m_bufferIndex;
     
     // Risk metrics
     double m_currentDrawdown;
     double m_peakEquity;
     double m_currentEquity;
+    double m_equityHistoryPeak; // Track peak in circular buffer for accurate drawdown
     
     // Real-time monitoring
     datetime m_lastUpdate;
@@ -122,6 +128,9 @@ public:
     bool IsPerformanceAcceptable(void);
     ENUM_RISK_LEVEL GetCurrentRiskLevel(void);
     
+    // Set risk-free rate
+    void SetRiskFreeRate(double rate) { m_riskFreeRate = MathMax(0.0, rate); }
+    
     // Parameter adjustment recommendations (NEW)
     double GetRecommendedRiskReduction(void);
     double GetRecommendedConfidenceThreshold(void);
@@ -160,13 +169,16 @@ CPerformanceAnalytics::CPerformanceAnalytics(void) :
     m_winRate(0.0),
     m_profitFactor(0.0),
     m_sharpeRatio(0.0),
+    m_sharpeRatioWithRiskFree(0.0),
     m_maxDrawdown(0.0),
     m_recoveryFactor(0.0),
     m_averageWin(0.0),
     m_averageLoss(0.0),
+    m_riskFreeRate(BENCHMARK_RETURN), // Default to benchmark return
     m_currentDrawdown(0.0),
     m_peakEquity(0.0),
     m_currentEquity(0.0),
+    m_equityHistoryPeak(0.0),
     m_lastUpdate(0),
     m_lastReportTime(0),
     m_rollingWinRate(0.0),
@@ -176,13 +188,17 @@ CPerformanceAnalytics::CPerformanceAnalytics(void) :
     m_needsParameterAdjustment(false),
     m_performanceAcceptable(true),
     m_initialized(false),
-    m_startTime(0)
+    m_startTime(0),
+    m_bufferIndex(0)
 {
-    // Initialize arrays
-    ArrayResize(m_dailyReturns, 0);
-    ArrayResize(m_equityCurve, 0);
-    ArrayResize(m_tradeTimes, 0);
+    // Initialize arrays - circular buffer size MAX_TRADES
+    ArrayResize(m_dailyReturns, MAX_TRADES);
+    ArrayResize(m_equityCurve, MAX_TRADES);
+    ArrayResize(m_tradeTimes, MAX_TRADES);
     ArrayInitialize(m_recentReturns, 0.0);
+    ArrayInitialize(m_dailyReturns, 0.0);
+    ArrayInitialize(m_equityCurve, 0.0);
+    ArrayInitialize(m_tradeTimes, 0);
 }
 
 //+------------------------------------------------------------------+
@@ -232,15 +248,9 @@ void CPerformanceAnalytics::RecordTrade(const string tradeSymbol, const ENUM_ORD
 void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double profit)
 {
     if(!m_initialized) return;
-
+    
     m_totalTrades++;
-
-    int currentSize = ArraySize(m_tradeTimes);
-    if(currentSize <= m_totalTrades)
-    {
-        ResizeArrays(m_totalTrades + 100);
-    }
-
+    
     double riskDenominator = 0.0;
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -250,13 +260,28 @@ void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double p
         riskDenominator = MathMax(balance, equity);
     if(riskDenominator <= 0.0)
         riskDenominator = 1.0;
-
+    
     double normalizedReturn = (profit / riskDenominator) * 100.0;
     for(int i = ArraySize(m_recentReturns) - 1; i > 0; i--)
         m_recentReturns[i] = m_recentReturns[i - 1];
     m_recentReturns[0] = normalizedReturn;
-    m_tradeTimes[m_totalTrades - 1] = TimeCurrent();
-    m_dailyReturns[m_totalTrades - 1] = normalizedReturn;
+    
+    // Store in circular buffer
+    m_tradeTimes[m_bufferIndex] = TimeCurrent();
+    m_dailyReturns[m_bufferIndex] = normalizedReturn;
+    
+    // Update equity curve in circular buffer
+    m_currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    m_equityCurve[m_bufferIndex] = m_currentEquity;
+    
+    // Update peak equity
+    if(m_currentEquity > m_peakEquity)
+        m_peakEquity = m_currentEquity;
+    
+    // Increment buffer index, wrap around
+    m_bufferIndex++;
+    if(m_bufferIndex >= MAX_TRADES)
+        m_bufferIndex = 0;
     
     // Update profit/loss tracking
     if(profit > 0)
@@ -323,16 +348,8 @@ void CPerformanceAnalytics::UpdateEquityCurve(void)
     
     m_currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     
-    // Resize equity curve array if needed
-    int currentSize = ArraySize(m_equityCurve);
-    if(currentSize <= m_totalTrades)
-    {
-        ArrayResize(m_equityCurve, m_totalTrades + 100);
-    }
-    
-    // Record current equity
-    if(m_totalTrades > 0)
-        m_equityCurve[m_totalTrades - 1] = m_currentEquity;
+    // Update current index in circular buffer
+    m_equityCurve[m_bufferIndex] = m_currentEquity;
     
     // Update peak equity
     if(m_currentEquity > m_peakEquity)
@@ -370,6 +387,7 @@ SPerformanceMetrics CPerformanceAnalytics::GetPerformanceMetrics(void)
     metrics.averageLoss = m_averageLoss;
     metrics.profitFactor = m_profitFactor;
     metrics.sharpeRatio = m_sharpeRatio;
+    metrics.sharpeRatioWithRiskFree = m_sharpeRatioWithRiskFree;
     metrics.maxDrawdown = m_maxDrawdown;
     metrics.recoveryFactor = m_recoveryFactor;
     
@@ -524,30 +542,55 @@ void CPerformanceAnalytics::CalculateProfitFactor(void)
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Sharpe Ratio                                         |
+//| Calculate Sharpe Ratio                                          |
 //+------------------------------------------------------------------+
 void CPerformanceAnalytics::CalculateSharpeRatio(void)
 {
-    if(ArraySize(m_dailyReturns) < 10)
+    int validTrades = MathMin(m_totalTrades, MAX_TRADES);
+    if(validTrades < 10)
     {
         m_sharpeRatio = 0.0;
+        m_sharpeRatioWithRiskFree = 0.0;
         return;
     }
     
-    // Calculate average return
+    // Calculate average return from circular buffer
     double avgReturn = 0.0;
-    int size = ArraySize(m_dailyReturns);
-    for(int i = 0; i < size; i++)
-        avgReturn += m_dailyReturns[i];
-    avgReturn /= size;
+    int count = 0;
+    
+    // Iterate through circular buffer
+    for(int i = 0; i < validTrades; i++)
+    {
+        int index = (m_bufferIndex - 1 - i + MAX_TRADES) % MAX_TRADES;
+        avgReturn += m_dailyReturns[index];
+        count++;
+    }
+    
+    avgReturn /= count;
+    
+    // Create a temporary array for standard deviation calculation
+    double tempReturns[];
+    ArrayResize(tempReturns, validTrades);
+    
+    for(int i = 0; i < validTrades; i++)
+    {
+        int index = (m_bufferIndex - 1 - i + MAX_TRADES) % MAX_TRADES;
+        tempReturns[i] = m_dailyReturns[index];
+    }
     
     // Calculate standard deviation
-    double stdDev = CalculateStandardDeviation(m_dailyReturns);
+    double stdDev = CalculateStandardDeviation(tempReturns);
     
     if(stdDev > 0)
-        m_sharpeRatio = (avgReturn - BENCHMARK_RETURN) / stdDev;
+    {
+        m_sharpeRatio = avgReturn / stdDev; // Simple Sharpe ratio
+        m_sharpeRatioWithRiskFree = (avgReturn - m_riskFreeRate) / stdDev; // Risk-adjusted
+    }
     else
+    {
         m_sharpeRatio = 0.0;
+        m_sharpeRatioWithRiskFree = 0.0;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -591,13 +634,14 @@ double CPerformanceAnalytics::CalculateStandardDeviation(const double &returns[]
 }
 
 //+------------------------------------------------------------------+
-//| Resize Arrays                                                  |
+//| Resize Arrays (deprecated - using circular buffer)              |
 //+------------------------------------------------------------------+
 void CPerformanceAnalytics::ResizeArrays(const int newSize)
 {
-    ArrayResize(m_dailyReturns, newSize);
-    ArrayResize(m_equityCurve, newSize);
-    ArrayResize(m_tradeTimes, newSize);
+    // No longer needed - using fixed-size circular buffer
+    // ArrayResize(m_dailyReturns, newSize);
+    // ArrayResize(m_equityCurve, newSize);
+    // ArrayResize(m_tradeTimes, newSize);
 }
 
 //+------------------------------------------------------------------+

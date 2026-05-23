@@ -22,6 +22,9 @@ struct SRegimeSnapshot
     bool reuseActive;
     int stalenessSeconds;
     ENUM_REGIME_STATE state;
+    ENUM_REGIME_STATE confirmedState;
+    double regimeConfidence;
+    int regimeStabilityBars;
     bool compression;
     bool spreadShock;
     bool spreadShockCooldownActive;
@@ -41,6 +44,9 @@ struct SRegimeSnapshot
         reuseActive(false),
         stalenessSeconds(0),
         state(REGIME_RANGE),
+        confirmedState(REGIME_RANGE),
+        regimeConfidence(0.0),
+        regimeStabilityBars(0),
         compression(false),
         spreadShock(false),
         spreadShockCooldownActive(false),
@@ -529,21 +535,43 @@ public:
         double spreadToAtr = (atrValue > 0.0) ? (spreadPrice / atrValue) : 0.0;
 
         ENUM_REGIME_STATE state = REGIME_TREND;
+        double regimeConfidence = 0.5;
         if(cooldownActive || spreadToAtr > (m_maxSpreadToAtrRatio * 1.5))
+        {
             state = REGIME_CHAOS;
+            regimeConfidence = 0.9;
+        }
         else if(MathAbs(zScore) >= m_breakoutZScoreThreshold && !compression)
+        {
             state = REGIME_BREAKOUT;
+            regimeConfidence = 0.7 + MathMin(0.3, (MathAbs(zScore) - m_breakoutZScoreThreshold) * 0.2);
+        }
         else if(compression)
+        {
             state = REGIME_RANGE;
+            regimeConfidence = 0.6 + MathMin(0.3, (m_compressionRatioThreshold - bbWidthAtrRatio) * 0.1);
+        }
         else
+        {
             state = REGIME_TREND;
+            regimeConfidence = 0.5 + MathMin(0.3, bbWidthAtrRatio * 0.1);
+        }
 
+        int stabilityBars = 1;
+        if(state == m_lastSnapshot.state && m_lastSnapshot.regimeStabilityBars > 0)
+            stabilityBars = m_lastSnapshot.regimeStabilityBars + 1;
         m_consecutiveDataFaults = 0;
         m_lastSnapshot.valid = true;
         m_lastSnapshot.readinessClass = usedFallback ? "FALLBACK_RATES" : "HEALTHY";
         m_lastSnapshot.reuseActive = false;
         m_lastSnapshot.stalenessSeconds = 0;
         m_lastSnapshot.state = state;
+        m_lastSnapshot.regimeConfidence = regimeConfidence;
+        m_lastSnapshot.regimeStabilityBars = stabilityBars;
+        if(stabilityBars >= 3)
+            m_lastSnapshot.confirmedState = state;
+        else
+            m_lastSnapshot.confirmedState = m_lastSnapshot.confirmedState;
         m_lastSnapshot.compression = compression;
         m_lastSnapshot.spreadShock = spreadShock;
         m_lastSnapshot.spreadShockCooldownActive = cooldownActive;
@@ -560,9 +588,13 @@ public:
         datetime now = TimeCurrent();
         if(state != m_lastLoggedState || m_lastStateLogTime == 0 || (now - m_lastStateLogTime) >= 60)
         {
-            PrintFormat("[REGIME-STATE] %s | tf=%s | compression=%s | spread_shock=%s | cooldown=%s | spread_atr=%.4f | z=%.3f | bb_atr=%.2f",
+            PrintFormat("[REGIME-STATE] %s | tf=%s | state=%s | confirmed=%s | conf=%.2f | stable_bars=%d | compression=%s | spread_shock=%s | cooldown=%s | spread_atr=%.4f | z=%.3f | bb_atr=%.2f",
                         symbol,
                         EnumToString(timeframe),
+                        RegimeToString(state),
+                        RegimeToString(m_lastSnapshot.confirmedState),
+                        regimeConfidence,
+                        stabilityBars,
                         compression ? "true" : "false",
                         spreadShock ? "true" : "false",
                         cooldownActive ? "true" : "false",
@@ -598,6 +630,9 @@ public:
 
     double GetMaxSpreadToAtrRatio() const { return m_maxSpreadToAtrRatio; }
     double GetLateEntryZScoreLimit() const { return m_lateEntryZScoreLimit; }
+    ENUM_REGIME_STATE GetConfirmedState() const { return m_lastSnapshot.confirmedState; }
+    double GetRegimeConfidence() const { return m_lastSnapshot.regimeConfidence; }
+    int GetRegimeStabilityBars() const { return m_lastSnapshot.regimeStabilityBars; }
 };
 
 #endif // REGIME_ENGINE_MQH

@@ -1,6 +1,7 @@
 //+------------------------------------------------------------------+
 //| SimpleMomentumStrategy.mqh                                       |
 //| Basic momentum strategy using EMA crossover                      |
+//| Simplified version: 4 indicators (fast/slow MA, ATR, RSI)       |
 //+------------------------------------------------------------------+
 #ifndef __SIMPLE_MOMENTUM_STRATEGY_MQH__
 #define __SIMPLE_MOMENTUM_STRATEGY_MQH__
@@ -18,21 +19,22 @@ private:
     double  m_thresholdPoints;
     int     m_fastHandle;
     int     m_slowHandle;
-    int     m_trendHandle;         // Trend indicator (slower MA)
-    int     m_stateSlowHandle;     // Regime state EMA (200)
     int     m_atrHandle;           // Volatility filter
+    int     m_rsiHandle;          // RSI for momentum trap filter
     double  m_lastDiff;
     datetime m_lastSignalBar;      // Track last bar where signal was generated
     bool     m_enableScalping;     // Allow rapid signals
     int      m_scalpCooldownSeconds;
-    double   m_minTrendStrength;   // Minimum trend strength for trades
     double   m_minVolatility;      // Minimum volatility threshold
     double   m_atrThresholdMult;   // Dynamic threshold multiplier
-    int      m_rsiHandle;          // RSI for momentum trap filter
-    int      m_volumeHandle;       // Tick volume confirmation
     datetime m_lastSignalTimestamp;     // Track absolute time of last signal
     string   m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
+    int      m_minConfirmationBars; // Minimum bars for crossover confirmation (hysteresis)
+    
+    // Timeframe validation bounds for scalping mode
+    ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
+    ENUM_TIMEFRAMES m_maxScalpTimeframe;  // Maximum allowed timeframe for scalping (default: M15)
 
     void LogRejectEvent(const string reasonTag)
     {
@@ -48,6 +50,65 @@ private:
         m_lastRejectLogTime = nowTime;
     }
 
+    //+------------------------------------------------------------------+
+    //| ValidateCrossoverWithHysteresis                                   |
+    //| Purpose: Verify crossover persists for minimum bars to filter     |
+    //|         false signals during volatile periods                     |
+    //|                                                                  |
+    //| Parameters:                                                      |
+    //|   direction: +1 for bullish crossover, -1 for bearish crossover   |
+    //|   threshold: Minimum gap between fast and slow MAs                |
+    //|   minBars: Number of bars crossover must persist (hysteresis)    |
+    //|                                                                  |
+    //| Returns: true if crossover is confirmed, false if it's just noise |
+    //+------------------------------------------------------------------+
+    bool ValidateCrossoverWithHysteresis(const int direction, const double threshold, const int minBars)
+    {
+        // Need at least minBars + 1 bars of historical data (including current)
+        int requiredBars = minBars + 1;
+        int maxBars = MathMax(requiredBars, 5); // Fetch extra for safety
+        
+        double fastBuffer[];
+        double slowBuffer[];
+        
+        if(CopyBuffer(m_fastHandle, 0, 1, maxBars, fastBuffer) < requiredBars ||
+           CopyBuffer(m_slowHandle, 0, 1, maxBars, slowBuffer) < requiredBars)
+        {
+            PrintFormat("[MOMENTUM] Failed to fetch %d bars for crossover validation", maxBars);
+            return false;
+        }
+        
+        // direction: +1 = bullish (fast crosses above slow)
+        // direction: -1 = bearish (fast crosses below slow)
+        for(int i = 0; i < minBars; i++)
+        {
+            double diff = fastBuffer[i] - slowBuffer[i];
+            
+            if(direction > 0) // Bullish: fast must be above slow + threshold
+            {
+                if(diff <= threshold)
+                {
+                    PrintFormat("[MOMENTUM] Crossover validation FAILED at bar %d: diff=%.5f <= threshold=%.5f", 
+                               i, diff, threshold);
+                    return false;
+                }
+            }
+            else // Bearish: fast must be below slow - threshold
+            {
+                if(diff >= -threshold)
+                {
+                    PrintFormat("[MOMENTUM] Crossover validation FAILED at bar %d: diff=%.5f >= -threshold=%.5f", 
+                               i, diff, -threshold);
+                    return false;
+                }
+            }
+        }
+        
+        PrintFormat("[MOMENTUM] Crossover CONFIRMED for %d bars (direction=%s)", 
+                   minBars, direction > 0 ? "BULLISH" : "BEARISH");
+        return true;
+    }
+
     ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
     {
         SetDecisionReasonTag(reasonTag);
@@ -59,23 +120,16 @@ private:
     {
         if(m_fastHandle != INVALID_HANDLE) IndicatorRelease(m_fastHandle);
         if(m_slowHandle != INVALID_HANDLE) IndicatorRelease(m_slowHandle);
-        if(m_trendHandle != INVALID_HANDLE) IndicatorRelease(m_trendHandle);
-        if(m_stateSlowHandle != INVALID_HANDLE) IndicatorRelease(m_stateSlowHandle);
         if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
         if(m_rsiHandle != INVALID_HANDLE) IndicatorRelease(m_rsiHandle);
-        if(m_volumeHandle != INVALID_HANDLE) IndicatorRelease(m_volumeHandle);
 
         m_fastHandle = iMA(m_symbol, m_timeframe, m_fastPeriod, 0, MODE_EMA, PRICE_CLOSE);
         m_slowHandle = iMA(m_symbol, m_timeframe, m_slowPeriod, 0, MODE_EMA, PRICE_CLOSE);
-        m_trendHandle = iMA(m_symbol, m_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);  // Trend filter
-        m_stateSlowHandle = iMA(m_symbol, m_timeframe, 200, 0, MODE_EMA, PRICE_CLOSE); // Regime state filter
         m_atrHandle = iATR(m_symbol, m_timeframe, 14); // Standard 14-period ATR
         m_rsiHandle = iRSI(m_symbol, m_timeframe, 14, PRICE_CLOSE);
-        m_volumeHandle = iVolumes(m_symbol, m_timeframe, VOLUME_TICK);
 
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE || 
-           m_trendHandle == INVALID_HANDLE || m_stateSlowHandle == INVALID_HANDLE || 
-           m_atrHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE)
+           m_atrHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE)
         {
             PrintFormat("[MOMENTUM-STRATEGY] Failed to create indicator handles for %s", m_symbol);
             return false;
@@ -108,8 +162,6 @@ public:
         m_thresholdPoints(12.0),
         m_fastHandle(INVALID_HANDLE),
         m_slowHandle(INVALID_HANDLE),
-        m_trendHandle(INVALID_HANDLE),
-        m_stateSlowHandle(INVALID_HANDLE),
         m_atrHandle(INVALID_HANDLE),
         m_lastDiff(0.0),
         m_lastSignalBar(0),
@@ -118,23 +170,22 @@ public:
         m_lastRejectLogTime(0),
         m_enableScalping(false),
         m_scalpCooldownSeconds(20),
-        m_minTrendStrength(0.55),
         m_minVolatility(0.0005),
-        m_atrThresholdMult(0.15),
+        m_atrThresholdMult(0.20),
         m_rsiHandle(INVALID_HANDLE),
-        m_volumeHandle(INVALID_HANDLE)
+        m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
+        m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
+        m_maxScalpTimeframe(PERIOD_M15)   // Maximum timeframe for scalping mode
     {
     }
 
-    CSimpleMomentumStrategy(const string name, const int fastPeriod = 8, const int slowPeriod = 21, const double thresholdPoints = 12.0) :
+    CSimpleMomentumStrategy(const string name, const int fastPeriod = 8, const int slowPeriod = 21, const double thresholdPoints = 12.0, const int minConfirmationBars = 1) :
         CStrategyBase(name),
         m_fastPeriod(fastPeriod),
         m_slowPeriod(slowPeriod),
         m_thresholdPoints(MathMax(1.0, thresholdPoints)),
         m_fastHandle(INVALID_HANDLE),
         m_slowHandle(INVALID_HANDLE),
-        m_trendHandle(INVALID_HANDLE),
-        m_stateSlowHandle(INVALID_HANDLE),
         m_atrHandle(INVALID_HANDLE),
         m_lastDiff(0.0),
         m_lastSignalBar(0),
@@ -143,11 +194,12 @@ public:
         m_lastRejectLogTime(0),
         m_enableScalping(false),      // SCALPING MODE: Disabled by default
         m_scalpCooldownSeconds(20),
-        m_minTrendStrength(0.55),    // TREND FILTER: 55% minimum trend alignment
         m_minVolatility(0.0005),     // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
-        m_atrThresholdMult(0.20),    // ADAPTIVE FILTER: Crossover gap must exceed 20% of ATR
+        m_atrThresholdMult(0.20),     // ADAPTIVE FILTER: Crossover gap must exceed 20% of ATR
         m_rsiHandle(INVALID_HANDLE),
-        m_volumeHandle(INVALID_HANDLE)
+        m_minConfirmationBars(MathMax(1, minConfirmationBars)),  // Hysteresis: min bars for crossover confirmation
+        m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
+        m_maxScalpTimeframe(PERIOD_M15)   // Maximum timeframe for scalping mode
     {
     }
 
@@ -160,6 +212,78 @@ public:
     {
         m_enableScalping = enabled;
         m_scalpCooldownSeconds = MathMax(5, cooldownSeconds);
+    }
+
+    //+------------------------------------------------------------------+
+    //| SetMinimumConfirmationBars                                        |
+    //| Configure minimum bars for crossover hysteresis validation         |
+    //|                                                                  |
+    //| bars = 1: Conservative - verify crossover holds for 1 bar        |
+    //| bars = 2: Stricter - verify crossover holds for 2 bars (default)  |
+    //| bars = 3: Very strict - verify crossover holds for 3 bars         |
+    //+------------------------------------------------------------------+
+    void SetMinimumConfirmationBars(const int bars)
+    {
+        m_minConfirmationBars = MathMax(1, MathMin(bars, 5)); // Clamp to 1-5 range
+        PrintFormat("[MOMENTUM] Minimum confirmation bars set to %d", m_minConfirmationBars);
+    }
+
+    int GetMinimumConfirmationBars() const { return m_minConfirmationBars; }
+
+    //+------------------------------------------------------------------+
+    //| SetScalpTimeframeBounds                                           |
+    //| Configure allowed timeframe range for scalping mode                 |
+    //|                                                                  |
+    //| minTf: Minimum timeframe (e.g., PERIOD_M1)                         |
+    //| maxTf: Maximum timeframe (e.g., PERIOD_M15)                       |
+    //|                                                                  |
+    //| Note: Scalping mode requires M1-M15 timeframes for appropriate     |
+    //|       signal timing. Non-scalping mode requires M5 or higher.      |
+    //+------------------------------------------------------------------+
+    void SetScalpTimeframeBounds(const ENUM_TIMEFRAMES minTf, const ENUM_TIMEFRAMES maxTf)
+    {
+        m_minScalpTimeframe = minTf;
+        m_maxScalpTimeframe = maxTf;
+        PrintFormat("[MOMENTUM] Scalp timeframe bounds set: %s to %s", 
+                   EnumToString(m_minScalpTimeframe), EnumToString(m_maxScalpTimeframe));
+    }
+
+    ENUM_TIMEFRAMES GetMinScalpTimeframe() const { return m_minScalpTimeframe; }
+    ENUM_TIMEFRAMES GetMaxScalpTimeframe() const { return m_maxScalpTimeframe; }
+
+    //+------------------------------------------------------------------+
+    //| ValidateTimeframeSuitability                                      |
+    //| Check if current timeframe is appropriate for configured mode      |
+    //|                                                                  |
+    //| Returns: true if timeframe is suitable, false otherwise            |
+    //+------------------------------------------------------------------+
+    bool ValidateTimeframeSuitability()
+    {
+        // Scalping mode: requires M1-M15 timeframes
+        if(m_enableScalping)
+        {
+            if(m_timeframe < m_minScalpTimeframe || m_timeframe > m_maxScalpTimeframe)
+            {
+                PrintFormat("[MOMENTUM-WARNING] Scalping mode on %s timeframe may produce inconsistent signals. ",
+                           EnumToString(m_timeframe));
+                PrintFormat("  Recommended: %s to %s for scalping.", 
+                           EnumToString(m_minScalpTimeframe), EnumToString(m_maxScalpTimeframe));
+                return false;
+            }
+        }
+        // Non-scalping mode: requires M5 or higher for trend following
+        else
+        {
+            if(m_timeframe < PERIOD_M5)
+            {
+                PrintFormat("[MOMENTUM-WARNING] Trend-following mode on %s timeframe may produce false signals. ",
+                           EnumToString(m_timeframe));
+                PrintFormat("  Recommended: %s or higher for trend-following strategies.", 
+                           EnumToString(PERIOD_M5));
+                return false;
+            }
+        }
+        return true;
     }
 
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
@@ -176,6 +300,13 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
 
+        //+------------------------------------------------------------------+
+        //| TIMEFRAME VALIDATION - Issue 2.1.2 Fix                           |
+        //| Validate timeframe suitability for configured mode (scalping/    |
+        //| trend-following) and log warnings for inappropriate settings    |
+        //+------------------------------------------------------------------+
+        ValidateTimeframeSuitability();
+
         // Adjust min volatility based on symbol digits
         if(SymbolInfoInteger(symbol, SYMBOL_DIGITS) <= 3) // JPY pairs or Indices
             m_minVolatility = 0.05; 
@@ -189,11 +320,8 @@ public:
     {
         if(m_fastHandle != INVALID_HANDLE) { IndicatorRelease(m_fastHandle); m_fastHandle = INVALID_HANDLE; }
         if(m_slowHandle != INVALID_HANDLE) { IndicatorRelease(m_slowHandle); m_slowHandle = INVALID_HANDLE; }
-        if(m_trendHandle != INVALID_HANDLE) { IndicatorRelease(m_trendHandle); m_trendHandle = INVALID_HANDLE; }
-        if(m_stateSlowHandle != INVALID_HANDLE) { IndicatorRelease(m_stateSlowHandle); m_stateSlowHandle = INVALID_HANDLE; }
         if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
         if(m_rsiHandle != INVALID_HANDLE) { IndicatorRelease(m_rsiHandle); m_rsiHandle = INVALID_HANDLE; }
-        if(m_volumeHandle != INVALID_HANDLE) { IndicatorRelease(m_volumeHandle); m_volumeHandle = INVALID_HANDLE; }
         CStrategyBase::Deinit();
     }
 
@@ -207,7 +335,7 @@ public:
         
         // Ensure handles are valid
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE ||
-           m_trendHandle == INVALID_HANDLE || m_stateSlowHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
+           m_atrHandle == INVALID_HANDLE)
             return RejectSignal("MOMENTUM_INVALID_HANDLES");
 
         // Conservative mode waits one full bar; scalping mode uses a short wall-clock
@@ -240,8 +368,8 @@ public:
         double staticThreshold = m_thresholdPoints * point;
 
         // --- VOLATILITY FILTER ---
-        double atrWindow[24];
-        if(CopyBuffer(m_atrHandle, 0, 1, 24, atrWindow) < 24)
+        double atrWindow[2];
+        if(CopyBuffer(m_atrHandle, 0, 1, 2, atrWindow) < 2)
             return RejectSignal("MOMENTUM_ATR_UNAVAILABLE");
         if(atrWindow[0] < m_minVolatility) 
         {
@@ -258,63 +386,35 @@ public:
         if(CopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer) < 1)
             return RejectSignal("MOMENTUM_RSI_UNAVAILABLE");
         double rsi = rsiBuffer[0];
-        
-        // --- VOLUME CONFIRMATION ---
-        double volBuffer[11];
-        if(CopyBuffer(m_volumeHandle, 0, 1, 11, volBuffer) < 11)
-            return RejectSignal("MOMENTUM_VOL_UNAVAILABLE");
-        long currentVol = (long)volBuffer[0];
-        long sumVol = 0;
-        for(int v=1; v<=10; v++) sumVol += (long)volBuffer[v];
-        long avgVol = MathMax((long)1, (long)(sumVol / 10));
-        bool volumeConfirmed = currentVol > (avgVol * 1.1); // Need 10% volume bump
 
-        double atrCompressionFloor = atrWindow[1];
-        for(int a = 2; a < 24; a++)
-        {
-            if(atrWindow[a] < atrCompressionFloor)
-                atrCompressionFloor = atrWindow[a];
-        }
-        bool compressionState = (atrCompressionFloor > 0.0 && atrWindow[0] <= (atrCompressionFloor * 1.20));
-        bool volatilityExpansion = (atrWindow[1] > 0.0 && atrWindow[0] >= (atrWindow[1] * 1.05));
-
-        // --- TREND FILTER ---
-        double trendBuffer[1];
-        double stateSlowBuffer[1];
-        if(CopyBuffer(m_trendHandle, 0, 1, 1, trendBuffer) < 1)
-            return RejectSignal("MOMENTUM_TREND_UNAVAILABLE");
-        if(CopyBuffer(m_stateSlowHandle, 0, 1, 1, stateSlowBuffer) < 1)
-            return RejectSignal("MOMENTUM_STATE_UNAVAILABLE");
-        double trendMA = trendBuffer[0];
-        double stateSlowMA = stateSlowBuffer[0];
-
-        // SOFTENED EMA STACK: Count how many of 3 alignment criteria are met.
-        // Old code required perfect 4-MA waterfall (8>21>50>200) — almost never seen on M1.
-        // New code requires 2-of-3: fast>slow, slow>trend, trend>state.
-        // This allows partial-trend entries on emerging moves.
-        int bullScore = (fastNow > slowNow ? 1 : 0) +
-                        (slowNow > trendMA  ? 1 : 0) +
-                        (trendMA > stateSlowMA ? 1 : 0);
-        int bearScore = (fastNow < slowNow ? 1 : 0) +
-                        (slowNow < trendMA  ? 1 : 0) +
-                        (trendMA < stateSlowMA ? 1 : 0);
-
-        bool bullishState = (bullScore >= 2);
-        bool bearishState = (bearScore >= 2);
-        if(!bullishState && !bearishState)
-            return RejectSignal("MOMENTUM_STATE_MISALIGNED");
-
+        // Check for crossovers
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
-        
-        // Trigger must come from compression-to-break, not pure crossover noise.
         bool crossedUp = (diffNow > threshold && diffPrev <= threshold);
         bool crossedDown = (diffNow < -threshold && diffPrev >= -threshold);
+        
+        //+------------------------------------------------------------------+
+        //| CROSSOVER VALIDATION WITH HYSTERESIS                              |
+        //| Issue 2.1.1 Fix: Verify crossover persists for min bars         |
+        //| Purpose: Filter false signals during volatile periods              |
+        //+------------------------------------------------------------------+
         if(crossedUp)
         {
+            // Validate bullish crossover holds for minimum confirmation bars
+            if(m_minConfirmationBars > 1)
+            {
+                if(!ValidateCrossoverWithHysteresis(+1, threshold, m_minConfirmationBars - 1))
+                    return RejectSignal("MOMENTUM_HYSTERESIS_BULLISH_FAILED");
+            }
             signal = TRADE_SIGNAL_BUY;
         }
         else if(crossedDown)
         {
+            // Validate bearish crossover holds for minimum confirmation bars
+            if(m_minConfirmationBars > 1)
+            {
+                if(!ValidateCrossoverWithHysteresis(-1, threshold, m_minConfirmationBars - 1))
+                    return RejectSignal("MOMENTUM_HYSTERESIS_BEARISH_FAILED");
+            }
             signal = TRADE_SIGNAL_SELL;
         }
         // SCALPING: Also signal if momentum is strong (not just crossover)
@@ -328,13 +428,6 @@ public:
 
         if(signal == TRADE_SIGNAL_NONE)
             return RejectSignal("MOMENTUM_NO_CROSSOVER");
-
-        bool scalpExpansionBypass = (m_enableScalping && volatilityExpansion);
-
-        // Confirm crossover structure using advanced metrics. Scalp mode can admit
-        // expansion without the volume bump, but it pays a confidence penalty below.
-        if(!volumeConfirmed && !scalpExpansionBypass)
-            return RejectSignal("MOMENTUM_LOW_VOLUME_BREAK");
             
         if(signal == TRADE_SIGNAL_BUY && rsi > 72.0)
             return RejectSignal("MOMENTUM_RSI_OVERBOUGHT");
@@ -342,27 +435,11 @@ public:
         if(signal == TRADE_SIGNAL_SELL && rsi < 28.0)
             return RejectSignal("MOMENTUM_RSI_OVERSOLD");
 
-        // FIX: Old code required BOTH compressionState AND volatilityExpansion simultaneously —
-        // these are near-mutually exclusive (ATR can't be at 24-bar low AND expanding at once).
-        // New logic: pass if EITHER condition is met (compression about to break, OR already breaking).
-        if(!compressionState && !volatilityExpansion)
-            return RejectSignal("MOMENTUM_NO_COMPRESSION_BREAK");
-
         if(signal != TRADE_SIGNAL_NONE)
         {
-            bool stateAligned = ((signal == TRADE_SIGNAL_BUY && bullishState) ||
-                                 (signal == TRADE_SIGNAL_SELL && bearishState));
-            if(!stateAligned)
-            {
-                return RejectSignal("MOMENTUM_TREND_MISALIGNED");
-            }
-
+            // Simplified confidence calculation
             double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.5));
-            double expansionConfidence = MathMin(1.0, atrWindow[0] / MathMax(atrWindow[1], m_minVolatility));
-            double stateConfidence = 1.0;
-            double volumeConfidence = volumeConfirmed ? 1.0 : 0.86;
-            confidence = ((momentumConfidence * 0.55) + (expansionConfidence * 0.30) + (stateConfidence * 0.15)) * volumeConfidence;
-            confidence = MathMin(1.0, MathMax(0.0, confidence));
+            confidence = MathMin(1.0, MathMax(0.0, momentumConfidence));
             
             m_lastSignalBar = iTime(m_symbol, m_timeframe, 1);
             m_lastSignalTimestamp = TimeCurrent();
