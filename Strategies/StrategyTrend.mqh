@@ -6,6 +6,8 @@
 #include "TrendFiles/TrendEntryTypes.mqh"
 #include "TrendFiles/TrendTrailingStop.mqh"
 #include "TrendFiles/ADXPositionSizing.mqh"
+// Risk Manager for AGENTS.md invariant #1
+#include "../Core/Risk/UnifiedRiskManager.mqh"
 //+------------------------------------------------------------------+
 //| Trend-Following Strategy v2.0                                    |
 //| Multi-Speed EMA (8/21/50/200), ADX-based sizing, trailing stops  |
@@ -19,21 +21,18 @@ private:
     CTrendEntryTypes*       m_entryTypes;
     CTrendTrailingStop*     m_trailingStop;
     CADXPositionSizing*     m_adxSizing;
+    
+    // Risk Management (AGENTS.md invariant #1)
+    CUnifiedRiskManager*    m_riskManager;
+    
     // Configuration
     int    m_lastBarProcessed;
-    ENUM_TIMEFRAMES m_effectiveTF; // Auto-resolved: chart TF or M30, whichever is higher
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
-
-    // Resolve the effective analysis timeframe (M15 minimum for trend strategies)
-    ENUM_TIMEFRAMES ResolveEffectiveTF(ENUM_TIMEFRAMES chartTF)
-    {
-        if(chartTF == PERIOD_M1  || chartTF == PERIOD_M2  || chartTF == PERIOD_M3  ||
-           chartTF == PERIOD_M4  || chartTF == PERIOD_M5  || chartTF == PERIOD_M6  ||
-           chartTF == PERIOD_M10 || chartTF == PERIOD_M12)
-            return PERIOD_M15;
-        return chartTF;
-    }
+    
+    // ENHANCEMENT: Higher-Timeframe Confirmation (Batch 93 - Week 1)
+    ENUM_TIMEFRAMES     m_htf;  // Higher timeframe for trend confirmation
+    int                 m_htfHandleADX;  // ADX handle for HTF
 
     void LogRejectEvent(const string reasonTag)
     {
@@ -63,10 +62,12 @@ public:
         m_entryTypes(NULL),
         m_trailingStop(NULL),
         m_adxSizing(NULL),
+        m_riskManager(NULL),
         m_lastBarProcessed(0),
-        m_effectiveTF(PERIOD_M30),
         m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0)
+        m_lastRejectLogTime(0),
+        m_htf(PERIOD_CURRENT),
+        m_htfHandleADX(INVALID_HANDLE)
     {
         m_minConfidence = 0.55; // use base class field
     }
@@ -82,6 +83,16 @@ public:
         if(m_entryTypes != NULL) { delete m_entryTypes; m_entryTypes = NULL; }
         if(m_trailingStop != NULL) { delete m_trailingStop; m_trailingStop = NULL; }
         if(m_adxSizing != NULL) { delete m_adxSizing; m_adxSizing = NULL; }
+        
+        // ENHANCEMENT: Release HTF ADX handle (Batch 93 - Week 1)
+        if(m_htfHandleADX != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_htfHandleADX);
+            m_htfHandleADX = INVALID_HANDLE;
+        }
+        
+        // Risk manager is not owned by this strategy - do NOT delete
+        m_riskManager = NULL;
     }
     //--- Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
@@ -89,49 +100,60 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
 
-        // Resolve effective analysis TF: Trend strategies need structure that only forms
-        // on M30+. If the trader is on M1-M20, silently step up to M30 for all sub-components.
-        m_effectiveTF = ResolveEffectiveTF(timeframe);
-
-        // Initialize Multi-EMA System (8/21/50/200) on effective TF
+        // Initialize Multi-EMA System (8/21/50/200)
         m_emaSystem = new CMultiEMASystem();
-        if(m_emaSystem == NULL || !m_emaSystem.Initialize(symbol, m_effectiveTF))
+        if(m_emaSystem == NULL || !m_emaSystem.Initialize(symbol, timeframe))
         {
             Print("[TREND v2.0] Failed to initialize Multi-EMA System");
             return false;
         }
-        // Initialize Entry Types Engine on effective TF
+        // Initialize Entry Types Engine
         m_entryTypes = new CTrendEntryTypes();
-        if(m_entryTypes == NULL || !m_entryTypes.Initialize(symbol, m_effectiveTF, m_emaSystem))
+        if(m_entryTypes == NULL || !m_entryTypes.Initialize(symbol, timeframe, m_emaSystem))
         {
             Print("[TREND v2.0] Failed to initialize Entry Types");
             return false;
         }
-        // Initialize Trailing Stop System on effective TF
+        // Initialize Trailing Stop System
         m_trailingStop = new CTrendTrailingStop();
-        if(m_trailingStop == NULL || !m_trailingStop.Initialize(symbol, m_effectiveTF, m_emaSystem))
+        if(m_trailingStop == NULL || !m_trailingStop.Initialize(symbol, timeframe, m_emaSystem))
         {
             Print("[TREND v2.0] Failed to initialize Trailing Stop");
             return false;
         }
-        // Initialize ADX Position Sizing on effective TF
+        // Initialize ADX Position Sizing
         m_adxSizing = new CADXPositionSizing();
-        if(m_adxSizing == NULL || !m_adxSizing.Initialize(symbol, m_effectiveTF))
+        if(m_adxSizing == NULL || !m_adxSizing.Initialize(symbol, timeframe))
         {
             Print("[TREND v2.0] Failed to initialize ADX Sizing");
             return false;
         }
 
-        // Note: ADX thresholds are now standardized across all timeframes
-        // using the InpADXNoTrendThreshold, InpADXWeakThreshold, InpADXNormalThreshold,
-        // and InpADXStrongThreshold input parameters in ADXPositionSizing.mqh.
-        // This resolves the arbitrariness issue where different timeframes had
-        // different hardcoded thresholds without empirical validation.
-        // Rationale: ADX measures trend strength uniformly across timeframes.
-        // Default thresholds: NoTrend<20, Weak<25, Normal<30, Strong<40.
+        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
+        m_riskManager = GetUnifiedRiskManager();
+        if(m_riskManager != NULL)
+            Print("[TREND v2.0] UnifiedRiskManager successfully injected - trades will pass through validation gate");
+        else
+            Print("[TREND v2.0] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
+        
+        // ENHANCEMENT: Setup Higher-Timeframe Confirmation (Batch 93 - Week 1)
+        // Use next higher timeframe for trend confirmation
+        m_htf = ResolveHigherTimeframe(timeframe);
+        m_htfHandleADX = iADX(symbol, m_htf, 14);
+        
+        if(m_htfHandleADX == INVALID_HANDLE)
+        {
+            PrintFormat("[TREND v2.0] WARNING: Failed to create HTF ADX handle for %s on %s",
+                       symbol, EnumToString(m_htf));
+        }
+        else
+        {
+            PrintFormat("[TREND v2.0] HTF confirmation enabled | LTF=%s | HTF=%s | ADX Handle=%d",
+                       EnumToString(timeframe), EnumToString(m_htf), m_htfHandleADX);
+        }
 
-        PrintFormat("[TREND v2.0] Strategy initialized for %s | chart=%s | analysis=%s",
-                    symbol, EnumToString(timeframe), EnumToString(m_effectiveTF));
+        PrintFormat("[TREND v2.0] Strategy initialized for %s | TF=%s",
+                    symbol, EnumToString(timeframe));
         return true;
     }
     //--- Deinitialization
@@ -178,6 +200,11 @@ public:
         STrendEntrySignal bestEntry = m_entryTypes.GetBestEntry();
         if(bestEntry.direction == TRADE_SIGNAL_NONE)
             return RejectSignal("TREND_NO_ENTRY");
+        
+        // ENHANCEMENT: Higher-Timeframe Confirmation (Batch 93 - Week 1)
+        // Ensure LTF signal aligns with HTF trend direction
+        if(!IsHTFTrendConfirmed(bestEntry.direction))
+            return RejectSignal("TREND_HTF_CONFLICT");
         // Apply ADX-based confidence adjustment
         double adxMult = m_adxSizing.GetPositionSizeMultiplier();
         confidence = MathMin(1.0, bestEntry.confidence * (0.85 + adxMult * 0.15));
@@ -187,6 +214,46 @@ public:
         // Log the signal
         string trendState = EnumToString(m_emaSystem.GetAlignment());
         SetDecisionReasonTag(bestEntry.direction == TRADE_SIGNAL_BUY ? "TREND_SIGNAL_BUY" : "TREND_SIGNAL_SELL");
+        
+        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
+        if(m_riskManager != NULL)
+        {
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = (bestEntry.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = 0.01;  // Placeholder
+            request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(bestEntry.entryPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.takeProfitPips = (bestEntry.takeProfit > 0) ? MathAbs(bestEntry.takeProfit - bestEntry.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+            
+            SValidationResult result = m_riskManager->ValidateTradeRequest(request, "TREND");
+            if(!result.approved)
+            {
+                SetDecisionReasonTag("TREND_RISK_REJECTED");
+                PrintFormat("[TREND v2.0] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
+                           bestEntry.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                           bestEntry.entryPrice, bestEntry.stopLoss, bestEntry.takeProfit, confidence * 100,
+                           result.message);
+                return TRADE_SIGNAL_NONE;
+            }
+            confidence *= result.confidenceMultiplier;
+        }
+        
+        m_signalsGenerated++;
+        RecordSignal();
+        
+        // CONSENSUS LOGGING (AGENTS.md requirement)
+        PrintFormat("[CONSENSUS-DIAG] %s | %s | EntryType: %s | Conf: %.1f%% | Weight: %.2f | Trend: %s | Reason: %s",
+                   m_symbol,
+                   bestEntry.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   EnumToString(bestEntry.type),
+                   confidence * 100,
+                   m_weight,
+                   trendState,
+                   m_lastDecisionReasonTag);
+        
         PrintFormat("[TREND v2.0] %s: %s | Entry: %s | Conf: %.1f%% | Trend: %s | %s",
                    m_symbol,
                    bestEntry.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
@@ -206,58 +273,42 @@ public:
         STrendEntrySignal entry = m_entryTypes.GetBestEntry();
         if(entry.direction == TRADE_SIGNAL_NONE)
             return false;
+        
         stopLoss = entry.stopLoss;
         takeProfit = entry.takeProfit;
+        
+        // ENHANCEMENT: ATR-Based Exit Logic (Batch 93 - Week 1)
+        // Calculate dynamic TP levels based on ATR multiples
+        int atrHandle = iATR(m_symbol, m_timeframe, 14);
+        if(atrHandle != INVALID_HANDLE)
+        {
+            double atrBuffer[1];
+            if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) == 1 && atrBuffer[0] > 0)
+            {
+                double atr = atrBuffer[0];
+                
+                // Conservative TP: 2x ATR from entry
+                double atr_tp = entry.entryPrice + (entry.direction == TRADE_SIGNAL_BUY ? 2.0 : -2.0) * atr;
+                
+                // Use ATR-based TP if it's more conservative than original TP
+                if(entry.direction == TRADE_SIGNAL_BUY && atr_tp < takeProfit)
+                {
+                    PrintFormat("[TREND-EXIT] ATR-adjusted TP | Original=%.5f | ATR_TP=%.5f (2x ATR=%.1f pts)",
+                               takeProfit, atr_tp, 2.0 * atr / SymbolInfoDouble(m_symbol, SYMBOL_POINT));
+                    takeProfit = atr_tp;
+                }
+                else if(entry.direction == TRADE_SIGNAL_SELL && atr_tp > takeProfit)
+                {
+                    PrintFormat("[TREND-EXIT] ATR-adjusted TP | Original=%.5f | ATR_TP=%.5f (2x ATR=%.1f pts)",
+                               takeProfit, atr_tp, 2.0 * atr / SymbolInfoDouble(m_symbol, SYMBOL_POINT));
+                    takeProfit = atr_tp;
+                }
+            }
+            IndicatorRelease(atrHandle); // Release temporary handle
+        }
+        
         lotSize = m_adxSizing.CalculateLotSize(entry.entryPrice, entry.stopLoss); // Base lot adjusted by ADX and Exact distance
         return true;
-    }
-    //--- Trailing Stop Management
-    bool ManageTrailingStop(ulong ticket, ENUM_TRADE_SIGNAL direction, double entryPrice, double currentSL)
-    {
-        if(m_trailingStop == NULL)
-            return false;
-        STradeTrailInfo tradeInfo;
-        tradeInfo.ticket = ticket;
-        tradeInfo.entryPrice = entryPrice;
-        tradeInfo.currentSL = currentSL;
-        tradeInfo.isBuy = (direction == TRADE_SIGNAL_BUY);
-        double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
-        tradeInfo.highestPrice = tradeInfo.isBuy ? MathMax(entryPrice, lastPrice) : 0.0;
-        tradeInfo.lowestPrice  = tradeInfo.isBuy ? DBL_MAX : MathMin(entryPrice, lastPrice);
-        double newSL = m_trailingStop.CalculateTrailingStop(tradeInfo);
-        if(newSL != currentSL && newSL > 0)
-        {
-            // Return true to signal that SL should be updated
-            return true;
-        }
-        return false;
-    }
-    //--- Get New Trailing Stop Value
-    double GetNewTrailingStop(ENUM_TRADE_SIGNAL direction, double entryPrice, double currentSL)
-    {
-        if(m_trailingStop == NULL)
-            return currentSL;
-        STradeTrailInfo tradeInfo;
-        tradeInfo.entryPrice = entryPrice;
-        tradeInfo.currentSL = currentSL;
-        tradeInfo.isBuy = (direction == TRADE_SIGNAL_BUY);
-        double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
-        tradeInfo.highestPrice = tradeInfo.isBuy ? MathMax(entryPrice, lastPrice) : 0.0;
-        tradeInfo.lowestPrice  = tradeInfo.isBuy ? DBL_MAX : MathMin(entryPrice, lastPrice);
-        return m_trailingStop.CalculateTrailingStop(tradeInfo);
-    }
-    //--- Check Early Exit Conditions
-    bool ShouldExitEarly(ENUM_TRADE_SIGNAL direction, double entryPrice)
-    {
-        if(m_trailingStop == NULL)
-            return false;
-        STradeTrailInfo tradeInfo;
-        tradeInfo.entryPrice = entryPrice;
-        tradeInfo.isBuy = (direction == TRADE_SIGNAL_BUY);
-        double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
-        tradeInfo.highestPrice = tradeInfo.isBuy ? MathMax(entryPrice, lastPrice) : 0.0;
-        tradeInfo.lowestPrice  = tradeInfo.isBuy ? DBL_MAX : MathMin(entryPrice, lastPrice);
-        return m_trailingStop.ShouldExitEarly(tradeInfo);
     }
     //--- Get Position Size Multiplier
     double GetPositionSizeMultiplier()
@@ -280,20 +331,75 @@ public:
             return EMA_NEUTRAL;
         return m_emaSystem.GetAlignment();
     }
-    //--- Check if in Trading Session
-    bool IsInOptimalTradingTime()
+    
+private:
+    // ENHANCEMENT: Helper Methods (Batch 93 - Week 1)
+    
+    // Resolve next higher timeframe for confirmation
+    ENUM_TIMEFRAMES ResolveHigherTimeframe(ENUM_TIMEFRAMES currentTF)
     {
-        // Best trend trading during London and NY overlap (8 AM - 12 PM EST)
-        // EST is UTC-5
-        MqlDateTime dt;
-        TimeToStruct(TimeGMT(), dt);
+        switch(currentTF)
+        {
+            case PERIOD_M1:  return PERIOD_M5;
+            case PERIOD_M5:  return PERIOD_M15;
+            case PERIOD_M15: return PERIOD_H1;
+            case PERIOD_H1:  return PERIOD_H4;
+            case PERIOD_H4:  return PERIOD_D1;
+            case PERIOD_D1:  return PERIOD_W1;
+            default:         return currentTF; // No higher TF available
+        }
+    }
+    
+    // Check if HTF trend confirms LTF signal
+    bool IsHTFTrendConfirmed(ENUM_TRADE_SIGNAL ltfSignal)
+    {
+        if(m_htfHandleADX == INVALID_HANDLE)
+            return true; // Skip HTF check if handle not available
         
-        // Convert GMT to EST (UTC-5)
-        int estHour = dt.hour - 5;
-        if(estHour < 0) estHour += 24;
+        double adxBuffer[3];
+        if(CopyBuffer(m_htfHandleADX, 0, 0, 3, adxBuffer) < 3)
+            return true; // Skip on data error
         
-        // Overlap: 8 AM to 12 PM EST
-        return (estHour >= 8 && estHour <= 12);
+        double htfADX = adxBuffer[0];
+        
+        // HTF must have sufficient trend strength (ADX > 25)
+        if(htfADX < 25.0)
+        {
+            PrintFormat("[TREND-HTF] Rejected: Weak HTF trend (ADX=%.1f < 25.0)", htfADX);
+            return false;
+        }
+        
+        // Check HTF directional bias using +DI/-DI
+        double plusDIBuffer[3], minusDIBuffer[3];
+        if(CopyBuffer(m_htfHandleADX, 1, 0, 3, plusDIBuffer) < 3 ||
+           CopyBuffer(m_htfHandleADX, 2, 0, 3, minusDIBuffer) < 3)
+            return true; // Skip on data error
+        
+        double htfPlusDI = plusDIBuffer[0];
+        double htfMinusDI = minusDIBuffer[0];
+        
+        // For BUY signals, HTF should be bullish (+DI > -DI)
+        if(ltfSignal == TRADE_SIGNAL_BUY && htfPlusDI <= htfMinusDI)
+        {
+            PrintFormat("[TREND-HTF] Rejected: HTF bearish bias (+DI=%.1f <= -DI=%.1f)",
+                       htfPlusDI, htfMinusDI);
+            return false;
+        }
+        
+        // For SELL signals, HTF should be bearish (-DI > +DI)
+        if(ltfSignal == TRADE_SIGNAL_SELL && htfMinusDI <= htfPlusDI)
+        {
+            PrintFormat("[TREND-HTF] Rejected: HTF bullish bias (-DI=%.1f <= +DI=%.1f)",
+                       htfMinusDI, htfPlusDI);
+            return false;
+        }
+        
+        PrintFormat("[TREND-HTF] Confirmed | Signal=%s | HTF_ADX=%.1f | +DI=%.1f | -DI=%.1f",
+                   ltfSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   htfADX, htfPlusDI, htfMinusDI);
+        
+        return true;
     }
 };
 #endif // __STRATEGY_TREND_MQH__
+

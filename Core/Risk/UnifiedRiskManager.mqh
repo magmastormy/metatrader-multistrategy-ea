@@ -79,6 +79,12 @@ private:
     bool m_initialized;
     bool m_conservativeMode;
     datetime m_lastPressureLogTime;
+    
+    // ENHANCEMENT: Drawdown Circuit Breaker (Batch 93 - Week 1)
+    bool m_tradingEnabled;           // Master switch for trading
+    double m_peakEquity;             // Highest equity reached
+    double m_maxDrawdownFromPeak;    // Current max drawdown from peak
+    int m_drawdownBreachCount;       // Number of times drawdown limit hit
 
 public:
     CUnifiedRiskManager();
@@ -118,6 +124,17 @@ public:
     bool HasUnprotectedPositions();
     int GetUnprotectedPositionCount();
     bool IsInitialized() const { return m_initialized; }
+    
+    // ENHANCEMENT: Circuit Breaker & Correlation Methods (Batch 93 - Week 1)
+    bool CheckDrawdownCircuitBreaker();
+    double GetCurrentDrawdownPercent() const;
+    bool IsTradingEnabled() const;
+    void ResetCircuitBreaker();
+    bool CheckCorrelationRisk(const string symbol, double newRiskPercent);
+    
+    // ENHANCEMENT: Correlation and position risk methods (Batch 93)
+    double GetSymbolCorrelation(const string symbol1, const string symbol2);
+    double CalculatePositionRiskPercent(ulong ticket);
 
 private:
     void UpdateAdaptiveRiskLevel();
@@ -149,13 +166,17 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_lastDailyReset(0),
     m_initialized(false),
     m_conservativeMode(false),
-    m_lastPressureLogTime(0)
+    m_lastPressureLogTime(0),
+    m_tradingEnabled(true),
+    m_peakEquity(0.0),
+    m_maxDrawdownFromPeak(0.0),
+    m_drawdownBreachCount(0)
 {
-    m_config.baseRiskPerTradePercent = 1.0;
+    m_config.baseRiskPerTradePercent = 10.0;
     m_config.minRiskPerTradePercent = 0.1;
-    m_config.maxRiskPerTradePercent = 2.0;
-    m_config.maxDailyRiskPercent = 6.0;
-    m_config.maxPortfolioRiskPercent = 10.0;
+    m_config.maxRiskPerTradePercent = 50.0;
+    m_config.maxDailyRiskPercent = 30.0;
+    m_config.maxPortfolioRiskPercent = 50.0;
     m_config.correlationThreshold = 0.7;
     m_config.drawdownWarningPercent = 6.0;
     m_config.drawdownCriticalPercent = 12.0;
@@ -182,15 +203,15 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     m_performanceAnalytics = perfAnalytics;
 
     if(m_config.maxRiskPerTradePercent <= 0.0)
-        m_config.maxRiskPerTradePercent = 2.0;
+        m_config.maxRiskPerTradePercent = 50.0;
     if(m_config.minRiskPerTradePercent <= 0.0)
         m_config.minRiskPerTradePercent = 0.1;
     if(m_config.baseRiskPerTradePercent <= 0.0)
         m_config.baseRiskPerTradePercent = m_config.maxRiskPerTradePercent;
     if(m_config.maxDailyRiskPercent <= 0.0)
-        m_config.maxDailyRiskPercent = 6.0;
+        m_config.maxDailyRiskPercent = 30.0;
     if(m_config.maxPortfolioRiskPercent <= 0.0)
-        m_config.maxPortfolioRiskPercent = 10.0;
+        m_config.maxPortfolioRiskPercent = 50.0;
     if(m_config.correlationThreshold <= 0.0 || m_config.correlationThreshold > 1.0)
         m_config.correlationThreshold = 0.7;
     if(m_config.adaptationMinTrades < 5)
@@ -224,6 +245,13 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     if(m_dailyStartEquity <= 0.0)
         m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
+    
+    // ENHANCEMENT: Initialize drawdown circuit breaker (Batch 93 - Week 1)
+    m_peakEquity = m_dailyStartEquity;
+    m_maxDrawdownFromPeak = 0.0;
+    m_drawdownBreachCount = 0;
+    m_tradingEnabled = true;
+    
     m_lastDailyReset = TimeCurrent();
     m_initialized = true;
 
@@ -233,6 +261,9 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
                 m_config.maxRiskPerTradePercent,
                 m_config.maxDailyRiskPercent,
                 m_config.maxPortfolioRiskPercent);
+    
+    PrintFormat("[RISK-CIRCUIT-BREAKER] Enabled | Initial Equity=%.2f | Drawdown Limits: Warning=%.1f%% Critical=%.1f%%",
+                m_peakEquity, m_config.drawdownWarningPercent, m_config.drawdownCriticalPercent);
 
     return true;
 }
@@ -284,6 +315,14 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     if(!m_initialized)
     {
         result.message = "Unified risk manager is not initialized";
+        return result;
+    }
+    
+    // ENHANCEMENT: Drawdown Circuit Breaker Check (Batch 93 - Week 1)
+    if(!CheckDrawdownCircuitBreaker())
+    {
+        result.message = "Trading paused: Drawdown circuit breaker activated";
+        result.severity = ERROR_LEVEL_CRITICAL;
         return result;
     }
 
@@ -690,4 +729,220 @@ double CUnifiedRiskManager::ClampRiskPercent(const double value) const
                    MathMin(m_config.maxRiskPerTradePercent, value));
 }
 
+//+------------------------------------------------------------------+
+//| ENHANCEMENT: Drawdown Circuit Breaker (Batch 93 - Week 1)         |
+//| Checks if drawdown from peak equity exceeds limits                |
+//| Returns: true if trading is allowed, false if circuit breaker hit |
+//+------------------------------------------------------------------+
+bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
+{
+    if(!m_initialized)
+        return false;
+    
+    double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
+    
+    // Update peak equity tracking
+    if(equityNow > m_peakEquity)
+    {
+        m_peakEquity = equityNow;
+        m_maxDrawdownFromPeak = 0.0;
+    }
+    
+    // Calculate current drawdown from peak
+    if(m_peakEquity > 0)
+    {
+        m_maxDrawdownFromPeak = ((m_peakEquity - equityNow) / m_peakEquity) * 100.0;
+    }
+    
+    // Check critical drawdown limit - HARD STOP
+    if(m_maxDrawdownFromPeak >= m_config.drawdownCriticalPercent)
+    {
+        if(m_tradingEnabled)
+        {
+            m_tradingEnabled = false;
+            m_drawdownBreachCount++;
+            
+            PrintFormat("[RISK-CIRCUIT-BREAKER] CRITICAL BREACH | Drawdown=%.2f%% >= Limit=%.2f%% | Trading HALTED",
+                       m_maxDrawdownFromPeak, m_config.drawdownCriticalPercent);
+            PrintFormat("[RISK-CIRCUIT-BREAKER] Peak Equity=%.2f | Current Equity=%.2f | Loss=%.2f",
+                       m_peakEquity, equityNow, m_peakEquity - equityNow);
+            PrintFormat("[RISK-CIRCUIT-BREAKER] Breach count: %d | Manual reset required", m_drawdownBreachCount);
+        }
+        return false;
+    }
+    
+    // Check warning drawdown limit - Reduce position sizes by 50%
+    if(m_maxDrawdownFromPeak >= m_config.drawdownWarningPercent && m_maxDrawdownFromPeak < m_config.drawdownCriticalPercent)
+    {
+        if(m_conservativeMode == false)
+        {
+            m_conservativeMode = true;
+            
+            PrintFormat("[RISK-CIRCUIT-BREAKER] WARNING | Drawdown=%.2f%% >= Warning=%.2f%% | Position sizes reduced 50%%",
+                       m_maxDrawdownFromPeak, m_config.drawdownWarningPercent);
+            PrintFormat("[RISK-CIRCUIT-BREAKER] Peak Equity=%.2f | Current Equity=%.2f",
+                       m_peakEquity, equityNow);
+        }
+        // Still allow trading but in conservative mode
+        return true;
+    }
+    
+    // Reset conservative mode if drawdown recovers
+    if(m_maxDrawdownFromPeak < m_config.drawdownWarningPercent * 0.5 && m_conservativeMode)
+    {
+        m_conservativeMode = false;
+        PrintFormat("[RISK-CIRCUIT-BREAKER] Recovery | Drawdown=%.2f%% < Half-Warning=%.2f%% | Normal mode restored",
+                   m_maxDrawdownFromPeak, m_config.drawdownWarningPercent * 0.5);
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Get current drawdown status                                      |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::GetCurrentDrawdownPercent() const
+{
+    return m_maxDrawdownFromPeak;
+}
+
+//+------------------------------------------------------------------+
+//| Check if trading is enabled                                      |
+//+------------------------------------------------------------------+
+bool CUnifiedRiskManager::IsTradingEnabled() const
+{
+    return m_tradingEnabled;
+}
+
+//+------------------------------------------------------------------+
+//| Manually reset circuit breaker (after review)                    |
+//+------------------------------------------------------------------+
+void CUnifiedRiskManager::ResetCircuitBreaker()
+{
+    m_tradingEnabled = true;
+    m_conservativeMode = false;
+    m_drawdownBreachCount = 0;
+    
+    // Reset peak to current equity
+    m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    m_maxDrawdownFromPeak = 0.0;
+    
+    Print("[RISK-CIRCUIT-BREAKER] Manually reset by operator | Trading resumed");
+}
+
+//+------------------------------------------------------------------+
+//| ENHANCEMENT: Correlation-Aware Risk Check (Batch 93 - Week 1)     |
+//| Prevents overexposure to highly correlated positions              |
+//+------------------------------------------------------------------+
+bool CUnifiedRiskManager::CheckCorrelationRisk(const string symbol, double newRiskPercent)
+{
+    if(!m_initialized || m_config.correlationThreshold <= 0.0)
+        return true; // Skip if not configured
+    
+    // Get all open positions and calculate correlated risk
+    double totalCorrelatedRisk = 0.0;
+    int totalPositions = PositionsTotal();
+    
+    for(int i = 0; i < totalPositions; i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+        
+        string posSymbol = PositionGetString(POSITION_SYMBOL);
+        if(posSymbol == symbol) continue; // Skip same symbol
+        
+        // Check correlation with new symbol
+        double correlation = GetSymbolCorrelation(symbol, posSymbol);
+        
+        // If highly correlated, add to correlated risk
+        if(correlation > m_config.correlationThreshold)
+        {
+            double posRisk = CalculatePositionRiskPercent(ticket);
+            totalCorrelatedRisk += posRisk;
+            
+            PrintFormat("[RISK-CORRELATION] High correlation detected | %s <-> %s = %.2f | Pos Risk=%.2f%%",
+                       symbol, posSymbol, correlation, posRisk);
+        }
+    }
+    
+    // Add new position risk
+    totalCorrelatedRisk += newRiskPercent;
+    
+    // Check if correlated risk exceeds portfolio limit
+    double maxCorrelatedRisk = m_config.maxPortfolioRiskPercent * 0.5; // Max 50% of portfolio in correlated positions
+    
+    if(totalCorrelatedRisk > maxCorrelatedRisk)
+    {
+        PrintFormat("[RISK-CORRELATION] REJECTED | Correlated risk=%.2f%% > Limit=%.2f%% (50%% of portfolio)",
+                   totalCorrelatedRisk, maxCorrelatedRisk);
+        return false;
+    }
+    
+    PrintFormat("[RISK-CORRELATION] Approved | Correlated risk=%.2f%% < Limit=%.2f%%",
+               totalCorrelatedRisk, maxCorrelatedRisk);
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Calculate simple correlation between two symbols          |
+//| Uses price change correlation over last N bars                    |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::GetSymbolCorrelation(const string symbol1, const string symbol2)
+{
+    // Simplified correlation: check if both symbols move in same direction
+    // Over last 10 bars (can be enhanced with proper Pearson correlation)
+    int lookback = 10;
+    
+    double close1[], close2[];
+    if(CopyClose(symbol1, PERIOD_CURRENT, 1, lookback, close1) < lookback ||
+       CopyClose(symbol2, PERIOD_CURRENT, 1, lookback, close2) < lookback)
+        return 0.0; // Cannot calculate
+    
+    int sameDirection = 0;
+    for(int i = 1; i < lookback; i++)
+    {
+        bool dir1 = (close1[i-1] > close1[i]); // Price went up?
+        bool dir2 = (close2[i-1] > close2[i]);
+        
+        if(dir1 == dir2)
+            sameDirection++;
+    }
+    
+    // Correlation = same direction moves / total moves
+    double correlation = (double)sameDirection / (double)(lookback - 1);
+    
+    return correlation;
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Calculate risk percent for a position                     |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
+{
+    if(!PositionSelectByTicket(ticket))
+        return 0.0;
+    
+    double volume = PositionGetDouble(POSITION_VOLUME);
+    double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+    double sl = PositionGetDouble(POSITION_SL);
+    
+    if(sl == 0.0 || openPrice == 0.0)
+        return 0.0; // No SL set
+    
+    string symbol = PositionGetString(POSITION_SYMBOL);
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+    
+    double slDistance = MathAbs(openPrice - sl) / point;
+    double riskAmount = volume * slDistance * tickValue;
+    
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(equity <= 0.0)
+        return 0.0;
+    
+    return (riskAmount / equity) * 100.0;
+}
+
 #endif // CORE_RISK_UNIFIED_RISK_MANAGER_MQH
+

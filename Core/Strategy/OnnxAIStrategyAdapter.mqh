@@ -8,11 +8,12 @@
 #define CORE_STRATEGY_ONNX_AI_STRATEGY_ADAPTER_MQH
 
 #include "../../Interfaces/IStrategy.mqh"
+#include "../../Interfaces/IAIStrategy.mqh"
 #include "../../AIModules/OnnxBrain.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
 #include "../AI/PipelineScaler.mqh"
 
-class COnnxAIStrategyAdapter : public IStrategy
+class COnnxAIStrategyAdapter : public IAIStrategy
 {
 private:
     COnnxBrain      m_brain;
@@ -37,10 +38,11 @@ private:
     ulong           m_noneVotes;
     datetime        m_lastVoteLogTime;
     int             m_barCounter;
+    datetime        m_voteWindowStart;  // Rolling vote window start time
     
     bool IsValidConfidence(const double conf) const
     {
-        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+        return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
     }
 
     void LogVoteHeartbeat()
@@ -77,6 +79,7 @@ public:
         m_noneVotes = 0;
         m_lastVoteLogTime = 0;
         m_barCounter = 0;
+        m_voteWindowStart = TimeCurrent();
     }
 
     virtual ~COnnxAIStrategyAdapter() {}
@@ -118,10 +121,21 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
-        m_voteCount++;
+        
+        datetime now = TimeCurrent();
+        if(now - m_voteWindowStart >= 86400)
+        {
+            m_voteCount = 0;
+            m_buyVotes = 0;
+            m_sellVotes = 0;
+            m_noneVotes = 0;
+            m_voteWindowStart = now;
+            PrintFormat("[AI-VOTE][ONNX] %s | Rolling vote window reset after 24h", m_symbol);
+        }
 
         if(!m_enabled || !m_brain.IsLoaded())
         {
+            m_voteCount++;
             m_noneVotes++;
             m_lastDecisionReasonTag = "ONNX_DISABLED_OR_UNAVAILABLE";
             LogVoteHeartbeat();
@@ -136,6 +150,7 @@ public:
             return m_cachedSignal;
         }
 
+        m_voteCount++;
         double features[];
         if(!CAIFeatureVectorBuilder::BuildNNFeatureVector(m_symbol, m_timeframe, features, 1))
         {
@@ -250,6 +265,50 @@ public:
         signals = (int)m_voteCount;
         successful = 0;
         accuracy = 0.0;
+    }
+    
+    virtual double GetUncertainty(void) override
+    {
+        return 0.5;
+    }
+    
+    virtual bool IsModelHealthy(void) const override
+    {
+        return m_brain.IsLoaded();
+    }
+    
+    virtual bool IsTraining(void) const override
+    {
+        return false;
+    }
+    
+    virtual int GetTrainingSteps(void) const override
+    {
+        return 0;
+    }
+    
+    virtual double GetTemperature(void) const override
+    {
+        return 1.0;
+    }
+    
+    virtual void SetTemperature(const double temperature) override
+    {
+    }
+    
+    virtual int GetRegimeState(void) const override
+    {
+        return -1;
+    }
+    
+    virtual bool SaveCheckpoint(void) override
+    {
+        return false;
+    }
+    
+    virtual string GetLastLoadStatus(void) const override
+    {
+        return m_brain.IsLoaded() ? "LOADED" : "NOT_LOADED";
     }
 };
 

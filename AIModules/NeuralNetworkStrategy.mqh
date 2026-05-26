@@ -12,6 +12,9 @@
 #include "../Core/AI/AIFeatureVectorBuilder.mqh"
 #include "TransformerBrain.mqh"
 #include "MetaLabeler.mqh"
+#include "CNeuralCore.mqh"
+#include "CNeuralTrainingDataManager.mqh"
+#include "CNeuralCheckpointManager.mqh"
 
 #define NN_CHECKPOINT_MAGIC 1313758027
 #define NN_CHECKPOINT_VERSION 7
@@ -44,7 +47,8 @@ private:
             values[i] = m_scores[i];
         ArraySort(values);
 
-        int idx = (int)MathCeil((1.0 - m_alphaACI) * (m_count + 1)) - 1;
+        double quantileLevel = (1.0 - m_alphaACI) * (1.0 + 1.0 / (double)m_count);
+        int idx = (int)MathCeil(quantileLevel * (double)m_count) - 1;
         idx = MathMax(0, MathMin(idx, m_count - 1));
         m_quantile = values[idx];
     }
@@ -85,6 +89,7 @@ public:
 
     double GetQuantile() const { return m_quantile; }
     double GetAlpha() const { return m_alphaACI; }
+    double GetLastUncertainty() const { return m_quantile; }
 };
 
 class CNeuralRegimeTracker
@@ -120,7 +125,7 @@ public:
         }
 
         for(int i = 0; i < 4; i++)
-            m_probs[i] = 0.85 * m_probs[i] + 0.15 * target[i];
+            m_probs[i] = 0.95 * m_probs[i] + 0.05 * target[i];
 
         double sum = 0.0;
         for(int i = 0; i < 4; i++)
@@ -136,6 +141,22 @@ public:
         ArrayResize(out, 4);
         for(int i = 0; i < 4; i++)
             out[i] = m_probs[i];
+    }
+    
+    int GetCurrentRegime() const
+    {
+        // Return index of highest probability regime
+        int bestIdx = 0;
+        double maxProb = m_probs[0];
+        for(int i = 1; i < 4; i++)
+        {
+            if(m_probs[i] > maxProb)
+            {
+                maxProb = m_probs[i];
+                bestIdx = i;
+            }
+        }
+        return bestIdx;
     }
 };
 
@@ -306,80 +327,15 @@ public:
     }
 };
 
-class CNeuralCore
-{
-public:
-    static void ReLU(double &values[], const int size)
-    {
-        for(int i = 0; i < size; i++)
-            values[i] = MathMax(0.0, values[i]);
-    }
-    
-    static double ReLUDerivative(const double value)
-    {
-        return (value > 0.0) ? 1.0 : 0.0;
-    }
-    
-    static void Softmax(double &values[], const int size, const double temperature = 1.0)
-    {
-        double maxVal = values[0];
-        for(int i = 1; i < size; i++)
-            maxVal = MathMax(maxVal, values[i]);
-
-        double safeTemp = MathMax(1e-6, temperature);
-        double sum = 0.0;
-        for(int i = 0; i < size; i++)
-        {
-            values[i] = MathExp((values[i] - maxVal) / safeTemp);
-            sum += values[i];
-        }
-        if(sum <= 1e-12)
-            sum = 1.0;
-        for(int i = 0; i < size; i++)
-            values[i] /= sum;
-    }
-    
-    static void ClipGradients(double &gradW1[][], double &gradB1[], 
-                              double &gradW2[][], double &gradB2[],
-                              const double maxNorm = 1.0)
-    {
-        double norm = 0.0;
-        
-        for(int i = 0; i < ArrayRange(gradW1, 0); i++)
-            for(int j = 0; j < ArrayRange(gradW1, 1); j++)
-                norm += gradW1[i][j] * gradW1[i][j];
-        for(int j = 0; j < ArraySize(gradB1); j++)
-            norm += gradB1[j] * gradB1[j];
-        for(int i = 0; i < ArrayRange(gradW2, 0); i++)
-            for(int j = 0; j < ArrayRange(gradW2, 1); j++)
-                norm += gradW2[i][j] * gradW2[i][j];
-        for(int j = 0; j < ArraySize(gradB2); j++)
-            norm += gradB2[j] * gradB2[j];
-        
-        norm = MathSqrt(norm);
-        if(norm > maxNorm && norm > 1e-12)
-        {
-            double scale = maxNorm / norm;
-            for(int i = 0; i < ArrayRange(gradW1, 0); i++)
-                for(int j = 0; j < ArrayRange(gradW1, 1); j++)
-                    gradW1[i][j] *= scale;
-            for(int j = 0; j < ArraySize(gradB1); j++)
-                gradB1[j] *= scale;
-            for(int i = 0; i < ArrayRange(gradW2, 0); i++)
-                for(int j = 0; j < ArrayRange(gradW2, 1); j++)
-                    gradW2[i][j] *= scale;
-            for(int j = 0; j < ArraySize(gradB2); j++)
-                gradB2[j] *= scale;
-        }
-    }
-};
+// NOTE: CNeuralCore is now defined in CNeuralCore.mqh (included above)
+// The inline definition has been removed to avoid duplicate class errors
 
 class CBarrierLabelResolver
 {
 public:
     static int ResolveLabel(const double upperBarrier, const double lowerBarrier, 
                            const double exitPrice, const double entryPrice,
-                           const datetime expiryTime, const datetime currentTime)
+                           const datetime expiryTime, const datetime currentTimestamp)
     {
         if(exitPrice <= 0.0 || entryPrice <= 0.0)
             return 0;
@@ -460,6 +416,7 @@ private:
     double           m_lastLoss;
     int              m_trainingSteps;
     int              m_checkpointWrites;
+    double           m_temperature;  // Temperature for confidence calibration
     int              m_totalObservations;
     int              m_tradeLinkedLabels;
     double           m_minConfidence;
@@ -531,25 +488,32 @@ private:
         return true;
     }
 
+    double RandNormal()
+    {
+        double u1 = (NextRand() + 1.0) / (4294967296.0 + 1.0);
+        double u2 = (NextRand() + 1.0) / (4294967296.0 + 1.0);
+        return MathSqrt(-2.0 * MathLog(MathMax(u1, 1e-10))) * MathCos(2.0 * M_PI * u2);
+    }
+
     void InitWeights()
     {
-        double x1 = MathSqrt(2.0 / (double)FEATURE_VECTOR_SIZE);
-        double x2 = MathSqrt(2.0 / 32.0);
-        double x3 = MathSqrt(2.0 / 16.0);
-        double x4 = MathSqrt(2.0 / 8.0);
+        double scale1 = MathSqrt(2.0 / ((double)(FEATURE_VECTOR_SIZE + 32)));
+        double scale2 = MathSqrt(2.0 / ((double)(32 + 16)));
+        double scale3 = MathSqrt(2.0 / ((double)(16 + 8)));
+        double scale4 = MathSqrt(2.0 / ((double)(8 + 3)));
 
         for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             for(int j = 0; j < 32; j++)
-                W1[i][j] = (NextRand() - 0.5) * 2.0 * x1;
+                W1[i][j] = RandNormal() * scale1;
         for(int i = 0; i < 32; i++)
             for(int j = 0; j < 16; j++)
-                W2[i][j] = (NextRand() - 0.5) * 2.0 * x2;
+                W2[i][j] = RandNormal() * scale2;
         for(int i = 0; i < 16; i++)
             for(int j = 0; j < 8; j++)
-                W3[i][j] = (NextRand() - 0.5) * 2.0 * x3;
+                W3[i][j] = RandNormal() * scale3;
         for(int i = 0; i < 8; i++)
             for(int j = 0; j < 3; j++)
-                W4[i][j] = (NextRand() - 0.5) * 2.0 * x4;
+                W4[i][j] = RandNormal() * scale4;
 
         ArrayInitialize(B1, 0.0);
         ArrayInitialize(B2, 0.0);
@@ -740,7 +704,7 @@ private:
                 sum += hidden3[i] * W4[i][j];
             outputs[j] = sum;
         }
-        Softmax(outputs, 3);
+        CNeuralCore::Softmax(outputs, 3, m_temperature);
     }
 
     void ForwardPropagate(const double &inputs[], double &outputs[])
@@ -903,7 +867,10 @@ private:
                             const double signalConfidence,
                             const double &metaInput[])
     {
-        if(signalClass == 0 || atr <= 0.0)
+        // Allow signalClass=0 (HOLD) for pseudo-labeling, but require ATR for directional signals
+        if(signalClass < 0 || signalClass > 2)
+            return false;
+        if(signalClass != 0 && atr <= 0.0)
             return false;
 
         int idx = m_barrierHead % NN_MAX_PERSISTED_SAMPLES;
@@ -991,8 +958,27 @@ private:
 
         for(int i = 0; i < m_barrierCount; i++)
         {
-            if(m_barrierBuffer[i].resolved || m_barrierBuffer[i].signalClass == 0)
+            if(m_barrierBuffer[i].resolved)
                 continue;
+
+            // Handle HOLD observations (signalClass=0): auto-resolve as neutral label
+            if(m_barrierBuffer[i].signalClass == 0)
+            {
+                m_barrierBuffer[i].label = 0;  // HOLD -> label class 0
+                m_barrierBuffer[i].resolved = true;
+                AddTrainingExample(m_barrierBuffer[i].featureSnapshot,
+                                   m_barrierBuffer[i].featureSize,
+                                   0,  // label class 0 (HOLD)
+                                   m_barrierBuffer[i].linkedToTrade,
+                                   m_barrierBuffer[i].predictionId,
+                                   m_barrierBuffer[i].signalConfidence,
+                                   m_barrierBuffer[i].metaInput);
+                m_conformal.AddScore(1.0 - m_barrierBuffer[i].signalConfidence);
+                m_conformal.UpdateACI(false);  // HOLD is not a correct directional prediction
+                m_metaLabeler.AddSample(m_barrierBuffer[i].metaInput, 0);  // Not profitable
+                resolvedThisPass++;
+                continue;
+            }
 
             bool upperHit = (currentHigh >= m_barrierBuffer[i].upperBarrier);
             bool lowerHit = (currentLow <= m_barrierBuffer[i].lowerBarrier);
@@ -1056,8 +1042,51 @@ private:
         if(forcedSignal != TRADE_SIGNAL_NONE)
             signal = forcedSignal;
 
-        if(signal == TRADE_SIGNAL_NONE)
+        // PSEUDO-LABEL FIX: When signal is NONE but pseudo-labeling is enabled,
+        // use random exploration to bootstrap training (cold-start problem)
+        if(signal == TRADE_SIGNAL_NONE && m_enableSelfLabeling && !linkedToTrade)
+        {
+            // Random exploration: assign BUY/SELL/HOLD based on price momentum
+            double close0 = iClose(m_symbol, m_timeframe, 0);
+            double close5 = iClose(m_symbol, m_timeframe, 5);
+            if(close5 > 0.0)
+            {
+                double momentum = (close0 - close5) / close5;
+                if(momentum > 0.001)      // Upward momentum -> BUY
+                    signal = TRADE_SIGNAL_BUY;
+                else if(momentum < -0.001) // Downward momentum -> SELL
+                    signal = TRADE_SIGNAL_SELL;
+                else                       // Flat -> HOLD (label class 0)
+                {
+                    // Record as HOLD observation (no trade direction needed)
+                    predictionId = GeneratePredictionId();
+                    if(RecordBarrierEntry(0, 0.0, normalizedFeatures, FEATURE_VECTOR_SIZE, predictionId, false, 0.5, metaInput))
+                    {
+                        m_totalObservations++;
+                        m_lastObservationTime = now;
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            else
+            {
+                // Fallback: default to HOLD if can't compute momentum
+                predictionId = GeneratePredictionId();
+                if(RecordBarrierEntry(0, 0.0, normalizedFeatures, FEATURE_VECTOR_SIZE, predictionId, false, 0.5, metaInput))
+                {
+                    m_totalObservations++;
+                    m_lastObservationTime = now;
+                    return true;
+                }
+                return false;
+            }
+        }
+        else if(signal == TRADE_SIGNAL_NONE)
+        {
+            // Non-pseudo-labeling mode: reject NONE signals as before
             return false;
+        }
 
         int signalClass = (signal == TRADE_SIGNAL_BUY) ? 1 : 2;
         double atr = rawFeatures[4] * iClose(m_symbol, m_timeframe, 1);
@@ -1173,6 +1202,9 @@ private:
                 FileWriteDouble(fh, m_barrierBuffer[i].metaInput[j]);
         }
 
+        ulong checksum = ComputeCheckpointChecksum();
+        FileWriteLong(fh, (long)checksum);
+
         FileClose(fh);
         if(!NNModelStorage_PromoteTempToPrimary(tempFile, primaryFile, backupFile))
             return false;
@@ -1180,6 +1212,79 @@ private:
         m_checkpointWrites++;
         m_lastCheckpointTimestamp = TimeCurrent();
         m_labeledSinceCheckpoint = 0;
+        return true;
+    }
+
+    ulong ComputeCheckpointChecksum() const
+    {
+        ulong hash1 = 0x123456789ABCDEF0;
+        ulong hash2 = 0xFEDCBA9876543210;
+        
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+            for(int j = 0; j < 32; j++)
+            {
+                hash1 ^= (ulong)(W1[i][j] * 1000000.0);
+                hash2 ^= (ulong)(i * 31 + j);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        
+        for(int i = 0; i < 32; i++)
+            for(int j = 0; j < 16; j++)
+            {
+                hash2 ^= (ulong)(W2[i][j] * 1000000.0);
+                hash1 ^= (ulong)(i * 17 + j);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        
+        for(int i = 0; i < 16; i++)
+            for(int j = 0; j < 8; j++)
+            {
+                hash1 ^= (ulong)(W3[i][j] * 1000000.0);
+                hash2 ^= (ulong)(i * 13 + j);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        
+        for(int i = 0; i < 8; i++)
+            for(int j = 0; j < 3; j++)
+            {
+                hash2 ^= (ulong)(W4[i][j] * 1000000.0);
+                hash1 ^= (ulong)(i * 7 + j);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        
+        return hash1 ^ (hash2 << 1);
+    }
+
+    bool ValidateWeights() const
+    {
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+            for(int j = 0; j < 32; j++)
+                if(!MathIsValidNumber(W1[i][j]))
+                    return false;
+        for(int i = 0; i < 32; i++)
+            for(int j = 0; j < 16; j++)
+                if(!MathIsValidNumber(W2[i][j]))
+                    return false;
+        for(int i = 0; i < 16; i++)
+            for(int j = 0; j < 8; j++)
+                if(!MathIsValidNumber(W3[i][j]))
+                    return false;
+        for(int i = 0; i < 8; i++)
+            for(int j = 0; j < 3; j++)
+                if(!MathIsValidNumber(W4[i][j]))
+                    return false;
+        for(int i = 0; i < 32; i++)
+            if(!MathIsValidNumber(B1[i]))
+                return false;
+        for(int i = 0; i < 16; i++)
+            if(!MathIsValidNumber(B2[i]))
+                return false;
+        for(int i = 0; i < 8; i++)
+            if(!MathIsValidNumber(B3[i]))
+                return false;
+        for(int i = 0; i < 3; i++)
+            if(!MathIsValidNumber(B4[i]))
+                return false;
         return true;
     }
 
@@ -1295,13 +1400,33 @@ private:
                 m_barrierBuffer[i].metaInput[j] = FileReadDouble(fh);
         }
 
+        ulong storedChecksum = (ulong)FileReadLong(fh);
+        ulong computedChecksum = ComputeCheckpointChecksum();
+        
         FileClose(fh);
+        
+        if(storedChecksum != computedChecksum)
+        {
+            m_lastLoadStatus = "REJECTED_CHECKSUM_MISMATCH";
+            PrintFormat("[NEURAL-NET] %s Checkpoint checksum mismatch: stored=0x%016llX, computed=0x%016llX", 
+                       m_symbol, storedChecksum, computedChecksum);
+            return false;
+        }
+        
         if(!m_enableOnlineTraining)
             m_enableSelfLabeling = false;
         else if(!persistedOnlineTraining)
             m_enableSelfLabeling = false;
         else
             m_enableSelfLabeling = m_enableSelfLabeling && persistedSelfLabeling;
+        
+        if(!ValidateWeights())
+        {
+            m_lastLoadStatus = "REJECTED_INVALID_WEIGHTS";
+            PrintFormat("[NEURAL-NET] %s Checkpoint validation FAILED: NaN/Inf detected in weights", m_symbol);
+            return false;
+        }
+        
         m_lastLoadStatus = "LOADED";
         return true;
     }
@@ -1320,6 +1445,7 @@ public:
         m_lastLoss = 0.0;
         m_trainingSteps = 0;
         m_checkpointWrites = 0;
+        m_temperature = 1.0;  // Default temperature for confidence calibration
         m_totalObservations = 0;
         m_tradeLinkedLabels = 0;
         m_resolvedLabelCount = 0;
@@ -1422,6 +1548,41 @@ public:
     void SetConfidenceThreshold(double threshold)
     {
         m_minConfidence = threshold;
+    }
+
+    void SetTemperature(const double temperature)
+    {
+        m_temperature = MathMax(0.1, MathMin(10.0, temperature));
+    }
+
+    double GetTemperature() const
+    {
+        return m_temperature;
+    }
+
+    double GetLastUncertainty() const
+    {
+        return m_conformal.GetLastUncertainty();
+    }
+
+    bool IsTraining() const
+    {
+        return (m_enableOnlineTraining && m_initialized);
+    }
+
+    int GetTrainingSteps() const
+    {
+        return m_trainingSteps;
+    }
+
+    int GetCurrentRegime() const
+    {
+        return (int)m_regimeTracker.GetCurrentRegime();
+    }
+
+    string GetLastLoadStatus() const
+    {
+        return m_lastLoadStatus;
     }
 
     ENUM_TRADE_SIGNAL GetNeuralSignalCached(double &confidence)

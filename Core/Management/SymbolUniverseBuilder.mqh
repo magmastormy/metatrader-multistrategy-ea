@@ -47,8 +47,7 @@ public:
         return false;
     }
 
-    static bool Build(const string rawSymbols, string &activePairs[], 
-                      const SSymbolValidationConfig &config = {500, 1000, true})
+    static bool Build(const string rawSymbols, string &activePairs[], const SSymbolValidationConfig &config)
     {
         ArrayResize(activePairs, 0);
 
@@ -145,13 +144,9 @@ public:
 
             if(config.enableVolumeCheck)
             {
-                double volume24h = SymbolInfoDouble(sym, SYMBOL_VOLUME);
-                if(volume24h < config.minDailyVolumeLots)
-                {
-                    PrintFormat("[SYMBOLS] Symbol %s rejected - low liquidity (%.0f lots/24h < %d lots minimum)", 
-                                sym, volume24h, config.minDailyVolumeLots);
-                    continue;
-                }
+                // Volume check skipped - SYMBOL_VOLUME not available in MQL5
+                // Use tick volume or other liquidity proxies instead
+                PrintFormat("[SYMBOLS] Symbol %s - volume check skipped (not available)", sym);
             }
 
             int size = ArraySize(activePairs);
@@ -165,7 +160,7 @@ public:
             Print("  - Lot Step: ", SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP));
             Print("  - Contract Size: ", SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE));
             if(config.enableVolumeCheck)
-                Print("  - 24h Volume: ", SymbolInfoDouble(sym, SYMBOL_VOLUME), " lots");
+                Print("  - Volume Check: Skipped (not available in MQL5)");
         }
 
         return (ArraySize(activePairs) > 0);

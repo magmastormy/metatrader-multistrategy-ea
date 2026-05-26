@@ -1,18 +1,19 @@
 //+------------------------------------------------------------------+
-//| AIStrategyAdapter.mqh                                            |
-//| Adapter to integrate CNeuralNetworkStrategy into Enterprise Manager|
-//+------------------------------------------------------------------+
-#property copyright "Copyright 2025, Advanced Trading Systems"
-#property strict
-
-#include "../../Interfaces/IStrategy.mqh"
-#include "../../AIModules/NeuralNetworkStrategy.mqh"
-
-//+------------------------------------------------------------------+
-//| AI Strategy Adapter Class                                        |
-//+------------------------------------------------------------------+
-class CAIStrategyAdapter : public IStrategy
-{
+ //| AIStrategyAdapter.mqh                                            |
+ //| Adapter to integrate CNeuralNetworkStrategy into Enterprise Manager|
+ //+------------------------------------------------------------------+
+ #property copyright "Copyright 2025, Advanced Trading Systems"
+ #property strict
+ 
+ #include "../../Interfaces/IStrategy.mqh"
+ #include "../../Interfaces/IAIStrategy.mqh"
+ #include "../../AIModules/NeuralNetworkStrategy.mqh"
+ 
+ //+------------------------------------------------------------------+
+ //| AI Strategy Adapter Class                                        |
+ //+------------------------------------------------------------------+
+ class CAIStrategyAdapter : public IAIStrategy
+ {
 private:
     CNeuralNetworkStrategy* m_neuralNet;
     string m_symbol;
@@ -24,7 +25,7 @@ private:
     
     bool IsValidConfidence(const double conf) const
     {
-        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+        return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
     }
     
 public:
@@ -130,5 +131,68 @@ public:
         signals = 0;
         successful = 0;
         accuracy = 0.0;
+    }
+    
+    //+------------------------------------------------------------------+
+    //| IAIStrategy Interface Implementation                             |
+    //+------------------------------------------------------------------+
+    virtual double GetUncertainty(void) override
+    {
+        if(m_neuralNet == NULL)
+            return 1.0;
+        return m_neuralNet.GetLastUncertainty();
+    }
+    
+    virtual bool IsModelHealthy(void) const override
+    {
+        return (m_neuralNet != NULL);
+    }
+    
+    virtual bool IsTraining(void) const override
+    {
+        if(m_neuralNet == NULL)
+            return false;
+        return m_neuralNet.IsTraining();
+    }
+    
+    virtual int GetTrainingSteps(void) const override
+    {
+        if(m_neuralNet == NULL)
+            return 0;
+        return m_neuralNet.GetTrainingSteps();
+    }
+    
+    virtual double GetTemperature(void) const override
+    {
+        if(m_neuralNet == NULL)
+            return 1.0;
+        return m_neuralNet.GetTemperature();
+    }
+    
+    virtual void SetTemperature(const double temperature) override
+    {
+        if(m_neuralNet != NULL)
+            m_neuralNet.SetTemperature(temperature);
+    }
+    
+    virtual int GetRegimeState(void) const override
+    {
+        if(m_neuralNet == NULL)
+            return -1;
+        return (int)m_neuralNet.GetCurrentRegime();
+    }
+    
+    virtual bool SaveCheckpoint(void) override
+    {
+        if(m_neuralNet == NULL)
+            return false;
+        return m_neuralNet.SaveCheckpoint();
+    }
+    
+    virtual string GetLastLoadStatus(void) const override
+    {
+        if(m_neuralNet == NULL)
+            return "MODEL_NULL";
+        return m_neuralNet.GetLastLoadStatus();
     }
 };

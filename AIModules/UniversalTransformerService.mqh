@@ -69,6 +69,137 @@ public:
 //+------------------------------------------------------------------+
 //| Symbol Adaptation Head - Lightweight symbol-specific processing  |
 //+------------------------------------------------------------------+
+class CSymbolEmbedding
+{
+private:
+    double m_embedding[32];  // Learnable symbol embedding
+    uint m_symbolHash;
+    int m_updateCount;
+    
+    uint GetSymbolHash(const string &symbol) const
+    {
+        uint hash = 0;
+        for(int i = 0; i < StringLen(symbol); i++)
+        {
+            hash = hash * 31 + (uint)StringGetCharacter(symbol, i);
+        }
+        return hash;
+    }
+    
+public:
+    CSymbolEmbedding(const string &symbol)
+    {
+        m_symbolHash = GetSymbolHash(symbol);
+        m_updateCount = 0;
+        InitializeEmbedding(symbol);
+    }
+    
+    void InitializeEmbedding(const string &symbol)
+    {
+        uint hash = m_symbolHash;
+        
+        // Initialize with class-dependent seed based on symbol characteristics
+        // This creates deterministic but varied embeddings per symbol
+        for(int i = 0; i < 32; i++)
+        {
+            hash = hash * 1664525 + 1013904223;
+            m_embedding[i] = ((double)(hash % 1000) / 500.0) - 1.0;  // Range [-1, 1]
+            m_embedding[i] *= 0.1;  // Scale down for gentle adaptation
+        }
+        
+        // First few dimensions encode symbol class characteristics
+        double classEncoding[32];
+        ClassifySymbol(symbol, classEncoding);
+        for(int i = 0; i < 8; i++)
+            m_embedding[i] = classEncoding[i];
+    }
+    
+    void ClassifySymbol(const string &symbol, double &encoding[])
+    {
+        ArrayResize(encoding, 32);
+        ArrayInitialize(encoding, 0.0);
+        
+        bool isSynthetic = (StringFind(symbol, "RANDOM") >= 0 || 
+                           StringFind(symbol, "SYNTH") >= 0 ||
+                           StringFind(symbol, "_IND") >= 0);
+        bool isForex = (StringFind(symbol, "EUR") >= 0 || 
+                       StringFind(symbol, "GBP") >= 0 ||
+                       StringFind(symbol, "USD") >= 0 ||
+                       StringFind(symbol, "JPY") >= 0 ||
+                       StringFind(symbol, "AUD") >= 0);
+        bool isCrypto = (StringFind(symbol, "BTC") >= 0 || 
+                        StringFind(symbol, "ETH") >= 0 ||
+                        StringFind(symbol, "Crypto") >= 0);
+        
+        int classId = 0;
+        if(isSynthetic) classId = 1;
+        else if(isForex) classId = 2;
+        else if(isCrypto) classId = 3;
+        
+        // One-hot class encoding
+        if(classId == 1) { encoding[0] = 1.0; }
+        else if(classId == 2) { encoding[1] = 1.0; }
+        else if(classId == 3) { encoding[2] = 1.0; }
+        
+        // Additional continuous features
+        encoding[3] = (StringLen(symbol) > 6) ? 1.0 : 0.0;  // Long symbol name
+        encoding[4] = 0.5;  // Default
+    }
+    
+    void UpdateEmbedding(const double &predictionError, const double learningRate = 0.001)
+    {
+        // Hebbian-style update: increase embedding when predictions are correct
+        m_updateCount++;
+        
+        if(predictionError < 0.3)
+        {
+            // Good prediction - reinforce current embedding
+            for(int i = 0; i < 32; i++)
+            {
+                m_embedding[i] += learningRate * m_embedding[i] * (1.0 - predictionError);
+                m_embedding[i] = MathMax(-1.0, MathMin(1.0, m_embedding[i]));
+            }
+        }
+        else if(predictionError > 0.7)
+        {
+            // Poor prediction - decay towards zero
+            for(int i = 0; i < 32; i++)
+            {
+                m_embedding[i] *= 0.99;
+            }
+        }
+    }
+    
+    void ApplyToFeatures(const double &inputFeatures[], double &outputFeatures[], const int featureSize)
+    {
+        if(ArraySize(inputFeatures) < featureSize)
+            return;
+            
+        ArrayResize(outputFeatures, featureSize);
+        
+        // Blend input features with symbol embedding
+        for(int i = 0; i < featureSize && i < 32; i++)
+        {
+            // Additive combination with small weight for embedding
+            outputFeatures[i] = inputFeatures[i] + 0.1 * m_embedding[i];
+            outputFeatures[i] = MathMax(-10.0, MathMin(10.0, outputFeatures[i]));
+        }
+        
+        // Copy remaining features directly
+        for(int i = 32; i < featureSize && i < ArraySize(inputFeatures); i++)
+        {
+            outputFeatures[i] = inputFeatures[i];
+        }
+    }
+    
+    int GetUpdateCount() const { return m_updateCount; }
+    void GetEmbedding(double &embedding[]) const
+    {
+        ArrayResize(embedding, 32);
+        ArrayCopy(embedding, m_embedding);
+    }
+};
+
 class CSymbolAdaptationHead : public CObject
 {
 private:
@@ -78,6 +209,7 @@ private:
     double m_adaptationBias;
     double m_performanceHistory[20]; // Track adaptation performance
     int m_performanceCount;
+    CSymbolEmbedding* m_embedding;  // Learnable symbol embedding
     
     uint GetSymbolHash() const {
         uint hash = 0;
@@ -92,10 +224,19 @@ public:
         m_symbol = symbol;
         m_symbolClass = symbolClass;
         m_performanceCount = 0;
+        m_embedding = new CSymbolEmbedding(symbol);
         ArrayInitialize(m_performanceHistory, 0.0);
         
-        // Initialize adaptation weights based on symbol class
         InitializeAdaptationWeights();
+    }
+    
+    ~CSymbolAdaptationHead()
+    {
+        if(m_embedding != NULL)
+        {
+            delete m_embedding;
+            m_embedding = NULL;
+        }
     }
     
     void InitializeAdaptationWeights() {
@@ -163,10 +304,13 @@ public:
         
         ArrayResize(adaptedFeatures, 32);
         
-        // Apply symbol-specific weighting
+        double embeddingModified[];
+        if(m_embedding != NULL)
+            m_embedding.ApplyToFeatures(universalFeatures, embeddingModified, 32);
+        
         for(int i = 0; i < 32; i++) {
-            adaptedFeatures[i] = universalFeatures[i] * m_adaptationWeights[i] + m_adaptationBias;
-            // Clamp to reasonable range
+            double baseFeature = (ArraySize(embeddingModified) >= 32) ? embeddingModified[i] : universalFeatures[i];
+            adaptedFeatures[i] = baseFeature * m_adaptationWeights[i] + m_adaptationBias;
             adaptedFeatures[i] = MathMax(-5.0, MathMin(5.0, adaptedFeatures[i]));
         }
         
@@ -186,6 +330,13 @@ public:
             m_performanceHistory[19] = performance;
         }
         
+        // Update symbol embedding based on performance
+        if(m_embedding != NULL)
+        {
+            double perfValue = 1.0 - performance;
+            m_embedding.UpdateEmbedding(perfValue);
+        }
+        
         // Adjust weights based on performance (simplified)
         if(m_performanceCount > 5) {
             double avgPerformance = 0.0;
@@ -196,12 +347,10 @@ public:
             
             // Slight weight adjustment based on performance
             if(avgPerformance > 0.6) {
-                // Good performance - slightly increase weights
                 for(int i = 0; i < 32; i++) {
                     m_adaptationWeights[i] *= 1.01;
                 }
             } else if(avgPerformance < 0.4) {
-                // Poor performance - slightly decrease weights
                 for(int i = 0; i < 32; i++) {
                     m_adaptationWeights[i] *= 0.99;
                 }

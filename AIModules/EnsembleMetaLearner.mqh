@@ -132,10 +132,10 @@ public:
         // Track state transitions for learning
         if(m_learningEnabled)
         {
-            int currentRegime = MostLikely();
-            m_transitionCount[m_lastRegime][currentRegime]++;
+            int detectedRegime = MostLikely();
+            m_transitionCount[m_lastRegime][detectedRegime]++;
             m_stateVisitCount[m_lastRegime]++;
-            m_lastRegime = currentRegime;
+            m_lastRegime = detectedRegime;
             
             // Update transition matrix periodically
             static int updateCounter = 0;
@@ -472,6 +472,7 @@ public:
             double b = (m_modelAvgLoss[i] > 1e-9) ? (m_modelAvgWin[i] / m_modelAvgLoss[i]) : 1.0;
             double f = (p * (b + 1.0) - 1.0) / (b + 1e-9);
             kf[i] = MathMax(0.0, f) * 0.5;
+            kf[i] = MathMax(0.01, MathMin(2.0, kf[i]));
             totalPos += kf[i];
         }
 

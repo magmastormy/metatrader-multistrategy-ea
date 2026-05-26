@@ -13,6 +13,7 @@
 #include "../Utils/Enums.mqh"
 #include "../Trading/TradeManager.mqh"
 #include "../Risk/PositionSizer.mqh"
+#include "../Risk/UnifiedRiskManager.mqh"
 #include "../Utils/ErrorHandling.mqh"
 
 // Forward declarations
@@ -50,6 +51,7 @@ protected:
 
     CTradeManager*    m_tradeManager;
     CPositionSizer*   m_positionSizer;
+    CUnifiedRiskManager* m_unifiedRiskManager;  // Unified risk validation gate (injected)
     CEnhancedErrorHandler* m_errorHandler;
 
     static double     s_defaultMinConfidence;
@@ -61,7 +63,7 @@ public:
     CStrategyBase(const string name, const int magic = 0);
     virtual ~CStrategyBase();
 
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr);
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL);
     virtual void Deinit(void);
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence);
@@ -95,6 +97,7 @@ protected:
 public:
     void SetTradeManager(CTradeManager* manager);
     void SetPositionSizer(CPositionSizer* sizer);
+    CUnifiedRiskManager* GetUnifiedRiskManager() const { return m_unifiedRiskManager; }
     virtual bool Initialize(void);
     virtual bool IsInitialized(void) const;
 
@@ -132,6 +135,7 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_lastDecisionReasonTag("BASE_UNSET"),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
+    m_unifiedRiskManager(NULL),
     m_errorHandler(NULL)
 {
     m_symbol = (StringLen(Symbol()) > 0) ? Symbol() : "";
@@ -179,7 +183,7 @@ CStrategyBase::~CStrategyBase()
     m_errorHandler = NULL;
 }
 
-bool CStrategyBase::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr)
+bool CStrategyBase::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr)
 {
     if(StringLen(symbol) == 0)
         return false;
@@ -195,6 +199,10 @@ bool CStrategyBase::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, v
         return false;
     m_positionSizer = (CPositionSizer*)positionSizerPtr;
 
+    // Unified risk manager is optional (backward compatibility)
+    if(CheckPointer(unifiedRiskManagerPtr) != POINTER_INVALID)
+        m_unifiedRiskManager = (CUnifiedRiskManager*)unifiedRiskManagerPtr;
+
     m_is_initialized = (m_tradeManager != NULL && m_positionSizer != NULL);
     m_lastDecisionReasonTag = m_is_initialized ? "BASE_INITIALIZED" : "BASE_INIT_FAILED";
     return m_is_initialized;
@@ -205,6 +213,7 @@ void CStrategyBase::Deinit(void)
     if(m_is_shutting_down) return;
     m_tradeManager = NULL;
     m_positionSizer = NULL;
+    m_unifiedRiskManager = NULL;
     m_is_initialized = false;
     m_lastSignalTime = 0;
     m_errorCount = 0;

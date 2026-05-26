@@ -7,6 +7,8 @@
 #define __SIMPLE_MOMENTUM_STRATEGY_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+// Risk Manager for AGENTS.md invariant #1
+#include "../Core/Risk/UnifiedRiskManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Momentum strategy for multi-instrument orchestration             |
@@ -31,6 +33,9 @@ private:
     string   m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
     int      m_minConfirmationBars; // Minimum bars for crossover confirmation (hysteresis)
+    
+    // Risk Management (AGENTS.md invariant #1)
+    CUnifiedRiskManager* m_riskManager;
     
     // Timeframe validation bounds for scalping mode
     ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
@@ -115,6 +120,51 @@ private:
         LogRejectEvent(reasonTag);
         return TRADE_SIGNAL_NONE;
     }
+    
+    // ENHANCEMENT: RSI Divergence Detection (Batch 93 - Week 1)
+    // Detects bearish/bullish divergence to filter false breakouts
+    bool HasRSIDivergence(ENUM_TRADE_SIGNAL signal)
+    {
+        // Need at least 5 bars for divergence detection
+        double priceBuffer[6], rsiBuffer[6];
+        if(CopyClose(m_symbol, m_timeframe, 1, 6, priceBuffer) < 6 ||
+           CopyBuffer(m_rsiHandle, 0, 1, 6, rsiBuffer) < 6)
+            return false; // Skip on data error
+        
+        // Look for divergence over last 3-5 bars
+        for(int lookback = 3; lookback <= 5; lookback++)
+        {
+            // Bullish Divergence: Price makes lower low, RSI makes higher low
+            if(signal == TRADE_SIGNAL_BUY)
+            {
+                bool priceLowerLow = (priceBuffer[0] < priceBuffer[lookback]);
+                bool rsiHigherLow = (rsiBuffer[0] > rsiBuffer[lookback]);
+                
+                if(priceLowerLow && rsiHigherLow)
+                {
+                    PrintFormat("[MOMENTUM-DIV] Bullish divergence detected | Price: %.5f -> %.5f | RSI: %.1f -> %.1f",
+                               priceBuffer[lookback], priceBuffer[0], rsiBuffer[lookback], rsiBuffer[0]);
+                    return true;
+                }
+            }
+            
+            // Bearish Divergence: Price makes higher high, RSI makes lower high
+            if(signal == TRADE_SIGNAL_SELL)
+            {
+                bool priceHigherHigh = (priceBuffer[0] > priceBuffer[lookback]);
+                bool rsiLowerHigh = (rsiBuffer[0] < rsiBuffer[lookback]);
+                
+                if(priceHigherHigh && rsiLowerHigh)
+                {
+                    PrintFormat("[MOMENTUM-DIV] Bearish divergence detected | Price: %.5f -> %.5f | RSI: %.1f -> %.1f",
+                               priceBuffer[lookback], priceBuffer[0], rsiBuffer[lookback], rsiBuffer[0]);
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
 
     bool CreateHandles()
     {
@@ -175,7 +225,8 @@ public:
         m_rsiHandle(INVALID_HANDLE),
         m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
-        m_maxScalpTimeframe(PERIOD_M15)   // Maximum timeframe for scalping mode
+        m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
+        m_riskManager(NULL)
     {
     }
 
@@ -313,6 +364,13 @@ public:
         else
             m_minVolatility = 0.0005;
 
+        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
+        m_riskManager = GetUnifiedRiskManager();
+        if(m_riskManager != NULL)
+            Print("[MOMENTUM] UnifiedRiskManager successfully injected - trades will pass through validation gate");
+        else
+            Print("[MOMENTUM] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
+
         return CreateHandles();
     }
 
@@ -322,6 +380,8 @@ public:
         if(m_slowHandle != INVALID_HANDLE) { IndicatorRelease(m_slowHandle); m_slowHandle = INVALID_HANDLE; }
         if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
         if(m_rsiHandle != INVALID_HANDLE) { IndicatorRelease(m_rsiHandle); m_rsiHandle = INVALID_HANDLE; }
+        // Risk manager is not owned by this strategy - do NOT delete
+        m_riskManager = NULL;
         CStrategyBase::Deinit();
     }
 
@@ -428,6 +488,11 @@ public:
 
         if(signal == TRADE_SIGNAL_NONE)
             return RejectSignal("MOMENTUM_NO_CROSSOVER");
+        
+        // ENHANCEMENT: RSI Divergence Filter (Batch 93 - Week 1)
+        // Reject signals with bearish/bullish divergence (exhaustion warning)
+        if(HasRSIDivergence(signal))
+            return RejectSignal("MOMENTUM_DIVERGENCE_DETECTED");
             
         if(signal == TRADE_SIGNAL_BUY && rsi > 72.0)
             return RejectSignal("MOMENTUM_RSI_OVERBOUGHT");
@@ -439,12 +504,73 @@ public:
         {
             // Simplified confidence calculation
             double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.5));
+            
+            // ENHANCEMENT: Volatility-Adjusted Confidence (Batch 93 - Week 1)
+            // Reduce confidence during extreme volatility (uncertainty)
+            double atrRatio = atrWindow[0] / m_minVolatility;
+            if(atrRatio > 3.0) // Extreme volatility
+            {
+                momentumConfidence *= 0.6; // Reduce by 40%
+                PrintFormat("[MOMENTUM-VOL] High volatility detected | ATR ratio=%.2f | Confidence reduced to %.1f%%",
+                           atrRatio, momentumConfidence * 100);
+            }
+            else if(atrRatio > 2.0) // Elevated volatility
+            {
+                momentumConfidence *= 0.8; // Reduce by 20%
+                PrintFormat("[MOMENTUM-VOL] Elevated volatility | ATR ratio=%.2f | Confidence adjusted to %.1f%%",
+                           atrRatio, momentumConfidence * 100);
+            }
+            
             confidence = MathMin(1.0, MathMax(0.0, momentumConfidence));
+            
+            // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
+            if(m_riskManager != NULL)
+            {
+                STradeValidationRequest request;
+                request.symbol = m_symbol;
+                request.orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+                request.lotSize = 0.01;  // Placeholder
+                request.stopLossPips = 0;
+                request.takeProfitPips = 0;
+                request.confidence = confidence;
+                request.strategy = GetName();
+                request.clusterCode = "";
+                
+                SValidationResult result = m_riskManager->ValidateTradeRequest(request, "MOMENTUM");
+                if(!result.approved)
+                {
+                    SetDecisionReasonTag("MOMENTUM_RISK_REJECTED");
+                    PrintFormat("[MOMENTUM] Risk rejected %s Conf=%.1f%% Reason=%s",
+                               signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                               confidence * 100,
+                               result.message);
+                    return TRADE_SIGNAL_NONE;
+                }
+                confidence *= result.confidenceMultiplier;
+            }
             
             m_lastSignalBar = iTime(m_symbol, m_timeframe, 1);
             m_lastSignalTimestamp = TimeCurrent();
+            m_signalsGenerated++;
             RecordSignal();
             SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
+            
+            // CONSENSUS LOGGING (AGENTS.md requirement)
+            PrintFormat("[CONSENSUS-DIAG] %s | %s | Cross: %.1f pts | RSI: %.1f | Conf: %.1f%% | Weight: %.2f | Reason: %s",
+                       m_symbol,
+                       signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                       diffNow / point,
+                       rsi,
+                       confidence * 100,
+                       m_weight,
+                       m_lastDecisionReasonTag);
+            
+            PrintFormat("[MOMENTUM] %s: %s | Diff: %.1f pts | RSI: %.1f | Conf: %.1f%%",
+                       m_symbol,
+                       signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                       diffNow / point,
+                       rsi,
+                       confidence * 100);
         }
 
         return signal;
@@ -457,3 +583,4 @@ public:
 };
 
 #endif // __SIMPLE_MOMENTUM_STRATEGY_MQH__
+

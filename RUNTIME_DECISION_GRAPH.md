@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-05-23
+- Last Updated: 2026-05-25
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 90 - Visualization System Audit Fixes
+- Current Batch: 92 - AI Modules Comprehensive Audit Implementation
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -14,13 +14,21 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Consensus: `CEnterpriseStrategyManager`
 - Multi-Tier Validation: `CTieredSignalValidator` (Batch 60)
 - Filtering: `CUnifiedSignalPipeline`
-- AI adaptation/weights: `CAIEngine` + symbol-scoped AI adapters
+- AI adaptation/weights: `CAIEngine` + symbol-scoped AI adapters (implementing `IAIStrategy`)
+- AI modules:
+  - `CNeuralCore` - Core activations, loss functions, gradients
+  - `CNeuralTrainingDataManager` - Training examples and barrier buffer
+  - `CNeuralCheckpointManager` - Atomic checkpoint operations
+  - `CSymbolEmbedding` - Learnable symbol embeddings in transformer
 - Live authority: `MultiStrategyAutonomousEA.mq5` candidate authority gate
 - Risk veto: `CUnifiedRiskManager`
 - Execution: `CTradeManager`
 - Position lifecycle: `MultiStrategyAutonomousEA.mq5` + `CTradeManager::ManageAllPositions(...)`
 - Indicator cache lifecycle: `CIndicatorManager`
 - Python bridge integration: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
+- Shared engine & scalability: `CSharedEngineManager` (Batch 91)
+- Error aggregation & verbosity: `CEnhancedErrorHandler` (enhanced in Batch 91)
+- Bar processing & multi-timeframe: `CBarProcessor` (enhanced in Batch 91)
 
 ## End-to-End Flow
 

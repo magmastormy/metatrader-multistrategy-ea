@@ -9,6 +9,8 @@
 #define __C_POWER_OF_THREE_STRATEGY_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+// Risk Manager for AGENTS.md invariant #1
+#include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "UnifiedICTFiles/AMDDetector.mqh"
 #include "UnifiedICTFiles/LiquidityDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
@@ -27,6 +29,9 @@ private:
     CSMTDivergenceScanner*    m_smtScanner;
     bool                      m_smtAvailable;
     int                       m_lastBarCount;
+    
+    // Risk Management (AGENTS.md invariant #1)
+    CUnifiedRiskManager*      m_riskManager;
 
     bool RefreshForNewBar()
     {
@@ -53,7 +58,8 @@ public:
         m_premiumDiscount(NULL),
         m_smtScanner(NULL),
         m_smtAvailable(false),
-        m_lastBarCount(0)
+        m_lastBarCount(0),
+        m_riskManager(NULL)
     {
         OverrideMinConfidence(0.64);
     }
@@ -87,6 +93,12 @@ public:
             return false;
         }
         m_smtAvailable = m_smtScanner.Initialize(symbol, timeframe, 80);
+        
+        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
+        m_riskManager = GetUnifiedRiskManager();
+        if(m_riskManager == NULL)
+            Print("[PO3] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
+        
         m_lastBarCount = 0;
         return true;
     }
@@ -100,6 +112,8 @@ public:
         if(m_premiumDiscount != NULL) { delete m_premiumDiscount; m_premiumDiscount = NULL; }
         if(m_smtScanner != NULL) { delete m_smtScanner; m_smtScanner = NULL; }
         m_smtAvailable = false;
+        // Risk manager is not owned by this strategy - do NOT delete
+        m_riskManager = NULL;
         CStrategyBase::Deinit();
     }
 
@@ -206,9 +220,56 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
+        ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+        
+        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
+        if(m_riskManager != NULL)
+        {
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = 0.01;
+            request.stopLossPips = 0;  // PO3 doesn't calculate SL/TP here
+            request.takeProfitPips = 0;
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+            
+            SValidationResult result = m_riskManager->ValidateTradeRequest(request, "PO3");
+            if(!result.approved)
+            {
+                SetDecisionReasonTag("PO3_RISK_REJECTED");
+                PrintFormat("[PO3] Risk rejected %s at %.5f Conf=%.1f%%",
+                           signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                           currentPrice, confidence * 100);
+                return TRADE_SIGNAL_NONE;
+            }
+            confidence *= result.confidenceMultiplier;
+        }
+
         SetDecisionReasonTag(bullish ? "PO3_SIGNAL_BUY" : "PO3_SIGNAL_SELL");
+        m_signalsGenerated++;
         RecordSignal();
-        return bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+        
+        // CONSENSUS LOGGING (AGENTS.md requirement)
+        PrintFormat("[CONSENSUS-DIAG] %s | %s | AMD: %s | Sweep: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
+                   m_symbol,
+                   signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   EnumToString(state.phase),
+                   state.liquiditySwept ? "Yes" : "No",
+                   confidence * 100,
+                   m_weight,
+                   m_lastDecisionReasonTag);
+        
+        PrintFormat("[PO3] %s: %s | Phase: %s | Sweep: %s | OTE: %s | Conf: %.1f%%",
+                   m_symbol,
+                   signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   EnumToString(state.phase),
+                   state.liquiditySwept ? "Yes" : "No",
+                   oteAligned ? "Yes" : "No",
+                   confidence * 100);
+        
+        return signal;
     }
 
     virtual string GetName() const override { return "Power of Three"; }
@@ -216,3 +277,4 @@ public:
 };
 
 #endif
+

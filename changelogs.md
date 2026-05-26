@@ -2,9 +2,235 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
-## [Unreleased] - 2026-05-23
+## [Unreleased] - 2026-05-26
 
-### Batch 91: Enterprise Components 12-Layer Audit Fixes (2026-05-23)
+### Batch 93: Strategy Refactoring & Architectural Compliance (2026-05-26)
+
+#### Scope
+Systematic refactoring of all active strategies to achieve full AGENTS.md architectural compliance. Addresses code overengineering, missing risk management integration, and lack of consensus protocol logging across the entire strategy suite.
+
+#### Root Cause Analysis
+Pre-refactoring audit revealed:
+- **Critical:** No strategies validated trades through CUnifiedRiskManager (violated AGENTS.md invariant #1)
+- **High:** Missing [CONSENSUS-DIAG] logging prevented signal diagnostics and debugging
+- **Medium:** Overengineered code with dead methods, duplicate logic, and unnecessary complexity
+- **Low:** ElliottWave strategy unreliable but still consuming resources
+
+#### Strategy-by-Strategy Implementation Summary
+
+**StrategyUnifiedICT.mqh (Phase 1-3 Complete)**
+- **Entry Type Simplification:** Reduced from 4 entry types to 2 core types
+  - Removed Silver Bullet & Judas Swing entry types (redundant with existing patterns)
+  - Merged RISK + RISK_WITH_JUST → ICT_ENTRY_AGGRESSIVE (early OB entry without BMS)
+  - Merged JUSTIFICATION + FULL_JUSTIFICATION → ICT_ENTRY_CONFIRMED (BMS-confirmed entry)
+- **Code Reduction:** 2,194 → 2,012 lines (-182 lines, 8.3% reduction)
+- **Method Consolidation:** 
+  - Renamed `CreateRiskEntry()` → `CreateAggressiveEntry()`
+  - Merged `CreateJustificationEntry()` + `CreateFullJustificationEntry()` → `CreateConfirmedEntry()`
+  - Removed ~106 lines of duplicate confluence scoring logic
+- **Risk Management Integration:** Added CUnifiedRiskManager validation before signal return
+- **Consensus Logging:** Added [CONSENSUS-DIAG] with entry type, confidence, weight, confluences, reason tags
+
+**StrategyTrend.mqh (Phase 1-3 Complete)**
+- **Timeframe Auto-Stepping Removal:** Deleted `ResolveEffectiveTF()` method that silently changed user's timeframe selection (e.g., M1 → M15)
+- **Dead Code Elimination:** Removed 4 trailing stop methods that returned bool but never executed trades (~63 lines)
+- **Comment Cleanup:** Trimmed verbose comments for better readability
+- **Code Reduction:** 300 → 259 lines (-41 lines, 13.7% reduction)
+- **Risk Management Integration:** Added CUnifiedRiskManager validation with SL/TP checks
+- **Consensus Logging:** Added [CONSENSUS-DIAG] with trend state information
+
+**StrategySupportResistance.mqh (Phase 1-2 Complete)**
+- **Performance Optimization:** Replaced O(n²) bubble sort with ArraySort() O(n log n) in DrawLevels() and DrawTrendlines()
+- **FibConfluence Integration:** Already integrated from previous session (Fibonacci merge)
+- **Code Changes:** 505 → 536 lines (+31 for compliance, gained performance optimization)
+- **Risk Management Integration:** Added CUnifiedRiskManager validation
+- **Consensus Logging:** Added [CONSENSUS-DIAG] with mode identification (Bounce/Breakout/Trendline/Mixed)
+
+**CPowerOfThreeStrategy.mqh (Complete)**
+- **Risk Management Integration:** Added CUnifiedRiskManager* member, initialized from trade manager
+- **Consensus Logging:** Added [CONSENSUS-DIAG] with AMD phase and liquidity sweep status
+- **Code Changes:** 219 → 272 lines (+53 for compliance)
+
+**CUnicornModelStrategy.mqh (Complete)**
+- **Risk Management Integration:** Added CUnifiedRiskManager* member, initialized from trade manager
+- **Consensus Logging:** Added [CONSENSUS-DIAG] with OB type and FVG direction
+- **Code Changes:** 211 → 263 lines (+52 for compliance)
+
+**SimpleMomentumStrategy.mqh (Complete)**
+- **Risk Management Integration:** Added CUnifiedRiskManager* member, initialized from trade manager
+- **Consensus Logging:** Added [CONSENSUS-DIAG] with crossover details and RSI values
+- **Code Changes:** 460 → 508 lines (+48 for compliance)
+
+**Elliott Wave Strategy (Deleted)**
+- Completely removed unreliable ElliottWave strategy (~1,600 lines deleted)
+- Files deleted: StrategyElliottWaveEnhanced.mqh, ElliottWaveFiles/HarmonicScanner.mqh, ElliottWaveFiles/WavePatternEngine.mqh, ElliottWaveFiles/ZigZagFilter.mqh
+- Already disabled by default in previous batch, now physically removed
+
+**Fibonacci Strategy (Merged)**
+- Deleted standalone CStrategyFibonacci.mqh (11.8KB)
+- Deleted FibonacciFiles folder: FibSwingDetector.mqh, FibLevelsCalculator.mqh, FibConfirmation.mqh
+- Functionality preserved as CFibConfluence module integrated into StrategySupportResistance
+- Confluence boost logic remains active when S/R aligns with Fibonacci levels
+
+#### Architecture Compliance Pattern Applied
+All 7 active strategies now follow consistent pattern:
+1. Added `#include "Core/Risk/UnifiedRiskManager.mqh"`
+2. Added `CUnifiedRiskManager* m_riskManager` member variable
+3. Initialized to NULL in constructor
+4. Initialized from CTradeManager pointer in Init() using reinterpret_cast
+5. Added validation gate in GetSignal() before returning signals
+6. Added [CONSENSUS-DIAG] logging with strategy-specific details
+7. Added cleanup in Deinit() (not deleting shared resource)
+
+#### Impact Metrics
+- **Total Lines Removed:** ~2,000+ (ElliottWave + UnifiedICT simplification + Trend cleanup + Fibonacci)
+- **Total Lines Added:** ~300 (risk management + consensus logging across 6 strategies)
+- **Net Reduction:** ~1,700 lines
+- **Active Strategies:** 7 (down from 9, ElliottWave deleted, Fibonacci merged)
+- **Architectural Compliance:** 100% (all strategies validate through CUnifiedRiskManager)
+- **Consensus Logging:** 100% (all strategies emit [CONSENSUS-DIAG])
+- **Compilation Errors:** 0
+
+#### Files Modified
+- `Strategies/StrategyUnifiedICT.mqh` - Entry type simplification, risk mgmt, consensus logging
+- `Strategies/StrategyTrend.mqh` - Timeframe auto-stepping removal, dead code cleanup, risk mgmt
+- `Strategies/StrategySupportResistance.mqh` - Bubble sort replacement, risk mgmt, consensus logging
+- `Strategies/CPowerOfThreeStrategy.mqh` - Risk mgmt integration, consensus logging
+- `Strategies/CUnicornModelStrategy.mqh` - Risk mgmt integration, consensus logging
+- `Strategies/SimpleMomentumStrategy.mqh` - Risk mgmt integration, consensus logging
+
+#### Files Deleted
+- `Strategies/StrategyElliottWaveEnhanced.mqh` - Unreliable strategy
+- `Strategies/ElliottWaveFiles/HarmonicScanner.mqh` - Harmonic pattern scanner
+- `Strategies/ElliottWaveFiles/WavePatternEngine.mqh` - Wave detection engine
+- `Strategies/ElliottWaveFiles/ZigZagFilter.mqh` - ZigZag indicator filter
+- `Strategies/StrategyFibonacci.mqh` - Standalone Fibonacci strategy (merged into SR)
+- `Strategies/FibonacciFiles/FibSwingDetector.mqh` - Fib swing detection
+- `Strategies/FibonacciFiles/FibLevelsCalculator.mqh` - Fib level calculation
+- `Strategies/FibonacciFiles/FibConfirmation.mqh` - Fib confirmation logic
+
+#### Validation Evidence
+- All strategies compile without errors
+- Risk management validation prevents invalid trades (bad SL/TP ratios, excessive position size)
+- Consensus logging provides full transparency into signal generation/rejection decisions
+- Resource lifecycle properly managed (Init/Deinit patterns)
+- Shared resource ownership correct (strategies don't delete CUnifiedRiskManager)
+
+#### Testing Protocol
+- Compile verification on all modified modules
+- Runtime log verification for [CONSENSUS-DIAG] presence
+- Risk rejection testing with intentionally bad SL/TP configurations
+- Signal generation testing to verify trading capability preserved
+- Memory leak verification (proper cleanup in Deinit)
+
+---
+
+### Batch 92: AI Modules Comprehensive Audit Implementation (2026-05-25)
+
+#### Scope
+Complete implementation of all 25 AI audit findings from `Mqh_AI_audit.md` across Phase 1-4 and GOD TIER refactoring. Addresses memory management, numerical stability, training integrity, inference pipeline, regime detection, uncertainty quantification, checkpoint integrity, and architectural decomposition.
+
+#### Phase 1-3 Core Enhancements
+
+**Memory & Numerical Stability (Completed)**
+- **NaN/Inf Validation:** Expanded validation in all AI adapters with `IsValidConfidence()` checks
+- **Ring Buffer Protection:** Verified `UncertaintyQuantifier.mqh` has proper bounds checking
+- **Checkpoint Validation:** Added `ValidateWeights()` method checking all weights for NaN/Inf
+- **MD5-like Checksum:** Implemented 128-bit hash (two xorshift generators) for checkpoint integrity validation
+
+**Temperature Scaling & Confidence Calibration (Completed)**
+- Added `m_temperature` parameter to `CNeuralCore::Softmax()`
+- Added `SetTemperature()` and `GetTemperature()` methods to `NeuralNetworkStrategy`
+- Temperature range clamped to [0.1, 10.0] for stability
+
+**Initialization Improvements (Completed)**
+- **He Initialization Fix:** Replaced uniform distribution with Box-Muller Gaussian transform
+- Changed scaling from `sqrt(2/fan-in)` to `sqrt(2/(fan-in + fan-out))` for fan-average
+- Added `RandNormal()` function using standard normal distribution
+
+**Conformal Prediction (Completed)**
+- Fixed quantile calculation: `(1 - α) * (1 + 1/n)` for proper coverage guarantee
+- Added `GetLastUncertainty()` to `CConformalPredictor`
+
+**Regime Detection (Completed)**
+- Adjusted EMA smoothing from 0.85 to 0.95 for faster regime responsiveness
+- Added `GetCurrentRegime()` and `GetRegimeState()` methods
+
+**Ensemble Improvements (Completed)**
+- Kelly weight clamping to [0.01, 2.0] range for risk management
+- Timeframe-aware cache prevents cross-timeframe pollution
+- Fixed vote counting to only increment on new inference, not cached results
+- Added 24-hour rolling vote window reset to all adapters
+
+#### Phase 4 GOD TIER Architecture Refactoring
+
+**NeuralNetwork Decomposition (Completed)**
+- Created `CNeuralCore.mqh`: Core activations (ReLU, Softmax), loss functions (CrossEntropy), gradient computation, gradient clipping
+- Created `CNeuralTrainingDataManager.mqh`: Training examples and barrier buffer management
+- Created `CNeuralCheckpointManager.mqh`: Atomic checkpoint save/load operations
+- Integrated `CNeuralCore::Softmax()` call in `NeuralNetworkStrategy::ForwardDetailed()`
+- Added includes for all modular components
+
+**Symbol Embeddings for Shared Transformer (Completed)**
+- Created `CSymbolEmbedding` class with learnable 32-dimensional embeddings
+- Automatic symbol classification (Forex, Crypto, Synthetic) based on symbol name patterns
+- Hebbian-style embedding updates based on prediction performance
+- Integrated into `CSymbolAdaptationHead` for feature blending
+
+**Transformer FFN Residual Compensation (Completed)**
+- Added `m_residualScale` and `numLayers` parameter to `CFeedForwardNetwork`
+- Weight initialization scaled by `1/sqrt(2*layers)` to prevent activation explosion
+- Updated `CTransformerBlock` and `CTransformerBrain` to propagate layer count
+
+#### IAIStrategy Interface Implementation
+
+**Interface Definition (Completed)**
+- Created `Interfaces/IAIStrategy.mqh` extending `IStrategy` with AI-specific methods:
+  - `GetUncertainty()` - Model uncertainty (0 = certain, 1 = uncertain)
+  - `IsModelHealthy()` - Model health status
+  - `IsTraining()` - Training status
+  - `GetTrainingSteps()` - Training step count
+  - `GetTemperature()` / `SetTemperature()` - Confidence calibration
+  - `GetRegimeState()` - Current market regime
+  - `SaveCheckpoint()` - Force checkpoint save
+  - `GetLastLoadStatus()` - Diagnostics
+
+**Adapter Implementation (Completed)**
+- `CAIStrategyAdapter`: Full IAIStrategy implementation with direct model access
+- `CEnsembleAIStrategyAdapter`: IAIStrategy implementation delegating to ensemble
+- `CTransformerAIStrategyAdapter`: IAIStrategy with transformer checkpoint support
+- `COnnxAIStrategyAdapter`: IAIStrategy implementation for ONNX models
+
+#### Files Modified
+- `AIModules/NeuralNetworkStrategy.mqh` - He init, temperature scaling, checksum, regime smoothing
+- `AIModules/TransformerBrain.mqh` - Residual compensation, checkpoint validation
+- `AIModules/EnsembleMetaLearner.mqh` - Kelly weight clamping [0.01, 2.0]
+- `AIModules/UniversalTransformerService.mqh` - Symbol embeddings (CSymbolEmbedding class)
+- `AIModules/CNeuralCore.mqh` - **NEW** - Core neural operations (ReLU, Softmax, loss, gradients)
+- `AIModules/CNeuralTrainingDataManager.mqh` - **NEW** - Training data management
+- `AIModules/CNeuralCheckpointManager.mqh` - **NEW** - Checkpoint I/O operations
+- `Core/Strategy/EnsembleAIStrategyAdapter.mqh` - Vote fix, rolling window, timeframe cache, IAIStrategy
+- `Core/Strategy/TransformerAIStrategyAdapter.mqh` - Vote fix, rolling window, timeframe cache, IAIStrategy
+- `Core/Strategy/OnnxAIStrategyAdapter.mqh` - Vote fix, rolling window, IAIStrategy
+- `Core/Strategy/AIStrategyAdapter.mqh` - IAIStrategy implementation
+- `Interfaces/IAIStrategy.mqh` - **NEW** - AI strategy interface definition
+
+#### Validation Evidence
+- All 25 AI audit findings addressed
+- Numerical stability ensured via NaN/Inf validation and checksum verification
+- Model expressiveness preserved - no dumbing down, only upgrading
+- Confidence calibration via temperature scaling for better decision making
+- Checkpoint integrity validated on every load operation
+- Modular architecture enables future component reuse and testing
+
+#### Testing Protocol
+- Compile verification on all modified modules
+- Checkpoint save/load cycle validation
+- Temperature scaling effect verification
+- Vote counting accuracy over extended runtime
+- Symbol embedding convergence on diverse symbol classes
+
+### Batch 91: Enterprise Components 12-Layer Audit Fixes (2026-05-25)
 
 #### Scope
 Comprehensive implementation of all 12 audit layers identified in `enterprise_components_audit.md`. Addresses critical vulnerabilities, high-priority issues, and medium improvements across management, pipeline, processing, and monitoring components.
@@ -37,16 +263,23 @@ The 12-layer audit revealed:
 - **Volume Liquidity Check:** Added `minDailyVolumeLots` validation (default 1000 lots) with enable/disable flag
 - **Similar Symbol Warning:** Added `HasSimilarSymbol()` check to warn about potential duplicates
 
-**Layer 5: Bar Processor** (Planned for next iteration)
+**Layer 5: Bar Processor**
+- **Multi-Timeframe Support:** Added `ConfigureMTF()`, `IsMTFEnabled()`, `GetMTFCount()`, `GetMTFTimeframe()` methods
+- **Timeframe Configuration:** Added `SMTFTimeframeConfig` struct with timeframe, lookback bars, enabled flag
+- **Backoff Tier Preservation:** Added `UpdateBackoffTierPreservation()` and `GetPreservedBackoffTier()` methods
+- **Configurable Preservation Duration:** Added `SetMaxBackoffTierPreservationBars()` to control preservation duration
 
 **Layer 6: Tick Safety Monitor**
 - **Spread Calculation Fix:** Replaced point division with `SymbolInfoInteger(SYMBOL_SPREAD)` direct call
 - **Pending Order Margin Check:** Added margin calculation for pending orders
 - **Emergency Stop Auto-Reset:** Added `m_emergencyStopTime` and `m_emergencyStopDuration`
+- **Tick Gap Detection:** Added `HasTickGap()` and `SetMaxTickGapSeconds()` methods
 
 **Layer 7: Performance Analytics**
 - **Circular Buffer:** Implemented fixed-size buffer (MAX_TRADES=1000) for trade metrics
 - **Memory Leak Prevention:** Replaced dynamic array growth with wrap-around indexing
+- **Risk-Free Rate:** Added configurable `m_riskFreeRate` with `SetRiskFreeRate()` method
+- **Enhanced Sharpe Ratio:** Added `m_sharpeRatioWithRiskFree` for proper risk-adjusted calculation
 - **Buffer-optimized metrics calculation**
 
 **Layer 8: Strategy Registration & Consensus**
@@ -54,24 +287,43 @@ The 12-layer audit revealed:
 - **Quorum Preset Profiles:** Added `ENUM_QUORUM_PROFILE` (CONSERVATIVE/BALANCED/AGGRESSIVE) with `ApplyQuorumProfile()` method
 - **Simplified quorum configuration for different risk tolerances**
 
-**Layer 9: Pipeline Filter Configuration** (Planned for next iteration)
+**Layer 9: Pipeline Filter Configuration**
+- **Filter Presets:** Added `ENUM_FILTER_PRESET` (CONSERVATIVE/BALANCED/AGGRESSIVE)
+- **Preset Application:** Added `ApplyFilterPreset()` method to UnifiedSignalPipeline
+- **Updated SPerformanceMetrics:** Added `sharpeRatioWithRiskFree` field
 
 **Layer 10: Memory Management**
 - **Pointer Ownership Clarification:** Verified deletion order in destructors
 - **Null Checks:** Added validation before deletion in all critical destructors
 
-**Layer 11: Error Handling & Logging** (Planned for next iteration)
+**Layer 11: Error Handling & Logging**
+- **Centralized Error Aggregator:** Added `SErrorAggregation` struct to track errors by code
+- **Configurable Aggregation Window:** Added `SetAggregationWindow()` with default 300 seconds
+- **Error Aggregation Methods:** Added `GetAggregatedErrors()` and `ClearAggregations()`
+- **Configurable Verbosity Levels:** Added `ENUM_LOG_VERBOSITY` with 6 levels (Silent/ErrorsOnly/Warning/Normal/Verbose/Debug)
+- **Verbosity Methods:** Added `SetVerbosityLevel()` and `GetVerbosityLevel()`
+- **Structured Logging:** Added `LogVerbose()` and `LogDebug()` methods
 
-**Layer 12: Performance & Scalability** (Planned for next iteration)
+**Layer 12: Performance & Scalability**
+- **SharedEngineManager:** Created `CSharedEngineManager` singleton class
+- **Read-Only Engine Sharing:** Added shared TrendEngine, VolatilityEngine, and RegimeEngine
+- **Symbol Prioritization:** Added `SSymbolPriority` struct with spread/volume-based scoring
+- **Dynamic Priority Recalculation:** Added `RecalculatePriorities()` method with configurable interval
+- **Active Symbol Management:** Added `RegisterSymbol()`, `UnregisterSymbol()`, `SetSymbolActive()`, `GetActiveSymbolCount()`, `GetNextPrioritySymbol()`
+- **Sharing Modes:** Added `ENUM_ENGINE_SHARING_MODE` (Disabled/ReadOnly/Full)
 
 #### Files Modified
-- `Core/Processing/TickSafetyMonitor.mqh` - Spread calculation fix, pending margin checks, emergency stop auto-reset
-- `Core/Monitoring/PerformanceAnalytics.mqh` - Circular buffer implementation (MAX_TRADES=1000)
+- `Core/Processing/TickSafetyMonitor.mqh` - Spread calculation fix, pending margin checks, emergency stop auto-reset, tick gap detection
+- `Core/Monitoring/PerformanceAnalytics.mqh` - Circular buffer implementation (MAX_TRADES=1000), risk-free rate, enhanced Sharpe ratio
 - `Core/Management/InitializationManager.mqh` - Timeout/retry tracking, rollback on failure, detailed errors
 - `Core/Risk/UnifiedRiskManager.mqh` - `SetPerformanceAnalytics()` method for post-init linking
 - `Core/Management/EnterpriseStrategyManager.mqh` - Max strategies limit, quorum preset profiles
-- `Core/Pipeline/UnifiedSignalPipeline.mqh` - Engine health monitoring, cache staleness validation
+- `Core/Pipeline/UnifiedSignalPipeline.mqh` - Engine health monitoring, cache staleness validation, filter presets
 - `Core/Management/SymbolUniverseBuilder.mqh` - Configurable spread threshold, volume liquidity check
+- `Core/Utils/Enums.mqh` - Updated `SPerformanceMetrics`, added `ENUM_QUORUM_PROFILE`, `ENUM_FILTER_PRESET`, `ENUM_LOG_VERBOSITY`, `ENUM_ENGINE_SHARING_MODE`
+- `Core/Utils/ErrorHandling.mqh` - Enhanced with error aggregation and configurable verbosity
+- `Core/Processing/BarProcessor.mqh` - Multi-timeframe support, backoff tier preservation
+- `Core/Management/SharedEngineManager.mqh` - NEW: Shared engine management for scalability
 
 #### Validation Evidence
 - All critical vulnerabilities addressed

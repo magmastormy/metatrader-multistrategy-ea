@@ -15,6 +15,27 @@ enum ENUM_REGIME_STATE
     REGIME_CHAOS = 3
 };
 
+// ENHANCEMENT: Multi-Dimensional Regime Classification (Batch 93 - Week 5)
+enum ENUM_DETAILED_REGIME
+{
+    // Trend regimes
+    DETAILED_REGIME_STRONG_UPTREND = 0,
+    DETAILED_REGIME_WEAK_UPTREND = 1,
+    DETAILED_REGIME_STRONG_DOWNTREND = 2,
+    DETAILED_REGIME_WEAK_DOWNTREND = 3,
+    
+    // Range regimes
+    DETAILED_REGIME_HIGH_VOL_RANGE = 4,
+    DETAILED_REGIME_LOW_VOL_RANGE = 5,
+    
+    // Transition regimes
+    DETAILED_REGIME_TRANSITION_UP = 6,
+    DETAILED_REGIME_TRANSITION_DOWN = 7,
+    
+    // Extreme regimes
+    DETAILED_REGIME_CHAOS = 8
+};
+
 struct SRegimeSnapshot
 {
     bool valid;
@@ -37,6 +58,18 @@ struct SRegimeSnapshot
     double spreadToAtrRatio;
     double rangeZScore;
     datetime timestamp;
+    
+    // ENHANCEMENT: Detailed Regime Classification (Batch 93 - Week 5)
+    ENUM_DETAILED_REGIME detailedRegime;
+    double trendStrength;           // ADX value or similar metric
+    double volatilityPercentile;    // Current vol vs historical (0-1)
+    
+    // ENHANCEMENT: Strategy-Specific Weight Multipliers (Batch 93 - Week 5)
+    double momentumWeightMult;      // Momentum strategy multiplier
+    double trendWeightMult;         // Trend strategy multiplier
+    double meanRevWeightMult;       // Mean Reversion strategy multiplier
+    double breakoutWeightMult;      // Volatility Breakout strategy multiplier
+    double ictWeightMult;           // ICT strategy multiplier
 
     SRegimeSnapshot() :
         valid(false),
@@ -58,7 +91,15 @@ struct SRegimeSnapshot
         spreadBaseline(0.0),
         spreadToAtrRatio(0.0),
         rangeZScore(0.0),
-        timestamp(0)
+        timestamp(0),
+        detailedRegime(DETAILED_REGIME_LOW_VOL_RANGE),
+        trendStrength(0.0),
+        volatilityPercentile(0.0),
+        momentumWeightMult(1.0),
+        trendWeightMult(1.0),
+        meanRevWeightMult(1.0),
+        breakoutWeightMult(1.0),
+        ictWeightMult(1.0)
     {
     }
 };
@@ -80,6 +121,7 @@ private:
 
     int m_atrHandle;
     int m_bbHandle;
+    int m_adxHandle;  // ENHANCEMENT: ADX for trend strength (Batch 93 - Week 5)
     string m_symbol;
     ENUM_TIMEFRAMES m_timeframe;
 
@@ -108,6 +150,12 @@ private:
         {
             IndicatorRelease(m_bbHandle);
             m_bbHandle = INVALID_HANDLE;
+        }
+        // ENHANCEMENT: Release ADX handle (Batch 93 - Week 5)
+        if(m_adxHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_adxHandle);
+            m_adxHandle = INVALID_HANDLE;
         }
     }
 
@@ -231,7 +279,7 @@ private:
 
     bool EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
-        bool handlesReady = (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE);
+        bool handlesReady = (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE && m_adxHandle != INVALID_HANDLE);
         bool contextMatches = (m_symbol == symbol && m_timeframe == timeframe);
         if(handlesReady && contextMatches)
             return true;
@@ -252,11 +300,13 @@ private:
         m_timeframe = timeframe;
         m_atrHandle = iATR(symbol, timeframe, m_atrPeriod);
         m_bbHandle = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
+        // ENHANCEMENT: Create ADX handle for trend strength (Batch 93 - Week 5)
+        m_adxHandle = iADX(symbol, timeframe, 14);
         m_spreadSampleCount = 0;
         m_spreadSampleCursor = 0;
         ArrayResize(m_spreadSamples, m_spreadWindow);
 
-        return (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE);
+        return (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE && m_adxHandle != INVALID_HANDLE);
     }
 
     double ComputeSpreadBaseline() const
@@ -584,8 +634,40 @@ public:
         m_lastSnapshot.spreadToAtrRatio = spreadToAtr;
         m_lastSnapshot.rangeZScore = zScore;
         m_lastSnapshot.timestamp = TimeCurrent();
-
+        
+        // ENHANCEMENT: Calculate detailed regime and weight multipliers (Batch 93 - Week 5)
+        double adxBuffer[1];
+        double adxValue = 0.0;
+        if(m_adxHandle != INVALID_HANDLE && CopyBuffer(m_adxHandle, 0, 0, 1, adxBuffer) == 1)
+            adxValue = adxBuffer[0];
+        
+        m_lastSnapshot.trendStrength = adxValue;
+        m_lastSnapshot.detailedRegime = CalculateDetailedRegime(adxValue, zScore, bbWidthAtrRatio, compression);
+        
+        CalculateStrategyWeightMultipliers(
+            m_lastSnapshot.detailedRegime,
+            m_lastSnapshot.momentumWeightMult,
+            m_lastSnapshot.trendWeightMult,
+            m_lastSnapshot.meanRevWeightMult,
+            m_lastSnapshot.breakoutWeightMult,
+            m_lastSnapshot.ictWeightMult
+        );
+        
         datetime now = TimeCurrent();
+        
+        // Log detailed regime with weight multipliers
+        if(m_lastStateLogTime == 0 || (now - m_lastStateLogTime) >= 60)
+        {
+            PrintFormat("[REGIME-DETAILED] %s | ADX=%.1f | Momentum=%.1fx | Trend=%.1fx | MeanRev=%.1fx | Breakout=%.1fx | ICT=%.1fx",
+                       DetailedRegimeToString(m_lastSnapshot.detailedRegime),
+                       adxValue,
+                       m_lastSnapshot.momentumWeightMult,
+                       m_lastSnapshot.trendWeightMult,
+                       m_lastSnapshot.meanRevWeightMult,
+                       m_lastSnapshot.breakoutWeightMult,
+                       m_lastSnapshot.ictWeightMult);
+        }
+
         if(state != m_lastLoggedState || m_lastStateLogTime == 0 || (now - m_lastStateLogTime) >= 60)
         {
             PrintFormat("[REGIME-STATE] %s | tf=%s | state=%s | confirmed=%s | conf=%.2f | stable_bars=%d | compression=%s | spread_shock=%s | cooldown=%s | spread_atr=%.4f | z=%.3f | bb_atr=%.2f",
@@ -616,6 +698,104 @@ public:
         }
 
         return true;
+    }
+    
+    // ENHANCEMENT: Convert detailed regime to string (Batch 93 - Week 5)
+    string DetailedRegimeToString(ENUM_DETAILED_REGIME regime)
+    {
+        switch(regime)
+        {
+            case DETAILED_REGIME_STRONG_UPTREND: return "STRONG_UPTREND";
+            case DETAILED_REGIME_WEAK_UPTREND: return "WEAK_UPTREND";
+            case DETAILED_REGIME_STRONG_DOWNTREND: return "STRONG_DOWNTREND";
+            case DETAILED_REGIME_WEAK_DOWNTREND: return "WEAK_DOWNTREND";
+            case DETAILED_REGIME_HIGH_VOL_RANGE: return "HIGH_VOL_RANGE";
+            case DETAILED_REGIME_LOW_VOL_RANGE: return "LOW_VOL_RANGE";
+            case DETAILED_REGIME_TRANSITION_UP: return "TRANSITION_UP";
+            case DETAILED_REGIME_TRANSITION_DOWN: return "TRANSITION_DOWN";
+            case DETAILED_REGIME_CHAOS: return "CHAOS";
+            default: return "UNKNOWN";
+        }
+    }
+    
+    // ENHANCEMENT: Calculate Detailed Regime Classification (Batch 93 - Week 5)
+    ENUM_DETAILED_REGIME CalculateDetailedRegime(double adxValue, double zScore, 
+                                                  double bbWidthAtrRatio, bool compression)
+    {
+        // Strong trend: ADX > 30
+        if(adxValue > 30.0)
+        {
+            if(zScore > 1.0) return DETAILED_REGIME_STRONG_UPTREND;
+            if(zScore < -1.0) return DETAILED_REGIME_STRONG_DOWNTREND;
+            return DETAILED_REGIME_STRONG_UPTREND; // Default to up if unclear
+        }
+        
+        // Weak trend: ADX 20-30
+        if(adxValue > 20.0)
+        {
+            if(zScore > 0.5) return DETAILED_REGIME_WEAK_UPTREND;
+            if(zScore < -0.5) return DETAILED_REGIME_WEAK_DOWNTREND;
+            return DETAILED_REGIME_WEAK_UPTREND;
+        }
+        
+        // Range or transition
+        if(compression)
+        {
+            if(bbWidthAtrRatio < 1.5) return DETAILED_REGIME_LOW_VOL_RANGE;
+            return DETAILED_REGIME_HIGH_VOL_RANGE;
+        }
+        
+        // Transition detection
+        if(MathAbs(zScore) > 1.5 && adxValue < 25.0)
+        {
+            if(zScore > 0) return DETAILED_REGIME_TRANSITION_UP;
+            return DETAILED_REGIME_TRANSITION_DOWN;
+        }
+        
+        return DETAILED_REGIME_CHAOS;
+    }
+    
+    // ENHANCEMENT: Calculate Strategy-Specific Weight Multipliers (Batch 93 - Week 5)
+    void CalculateStrategyWeightMultipliers(ENUM_DETAILED_REGIME regime, 
+                                             double &momentumMult,
+                                             double &trendMult,
+                                             double &meanRevMult,
+                                             double &breakoutMult,
+                                             double &ictMult)
+    {
+        switch(regime)
+        {
+            case DETAILED_REGIME_STRONG_UPTREND:
+            case DETAILED_REGIME_STRONG_DOWNTREND:
+                momentumMult = 1.5; trendMult = 2.0; meanRevMult = 0.3; breakoutMult = 1.2; ictMult = 1.8;
+                break;
+                
+            case DETAILED_REGIME_WEAK_UPTREND:
+            case DETAILED_REGIME_WEAK_DOWNTREND:
+                momentumMult = 1.2; trendMult = 1.3; meanRevMult = 0.6; breakoutMult = 0.8; ictMult = 1.0;
+                break;
+                
+            case DETAILED_REGIME_HIGH_VOL_RANGE:
+                momentumMult = 0.8; trendMult = 0.5; meanRevMult = 1.8; breakoutMult = 1.5; ictMult = 0.7;
+                break;
+                
+            case DETAILED_REGIME_LOW_VOL_RANGE:
+                momentumMult = 0.6; trendMult = 0.4; meanRevMult = 2.0; breakoutMult = 0.5; ictMult = 0.6;
+                break;
+                
+            case DETAILED_REGIME_TRANSITION_UP:
+            case DETAILED_REGIME_TRANSITION_DOWN:
+                momentumMult = 0.9; trendMult = 0.7; meanRevMult = 0.9; breakoutMult = 1.3; ictMult = 0.8;
+                break;
+                
+            case DETAILED_REGIME_CHAOS:
+                momentumMult = 0.2; trendMult = 0.2; meanRevMult = 0.2; breakoutMult = 0.2; ictMult = 0.2;
+                break;
+                
+            default:
+                momentumMult = 1.0; trendMult = 1.0; meanRevMult = 1.0; breakoutMult = 1.0; ictMult = 1.0;
+                break;
+        }
     }
 
     SRegimeSnapshot GetSnapshot() const

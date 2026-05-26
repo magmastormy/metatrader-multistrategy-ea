@@ -207,6 +207,8 @@ class CFeedForwardNetwork : public CObject
 private:
     int    m_dModel;
     int    m_dFF;
+    int    m_numLayers;
+    double m_residualScale;
     double m_w1[];
     double m_b1[];
     double m_w2[];
@@ -220,10 +222,12 @@ private:
     }
 
 public:
-    CFeedForwardNetwork(const int dModel = 32, const int dFF = 64, const int seed = 1)
+    CFeedForwardNetwork(const int dModel = 32, const int dFF = 64, const int numLayers = 1, const int seed = 1)
     {
         m_dModel = MathMax(1, dModel);
         m_dFF = MathMax(m_dModel, dFF);
+        m_numLayers = MathMax(1, numLayers);
+        m_residualScale = 1.0 / MathSqrt(2.0 * (double)m_numLayers);
         m_state = (uint)MathMax(1, seed);
 
         ArrayResize(m_w1, m_dModel * m_dFF);
@@ -231,8 +235,8 @@ public:
         ArrayResize(m_w2, m_dFF * m_dModel);
         ArrayResize(m_b2, m_dModel);
 
-        double scale1 = MathSqrt(2.0 / (double)(m_dModel + m_dFF));
-        double scale2 = MathSqrt(2.0 / (double)(m_dFF + m_dModel));
+        double scale1 = MathSqrt(2.0 / (double)(m_dModel + m_dFF)) * m_residualScale;
+        double scale2 = MathSqrt(2.0 / (double)(m_dFF + m_dModel)) * m_residualScale;
         for(int i = 0; i < ArraySize(m_w1); i++)
             m_w1[i] = (NextRand() - 0.5) * 2.0 * scale1;
         for(int i = 0; i < ArraySize(m_w2); i++)
@@ -240,6 +244,8 @@ public:
         ArrayInitialize(m_b1, 0.0);
         ArrayInitialize(m_b2, 0.0);
     }
+
+    double GetResidualScale() const { return m_residualScale; }
 
     bool Forward(const double &inputData[], double &output[])
     {
@@ -469,10 +475,11 @@ public:
                       const int numHeads = 4,
                       const int dFF = 64,
                       const int maxSeqLen = 60,
+                      const int totalLayers = 1,
                       const int seed = 1)
     {
         m_attention = new CMultiHeadAttention(dModel, numHeads, maxSeqLen, seed);
-        m_feedForward = new CFeedForwardNetwork(dModel, dFF, seed + 17);
+        m_feedForward = new CFeedForwardNetwork(dModel, dFF, totalLayers, seed + 17);
         m_layerNorm1 = new CLayerNorm(dModel);
         m_layerNorm2 = new CLayerNorm(dModel);
     }
@@ -810,7 +817,7 @@ public:
 
         m_blocks.FreeMode(true);
         for(int i = 0; i < m_numLayers; i++)
-            m_blocks.Add(new CTransformerBlock(m_dModel, m_numHeads, m_dFF, m_maxSeqLen, 100 + i * 17));
+            m_blocks.Add(new CTransformerBlock(m_dModel, m_numHeads, m_dFF, m_maxSeqLen, m_numLayers, 100 + i * 17));
 
         InitHeadWeights();
         PrintFormat("[TRANSFORMER] Initialized | dModel=%d | heads=%d | layers=%d | seq=%d",
@@ -824,6 +831,9 @@ public:
 
     int GetModelDimension() const { return m_dModel; }
     int GetMaxSequenceLength() const { return m_maxSeqLen; }
+    int GetDModel() const { return m_dModel; }
+    int GetNumHeads() const { return m_numHeads; }
+    int GetNumLayers() const { return m_numLayers; }
     bool IsWarmedUp(const int threshold = 100) const { return m_trainingSteps >= threshold; }
 
     bool Forward(const double &inputFeatures[], const int actualSeqLen, double &output[])
@@ -1076,6 +1086,23 @@ public:
         return true;
     }
 
+    bool ValidateWeights() const
+    {
+        for(int i = 0; i < ArraySize(m_classificationWeights); i++)
+            if(!MathIsValidNumber(m_classificationWeights[i]))
+                return false;
+        for(int i = 0; i < ArraySize(m_classificationBiases); i++)
+            if(!MathIsValidNumber(m_classificationBiases[i]))
+                return false;
+        for(int i = 0; i < ArraySize(m_patternWeights); i++)
+            if(!MathIsValidNumber(m_patternWeights[i]))
+                return false;
+        for(int i = 0; i < ArraySize(m_patternBiases); i++)
+            if(!MathIsValidNumber(m_patternBiases[i]))
+                return false;
+        return true;
+    }
+
     bool LoadHeadState(const string filePath)
     {
         if(!FileIsExist(filePath, FILE_COMMON))
@@ -1121,6 +1148,13 @@ public:
             m_patternBiases[i] = FileReadDouble(fh);
 
         FileClose(fh);
+        
+        if(!ValidateWeights())
+        {
+            PrintFormat("[TRANSFORMER] %s Checkpoint validation FAILED: NaN/Inf detected in weights", filePath);
+            return false;
+        }
+        
         return true;
     }
 };

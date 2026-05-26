@@ -42,10 +42,8 @@
 enum ENUM_ICT_ENTRY_TYPE
 {
     ICT_ENTRY_NONE = 0,
-    ICT_ENTRY_RISK,
-    ICT_ENTRY_JUSTIFICATION,
-    ICT_ENTRY_RISK_WITH_JUST,
-    ICT_ENTRY_FULL_JUSTIFICATION
+    ICT_ENTRY_AGGRESSIVE,      // Early entry at OB (Risk/Risk+Just merged)
+    ICT_ENTRY_CONFIRMED        // Confirmed entry with BMS (Justification/Full Just merged)
 };
 
 //+------------------------------------------------------------------+
@@ -154,6 +152,9 @@ private:
     CAnchoredVWAP*              m_anchoredVWAP;
     CCumulativeDelta*           m_cumulativeDelta;
     
+    // Risk Management (AGENTS.md invariant #1)
+    CUnifiedRiskManager*        m_riskManager;
+    
     // Configuration
     double                      m_minConfluenceScore;
     int                         m_minConfluences;
@@ -201,13 +202,9 @@ private:
     void                        DrawElements();
     bool                        RefreshComponentsForCurrentBar();
     
-    // Entry System
-    SICTEntrySetup              CreateRiskEntry();
-    SICTEntrySetup              CreateJustificationEntry();
-    SICTEntrySetup              CreateRiskWithJustEntry();
-    SICTEntrySetup              CreateFullJustificationEntry();
-    SICTEntrySetup              CreateSilverBulletEntry();
-    SICTEntrySetup              CreateJudasSwingEntry();
+    // Entry System - Simplified to 2 core types
+    SICTEntrySetup              CreateAggressiveEntry();      // Early OB entry (no BMS required)
+    SICTEntrySetup              CreateConfirmedEntry();       // BMS-confirmed entry
     
     // Confluence — P3-A weighted scoring
     double                      ScoreConfluences(double price, bool bullish);   // Returns 0-130 weighted score
@@ -271,6 +268,7 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_smtScanner(NULL),
     m_anchoredVWAP(NULL),
     m_cumulativeDelta(NULL),
+    m_riskManager(NULL),
     m_minConfluenceScore(35.0),
     m_minConfluences(2),
     m_requireKillZone(false),
@@ -318,6 +316,8 @@ void CStrategyUnifiedICT::Cleanup()
     if(m_smtScanner != NULL)    { delete m_smtScanner;    m_smtScanner    = NULL; }
     if(m_anchoredVWAP != NULL)  { delete m_anchoredVWAP;  m_anchoredVWAP  = NULL; }
     if(m_cumulativeDelta != NULL) { delete m_cumulativeDelta; m_cumulativeDelta = NULL; }
+    // Risk manager is not owned by this strategy - do NOT delete
+    m_riskManager = NULL;
 }
 
 string CStrategyUnifiedICT::BuildDrawPrefix(const string symbol, const ENUM_TIMEFRAMES timeframe) const
@@ -543,7 +543,7 @@ bool CStrategyUnifiedICT::BuildImbalanceDrivenEntry(const bool bullish,
     if(imb.hasRebalanced || imb.isInverse || imb.isBullish != bullish)
         return false;
 
-    entry.entryType = ICT_ENTRY_FULL_JUSTIFICATION;
+    entry.entryType = ICT_ENTRY_CONFIRMED;  // Full justification = confirmed entry
     entry.aoiTop = imb.top;
     entry.aoiBottom = imb.bottom;
     entry.aoiMidpoint = imb.midpoint;
@@ -659,6 +659,11 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
     m_cumulativeDelta = new CCumulativeDelta();
     if(m_cumulativeDelta != NULL)
         m_cumulativeDelta.Initialize(symbol, timeframe);
+
+    // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
+    m_riskManager = GetUnifiedRiskManager();
+    if(m_riskManager == NULL)
+        Print("[UICT] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
 
     // Chart Drawing Manager - initialized but drawing done in DrawElements
     m_drawingManager = new CChartDrawingManager();
@@ -855,6 +860,29 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         if(!m_killZones.IsInKillZone())
             return RejectSignal("UICT_KILLZONE_INACTIVE");
     }
+    
+    // ENHANCEMENT: Validate displacement magnitude (Batch 93 - Week 1)
+    // ICT concepts require strong displacement to confirm institutional intent
+    if(m_structureAnalyzer != NULL)
+    {
+        double atr = m_structureAnalyzer.GetATR(14);
+        if(atr > 0)
+        {
+            // Check last completed bar for displacement
+            double open_prev = iOpen(m_symbol, m_timeframe, 1);
+            double close_prev = iClose(m_symbol, m_timeframe, 1);
+            double displacement = MathAbs(close_prev - open_prev);
+            
+            // Require displacement >= 1.5x ATR for strong institutional move
+            if(displacement < atr * 1.5)
+            {
+                return RejectSignal("UICT_WEAK_DISPLACEMENT",
+                    StringFormat("[UICT] Filtered: Weak displacement %.1f pts (need >= %.1f pts)",
+                                 displacement / SymbolInfoDouble(m_symbol, SYMBOL_POINT),
+                                 (atr * 1.5) / SymbolInfoDouble(m_symbol, SYMBOL_POINT)));
+            }
+        }
+    }
 
     bool isBullish = false;
     if(!ResolveDirectionalBias(isBullish))
@@ -932,39 +960,20 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
              return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
     }
     
-    // Get best entry setup
+    // Get best entry setup - simplified to 2 core types
     SICTEntrySetup bestEntry;
     bestEntry.entryType = ICT_ENTRY_NONE;
     bestEntry.confidence = 0;
 
-    // Special ICT sequences first
-    SICTEntrySetup judasEntry = CreateJudasSwingEntry();
-    if(judasEntry.entryType != ICT_ENTRY_NONE && judasEntry.confidence > bestEntry.confidence)
-        bestEntry = judasEntry;
-
-    SICTEntrySetup silverBulletEntry = CreateSilverBulletEntry();
-    if(silverBulletEntry.entryType != ICT_ENTRY_NONE && silverBulletEntry.confidence > bestEntry.confidence)
-        bestEntry = silverBulletEntry;
+    // Try Confirmed entry first (higher probability, requires BMS)
+    SICTEntrySetup confirmedEntry = CreateConfirmedEntry();
+    if(confirmedEntry.entryType != ICT_ENTRY_NONE && confirmedEntry.confidence > bestEntry.confidence)
+        bestEntry = confirmedEntry;
     
-    // Try Full Justification entry first (highest probability)
-    SICTEntrySetup fullJust = CreateFullJustificationEntry();
-    if(fullJust.entryType != ICT_ENTRY_NONE && fullJust.confidence > bestEntry.confidence)
-        bestEntry = fullJust;
-    
-    // Try Risk + Justification
-    SICTEntrySetup riskJust = CreateRiskWithJustEntry();
-    if(riskJust.entryType != ICT_ENTRY_NONE && riskJust.confidence > bestEntry.confidence)
-        bestEntry = riskJust;
-    
-    // Try Justification entry
-    SICTEntrySetup justEntry = CreateJustificationEntry();
-    if(justEntry.entryType != ICT_ENTRY_NONE && justEntry.confidence > bestEntry.confidence)
-        bestEntry = justEntry;
-    
-    // Try Risk entry
-    SICTEntrySetup riskEntry = CreateRiskEntry();
-    if(riskEntry.entryType != ICT_ENTRY_NONE && riskEntry.confidence > bestEntry.confidence)
-        bestEntry = riskEntry;
+    // Try Aggressive entry (early OB entry, no BMS required)
+    SICTEntrySetup aggressiveEntry = CreateAggressiveEntry();
+    if(aggressiveEntry.entryType != ICT_ENTRY_NONE && aggressiveEntry.confidence > bestEntry.confidence)
+        bestEntry = aggressiveEntry;
     
     // Check if we have a valid entry
     if(bestEntry.entryType == ICT_ENTRY_NONE || bestEntry.confidence < m_minConfidence)
@@ -1022,8 +1031,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
                                 "[UICT] Filtered: Counter-trend setup blocked (production mode)");
         }
 
-        bool aggressiveCounterTrend = (bestEntry.entryType == ICT_ENTRY_RISK ||
-                                       bestEntry.entryType == ICT_ENTRY_RISK_WITH_JUST);
+        bool aggressiveCounterTrend = (bestEntry.entryType == ICT_ENTRY_AGGRESSIVE);
         if(aggressiveCounterTrend)
         {
             return RejectSignal("UICT_COUNTERTREND_AGGRESSIVE_BLOCK",
@@ -1115,9 +1123,44 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     
     if(result != TRADE_SIGNAL_NONE)
     {
+        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
+        if(m_riskManager != NULL)
+        {
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = (result == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = 0.01;
+            request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(bestEntry.entryPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.takeProfitPips = (bestEntry.takeProfit1 > 0) ? MathAbs(bestEntry.takeProfit1 - bestEntry.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+            
+            SValidationResult validationResult = m_riskManager->ValidateTradeRequest(request, "UICT");
+            if(!validationResult.approved)
+            {
+                SetDecisionReasonTag("UICT_RISK_REJECTED");
+                PrintFormat("[UICT] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%)",
+                           result == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                           bestEntry.entryPrice, bestEntry.stopLoss, bestEntry.takeProfit1, confidence * 100);
+                return TRADE_SIGNAL_NONE;
+            }
+            confidence *= validationResult.confidenceMultiplier;
+        }
+        
         m_signalsGenerated++;
         RecordSignal();
         SetDecisionReasonTag(result == TRADE_SIGNAL_BUY ? "UICT_SIGNAL_BUY" : "UICT_SIGNAL_SELL");
+        
+        // CONSENSUS LOGGING (AGENTS.md requirement)
+        PrintFormat("[CONSENSUS-DIAG] %s | %s | EntryType: %s | Conf: %.1f%% | Weight: %.2f | Confluences: %d | Reason: %s",
+                   m_symbol,
+                   result == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   EnumToString(bestEntry.entryType),
+                   confidence * 100,
+                   m_weight,
+                   bestEntry.confluenceCount,
+                   m_lastDecisionReasonTag);
         
         PrintFormat("[UICT-EVENT] %s | structure_break=%s | displacement=%s | mitigation=%s | ref=%.5f | event_quality=%.2f",
                    m_symbol,
@@ -1193,99 +1236,9 @@ bool CStrategyUnifiedICT::RefreshComponentsForCurrentBar()
 }
 
 //+------------------------------------------------------------------+
-//| Create Silver Bullet Entry                                        |
+//| Create Aggressive Entry (Early OB entry, no BMS required)        |
 //+------------------------------------------------------------------+
-SICTEntrySetup CStrategyUnifiedICT::CreateSilverBulletEntry()
-{
-    SICTEntrySetup entry;
-    if(m_killZones == NULL || m_liquidityDetector == NULL || m_structureAnalyzer == NULL)
-        return entry;
-    if(!m_killZones.IsSilverBullet())
-        return entry;
-
-    bool sweepBuyside = false;
-    if(!m_liquidityDetector.HasRecentSweep(sweepBuyside))
-        return entry;
-
-    bool bullish = !sweepBuyside;
-    SStructuralPoint swingPoint;
-    bool hasSwing = bullish ? m_structureAnalyzer.GetLastSwingLow(swingPoint)
-                            : m_structureAnalyzer.GetLastSwingHigh(swingPoint);
-    if(!hasSwing)
-        return entry;
-
-    double stopAnchor = swingPoint.price;
-    int sweptIdx = m_liquidityDetector.FindSweptLiquidity();
-    if(sweptIdx >= 0)
-    {
-        SLiquidityPool sweptPool;
-        if(m_liquidityDetector.GetPool(sweptIdx, sweptPool) && sweptPool.price > 0.0)
-            stopAnchor = sweptPool.price;
-    }
-
-    double targetPrice = ResolveOpposingLiquidityTarget(SymbolInfoDouble(m_symbol, SYMBOL_BID), bullish);
-    if(!BuildImbalanceDrivenEntry(bullish,
-                                  "Silver Bullet sweep + FVG",
-                                  stopAnchor,
-                                  targetPrice,
-                                  0.10,
-                                  entry))
-    {
-        return SICTEntrySetup();
-    }
-
-    entry.reason = "Silver Bullet - " + m_killZones.GetSilverBulletName();
-    return entry;
-}
-
-//+------------------------------------------------------------------+
-//| Create Judas Swing Entry                                          |
-//+------------------------------------------------------------------+
-SICTEntrySetup CStrategyUnifiedICT::CreateJudasSwingEntry()
-{
-    SICTEntrySetup entry;
-    if(m_amdDetector == NULL)
-        return entry;
-
-    int nyHour = GetCurrentNewYorkHour();
-    if(nyHour < 0 || nyHour >= 5)
-        return entry;
-
-    SAMDState state = m_amdDetector.GetState();
-    if(!state.liquiditySwept)
-        return entry;
-    if(state.phase == AMD_PHASE_DISTRIBUTION || state.phase == AMD_PHASE_POST_DISTRIBUTION)
-        return entry;
-    if(m_amdDetector.GetConfidence() < 0.60)
-        return entry;
-
-    bool bullish = false;
-    if(state.isBullishManipulation)
-        bullish = true;
-    else if(state.isBearishManipulation)
-        bullish = false;
-    else
-        return entry;
-
-    double targetPrice = bullish ? state.accumulationHigh : state.accumulationLow;
-    if(!BuildImbalanceDrivenEntry(bullish,
-                                  "Judas Swing manipulation + FVG",
-                                  state.manipulationLevel,
-                                  targetPrice,
-                                  0.12,
-                                  entry))
-    {
-        return SICTEntrySetup();
-    }
-
-    entry.reason = "Judas Swing entry";
-    return entry;
-}
-
-//+------------------------------------------------------------------+
-//| Create Risk Entry                                                |
-//+------------------------------------------------------------------+
-SICTEntrySetup CStrategyUnifiedICT::CreateRiskEntry()
+SICTEntrySetup CStrategyUnifiedICT::CreateAggressiveEntry()
 {
     SICTEntrySetup entry;
     
@@ -1302,6 +1255,11 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskEntry()
     
     SAdvancedOrderBlock ob;
     if(!m_obDetector.GetOrderBlock(obIdx, ob)) return entry;
+    
+    // ENHANCEMENT: Skip mitigated OBs (Batch 93 - Week 1)
+    // Mitigated OBs have been invalidated and should not be used for entries
+    if(ob.isMitigated)
+        return entry;
 
     // P3-A: Weighted confluence score
     double score = ScoreConfluences(ob.midpoint, bullish);
@@ -1312,7 +1270,7 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskEntry()
     // P1-B: Use OB CE as precision entry
     double entryPx = (ob.ce > 0) ? ob.ce : ob.midpoint;
 
-    entry.entryType       = ICT_ENTRY_RISK;
+    entry.entryType       = ICT_ENTRY_AGGRESSIVE;
     entry.aoiTop          = ob.top;
     entry.aoiBottom       = ob.bottom;
     entry.aoiMidpoint     = ob.midpoint;
@@ -1320,7 +1278,7 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskEntry()
     entry.entryPrice      = entryPx;
     entry.confluenceCount = confluences;
     entry.confluenceScore = score;
-    entry.reason          = "Risk entry at OB CE";
+    entry.reason          = "Aggressive entry at OB";
 
     // P3-B: Dynamic confidence
     entry.confidence = ComputeEntryConfidence(entry, bullish);
@@ -1333,9 +1291,9 @@ SICTEntrySetup CStrategyUnifiedICT::CreateRiskEntry()
 }
 
 //+------------------------------------------------------------------+
-//| Create Justification Entry                                       |
+//| Create Confirmed Entry (BMS-confirmed, higher probability)       |
 //+------------------------------------------------------------------+
-SICTEntrySetup CStrategyUnifiedICT::CreateJustificationEntry()
+SICTEntrySetup CStrategyUnifiedICT::CreateConfirmedEntry()
 {
     SICTEntrySetup entry;
     
@@ -1354,138 +1312,38 @@ SICTEntrySetup CStrategyUnifiedICT::CreateJustificationEntry()
     SAdvancedOrderBlock ob;
     if(!m_obDetector.GetOrderBlock(obIdx, ob)) return entry;
     
+    // ENHANCEMENT: Skip mitigated OBs (Batch 93 - Week 1)
+    // Mitigated OBs have been invalidated and should not be used for entries
+    if(ob.isMitigated)
+        return entry;
+    
+    // Check for BMS confirmation (required for confirmed entry)
+    ENUM_BMS_TYPE bms = m_structureAnalyzer.DetectBMS();
+    if(bms == BMS_NONE)
+        return entry;
+    
     // Check if price is near AOI using ATR-based tolerance
     double atr = m_structureAnalyzer.GetATR(14);
     double tolerance = (atr > 0) ? atr * 0.2 : 15 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     
     if(MathAbs(price - ob.midpoint) > tolerance)
         return entry;
-    
-    // Check for BMS confirmation
-    ENUM_BMS_TYPE bms = m_structureAnalyzer.DetectBMS();
-    if(bms == BMS_NONE)
-        return entry;
 
     double score = ScoreConfluences(price, bullish);
     int confluences = CountConfluences(price, bullish);
 
-    entry.entryType       = ICT_ENTRY_JUSTIFICATION;
+    entry.entryType       = ICT_ENTRY_CONFIRMED;
     entry.aoiTop          = ob.top;
     entry.aoiBottom       = ob.bottom;
     entry.aoiMidpoint     = ob.midpoint;
     entry.ceLevelEntry    = ob.ce > 0 ? ob.ce : ob.midpoint;
     entry.ltfBMS          = true;
+    entry.htfTrendConfirmed = m_structureAnalyzer.IsTrendConfirmed();
     entry.entryPrice      = price;
     entry.confluenceCount = confluences;
     entry.confluenceScore = score;
-    entry.reason          = "Justification entry with BMS confirmation";
+    entry.reason          = "Confirmed entry with BMS";
     entry.confidence      = ComputeEntryConfidence(entry, bullish);
-    
-    entry.stopLoss = CalculateStopLoss(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
-    CalculateTakeProfits(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
-    
-    return entry;
-}
-
-//+------------------------------------------------------------------+
-//| Create Risk + Justification Entry                                |
-//+------------------------------------------------------------------+
-SICTEntrySetup CStrategyUnifiedICT::CreateRiskWithJustEntry()
-{
-    SICTEntrySetup entry;
-    
-    if(m_structureAnalyzer == NULL || m_obDetector == NULL)
-        return entry;
-    
-    // Check for first BMS but trend not confirmed
-    ENUM_BMS_TYPE bms = m_structureAnalyzer.DetectBMS();
-    if(bms == BMS_NONE)
-        return entry;
-    
-    if(m_structureAnalyzer.IsTrendConfirmed())
-        return entry;
-    
-    bool bullish = false;
-    if(!ResolveDirectionalBias(bullish))
-        return entry;
-    
-    int obIdx = bullish ? m_obDetector.FindBestBullishOB() : m_obDetector.FindBestBearishOB();
-    if(obIdx < 0) return entry;
-    
-    SAdvancedOrderBlock ob;
-    if(!m_obDetector.GetOrderBlock(obIdx, ob)) return entry;
-
-    double entryPx = (ob.ce > 0) ? ob.ce : ob.midpoint;
-    double score   = ScoreConfluences(entryPx, bullish);
-    int confluences = CountConfluences(entryPx, bullish);
-
-    entry.entryType       = ICT_ENTRY_RISK_WITH_JUST;
-    entry.htfBMS          = true;
-    entry.htfTrendConfirmed = false;
-    entry.aoiTop          = ob.top;
-    entry.aoiBottom       = ob.bottom;
-    entry.aoiMidpoint     = ob.midpoint;
-    entry.ceLevelEntry    = ob.ce > 0 ? ob.ce : ob.midpoint;
-    entry.entryPrice      = entryPx;
-    entry.confluenceCount = confluences;
-    entry.confluenceScore = score;
-    entry.reason          = "Risk + Justification after first BMS";
-    entry.confidence      = ComputeEntryConfidence(entry, bullish);
-    
-    entry.stopLoss = CalculateStopLoss(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
-    CalculateTakeProfits(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
-    
-    return entry;
-}
-
-//+------------------------------------------------------------------+
-//| Create Full Justification Entry                                  |
-//+------------------------------------------------------------------+
-SICTEntrySetup CStrategyUnifiedICT::CreateFullJustificationEntry()
-{
-    SICTEntrySetup entry;
-    
-    if(m_structureAnalyzer == NULL || m_obDetector == NULL)
-        return entry;
-    
-    // HTF trend must be confirmed (2+ BMS)
-    if(!m_structureAnalyzer.IsTrendConfirmed())
-        return entry;
-    
-    if(m_structureAnalyzer.GetConsecutiveBMS() < 2)
-        return entry;
-    
-    bool bullish = false;
-    if(!ResolveDirectionalBias(bullish))
-        return entry;
-    
-    int obIdx = bullish ? m_obDetector.FindBestBullishOB() : m_obDetector.FindBestBearishOB();
-    if(obIdx < 0) return entry;
-    
-    SAdvancedOrderBlock ob;
-    if(!m_obDetector.GetOrderBlock(obIdx, ob)) return entry;
-    
-    // Check for LTF BMS
-    ENUM_BMS_TYPE ltfBMS = m_structureAnalyzer.DetectBMS();
-
-    double entryPx     = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-    double score       = ScoreConfluences(entryPx, bullish);
-    int    confluences = CountConfluences(entryPx, bullish);
-
-    entry.entryType         = ICT_ENTRY_FULL_JUSTIFICATION;
-    entry.htfTrendConfirmed = true;
-    entry.ltfBMS            = (ltfBMS != BMS_NONE);
-    entry.aoiTop            = ob.top;
-    entry.aoiBottom         = ob.bottom;
-    entry.aoiMidpoint       = ob.midpoint;
-    entry.ceLevelEntry      = ob.ce > 0 ? ob.ce : ob.midpoint;
-    entry.entryPrice        = entryPx;
-    entry.confluenceCount   = confluences;
-    entry.confluenceScore   = score;
-    entry.reason            = "Full Justification - HTF trend confirmed";
-
-    // P3-B: Dynamic confidence
-    entry.confidence = ComputeEntryConfidence(entry, bullish);
     
     entry.stopLoss = CalculateStopLoss(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
     CalculateTakeProfits(entry, bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL);
@@ -1657,9 +1515,8 @@ double CStrategyUnifiedICT::ComputeEntryConfidence(const SICTEntrySetup &entry, 
     // Entry type bonus (Setup quality)
     switch(entry.entryType)
     {
-        case ICT_ENTRY_FULL_JUSTIFICATION: conf += 0.10; break;
-        case ICT_ENTRY_RISK_WITH_JUST:     conf += 0.06; break;
-        case ICT_ENTRY_JUSTIFICATION:      conf += 0.04; break;
+        case ICT_ENTRY_CONFIRMED: conf += 0.10; break;   // Full justification
+        case ICT_ENTRY_AGGRESSIVE: conf += 0.06; break;  // Risk/Risk+Just merged
         default: break;
     }
 
@@ -2191,3 +2048,4 @@ bool CStrategyUnifiedICT::ValidatePriceRejection(ENUM_TRADE_SIGNAL signal)
 }
 
 #endif // __STRATEGY_UNIFIED_ICT_MQH__
+

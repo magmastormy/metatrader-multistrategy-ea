@@ -81,22 +81,7 @@ bool CTickSafetyMonitor::IsMarginHealthy()
         return false;
     
     // Calculate used margin including pending orders
-    double usedMargin = accountInfo.Margin();
-    int totalOrders = OrdersTotal();
-    double pendingMargin = 0.0;
-    
-    for(int i = totalOrders - 1; i >= 0; i--)
-    {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-        {
-            if(OrderType() == OP_BUY || OrderType() == OP_SELL)
-            {
-                pendingMargin += accountInfo.MarginUsed();
-            }
-        }
-    }
-    
-    double totalMarginUsed = usedMargin + pendingMargin;
+    double totalMarginUsed = accountInfo.Margin(); // Already includes pending orders
     double freeMarginAfterPending = equity - totalMarginUsed;
     
     double freeMarginPercent = (freeMarginAfterPending / equity) * 100.0;

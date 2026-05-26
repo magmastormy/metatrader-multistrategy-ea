@@ -8,10 +8,11 @@
 #define CORE_STRATEGY_TRANSFORMER_AI_STRATEGY_ADAPTER_MQH
 
 #include "../../Interfaces/IStrategy.mqh"
+#include "../../Interfaces/IAIStrategy.mqh"
 #include "../../AIModules/TransformerBrain.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
 
-class CTransformerAIStrategyAdapter : public IStrategy
+class CTransformerAIStrategyAdapter : public IAIStrategy
 {
 private:
     CTransformerBrain* m_transformer;
@@ -28,19 +29,21 @@ private:
     ENUM_TRADE_SIGNAL m_cachedSignal;
     double m_cachedConfidence;
     datetime m_cacheBarTime;
+    ENUM_TIMEFRAMES m_cacheTimeframe;
     bool m_hasCachedSignal;
     string m_lastDecisionReasonTag;
     double m_minConfidence;
     bool m_ownsTransformer;  // Track ownership for proper cleanup
+    datetime m_voteWindowStart;  // Rolling vote window start time
     
     bool IsValidConfidence(const double conf) const
     {
-        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+        return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
     }
 
-    bool BuildFeaturesFailed(const string symbol, const ENUM_TIMEFRAMES tf, double &input[])
+    bool BuildFeaturesFailed(const string symbol, const ENUM_TIMEFRAMES tf, double &inputSeq[])
     {
-        bool success = CAIFeatureVectorBuilder::BuildTransformerInput(symbol, tf, input, TRANSFORMER_D_MODEL_DEFAULT, 8);
+        bool success = CAIFeatureVectorBuilder::BuildTransformerInput(symbol, tf, inputSeq, TRANSFORMER_D_MODEL_DEFAULT, 8);
         if(!success)
         {
             m_noneVotes++;
@@ -72,7 +75,7 @@ private:
 
     bool NeedsNewInference(const datetime currentBarTime) const
     {
-        return (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime);
+        return (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime || m_cacheTimeframe != m_timeframe);
     }
 
     void UpdateCache(const datetime currentBarTime, const ENUM_TRADE_SIGNAL signal, const double confidence)
@@ -80,6 +83,7 @@ private:
         m_cachedSignal = signal;
         m_cachedConfidence = confidence;
         m_cacheBarTime = currentBarTime;
+        m_cacheTimeframe = m_timeframe;
         m_hasCachedSignal = true;
     }
 
@@ -112,9 +116,11 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheTimeframe = PERIOD_CURRENT;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "TRANSFORMER_UNSET";
         m_minConfidence = 0.70;
+        m_voteWindowStart = TimeCurrent();
     }
     
     void SetSharedTransformer(CTransformerBrain* transformer)
@@ -152,6 +158,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheTimeframe = timeframe;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = (m_transformer != NULL) ? "TRANSFORMER_INITIALIZED" : "TRANSFORMER_INIT_FAILED";
         return true;
@@ -166,10 +173,21 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
-        m_voteCount++;
+        
+        datetime now = TimeCurrent();
+        if(now - m_voteWindowStart >= 86400)
+        {
+            m_voteCount = 0;
+            m_buyVotes = 0;
+            m_sellVotes = 0;
+            m_noneVotes = 0;
+            m_voteWindowStart = now;
+            PrintFormat("[AI-VOTE][Transformer] %s | Rolling vote window reset after 24h", m_symbol);
+        }
 
         if(!m_enabled || m_transformer == NULL)
         {
+            m_voteCount++;
             m_noneVotes++;
             m_lastDecisionReasonTag = "TRANSFORMER_DISABLED_OR_UNINIT";
             LogVoteHeartbeat();
@@ -185,6 +203,7 @@ public:
         }
         else
         {
+            m_voteCount++;
             double inputSequence[];
             if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, 8))
             {
@@ -275,6 +294,52 @@ public:
         signals = (int)m_voteCount;
         successful = 0;
         accuracy = 0.0;
+    }
+    
+    virtual double GetUncertainty(void) override
+    {
+        return 0.5;
+    }
+    
+    virtual bool IsModelHealthy(void) const override
+    {
+        return (m_transformer != NULL);
+    }
+    
+    virtual bool IsTraining(void) const override
+    {
+        return false;
+    }
+    
+    virtual int GetTrainingSteps(void) const override
+    {
+        return 0;
+    }
+    
+    virtual double GetTemperature(void) const override
+    {
+        return 1.0;
+    }
+    
+    virtual void SetTemperature(const double temperature) override
+    {
+    }
+    
+    virtual int GetRegimeState(void) const override
+    {
+        return -1;
+    }
+    
+    virtual bool SaveCheckpoint(void) override
+    {
+        if(m_transformer == NULL || !m_ownsTransformer)
+            return false;
+        return m_transformer.SaveHeadState(NNModelStorage_GetPrimaryPath(m_symbol, m_timeframe, TRANSFORMER_CHECKPOINT_VERSION));
+    }
+    
+    virtual string GetLastLoadStatus(void) const override
+    {
+        return (m_transformer != NULL) ? "LOADED" : "NOT_INITIALIZED";
     }
 };
 

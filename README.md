@@ -1,13 +1,56 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-05-23
-- Status: Batch 90 - Visualization System Audit Fixes
+- Last Updated: 2026-05-26
+- Status: Batch 93 - Strategy Refactoring & Architectural Compliance
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.
 
 ## System Snapshot
+- **Strategy Refactoring & Architectural Compliance (Batch 93):** Systematic refactoring of all active strategies to achieve full AGENTS.md architectural compliance:
+  - **UnifiedICT Simplification:** Removed Silver Bullet & Judas Swing entry types, simplified from 4 to 2 core entry types (AGGRESSIVE/CONFIRMED), reduced from 2,194 → 2,012 lines (-8.3%)
+  - **StrategyTrend Cleanup:** Removed timeframe auto-stepping logic and dead trailing stop methods, reduced from 300 → 259 lines (-13.7%)
+  - **StrategySupportResistance Optimization:** Replaced O(n²) bubble sort with ArraySort() for performance, integrated FibConfluence module
+  - **Elliott Wave Removal:** Completely removed unreliable ElliottWave strategy (~1,600 lines deleted, disabled by default in previous batch)
+  - **Fibonacci Merge:** Deleted standalone CStrategyFibonacci, functionality preserved as CFibConfluence module integrated into SupportResistance
+  - **Universal Risk Management Integration:** All 7 active strategies now validate through CUnifiedRiskManager (AGENTS.md invariant #1)
+  - **Consensus Protocol Logging:** All strategies emit [CONSENSUS-DIAG] logs with signal details, confidence, weight, and reason tags
+  - **Resource Lifecycle Management:** Proper Init/Deinit patterns across all strategies with shared resource ownership
+  - **Net Impact:** ~2,000+ lines removed, ~300 lines added for compliance, net reduction ~1,700 lines
+  - **All Active Strategies:** CPowerOfThreeStrategy, CUnicornModelStrategy, SimpleMomentumStrategy, StrategyCandlestick, StrategySupportResistance, StrategyTrend, StrategyUnifiedICT
+
+- **AI Modules Comprehensive Audit Implementation (Batch 92):** Complete implementation of all 25 AI audit findings with GOD TIER architectural refactoring:
+  - **Memory & Numerical Stability:** NaN/Inf validation expanded, ring buffer protection verified, checkpoint validation with 128-bit checksum
+  - **Confidence Calibration:** Temperature scaling with runtime control (SetTemperature/GetTemperature), range [0.1, 10.0]
+  - **Initialization Improvements:** He initialization fixed with Box-Muller Gaussian transform, fan-average scaling
+  - **Conformal Prediction:** Quantile formula fixed for proper coverage guarantee, GetLastUncertainty() added
+  - **Regime Detection:** EMA smoothing adjusted to 0.95 for faster response, GetCurrentRegime() method
+  - **Ensemble Improvements:** Kelly weight clamping [0.01, 2.0], timeframe-aware cache, vote counting fix, 24h rolling window
+  - **GOD TIER Architecture:** Modular decomposition into CNeuralCore, CNeuralTrainingDataManager, CNeuralCheckpointManager
+  - **Symbol Embeddings:** Learnable 32-dim embeddings with automatic symbol classification (Forex/Crypto/Synthetic)
+  - **Transformer FFN:** Residual compensation (m_residualScale = 1/sqrt(2*layers)) prevents activation explosion
+  - **IAIStrategy Interface:** Unified interface for all AI adapters with GetUncertainty(), IsModelHealthy(), IsTraining(), etc.
+  - **New Files:** CNeuralCore.mqh, CNeuralTrainingDataManager.mqh, CNeuralCheckpointManager.mqh, IAIStrategy.mqh
+
+- **Enterprise Components 12-Layer Audit Fixes (Batch 91):** Comprehensive implementation of all 12 audit layers with critical stability improvements:
+  - Fixed circular initialization dependency between RiskManager and PerformanceAnalytics
+  - Implemented circular buffer in PerformanceAnalytics (MAX_TRADES=1000) to prevent memory leaks
+  - Added initialization rollback on failure with detailed error messages
+  - Fixed TickSafetyMonitor spread calculation (replaced point division with SymbolInfoInteger)
+  - Added tick gap detection in TickSafetyMonitor
+  - Added engine health monitoring and cache staleness validation in UnifiedSignalPipeline
+  - Added filter preset configurations (Conservative/Balanced/Aggressive)
+  - Added configurable spread threshold and volume liquidity check in SymbolUniverseBuilder
+  - Added max strategy limit and quorum preset profiles in EnterpriseStrategyManager
+  - Enhanced error handling with configurable verbosity levels (Silent/ErrorsOnly/Warning/Normal/Verbose/Debug)
+  - Added centralized error aggregation with configurable window
+  - Added SharedEngineManager for multi-symbol scalability
+  - Added symbol prioritization based on spread and volume metrics
+  - Added multi-timeframe support in BarProcessor
+  - Added backoff tier preservation in BarProcessor
+  - Added Sharpe ratio with risk-free rate in PerformanceAnalytics
+
 - **Visualization System Audit Fixes (Batch 90):** Comprehensive chart object management and visualization safety improvements:
   - Fixed hardcoded chart ID 0 in StrategyUnifiedICT that caused cross-chart contamination
   - Converted StrategyUnifiedICT to use CChartDrawingManager instead of direct MT5 API calls

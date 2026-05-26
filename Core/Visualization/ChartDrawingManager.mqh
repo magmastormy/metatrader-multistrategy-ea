@@ -52,7 +52,7 @@ struct SDrawingConfig
     bool enableOrderBlocks;       // Order blocks
     bool enableFVG;               // Fair Value Gaps
     bool enableLiquidity;         // Liquidity levels
-    bool enableElliottWave;       // Elliott Wave counts
+    // ELLIOTT WAVE REMOVED - Flag deleted
     bool enableTrendLines;        // Trend lines
     bool enableSignalMarkers;     // Entry/Exit markers
     bool enableDebugMode;         // Developer-level visuals
@@ -69,7 +69,7 @@ struct SDrawingConfig
         enableOrderBlocks = true;
         enableFVG = true;
         enableLiquidity = true;
-        enableElliottWave = true;
+        // ELLIOTT WAVE REMOVED - Initialization deleted
         enableTrendLines = true;
         enableSignalMarkers = true;
         enableDebugMode = false;
@@ -148,7 +148,7 @@ public:
     bool DrawEqualHighs(datetime time1, datetime time2, datetime time3, double price);
     bool DrawEqualLows(datetime time1, datetime time2, datetime time3, double price);
     
-    // Elliott Wave Drawing
+    // ELLIOTT WAVE REMOVED - Wave drawing methods deleted
     bool DrawWaveCount(datetime time, double price, int waveNumber, bool isImpulse = true);
     bool DrawWaveLabel(datetime time, double price, const string label, bool isImpulse = true);
     bool DrawFibProjection(datetime time1, double price1, datetime time2, double price2,
@@ -857,68 +857,31 @@ bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetim
 
 //+------------------------------------------------------------------+
 //| Draw Wave Count                                                 |
+// ELLIOTT WAVE REMOVED - Method deleted
 //+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawWaveCount(datetime time, double price, int waveNumber, bool isImpulse)
 {
-    if(!m_config.enableDrawing || !m_config.enableElliottWave)
-        return false;
-        
-    string label = IntegerToString(waveNumber);
-    return DrawWaveLabel(time, price, label, isImpulse);
+    // ELLIOTT WAVE REMOVED - Returns false
+    return false;
 }
 
 //+------------------------------------------------------------------+
 //| Draw Wave Label                                                 |
+// ELLIOTT WAVE REMOVED - Method deleted
 //+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawWaveLabel(datetime time, double price, const string label, bool isImpulse)
 {
-    if(!m_config.enableDrawing || !m_config.enableElliottWave)
-        return false;
-    
-    // Check for "Debug" label if not in debug mode
-    if(StringFind(label, "Debug") >= 0 && !m_config.enableDebugMode)
-        return false;
-
-    PrepareSnapshotDraw();
-        
-    string objName = GenerateObjectName("WAVE", label + "_" + TimeToString(time));
-    
-    ObjectCreate(m_chartID, objName, OBJ_TEXT, 0, time, price);
-    ObjectSetString(m_chartID, objName, OBJPROP_TEXT, label);
-    ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, isImpulse ? COLOR_SCHEME_ELLIOTT_IMPULSE : COLOR_SCHEME_ELLIOTT_CORRECTIVE);
-    ObjectSetInteger(m_chartID, objName, OBJPROP_FONTSIZE, 10);
-    ObjectSetInteger(m_chartID, objName, OBJPROP_ANCHOR, ANCHOR_CENTER);
-    ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
-    
-    m_objectsDrawn++;
-    return true;
+    // ELLIOTT WAVE REMOVED - Returns false
+    return false;
 }
 
 //+------------------------------------------------------------------+
 //| Draw Fibonacci Projection                                       |
+// ELLIOTT WAVE REMOVED - Method deleted
 //+------------------------------------------------------------------+
 bool CChartDrawingManager::DrawFibProjection(datetime time1, double price1, datetime time2, double price2, datetime time3, double price3)
 {
-    if(!m_config.enableDrawing || !m_config.enableElliottWave)
-        return false;
-
-    PrepareSnapshotDraw();
-        
-    string objName = GenerateObjectName("FIB_EXP", TimeToString(time3));
-    
-    if(ObjectCreate(m_chartID, objName, OBJ_EXPANSION, 0, time1, price1, time2, price2))
-    {
-        ObjectSetInteger(m_chartID, objName, OBJPROP_TIME, 2, time3);
-        ObjectSetDouble(m_chartID, objName, OBJPROP_PRICE, 2, price3);
-        ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, clrDarkGray);
-        ObjectSetInteger(m_chartID, objName, OBJPROP_LEVELS, 3);
-        ObjectSetDouble(m_chartID, objName, OBJPROP_LEVELVALUE, 0, 0.618);
-        ObjectSetDouble(m_chartID, objName, OBJPROP_LEVELVALUE, 1, 1.0);
-        ObjectSetDouble(m_chartID, objName, OBJPROP_LEVELVALUE, 2, 1.618);
-        
-        m_objectsDrawn++;
-        return true;
-    }
+    // ELLIOTT WAVE REMOVED - Returns false
     return false;
 }
 
