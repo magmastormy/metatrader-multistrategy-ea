@@ -8,10 +8,11 @@
 #define CORE_STRATEGY_ENSEMBLE_AI_STRATEGY_ADAPTER_MQH
 
 #include "../../Interfaces/IStrategy.mqh"
+#include "../../Interfaces/IAIStrategy.mqh"
 #include "../../AIModules/EnsembleMetaLearner.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
 
-class CEnsembleAIStrategyAdapter : public IStrategy
+class CEnsembleAIStrategyAdapter : public IAIStrategy
 {
 private:
     CEnsembleMetaLearner m_ensemble;
@@ -31,14 +32,16 @@ private:
     ENUM_TRADE_SIGNAL m_cachedSignal;
     double m_cachedConfidence;
     datetime m_cacheBarTime;
+    ENUM_TIMEFRAMES m_cacheTimeframe;
     bool m_hasCachedSignal;
     string m_lastDecisionReasonTag;
     double m_minConfidence;
     bool m_ownsModels;  // Track ownership to prevent double-delete
+    datetime m_voteWindowStart;  // Rolling vote window start time
     
     bool IsValidConfidence(const double conf) const
     {
-        return !MathIsNaN(conf) && !MathIsInf(conf) && conf >= 0.0 && conf <= 1.0;
+        return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
     }
 
 
@@ -126,10 +129,12 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheTimeframe = PERIOD_CURRENT;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "ENSEMBLE_UNSET";
         m_minConfidence = 0.70;
         m_ownsModels = false;
+        m_voteWindowStart = TimeCurrent();
     }
 
     virtual ~CEnsembleAIStrategyAdapter()
@@ -175,6 +180,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheTimeframe = timeframe;
         m_hasCachedSignal = false;
         bool modelsReady = EnsureModels();
         m_lastDecisionReasonTag = modelsReady ? "ENSEMBLE_INITIALIZED" : "ENSEMBLE_INIT_FAILED";
@@ -190,10 +196,21 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
-        m_voteCount++;
+        
+        datetime now = TimeCurrent();
+        if(now - m_voteWindowStart >= 86400)
+        {
+            m_voteCount = 0;
+            m_buyVotes = 0;
+            m_sellVotes = 0;
+            m_noneVotes = 0;
+            m_voteWindowStart = now;
+            PrintFormat("[AI-VOTE][Ensemble] %s | Rolling vote window reset after 24h", m_symbol);
+        }
 
         if(!m_enabled || !EnsureModels())
         {
+            m_voteCount++;
             m_noneVotes++;
             m_lastDecisionReasonTag = "ENSEMBLE_DISABLED_OR_UNINIT";
             LogVoteHeartbeat();
@@ -202,7 +219,7 @@ public:
 
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         datetime currentBarTime = (m_symbol == "") ? 0 : iTime(m_symbol, m_timeframe, 0);
-        bool needsNewInference = (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime);
+        bool needsNewInference = (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime || m_cacheTimeframe != m_timeframe);
         if(!needsNewInference)
         {
             confidence = m_cachedConfidence;
@@ -210,6 +227,7 @@ public:
         }
         else
         {
+            m_voteCount++;
             double inputSequence[];
             if(!CAIFeatureVectorBuilder::BuildTransformerInput(m_symbol, m_timeframe, inputSequence, TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_SHORT_SEQ_LEN_DEFAULT))
             {
@@ -265,6 +283,7 @@ public:
             m_cachedSignal = signal;
             m_cachedConfidence = confidence;
             m_cacheBarTime = currentBarTime;
+            m_cacheTimeframe = m_timeframe;
             m_hasCachedSignal = true;
         }
 
@@ -314,6 +333,50 @@ public:
         signals = (int)m_voteCount;
         successful = 0;
         accuracy = 0.0;
+    }
+    
+    virtual double GetUncertainty(void) override
+    {
+        return m_ensemble.GetUncertainty();
+    }
+    
+    virtual bool IsModelHealthy(void) const override
+    {
+        return (m_modelA != NULL || m_modelB != NULL) && m_modelsInitialized;
+    }
+    
+    virtual bool IsTraining(void) const override
+    {
+        return m_ensemble.IsLearningEnabled();
+    }
+    
+    virtual int GetTrainingSteps(void) const override
+    {
+        return m_ensemble.GetUpdateCount();
+    }
+    
+    virtual double GetTemperature(void) const override
+    {
+        return 1.0;
+    }
+    
+    virtual void SetTemperature(const double temperature) override
+    {
+    }
+    
+    virtual int GetRegimeState(void) const override
+    {
+        return m_ensemble.GetCurrentRegime();
+    }
+    
+    virtual bool SaveCheckpoint(void) override
+    {
+        return false;
+    }
+    
+    virtual string GetLastLoadStatus(void) const override
+    {
+        return m_modelsInitialized ? "LOADED" : "NOT_INITIALIZED";
     }
 };
 

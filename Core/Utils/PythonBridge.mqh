@@ -169,6 +169,11 @@ public:
    SPythonBridgeResponse PredictDoubleAdapt(const double &features[], int features_size);
    SPythonBridgeResponse PredictMamlPpo(const double &features[], int features_size);
    
+   // ENHANCEMENT: Correlation Matrix Methods (Batch 93 - Week 4)
+   bool              GetCorrelationMatrix(double &matrix[][], int &size, string &symbols[]);
+   double            GetPairCorrelation(const string symbol1, const string symbol2);
+   bool              FindBestCorrelatedPair(const string symbol, string &bestPair, double &correlation);
+   
    // Getters
    ENUM_PYTHON_BRIDGE_STATE GetState() const { return m_state; }
    bool              IsConnected() const { return m_state == PYTHON_BRIDGE_CONNECTED; }
@@ -310,7 +315,7 @@ bool CPythonBridge::SendHttpRequest(const string &method, const string &url,
    
    if(res == -1)
    {
-      int err = GetLastError();
+      int err = ::GetLastError();
       LogBridgeState("HTTP request failed: " + IntegerToString(err), ERROR_LEVEL_ERROR);
       return false;
    }
@@ -800,5 +805,87 @@ SPythonBridgeHealthStatus CPythonBridge::GetHealthStatus()
    status.version = m_server_version;
    
    return status;
+}
+
+//+------------------------------------------------------------------+
+//| ENHANCEMENT: Get Correlation Matrix (Batch 93 - Week 4)          |
+//| Fetches correlation matrix from Python server                    |
+//+------------------------------------------------------------------+
+bool CPythonBridge::GetCorrelationMatrix(double &matrix[][], int &size, string &symbols[])
+{
+   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected())
+      return false;
+   
+   // Request correlation matrix from Python endpoint
+   string response;
+   string corrUrl = m_endpoint + "/correlation_matrix";
+   
+   if(!SendHttpRequest("GET", corrUrl, "", response))
+   {
+      m_last_error = "Failed to fetch correlation matrix";
+      m_error_count++;
+      return false;
+   }
+   
+   // TODO: Parse JSON response containing correlation matrix
+   // Expected format: {"symbols": ["Vol75", "Vol100", ...], "matrix": [[1.0, 0.85, ...], ...]}
+   // For now, return false until Python server implements this endpoint
+   
+   m_last_error = "Correlation matrix endpoint not yet implemented on Python server";
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| ENHANCEMENT: Get Pair Correlation (Batch 93 - Week 4)            |
+//| Returns correlation between two symbols                          |
+//+------------------------------------------------------------------+
+double CPythonBridge::GetPairCorrelation(const string symbol1, const string symbol2)
+{
+   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected())
+      return 0.0;
+   
+   // Request specific pair correlation
+   string response;
+   string corrUrl = m_endpoint + "/correlation?symbol1=" + symbol1 + "&symbol2=" + symbol2;
+   
+   if(SendHttpRequest("GET", corrUrl, "", response))
+   {
+      // TODO: Parse JSON response {"correlation": 0.85}
+      // For now, return placeholder
+      return 0.0;
+   }
+   
+   return 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| ENHANCEMENT: Find Best Correlated Pair (Batch 93 - Week 4)       |
+//| Finds the most highly correlated symbol for a given symbol       |
+//+------------------------------------------------------------------+
+bool CPythonBridge::FindBestCorrelatedPair(const string symbol, string &bestPair, double &correlation)
+{
+   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected())
+   {
+      bestPair = "";
+      correlation = 0.0;
+      return false;
+   }
+   
+   // Request best pair from Python
+   string response;
+   string bestPairUrl = m_endpoint + "/best_pair?symbol=" + symbol;
+   
+   if(SendHttpRequest("GET", bestPairUrl, "", response))
+   {
+      // TODO: Parse JSON response {"best_pair": "Vol100", "correlation": 0.92}
+      // For now, return false
+      bestPair = "";
+      correlation = 0.0;
+      return false;
+   }
+   
+   bestPair = "";
+   correlation = 0.0;
+   return false;
 }
 

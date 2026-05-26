@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-05-23
+- Last Updated: 2026-05-26
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 90 - Visualization System Audit Fixes
+- Current Batch: 93 - Strategy Refactoring & Architectural Compliance
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -22,6 +22,9 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - Batch 81 makes indicator/hybrid no-signal diagnosis falsifiable and changes the math that was suppressing real producers: runtime fingerprints include requested vs effective EA mode, pipeline-filtered abstentions expose the actual filter chain in manager summaries, infrastructure/raw-none/filtered abstentions no longer inflate the live denominator at full weight, and `Momentum` / `Candlestick` have lower-timeframe scalp/intrabar registration controls.
 - Batch 82 removes the "AI-Only" bias by relaxing strategy and consensus filters: softened weight decay (15 bars threshold, 5% rate), lowered tier confidence floors (Tier 3 to 0.62), and enabled high-quality solo strategy signals for live trading. It also introduces "Smart SRE" with Profit Guard and Structural Invalidation, and upgrades the lifecycle manager with dynamic ATR-based trailing stops.
 - Batch 90 fixes visualization system vulnerabilities: hardcoded chart ID 0 in StrategyUnifiedICT caused cross-chart contamination; StrategyUnifiedICT/StrategyFibonacci bypassed CChartDrawingManager; no global object counter for MT5 1000-object limit; excessive object retention with maxObjectAge=500; debug logging ran in production; bitwise OR colors caused inconsistent rendering; no coordinate validation for invalid time/price values. All strategies now use CChartDrawingManager with per-strategy object limits, global count alerts at 800/900/950, coordinate validation, explicit RGB colors, and periodic cleanup with maxObjectAge=150. Drawing statistics added to VisualDashboard.
+- Batch 91 implements comprehensive enterprise 12-layer audit fixes: addresses circular initialization dependencies, memory leaks, pipeline fail-closed logic, and scalability across all components; adds SharedEngineManager for multi-symbol efficiency, enhanced error aggregation, and configurable verbosity levels.
+- Batch 92 implements comprehensive AI modules audit: all 25 findings addressed including memory management, numerical stability, training integrity, checkpoint integrity, and GOD TIER architectural refactoring; adds IAIStrategy interface for unified AI adapter contract.
+- Batch 93 implements systematic strategy refactoring for full AGENTS.md architectural compliance: UnifiedICT simplified from 4 to 2 entry types (2,194 → 2,012 lines), StrategyTrend cleaned up (300 → 259 lines), ElliottWave removed (~1,600 lines), Fibonacci merged into SupportResistance as CFibConfluence module, all 7 active strategies now validate through CUnifiedRiskManager with [CONSENSUS-DIAG] logging.
 
 ## 2. Top-Level Runtime Topology
 
@@ -163,6 +166,34 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Methods: `QueryExternalLLM()`, `SynthesizeSignals()`, `GenerateTradeExplanation()`, `AssessRisk()`, `ReasonStrategyWeights()`, `ProvideFeedback()`
   - Runtime control: `ConfigureExternalLLM()`, `SetExternalLLMEnabled(bool)`, `IsExternalLLMEnabled()`
   - Runtime observability: `[EXT-LLM]` now covers init, endpoint config, query start/success/failure, reasoning capture, feedback, and shutdown so "enabled but unused" states are visible from logs
+
+### 2.4 AI Modular Architecture (Batch 92 - GOD TIER Refactoring)
+- **Modular Component Decomposition:**
+  - `CNeuralCore.mqh`: Core neural operations (ReLU, Softmax with temperature, CrossEntropy loss, gradient computation, gradient clipping)
+  - `CNeuralTrainingDataManager.mqh`: Training examples and barrier buffer management (SMTrainingExample, SMBarrierEntry)
+  - `CNeuralCheckpointManager.mqh`: Atomic checkpoint save/load with validation
+  - `IAIStrategy.mqh`: Unified interface for AI adapters extending `IStrategy`
+- **Symbol Embedding System (UniversalTransformerService.mqh):**
+  - `CSymbolEmbedding`: Learnable 32-dimensional symbol embeddings
+  - Automatic symbol classification: Forex, Crypto, Synthetic based on name patterns
+  - Hebbian-style embedding updates based on prediction performance
+  - Integrated into `CSymbolAdaptationHead` for feature blending
+- **Transformer FFN Residual Compensation:**
+  - `m_residualScale = 1/sqrt(2*layers)` prevents activation explosion in deep networks
+  - `numLayers` parameter propagated through `CFeedForwardNetwork` → `CTransformerBlock` → `CTransformerBrain`
+- **Checkpoint Integrity Validation:**
+  - 128-bit hash using two xorshift generators (hash1, hash2)
+  - Computed over all weight matrices (W1-W4) before save
+  - Validated on load - rejects corrupted checkpoints with `REJECTED_CHECKSUM_MISMATCH`
+- **IAIStrategy Interface Implementation:**
+  - `GetUncertainty()`: Model uncertainty (0 = certain, 1 = uncertain)
+  - `IsModelHealthy()`: Model health status check
+  - `IsTraining()`: Online training status
+  - `GetTrainingSteps()`: Training step counter
+  - `GetTemperature()`/`SetTemperature()`: Confidence calibration control
+  - `GetRegimeState()`: Current market regime (-1 to 3)
+  - `SaveCheckpoint()`: Force checkpoint save
+  - `GetLastLoadStatus()`: Diagnostics string
 
 ### 2.5 Risk domain
 - Class: `CUnifiedRiskManager`
@@ -327,22 +358,56 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - `GET /version`: Get server version information
 - Observability: Emits `[PYTHON-BRIDGE-DASHBOARD]` telemetry with connection state, version, and request stats
 
+### 2.13 Shared Engine & Scalability (Batch 91)
+- Class: `CSharedEngineManager` in `Core/Management/SharedEngineManager.mqh`
+- Responsibilities:
+  - Shared read-only TrendEngine, VolatilityEngine, and RegimeEngine across symbols to reduce memory and computation footprint
+  - Symbol prioritization based on spread, volume 24h, and custom priority score
+  - Dynamic priority recalculation with configurable window
+  - Active symbol management with enable/disable controls
+  - Symbol priority tracking with SSymbolPriority struct
+  - Provides GetNextPrioritySymbol() for load balancing
+- **Engine Sharing Modes**:
+  - `SHARING_DISABLED`: Each symbol gets its own engines (legacy mode)
+  - `SHARING_READONLY`: Engines are shared read-only (default)
+  - `SHARING_FULL`: Full engine sharing (future use)
+- **Symbol Priority Calculation**:
+  - Spread-based score (lower spread = higher score)
+  - Volume-based score (higher volume = higher score)
+  - Configurable weight mix (spread: 40%, volume:40%, manual:20%)
+  - Sorts symbols by priority each recalculation interval
+- **Observability**: GetSharingStatus() returns sharing mode, active symbol count, and engine health
+
 ## 3. Managed Strategies
 
 ### 3.1 Core retained set
-- Momentum
+- **Momentum** (SimpleMomentumStrategy.mqh)
   - Optional scalp-continuation mode is configured by `InpEnableMomentumScalping` and `InpMomentumScalpCooldownSeconds`; it shortens cooldown only for momentum itself and still sends every entry through manager consensus, unified risk, and trade-manager execution.
   - Optional scalp timeframe registration is configured by `InpMomentumScalpTimeframe`; when this is lower than the attached chart timeframe, Momentum evaluates on that lower timeframe instead of waiting on the chart bar cadence.
-- Trend
-- Fibonacci
-- Elliott Wave
-- Support/Resistance
-- Unified ICT
-- Candlestick
+  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+- **Trend** (StrategyTrend.mqh)
+  - Simplified from 300 → 259 lines (-13.7%), removed timeframe auto-stepping and dead trailing stop code
+  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+- **Support/Resistance** (StrategySupportResistance.mqh)
+  - Integrated CFibConfluence module (Fibonacci merge), replaced bubble sort with ArraySort()
+  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+- **Unified ICT** (StrategyUnifiedICT.mqh)
+  - Simplified from 4 to 2 entry types (2,194 → 2,012 lines, -8.3%)
+  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+- **Candlestick** (StrategyCandlestick.mqh)
   - Optional intrabar timeframe registration is configured by `InpCandlestickIntrabarTimeframe`; when this is lower than the attached chart timeframe and candlestick intrabar eligibility is enabled, Candlestick evaluates its own lower-timeframe bar stream.
+  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+- **Power of Three** (CPowerOfThreeStrategy.mqh)
+  - ICT AMD (Accumulation-Manipulation-Distribution) phase detection
+  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+- **Unicorn Model** (CUnicornModelStrategy.mqh)
+  - ICT breaker/OB + FVG overlap pattern detection
+  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
 
-Retired standalone strategy families (RSI, Mean Reversion, Swing, Volatility, MACD, Bollinger, Ichimoku, Harmonic, legacy SMC wrapper) are removed from active runtime inventory.
-The legacy strategy configuration module (`Config/StrategyConfig.mqh`) has also been removed to avoid stale retired-strategy references.
+**Removed Strategies:**
+- ~~Elliott Wave~~ - Deleted (~1,600 lines removed, unreliable)
+- ~~Fibonacci~~ - Merged into SupportResistance as CFibConfluence module
+- ~~RSI, Mean Reversion, Swing, Volatility, MACD, Bollinger, Ichimoku, Harmonic, legacy SMC wrapper~~ - Previously retired
 
 ### 3.2 AI strategy adapters
 - Neural Network adapter (`CAIStrategyAdapter`)

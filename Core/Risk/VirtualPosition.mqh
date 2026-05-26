@@ -170,3 +170,4 @@ public:
 };
 
 #endif // CORE_RISK_VIRTUAL_POSITION_MQH
+

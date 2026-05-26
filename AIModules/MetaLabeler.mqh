@@ -123,7 +123,7 @@ private:
         double gradB1[ML_H1];
         double gradW2[ML_H1][ML_OUT];
         double gradB2[ML_OUT];
-        double totalLoss = 0.0;
+        double batchTotalLoss = 0.0;
         int lossCount = 0;
 
         for(int iter = 0; iter < steps; iter++)
@@ -168,7 +168,7 @@ private:
                 // Calculate binary cross-entropy loss
                 double eps = 1e-15;
                 double loss = -target * MathLog(MathMax(pProfit, eps)) - (1.0 - target) * MathLog(MathMax(1.0 - pProfit, eps));
-                totalLoss += loss;
+                batchTotalLoss += loss;
                 lossCount++;
                 double dOut[ML_OUT];
                 dOut[1] = dProfit;
@@ -237,7 +237,7 @@ private:
         // Record average loss for early stopping
         if(lossCount > 0)
         {
-            double avgLoss = totalLoss / (double)lossCount;
+            double avgLoss = batchTotalLoss / (double)lossCount;
             RecordLoss(avgLoss);
         }
     }

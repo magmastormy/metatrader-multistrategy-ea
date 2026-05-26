@@ -737,6 +737,11 @@ public:
     // Initialization
     bool Initialize(const uint magicNumber = 12345, const string expertName = "MultiStrategyEA");
     
+    // Getters for dependencies
+    CPortfolioRiskManager* GetRiskManager() const { return m_riskManager; }
+    CPositionSizer* GetPositionSizer() const { return m_positionSizer; }
+    CMarketAnalysis* GetMarketAnalysis() const { return m_marketAnalysis; }
+    
     // Set trading parameters
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); }
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }

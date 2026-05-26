@@ -72,10 +72,14 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_MOMENTUM = 1,         // Momentum strategy
     STRATEGY_TREND = 2,            // Trend strategy
     STRATEGY_FIBONACCI = 3,        // Fibonacci strategy
-    STRATEGY_ELLIOTT_WAVE = 4,     // Elliott Wave strategy
+    // ELLIOTT WAVE REMOVED - Enum value kept for backward compatibility but deprecated
+    STRATEGY_ELLIOTT_WAVE = 4,     // [DEPRECATED] Elliott Wave strategy - removed from system
     STRATEGY_SUPPORT_RESISTANCE = 5, // Support/Resistance strategy
     STRATEGY_UNIFIED_ICT = 6,      // Unified ICT strategy
     STRATEGY_CANDLESTICK = 7,      // Candlestick strategy
+    STRATEGY_MEAN_REVERSION = 8,   // Mean Reversion strategy (NEW: Batch 93)
+    STRATEGY_VOLATILITY_BREAKOUT = 9, // Volatility Breakout strategy (NEW: Batch 93 - Week 3)
+    STRATEGY_STATISTICAL_ARBITRAGE = 10, // Statistical Arbitrage strategy (NEW: Batch 93 - Week 4 - ADVANCED)
     STRATEGY_CUSTOM = 99,          // Custom strategy
     STRATEGY_BRAIN = 100,          // Strategy brain type
     STRATEGY_AI_ENHANCED = 101     // AI enhanced strategy type
@@ -212,7 +216,7 @@ enum ENUM_RISK_LEVEL
 #define MIN_ACCOUNT_BALANCE 1.0         // Minimum account balance (lowered for micro-account testing)
 #define DRAWDOWN_CRITICAL 10.0           // Critical drawdown level
 #define DRAWDOWN_WARNING 5.0            // Warning drawdown level
-#define MAX_RISK_PER_TRADE 2.0        // Maximum risk per trade as percentage
+#define MAX_RISK_PER_TRADE 20.0       // Maximum risk per trade as percentage (increased for aggressive trading)
 #define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 
@@ -395,6 +399,7 @@ struct SValidationResult
     double correlationRisk;        // Correlation risk
     bool requiresAdjustment;       // Whether adjustment is required
     ENUM_ERROR_LEVEL severity;     // Error severity level
+    double confidenceMultiplier;   // Confidence adjustment multiplier (1.0 = no change)
     
     // Additional fields used by AdvancedSignalValidator
     bool isValid;                  // Signal validity
@@ -417,6 +422,7 @@ struct SValidationResult
         correlationRisk(0.0),
         requiresAdjustment(false),
         severity(ERROR_LEVEL_INFO),
+        confidenceMultiplier(1.0),
         isValid(false),
         qualityScore(0.0),
         reason(""),
@@ -438,6 +444,7 @@ struct SValidationResult
         correlationRisk(other.correlationRisk),
         requiresAdjustment(other.requiresAdjustment),
         severity(other.severity),
+        confidenceMultiplier(other.confidenceMultiplier),
         isValid(other.isValid),
         qualityScore(other.qualityScore),
         reason(other.reason),
@@ -460,6 +467,7 @@ struct SValidationResult
         correlationRisk = other.correlationRisk;
         requiresAdjustment = other.requiresAdjustment;
         severity = other.severity;
+        confidenceMultiplier = other.confidenceMultiplier;
         isValid = other.isValid;
         qualityScore = other.qualityScore;
         reason = other.reason;

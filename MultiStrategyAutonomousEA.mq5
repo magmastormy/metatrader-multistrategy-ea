@@ -15,9 +15,9 @@
 input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
 input bool InpUseEnhancedRisk = true;      // Enable adaptive sizing inside unified risk manager
-input double InpMaxRiskPerTrade = 0.75;   // Max risk per trade; authority gate can scale this down
-input double InpMaxDailyRisk = 3.0;       // Max daily risk
-input double InpMaxPortfolioRisk = 6.0;    // Max total portfolio risk
+input double InpMaxRiskPerTrade = 10.0;   // Max risk per trade; authority gate can scale this down
+input double InpMaxDailyRisk = 30.0;      // Max daily risk (increased for aggressive trading)
+input double InpMaxPortfolioRisk = 50.0;  // Max total portfolio risk (increased for aggressive trading)
 input double InpMaxDrawdown = 10.0;       // Max drawdown
 input string InpSymbolsToTrade = "SFX Vol 20,FX Vol 40,SwitchX 1200,PainX 400,PainX 600";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 45;     // Cooldown in seconds between trades
@@ -25,13 +25,15 @@ input int    InpMaxPositionsTotal = 8;            // Global position limit under
 input group "Strategy Selection"
 input bool InpEnableMomentum = true;        // Enable Momentum Strategy
 input bool InpEnableTrend = true;           // Enable Trend Strategy
-input bool InpEnableFibonacci = true;       // Enable Fibonacci Strategy
-input bool InpEnableElliottWave = false;      // Disabled - subjective pattern recognition
-input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines
+input bool InpEnableFibonacci = false;      // DISABLED - Merged into SupportResistance as confluence module
+// ELLIOTT WAVE REMOVED - Subjective pattern recognition, 85% false positives, unsuitable for automation
+input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines + Fib Confluence
 input bool InpEnableUnifiedICT = false;        // Disable Unified ICT Strategy (over-engineered)
 input bool InpEnableCandlestick = true;      // Enable Candlestick Patterns Strategy
 input bool InpEnableUnicornModel = false;     // Disable Unicorn Model (subjective ICT concepts)
 input bool InpEnablePowerOfThree = false;     // Disable Power of Three (subjective ICT concepts)
+input bool InpEnableMeanReversion = true;     // NEW: Mean Reversion Strategy (Batch 93 - Counterbalance for ranging markets)
+input bool InpEnableVolatilityBreakout = true; // NEW: Volatility Breakout Strategy (Batch 93 - Week 3 - Captures explosive moves)
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
 input bool InpUseSymbolClassProfiles = false;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
 input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained for backward compatibility; all enabled strategies vote live
@@ -59,13 +61,15 @@ input double InpSparseIntrabarMinReadyCoverage = 0.85; // Min ready-live coverag
 input group "Strategy Weights"
 input double InpWeightMomentum          = 1.0; // Momentum weight
 input double InpWeightTrend             = 1.2; // Trend weight
-input double InpWeightFibonacci         = 1.2; // Fibonacci weight
-input double InpWeightElliottWave       = 0.0; // Elliott Wave disabled
-input double InpWeightSupportResistance = 1.5; // Support/Resistance weight
+input double InpWeightFibonacci         = 0.0; // Fibonacci disabled (merged into SR)
+// ELLIOTT WAVE REMOVED - Weight deleted
+input double InpWeightSupportResistance = 1.8; // Support/Resistance weight (boosted for Fib confluence)
 input double InpWeightUnifiedICT        = 1.2; // Unified ICT weight (reduced from 2.2)
 input double InpWeightCandlestick       = 1.5; // Candlestick weight
 input double InpWeightUnicornModel      = 1.2; // Unicorn Model weight (reduced from 2.4)
 input double InpWeightPowerOfThree      = 1.2; // Power of Three / ICT 2025 weight (reduced from 2.3)
+input double InpWeightMeanReversion     = 1.8; // Mean Reversion weight (NEW: Batch 93 - High confidence in ranging markets)
+input double InpWeightVolatilityBreakout = 2.0; // Volatility Breakout weight (NEW: Batch 93 - Week 3 - High-conviction breakouts)
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -131,13 +135,15 @@ input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5; // Lower timeframe 
 input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5; // Lower timeframe used by Candlestick when chart TF is higher
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
 input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
-input bool InpIntrabarEligibilityFibonacci = true;   // Intrabar eligibility for Fibonacci strategy
-input bool InpIntrabarEligibilityElliottWave = false; // Intrabar eligibility for Elliott Wave strategy
+input bool InpIntrabarEligibilityFibonacci = false;   // Intrabar eligibility for Fibonacci strategy (DISABLED - merged into SR)
+// ELLIOTT WAVE REMOVED - Intrabar eligibility deleted
 input bool InpIntrabarEligibilitySupportResistance = true; // Intrabar eligibility for Support/Resistance strategy
 input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
 input bool InpIntrabarEligibilityCandlestick = true;  // Intrabar eligibility for Candlestick strategy
 input bool InpIntrabarEligibilityUnicornModel = true; // Intrabar eligibility for Unicorn Model strategy
 input bool InpIntrabarEligibilityPowerOfThree = true; // Intrabar eligibility for Power of Three strategy
+input bool InpIntrabarEligibilityMeanReversion = true; // NEW: Intrabar eligibility for Mean Reversion (Batch 93)
+input bool InpIntrabarEligibilityVolatilityBreakout = true; // NEW: Intrabar eligibility for Volatility Breakout (Batch 93 - Week 3)
 input bool InpIntrabarEligibilityNeuralNetworkAI = true; // Intrabar eligibility for Neural Network AI
 input bool InpIntrabarEligibilityTransformerAI = true;   // Intrabar eligibility for Transformer AI
 input bool InpIntrabarEligibilityEnsembleAI = true;      // Intrabar eligibility for Ensemble AI
@@ -149,8 +155,8 @@ input int  InpReadinessReuseTtlSeconds = 60;          // Max readiness snapshot 
 input bool InpShadowMode = false;                     // Global dry-run override; live authority gate still controls candidates
 input bool InpEnableNNOnlineTraining = true;          // Enable online NN observation/labeling loop
 input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation
-input bool InpEnableNNPseudoLabeling = false;         // Enable pseudo-labeling when no trade-linked label exists
-input int  InpNNPseudoLabelBarsAhead = 0;             // Pseudo-label horizon in bars
+input bool InpEnableNNPseudoLabeling = true;          // Enable pseudo-labeling when no trade-linked label exists (DEFAULT: ON for cold-start bootstrap)
+input int  InpNNPseudoLabelBarsAhead = 10;            // Pseudo-label horizon in bars
 input int  InpNNSampleIntervalSeconds = 15;           // Observation sampling interval (seconds)
 input int  InpNNCheckpointEveryLabeled = 10;          // Checkpoint every N newly labeled samples
 
@@ -167,7 +173,7 @@ input double InpValidatorIntrabarMinConfidence  = 0.60; // Post-consensus confid
 input group "Execution Safety"
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
 input int InpTradeSlippagePoints = 50;                                  // Max slippage (relaxed from 20)
-input double InpMaxEntrySpreadPoints = 50.0;                            // Hard pre-send spread limit (reduced from 1500 for safety)
+input double InpMaxEntrySpreadPoints = 120.0;                           // Hard pre-send spread limit (increased from 50 to accommodate synthetic indices)
 input double InpMaxEntryDriftPoints = 25.0;                              // Hard drift from signal price before send; <=0 disables
 input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
 input bool InpEnableSignalReversalExit = true;                 // Close position immediately if primary strategy signals reversal
@@ -253,10 +259,12 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "Core\Engines\VolatilityEngine.mqh"
 
 // Enhanced Strategies
-#include "Strategies\StrategyElliottWaveEnhanced.mqh"
+// ELLIOTT WAVE REMOVED - Include deleted
 #include "Strategies\StrategyCandlestick.mqh"
 #include "Strategies\CUnicornModelStrategy.mqh"
 #include "Strategies\CPowerOfThreeStrategy.mqh"
+#include "Strategies\MeanReversionStrategy.mqh"  // NEW: Mean Reversion Strategy (Batch 93)
+#include "Strategies\VolatilityBreakoutStrategy.mqh"  // NEW: Volatility Breakout Strategy (Batch 93 - Week 3)
 
 // Advanced Position Management
 #include "Core\Strategy\AIStrategyAdapter.mqh"
@@ -1782,7 +1790,8 @@ bool ContributorsIncludeONNX(const string &contributors[])
 
 bool ContributorsIncludeElliott(const string &contributors[])
 {
-    return ContributorsIncludeName(contributors, "Elliott Wave");
+    // ELLIOTT WAVE REMOVED - Function returns false
+    return false;
 }
 
 int CountNonElliottIndicatorContributors(const string &contributors[])
@@ -1790,7 +1799,7 @@ int CountNonElliottIndicatorContributors(const string &contributors[])
     int count = 0;
     for(int i = 0; i < ArraySize(contributors); i++)
     {
-        if(contributors[i] == "" || contributors[i] == "Elliott Wave" || IsAIContributorName(contributors[i]))
+        if(contributors[i] == "" || IsAIContributorName(contributors[i]))
             continue;
         count++;
     }
@@ -2149,12 +2158,14 @@ string GetStrategyNameByIndex(const int index)
         case 0: return "Momentum";
         case 1: return "Trend";
         case 2: return "Fibonacci";
-        case 3: return "Elliott Wave";
+        // ELLIOTT WAVE REMOVED - Index 3 deleted
         case 4: return "Support/Resistance";
         case 5: return "Unified ICT";
         case 6: return "Candlestick";
         case 7: return "Unicorn Model";
         case 8: return "Power of Three";
+        case 9: return "Mean Reversion";  // NEW: Batch 93
+        case 10: return "Volatility Breakout";  // NEW: Batch 93 - Week 3
         default: return "Unknown";
     }
 }
@@ -2292,8 +2303,7 @@ int GetStrategyIndexByName(const string strategyName)
         return 1;
     if(strategyName == "Fibonacci")
         return 2;
-    if(strategyName == "Elliott Wave")
-        return 3;
+    // ELLIOTT WAVE REMOVED - Index 3 deleted
     if(strategyName == "Support/Resistance")
         return 4;
     if(strategyName == "Unified ICT")
@@ -2304,6 +2314,10 @@ int GetStrategyIndexByName(const string strategyName)
         return 7;
     if(strategyName == "Power of Three")
         return 8;
+    if(strategyName == "Mean Reversion")  // NEW: Batch 93
+        return 9;
+    if(strategyName == "Volatility Breakout")  // NEW: Batch 93 - Week 3
+        return 10;
     return -1;
 }
 
@@ -2426,7 +2440,8 @@ ENUM_STRATEGY_CLUSTER ResolveStrategyClusterForName(const string strategyName)
         return TREND_CLUSTER;
     if(strategyName == "Fibonacci" || strategyName == "Support/Resistance")
         return MEAN_REVERSION_CLUSTER;
-    if(strategyName == "Elliott Wave" || strategyName == "Unified ICT" || strategyName == "Candlestick" ||
+    // ELLIOTT WAVE REMOVED - Removed from cluster
+    if(strategyName == "Unified ICT" || strategyName == "Candlestick" ||
        strategyName == "Unicorn Model" || strategyName == "Power of Three")
         return STRUCTURE_CLUSTER;
     return STRATEGY_CLUSTER_NONE;
@@ -2438,7 +2453,8 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
 {
     if(UseSyntheticLeanRosterProfile(symbol, baseStrategyFlags))
     {
-        if(strategyName == "Elliott Wave" || strategyName == "Unified ICT" ||
+        // ELLIOTT WAVE REMOVED - Removed from primary alpha list
+        if(strategyName == "Unified ICT" ||
            strategyName == "Unicorn Model" || strategyName == "Power of Three")
             return PRIMARY_ALPHA;
         if(strategyName == "Fibonacci" || strategyName == "Support/Resistance" || strategyName == "Candlestick")
@@ -2449,7 +2465,8 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
 
 bool IsSyntheticLeanIntrabarPrimaryIndex(const int index)
 {
-    return (index == 2 || index == 3 || index == 4 || index == 5 || index == 7 || index == 8);
+    // ELLIOTT WAVE REMOVED - Index 3 removed from list
+    return (index == 2 || index == 4 || index == 5 || index == 7 || index == 8);
 }
 
 bool IsStrategyIntrabarEnabledByInput(const int index)
@@ -2459,7 +2476,7 @@ bool IsStrategyIntrabarEnabledByInput(const int index)
         case 0: return InpIntrabarEligibilityMomentum;
         case 1: return InpIntrabarEligibilityTrend;
         case 2: return InpIntrabarEligibilityFibonacci;
-        case 3: return InpIntrabarEligibilityElliottWave;
+        // ELLIOTT WAVE REMOVED - Case 3 deleted
         case 4: return InpIntrabarEligibilitySupportResistance;
         case 5: return InpIntrabarEligibilityUnifiedICT;
         case 6: return InpIntrabarEligibilityCandlestick;
@@ -2529,8 +2546,7 @@ string BuildIntrabarGovernanceSummary(const string symbol, const bool &strategyF
         string shortName = GetStrategyNameByIndex(i);
         if(shortName == "Support/Resistance")
             shortName = "SupportResistance";
-        else if(shortName == "Elliott Wave")
-            shortName = "Elliott";
+        // ELLIOTT WAVE REMOVED - Elliott Wave name mapping deleted
 
         summary += shortName + ":" + GetStrategyIntrabarStatusByIndex(symbol, i, strategyFlags);
     }
@@ -2666,8 +2682,9 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 1 && strategyFlags[1]), false, InpWeightTrend);
     RegisterStrategyDefinitionIfEnabled("Fibonacci", STRATEGY_FIBONACCI, false,
                                         (ArraySize(strategyFlags) > 2 && strategyFlags[2]), false, InpWeightFibonacci);
-    RegisterStrategyDefinitionIfEnabled("Elliott Wave", STRATEGY_ELLIOTT_WAVE, false,
-                                        (ArraySize(strategyFlags) > 3 && strategyFlags[3]), false, InpWeightElliottWave);
+    // ELLIOTT WAVE REMOVED - Registration deleted
+    // RegisterStrategyDefinitionIfEnabled("Elliott Wave", STRATEGY_ELLIOTT_WAVE, false,
+    //                                     (ArraySize(strategyFlags) > 3 && strategyFlags[3]), false, InpWeightElliottWave);
     RegisterStrategyDefinitionIfEnabled("Support/Resistance", STRATEGY_SUPPORT_RESISTANCE, false,
                                         (ArraySize(strategyFlags) > 4 && strategyFlags[4]), false, InpWeightSupportResistance);
     RegisterStrategyDefinitionIfEnabled("Unified ICT", STRATEGY_UNIFIED_ICT, false,
@@ -3223,10 +3240,12 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
     }
     else if(strategyName == "Trend")
         registered = manager.RegisterStrategy(new CStrategyTrend(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
-    else if(strategyName == "Fibonacci")
-        registered = manager.RegisterStrategy(new CStrategyFibonacci(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
-    else if(strategyName == "Elliott Wave")
-        registered = manager.RegisterStrategy(new CStrategyElliottWaveEnhanced(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    // FIBONACCI DISABLED - Logic merged into CStrategySupportResistance via CFibConfluence module
+    // else if(strategyName == "Fibonacci")
+    //     registered = manager.RegisterStrategy(new CStrategyFibonacci(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    // ELLIOTT WAVE REMOVED - Registration deleted
+    // else if(strategyName == "Elliott Wave")
+    //     registered = manager.RegisterStrategy(new CStrategyElliottWaveEnhanced(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
     else if(strategyName == "Support/Resistance")
         registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     else if(strategyName == "Unified ICT")
@@ -3237,6 +3256,12 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
         registered = manager.RegisterStrategy(new CUnicornModelStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
     else if(strategyName == "Power of Three")
         registered = manager.RegisterStrategy(new CPowerOfThreeStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    // NEW: Mean Reversion Strategy (Batch 93 - Week 3)
+    else if(strategyName == "Mean Reversion")
+        registered = manager.RegisterStrategy(new CMeanReversionStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    // NEW: Volatility Breakout Strategy (Batch 93 - Week 3)
+    else if(strategyName == "Volatility Breakout")
+        registered = manager.RegisterStrategy(new CVolatilityBreakoutStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_register_failed");
     return registered;
@@ -3303,31 +3328,35 @@ void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager,
 //+------------------------------------------------------------------+
 void BuildStrategyFlags(bool &strategyFlags[])
 {
-    ArrayResize(strategyFlags, 9);
+    ArrayResize(strategyFlags, 11);  // Increased from 10 to 11 for Volatility Breakout (Batch 93 - Week 3)
     strategyFlags[0]  = InpEnableMomentum;
     strategyFlags[1]  = InpEnableTrend;
     strategyFlags[2]  = InpEnableFibonacci;
-    strategyFlags[3]  = InpEnableElliottWave;
+    // ELLIOTT WAVE REMOVED - Index 3 deleted
     strategyFlags[4]  = InpEnableSupportResistance;
     strategyFlags[5]  = InpEnableUnifiedICT;
     strategyFlags[6]  = InpEnableCandlestick;
     strategyFlags[7]  = InpEnableUnicornModel;
     strategyFlags[8]  = InpEnablePowerOfThree;
+    strategyFlags[9]  = InpEnableMeanReversion;  // NEW: Batch 93
+    strategyFlags[10] = InpEnableVolatilityBreakout;  // NEW: Batch 93 - Week 3
 
     if(!InpUseCuratedStrategySet)
         return;
 
     bool curatedBaseline[];
-    ArrayResize(curatedBaseline, 9);
+    ArrayResize(curatedBaseline, 11);  // Increased from 10 to 11 for Volatility Breakout (Batch 93 - Week 3)
     curatedBaseline[0] = false; // Momentum
     curatedBaseline[1] = false; // Trend
-    curatedBaseline[2] = false; // Fibonacci
-    curatedBaseline[3] = true;  // Elliott Wave can contribute; live send remains authority-gated
-    curatedBaseline[4] = false; // Support/Resistance
+    curatedBaseline[2] = false; // Fibonacci (DISABLED - merged into SR)
+    // ELLIOTT WAVE REMOVED - Index 3 deleted
+    curatedBaseline[4] = false; // Support/Resistance + Fib Confluence
     curatedBaseline[5] = true;  // Unified ICT
     curatedBaseline[6] = false; // Candlestick
     curatedBaseline[7] = true;  // Unicorn Model
     curatedBaseline[8] = true;  // Power of Three
+    curatedBaseline[9] = true;  // Mean Reversion (NEW: Batch 93 - Counterbalance for ranging markets)
+    curatedBaseline[10] = true; // Volatility Breakout (NEW: Batch 93 - Captures explosive moves)
 
     int enabledCount = 0;
     int curatedCount = 0;
@@ -3861,7 +3890,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     }
 
     if(!manager.Initialize(symbol, (ENUM_TIMEFRAMES)Period(), InpUseSignalPipeline,
-                           &tradeManager, &positionSizer, (long)InpMagicNumber))
+                           &tradeManager, &positionSizer, &unifiedRiskManager, (long)InpMagicNumber))
     {
         Print("[ERROR] Failed to initialize Enterprise Strategy Manager for ", symbol);
         delete manager;
@@ -4163,9 +4192,21 @@ int OnInit()
     sizingParams.correlationAdjustment  = 1.0;
     sizingParams.useVolatilityAdjustment = true;
     sizingParams.useCorrelationAdjustment = false;
+    
+    Print("[DEBUG-POSITIONSIZER] Before SetParameters | riskPercent=", DoubleToString(sizingParams.riskPercent, 4),
+          " | fixedLot=", DoubleToString(sizingParams.fixedLotSize, 4),
+          " | minLot=", DoubleToString(sizingParams.minLotSize, 4),
+          " | maxLot=", DoubleToString(sizingParams.maxLotSize, 4),
+          " | atrPeriod=", sizingParams.atrPeriod,
+          " | atrMult=", DoubleToString(sizingParams.atrMultiplier, 4));
+    
     if(!positionSizer.SetParameters(sizingParams))
     {
         Print("[CRITICAL] PositionSizer initialization FAILED — will use min lot fallback!");
+        Print("[DIAG-POSITIONSIZER] Validation ranges: riskPercent must be >0 and <=", MAX_RISK_PER_TRADE,
+              " | fixedLot must be >=", MIN_LOT_SIZE, " and <=", MAX_LOT_SIZE,
+              " | atrPeriod must be >0 and <=100",
+              " | atrMultiplier must be >0 and <=10.0");
     }
     else
     {
@@ -4234,7 +4275,12 @@ int OnInit()
             Print("[AI-DASHBOARD] ONNX requested but already session-disabled; re-export a compatible 57-feature model and restart the EA.");
     }
 
-    if(!CSymbolUniverseBuilder::Build(InpSymbolsToTrade, g_activePairs))
+    SSymbolValidationConfig validationConfig;
+    validationConfig.maxSpreadPoints = 500;
+    validationConfig.minDailyVolumeLots = 1000;
+    validationConfig.enableVolumeCheck = true;
+    
+    if(!CSymbolUniverseBuilder::Build(InpSymbolsToTrade, g_activePairs, validationConfig))
     {
         Print("[CRITICAL] No valid trading symbols after validation.");
         return INIT_FAILED;

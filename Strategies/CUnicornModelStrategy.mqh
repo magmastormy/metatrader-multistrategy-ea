@@ -9,6 +9,8 @@
 #define __C_UNICORN_MODEL_STRATEGY_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+// Risk Manager for AGENTS.md invariant #1
+#include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 #include "UnifiedICTFiles/AdvancedOrderBlocks.mqh"
 #include "UnifiedICTFiles/LiquidityDetector.mqh"
@@ -22,6 +24,9 @@ private:
     CLiquidityDetector*          m_liquidityDetector;
     CImbalanceDetector*          m_imbalanceDetector;
     int                          m_lastBarCount;
+    
+    // Risk Management (AGENTS.md invariant #1)
+    CUnifiedRiskManager*         m_riskManager;
 
     bool RefreshForNewBar()
     {
@@ -58,7 +63,8 @@ public:
         m_obDetector(NULL),
         m_liquidityDetector(NULL),
         m_imbalanceDetector(NULL),
-        m_lastBarCount(0)
+        m_lastBarCount(0),
+        m_riskManager(NULL)
     {
         OverrideMinConfidence(0.62);
     }
@@ -89,6 +95,12 @@ public:
         }
 
         m_lastBarCount = 0;
+        
+        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
+        m_riskManager = GetUnifiedRiskManager();
+        if(m_riskManager == NULL)
+            Print("[UNICORN] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
+        
         return true;
     }
 
@@ -98,6 +110,8 @@ public:
         if(m_obDetector != NULL) { delete m_obDetector; m_obDetector = NULL; }
         if(m_liquidityDetector != NULL) { delete m_liquidityDetector; m_liquidityDetector = NULL; }
         if(m_imbalanceDetector != NULL) { delete m_imbalanceDetector; m_imbalanceDetector = NULL; }
+        // Risk manager is not owned by this strategy - do NOT delete
+        m_riskManager = NULL;
         CStrategyBase::Deinit();
     }
 
@@ -198,9 +212,55 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
+        ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        
+        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
+        if(m_riskManager != NULL)
+        {
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = 0.01;
+            request.stopLossPips = 0;  // Unicorn doesn't calculate SL/TP here
+            request.takeProfitPips = 0;
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+            
+            SValidationResult result = m_riskManager->ValidateTradeRequest(request, "UNICORN");
+            if(!result.approved)
+            {
+                SetDecisionReasonTag("UNICORN_RISK_REJECTED");
+                PrintFormat("[UNICORN] Risk rejected %s at %.5f Conf=%.1f%%",
+                           signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                           currentPrice, confidence * 100);
+                return TRADE_SIGNAL_NONE;
+            }
+            confidence *= result.confidenceMultiplier;
+        }
+
         SetDecisionReasonTag(bullish ? "UNICORN_SIGNAL_BUY" : "UNICORN_SIGNAL_SELL");
+        m_signalsGenerated++;
         RecordSignal();
-        return bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+        
+        // CONSENSUS LOGGING (AGENTS.md requirement)
+        PrintFormat("[CONSENSUS-DIAG] %s | %s | OB: %s | FVG: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
+                   m_symbol,
+                   signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   EnumToString(ob.type),
+                   imb.isBullish ? "Bull" : "Bear",
+                   confidence * 100,
+                   m_weight,
+                   m_lastDecisionReasonTag);
+        
+        PrintFormat("[UNICORN] %s: %s | OB+FVG Overlap | Conf: %.1f%% | CISD: %s",
+                   m_symbol,
+                   signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   confidence * 100,
+                   cisdAligned ? "Yes" : "No");
+        
+        return signal;
     }
 
     virtual string GetName() const override { return "Unicorn Model"; }
@@ -208,3 +268,4 @@ public:
 };
 
 #endif
+

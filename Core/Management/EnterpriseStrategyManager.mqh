@@ -13,8 +13,8 @@
 // Retained production strategy inventory (7 kept in codebase)
 #include "../../Strategies/SimpleMomentumStrategy.mqh"
 #include "../../Strategies/StrategyTrend.mqh"
-#include "../../Strategies/StrategyFibonacci.mqh"
-#include "../../Strategies/StrategyElliottWaveEnhanced.mqh"
+// FIBONACCI REMOVED - Include deleted
+// ELLIOTT WAVE REMOVED - Include deleted
 #include "../../Strategies/StrategySupportResistance.mqh"
 #include "../../Strategies/StrategyUnifiedICT.mqh"
 #include "../../Strategies/StrategyCandlestick.mqh"
@@ -195,6 +195,7 @@ private:
     CTimeframeConsistency* m_tfConsistency;
     CTradeManager* m_tradeManager;   // CRITICAL FIX: Store for strategy initialization
     CPositionSizer* m_positionSizer; // CRITICAL FIX: Store for strategy initialization
+    CUnifiedRiskManager* m_unifiedRiskManager; // Unified risk validation gate (injected)
     CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
     
     StrategyEntry m_strategies[];
@@ -375,6 +376,7 @@ public:
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
                    bool usePipeline = true,
                    CTradeManager* tradeManagerPtr = NULL, CPositionSizer* positionSizerPtr = NULL,
+                   CUnifiedRiskManager* unifiedRiskManagerPtr = NULL,
                    const long managedMagic = 0);
     
     // Strategy management
@@ -713,6 +715,7 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
 bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            bool usePipeline,
                                            CTradeManager* tradeManagerPtr, CPositionSizer* positionSizerPtr,
+                                           CUnifiedRiskManager* unifiedRiskManagerPtr,
                                            const long managedMagic)
 {
     m_symbol = symbol;
@@ -721,6 +724,7 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_usePipeline = usePipeline;
     m_tradeManager = tradeManagerPtr;   // CRITICAL FIX: Store for strategy initialization
     m_positionSizer = positionSizerPtr; // CRITICAL FIX: Store for strategy initialization
+    m_unifiedRiskManager = unifiedRiskManagerPtr; // ARCHITECTURAL FIX: Inject unified risk manager
     
     // Initialize pipeline
     if(m_usePipeline)
@@ -797,10 +801,10 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
         return false;
     }
     
-    // Initialize strategy with VALID pointers
+    // Initialize strategy with VALID pointers (ARCHITECTURAL FIX: inject unified risk manager)
     ENUM_TIMEFRAMES resolvedTf = (tf == PERIOD_CURRENT ? m_baseTimeframe : tf);
     bool initSuccess = strategy.Init(m_symbol, resolvedTf,
-                                     m_tradeManager, m_positionSizer);
+                                     m_tradeManager, m_positionSizer, m_unifiedRiskManager);
     
     if(!initSuccess)
     {
@@ -2030,9 +2034,10 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
     
+    // ELLIOTT WAVE REMOVED - Registration deleted
     // 3: Elliott Wave (live primary voter) - Tier 1
-    if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+    // if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, false,
+    //                                          PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
     
     // 4: Support/Resistance (live primary voter) - Tier 2
     if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,

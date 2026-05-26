@@ -281,62 +281,78 @@ CPositionSizer::~CPositionSizer(void)
 //+------------------------------------------------------------------+
 bool CPositionSizer::SetParameters(const SPositionSizingParams &params)
 {
+    // DIAGNOSTIC: Log entry
+    Print("[POSITIONSIZER-DEBUG] SetParameters called | riskPercent=", DoubleToString(params.riskPercent, 4),
+          " | fixedLot=", DoubleToString(params.fixedLotSize, 4),
+          " | minLot=", DoubleToString(params.minLotSize, 4),
+          " | maxLot=", DoubleToString(params.maxLotSize, 4),
+          " | atrPeriod=", params.atrPeriod,
+          " | atrMult=", DoubleToString(params.atrMultiplier, 4),
+          " | corrAdj=", DoubleToString(params.correlationAdjustment, 4));
+    
     // Validate parameters
     if(params.riskPercent <= 0 || params.riskPercent > MAX_RISK_PER_TRADE)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Invalid risk percent: %.2f", params.riskPercent), 0);
+        string errMsg = StringFormat("Invalid risk percent: %.2f (must be >0 and <=%.2f)", params.riskPercent, MAX_RISK_PER_TRADE);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
     if(params.fixedLotSize < MIN_LOT_SIZE || params.fixedLotSize > MAX_LOT_SIZE)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Invalid fixed lot size: %.2f", params.fixedLotSize), 0);
+        string errMsg = StringFormat("Invalid fixed lot size: %.2f (must be >=%.2f and <=%.2f)", params.fixedLotSize, MIN_LOT_SIZE, MAX_LOT_SIZE);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
     if(params.atrPeriod <= 0 || params.atrPeriod > 100)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Invalid ATR period: %d", params.atrPeriod), 0);
+        string errMsg = StringFormat("Invalid ATR period: %d (must be >0 and <=100)", params.atrPeriod);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
     // AUDIT FIX: Add validation for additional parameters
     if(params.atrMultiplier <= 0 || params.atrMultiplier > 10.0)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Invalid ATR multiplier: %.2f", params.atrMultiplier), 0);
+        string errMsg = StringFormat("Invalid ATR multiplier: %.2f (must be >0 and <=10.0)", params.atrMultiplier);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
     if(params.maxLotSize <= 0 || params.maxLotSize > MAX_LOT_SIZE)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Invalid max lot size: %.2f", params.maxLotSize), 0);
+        string errMsg = StringFormat("Invalid max lot size: %.2f (must be >0 and <=%.2f)", params.maxLotSize, MAX_LOT_SIZE);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
     if(params.minLotSize <= 0 || params.minLotSize > MAX_LOT_SIZE)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Invalid min lot size: %.2f", params.minLotSize), 0);
+        string errMsg = StringFormat("Invalid min lot size: %.2f (must be >0 and <=%.2f)", params.minLotSize, MAX_LOT_SIZE);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
     if(params.minLotSize > params.maxLotSize)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Min lot size (%.2f) > Max lot size (%.2f)", 
-                                               params.minLotSize, params.maxLotSize), 0);
+        string errMsg = StringFormat("Min lot size (%.2f) > Max lot size (%.2f)", params.minLotSize, params.maxLotSize);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
     if(params.correlationAdjustment <= 0 || params.correlationAdjustment > 2.0)
     {
-        LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                                   StringFormat("Invalid correlation adjustment: %.2f", params.correlationAdjustment), 0);
+        string errMsg = StringFormat("Invalid correlation adjustment: %.2f (must be >0 and <=2.0)", params.correlationAdjustment);
+        LogError(ERROR_RECOVERABLE, "PositionSizer", errMsg, 0);
+        Print("[POSITIONSIZER-REJECT] ", errMsg);
         return false;
     }
     
@@ -348,6 +364,9 @@ bool CPositionSizer::SetParameters(const SPositionSizingParams &params)
         LogError(ERROR_INFO, "PositionSizer", 
                                StringFormat("Position sizer initialized - Mode: %d, Risk: %.2f%%", 
                                            params.sizingMode, params.riskPercent), 0);
+    
+    Print("[POSITIONSIZER-SUCCESS] Initialized successfully | mode=", params.sizingMode,
+          " | risk=", DoubleToString(params.riskPercent, 2), "%");
     
     return true;
 }
@@ -1033,3 +1052,4 @@ void CPositionSizer::LogSizingDecision(const string symbolParam, const double si
 }
 
 #endif // CORE_POSITION_SIZER_MQH
+

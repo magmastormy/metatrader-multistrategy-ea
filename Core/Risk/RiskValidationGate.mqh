@@ -1155,3 +1155,4 @@ void CRiskValidationGate::UpdatePerformanceMetrics(const ulong startTimeParam)
 }
 
 #endif // CORE_RISK_VALIDATION_GATE_MQH
+

@@ -1570,6 +1570,7 @@ bool CUnifiedSignalPipeline::IsSyntheticSymbol(const string symbol)
        StringFind(symbol, "FX Vol") >= 0 ||
        StringFind(symbol, "GainX") >= 0 ||
        StringFind(symbol, "FlipX") >= 0 ||
+       StringFind(symbol, "SwitchX") >= 0 ||   // SwitchX 1200 and variants
        StringFind(symbol, "Synth") >= 0 ||
        StringFind(symbol, "Index") >= 0)
     {
@@ -1583,6 +1584,13 @@ bool CUnifiedSignalPipeline::IsSyntheticSymbol(const string symbol)
 //+------------------------------------------------------------------+
 bool CUnifiedSignalPipeline::ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal, const string symbol)
 {
+    // Synthetic indices trade 24/7 - bypass ALL time restrictions including weekends
+    if(IsSyntheticSymbol(symbol))
+    {
+        LogFilterResult("TimeFilter", true, "Synthetic index - 24/7 trading enabled");
+        return true;
+    }
+    
     // If synthetic indices and off-hours allowed, bypass time filter
     if(m_filters.allowSyntheticOffHours && IsSyntheticSymbol(symbol))
         return true;
@@ -1612,7 +1620,7 @@ bool CUnifiedSignalPipeline::ApplyTimeFilter(ENUM_TRADE_SIGNAL &signal, const st
         }
     }
     
-    // Skip weekends
+    // Skip weekends (only for non-synthetic symbols)
     if(dt.day_of_week == 0 || dt.day_of_week == 6)
     {
         LogFilterResult("TimeFilter", false, "Weekend - trading disabled");
@@ -1740,21 +1748,6 @@ void CUnifiedSignalPipeline::CheckEngineHealth(const string symbol)
     m_liquidityEngineHealthy = (m_liquidityEngine != NULL);
     m_volatilityEngineHealthy = (m_volatilityEngine != NULL);
     m_regimeEngineHealthy = (m_regimeEngine != NULL);
-    
-    if(m_trendEngine != NULL)
-        m_trendEngineHealthy = m_trendEngine.IsReady();
-    
-    if(m_structureEngine != NULL)
-        m_structureEngineHealthy = m_structureEngine.IsReady();
-    
-    if(m_liquidityEngine != NULL)
-        m_liquidityEngineHealthy = m_liquidityEngine.IsReady();
-    
-    if(m_volatilityEngine != NULL)
-        m_volatilityEngineHealthy = m_volatilityEngine.IsReady();
-    
-    if(m_regimeEngine != NULL)
-        m_regimeEngineHealthy = m_regimeEngine.IsReady();
     
     m_lastHealthCheckTime = TimeCurrent();
 }

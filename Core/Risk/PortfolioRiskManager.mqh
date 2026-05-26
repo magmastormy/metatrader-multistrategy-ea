@@ -469,3 +469,4 @@ int CPortfolioRiskManager::GetPositionsOnSymbol(const string symbol)
 }
 
 #endif // CORE_RISK_PORTFOLIO_MANAGER_MQH
+
