@@ -70,6 +70,7 @@ private:
     
     // State Tracking
     datetime m_lastSignalBar;
+    int m_signalsGenerated;
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
     
@@ -110,6 +111,7 @@ public:
         m_minVolumeRatio(1.2),
         m_riskManager(NULL),
         m_lastSignalBar(0),
+        m_signalsGenerated(0),
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0)
     {
@@ -133,7 +135,7 @@ public:
     }
     
     // Initialization
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
@@ -215,11 +217,11 @@ public:
             avgVol += volumeBuffer[i];
         avgVol /= 10.0;
         
-        double volumeRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
+        double volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
         
-        if(volumeRatio < m_minVolumeRatio)
+        if(volRatio < m_minVolumeRatio)
         {
-            PrintFormat("[MEANREV-VOL] Low volume | Ratio=%.2f < %.2f", volumeRatio, m_minVolumeRatio);
+            PrintFormat("[MEANREV-VOL] Low volume | Ratio=%.2f < %.2f", volRatio, m_minVolumeRatio);
             return RejectSignal("MEANREV_LOW_VOLUME");
         }
         
@@ -228,7 +230,7 @@ public:
             currentPrice, prevPrice,
             bbUpper[0], bbMiddle[0], bbLower[0],
             rsiBuffer[0],
-            volumeRatio
+            volRatio
         );
         
         if(signal.direction == TRADE_SIGNAL_NONE)
@@ -245,13 +247,35 @@ public:
         // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
         if(m_riskManager != NULL)
         {
-            if(!m_riskManager->ValidateTrade(signal.direction, signal.entryPrice, 
-                                            signal.stopLoss, signal.takeProfit, signal.confidence))
+            // Calculate volatility-based SL from signal structure
+            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            double slDistance = MathAbs(signal.entryPrice - signal.stopLoss);
+            double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 50.0; // Fallback to 50 pips
+            double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
+            double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 2.0;
+            
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = 0.01;  // Placeholder - will be sized by PositionSizer
+            request.stopLossPips = slPips;
+            request.takeProfitPips = tpPips;
+            request.confidence = signal.confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+            
+            CUnifiedRiskManager* riskMgr = m_riskManager;
+            SValidationResult result;
+            ZeroMemory(result);
+            if(riskMgr != NULL)
+                result = (*riskMgr).ValidateTradeRequest(request, "MEANREV");
+            if(!result.approved)
             {
                 SetDecisionReasonTag("MEANREV_RISK_REJECTED");
-                PrintFormat("[MEANREV] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%)",
+                PrintFormat("[MEANREV] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
                            signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           signal.entryPrice, signal.stopLoss, signal.takeProfit, signal.confidence * 100);
+                           signal.entryPrice, signal.stopLoss, signal.takeProfit, signal.confidence * 100,
+                           result.message);
                 return TRADE_SIGNAL_NONE;
             }
         }
@@ -296,7 +320,7 @@ private:
         double price, double prevPrice,
         double bbUpper, double bbMiddle, double bbLower,
         double rsi,
-        double volumeRatio)
+        double volRatio)  // Renamed to avoid shadowing global 'volumeRatio'
     {
         SMeanReversionSignal signal;
         
@@ -312,7 +336,7 @@ private:
             signal.entryPrice = price;
             signal.stopLoss = bbLower - (bbUpper - bbLower) * 0.5; // Below lower band
             signal.takeProfit = bbMiddle; // Target middle band
-            signal.confidence = 0.75 + (volumeRatio - 1.0) * 0.1; // Boost with volume
+            signal.confidence = 0.75 + (volRatio - 1.0) * 0.1; // Boost with volume
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "Double signal: BB lower + RSI oversold";
             
@@ -329,8 +353,8 @@ private:
             signal.direction = TRADE_SIGNAL_BUY;
             signal.entryPrice = price;
             signal.stopLoss = bbLower - (bbUpper - bbLower) * 0.5;
-            signal.takeProfit = bbMiddle;
-            signal.confidence = 0.60 + (volumeRatio - 1.0) * 0.08;
+            signal.takeProfit = bbMiddle; // Target middle band
+            signal.confidence = 0.60 + (volRatio - 1.0) * 0.08;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "BB lower band touch";
             
@@ -345,7 +369,7 @@ private:
             signal.entryPrice = price;
             signal.stopLoss = price - (bbUpper - bbLower) * 0.3; // ATR-based SL
             signal.takeProfit = bbMiddle;
-            signal.confidence = 0.58 + (volumeRatio - 1.0) * 0.07;
+            signal.confidence = 0.58 + (volRatio - 1.0) * 0.07;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "RSI oversold";
             
@@ -364,7 +388,7 @@ private:
             signal.entryPrice = price;
             signal.stopLoss = bbUpper + (bbUpper - bbLower) * 0.5; // Above upper band
             signal.takeProfit = bbMiddle; // Target middle band
-            signal.confidence = 0.75 + (volumeRatio - 1.0) * 0.1;
+            signal.confidence = 0.75 + (volRatio - 1.0) * 0.1;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "Double signal: BB upper + RSI overbought";
             
@@ -381,8 +405,8 @@ private:
             signal.direction = TRADE_SIGNAL_SELL;
             signal.entryPrice = price;
             signal.stopLoss = bbUpper + (bbUpper - bbLower) * 0.5;
-            signal.takeProfit = bbMiddle;
-            signal.confidence = 0.60 + (volumeRatio - 1.0) * 0.08;
+            signal.takeProfit = bbMiddle; // Target middle band
+            signal.confidence = 0.60 + (volRatio - 1.0) * 0.08;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "BB upper band touch";
             
@@ -397,7 +421,7 @@ private:
             signal.entryPrice = price;
             signal.stopLoss = price + (bbUpper - bbLower) * 0.3;
             signal.takeProfit = bbMiddle;
-            signal.confidence = 0.58 + (volumeRatio - 1.0) * 0.07;
+            signal.confidence = 0.58 + (volRatio - 1.0) * 0.07;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "RSI overbought";
             

@@ -1,5 +1,5 @@
 param(
-[string]$MetaTraderRoot = "C:\Users\Administrator\AppData\Roaming\MetaQuotes\Terminal\CF89AB30ACB6DA0DBA14DA647C3517F8",
+[string]$MetaTraderRoot = "C:\Users\Administrator\AppData\Roaming\MetaQuotes\Terminal\37DFD387E83142603765C3D8E280A1B5",
 [string]$Destination,
 [string]$ProjectRoot,
 [switch]$SkipSync,
@@ -244,11 +244,12 @@ return 0
 }
 
 $metaEditorCandidates = @(
-Join-Path -Path $MetaTraderRoot -ChildPath "MetaEditor64.exe"
-"C:\Program Files\MT5 Weltrade\MetaEditor64.exe",
-"C:\Program Files\MetaTrader 5\MetaEditor64.exe",
-"C:\Program Files (x86)\MetaTrader 5\MetaEditor.exe",
-"C:\Program Files\MetaTrader 5\MetaEditor.exe"
+    (Join-Path -Path $MetaTraderRoot -ChildPath "MetaEditor64.exe"),
+    "C:\Program Files\Weltrade MT5 Terminal\MetaEditor64.exe",
+    "C:\Program Files\MT5 Weltrade\MetaEditor64.exe",
+    "C:\Program Files\MetaTrader 5\MetaEditor64.exe",
+    "C:\Program Files (x86)\MetaTrader 5\MetaEditor.exe",
+    "C:\Program Files\MetaTrader 5\MetaEditor.exe"
 )
 
 $metaEditor = Resolve-MetaEditor -Candidates $metaEditorCandidates
@@ -261,6 +262,7 @@ $terminalIncludePath = Resolve-TerminalIncludePath `
     -AppDataRoot (Join-Path $env:APPDATA "MetaQuotes\Terminal") `
     -AdditionalCandidates @(
         (Join-Path $MetaTraderRoot "MQL5\Include"),
+        "C:\Program Files\Weltrade MT5 Terminal\MQL5\Include",
         "C:\Program Files\MT5 Weltrade\MQL5\Include",
         "C:\Program Files\MetaTrader 5\MQL5\Include",
         "C:\Program Files (x86)\MetaTrader 5\MQL5\Include"

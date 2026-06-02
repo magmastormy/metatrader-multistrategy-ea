@@ -71,6 +71,7 @@ private:
     
     // State Tracking
     datetime m_lastSignalBar;
+    int m_signalsGenerated;
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
     bool m_inSqueeze;         // Track if we're in a squeeze state
@@ -113,6 +114,7 @@ public:
         m_lookbackPeriods(10),
         m_riskManager(NULL),
         m_lastSignalBar(0),
+        m_signalsGenerated(0),
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0),
         m_inSqueeze(false)
@@ -137,7 +139,7 @@ public:
     }
     
     // Initialization
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
@@ -219,16 +221,16 @@ public:
             avgVol += volumeBuffer[i];
         avgVol /= 10.0;
         
-        double volumeRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
+        double volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
         
         // --- VOLATILITY ANALYSIS ---
-        double currentATR = atrBuffer[0];
+        double curATR = atrBuffer[0];
         double avgATR = 0;
         for(int i = 1; i < 11; i++)
             avgATR += atrBuffer[i];
         avgATR /= 10.0;
         
-        double atrRatio = (avgATR > 0) ? (currentATR / avgATR) : 1.0;
+        double atrRatio = (avgATR > 0) ? (curATR / avgATR) : 1.0;
         
         // Calculate BB width for squeeze detection
         double bbWidth = bbUpper[0] - bbLower[0];
@@ -241,8 +243,8 @@ public:
         SVolatilityBreakoutSignal signal = DetectBreakoutSignal(
             currentPrice, prevPrice,
             bbUpper[0], bbMiddle[0], bbLower[0],
-            currentATR, atrRatio,
-            volumeRatio,
+            curATR, atrRatio,
+            volRatio,
             isInSqueeze
         );
         
@@ -260,13 +262,28 @@ public:
         // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
         if(m_riskManager != NULL)
         {
-            if(!m_riskManager->ValidateTrade(signal.direction, signal.entryPrice, 
-                                            signal.stopLoss, signal.takeProfit, signal.confidence))
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = 0.01;
+            request.stopLossPips = (signal.stopLoss > 0) ? MathAbs(signal.entryPrice - signal.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.takeProfitPips = (signal.takeProfit > 0) ? MathAbs(signal.takeProfit - signal.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.confidence = signal.confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+            
+            CUnifiedRiskManager* riskMgr = m_riskManager;
+            SValidationResult result;
+            ZeroMemory(result);
+            if(riskMgr != NULL)
+                result = (*riskMgr).ValidateTradeRequest(request, "VOLBREAK");
+            if(!result.approved)
             {
                 SetDecisionReasonTag("VOLBREAK_RISK_REJECTED");
-                PrintFormat("[VOLBREAK] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%)",
+                PrintFormat("[VOLBREAK] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
                            signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           signal.entryPrice, signal.stopLoss, signal.takeProfit, signal.confidence * 100);
+                           signal.entryPrice, signal.stopLoss, signal.takeProfit, signal.confidence * 100,
+                           result.message);
                 return TRADE_SIGNAL_NONE;
             }
         }
@@ -286,7 +303,7 @@ public:
                    EnumToString(signal.entryType),
                    bbWidthPercent * 100,
                    atrRatio,
-                   volumeRatio,
+                   volRatio,
                    isInSqueeze ? "YES" : "NO",
                    confidence * 100,
                    m_weight,
@@ -357,8 +374,8 @@ private:
     SVolatilityBreakoutSignal DetectBreakoutSignal(
         double price, double prevPrice,
         double bbUpper, double bbMiddle, double bbLower,
-        double currentATR, double atrRatio,
-        double volumeRatio,
+        double curATR, double atrRatio,
+        double volRatio,
         bool isInSqueeze)
     {
         SVolatilityBreakoutSignal signal;
@@ -377,13 +394,13 @@ private:
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
                 signal.stopLoss = bbMiddle; // Below middle band
-                signal.takeProfit = price + (currentATR * 2.5); // 2.5x ATR target
-                signal.confidence = 0.80 + (volumeRatio - 1.0) * 0.05; // Boost with volume
+                signal.takeProfit = price + (curATR * 2.5); // 2.5x ATR target
+                signal.confidence = 0.80 + (volRatio - 1.0) * 0.05; // Boost with volume
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
                 
                 PrintFormat("[VOLBREAK-SIGNAL] BUY combined signal | Price=%.5f > BB_Upper=%.5f | ATR_Ratio=%.2f | Vol=%.2fx",
-                           price, bbUpper, atrRatio, volumeRatio);
+                           price, bbUpper, atrRatio, volRatio);
                 
                 return signal;
             }
@@ -395,8 +412,8 @@ private:
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
                 signal.stopLoss = bbMiddle;
-                signal.takeProfit = price + (currentATR * 2.0); // 2x ATR target
-                signal.confidence = 0.70 + (volumeRatio - 1.0) * 0.05;
+                signal.takeProfit = price + (curATR * 2.0); // 2x ATR target
+                signal.confidence = 0.70 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = isInSqueeze ? "Squeeze breakout" : "ATR expansion breakout";
                 
@@ -410,7 +427,7 @@ private:
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
                 signal.stopLoss = bbMiddle;
-                signal.takeProfit = price + (currentATR * 1.8);
+                signal.takeProfit = price + (curATR * 1.8);
                 signal.confidence = 0.65;
                 signal.reason = "BB breakout with volume";
                 
@@ -430,13 +447,13 @@ private:
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
                 signal.stopLoss = bbMiddle; // Above middle band
-                signal.takeProfit = price - (currentATR * 2.5);
-                signal.confidence = 0.80 + (volumeRatio - 1.0) * 0.05;
+                signal.takeProfit = price - (curATR * 2.5);
+                signal.confidence = 0.80 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
                 
                 PrintFormat("[VOLBREAK-SIGNAL] SELL combined signal | Price=%.5f < BB_Lower=%.5f | ATR_Ratio=%.2f | Vol=%.2fx",
-                           price, bbLower, atrRatio, volumeRatio);
+                           price, bbLower, atrRatio, volRatio);
                 
                 return signal;
             }
@@ -448,8 +465,8 @@ private:
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
                 signal.stopLoss = bbMiddle;
-                signal.takeProfit = price - (currentATR * 2.0);
-                signal.confidence = 0.70 + (volumeRatio - 1.0) * 0.05;
+                signal.takeProfit = price - (curATR * 2.0);
+                signal.confidence = 0.70 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = isInSqueeze ? "Squeeze breakout" : "ATR expansion breakout";
                 
@@ -463,7 +480,7 @@ private:
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
                 signal.stopLoss = bbMiddle;
-                signal.takeProfit = price - (currentATR * 1.8);
+                signal.takeProfit = price - (curATR * 1.8);
                 signal.confidence = 0.65;
                 signal.reason = "BB breakout with volume";
                 

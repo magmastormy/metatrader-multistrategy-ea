@@ -15,6 +15,8 @@
 #include "../Core/Engines/FibConfluence.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+// Subsystem Logger for separated log files
+#include "../Core/Utils/SubsystemLogger.mqh"
 
 // S/R Strategy Component Files
 #include "SupportResistanceFiles/SupportResistanceDetector.mqh"
@@ -51,6 +53,7 @@ private:
     
     // Risk Management (AGENTS.md invariant #1)
     CUnifiedRiskManager*        m_riskManager;
+    CSubsystemLogger*           m_logger;  // Subsystem logger for drawing diagnostics
     
     // Configuration
     ENUM_SR_STRATEGY_MODE       m_mode;
@@ -65,7 +68,7 @@ public:
                                 CStrategySupportResistance(const string name = "S/R Strategy v1.0", int magic = 0);
     virtual                    ~CStrategySupportResistance();
     
-    virtual bool                Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override;
+    virtual bool                Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override;
     virtual void                Deinit() override;
     virtual void                OnTick() override;
     virtual void                OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe);
@@ -132,6 +135,7 @@ void CStrategySupportResistance::Cleanup()
     if(m_breakoutStrategy != NULL) { delete m_breakoutStrategy; m_breakoutStrategy = NULL; }
     if(m_trendlineStrategy != NULL) { delete m_trendlineStrategy; m_trendlineStrategy = NULL; }
     if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
+    if(m_logger != NULL) { delete m_logger; m_logger = NULL; }  // Clean up logger
     // Risk manager is not owned by this strategy - do NOT delete
     m_riskManager = NULL;
 }
@@ -139,9 +143,9 @@ void CStrategySupportResistance::Cleanup()
 //+------------------------------------------------------------------+
 //| Initialization                                                   |
 //+------------------------------------------------------------------+
-bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer)
+bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr)
 {
-    if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
+    if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
         return false;
     
     // Initialize S/R Detector
@@ -164,7 +168,7 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     m_fibModule = new CFibConfluence();
     if(m_fibModule != NULL)
     {
-        m_fibModule->Initialize();
+        (*m_fibModule).Initialize(m_symbol, m_timeframe);
     }
     
     // Initialize Bounce Strategy
@@ -195,7 +199,7 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     m_trendlineStrategy.SetMinConfidence(m_minConfidence);
     
     // Initial detection
-    m_srDetector.DetectLevels(200);
+    m_srDetector.DetectLevels(300);  // Increased from 200 to 300 for deeper historical context
     m_trendDetector.DetectTrendlines(100);
     
     m_levelsDetected = m_srDetector.GetLevelCount();
@@ -216,6 +220,15 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
         config.enableFVG = false;
         config.enableSignalMarkers = false;
         m_drawingManager.SetConfiguration(config);
+    }
+    
+    // Initialize subsystem logger for drawing diagnostics
+    m_logger = new CSubsystemLogger();
+    if(m_logger != NULL)
+    {
+        m_logger.Initialize(symbol, "");
+        m_logger.Log(LOG_DRAWING, StringFormat("[INIT] S/R Strategy initialized | Symbol=%s TF=%s Levels=%d Trendlines=%d",
+                                                symbol, EnumToString(timeframe), m_levelsDetected, m_trendlinesDetected));
     }
     
     // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
@@ -276,6 +289,17 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
         m_trendlinesDetected = m_trendDetector.GetTrendlineCount();
     }
     
+    // DIAGNOSTIC: Log detection status every 10 bars
+    static int s_diagBarCount = 0;
+    s_diagBarCount++;
+    if(s_diagBarCount % 10 == 0 && m_logger != NULL)
+    {
+        m_logger.Log(LOG_DRAWING, StringFormat("[BAR-%d] Symbol=%s TF=%s | Levels=%d Trendlines=%d DrawingMgr=%s",
+                                                currentBar, symbol, EnumToString(timeframe),
+                                                m_levelsDetected, m_trendlinesDetected,
+                                                (m_drawingManager != NULL) ? "READY" : "NULL"));
+    }
+    
     // Regular cleanup to prevent object accumulation
     if(m_drawingManager != NULL)
         m_drawingManager.CleanupOldObjects();
@@ -305,8 +329,37 @@ void CStrategySupportResistance::DrawLevels()
         }
     }
     
+    // DIAGNOSTIC: Log drawing attempt every 5 bars
+    static int s_drawLevelCount = 0;
+    s_drawLevelCount++;
+    if(s_drawLevelCount % 5 == 0 && m_logger != NULL)
+    {
+        m_logger.Log(LOG_DRAWING, StringFormat("[DRAW-LEVELS] Total=%d PassedFilter=%d WillDraw=%d StrengthThreshold=0.4",
+                                                m_srDetector.GetLevelCount(), count, MathMin(count, 8)));
+        
+        // Log individual level details if any found
+        if(count > 0)
+        {
+            string levelDetails = "";
+            int logCount = MathMin(count, 3); // Log first 3 levels
+            for(int j = 0; j < logCount; j++)
+            {
+                SSupportResistance lvl;
+                if(m_srDetector.GetLevel(j, lvl))
+                {
+                    levelDetails += StringFormat("L%d: Price=%.5f Str=%.2f Type=%s | ",
+                                                 j+1, lvl.price, lvl.strength,
+                                                 lvl.isSupport ? "SUP" : "RES");
+                }
+            }
+            m_logger.Log(LOG_DRAWING, StringFormat("[LEVEL-DETAILS] %s", levelDetails));
+        }
+    }
+    
     // Sort descending by strength using efficient ArraySort
-    ArraySort(levels, DESCENDING);
+    // Note: ArraySort sorts ascending by default, so we reverse after sorting
+    ArraySort(levels);
+    ArrayReverse(levels);
     
     int drawCount = MathMin(count, 8); // Cap S/R levels to top 8
     
@@ -326,7 +379,17 @@ void CStrategySupportResistance::DrawLevels()
                                     level.touches);
         
         // Pass price as string tag label
-        m_drawingManager.DrawHorizontalLevel(level.price, levelColor, label, STYLE_DOT, 1, true);
+        bool drawn = m_drawingManager.DrawHorizontalLevel(level.price, levelColor, label, STYLE_DOT, 1, true);
+        
+        // Log drawing result for first level every 10 draws
+        if(i == 0 && s_drawLevelCount % 10 == 0 && m_logger != NULL)
+        {
+            m_logger.Log(LOG_DRAWING, StringFormat("[DRAW-RESULT] Level=%.5f Color=%s Label='%s' Success=%s",
+                                                    level.price,
+                                                    (level.isSupport ? "BLUE" : "RED"),
+                                                    label,
+                                                    drawn ? "YES" : "NO"));
+        }
     }
 }
 
@@ -351,7 +414,9 @@ void CStrategySupportResistance::DrawTrendlines()
     }
     
     // Sort descending by strength using efficient ArraySort
-    ArraySort(lines, DESCENDING);
+    // Note: ArraySort sorts ascending by default, so we reverse after sorting
+    ArraySort(lines);
+    ArrayReverse(lines);
     
     int drawCount = MathMin(count, 6); // Cap Trendlines to top 6
     
@@ -437,7 +502,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         // Apply Fibonacci confluence boost
         if(m_fibModule != NULL && m_srDetector != NULL)
         {
-            confidence = ApplyFibConfluence(bestResult.signal, bestResult.price, confidence);
+            confidence = ApplyFibConfluence(bestResult.signal, bestResult.entryPrice, confidence);
         }
         
         // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
@@ -447,19 +512,23 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
             request.symbol = m_symbol;
             request.orderType = (bestResult.signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
             request.lotSize = 0.01;  // Placeholder
-            request.stopLossPips = (bestResult.stopLoss > 0) ? MathAbs(bestResult.price - bestResult.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.takeProfitPips = (bestResult.takeProfit > 0) ? MathAbs(bestResult.takeProfit - bestResult.price) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.stopLossPips = (bestResult.stopLoss > 0) ? MathAbs(bestResult.entryPrice - bestResult.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.takeProfitPips = (bestResult.takeProfit1 > 0) ? MathAbs(bestResult.takeProfit1 - bestResult.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.confidence = confidence;
             request.strategy = GetName();
             request.clusterCode = "";
-            
-            SValidationResult result = m_riskManager->ValidateTradeRequest(request, "SR");
+                        
+            CUnifiedRiskManager* riskMgr = m_riskManager;
+            SValidationResult result;
+            ZeroMemory(result);
+            if(riskMgr != NULL)
+                result = (*riskMgr).ValidateTradeRequest(request, "SR");
             if(!result.approved)
             {
                 SetDecisionReasonTag("SR_RISK_REJECTED");
                 PrintFormat("[S/R v1.0] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
                            bestResult.signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           bestResult.price, bestResult.stopLoss, bestResult.takeProfit, confidence * 100,
+                           bestResult.entryPrice, bestResult.stopLoss, bestResult.takeProfit1, confidence * 100,
                            result.message);
                 return TRADE_SIGNAL_NONE;
             }

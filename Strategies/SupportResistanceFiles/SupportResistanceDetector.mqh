@@ -164,6 +164,10 @@ bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES
 
     m_atrHandle = iATR(m_symbol, m_timeframe, 14);
     
+    // ENHANCEMENT: Detect both significant and frequently-tested levels
+    // Lower significance threshold from 0.30 ATR to 0.20 ATR for more touch points
+    // Increase lookback from 200 to 300 bars for deeper historical context
+    
     return (m_atrHandle != INVALID_HANDLE);
 }
 
@@ -188,8 +192,11 @@ void CSupportResistanceDetector::DetectLevels(int lookback)
     m_levelCount = 0;
     ArrayResize(m_levels, 0);
     
+    // ENHANCEMENT: Increased default lookback from 200 to 300 for deeper historical context
+    int effectiveLookback = MathMax(lookback, 300);
+    
     // 1. Swing-based S/R
-    DetectSwingLevels(lookback);
+    DetectSwingLevels(effectiveLookback);
     
     // 2. Psychological levels
     DetectPsychologicalLevels();
@@ -226,7 +233,7 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
     
     // SIGNIFICANCE FILTER
     double atr = GetAtrValue();
-    double minSwingSize = (atr > 0) ? atr * 0.30 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    double minSwingSize = (atr > 0) ? atr * 0.20 : 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);  // LOWERED from 0.30 to 0.20
 
     // Find swing highs (resistance)
     for(int i = str; i < lookback - str; i++)
@@ -270,6 +277,60 @@ void CSupportResistanceDetector::DetectSwingLevels(int lookback)
             if((neighborAvgLow - low[i]) >= minSwingSize)
             {
                 AddLevel(low[i], SR_SWING_HIGH_LOW, true, time[i]);
+            }
+        }
+    }
+    
+    // ENHANCEMENT: Detect additional touch-point levels (less strict criteria)
+    // These capture frequently-tested but smaller swings that act as micro S/R
+    double touchPointThreshold = (atr > 0) ? atr * 0.12 : 5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    
+    for(int i = str; i < lookback - str; i++)
+    {
+        bool isSwingHigh = true;
+        for(int j = 1; j <= str; j++)
+        {
+            if(high[i] <= high[i-j] || high[i] <= high[i+j])
+            {
+                isSwingHigh = false;
+                break;
+            }
+        }
+        
+        if(isSwingHigh)
+        {
+            double neighborAvgHigh = (high[i-1] + high[i+1]) / 2.0;
+            double swingSize = (high[i] - neighborAvgHigh);
+            // Only add if between touch-point threshold and full significance threshold
+            if(swingSize >= touchPointThreshold && swingSize < minSwingSize)
+            {
+                AddLevel(high[i], SR_SWING_HIGH_LOW, false, time[i]);
+                // Mark as lower strength since it's a smaller swing
+                m_levels[m_levelCount-1].strength = 0.50;
+            }
+        }
+    }
+    
+    for(int i = str; i < lookback - str; i++)
+    {
+        bool isSwingLow = true;
+        for(int j = 1; j <= str; j++)
+        {
+            if(low[i] >= low[i-j] || low[i] >= low[i+j])
+            {
+                isSwingLow = false;
+                break;
+            }
+        }
+        
+        if(isSwingLow)
+        {
+            double neighborAvgLow = (low[i-1] + low[i+1]) / 2.0;
+            double swingSize = (neighborAvgLow - low[i]);
+            if(swingSize >= touchPointThreshold && swingSize < minSwingSize)
+            {
+                AddLevel(low[i], SR_SWING_HIGH_LOW, true, time[i]);
+                m_levels[m_levelCount-1].strength = 0.50;
             }
         }
     }
@@ -481,7 +542,7 @@ void CSupportResistanceDetector::UpdateTouches()
 //+------------------------------------------------------------------+
 void CSupportResistanceDetector::Update()
 {
-    DetectLevels(200);  // Reduced to 200 for proper scaling and removing stale lines
+    DetectLevels(300);  // Increased from 200 to 300 for proper scaling and capturing more touch points
 }
 
 //+------------------------------------------------------------------+

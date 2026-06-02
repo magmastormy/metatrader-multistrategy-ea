@@ -6,7 +6,7 @@
 #define __NEURAL_CHECKPOINT_MANAGER_MQH__
 
 #include "CNeuralCore.mqh"
-#include "NNModelStorage.mqh"
+#include "../Core/AI/NNModelStorage.mqh"
 #include "CNeuralTrainingDataManager.mqh"
 
 // Checkpoint version and magic constants

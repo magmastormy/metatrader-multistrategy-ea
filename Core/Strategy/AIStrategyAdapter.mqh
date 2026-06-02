@@ -8,6 +8,7 @@
  #include "../../Interfaces/IStrategy.mqh"
  #include "../../Interfaces/IAIStrategy.mqh"
  #include "../../AIModules/NeuralNetworkStrategy.mqh"
+ #include "../Utils/SubsystemLogger.mqh"
  
  //+------------------------------------------------------------------+
  //| AI Strategy Adapter Class                                        |
@@ -22,6 +23,8 @@ private:
     double m_weight;
     datetime m_lastSignalTime;
     string m_lastDecisionReasonTag;
+    CSubsystemLogger* m_logger;  // AI subsystem logger
+    int m_logCounter;  // Counter for periodic logging
     
     bool IsValidConfidence(const double conf) const
     {
@@ -38,10 +41,17 @@ public:
         m_timeframe = PERIOD_CURRENT;
         m_lastSignalTime = 0;
         m_lastDecisionReasonTag = "NNAI_UNSET";
+        m_logger = NULL;
+        m_logCounter = 0;
     }
     
     ~CAIStrategyAdapter()
     {
+        if(m_logger != NULL)
+        {
+            delete m_logger;
+            m_logger = NULL;
+        }
         // Do NOT delete m_neuralNet as it's managed externally
         m_neuralNet = NULL;
     }
@@ -50,11 +60,24 @@ public:
     //| IStrategy Interface Implementation                               |
     //+------------------------------------------------------------------+
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, 
-                     void* tradeManagerPtr, void* positionSizerPtr) override
+                     void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL) override
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
         m_lastDecisionReasonTag = (m_neuralNet != NULL) ? "NNAI_INITIALIZED" : "NNAI_INIT_FAILED";
+        
+        // Initialize AI logger
+        if(m_logger == NULL)
+        {
+            m_logger = new CSubsystemLogger();
+            if(m_logger != NULL)
+            {
+                m_logger.Initialize(symbol, "");
+                m_logger.Log(LOG_AI, StringFormat("[INIT] Neural Network AI initialized | Symbol=%s TF=%s",
+                                                  symbol, EnumToString(timeframe)));
+            }
+        }
+        
         return (m_neuralNet != NULL);
     }
     
@@ -87,6 +110,26 @@ public:
             confidence = 0.0;
             m_lastDecisionReasonTag = "NNAI_INVALID_CONFIDENCE";
             return TRADE_SIGNAL_NONE;
+        }
+        
+        // Log AI decision every 5 calls
+        m_logCounter++;
+        if(m_logCounter % 5 == 0 && m_logger != NULL)
+        {
+            string signalStr = "NONE";
+            if(signal == TRADE_SIGNAL_BUY) signalStr = "BUY";
+            else if(signal == TRADE_SIGNAL_SELL) signalStr = "SELL";
+            
+            m_logger.Log(LOG_AI, StringFormat("[PREDICTION] Signal=%s | Confidence=%.3f | Regime=%d | Temp=%.2f",
+                                              signalStr, confidence,
+                                              m_neuralNet.GetCurrentRegime(),
+                                              m_neuralNet.GetTemperature()));
+            
+            // Log model health stats
+            m_logger.Log(LOG_AI, StringFormat("[MODEL-HEALTH] Training=%s | Steps=%d | Uncertainty=%.3f",
+                                              m_neuralNet.IsTraining() ? "YES" : "NO",
+                                              m_neuralNet.GetTrainingSteps(),
+                                              m_neuralNet.GetLastUncertainty()));
         }
         
         if(signal == TRADE_SIGNAL_BUY)

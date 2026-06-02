@@ -2030,9 +2030,9 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, TREND_CLUSTER, true, false);
     
-    // 2: Fibonacci (live primary voter) - Tier 2
-    if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
+    // 2: Fibonacci REMOVED - Class deleted
+    // if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
+    //                                          PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
     
     // ELLIOTT WAVE REMOVED - Registration deleted
     // 3: Elliott Wave (live primary voter) - Tier 1
