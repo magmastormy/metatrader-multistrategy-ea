@@ -821,6 +821,27 @@ public:
     {
         m_hmm.GetProbabilities(out);
     }
+    
+    // Stub implementations for adapter compatibility
+    double GetUncertainty() const
+    {
+        return 0.5;  // Default uncertainty
+    }
+    
+    bool IsLearningEnabled() const
+    {
+        return true;  // Always enabled by default
+    }
+    
+    int GetUpdateCount() const
+    {
+        return 0;  // Not tracked in ensemble
+    }
+    
+    int GetCurrentRegime() const
+    {
+        return (int)m_lastDetectedRegime;
+    }
 };
 
 #endif // __ENSEMBLE_META_LEARNER_MQH__

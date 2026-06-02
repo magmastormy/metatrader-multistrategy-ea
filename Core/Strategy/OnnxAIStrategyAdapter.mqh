@@ -87,7 +87,8 @@ public:
     virtual bool Init(const string symbol,
                       const ENUM_TIMEFRAMES timeframe,
                       void* tradeManagerPtr,
-                      void* positionSizerPtr) override
+                      void* positionSizerPtr,
+                      void* unifiedRiskManagerPtr = NULL) override
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
@@ -160,7 +161,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        datetime now = TimeCurrent();
+        // Reuse 'now' from line 126 instead of redeclaring
         if(m_lastScalerCheckTime == 0 || (now - m_lastScalerCheckTime) >= 10)
         {
             if(m_scaler.MaybeReload(m_scalerWatchPath, true))

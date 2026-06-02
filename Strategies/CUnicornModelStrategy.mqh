@@ -2,9 +2,10 @@
 //| CUnicornModelStrategy.mqh                                        |
 //| ICT Unicorn Model: breaker/order-block + FVG after liquidity     |
 //| sweep and MSS/CISD confirmation                                  |
+//|                                                                  |
+//| STATUS: DISABLED (subjective ICT concepts)                       |
+//| Disabled via InpEnableUnicornModel = false in MultiStrategyAutonomousEA.mq5 |
 //+------------------------------------------------------------------+
-#property strict
-
 #ifndef __C_UNICORN_MODEL_STRATEGY_MQH__
 #define __C_UNICORN_MODEL_STRATEGY_MQH__
 
@@ -74,7 +75,7 @@ public:
         Deinit();
     }
 
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
@@ -215,6 +216,12 @@ public:
         ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         
+        // Calculate structure-based SL using OB/FVG boundaries
+        double slPrice = bullish ? MathMin(ob.bottom, imb.bottom) : MathMax(ob.top, imb.top);
+        double slDistance = MathAbs(currentPrice - slPrice);
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 50.0; // Fallback to 50 pips
+        
         // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
         if(m_riskManager != NULL)
         {
@@ -222,13 +229,17 @@ public:
             request.symbol = m_symbol;
             request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
             request.lotSize = 0.01;
-            request.stopLossPips = 0;  // Unicorn doesn't calculate SL/TP here
-            request.takeProfitPips = 0;
+            request.stopLossPips = slPips;
+            request.takeProfitPips = slPips * 2.0; // 1:2 R:R ratio
             request.confidence = confidence;
             request.strategy = GetName();
             request.clusterCode = "";
             
-            SValidationResult result = m_riskManager->ValidateTradeRequest(request, "UNICORN");
+            CUnifiedRiskManager* riskMgr = m_riskManager;
+            SValidationResult result;
+            ZeroMemory(result);
+            if(riskMgr != NULL)
+                result = (*riskMgr).ValidateTradeRequest(request, "UNICORN");
             if(!result.approved)
             {
                 SetDecisionReasonTag("UNICORN_RISK_REJECTED");
@@ -241,7 +252,6 @@ public:
         }
 
         SetDecisionReasonTag(bullish ? "UNICORN_SIGNAL_BUY" : "UNICORN_SIGNAL_SELL");
-        m_signalsGenerated++;
         RecordSignal();
         
         // CONSENSUS LOGGING (AGENTS.md requirement)

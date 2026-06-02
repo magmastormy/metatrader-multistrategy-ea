@@ -170,7 +170,7 @@ public:
    SPythonBridgeResponse PredictMamlPpo(const double &features[], int features_size);
    
    // ENHANCEMENT: Correlation Matrix Methods (Batch 93 - Week 4)
-   bool              GetCorrelationMatrix(double &matrix[][], int &size, string &symbols[]);
+   bool              GetCorrelationMatrix(double &corrMatrix[], int &size, string &symbols[]);
    double            GetPairCorrelation(const string symbol1, const string symbol2);
    bool              FindBestCorrelatedPair(const string symbol, string &bestPair, double &correlation);
    
@@ -810,8 +810,9 @@ SPythonBridgeHealthStatus CPythonBridge::GetHealthStatus()
 //+------------------------------------------------------------------+
 //| ENHANCEMENT: Get Correlation Matrix (Batch 93 - Week 4)          |
 //| Fetches correlation matrix from Python server                    |
+//| Returns flattened matrix (row-major order): matrix[i*size + j]   |
 //+------------------------------------------------------------------+
-bool CPythonBridge::GetCorrelationMatrix(double &matrix[][], int &size, string &symbols[])
+bool CPythonBridge::GetCorrelationMatrix(double &corrMatrix[], int &size, string &symbols[])
 {
    if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected())
       return false;

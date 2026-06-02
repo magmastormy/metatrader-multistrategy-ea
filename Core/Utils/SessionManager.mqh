@@ -21,7 +21,8 @@ public:
     //+------------------------------------------------------------------+
     bool IsMarketOpen(const string symbol)
     {
-        if(!m_symbol.Name(symbol)) return false;
+        if(symbol == "") return false;
+        m_symbol.Name(symbol);
         
         // CRITICAL FIX: Force refresh to ensure we have latest quote data
         if(!m_symbol.RefreshRates()) 

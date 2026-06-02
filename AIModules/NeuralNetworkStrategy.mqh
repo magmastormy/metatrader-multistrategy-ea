@@ -16,10 +16,19 @@
 #include "CNeuralTrainingDataManager.mqh"
 #include "CNeuralCheckpointManager.mqh"
 
+// Checkpoint constants - only define if not already defined by CNeuralCheckpointManager
+#ifndef NN_CHECKPOINT_MAGIC
 #define NN_CHECKPOINT_MAGIC 1313758027
+#endif
+#ifndef NN_CHECKPOINT_VERSION
 #define NN_CHECKPOINT_VERSION 7
+#endif
+#ifndef NN_MAX_PERSISTED_SAMPLES
 #define NN_MAX_PERSISTED_SAMPLES 300
+#endif
+#ifndef NN_MAX_TRAINING_EXAMPLES
 #define NN_MAX_TRAINING_EXAMPLES 2000
+#endif
 #define NN_MIN_NORMALIZATION_SAMPLES 30
 
 class CConformalPredictor
@@ -631,6 +640,23 @@ private:
         {
             UpdateNormalizationStats(rawFeatures, FEATURE_VECTOR_SIZE);
             m_lastNormalizationBarTime = barTime;
+            
+            // Log raw features every 20 bars for AI visualization
+            static int s_featureLogCounter = 0;
+            s_featureLogCounter++;
+            if(s_featureLogCounter % 20 == 0)
+            {
+                string featureSummary = StringFormat("[FEATURES-RAW] Bar=%s | RSI=%.2f | ATR=%.5f | Vol=%.0f | ROC=%.4f",
+                                                     TimeToString(barTime, TIME_DATE|TIME_MINUTES),
+                                                     rawFeatures[0], rawFeatures[8], rawFeatures[9], rawFeatures[10]);
+                Print(featureSummary);
+                
+                // Log key normalized features
+                string normSummary = StringFormat("[FEATURES-NORM] F0=%.3f | F8=%.3f | F15=%.3f | F25=%.3f",
+                                                  normalizedFeatures[0], normalizedFeatures[8],
+                                                  normalizedFeatures[15], normalizedFeatures[25]);
+                Print(normSummary);
+            }
         }
 
         NormalizeFeatures(normalizedFeatures, FEATURE_VECTOR_SIZE);
@@ -1768,6 +1794,12 @@ public:
     bool SaveNetwork()
     {
         return SaveCheckpointAtomic(true);
+    }
+    
+    // Wrapper for adapter compatibility
+    bool SaveCheckpoint()
+    {
+        return SaveCheckpointAtomic(false);
     }
 
     bool LoadNetwork()

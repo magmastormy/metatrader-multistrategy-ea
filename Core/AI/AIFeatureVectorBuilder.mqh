@@ -83,8 +83,43 @@ private:
         int availableBars = Bars(symbol, timeframe);
         if(availableBars < requiredBars)
         {
-            static datetime s_lastHistoryLog = 0;
+            // Attempt to preload more historical data if insufficient
+            static datetime s_lastPreloadAttempt = 0;
             datetime now = TimeCurrent();
+            
+            // Try to load more history (limit attempts to avoid spam)
+            if(s_lastPreloadAttempt == 0 || (now - s_lastPreloadAttempt) >= 60)
+            {
+                PrintFormat("[AI-FEATURE] Preloading history for %s %s | available=%d | required=%d | deficit=%d",
+                            symbol, EnumToString(timeframe), availableBars, requiredBars, requiredBars - availableBars);
+                
+                // Request additional bars from server
+                int barsToRequest = requiredBars - availableBars + 100; // Add buffer
+                datetime preloadStartTime = iTime(symbol, timeframe, MathMin(availableBars - 1, 1000));
+                
+                // Force history download by requesting older data
+                MqlDateTime dtStart;
+                TimeToStruct(preloadStartTime, dtStart);
+                dtStart.day -= 30; // Go back 30 days
+                datetime newStartTime = StructToTime(dtStart);
+                
+                // CopyRates will trigger history download if needed
+                MqlRates tempRates[];
+                int copied = CopyRates(symbol, timeframe, newStartTime, 1, tempRates);
+                
+                s_lastPreloadAttempt = now;
+                
+                // Recheck after preload attempt
+                availableBars = Bars(symbol, timeframe);
+                if(availableBars >= requiredBars)
+                {
+                    PrintFormat("[AI-FEATURE] History preload successful for %s %s | now available=%d",
+                                symbol, EnumToString(timeframe), availableBars);
+                    return true;
+                }
+            }
+            
+            static datetime s_lastHistoryLog = 0;
             if(s_lastHistoryLog == 0 || (now - s_lastHistoryLog) >= 60)
             {
                 PrintFormat("[AI-FEATURE] History not ready for %s %s | available=%d | required=%d | shift=%d",
@@ -495,7 +530,7 @@ public:
         if(symbol == "" || barShift < 1)
             return false;
 
-        if(!EnsureBars(symbol, timeframe, barShift, 260))
+        if(!EnsureBars(symbol, timeframe, barShift, 150))
             return false;
 
         CIndicatorManager* ind = CIndicatorManager::Instance();

@@ -130,6 +130,13 @@ public:
     bool DrawBOS(datetime time1, double price1, datetime time2, double price2, bool isBullish);
     bool DrawCHOCH(datetime time1, double price1, datetime time2, double price2, bool isBullish);
     
+    // ICT-Specific Drawing Methods
+    bool DrawICT_CHOCH(datetime time, double price, bool isBullish, const string htfLabel = "");
+    bool DrawICT_SupplyZone(datetime timeStart, datetime timeEnd, double top, double bottom, 
+                           const string label = "", int transparency = 85);
+    bool DrawICT_DemandZone(datetime timeStart, datetime timeEnd, double top, double bottom,
+                           const string label = "", int transparency = 85);
+    
     // Zone Drawing (Supply/Demand, Order Blocks)
     bool DrawZone(datetime timeStart, datetime timeEnd, double priceHigh, double priceLow, 
                   const string label, color zoneColor, bool isFilled = true, int transparency = 90);
@@ -488,6 +495,132 @@ bool CChartDrawingManager::DrawCHOCH(datetime time1, double price1, datetime tim
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
     
     m_objectsDrawn += 2;
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Draw ICT Change of Character (CHOCH) - Enhanced Version         |
+//| Single-point CHOCH marker with HTF context label                |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::DrawICT_CHOCH(datetime time, double price, bool isBullish, const string htfLabel)
+{
+    if(!m_config.enableDrawing || !m_config.enableStructure)
+        return false;
+
+    PrepareSnapshotDraw();
+    
+    // Generate unique object name
+    string objName = GenerateObjectName("ICT_CHOCH", TimeToString(time));
+    
+    // Draw arrow marker at CHOCH point
+    int arrowCode = isBullish ? 233 : 234;  // Up/Down arrows
+    ObjectCreate(m_chartID, objName, OBJ_ARROW, 0, time, price);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_ARROWCODE, arrowCode);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 4);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
+    
+    // Draw CHOCH label with optional HTF context
+    string labelName = objName + "_LABEL";
+    string labelText = isBullish ? "CHOCH↑" : "CHOCH↓";
+    if(htfLabel != "")
+        labelText += " [" + htfLabel + "]";
+    
+    ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time, price);
+    ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, labelText);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 10);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, isBullish ? ANCHOR_BOTTOM : ANCHOR_TOP);
+    
+    m_objectsDrawn += 2;
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Draw ICT Supply Zone - Bearish Rejection Area                   |
+//| Visual: Salmon-colored rectangle with transparency              |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::DrawICT_SupplyZone(datetime timeStart, datetime timeEnd, double top, double bottom,
+                                             const string label, int transparency)
+{
+    if(!m_config.enableDrawing || !m_config.enableSupplyDemand)
+        return false;
+    
+    // Validate coordinates
+    if(!ValidateCoordinates(timeStart, timeEnd, bottom, top))
+        return false;
+    
+    PrepareSnapshotDraw();
+    
+    string zoneLabel = (label != "") ? "SUPPLY_" + label : "SUPPLY";
+    string objName = GenerateObjectName("SUPPLY", zoneLabel + "_" + TimeToString(timeStart));
+    
+    // Draw supply zone rectangle
+    ObjectCreate(m_chartID, objName, OBJ_RECTANGLE, 0, timeStart, top, timeEnd, bottom);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_SUPPLY);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, STYLE_SOLID);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_FILL, true);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, true);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_BGCOLOR, COLOR_SCHEME_SUPPLY);
+    
+    // Add zone label
+    string labelName = objName + "_LABEL";
+    datetime midTime = (datetime)((timeStart + timeEnd) / 2);
+    double midPrice = (top + bottom) / 2;
+    
+    ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, midTime, midPrice);
+    ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, "SUPPLY");
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, clrWhite);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 9);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
+    
+    m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Draw ICT Demand Zone - Bullish Support Area                     |
+//| Visual: Pale green-colored rectangle with transparency          |
+//+------------------------------------------------------------------+
+bool CChartDrawingManager::DrawICT_DemandZone(datetime timeStart, datetime timeEnd, double top, double bottom,
+                                             const string label, int transparency)
+{
+    if(!m_config.enableDrawing || !m_config.enableSupplyDemand)
+        return false;
+    
+    // Validate coordinates
+    if(!ValidateCoordinates(timeStart, timeEnd, bottom, top))
+        return false;
+    
+    PrepareSnapshotDraw();
+    
+    string zoneLabel = (label != "") ? "DEMAND_" + label : "DEMAND";
+    string objName = GenerateObjectName("DEMAND", zoneLabel + "_" + TimeToString(timeStart));
+    
+    // Draw demand zone rectangle
+    ObjectCreate(m_chartID, objName, OBJ_RECTANGLE, 0, timeStart, top, timeEnd, bottom);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, COLOR_SCHEME_DEMAND);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, STYLE_SOLID);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_FILL, true);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, true);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_BGCOLOR, COLOR_SCHEME_DEMAND);
+    
+    // Add zone label
+    string labelName = objName + "_LABEL";
+    datetime midTime = (datetime)((timeStart + timeEnd) / 2);
+    double midPrice = (top + bottom) / 2;
+    
+    ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, midTime, midPrice);
+    ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, "DEMAND");
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, clrBlack);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 9);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
+    
+    m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 

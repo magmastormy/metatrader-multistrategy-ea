@@ -23,7 +23,7 @@ public:
     
     // Initialize strategy
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, 
-                     void* tradeManager, void* positionSizer) = 0;
+                     void* tradeManager, void* positionSizer, void* unifiedRiskManager = NULL) = 0;
     
     // Deinitialize strategy
     virtual void Deinit(void) = 0;

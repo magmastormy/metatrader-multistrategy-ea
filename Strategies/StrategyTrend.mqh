@@ -29,6 +29,7 @@ private:
     int    m_lastBarProcessed;
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
+    int    m_signalsGenerated;
     
     // ENHANCEMENT: Higher-Timeframe Confirmation (Batch 93 - Week 1)
     ENUM_TIMEFRAMES     m_htf;  // Higher timeframe for trend confirmation
@@ -66,6 +67,7 @@ public:
         m_lastBarProcessed(0),
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0),
+        m_signalsGenerated(0),
         m_htf(PERIOD_CURRENT),
         m_htfHandleADX(INVALID_HANDLE)
     {
@@ -95,9 +97,9 @@ public:
         m_riskManager = NULL;
     }
     //--- Initialization
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
-        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
+        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
 
         // Initialize Multi-EMA System (8/21/50/200)
@@ -228,7 +230,11 @@ public:
             request.strategy = GetName();
             request.clusterCode = "";
             
-            SValidationResult result = m_riskManager->ValidateTradeRequest(request, "TREND");
+            CUnifiedRiskManager* riskMgr = m_riskManager;
+            SValidationResult result;
+            ZeroMemory(result);
+            if(riskMgr != NULL)
+                result = (*riskMgr).ValidateTradeRequest(request, "TREND");
             if(!result.approved)
             {
                 SetDecisionReasonTag("TREND_RISK_REJECTED");

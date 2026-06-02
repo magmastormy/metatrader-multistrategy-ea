@@ -2,9 +2,10 @@
 //| CPowerOfThreeStrategy.mqh                                        |
 //| ICT Power of Three / ICT 2025 model                              |
 //| Turtle Soup + OTE + FVG + SMT + AMD distribution                 |
+//|                                                                  |
+//| STATUS: DISABLED (subjective ICT concepts)                       |
+//| Disabled via InpEnablePowerOfThree = false in MultiStrategyAutonomousEA.mq5 |
 //+------------------------------------------------------------------+
-#property strict
-
 #ifndef __C_POWER_OF_THREE_STRATEGY_MQH__
 #define __C_POWER_OF_THREE_STRATEGY_MQH__
 
@@ -69,7 +70,7 @@ public:
         Deinit();
     }
 
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
@@ -235,7 +236,11 @@ public:
             request.strategy = GetName();
             request.clusterCode = "";
             
-            SValidationResult result = m_riskManager->ValidateTradeRequest(request, "PO3");
+            CUnifiedRiskManager* riskMgr = m_riskManager;
+            SValidationResult result;
+            ZeroMemory(result);
+            if(riskMgr != NULL)
+                result = (*riskMgr).ValidateTradeRequest(request, "PO3");
             if(!result.approved)
             {
                 SetDecisionReasonTag("PO3_RISK_REJECTED");
@@ -248,7 +253,6 @@ public:
         }
 
         SetDecisionReasonTag(bullish ? "PO3_SIGNAL_BUY" : "PO3_SIGNAL_SELL");
-        m_signalsGenerated++;
         RecordSignal();
         
         // CONSENSUS LOGGING (AGENTS.md requirement)

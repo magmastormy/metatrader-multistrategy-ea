@@ -261,8 +261,8 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 // Enhanced Strategies
 // ELLIOTT WAVE REMOVED - Include deleted
 #include "Strategies\StrategyCandlestick.mqh"
-#include "Strategies\CUnicornModelStrategy.mqh"
-#include "Strategies\CPowerOfThreeStrategy.mqh"
+// NOTE: CUnicornModelStrategy and CPowerOfThreeStrategy are included via EnterpriseStrategyManager.mqh
+// to avoid duplicate inclusion and preprocessor directive conflicts
 #include "Strategies\MeanReversionStrategy.mqh"  // NEW: Mean Reversion Strategy (Batch 93)
 #include "Strategies\VolatilityBreakoutStrategy.mqh"  // NEW: Volatility Breakout Strategy (Batch 93 - Week 3)
 
@@ -282,7 +282,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 
 //--- Global variables
 CSymbolInfo globalSymbol;
-CAccountInfo account;
+CAccountInfo g_accountInfo;
 CEnhancedErrorHandler errorHandler;
 CUnifiedRiskManager unifiedRiskManager;
 CPerformanceAnalytics performanceAnalytics;
@@ -6348,3 +6348,4 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
         }
     }
 }
+

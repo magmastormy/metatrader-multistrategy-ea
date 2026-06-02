@@ -474,6 +474,8 @@ bool CRiskValidationGate::ValidateBasicParameters(const STradeValidationRequest 
     // Validate stop loss
     if(request.stopLossPips <= 0)
     {
+        PrintFormat("[RISK-GATE] Rejected %s %s: Missing stop loss (strategy=%s, SL=%.1f pips)",
+                    request.symbol, EnumToString(request.orderType), request.strategy, request.stopLossPips);
         message = "Invalid stop loss: " + DoubleToString(request.stopLossPips, 1) + " pips";
         return false;
     }

@@ -36,6 +36,7 @@ private:
     
     // Risk Management (AGENTS.md invariant #1)
     CUnifiedRiskManager* m_riskManager;
+    int                  m_signalsGenerated;
     
     // Timeframe validation bounds for scalping mode
     ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
@@ -226,7 +227,8 @@ public:
         m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
         m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
-        m_riskManager(NULL)
+        m_riskManager(NULL),
+        m_signalsGenerated(0)
     {
     }
 
@@ -250,7 +252,8 @@ public:
         m_rsiHandle(INVALID_HANDLE),
         m_minConfirmationBars(MathMax(1, minConfirmationBars)),  // Hysteresis: min bars for crossover confirmation
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
-        m_maxScalpTimeframe(PERIOD_M15)   // Maximum timeframe for scalping mode
+        m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
+        m_signalsGenerated(0)
     {
     }
 
@@ -337,7 +340,7 @@ public:
         return true;
     }
 
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
         if(m_fastPeriod >= m_slowPeriod)
             m_fastPeriod = MathMax(3, m_slowPeriod - 2);
@@ -348,7 +351,7 @@ public:
             return false;
         }
 
-        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
+        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
 
         //+------------------------------------------------------------------+
@@ -523,6 +526,13 @@ public:
             
             confidence = MathMin(1.0, MathMax(0.0, momentumConfidence));
             
+            // Calculate ATR-based stop loss for risk validation
+            double atr = iATR(m_symbol, m_timeframe, 14);
+            double currentPrice = (signal == TRADE_SIGNAL_BUY) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK) : SymbolInfoDouble(m_symbol, SYMBOL_BID);
+            double slDistance = (atr > 0) ? (atr * 2.0) : (currentPrice * 0.01); // 2x ATR or 1% fallback
+            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            double slPips = (point > 0) ? (slDistance / point) : 0;
+            
             // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
             if(m_riskManager != NULL)
             {
@@ -530,13 +540,17 @@ public:
                 request.symbol = m_symbol;
                 request.orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
                 request.lotSize = 0.01;  // Placeholder
-                request.stopLossPips = 0;
-                request.takeProfitPips = 0;
+                request.stopLossPips = slPips;
+                request.takeProfitPips = slPips * 2.0; // 1:2 R:R ratio
                 request.confidence = confidence;
                 request.strategy = GetName();
                 request.clusterCode = "";
                 
-                SValidationResult result = m_riskManager->ValidateTradeRequest(request, "MOMENTUM");
+                CUnifiedRiskManager* riskMgr = m_riskManager;
+                SValidationResult result;
+                ZeroMemory(result);
+                if(riskMgr != NULL)
+                    result = (*riskMgr).ValidateTradeRequest(request, "MOMENTUM");
                 if(!result.approved)
                 {
                     SetDecisionReasonTag("MOMENTUM_RISK_REJECTED");

@@ -44,13 +44,16 @@ public:
     }
     ~CStrategyCandlestick() { if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; } }
     
-    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr) override
+    virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL) override
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
         
-        // Cast risk manager from void pointer
-        m_riskManager = (CUnifiedRiskManager*)tradeManagerPtr;
+        // Cast risk manager from void pointer (use dedicated parameter if provided, fallback to tradeManagerPtr for backward compatibility)
+        if(unifiedRiskManagerPtr != NULL)
+            m_riskManager = (CUnifiedRiskManager*)unifiedRiskManagerPtr;
+        else
+            m_riskManager = (CUnifiedRiskManager*)tradeManagerPtr;
         if(m_riskManager == NULL)
         {
             Print("[CANDLESTICK] WARNING: Risk manager not provided");
@@ -196,7 +199,11 @@ public:
                     request.strategy = GetName();
                     request.clusterCode = "";
                     
-                    SValidationResult result = m_riskManager->ValidateTradeRequest(request, "CANDLE");
+                    CUnifiedRiskManager* riskMgr = m_riskManager;
+                    SValidationResult result;
+                    ZeroMemory(result);
+                    if(riskMgr != NULL)
+                        result = (*riskMgr).ValidateTradeRequest(request, "CANDLE");
                     if(!result.approved)
                     {
                         m_lastDecisionReasonTag = "CANDLE_RISK_REJECTED";
@@ -258,7 +265,11 @@ public:
                     request.strategy = GetName();
                     request.clusterCode = "";
                     
-                    SValidationResult result = m_riskManager->ValidateTradeRequest(request, "CANDLE");
+                    CUnifiedRiskManager* riskMgr = m_riskManager;
+                    SValidationResult result;
+                    ZeroMemory(result);
+                    if(riskMgr != NULL)
+                        result = (*riskMgr).ValidateTradeRequest(request, "CANDLE");
                     if(!result.approved)
                     {
                         m_lastDecisionReasonTag = "CANDLE_RISK_REJECTED";

@@ -4,11 +4,11 @@
 //| Combines Market Structure, Order Blocks, Supply/Demand,          |
 //| Liquidity, Imbalance, and Institutional Order Flow               |
 //| Copyright 2025, Multi-Strategy EA                                |
+//|                                                                  |
+//| STATUS: DISABLED (over-engineered - 14+ modules, 1850 lines)    |
+//| Disabled via InpEnableUnifiedICT = false in MultiStrategyAutonomousEA.mq5 |
+//| Core ICT signals extracted into lighter-weight pipeline filters |
 //+------------------------------------------------------------------+
-#property copyright "Copyright 2025, Multi-Strategy EA"
-#property version   "1.00"
-#property strict
-
 #ifndef __STRATEGY_UNIFIED_ICT_MQH__
 #define __STRATEGY_UNIFIED_ICT_MQH__
 
@@ -180,7 +180,7 @@ public:
                                 CStrategyUnifiedICT(const string name = "Unified ICT v1.0", int magic = 0);
     virtual                    ~CStrategyUnifiedICT();
     
-    virtual bool                Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer) override;
+    virtual bool                Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override;
     virtual void                Deinit() override;
     virtual void                OnTick() override;
     virtual void                OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe);
@@ -578,9 +578,9 @@ bool CStrategyUnifiedICT::BuildImbalanceDrivenEntry(const bool bullish,
 //+------------------------------------------------------------------+
 //| Initialization                                                   |
 //+------------------------------------------------------------------+
-bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer)
+bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr)
 {
-    if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
+    if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
         return false;
 
     m_drawPrefix = BuildDrawPrefix(symbol, timeframe);
@@ -1136,7 +1136,11 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
             request.strategy = GetName();
             request.clusterCode = "";
             
-            SValidationResult validationResult = m_riskManager->ValidateTradeRequest(request, "UICT");
+            CUnifiedRiskManager* riskMgr = m_riskManager;
+            SValidationResult validationResult;
+            ZeroMemory(validationResult);
+            if(riskMgr != NULL)
+                validationResult = (*riskMgr).ValidateTradeRequest(request, "UICT");
             if(!validationResult.approved)
             {
                 SetDecisionReasonTag("UICT_RISK_REJECTED");

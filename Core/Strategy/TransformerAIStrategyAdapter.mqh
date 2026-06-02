@@ -7,6 +7,9 @@
 #ifndef CORE_STRATEGY_TRANSFORMER_AI_STRATEGY_ADAPTER_MQH
 #define CORE_STRATEGY_TRANSFORMER_AI_STRATEGY_ADAPTER_MQH
 
+// Checkpoint version constant for transformer models (integer version)
+#define TRANSFORMER_CHECKPOINT_VERSION 1
+
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
 #include "../../AIModules/TransformerBrain.mqh"
@@ -147,7 +150,8 @@ public:
     virtual bool Init(const string symbol,
                       const ENUM_TIMEFRAMES timeframe,
                       void* tradeManagerPtr,
-                      void* positionSizerPtr) override
+                      void* positionSizerPtr,
+                      void* unifiedRiskManagerPtr = NULL) override
     {
         m_symbol = symbol;
         m_timeframe = timeframe;

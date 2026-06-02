@@ -211,7 +211,7 @@ private:
             if(m_positionStates[i].ticket == ticket) 
             {
                 // Validate that the position still exists
-                if(!m_positionInfo.SelectByTicket(ticket)) 
+                if(!PositionSelectByTicket(ticket)) 
                 {
                     // Position no longer exists, remove from tracking
                     RemovePositionState(i);
@@ -231,7 +231,7 @@ private:
         if(ticket <= 0) return;
         
         // Validate position exists before updating state
-        if(!m_positionInfo.SelectByTicket(ticket)) 
+        if(!PositionSelectByTicket(ticket)) 
         {
             return;
         }
@@ -1249,7 +1249,7 @@ bool CTradeManager::Initialize(const uint magicNumber,
 //+------------------------------------------------------------------+
 bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
 {
-    if(!m_positionInfo.SelectByTicket(ticket)) return false;
+    if(!PositionSelectByTicket(ticket)) return false;
     
     string positionSymbol = m_positionInfo.Symbol();
     double openPrice = m_positionInfo.PriceOpen();
@@ -1296,7 +1296,7 @@ bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
 //+------------------------------------------------------------------+
 bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
 {
-    if(!m_positionInfo.SelectByTicket(ticket))
+    if(!PositionSelectByTicket(ticket))
     {
         return false;
     }
@@ -1344,7 +1344,7 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
     if(volume <= 0)
         return false;
     
-    if(!m_positionInfo.SelectByTicket(ticket))
+    if(!PositionSelectByTicket(ticket))
         return false;
     
     string symbol = m_positionInfo.Symbol();
@@ -2018,7 +2018,7 @@ void CTradeManager::LogTradeOperation(const string operation, const string symbo
 //+------------------------------------------------------------------+
 bool CTradeManager::ShouldMoveToBreakeven(const ulong ticket, const double buffer)
 {
-    if(!m_positionInfo.SelectByTicket(ticket))
+    if(!PositionSelectByTicket(ticket))
         return false;
     
     double openPrice = m_positionInfo.PriceOpen();
@@ -2042,7 +2042,7 @@ bool CTradeManager::ShouldMoveToBreakeven(const ulong ticket, const double buffe
 //+------------------------------------------------------------------+
 bool CTradeManager::ShouldUpdateTrailingStop(const ulong ticket, const double distance, const double step)
 {
-    if(!m_positionInfo.SelectByTicket(ticket))
+    if(!PositionSelectByTicket(ticket))
         return false;
     
     double currentSL = m_positionInfo.StopLoss();
@@ -2094,7 +2094,7 @@ double CTradeManager::CalculatePositionRisk(const string symbolParam, const doub
 //+------------------------------------------------------------------+
 void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin)
 {
-    if(!m_positionInfo.SelectByTicket(ticket))
+    if(!PositionSelectByTicket(ticket))
         return;
         
     if(isWin)

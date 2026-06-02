@@ -151,8 +151,8 @@ public:
         if(m_trainCount < batchSize)
             return false;
         
-        // Resize first dimension
-        ArrayResize(inputs, batchSize);
+        // Resize both dimensions upfront
+        ArrayResize(inputs, batchSize, maxFeatures);
         ArrayResize(labels, batchSize);
         
         for(int b = 0; b < batchSize; b++)
@@ -160,12 +160,9 @@ public:
             int idx = (m_trainHead - batchSize + b) % NN_MAX_TRAINING_EXAMPLES;
             if(idx < 0) idx += NN_MAX_TRAINING_EXAMPLES;
             
-            // Initialize and resize second dimension for this row
-            double tempRow[];
-            ArrayResize(tempRow, maxFeatures);
+            // Copy features to pre-sized row
             for(int i = 0; i < maxFeatures && i < FEATURE_VECTOR_SIZE; i++)
-                tempRow[i] = m_trainingBuffer[idx].inputs[i];
-            inputs[b] = tempRow;
+                inputs[b][i] = m_trainingBuffer[idx].inputs[i];
             labels[b] = m_trainingBuffer[idx].labelClass;
         }
         
