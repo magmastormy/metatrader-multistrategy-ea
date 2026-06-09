@@ -4,6 +4,28 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 
 ## [Unreleased] - 2026-05-31
 
+### Batch 96: Execution Profitability Recovery (2026-06-05)
+
+#### Root Cause Analysis
+- **Trade execution/scalping failure:** `MultiStrategyAutonomousEA.mq5` staged only one `bestCandidate` per scan cycle and defaulted `InpPortfolioMaxPositionsPerSymbol` to one, while a legacy portfolio cap stopped same-symbol stacking at two positions.
+- **Stop-loss mismanagement:** `CTradeManager::ManageAllPositions()` was account-wide, SELL breakeven placed SL above entry, and protective modification cooldown could be bypassed by routine tightening.
+- **Signal accuracy degradation:** `CNeuralNetworkStrategy::ResolveBarriers()` trained class labels as correctness outcomes instead of directional classes, while AI same-bar caches could keep tick-sensitive features stale.
+- **Trade concurrency regression:** scan-cycle virtual risk reservation replaced prior winners instead of retaining all approved candidates for ranked execution.
+- **Directional/synthetic bias:** newer synthetic broker symbols were not consistently classified as synthetic, and Mean Reversion / Volatility Breakout governance paths had stale/incomplete wiring plus compile-blocking `volumeRatio` identifiers.
+
+#### Implementation Summary
+- Added `InpMaxTradeSendsPerCycle` and changed the scan tail to stage every `CUnifiedRiskManager`-reserved candidate, rank candidates, and execute up to the configured cap through `CTradeManager`.
+- Changed same-symbol capacity to count EA-owned positions for `InpPortfolioMaxPositionsPerSymbol`, with external/manual positions logged separately.
+- Expanded synthetic detection for `SFX Vol`, `FX Vol`, `SwitchX`, `PainX`, `GainX`, and `FlipX`; aligned fallback stop envelopes with that classification.
+- Magic-filtered trade lifecycle management, fixed SELL breakeven to normalized entry, delayed trailing until meaningful profit, and limited modification cooldown bypass to missing SL protection.
+- Made execution drift preflight ATR/spread-aware, preserving stale-price protection without blocking fast synthetic reprices.
+- Corrected online neural barrier labels to train `NONE/BUY/SELL` directly and added short same-bar TTLs to neural, ONNX, transformer, ensemble, and next-gen AI caches.
+- Included Mean Reversion and Volatility Breakout in intrabar/governance paths and fixed their stale `volumeRatio` references.
+
+#### Validation Plan
+- Compile with `sync_and_compile.ps1 -MirrorSync`.
+- Runtime logs to verify after deployment: `[HEARTBEAT]`, `[CONSENSUS-DIAG]`, `[SIGNAL-REJECTED]`, `[AI-VOTE]`, `[SCAN-CANDIDATE]`, `[SCAN-DECISION-SUMMARY]`, and `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]`.
+
 ### Batch 95: Stop Loss Validation Fix & Directional Bias Resolution (2026-05-31)
 
 #### Root Cause Analysis

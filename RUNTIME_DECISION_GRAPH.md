@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-05-25
+- Last Updated: 2026-06-05
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 92 - AI Modules Comprehensive Audit Implementation
+- Current Batch: 96 - Execution Profitability Recovery
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -105,14 +105,15 @@ flowchart TD
   U --> V[UnifiedRisk post-size validation]
   V --> W{Pass?}
   W -->|No| T
-  W -->|Yes| X[Stage ranked candidate and reserve virtual risk if it becomes best-so-far]
+  W -->|Yes| X[Reserve virtual risk and stage approved candidate]
 
   X --> X1{More symbols?}
   X1 -->|Yes| E4
-  X1 -->|No| X2[Select top-ranked candidate]
+  X1 -->|No| X2[Sort approved candidates by ranking]
   X2 --> X2A[Resolve LIVE-AUTHORITY and authority risk scale]
   X2A --> X2B[Register/maintain authority forward trials]
-  X2B --> X3{Global shadow or candidate lacks live authority?}
+  X2B --> X2C[Walk ranked list up to InpMaxTradeSendsPerCycle]
+  X2C --> X3{Global shadow or candidate lacks live authority?}
 
   X3 -->|Yes| Y[Log SHADOW-TRADE + AUTHORITY-TRIAL]
   X3 -->|No| Z0[TradeManager hard spread/drift preflight]
@@ -352,9 +353,11 @@ flowchart TD
 - Transient retcodes use bounded retry with immediate refresh/reprice instead of sleep-based blocking.
 - `LOCKED`/`FROZEN` retcodes use single bounded retry to avoid prolonged retry loops.
 - Market orders rebuild execution price and protective stops at submit time.
-- Protective stop modifications are throttled but allow emergency bypass for missing/tightening protection.
+- Protective stop modifications are throttled; the cooldown bypass is limited to missing stop-loss protection.
+- Position lifecycle management is magic-filtered so `CTradeManager::ManageAllPositions(...)` does not modify unrelated manual or external positions.
+- SELL breakeven moves to normalized entry price instead of above entry, and trailing stops require meaningful profit before tightening.
 - Symbol scan order rotates each cycle to reduce first-symbol concentration when only one trade is allowed per cycle.
-- The runtime no longer executes the first valid symbol blindly; it stages `[SCAN-CANDIDATE]` entries and promotes the best `[SCAN-DECISION]` at the end of the cycle.
+- The runtime no longer executes the first valid symbol blindly; it stages `[SCAN-CANDIDATE]` entries, sorts them, and emits ranked `[SCAN-DECISION]` attempts up to `InpMaxTradeSendsPerCycle`.
 - `TradeManager` emits `[EXECUTION-RECEIPT]` with requested/fill size, retcode, request id, and retries; partial fills emit `[FILL-DIFF]`.
 - `TradeManager` also emits `[EXECUTION-TELEMETRY]` with broker request/fill price, slippage points, and round-trip latency; the EA mirrors that into `[TRADE-EXECUTION]`.
 - `UnifiedRiskManager` registers executed risk using fill ratio so daily risk usage matches actual exposure.
@@ -371,7 +374,7 @@ flowchart TD
 - Startup/runtime priming emits `[SCAN-PRIME]`, and cadence overrides emit `[CADENCE-WARNING]` when global new-bar-only mode suppresses otherwise-live intrabar policy.
 - Scheduler repair emits `[SCHEDULER-STATE]` so silent cadence-array drift is visible immediately in the runtime log.
 - Ranked approved candidates emitted as `[SCAN-CANDIDATE]`.
-- Final cycle winner emitted as `[SCAN-DECISION]`.
+- Ranked cycle execution attempts emitted as `[SCAN-DECISION]`; per-cycle totals emitted as `[SCAN-DECISION-SUMMARY]`.
 - Mode-filtered indicator absence emitted as `[MODE-MASK]`.
 - External LLM lifecycle and reasoning emitted as `[EXT-LLM]`.
 - Adaptive-training summary emitted as `[AI-FEEDBACK]`.

@@ -97,7 +97,9 @@ string NormalizeInstrumentSymbolName(const string symbol)
 bool IsVolatilitySyntheticSymbolName(const string symbol)
 {
     string normalized = NormalizeInstrumentSymbolName(symbol);
-    return (StringFind(normalized, "VOLATILITY ") >= 0);
+    return (StringFind(normalized, "VOLATILITY ") >= 0 ||
+            StringFind(normalized, "SFX VOL ") >= 0 ||
+            StringFind(normalized, "FX VOL ") >= 0);
 }
 
 bool IsJumpSyntheticSymbolName(const string symbol)
@@ -130,6 +132,21 @@ bool IsPainSyntheticSymbolName(const string symbol)
     return (StringFind(normalized, "PAINX ") >= 0 || StringFind(normalized, "PAIN ") >= 0);
 }
 
+bool IsSwitchSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "SWITCHX ") >= 0 || StringFind(normalized, "SWITCH ") >= 0);
+}
+
+bool IsGainFlipSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "GAINX ") >= 0 ||
+            StringFind(normalized, "GAIN ") >= 0 ||
+            StringFind(normalized, "FLIPX ") >= 0 ||
+            StringFind(normalized, "FLIP ") >= 0);
+}
+
 bool IsSyntheticIndexSymbolName(const string symbol)
 {
     return (IsVolatilitySyntheticSymbolName(symbol) ||
@@ -137,7 +154,9 @@ bool IsSyntheticIndexSymbolName(const string symbol)
             IsStepSyntheticSymbolName(symbol) ||
             IsBoomCrashSyntheticSymbolName(symbol) ||
             IsRangeBreakSyntheticSymbolName(symbol) ||
-            IsPainSyntheticSymbolName(symbol));
+            IsPainSyntheticSymbolName(symbol) ||
+            IsSwitchSyntheticSymbolName(symbol) ||
+            IsGainFlipSyntheticSymbolName(symbol));
 }
 
 bool IsForexCurrencyCode(const string code)
@@ -175,6 +194,10 @@ string GetInstrumentExecutionProfileName(const string symbol)
         return "SYNTHETIC_RANGE_BREAK";
     if(IsPainSyntheticSymbolName(symbol))
         return "SYNTHETIC_PAIN";
+    if(IsSwitchSyntheticSymbolName(symbol))
+        return "SYNTHETIC_SWITCH";
+    if(IsGainFlipSyntheticSymbolName(symbol))
+        return "SYNTHETIC_GAIN_FLIP";
     if(IsForexPairSymbolName(symbol))
         return "FOREX";
     return "GENERIC";

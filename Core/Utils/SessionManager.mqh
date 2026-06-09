@@ -104,11 +104,24 @@ public:
     //+------------------------------------------------------------------+
     bool IsSynthetic(const string symbol)
     {
-        return (StringFind(symbol, "Volatility") >= 0 || 
-                StringFind(symbol, "Step") >= 0 || 
-                StringFind(symbol, "Jump") >= 0 ||
-                StringFind(symbol, "Boom") >= 0 ||
-                StringFind(symbol, "Crash") >= 0);
+        string normalized = symbol;
+        StringToUpper(normalized);
+        return (StringFind(normalized, "VOLATILITY") >= 0 ||
+                StringFind(normalized, "SFX VOL") >= 0 ||
+                StringFind(normalized, "FX VOL") >= 0 ||
+                StringFind(normalized, "STEP") >= 0 ||
+                StringFind(normalized, "JUMP") >= 0 ||
+                StringFind(normalized, "BOOM") >= 0 ||
+                StringFind(normalized, "CRASH") >= 0 ||
+                StringFind(normalized, "RANGE BREAK") >= 0 ||
+                StringFind(normalized, "PAINX") >= 0 ||
+                StringFind(normalized, "PAIN ") >= 0 ||
+                StringFind(normalized, "SWITCHX") >= 0 ||
+                StringFind(normalized, "SWITCH ") >= 0 ||
+                StringFind(normalized, "GAINX") >= 0 ||
+                StringFind(normalized, "GAIN ") >= 0 ||
+                StringFind(normalized, "FLIPX") >= 0 ||
+                StringFind(normalized, "FLIP ") >= 0);
     }
 };
 

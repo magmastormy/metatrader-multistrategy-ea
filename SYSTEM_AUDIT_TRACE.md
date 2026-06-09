@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-05-25
+- Last Updated: 2026-06-05
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 92 - AI Modules Comprehensive Audit Implementation
+- Current Batch: 96 - Execution Profitability Recovery
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -30,6 +30,14 @@
 - Python bridge: `Core/Utils/PythonBridge.mqh`, `Python/zmq_server.py`
 
 ## Current Runtime Evidence
+- **Execution Profitability Recovery (Batch 96):** Static audit and implementation pass for the reported live-trading failures:
+  - **Trade execution failures:** `MultiStrategyAutonomousEA.mq5` previously retained only one `bestCandidate` per scan cycle and defaulted same-symbol capacity to one. The scan loop now stages all risk-reserved candidates, sorts by ranking, and attempts up to `InpMaxTradeSendsPerCycle`.
+  - **Scalping/synthetic blockers:** synthetic classification now covers broker names such as `SFX Vol`, `FX Vol`, `SwitchX`, `PainX`, `GainX`, and `FlipX`; fallback stop sizing now applies the synthetic envelope to those instruments.
+  - **Stop-loss mismanagement:** `CTradeManager` lifecycle edits are magic-filtered, SELL breakeven no longer places SL above entry, trailing stop activation waits for meaningful profit, and modification cooldown bypass only covers missing SL protection.
+  - **Signal accuracy degradation:** `CNeuralNetworkStrategy::ResolveBarriers()` now writes directional classes directly instead of correctness-derived labels; AI adapter caches use a short same-bar TTL so tick-sensitive features do not stay stale for an entire bar.
+  - **Concurrency regression:** the legacy hidden same-symbol portfolio cap was raised from 2 to 5 while the EA-owned input cap remains the primary runtime limit.
+  - **Directional bias controls:** Mean Reversion and Volatility Breakout are included in governance/intrabar profiles, and SELL-capable strategies are no longer compile-blocked by stale `volumeRatio` names.
+
 - **AI Modules Comprehensive Audit Implementation (Batch 92):** Complete implementation of all 25 AI audit findings:
   - **Memory & Numerical Stability:**
     - NaN/Inf validation expanded in all AI adapters with `IsValidConfidence()` checks

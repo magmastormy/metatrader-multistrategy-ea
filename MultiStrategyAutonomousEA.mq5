@@ -20,8 +20,9 @@ input double InpMaxDailyRisk = 30.0;      // Max daily risk (increased for aggre
 input double InpMaxPortfolioRisk = 50.0;  // Max total portfolio risk (increased for aggressive trading)
 input double InpMaxDrawdown = 10.0;       // Max drawdown
 input string InpSymbolsToTrade = "SFX Vol 20,FX Vol 40,SwitchX 1200,PainX 400,PainX 600";               // Comprehensive test symbols
-input int    InpMinSecondsBetweenTrades = 45;     // Cooldown in seconds between trades
+input int    InpMinSecondsBetweenTrades = 10;     // Cooldown in seconds between trade cycles
 input int    InpMaxPositionsTotal = 8;            // Global position limit under authority gate
+input int    InpMaxTradeSendsPerCycle = 3;        // Max ranked candidates the EA may send per scan cycle
 input group "Strategy Selection"
 input bool InpEnableMomentum = true;        // Enable Momentum Strategy
 input bool InpEnableTrend = true;           // Enable Trend Strategy
@@ -174,7 +175,7 @@ input group "Execution Safety"
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
 input int InpTradeSlippagePoints = 50;                                  // Max slippage (relaxed from 20)
 input double InpMaxEntrySpreadPoints = 120.0;                           // Hard pre-send spread limit (increased from 50 to accommodate synthetic indices)
-input double InpMaxEntryDriftPoints = 25.0;                              // Hard drift from signal price before send; <=0 disables
+input double InpMaxEntryDriftPoints = 80.0;                              // Hard drift from signal price before send; volatility-aware in trade manager; <=0 disables
 input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
 input bool InpEnableSignalReversalExit = true;                 // Close position immediately if primary strategy signals reversal
 input double InpSignalReversalMinConfidence = 0.58;             // Min confidence to trigger a reversal exit
@@ -217,7 +218,7 @@ input double InpMaxVolatility = 3.0;           // Maximum Volatility %
 input bool InpEnableStructureFilter = true;    // Enable Structure Filter
 input bool InpEnableLiquidityFilter = true;    // Enable Liquidity Filter
 input bool InpSignalScanOnNewBarOnly = false;  // Evaluate fresh entry signals only on new bar
-input int  InpPortfolioMaxPositionsPerSymbol = 1; // EA-side precheck before risk gate
+input int  InpPortfolioMaxPositionsPerSymbol = 3; // EA-owned same-symbol stacking cap before risk gate
 input int  InpMaxPositionsSameBase = 3;        // Max positions with the same base currency (e.g. 3)
 input bool InpEnableClusterRiskGovernance = true; // Enable cluster-aware risk mutex/caps in risk gate
 input bool InpEnableClusterMutex = true;          // Block opposing-cluster same-symbol stacking
@@ -647,6 +648,31 @@ double CalculateCandidateRankingScore(const SApprovedTradeCandidate &candidate)
     score += candidate.diversityScore * 0.05;
     score += confluenceScore * 0.05;
     return MathMax(0.0, MathMin(1.0, score));
+}
+
+void AppendApprovedTradeCandidate(SApprovedTradeCandidate &candidates[],
+                                  const SApprovedTradeCandidate &candidate)
+{
+    int nextIndex = ArraySize(candidates);
+    ArrayResize(candidates, nextIndex + 1);
+    candidates[nextIndex] = candidate;
+}
+
+void SortApprovedTradeCandidatesByRank(SApprovedTradeCandidate &candidates[])
+{
+    int count = ArraySize(candidates);
+    for(int i = 0; i < count - 1; i++)
+    {
+        for(int j = i + 1; j < count; j++)
+        {
+            if(candidates[j].rankingScore > candidates[i].rankingScore)
+            {
+                SApprovedTradeCandidate swap = candidates[i];
+                candidates[i] = candidates[j];
+                candidates[j] = swap;
+            }
+        }
+    }
 }
 
 double CalculateAtrFromRates(const string symbol, const ENUM_TIMEFRAMES timeframe, const int period, const int shift = 0)
@@ -2343,7 +2369,7 @@ bool UseSyntheticLeanRosterProfile(const string symbol, const bool &baseStrategy
         return false;
 
     int preferredSyntheticCount = 0;
-    int preferredIndices[] = {2, 3, 4, 5, 7, 8};
+    int preferredIndices[] = {4, 5, 7, 8, 9, 10};
     for(int i = 0; i < ArraySize(preferredIndices); i++)
     {
         if(StrategyFlagIsEnabled(baseStrategyFlags, preferredIndices[i]))
@@ -2436,9 +2462,9 @@ ENUM_TIMEFRAMES ResolveStrategyRegistrationTimeframe(const string symbol, const 
 
 ENUM_STRATEGY_CLUSTER ResolveStrategyClusterForName(const string strategyName)
 {
-    if(strategyName == "Momentum" || strategyName == "Trend")
+    if(strategyName == "Momentum" || strategyName == "Trend" || strategyName == "Volatility Breakout")
         return TREND_CLUSTER;
-    if(strategyName == "Fibonacci" || strategyName == "Support/Resistance")
+    if(strategyName == "Fibonacci" || strategyName == "Support/Resistance" || strategyName == "Mean Reversion")
         return MEAN_REVERSION_CLUSTER;
     // ELLIOTT WAVE REMOVED - Removed from cluster
     if(strategyName == "Unified ICT" || strategyName == "Candlestick" ||
@@ -2455,7 +2481,8 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
     {
         // ELLIOTT WAVE REMOVED - Removed from primary alpha list
         if(strategyName == "Unified ICT" ||
-           strategyName == "Unicorn Model" || strategyName == "Power of Three")
+           strategyName == "Unicorn Model" || strategyName == "Power of Three" ||
+           strategyName == "Mean Reversion" || strategyName == "Volatility Breakout")
             return PRIMARY_ALPHA;
         if(strategyName == "Fibonacci" || strategyName == "Support/Resistance" || strategyName == "Candlestick")
             return CONTEXT_FEATURE;
@@ -2466,7 +2493,7 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
 bool IsSyntheticLeanIntrabarPrimaryIndex(const int index)
 {
     // ELLIOTT WAVE REMOVED - Index 3 removed from list
-    return (index == 2 || index == 4 || index == 5 || index == 7 || index == 8);
+    return (index == 2 || index == 4 || index == 5 || index == 7 || index == 8 || index == 9 || index == 10);
 }
 
 bool IsStrategyIntrabarEnabledByInput(const int index)
@@ -2482,6 +2509,8 @@ bool IsStrategyIntrabarEnabledByInput(const int index)
         case 6: return InpIntrabarEligibilityCandlestick;
         case 7: return InpIntrabarEligibilityUnicornModel;
         case 8: return InpIntrabarEligibilityPowerOfThree;
+        case 9: return InpIntrabarEligibilityMeanReversion;
+        case 10: return InpIntrabarEligibilityVolatilityBreakout;
         default: return false;
     }
 }
@@ -2538,7 +2567,7 @@ string GetStrategyIntrabarStatusByIndex(const string symbol,
 string BuildIntrabarGovernanceSummary(const string symbol, const bool &strategyFlags[])
 {
     string summary = "";
-    for(int i = 0; i < 9; i++)
+    for(int i = 0; i < ArraySize(strategyFlags); i++)
     {
         if(i > 0)
             summary += ",";
@@ -3397,7 +3426,7 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
                                                             : (syntheticLeanProfile ? "SYMBOL_CLASS_MIXED"
                                                                                     : (indicatorsPrimary ? "PRIMARY_ALPHA" : "CONTEXT_FEATURE"));
 
-    for(int i = 0; i < 9; i++)
+    for(int i = 0; i < ArraySize(strategyFlags); i++)
     {
         if(!StrategyFlagIsEnabled(strategyFlags, i))
             continue;
@@ -4904,10 +4933,10 @@ void ProcessTradingLogic(bool fromTimer)
     if(allowSignalEvaluation && ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
         // Check entry gates, but keep signal evaluation running even while entry is paused.
-        SApprovedTradeCandidate bestCandidate;
+        SApprovedTradeCandidate approvedCandidates[];
+        ArrayResize(approvedCandidates, 0);
         ulong scanCycleId = ++g_scanCycleSequence;
         datetime tickTime = TimeCurrent();
-        string bestReservationOwner = "scan_best_candidate";
         unifiedRiskManager.ClearVirtualPositions();
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
         bool cooldownBlocked = (secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0);
@@ -5229,11 +5258,13 @@ void ProcessTradingLogic(bool fromTimer)
                     if(InpPortfolioMaxPositionsPerSymbol > 0)
                     {
                         symbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, false);
-                        if(symbolPositionCount >= InpPortfolioMaxPositionsPerSymbol)
+                        eaSymbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, true);
+                        externalSymbolPositions = symbolPositionCount - eaSymbolPositionCount;
+                        if(externalSymbolPositions < 0)
+                            externalSymbolPositions = 0;
+                        if(eaSymbolPositionCount >= InpPortfolioMaxPositionsPerSymbol)
                         {
                             symbolPositionCapBlocked = true;
-                            eaSymbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, true);
-                            externalSymbolPositions = MathMax(0, symbolPositionCount - eaSymbolPositionCount);
                         }
                     }
 
@@ -5266,10 +5297,10 @@ void ProcessTradingLogic(bool fromTimer)
                         {
                             if(blockReason != "")
                                 blockReason += " | ";
-                            blockReason += StringFormat("symbol cap total=%d/%d | ea=%d | external=%d",
-                                                        symbolPositionCount,
-                                                        InpPortfolioMaxPositionsPerSymbol,
+                            blockReason += StringFormat("symbol cap ea=%d/%d | total=%d | external=%d",
                                                         eaSymbolPositionCount,
+                                                        InpPortfolioMaxPositionsPerSymbol,
+                                                        symbolPositionCount,
                                                         externalSymbolPositions);
                         }
 
@@ -5311,11 +5342,8 @@ void ProcessTradingLogic(bool fromTimer)
                     if(pointValue <= 0.0)
                         pointValue = 0.00001;
 
-                    // Check if this is a synthetic index (different pip calculation)
-                    bool isSynthetic = (StringFind(currentSymbol, "Volatility") >= 0 ||
-                                       StringFind(currentSymbol, "Boom") >= 0 ||
-                                       StringFind(currentSymbol, "Crash") >= 0 ||
-                                       StringFind(currentSymbol, "Step") >= 0);
+                    // Check if this is a synthetic index (different pip calculation).
+                    bool isSynthetic = IsSyntheticIndexSymbolName(currentSymbol);
 
                     double stopLossPips = 0.0;
                     if(atrReady)
@@ -5337,7 +5365,7 @@ void ProcessTradingLogic(bool fromTimer)
                         // Gap/stress fallback: derive a deterministic stop distance from broker constraints + price percent.
                         int stopLevelPts = (int)SymbolInfoInteger(currentSymbol, SYMBOL_TRADE_STOPS_LEVEL);
                         double fallbackByStopLevel = MathMax(30.0, (double)stopLevelPts * 2.0);
-                        double fallbackByPrice = (entryPrice * (isSynthetic ? 0.003 : 0.01)) / pointValue;
+                        double fallbackByPrice = (entryPrice * (isSynthetic ? 0.010 : 0.003)) / pointValue;
                         stopLossPips = MathMax(fallbackByStopLevel, fallbackByPrice);
                         PrintFormat("[RISK-FALLBACK] ATR unavailable for %s | using fallback stop distance %.1f points",
                                     currentSymbol, stopLossPips);
@@ -5630,8 +5658,11 @@ tradeReq.lotSize = lotSize;
                                 candidate.riskResult = riskResult;
                                 candidate.rankingScore = CalculateCandidateRankingScore(candidate);
 
-                                bool replaceBestCandidate = (!bestCandidate.valid || candidate.rankingScore > bestCandidate.rankingScore);
-                                PrintFormat("[SCAN-CANDIDATE] cycle=%I64u | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | selected=%s",
+                                int candidateIndex = ArraySize(approvedCandidates);
+                                string reservationOwner = StringFormat("scan_candidate_%I64u_%d", scanCycleId, candidateIndex);
+                                SValidationResult reserveResult;
+                                bool stagedCandidate = ApproveAndReserveVirtualCandidate(candidate, reservationOwner, scanCycleId, reserveResult);
+                                PrintFormat("[SCAN-CANDIDATE] cycle=%I64u | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | staged=%s",
                                             candidate.cycleId,
                                             candidate.symbol,
                                             candidate.signalType,
@@ -5642,34 +5673,12 @@ tradeReq.lotSize = lotSize;
                                             candidate.readinessScore,
                                             candidate.costScore,
                                             candidate.confluence,
-                                            replaceBestCandidate ? "true" : "false");
+                                            stagedCandidate ? "true" : "false");
 
-                                if(replaceBestCandidate)
+                                if(stagedCandidate)
                                 {
-                                    SApprovedTradeCandidate previousBest = bestCandidate;
-                                    bool hadPreviousBest = previousBest.valid;
-                                    if(hadPreviousBest)
-                                        unifiedRiskManager.ReleaseVirtualPosition(bestReservationOwner);
-
-                                    SValidationResult reserveResult;
-                                    if(ApproveAndReserveVirtualCandidate(candidate, bestReservationOwner, scanCycleId, reserveResult))
-                                    {
-                                        candidate.riskResult = reserveResult;
-                                        bestCandidate = candidate;
-                                    }
-                                    else if(hadPreviousBest)
-                                    {
-                                        SValidationResult restoreResult;
-                                        if(ApproveAndReserveVirtualCandidate(previousBest, bestReservationOwner, scanCycleId, restoreResult))
-                                        {
-                                            previousBest.riskResult = restoreResult;
-                                            bestCandidate = previousBest;
-                                        }
-                                        else
-                                        {
-                                            bestCandidate = SApprovedTradeCandidate();
-                                        }
-                                    }
+                                    candidate.riskResult = reserveResult;
+                                    AppendApprovedTradeCandidate(approvedCandidates, candidate);
                                 }
                             }
                             else
@@ -5686,183 +5695,204 @@ tradeReq.lotSize = lotSize;
                 }
             }
 
-            if(bestCandidate.valid)
+            int approvedCandidateCount = ArraySize(approvedCandidates);
+            if(approvedCandidateCount > 0)
             {
-                PrintFormat("[SCAN-DECISION] cycle=%I64u | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | diversity=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | contributors=%s",
-                            bestCandidate.cycleId,
-                            bestCandidate.symbol,
-                            bestCandidate.signalType,
-                            bestCandidate.rankingScore,
-                            bestCandidate.qualityScore,
-                            bestCandidate.convictionScore,
-                            bestCandidate.contextScore,
-                            bestCandidate.readinessScore,
-                            bestCandidate.costScore,
-                            bestCandidate.diversityScore,
-                            bestCandidate.confluence,
-                            bestCandidate.liveAuthorityAllowed ? "true" : "false",
-                            bestCandidate.liveAuthorityReason,
-                            bestCandidate.contributorSummary);
+                SortApprovedTradeCandidatesByRank(approvedCandidates);
+                int maxSendsThisCycle = InpMaxTradeSendsPerCycle;
+                if(maxSendsThisCycle < 1)
+                    maxSendsThisCycle = 1;
+                if(maxSendsThisCycle > approvedCandidateCount)
+                    maxSendsThisCycle = approvedCandidateCount;
+                int attemptedThisCycle = 0;
 
-                bool executeAsShadow = (InpShadowMode || (InpEnableLiveAuthorityGate && !bestCandidate.liveAuthorityAllowed));
-                datetime aiPredictionTime = 0;
-                bool aiPredictionRecorded = false;
-                if(!executeAsShadow && g_aiFeedbackReady && bestCandidate.hasAIContributor)
+                for(int sendIdx = 0; sendIdx < approvedCandidateCount && attemptedThisCycle < maxSendsThisCycle; sendIdx++)
                 {
-                    aiPredictionTime = TimeCurrent();
-                    aiFeedback.RecordPrediction(bestCandidate.symbol,
-                                                bestCandidate.signal,
-                                                bestCandidate.tradeConfidence,
-                                                MathMax(0.0, 1.0 - bestCandidate.tradeConfidence),
-                                                g_currentRegime,
-                                                aiPredictionTime);
-                    aiPredictionRecorded = (aiPredictionTime > 0);
-                }
+                    SApprovedTradeCandidate bestCandidate = approvedCandidates[sendIdx];
+                    if(!bestCandidate.valid)
+                        continue;
 
-                if(executeAsShadow)
-                {
-                    g_hbShadowTrades++;
-                    g_hbSignalsSent++;
-                    if(InpShadowMode)
-                        g_lastTradeTime = tickTime;
-                    RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
-                    PrintFormat("[SHADOW-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                    PrintFormat("[SCAN-DECISION] cycle=%I64u | rank=%d/%d | %s | signal=%s | ranking=%.3f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | diversity=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | contributors=%s",
                                 bestCandidate.cycleId,
+                                sendIdx + 1,
+                                approvedCandidateCount,
                                 bestCandidate.symbol,
                                 bestCandidate.signalType,
-                                bestCandidate.lotSize,
-                                bestCandidate.tradeConfidence,
+                                bestCandidate.rankingScore,
                                 bestCandidate.qualityScore,
                                 bestCandidate.convictionScore,
                                 bestCandidate.contextScore,
                                 bestCandidate.readinessScore,
                                 bestCandidate.costScore,
+                                bestCandidate.diversityScore,
                                 bestCandidate.confluence,
                                 bestCandidate.liveAuthorityAllowed ? "true" : "false",
                                 bestCandidate.liveAuthorityReason,
-                                bestCandidate.strategyRoleTag,
-                                bestCandidate.strategyClusterTag,
-                                bestCandidate.contributorSummary,
-                                bestCandidate.slPrice,
-                                bestCandidate.tpPrice);
-                }
-                else
-                {
-                    string predictionId = "";
-                    CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(bestCandidate.symbol);
-                    if(symbolNet == NULL)
-                        symbolNet = neuralNetStrategy;
+                                bestCandidate.contributorSummary);
 
-                    if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
-                        symbolNet.ReservePredictionForSignal(bestCandidate.signal, predictionId, 600);
-
-                    string tradeComment = BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
-
-                    bool tradeSuccess = tradeManager.OpenPosition(
-                        bestCandidate.symbol,
-                        bestCandidate.orderType,
-                        bestCandidate.lotSize,
-                        bestCandidate.entryPrice,
-                        bestCandidate.stopLossPips,
-                        bestCandidate.takeProfitPips,
-                        tradeComment,
-                        (uint)InpMagicNumber
-                    );
-
-                    STradeExecutionReceipt executionReceipt;
-                    tradeManager.GetLastExecutionReceipt(executionReceipt);
-
-                    if(!tradeSuccess)
+                    bool executeAsShadow = (InpShadowMode || (InpEnableLiveAuthorityGate && !bestCandidate.liveAuthorityAllowed));
+                    datetime aiPredictionTime = 0;
+                    bool aiPredictionRecorded = false;
+                    if(!executeAsShadow && g_aiFeedbackReady && bestCandidate.hasAIContributor)
                     {
-                        if(symbolNet != NULL && predictionId != "")
-                            symbolNet.ReleasePredictionReservation(predictionId);
+                        aiPredictionTime = TimeCurrent();
+                        aiFeedback.RecordPrediction(bestCandidate.symbol,
+                                                    bestCandidate.signal,
+                                                    bestCandidate.tradeConfidence,
+                                                    MathMax(0.0, 1.0 - bestCandidate.tradeConfidence),
+                                                    g_currentRegime,
+                                                    aiPredictionTime);
+                        aiPredictionRecorded = (aiPredictionTime > 0);
+                    }
 
-                        int errorCode = GetLastError();
-                        PrintFormat("[TRADE-ERROR] cycle=%I64u | %s | signal=%s | lot=%.2f | err=%d | retcode=%u | request=%u | retries=%d | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u | note=%s",
+                    attemptedThisCycle++;
+                    if(executeAsShadow)
+                    {
+                        g_hbShadowTrades++;
+                        g_hbSignalsSent++;
+                        if(InpShadowMode)
+                            g_lastTradeTime = tickTime;
+                        RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
+                        PrintFormat("[SHADOW-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
                                     bestCandidate.cycleId,
                                     bestCandidate.symbol,
                                     bestCandidate.signalType,
                                     bestCandidate.lotSize,
-                                    errorCode,
-                                    executionReceipt.retcode,
-                                    executionReceipt.requestId,
-                                    executionReceipt.retryCount,
-                                    executionReceipt.requestedPrice,
-                                    executionReceipt.averagePrice,
-                                    executionReceipt.slippagePoints,
-                                    executionReceipt.roundTripMs,
-                                    executionReceipt.note);
-                    }
-                    else
-                    {
-                        double fillRatio = 1.0;
-                        if(executionReceipt.requestedVolume > 0.0 && executionReceipt.filledVolume > 0.0)
-                            fillRatio = MathMin(1.0, executionReceipt.filledVolume / executionReceipt.requestedVolume);
-
-                        g_hbTradesOpened++;
-                        g_hbSignalsSent++;
-                        unifiedRiskManager.RegisterExecutedTradeRisk(bestCandidate.riskResult, fillRatio);
-                        g_lastTradeTime = tickTime;
-                        RegisterLiveAuthorityTrial(bestCandidate, true, bestCandidate.liveAuthorityReason);
-
-                        if(fillRatio < 0.999)
-                        {
-                            PrintFormat("[FILL-DIFF] cycle=%I64u | %s | requested=%.2f | filled=%.2f | fill_ratio=%.3f | retcode=%u",
-                                        bestCandidate.cycleId,
-                                        bestCandidate.symbol,
-                                        executionReceipt.requestedVolume,
-                                        executionReceipt.filledVolume,
-                                        fillRatio,
-                                        executionReceipt.retcode);
-                        }
-
-                        ulong executionTicket = (executionReceipt.dealTicket > 0) ? executionReceipt.dealTicket :
-                                                ((executionReceipt.orderTicket > 0) ? executionReceipt.orderTicket :
-                                                 tradeManager.GetLastTicket());
-                        PrintFormat("[TRADE-SUCCESS] cycle=%I64u | %s | signal=%s | lot=%.2f | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u | sl=%.5f (%.0f pips) | tp=%.5f (%.0f pips) | ticket=%I64u | request=%u | role=%s | cluster=%s | contributors=%s | ranking=%.3f | note=%s",
-                                    bestCandidate.cycleId,
-                                    bestCandidate.symbol,
-                                    bestCandidate.signalType,
-                                    executionReceipt.filledVolume > 0.0 ? executionReceipt.filledVolume : bestCandidate.lotSize,
-                                    executionReceipt.requestedPrice,
-                                    executionReceipt.averagePrice,
-                                    executionReceipt.slippagePoints,
-                                    executionReceipt.roundTripMs,
-                                    tradeManager.GetLastRequestedStopLoss(),
-                                    bestCandidate.stopLossPips,
-                                    tradeManager.GetLastRequestedTakeProfit(),
-                                    bestCandidate.takeProfitPips,
-                                    executionTicket,
-                                    executionReceipt.requestId,
+                                    bestCandidate.tradeConfidence,
+                                    bestCandidate.qualityScore,
+                                    bestCandidate.convictionScore,
+                                    bestCandidate.contextScore,
+                                    bestCandidate.readinessScore,
+                                    bestCandidate.costScore,
+                                    bestCandidate.confluence,
+                                    bestCandidate.liveAuthorityAllowed ? "true" : "false",
+                                    bestCandidate.liveAuthorityReason,
                                     bestCandidate.strategyRoleTag,
                                     bestCandidate.strategyClusterTag,
                                     bestCandidate.contributorSummary,
-                                    bestCandidate.rankingScore,
-                                    executionReceipt.note);
-                        PrintFormat("[TRADE-EXECUTION] cycle=%I64u | %s | request=%u | retcode=%u | partial_fill=%s | requested=%.2f | filled=%.2f | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u",
-                                    bestCandidate.cycleId,
-                                    bestCandidate.symbol,
-                                    executionReceipt.requestId,
-                                    executionReceipt.retcode,
-                                    executionReceipt.partialFill ? "true" : "false",
-                                    executionReceipt.requestedVolume,
-                                    executionReceipt.filledVolume,
-                                    executionReceipt.requestedPrice,
-                                    executionReceipt.averagePrice,
-                                    executionReceipt.slippagePoints,
-                                    executionReceipt.roundTripMs);
+                                    bestCandidate.slPrice,
+                                    bestCandidate.tpPrice);
+                    }
+                    else
+                    {
+                        string predictionId = "";
+                        CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(bestCandidate.symbol);
+                        if(symbolNet == NULL)
+                            symbolNet = neuralNetStrategy;
 
-                        if(aiPredictionRecorded && executionReceipt.requestId > 0)
-                            UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
+                        if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
+                            symbolNet.ReservePredictionForSignal(bestCandidate.signal, predictionId, 600);
+
+                        string tradeComment = BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
+
+                        bool tradeSuccess = tradeManager.OpenPosition(
+                            bestCandidate.symbol,
+                            bestCandidate.orderType,
+                            bestCandidate.lotSize,
+                            bestCandidate.entryPrice,
+                            bestCandidate.stopLossPips,
+                            bestCandidate.takeProfitPips,
+                            tradeComment,
+                            (uint)InpMagicNumber
+                        );
+
+                        STradeExecutionReceipt executionReceipt;
+                        tradeManager.GetLastExecutionReceipt(executionReceipt);
+
+                        if(!tradeSuccess)
+                        {
+                            if(symbolNet != NULL && predictionId != "")
+                                symbolNet.ReleasePredictionReservation(predictionId);
+
+                            int errorCode = GetLastError();
+                            PrintFormat("[TRADE-ERROR] cycle=%I64u | %s | signal=%s | lot=%.2f | err=%d | retcode=%u | request=%u | retries=%d | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u | note=%s",
+                                        bestCandidate.cycleId,
+                                        bestCandidate.symbol,
+                                        bestCandidate.signalType,
+                                        bestCandidate.lotSize,
+                                        errorCode,
+                                        executionReceipt.retcode,
+                                        executionReceipt.requestId,
+                                        executionReceipt.retryCount,
+                                        executionReceipt.requestedPrice,
+                                        executionReceipt.averagePrice,
+                                        executionReceipt.slippagePoints,
+                                        executionReceipt.roundTripMs,
+                                        executionReceipt.note);
+                        }
+                        else
+                        {
+                            double fillRatio = 1.0;
+                            if(executionReceipt.requestedVolume > 0.0 && executionReceipt.filledVolume > 0.0)
+                                fillRatio = MathMin(1.0, executionReceipt.filledVolume / executionReceipt.requestedVolume);
+
+                            g_hbTradesOpened++;
+                            g_hbSignalsSent++;
+                            unifiedRiskManager.RegisterExecutedTradeRisk(bestCandidate.riskResult, fillRatio);
+                            g_lastTradeTime = tickTime;
+                            RegisterLiveAuthorityTrial(bestCandidate, true, bestCandidate.liveAuthorityReason);
+
+                            if(fillRatio < 0.999)
+                            {
+                                PrintFormat("[FILL-DIFF] cycle=%I64u | %s | requested=%.2f | filled=%.2f | fill_ratio=%.3f | retcode=%u",
+                                            bestCandidate.cycleId,
+                                            bestCandidate.symbol,
+                                            executionReceipt.requestedVolume,
+                                            executionReceipt.filledVolume,
+                                            fillRatio,
+                                            executionReceipt.retcode);
+                            }
+
+                            ulong executionTicket = (executionReceipt.dealTicket > 0) ? executionReceipt.dealTicket :
+                                                    ((executionReceipt.orderTicket > 0) ? executionReceipt.orderTicket :
+                                                     tradeManager.GetLastTicket());
+                            PrintFormat("[TRADE-SUCCESS] cycle=%I64u | %s | signal=%s | lot=%.2f | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u | sl=%.5f (%.0f pips) | tp=%.5f (%.0f pips) | ticket=%I64u | request=%u | role=%s | cluster=%s | contributors=%s | ranking=%.3f | note=%s",
+                                        bestCandidate.cycleId,
+                                        bestCandidate.symbol,
+                                        bestCandidate.signalType,
+                                        executionReceipt.filledVolume > 0.0 ? executionReceipt.filledVolume : bestCandidate.lotSize,
+                                        executionReceipt.requestedPrice,
+                                        executionReceipt.averagePrice,
+                                        executionReceipt.slippagePoints,
+                                        executionReceipt.roundTripMs,
+                                        tradeManager.GetLastRequestedStopLoss(),
+                                        bestCandidate.stopLossPips,
+                                        tradeManager.GetLastRequestedTakeProfit(),
+                                        bestCandidate.takeProfitPips,
+                                        executionTicket,
+                                        executionReceipt.requestId,
+                                        bestCandidate.strategyRoleTag,
+                                        bestCandidate.strategyClusterTag,
+                                        bestCandidate.contributorSummary,
+                                        bestCandidate.rankingScore,
+                                        executionReceipt.note);
+                            PrintFormat("[TRADE-EXECUTION] cycle=%I64u | %s | request=%u | retcode=%u | partial_fill=%s | requested=%.2f | filled=%.2f | req_price=%.5f | fill_price=%.5f | slip_pts=%.1f | latency_ms=%I64u",
+                                        bestCandidate.cycleId,
+                                        bestCandidate.symbol,
+                                        executionReceipt.requestId,
+                                        executionReceipt.retcode,
+                                        executionReceipt.partialFill ? "true" : "false",
+                                        executionReceipt.requestedVolume,
+                                        executionReceipt.filledVolume,
+                                        executionReceipt.requestedPrice,
+                                        executionReceipt.averagePrice,
+                                        executionReceipt.slippagePoints,
+                                        executionReceipt.roundTripMs);
+
+                            if(aiPredictionRecorded && executionReceipt.requestId > 0)
+                                UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
+                        }
                     }
                 }
 
-                unifiedRiskManager.ReleaseVirtualPosition(bestReservationOwner);
+                PrintFormat("[SCAN-DECISION-SUMMARY] cycle=%I64u | candidates=%d | attempted=%d | cap=%d",
+                            scanCycleId,
+                            approvedCandidateCount,
+                            attemptedThisCycle,
+                            maxSendsThisCycle);
             }
-            else
-            {
-                unifiedRiskManager.ReleaseVirtualPosition(bestReservationOwner);
-            }
+
+            unifiedRiskManager.ClearVirtualPositions();
     }
 
     }
@@ -6348,4 +6378,3 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
         }
     }
 }
-

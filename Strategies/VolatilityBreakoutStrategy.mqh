@@ -383,7 +383,7 @@ private:
         // Check for bullish breakout
         bool brokeAboveBB = (price > bbUpper && prevPrice <= bbUpper);
         bool atrExpanding = (atrRatio >= m_atrExpansionMult);
-        bool volumeSurge = (volumeRatio >= m_volumeMultiplier);
+        bool volumeSurge = (volRatio >= m_volumeMultiplier);
         
         if(brokeAboveBB)
         {

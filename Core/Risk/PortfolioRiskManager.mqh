@@ -189,9 +189,9 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
     m_lastBlockReason = "";
     int positionsOnSymbol = GetPositionsOnSymbol(symbol);
     
-    if(positionsOnSymbol >= 2) // Hard limit: Max 2 positions per symbol
+    if(positionsOnSymbol >= 5) // Legacy safety ceiling; EA-owned stacking cap is enforced before this gate.
     {
-        RecordBlockReason(StringFormat("Max positions limit (2) reached for %s", symbol));
+        RecordBlockReason(StringFormat("Legacy max positions limit (5) reached for %s", symbol));
         return false;
     }
 

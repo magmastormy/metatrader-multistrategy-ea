@@ -1,13 +1,21 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-05-26
-- Status: Batch 93 - Strategy Refactoring & Architectural Compliance
+- Last Updated: 2026-06-05
+- Status: Batch 96 - Execution Profitability Recovery
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.
 
 ## System Snapshot
+- **Execution Profitability Recovery (Batch 96):** Fixed critical blockers behind no-trade/scalping failures, destructive SL behavior, AI signal drift, same-symbol stacking regression, and synthetic SELL/BUY imbalance:
+  - Scan cycles now stage all risk-approved candidates, sort by ranking, and execute up to `InpMaxTradeSendsPerCycle` through `CTradeManager`.
+  - Same-symbol stacking uses EA-owned positions for `InpPortfolioMaxPositionsPerSymbol`; external/manual positions are logged but no longer consume EA slots.
+  - Synthetic classification now covers `SFX Vol`, `FX Vol`, `SwitchX`, `PainX`, `GainX`, and `FlipX`, enabling 24/7 session handling and synthetic stop envelopes.
+  - `CTradeManager` lifecycle management filters by EA magic, fixes SELL breakeven placement, delays trailing until meaningful profit, and keeps modification cooldown bypass only for missing SL protection.
+  - Online neural barrier labels now train direction classes directly (`NONE`, `BUY`, `SELL`) instead of correctness classes; AI adapters refresh same-bar cache after a short TTL.
+  - Mean Reversion and Volatility Breakout are included in intrabar/governance paths, and compile-blocking `volumeRatio` typos were corrected.
+
 - **Strategy Refactoring & Architectural Compliance (Batch 93):** Systematic refactoring of all active strategies to achieve full AGENTS.md architectural compliance:
   - **UnifiedICT Simplification:** Removed Silver Bullet & Judas Swing entry types, simplified from 4 to 2 core entry types (AGGRESSIVE/CONFIRMED), reduced from 2,194 → 2,012 lines (-8.3%)
   - **StrategyTrend Cleanup:** Removed timeframe auto-stepping logic and dead trailing stop methods, reduced from 300 → 259 lines (-13.7%)

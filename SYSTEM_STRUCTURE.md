@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-05-26
+- Last Updated: 2026-06-05
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 93 - Strategy Refactoring & Architectural Compliance
+- Current Batch: 96 - Execution Profitability Recovery
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -26,6 +26,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - Batch 92 implements comprehensive AI modules audit: all 25 findings addressed including memory management, numerical stability, training integrity, checkpoint integrity, and GOD TIER architectural refactoring; adds IAIStrategy interface for unified AI adapter contract.
 - Batch 93 implements systematic strategy refactoring for full AGENTS.md architectural compliance: UnifiedICT simplified from 4 to 2 entry types (2,194 → 2,012 lines), StrategyTrend cleaned up (300 → 259 lines), ElliottWave removed (~1,600 lines), Fibonacci merged into SupportResistance as CFibConfluence module, all 7 active strategies now validate through CUnifiedRiskManager with [CONSENSUS-DIAG] logging.
 
+- Batch 96 restores profitable execution mechanics: scan cycles retain multiple `CUnifiedRiskManager`-reserved candidates instead of replacing them with one winner, `InpMaxTradeSendsPerCycle` controls ranked multi-send throughput, same-symbol capacity counts EA-owned positions, synthetic symbol detection covers SFX/FX Vol/SwitchX/PainX/GainX/FlipX, and `CTradeManager` stop lifecycle management is magic-filtered and volatility-aware.
+
 ## 2. Top-Level Runtime Topology
 
 ### 2.1 Entrypoint and orchestration
@@ -45,7 +47,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - self-heal cadence scheduler state at runtime if any scheduler array drifts away from the active symbol set
   - dispatch per-symbol evaluations
   - rank approved candidates across symbols before execution
-  - reserve and release the cycle-best candidate as a virtual position inside unified risk while scan-time ranking is still in progress
+  - reserve every staged candidate as a virtual position inside unified risk before it can enter the ranked execution list
+  - execute up to `InpMaxTradeSendsPerCycle` ranked candidates per scan cycle through `CTradeManager`, preserving runtime execution ownership
   - detect synthetic-index tick-velocity spikes and trigger flatten-plus-pause protection
   - register the `Unicorn Model` and `Power of Three` ICT expansion strategies as manager-owned Tier-1 participants
   - own the non-AI confidence policy inputs for pipeline and manager admission stages
@@ -55,7 +58,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - emit runtime fingerprints with both requested and effective EA mode so `AI_ONLY` logs cannot be mistaken for failed indicator/hybrid participation
   - emit explicit AI topology diagnostics so MT5-native voters, Python-trained ONNX runtime voting, Python sidecar expectations, and external LLM reasoning are not conflated
   - coordinate validator/risk/execution path
-  - enforce live-authority source defaults: AI/ONNX enabled, global live execution allowed, candidate-level shadow fallback for unproven packets, one position per symbol, and no one-voter sparse intrabar admission
+  - enforce live-authority source defaults: AI/ONNX enabled, global live execution allowed, candidate-level shadow fallback for unproven packets, EA-owned same-symbol stacking, and no one-voter sparse intrabar admission
   - handle runtime telemetry and deinitialization
 
 ### 2.2 Per-symbol strategy domain

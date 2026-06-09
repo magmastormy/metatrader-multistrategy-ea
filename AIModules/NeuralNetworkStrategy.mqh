@@ -437,6 +437,7 @@ private:
     datetime         m_lastSelfRecordBarTime;
     datetime         m_lastFeatureImportanceLogTime;
     datetime         m_cacheBarTime;
+    datetime         m_cacheRefreshTime;
     bool             m_hasCachedSignal;
     ENUM_TRADE_SIGNAL m_cachedSignal;
     double           m_cachedConfidence;
@@ -1010,28 +1011,30 @@ private:
             bool lowerHit = (currentLow <= m_barrierBuffer[i].lowerBarrier);
             bool verticalHit = (TimeCurrent() >= m_barrierBuffer[i].expiryTime);
 
-            int label = -99;
-            if(upperHit && m_barrierBuffer[i].signalClass == 1) label = 1;
-            else if(lowerHit && m_barrierBuffer[i].signalClass == 1) label = -1;
-            else if(upperHit && m_barrierBuffer[i].signalClass == 2) label = -1;
-            else if(lowerHit && m_barrierBuffer[i].signalClass == 2) label = 1;
-            else if(verticalHit) label = 0;
+            int directionalLabel = -1;
+            if(upperHit)
+                directionalLabel = 1;  // BUY class
+            else if(lowerHit)
+                directionalLabel = 2;  // SELL class
+            else if(verticalHit)
+                directionalLabel = 0;  // NONE/HOLD class
 
-            if(label == -99)
+            if(directionalLabel < 0)
                 continue;
 
-            m_barrierBuffer[i].label = label;
+            bool directionalCorrect = (directionalLabel != 0 && directionalLabel == m_barrierBuffer[i].signalClass);
+            m_barrierBuffer[i].label = directionalLabel;
             m_barrierBuffer[i].resolved = true;
             AddTrainingExample(m_barrierBuffer[i].featureSnapshot,
                                m_barrierBuffer[i].featureSize,
-                               label + 1,
+                               directionalLabel,
                                m_barrierBuffer[i].linkedToTrade,
                                m_barrierBuffer[i].predictionId,
                                m_barrierBuffer[i].signalConfidence,
                                m_barrierBuffer[i].metaInput);
             m_conformal.AddScore(1.0 - m_barrierBuffer[i].signalConfidence);
-            m_conformal.UpdateACI(label > 0);
-            m_metaLabeler.AddSample(m_barrierBuffer[i].metaInput, label > 0 ? 1 : 0);
+            m_conformal.UpdateACI(directionalCorrect);
+            m_metaLabeler.AddSample(m_barrierBuffer[i].metaInput, directionalCorrect ? 1 : 0);
             resolvedThisPass++;
         }
 
@@ -1488,6 +1491,7 @@ public:
         m_lastSelfRecordBarTime = 0;
         m_lastFeatureImportanceLogTime = 0;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_hasCachedSignal = false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
@@ -1618,7 +1622,9 @@ public:
             return TRADE_SIGNAL_NONE;
 
         datetime currentBar = CurrentBarTime();
-        if(m_hasCachedSignal && currentBar == m_cacheBarTime && currentBar > 0)
+        datetime cacheNow = TimeCurrent();
+        if(m_hasCachedSignal && currentBar == m_cacheBarTime && currentBar > 0 &&
+           m_cacheRefreshTime > 0 && (cacheNow - m_cacheRefreshTime) < 10)
         {
             confidence = m_cachedConfidence;
             return m_cachedSignal;
@@ -1636,6 +1642,7 @@ public:
         m_cachedSignal = signal;
         m_cachedConfidence = confidence;
         m_cacheBarTime = currentBar;
+        m_cacheRefreshTime = cacheNow;
         m_hasCachedSignal = true;
 
         if(signal != TRADE_SIGNAL_NONE)

@@ -36,6 +36,7 @@ private:
     bool m_useUncertaintyFiltering;
 
     datetime m_cacheBarTime;
+    datetime m_cacheRefreshTime;
     bool m_hasCachedSignal;
     SEnhancedTradeSignal m_cachedSignal;
 
@@ -48,13 +49,18 @@ private:
 
     bool NeedsNewInference(const datetime currentBarTime) const
     {
-        return (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime);
+        return (!m_hasCachedSignal ||
+                currentBarTime <= 0 ||
+                currentBarTime != m_cacheBarTime ||
+                m_cacheRefreshTime <= 0 ||
+                (TimeCurrent() - m_cacheRefreshTime) >= 10);
     }
 
     void UpdateSignalCache(const datetime currentBarTime, const SEnhancedTradeSignal &signal)
     {
         m_cachedSignal = signal;
         m_cacheBarTime = currentBarTime;
+        m_cacheRefreshTime = TimeCurrent();
         m_hasCachedSignal = true;
     }
 
@@ -156,6 +162,7 @@ public:
         m_uncertaintyThreshold = 0.4;
         m_useUncertaintyFiltering = true;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_hasCachedSignal = false;
     }
 
@@ -189,6 +196,7 @@ public:
         }
 
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_hasCachedSignal = false;
         m_initialized = true;
         Print("NEXTGEN AI Strategy Brain initialized for ", brainSymbol);

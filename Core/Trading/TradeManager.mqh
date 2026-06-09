@@ -379,29 +379,14 @@ private:
         }
 
         string positionSymbol = PositionGetString(POSITION_SYMBOL);
-        ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
         double currentSL = PositionGetDouble(POSITION_SL);
 
-        // Bounded throttling with emergency bypass for missing or materially tighter protection.
+        // Bounded throttling with emergency bypass only for missing protection.
         datetime localCurrentTime2 = TimeCurrent();
         int elapsedSec = (int)(localCurrentTime2 - m_positionStates[index].lastModified);
         if(elapsedSec < m_minModifyIntervalSec) {
-            double pointFast = SymbolInfoDouble(positionSymbol, SYMBOL_POINT);
-            if(pointFast <= 0.0)
-                pointFast = 0.00001;
-
             bool missingProtection = (newSL > 0.0 && currentSL <= 0.0);
-            bool materiallyTighter = false;
-            if(newSL > 0.0 && currentSL > 0.0)
-            {
-                double tightenThreshold = pointFast * 20.0;
-                if(posType == POSITION_TYPE_BUY)
-                    materiallyTighter = (newSL - currentSL) > tightenThreshold;
-                else if(posType == POSITION_TYPE_SELL)
-                    materiallyTighter = (currentSL - newSL) > tightenThreshold;
-            }
-
-            if(!missingProtection && !materiallyTighter)
+            if(!missingProtection)
                 return false;
         }
 
@@ -602,9 +587,15 @@ private:
         if(m_maxEntryDriftPoints > 0.0 && requestedPrice > 0.0)
         {
             double driftPoints = MathAbs(executionPrice - requestedPrice) / point;
-            if(driftPoints > m_maxEntryDriftPoints)
+            double effectiveDriftLimit = m_maxEntryDriftPoints;
+            double atr = CalculateATR(symbolName, PERIOD_CURRENT, m_dynamicSlippageAtrPeriod);
+            if(atr > 0.0)
+                effectiveDriftLimit = MathMax(effectiveDriftLimit, (atr / point) * 0.30);
+            effectiveDriftLimit = MathMax(effectiveDriftLimit, spreadPoints * 2.0);
+
+            if(driftPoints > effectiveDriftLimit)
             {
-                reason = StringFormat("entry_drift_points %.1f exceeds %.1f", driftPoints, m_maxEntryDriftPoints);
+                reason = StringFormat("entry_drift_points %.1f exceeds %.1f", driftPoints, effectiveDriftLimit);
                 return false;
             }
         }
@@ -2169,17 +2160,24 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
             double stopLoss = PositionGetDouble(POSITION_SL);
             double takeProfit = PositionGetDouble(POSITION_TP);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            uint positionMagic = (uint)PositionGetInteger(POSITION_MAGIC);
+            if(m_magicNumber > 0 && positionMagic != m_magicNumber)
+                continue;
             
             if(breakevenBuffer > 0)
             {
+                double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+                if(point <= 0.0)
+                    point = 0.00001;
+
                 double profitPoints = 0;
                 if(type == POSITION_TYPE_BUY)
                 {
-                    profitPoints = (currentPriceValue - openPrice) / SymbolInfoDouble(symbolName, SYMBOL_POINT);
+                    profitPoints = (currentPriceValue - openPrice) / point;
                 }
                 else
                 {
-                    profitPoints = (openPrice - currentPriceValue) / SymbolInfoDouble(symbolName, SYMBOL_POINT);
+                    profitPoints = (openPrice - currentPriceValue) / point;
                 }
                 
                 bool breakevenNeeded = false;
@@ -2190,13 +2188,7 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
 
                 if(breakevenNeeded)
                 {
-                    double newStopLoss = openPrice;
-                    if(type == POSITION_TYPE_SELL)
-                    {
-                        int spread = (int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD);
-                        newStopLoss = openPrice + spread * SymbolInfoDouble(symbolName, SYMBOL_POINT);
-                    }
-                    
+                    double newStopLoss = NormalizePrice(symbolName, openPrice);
                     ModifyPosition(ticket, newStopLoss, takeProfit);
                 }
             }
@@ -2219,17 +2211,34 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     
     string symbolName = PositionGetString(POSITION_SYMBOL);
     double currentPriceValue = PositionGetDouble(POSITION_PRICE_CURRENT);
+    double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
     double currentStopLoss = PositionGetDouble(POSITION_SL);
     double currentTakeProfit = PositionGetDouble(POSITION_TP);
     ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+    uint positionMagic = (uint)PositionGetInteger(POSITION_MAGIC);
+    if(m_magicNumber > 0 && positionMagic != m_magicNumber)
+        return true;
     
     double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    double profitPoints = (type == POSITION_TYPE_BUY)
+                          ? (currentPriceValue - openPrice) / point
+                          : (openPrice - currentPriceValue) / point;
+    if(profitPoints <= 0.0)
+        return true;
+
     double newStopLoss = 0;
+    double activationPoints = MathMax(step, distance);
     
     if(useATR)
     {
         double atr = CalculateATR(symbolName, PERIOD_CURRENT, 14);
         if(atr <= 0) return false;
+        activationPoints = MathMax(activationPoints, (atr / point) * MathMax(0.75, atrMult * 0.50));
+        if(profitPoints < activationPoints)
+            return true;
         
         if(type == POSITION_TYPE_BUY)
         {
@@ -2246,6 +2255,9 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     }
     else if(distance > 0 && step > 0)
     {
+        if(profitPoints < activationPoints)
+            return true;
+
         if(type == POSITION_TYPE_BUY)
         {
             double minStopLoss = currentPriceValue - distance * point;
@@ -2266,6 +2278,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     
     if(newStopLoss > 0 && newStopLoss != currentStopLoss)
     {
+        newStopLoss = NormalizePrice(symbolName, newStopLoss);
         return ModifyPosition(ticket, newStopLoss, currentTakeProfit);
     }
     

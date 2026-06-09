@@ -294,7 +294,7 @@ public:
                    EnumToString(signal.entryType),
                    bbLower[0], bbUpper[0],
                    rsiBuffer[0],
-                   volumeRatio,
+                   volRatio,
                    confidence * 100,
                    m_weight,
                    m_lastDecisionReasonTag);
