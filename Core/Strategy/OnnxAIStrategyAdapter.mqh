@@ -24,6 +24,7 @@ private:
     double          m_weight;
     datetime        m_lastSignalTime;
     datetime        m_cacheBarTime;
+    datetime        m_cacheRefreshTime;
     bool            m_hasCachedSignal;
     ENUM_TRADE_SIGNAL m_cachedSignal;
     double          m_cachedConfidence;
@@ -66,6 +67,7 @@ public:
         m_weight = 2.0;
         m_lastSignalTime = 0;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_hasCachedSignal = false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
@@ -93,6 +95,7 @@ public:
         m_symbol = symbol;
         m_timeframe = timeframe;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_hasCachedSignal = false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
@@ -144,7 +147,9 @@ public:
         }
 
         datetime currentBarTime = (m_symbol == "") ? 0 : iTime(m_symbol, m_timeframe, 0);
-        if(m_hasCachedSignal && currentBarTime > 0 && currentBarTime == m_cacheBarTime)
+        datetime cacheNow = TimeCurrent();
+        if(m_hasCachedSignal && currentBarTime > 0 && currentBarTime == m_cacheBarTime &&
+           m_cacheRefreshTime > 0 && (cacheNow - m_cacheRefreshTime) < 10)
         {
             confidence = m_cachedConfidence;
             LogVoteHeartbeat();
@@ -223,6 +228,7 @@ public:
         m_cachedSignal = signal;
         m_cachedConfidence = (signal == TRADE_SIGNAL_NONE) ? 0.0 : confidence;
         m_cacheBarTime = currentBarTime;
+        m_cacheRefreshTime = cacheNow;
         m_hasCachedSignal = true;
 
         if(signal == TRADE_SIGNAL_BUY)

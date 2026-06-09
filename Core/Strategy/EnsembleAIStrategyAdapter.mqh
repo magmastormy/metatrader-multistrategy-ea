@@ -32,6 +32,7 @@ private:
     ENUM_TRADE_SIGNAL m_cachedSignal;
     double m_cachedConfidence;
     datetime m_cacheBarTime;
+    datetime m_cacheRefreshTime;
     ENUM_TIMEFRAMES m_cacheTimeframe;
     bool m_hasCachedSignal;
     string m_lastDecisionReasonTag;
@@ -129,6 +130,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_cacheTimeframe = PERIOD_CURRENT;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "ENSEMBLE_UNSET";
@@ -181,6 +183,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_cacheTimeframe = timeframe;
         m_hasCachedSignal = false;
         bool modelsReady = EnsureModels();
@@ -220,7 +223,12 @@ public:
 
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         datetime currentBarTime = (m_symbol == "") ? 0 : iTime(m_symbol, m_timeframe, 0);
-        bool needsNewInference = (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime || m_cacheTimeframe != m_timeframe);
+        bool needsNewInference = (!m_hasCachedSignal ||
+                                  currentBarTime <= 0 ||
+                                  currentBarTime != m_cacheBarTime ||
+                                  m_cacheTimeframe != m_timeframe ||
+                                  m_cacheRefreshTime <= 0 ||
+                                  (TimeCurrent() - m_cacheRefreshTime) >= 10);
         if(!needsNewInference)
         {
             confidence = m_cachedConfidence;
@@ -284,6 +292,7 @@ public:
             m_cachedSignal = signal;
             m_cachedConfidence = confidence;
             m_cacheBarTime = currentBarTime;
+            m_cacheRefreshTime = TimeCurrent();
             m_cacheTimeframe = m_timeframe;
             m_hasCachedSignal = true;
         }

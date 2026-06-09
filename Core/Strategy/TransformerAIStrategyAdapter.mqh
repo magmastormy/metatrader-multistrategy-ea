@@ -32,6 +32,7 @@ private:
     ENUM_TRADE_SIGNAL m_cachedSignal;
     double m_cachedConfidence;
     datetime m_cacheBarTime;
+    datetime m_cacheRefreshTime;
     ENUM_TIMEFRAMES m_cacheTimeframe;
     bool m_hasCachedSignal;
     string m_lastDecisionReasonTag;
@@ -78,7 +79,12 @@ private:
 
     bool NeedsNewInference(const datetime currentBarTime) const
     {
-        return (!m_hasCachedSignal || currentBarTime <= 0 || currentBarTime != m_cacheBarTime || m_cacheTimeframe != m_timeframe);
+        return (!m_hasCachedSignal ||
+                currentBarTime <= 0 ||
+                currentBarTime != m_cacheBarTime ||
+                m_cacheTimeframe != m_timeframe ||
+                m_cacheRefreshTime <= 0 ||
+                (TimeCurrent() - m_cacheRefreshTime) >= 10);
     }
 
     void UpdateCache(const datetime currentBarTime, const ENUM_TRADE_SIGNAL signal, const double confidence)
@@ -86,6 +92,7 @@ private:
         m_cachedSignal = signal;
         m_cachedConfidence = confidence;
         m_cacheBarTime = currentBarTime;
+        m_cacheRefreshTime = TimeCurrent();
         m_cacheTimeframe = m_timeframe;
         m_hasCachedSignal = true;
     }
@@ -119,6 +126,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_cacheTimeframe = PERIOD_CURRENT;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "TRANSFORMER_UNSET";
@@ -162,6 +170,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_cacheBarTime = 0;
+        m_cacheRefreshTime = 0;
         m_cacheTimeframe = timeframe;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = (m_transformer != NULL) ? "TRANSFORMER_INITIALIZED" : "TRANSFORMER_INIT_FAILED";
