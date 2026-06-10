@@ -175,6 +175,7 @@ private:
     datetime                    m_lastDrawLogTime;
     datetime                    m_lastDrawRecoveryCheck;
     long                        m_chartID;               // Chart ID for drawing operations
+    int                         m_volumesHandle;          // Cached volumes indicator handle
     
 public:
                                 CStrategyUnifiedICT(const string name = "Unified ICT v1.0", int magic = 0);
@@ -273,7 +274,7 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_minConfluences(2),
     m_requireKillZone(false),
     m_requireOTE(false),
-    m_allowCounterTrendScout(true),
+    m_allowCounterTrendScout(false),
     m_lastBarProcessed(0),
     m_signalsGenerated(0),
     m_obsDetected(0),
@@ -285,7 +286,8 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_drawOnChartSymbolOnly(false),
     m_lastDrawLogTime(0),
     m_lastDrawRecoveryCheck(0),
-    m_chartID(0)
+    m_chartID(0),
+    m_volumesHandle(INVALID_HANDLE)
 {
 }
 
@@ -316,6 +318,8 @@ void CStrategyUnifiedICT::Cleanup()
     if(m_smtScanner != NULL)    { delete m_smtScanner;    m_smtScanner    = NULL; }
     if(m_anchoredVWAP != NULL)  { delete m_anchoredVWAP;  m_anchoredVWAP  = NULL; }
     if(m_cumulativeDelta != NULL) { delete m_cumulativeDelta; m_cumulativeDelta = NULL; }
+    // Release cached volumes handle
+    if(m_volumesHandle != INVALID_HANDLE) { IndicatorRelease(m_volumesHandle); m_volumesHandle = INVALID_HANDLE; }
     // Risk manager is not owned by this strategy - do NOT delete
     m_riskManager = NULL;
 }
@@ -677,9 +681,13 @@ bool CStrategyUnifiedICT::Init(const string symbol, const ENUM_TIMEFRAMES timefr
     
     m_lastBarProcessed = 0;
 
+    // Phase 3.3: Lowered confidence threshold and confluence gate for simplified gate structure
+    OverrideMinConfidence(0.40);
+    m_minConfluences = 2;
+
     if(m_drawOnChartSymbolOnly && RefreshComponentsForCurrentBar())
         DrawElements();
-    
+
     Print("[UICT v1.0] Strategy initialized for ", symbol, " on ", EnumToString(timeframe));
     return true;
 }
@@ -941,7 +949,18 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     // --- VOLUME CONFIRMATION ---
     double volBuffer[11];
     double volThreshold = 1.0; // Reduced from 1.1: Just needs to be above average
-    if(CopyBuffer(iVolumes(m_symbol, m_timeframe, VOLUME_TICK), 0, 1, 11, volBuffer) < 11)
+    // Create volumes handle once, cache for reuse
+    if(m_volumesHandle == INVALID_HANDLE)
+        m_volumesHandle = iVolumes(m_symbol, m_timeframe, VOLUME_TICK);
+    if(m_volumesHandle != INVALID_HANDLE && CopyBuffer(m_volumesHandle, 0, 1, 11, volBuffer) >= 11)
+    {
+        long v1 = (long)volBuffer[0]; // bar 1
+        long vSum = 0;
+        for(int i=1; i<11; i++) vSum += (long)volBuffer[i];
+        if(v1 < (vSum/10) * volThreshold)
+             return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
+    }
+    else
     {
         // Fallback if handle logic is complex, just use iVolume
         long v0 = iVolume(m_symbol, m_timeframe, 0);
@@ -950,14 +969,6 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
         for(int i=2; i<12; i++) vSum += iVolume(m_symbol, m_timeframe, i);
         if(v1 < (vSum/10) * volThreshold) 
             return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
-    }
-    else
-    {
-        long v1 = (long)volBuffer[0]; // bar 1
-        long vSum = 0;
-        for(int i=1; i<11; i++) vSum += (long)volBuffer[i];
-        if(v1 < (vSum/10) * volThreshold)
-             return RejectSignal("UICT_LOW_VOLUME", "[UICT] Filtered: Breakout/Reversal lacks volume spike");
     }
     
     // Get best entry setup - simplified to 2 core types
@@ -979,14 +990,14 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     if(bestEntry.entryType == ICT_ENTRY_NONE || bestEntry.confidence < m_minConfidence)
         return RejectSignal("UICT_NO_ENTRY_SETUP");
 
-    // P3-A: Use weighted confluence score (0-130) as gate instead of raw count
+    // P3-A: Use weighted confluence score (0-110) as gate instead of raw count
     double currentPrice2 = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double gateScore = bestEntry.confluenceScore;  // set by entry creator via ScoreConfluences
-    double gateScorePct = (gateScore / 130.0) * 100.0;  // normalise to %
+    double gateScorePct = (gateScore / 110.0) * 100.0;  // normalise to % (Phase 3.3: max 110)
     if(bestEntry.confluenceCount < m_minConfluences || gateScorePct < m_minConfluenceScore)
     {
         return RejectSignal("UICT_CONFLUENCE_GATE",
-                            StringFormat("[UICT] Filtered: Confluence gate failed (cnt=%d, score=%.1f/130 = %.1f%%)",
+                            StringFormat("[UICT] Filtered: Confluence gate failed (cnt=%d, score=%.1f/110 = %.1f%%)",
                                          bestEntry.confluenceCount, (double)gateScore, (double)gateScorePct));
     }
     
@@ -1005,80 +1016,14 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
                             StringFormat("[UICT] Filtered: Price %.5f not at major POI", (double)currentPrice));
     }
 
-    // COUNTER-TREND SCOUT: Allow reversals targeting HTF zones
-    bool htfAligned = m_structureAnalyzer.IsHTFAligned(isBullish);
-    bool oppositeCISD = (m_structureAnalyzer != NULL) &&
-                        (isBullish ? m_structureAnalyzer.HasRecentBearishCISD(3)
-                                   : m_structureAnalyzer.HasRecentBullishCISD(3));
-    if(oppositeCISD)
+    // Phase 3.3: Removed counter-trend scout logic (kill zone + OTE + higher confluence gate)
+    // Now simply reject if HTF not aligned
+    if(!m_structureAnalyzer.IsHTFAligned(isBullish))
     {
-        return RejectSignal("UICT_OPPOSITE_CISD_ACTIVE",
-                            "[UICT] Filtered: Opposing CISD warns against current delivery direction");
+        return RejectSignal("UICT_HTF_NOT_ALIGNED",
+                            "[UICT] Filtered: HTF not aligned with signal direction");
     }
 
-    if(!htfAligned)
-    {
-        bool rangeRegime = (m_structureAnalyzer != NULL && !m_structureAnalyzer.IsTrendConfirmed());
-        if(!rangeRegime)
-        {
-            return RejectSignal("UICT_COUNTERTREND_NON_RANGE",
-                                "[UICT] Filtered: Counter-trend logic restricted to range regime");
-        }
-
-        if(!m_allowCounterTrendScout)
-        {
-            return RejectSignal("UICT_COUNTERTREND_BLOCKED_PRODUCTION",
-                                "[UICT] Filtered: Counter-trend setup blocked (production mode)");
-        }
-
-        bool aggressiveCounterTrend = (bestEntry.entryType == ICT_ENTRY_AGGRESSIVE);
-        if(aggressiveCounterTrend)
-        {
-            return RejectSignal("UICT_COUNTERTREND_AGGRESSIVE_BLOCK",
-                                "[UICT] Filtered: Counter-trend blocked for aggressive entry type");
-        }
-
-        int requiredCounterConfluence = (int)MathMax((double)(m_minConfluences + 1), 5.0);
-        if(bestEntry.confluenceCount < requiredCounterConfluence)
-        {
-            return RejectSignal("UICT_COUNTERTREND_CONFLUENCE_LOW",
-                                StringFormat("[UICT] Filtered: Counter-trend confluence too low (%d < %d)",
-                                             bestEntry.confluenceCount, requiredCounterConfluence));
-        }
-
-        // Check if counter-trend is valid (targeting opposing HTF zone)
-        if(!IsCounterTrendScoutValid(isBullish))
-        {
-            return RejectSignal("UICT_COUNTERTREND_INVALID_TARGET",
-                                "[UICT] Filtered: No HTF alignment and no valid counter-trend target");
-        }
-
-        bool inKillZone = (m_killZones != NULL && m_killZones.IsInKillZone());
-        if(!inKillZone)
-        {
-            return RejectSignal("UICT_COUNTERTREND_KILLZONE_REQUIRED",
-                                "[UICT] Filtered: Counter-trend requires active kill-zone");
-        }
-
-        bool hasOteAlignment = false;
-        if(m_premiumDiscount != NULL)
-        {
-            if(result == TRADE_SIGNAL_BUY)
-                hasOteAlignment = m_premiumDiscount.IsInBullishOTE(currentPrice);
-            else if(result == TRADE_SIGNAL_SELL)
-                hasOteAlignment = m_premiumDiscount.IsInBearishOTE(currentPrice);
-        }
-        if(!hasOteAlignment)
-        {
-            return RejectSignal("UICT_COUNTERTREND_OTE_REQUIRED",
-                                "[UICT] Filtered: Counter-trend requires OTE alignment");
-        }
-
-        // Counter-trend is valid, reduce confidence but allow signal
-        bestEntry.confidence *= 0.75;
-        bestEntry.reason += " (Counter-Trend Scout)";
-    }
-    
     // CANDLESTICK CONFIRMATION: Validate price rejection at POI
     if(!ValidatePriceRejection(result))
     {
@@ -1361,79 +1306,49 @@ SICTEntrySetup CStrategyUnifiedICT::CreateConfirmedEntry()
 double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
 {
     double score = 0;
-    double smtStrength = 0.0;
-    
-    // TIER 1: Institutional / Liquidity (Multiplier 2.5)
+
+    // Phase 3.3: Simplified to 2 tiers (Core + Context)
+    // Removed: SMT Divergence, Anchored VWAP, Cumulative Delta
+
+    // TIER 1: Core ICT Confluence (Multiplier 2.0)
     double t1_base = 10.0;
-    
+
     // 1. Liquidity sweep confirmed (ICT primary reversal driver)
     if(HasLiquidityConfluence(price))
-        score += t1_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 25.0
+        score += t1_base * 2.0; // 20.0
 
-    // 2. AMD phase alignment (Institutional cycle)
-    if(HasAMDPhaseConfluence(bullish))
-        score += t1_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 25.0
+    // 2. Order Block at price (Primary entry vehicle)
+    if(HasOrderBlockConfluence(price, bullish))
+        score += t1_base * 2.0; // 20.0
 
-    // 2b. CISD early-delivery shift
-    if(HasCISDConfluence(bullish))
-        score += (t1_base * 0.35) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 8.75
+    // 3. FVG/Imbalance at price (Displacement evidence)
+    if(HasImbalanceConfluence(price, bullish))
+        score += t1_base * 2.0; // 20.0
 
-    // 3. NDOG/NWOG gap zone (Institutional gaps)
-    if(HasGapConfluence(price))
-        score += (t1_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 12.5
-
-    // 4. Institutional Level (Round numbers)
-    if(IsAtInstitutionalLevel(price))
-        score += (t1_base * 0.4) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 10.0
-
-    // 5. Anchored VWAP around institutional anchor
-    if(HasAnchoredVWAPConfluence(price, bullish))
-        score += (t1_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 12.5
-
-    // 6. SMT divergence (cross-symbol confirmation)
-    if(HasSMTConfluence(bullish, smtStrength))
-        score += (t1_base * 0.6) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1) * MathMax(0.50, smtStrength);
+    // 4. BMS/CHoCH alignment (Structure break)
+    if(m_structureAnalyzer != NULL && m_structureAnalyzer.HasStructureBreak())
+        score += t1_base * 2.0; // 20.0
 
 
-    // TIER 2: Market Structure (Multiplier 1.5)
+    // TIER 2: Context / Timing (Multiplier 1.0)
     double t2_base = 10.0;
 
-    // 5. Order Block at price (Primary entry vehicle)
-    if(HasOrderBlockConfluence(price, bullish))
-        score += t2_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 15.0
+    // 5. Kill Zone (Time-based filter)
+    if(m_killZones != NULL && m_killZones.IsInKillZone())
+        score += t2_base * 1.0; // 10.0
 
-    // 6. FVG/Imbalance at price (Displacement evidence)
-    if(HasImbalanceConfluence(price, bullish))
-        score += t2_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 15.0
+    // 6. Premium/Discount zone alignment
+    if(HasPremiumDiscountConfluence(price, bullish))
+        score += t2_base * 1.0; // 10.0
 
-    // 7. BMS/CHoCH alignment (Structure break)
-    if(m_structureAnalyzer != NULL && m_structureAnalyzer.HasStructureBreak())
-        score += (t2_base * 0.8) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 12.0
-
-    // 8. Cumulative delta / order-flow proxy
-    if(HasCumulativeDeltaConfluence(bullish))
-        score += (t2_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_2); // 7.5
-
-
-    // TIER 3: Indicators / Oscillators (Multiplier 0.8)
-    double t3_base = 10.0;
-
-    // 8. OTE zone (Fibonacci entry precision)
+    // 7. OTE zone (Fibonacci entry precision)
     if(m_premiumDiscount != NULL)
     {
-        if(bullish && m_premiumDiscount.IsInBullishOTE(price))  score += t3_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 8.0
-        if(!bullish && m_premiumDiscount.IsInBearishOTE(price)) score += t3_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 8.0
+        if(bullish && m_premiumDiscount.IsInBullishOTE(price))  score += t2_base * 1.0; // 10.0
+        if(!bullish && m_premiumDiscount.IsInBearishOTE(price)) score += t2_base * 1.0; // 10.0
     }
 
-    // 9. Premium/Discount zone alignment
-    if(HasPremiumDiscountConfluence(price, bullish))
-        score += t3_base * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 8.0
-
-    // 10. Kill Zone (Time-based filter)
-    if(m_killZones != NULL && m_killZones.IsInKillZone())
-        score += (t3_base * 0.5) * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_3); // 4.0
-
-    return score; // 0-~140+
+    return score; // 0-110
 }
 
 //+------------------------------------------------------------------+
@@ -1442,8 +1357,8 @@ double CStrategyUnifiedICT::ScoreConfluences(double price, bool bullish)
 int CStrategyUnifiedICT::CountConfluences(double price, bool bullish)
 {
     double score = ScoreConfluences(price, bullish);
-    // Adjust estimate for new weighted scoring (max ~140, average confluence ~14)
-    int count = (int)MathFloor(score / 14.0);
+    // Phase 3.3: Adjusted for simplified 2-tier scoring (max ~110, average confluence ~15.7)
+    int count = (int)MathFloor(score / 15.7);
     return MathMax(0, MathMin(count, 10));
 }
 
@@ -1513,7 +1428,7 @@ double CStrategyUnifiedICT::ComputeEntryConfidence(const SICTEntrySetup &entry, 
     }
 
     // Confluence score contribution (max 0.30 from score)
-    double scoreNorm = MathMin(1.0, entry.confluenceScore / 140.0);
+    double scoreNorm = MathMin(1.0, entry.confluenceScore / 110.0);
     conf += scoreNorm * 0.30;
 
     // Entry type bonus (Setup quality)
@@ -1538,15 +1453,7 @@ double CStrategyUnifiedICT::ComputeEntryConfidence(const SICTEntrySetup &entry, 
     if(choch && amd) 
         conf += 0.05 * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 0.125
 
-    double smtStrength = 0.0;
-    if(HasSMTConfluence(bullish, smtStrength))
-        conf += 0.05 * smtStrength;
-
-    if(HasAnchoredVWAPConfluence(entry.entryPrice, bullish))
-        conf += 0.04;
-
-    if(HasCumulativeDeltaConfluence(bullish))
-        conf += 0.04;
+    // Phase 3.3: Removed SMT, Anchored VWAP, Cumulative Delta confidence boosts
 
     return MathMin(0.95, MathMax(0.0, conf));
 }
@@ -1649,8 +1556,7 @@ bool CStrategyUnifiedICT::IsAtInstitutionalLevel(double price)
         }
     }
 
-    if(m_anchoredVWAP != NULL && m_anchoredVWAP.IsReady() && m_anchoredVWAP.IsNearVWAP(price, 1.0))
-        return true;
+    // Phase 3.3: Removed Anchored VWAP institutional level check
 
     // Calculate distance to nearest "round" level
     // Round levels are usually 500, 1000, 2000 points depending on instrument
@@ -1702,11 +1608,8 @@ bool CStrategyUnifiedICT::ValidateMarketMakerSetup(SICTEntrySetup &entry)
     if(HasOrderBlockConfluence(entry.entryPrice, bullish))
         validationScore += 2;
 
-    if(HasAnchoredVWAPConfluence(entry.entryPrice, bullish))
-        validationScore += 1;
-    if(HasCumulativeDeltaConfluence(bullish))
-        validationScore += 1;
-    
+    // Phase 3.3: Removed Anchored VWAP and Cumulative Delta from validation
+
     // Need 5+ points for valid setup (relaxed from 7)
     return (validationScore >= 5);
 }
@@ -1937,9 +1840,8 @@ bool CStrategyUnifiedICT::IsPriceAtMajorPOI(double price)
             return true;
     }
 
-    if(m_anchoredVWAP != NULL && m_anchoredVWAP.IsReady() && m_anchoredVWAP.IsNearVWAP(price, 1.0))
-        return true;
-    
+    // Phase 3.3: Removed Anchored VWAP check from POI validation
+
     return false;
 }
 

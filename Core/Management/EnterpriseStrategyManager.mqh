@@ -20,6 +20,8 @@
 #include "../../Strategies/StrategyCandlestick.mqh"
 #include "../../Strategies/CUnicornModelStrategy.mqh"
 #include "../../Strategies/CPowerOfThreeStrategy.mqh"
+#include "../../Strategies/MeanReversionStrategy.mqh"
+#include "../../Strategies/VolatilityBreakoutStrategy.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -114,6 +116,7 @@ string StrategyClusterToString(const ENUM_STRATEGY_CLUSTER cluster)
         case TREND_CLUSTER: return "TREND_CLUSTER";
         case MEAN_REVERSION_CLUSTER: return "MEAN_REVERSION_CLUSTER";
         case STRUCTURE_CLUSTER: return "STRUCTURE_CLUSTER";
+        case SCALP_CLUSTER: return "SCALP_CLUSTER";
         case STRATEGY_CLUSTER_NONE:
         default:
             return "NONE";
@@ -127,6 +130,7 @@ string StrategyClusterShortCode(const ENUM_STRATEGY_CLUSTER cluster)
         case TREND_CLUSTER: return "T";
         case MEAN_REVERSION_CLUSTER: return "R";
         case STRUCTURE_CLUSTER: return "S";
+        case SCALP_CLUSTER: return "X";
         case STRATEGY_CLUSTER_NONE:
         default:
             return "N";
@@ -205,6 +209,7 @@ private:
     string m_symbol;
     ENUM_TIMEFRAMES m_baseTimeframe;
     long m_managedMagic;
+    long m_managedMagicRangeMax;
     
     bool m_initialized;
     bool m_usePipeline;
@@ -367,6 +372,7 @@ private:
     bool IsStrategyIntrabarLiveEligible(const int strategyIndex) const;
     bool IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
     double CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const;
+    bool IsTrendingRegime() const;
     
 public:
     CEnterpriseStrategyManager();
@@ -398,11 +404,16 @@ public:
     ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
+
+    // Two-tier consensus: Tier 1 quick-probe fast path, Tier 2 full evaluation fallback
+    ENUM_TRADE_SIGNAL EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
     
     // Configuration
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum) { m_minQuorum = MathMax(1, quorum); }  // Solo Mode support
+    void SetManagedMagicRangeMax(long rangeMax) { m_managedMagicRangeMax = rangeMax; }
+    bool IsEAOwnedMagic(long magic) const { return (m_managedMagicRangeMax > m_managedMagic) ? (magic >= m_managedMagic && magic <= m_managedMagicRangeMax) : (magic == m_managedMagic); }
     void SetQuorumThreshold(const double threshold)
     {
         m_quorumThreshold = MathMax(0.0, MathMin(1.0, threshold));
@@ -553,6 +564,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_strategyCount(0),
     m_maxStrategies(20),
     m_managedMagic(0),
+    m_managedMagicRangeMax(0),
     m_initialized(false),
     m_usePipeline(true),
     m_minQuorum(2),         // Minimum agreeing live voters floor (overridden by EA input)
@@ -721,6 +733,7 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_symbol = symbol;
     m_baseTimeframe = timeframe;
     m_managedMagic = managedMagic;
+    m_managedMagicRangeMax = managedMagic; // Default: exact match; EA will update after symbol universe is built
     m_usePipeline = usePipeline;
     m_tradeManager = tradeManagerPtr;   // CRITICAL FIX: Store for strategy initialization
     m_positionSizer = positionSizerPtr; // CRITICAL FIX: Store for strategy initialization
@@ -959,6 +972,12 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     double buyCostSum = 0.0, sellCostSum = 0.0;
     double probeBuyCostSum = 0.0, probeSellCostSum = 0.0;
     double totalLiveWeight = 0.0;
+
+    // Cross-cluster conflict resolution: per-cluster conviction tracking
+    double trendClusterBuyConviction = 0.0;
+    double trendClusterSellConviction = 0.0;
+    double meanRevClusterBuyConviction = 0.0;
+    double meanRevClusterSellConviction = 0.0;
     double readyLiveWeight = 0.0;
     double readyContextWeightedSum = 0.0;
     double readyCostWeightedSum = 0.0;
@@ -1113,11 +1132,12 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         // NEW: Tier-based confidence filtering with Special Confluence Bypass
         double minTierConf = CRankingMatrix::GetRequiredConfidence(m_strategies[i].tier);
         
-        // SPECIAL BYPASS: Trend + Fibonacci Reversal Override
+        // SPECIAL BYPASS: Trend + Support/Resistance Reversal Override
         // If they have "good" confidence (>0.65), they bypass the tier floor 
         // to ensure reversals are heard even during strong Tier 1 (ICT) moves.
+        // Fibonacci REMOVED — S/R now carries the confluence module
         bool bypassTierFloor = false;
-        if(m_strategies[i].name == "Trend" || m_strategies[i].name == "Fibonacci")
+        if(m_strategies[i].name == "Trend" || m_strategies[i].name == "Support/Resistance")
         {
             if(stratConf > 0.65)
                 bypassTierFloor = true;
@@ -1358,6 +1378,13 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                 buyReadinessSum += readinessScore * readyWeightContribution;
                 buyCostSum += costScore * readyWeightContribution;
 
+                // Per-cluster conviction tracking for cross-cluster conflict resolution
+                ENUM_STRATEGY_CLUSTER voteCluster = (ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster;
+                if(voteCluster == TREND_CLUSTER)
+                    trendClusterBuyConviction += conviction * readyWeightContribution;
+                else if(voteCluster == MEAN_REVERSION_CLUSTER)
+                    meanRevClusterBuyConviction += conviction * readyWeightContribution;
+
                 int buySize = ArraySize(buyContributors);
                 ArrayResize(buyContributors, buySize + 1);
                 ArrayResize(buyContributorIndices, buySize + 1);
@@ -1391,6 +1418,13 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                 sellContextSum += contextScore * readyWeightContribution;
                 sellReadinessSum += readinessScore * readyWeightContribution;
                 sellCostSum += costScore * readyWeightContribution;
+
+                // Per-cluster conviction tracking for cross-cluster conflict resolution
+                ENUM_STRATEGY_CLUSTER voteCluster = (ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster;
+                if(voteCluster == TREND_CLUSTER)
+                    trendClusterSellConviction += conviction * readyWeightContribution;
+                else if(voteCluster == MEAN_REVERSION_CLUSTER)
+                    meanRevClusterSellConviction += conviction * readyWeightContribution;
 
                 int sellSize = ArraySize(sellContributors);
                 ArrayResize(sellContributors, sellSize + 1);
@@ -1426,6 +1460,40 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     m_diagSignalsGenerated += (ulong)MathMax(0, cycleSignalsGenerated);
     m_diagSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
     m_diagVoteSuppressed += (ulong)MathMax(0, cycleVoteSuppressed);
+
+    //--- Cross-cluster conflict resolution ---
+    // When trend and mean-reversion clusters disagree on direction,
+    // the regime determines which cluster to trust.
+    bool trendBuyActive = (trendClusterBuyConviction > 0.0);
+    bool meanRevSellActive = (meanRevClusterSellConviction > 0.0);
+    bool trendSellActive = (trendClusterSellConviction > 0.0);
+    bool meanRevBuyActive = (meanRevClusterBuyConviction > 0.0);
+
+    bool crossClusterConflict = (trendBuyActive && meanRevSellActive) ||
+                                (trendSellActive && meanRevBuyActive);
+
+    if(crossClusterConflict)
+    {
+        bool isTrendingRegime = IsTrendingRegime();
+
+        if(isTrendingRegime)
+        {
+            // Trending regime: zero out mean-reversion votes
+            buyConviction = MathMax(0.0, buyConviction - meanRevClusterBuyConviction);
+            sellConviction = MathMax(0.0, sellConviction - meanRevClusterSellConviction);
+        }
+        else
+        {
+            // Ranging regime: zero out trend votes
+            buyConviction = MathMax(0.0, buyConviction - trendClusterBuyConviction);
+            sellConviction = MathMax(0.0, sellConviction - trendClusterSellConviction);
+        }
+
+        PrintFormat("[CONSENSUS-CONFLICT] %s: Cross-cluster conflict detected. Trend: Buy=%.2f/Sell=%.2f, MeanRev: Buy=%.2f/Sell=%.2f. Resolved using %s regime.",
+                    symbol, trendClusterBuyConviction, trendClusterSellConviction,
+                    meanRevClusterBuyConviction, meanRevClusterSellConviction,
+                    isTrendingRegime ? "TRENDING" : "RANGING");
+    }
 
     double minReadyWeight = totalLiveWeight * m_minReadyWeightRatio;
     bool readyWeightMet = (readyLiveWeight >= minReadyWeight);
@@ -2058,8 +2126,16 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     // 8: Power of Three / ICT 2025 (live primary voter) - Tier 1
     if(size > 8 && flags[8]) RegisterStrategy(new CPowerOfThreeStrategy(), "Power of Three", true, 2.3, STRATEGY_TIER_1, PERIOD_CURRENT, false,
                                              PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
-    
-    Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ", 
+
+    // 9: Mean Reversion (live primary voter) - Tier 2 - MEAN_REVERSION_CLUSTER
+    if(size > 9 && flags[9]) RegisterStrategy(new CMeanReversionStrategy(), "Mean Reversion", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, true,
+                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
+
+    // 10: Volatility Breakout (live primary voter) - Tier 1 - TREND_CLUSTER
+    if(size > 10 && flags[10]) RegisterStrategy(new CVolatilityBreakoutStrategy(), "Volatility Breakout", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, true,
+                                               PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+
+    Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
           GetActiveStrategyCount());
 }
 
@@ -2621,6 +2697,41 @@ double CEnterpriseStrategyManager::CalculateAverageStrategyMetric(const int &str
         return 0.0;
 
     return ClampUnitValue(weightedSum / totalWeight);
+}
+
+//+------------------------------------------------------------------+
+//| Determine if current regime is trending for cross-cluster conflict |
+//+------------------------------------------------------------------+
+bool CEnterpriseStrategyManager::IsTrendingRegime() const
+{
+    // Primary: use RegimeEngine via pipeline if available
+    if(m_pipeline != NULL)
+    {
+        CRegimeEngine* regimeEngine = m_pipeline.GetRegimeEngine();
+        if(regimeEngine != NULL)
+        {
+            ENUM_REGIME_STATE state = regimeEngine.GetConfirmedState();
+            return (state == REGIME_TREND);
+        }
+    }
+
+    // Fallback: simple ADX-based check
+    // ADX > 25 = trending, otherwise ranging
+    int adxHandle = iADX(m_symbol, m_baseTimeframe, 14);
+    if(adxHandle != INVALID_HANDLE)
+    {
+        double adxBuffer[];
+        ArraySetAsSeries(adxBuffer, true);
+        if(CopyBuffer(adxHandle, 0, 0, 1, adxBuffer) > 0)
+        {
+            IndicatorRelease(adxHandle);
+            return (adxBuffer[0] > 25.0);
+        }
+        IndicatorRelease(adxHandle);
+    }
+
+    // Default: assume ranging (conservative)
+    return false;
 }
 
 bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) const
@@ -3322,7 +3433,7 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
         if(HistoryDealSelect(dealTicket))
         {
             long dealMagic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
-            if(m_managedMagic > 0 && dealMagic != m_managedMagic)
+            if(m_managedMagic > 0 && !IsEAOwnedMagic(dealMagic))
                 return;
 
             string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);

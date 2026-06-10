@@ -11,6 +11,8 @@
 #include <Object.mqh>
 #include "../../Interfaces/IStrategy.mqh"
 #include "../Utils/Enums.mqh"
+#include "../Engines/RegimeEngine.mqh"
+#include "../../IndicatorManager.mqh"
 #include "../Trading/TradeManager.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
@@ -48,6 +50,8 @@ protected:
     int               m_errorCount;
     datetime          m_lastErrorTime;
     string            m_lastDecisionReasonTag;
+    int               m_regimeDetailedType;   // Regime context from RegimeEngine (ENUM_DETAILED_REGIME as int)
+    int               m_strategyCluster;      // Strategy cluster type (ENUM_STRATEGY_CLUSTER as int)
 
     CTradeManager*    m_tradeManager;
     CPositionSizer*   m_positionSizer;
@@ -80,6 +84,7 @@ public:
     virtual void GetStatistics(int &signals, int &successful, double &accuracy);
     virtual string GetLastDecisionReasonTag(void) const override;
     virtual void SetConfidenceThreshold(double threshold) override;
+    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override { return TRADE_SIGNAL_NONE; }
 
 
     virtual void Update(void);
@@ -87,12 +92,27 @@ public:
     void OverrideMinConfidence(const double value);
     double GetMinConfidence(void) const;
 
+    // Feature 1: Regime-Aware Strategy Weighting - setters
+    void SetRegimeContext(int detailedRegime);
+    void SetStrategyCluster(int cluster);
+
 protected:
     virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence);
     virtual void HandleNewBar();
     void RecordSignal(const bool successful = false);
     void RecordSignalOutcome(const bool successful);
     void SetDecisionReasonTag(const string tag);
+
+    // Feature 1: Regime-Aware Strategy Weighting
+    double GetRegimeConfidenceMultiplier();
+
+    // Feature 2: Volatility Direction Awareness
+    ENUM_VOLATILITY_DIRECTION GetVolatilityDirection();
+    double GetVolatilityDirectionMultiplier();
+
+    // Feature 3: Multi-Timeframe Confluence
+    bool IsAlignedWithHigherTF(int signalDirection);
+    ENUM_TIMEFRAMES GetNextHigherTF(ENUM_TIMEFRAMES tf);
 
 public:
     void SetTradeManager(CTradeManager* manager);
@@ -133,6 +153,8 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_errorCount(0),
     m_lastErrorTime(0),
     m_lastDecisionReasonTag("BASE_UNSET"),
+    m_regimeDetailedType(0),
+    m_strategyCluster(0),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_unifiedRiskManager(NULL),
@@ -233,6 +255,18 @@ ENUM_TRADE_SIGNAL CStrategyBase::GetSignal(double &confidence)
     ENUM_TRADE_SIGNAL signal = ExecuteSignal(confidence);
     if(signal != TRADE_SIGNAL_NONE)
     {
+        // Feature 1: Regime-aware confidence adjustment
+        confidence *= GetRegimeConfidenceMultiplier();
+
+        // Feature 2: Volatility direction confidence adjustment
+        confidence *= GetVolatilityDirectionMultiplier();
+
+        // Feature 3: HTF alignment filter - halve confidence for counter-HTF signals
+        if(!IsAlignedWithHigherTF((int)signal))
+        {
+            confidence *= 0.5;
+        }
+
         RecordSignal();
         if(m_lastDecisionReasonTag == "")
             m_lastDecisionReasonTag = "BASE_SIGNAL";
@@ -441,6 +475,133 @@ ENUM_TIMEFRAMES CStrategyBase::GetTimeframe(void) const
 int CStrategyBase::GetMagicNumber(void) const
 {
     return m_magic;
+}
+
+//+------------------------------------------------------------------+
+//| Feature 1: Set regime context from RegimeEngine                  |
+//+------------------------------------------------------------------+
+void CStrategyBase::SetRegimeContext(int detailedRegime)
+{
+    m_regimeDetailedType = detailedRegime;
+}
+
+//+------------------------------------------------------------------+
+//| Feature 1: Set strategy cluster type                             |
+//+------------------------------------------------------------------+
+void CStrategyBase::SetStrategyCluster(int cluster)
+{
+    m_strategyCluster = cluster;
+}
+
+//+------------------------------------------------------------------+
+//| Feature 1: Regime-aware confidence multiplier                    |
+//+------------------------------------------------------------------+
+double CStrategyBase::GetRegimeConfidenceMultiplier()
+{
+    if(m_strategyCluster == STRATEGY_CLUSTER_NONE) return 1.0;
+
+    bool isStrongTrend = (m_regimeDetailedType == DETAILED_REGIME_STRONG_UPTREND ||
+                          m_regimeDetailedType == DETAILED_REGIME_STRONG_DOWNTREND);
+    bool isRange = (m_regimeDetailedType == DETAILED_REGIME_HIGH_VOL_RANGE ||
+                    m_regimeDetailedType == DETAILED_REGIME_LOW_VOL_RANGE);
+
+    if(m_strategyCluster == TREND_CLUSTER)
+    {
+        if(isStrongTrend) return 1.5;
+        if(isRange) return 0.3;
+    }
+    else if(m_strategyCluster == MEAN_REVERSION_CLUSTER)
+    {
+        if(isRange) return 1.5;
+        if(isStrongTrend) return 0.2;
+    }
+    // STRUCTURE_CLUSTER or unknown: neutral
+    return 1.0;
+}
+
+//+------------------------------------------------------------------+
+//| Feature 2: Detect volatility direction via ATR comparison        |
+//+------------------------------------------------------------------+
+ENUM_VOLATILITY_DIRECTION CStrategyBase::GetVolatilityDirection()
+{
+    int atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
+    if(atrHandle == INVALID_HANDLE)
+        return VOL_STABLE;
+
+    double atrValues[];
+    ArraySetAsSeries(atrValues, true);
+    int copied = CopyBuffer(atrHandle, 0, 0, 6, atrValues);
+    if(copied < 6)
+        return VOL_STABLE;
+
+    double currentATR = atrValues[0];
+    double prevATR = atrValues[5];
+
+    if(prevATR <= 0.0)
+        return VOL_STABLE;
+
+    double ratio = currentATR / prevATR;
+
+    if(ratio > 1.15) return VOL_EXPANDING;
+    if(ratio < 0.85) return VOL_CONTRACTING;
+    return VOL_STABLE;
+}
+
+//+------------------------------------------------------------------+
+//| Feature 2: Volatility direction confidence multiplier            |
+//+------------------------------------------------------------------+
+double CStrategyBase::GetVolatilityDirectionMultiplier()
+{
+    ENUM_VOLATILITY_DIRECTION volDir = GetVolatilityDirection();
+    switch(volDir)
+    {
+        case VOL_EXPANDING:   return 1.2;  // Breakouts more likely
+        case VOL_CONTRACTING: return 0.8;  // Squeeze forming, reduce confidence
+        default:              return 1.0;  // VOL_STABLE
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Feature 3: Check if signal aligns with higher TF trend           |
+//+------------------------------------------------------------------+
+bool CStrategyBase::IsAlignedWithHigherTF(int signalDirection)
+{
+    ENUM_TIMEFRAMES htf = GetNextHigherTF(m_timeframe);
+    if(htf == m_timeframe) return true; // Can't go higher, assume aligned
+
+    int emaHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, htf, 50, 0, MODE_EMA, PRICE_CLOSE);
+    if(emaHandle == INVALID_HANDLE) return true; // Can't determine, assume aligned
+
+    double emaValues[];
+    ArraySetAsSeries(emaValues, true);
+    int copied = CopyBuffer(emaHandle, 0, 0, 2, emaValues);
+    if(copied < 2) return true;
+
+    double closePrice = iClose(m_symbol, htf, 0);
+    bool htfBullish = (closePrice > emaValues[0]);
+
+    if(signalDirection == 1 && htfBullish) return true;   // BUY aligned with HTF uptrend
+    if(signalDirection == -1 && !htfBullish) return true;  // SELL aligned with HTF downtrend
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Feature 3: Get next higher timeframe                             |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES CStrategyBase::GetNextHigherTF(ENUM_TIMEFRAMES tf)
+{
+    switch(tf)
+    {
+        case PERIOD_M1:  return PERIOD_M5;
+        case PERIOD_M5:  return PERIOD_M15;
+        case PERIOD_M15: return PERIOD_M30;
+        case PERIOD_M30: return PERIOD_H1;
+        case PERIOD_H1:  return PERIOD_H4;
+        case PERIOD_H4:  return PERIOD_D1;
+        case PERIOD_D1:  return PERIOD_W1;
+        case PERIOD_W1:  return PERIOD_MN1;
+        default:         return tf;
+    }
 }
 
 #endif

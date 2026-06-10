@@ -67,7 +67,7 @@ public:
         m_lastBarCount(0),
         m_riskManager(NULL)
     {
-        OverrideMinConfidence(0.62);
+        OverrideMinConfidence(0.55);
     }
 
     virtual ~CUnicornModelStrategy()
@@ -148,10 +148,14 @@ public:
         }
 
         bool bullish = !sweepBuyside;
-        if(!m_structureAnalyzer.IsHTFAligned(bullish))
+        // Phase 3.3: Skip HTF alignment for M1/M5 timeframes (lower TF signals are self-contained)
+        if(m_timeframe != PERIOD_M1 && m_timeframe != PERIOD_M5)
         {
-            SetDecisionReasonTag("UNICORN_HTF_NOT_ALIGNED");
-            return TRADE_SIGNAL_NONE;
+            if(!m_structureAnalyzer.IsHTFAligned(bullish))
+            {
+                SetDecisionReasonTag("UNICORN_HTF_NOT_ALIGNED");
+                return TRADE_SIGNAL_NONE;
+            }
         }
 
         bool ltfAligned = bullish ? m_structureAnalyzer.IsBullishStructure()
@@ -198,7 +202,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        double score = 0.62;
+        double score = 0.55;
         score += MathMin(0.12, ob.strength * 0.10);
         score += MathMin(0.12, imb.strength * 0.10);
         score += cisdAligned ? 0.07 : 0.0;

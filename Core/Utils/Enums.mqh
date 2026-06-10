@@ -71,9 +71,8 @@ enum ENUM_STRATEGY_TYPE
 {
     STRATEGY_MOMENTUM = 1,         // Momentum strategy
     STRATEGY_TREND = 2,            // Trend strategy
-    STRATEGY_FIBONACCI = 3,        // Fibonacci strategy
-    // ELLIOTT WAVE REMOVED - Enum value kept for backward compatibility but deprecated
-    STRATEGY_ELLIOTT_WAVE = 4,     // [DEPRECATED] Elliott Wave strategy - removed from system
+    // STRATEGY_FIBONACCI = 3 — REMOVED: merged into Support/Resistance as confluence module
+    // STRATEGY_ELLIOTT_WAVE = 4 — REMOVED: subjective pattern recognition, unsuitable for automation
     STRATEGY_SUPPORT_RESISTANCE = 5, // Support/Resistance strategy
     STRATEGY_UNIFIED_ICT = 6,      // Unified ICT strategy
     STRATEGY_CANDLESTICK = 7,      // Candlestick strategy
@@ -165,7 +164,18 @@ enum ENUM_STRATEGY_CLUSTER
     STRATEGY_CLUSTER_NONE = 0,
     TREND_CLUSTER = 1,
     MEAN_REVERSION_CLUSTER = 2,
-    STRUCTURE_CLUSTER = 3
+    STRUCTURE_CLUSTER = 3,
+    SCALP_CLUSTER = 4
+};
+
+//+------------------------------------------------------------------+
+//| Volatility Direction Enumeration                                 |
+//+------------------------------------------------------------------+
+enum ENUM_VOLATILITY_DIRECTION
+{
+    VOL_EXPANDING = 1,          // ATR expanding - breakouts more likely
+    VOL_STABLE = 0,             // ATR stable - no adjustment
+    VOL_CONTRACTING = -1        // ATR contracting - squeeze forming
 };
 
 //+------------------------------------------------------------------+
@@ -202,6 +212,28 @@ enum ENUM_RISK_LEVEL
 };
 
 //+------------------------------------------------------------------+
+//| Margin Health Level (Phase 2.4)                                  |
+//+------------------------------------------------------------------+
+enum ENUM_MARGIN_HEALTH_LEVEL
+{
+    MARGIN_HEALTH_OK = 0,           // Margin level >= 300%
+    MARGIN_HEALTH_WARNING = 1,      // Margin level >= 200% and < 300%
+    MARGIN_HEALTH_CRITICAL = 2,     // Margin level >= 150% and < 200%
+    MARGIN_HEALTH_EMERGENCY = 3     // Margin level < 150%
+};
+
+//+------------------------------------------------------------------+
+//| Risk Tier (Phase 2.3)                                            |
+//+------------------------------------------------------------------+
+enum ENUM_RISK_TIER
+{
+   RISK_TIER_CONSERVATIVE,   // Conservative: low risk, tight controls
+   RISK_TIER_MODERATE,       // Moderate: balanced risk/reward
+   RISK_TIER_AGGRESSIVE,     // Aggressive: higher risk tolerance
+   RISK_TIER_FULL_MARGIN     // Full margin: maximum exposure
+};
+
+//+------------------------------------------------------------------+
 //| Constants                                                       |
 //+------------------------------------------------------------------+
 #define MAX_STRATEGIES 150              // Maximum number of strategies (increased for multi-symbol support)
@@ -216,9 +248,22 @@ enum ENUM_RISK_LEVEL
 #define MIN_ACCOUNT_BALANCE 1.0         // Minimum account balance (lowered for micro-account testing)
 #define DRAWDOWN_CRITICAL 10.0           // Critical drawdown level
 #define DRAWDOWN_WARNING 5.0            // Warning drawdown level
-#define MAX_RISK_PER_TRADE 20.0       // Maximum risk per trade as percentage (increased for aggressive trading)
+#define MAX_RISK_PER_TRADE 10.0       // Maximum risk per trade as percentage
 #define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
+
+//+------------------------------------------------------------------+
+//| Drawdown state — single source of truth for all drawdown queries |
+//| (Phase 2.1: Defined here to break circular include dependency)   |
+//+------------------------------------------------------------------+
+struct SDrawdownState
+{
+    double currentDrawdownPct;       // Current drawdown from peak equity (%)
+    bool   isWarningActive;         // Drawdown >= warning threshold
+    bool   isCriticalActive;        // Drawdown >= critical threshold (trading halted)
+    bool   isTradingEnabled;        // Master trading switch
+    double conservativeMultiplier;   // Position size multiplier (1.0 normal, 0.5 warning)
+};
 
 // Position Sizing Enumeration
 enum ENUM_POSITION_SIZING_MODE
@@ -226,7 +271,8 @@ enum ENUM_POSITION_SIZING_MODE
     POSITION_SIZE_FIXED = 1,           // Fixed position sizing
     POSITION_SIZE_RISK_PERCENT = 2,    // Risk percentage sizing
     POSITION_SIZE_VOLATILITY = 3,      // Volatility-based sizing
-    POSITION_SIZE_CORRELATION = 4      // Correlation-based sizing
+    POSITION_SIZE_CORRELATION = 4,     // Correlation-based sizing
+    POSITION_SIZE_KELLY = 5            // Kelly Criterion sizing
 };
 
 // Position Sizing Constants (for backward compatibility)
@@ -234,6 +280,7 @@ enum ENUM_POSITION_SIZING_MODE
 #define POSITION_SIZE_RISK_PERCENT 2    // Risk percentage sizing
 #define POSITION_SIZE_VOLATILITY 3      // Volatility-based sizing
 #define POSITION_SIZE_CORRELATION 4     // Correlation-based sizing
+#define POSITION_SIZE_KELLY 5           // Kelly Criterion sizing
 
 // Performance Monitoring Constants
 #define MIN_TRADES_FOR_STATS 10         // Minimum trades for statistics

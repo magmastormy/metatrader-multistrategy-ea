@@ -73,7 +73,8 @@ private:
     double m_rollingWinRate;
     double m_rollingSharpe;
     int m_consecutiveLosses;
-    
+    int m_consecutiveWins;              // Anti-Martingale: consecutive win streak
+
     // Performance triggers
     bool m_needsRiskReduction;
     bool m_needsParameterAdjustment;
@@ -123,7 +124,11 @@ public:
     double GetRollingWinRate(void) const { return m_rollingWinRate; }
     double GetRollingSharpe(void) const { return m_rollingSharpe; }
     int GetConsecutiveLosses(void) const { return m_consecutiveLosses; }
-    
+    int GetConsecutiveWins(void) const { return m_consecutiveWins; }
+
+    // Anti-Martingale momentum scaling
+    double CalculateMomentumScale(void);
+
     // Risk assessment
     bool IsPerformanceAcceptable(void);
     ENUM_RISK_LEVEL GetCurrentRiskLevel(void);
@@ -184,6 +189,7 @@ CPerformanceAnalytics::CPerformanceAnalytics(void) :
     m_rollingWinRate(0.0),
     m_rollingSharpe(0.0),
     m_consecutiveLosses(0),
+    m_consecutiveWins(0),
     m_needsRiskReduction(false),
     m_needsParameterAdjustment(false),
     m_performanceAcceptable(true),
@@ -288,6 +294,7 @@ void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double p
     {
         m_successfulTrades++;
         m_consecutiveLosses = 0;
+        m_consecutiveWins++;
         m_totalProfit += profit;
         if(profit > m_largestWin)
             m_largestWin = profit;
@@ -296,6 +303,7 @@ void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double p
     {
         m_failedTrades++;
         m_consecutiveLosses++;
+        m_consecutiveWins = 0;
         m_totalLoss += MathAbs(profit);
         if(MathAbs(profit) > m_largestLoss)
             m_largestLoss = MathAbs(profit);
@@ -303,6 +311,7 @@ void CPerformanceAnalytics::RecordClosedTrade(const ulong ticket, const double p
     else
     {
         m_consecutiveLosses = 0;
+        m_consecutiveWins = 0;
     }
     
     // Update equity tracking
@@ -884,6 +893,33 @@ void CPerformanceAnalytics::PrintRealTimeDashboard(void)
     }
     
     Print("============================================\n");
+}
+
+//+------------------------------------------------------------------+
+//| Anti-Martingale Momentum Scale                                   |
+//| Win streak: scale up by 10% per win, capped at 1.5x             |
+//| Loss streak: scale down by 15% per loss, floored at 0.5x        |
+//+------------------------------------------------------------------+
+double CPerformanceAnalytics::CalculateMomentumScale(void)
+{
+    double scale = 1.0;
+
+    // Win streak and loss streak are mutually exclusive (each resets the other)
+    if(m_consecutiveWins > 0)
+    {
+        // Win streak: increase size by 10% per win, capped at 1.5x
+        scale = MathMin(1.5, 1.0 + m_consecutiveWins * 0.10);
+    }
+    else if(m_consecutiveLosses > 0)
+    {
+        // Loss streak: decrease size by 15% per loss, floored at 0.5x
+        scale = MathMax(0.5, 1.0 - m_consecutiveLosses * 0.15);
+    }
+
+    PrintFormat("[MOMENTUM-SCALE] Wins=%d Losses=%d Scale=%.2f",
+                m_consecutiveWins, m_consecutiveLosses, scale);
+
+    return scale;
 }
 
 

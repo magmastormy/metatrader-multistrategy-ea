@@ -82,7 +82,7 @@ public:
         atr(0.0),
         momentumScore(0.0),
         newsEventActive(false),
-        riskPerTrade(0.02), // Default 2%
+        riskPerTrade(2.0), // Default 2% (0-100 scale, consistent with UnifiedRiskManager)
         symbolDailyRiskUsed(0.0),
         lastPrice(0.0),
         analysis(NULL)

@@ -169,17 +169,12 @@ private:
 
     bool CreateHandles()
     {
-        if(m_fastHandle != INVALID_HANDLE) IndicatorRelease(m_fastHandle);
-        if(m_slowHandle != INVALID_HANDLE) IndicatorRelease(m_slowHandle);
-        if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
-        if(m_rsiHandle != INVALID_HANDLE) IndicatorRelease(m_rsiHandle);
+        m_fastHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_fastPeriod, 0, MODE_EMA, PRICE_CLOSE);
+        m_slowHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_slowPeriod, 0, MODE_EMA, PRICE_CLOSE);
+        m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
+        m_rsiHandle = CIndicatorManager::Instance().GetRSIHandle(m_symbol, m_timeframe, 14, PRICE_CLOSE);
 
-        m_fastHandle = iMA(m_symbol, m_timeframe, m_fastPeriod, 0, MODE_EMA, PRICE_CLOSE);
-        m_slowHandle = iMA(m_symbol, m_timeframe, m_slowPeriod, 0, MODE_EMA, PRICE_CLOSE);
-        m_atrHandle = iATR(m_symbol, m_timeframe, 14); // Standard 14-period ATR
-        m_rsiHandle = iRSI(m_symbol, m_timeframe, 14, PRICE_CLOSE);
-
-        if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE || 
+        if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE ||
            m_atrHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE)
         {
             PrintFormat("[MOMENTUM-STRATEGY] Failed to create indicator handles for %s", m_symbol);
@@ -201,6 +196,20 @@ private:
         fastPrev = fastBuffer[1];
         slowNow = slowBuffer[0];
         slowPrev = slowBuffer[1];
+        return true;
+    }
+
+    // Fetch 3 bars of fast EMA for rate-of-change acceleration detection
+    bool FetchFastEMA3(double &emaNow, double &emaPrev, double &emaPrev2)
+    {
+        double fastBuffer[3];
+
+        // Closed-bar values: shift 1 (current signal), shift 2 (previous), shift 3 (2-bars-ago)
+        if(CopyBuffer(m_fastHandle, 0, 1, 3, fastBuffer) < 3) return false;
+
+        emaNow = fastBuffer[0];
+        emaPrev = fastBuffer[1];
+        emaPrev2 = fastBuffer[2];
         return true;
     }
 
@@ -379,10 +388,11 @@ public:
 
     virtual void Deinit() override
     {
-        if(m_fastHandle != INVALID_HANDLE) { IndicatorRelease(m_fastHandle); m_fastHandle = INVALID_HANDLE; }
-        if(m_slowHandle != INVALID_HANDLE) { IndicatorRelease(m_slowHandle); m_slowHandle = INVALID_HANDLE; }
-        if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
-        if(m_rsiHandle != INVALID_HANDLE) { IndicatorRelease(m_rsiHandle); m_rsiHandle = INVALID_HANDLE; }
+        // Handles are managed by CIndicatorManager — no IndicatorRelease needed
+        m_fastHandle = INVALID_HANDLE;
+        m_slowHandle = INVALID_HANDLE;
+        m_atrHandle = INVALID_HANDLE;
+        m_rsiHandle = INVALID_HANDLE;
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
         CStrategyBase::Deinit();
@@ -489,6 +499,40 @@ public:
                 signal = TRADE_SIGNAL_SELL;
         }
 
+        // --- RATE-OF-CHANGE ACCELERATION DETECTION (Phase 3.4) ---
+        // If crossover detected, check whether momentum is accelerating or decelerating
+        double rocMultiplier = 1.0;
+        if(signal != TRADE_SIGNAL_NONE)
+        {
+            double emaNow, emaPrev, emaPrev2;
+            if(FetchFastEMA3(emaNow, emaPrev, emaPrev2))
+            {
+                // Calculate current ROC: (ema8_now - ema8_prev) / ema8_prev * 100
+                // Calculate previous ROC: (ema8_prev - ema8_prev2) / ema8_prev2 * 100
+                if(emaPrev != 0.0 && emaPrev2 != 0.0)
+                {
+                    double currentROC = (emaNow - emaPrev) / emaPrev * 100.0;
+                    double previousROC = (emaPrev - emaPrev2) / emaPrev2 * 100.0;
+                    double absCurrentROC = MathAbs(currentROC);
+                    double absPreviousROC = MathAbs(previousROC);
+
+                    // If |current ROC| > |previous ROC| * 1.2 → momentum is accelerating
+                    if(absPreviousROC > 0.0 && absCurrentROC > absPreviousROC * 1.2)
+                    {
+                        rocMultiplier = 1.3;  // Accelerating → boost confidence
+                        PrintFormat("[MOMENTUM-ROC] Accelerating | CurrROC=%.4f PrevROC=%.4f | Boost=1.3x",
+                                   currentROC, previousROC);
+                    }
+                    else
+                    {
+                        rocMultiplier = 0.7;  // Not accelerating → reduce confidence
+                        PrintFormat("[MOMENTUM-ROC] Decelerating | CurrROC=%.4f PrevROC=%.4f | Reduce=0.7x",
+                                   currentROC, previousROC);
+                    }
+                }
+            }
+        }
+
         if(signal == TRADE_SIGNAL_NONE)
             return RejectSignal("MOMENTUM_NO_CROSSOVER");
         
@@ -524,10 +568,17 @@ public:
                            atrRatio, momentumConfidence * 100);
             }
             
+            // ENHANCEMENT: ROC Acceleration Multiplier (Phase 3.4)
+            // Boost confidence if momentum accelerating, reduce if decelerating
+            momentumConfidence *= rocMultiplier;
+
             confidence = MathMin(1.0, MathMax(0.0, momentumConfidence));
             
             // Calculate ATR-based stop loss for risk validation
-            double atr = iATR(m_symbol, m_timeframe, 14);
+            double atrBuffer[2];
+            double atr = 0.0;
+            if(CopyBuffer(m_atrHandle, 0, 1, 2, atrBuffer) >= 1)
+                atr = atrBuffer[0];
             double currentPrice = (signal == TRADE_SIGNAL_BUY) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK) : SymbolInfoDouble(m_symbol, SYMBOL_BID);
             double slDistance = (atr > 0) ? (atr * 2.0) : (currentPrice * 0.01); // 2x ATR or 1% fallback
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -593,6 +644,42 @@ public:
     virtual ENUM_STRATEGY_TYPE GetType(void) const override
     {
         return STRATEGY_MOMENTUM;
+    }
+
+    //+------------------------------------------------------------------+
+    //| Quick-probe signal: fast EMA crossover check (O(1) cached)       |
+    //| Tier 1 fast-path for two-tier consensus evaluation.              |
+    //| Uses already-cached indicator handles — no new handle creation,   |
+    //| no full confidence pipeline, no risk validation.                  |
+    //+------------------------------------------------------------------+
+    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
+    {
+        if(!m_is_enabled || !m_is_initialized)
+            return TRADE_SIGNAL_NONE;
+
+        // Handles must be valid (created during Init)
+        if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE)
+            return TRADE_SIGNAL_NONE;
+
+        // Fetch 2 bars of fast/slow EMA (closed-bar, shift 1 and 2)
+        double fastNow, fastPrev, slowNow, slowPrev;
+        if(!FetchAverages(fastNow, fastPrev, slowNow, slowPrev))
+            return TRADE_SIGNAL_NONE;
+
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        if(point <= 0.0) point = 0.0001;
+
+        double diffNow = fastNow - slowNow;
+        double diffPrev = fastPrev - slowPrev;
+        double threshold = m_thresholdPoints * point;
+
+        // Quick crossover detection — no ATR, no RSI, no hysteresis, no risk gate
+        if(diffNow > threshold && diffPrev <= threshold)
+            return TRADE_SIGNAL_BUY;
+        if(diffNow < -threshold && diffPrev >= -threshold)
+            return TRADE_SIGNAL_SELL;
+
+        return TRADE_SIGNAL_NONE;
     }
 };
 

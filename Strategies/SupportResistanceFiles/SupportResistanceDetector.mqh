@@ -11,6 +11,7 @@
 #define __SR_SUPPORT_RESISTANCE_DETECTOR_MQH__
 
 #include <Arrays/ArrayObj.mqh>
+#include "../../IndicatorManager.mqh"
 
 // Dynamic array approach - no fixed limit
 
@@ -136,11 +137,8 @@ CSupportResistanceDetector::CSupportResistanceDetector() :
 //+------------------------------------------------------------------+
 CSupportResistanceDetector::~CSupportResistanceDetector()
 {
-    if(m_atrHandle != INVALID_HANDLE)
-    {
-        IndicatorRelease(m_atrHandle);
-        m_atrHandle = INVALID_HANDLE;
-    }
+    // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
+    m_atrHandle = INVALID_HANDLE;
     ArrayFree(m_levels);
 }
 
@@ -150,11 +148,8 @@ CSupportResistanceDetector::~CSupportResistanceDetector()
 bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            double clusterPips, int swingStrength)
 {
-    if(m_atrHandle != INVALID_HANDLE)
-    {
-        IndicatorRelease(m_atrHandle);
-        m_atrHandle = INVALID_HANDLE;
-    }
+    // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
+    m_atrHandle = INVALID_HANDLE;
 
     m_symbol = symbol;
     m_timeframe = timeframe;
@@ -162,7 +157,7 @@ bool CSupportResistanceDetector::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_swingStrength = swingStrength;
     m_levelCount = 0;
 
-    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
+    m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
     
     // ENHANCEMENT: Detect both significant and frequently-tested levels
     // Lower significance threshold from 0.30 ATR to 0.20 ATR for more touch points

@@ -50,28 +50,29 @@ public:
         return 0;
     }
 
-    // NEW: Check for dynamic tier escalation (e.g., Trend + Fib agreement = Tier 1 power)
+    // NEW: Check for dynamic tier escalation (e.g., Trend + S/R agreement = Tier 1 power)
     static ENUM_STRATEGY_TIER CheckConfluenceEscalation(const string nameA, double confA, ENUM_TRADE_SIGNAL signalA,
                                                       const string nameB, double confB, ENUM_TRADE_SIGNAL signalB)
     {
-        // Special Case: Trend + Fibonacci Agreement on a Reversal/Strong Move
+        // Special Case: Trend + Support/Resistance Agreement on a Reversal/Strong Move
         if(signalA == signalB && signalA != TRADE_SIGNAL_NONE)
         {
             // Extract base names if they are qualified (e.g., EURUSD::Trend -> Trend)
             string baseA = nameA;
             string baseB = nameB;
-            
+
             int posA = StringFind(nameA, "::");
             if(posA >= 0) baseA = StringSubstr(nameA, posA + 2);
-            
+
             int posB = StringFind(nameB, "::");
             if(posB >= 0) baseB = StringSubstr(nameB, posB + 2);
 
-            if((baseA == "Trend" && baseB == "Fibonacci") || (baseA == "Fibonacci" && baseB == "Trend"))
+            // Fibonacci REMOVED — Trend + S/R confluence escalation replaces the old Trend+Fib pair
+            if((baseA == "Trend" && baseB == "Support/Resistance") || (baseA == "Support/Resistance" && baseB == "Trend"))
             {
                 if(confA > 0.65 && confB > 0.65)
                 {
-                    // If Trend and Fib agree with high confidence, they escalate to Tier 1 influence
+                    // If Trend and S/R agree with high confidence, they escalate to Tier 1 influence
                     return STRATEGY_TIER_1;
                 }
             }

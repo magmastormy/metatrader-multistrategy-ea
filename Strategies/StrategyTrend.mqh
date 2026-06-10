@@ -34,6 +34,7 @@ private:
     // ENHANCEMENT: Higher-Timeframe Confirmation (Batch 93 - Week 1)
     ENUM_TIMEFRAMES     m_htf;  // Higher timeframe for trend confirmation
     int                 m_htfHandleADX;  // ADX handle for HTF
+    int                 m_tradeParamATRHandle;  // Cached ATR handle for GetTradeParameters
 
     void LogRejectEvent(const string reasonTag)
     {
@@ -86,12 +87,11 @@ public:
         if(m_trailingStop != NULL) { delete m_trailingStop; m_trailingStop = NULL; }
         if(m_adxSizing != NULL) { delete m_adxSizing; m_adxSizing = NULL; }
         
-        // ENHANCEMENT: Release HTF ADX handle (Batch 93 - Week 1)
-        if(m_htfHandleADX != INVALID_HANDLE)
-        {
-            IndicatorRelease(m_htfHandleADX);
-            m_htfHandleADX = INVALID_HANDLE;
-        }
+        // ENHANCEMENT: Release HTF ADX handle — managed by CIndicatorManager
+        m_htfHandleADX = INVALID_HANDLE;
+
+        // Release cached ATR handle for GetTradeParameters — managed by CIndicatorManager
+        m_tradeParamATRHandle = INVALID_HANDLE;
         
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
@@ -141,7 +141,7 @@ public:
         // ENHANCEMENT: Setup Higher-Timeframe Confirmation (Batch 93 - Week 1)
         // Use next higher timeframe for trend confirmation
         m_htf = ResolveHigherTimeframe(timeframe);
-        m_htfHandleADX = iADX(symbol, m_htf, 14);
+        m_htfHandleADX = CIndicatorManager::Instance().GetADXHandle(symbol, m_htf, 14);
         
         if(m_htfHandleADX == INVALID_HANDLE)
         {
@@ -285,11 +285,13 @@ public:
         
         // ENHANCEMENT: ATR-Based Exit Logic (Batch 93 - Week 1)
         // Calculate dynamic TP levels based on ATR multiples
-        int atrHandle = iATR(m_symbol, m_timeframe, 14);
-        if(atrHandle != INVALID_HANDLE)
+        // Use cached ATR handle from CIndicatorManager
+        if(m_tradeParamATRHandle == INVALID_HANDLE)
+            m_tradeParamATRHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
+        if(m_tradeParamATRHandle != INVALID_HANDLE)
         {
             double atrBuffer[1];
-            if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) == 1 && atrBuffer[0] > 0)
+            if(CopyBuffer(m_tradeParamATRHandle, 0, 0, 1, atrBuffer) == 1 && atrBuffer[0] > 0)
             {
                 double atr = atrBuffer[0];
                 
@@ -310,7 +312,6 @@ public:
                     takeProfit = atr_tp;
                 }
             }
-            IndicatorRelease(atrHandle); // Release temporary handle
         }
         
         lotSize = m_adxSizing.CalculateLotSize(entry.entryPrice, entry.stopLoss); // Base lot adjusted by ADX and Exact distance

@@ -12,6 +12,7 @@
 
 #include "SupportResistanceDetector.mqh"
 #include "TrendlineDetector.mqh"
+#include "../../IndicatorManager.mqh"
 
 //+------------------------------------------------------------------+
 //| S/R Signal Result Structure                                      |
@@ -94,9 +95,10 @@ CSRBounceStrategy::CSRBounceStrategy() :
 //+------------------------------------------------------------------+
 CSRBounceStrategy::~CSRBounceStrategy()
 {
-    if(m_emaFastHandle != INVALID_HANDLE) IndicatorRelease(m_emaFastHandle);
-    if(m_emaSlowHandle != INVALID_HANDLE) IndicatorRelease(m_emaSlowHandle);
-    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+    // Handles managed by CIndicatorManager — no IndicatorRelease needed
+    m_emaFastHandle = INVALID_HANDLE;
+    m_emaSlowHandle = INVALID_HANDLE;
+    m_atrHandle = INVALID_HANDLE;
 }
 
 //+------------------------------------------------------------------+
@@ -110,14 +112,15 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
     m_timeframe = timeframe;
     m_srDetector = srDetector;
     m_trendDetector = trendDetector;
-    
-    if(m_emaFastHandle != INVALID_HANDLE) IndicatorRelease(m_emaFastHandle);
-    if(m_emaSlowHandle != INVALID_HANDLE) IndicatorRelease(m_emaSlowHandle);
-    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
-    
-    m_emaFastHandle = iMA(m_symbol, m_timeframe, m_emaFast, 0, MODE_EMA, PRICE_CLOSE);
-    m_emaSlowHandle = iMA(m_symbol, m_timeframe, m_emaSlow, 0, MODE_EMA, PRICE_CLOSE);
-    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
+
+    // Handles managed by CIndicatorManager — no IndicatorRelease needed
+    m_emaFastHandle = INVALID_HANDLE;
+    m_emaSlowHandle = INVALID_HANDLE;
+    m_atrHandle = INVALID_HANDLE;
+
+    m_emaFastHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_emaFast, 0, MODE_EMA, PRICE_CLOSE);
+    m_emaSlowHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_emaSlow, 0, MODE_EMA, PRICE_CLOSE);
+    m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
     
     return (m_srDetector != NULL && m_emaFastHandle != INVALID_HANDLE && m_emaSlowHandle != INVALID_HANDLE && m_atrHandle != INVALID_HANDLE);
 }
@@ -321,17 +324,14 @@ double CSRBounceStrategy::GetEMA(int handle)
 //+------------------------------------------------------------------+
 double CSRBounceStrategy::GetATR(int period)
 {
-    int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
+    int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
-    
-    double atrBuf[1];
-    double result = 0;
-    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
-        result = atrBuf[0];
 
-    if(handle != m_atrHandle)
-        IndicatorRelease(handle);
-    return result;
+    double atrBuf[1];
+    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
+        return atrBuf[0];
+
+    return 0;
 }
 
 //+------------------------------------------------------------------+
@@ -379,7 +379,8 @@ CSRBreakoutStrategy::CSRBreakoutStrategy() :
 //+------------------------------------------------------------------+
 CSRBreakoutStrategy::~CSRBreakoutStrategy()
 {
-    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+    // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
+    m_atrHandle = INVALID_HANDLE;
 }
 
 //+------------------------------------------------------------------+
@@ -391,8 +392,9 @@ bool CSRBreakoutStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
     m_symbol = symbol;
     m_timeframe = timeframe;
     m_srDetector = srDetector;
-    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
-    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
+    // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
+    m_atrHandle = INVALID_HANDLE;
+    m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
     
     return (m_srDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
@@ -511,17 +513,14 @@ bool CSRBreakoutStrategy::HasVolumeConfirmation()
 //+------------------------------------------------------------------+
 double CSRBreakoutStrategy::GetATR(int period)
 {
-    int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
+    int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
-    
-    double atrBuf[1];
-    double result = 0;
-    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
-        result = atrBuf[0];
 
-    if(handle != m_atrHandle)
-        IndicatorRelease(handle);
-    return result;
+    double atrBuf[1];
+    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
+        return atrBuf[0];
+
+    return 0;
 }
 
 //+------------------------------------------------------------------+
@@ -573,7 +572,8 @@ CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
 //+------------------------------------------------------------------+
 CTrendlineBounceStrategy::~CTrendlineBounceStrategy()
 {
-    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+    // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
+    m_atrHandle = INVALID_HANDLE;
 }
 
 //+------------------------------------------------------------------+
@@ -587,8 +587,9 @@ bool CTrendlineBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES t
     m_timeframe = timeframe;
     m_trendDetector = trendDetector;
     m_srDetector = srDetector;
-    if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
-    m_atrHandle = iATR(m_symbol, m_timeframe, 14);
+    // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
+    m_atrHandle = INVALID_HANDLE;
+    m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
     
     return (m_trendDetector != NULL && m_atrHandle != INVALID_HANDLE);
 }
@@ -748,17 +749,14 @@ bool CTrendlineBounceStrategy::HasBearishRejection()
 //+------------------------------------------------------------------+
 double CTrendlineBounceStrategy::GetATR(int period)
 {
-    int handle = (period == 14 && m_atrHandle != INVALID_HANDLE) ? m_atrHandle : iATR(m_symbol, m_timeframe, period);
+    int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
-    
-    double atrBuf[1];
-    double result = 0;
-    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
-        result = atrBuf[0];
 
-    if(handle != m_atrHandle)
-        IndicatorRelease(handle);
-    return result;
+    double atrBuf[1];
+    if(CopyBuffer(handle, 0, 0, 1, atrBuf) > 0)
+        return atrBuf[0];
+
+    return 0;
 }
 
 #endif // __SR_TRADING_STRATEGIES_MQH__
