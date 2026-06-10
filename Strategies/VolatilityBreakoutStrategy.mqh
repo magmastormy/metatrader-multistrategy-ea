@@ -131,9 +131,10 @@ public:
     // Cleanup helper
     void Cleanup()
     {
-        if(m_bbHandle != INVALID_HANDLE) { IndicatorRelease(m_bbHandle); m_bbHandle = INVALID_HANDLE; }
-        if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
-        if(m_volumeHandle != INVALID_HANDLE) { IndicatorRelease(m_volumeHandle); m_volumeHandle = INVALID_HANDLE; }
+        // Handles are managed by CIndicatorManager — no IndicatorRelease needed
+        m_bbHandle = INVALID_HANDLE;
+        m_atrHandle = INVALID_HANDLE;
+        m_volumeHandle = INVALID_HANDLE;
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
     }
@@ -144,10 +145,10 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
         
-        // Create indicator handles
-        m_bbHandle = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
-        m_atrHandle = iATR(symbol, timeframe, m_atrPeriod);
-        m_volumeHandle = iVolumes(symbol, timeframe, VOLUME_TICK);
+        // Create indicator handles via CIndicatorManager
+        m_bbHandle = CIndicatorManager::Instance().GetBandsHandle(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
+        m_atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, timeframe, m_atrPeriod);
+        m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(symbol, timeframe, VOLUME_TICK);
         
         if(m_bbHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE)
         {

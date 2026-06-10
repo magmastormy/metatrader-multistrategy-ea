@@ -15,10 +15,11 @@
 input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
 input bool InpUseEnhancedRisk = true;      // Enable adaptive sizing inside unified risk manager
-input double InpMaxRiskPerTrade = 10.0;   // Max risk per trade; authority gate can scale this down
-input double InpMaxDailyRisk = 30.0;      // Max daily risk (increased for aggressive trading)
-input double InpMaxPortfolioRisk = 50.0;  // Max total portfolio risk (increased for aggressive trading)
+input double InpMaxRiskPerTrade = 5.0;    // Max risk per trade; authority gate can scale this down
+input double InpMaxDailyRisk = 5.0;       // Max daily risk
+input double InpMaxPortfolioRisk = 15.0;  // Max total portfolio risk
 input double InpMaxDrawdown = 10.0;       // Max drawdown
+input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE; // Risk Tier
 input string InpSymbolsToTrade = "SFX Vol 20,FX Vol 40,SwitchX 1200,PainX 400,PainX 600";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 10;     // Cooldown in seconds between trade cycles
 input int    InpMaxPositionsTotal = 8;            // Global position limit under authority gate
@@ -26,13 +27,13 @@ input int    InpMaxTradeSendsPerCycle = 3;        // Max ranked candidates the E
 input group "Strategy Selection"
 input bool InpEnableMomentum = true;        // Enable Momentum Strategy
 input bool InpEnableTrend = true;           // Enable Trend Strategy
-input bool InpEnableFibonacci = false;      // DISABLED - Merged into SupportResistance as confluence module
-// ELLIOTT WAVE REMOVED - Subjective pattern recognition, 85% false positives, unsuitable for automation
+// Fibonacci REMOVED - merged into SupportResistance as confluence module
+// Elliott Wave REMOVED - subjective pattern recognition, unsuitable for automation
 input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines + Fib Confluence
-input bool InpEnableUnifiedICT = false;        // Disable Unified ICT Strategy (over-engineered)
+input bool InpEnableUnifiedICT = true;         // Enable Unified ICT Strategy (Phase 3.3: simplified gate structure)
 input bool InpEnableCandlestick = true;      // Enable Candlestick Patterns Strategy
-input bool InpEnableUnicornModel = false;     // Disable Unicorn Model (subjective ICT concepts)
-input bool InpEnablePowerOfThree = false;     // Disable Power of Three (subjective ICT concepts)
+input bool InpEnableUnicornModel = true;      // Enable Unicorn Model (Phase 3.3: simplified gates, lower confidence)
+input bool InpEnablePowerOfThree = true;      // Enable Power of Three (Phase 3.3: removed SMT, lower confidence)
 input bool InpEnableMeanReversion = true;     // NEW: Mean Reversion Strategy (Batch 93 - Counterbalance for ranging markets)
 input bool InpEnableVolatilityBreakout = true; // NEW: Volatility Breakout Strategy (Batch 93 - Week 3 - Captures explosive moves)
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
@@ -62,8 +63,8 @@ input double InpSparseIntrabarMinReadyCoverage = 0.85; // Min ready-live coverag
 input group "Strategy Weights"
 input double InpWeightMomentum          = 1.0; // Momentum weight
 input double InpWeightTrend             = 1.2; // Trend weight
-input double InpWeightFibonacci         = 0.0; // Fibonacci disabled (merged into SR)
-// ELLIOTT WAVE REMOVED - Weight deleted
+// Fibonacci weight REMOVED - merged into SupportResistance
+// Elliott Wave weight REMOVED
 input double InpWeightSupportResistance = 1.8; // Support/Resistance weight (boosted for Fib confluence)
 input double InpWeightUnifiedICT        = 1.2; // Unified ICT weight (reduced from 2.2)
 input double InpWeightCandlestick       = 1.5; // Candlestick weight
@@ -136,8 +137,8 @@ input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5; // Lower timeframe 
 input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5; // Lower timeframe used by Candlestick when chart TF is higher
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
 input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
-input bool InpIntrabarEligibilityFibonacci = false;   // Intrabar eligibility for Fibonacci strategy (DISABLED - merged into SR)
-// ELLIOTT WAVE REMOVED - Intrabar eligibility deleted
+// Fibonacci intrabar eligibility REMOVED - merged into SR
+// Elliott Wave intrabar eligibility REMOVED
 input bool InpIntrabarEligibilitySupportResistance = true; // Intrabar eligibility for Support/Resistance strategy
 input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
 input bool InpIntrabarEligibilityCandlestick = true;  // Intrabar eligibility for Candlestick strategy
@@ -197,6 +198,12 @@ input bool InpCloseUnprotectedOnRemediationFailure = true;              // Force
 input double InpSyntheticSpikeVelocityMultiplier = 3.0;                 // Synthetic-symbol tick-rate spike multiplier before flatten/pause
 input int InpSyntheticSpikePauseSeconds = 30;                           // Trading pause after synthetic spike alarm
 
+//--- Fast Scalp Engine (Phase 4)
+input group "Fast Scalp Engine"
+input bool InpEnableScalpEngine = true;                                  // Enable Fast Scalp Engine (bypasses consensus)
+input bool InpScalpAsyncMode = false;                                    // Scalp: Use async order execution (faster but no instant confirmation)
+input uint InpScalpMaxLatencyMs = 500;                                   // Scalp: Max execution latency (ms) — reject stale fills
+
 //--- Dynamic Slippage Settings
 input group "Dynamic Slippage"
 input bool InpEnableDynamicSlippage = true;                              // Enable ATR-based dynamic slippage adjustment
@@ -225,6 +232,23 @@ input bool InpEnableClusterMutex = true;          // Block opposing-cluster same
 input int  InpRiskMaxConcurrentPerCluster = 3;    // Maximum concurrent open positions per cluster
 input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per cluster (%)
 
+//--- Portfolio Profit Target with Trailing Floor
+input group "Portfolio Profit Target"
+input double InpDailyProfitTargetPercent = 2.0;    // Daily profit target % (0 = disabled)
+input double InpProfitTrailFactor = 0.7;            // Trail factor: protect this fraction of peak daily profit
+
+//--- Dual-Mode Auto-Switching
+input group "Dual-Mode Auto-Switching"
+input bool   InpEnableAutoModeSwitch = false;       // Enable automatic mode switching
+input double InpConservativeBaseRiskPct = 1.0;      // Conservative: base risk per trade %
+input double InpAggressiveBaseRiskPct = 3.0;        // Aggressive: base risk per trade %
+input double InpModeSwitchDrawdownPct = 5.0;        // Downgrade to conservative at this drawdown %
+input int    InpModeSwitchWinStreak = 5;             // Upgrade to aggressive after N consecutive wins
+
+//--- Log Level
+input group "Logging"
+input int    InpLogLevel = 1;                        // Log verbosity: 0=Silent, 1=Critical, 2=Normal, 3=Verbose, 4=Debug
+
 //--- Include files
 #include <Object.mqh>
 #include <Trade\SymbolInfo.mqh>
@@ -235,6 +259,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "Core\Utils\Instruments.mqh"
 #include "Core\Risk\UnifiedRiskManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
+#include "Core\Risk\RiskTierManager.mqh"
 #include "Core\Monitoring\PerformanceAnalytics.mqh"
 #include "Core\AI\AIPerformanceFeedback.mqh"
 #include "Core\Trading\TradeManager.mqh"
@@ -249,6 +274,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "AIModules\NeuralNetworkStrategy.mqh"
 #include "Core\Engines\AIEngine.mqh"
 #include "Core\Utils\PythonBridge.mqh"
+#include "Core\Utils\DiagnosticsLogger.mqh"
 
 // Enterprise Components
 #include "Core\Management\SymbolUniverseBuilder.mqh"
@@ -258,6 +284,7 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "Core\Engines\TrendEngine.mqh"
 #include "Core\Engines\LiquidityEngine.mqh"
 #include "Core\Engines\VolatilityEngine.mqh"
+#include "Core\Cache\ConsensusCache.mqh"
 
 // Enhanced Strategies
 // ELLIOTT WAVE REMOVED - Include deleted
@@ -276,6 +303,12 @@ input double InpRiskMaxClusterExposurePct = 5.0;  // Maximum projected risk per 
 #include "Core\Visualization\VisualDashboard.mqh"
 #include "Core\Visualization\DrawingCoordinator.mqh"
 
+// Fast Scalp Engine (Phase 4)
+#include "Core\Scalp\FastScalpEngine.mqh"
+#include "Core\Scalp\ScalpSignalCache.mqh"
+#include "Core\Risk\FullMarginMode.mqh"
+#include "Core\Risk\SafeModeConfig.mqh"
+
 //+------------------------------------------------------------------+
 //| Forward declarations
 //+------------------------------------------------------------------+
@@ -286,6 +319,7 @@ CSymbolInfo globalSymbol;
 CAccountInfo g_accountInfo;
 CEnhancedErrorHandler errorHandler;
 CUnifiedRiskManager unifiedRiskManager;
+CRiskTierManager g_riskTierManager;
 CPerformanceAnalytics performanceAnalytics;
 CAIPerformanceFeedback aiFeedback;
 
@@ -315,8 +349,13 @@ CPythonBridge g_pythonBridge; // Python bridge instance
 CTradeManager tradeManager;
 CEnterpriseStrategyManager* g_enterpriseManagers[];      // Per-symbol managers
 string g_enterpriseManagerSymbols[];                     // Manager symbol mapping
+CConsensusCache g_consensusCache;                        // Consensus result cache for SRE hot path
 // g_AIEngine declared in AIEngine.mqh
 CVisualDashboard g_dashboard;
+CFastScalpEngine g_scalpEngine;                            // Fast Scalp Engine (Phase 4)
+CScalpSignalCache g_scalpCache;                            // Scalp signal cache for fast-path evaluation
+CFullMarginMode  g_fullMarginMode;                          // Full-margin aggressive mode (Phase 6)
+CSafeMode        g_safeMode;                                // Conservative safe mode (Phase 6)
 CChartDrawingManager* g_drawingManagers[]; // Per-symbol drawing managers
 string g_drawingManagerSymbols[];          // Symbol mapping for drawing managers
 
@@ -383,6 +422,7 @@ string g_symbolsToTrade = "";
 bool g_beastModeProtection = true;
 bool systemInitialized = false;
 bool tradingEnabled = false;
+int g_logLevel = 1;  // Set from InpLogLevel in OnInit()
 
 // NN attribution diagnostics counters
 int g_nnDiagEntryMapCount = 0;
@@ -426,6 +466,7 @@ ulong g_prevHbSignalsSent = 0;
 datetime g_lastHeartbeatLogTime = 0;
 datetime g_lastNNHealthLogTime = 0;
 datetime g_lastSignalEvalSecond = 0;
+datetime g_lastScalpFastPathSecond = 0;
 int g_symbolEvalStartIndex = 0;
 datetime g_lastExternalCapacityLogTime = 0;
 datetime g_lastUnprotectedRemediationAttempt = 0;
@@ -441,6 +482,25 @@ int g_unprotectedPositionAttempts[];
 int g_syntheticTickRateWindowCount = 0;
 double g_syntheticTickRateBaseline = 0.0;
 bool g_tradingPaused = false;
+
+// Diagnostics logger (Blueprint 3.6: off-journal logging)
+CDiagnosticsLogger g_diagLogger;
+
+// Cached diagnostic strings (Blueprint 3.6: throttle recomputation to 60s)
+string   g_cachedConsensusDiag = "";
+datetime g_consensusDiagTime = 0;
+string   g_cachedRoleClusterDiag = "";
+datetime g_roleClusterDiagTime = 0;
+
+// Portfolio profit target tracking
+bool   g_dailyProfitTargetReached = false;
+double g_dailyProfitPeakPct = 0.0;
+double g_trailingProfitFloor = 0.0;
+bool   g_dailyTradingHalt = false;
+
+// Dual-mode auto-switching
+enum ENUM_AUTO_SWITCH_MODE { AUTO_MODE_CONSERVATIVE = 0, AUTO_MODE_AGGRESSIVE = 1, AUTO_MODE_EMERGENCY = 2 };
+ENUM_AUTO_SWITCH_MODE g_currentTradingMode = AUTO_MODE_CONSERVATIVE;
 
 // Risk configuration defaults (overridable by configuration modules)
 double DefaultStopLossPips = 20.0;
@@ -506,7 +566,7 @@ struct SApprovedTradeCandidate
     bool hasAIContributor;
     bool hasONNXContributor;
     bool hasIndicatorContributor;
-    bool hasElliottContributor;
+    // hasElliottContributor REMOVED - Elliott Wave strategy removed from system
     bool liveAuthorityAllowed;
     double liveAuthorityRiskMultiplier;
     string liveAuthorityReason;
@@ -546,7 +606,7 @@ struct SApprovedTradeCandidate
         hasAIContributor = false;
         hasONNXContributor = false;
         hasIndicatorContributor = false;
-        hasElliottContributor = false;
+        // hasElliottContributor REMOVED
         liveAuthorityAllowed = false;
         liveAuthorityRiskMultiplier = 0.0;
         liveAuthorityReason = "";
@@ -606,7 +666,7 @@ struct SLiveAuthorityTrial
     bool hasAI;
     bool hasONNX;
     bool hasIndicator;
-    bool hasElliott;
+    // hasElliott REMOVED - Elliott Wave strategy removed from system
     string contributors;
     string authorityReason;
 
@@ -624,7 +684,7 @@ struct SLiveAuthorityTrial
         hasAI = false;
         hasONNX = false;
         hasIndicator = false;
-        hasElliott = false;
+        // hasElliott REMOVED
         contributors = "";
         authorityReason = "";
     }
@@ -633,7 +693,7 @@ struct SLiveAuthorityTrial
 SLiveAuthorityStats g_authorityAIStats;
 SLiveAuthorityStats g_authorityONNXStats;
 SLiveAuthorityStats g_authorityIndicatorStats;
-SLiveAuthorityStats g_authorityElliottStats;
+// g_authorityElliottStats REMOVED - Elliott Wave strategy removed from system
 SLiveAuthorityTrial g_authorityTrials[];
 
 double CalculateCandidateRankingScore(const SApprovedTradeCandidate &candidate)
@@ -1007,7 +1067,54 @@ string GetLastErrorMessage()
 }
 
 //+------------------------------------------------------------------+
-//| Helper: Count EA Positions (by magic number)                     |
+//| Per-Symbol Magic Number Encoding                                  |
+//| Format: BASE_MAGIC + symbol_index * 100 + cluster_code           |
+//| Example: BASE=123456, symbol[0]=EURUSD, TREND_CLUSTER=1          |
+//|          → magic=123456 + 0*100 + 1 = 123457                    |
+//|          BASE=123456, symbol[1]=GBPUSD, STRUCTURE_CLUSTER=3      |
+//|          → magic=123456 + 1*100 + 3 = 123559                    |
+//+------------------------------------------------------------------+
+#define MAGIC_SYMBOL_MULTIPLIER 100
+#define MAGIC_MAX_CLUSTER_CODE  99
+
+int GenerateMagicNumber(int symbolIndex, int clusterCode)
+{
+   return InpMagicNumber + symbolIndex * MAGIC_SYMBOL_MULTIPLIER + clusterCode;
+}
+
+//+------------------------------------------------------------------+
+//| Check if a magic number falls within this EA's ownership range    |
+//| Range: [InpMagicNumber, InpMagicNumber + symbolCount*100 + 99]   |
+//+------------------------------------------------------------------+
+bool IsEAOwnedMagic(long magic)
+{
+   int symbolCount = ArraySize(g_enterpriseManagerSymbols);
+   if(symbolCount <= 0)
+      symbolCount = 1; // Fallback for single-symbol mode
+   int maxMagic = InpMagicNumber + symbolCount * MAGIC_SYMBOL_MULTIPLIER + MAGIC_MAX_CLUSTER_CODE;
+   return (magic >= InpMagicNumber && magic <= maxMagic);
+}
+
+//+------------------------------------------------------------------+
+//| Check if a position belongs to this EA (range-based magic check)  |
+//+------------------------------------------------------------------+
+bool IsEAOwnedPosition(ulong ticket)
+{
+   if(!PositionSelectByTicket(ticket))
+      return false;
+   return IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC));
+}
+
+//+------------------------------------------------------------------+
+//| Check if a deal belongs to this EA (range-based magic check)      |
+//+------------------------------------------------------------------+
+bool IsEAOwnedDeal(ulong dealTicket)
+{
+   return IsEAOwnedMagic(HistoryDealGetInteger(dealTicket, DEAL_MAGIC));
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Count EA Positions (by magic number range)                |
 //+------------------------------------------------------------------+
 int GetEAPositionCount()
 {
@@ -1016,8 +1123,8 @@ int GetEAPositionCount()
     {
         if(PositionSelectByTicket(PositionGetTicket(i)))
         {
-            // Check if position belongs to this EA (by magic number)
-            if(PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+            // Check if position belongs to this EA (by magic number range)
+            if(IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC)))
                 count++;
         }
     }
@@ -1039,7 +1146,7 @@ int GetOpenPositionCountForSymbol(const string symbol, const bool onlyThisEAMagi
         if(PositionGetString(POSITION_SYMBOL) != symbol)
             continue;
 
-        if(onlyThisEAMagic && PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+        if(onlyThisEAMagic && !IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC)))
             continue;
 
         count++;
@@ -1057,7 +1164,7 @@ datetime GetLatestEAOpenPositionTime()
         if(ticket == 0 || !PositionSelectByTicket(ticket))
             continue;
 
-        if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+        if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC)))
             continue;
 
         datetime positionTime = (datetime)PositionGetInteger(POSITION_TIME);
@@ -1086,7 +1193,7 @@ datetime GetLatestEAHistoryDealTime()
         if(dealTicket == 0)
             continue;
 
-        if((long)HistoryDealGetInteger(dealTicket, DEAL_MAGIC) != (long)InpMagicNumber)
+        if(!IsEAOwnedMagic(HistoryDealGetInteger(dealTicket, DEAL_MAGIC)))
             continue;
 
         datetime dealTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
@@ -1095,6 +1202,100 @@ datetime GetLatestEAHistoryDealTime()
     }
 
     return latestDealTime;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate daily P&L as percentage of starting equity              |
+//+------------------------------------------------------------------+
+double CalculateDailyPnLPercent()
+{
+    // Sum today's realized P&L from deal history
+    double realizedPnL = 0.0;
+    datetime dayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+
+    HistorySelect(dayStart, TimeCurrent());
+    int totalDeals = HistoryDealsTotal();
+    for(int i = 0; i < totalDeals; i++)
+    {
+        ulong dealTicket = HistoryDealGetTicket(i);
+        if(!IsEAOwnedMagic(HistoryDealGetInteger(dealTicket, DEAL_MAGIC))) continue;
+        if(HistoryDealGetInteger(dealTicket, DEAL_ENTRY) == DEAL_ENTRY_OUT ||
+           HistoryDealGetInteger(dealTicket, DEAL_ENTRY) == DEAL_ENTRY_OUT_BY)
+        {
+            realizedPnL += HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+            realizedPnL += HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+            realizedPnL += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+        }
+    }
+
+    // Add unrealized P&L
+    double unrealizedPnL = 0.0;
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+        unrealizedPnL += PositionGetDouble(POSITION_PROFIT);
+        unrealizedPnL += PositionGetDouble(POSITION_SWAP);
+    }
+
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double denominator = MathMax(MathMin(balance, equity), 1.0);
+
+    return (realizedPnL + unrealizedPnL) / denominator * 100.0;
+}
+
+//+------------------------------------------------------------------+
+//| Count consecutive winning deals from history                      |
+//+------------------------------------------------------------------+
+int CountConsecutiveWins()
+{
+    int count = 0;
+    HistorySelect(0, TimeCurrent());
+    int totalDeals = HistoryDealsTotal();
+    for(int i = totalDeals - 1; i >= 0; i--)
+    {
+        ulong dealTicket = HistoryDealGetTicket(i);
+        if(!IsEAOwnedMagic(HistoryDealGetInteger(dealTicket, DEAL_MAGIC))) continue;
+        if(HistoryDealGetInteger(dealTicket, DEAL_ENTRY) != DEAL_ENTRY_OUT &&
+           HistoryDealGetInteger(dealTicket, DEAL_ENTRY) != DEAL_ENTRY_OUT_BY) continue;
+
+        double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT) +
+                        HistoryDealGetDouble(dealTicket, DEAL_SWAP) +
+                        HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+        if(profit > 0) count++;
+        else break;
+    }
+    return count;
+}
+
+//+------------------------------------------------------------------+
+//| Determine trading mode based on performance and market conditions |
+//+------------------------------------------------------------------+
+ENUM_AUTO_SWITCH_MODE DetermineTradingMode()
+{
+    double drawdownPct = 0.0;
+    // Calculate current drawdown from peak equity
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    if(balance > 0) drawdownPct = (balance - equity) / balance * 100.0;
+
+    // Emergency: Critical drawdown
+    if(drawdownPct > 15.0) return AUTO_MODE_EMERGENCY;
+
+    // Downgrade to conservative if drawdown exceeds threshold
+    if(drawdownPct > InpModeSwitchDrawdownPct) return AUTO_MODE_CONSERVATIVE;
+
+    // Upgrade to aggressive if: equity at high + winning streak + clear trend
+    if(g_currentTradingMode == AUTO_MODE_CONSERVATIVE)
+    {
+        // Only upgrade if we have a winning streak
+        int consecutiveWins = CountConsecutiveWins();
+        if(consecutiveWins >= InpModeSwitchWinStreak)
+            return AUTO_MODE_AGGRESSIVE;
+    }
+
+    return g_currentTradingMode;  // Stay in current mode
 }
 
 void RecoverTradeTimingStateOnInit()
@@ -1295,7 +1496,7 @@ void AttemptUnprotectedPositionRemediation()
         }
 
         long positionMagic = PositionGetInteger(POSITION_MAGIC);
-        if(positionMagic != InpMagicNumber)
+        if(!IsEAOwnedMagic(positionMagic))
         {
             externalUnprotectedCount++;
             continue;
@@ -1391,7 +1592,7 @@ void ManageOpenPositionsIfNeeded()
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
 
             string sym = PositionGetString(POSITION_SYMBOL);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
@@ -1402,7 +1603,12 @@ void ManageOpenPositionsIfNeeded()
             double confidence = 0;
             int confluence = 0;
             // Use INTRABAR mode for fast reversal detection
-            ENUM_TRADE_SIGNAL currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(sym, confidence, confluence, EVAL_MODE_INTRABAR);
+            ENUM_TRADE_SIGNAL currentSignal;
+            if(!g_consensusCache.TryGet(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence))
+            {
+                currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(sym, confidence, confluence, EVAL_MODE_INTRABAR);
+                g_consensusCache.Store(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence);
+            }
             
             bool reversalDetected = false;
             bool isBuy = (type == POSITION_TYPE_BUY);
@@ -1493,11 +1699,18 @@ void ManageOpenPositionsIfNeeded()
     datetime nowManage = TimeCurrent();
     if(s_lastPositionManageTime == 0 || (nowManage - s_lastPositionManageTime) >= 1)
     {
-        tradeManager.ManageAllPositions(InpLifecycleBreakevenBufferPoints,
-                                        InpLifecycleTrailingDistancePoints,
+        tradeManager.ManageAllPositions(g_riskTierManager.GetBreakevenBufferPts(),
+                                        g_riskTierManager.GetTrailingDistancePts(),
                                         InpLifecycleTrailingStepPoints,
                                         InpLifecycleUseATRTrailing,
                                         InpLifecycleATRMultiplier);
+
+        // Phase 6: Safe mode partial profit taking for swing positions
+        if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+        {
+            g_safeMode.ManageSafeModePositions(&tradeManager);
+        }
+
         s_lastPositionManageTime = nowManage;
     }
 }
@@ -1575,7 +1788,7 @@ bool HandleEmergencyDrawdownStop(const string reasonTag)
             continue;
 
         bool shouldClose = InpEmergencyFlattenAllAccountPositions ||
-                           (PositionGetInteger(POSITION_MAGIC) == InpMagicNumber);
+                           IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC));
         if(shouldClose)
         {
             if(tradeManager.ClosePosition(ticket, "Emergency Stop"))
@@ -1613,7 +1826,7 @@ void TriggerSyntheticSpikeAlarm(const double currentRate, const double baselineR
             continue;
 
         string positionSymbol = PositionGetString(POSITION_SYMBOL);
-        bool ownPosition = (PositionGetInteger(POSITION_MAGIC) == InpMagicNumber);
+        bool ownPosition = IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC));
         bool shouldClose = InpEmergencyFlattenAllAccountPositions ||
                            (ownPosition && positionSymbol == _Symbol);
         if(shouldClose)
@@ -1737,10 +1950,20 @@ void ProcessTickSafetyLoop()
 
     unifiedRiskManager.RefreshRuntimeState();
     RefreshAccountRuntimeMetrics();
+    unifiedRiskManager.MonitorMarginHealth();
+    tradeManager.CheckPendingConfirmations();  // Phase 1.4: non-blocking execution confirmation
     AttemptUnprotectedPositionRemediation();
     ManageOpenPositionsIfNeeded();
     EvaluateSyntheticSpikeAlarm();
     HandleEmergencyDrawdownStop("tick");
+
+    // Fast Scalp Engine: tick-level position management (NOT throttled)
+    if(InpEnableScalpEngine && g_scalpEngine.IsInitialized())
+    {
+        g_scalpEngine.ManageScalpPositions();
+        g_scalpEngine.CheckPendingScalpOrders();
+        g_scalpEngine.CheckPendingAsyncOrders();
+    }
 }
 
 string ExtractPredictionIdFromComment(const string comment)
@@ -1781,6 +2004,17 @@ string NormalizeClusterCode(const string clusterCode)
     return "N";
 }
 
+//+------------------------------------------------------------------+
+//| Convert cluster code string to numeric value for magic encoding   |
+//+------------------------------------------------------------------+
+int ClusterCodeToNumeric(const string clusterCode)
+{
+    if(clusterCode == "T") return (int)TREND_CLUSTER;            // 1
+    if(clusterCode == "R") return (int)MEAN_REVERSION_CLUSTER;   // 2
+    if(clusterCode == "S") return (int)STRUCTURE_CLUSTER;        // 3
+    return 0; // STRATEGY_CLUSTER_NONE
+}
+
 string BuildClusterTaggedTradeComment(const string clusterCode, const string predictionId)
 {
     string compactBase = "K:" + NormalizeClusterCode(clusterCode) + "|EA";
@@ -1814,13 +2048,9 @@ bool ContributorsIncludeONNX(const string &contributors[])
     return ContributorsIncludeName(contributors, "ONNX AI");
 }
 
-bool ContributorsIncludeElliott(const string &contributors[])
-{
-    // ELLIOTT WAVE REMOVED - Function returns false
-    return false;
-}
+// ContributorsIncludeElliott REMOVED - Elliott Wave strategy removed from system
 
-int CountNonElliottIndicatorContributors(const string &contributors[])
+int CountIndicatorContributors(const string &contributors[])
 {
     int count = 0;
     for(int i = 0; i < ArraySize(contributors); i++)
@@ -2183,8 +2413,8 @@ string GetStrategyNameByIndex(const int index)
     {
         case 0: return "Momentum";
         case 1: return "Trend";
-        case 2: return "Fibonacci";
-        // ELLIOTT WAVE REMOVED - Index 3 deleted
+        // case 2: Fibonacci REMOVED - merged into Support/Resistance
+        // case 3: Elliott Wave REMOVED
         case 4: return "Support/Resistance";
         case 5: return "Unified ICT";
         case 6: return "Candlestick";
@@ -2328,7 +2558,7 @@ int GetStrategyIndexByName(const string strategyName)
     if(strategyName == "Trend")
         return 1;
     if(strategyName == "Fibonacci")
-        return 2;
+        return 2; // REMOVED — slot preserved for index stability; Fibonacci never registers
     // ELLIOTT WAVE REMOVED - Index 3 deleted
     if(strategyName == "Support/Resistance")
         return 4;
@@ -2464,7 +2694,7 @@ ENUM_STRATEGY_CLUSTER ResolveStrategyClusterForName(const string strategyName)
 {
     if(strategyName == "Momentum" || strategyName == "Trend" || strategyName == "Volatility Breakout")
         return TREND_CLUSTER;
-    if(strategyName == "Fibonacci" || strategyName == "Support/Resistance" || strategyName == "Mean Reversion")
+    if(strategyName == "Support/Resistance" || strategyName == "Mean Reversion")
         return MEAN_REVERSION_CLUSTER;
     // ELLIOTT WAVE REMOVED - Removed from cluster
     if(strategyName == "Unified ICT" || strategyName == "Candlestick" ||
@@ -2484,7 +2714,7 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
            strategyName == "Unicorn Model" || strategyName == "Power of Three" ||
            strategyName == "Mean Reversion" || strategyName == "Volatility Breakout")
             return PRIMARY_ALPHA;
-        if(strategyName == "Fibonacci" || strategyName == "Support/Resistance" || strategyName == "Candlestick")
+        if(strategyName == "Support/Resistance" || strategyName == "Candlestick")
             return CONTEXT_FEATURE;
     }
     return PRIMARY_ALPHA;
@@ -2502,8 +2732,8 @@ bool IsStrategyIntrabarEnabledByInput(const int index)
     {
         case 0: return InpIntrabarEligibilityMomentum;
         case 1: return InpIntrabarEligibilityTrend;
-        case 2: return InpIntrabarEligibilityFibonacci;
-        // ELLIOTT WAVE REMOVED - Case 3 deleted
+        case 2: return false; // Fibonacci REMOVED - always false
+        // case 3: Elliott Wave REMOVED
         case 4: return InpIntrabarEligibilitySupportResistance;
         case 5: return InpIntrabarEligibilityUnifiedICT;
         case 6: return InpIntrabarEligibilityCandlestick;
@@ -2709,11 +2939,8 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 0 && strategyFlags[0]), false, InpWeightMomentum);
     RegisterStrategyDefinitionIfEnabled("Trend", STRATEGY_TREND, false,
                                         (ArraySize(strategyFlags) > 1 && strategyFlags[1]), false, InpWeightTrend);
-    RegisterStrategyDefinitionIfEnabled("Fibonacci", STRATEGY_FIBONACCI, false,
-                                        (ArraySize(strategyFlags) > 2 && strategyFlags[2]), false, InpWeightFibonacci);
-    // ELLIOTT WAVE REMOVED - Registration deleted
-    // RegisterStrategyDefinitionIfEnabled("Elliott Wave", STRATEGY_ELLIOTT_WAVE, false,
-    //                                     (ArraySize(strategyFlags) > 3 && strategyFlags[3]), false, InpWeightElliottWave);
+    // Fibonacci REMOVED - merged into Support/Resistance
+    // Elliott Wave REMOVED - registration deleted
     RegisterStrategyDefinitionIfEnabled("Support/Resistance", STRATEGY_SUPPORT_RESISTANCE, false,
                                         (ArraySize(strategyFlags) > 4 && strategyFlags[4]), false, InpWeightSupportResistance);
     RegisterStrategyDefinitionIfEnabled("Unified ICT", STRATEGY_UNIFIED_ICT, false,
@@ -2724,6 +2951,10 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 7 && strategyFlags[7]), false, InpWeightUnicornModel);
     RegisterStrategyDefinitionIfEnabled("Power of Three", STRATEGY_UNIFIED_ICT, false,
                                         (ArraySize(strategyFlags) > 8 && strategyFlags[8]), false, InpWeightPowerOfThree);
+    RegisterStrategyDefinitionIfEnabled("Mean Reversion", STRATEGY_MEAN_REVERSION, false,
+                                        (ArraySize(strategyFlags) > 9 && strategyFlags[9]), false, InpWeightMeanReversion);
+    RegisterStrategyDefinitionIfEnabled("Volatility Breakout", STRATEGY_VOLATILITY_BREAKOUT, false,
+                                        (ArraySize(strategyFlags) > 10 && strategyFlags[10]), false, InpWeightVolatilityBreakout);
 
     }
 
@@ -2954,8 +3185,7 @@ bool ResolveLiveAuthority(const string symbol,
                           const bool hasAI,
                           const bool hasONNX,
                           const bool hasIndicator,
-                          const bool hasElliott,
-                          const int nonElliottIndicatorCount,
+                          const int indicatorContributorCount,
                           const int confluence,
                           const double tradeConfidence,
                           const double qualityScore,
@@ -3052,18 +3282,13 @@ bool ResolveLiveAuthority(const string symbol,
         return false;
     }
 
-    if(hasElliott && nonElliottIndicatorCount <= 0)
-    {
-        reason = StringFormat("ELLIOTT_ONLY_RESEARCH_SHADOW | %s", AuthorityStatsSummary("Elliott", g_authorityElliottStats));
-        riskMultiplier = 0.0;
-        return false;
-    }
+    // Elliott Wave REMOVED — no longer a separate strategy family
 
     bool indicatorPromoted = AuthorityStatsPromoted(g_authorityIndicatorStats);
     bool highQualitySolo = (confluence >= 1 && tradeConfidence >= 0.78 && qualityScore >= 0.82);
-    
+
     if((confluence >= MathMax(1, InpMinLiveVoters) || highQualitySolo) &&
-       nonElliottIndicatorCount >= 1 &&
+       indicatorContributorCount >= 1 &&
        (indicatorPromoted || g_authorityIndicatorStats.samples < MathMax(1, InpAuthorityMinSamples) || highQualitySolo) &&
        tradeConfidence >= (highQualitySolo ? 0.75 : 0.60) &&
        qualityScore >= (highQualitySolo ? 0.80 : 0.68))
@@ -3088,9 +3313,9 @@ bool ResolveLiveAuthority(const string symbol,
         return true;
     }
 
-    reason = StringFormat("UNPROVEN_RESEARCH_SHADOW | confluence=%d non_elliott=%d contributors=%s",
+    reason = StringFormat("UNPROVEN_RESEARCH_SHADOW | confluence=%d indicator_count=%d contributors=%s",
                           confluence,
-                          nonElliottIndicatorCount,
+                          indicatorContributorCount,
                           contributors);
     riskMultiplier = 0.0;
     return false;
@@ -3148,7 +3373,7 @@ void RegisterLiveAuthorityTrial(const SApprovedTradeCandidate &candidate,
     trial.hasAI = candidate.hasAIContributor;
     trial.hasONNX = candidate.hasONNXContributor;
     trial.hasIndicator = candidate.hasIndicatorContributor;
-    trial.hasElliott = candidate.hasElliottContributor;
+    // hasElliott REMOVED — Elliott Wave strategy removed
     trial.contributors = candidate.contributorSummary;
     trial.authorityReason = authorityReason;
     g_authorityTrials[slot] = trial;
@@ -3177,10 +3402,9 @@ void CompleteAuthorityTrial(const int index, const double outcomeR, const string
         UpdateAuthorityStats(g_authorityONNXStats, outcomeR);
     if(trial.hasIndicator)
         UpdateAuthorityStats(g_authorityIndicatorStats, outcomeR);
-    if(trial.hasElliott)
-        UpdateAuthorityStats(g_authorityElliottStats, outcomeR);
+    // Elliott Wave REMOVED — no separate authority stats tracking
 
-    PrintFormat("[AUTHORITY-RESULT] %s | signal=%s | live=%s | outcomeR=%.3f | reason=%s | trial_reason=%s | contributors=%s | AI={%s} | ONNX={%s} | IND={%s} | EW={%s}",
+    PrintFormat("[AUTHORITY-RESULT] %s | signal=%s | live=%s | outcomeR=%.3f | reason=%s | trial_reason=%s | contributors=%s | AI={%s} | ONNX={%s} | IND={%s}",
                 trial.symbol,
                 TradeSignalToString(trial.signal),
                 trial.liveSent ? "true" : "false",
@@ -3190,8 +3414,7 @@ void CompleteAuthorityTrial(const int index, const double outcomeR, const string
                 trial.contributors,
                 AuthorityStatsSummary("AI", g_authorityAIStats),
                 AuthorityStatsSummary("ONNX", g_authorityONNXStats),
-                AuthorityStatsSummary("Indicator", g_authorityIndicatorStats),
-                AuthorityStatsSummary("Elliott", g_authorityElliottStats));
+                AuthorityStatsSummary("Indicator", g_authorityIndicatorStats));
 
     g_authorityTrials[index].active = false;
 }
@@ -3360,8 +3583,8 @@ void BuildStrategyFlags(bool &strategyFlags[])
     ArrayResize(strategyFlags, 11);  // Increased from 10 to 11 for Volatility Breakout (Batch 93 - Week 3)
     strategyFlags[0]  = InpEnableMomentum;
     strategyFlags[1]  = InpEnableTrend;
-    strategyFlags[2]  = InpEnableFibonacci;
-    // ELLIOTT WAVE REMOVED - Index 3 deleted
+    strategyFlags[2]  = false; // Fibonacci REMOVED - always false, slot preserved for index stability
+    // Index 3: Elliott Wave REMOVED - slot preserved for index stability
     strategyFlags[4]  = InpEnableSupportResistance;
     strategyFlags[5]  = InpEnableUnifiedICT;
     strategyFlags[6]  = InpEnableCandlestick;
@@ -3377,8 +3600,8 @@ void BuildStrategyFlags(bool &strategyFlags[])
     ArrayResize(curatedBaseline, 11);  // Increased from 10 to 11 for Volatility Breakout (Batch 93 - Week 3)
     curatedBaseline[0] = false; // Momentum
     curatedBaseline[1] = false; // Trend
-    curatedBaseline[2] = false; // Fibonacci (DISABLED - merged into SR)
-    // ELLIOTT WAVE REMOVED - Index 3 deleted
+    curatedBaseline[2] = false; // Fibonacci REMOVED - merged into SR
+    // Index 3: Elliott Wave REMOVED
     curatedBaseline[4] = false; // Support/Resistance + Fib Confluence
     curatedBaseline[5] = true;  // Unified ICT
     curatedBaseline[6] = false; // Candlestick
@@ -3939,9 +4162,19 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         filters.tradeNewYorkSession = true;
         filters.tradeTokyoSession = true;
         filters.minConfidence = MathMax(0.0, MathMin(1.0, InpPipelineMinConfidence));
+
+        // Phase 6: Safe mode raises the minimum confidence floor
+        if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+            filters.minConfidence = MathMax(filters.minConfidence, g_safeMode.GetConfig().minConfidence);
         filters.intrabarConfidenceCap = MathMax(0.0, InpPipelineIntrabarConfidenceCap);
         filters.enableRegimeCostGate = InpPipelineEnableRegimeCostGate;
         filters.maxSpreadToAtrRatio = MathMax(0.01, InpPipelineMaxSpreadToAtrRatio);
+
+        // Phase 6: Full-margin and safe mode use stricter spread/ATR ratios
+        if(InpRiskTier == RISK_TIER_FULL_MARGIN && g_fullMarginMode.IsInitialized())
+            filters.maxSpreadToAtrRatio = MathMin(filters.maxSpreadToAtrRatio, g_fullMarginMode.GetConfig().maxSpreadATRRatio);
+        if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+            filters.maxSpreadToAtrRatio = MathMin(filters.maxSpreadToAtrRatio, g_safeMode.GetConfig().maxSpreadATRRatio);
         filters.spreadShockCooldownSeconds = MathMax(5, InpPipelineSpreadShockCooldownSec);
         filters.maxEntryRangeZScore = MathMax(0.5, InpPipelineLateEntryZScoreLimit);
         filters.maxVolatility = InpMaxVolatility;
@@ -4075,6 +4308,13 @@ int OnInit()
     Print("[MULTI-STRATEGY-EA] Advanced AI Trading System v2.0 Starting");
     Print("[MULTI-STRATEGY-EA] ========================================");
 
+    // Set global log level from input
+    g_logLevel = InpLogLevel;
+    PrintFormat("[LOG-LEVEL] Set to %d (0=Silent, 1=Critical, 2=Normal, 3=Verbose, 4=Debug)", g_logLevel);
+
+    // Initialize diagnostics logger (Blueprint 3.6: off-journal logging)
+    g_diagLogger.Initialize("MultiStrategyEA", InpLogLevel);
+
     // Validate MetaTrader 5 environment
     if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
     {
@@ -4106,12 +4346,43 @@ int OnInit()
         Print("[CRITICAL] Failed to initialize TradeManager");
         return INIT_FAILED;
     }
+    tradeManager.SetLogLevel(InpLogLevel);
+    // Set magic range for per-symbol ownership check (will be updated after symbol universe is built)
+    tradeManager.SetMagicRangeMax((uint)InpMagicNumber);
     g_tickSafetyMonitor.SetMinFreeMarginPercent(20.0);
     g_tickSafetyMonitor.SetMinMarginLevel(150.0);
     g_tickSafetyMonitor.SetEmergencyStop(false);
+    g_consensusCache.InvalidateAll();
     g_aiBrainReady = false;
     g_aiEngineReady = false;
     g_aiFeedbackReady = false;
+
+    // Initialize Fast Scalp Engine (Phase 4)
+    if(InpEnableScalpEngine)
+    {
+        if(!g_scalpEngine.Initialize(&tradeManager, &unifiedRiskManager, &positionSizer, &g_riskTierManager))
+            Print("[SCALP-ENGINE] WARNING: Failed to initialize — scalp engine disabled");
+        else
+        {
+            g_scalpEngine.SetMagicNumber((uint)InpMagicNumber);
+            g_scalpEngine.SetAsyncMode(InpScalpAsyncMode);
+            g_scalpEngine.SetMaxLatencyMs(InpScalpMaxLatencyMs);
+
+            // Initialize scalp signal cache for fast-path evaluation
+            if(g_scalpCache.Initialize(g_activePairs, ArraySize(g_activePairs), PERIOD_M1))
+            {
+                // Wire cache to scalp engine for zero-CopyBuffer fast path
+                g_scalpEngine.SetSignalCache(GetPointer(g_scalpCache));
+                Print("[SCALP-CACHE] Fast-path dual-path architecture enabled");
+            }
+            else
+                Print("[SCALP-CACHE] WARNING: Cache initialization failed — falling back to per-call indicators");
+        }
+    }
+    else
+    {
+        Print("[SCALP-ENGINE] Disabled by user input (InpEnableScalpEngine=false)");
+    }
 
     // Validate account type and permissions
     ENUM_ACCOUNT_TRADE_MODE tradeMode = (ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE);
@@ -4200,10 +4471,7 @@ int OnInit()
         Print("[CRITICAL] UnifiedRiskManager failed to initialize!");
         return INIT_FAILED;
     }
-    unifiedRiskManager.ConfigureClusterGovernance(InpEnableClusterRiskGovernance,
-                                                  MathMax(1, InpRiskMaxConcurrentPerCluster),
-                                                  MathMax(0.1, InpRiskMaxClusterExposurePct),
-                                                  InpEnableClusterMutex);
+    // Cluster governance configured after RiskTierManager applies tier overrides (see below)
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
     
     // Log initial account capacity diagnostics
@@ -4241,6 +4509,43 @@ int OnInit()
     {
         Print("[INIT] PositionSizer initialized — Mode: RISK_PERCENT, Risk: ",
               DoubleToString(sizingParams.riskPercent, 2), "%");
+    }
+
+    // Apply risk tier configuration to risk manager, position sizer, and trade manager
+    g_riskTierManager.SetTier(InpRiskTier);
+    g_riskTierManager.ApplyToRiskManager(unifiedRiskManager, &performanceAnalytics);
+    g_riskTierManager.ApplyToPositionSizer(positionSizer);
+    g_riskTierManager.ApplyToTradeManager(tradeManager);
+
+    // Wire PositionSizer to unified correlation engine via portfolio risk manager
+    positionSizer.SetCorrelationEngine(unifiedRiskManager.GetPortfolioRiskManager().GetCorrelationEngine());
+    positionSizer.SetLogLevel(InpLogLevel);
+
+    unifiedRiskManager.ConfigureClusterGovernance(InpEnableClusterRiskGovernance,
+                                                  MathMax(1, InpRiskMaxConcurrentPerCluster),
+                                                  MathMax(0.1, InpRiskMaxClusterExposurePct),
+                                                  InpEnableClusterMutex);
+    PrintFormat("[INIT] RiskTierManager applied tier=%s | breakeven=%.0f pts | trailing=%.0f pts",
+                g_riskTierManager.GetTierName(),
+                g_riskTierManager.GetBreakevenBufferPts(),
+                g_riskTierManager.GetTrailingDistancePts());
+
+    // Phase 6: Initialize full-margin mode or safe mode based on risk tier
+    if(InpRiskTier == RISK_TIER_FULL_MARGIN)
+    {
+        SFullMarginConfig fmConfig = g_riskTierManager.GetFullMarginConfig();
+        if(!g_fullMarginMode.Initialize(fmConfig))
+            Print("[INIT] WARNING: Full-margin mode initialization failed");
+        else
+            Print("[INIT] Full-margin aggressive mode ENABLED — position stacking, stricter circuit breaker active");
+    }
+    else if(InpRiskTier == RISK_TIER_CONSERVATIVE)
+    {
+        SSafeModeConfig smConfig = g_riskTierManager.GetSafeModeConfig();
+        if(!g_safeMode.Initialize(smConfig))
+            Print("[INIT] WARNING: Safe mode initialization failed");
+        else
+            Print("[INIT] Conservative safe mode ENABLED — kill zone filter, partial profit taking active");
     }
 
     // AIEngine will be initialized after enterprise managers are created (manager-owned adaptation).
@@ -4348,6 +4653,19 @@ int OnInit()
         Print("[CRITICAL] Failed to initialize any Enterprise Strategy Manager.");
         return INIT_FAILED;
     }
+
+    // Update magic range max now that symbol universe is known
+    int symbolCount = ArraySize(g_enterpriseManagerSymbols);
+    uint magicRangeMax = (uint)(InpMagicNumber + symbolCount * MAGIC_SYMBOL_MULTIPLIER + MAGIC_MAX_CLUSTER_CODE);
+    tradeManager.SetMagicRangeMax(magicRangeMax);
+    // Propagate magic range to all enterprise managers
+    for(int mi = 0; mi < ArraySize(g_enterpriseManagers); mi++)
+    {
+        if(g_enterpriseManagers[mi] != NULL)
+            g_enterpriseManagers[mi].SetManagedMagicRangeMax((long)magicRangeMax);
+    }
+    PrintFormat("[MAGIC-RANGE] base=%d | symbols=%d | range_max=%u | encoding=BASE+symbolIndex*%d+clusterCode",
+                InpMagicNumber, symbolCount, magicRangeMax, MAGIC_SYMBOL_MULTIPLIER);
 
 
     RebuildSymbolSchedulerState("post_manager_init");
@@ -4613,6 +4931,12 @@ void OnDeinit(const int reason)
     g_aiBrainReady = false;
     g_aiEngineReady = false;
 
+    // Deinitialize diagnostics logger (Blueprint 3.6)
+    g_diagLogger.Deinit();
+
+    // Cleanup scalp signal cache
+    g_scalpCache.Cleanup();
+
     CIndicatorManager::DestroyInstance();
 
     // Clear chart
@@ -4739,6 +5063,90 @@ void OnTimer()
 void OnTick()
 {
     ProcessTickSafetyLoop();
+
+    // Fast-path scalp signal evaluation on ticks (dual-path architecture)
+    if(InpEnableScalpEngine && g_scalpEngine.IsInitialized())
+    {
+        ProcessScalpFastPath();
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Fast-path scalp signal evaluation (tick-level, dual-path)         |
+//| Uses cached indicator values — zero CopyBuffer in fast path       |
+//| Throttled to max once per second for signal evaluation            |
+//+------------------------------------------------------------------+
+void ProcessScalpFastPath()
+{
+    // Throttle: max once per second for signal evaluation
+    // (position management in ProcessTickSafetyLoop runs every tick)
+    datetime currentSecond = TimeCurrent();
+    if(currentSecond == g_lastScalpFastPathSecond) return;
+    g_lastScalpFastPathSecond = currentSecond;
+
+    // Skip if daily trading halt is active
+    if(g_dailyTradingHalt) return;
+
+    // Skip if scalp cache not initialized
+    if(!g_scalpCache.IsInitialized()) return;
+
+    // Update tick-level cache values (zero computation — just reads SymbolInfoDouble)
+    g_scalpCache.UpdateTickValues();
+
+    // Check for new bar — if new bar, update indicator cache (CopyBuffer only here)
+    for(int i = 0; i < ArraySize(g_activePairs); i++)
+    {
+        if(g_scalpCache.HasNewBar(g_activePairs[i]))
+        {
+            g_scalpCache.UpdateOnNewBar();
+            break;  // UpdateOnNewBar updates all symbols at once
+        }
+    }
+
+    // Evaluate scalp signals for each active symbol
+    for(int i = 0; i < ArraySize(g_activePairs); i++)
+    {
+        string symbol = g_activePairs[i];
+        SScalpIndicatorCache* cache = g_scalpCache.GetCache(symbol);
+        if(cache == NULL) continue;
+        if(!cache.isValid) continue;
+
+        // Only evaluate if pre-qualified for scalping
+        if(!cache.scalpSetupActive) continue;
+
+        // Quick spread gate (zero computation — uses cached spread)
+        if(cache.pointSize > 0.0 && cache.atrValue > 0.0)
+        {
+            double maxSpreadPoints = cache.atrValue * 0.3 / cache.pointSize;
+            if(cache.spreadPoints > maxSpreadPoints) continue;
+        }
+
+        // Delegate to scalp engine for signal evaluation and execution
+        // The scalp engine uses the cached values instead of computing them
+        ENUM_TRADE_SIGNAL scalpSignal = TRADE_SIGNAL_NONE;
+        double scalpConfidence = 0.0;
+        double scalpLotSize = 0.0;
+
+        if(g_scalpEngine.ShouldEnterScalp(symbol, scalpSignal, scalpConfidence, scalpLotSize))
+        {
+            if(InpShadowMode)
+            {
+                PrintFormat("[SHADOW-SCALP-FAST] %s | %s | lot=%.2f | confidence=%.2f | SHADOW MODE — no order sent",
+                            symbol,
+                            scalpSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                            scalpLotSize,
+                            scalpConfidence);
+            }
+            else
+            {
+                // Use pending orders if configured, otherwise market order
+                if(g_scalpEngine.GetConfig().usePendingOrders)
+                    g_scalpEngine.PlaceScalpPendingOrder(symbol, scalpSignal, scalpLotSize);
+                else
+                    g_scalpEngine.ExecuteScalpTrade(symbol, scalpSignal, scalpLotSize, scalpConfidence);
+            }
+        }
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -4761,7 +5169,7 @@ void ProcessTradingLogic(bool fromTimer)
     }
 
     // Enhanced logging every 50 calls to show pipeline activity
-    if(callCount % 50 == 0)
+    if(callCount % 50 == 0 && g_logLevel >= 3)
     {
         PrintFormat("[DEBUG-PROCESS] Call #%d - EA is processing normally (Source: %s)", callCount, fromTimer ? "TIMER" : "TICK");
         Print("[DEBUG-PROCESS] Call #", callCount, " Time: ", TimeCurrent());
@@ -4827,10 +5235,73 @@ void ProcessTradingLogic(bool fromTimer)
     RefreshAccountRuntimeMetrics();
     UpdateLiveAuthorityTrials();
 
+    // Reset daily profit target state on new day
+    static datetime s_lastProfitTargetDay = 0;
+    datetime profitTargetToday = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+    if(profitTargetToday != s_lastProfitTargetDay)
+    {
+        s_lastProfitTargetDay = profitTargetToday;
+        g_dailyProfitTargetReached = false;
+        g_dailyProfitPeakPct = 0.0;
+        g_trailingProfitFloor = 0.0;
+        g_dailyTradingHalt = false;
+    }
+
+    // Portfolio-level profit target with trailing floor
+    if(InpDailyProfitTargetPercent > 0.0 && !g_dailyTradingHalt)
+    {
+        double dailyProfitPct = CalculateDailyPnLPercent();
+
+        if(dailyProfitPct >= InpDailyProfitTargetPercent && !g_dailyProfitTargetReached)
+        {
+            g_dailyProfitTargetReached = true;
+            g_dailyProfitPeakPct = dailyProfitPct;
+            g_trailingProfitFloor = dailyProfitPct * InpProfitTrailFactor;
+            PrintFormat("[PROFIT-TARGET] Daily profit target reached: %.2f%% (target: %.2f%%). Trailing floor set at %.2f%%",
+                        dailyProfitPct, InpDailyProfitTargetPercent, g_trailingProfitFloor);
+        }
+
+        if(g_dailyProfitTargetReached)
+        {
+            g_dailyProfitPeakPct = MathMax(g_dailyProfitPeakPct, dailyProfitPct);
+            g_trailingProfitFloor = g_dailyProfitPeakPct * InpProfitTrailFactor;
+
+            if(dailyProfitPct < g_trailingProfitFloor)
+            {
+                PrintFormat("[PROFIT-TARGET] Trailing floor breached: %.2f%% < %.2f%%. Closing all positions.",
+                            dailyProfitPct, g_trailingProfitFloor);
+                tradeManager.CloseAllPositions("");
+                g_dailyTradingHalt = true;
+            }
+        }
+    }
+
+    // Dual-mode auto-switching logic
+    if(InpEnableAutoModeSwitch)
+    {
+        ENUM_AUTO_SWITCH_MODE newMode = DetermineTradingMode();
+        if(newMode != g_currentTradingMode)
+        {
+            PrintFormat("[MODE-SWITCH] Trading mode changed: %d -> %d", g_currentTradingMode, newMode);
+            g_currentTradingMode = newMode;
+
+            // Apply mode-specific risk parameters
+            if(g_currentTradingMode == AUTO_MODE_CONSERVATIVE)
+                unifiedRiskManager.SetBaseRiskPerTrade(InpConservativeBaseRiskPct);
+            else if(g_currentTradingMode == AUTO_MODE_AGGRESSIVE)
+                unifiedRiskManager.SetBaseRiskPerTrade(InpAggressiveBaseRiskPct);
+            else if(g_currentTradingMode == AUTO_MODE_EMERGENCY)
+            {
+                tradeManager.CloseAllPositions("");
+                g_dailyTradingHalt = true;
+            }
+        }
+    }
+
     // Deterministic remediation loop for unprotected-position veto states.
     AttemptUnprotectedPositionRemediation();
     bool unprotectedPositionsActive = unifiedRiskManager.HasUnprotectedPositions();
-    if(unprotectedPositionsActive && callCount % 50 == 0)
+    if(unprotectedPositionsActive && callCount % 50 == 0 && g_logLevel >= 2)
     {
         Print("[RISK-UNPROTECTED] New entries paused until stop protection is restored");
     }
@@ -4879,6 +5350,7 @@ void ProcessTradingLogic(bool fromTimer)
             {
                 g_lastSymbolBarTimes[symIdx] = currentBarTime;
                 anyNewBarDetected = true;
+                g_consensusCache.Invalidate(symbolForBar);
                 if(symIdx < ArraySize(g_pendingNewBarScans))
                     g_pendingNewBarScans[symIdx] = true;
                 if(symIdx < ArraySize(g_symbolScanStates))
@@ -4913,7 +5385,7 @@ void ProcessTradingLogic(bool fromTimer)
             }
         }
 
-        if(callCount % 100 == 0)
+        if(callCount % 100 == 0 && g_logLevel >= 3)
             Print("[DRAWINGS] OnNewBar processed for all managed symbols");
     }
 
@@ -4932,6 +5404,34 @@ void ProcessTradingLogic(bool fromTimer)
     // UNIFIED PIPELINE - All strategies including AI now go through here
     if(allowSignalEvaluation && ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
+        // Phase 6: Full-margin circuit breaker check
+        if(InpRiskTier == RISK_TIER_FULL_MARGIN && g_fullMarginMode.IsInitialized())
+        {
+            double currentDD = unifiedRiskManager.GetCurrentDrawdownPercent();
+            if(!g_fullMarginMode.CheckFullMarginCircuitBreaker(currentDD))
+            {
+                // Full-margin circuit breaker active — skip signal evaluation
+                g_hbQuietCadenceHold++;
+                if(callCount % 60 == 0)
+                    g_fullMarginMode.PrintDiagnostics();
+                allowSignalEvaluation = false;
+            }
+        }
+
+        // Phase 6: Safe mode kill zone filter
+        if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+        {
+            if(g_safeMode.GetConfig().tradeOnlyKillZones && !g_safeMode.IsInKillZone())
+            {
+                // Outside kill zone — skip signal evaluation in safe mode
+                g_hbQuietCadenceHold++;
+                allowSignalEvaluation = false;
+            }
+        }
+    }
+
+    if(allowSignalEvaluation && ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
+    {
         // Check entry gates, but keep signal evaluation running even while entry is paused.
         SApprovedTradeCandidate approvedCandidates[];
         ArrayResize(approvedCandidates, 0);
@@ -4943,19 +5443,19 @@ void ProcessTradingLogic(bool fromTimer)
         bool unprotectedEntryBlocked = unprotectedPositionsActive;
         bool tradingPauseBlocked = IsTradingPauseActive();
 
-        if(cooldownBlocked && callCount % 100 == 0)
+        if(cooldownBlocked && callCount % 100 == 0 && g_logLevel >= 2)
             Print("[ENTERPRISE-BLOCKED] Cooldown active: ", secondsSinceLastTrade, " / ", InpMinSecondsBetweenTrades, " seconds");
-        if(tradingPauseBlocked && callCount % 50 == 0)
+        if(tradingPauseBlocked && callCount % 50 == 0 && g_logLevel >= 2)
             PrintFormat("[SPIKE-PAUSE] New entries paused until %s",
                         TimeToString(g_tradingPauseUntil, TIME_SECONDS));
 
         // Check position limit - count only THIS EA's positions by magic number
         int eaPositions = GetEAPositionCount();
         bool totalPositionLimitBlocked = (eaPositions >= InpMaxPositionsTotal);
-        if(totalPositionLimitBlocked && callCount % 100 == 0)  // Log occasionally to avoid spam
+        if(totalPositionLimitBlocked && callCount % 100 == 0 && g_logLevel >= 2)  // Log occasionally to avoid spam
             Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", InpMaxPositionsTotal);
 
-        bool canOpenNewTrades = !(cooldownBlocked || totalPositionLimitBlocked || unprotectedEntryBlocked || tradingPauseBlocked);
+        bool canOpenNewTrades = !(cooldownBlocked || totalPositionLimitBlocked || unprotectedEntryBlocked || tradingPauseBlocked || g_dailyTradingHalt);
 
         // Evaluate each active symbol through its own symbol-bound enterprise manager.
         int symbolCount = ArraySize(g_activePairs);
@@ -5196,7 +5696,15 @@ void ProcessTradingLogic(bool fromTimer)
                     // Spread check (exogenous gate - TODO: move to USP)
                     bool exogenousPass = true;
                     string exogenousReason = "";
-                    
+
+                    // Phase 6: Full-margin uses stricter spread gate (20% ATR vs default 50%)
+                    double effectiveSpreadATRRatio = InpPipelineMaxSpreadToAtrRatio;
+                    if(InpRiskTier == RISK_TIER_FULL_MARGIN && g_fullMarginMode.IsInitialized())
+                        effectiveSpreadATRRatio = MathMin(effectiveSpreadATRRatio, g_fullMarginMode.GetConfig().maxSpreadATRRatio);
+                    // Phase 6: Safe mode uses stricter spread gate (15% ATR)
+                    if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+                        effectiveSpreadATRRatio = MathMin(effectiveSpreadATRRatio, g_safeMode.GetConfig().maxSpreadATRRatio);
+
                     if(atrValue > 0)
                     {
                         double point = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
@@ -5204,7 +5712,7 @@ void ProcessTradingLogic(bool fromTimer)
                         double bid = SymbolInfoDouble(currentSymbol, SYMBOL_BID);
                         double ask = SymbolInfoDouble(currentSymbol, SYMBOL_ASK);
                         double spread = (ask > 0.0 && bid > 0.0 && ask >= bid) ? (ask - bid) : 0.0;
-                        double maxSpread = atrValue * MathMax(0.01, InpPipelineMaxSpreadToAtrRatio);
+                        double maxSpread = atrValue * MathMax(0.01, effectiveSpreadATRRatio);
                         if(spread > maxSpread)
                         {
                             exogenousPass = false;
@@ -5386,7 +5894,16 @@ void ProcessTradingLogic(bool fromTimer)
                         maxSlPips = minSlPips;
 
                     stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
-                    double takeProfitPips = MathMin(stopLossPips * 1.50, maxSlPips * 1.50);
+
+                    // Minimum R:R enforcement with cluster-specific override
+                    double minRR = 2.0;  // Default minimum R:R
+                    // Mean-reversion strategies can use lower R:R (higher win rate compensates)
+                    if(decisionContext.dominantCluster == MEAN_REVERSION_CLUSTER)
+                        minRR = 1.5;
+
+                    double takeProfitPips = stopLossPips * minRR;
+                    // Cap at maxSlPips * minRR to avoid unreasonably large TPs
+                    takeProfitPips = MathMin(takeProfitPips, maxSlPips * minRR);
 
                     if(currentSpreadPoints > 0.0 && takeProfitPips > 0.0 && currentSpreadPoints / takeProfitPips > 0.15)
                     {
@@ -5467,8 +5984,8 @@ void ProcessTradingLogic(bool fromTimer)
                     bool hasAIContributor = ContributorsIncludeAI(contributorsList);
                     bool hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
                     bool hasONNXContributor = ContributorsIncludeONNX(contributorsList);
-                    bool hasElliottContributor = ContributorsIncludeElliott(contributorsList);
-                    int nonElliottIndicatorContributors = CountNonElliottIndicatorContributors(contributorsList);
+                    // hasElliottContributor REMOVED — Elliott Wave strategy removed
+                    int indicatorContributorCount = CountIndicatorContributors(contributorsList);
 
                     if(contributorSummary == "")
                     {
@@ -5517,8 +6034,7 @@ void ProcessTradingLogic(bool fromTimer)
                                                                      hasAIContributor,
                                                                      hasONNXContributor,
                                                                      hasIndicatorContributor,
-                                                                     hasElliottContributor,
-                                                                     nonElliottIndicatorContributors,
+                                                                     indicatorContributorCount,
                                                                      confluence,
                                                                      tradeConfidence,
                                                                      qualityScore,
@@ -5573,20 +6089,8 @@ void ProcessTradingLogic(bool fromTimer)
                         SValidationResult riskResult;
                         if(ApproveTradeByUnifiedRisk(tradeReq, "pre-size", riskResult, scanCycleId))
                         {
-                            SPositionSizingParams currentSizingParams = positionSizer.GetParameters();
-                            currentSizingParams.riskPercent = proposedRisk;
-                            if(!positionSizer.SetParameters(currentSizingParams))
-                            {
-                                g_hbSizingRejects++;
-                                PrintFormat("[POSITION-SIZE-REJECTED] cycle=%I64u | %s | reason=failed_to_apply_sizing_params | risk=%.2f",
-                                            scanCycleId,
-                                            currentSymbol,
-                                            proposedRisk);
-                                continue;
-                            }
-
-                            // Calculate optimal lot size
-                            double lotSize = positionSizer.CalculateOptimalPositionSize(currentSymbol, orderType, stopLossPips, tradeConfidence);
+                            // Stateless sizing — no shared state mutation (Blueprint 10.5)
+                            double lotSize = positionSizer.CalculateSize(currentSymbol, orderType, stopLossPips, proposedRisk, tradeConfidence);
                             double drawdownMultiplier = 1.0;
                             if(peakEquity > 0.0 && InpAIDrawdownSizingLimit > 0.0)
                             {
@@ -5607,6 +6111,87 @@ void ProcessTradingLogic(bool fromTimer)
                                             unadjustedLot,
                                             lotSize);
                             }
+
+                            // Anti-Martingale Momentum Scaling (Phase 5)
+                            double momentumScale = performanceAnalytics.CalculateMomentumScale();
+                            if(MathAbs(momentumScale - 1.0) > 0.001)
+                            {
+                                double preMomentumLot = lotSize;
+                                lotSize *= momentumScale;
+                                lotSize = MathMax(SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN), lotSize);
+                                PrintFormat("[MOMENTUM-SCALE] %s | scale=%.2f | lot %.2f->%.2f",
+                                            currentSymbol, momentumScale, preMomentumLot, lotSize);
+                            }
+
+                            // Phase 6: Full-margin position stacking — scale lot if stacking on existing position
+                            if(InpRiskTier == RISK_TIER_FULL_MARGIN && g_fullMarginMode.IsInitialized())
+                            {
+                                int stackLevel = g_fullMarginMode.GetStackLevel(currentSymbol, enterpriseSignal);
+                                if(stackLevel > 0)
+                                {
+                                    if(g_fullMarginMode.CanStackPosition(currentSymbol, enterpriseSignal))
+                                    {
+                                        double preStackLot = lotSize;
+                                        lotSize = g_fullMarginMode.GetStackedLotSize(lotSize, stackLevel);
+                                        lotSize = MathMax(SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN), lotSize);
+                                        PrintFormat("[FULL-MARGIN-STACK] %s | level=%d | lot %.2f->%.2f | scale=%.2f",
+                                                    currentSymbol, stackLevel, preStackLot, lotSize,
+                                                    g_fullMarginMode.GetConfig().stackLotScale);
+                                    }
+                                    else
+                                    {
+                                        // Stacking not allowed — reject this stacked entry
+                                        g_hbValidatorRejects++;
+                                        PrintFormat("[FULL-MARGIN-STACK-REJECTED] %s | level=%d | reason=stacking_conditions_not_met",
+                                                    currentSymbol, stackLevel);
+                                        continue;
+                                    }
+                                }
+
+                                // Full-margin safeguard check (stricter spread, margin level, daily loss)
+                                if(!g_fullMarginMode.CheckSafeguards(currentSymbol, atrValue))
+                                {
+                                    g_hbValidatorRejects++;
+                                    continue;
+                                }
+                            }
+
+                            // Phase 6: Safe mode — block stacking entirely
+                            if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+                            {
+                                if(!g_safeMode.IsStackingAllowed())
+                                {
+                                    int existingPositions = 0;
+                                    int totalPos = PositionsTotal();
+                                    for(int posI = 0; posI < totalPos; posI++)
+                                    {
+                                        ulong posTicket = PositionGetTicket(posI);
+                                        if(posTicket <= 0) continue;
+                                        if(!PositionSelectByTicket(posTicket)) continue;
+                                        if(PositionGetString(POSITION_SYMBOL) != currentSymbol) continue;
+                                        ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                                        if((enterpriseSignal == TRADE_SIGNAL_BUY && posType == POSITION_TYPE_BUY) ||
+                                           (enterpriseSignal == TRADE_SIGNAL_SELL && posType == POSITION_TYPE_SELL))
+                                            existingPositions++;
+                                    }
+                                    if(existingPositions > 0)
+                                    {
+                                        g_hbValidatorRejects++;
+                                        PrintFormat("[SAFE-MODE-REJECTED] %s | reason=no_stacking_allowed | existing=%d",
+                                                    currentSymbol, existingPositions);
+                                        continue;
+                                    }
+                                }
+
+                                // Safe mode spread gate (stricter: 15% ATR)
+                                if(atrValue > 0.0 && !g_safeMode.IsSpreadAcceptable(currentSymbol, atrValue))
+                                {
+                                    g_hbValidatorRejects++;
+                                    PrintFormat("[SAFE-MODE-REJECTED] %s | reason=spread_exceeds_safe_limit", currentSymbol);
+                                    continue;
+                                }
+                            }
+
 tradeReq.lotSize = lotSize;
                             if(!ApproveTradeByUnifiedRisk(tradeReq, "post-size", riskResult, scanCycleId))
                                 continue;
@@ -5650,7 +6235,7 @@ tradeReq.lotSize = lotSize;
                                 candidate.hasAIContributor = hasAIContributor;
                                 candidate.hasONNXContributor = hasONNXContributor;
                                 candidate.hasIndicatorContributor = hasIndicatorContributor;
-                                candidate.hasElliottContributor = hasElliottContributor;
+                                // hasElliottContributor REMOVED — Elliott Wave strategy removed
                                 candidate.liveAuthorityAllowed = liveAuthorityAllowed;
                                 candidate.liveAuthorityRiskMultiplier = liveAuthorityRiskMultiplier;
                                 candidate.liveAuthorityReason = liveAuthorityReason;
@@ -5785,6 +6370,12 @@ tradeReq.lotSize = lotSize;
 
                         string tradeComment = BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
 
+                        // Per-symbol magic number: BASE + symbolIndex*100 + clusterCode
+                        int symbolIdx = FindEnterpriseManagerIndex(bestCandidate.symbol);
+                        if(symbolIdx < 0) symbolIdx = 0;
+                        int clusterNum = ClusterCodeToNumeric(bestCandidate.strategyClusterCode);
+                        uint perSymbolMagic = (uint)GenerateMagicNumber(symbolIdx, clusterNum);
+
                         bool tradeSuccess = tradeManager.OpenPosition(
                             bestCandidate.symbol,
                             bestCandidate.orderType,
@@ -5793,7 +6384,7 @@ tradeReq.lotSize = lotSize;
                             bestCandidate.stopLossPips,
                             bestCandidate.takeProfitPips,
                             tradeComment,
-                            (uint)InpMagicNumber
+                            perSymbolMagic
                         );
 
                         STradeExecutionReceipt executionReceipt;
@@ -5831,6 +6422,16 @@ tradeReq.lotSize = lotSize;
                             unifiedRiskManager.RegisterExecutedTradeRisk(bestCandidate.riskResult, fillRatio);
                             g_lastTradeTime = tickTime;
                             RegisterLiveAuthorityTrial(bestCandidate, true, bestCandidate.liveAuthorityReason);
+
+                            // Phase 6: Register position for safe mode partial profit tracking
+                            if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+                            {
+                                ulong safeTicket = tradeManager.GetLastTicket();
+                                double safeEntry = executionReceipt.averagePrice > 0.0 ? executionReceipt.averagePrice : bestCandidate.entryPrice;
+                                double safeSL = tradeManager.GetLastRequestedStopLoss();
+                                double safeTP = tradeManager.GetLastRequestedTakeProfit();
+                                g_safeMode.RegisterPosition(safeTicket, bestCandidate.symbol, safeEntry, safeSL, safeTP);
+                            }
 
                             if(fillRatio < 0.999)
                             {
@@ -5895,6 +6496,39 @@ tradeReq.lotSize = lotSize;
             unifiedRiskManager.ClearVirtualPositions();
     }
 
+    }
+
+    // Fast Scalp Engine: evaluate and execute scalp signals (Phase 4)
+    // Runs every signal evaluation cycle, bypasses full consensus pipeline
+    if(InpEnableScalpEngine && g_scalpEngine.IsInitialized() && allowSignalEvaluation)
+    {
+        for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
+        {
+            string scalpSymbol = g_activePairs[symIdx];
+            ENUM_TRADE_SIGNAL scalpSignal = TRADE_SIGNAL_NONE;
+            double scalpConfidence = 0.0;
+            double scalpLotSize = 0.0;
+
+            if(g_scalpEngine.ShouldEnterScalp(scalpSymbol, scalpSignal, scalpConfidence, scalpLotSize))
+            {
+                if(InpShadowMode)
+                {
+                    PrintFormat("[SHADOW-SCALP] %s | %s | lot=%.2f | confidence=%.2f | SHADOW MODE — no order sent",
+                                scalpSymbol,
+                                scalpSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                                scalpLotSize,
+                                scalpConfidence);
+                }
+                else
+                {
+                    // Use pending orders if configured, otherwise market order
+                    if(g_scalpEngine.GetConfig().usePendingOrders)
+                        g_scalpEngine.PlaceScalpPendingOrder(scalpSymbol, scalpSignal, scalpLotSize);
+                    else
+                        g_scalpEngine.ExecuteScalpTrade(scalpSymbol, scalpSignal, scalpLotSize, scalpConfidence);
+                }
+            }
+        }
     }
 
     datetime heartbeatNow = TimeCurrent();
@@ -5964,6 +6598,16 @@ tradeReq.lotSize = lotSize;
                     g_hbSignalsValidated,
                     g_hbSignalsRiskApproved,
                     g_hbSignalsSent);
+
+        // Scalp engine heartbeat diagnostics
+        if(InpEnableScalpEngine && g_scalpEngine.IsInitialized())
+            g_scalpEngine.PrintDiagnostics();
+
+        // Phase 6: Full-margin / safe mode heartbeat diagnostics
+        if(InpRiskTier == RISK_TIER_FULL_MARGIN && g_fullMarginMode.IsInitialized())
+            g_fullMarginMode.PrintDiagnostics();
+        if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
+            g_safeMode.PrintDiagnostics();
         PrintFormat("[CONSENSUS-SNAPSHOT] generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u",
                     diagSignalsGenerated,
                     diagSignalsAfterPipeline,
@@ -6150,7 +6794,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
         if(HistoryDealSelect(trans.deal))
         {
             long dealMagic = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
-            if(dealMagic == InpMagicNumber)
+            if(IsEAOwnedMagic(dealMagic))
             {
                 ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
                 ulong positionId = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
@@ -6160,6 +6804,13 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                 // Keep trade-time state synchronized even for externally managed closes/partials.
                 if(dealTime > g_lastTradeTime)
                     g_lastTradeTime = dealTime;
+
+                // Route scalp async order confirmations
+                if(g_scalpEngine.GetPendingAsyncCount() > 0)
+                {
+                    ulong orderTicket = trans.order;
+                    g_scalpEngine.OnDealConfirmed(trans.deal, orderTicket);
+                }
 
                 // Capture entry-time mapping from comment to position for exact close labeling
                 if((dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT) && positionId > 0)

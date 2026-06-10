@@ -68,6 +68,11 @@ public:
 
     // Set confidence threshold for the strategy
     virtual void SetConfidenceThreshold(double threshold) {}
+
+    // Quick-probe signal — fast indicators only, O(1) with cached values.
+    // Returns NONE by default. Strategies that can produce fast signals override this.
+    // Used by two-tier consensus: Tier 1 quick-probe evaluation for early quorum short-circuit.
+    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() { return TRADE_SIGNAL_NONE; }
 };
 
 #endif // INTERFACES_ISTRATEGY_MQH

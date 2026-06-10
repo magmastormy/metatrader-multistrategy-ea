@@ -26,6 +26,7 @@
 #include "../Monitoring/PerformanceAnalytics.mqh"
 #include "../Engines/MarketAnalysis.mqh"
 #include "../../IndicatorManager.mqh"
+#include "../Cache/ATRCache.mqh"
 
 
 
@@ -44,11 +45,23 @@ class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
 
+// Pending confirmation tracking for non-blocking execution
+struct SPendingConfirmation
+{
+    ulong    orderTicket;
+    string   symbol;
+    double   expectedPrice;
+    datetime sentAt;
+    int      checkAttempts;
+    bool     isActive;
+};
+
 // Trade execution settings
 #define MAX_TRADE_RETRIES 4
 #define TRADE_RETRY_DELAY 150 // ms
 #define MAX_ORDERS_PER_SYMBOL 5
 #define ORDER_TIMEOUT_SECONDS 30
+#define MAX_PENDING_CONFIRMATIONS 20
 
 struct STradeExecutionReceipt
 {
@@ -116,7 +129,8 @@ private:
     
     // Trade settings
     uint m_slippage;                         // Maximum slippage (in points)
-    uint m_magicNumber;                      // Magic number for trades
+    uint m_magicNumber;                      // Magic number for trades (base)
+    uint m_magicRangeMax;                    // Max magic number for EA ownership range check
     string m_expertName;                     // Expert advisor name
     bool m_useAsyncMode;                     // Use asynchronous order execution
     ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
@@ -165,6 +179,14 @@ private:
     
     // Safety mechanisms
     bool m_emergencyStop;                    // Emergency stop flag
+    int m_logLevel;                          // Log verbosity: 0=Silent, 1=Critical, 2=Normal, 3=Verbose, 4=Debug
+
+    // ATR value cache to avoid redundant indicator reads per bar
+    CATRCache m_atrCache;
+
+    // Pending confirmation tracking for non-blocking execution
+    SPendingConfirmation m_pendingConfirmations[MAX_PENDING_CONFIRMATIONS];
+    int m_pendingConfirmationCount;
     
     // Trade execution state
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
@@ -588,7 +610,16 @@ private:
         {
             double driftPoints = MathAbs(executionPrice - requestedPrice) / point;
             double effectiveDriftLimit = m_maxEntryDriftPoints;
-            double atr = CalculateATR(symbolName, PERIOD_CURRENT, m_dynamicSlippageAtrPeriod);
+            double atr = m_atrCache.GetATR(symbolName, PERIOD_CURRENT);
+            if(atr == INVALID_VALUE || atr <= 0.0)
+            {
+                atr = CalculateATR(symbolName, PERIOD_CURRENT, m_dynamicSlippageAtrPeriod);
+                if(atr > 0.0)
+                {
+                    datetime barTime = iTime(symbolName, PERIOD_CURRENT, 0);
+                    m_atrCache.StoreATR(symbolName, PERIOD_CURRENT, atr, barTime);
+                }
+            }
             if(atr > 0.0)
                 effectiveDriftLimit = MathMax(effectiveDriftLimit, (atr / point) * 0.30);
             effectiveDriftLimit = MathMax(effectiveDriftLimit, spreadPoints * 2.0);
@@ -632,50 +663,61 @@ private:
         datetime historyFrom = TimeCurrent() - 300;
         datetime historyTo = TimeCurrent() + 60;
 
-        for(int attempt = 0; attempt < 3; attempt++)
+        // Single non-blocking check — no Sleep loop
+        if(HistorySelect(historyFrom, historyTo))
         {
-            if(HistorySelect(historyFrom, historyTo))
+            if(tradeResult.deal > 0 && HistoryDealSelect(tradeResult.deal))
             {
-                if(tradeResult.deal > 0 && HistoryDealSelect(tradeResult.deal))
+                string dealSymbol = HistoryDealGetString(tradeResult.deal, DEAL_SYMBOL);
+                long dealEntry = HistoryDealGetInteger(tradeResult.deal, DEAL_ENTRY);
+                long dealType = HistoryDealGetInteger(tradeResult.deal, DEAL_TYPE);
+                bool directionMatches = ((orderType == ORDER_TYPE_BUY && dealType == DEAL_TYPE_BUY) ||
+                                         (orderType == ORDER_TYPE_SELL && dealType == DEAL_TYPE_SELL));
+                if(dealSymbol == symbolName &&
+                   directionMatches &&
+                   (dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT))
                 {
-                    string dealSymbol = HistoryDealGetString(tradeResult.deal, DEAL_SYMBOL);
-                    long dealEntry = HistoryDealGetInteger(tradeResult.deal, DEAL_ENTRY);
-                    long dealType = HistoryDealGetInteger(tradeResult.deal, DEAL_TYPE);
-                    bool directionMatches = ((orderType == ORDER_TYPE_BUY && dealType == DEAL_TYPE_BUY) ||
-                                             (orderType == ORDER_TYPE_SELL && dealType == DEAL_TYPE_SELL));
-                    if(dealSymbol == symbolName &&
-                       directionMatches &&
-                       (dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT))
-                    {
-                        double dealVolume = HistoryDealGetDouble(tradeResult.deal, DEAL_VOLUME);
-                        double dealPrice = HistoryDealGetDouble(tradeResult.deal, DEAL_PRICE);
-                        if(dealVolume > 0.0)
-                            m_lastExecutionReceipt.filledVolume = dealVolume;
-                        if(dealPrice > 0.0)
-                            m_lastExecutionReceipt.averagePrice = dealPrice;
-                        else if(m_lastExecutionReceipt.averagePrice <= 0.0)
-                            m_lastExecutionReceipt.averagePrice = fallbackPrice;
+                    double dealVolume = HistoryDealGetDouble(tradeResult.deal, DEAL_VOLUME);
+                    double dealPrice = HistoryDealGetDouble(tradeResult.deal, DEAL_PRICE);
+                    if(dealVolume > 0.0)
+                        m_lastExecutionReceipt.filledVolume = dealVolume;
+                    if(dealPrice > 0.0)
+                        m_lastExecutionReceipt.averagePrice = dealPrice;
+                    else if(m_lastExecutionReceipt.averagePrice <= 0.0)
+                        m_lastExecutionReceipt.averagePrice = fallbackPrice;
 
-                        m_lastExecutionReceipt.accepted = true;
-                        m_lastExecutionReceipt.partialFill = (m_lastExecutionReceipt.filledVolume > 0.0 &&
-                                                              m_lastExecutionReceipt.filledVolume + 1e-8 < requestedVolume);
-                        m_lastExecutionReceipt.note = "history_deal_confirmed";
-                        return true;
-                    }
+                    m_lastExecutionReceipt.accepted = true;
+                    m_lastExecutionReceipt.partialFill = (m_lastExecutionReceipt.filledVolume > 0.0 &&
+                                                          m_lastExecutionReceipt.filledVolume + 1e-8 < requestedVolume);
+                    m_lastExecutionReceipt.note = "history_deal_confirmed";
+                    return true;
                 }
             }
-
-            if(attempt < 2)
-                Sleep(TRADE_RETRY_DELAY);
         }
 
-        m_lastExecutionReceipt.accepted = false;
+        // Deal not found yet — defer to pending confirmation for later resolution
+        if(tradeResult.order > 0 && m_pendingConfirmationCount < MAX_PENDING_CONFIRMATIONS)
+        {
+            int idx = m_pendingConfirmationCount;
+            m_pendingConfirmations[idx].orderTicket   = tradeResult.order;
+            m_pendingConfirmations[idx].symbol        = symbolName;
+            m_pendingConfirmations[idx].expectedPrice = fallbackPrice;
+            m_pendingConfirmations[idx].sentAt        = TimeCurrent();
+            m_pendingConfirmations[idx].checkAttempts = 0;
+            m_pendingConfirmations[idx].isActive      = true;
+            m_pendingConfirmationCount++;
+            PrintFormat("[EXECUTION-DEFERRED] %s | order=%I64u | added to pending confirmation queue",
+                        symbolName, tradeResult.order);
+        }
+
+        // Optimistic return — broker accepted the order, confirmation deferred
+        m_lastExecutionReceipt.accepted = true;
         if(m_lastExecutionReceipt.averagePrice <= 0.0)
             m_lastExecutionReceipt.averagePrice = fallbackPrice;
         if(m_lastExecutionReceipt.filledVolume <= 0.0)
             m_lastExecutionReceipt.filledVolume = 0.0;
-        m_lastExecutionReceipt.note = "broker_accept_unconfirmed";
-        return false;
+        m_lastExecutionReceipt.note = "broker_accept_deferred";
+        return true;
     }
     
 public:
@@ -692,6 +734,7 @@ public:
         m_errorHandler(pErrorHandler),
         m_slippage(10),
         m_magicNumber(0),
+        m_magicRangeMax(0),
         m_useAsyncMode(false),
         m_orderFillMode(ORDER_FILLING_IOC),
         m_minModifyIntervalSec(5),
@@ -704,6 +747,8 @@ public:
         m_dynamicSlippageAtrPeriod(14),
         m_baseSlippage(10),
         m_emergencyStop(false),
+        m_logLevel(1),
+        m_pendingConfirmationCount(0),
         m_pendingOrderCount(0),
         m_stateCount(0),
         m_totalTrades(0),
@@ -736,9 +781,12 @@ public:
     // Set trading parameters
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); }
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
+    void SetMagicRangeMax(const uint magicRangeMax) { m_magicRangeMax = magicRangeMax; }
+    bool IsEAOwnedMagic(const uint magic) const { return (m_magicRangeMax > m_magicNumber) ? (magic >= m_magicNumber && magic <= m_magicRangeMax) : (magic == m_magicNumber); }
     void SetOrderFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_orderFillMode = mode; }
     void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
-    
+    void SetLogLevel(const int level) { m_logLevel = MathMax(0, MathMin(4, level)); }
+
     // Set dynamic slippage configuration
     void SetDynamicSlippageConfig(const bool enable, const double atrPercent, const uint minPoints, 
                                    const uint maxMultiplier, const int atrPeriod)
@@ -771,7 +819,16 @@ public:
             return m_baseSlippage;
         }
 
-        double atrValue = m_marketAnalysis.GetATR(symbol, m_dynamicSlippageAtrPeriod);
+        double atrValue = m_atrCache.GetATR(symbol, PERIOD_CURRENT);
+        if(atrValue == INVALID_VALUE || atrValue <= 0.0)
+        {
+            atrValue = m_marketAnalysis.GetATR(symbol, m_dynamicSlippageAtrPeriod);
+            if(atrValue > 0.0)
+            {
+                datetime barTime = iTime(symbol, PERIOD_CURRENT, 0);
+                m_atrCache.StoreATR(symbol, PERIOD_CURRENT, atrValue, barTime);
+            }
+        }
         if(atrValue <= 0.0)
         {
             return m_baseSlippage;
@@ -860,6 +917,80 @@ public:
     uint GetLastRequestId() const { return m_lastTradeResult.request_id; }
     uint GetLastRetcode() const { return m_lastTradeResult.retcode; }
     void GetLastExecutionReceipt(STradeExecutionReceipt &receipt) const { receipt = m_lastExecutionReceipt; }
+
+    // Check and resolve pending execution confirmations (call from main tick loop)
+    void CheckPendingConfirmations()
+    {
+        if(m_pendingConfirmationCount <= 0)
+            return;
+
+        datetime historyFrom = TimeCurrent() - 300;
+        datetime historyTo = TimeCurrent() + 60;
+
+        for(int i = m_pendingConfirmationCount - 1; i >= 0; i--)
+        {
+            if(!m_pendingConfirmations[i].isActive)
+                continue;
+
+            m_pendingConfirmations[i].checkAttempts++;
+
+            bool resolved = false;
+            if(HistorySelect(historyFrom, historyTo))
+            {
+                int totalDeals = HistoryDealsTotal();
+                for(int d = 0; d < totalDeals; d++)
+                {
+                    ulong dealTicket = HistoryDealGetTicket(d);
+                    if(dealTicket == 0)
+                        continue;
+
+                    long dealOrderId = HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+                    if((ulong)dealOrderId == m_pendingConfirmations[i].orderTicket)
+                    {
+                        string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+                        if(dealSymbol == m_pendingConfirmations[i].symbol)
+                        {
+                            double dealPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+                            double dealVolume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+                            PrintFormat("[EXECUTION-CONFIRMED] %s | order=%I64u | deal=%I64u | price=%.5f | volume=%.2f | attempts=%d",
+                                        dealSymbol,
+                                        m_pendingConfirmations[i].orderTicket,
+                                        dealTicket,
+                                        dealPrice,
+                                        dealVolume,
+                                        m_pendingConfirmations[i].checkAttempts);
+                            resolved = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if(resolved || m_pendingConfirmations[i].checkAttempts >= 5)
+            {
+                if(!resolved)
+                {
+                    PrintFormat("[EXECUTION-TIMEOUT] %s | order=%I64u | attempts=%d | no deal found after max checks",
+                                m_pendingConfirmations[i].symbol,
+                                m_pendingConfirmations[i].orderTicket,
+                                m_pendingConfirmations[i].checkAttempts);
+                }
+
+                // Remove by shifting
+                for(int j = i; j < m_pendingConfirmationCount - 1; j++)
+                {
+                    m_pendingConfirmations[j] = m_pendingConfirmations[j + 1];
+                }
+                m_pendingConfirmationCount--;
+                m_pendingConfirmations[m_pendingConfirmationCount].isActive = false;
+                m_pendingConfirmations[m_pendingConfirmationCount].orderTicket = 0;
+                m_pendingConfirmations[m_pendingConfirmationCount].symbol = "";
+                m_pendingConfirmations[m_pendingConfirmationCount].expectedPrice = 0.0;
+                m_pendingConfirmations[m_pendingConfirmationCount].sentAt = 0;
+                m_pendingConfirmations[m_pendingConfirmationCount].checkAttempts = 0;
+            }
+        }
+    }
     
     // Statistics
     void GetTradeStatistics(int &total, int &successful, int &failed, double &successRate);
@@ -897,10 +1028,15 @@ public:
     
     void GetExecutionQualitySummary(string &summary)
     {
+        if(m_logLevel < 3)
+        {
+            summary = "";
+            return;
+        }
         int total, filled, partial, rejected;
         double avgSlippage, avgLatency, fillRate;
         GetExecutionQualityMetrics(total, filled, partial, rejected, avgSlippage, avgLatency, fillRate);
-        
+
         summary = StringFormat("[EXECUTION-QUALITY] Total: %d | Filled: %d | Partial: %d | Rejected: %d | "
                               "Fill Rate: %.1f%% | Avg Slippage: %.1f pts | Avg Latency: %.0f ms | "
                               "Max Slippage: %.1f pts | Max Latency: %.0f ms",
@@ -916,6 +1052,9 @@ public:
     // Generate detailed execution quality report
     void GenerateExecutionQualityReport()
     {
+        if(m_logLevel < 3)
+            return;
+
         Print("========== EXECUTION QUALITY REPORT ==========");
         PrintFormat("Report Generated: %s", TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
         
@@ -1626,7 +1765,18 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastExecutionReceipt.note = "Invalid execution request";
         return false;
     }
-    
+
+    // MANDATORY STOP-LOSS GATE: Defense-in-depth — execution layer enforces SL invariant
+    if(stopLossPips <= 0.0)
+    {
+        LogError("EXECUTION BLOCKED: Stop-loss is mandatory. Trade rejected", symbolName);
+        ResetExecutionReceipt(symbolName, volume);
+        m_lastExecutionReceipt.note = "EXECUTION BLOCKED: Stop-loss is mandatory";
+        PrintFormat("[EXECUTION-BLOCKED] %s | reason=MandatoryStopLoss | stopLossPips=%.1f",
+                    symbolName, stopLossPips);
+        return false;
+    }
+
     ResetExecutionReceipt(symbolName, volume);
     bool executionConfirmed = false;
     int retryCount = 0;
@@ -2161,7 +2311,7 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
             double takeProfit = PositionGetDouble(POSITION_TP);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
             uint positionMagic = (uint)PositionGetInteger(POSITION_MAGIC);
-            if(m_magicNumber > 0 && positionMagic != m_magicNumber)
+            if(m_magicNumber > 0 && !IsEAOwnedMagic(positionMagic))
                 continue;
             
             if(breakevenBuffer > 0)
@@ -2216,7 +2366,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     double currentTakeProfit = PositionGetDouble(POSITION_TP);
     ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
     uint positionMagic = (uint)PositionGetInteger(POSITION_MAGIC);
-    if(m_magicNumber > 0 && positionMagic != m_magicNumber)
+    if(m_magicNumber > 0 && !IsEAOwnedMagic(positionMagic))
         return true;
     
     double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);

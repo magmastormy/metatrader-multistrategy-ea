@@ -575,41 +575,78 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
 //+------------------------------------------------------------------+
 double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, double price, double confidence)
 {
-    // TODO: Fix compilation errors - methods not recognized on pointer types
-    // if(m_fibModule == NULL || m_srDetector == NULL) return confidence;
-    
-    // Find recent swing high/low for Fib calculation
-    // SSupportResistance nearestSupport, nearestResistance;
-    // bool hasSupport = false, hasResistance = false;
-    // 
-    // int supIdx = m_srDetector->FindNearestSupport(price);
-    // int resIdx = m_srDetector->FindNearestResistance(price);
-    // 
-    // if(supIdx >= 0) hasSupport = m_srDetector->GetLevel(supIdx, nearestSupport);
-    // if(resIdx >= 0) hasResistance = m_srDetector->GetLevel(resIdx, nearestResistance);
-    // 
-    // // Calculate Fib levels if we have both support and resistance
-    // if(hasSupport && hasResistance && nearestResistance.price > nearestSupport.price)
-    // {
-    //     SFibLevel fibLevels[];
-    //     int fibCount = 0;
-    //     
-    //     m_fibModule->CalculateLevels(nearestResistance.price, nearestSupport.price, fibLevels, fibCount);
-    //     
-    //     // Check if entry price is near a Fib level
-    //     double nearestRatio = 0.0;
-    //     if(m_fibModule->IsNearFibLevel(price, fibLevels, fibCount, 10, nearestRatio))
-    //     {
-    //         double boost = m_fibModule->GetConfidenceBoost(nearestRatio);
-    //         confidence *= boost;
-    //         confidence = MathMin(1.0, confidence);  // Cap at 1.0
-    //         
-    //         PrintFormat("[SR-FIB] Confluence at %.1f%% Fib level - confidence boosted from %.1f%% to %.1f%%",
-    //                    nearestRatio * 100, (confidence / boost) * 100, confidence * 100);
-    //     }
-    // }
-    
-    return confidence;
+    if(m_fibModule == NULL || m_srDetector == NULL) return confidence;
+
+    // Find nearest support and resistance for Fib swing range
+    SSupportResistance nearestSupport, nearestResistance;
+    bool hasSupport = false, hasResistance = false;
+
+    int supIdx = m_srDetector.FindNearestSupport(price);
+    int resIdx = m_srDetector.FindNearestResistance(price);
+
+    if(supIdx >= 0) hasSupport = m_srDetector.GetLevel(supIdx, nearestSupport);
+    if(resIdx >= 0) hasResistance = m_srDetector.GetLevel(resIdx, nearestResistance);
+
+    // Need both support and resistance to calculate Fib levels
+    if(!hasSupport || !hasResistance) return confidence;
+    if(nearestResistance.price <= nearestSupport.price) return confidence;
+
+    // Calculate Fibonacci levels from swing pair
+    SFibLevel fibLevels[];
+    int fibCount = 0;
+
+    (*m_fibModule).CalculateLevels(nearestResistance.price, nearestSupport.price, fibLevels, fibCount);
+
+    if(fibCount == 0) return confidence;
+
+    // Get current ATR for proximity tolerance
+    int atrHandle = iATR(m_symbol, m_timeframe, 14);
+    if(atrHandle == INVALID_HANDLE) return confidence;
+
+    double atrBuf[];
+    ArraySetAsSeries(atrBuf, true);
+    double atr = 0.0;
+    if(CopyBuffer(atrHandle, 0, 1, 1, atrBuf) >= 1)
+        atr = atrBuf[0];
+    IndicatorRelease(atrHandle);
+
+    if(atr <= 0.0) return confidence;
+
+    // Check proximity of price to each Fib level
+    double proximityBonus = 0.0;
+
+    for(int i = 0; i < fibCount; i++)
+    {
+        double distance = MathAbs(price - fibLevels[i].price);
+        double halfAtr = 0.5 * atr;
+        double fullAtr = 1.0 * atr;
+
+        if(distance <= halfAtr)
+        {
+            proximityBonus += 0.10;  // Within 0.5 * ATR
+            PrintFormat("[SR-FIB] Price %.5f within 0.5*ATR of %.1f%% Fib (%.5f) | +0.10 bonus",
+                       price, fibLevels[i].ratio * 100.0, fibLevels[i].price);
+        }
+        else if(distance <= fullAtr)
+        {
+            proximityBonus += 0.05;  // Within 1.0 * ATR
+            PrintFormat("[SR-FIB] Price %.5f within 1.0*ATR of %.1f%% Fib (%.5f) | +0.05 bonus",
+                       price, fibLevels[i].ratio * 100.0, fibLevels[i].price);
+        }
+    }
+
+    // Cap total proximity bonus at 0.20
+    proximityBonus = MathMin(0.20, proximityBonus);
+
+    double adjustedConfidence = MathMin(1.0, confidence + proximityBonus);
+
+    if(proximityBonus > 0.0)
+    {
+        PrintFormat("[SR-FIB] Confluence bonus +%.2f applied | Conf: %.1f%% -> %.1f%% | Fib levels checked: %d",
+                   proximityBonus, confidence * 100.0, adjustedConfidence * 100.0, fibCount);
+    }
+
+    return adjustedConfidence;
 }
 
 #endif // __STRATEGY_SUPPORT_RESISTANCE_MQH__

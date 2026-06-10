@@ -127,9 +127,10 @@ public:
     // Cleanup helper
     void Cleanup()
     {
-        if(m_bbHandle != INVALID_HANDLE) { IndicatorRelease(m_bbHandle); m_bbHandle = INVALID_HANDLE; }
-        if(m_rsiHandle != INVALID_HANDLE) { IndicatorRelease(m_rsiHandle); m_rsiHandle = INVALID_HANDLE; }
-        if(m_volumeHandle != INVALID_HANDLE) { IndicatorRelease(m_volumeHandle); m_volumeHandle = INVALID_HANDLE; }
+        // Handles are managed by CIndicatorManager — no IndicatorRelease needed
+        m_bbHandle = INVALID_HANDLE;
+        m_rsiHandle = INVALID_HANDLE;
+        m_volumeHandle = INVALID_HANDLE;
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
     }
@@ -140,10 +141,10 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
             return false;
         
-        // Create indicator handles
-        m_bbHandle = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
-        m_rsiHandle = iRSI(symbol, timeframe, m_rsiPeriod, PRICE_CLOSE);
-        m_volumeHandle = iVolumes(symbol, timeframe, VOLUME_TICK);
+        // Create indicator handles via CIndicatorManager
+        m_bbHandle = CIndicatorManager::Instance().GetBandsHandle(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
+        m_rsiHandle = CIndicatorManager::Instance().GetRSIHandle(symbol, timeframe, m_rsiPeriod, PRICE_CLOSE);
+        m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(symbol, timeframe, VOLUME_TICK);
         
         if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE)
         {
@@ -313,7 +314,42 @@ public:
     
     // Strategy Type
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_MEAN_REVERSION; }
-    
+
+    //+------------------------------------------------------------------+
+    //| Quick-probe signal: fast BB + RSI extreme check (O(1) cached)   |
+    //| Tier 1 fast-path for two-tier consensus evaluation.              |
+    //| Uses already-cached indicator handles — no new handle creation,   |
+    //| no volume confirmation, no full confidence pipeline, no risk gate.|
+    //+------------------------------------------------------------------+
+    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
+    {
+        if(!m_is_enabled || !m_is_initialized)
+            return TRADE_SIGNAL_NONE;
+
+        if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE)
+            return TRADE_SIGNAL_NONE;
+
+        // Fetch 1 bar of BB bands and RSI (closed-bar, shift 1)
+        double bbUpper[1], bbLower[1];
+        double rsiBuffer[1];
+
+        if(CopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) < 1 ||
+           CopyBuffer(m_bbHandle, 2, 1, 1, bbLower) < 1 ||
+           CopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer) < 1)
+            return TRADE_SIGNAL_NONE;
+
+        double currentPrice = iClose(m_symbol, m_timeframe, 1);
+        double rsi = rsiBuffer[0];
+
+        // Quick double-signal check: price at BB extreme + RSI extreme
+        if(currentPrice <= bbLower[0] && rsi <= m_rsiOversold)
+            return TRADE_SIGNAL_BUY;
+        if(currentPrice >= bbUpper[0] && rsi >= m_rsiOverbought)
+            return TRADE_SIGNAL_SELL;
+
+        return TRADE_SIGNAL_NONE;
+    }
+
 private:
     // Detect mean reversion signal
     SMeanReversionSignal DetectMeanReversionSignal(

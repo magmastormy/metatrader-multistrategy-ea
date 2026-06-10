@@ -22,6 +22,7 @@ private:
     int m_emergencyStopDuration;
     datetime m_lastValidTickTime;
     int m_maxTickGapSeconds;
+    CAccountInfo m_accountInfo;  // Cached as member — avoids per-call construction
     
 public:
     CTickSafetyMonitor() :
@@ -73,15 +74,14 @@ bool CTickSafetyMonitor::IsSpreadAcceptable(const string symbol)
 //+------------------------------------------------------------------+
 bool CTickSafetyMonitor::IsMarginHealthy()
 {
-    CAccountInfo accountInfo;
-    double freeMargin = accountInfo.FreeMargin();
-    double equity = accountInfo.Equity();
+    double freeMargin = m_accountInfo.FreeMargin();
+    double equity = m_accountInfo.Equity();
     
     if(equity <= 0)
         return false;
     
     // Calculate used margin including pending orders
-    double totalMarginUsed = accountInfo.Margin(); // Already includes pending orders
+    double totalMarginUsed = m_accountInfo.Margin(); // Already includes pending orders
     double freeMarginAfterPending = equity - totalMarginUsed;
     
     double freeMarginPercent = (freeMarginAfterPending / equity) * 100.0;
@@ -92,7 +92,7 @@ bool CTickSafetyMonitor::IsMarginHealthy()
     if(totalMarginUsed > 0)
         marginLevel = (equity / totalMarginUsed) * 100.0;
     else
-        marginLevel = accountInfo.MarginLevel();
+        marginLevel = m_accountInfo.MarginLevel();
     
     if(marginLevel < m_minMarginLevel)
         return false;

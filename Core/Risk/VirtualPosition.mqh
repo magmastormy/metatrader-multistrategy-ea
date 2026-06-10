@@ -15,6 +15,7 @@ struct SVirtualPosition
     double lotSize;
     double riskPercent;
     datetime reservedAt;
+    int    ttlSeconds;       // Time-to-live in seconds; expired entries are pruned
 
     SVirtualPosition() :
         ownerTag(""),
@@ -24,7 +25,8 @@ struct SVirtualPosition
         orderType(ORDER_TYPE_BUY),
         lotSize(0.0),
         riskPercent(0.0),
-        reservedAt(0)
+        reservedAt(0),
+        ttlSeconds(60)
     {
     }
 };
@@ -53,6 +55,33 @@ public:
         ArrayResize(m_positions, 0);
     }
 
+    //+------------------------------------------------------------------+
+    //| Remove entries older than their TTL                              |
+    //+------------------------------------------------------------------+
+    int PruneExpired()
+    {
+        datetime now = TimeCurrent();
+        int pruned = 0;
+        for(int i = ArraySize(m_positions) - 1; i >= 0; i--)
+        {
+            if(m_positions[i].ttlSeconds > 0 &&
+               m_positions[i].reservedAt > 0 &&
+               (now - m_positions[i].reservedAt) > m_positions[i].ttlSeconds)
+            {
+                int last = ArraySize(m_positions) - 1;
+                m_positions[i] = m_positions[last];
+                ArrayResize(m_positions, last);
+                pruned++;
+            }
+        }
+        if(pruned > 0)
+        {
+            PrintFormat("[RISK-VIRTUAL] Pruned %d expired reservation(s) | remaining=%d",
+                        pruned, ArraySize(m_positions));
+        }
+        return pruned;
+    }
+
     void ClearOwner(const string ownerTag)
     {
         for(int i = ArraySize(m_positions) - 1; i >= 0; i--)
@@ -77,6 +106,7 @@ public:
         if(ownerTag == "" || symbol == "" || lotSize <= 0.0 || riskPercent <= 0.0)
             return false;
 
+        PruneExpired();
         ClearOwner(ownerTag);
 
         int size = ArraySize(m_positions);
@@ -89,6 +119,7 @@ public:
         m_positions[size].lotSize = lotSize;
         m_positions[size].riskPercent = riskPercent;
         m_positions[size].reservedAt = TimeCurrent();
+        m_positions[size].ttlSeconds = 60;
         return true;
     }
 
@@ -105,16 +136,18 @@ public:
         return true;
     }
 
-    double GetReservedRiskPercent() const
+    double GetReservedRiskPercent()
     {
+        PruneExpired();
         double total = 0.0;
         for(int i = 0; i < ArraySize(m_positions); i++)
             total += MathMax(0.0, m_positions[i].riskPercent);
         return total;
     }
 
-    double GetReservedRiskPercentForSymbol(const string symbol) const
+    double GetReservedRiskPercentForSymbol(const string symbol)
     {
+        PruneExpired();
         double total = 0.0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
@@ -124,8 +157,9 @@ public:
         return total;
     }
 
-    double GetReservedRiskPercentForCluster(const string strategyCluster) const
+    double GetReservedRiskPercentForCluster(const string strategyCluster)
     {
+        PruneExpired();
         double total = 0.0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
@@ -135,8 +169,9 @@ public:
         return total;
     }
 
-    int GetReservedPositionsOnSymbol(const string symbol) const
+    int GetReservedPositionsOnSymbol(const string symbol)
     {
+        PruneExpired();
         int total = 0;
         for(int i = 0; i < ArraySize(m_positions); i++)
         {
@@ -170,4 +205,3 @@ public:
 };
 
 #endif // CORE_RISK_VIRTUAL_POSITION_MQH
-

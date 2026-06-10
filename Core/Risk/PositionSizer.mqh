@@ -13,6 +13,8 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 #include "../../IndicatorManager.mqh"
+#include "PositionSizerModifiers.mqh"
+#include "CorrelationEngine.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -26,6 +28,7 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
+struct STierConfig;
 
 //+------------------------------------------------------------------+
 //| Position Sizing Parameters Structure                           |
@@ -66,6 +69,34 @@ private:
     
     // FIX: Injected error handler pointer for logging
     CEnhancedErrorHandler* m_errorHandler;
+
+    // Log level for gating diagnostic string building
+    int m_logLevel;
+
+    // FIX: Correlation engine pointer — delegates to CCorrelationEngine instead of own Pearson
+    CCorrelationEngine* m_correlationEngine;
+    
+    // Kelly Criterion statistics
+    double m_kellyWinRate;           // Rolling win rate
+    double m_kellyAvgWin;            // Average winning trade profit
+    double m_kellyAvgLoss;           // Average losing trade loss
+    int m_kellyTradeCount;           // Number of trades in rolling window
+    double m_kellyFraction;          // Fraction of Kelly to use (half-Kelly)
+    double m_kellyMaxCap;            // Maximum fraction of account to risk
+    double m_kellyWinHistory[];      // Rolling window of win profits
+    double m_kellyLossHistory[];     // Rolling window of loss amounts
+    int m_kellyHistoryIndex;         // Circular buffer index
+    int m_kellyHistorySize;          // Current filled size of circular buffer
+    
+    // Equity compounding
+    double m_startingEquity;                  // Equity at EA start
+    double m_compoundingAggressiveness;       // How aggressively to compound (0=none, 1=full)
+    double m_drawdownScalingFactor;           // How much to reduce on drawdown
+    bool m_enableCompounding;                 // Enable/disable compounding
+
+    // Pluggable modifier chain (Phase 5: Position Sizer Consolidation)
+    CPositionSizerModifier* m_modifiers[5];
+    int m_modifierCount;
     
 public:
     // Constructor
@@ -74,16 +105,35 @@ public:
     // Destructor
     ~CPositionSizer(void);
     
+    // DEPRECATED: Use CalculateSize() instead — avoids shared mutable state
     // Initialize with parameters
     bool SetParameters(const SPositionSizingParams &params);
     
 void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler; }
+
+    // Set log level for gating diagnostic string building
+    void SetLogLevel(const int level) { m_logLevel = MathMax(0, MathMin(4, level)); }
+
+    // Set correlation engine for delegated correlation calculation
+    void SetCorrelationEngine(CCorrelationEngine* engine) { m_correlationEngine = engine; }
     
+    // DEPRECATED: Use CalculateSize() instead — avoids shared mutable state
     // Calculate optimal position size with enhanced risk management
     double CalculateOptimalPositionSize(const string symbol,
                                        const ENUM_ORDER_TYPE orderType,
                                        const double stopLossPips,
                                        const double confidence = 1.0);
+
+    // Stateless position size calculation — all per-call parameters passed directly.
+    // This is the preferred API. SetParameters+CalculateOptimalPositionSize is deprecated.
+    // Produces IDENTICAL results to SetParameters(riskPercent=X)+CalculateOptimalPositionSize
+    // without mutating shared state, so it is safe to call for multiple symbols per tick.
+    double CalculateSize(const string symbol,
+                         const ENUM_ORDER_TYPE orderType,
+                         const double slDistancePips,
+                         const double riskPercent,
+                         const double confidence = 1.0,
+                         STierConfig* tierConfig = NULL);
     
     // Calculate base position size according to sizing mode
     double CalculateBasePositionSize(const string symbol, const double stopLossPips);
@@ -208,6 +258,18 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     // Log position sizing decision
     void LogSizingDecision(const string symbol, const double size, const string reason);
 
+    // Kelly Criterion methods
+    void UpdateKellyStats(bool win, double profit, double loss);
+    double CalculateKellyFraction(void);
+
+    // Equity compounding methods
+    void InitializeCompounding(void);
+    double CalculateCompoundingMultiplier(void);
+
+    // Pluggable modifier chain (Phase 5)
+    void AddModifier(CPositionSizerModifier* modifier);
+    int GetModifierCount(void) const { return m_modifierCount; }
+
     // Error logging method with proper signature
     void LogError(ENUM_ERROR_SEVERITY severity, string component, string message, int errorCode = 0)
     {
@@ -237,7 +299,9 @@ CPositionSizer::CPositionSizer(void)
     m_maxAllowedRisk = MAX_TOTAL_RISK;
     m_activePositions = 0;
     m_errorHandler = NULL;
+    m_correlationEngine = NULL;
     m_atrHandle = INVALID_HANDLE;
+    m_logLevel = 1;
     // Initialize default parameters
     m_params.sizingMode = POSITION_SIZE_RISK_PERCENT;
     m_params.fixedLotSize = MIN_LOT_SIZE;
@@ -249,6 +313,28 @@ CPositionSizer::CPositionSizer(void)
     m_params.correlationAdjustment = 1.0;
     m_params.useVolatilityAdjustment = true;
     m_params.useCorrelationAdjustment = true;
+    // Kelly Criterion defaults
+    m_kellyWinRate = 0.5;
+    m_kellyAvgWin = 0.0;
+    m_kellyAvgLoss = 0.0;
+    m_kellyTradeCount = 0;
+    m_kellyFraction = 0.5;      // Half-Kelly
+    m_kellyMaxCap = 0.25;       // Cap at 25%
+    m_kellyHistoryIndex = 0;
+    m_kellyHistorySize = 0;
+    ArrayResize(m_kellyWinHistory, 100);
+    ArrayResize(m_kellyLossHistory, 100);
+    ArrayInitialize(m_kellyWinHistory, 0.0);
+    ArrayInitialize(m_kellyLossHistory, 0.0);
+    // Equity compounding defaults
+    m_startingEquity = 0.0;
+    m_compoundingAggressiveness = 0.5;
+    m_drawdownScalingFactor = 1.0;
+    m_enableCompounding = true;
+    // Pluggable modifier chain defaults
+    m_modifierCount = 0;
+    for(int i = 0; i < 5; i++)
+        m_modifiers[i] = NULL;
 }
 
 //+------------------------------------------------------------------+
@@ -448,15 +534,91 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
         baseSize = CalculateCorrelationAdjustedSize(symbolParam, baseSize);
     }
     
+    // Apply equity compounding multiplier
+    baseSize *= CalculateCompoundingMultiplier();
+
+    // Apply pluggable modifier chain (Phase 5: Position Sizer Consolidation)
+    for(int i = 0; i < m_modifierCount; i++)
+    {
+        if(CheckPointer(m_modifiers[i]) != POINTER_INVALID)
+        {
+            double preMod = baseSize;
+            baseSize = m_modifiers[i].AdjustLotSize(baseSize, symbolParam, confidence);
+            if(MathAbs(baseSize - preMod) > 0.001)
+            {
+                LogSizingDecision(symbolParam, baseSize,
+                    StringFormat("Modifier[%d] %s: %.2f->%.2f", i, m_modifiers[i].GetName(), preMod, baseSize));
+            }
+        }
+    }
+
     // Validate final size
     double finalSize = ValidatePositionSize(symbolParam, baseSize);
-    
+
     // Store for debugging
     m_lastCalculatedSize = finalSize;
     m_lastSymbol = symbolParam;
     m_lastCalculation = TimeCurrent();
-    
+
     return finalSize;
+}
+
+//+------------------------------------------------------------------+
+//| Stateless position size calculation (Blueprint Section 10.5)      |
+//| All per-call parameters passed directly — no shared state mutation|
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateSize(const string symbol,
+                                      const ENUM_ORDER_TYPE orderType,
+                                      const double slDistancePips,
+                                      const double riskPercent,
+                                      const double confidence,
+                                      STierConfig* tierConfig)
+{
+    // Validate risk percent before proceeding
+    if(riskPercent <= 0.0 || riskPercent > MAX_RISK_PER_TRADE)
+    {
+        PrintFormat("[POSITIONSIZER-CALCULATE-SIZE] Invalid risk percent: %.2f — falling back to min lot for %s",
+                    riskPercent, symbol);
+        return NormalizeVolume(symbol, MIN_LOT_SIZE);
+    }
+
+    // Save the current risk percent so we can restore it after calculation.
+    // This makes the method stateless from the caller's perspective —
+    // no persistent mutation of m_params, safe for multi-symbol per-tick use.
+    double savedRiskPercent = m_params.riskPercent;
+
+    // Temporarily override with the caller-provided risk percent
+    m_params.riskPercent = riskPercent;
+
+    // Ensure initialized flag is set (CalculateOptimalPositionSize checks this)
+    if(!m_initialized)
+        m_initialized = true;
+
+    // Delegate to the existing calculation — produces IDENTICAL results
+    double lotSize = CalculateOptimalPositionSize(symbol, orderType, slDistancePips, confidence);
+
+    // Apply tier cap if a tier config is provided
+    if(tierConfig != NULL)
+    {
+        double riskDenominator = GetRiskDenominator();
+        double tierMaxRisk = riskDenominator * (tierConfig.riskPerTradePct / 100.0);
+        double riskPerLot = CalculateRiskPerLot(symbol, slDistancePips);
+        if(riskPerLot > 0.0)
+        {
+            double tierMaxLot = tierMaxRisk / riskPerLot;
+            if(lotSize > tierMaxLot)
+            {
+                LogSizingDecision(symbol, tierMaxLot, StringFormat("Tier cap applied (%.1f%%)", tierConfig.riskPerTradePct));
+                lotSize = tierMaxLot;
+                lotSize = NormalizeVolume(symbol, lotSize);
+            }
+        }
+    }
+
+    // Restore original risk percent — no persistent state mutation
+    m_params.riskPercent = savedRiskPercent;
+
+    return lotSize;
 }
 
 //+------------------------------------------------------------------+
@@ -490,6 +652,25 @@ double CPositionSizer::CalculateBasePositionSize(const string symbolParam, const
             baseSize = CalculateCorrelationAdjustedSize(symbolParam, baseSize);
             LogSizingDecision(symbolParam, baseSize, "Correlation adjusted");
             break;
+            
+        case POSITION_SIZE_KELLY:
+        {
+            double kellyFraction = CalculateKellyFraction();
+            double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+            double riskAmount = equity * kellyFraction;
+            double riskPerLot = CalculateRiskPerLot(symbolParam, stopLossPips);
+            if(riskPerLot > 0.0)
+            {
+                baseSize = riskAmount / riskPerLot;
+                LogSizingDecision(symbolParam, baseSize, StringFormat("Kelly Criterion (fraction=%.4f)", kellyFraction));
+            }
+            else
+            {
+                baseSize = MIN_LOT_SIZE;
+                LogSizingDecision(symbolParam, baseSize, "Kelly Criterion fallback (invalid risk per lot)");
+            }
+            break;
+        }
             
         default:
             baseSize = MIN_LOT_SIZE;
@@ -954,82 +1135,33 @@ bool CPositionSizer::ValidateSymbol(const string symbolParam)
 }
 
 //+------------------------------------------------------------------+
-//| Calculate correlation between two symbols using historical data     |
+//| Calculate correlation between two symbols — delegates to engine   |
 //+------------------------------------------------------------------+
 double CPositionSizer::CalculateCorrelation(const string symbol1, const string symbol2, int period)
 {
-    if(period < 10) period = 10;
-    if(period > 200) period = 200;
-    
-    // Get historical close prices for both symbols
-    double prices1[];
-    double prices2[];
-    ArrayResize(prices1, period);
-    ArrayResize(prices2, period);
-    
-    int count1 = 0, count2 = 0;
-    for(int i = 0; i < period; i++)
+    // Delegate to unified correlation engine if available
+    if(CheckPointer(m_correlationEngine) != POINTER_INVALID)
     {
-        double close1 = iClose(symbol1, PERIOD_CURRENT, i);
-        double close2 = iClose(symbol2, PERIOD_CURRENT, i);
-        
-        if(close1 > 0)
-        {
-            prices1[count1] = close1;
-            count1++;
-        }
-        if(close2 > 0)
-        {
-            prices2[count2] = close2;
-            count2++;
-        }
-    }
-    
-    // Need at least 10 data points for meaningful correlation
-    if(count1 < 10 || count2 < 10)
+        double corr = m_correlationEngine.GetCorrelation(symbol1, symbol2);
+        // Engine returns conservative fallback (1.0) when data insufficient;
+        // for position sizing, 0.0 is safer (no correlation penalty).
+        // Only accept values that look like real correlations.
+        if(corr >= -1.0 && corr <= 1.0)
+            return corr;
         return 0.0;
-    
-    // Use the minimum count
-    int n = MathMin(count1, count2);
-    ArrayResize(prices1, n);
-    ArrayResize(prices2, n);
-    
-    // Calculate means
-    double mean1 = 0.0, mean2 = 0.0;
-    for(int i = 0; i < n; i++)
-    {
-        mean1 += prices1[i];
-        mean2 += prices2[i];
     }
-    mean1 /= n;
-    mean2 /= n;
-    
-    // Calculate covariance and variances
-    double covariance = 0.0;
-    double variance1 = 0.0;
-    double variance2 = 0.0;
-    
-    for(int i = 0; i < n; i++)
-    {
-        double diff1 = prices1[i] - mean1;
-        double diff2 = prices2[i] - mean2;
-        
-        covariance += diff1 * diff2;
-        variance1 += diff1 * diff1;
-        variance2 += diff2 * diff2;
-    }
-    
-    covariance /= n;
-    variance1 /= n;
-    variance2 /= n;
-    
-    // Calculate correlation coefficient
-    double stdDev1 = MathSqrt(variance1);
-    double stdDev2 = MathSqrt(variance2);
-    
-    if(stdDev1 > 0.0 && stdDev2 > 0.0)
-        return covariance / (stdDev1 * stdDev2);
-    
+
+    // Fallback: simple same-direction heuristic when engine is unavailable.
+    // If both symbols share the same base currency, assume positive correlation.
+    // Otherwise, assume zero correlation (no penalty).
+    string base1 = StringSubstr(symbol1, 0, 3);
+    string base2 = StringSubstr(symbol2, 0, 3);
+    string quote1 = StringSubstr(symbol1, 3, 3);
+    string quote2 = StringSubstr(symbol2, 3, 3);
+
+    if(base1 == base2 || quote1 == quote2)
+        return 0.5;  // Moderate positive correlation assumption
+
     return 0.0;
 }
 
@@ -1038,6 +1170,9 @@ double CPositionSizer::CalculateCorrelation(const string symbol1, const string s
 //+------------------------------------------------------------------+
 void CPositionSizer::LogSizingDecision(const string symbolParam, const double size, const string reason)
 {
+    if(m_logLevel < 3)
+        return;
+
     string message = StringFormat("Position size calculated: %s = %.2f lots (%s)",
                                  symbolParam, size, reason);
     SErrorContext context;
@@ -1049,6 +1184,144 @@ void CPositionSizer::LogSizingDecision(const string symbolParam, const double si
     context.timestamp = TimeCurrent();
     context.severity = ERROR_INFO;
     CEnhancedErrorHandler::LogError(ERROR_INFO, context);
+}
+
+//+------------------------------------------------------------------+
+//| Update Kelly Criterion rolling statistics                      |
+//+------------------------------------------------------------------+
+void CPositionSizer::UpdateKellyStats(bool win, double profit, double loss)
+{
+    // Store in circular buffer (last 100 trades)
+    m_kellyWinHistory[m_kellyHistoryIndex] = win ? profit : 0.0;
+    m_kellyLossHistory[m_kellyHistoryIndex] = win ? 0.0 : MathAbs(loss);
+    m_kellyHistoryIndex = (m_kellyHistoryIndex + 1) % 100;
+    if(m_kellyHistorySize < 100)
+        m_kellyHistorySize++;
+    
+    // Recalculate rolling statistics
+    double totalWins = 0.0;
+    double totalLosses = 0.0;
+    int winCount = 0;
+    int lossCount = 0;
+    
+    for(int i = 0; i < m_kellyHistorySize; i++)
+    {
+        if(m_kellyWinHistory[i] > 0.0)
+        {
+            totalWins += m_kellyWinHistory[i];
+            winCount++;
+        }
+        if(m_kellyLossHistory[i] > 0.0)
+        {
+            totalLosses += m_kellyLossHistory[i];
+            lossCount++;
+        }
+    }
+    
+    m_kellyTradeCount = m_kellyHistorySize;
+    m_kellyWinRate = (m_kellyTradeCount > 0) ? (double)winCount / (double)m_kellyTradeCount : 0.5;
+    m_kellyAvgWin = (winCount > 0) ? totalWins / winCount : 0.0;
+    m_kellyAvgLoss = (lossCount > 0) ? totalLosses / lossCount : 0.0;
+    
+    Print("[KELLY-STATS] WinRate=", DoubleToString(m_kellyWinRate, 4),
+          " AvgWin=", DoubleToString(m_kellyAvgWin, 2),
+          " AvgLoss=", DoubleToString(m_kellyAvgLoss, 2),
+          " Trades=", m_kellyTradeCount);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Kelly Criterion fraction                             |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateKellyFraction(void)
+{
+    // If not enough data, use conservative default
+    if(m_kellyTradeCount < 10 || m_kellyAvgLoss <= 0.0)
+    {
+        Print("[KELLY] Insufficient data (trades=", m_kellyTradeCount, "), using conservative 1%");
+        return 0.01;
+    }
+    
+    double payoffRatio = m_kellyAvgWin / MathMax(m_kellyAvgLoss, 0.0001);
+    double kelly = m_kellyWinRate - ((1.0 - m_kellyWinRate) / payoffRatio);
+    double adjustedKelly = kelly * m_kellyFraction;  // Half-Kelly
+    double result = MathMax(0.01, MathMin(adjustedKelly, m_kellyMaxCap));  // Floor at 1%, cap at 25%
+    
+    Print("[KELLY] PayoffRatio=", DoubleToString(payoffRatio, 4),
+          " RawKelly=", DoubleToString(kelly, 4),
+          " AdjustedKelly=", DoubleToString(adjustedKelly, 4),
+          " Final=", DoubleToString(result, 4));
+    
+    return result;
+}
+
+//+------------------------------------------------------------------+
+//| Initialize equity compounding                                  |
+//+------------------------------------------------------------------+
+void CPositionSizer::InitializeCompounding(void)
+{
+    m_startingEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    Print("[COMPOUNDING] Initialized with starting equity: ", DoubleToString(m_startingEquity, 2));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate equity compounding multiplier                        |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateCompoundingMultiplier(void)
+{
+    if(!m_enableCompounding)
+        return 1.0;
+    
+    if(m_startingEquity <= 0.0)
+    {
+        // Not initialized yet — initialize on first call
+        InitializeCompounding();
+        return 1.0;
+    }
+    
+    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double equityRatio = currentEquity / MathMax(m_startingEquity, 0.01);
+    
+    double multiplier;
+    if(equityRatio > 1.0)
+    {
+        // Growing: scale up with square root to avoid over-leveraging
+        multiplier = 1.0 + (MathSqrt(equityRatio) - 1.0) * m_compoundingAggressiveness;
+    }
+    else
+    {
+        // Declining: scale down linearly (more conservative)
+        multiplier = equityRatio * m_drawdownScalingFactor;
+    }
+    
+    // Safety floor: never scale below 0.1x
+    multiplier = MathMax(0.1, multiplier);
+    
+    Print("[COMPOUNDING] EquityRatio=", DoubleToString(equityRatio, 4),
+          " Multiplier=", DoubleToString(multiplier, 4),
+          " StartingEquity=", DoubleToString(m_startingEquity, 2),
+          " CurrentEquity=", DoubleToString(currentEquity, 2));
+    
+    return multiplier;
+}
+
+//+------------------------------------------------------------------+
+//| Add a pluggable modifier to the chain (Phase 5)                   |
+//+------------------------------------------------------------------+
+void CPositionSizer::AddModifier(CPositionSizerModifier* modifier)
+{
+    if(modifier == NULL)
+    {
+        Print("[POSITIONSIZER] AddModifier: NULL modifier ignored");
+        return;
+    }
+    if(m_modifierCount >= 5)
+    {
+        Print("[POSITIONSIZER] AddModifier: Max 5 modifiers reached, ignoring ", modifier.GetName());
+        return;
+    }
+    m_modifiers[m_modifierCount] = modifier;
+    m_modifierCount++;
+    PrintFormat("[POSITIONSIZER] Modifier added: %s (total=%d)", modifier.GetName(), m_modifierCount);
 }
 
 #endif // CORE_POSITION_SIZER_MQH

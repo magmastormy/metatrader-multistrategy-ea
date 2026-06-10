@@ -13,6 +13,7 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 #include "PortfolioRiskManager.mqh"
+#include "CorrelationEngine.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -26,6 +27,7 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
+class CUnifiedRiskManager;
 
 //+------------------------------------------------------------------+
 //| Trade Request Validation Structure                             |
@@ -55,6 +57,7 @@ class CRiskValidationGate
 {
 private:
     CPortfolioRiskManager* m_portfolioRiskManager;  // Use pointer instead of reference
+    CUnifiedRiskManager*   m_unifiedRiskManager;    // Unified drawdown authority (Phase 2.1)
     
     // Validation parameters
     double m_maxRiskPerTrade;         // Maximum risk per trade (3%)
@@ -132,6 +135,7 @@ public:
     void SetMaxRiskPerTrade(const double maxRisk) { m_maxRiskPerTrade = maxRisk; }
     void SetMaxPortfolioRisk(const double maxRisk) { m_maxPortfolioRisk = maxRisk; }
     void SetCorrelationThreshold(const double threshold) { m_correlationThreshold = threshold; }
+    void SetUnifiedRiskManager(CUnifiedRiskManager* manager) { m_unifiedRiskManager = manager; }
     void ConfigureClusterGovernance(const bool enabled,
                                     const int maxConcurrentPerCluster,
                                     const double maxClusterRiskPercent,
@@ -216,6 +220,7 @@ bool CRiskValidationGate::PortfolioHasUnprotectedPositions() const
 //| Constructor                                                     |
 //+------------------------------------------------------------------+
 CRiskValidationGate::CRiskValidationGate() : m_portfolioRiskManager(NULL),
+                                           m_unifiedRiskManager(NULL),
                                            m_maxRiskPerTrade(2.0),
                                            m_maxPortfolioRisk(10.0),
                                            m_correlationThreshold(0.7),
@@ -675,6 +680,7 @@ bool CRiskValidationGate::ValidateMarginRequirements(const STradeValidationReque
 
 //+------------------------------------------------------------------+
 //| Validate account health                                        |
+//| Drawdown authority delegated to CUnifiedRiskManager (Phase 2.1) |
 //+------------------------------------------------------------------+
 bool CRiskValidationGate::ValidateAccountHealth(const STradeValidationRequest &request, string &message)
 {
@@ -685,18 +691,30 @@ bool CRiskValidationGate::ValidateAccountHealth(const STradeValidationRequest &r
         return false;
     }
 
-    double accountEquityLocal = AccountInfoDouble(ACCOUNT_EQUITY);
-    double drawdown = 0.0;
-
-    if(accountBalanceLocal2 > 0)
+    // Delegate drawdown check to CUnifiedRiskManager — single source of truth
+    if(CheckPointer(m_unifiedRiskManager) != POINTER_INVALID)
     {
-        drawdown = ((accountBalanceLocal2 - accountEquityLocal) / accountBalanceLocal2) * 100.0;
+        SDrawdownState ddState = m_unifiedRiskManager.GetDrawdownState();
+        if(ddState.isCriticalActive)
+        {
+            message = StringFormat("Drawdown critical: %.2f%% — trading halted by unified risk manager",
+                                   ddState.currentDrawdownPct);
+            return false;
+        }
     }
-
-    if(drawdown > DRAWDOWN_CRITICAL)
+    else
     {
-        message = StringFormat("Drawdown too high: %.2f%%", drawdown);
-        return false;
+        // Fallback: independent calculation only when unified manager is unavailable
+        double accountEquityLocal = AccountInfoDouble(ACCOUNT_EQUITY);
+        double drawdown = 0.0;
+        if(accountBalanceLocal2 > 0)
+            drawdown = ((accountBalanceLocal2 - accountEquityLocal) / accountBalanceLocal2) * 100.0;
+
+        if(drawdown > DRAWDOWN_CRITICAL)
+        {
+            message = StringFormat("Drawdown too high: %.2f%% (fallback — unified manager not linked)", drawdown);
+            return false;
+        }
     }
 
     if(PortfolioEmergencyActive())
@@ -1054,47 +1072,20 @@ bool CRiskValidationGate::CheckAccountTradingPermissions(void)
 }
 
 //+------------------------------------------------------------------+
-//| Calculate symbol correlation                                   |
+//| Calculate symbol correlation (Phase 2.2: delegates to engine)    |
 //+------------------------------------------------------------------+
 double CRiskValidationGate::CalculateSymbolCorrelation(const string symbol1, const string symbol2)
 {
-    // Simple correlation calculation based on recent price movements
-    double prices1[], prices2[];
-    int period = 20; // Use 20 periods for correlation
-    
-    if(CopyClose(symbol1, PERIOD_H1, 0, period, prices1) < period ||
-       CopyClose(symbol2, PERIOD_H1, 0, period, prices2) < period) {
-        return 0.0; // No correlation if insufficient data
+    // Delegate to unified correlation engine via portfolio risk manager
+    if(CheckPointer(m_portfolioRiskManager) != POINTER_INVALID)
+    {
+        CCorrelationEngine* engine = m_portfolioRiskManager.GetCorrelationEngine();
+        if(engine != NULL)
+            return engine.GetCorrelation(symbol1, symbol2);
     }
-    
-    // Calculate returns
-    double returns1[], returns2[];
-    ArrayResize(returns1, period - 1);
-    ArrayResize(returns2, period - 1);
-    
-    for(int i = 1; i < period; i++) {
-        returns1[i-1] = (prices1[i] - prices1[i-1]) / prices1[i-1];
-        returns2[i-1] = (prices2[i] - prices2[i-1]) / prices2[i-1];
-    }
-    
-    // Calculate correlation coefficient
-    double sum1 = 0, sum2 = 0, sum12 = 0, sum1sq = 0, sum2sq = 0;
-    int n = period - 1;
-    
-    for(int i = 0; i < n; i++) {
-        sum1 += returns1[i];
-        sum2 += returns2[i];
-        sum12 += returns1[i] * returns2[i];
-        sum1sq += returns1[i] * returns1[i];
-        sum2sq += returns2[i] * returns2[i];
-    }
-    
-    double numerator = n * sum12 - sum1 * sum2;
-    double denominator = MathSqrt((n * sum1sq - sum1 * sum1) * (n * sum2sq - sum2 * sum2));
-    
-    if(denominator == 0) return 0.0;
-    
-    return numerator / denominator;
+
+    // Fallback: conservative return when engine unavailable
+    return 1.0;
 }
 
 //+------------------------------------------------------------------+

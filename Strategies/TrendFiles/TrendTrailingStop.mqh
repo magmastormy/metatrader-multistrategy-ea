@@ -11,6 +11,7 @@
 #define __TREND_TRAILING_STOP_MQH__
 
 #include "MultiEMASystem.mqh"
+#include "../../IndicatorManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Trailing Method                                                  |
@@ -167,18 +168,14 @@ void CTrendTrailingStop::Deinit()
 //+------------------------------------------------------------------+
 double CTrendTrailingStop::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
-    
+
     double atr[];
     ArraySetAsSeries(atr, true);
     if(CopyBuffer(handle, 0, 0, 1, atr) <= 0)
-    {
-        IndicatorRelease(handle);
         return 0;
-    }
-    
-    IndicatorRelease(handle);
+
     return atr[0];
 }
 

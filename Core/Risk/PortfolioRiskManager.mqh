@@ -12,6 +12,7 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 #include "../../IndicatorManager.mqh"
+#include "CorrelationEngine.mqh"
 
 //+------------------------------------------------------------------+
 //| Portfolio Risk Manager Class                                     |
@@ -28,6 +29,9 @@ private:
     string m_lastBlockReason;       // Last deterministic veto reason
     string m_lastPrintedBlockReason;
     datetime m_lastPrintedBlockTime;
+
+    // Unified correlation engine (Phase 2.2)
+    CCorrelationEngine m_correlationEngine;
     
     // Track per-symbol exposure
     struct SymbolExposure
@@ -36,6 +40,20 @@ private:
         double riskPercent;
         double correlationGroup;
     };
+
+    // Incremental position risk cache (avoids full position scan on every validation)
+    struct SCachedPortfolioRisk
+    {
+        double   totalRiskPct;           // Total portfolio risk %
+        double   perSymbolRisk[];        // Per-symbol risk % (dynamic array)
+        string   perSymbolName[];        // Symbol names corresponding to perSymbolRisk
+        datetime lastFullRefresh;        // Last time full refresh was done
+        int      positionCount;          // Number of positions at last refresh
+        bool     isValid;                // Whether cache is valid
+    };
+
+    SCachedPortfolioRisk m_riskCache;
+    int                  m_cacheRefreshIntervalSec;  // Full refresh interval (default 60)
     
 public:
     CPortfolioRiskManager();
@@ -54,6 +72,15 @@ public:
     int    GetUnprotectedPositionCount() const { return m_missingStopCount; }
     string GetLastBlockReason() const { return m_lastBlockReason; }
 
+    // Correlation engine access (Phase 2.2)
+    CCorrelationEngine* GetCorrelationEngine() { return &m_correlationEngine; }
+
+    // Incremental risk cache — public interface
+    void OnPositionOpened(string symbol, double riskPct);
+    void OnPositionClosed(string symbol, double riskPct);
+    void InvalidateRiskCache();
+    void SetCacheRefreshInterval(int seconds) { m_cacheRefreshIntervalSec = (seconds > 0 ? seconds : 60); }
+
 private:
     double GetPositionRisk(ulong ticket);
     void   UpdateCurrentRisk();
@@ -62,6 +89,12 @@ private:
     double CalculateSymbolCorrelation(const string symbol1, const string symbol2);
     int    GetPositionsOnSymbol(const string symbol);
     void   RecordBlockReason(const string reason);
+
+    // Incremental risk cache — private methods
+    void   AddPositionToCache(string symbol, double riskPct);
+    void   RemovePositionFromCache(string symbol, double riskPct);
+    int    FindSymbolInCache(string symbol);
+    void   RefreshRiskCache();
 };
 
 //+------------------------------------------------------------------+
@@ -76,8 +109,15 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_missingStopCount(0),
     m_lastBlockReason(""),
     m_lastPrintedBlockReason(""),
-    m_lastPrintedBlockTime(0)
+    m_lastPrintedBlockTime(0),
+    m_cacheRefreshIntervalSec(60)
 {
+    m_riskCache.totalRiskPct = 0.0;
+    m_riskCache.lastFullRefresh = 0;
+    m_riskCache.positionCount = 0;
+    m_riskCache.isValid = false;
+    ArrayResize(m_riskCache.perSymbolRisk, 0);
+    ArrayResize(m_riskCache.perSymbolName, 0);
 }
 
 //+------------------------------------------------------------------+
@@ -106,7 +146,18 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     m_lastBlockReason = "";
     m_lastPrintedBlockReason = "";
     m_lastPrintedBlockTime = 0;
-    
+
+    // Reset risk cache
+    m_riskCache.totalRiskPct = 0.0;
+    m_riskCache.lastFullRefresh = 0;
+    m_riskCache.positionCount = 0;
+    m_riskCache.isValid = false;
+    ArrayResize(m_riskCache.perSymbolRisk, 0);
+    ArrayResize(m_riskCache.perSymbolName, 0);
+
+    // Initialize unified correlation engine (Phase 2.2)
+    m_correlationEngine.Initialize(30, 300);
+
     PrintFormat("[PortfolioRisk] Initialized. Max Risk: %.1f%%, Max Correlation: %.2f", 
                 m_maxPortfolioRisk, m_maxCorrelation);
     
@@ -118,7 +169,13 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
 //+------------------------------------------------------------------+
 double CPortfolioRiskManager::GetPortfolioRisk()
 {
-    UpdateCurrentRisk();
+    // Check if cache needs refresh
+    if(!m_riskCache.isValid ||
+       (int)(TimeCurrent() - m_riskCache.lastFullRefresh) > m_cacheRefreshIntervalSec ||
+       PositionsTotal() != m_riskCache.positionCount)
+    {
+        RefreshRiskCache();
+    }
 
     if(m_missingStopDetected)
     {
@@ -154,23 +211,24 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
         return false;
     }
     
-    UpdateCurrentRisk();
+    // Use cached risk (RefreshRiskCache handles staleness)
+    double currentRisk = GetPortfolioRisk();
     
     // If we are already above limit, block everything
-    if(m_currentTotalRisk >= m_maxPortfolioRisk)
+    if(currentRisk >= m_maxPortfolioRisk)
     {
         RecordBlockReason(StringFormat("Risk %.2f%% >= Max %.2f%%",
-                                       m_currentTotalRisk,
+                                       currentRisk,
                                        m_maxPortfolioRisk));
         return false;
     }
     
     // Check estimated impact
     double estimatedNewRisk = CalculatePotentialTradeRisk(symbol, lotSize, stopLossPoints);
-    if(m_currentTotalRisk + estimatedNewRisk > m_maxPortfolioRisk)
+    if(currentRisk + estimatedNewRisk > m_maxPortfolioRisk)
     {
         RecordBlockReason(StringFormat("New Total %.2f%% > Max %.2f%%",
-                                       m_currentTotalRisk + estimatedNewRisk,
+                                       currentRisk + estimatedNewRisk,
                                        m_maxPortfolioRisk));
         return false;
     }
@@ -389,68 +447,8 @@ double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double 
 
 double CPortfolioRiskManager::CalculateSymbolCorrelation(const string symbol1, const string symbol2)
 {
-    const double conservativeCorrelation = 1.0;
-    static datetime s_lastCorrelationDataWarn = 0;
-
-    double boundedFallbackCorrelation = 0.65;
-    if(m_maxCorrelation > 0.0)
-        boundedFallbackCorrelation = MathMin(boundedFallbackCorrelation, m_maxCorrelation);
-
-    if(symbol1 == "" || symbol2 == "")
-        return conservativeCorrelation;
-    if(symbol1 == symbol2)
-        return conservativeCorrelation;
-
-    if(!SymbolSelect(symbol1, true) || !SymbolSelect(symbol2, true))
-        return conservativeCorrelation;
-
-    const int period = 30;
-    double prices1[];
-    double prices2[];
-
-    if(CopyClose(symbol1, PERIOD_H1, 0, period, prices1) < period ||
-       CopyClose(symbol2, PERIOD_H1, 0, period, prices2) < period)
-    {
-        datetime now = TimeCurrent();
-        if(s_lastCorrelationDataWarn == 0 || (now - s_lastCorrelationDataWarn) >= 300)
-        {
-            PrintFormat("[PortfolioRisk] Correlation data unavailable for %s/%s - applying bounded fallback %.2f",
-                        symbol1, symbol2, boundedFallbackCorrelation);
-            s_lastCorrelationDataWarn = now;
-        }
-        return boundedFallbackCorrelation;
-    }
-
-    double returns1[];
-    double returns2[];
-    ArrayResize(returns1, period - 1);
-    ArrayResize(returns2, period - 1);
-
-    for(int i = 1; i < period; i++)
-    {
-        if(prices1[i - 1] == 0.0 || prices2[i - 1] == 0.0)
-            return conservativeCorrelation;
-        returns1[i - 1] = (prices1[i] - prices1[i - 1]) / prices1[i - 1];
-        returns2[i - 1] = (prices2[i] - prices2[i - 1]) / prices2[i - 1];
-    }
-
-    double sum1 = 0.0, sum2 = 0.0, sum12 = 0.0, sum1sq = 0.0, sum2sq = 0.0;
-    int n = period - 1;
-    for(int i = 0; i < n; i++)
-    {
-        sum1 += returns1[i];
-        sum2 += returns2[i];
-        sum12 += returns1[i] * returns2[i];
-        sum1sq += returns1[i] * returns1[i];
-        sum2sq += returns2[i] * returns2[i];
-    }
-
-    double numerator = n * sum12 - sum1 * sum2;
-    double denominator = MathSqrt((n * sum1sq - sum1 * sum1) * (n * sum2sq - sum2 * sum2));
-    if(denominator <= 0.0)
-        return conservativeCorrelation;
-
-    return numerator / denominator;
+    // Delegate to unified correlation engine (Phase 2.2)
+    return m_correlationEngine.GetCorrelation(symbol1, symbol2);
 }
 
 int CPortfolioRiskManager::GetPositionsOnSymbol(const string symbol)
@@ -466,6 +464,142 @@ int CPortfolioRiskManager::GetPositionsOnSymbol(const string symbol)
         }
     }
     return count;
+}
+
+//+------------------------------------------------------------------+
+//| Find symbol index in risk cache                                  |
+//+------------------------------------------------------------------+
+int CPortfolioRiskManager::FindSymbolInCache(string symbol)
+{
+    for(int i = 0; i < ArraySize(m_riskCache.perSymbolName); i++)
+    {
+        if(m_riskCache.perSymbolName[i] == symbol)
+            return i;
+    }
+    return -1;
+}
+
+//+------------------------------------------------------------------+
+//| Add position risk to cache incrementally                         |
+//+------------------------------------------------------------------+
+void CPortfolioRiskManager::AddPositionToCache(string symbol, double riskPct)
+{
+    // Add risk to total
+    m_riskCache.totalRiskPct += riskPct;
+
+    // Add to per-symbol tracking
+    int idx = FindSymbolInCache(symbol);
+    if(idx >= 0)
+        m_riskCache.perSymbolRisk[idx] += riskPct;
+    else
+    {
+        // New symbol entry
+        int size = ArraySize(m_riskCache.perSymbolRisk);
+        ArrayResize(m_riskCache.perSymbolRisk, size + 1);
+        ArrayResize(m_riskCache.perSymbolName, size + 1);
+        m_riskCache.perSymbolRisk[size] = riskPct;
+        m_riskCache.perSymbolName[size] = symbol;
+    }
+    m_riskCache.positionCount++;
+}
+
+//+------------------------------------------------------------------+
+//| Remove position risk from cache incrementally                    |
+//+------------------------------------------------------------------+
+void CPortfolioRiskManager::RemovePositionFromCache(string symbol, double riskPct)
+{
+    m_riskCache.totalRiskPct -= riskPct;
+    m_riskCache.totalRiskPct = MathMax(0.0, m_riskCache.totalRiskPct);
+
+    int idx = FindSymbolInCache(symbol);
+    if(idx >= 0)
+    {
+        m_riskCache.perSymbolRisk[idx] -= riskPct;
+        m_riskCache.perSymbolRisk[idx] = MathMax(0.0, m_riskCache.perSymbolRisk[idx]);
+    }
+    m_riskCache.positionCount--;
+}
+
+//+------------------------------------------------------------------+
+//| Full refresh of risk cache from all open positions               |
+//+------------------------------------------------------------------+
+void CPortfolioRiskManager::RefreshRiskCache()
+{
+    // Delegate to the existing full-scan logic
+    UpdateCurrentRisk();
+
+    // Rebuild per-symbol cache from scratch
+    ArrayResize(m_riskCache.perSymbolRisk, 0);
+    ArrayResize(m_riskCache.perSymbolName, 0);
+    m_riskCache.totalRiskPct = 0.0;
+    m_riskCache.positionCount = 0;
+
+    double riskDenominator = GetRiskDenominator();
+    if(riskDenominator <= 0.0)
+    {
+        m_riskCache.lastFullRefresh = TimeCurrent();
+        m_riskCache.isValid = true;
+        return;
+    }
+
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(!PositionSelectByTicket(ticket)) continue;
+
+        string symbol = PositionGetString(POSITION_SYMBOL);
+        double riskDollar = GetPositionRisk(ticket);
+
+        if(riskDollar > 0.0)
+        {
+            double riskPct = (riskDollar / riskDenominator) * 100.0;
+
+            int idx = FindSymbolInCache(symbol);
+            if(idx >= 0)
+                m_riskCache.perSymbolRisk[idx] += riskPct;
+            else
+            {
+                int size = ArraySize(m_riskCache.perSymbolRisk);
+                ArrayResize(m_riskCache.perSymbolRisk, size + 1);
+                ArrayResize(m_riskCache.perSymbolName, size + 1);
+                m_riskCache.perSymbolRisk[size] = riskPct;
+                m_riskCache.perSymbolName[size] = symbol;
+            }
+            m_riskCache.totalRiskPct += riskPct;
+            m_riskCache.positionCount++;
+        }
+    }
+
+    m_riskCache.lastFullRefresh = TimeCurrent();
+    m_riskCache.isValid = true;
+}
+
+//+------------------------------------------------------------------+
+//| Public: notify cache that a position was opened                  |
+//+------------------------------------------------------------------+
+void CPortfolioRiskManager::OnPositionOpened(string symbol, double riskPct)
+{
+    AddPositionToCache(symbol, riskPct);
+    // Sync m_currentTotalRisk with cache
+    m_currentTotalRisk = m_riskCache.totalRiskPct;
+}
+
+//+------------------------------------------------------------------+
+//| Public: notify cache that a position was closed                  |
+//+------------------------------------------------------------------+
+void CPortfolioRiskManager::OnPositionClosed(string symbol, double riskPct)
+{
+    RemovePositionFromCache(symbol, riskPct);
+    // Sync m_currentTotalRisk with cache
+    m_currentTotalRisk = m_riskCache.totalRiskPct;
+}
+
+//+------------------------------------------------------------------+
+//| Public: force cache invalidation                                 |
+//+------------------------------------------------------------------+
+void CPortfolioRiskManager::InvalidateRiskCache()
+{
+    m_riskCache.isValid = false;
 }
 
 #endif // CORE_RISK_PORTFOLIO_MANAGER_MQH

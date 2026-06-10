@@ -361,36 +361,19 @@ void CICTPositionSizer::UpdateWeeklyTracking()
 
 //+------------------------------------------------------------------+
 //| P3-D: Can Trade — Daily/Weekly Risk Guards                       |
+//| NOTE: Drawdown protection is now handled by CUnifiedRiskManager  |
+//| (Phase 2.1). This method no longer independently blocks trading  |
+//| based on drawdown — that authority belongs to the unified manager.|
+//| The sizer still tracks daily/weekly PnL for informational use.   |
 //+------------------------------------------------------------------+
 bool CICTPositionSizer::CanTrade(string &reason)
 {
     Update();
 
-    // Guard 1: Daily drawdown check
-    if(m_startOfDayBalance > 0)
-    {
-        double dailyDDPct = (m_dailyPnL / m_startOfDayBalance) * 100.0;
-        if(dailyDDPct <= -m_maxDailyDrawdownPct)
-        {
-            reason = StringFormat("Daily DD limit hit: %.2f%% (max: %.2f%%)",
-                                  dailyDDPct, -m_maxDailyDrawdownPct);
-            Print("[ICT-SIZER] BLOCKED: " + reason);
-            return false;
-        }
-    }
-
-    // Guard 2: Weekly drawdown check
-    if(m_startOfWeekBalance > 0)
-    {
-        double weeklyDDPct = (m_weeklyPnL / m_startOfWeekBalance) * 100.0;
-        if(weeklyDDPct <= -m_maxWeeklyDrawdownPct)
-        {
-            reason = StringFormat("Weekly DD limit hit: %.2f%% (max: %.2f%%)",
-                                  weeklyDDPct, -m_maxWeeklyDrawdownPct);
-            Print("[ICT-SIZER] BLOCKED: " + reason);
-            return false;
-        }
-    }
+    // Drawdown guards REMOVED — CUnifiedRiskManager is now the single
+    // drawdown authority. Daily/weekly DD limits (3%/6%) were redundant
+    // with the unified manager's warning (6%) and critical (12%) tiers.
+    // Keeping the PnL tracking for informational getters only.
 
     reason = "";
     return true;

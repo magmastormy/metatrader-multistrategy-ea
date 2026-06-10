@@ -25,6 +25,7 @@ enum ENUM_INDICATOR_TYPE
    INDICATOR_ICHIMOKU,   // Ichimoku Cloud
    INDICATOR_ADX,        // ADX
    INDICATOR_CCI,        // CCI
+   INDICATOR_VOLUMES,    // Volumes
    INDICATOR_CUSTOM      // Custom indicator
 };
 
@@ -66,6 +67,7 @@ public:
    int               GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int period);
    int               GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int shift, double deviation, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
    int               GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
+   int               GetVolumesHandle(string symbol, ENUM_TIMEFRAMES tf, ENUM_APPLIED_VOLUME applied_volume = VOLUME_TICK);
    
    // General method to access a handle
    int               GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[]);
@@ -650,6 +652,62 @@ int CIndicatorManager::GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
 }
 
 //+------------------------------------------------------------------+
+//| Get Volumes handle                                               |
+//+------------------------------------------------------------------+
+int CIndicatorManager::GetVolumesHandle(string symbol, ENUM_TIMEFRAMES tf, ENUM_APPLIED_VOLUME applied_volume)
+{
+   int params[5] = {(int)applied_volume};
+   int handle = FindHandle(INDICATOR_VOLUMES, symbol, tf, params);
+
+   if(handle != INVALID_HANDLE)
+   {
+      AccessHandle(handle);
+      return handle;
+   }
+
+   // Check symbol availability before creating indicator
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
+   handle = iVolumes(symbol, tf, applied_volume);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create Volumes handle for %s %s err=%d",
+                  symbol, EnumToString(tf), err);
+   }
+   if(handle != INVALID_HANDLE)
+   {
+      int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60);
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
+      ArrayResize(m_handles, size + 1);
+      m_handles[size].handle = handle;
+      m_handles[size].lastAccess = TimeCurrent();
+      m_handles[size].symbol = symbol;
+      m_handles[size].timeframe = tf;
+      m_handles[size].type = INDICATOR_VOLUMES;
+      m_handles[size].paramCount = 1;
+      ArrayInitialize(m_handles[size].parameters, 0);
+      m_handles[size].parameters[0] = (int)applied_volume;
+      PrintFormat("[INDICATOR-MANAGER] Created Volumes handle=%d for %s %s",
+                  handle, symbol, EnumToString(tf));
+   }
+
+   return handle;
+}
+
+//+------------------------------------------------------------------+
 //| General method to get a handle                                   |
 //+------------------------------------------------------------------+
 int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[])
@@ -689,6 +747,11 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
       case INDICATOR_CCI:
          if(ArraySize(params) >= 2)
             return GetCCIHandle(symbol, tf, params[0], (ENUM_APPLIED_PRICE)params[1]);
+         break;
+
+      case INDICATOR_VOLUMES:
+         if(ArraySize(params) >= 1)
+            return GetVolumesHandle(symbol, tf, (ENUM_APPLIED_VOLUME)params[0]);
          break;
          
       // Add other indicator types as needed

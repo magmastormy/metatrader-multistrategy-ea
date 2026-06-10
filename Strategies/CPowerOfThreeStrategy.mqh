@@ -62,7 +62,7 @@ public:
         m_lastBarCount(0),
         m_riskManager(NULL)
     {
-        OverrideMinConfidence(0.64);
+        OverrideMinConfidence(0.55);
     }
 
     virtual ~CPowerOfThreeStrategy()
@@ -194,10 +194,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        SSMTDivergence divergence;
-        bool hasSMT = (m_smtAvailable && m_smtScanner != NULL && m_smtScanner.Scan(divergence));
-        if(hasSMT && divergence.isBearish == bullish)
-            hasSMT = false;
+        // Phase 3.3: Removed SMT Divergence requirement (unreliable cross-symbol data)
 
         bool cisdAligned = m_structureAnalyzer.IsCISD(bullish ? POSITION_TYPE_BUY : POSITION_TYPE_SELL, 1);
         if(!cisdAligned && !state.chochAfterSweep)
@@ -209,7 +206,7 @@ public:
         double score = MathMax(0.55, state.confidence);
         score += hasTurtleSoup ? 0.10 : 0.0;
         score += oteAligned ? 0.08 : 0.0;
-        score += hasSMT ? 0.07 : 0.0;
+        // Phase 3.3: Removed SMT score contribution
         score += cisdAligned ? 0.05 : 0.0;
         score += state.chochAfterSweep ? 0.05 : 0.0;
         confidence = MathMin(0.95, score);
