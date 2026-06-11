@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-06-05
+- Last Updated: 2026-06-10
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 96 - Execution Profitability Recovery
+- Current Batch: 98 - Monolith Decomposition & Risk Framework Completion
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -29,6 +29,15 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Shared engine & scalability: `CSharedEngineManager` (Batch 91)
 - Error aggregation & verbosity: `CEnhancedErrorHandler` (enhanced in Batch 91)
 - Bar processing & multi-timeframe: `CBarProcessor` (enhanced in Batch 91)
+- Scalping engine: `CFastScalpEngine` + `CScalpSignalCache` (Batch 97)
+- Scalp strategies: `CScalpMomentumStrategy`, `CScalpSpreadStrategy`, `CScalpVolatilityBreakout` (Batch 97)
+- Position lifecycle: `CPositionLifecycleManager` (Batch 98)
+- Diagnostics/heartbeat: `CDiagnosticsManager` (Batch 98)
+- Unprotected position tracking: `CUnprotectedPositionTracker` (Batch 98)
+- Synthetic spike monitoring: `CSyntheticSpikeMonitor` (Batch 98)
+- Trade attribution: `CTradeAttributionManager` (Batch 98)
+- Symbol scan scheduling: `CSymbolScanScheduler` (Batch 98)
+- Position sizing (stateless): `CPositionSizer::CalculateSize()` → `CalculateOptimalPositionSizeCore()` (Batch 98)
 
 ## End-to-End Flow
 
@@ -50,7 +59,8 @@ flowchart TD
 
   D0 --> D0A[Validate tick and trading permissions]
   D0A --> D0B[Refresh runtime metrics, remediate unprotected positions, manage open positions]
-  D0B --> D0C{Synthetic tick spike?}
+  D0B --> D0B1[g_unprotectedTracker.AttemptRemediation]
+  D0B1 --> D0C{Synthetic tick spike?}
   D0C -->|Yes| D0D[Flatten positions and activate temporary trading pause]
   D0C -->|No| D0E[Continue]
   D0E --> D0F{Emergency drawdown breach?}
@@ -59,14 +69,14 @@ flowchart TD
 
   D --> D1{Terminal connected?}
   D1 -->|No| D2[Skip evaluation, wait reconnect]
-  D1 -->|Yes| D_MGMT[ManageOpenPositionsIfNeeded]
-  D_MGMT --> D_EXIT{SignalReversalExit Enabled?}
+  D1 -->|Yes| D_MGMT[g_lifecycleManager.ManagePositions]
+  D_MGMT --> D_EXIT{SRE Configured?}
   D_EXIT -- Yes --> D_REV[Check Consensus Reversal]
   D_REV --> D_CONF{Reversal > 0.58 Conf?}
   D_CONF -- Yes --> D_PROFIT{Profit Guard Pass?}
   D_PROFIT -- Yes --> D_ZONE{Last Stand Zone?}
   D_ZONE -- No --> D_CLOSE[Close Position]
-  D_EXIT -- No --> D_LIFECYCLE[PositionLifecycleManager]
+  D_EXIT -- No --> D_LIFECYCLE[g_lifecycleManager.ManageBreakevenAndTrailing]
   D_LIFECYCLE --> D_ATR[ATR-Based Trailing/BE]
   D_CLOSE --> D_LIFECYCLE
   D_ATR --> E{Signal eval second already used?}
@@ -130,6 +140,47 @@ flowchart TD
 
   D --> AH[Periodic HEARTBEAT, RISK-BUDGET, CONSENSUS-DIAG, AI-FEEDBACK, AUTHORITY-RESULT, PYTHON-BRIDGE-DASHBOARD]
 ```
+
+## De-Monolithized Manager Delegation Map
+
+The main EA delegates to the following extracted managers instead of inline logic:
+
+| Manager | File | Replaces (inline) | Key Methods |
+|---------|------|-------------------|-------------|
+| `CPositionLifecycleManager` | `Core/Management/PositionLifecycleManager.mqh` | `ManageOpenPositionsIfNeeded()` SRE + lifecycle | `ManagePositions()`, `CheckSignalReversalExit()`, `ManageBreakevenAndTrailing()` |
+| `CDiagnosticsManager` | `Core/Management/DiagnosticsManager.mqh` | Heartbeat block + consensus diagnostics | `EmitHeartbeat()`, `EmitConsensusDiagnostics()` |
+| `CUnprotectedPositionTracker` | `Core/Risk/UnprotectedPositionTracker.mqh` | `AttemptUnprotectedPositionRemediation()` + helpers | `AttemptRemediation()` |
+| `CSyntheticSpikeMonitor` | `Core/Processing/SyntheticSpikeMonitor.mqh` | Spike alarm + trading pause + emergency drawdown | `ProcessTickSafety()`, `EvaluateSpike()`, `IsPaused()` |
+| `CTradeAttributionManager` | `Core/Trading/TradeAttributionManager.mqh` | 27+ prediction/attribution/NN functions | `UpsertPredictionPositionMap()`, `ConsumeAIPendingRequestMap()`, `NNDiagPrintSummary()` |
+| `CSymbolScanScheduler` | `Core/Processing/SymbolScanScheduler.mqh` | 8 intrabar scoring/scheduling functions | `ScoreSymbolForIntrabar()`, `UpdateSymbolScanStateAfterDecision()` |
+
+## Scalping Fast Path (Batch 97)
+
+### Dual-Path Processing
+- `OnTick()` runs two parallel paths:
+  1. **Safety Loop** (existing): tick validation, runtime metrics refresh, unprotected position remediation, synthetic spike detection, emergency drawdown
+  2. **Scalp Fast Path** (new): `ProcessScalpFastPath()` reads from `CScalpSignalCache` for zero-computation indicator access, evaluates scalp strategies at tick level
+- `OnTimer()` retains full consensus logic (pipeline → manager → validator → risk → execution)
+- Scalp fast path entries still pass through `CUnifiedRiskManager` pre-trade gating
+
+### Scalp Signal Cache Architecture
+- `SScalpIndicatorCache` struct: 13 indicator values + tick-level bid/ask/spread + state tracking + 7 handle references
+- `CScalpSignalCache` class: fixed-size array for 20 symbols
+- `UpdateOnNewBar()`: CopyBuffer path (runs only on new bar formation)
+- `UpdateTickValues()`: SymbolInfoDouble-only path (runs every tick, minimal computation)
+- All handles sourced from `CIndicatorManager::Instance()` singleton
+
+### Async Order Execution
+- `InpScalpAsyncMode`: enables `OrderSendAsync()` for scalp entries
+- `SScalpPendingAsync` struct tracks async order state
+- `OnAsyncOrderSent()` / `OnDealConfirmed()` callbacks for order lifecycle
+- `CheckPendingAsyncOrders()` timeout handling via `InpScalpMaxLatencyMs`
+- `OnTradeTransaction()` routes scalp async confirmations to `CFastScalpEngine`
+
+### Scalp Strategies
+- **ScalpMomentum**: EMA trend + pullback (0.5 ATR) + ATR expanding + spread < 0.3 ATR + RSI 40-60; SL=0.75×ATR, TP=1.5×ATR (1:2 R:R); SCALP_CLUSTER
+- **ScalpSpread**: Wide spread returning + price near EMA + RSI filter; SL=0.06×ATR, TP=0.3×ATR; MEAN_REVERSION_CLUSTER
+- **ScalpVolatilityBreakout**: ATR at 20-bar low + BB breakout + strong bar + RSI confirmation; SL=BB middle, TP=2×ATR; SCALP_CLUSTER
 
 - Manager consensus resolves mixed-timeframe conflicts via `TimeframeConsistency` before final vote selection.
 - OnInit is two-tiered: mandatory trade/risk/runtime bootstrap remains fatal, while auxiliary AI brain/orchestrator/adaptation modules degrade behind readiness flags and do not abort the EA.
@@ -241,6 +292,41 @@ flowchart TD
   - FX: balanced roster, full trend filter, default higher-timeframe mapping
   - synthetics: structure-first roster, no ADX-dependent trend engine path, lighter higher-timeframe mapping for ICT/Elliott alignment, and a narrower intrabar live roster to keep M1 synthetic quorum from becoming a 7-strategy noise funnel
 
+## Strategy Intelligence (Batch 97)
+
+### Regime-Aware Strategy Weighting
+- `CStrategyBase::GetRegimeConfidenceMultiplier()` scales confidence by regime alignment:
+  - TREND_CLUSTER: 1.5x in strong trend, 0.3x in range
+  - MEAN_REVERSION_CLUSTER: 1.5x in range, 0.2x in strong trend
+  - STRUCTURE_CLUSTER: 1.0x (neutral)
+- Applied in `GetSignal()` before returning to manager consensus
+
+### Volatility Direction Awareness
+- `GetVolatilityDirection()` classifies ATR as EXPANDING, CONTRACTING, or STABLE via ratio comparison
+- `GetVolatilityDirectionMultiplier()` applies scaling: 1.2x expanding, 0.8x contracting, 1.0x stable
+- Expanding volatility boosts trend/breakout confidence; contracting volatility boosts mean-reversion confidence
+
+### Multi-Timeframe Confluence
+- `IsAlignedWithHigherTF()` checks EMA50 alignment on the next higher timeframe
+- Counter-trend entries filtered when higher-TF momentum opposes the signal direction
+- `GetNextHigherTF()` resolves the next timeframe in the standard MT5 hierarchy
+
+### Cross-Cluster Conflict Resolution
+- `CEnterpriseStrategyManager` tracks per-cluster conviction:
+  - trendClusterBuyConviction / trendClusterSellConviction
+  - meanRevClusterBuyConviction / meanRevClusterSellConviction
+- When trend and mean-reversion clusters oppose, the weaker cluster's conviction is subtracted (regime-weighted)
+- `MathMax(0.0, ...)` guards prevent negative conviction from floating-point precision
+
+### Conditional Diagnostic Logging
+- `InpLogLevel` input (0-4) gates diagnostic verbosity:
+  - 0: Silent (errors only)
+  - 1: Basic (trade events)
+  - 2: Normal (consensus + risk)
+  - 3: Detailed (execution quality, sizing decisions)
+  - 4: Verbose (all diagnostics)
+- Applied in `CTradeManager`, `CPositionSizer`, and EA heartbeat paths
+
 ## AI Runtime Path
 - `CNextGenStrategyBrain` now runs in a single local transformer mode; there is no runtime Python/cloud branch.
 - The shared universal transformer service is now initialized at startup and remains lazy-safe for late callers, preventing registered-symbol / missing-encoder drift in the AI feature path.
@@ -346,6 +432,45 @@ flowchart TD
   - max projected cluster risk cap
 - Portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
 - Recommended per-trade risk is now progressively throttled as daily and portfolio utilization rise, producing `[RISK-THROTTLE]` before the final hard-cap path is reached.
+
+## Risk Enhancement (Batch 97)
+
+### Tiered Correlation Response
+- `CUnifiedRiskManager` now applies a two-tier correlation response:
+  - `correlationReduceThreshold` (default 0.4): position size reduced proportionally
+  - `correlationBlockThreshold` (default 0.7): trade blocked entirely
+- Replaces previous binary block-at-threshold behavior with graduated response
+
+### Daily P&L Loss Limit
+- `dailyLossLimitPercent` circuit breaker in `CUnifiedRiskManager`
+- `CheckDailyLossLimit()` evaluates daily realized + unrealized loss against threshold
+- `m_dailyLossHaltActive` state prevents new entries until the next trading day
+- Resets at configurable `m_tradingDayStartHour` (default 0) for broker-consistent daily boundaries
+
+### Kelly Criterion Position Sizing
+- `POSITION_SIZE_KELLY` mode (enum value 5) in `CPositionSizer`
+- `CalculateKellyFraction()`: half-Kelly fraction with 25% cap, computed from recent trade history win rate and avg win/loss ratio
+- `CalculateCompoundingMultiplier()`: sqrt upside / linear downside scaling for asymmetric compounding
+
+### Mandatory SL Gate
+- `CTradeManager::ExecuteMarketOrder()` rejects any trade with `stopLossPips <= 0.0`
+- Enforces stop-loss protection at the execution layer, complementing risk-level validation
+
+### Min R:R Enforcement
+- Default minimum R:R of 1:2 applied to all clusters
+- MEAN_REVERSION_CLUSTER uses 1:5 minimum
+- Signals below threshold rejected before risk sizing
+
+### Portfolio Profit Target
+- `InpDailyProfitTargetPercent`: daily profit target as percentage of starting equity
+- `InpProfitTrailFactor`: trailing floor factor — once target reached, new entries halt but floor trails up with profit
+- Existing positions remain managed (trailing, breakeven, etc.) during profit halt
+
+### Auto Mode Switching
+- `InpEnableAutoModeSwitch`: enables automatic risk mode switching
+- Three modes: CONSERVATIVE, AGGRESSIVE, EMERGENCY
+- Switching triggers: drawdown percentage and consecutive win streak
+- Each mode has configurable risk parameters (`InpConservativeBaseRiskPct`, `InpAggressiveBaseRiskPct`, `InpModeSwitchDrawdownPct`, `InpModeSwitchWinStreak`)
 
 ## Execution Hardening
 - Fill policy is configurable via EA input (`IOC` default).
@@ -484,6 +609,9 @@ flowchart TD
 - Shadow mode executes full decision stack but does not send orders.
 - Runtime requires hedging account semantics and rejects unsupported margin modes during startup.
 - `CIndicatorManager::DestroyInstance()` must run on deinit.
+- All scalp entries must pass `CUnifiedRiskManager` pre-trade gating (same as non-scalp entries).
+- `CTradeManager` rejects any trade without a valid stop-loss (`stopLossPips <= 0.0`).
+- Scalp signal cache handles are sourced exclusively from `CIndicatorManager::Instance()`.
 - Removed strategy families are not represented in runtime registration paths.
 - Unified ICT runtime labeling is normalized (no legacy `Unified ICT/SMC` path labels).
 

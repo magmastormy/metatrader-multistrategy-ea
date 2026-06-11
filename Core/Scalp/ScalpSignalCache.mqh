@@ -193,7 +193,7 @@ public:
    {
       if(symbolCount <= 0 || symbolCount > SCALP_CACHE_MAX_SYMBOLS)
       {
-         PrintFormat("[SCALP-CACHE] ERROR: Invalid symbolCount=%d (max=%d)",
+         PrintFormat("[SCALP-CACHE] DEFERRED: symbolCount=%d (max=%d) — will init after symbol registration",
                      symbolCount, SCALP_CACHE_MAX_SYMBOLS);
          return false;
       }
@@ -214,39 +214,38 @@ public:
          if(sym == "")
             continue;
 
-         SScalpIndicatorCache &entry = m_cache[m_cacheCount];
-         entry.symbol    = sym;
-         entry.timeframe = timeframe;
+         m_cache[m_cacheCount].symbol    = sym;
+         m_cache[m_cacheCount].timeframe = timeframe;
 
          // Obtain handles from CIndicatorManager — never call iMA/iATR/iRSI directly
-         entry.emaFastHandle = indMgr.GetMAHandle(sym, timeframe, m_emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
-         entry.emaSlowHandle = indMgr.GetMAHandle(sym, timeframe, m_emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
-         entry.atrHandle     = indMgr.GetATRHandle(sym, timeframe, m_atrPeriod);
-         entry.rsiHandle     = indMgr.GetRSIHandle(sym, timeframe, m_rsiPeriod, PRICE_CLOSE);
-         entry.bbHandle      = indMgr.GetBandsHandle(sym, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
-         entry.adxHandle     = indMgr.GetADXHandle(sym, timeframe, m_adxPeriod);
-         entry.volumeHandle  = indMgr.GetVolumesHandle(sym, timeframe, VOLUME_TICK);
+         m_cache[m_cacheCount].emaFastHandle = indMgr.GetMAHandle(sym, timeframe, m_emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
+         m_cache[m_cacheCount].emaSlowHandle = indMgr.GetMAHandle(sym, timeframe, m_emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
+         m_cache[m_cacheCount].atrHandle     = indMgr.GetATRHandle(sym, timeframe, m_atrPeriod);
+         m_cache[m_cacheCount].rsiHandle     = indMgr.GetRSIHandle(sym, timeframe, m_rsiPeriod, PRICE_CLOSE);
+         m_cache[m_cacheCount].bbHandle      = indMgr.GetBandsHandle(sym, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
+         m_cache[m_cacheCount].adxHandle     = indMgr.GetADXHandle(sym, timeframe, m_adxPeriod);
+         m_cache[m_cacheCount].volumeHandle  = indMgr.GetVolumesHandle(sym, timeframe, VOLUME_TICK);
 
          // Validate critical handles — ATR and EMA are required for scalp
-         if(entry.emaFastHandle == INVALID_HANDLE || entry.emaSlowHandle == INVALID_HANDLE ||
-            entry.atrHandle == INVALID_HANDLE)
+         if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE || m_cache[m_cacheCount].emaSlowHandle == INVALID_HANDLE ||
+            m_cache[m_cacheCount].atrHandle == INVALID_HANDLE)
          {
             PrintFormat("[SCALP-CACHE] ERROR: Critical handle missing for %s | emaFast=%d emaSlow=%d atr=%d",
-                        sym, entry.emaFastHandle, entry.emaSlowHandle, entry.atrHandle);
+                        sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
             // Skip this symbol — cannot scalp without EMA and ATR
-            ZeroMemory(entry);
-            entry.symbol = "";
+            ZeroMemory(m_cache[m_cacheCount]);
+            m_cache[m_cacheCount].symbol = "";
             continue;
          }
 
          // Warn on non-critical handle failures
-         if(entry.rsiHandle == INVALID_HANDLE)
+         if(m_cache[m_cacheCount].rsiHandle == INVALID_HANDLE)
             PrintFormat("[SCALP-CACHE] WARNING: RSI handle missing for %s", sym);
-         if(entry.bbHandle == INVALID_HANDLE)
+         if(m_cache[m_cacheCount].bbHandle == INVALID_HANDLE)
             PrintFormat("[SCALP-CACHE] WARNING: BB handle missing for %s", sym);
-         if(entry.adxHandle == INVALID_HANDLE)
+         if(m_cache[m_cacheCount].adxHandle == INVALID_HANDLE)
             PrintFormat("[SCALP-CACHE] WARNING: ADX handle missing for %s", sym);
-         if(entry.volumeHandle == INVALID_HANDLE)
+         if(m_cache[m_cacheCount].volumeHandle == INVALID_HANDLE)
             PrintFormat("[SCALP-CACHE] WARNING: Volume handle missing for %s", sym);
 
          m_cacheCount++;
@@ -278,129 +277,127 @@ public:
    {
       for(int i = 0; i < m_cacheCount; i++)
       {
-         SScalpIndicatorCache &c = m_cache[i];
-
          // New-bar detection
-         datetime barTime = iTime(c.symbol, c.timeframe, 0);
+         datetime barTime = iTime(m_cache[i].symbol, m_cache[i].timeframe, 0);
          if(barTime == 0)
             continue;  // No data yet
-         if(barTime == c.lastBarTime)
+         if(barTime == m_cache[i].lastBarTime)
             continue;  // Same bar — skip
 
          bool anyFailed = false;
 
          // EMA fast (2 values: current + previous)
-         if(!CopyBuffer2(c.emaFastHandle, c.emaFast, c.emaFastPrev))
+         if(!CopyBuffer2(m_cache[i].emaFastHandle, m_cache[i].emaFast, m_cache[i].emaFastPrev))
          {
-            c.emaFast = 0.0;
-            c.emaFastPrev = 0.0;
+            m_cache[i].emaFast = 0.0;
+            m_cache[i].emaFastPrev = 0.0;
             anyFailed = true;
          }
 
          // EMA slow (2 values: current + previous)
-         if(!CopyBuffer2(c.emaSlowHandle, c.emaSlow, c.emaSlowPrev))
+         if(!CopyBuffer2(m_cache[i].emaSlowHandle, m_cache[i].emaSlow, m_cache[i].emaSlowPrev))
          {
-            c.emaSlow = 0.0;
-            c.emaSlowPrev = 0.0;
+            m_cache[i].emaSlow = 0.0;
+            m_cache[i].emaSlowPrev = 0.0;
             anyFailed = true;
          }
 
          // ATR (current + 5 bars ago for direction)
          {
             double atrBuf[];
-            if(CopyBufferN(c.atrHandle, 0, 6, atrBuf))
+            if(CopyBufferN(m_cache[i].atrHandle, 0, 6, atrBuf))
             {
-               c.atrValue = atrBuf[0];
-               c.atrPrev  = atrBuf[5];
+               m_cache[i].atrValue = atrBuf[0];
+               m_cache[i].atrPrev  = atrBuf[5];
             }
             else
             {
                // Fallback: try just current value
-               if(!CopyBuffer1(c.atrHandle, c.atrValue))
+               if(!CopyBuffer1(m_cache[i].atrHandle, m_cache[i].atrValue))
                {
-                  c.atrValue = 0.0;
+                  m_cache[i].atrValue = 0.0;
                   anyFailed = true;
                }
-               c.atrPrev = 0.0;
+               m_cache[i].atrPrev = 0.0;
             }
          }
 
          // RSI (current only)
-         if(!CopyBuffer1(c.rsiHandle, c.rsiValue))
+         if(!CopyBuffer1(m_cache[i].rsiHandle, m_cache[i].rsiValue))
          {
-            c.rsiValue = 0.0;
+            m_cache[i].rsiValue = 0.0;
             // Non-critical — don't set anyFailed
          }
 
          // Bollinger Bands (3 buffers: 0=base/median, 1=upper, 2=lower)
-         if(c.bbHandle != INVALID_HANDLE)
+         if(m_cache[i].bbHandle != INVALID_HANDLE)
          {
             double bbBuf[];
             ArraySetAsSeries(bbBuf, true);
             // Buffer 0 = middle line
-            if(CopyBuffer(c.bbHandle, 0, 0, 1, bbBuf) >= 1)
-               c.bbMiddle = bbBuf[0];
+            if(CopyBuffer(m_cache[i].bbHandle, 0, 0, 1, bbBuf) >= 1)
+               m_cache[i].bbMiddle = bbBuf[0];
             else
-               c.bbMiddle = 0.0;
+               m_cache[i].bbMiddle = 0.0;
 
             // Buffer 1 = upper band
-            if(CopyBuffer(c.bbHandle, 1, 0, 1, bbBuf) >= 1)
-               c.bbUpper = bbBuf[0];
+            if(CopyBuffer(m_cache[i].bbHandle, 1, 0, 1, bbBuf) >= 1)
+               m_cache[i].bbUpper = bbBuf[0];
             else
-               c.bbUpper = 0.0;
+               m_cache[i].bbUpper = 0.0;
 
             // Buffer 2 = lower band
-            if(CopyBuffer(c.bbHandle, 2, 0, 1, bbBuf) >= 1)
-               c.bbLower = bbBuf[0];
+            if(CopyBuffer(m_cache[i].bbHandle, 2, 0, 1, bbBuf) >= 1)
+               m_cache[i].bbLower = bbBuf[0];
             else
-               c.bbLower = 0.0;
+               m_cache[i].bbLower = 0.0;
          }
          else
          {
-            c.bbUpper  = 0.0;
-            c.bbLower  = 0.0;
-            c.bbMiddle = 0.0;
+            m_cache[i].bbUpper  = 0.0;
+            m_cache[i].bbLower  = 0.0;
+            m_cache[i].bbMiddle = 0.0;
          }
 
          // ADX (current only — buffer 0 = main ADX line)
-         if(!CopyBuffer1(c.adxHandle, c.adxValue))
+         if(!CopyBuffer1(m_cache[i].adxHandle, m_cache[i].adxValue))
          {
-            c.adxValue = 0.0;
+            m_cache[i].adxValue = 0.0;
             // Non-critical
          }
 
          // Volume (current + average over m_volumePeriod bars)
-         if(c.volumeHandle != INVALID_HANDLE)
+         if(m_cache[i].volumeHandle != INVALID_HANDLE)
          {
             double volBuf[];
-            if(CopyBufferN(c.volumeHandle, 0, m_volumePeriod + 1, volBuf))
+            if(CopyBufferN(m_cache[i].volumeHandle, 0, m_volumePeriod + 1, volBuf))
             {
-               c.volumeCurrent = volBuf[0];
+               m_cache[i].volumeCurrent = volBuf[0];
                double sum = 0.0;
                for(int v = 1; v <= m_volumePeriod; v++)
                   sum += volBuf[v];
-               c.volumeAvg = sum / m_volumePeriod;
+               m_cache[i].volumeAvg = sum / m_volumePeriod;
             }
             else
             {
-               c.volumeCurrent = 0.0;
-               c.volumeAvg    = 0.0;
+               m_cache[i].volumeCurrent = 0.0;
+               m_cache[i].volumeAvg    = 0.0;
             }
          }
          else
          {
-            c.volumeCurrent = 0.0;
-            c.volumeAvg    = 0.0;
+            m_cache[i].volumeCurrent = 0.0;
+            m_cache[i].volumeAvg    = 0.0;
          }
 
          // Mark cache as valid if critical values populated
-         c.isValid = (c.emaFast > 0.0 && c.emaSlow > 0.0 && c.atrValue > 0.0);
-         c.lastBarTime = barTime;
+         m_cache[i].isValid = (m_cache[i].emaFast > 0.0 && m_cache[i].emaSlow > 0.0 && m_cache[i].atrValue > 0.0);
+         m_cache[i].lastBarTime = barTime;
 
-         if(anyFailed && c.isValid)
+         if(anyFailed && m_cache[i].isValid)
          {
             PrintFormat("[SCALP-CACHE] WARNING: Partial update for %s — some indicators failed",
-                        c.symbol);
+                        m_cache[i].symbol);
          }
       }
    }
@@ -413,28 +410,45 @@ public:
    {
       for(int i = 0; i < m_cacheCount; i++)
       {
-         SScalpIndicatorCache &c = m_cache[i];
+         m_cache[i].bidPrice = SymbolInfoDouble(m_cache[i].symbol, SYMBOL_BID);
+         m_cache[i].askPrice = SymbolInfoDouble(m_cache[i].symbol, SYMBOL_ASK);
 
-         c.bidPrice = SymbolInfoDouble(c.symbol, SYMBOL_BID);
-         c.askPrice = SymbolInfoDouble(c.symbol, SYMBOL_ASK);
-
-         double point = SymbolInfoDouble(c.symbol, SYMBOL_POINT);
+         double point = SymbolInfoDouble(m_cache[i].symbol, SYMBOL_POINT);
          if(point > 0.0)
-            c.spreadPoints = (c.askPrice - c.bidPrice) / point;
+            m_cache[i].spreadPoints = (m_cache[i].askPrice - m_cache[i].bidPrice) / point;
          else
-            c.spreadPoints = 0.0;
+            m_cache[i].spreadPoints = 0.0;
       }
    }
 
    //+------------------------------------------------------------------+
-   //| Get cache for a specific symbol (pointer for fast access)        |
+   //| Get cache for a specific symbol (copy values out)                |
    //+------------------------------------------------------------------+
-   SScalpIndicatorCache* GetCache(string symbol)
+   bool GetCache(string symbol, SScalpIndicatorCache &outCache)
    {
       int idx = FindIndex(symbol);
       if(idx < 0)
-         return NULL;
-      return &m_cache[idx];
+         return false;
+      outCache = m_cache[idx];
+      return true;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Check if cache has been initialized                              |
+   //+------------------------------------------------------------------+
+   bool IsInitialized() const { return m_cacheCount > 0; }
+
+   //+------------------------------------------------------------------+
+   //| Lazy init: initialize on first access if not yet done            |
+   //| Call from OnTick path with the populated symbol array            |
+   //+------------------------------------------------------------------+
+   bool EnsureInitialized(const string &symbols[], int symbolCount, ENUM_TIMEFRAMES timeframe)
+   {
+      if(m_cacheCount > 0)
+         return true;  // Already initialized
+      if(symbolCount <= 0)
+         return false; // Still no symbols — skip silently
+      return Initialize(symbols, symbolCount, timeframe);
    }
 
    //+------------------------------------------------------------------+

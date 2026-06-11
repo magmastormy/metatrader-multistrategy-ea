@@ -60,15 +60,15 @@ private:
     CUnifiedRiskManager*   m_unifiedRiskManager;    // Unified drawdown authority (Phase 2.1)
     
     // Validation parameters
-    double m_maxRiskPerTrade;         // Maximum risk per trade (3%)
-    double m_maxPortfolioRisk;        // Maximum total portfolio risk (10%)
-    double m_correlationThreshold;    // Correlation blocking threshold (0.7)
+    double m_maxRiskPerTrade;         // Blueprint 10.4: 0-100 scale (e.g., 3.0 = 3%)
+    double m_maxPortfolioRisk;        // Blueprint 10.4: 0-100 scale (e.g., 10.0 = 10%)
+    double m_correlationThreshold;    // Correlation blocking threshold (0-1 scale, not a risk percent)
     int m_maxPositionsSameBase;       // Max positions with the same base currency
-    double m_emergencyRiskOverride;   // Emergency risk override (5%)
+    double m_emergencyRiskOverride;   // Blueprint 10.4: 0-100 scale (5.0 = 5%)
     bool m_clusterGovernanceEnabled;  // Cluster-level risk governance
     bool m_clusterMutexEnabled;       // Same-symbol opposing-cluster mutex
     int m_maxConcurrentPerCluster;    // Max open positions per cluster
-    double m_maxClusterRiskPercent;   // Max projected risk per cluster
+    double m_maxClusterRiskPercent;   // Blueprint 10.4: 0-100 scale
     
     // Margin check thresholds (configurable for broker differences)
     double m_maxFreeMarginUsage;      // Maximum free margin usage percentage (default 0.8 = 80%)
@@ -466,8 +466,20 @@ bool CRiskValidationGate::ValidateBasicParameters(const STradeValidationRequest 
     
     if(request.lotSize < minLot)
     {
-        message = "Lot size below minimum: " + DoubleToString(request.lotSize, 3) + " < " + DoubleToString(minLot, 3);
-        return false;
+        // On small accounts, the calculated lot may be below broker minimum.
+        // If the lot is at least 10% of minLot, allow a round-up rather than
+        // rejecting outright. The PositionSizer will handle the risk assessment.
+        // This prevents the validation gate from being a hard blocker for small accounts.
+        if(request.lotSize >= minLot * 0.1)
+        {
+            // Don't reject — the caller (UnifiedRiskManager) will re-calculate
+            // with the min lot and assess whether the risk is acceptable
+        }
+        else
+        {
+            message = "Lot size below minimum: " + DoubleToString(request.lotSize, 3) + " < " + DoubleToString(minLot, 3);
+            return false;
+        }
     }
     
     if(request.lotSize > maxLot)
@@ -541,7 +553,7 @@ bool CRiskValidationGate::ValidateRiskLimits(const STradeValidationRequest &requ
         return false;
     }
     
-    riskPercent = (tradeRisk / riskDenominator) * 100.0;
+    riskPercent = (tradeRisk / riskDenominator) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
     
     // Check against maximum risk per trade
     if(riskPercent > m_maxRiskPerTrade)
@@ -854,7 +866,7 @@ void CRiskValidationGate::GetValidationStats(int &total, int &approved, int &rej
     rejected = m_rejectedCount;
     
     if(total > 0)
-        approvalRate = (double)approved / total * 100.0;
+        approvalRate = (double)approved / total * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
     else
         approvalRate = 0.0;
 }
@@ -944,7 +956,7 @@ double CRiskValidationGate::EstimatePositionRiskPercent(const ulong ticket) cons
     if(denominator <= 0.0)
         return m_maxRiskPerTrade;
 
-    return (riskAmount / denominator) * 100.0;
+    return (riskAmount / denominator) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
 bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationRequest &request,

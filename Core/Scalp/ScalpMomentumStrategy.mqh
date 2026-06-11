@@ -99,7 +99,7 @@ public:
         }
 
         //--- Read EMA fast
-        int emaFastHandle = indMgr->GetMAHandle(m_symbol, m_timeframe, m_emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
+        int emaFastHandle = indMgr.GetMAHandle(m_symbol, m_timeframe, m_emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
         if(emaFastHandle == INVALID_HANDLE)
         {
             SetDecisionReasonTag("SCALP_MOM_NO_EMA_FAST");
@@ -114,7 +114,7 @@ public:
         }
 
         //--- Read EMA slow
-        int emaSlowHandle = indMgr->GetMAHandle(m_symbol, m_timeframe, m_emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
+        int emaSlowHandle = indMgr.GetMAHandle(m_symbol, m_timeframe, m_emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
         if(emaSlowHandle == INVALID_HANDLE)
         {
             SetDecisionReasonTag("SCALP_MOM_NO_EMA_SLOW");
@@ -129,7 +129,7 @@ public:
         }
 
         //--- Read ATR (need 6 bars for expansion check)
-        int atrHandle = indMgr->GetATRHandle(m_symbol, m_timeframe, m_atrPeriod);
+        int atrHandle = indMgr.GetATRHandle(m_symbol, m_timeframe, m_atrPeriod);
         if(atrHandle == INVALID_HANDLE)
         {
             SetDecisionReasonTag("SCALP_MOM_NO_ATR");
@@ -144,7 +144,7 @@ public:
         }
 
         //--- Read RSI
-        int rsiHandle = indMgr->GetRSIHandle(m_symbol, m_timeframe, m_rsiPeriod, PRICE_CLOSE);
+        int rsiHandle = indMgr.GetRSIHandle(m_symbol, m_timeframe, m_rsiPeriod, PRICE_CLOSE);
         if(rsiHandle == INVALID_HANDLE)
         {
             SetDecisionReasonTag("SCALP_MOM_NO_RSI");

@@ -158,12 +158,14 @@ void CPositionStateManager::UpsertPredictionId(const ulong positionId, const str
         ArrayResize(m_states, m_count);
     }
     
-    // Create new state
+    // Create new state via temporary struct (MQL5 ArrayResize may not call struct constructors)
     ArrayResize(m_states, m_count + 1);
-    m_states[m_count].positionId = positionId;
-    m_states[m_count].predictionId = predictionId;
-    m_states[m_count].aiPredictionTime = 0;
-    m_states[m_count].aiPredictionSignal = TRADE_SIGNAL_NONE;
+    SPositionState newState;
+    newState.positionId = positionId;
+    newState.predictionId = predictionId;
+    newState.aiPredictionTime = 0;
+    newState.aiPredictionSignal = TRADE_SIGNAL_NONE;
+    m_states[m_count] = newState;
     m_count++;
 }
 
@@ -225,12 +227,14 @@ void CPositionStateManager::UpsertAIPrediction(const ulong positionId, const dat
         ArrayResize(m_states, m_count);
     }
     
-    // Create new state
+    // Create new state via temporary struct (MQL5 ArrayResize may not call struct constructors)
     ArrayResize(m_states, m_count + 1);
-    m_states[m_count].positionId = positionId;
-    m_states[m_count].predictionId = "";
-    m_states[m_count].aiPredictionTime = predictionTime;
-    m_states[m_count].aiPredictionSignal = predictionSignal;
+    SPositionState newState;
+    newState.positionId = positionId;
+    newState.predictionId = "";
+    newState.aiPredictionTime = predictionTime;
+    newState.aiPredictionSignal = predictionSignal;
+    m_states[m_count] = newState;
     m_count++;
 }
 

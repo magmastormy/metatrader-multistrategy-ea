@@ -25,21 +25,22 @@ struct SClusterAllocation
 
 //+------------------------------------------------------------------+
 //| Per-tier configuration                                           |
+//| Blueprint 10.4: All percent fields use 0-100 scale               |
 //+------------------------------------------------------------------+
 struct STierConfig
 {
-   double riskPerTradePct;      // Risk per trade as % of equity
-   double dailyRiskPct;         // Max daily risk %
-   double portfolioRiskPct;     // Max portfolio risk %
+   double riskPerTradePct;      // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
+   double dailyRiskPct;         // Blueprint 10.4: 0-100 scale
+   double portfolioRiskPct;     // Blueprint 10.4: 0-100 scale
    int    maxPositions;         // Max concurrent positions
    double breakevenBufferPts;   // Points buffer for breakeven move
    double trailingDistancePts;  // Points for trailing stop distance
-   double ddWarningPct;         // Drawdown warning threshold %
-   double ddCriticalPct;        // Drawdown critical threshold %
-   double minConfidence;        // Min consensus confidence for entry
+   double ddWarningPct;         // Blueprint 10.4: 0-100 scale
+   double ddCriticalPct;        // Blueprint 10.4: 0-100 scale
+   double minConfidence;        // 0-1 scale (not a risk percent)
    int    minVoters;            // Min live voters for consensus
    double maxSpreadATRRatio;    // Max spread/ATR ratio for entry
-   double scalpBudgetPct;       // % of daily risk budget for scalps
+   double scalpBudgetPct;       // Blueprint 10.4: 0-100 scale
    SClusterAllocation clusterAllocation; // Per-cluster risk allocation
 };
 
@@ -52,11 +53,11 @@ private:
     ENUM_RISK_TIER m_tier;
     STierConfig    m_config;
 
-    // Pre-defined tier presets
+    // Pre-defined tier presets (Blueprint 10.4: all Pct fields use 0-100 scale)
     static STierConfig GetConservativeConfig()
     {
         STierConfig c;
-        c.riskPerTradePct     = 0.5;
+        c.riskPerTradePct     = 0.5;   // Blueprint 10.4: 0-100 scale
         c.dailyRiskPct        = 2.0;
         c.portfolioRiskPct    = 6.0;
         c.maxPositions        = 3;
@@ -68,9 +69,9 @@ private:
         c.minVoters           = 3;
         c.maxSpreadATRRatio   = 0.15;
         c.scalpBudgetPct      = 0.0;
-        c.clusterAllocation.trendPct         = 30.0;
-        c.clusterAllocation.meanReversionPct = 30.0;
-        c.clusterAllocation.structurePct     = 30.0;
+        c.clusterAllocation.trendPct         = 40.0;
+        c.clusterAllocation.meanReversionPct = 25.0;
+        c.clusterAllocation.structurePct     = 25.0;
         c.clusterAllocation.scalpPct         = 10.0;
         return c;
     }
@@ -119,7 +120,7 @@ private:
         return c;
     }
 
-    static STierConfig GetFullMarginConfig()
+    static STierConfig GetFullMarginTierPreset()
     {
         STierConfig c;
         c.riskPerTradePct     = 5.0;
@@ -157,7 +158,7 @@ public:
             case RISK_TIER_CONSERVATIVE: m_config = GetConservativeConfig(); break;
             case RISK_TIER_MODERATE:     m_config = GetModerateConfig();     break;
             case RISK_TIER_AGGRESSIVE:   m_config = GetAggressiveConfig();   break;
-            case RISK_TIER_FULL_MARGIN:  m_config = GetFullMarginConfig();   break;
+            case RISK_TIER_FULL_MARGIN:  m_config = GetFullMarginTierPreset(); break;
             default:                     m_config = GetModerateConfig();     break;
         }
         PrintFormat("[RISK-TIER] Tier set to %d | riskPerTrade=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | maxPos=%d",
@@ -165,23 +166,34 @@ public:
                     m_config.portfolioRiskPct, m_config.maxPositions);
     }
 
-    const STierConfig& GetConfig() const { return m_config; }
+    STierConfig GetConfig() const { return m_config; }
 
     //+------------------------------------------------------------------+
     //| Apply tier parameters to CUnifiedRiskManager                     |
+    //| Blueprint 10.4: All percent values in 0-100 scale               |
+    //| Input floors: if >0, tier values cannot go below these floors   |
     //+------------------------------------------------------------------+
-    void ApplyToRiskManager(CUnifiedRiskManager &riskManager, CPerformanceAnalytics* perfAnalytics = NULL)
+    void ApplyToRiskManager(CUnifiedRiskManager &riskManager, CPerformanceAnalytics* perfAnalytics = NULL,
+                            double inputDailyFloor = 0.0, double inputPortfolioFloor = 0.0,
+                            double inputDdWarningFloor = 0.0, double inputDdCriticalFloor = 0.0)
     {
+        // Tier values are defaults, but user input params serve as floors —
+        // the effective value is the higher of tier preset and user input.
+        double effectiveDaily     = (inputDailyFloor > 0.0)     ? MathMax(m_config.dailyRiskPct, inputDailyFloor)     : m_config.dailyRiskPct;
+        double effectivePortfolio = (inputPortfolioFloor > 0.0) ? MathMax(m_config.portfolioRiskPct, inputPortfolioFloor) : m_config.portfolioRiskPct;
+        double effectiveDdWarning = (inputDdWarningFloor > 0.0) ? MathMax(m_config.ddWarningPct, inputDdWarningFloor) : m_config.ddWarningPct;
+        double effectiveDdCritical= (inputDdCriticalFloor > 0.0)? MathMax(m_config.ddCriticalPct, inputDdCriticalFloor): m_config.ddCriticalPct;
+
         SUnifiedRiskConfig cfg;
-        cfg.baseRiskPerTradePercent = m_config.riskPerTradePct;
-        cfg.minRiskPerTradePercent  = 0.1;
-        cfg.maxRiskPerTradePercent  = MathMax(m_config.riskPerTradePct * 2.0, 50.0);
-        cfg.maxDailyRiskPercent     = m_config.dailyRiskPct;
-        cfg.maxPortfolioRiskPercent = m_config.portfolioRiskPct;
+        cfg.baseRiskPerTradePercent = m_config.riskPerTradePct;  // Blueprint 10.4: 0-100 scale
+        cfg.minRiskPerTradePercent  = 0.1;                       // Blueprint 10.4: 0-100 scale
+        cfg.maxRiskPerTradePercent  = MathMax(m_config.riskPerTradePct * 2.0, 50.0);  // Blueprint 10.4: 0-100 scale
+        cfg.maxDailyRiskPercent     = effectiveDaily;
+        cfg.maxPortfolioRiskPercent = effectivePortfolio;
         cfg.correlationThreshold    = 0.7;
         cfg.maxPositionsSameBase    = m_config.maxPositions;
-        cfg.drawdownWarningPercent  = m_config.ddWarningPct;
-        cfg.drawdownCriticalPercent = m_config.ddCriticalPct;
+        cfg.drawdownWarningPercent  = effectiveDdWarning;
+        cfg.drawdownCriticalPercent = effectiveDdCritical;
         cfg.adaptationMinTrades     = 10;
         cfg.enableAdaptiveSizing    = true;
         cfg.enableAuditLogging      = true;
@@ -193,19 +205,24 @@ public:
         }
         else
         {
-            PrintFormat("[RISK-TIER] Applied to RiskManager | risk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%%",
-                        m_config.riskPerTradePct, m_config.dailyRiskPct, m_config.portfolioRiskPct,
-                        m_config.ddWarningPct, m_config.ddCriticalPct);
+            PrintFormat("[RISK-TIER] Applied to RiskManager | risk=%.1f%% | daily=%.1f%% (tier=%.1f floor=%.1f) | portfolio=%.1f%% (tier=%.1f floor=%.1f) | ddWarn=%.1f%% | ddCrit=%.1f%%",
+                        m_config.riskPerTradePct,
+                        effectiveDaily, m_config.dailyRiskPct, inputDailyFloor,
+                        effectivePortfolio, m_config.portfolioRiskPct, inputPortfolioFloor,
+                        effectiveDdWarning, effectiveDdCritical);
         }
     }
 
     //+------------------------------------------------------------------+
     //| Apply tier parameters to CPositionSizer                          |
+    //| Blueprint 10.4: riskPercent uses 0-100 scale                     |
+    //| Input floor: if >0, tier risk percent cannot go below this floor |
     //+------------------------------------------------------------------+
-    void ApplyToPositionSizer(CPositionSizer &sizer)
+    void ApplyToPositionSizer(CPositionSizer &sizer, double inputRiskFloor = 0.0)
     {
         SPositionSizingParams params = sizer.GetParameters();
-        params.riskPercent = m_config.riskPerTradePct;
+        double effectiveRisk = (inputRiskFloor > 0.0) ? MathMax(m_config.riskPerTradePct, inputRiskFloor) : m_config.riskPerTradePct;
+        params.riskPercent = effectiveRisk;  // Blueprint 10.4: 0-100 scale
 
         if(!sizer.SetParameters(params))
         {
@@ -213,7 +230,8 @@ public:
         }
         else
         {
-            PrintFormat("[RISK-TIER] Applied to PositionSizer | riskPercent=%.1f%%", m_config.riskPerTradePct);
+            PrintFormat("[RISK-TIER] Applied to PositionSizer | riskPercent=%.1f%% (tier=%.1f floor=%.1f)",
+                        effectiveRisk, m_config.riskPerTradePct, inputRiskFloor);
         }
     }
 
@@ -264,7 +282,7 @@ public:
     //+------------------------------------------------------------------+
     //| Get cluster allocation config for current tier                   |
     //+------------------------------------------------------------------+
-    const SClusterAllocation& GetClusterAllocation() const { return m_config.clusterAllocation; }
+    SClusterAllocation GetClusterAllocation() const { return m_config.clusterAllocation; }
 
     //+------------------------------------------------------------------+
     //| Get full-margin mode config for RISK_TIER_FULL_MARGIN            |

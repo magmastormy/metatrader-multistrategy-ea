@@ -77,7 +77,7 @@ public:
 
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
-        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
+        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
 
         m_structureAnalyzer = new CMarketStructureAnalyzer();

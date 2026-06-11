@@ -587,10 +587,20 @@ public:
             // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
             if(m_riskManager != NULL)
             {
+                // Calculate lot size using position sizer instead of placeholder 0.01
+                double calculatedLot = 0.01;
+                if(m_positionSizer != NULL)
+                {
+                    SPositionSizingParams sizerParams = m_positionSizer.GetParameters();
+                    calculatedLot = m_positionSizer.CalculateRiskBasedSize(m_symbol, slPips, sizerParams.riskPercent);
+                    if(calculatedLot <= 0.0)
+                        calculatedLot = 0.01;  // Fallback
+                }
+
                 STradeValidationRequest request;
                 request.symbol = m_symbol;
                 request.orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                request.lotSize = 0.01;  // Placeholder
+                request.lotSize = calculatedLot;
                 request.stopLossPips = slPips;
                 request.takeProfitPips = slPips * 2.0; // 1:2 R:R ratio
                 request.confidence = confidence;

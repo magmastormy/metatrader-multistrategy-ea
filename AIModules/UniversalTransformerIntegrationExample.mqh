@@ -55,18 +55,18 @@ public:
         
         // Initialize Strategy Brain with Universal Transformer
         m_strategyBrain = new CNextGenStrategyBrain();
-        if(m_strategyBrain == NULL || !m_strategyBrain->Initialize(symbol, timeframe))
+        if(m_strategyBrain == NULL || !m_strategyBrain.Initialize(symbol, timeframe))
         {
             Print("[INTEGRATION] ERROR: Failed to initialize Strategy Brain");
             return false;
         }
         
         // Enable Universal Transformer for Strategy Brain
-        m_strategyBrain->SetUseUniversalTransformer(true);
+        m_strategyBrain.SetUseUniversalTransformer(true);
         
         // Initialize Ensemble Meta Learner
         m_ensembleLearner = new CEnsembleMetaLearner();
-        if(m_ensembleLearner == NULL || !m_ensembleLearner->Initialize(symbol, true))
+        if(m_ensembleLearner == NULL || !m_ensembleLearner.Initialize(symbol, true))
         {
             Print("[INTEGRATION] ERROR: Failed to initialize Ensemble Learner");
             return false;
@@ -74,14 +74,14 @@ public:
         
         // Initialize Neural Network Strategy
         m_neuralNetwork = new CNeuralNetworkStrategy();
-        if(m_neuralNetwork == NULL || !m_neuralNetwork->Initialize(symbol, timeframe))
+        if(m_neuralNetwork == NULL || !m_neuralNetwork.Initialize(symbol, timeframe))
         {
             Print("[INTEGRATION] ERROR: Failed to initialize Neural Network");
             return false;
         }
         
         // Enable Universal Transformer for Neural Network
-        m_neuralNetwork->SetUseSharedTransformer(true);
+        m_neuralNetwork.SetUseSharedTransformer(true);
         
         m_initialized = true;
         Print("[INTEGRATION] Successfully initialized Universal Transformer integration for ", symbol);
@@ -106,7 +106,7 @@ public:
             double indicators[10]; // Placeholder indicators
             ArrayInitialize(indicators, 0.0);
             
-            if(m_strategyBrain->GenerateSignal(price, volume, indicators, signal))
+            if(m_strategyBrain.GenerateSignal(price, volume, indicators, signal))
             {
                 brainBuySignal = signal.buyProbability;
                 brainSellSignal = signal.sellProbability;
@@ -117,7 +117,7 @@ public:
         // Get signals from Ensemble Learner
         if(m_ensembleLearner != NULL)
         {
-            if(m_ensembleLearner->ProcessWithSharedTransformer(marketData, ensembleBuySignal, ensembleSellSignal, ensembleConfidence))
+            if(m_ensembleLearner.ProcessWithSharedTransformer(marketData, ensembleBuySignal, ensembleSellSignal, ensembleConfidence))
             {
                 // Successfully processed with shared transformer
             }
@@ -126,8 +126,8 @@ public:
         // Get signals from Neural Network
         if(m_neuralNetwork != NULL)
         {
-            ENUM_TRADE_SIGNAL nnSignal = m_neuralNetwork->GenerateSignal(marketData, seqLen);
-            neuralConfidence = m_neuralNetwork->GetLastConfidence();
+            ENUM_TRADE_SIGNAL nnSignal = m_neuralNetwork.GenerateSignal(marketData, seqLen);
+            neuralConfidence = m_neuralNetwork.GetLastConfidence();
             
             switch(nnSignal)
             {
@@ -176,19 +176,19 @@ public:
         // Update Strategy Brain
         if(m_strategyBrain != NULL)
         {
-            m_strategyBrain->UpdatePerformance(tradeReturn, isWin);
+            m_strategyBrain.UpdatePerformance(tradeReturn, isWin);
         }
         
         // Update Ensemble Learner
         if(m_ensembleLearner != NULL)
         {
-            m_ensembleLearner->UpdateEnsemblePerformance(tradeReturn);
+            m_ensembleLearner.UpdateEnsemblePerformance(tradeReturn);
         }
         
         // Update Neural Network
         if(m_neuralNetwork != NULL)
         {
-            m_neuralNetwork->UpdatePerformance(tradeReturn, isWin);
+            m_neuralNetwork.UpdatePerformance(tradeReturn, isWin);
         }
         
         return true;
@@ -208,14 +208,14 @@ public:
             double totalReturn = 0.0;
             double winRate = 0.0;
             int totalTrades = 0;
-            m_strategyBrain->GetPerformanceStats(totalReturn, winRate, totalTrades);
+            m_strategyBrain.GetPerformanceStats(totalReturn, winRate, totalTrades);
             status += StringFormat("Strategy Brain - Trades: %d, Win Rate: %.2f%%, Return: %.2f\n", 
                                  totalTrades, winRate * 100, totalReturn);
         }
         
         if(m_ensembleLearner != NULL)
         {
-            int modelCount = m_ensembleLearner->GetActiveModelCount();
+            int modelCount = m_ensembleLearner.GetActiveModelCount();
             status += "Ensemble Learner - Models: " + IntegerToString(modelCount) + "\n";
         }
         

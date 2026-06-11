@@ -611,7 +611,7 @@ private:
             double driftPoints = MathAbs(executionPrice - requestedPrice) / point;
             double effectiveDriftLimit = m_maxEntryDriftPoints;
             double atr = m_atrCache.GetATR(symbolName, PERIOD_CURRENT);
-            if(atr == INVALID_VALUE || atr <= 0.0)
+            if(atr == EMPTY_VALUE || atr <= 0.0)
             {
                 atr = CalculateATR(symbolName, PERIOD_CURRENT, m_dynamicSlippageAtrPeriod);
                 if(atr > 0.0)
@@ -820,7 +820,7 @@ public:
         }
 
         double atrValue = m_atrCache.GetATR(symbol, PERIOD_CURRENT);
-        if(atrValue == INVALID_VALUE || atrValue <= 0.0)
+        if(atrValue == EMPTY_VALUE || atrValue <= 0.0)
         {
             atrValue = m_marketAnalysis.GetATR(symbol, m_dynamicSlippageAtrPeriod);
             if(atrValue > 0.0)
@@ -2321,20 +2321,29 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                     point = 0.00001;
 
                 double profitPoints = 0;
+                double profitPercent = 0.0;
                 if(type == POSITION_TYPE_BUY)
                 {
                     profitPoints = (currentPriceValue - openPrice) / point;
+                    if(openPrice > 0.0)
+                        profitPercent = ((currentPriceValue - openPrice) / openPrice) * 100.0;
                 }
                 else
                 {
                     profitPoints = (openPrice - currentPriceValue) / point;
+                    if(openPrice > 0.0)
+                        profitPercent = ((openPrice - currentPriceValue) / openPrice) * 100.0;
                 }
-                
+
+                // Require BOTH: sufficient points buffer AND minimum 0.3% profit.
+                // On synthetics with tiny point values (e.g., PainX point=0.01),
+                // 120 points = only 0.0013% move — noise, not a real profit signal.
+                // The 0.3% gate ensures breakeven only triggers on meaningful moves.
                 bool breakevenNeeded = false;
                 if(type == POSITION_TYPE_BUY)
-                    breakevenNeeded = (profitPoints >= breakevenBuffer && (stopLoss == 0.0 || stopLoss < openPrice));
+                    breakevenNeeded = (profitPoints >= breakevenBuffer && profitPercent >= 0.3 && (stopLoss == 0.0 || stopLoss < openPrice));
                 else
-                    breakevenNeeded = (profitPoints >= breakevenBuffer && (stopLoss == 0.0 || stopLoss > openPrice));
+                    breakevenNeeded = (profitPoints >= breakevenBuffer && profitPercent >= 0.3 && (stopLoss == 0.0 || stopLoss > openPrice));
 
                 if(breakevenNeeded)
                 {

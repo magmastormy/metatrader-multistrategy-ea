@@ -37,7 +37,7 @@ struct SScalpConfig
    double   maxSpreadATRRatio;       // Reject if spread > 30% ATR (0.30)
    double   momentumBurstATRRatio;   // Bar body > 80% ATR (0.80)
    bool     usePendingOrders;        // Use pending limit orders (true)
-   int      pendingOrderTTL;         // Pending order TTL in seconds (20)
+   int      pendingOrderTTL;         // Pending order TTL in seconds (120)
    bool     partialCloseEnabled;     // Close 50% at 1R profit (true)
    int      breakevenProfitPoints;   // Points profit to trigger BE (10)
    int      breakevenBufferPoints;   // Buffer past entry for BE (5)
@@ -127,6 +127,7 @@ private:
    CPositionSizer*           m_positionSizer;
    CRiskTierManager*         m_riskTierManager;
    CScalpSignalCache*        m_signalCache;          // External cache reference (optional)
+   CTrade                    m_tradeObj;             // For pending order operations (OrderDelete)
 
    datetime                  m_lastScalpTime;        // Last scalp entry time
    double                    m_usedScalpRiskPct;     // Tracked scalp risk budget used
@@ -170,7 +171,7 @@ private:
          return false;
 
       // ATR(14) on M1
-      int atrHandle = indMgr->GetATRHandle(symbol, PERIOD_M1, 14);
+      int atrHandle = indMgr.GetATRHandle(symbol, PERIOD_M1, 14);
       if(atrHandle == INVALID_HANDLE)
          return false;
       double atrBuf[];
@@ -180,7 +181,7 @@ private:
       m_cachedATR = atrBuf[0];
 
       // Fast EMA(5) on M1
-      int fastHandle = indMgr->GetMAHandle(symbol, PERIOD_M1, m_config.fastEMA, 0, MODE_EMA, PRICE_CLOSE);
+      int fastHandle = indMgr.GetMAHandle(symbol, PERIOD_M1, m_config.fastEMA, 0, MODE_EMA, PRICE_CLOSE);
       if(fastHandle == INVALID_HANDLE)
          return false;
       double fastBuf[];
@@ -190,7 +191,7 @@ private:
       m_cachedFastEMA = fastBuf[0];
 
       // Slow EMA(13) on M1
-      int slowHandle = indMgr->GetMAHandle(symbol, PERIOD_M1, m_config.slowEMA, 0, MODE_EMA, PRICE_CLOSE);
+      int slowHandle = indMgr.GetMAHandle(symbol, PERIOD_M1, m_config.slowEMA, 0, MODE_EMA, PRICE_CLOSE);
       if(slowHandle == INVALID_HANDLE)
          return false;
       double slowBuf[];
@@ -200,7 +201,7 @@ private:
       m_cachedSlowEMA = slowBuf[0];
 
       // RSI(7) on M1
-      int rsiHandle = indMgr->GetRSIHandle(symbol, PERIOD_M1, m_config.rsiPeriod, PRICE_CLOSE);
+      int rsiHandle = indMgr.GetRSIHandle(symbol, PERIOD_M1, m_config.rsiPeriod, PRICE_CLOSE);
       if(rsiHandle == INVALID_HANDLE)
          return false;
       double rsiBuf[];
@@ -211,6 +212,40 @@ private:
 
       m_cachedSymbol = symbol;
       m_cachedBarTime = barTime;
+      return true;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Refresh market price with tick-level freshness check              |
+   //| Returns true if valid prices obtained, false otherwise            |
+   //| Prevents retcode=10015 (Invalid price) by ensuring latest tick   |
+   //+------------------------------------------------------------------+
+   bool RefreshScalpPrice(string symbol, double &ask, double &bid)
+   {
+      ask = 0.0;
+      bid = 0.0;
+
+      // Get the latest tick — most authoritative price source
+      MqlTick tick;
+      if(!SymbolInfoTick(symbol, tick))
+      {
+         PrintFormat("[SCALP-PRICE] SymbolInfoTick failed for %s — falling back to SymbolInfoDouble", symbol);
+         ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+         bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+      }
+      else
+      {
+         ask = tick.ask;
+         bid = tick.bid;
+      }
+
+      if(ask <= 0.0 || bid <= 0.0)
+      {
+         PrintFormat("[SCALP-PRICE] Invalid prices for %s: ask=%.5f bid=%.5f", symbol, ask, bid);
+         return false;
+      }
+
+      PrintFormat("[SCALP-PRICE] Refreshed price for %s: ask=%.5f bid=%.5f", symbol, ask, bid);
       return true;
    }
 
@@ -234,8 +269,8 @@ private:
          return false;
 
       // Need 2 bars for crossover detection
-      int fastHandle = indMgr->GetMAHandle(symbol, PERIOD_M1, m_config.fastEMA, 0, MODE_EMA, PRICE_CLOSE);
-      int slowHandle = indMgr->GetMAHandle(symbol, PERIOD_M1, m_config.slowEMA, 0, MODE_EMA, PRICE_CLOSE);
+      int fastHandle = indMgr.GetMAHandle(symbol, PERIOD_M1, m_config.fastEMA, 0, MODE_EMA, PRICE_CLOSE);
+      int slowHandle = indMgr.GetMAHandle(symbol, PERIOD_M1, m_config.slowEMA, 0, MODE_EMA, PRICE_CLOSE);
       if(fastHandle == INVALID_HANDLE || slowHandle == INVALID_HANDLE)
          return false;
 
@@ -320,15 +355,14 @@ private:
       if(m_scalpPositionCount >= ArraySize(m_scalpPositions))
          return;
 
-      SScalpPositionState &state = m_scalpPositions[m_scalpPositionCount];
-      state.ticket          = ticket;
-      state.symbol          = symbol;
-      state.breakevenSet    = false;
-      state.partialClosed   = false;
-      state.entryPrice      = entryPrice;
-      state.originalSL      = sl;
-      state.originalTP      = tp;
-      state.oneRProfitPrice = oneRPrice;
+      m_scalpPositions[m_scalpPositionCount].ticket          = ticket;
+      m_scalpPositions[m_scalpPositionCount].symbol          = symbol;
+      m_scalpPositions[m_scalpPositionCount].breakevenSet    = false;
+      m_scalpPositions[m_scalpPositionCount].partialClosed   = false;
+      m_scalpPositions[m_scalpPositionCount].entryPrice      = entryPrice;
+      m_scalpPositions[m_scalpPositionCount].originalSL      = sl;
+      m_scalpPositions[m_scalpPositionCount].originalTP      = tp;
+      m_scalpPositions[m_scalpPositionCount].oneRProfitPrice = oneRPrice;
       m_scalpPositionCount++;
    }
 
@@ -407,7 +441,7 @@ public:
          if(m_pendingOrders[i].isActive && m_pendingOrders[i].ticket > 0)
          {
             if(OrderSelect(m_pendingOrders[i].ticket))
-               OrderDelete(m_pendingOrders[i].ticket);
+               m_tradeObj.OrderDelete(m_pendingOrders[i].ticket);
          }
       }
       m_pendingOrderCount = 0;
@@ -417,21 +451,21 @@ public:
    //+------------------------------------------------------------------+
    //| Initialize with external dependencies                             |
    //+------------------------------------------------------------------+
-   bool Initialize(CTradeManager* tradeManager,
+   bool Initialize(CTradeManager* scalpTradeMgr,
                    CUnifiedRiskManager* riskManager,
-                   CPositionSizer* positionSizer,
+                   CPositionSizer* scalpPosSizer,
                    CRiskTierManager* riskTierManager)
    {
-      if(tradeManager == NULL || riskManager == NULL ||
-         positionSizer == NULL || riskTierManager == NULL)
+      if(scalpTradeMgr == NULL || riskManager == NULL ||
+         scalpPosSizer == NULL || riskTierManager == NULL)
       {
          Print("[SCALP-ENGINE] ERROR: NULL dependency passed to Initialize");
          return false;
       }
 
-      m_tradeManager    = tradeManager;
+      m_tradeManager    = scalpTradeMgr;
       m_riskManager     = riskManager;
-      m_positionSizer   = positionSizer;
+      m_positionSizer   = scalpPosSizer;
       m_riskTierManager = riskTierManager;
 
       // Capture magic number from trade manager for pending orders
@@ -472,7 +506,7 @@ public:
    //+------------------------------------------------------------------+
    //| Get current configuration                                         |
    //+------------------------------------------------------------------+
-   const SScalpConfig& GetConfig() const { return m_config; }
+   SScalpConfig GetConfig() const { return m_config; }
 
    //+------------------------------------------------------------------+
    //| Set magic number for pending orders                               |
@@ -529,14 +563,15 @@ public:
       // Try fast-path: read from signal cache (zero CopyBuffer)
       if(m_signalCache != NULL)
       {
-         SScalpIndicatorCache* cache = m_signalCache->GetCache(symbol);
-         if(cache != NULL && cache->isValid)
+         SScalpIndicatorCache cache;
+         if(m_signalCache.GetCache(symbol, cache) && cache.isValid)
          {
             // Spread gate using cached values
-            if(cache->pointSize > 0.0 && cache->atrValue > 0.0)
+            double pointVal = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            if(pointVal > 0.0 && cache.atrValue > 0.0)
             {
-               double spreadPrice = cache->spreadPoints * cache->pointSize;
-               if(spreadPrice > m_config.maxSpreadATRRatio * cache->atrValue)
+               double spreadPrice = cache.spreadPoints * pointVal;
+               if(spreadPrice > m_config.maxSpreadATRRatio * cache.atrValue)
                   return TRADE_SIGNAL_NONE;
             }
             else
@@ -544,27 +579,27 @@ public:
 
             // EMA crossover detection using cached values
             ENUM_TRADE_SIGNAL emaSignal = TRADE_SIGNAL_NONE;
-            if(cache->emaFastPrev <= cache->emaSlowPrev && cache->emaFast > cache->emaSlow)
+            if(cache.emaFastPrev <= cache.emaSlowPrev && cache.emaFast > cache.emaSlow)
                emaSignal = TRADE_SIGNAL_BUY;
-            else if(cache->emaFastPrev >= cache->emaSlowPrev && cache->emaFast < cache->emaSlow)
+            else if(cache.emaFastPrev >= cache.emaSlowPrev && cache.emaFast < cache.emaSlow)
                emaSignal = TRADE_SIGNAL_SELL;
 
             if(emaSignal == TRADE_SIGNAL_NONE)
                return TRADE_SIGNAL_NONE;
 
             // RSI confirmation using cached value
-            if(emaSignal == TRADE_SIGNAL_BUY && cache->rsiValue >= m_config.rsiOverbought)
+            if(emaSignal == TRADE_SIGNAL_BUY && cache.rsiValue >= m_config.rsiOverbought)
                return TRADE_SIGNAL_NONE;
-            if(emaSignal == TRADE_SIGNAL_SELL && cache->rsiValue <= m_config.rsiOversold)
+            if(emaSignal == TRADE_SIGNAL_SELL && cache.rsiValue <= m_config.rsiOversold)
                return TRADE_SIGNAL_NONE;
 
             // Cache the indicator values for ShouldEnterScalp's confidence calculation
-            m_cachedATR     = cache->atrValue;
-            m_cachedFastEMA = cache->emaFast;
-            m_cachedSlowEMA = cache->emaSlow;
-            m_cachedRSI     = cache->rsiValue;
+            m_cachedATR     = cache.atrValue;
+            m_cachedFastEMA = cache.emaFast;
+            m_cachedSlowEMA = cache.emaSlow;
+            m_cachedRSI     = cache.rsiValue;
             m_cachedSymbol  = symbol;
-            m_cachedBarTime = cache->lastBarTime;
+            m_cachedBarTime = cache.lastBarTime;
 
             return emaSignal;
          }
@@ -672,7 +707,7 @@ public:
          return false;
 
       // Risk validation through CUnifiedRiskManager
-      if(m_riskManager != NULL && m_riskManager->IsInitialized())
+      if(m_riskManager != NULL && m_riskManager.IsInitialized())
       {
          ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
          STradeValidationRequest request;
@@ -689,7 +724,7 @@ public:
          request.clusterCode     = "T";
          request.requestTime     = TimeCurrent();
 
-         SValidationResult result = m_riskManager->ValidateTradeRequest(request, "scalp");
+         SValidationResult result = m_riskManager.ValidateTradeRequest(request, "scalp");
          if(!result.approved)
          {
             PrintFormat("[SCALP-REJECTED] %s | reason=%s | confidence=%.2f",
@@ -730,9 +765,9 @@ public:
          if(point <= 0.0)
             return false;
 
-         double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-         if(bid <= 0.0 || ask <= 0.0)
+         // Refresh prices immediately before order submission to prevent retcode=10015
+         double bid = 0.0, ask = 0.0;
+         if(!RefreshScalpPrice(symbol, ask, bid))
             return false;
 
          double entryPrice = (orderType == ORDER_TYPE_BUY) ? ask : bid;
@@ -793,7 +828,7 @@ public:
 
          // Track risk usage optimistically (will adjust on confirmation)
          double riskPerTrade = m_riskManager != NULL ?
-                               m_riskManager->GetActiveRiskPerTradePercent() : 1.0;
+                               m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
          m_usedScalpRiskPct += riskPerTrade;
 
          PrintFormat("[SCALP-ASYNC-SENT] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f | order=%I64u",
@@ -824,7 +859,7 @@ public:
 
          // Track risk usage
          double riskPerTrade = m_riskManager != NULL ?
-                               m_riskManager->GetActiveRiskPerTradePercent() : 1.0;
+                               m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
          m_usedScalpRiskPct += riskPerTrade;
 
          // Register the position for tick-level management
@@ -893,12 +928,43 @@ public:
       if(point <= 0.0)
          return false;
 
-      double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-      double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-      if(bid <= 0.0 || ask <= 0.0)
+      // Refresh prices immediately before order submission to prevent retcode=10015
+      double bid = 0.0, ask = 0.0;
+      if(!RefreshScalpPrice(symbol, ask, bid))
          return false;
 
-      // Place limit order 5 points inside for better fill
+      // Calculate minimum offset from current price for pending orders
+      // Must respect broker's SYMBOL_TRADE_STOPS_LEVEL
+      long stopsLevel = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      long freezeLevel = SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+      long minDistPoints = MathMax(stopsLevel, freezeLevel);
+      double minOffset = minDistPoints * point;
+
+      // For synthetic CFDs, SYMBOL_TRADE_STOPS_LEVEL often returns 0.
+      // Use a percentage-based minimum as fallback: 0.1% of mid-price.
+      // This ensures stops are far enough from entry for high-priced instruments.
+      double midPrice = (ask + bid) / 2.0;
+      double pctMinDistance = midPrice * 0.001;  // 0.1% of price
+      double absMinOffset = 10 * point;           // absolute minimum: 10 points
+      minOffset = MathMax(minOffset, MathMax(absMinOffset, pctMinDistance));
+
+      // SL/TP must also be at least the same minimum distance away from entry price
+      // Enforce minimum SL and TP distances to prevent "Invalid stops"
+      double slDistance = m_config.scalpSLPips * point;
+      double tpDistance = m_config.scalpTPPips * point;
+      double minStopDistance = minOffset;  // Use same minimum as entry offset
+      if(slDistance < minStopDistance)
+      {
+         PrintFormat("[SCALP-STOPS] %s | SL distance %.2f < min stop distance %.2f (pct-based), adjusting", symbol, slDistance, minStopDistance);
+         slDistance = minStopDistance;
+      }
+      if(tpDistance < minStopDistance)
+      {
+         PrintFormat("[SCALP-STOPS] %s | TP distance %.2f < min stop distance %.2f (pct-based), adjusting", symbol, tpDistance, minStopDistance);
+         tpDistance = minStopDistance;
+      }
+
+      // Place limit order at broker-minimum distance from current price
       double entryPrice = 0.0;
       double sl = 0.0, tp = 0.0;
       int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
@@ -906,16 +972,18 @@ public:
 
       if(signal == TRADE_SIGNAL_BUY)
       {
-         entryPrice = NormalizeDouble(ask - 5.0 * point, digits);
-         sl = NormalizeDouble(entryPrice - m_config.scalpSLPips * point, digits);
-         tp = NormalizeDouble(entryPrice + m_config.scalpTPPips * point, digits);
+         // BUY_LIMIT must be below current ask by at least stops_level
+         entryPrice = NormalizeDouble(ask - minOffset, digits);
+         sl = NormalizeDouble(entryPrice - slDistance, digits);
+         tp = NormalizeDouble(entryPrice + tpDistance, digits);
          pendingType = ORDER_TYPE_BUY_LIMIT;
       }
       else
       {
-         entryPrice = NormalizeDouble(bid + 5.0 * point, digits);
-         sl = NormalizeDouble(entryPrice + m_config.scalpSLPips * point, digits);
-         tp = NormalizeDouble(entryPrice - m_config.scalpTPPips * point, digits);
+         // SELL_LIMIT must be above current bid by at least stops_level
+         entryPrice = NormalizeDouble(bid + minOffset, digits);
+         sl = NormalizeDouble(entryPrice + slDistance, digits);
+         tp = NormalizeDouble(entryPrice - tpDistance, digits);
          pendingType = ORDER_TYPE_SELL_LIMIT;
       }
 
@@ -944,16 +1012,15 @@ public:
       }
 
       // Track the pending order
-      SPendingScalpOrder &order = m_pendingOrders[m_pendingOrderCount];
-      order.ticket     = result.order;
-      order.symbol     = symbol;
-      order.orderType  = pendingType;
-      order.lotSize    = lotSize;
-      order.entryPrice = entryPrice;
-      order.stopLoss   = sl;
-      order.takeProfit = tp;
-      order.placedAt   = TimeCurrent();
-      order.isActive   = true;
+      m_pendingOrders[m_pendingOrderCount].ticket     = result.order;
+      m_pendingOrders[m_pendingOrderCount].symbol     = symbol;
+      m_pendingOrders[m_pendingOrderCount].orderType  = pendingType;
+      m_pendingOrders[m_pendingOrderCount].lotSize    = lotSize;
+      m_pendingOrders[m_pendingOrderCount].entryPrice = entryPrice;
+      m_pendingOrders[m_pendingOrderCount].stopLoss   = sl;
+      m_pendingOrders[m_pendingOrderCount].takeProfit = tp;
+      m_pendingOrders[m_pendingOrderCount].placedAt   = TimeCurrent();
+      m_pendingOrders[m_pendingOrderCount].isActive   = true;
       m_pendingOrderCount++;
 
       m_lastScalpTime = TimeCurrent();
@@ -998,7 +1065,7 @@ public:
          if(elapsedSec >= m_config.pendingOrderTTL)
          {
             // Cancel expired pending order
-            if(OrderDelete(m_pendingOrders[i].ticket))
+            if(m_tradeObj.OrderDelete(m_pendingOrders[i].ticket))
             {
                PrintFormat("[SCALP-PENDING-EXPIRED] %s | ticket=%I64u | elapsed=%ds",
                            m_pendingOrders[i].symbol,
@@ -1041,13 +1108,12 @@ public:
 
       for(int i = m_scalpPositionCount - 1; i >= 0; i--)
       {
-         SScalpPositionState &state = m_scalpPositions[i];
-         ulong ticket = state.ticket;
+         ulong ticket = m_scalpPositions[i].ticket;
 
          if(!PositionSelectByTicket(ticket))
          {
             // Position closed — remove from tracking and free risk budget
-            FreeScalpRiskBudget(state.ticket);
+            FreeScalpRiskBudget(m_scalpPositions[i].ticket);
             RemoveScalpPosition(ticket);
             continue;
          }
@@ -1070,12 +1136,12 @@ public:
             profitPoints = (openPrice - currentPrice) / point;
 
          // 1. Partial close at 1R profit (50% of position)
-         if(m_config.partialCloseEnabled && !state.partialClosed && state.oneRProfitPrice > 0.0)
+         if(m_config.partialCloseEnabled && !m_scalpPositions[i].partialClosed && m_scalpPositions[i].oneRProfitPrice > 0.0)
          {
             bool reachedOneR = false;
-            if(posType == POSITION_TYPE_BUY && currentPrice >= state.oneRProfitPrice)
+            if(posType == POSITION_TYPE_BUY && currentPrice >= m_scalpPositions[i].oneRProfitPrice)
                reachedOneR = true;
-            else if(posType == POSITION_TYPE_SELL && currentPrice <= state.oneRProfitPrice)
+            else if(posType == POSITION_TYPE_SELL && currentPrice <= m_scalpPositions[i].oneRProfitPrice)
                reachedOneR = true;
 
             if(reachedOneR && volume > SymbolInfoDouble(posSymbol, SYMBOL_VOLUME_MIN))
@@ -1091,7 +1157,7 @@ public:
                {
                   if(m_tradeManager.ClosePositionPartial(ticket, halfVol, "SCALP|1R-PARTIAL"))
                   {
-                     state.partialClosed = true;
+                     m_scalpPositions[i].partialClosed = true;
                      PrintFormat("[SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f",
                                  posSymbol, ticket, halfVol, profitPoints);
                   }
@@ -1100,7 +1166,7 @@ public:
          }
 
          // 2. Move to breakeven after breakevenProfitPoints
-         if(!state.breakevenSet && profitPoints >= m_config.breakevenProfitPoints)
+         if(!m_scalpPositions[i].breakevenSet && profitPoints >= m_config.breakevenProfitPoints)
          {
             double beSL = 0.0;
             if(posType == POSITION_TYPE_BUY)
@@ -1121,7 +1187,7 @@ public:
             {
                if(m_tradeManager.ModifyPosition(ticket, beSL, currentTP))
                {
-                  state.breakevenSet = true;
+                  m_scalpPositions[i].breakevenSet = true;
                   PrintFormat("[SCALP-BREAKEVEN] %s | ticket=%I64u | SL=%.5f | profit_pts=%.1f",
                               posSymbol, ticket, beSL, profitPoints);
                }
@@ -1129,7 +1195,7 @@ public:
          }
 
          // 3. Tight trailing after breakeven is set
-         if(state.breakevenSet && m_config.trailingDistancePoints > 0)
+         if(m_scalpPositions[i].breakevenSet && m_config.trailingDistancePoints > 0)
          {
             double newSL = 0.0;
             int digits = (int)SymbolInfoInteger(posSymbol, SYMBOL_DIGITS);
@@ -1245,7 +1311,7 @@ public:
    {
       // Approximate: release 1 trade's worth of risk
       double riskPerTrade = m_riskManager != NULL ?
-                            m_riskManager->GetActiveRiskPerTradePercent() : 1.0;
+                            m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
       m_usedScalpRiskPct -= riskPerTrade;
       if(m_usedScalpRiskPct < 0.0)
          m_usedScalpRiskPct = 0.0;
@@ -1264,17 +1330,16 @@ public:
          return;
       }
 
-      SScalpPendingAsync &pending = m_pendingAsync[m_pendingAsyncCount];
-      pending.orderTicket     = orderTicket;
-      pending.symbol          = symbol;
-      pending.direction       = direction;
-      pending.lotSize         = lotSize;
-      pending.entryPrice      = entryPrice;
-      pending.stopLoss        = sl;
-      pending.takeProfit      = tp;
-      pending.sendTimestampMs = GetTickCount();
-      pending.confirmed       = false;
-      pending.expired         = false;
+      m_pendingAsync[m_pendingAsyncCount].orderTicket     = orderTicket;
+      m_pendingAsync[m_pendingAsyncCount].symbol          = symbol;
+      m_pendingAsync[m_pendingAsyncCount].direction       = direction;
+      m_pendingAsync[m_pendingAsyncCount].lotSize         = lotSize;
+      m_pendingAsync[m_pendingAsyncCount].entryPrice      = entryPrice;
+      m_pendingAsync[m_pendingAsyncCount].stopLoss        = sl;
+      m_pendingAsync[m_pendingAsyncCount].takeProfit      = tp;
+      m_pendingAsync[m_pendingAsyncCount].sendTimestampMs = GetTickCount();
+      m_pendingAsync[m_pendingAsyncCount].confirmed       = false;
+      m_pendingAsync[m_pendingAsyncCount].expired         = false;
       m_pendingAsyncCount++;
    }
 
@@ -1292,21 +1357,19 @@ public:
       {
          if(m_pendingAsync[i].orderTicket == orderTicket && !m_pendingAsync[i].confirmed)
          {
-            SScalpPendingAsync &pending = m_pendingAsync[i];
-
             // Calculate execution latency
-            uint latencyMs = GetTickCount() - pending.sendTimestampMs;
+            uint latencyMs = GetTickCount() - m_pendingAsync[i].sendTimestampMs;
 
             // Check for stale fill
             if(latencyMs > m_maxLatencyMs)
             {
                PrintFormat("[SCALP-ASYNC-LATENCY] %s: Execution latency %u ms exceeds max %u ms. Stale fill detected.",
-                           pending.symbol, latencyMs, m_maxLatencyMs);
+                           m_pendingAsync[i].symbol, latencyMs, m_maxLatencyMs);
                // Don't reject the fill (it's already executed), but flag it for monitoring
                // Consider tighter SL for stale fills
             }
 
-            pending.confirmed = true;
+            m_pendingAsync[i].confirmed = true;
 
             // Register the position in m_scalpPositions for tick-level management
             // Use the position ID from the deal as the tracking ticket
@@ -1316,27 +1379,27 @@ public:
 
             if(positionId > 0)
             {
-               double point = SymbolInfoDouble(pending.symbol, SYMBOL_POINT);
+               double point = SymbolInfoDouble(m_pendingAsync[i].symbol, SYMBOL_POINT);
                double oneRPrice = 0.0;
                if(point > 0.0)
                {
-                  if(pending.direction == 1)  // BUY
-                     oneRPrice = pending.entryPrice + m_config.scalpSLPips * point;
+                  if(m_pendingAsync[i].direction == 1)  // BUY
+                     oneRPrice = m_pendingAsync[i].entryPrice + m_config.scalpSLPips * point;
                   else  // SELL
-                     oneRPrice = pending.entryPrice - m_config.scalpSLPips * point;
+                     oneRPrice = m_pendingAsync[i].entryPrice - m_config.scalpSLPips * point;
                }
 
-               RegisterScalpPosition(positionId, pending.symbol, pending.entryPrice,
-                                      pending.stopLoss, pending.takeProfit, oneRPrice);
+               RegisterScalpPosition(positionId, m_pendingAsync[i].symbol, m_pendingAsync[i].entryPrice,
+                                      m_pendingAsync[i].stopLoss, m_pendingAsync[i].takeProfit, oneRPrice);
             }
 
             PrintFormat("[SCALP-ASYNC-CONFIRMED] %s | %s | order=%I64u | deal=%I64u | position=%I64u | lot=%.2f | latency=%u ms",
-                        pending.symbol,
-                        pending.direction == 1 ? "BUY" : "SELL",
+                        m_pendingAsync[i].symbol,
+                        m_pendingAsync[i].direction == 1 ? "BUY" : "SELL",
                         orderTicket,
                         dealTicket,
                         positionId,
-                        pending.lotSize,
+                        m_pendingAsync[i].lotSize,
                         latencyMs);
 
             // Remove from pending array
@@ -1372,7 +1435,7 @@ public:
 
             // Release risk budget for expired order
             double riskPerTrade = m_riskManager != NULL ?
-                                  m_riskManager->GetActiveRiskPerTradePercent() : 1.0;
+                                  m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
             m_usedScalpRiskPct -= riskPerTrade;
             if(m_usedScalpRiskPct < 0.0)
                m_usedScalpRiskPct = 0.0;

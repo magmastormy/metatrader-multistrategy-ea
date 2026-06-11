@@ -40,6 +40,7 @@ private:
     void            UpdateWeeklyTracking();
     double          GetTickValue();
     double          GetTickSize();
+    double          GetRiskDenominator() const;
     bool            LoadClosedTradeStats(const int lookbackTrades,
                                          int &sampleCount,
                                          int &wins,
@@ -159,13 +160,29 @@ double CICTPositionSizer::GetTickSize()
 }
 
 //+------------------------------------------------------------------+
+//| Get Risk Denominator — Unified formula (Blueprint 4.1)           |
+//| Uses MathMin(balance, equity) for conservative sizing:           |
+//|   - equity < balance → floating loss exists, use equity          |
+//|   - equity > balance → don't size up on unrealized gains         |
+//+------------------------------------------------------------------+
+double CICTPositionSizer::GetRiskDenominator() const
+{
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(balance <= 0.0 && equity <= 0.0) return 1.0;
+    if(balance <= 0.0) return equity;
+    if(equity <= 0.0)  return balance;
+    return MathMin(balance, equity);
+}
+
+//+------------------------------------------------------------------+
 //| P1-C: Calculate Lot Size                                        |
 //+------------------------------------------------------------------+
 // Formula:
 //   SL_Distance (in price) = |entry - stopLoss|
 //   SL_Distance (in ticks) = SL_Distance / tick_size
 //   Risk_per_tick (per lot) = tick_value
-//   RiskableAmount = account_balance * riskPct / 100
+//   RiskableAmount = MathMin(balance, equity) * riskPct / 100
 //   Lots = RiskableAmount / (SL_in_ticks * tick_value_per_lot)
 double CICTPositionSizer::CalculateLotSize(double entryPrice, double stopLossPrice)
 {
@@ -177,13 +194,13 @@ double CICTPositionSizer::CalculateLotSize(double entryPrice, double stopLossPri
         return m_minLotSize;
     }
 
-    double balance   = AccountInfoDouble(ACCOUNT_BALANCE);
+    double riskDenominator = GetRiskDenominator();
     double effectiveRiskPct = m_riskPctPerTrade;
     double kellyRiskPct = GetKellyRiskPct(50);
     if(kellyRiskPct > 0.0)
         effectiveRiskPct = MathMin(effectiveRiskPct, kellyRiskPct);
 
-    double riskAmount = balance * (effectiveRiskPct / 100.0);
+    double riskAmount = riskDenominator * (effectiveRiskPct / 100.0);
 
     double tickSize  = GetTickSize();
     double tickValue = GetTickValue();
@@ -213,8 +230,8 @@ double CICTPositionSizer::CalculateLotSize(double entryPrice, double stopLossPri
     // Clamp to min/max
     rawLots = MathMax(m_minLotSize, MathMin(rawLots, m_maxLotSize));
 
-    PrintFormat("[ICT-SIZER] Lots=%.2f | Risk=$%.2f | RiskPct=%.2f | KellyCap=%.2f | SL=%.5f pts | TickVal=%.5f | Balance=%.2f",
-                rawLots, riskAmount, effectiveRiskPct, kellyRiskPct, slDistance, tickValue, balance);
+    PrintFormat("[ICT-SIZER] Lots=%.2f | Risk=$%.2f | RiskPct=%.2f | KellyCap=%.2f | SL=%.5f pts | TickVal=%.5f | Denominator=%.2f",
+                rawLots, riskAmount, effectiveRiskPct, kellyRiskPct, slDistance, tickValue, riskDenominator);
 
     return rawLots;
 }
@@ -384,8 +401,9 @@ bool CICTPositionSizer::CanTrade(string &reason)
 //+------------------------------------------------------------------+
 double CICTPositionSizer::GetDailyDDUsedPct() const
 {
-    if(m_startOfDayBalance <= 0) return 0;
-    return (m_dailyPnL / m_startOfDayBalance) * 100.0;
+    double denominator = GetRiskDenominator();
+    if(denominator <= 0) return 0;
+    return (m_dailyPnL / denominator) * 100.0;
 }
 
 //+------------------------------------------------------------------+
@@ -393,8 +411,9 @@ double CICTPositionSizer::GetDailyDDUsedPct() const
 //+------------------------------------------------------------------+
 double CICTPositionSizer::GetWeeklyDDUsedPct() const
 {
-    if(m_startOfWeekBalance <= 0) return 0;
-    return (m_weeklyPnL / m_startOfWeekBalance) * 100.0;
+    double denominator = GetRiskDenominator();
+    if(denominator <= 0) return 0;
+    return (m_weeklyPnL / denominator) * 100.0;
 }
 
 #endif // __ICT_POSITION_SIZER_MQH__

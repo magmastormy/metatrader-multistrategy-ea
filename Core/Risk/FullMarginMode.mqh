@@ -123,8 +123,8 @@ public:
       return true;
    }
 
-   const SFullMarginConfig& GetConfig() const { return m_config; }
-   const SFullMarginBreachState& GetBreachState() const { return m_breachState; }
+   SFullMarginConfig GetConfig() const { return m_config; }
+   SFullMarginBreachState GetBreachState() const { return m_breachState; }
 
    //+------------------------------------------------------------------+
    //| Count positions by symbol and direction                           |

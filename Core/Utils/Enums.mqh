@@ -244,12 +244,42 @@ enum ENUM_RISK_TIER
 #define MAX_SPREAD_POINTS 50            // Maximum spread in points
 #define DEFAULT_SLIPPAGE 3              // Default slippage in points
 
+//+------------------------------------------------------------------+
+//| Risk Percent Scale Conversion Helpers (Blueprint Section 10.4)    |
+//| Convention: All risk parameters use 0-100 scale (e.g., 1.5 = 1.5%)|
+//| Internal calculations divide by 100 when fraction is needed.      |
+//+------------------------------------------------------------------+
+
+// Convert risk percent (0-100 scale) to fraction (0-1 scale)
+double RiskPercentToFraction(double riskPercent)
+{
+    return MathMax(0.0, riskPercent) / 100.0;
+}
+
+// Convert fraction (0-1 scale) to risk percent (0-100 scale)
+double FractionToRiskPercent(double fraction)
+{
+    return fraction * 100.0;
+}
+
+// Validate that a risk percent value is in the expected 0-100 scale
+bool IsValidRiskPercent(double riskPercent)
+{
+    return (riskPercent >= 0.0 && riskPercent <= 100.0);
+}
+
+// Clamp risk percent to safe range [0.01, 50.0]
+double ClampRiskPercentGlobal(double riskPercent)
+{
+    return MathMax(0.01, MathMin(riskPercent, 50.0));
+}
+
 // Risk Management Constants
 #define MIN_ACCOUNT_BALANCE 1.0         // Minimum account balance (lowered for micro-account testing)
-#define DRAWDOWN_CRITICAL 10.0           // Critical drawdown level
-#define DRAWDOWN_WARNING 5.0            // Warning drawdown level
-#define MAX_RISK_PER_TRADE 10.0       // Maximum risk per trade as percentage
-#define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk
+#define DRAWDOWN_CRITICAL 10.0           // Critical drawdown level (Blueprint 10.4: 0-100 scale)
+#define DRAWDOWN_WARNING 5.0            // Warning drawdown level (Blueprint 10.4: 0-100 scale)
+#define MAX_RISK_PER_TRADE 10.0       // Maximum risk per trade as percentage (Blueprint 10.4: 0-100 scale)
+#define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk (Blueprint 10.4: 0-100 scale)
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 
 //+------------------------------------------------------------------+

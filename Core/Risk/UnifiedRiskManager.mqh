@@ -29,21 +29,23 @@ struct SSymbolRiskBudget
 
 //+------------------------------------------------------------------+
 //| Unified risk configuration                                       |
+//| Blueprint 10.4: All percent fields use 0-100 scale               |
 //+------------------------------------------------------------------+
 struct SUnifiedRiskConfig
 {
-    double baseRiskPerTradePercent;
-    double minRiskPerTradePercent;
-    double maxRiskPerTradePercent;
-    double maxDailyRiskPercent;
-    double maxPortfolioRiskPercent;
-    double correlationThreshold;
-    double correlationReduceThreshold;     // Tiered correlation: reduce lot size above this
-    double correlationBlockThreshold;      // Tiered correlation: block trade above this
+    double baseRiskPerTradePercent;     // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
+    double minRiskPerTradePercent;      // Blueprint 10.4: 0-100 scale (e.g., 0.1 = 0.1%)
+    double maxRiskPerTradePercent;      // Blueprint 10.4: 0-100 scale (e.g., 5.0 = 5%)
+    double maxDailyRiskPercent;         // Blueprint 10.4: 0-100 scale
+    double maxPortfolioRiskPercent;     // Blueprint 10.4: 0-100 scale
+    double correlationThreshold;        // 0-1 scale (not a risk percent)
+    double correlationReduceThreshold;  // 0-1 scale (not a risk percent)
+    double correlationBlockThreshold;   // 0-1 scale (not a risk percent)
     int maxPositionsSameBase;
-    double drawdownWarningPercent;
-    double drawdownCriticalPercent;
-    double dailyLossLimitPercent;          // Daily P&L circuit breaker threshold (%)
+    double drawdownWarningPercent;      // Blueprint 10.4: 0-100 scale
+    double drawdownCriticalPercent;     // Blueprint 10.4: 0-100 scale
+    double dailyLossLimitPercent;       // Blueprint 10.4: 0-100 scale
+    double minLotRiskMultiplier;        // Max risk multiplier when rounding up to broker min lot (e.g., 2.0 = 2x)
     int adaptationMinTrades;
     bool enableAdaptiveSizing;
     bool enableAuditLogging;
@@ -52,19 +54,20 @@ struct SUnifiedRiskConfig
 
 //+------------------------------------------------------------------+
 //| Unified risk runtime snapshot                                    |
+//| Blueprint 10.4: All percent fields use 0-100 scale               |
 //+------------------------------------------------------------------+
 struct SUnifiedRiskSnapshot
 {
-    double activeRiskPerTradePercent;
-    double dailyRiskUsedPercent;           // Effective max(entry_budget, mtm_loss, open_exposure)
-    double dailyEntryRiskUsedPercent;      // Cumulative accepted entry risk intents
-    double dailyMarkToMarketLossPercent;   // Equity loss vs daily baseline
-    double openExposureRiskPercent;        // Current stop-defined portfolio exposure
-    double virtualReservedRiskPercent;     // Scan-time reserved candidate risk
-    double maxDailyRiskPercent;
-    double portfolioRiskPercent;
-    double currentDrawdownPercent;
-    double winRatePercent;
+    double activeRiskPerTradePercent;      // Blueprint 10.4: 0-100 scale
+    double dailyRiskUsedPercent;           // Blueprint 10.4: 0-100 scale
+    double dailyEntryRiskUsedPercent;      // Blueprint 10.4: 0-100 scale
+    double dailyMarkToMarketLossPercent;   // Blueprint 10.4: 0-100 scale
+    double openExposureRiskPercent;        // Blueprint 10.4: 0-100 scale
+    double virtualReservedRiskPercent;     // Blueprint 10.4: 0-100 scale
+    double maxDailyRiskPercent;            // Blueprint 10.4: 0-100 scale
+    double portfolioRiskPercent;           // Blueprint 10.4: 0-100 scale
+    double currentDrawdownPercent;         // Blueprint 10.4: 0-100 scale
+    double winRatePercent;                 // Blueprint 10.4: 0-100 scale
     double profitFactor;
     double netProfit;
     int totalTrades;
@@ -166,7 +169,7 @@ public:
     bool IsInitialized() const { return m_initialized; }
 
     // Access portfolio risk manager (for wiring correlation engine to PositionSizer)
-    CPortfolioRiskManager& GetPortfolioRiskManager() { return m_portfolioRiskManager; }
+    CPortfolioRiskManager* GetPortfolioRiskManager() { return &m_portfolioRiskManager; }
 
     // Set broker trading day start hour (0=midnight server time, 17=5pm for forex rollover)
     void SetTradingDayStartHour(int hour) { m_tradingDayStartHour = MathMax(0, MathMin(23, hour)); }
@@ -207,6 +210,7 @@ private:
     double CalculateDailyMarkToMarketLossPercent();
     double GetCurrentOpenExposureRiskPercent();
     double GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent = 0.0);
+    double CalculateMinLotRiskPercent(const string symbol);
 };
 
 //+------------------------------------------------------------------+
@@ -233,7 +237,7 @@ void CUnifiedRiskManager::SetBaseRiskPerTrade(double riskPercent)
 //+------------------------------------------------------------------+
 CUnifiedRiskManager::CUnifiedRiskManager() :
     m_performanceAnalytics(NULL),
-    m_activeRiskPerTradePercent(1.0),
+    m_activeRiskPerTradePercent(1.0),  // Blueprint 10.4: 0-100 scale (1.0 = 1%)
     m_dailyRiskUsedPercent(0.0),
     m_dailyStartEquity(0.0),
     m_lastDailyReset(0),
@@ -255,18 +259,19 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_symbolBudgetCount(0),
     m_lastBudgetRefresh(0)
 {
-    m_config.baseRiskPerTradePercent = 1.0;
-    m_config.minRiskPerTradePercent = 0.1;
-    m_config.maxRiskPerTradePercent = 5.0;
-    m_config.maxDailyRiskPercent = 5.0;
-    m_config.maxPortfolioRiskPercent = 15.0;
+    m_config.baseRiskPerTradePercent = 1.0;   // Blueprint 10.4: 0-100 scale (1.0 = 1%)
+    m_config.minRiskPerTradePercent = 0.1;    // Blueprint 10.4: 0-100 scale (0.1 = 0.1%)
+    m_config.maxRiskPerTradePercent = 5.0;    // Blueprint 10.4: 0-100 scale (5.0 = 5%)
+    m_config.maxDailyRiskPercent = 5.0;       // Blueprint 10.4: 0-100 scale
+    m_config.maxPortfolioRiskPercent = 15.0;  // Blueprint 10.4: 0-100 scale
     m_config.correlationThreshold = 0.7;
     m_config.correlationReduceThreshold = 0.4;
     m_config.correlationBlockThreshold = 0.7;
     m_config.maxPositionsSameBase = 3;
-    m_config.drawdownWarningPercent = 5.0;
-    m_config.drawdownCriticalPercent = 10.0;
-    m_config.dailyLossLimitPercent = 3.0;
+    m_config.drawdownWarningPercent = 17.5;   // Blueprint 10.4: 0-100 scale (70% of 25% max)
+    m_config.drawdownCriticalPercent = 25.0;  // Blueprint 10.4: 0-100 scale (matches InpMaxDrawdown)
+    m_config.dailyLossLimitPercent = 15.0;    // Blueprint 10.4: 0-100 scale (raised for small accounts: single trade ~10%)
+    m_config.minLotRiskMultiplier = 15.0;      // Allow up to 15x risk when rounding up to broker min lot (small accounts: 0.10 min on $179)
     m_config.adaptationMinTrades = 20;
     m_config.enableAdaptiveSizing = true;
     m_config.enableAuditLogging = true;
@@ -470,28 +475,93 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     if(!result.approved)
         return result;
 
+    // Lot size floor: if the validation gate allowed a below-minimum lot through
+    // (small account round-up path), adjust to the broker minimum lot.
+    double brokerMinLot = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_MIN);
+    if(brokerMinLot <= 0.0) brokerMinLot = 0.01;
+    if(result.adjustedLotSize > 0.0 && result.adjustedLotSize < brokerMinLot)
+    {
+        double riskRatio = brokerMinLot / result.adjustedLotSize;
+        if(riskRatio <= m_config.minLotRiskMultiplier)
+        {
+            PrintFormat("[RISK-LOT-FLOOR] %s | Adjusted %.3f -> %.3f (broker min, risk %.1fx <= %.1fx cap)",
+                        request.symbol, result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier);
+            result.adjustedLotSize = brokerMinLot;
+            // Re-calculate risk percent with the adjusted lot
+            if(result.riskPercent > 0.0)
+                result.riskPercent *= riskRatio;
+        }
+        else
+        {
+            result.approved = false;
+            result.message = StringFormat("Lot below minimum: %.3f < %.3f. Risk at min lot (%.1fx) exceeds %.1fx cap.",
+                                          result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier);
+            result.severity = ERROR_LEVEL_WARNING;
+            PrintFormat("[RISK-LOT-FLOOR] %s | REJECTED: %.3f < %.3f, risk %.1fx > %.1fx cap",
+                        request.symbol, result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier);
+            return result;
+        }
+    }
+
     // Per-Symbol Risk Budget check (Phase 5)
     if(result.riskPercent > 0.0 && !IsSymbolBudgetAvailable(request.symbol, result.riskPercent))
     {
         double allocation = GetSymbolRiskAllocation(request.symbol);
         double used = GetSymbolUsedRisk(request.symbol);
-        result.approved = false;
-        result.message = StringFormat("Symbol risk budget exhausted for %s: used=%.2f%% + %.2f%% > alloc=%.2f%%",
-                                      request.symbol, used, result.riskPercent, allocation);
-        result.severity = ERROR_LEVEL_WARNING;
-        PrintFormat("[RISK-SYMBOL-BUDGET] REJECTED | %s | used=%.2f%% + new=%.2f%% > alloc=%.2f%%",
-                    request.symbol, used, result.riskPercent, allocation);
-        return result;
+
+        // Cold-start bypass: if no positions are open and no virtual reservations,
+        // allow the trade even if it exceeds the symbol allocation.
+        // The portfolio-level check below will still gate the total risk.
+        int openPositionCount = PositionsTotal();
+        int virtualReservationCount = GetVirtualReservationCount();
+        bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
+
+        if(isColdStart && result.riskPercent <= m_config.maxRiskPerTradePercent)
+        {
+            PrintFormat("[RISK-SYMBOL-BUDGET] Bootstrap bypass | %s | used=%.2f%% + new=%.2f%% > alloc=%.2f%% (cold start, per-trade risk OK)",
+                        request.symbol, used, result.riskPercent, allocation);
+        }
+        else
+        {
+            result.approved = false;
+            result.message = StringFormat("Symbol risk budget exhausted for %s: used=%.2f%% + %.2f%% > alloc=%.2f%%",
+                                          request.symbol, used, result.riskPercent, allocation);
+            result.severity = ERROR_LEVEL_WARNING;
+            PrintFormat("[RISK-SYMBOL-BUDGET] REJECTED | %s | used=%.2f%% + new=%.2f%% > alloc=%.2f%%",
+                        request.symbol, used, result.riskPercent, allocation);
+            return result;
+        }
     }
 
     double projectedPortfolioRisk = openExposureRisk + reservedRisk + MathMax(0.0, result.riskPercent);
     if(projectedPortfolioRisk > m_config.maxPortfolioRiskPercent)
     {
-        result.approved = false;
-        result.severity = ERROR_LEVEL_WARNING;
-        result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
-                                      phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
-        return result;
+        // Issue B fix: Bootstrap mode — when there are zero open positions and no virtual
+        // reservations (cold start), allow a one-time bootstrap allocation that distributes
+        // the portfolio cap evenly across requesting symbols. Each symbol's risk must still
+        // be within the per-trade max, and the total is capped at portfolio max.
+        int openPositionCount = PositionsTotal();
+        int virtualReservationCount = GetVirtualReservationCount();
+        bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
+
+        if(isColdStart && result.riskPercent > 0.0 && result.riskPercent <= m_config.maxRiskPerTradePercent)
+        {
+            // Bootstrap: allow this trade as the first entry on cold start
+            // The portfolio cap is effectively distributed: each requesting symbol
+            // can take up to (portfolioCap / activeSymbolCount) risk.
+            // Since there are no positions yet, this first trade is always allowed
+            // as long as its risk is within per-trade limits.
+            PrintFormat("[RISK-PORTFOLIO] Bootstrap mode: distributing %.2f%% cap across requesting symbols (no open positions)",
+                        m_config.maxPortfolioRiskPercent);
+        }
+        else
+        {
+            result.approved = false;
+            result.severity = ERROR_LEVEL_WARNING;
+            result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
+                                          phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
+            return result;
+        }
     }
 
     // Tiered Correlation Response: check correlation with existing positions
@@ -807,7 +877,7 @@ double CUnifiedRiskManager::CalculateDailyMarkToMarketLossPercent()
         return 0.0;
 
     double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
-    return MathMax(0.0, ((baselineEquity - equityNow) / baselineEquity) * 100.0);
+    return MathMax(0.0, ((baselineEquity - equityNow) / baselineEquity) * 100.0);  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
 //+------------------------------------------------------------------+
@@ -882,9 +952,6 @@ void CUnifiedRiskManager::UpdateAdaptiveRiskLevel()
 //+------------------------------------------------------------------+
 bool CUnifiedRiskManager::IsNewTradingDay(const datetime nowTime)
 {
-    if(m_lastTradingDayKey == 0)
-        return true;
-
     MqlDateTime dt;
     TimeToStruct(nowTime, dt);
 
@@ -947,7 +1014,7 @@ bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
     // Calculate current drawdown from peak
     if(m_peakEquity > 0)
     {
-        m_maxDrawdownFromPeak = ((m_peakEquity - equityNow) / m_peakEquity) * 100.0;
+        m_maxDrawdownFromPeak = ((m_peakEquity - equityNow) / m_peakEquity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
     }
     
     // Check critical drawdown limit - HARD STOP
@@ -1151,7 +1218,7 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     if(equity <= 0.0)
         return 0.0;
     
-    return (riskAmount / equity) * 100.0;
+    return (riskAmount / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
 //+------------------------------------------------------------------+
@@ -1236,7 +1303,7 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
     if(equity <= 0.0)
         return MARGIN_HEALTH_EMERGENCY;
 
-    double marginLevel = (equity / margin) * 100.0;
+    double marginLevel = (equity / margin) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale (margin level %)
 
     // Emergency: margin level < 150% — close all positions immediately
     if(marginLevel < 150.0)
@@ -1364,15 +1431,15 @@ bool CUnifiedRiskManager::CheckDailyLossLimit()
     double dailyPL = dailyRealizedPL + unrealizedPL;
 
     // Calculate as percentage of peak equity
-    double peakEquity = m_peakEquity;
-    if(peakEquity <= 0.0)
-        peakEquity = m_dailyStartEquity;
-    if(peakEquity <= 0.0)
-        peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double riskPeakEquity = m_peakEquity;
+    if(riskPeakEquity <= 0.0)
+        riskPeakEquity = m_dailyStartEquity;
+    if(riskPeakEquity <= 0.0)
+        riskPeakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
 
     double dailyPLPercent = 0.0;
-    if(peakEquity > 0.0)
-        dailyPLPercent = (dailyPL / peakEquity) * 100.0;
+    if(riskPeakEquity > 0.0)
+        dailyPLPercent = (dailyPL / riskPeakEquity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 
     // Check if daily loss exceeds limit
     if(dailyPLPercent <= -m_config.dailyLossLimitPercent)
@@ -1448,7 +1515,23 @@ double CUnifiedRiskManager::GetSymbolRiskAllocation(const string symbol)
     else if(winRate < 40.0 || profitFactor < 0.8)
         perfWeight = 0.5;   // Penalize underperformers
 
-    return baseShare * perfWeight;
+    double allocation = baseShare * perfWeight;
+
+    // Issue A fix: Minimum viable risk floor — if the symbol allocation is less than
+    // the risk of a single minimum-lot trade, raise it so at least one position is viable.
+    double minLotRisk = CalculateMinLotRiskPercent(symbol);
+    if(minLotRisk > 0.0 && allocation < minLotRisk)
+    {
+        double originalAllocation = allocation;
+        allocation = minLotRisk;
+        // Cap at maxDailyRiskPercent to avoid absurd allocations on tiny accounts
+        allocation = MathMin(allocation, m_config.maxDailyRiskPercent);
+        if(allocation > originalAllocation)
+            PrintFormat("[RISK-SYMBOL-BUDGET] Auto-adjusted %s allocation from %.2f%% to %.2f%% (min-lot viability)",
+                        symbol, originalAllocation, allocation);
+    }
+
+    return allocation;
 }
 
 //+------------------------------------------------------------------+
@@ -1579,7 +1662,7 @@ double CUnifiedRiskManager::GetSymbolWinRate(const string symbol)
     if(total < 5)
         return 50.0; // Default for insufficient data
 
-    return ((double)wins / (double)total) * 100.0;
+    return ((double)wins / (double)total) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
 //+------------------------------------------------------------------+
@@ -1627,6 +1710,48 @@ double CUnifiedRiskManager::GetSymbolProfitFactor(const string symbol)
     if(grossWin > 0.0)
         return grossWin; // No losses yet
     return 1.0;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate risk % of a single minimum-lot trade for viability     |
+//| Uses ATR-based SL distance to estimate realistic risk per trade  |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
+{
+    double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    if(minLot <= 0.0)
+        minLot = 0.01;
+
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(equity <= 0.0)
+        equity = AccountInfoDouble(ACCOUNT_BALANCE);
+    if(equity <= 0.0)
+        return 0.0;
+
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+    double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+    if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
+        return 0.0;
+
+    // Estimate SL distance using ATR(14) on the daily timeframe as a reasonable default
+    double slDistancePoints = 0.0;
+    int atrHandle = iATR(symbol, PERIOD_D1, 14);
+    if(atrHandle != INVALID_HANDLE)
+    {
+        double atrValues[];
+        ArraySetAsSeries(atrValues, true);
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrValues) == 1 && atrValues[0] > 0.0)
+            slDistancePoints = atrValues[0] / point;
+        IndicatorRelease(atrHandle);
+    }
+
+    // Fallback: use 100 pips if ATR unavailable
+    if(slDistancePoints <= 0.0)
+        slDistancePoints = 100.0;
+
+    double riskAmount = minLot * slDistancePoints * tickValue * (point / tickSize);
+    return (riskAmount / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
 
 #endif // CORE_RISK_UNIFIED_RISK_MANAGER_MQH

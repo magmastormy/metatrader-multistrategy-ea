@@ -871,7 +871,16 @@ private:
 
         if(signal != TRADE_SIGNAL_NONE)
         {
-            if(confidence < m_minConfidence)
+            // Cold-start guard: reject signals from untrained networks.
+            // With random weights and no training data, softmax produces extreme
+            // probabilities (e.g., buy=1.000) that pass all other gates.
+            // Require at least 30 resolved labels before trusting the network.
+            if(m_resolvedLabelCount < NN_MIN_NORMALIZATION_SAMPLES)
+            {
+                signal = TRADE_SIGNAL_NONE;
+                confidence = 0.0;
+            }
+            else if(confidence < m_minConfidence)
                 signal = TRADE_SIGNAL_NONE;
             else if(!m_conformal.Approve(confidence))
                 signal = TRADE_SIGNAL_NONE;
@@ -1658,10 +1667,12 @@ public:
         datetime now = TimeCurrent();
         if(m_lastSignalLogTime == 0 || (now - m_lastSignalLogTime) >= 10)
         {
-            PrintFormat("[NEURAL-NET] Signal=%s | conf=%.3f | none=%.3f | buy=%.3f | sell=%.3f | conformal_q=%.3f | alpha=%.3f",
+            PrintFormat("[NEURAL-NET] Signal=%s | conf=%.3f | none=%.3f | buy=%.3f | sell=%.3f | conformal_q=%.3f | alpha=%.3f | labels=%d/%d | norm=%s",
                         TradeSignalToString(signal), confidence,
                         probabilities[0], probabilities[1], probabilities[2],
-                        m_conformal.GetQuantile(), m_conformal.GetAlpha());
+                        m_conformal.GetQuantile(), m_conformal.GetAlpha(),
+                        m_resolvedLabelCount, NN_MIN_NORMALIZATION_SAMPLES,
+                        m_normalizationReady ? "READY" : "COLD");
             m_lastSignalLogTime = now;
         }
 

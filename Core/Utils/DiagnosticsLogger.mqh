@@ -29,7 +29,7 @@ public:
    CDiagnosticsLogger();
    ~CDiagnosticsLogger();
 
-   bool Initialize(string eaName, int logLevel);
+   bool Initialize(string eaName, int logLevel, int flushIntervalSec = 5);
    void Deinit();
 
    // Level-gated logging
@@ -42,6 +42,9 @@ public:
 
    // Flush buffer to disk
    void Flush();
+
+   // Set flush interval
+   void SetFlushInterval(int flushIntervalSec) { m_flushIntervalSec = MathMax(1, flushIntervalSec); }
 
    // Getters
    int  GetLogLevel() const { return m_logLevel; }
@@ -72,9 +75,10 @@ CDiagnosticsLogger::~CDiagnosticsLogger()
 //+------------------------------------------------------------------+
 //| Initialize                                                       |
 //+------------------------------------------------------------------+
-bool CDiagnosticsLogger::Initialize(string eaName, int logLevel)
+bool CDiagnosticsLogger::Initialize(string eaName, int logLevel, int flushIntervalSec)
 {
    m_logLevel = MathMax(0, MathMin(4, logLevel));
+   m_flushIntervalSec = MathMax(1, flushIntervalSec);
    m_filePath = eaName + "_diagnostics.log";
 
    m_fileHandle = FileOpen(m_filePath,
@@ -83,7 +87,7 @@ bool CDiagnosticsLogger::Initialize(string eaName, int logLevel)
    {
       FileSeek(m_fileHandle, 0, SEEK_END);
       m_enabled = true;
-      WriteToFile("=== Diagnostics Logger Initialized | Level=" + IntegerToString(m_logLevel) + " ===");
+      WriteToFile("=== Diagnostics Logger Initialized | Level=" + IntegerToString(m_logLevel) + " | FlushInterval=" + IntegerToString(m_flushIntervalSec) + "s ===");
    }
    else
    {

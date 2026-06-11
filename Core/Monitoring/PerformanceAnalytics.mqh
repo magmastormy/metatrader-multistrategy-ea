@@ -75,6 +75,10 @@ private:
     int m_consecutiveLosses;
     int m_consecutiveWins;              // Anti-Martingale: consecutive win streak
 
+    // Momentum scale log throttle
+    datetime m_lastMomentumScaleLogTime;
+    double m_lastMomentumScaleValue;
+
     // Performance triggers
     bool m_needsRiskReduction;
     bool m_needsParameterAdjustment;
@@ -190,6 +194,8 @@ CPerformanceAnalytics::CPerformanceAnalytics(void) :
     m_rollingSharpe(0.0),
     m_consecutiveLosses(0),
     m_consecutiveWins(0),
+    m_lastMomentumScaleLogTime(0),
+    m_lastMomentumScaleValue(1.0),
     m_needsRiskReduction(false),
     m_needsParameterAdjustment(false),
     m_performanceAcceptable(true),
@@ -916,8 +922,15 @@ double CPerformanceAnalytics::CalculateMomentumScale(void)
         scale = MathMax(0.5, 1.0 - m_consecutiveLosses * 0.15);
     }
 
-    PrintFormat("[MOMENTUM-SCALE] Wins=%d Losses=%d Scale=%.2f",
-                m_consecutiveWins, m_consecutiveLosses, scale);
+    // Throttle logging: only print every 60 seconds or when the scale value changes
+    datetime now = TimeCurrent();
+    if(MathAbs(scale - m_lastMomentumScaleValue) > 0.001 || now - m_lastMomentumScaleLogTime >= 60)
+    {
+        PrintFormat("[MOMENTUM-SCALE] Wins=%d Losses=%d Scale=%.2f",
+                    m_consecutiveWins, m_consecutiveLosses, scale);
+        m_lastMomentumScaleLogTime = now;
+        m_lastMomentumScaleValue = scale;
+    }
 
     return scale;
 }

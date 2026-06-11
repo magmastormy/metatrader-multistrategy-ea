@@ -28,7 +28,6 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
-struct STierConfig;
 
 //+------------------------------------------------------------------+
 //| Position Sizing Parameters Structure                           |
@@ -37,7 +36,7 @@ struct SPositionSizingParams
 {
     ENUM_POSITION_SIZING_MODE sizingMode;    // Position sizing method
     double fixedLotSize;                     // Fixed lot size
-    double riskPercent;                      // Risk percentage per trade
+    double riskPercent;                      // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
     int atrPeriod;                           // ATR period for volatility
     double atrMultiplier;                    // ATR multiplier
     double maxLotSize;                       // Maximum allowed lot size
@@ -75,6 +74,9 @@ private:
 
     // FIX: Correlation engine pointer — delegates to CCorrelationEngine instead of own Pearson
     CCorrelationEngine* m_correlationEngine;
+
+    // Anti-Martingale momentum scaling (Blueprint Section 4.3)
+    CPerformanceAnalytics* m_perfAnalytics;
     
     // Kelly Criterion statistics
     double m_kellyWinRate;           // Rolling win rate
@@ -93,6 +95,10 @@ private:
     double m_compoundingAggressiveness;       // How aggressively to compound (0=none, 1=full)
     double m_drawdownScalingFactor;           // How much to reduce on drawdown
     bool m_enableCompounding;                 // Enable/disable compounding
+
+    // Min-lot round-up policy (fixes "Lot size below minimum" rejection)
+    bool   m_allowMinLotRoundUp;       // Allow rounding up to broker min lot when calculated lot is below min
+    double m_minLotRiskMultiplier;     // Max risk multiplier for round-up (e.g., 2.0 = risk at min lot must be <= 2x intended)
 
     // Pluggable modifier chain (Phase 5: Position Sizer Consolidation)
     CPositionSizerModifier* m_modifiers[5];
@@ -114,8 +120,15 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     // Set log level for gating diagnostic string building
     void SetLogLevel(const int level) { m_logLevel = MathMax(0, MathMin(4, level)); }
 
+    // Set min-lot round-up policy (fixes "Lot size below minimum" rejection)
+    void SetAllowMinLotRoundUp(bool allow) { m_allowMinLotRoundUp = allow; }
+    void SetMinLotRiskMultiplier(double multiplier) { m_minLotRiskMultiplier = MathMax(1.0, multiplier); }
+
     // Set correlation engine for delegated correlation calculation
     void SetCorrelationEngine(CCorrelationEngine* engine) { m_correlationEngine = engine; }
+
+    // Set performance analytics for anti-Martingale momentum scaling
+    void SetPerformanceAnalytics(CPerformanceAnalytics* pa) { m_perfAnalytics = pa; }
     
     // DEPRECATED: Use CalculateSize() instead — avoids shared mutable state
     // Calculate optimal position size with enhanced risk management
@@ -132,11 +145,26 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
                          const ENUM_ORDER_TYPE orderType,
                          const double slDistancePips,
                          const double riskPercent,
-                         const double confidence = 1.0,
-                         STierConfig* tierConfig = NULL);
+                         const double confidence = 1.0);
+    double CalculateSizeWithTierCap(const string symbol,
+                         const ENUM_ORDER_TYPE orderType,
+                         const double slDistancePips,
+                         const double riskPercent,
+                         const double confidence,
+                         double tierRiskPerTradePct);
     
     // Calculate base position size according to sizing mode
     double CalculateBasePositionSize(const string symbol, const double stopLossPips);
+
+    // Private: base size with explicit risk percent
+    double CalculateBasePositionSizeWithRisk(const string symbol, const double stopLossPips, const double riskPercent);
+
+    // Private: stateless core calculation — accepts riskPercent as parameter
+    double CalculateOptimalPositionSizeCore(const string symbol,
+                                             const ENUM_ORDER_TYPE orderType,
+                                             const double stopLossPips,
+                                             const double riskPercent,
+                                             const double confidence);
     
     // Calculate position size based on risk percentage (see implementation below)
     double CalculateRiskBasedSize(const string symbol,
@@ -300,12 +328,13 @@ CPositionSizer::CPositionSizer(void)
     m_activePositions = 0;
     m_errorHandler = NULL;
     m_correlationEngine = NULL;
+    m_perfAnalytics = NULL;
     m_atrHandle = INVALID_HANDLE;
     m_logLevel = 1;
     // Initialize default parameters
     m_params.sizingMode = POSITION_SIZE_RISK_PERCENT;
     m_params.fixedLotSize = MIN_LOT_SIZE;
-    m_params.riskPercent = 1.0;
+    m_params.riskPercent = 1.0;  // Blueprint 10.4: 0-100 scale (1.0 = 1%)
     m_params.atrPeriod = 14;
     m_params.atrMultiplier = 1.5;
     m_params.maxLotSize = MAX_LOT_SIZE;
@@ -331,6 +360,9 @@ CPositionSizer::CPositionSizer(void)
     m_compoundingAggressiveness = 0.5;
     m_drawdownScalingFactor = 1.0;
     m_enableCompounding = true;
+    // Min-lot round-up defaults
+    m_allowMinLotRoundUp = true;
+    m_minLotRiskMultiplier = 15.0;
     // Pluggable modifier chain defaults
     m_modifierCount = 0;
     for(int i = 0; i < 5; i++)
@@ -465,6 +497,18 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
                                                     const double stopLossPips,
                                                     const double confidence)
 {
+    return CalculateOptimalPositionSizeCore(symbolParam, orderType, stopLossPips, m_params.riskPercent, confidence);
+}
+
+//+------------------------------------------------------------------+
+//| Stateless core calculation — accepts riskPercent as parameter     |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateOptimalPositionSizeCore(const string symbolParam,
+                                                          const ENUM_ORDER_TYPE orderType,
+                                                          const double stopLossPips,
+                                                          const double riskPercent,
+                                                          const double confidence)
+{
     if(!m_initialized)
     {
         SErrorContext context;
@@ -476,10 +520,9 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
         context.timestamp = TimeCurrent();
         context.severity = ERROR_RECOVERABLE;
         CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, context);
-        // CRITICAL FIX: Normalize before returning!
         return NormalizeVolume(symbolParam, MIN_LOT_SIZE);
     }
-    
+
     if(!ValidateSymbol(symbolParam))
     {
         SErrorContext symbolContext;
@@ -491,10 +534,9 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
         symbolContext.timestamp = TimeCurrent();
         symbolContext.severity = ERROR_RECOVERABLE;
         CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, symbolContext);
-        // CRITICAL FIX: Normalize before returning!
         return NormalizeVolume(symbolParam, MIN_LOT_SIZE);
     }
-    
+
     if(stopLossPips <= 0)
     {
         SErrorContext slContext;
@@ -506,38 +548,28 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
         slContext.timestamp = TimeCurrent();
         slContext.severity = ERROR_WARNING;
         CEnhancedErrorHandler::LogError(ERROR_WARNING, slContext);
-        // CRITICAL FIX: Normalize before returning!
         return NormalizeVolume(symbolParam, MIN_LOT_SIZE);
     }
-    
-    // Update risk metrics
+
     UpdateRiskMetrics();
-    
-    // Calculate base size according to sizing mode
-    double baseSize = CalculateBasePositionSize(symbolParam, stopLossPips);
-    
-    // Apply confidence adjustment
+
+    // Use the riskPercent parameter instead of m_params.riskPercent
+    double baseSize = CalculateBasePositionSizeWithRisk(symbolParam, stopLossPips, riskPercent);
+
     if(confidence > 0 && confidence != 1.0)
     {
         baseSize *= confidence;
         LogSizingDecision(symbolParam, baseSize, StringFormat("Confidence adjusted (%.2f)", confidence));
     }
-    
-    // Apply additional adjustments if enabled
+
     if(m_params.useVolatilityAdjustment && m_params.sizingMode != POSITION_SIZE_VOLATILITY)
-    {
         baseSize = CalculateVolatilityBasedSize(symbolParam, baseSize);
-    }
-    
+
     if(m_params.useCorrelationAdjustment && m_params.sizingMode != POSITION_SIZE_CORRELATION)
-    {
         baseSize = CalculateCorrelationAdjustedSize(symbolParam, baseSize);
-    }
-    
-    // Apply equity compounding multiplier
+
     baseSize *= CalculateCompoundingMultiplier();
 
-    // Apply pluggable modifier chain (Phase 5: Position Sizer Consolidation)
     for(int i = 0; i < m_modifierCount; i++)
     {
         if(CheckPointer(m_modifiers[i]) != POINTER_INVALID)
@@ -545,17 +577,25 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
             double preMod = baseSize;
             baseSize = m_modifiers[i].AdjustLotSize(baseSize, symbolParam, confidence);
             if(MathAbs(baseSize - preMod) > 0.001)
-            {
-                LogSizingDecision(symbolParam, baseSize,
-                    StringFormat("Modifier[%d] %s: %.2f->%.2f", i, m_modifiers[i].GetName(), preMod, baseSize));
-            }
+                LogSizingDecision(symbolParam, baseSize, StringFormat("Modifier[%d] %s: %.2f->%.2f", i, m_modifiers[i].GetName(), preMod, baseSize));
         }
     }
 
-    // Validate final size
     double finalSize = ValidatePositionSize(symbolParam, baseSize);
 
-    // Store for debugging
+    if(m_perfAnalytics != NULL)
+    {
+        double momentumScale = m_perfAnalytics.CalculateMomentumScale();
+        if(momentumScale != 1.0 && momentumScale > 0.0)
+        {
+            double preMomentum = finalSize;
+            finalSize *= momentumScale;
+            finalSize = NormalizeVolume(symbolParam, finalSize);
+            if(MathAbs(preMomentum - finalSize) > 0.001)
+                LogSizingDecision(symbolParam, finalSize, StringFormat("Momentum scale applied (%.2fx)", momentumScale));
+        }
+    }
+
     m_lastCalculatedSize = finalSize;
     m_lastSymbol = symbolParam;
     m_lastCalculation = TimeCurrent();
@@ -571,8 +611,7 @@ double CPositionSizer::CalculateSize(const string symbol,
                                       const ENUM_ORDER_TYPE orderType,
                                       const double slDistancePips,
                                       const double riskPercent,
-                                      const double confidence,
-                                      STierConfig* tierConfig)
+                                      const double confidence)
 {
     // Validate risk percent before proceeding
     if(riskPercent <= 0.0 || riskPercent > MAX_RISK_PER_TRADE)
@@ -582,41 +621,52 @@ double CPositionSizer::CalculateSize(const string symbol,
         return NormalizeVolume(symbol, MIN_LOT_SIZE);
     }
 
-    // Save the current risk percent so we can restore it after calculation.
-    // This makes the method stateless from the caller's perspective —
-    // no persistent mutation of m_params, safe for multi-symbol per-tick use.
-    double savedRiskPercent = m_params.riskPercent;
-
-    // Temporarily override with the caller-provided risk percent
-    m_params.riskPercent = riskPercent;
-
-    // Ensure initialized flag is set (CalculateOptimalPositionSize checks this)
     if(!m_initialized)
         m_initialized = true;
 
-    // Delegate to the existing calculation — produces IDENTICAL results
-    double lotSize = CalculateOptimalPositionSize(symbol, orderType, slDistancePips, confidence);
+    // Direct call — no shared state mutation (Blueprint Section 10.5)
+    double lotSize = CalculateOptimalPositionSizeCore(symbol, orderType, slDistancePips, riskPercent, confidence);
 
-    // Apply tier cap if a tier config is provided
-    if(tierConfig != NULL)
+    // Apply anti-Martingale momentum scaling (Blueprint Section 4.3)
+    if(m_perfAnalytics != NULL)
     {
-        double riskDenominator = GetRiskDenominator();
-        double tierMaxRisk = riskDenominator * (tierConfig.riskPerTradePct / 100.0);
-        double riskPerLot = CalculateRiskPerLot(symbol, slDistancePips);
-        if(riskPerLot > 0.0)
+        double momentumScale = m_perfAnalytics.CalculateMomentumScale();
+        if(momentumScale != 1.0 && momentumScale > 0.0)
         {
-            double tierMaxLot = tierMaxRisk / riskPerLot;
-            if(lotSize > tierMaxLot)
-            {
-                LogSizingDecision(symbol, tierMaxLot, StringFormat("Tier cap applied (%.1f%%)", tierConfig.riskPerTradePct));
-                lotSize = tierMaxLot;
-                lotSize = NormalizeVolume(symbol, lotSize);
-            }
+            lotSize *= momentumScale;
+            lotSize = NormalizeVolume(symbol, lotSize);
         }
     }
 
-    // Restore original risk percent — no persistent state mutation
-    m_params.riskPercent = savedRiskPercent;
+    return lotSize;
+}
+
+//+------------------------------------------------------------------+
+//| Stateless position size with tier cap (Blueprint Section 10.5)   |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateSizeWithTierCap(const string symbol,
+                                      const ENUM_ORDER_TYPE orderType,
+                                      const double slDistancePips,
+                                      const double riskPercent,
+                                      const double confidence,
+                                      double tierRiskPerTradePct)
+{
+    double lotSize = CalculateSize(symbol, orderType, slDistancePips, riskPercent, confidence);
+
+    // Apply tier cap
+    double riskDenominator = GetRiskDenominator();
+    double tierMaxRisk = riskDenominator * (tierRiskPerTradePct / 100.0);  // Blueprint 10.4: / 100.0 converts 0-100 scale to fraction
+    double riskPerLot = CalculateRiskPerLot(symbol, slDistancePips);
+    if(riskPerLot > 0.0)
+    {
+        double tierMaxLot = tierMaxRisk / riskPerLot;
+        if(lotSize > tierMaxLot)
+        {
+            LogSizingDecision(symbol, tierMaxLot, StringFormat("Tier cap applied (%.1f%%)", tierRiskPerTradePct));
+            lotSize = tierMaxLot;
+            lotSize = NormalizeVolume(symbol, lotSize);
+        }
+    }
 
     return lotSize;
 }
@@ -682,6 +732,58 @@ double CPositionSizer::CalculateBasePositionSize(const string symbolParam, const
 }
 
 //+------------------------------------------------------------------+
+//| Calculate base position size with explicit risk percent          |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateBasePositionSizeWithRisk(const string symbolParam, const double stopLossPips, const double riskPercent)
+{
+    double baseSize = 0.0;
+    switch(m_params.sizingMode)
+    {
+        case POSITION_SIZE_FIXED:
+            baseSize = m_params.fixedLotSize;
+            LogSizingDecision(symbolParam, baseSize, "Fixed lot size");
+            break;
+        case POSITION_SIZE_RISK_PERCENT:
+            baseSize = CalculateRiskBasedSize(symbolParam, stopLossPips, riskPercent);
+            LogSizingDecision(symbolParam, baseSize, "Risk percentage based");
+            break;
+        case POSITION_SIZE_VOLATILITY:
+            baseSize = CalculateRiskBasedSize(symbolParam, stopLossPips, riskPercent);
+            baseSize = CalculateVolatilityBasedSize(symbolParam, baseSize);
+            LogSizingDecision(symbolParam, baseSize, "Volatility adjusted");
+            break;
+        case POSITION_SIZE_CORRELATION:
+            baseSize = CalculateRiskBasedSize(symbolParam, stopLossPips, riskPercent);
+            baseSize = CalculateCorrelationAdjustedSize(symbolParam, baseSize);
+            LogSizingDecision(symbolParam, baseSize, "Correlation adjusted");
+            break;
+        case POSITION_SIZE_KELLY:
+        {
+            double kellyFraction = CalculateKellyFraction();
+            double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+            double riskAmount = equity * kellyFraction;
+            double riskPerLot = CalculateRiskPerLot(symbolParam, stopLossPips);
+            if(riskPerLot > 0.0)
+            {
+                baseSize = riskAmount / riskPerLot;
+                LogSizingDecision(symbolParam, baseSize, StringFormat("Kelly Criterion (fraction=%.4f)", kellyFraction));
+            }
+            else
+            {
+                baseSize = MIN_LOT_SIZE;
+                LogSizingDecision(symbolParam, baseSize, "Kelly Criterion fallback (invalid risk per lot)");
+            }
+            break;
+        }
+        default:
+            baseSize = MIN_LOT_SIZE;
+            LogSizingDecision(symbolParam, baseSize, "Default minimum size");
+            break;
+    }
+    return baseSize;
+}
+
+//+------------------------------------------------------------------+
 //| Calculate position size based on risk percentage               |
 //+------------------------------------------------------------------+
 double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
@@ -710,7 +812,7 @@ double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
     }
     
     // Calculate risk amount in account currency
-    double riskAmount = riskDenominator * (riskPercent / 100.0);
+    double riskAmount = riskDenominator * (riskPercent / 100.0);  // Blueprint 10.4: / 100.0 converts 0-100 scale to fraction
 
     double riskPerLot = CalculateRiskPerLot(symbolParam, stopLossPips);
     if(riskPerLot <= 0.0)
@@ -785,18 +887,58 @@ double CPositionSizer::ValidatePositionSize(const string symbolParam,
                                             const double proposedSize)
 {
     double validatedSize = proposedSize;
-    
-    // Normalize volume to symbol's step size FIRST
-    validatedSize = NormalizeVolume(symbolParam, validatedSize);
-    
-    // Check minimum size
-    double minSize = CalculateMinViableSize(symbolParam);
-    if(validatedSize < minSize)
+
+    // --- Min-lot round-up gate (before NormalizeVolume clamps silently) ---
+    // If the calculated lot is below the broker minimum, decide whether to
+    // round up (within risk budget) or skip the trade entirely.
+    double brokerMinLot = SymbolInfoDouble(symbolParam, SYMBOL_VOLUME_MIN);
+    if(brokerMinLot <= 0.0) brokerMinLot = MIN_LOT_SIZE;
+    double effectiveMinLot = MathMax(brokerMinLot, m_params.minLotSize);
+
+    if(validatedSize > 0.0 && validatedSize < effectiveMinLot)
     {
-        validatedSize = minSize;
-        LogSizingDecision(symbolParam, validatedSize, "Adjusted to minimum viable size");
+        if(m_allowMinLotRoundUp)
+        {
+            double riskRatio = effectiveMinLot / validatedSize;  // How many times bigger the risk would be
+            if(riskRatio <= m_minLotRiskMultiplier)
+            {
+                Print("[POSITION-SIZER] Lot below minimum: calculated=", DoubleToString(validatedSize, 3),
+                      " < min=", DoubleToString(effectiveMinLot, 3),
+                      ". Round-up allowed (risk ", DoubleToString(riskRatio, 2),
+                      "x <= cap ", DoubleToString(m_minLotRiskMultiplier, 2), "x)");
+                validatedSize = effectiveMinLot;
+                LogSizingDecision(symbolParam, validatedSize, "Rounded up to broker minimum (within risk cap)");
+            }
+            else
+            {
+                Print("[POSITION-SIZER] Lot below minimum: calculated=", DoubleToString(validatedSize, 3),
+                      " < min=", DoubleToString(effectiveMinLot, 3),
+                      ". Risk at min lot (", DoubleToString(riskRatio, 2),
+                      "x) exceeds ", DoubleToString(m_minLotRiskMultiplier, 2),
+                      "x cap. Trade skipped.");
+                return 0.0;
+            }
+        }
+        else
+        {
+            // Round-up disabled — skip trade with clear message
+            Print("[POSITION-SIZER] Lot below minimum: calculated=", DoubleToString(validatedSize, 3),
+                  " < min=", DoubleToString(effectiveMinLot, 3),
+                  ". Round-up disabled. Trade skipped.");
+            return 0.0;
+        }
     }
-    
+    else if(validatedSize <= 0.0)
+    {
+        // Zero or negative lot — always skip
+        Print("[POSITION-SIZER] Calculated lot is zero or negative: ", DoubleToString(validatedSize, 3),
+              ". Trade skipped.");
+        return 0.0;
+    }
+
+    // Normalize volume to symbol's step size
+    validatedSize = NormalizeVolume(symbolParam, validatedSize);
+
     // Check maximum size
     double maxSize = CalculateMaxSafeSize(symbolParam);
     if(validatedSize > maxSize)
@@ -804,34 +946,28 @@ double CPositionSizer::ValidatePositionSize(const string symbolParam,
         validatedSize = maxSize;
         LogSizingDecision(symbolParam, validatedSize, "Adjusted to maximum safe size");
     }
-    
+
     // Check parameter limits
     if(validatedSize > m_params.maxLotSize)
     {
         validatedSize = m_params.maxLotSize;
         LogSizingDecision(symbolParam, validatedSize, "Adjusted to parameter maximum");
     }
-    
-    if(validatedSize < m_params.minLotSize)
-    {
-        validatedSize = m_params.minLotSize;
-        LogSizingDecision(symbolParam, validatedSize, "Adjusted to parameter minimum");
-    }
-    
+
     // Check margin requirements
     double marginRequired = CalculateMarginRequirement(symbolParam, validatedSize);
     double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-    
+
     if(marginRequired > freeMargin * 0.80) // Use max 80% of free margin
     {
         double safeSize = (freeMargin * 0.80) / (marginRequired / validatedSize);
         validatedSize = MathMax(MIN_LOT_SIZE, safeSize);
         LogSizingDecision(symbolParam, validatedSize, "Adjusted for margin requirements");
     }
-    
+
     // Final normalization to ensure compliance
     validatedSize = NormalizeVolume(symbolParam, validatedSize);
-    
+
     return validatedSize;
 }
 
@@ -865,7 +1001,7 @@ void CPositionSizer::UpdateRiskMetrics(void)
     double riskDenominator = GetRiskDenominator();
     if(riskDenominator > 0.0)
     {
-        m_currentTotalRisk = (m_currentTotalRisk / riskDenominator) * 100.0;
+        m_currentTotalRisk = (m_currentTotalRisk / riskDenominator) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
     }
 }
 
@@ -1278,8 +1414,8 @@ double CPositionSizer::CalculateCompoundingMultiplier(void)
         return 1.0;
     }
     
-    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-    double equityRatio = currentEquity / MathMax(m_startingEquity, 0.01);
+    double sizerEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double equityRatio = sizerEquity / MathMax(m_startingEquity, 0.01);
     
     double multiplier;
     if(equityRatio > 1.0)
@@ -1299,7 +1435,7 @@ double CPositionSizer::CalculateCompoundingMultiplier(void)
     Print("[COMPOUNDING] EquityRatio=", DoubleToString(equityRatio, 4),
           " Multiplier=", DoubleToString(multiplier, 4),
           " StartingEquity=", DoubleToString(m_startingEquity, 2),
-          " CurrentEquity=", DoubleToString(currentEquity, 2));
+          " CurrentEquity=", DoubleToString(sizerEquity, 2));
     
     return multiplier;
 }
