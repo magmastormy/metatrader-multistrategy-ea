@@ -1,25 +1,25 @@
-# EA Performance Redesign: Research & Strategy Report
+# EA Performance Redesign: Research & Strategy Report v3
 
-**Date:** 2026-06-10
-**Scope:** Comprehensive research synthesis for transforming a slow, unprofitable multi-strategy EA into a high-performance trading system
-**Target Codebase:** `metatrader-multistrategy-ea` (MQL5, MT5)
+**Date:** 2026-06-10 (v3 — Fresh Deep Research)
+**Scope:** 2026 internet research synthesis mapped to the evolved `metatrader-multistrategy-ea` architecture
+**Target Codebase:** `metatrader-multistrategy-ea` (MQL5, MT5) — post-overhaul with Scalp pipeline, Risk Tiers, Correlation Engine, Orchestration layer, AI modules, ONNX integration
 
 ---
 
 ## Table of Contents
 
 1. [Executive Summary](#1-executive-summary)
-2. [Research Findings](#2-research-findings)
+2. [Findings from Research](#2-findings-from-research)
    - 2.1 [Faster Execution Techniques](#21-faster-execution-techniques)
    - 2.2 [Modern Money Management Frameworks](#22-modern-money-management-frameworks)
    - 2.3 [Advanced Risk Control Methods](#23-advanced-risk-control-methods)
    - 2.4 [Scalping Strategies — Fast & Profitable](#24-scalping-strategies--fast--profitable)
    - 2.5 [Algorithmic Improvements & Intelligent Trading Logic](#25-algorithmic-improvements--intelligent-trading-logic)
-3. [Identified Issues in the Current EA](#3-identified-issues-in-the-current-ea)
+3. [Identified Issues in Typical EAs](#3-identified-issues-in-typical-eas)
 4. [Proposed Solutions](#4-proposed-solutions)
 5. [Recommended Strategies](#5-recommended-strategies)
    - 5.1 [Conservative Approach (Safe Trading)](#51-conservative-approach-safe-trading)
-   - 5.2 [Aggressive Approach (Full-Margin Fast Scalping)](#52-aggressive-approach-full-margin-fast-scalping)
+   - 5.2 [Aggressive Approach (Full-Margin Fast Scalping)](#52-aggressive-approach-full-margin-fast-scaling)
 6. [Implementation Notes](#6-implementation-notes)
 7. [References](#7-references)
 
@@ -27,748 +27,995 @@
 
 ## 1. Executive Summary
 
-This report synthesizes extensive web research (2024-2026) on five critical dimensions of EA performance: execution speed, money management, risk control, scalping strategies, and algorithmic intelligence. The findings are mapped directly to the current `metatrader-multistrategy-ea` codebase, identifying specific architectural and parametric issues that cause slowness and unprofitability.
+This report synthesizes fresh June 2026 deep web research across five critical dimensions of EA performance, mapped to the **evolved** `metatrader-multistrategy-ea` codebase. The architecture has been significantly upgraded since the last report with new subsystems:
 
-**Key findings:**
+**Current architecture modules:**
+- `Core/Scalp/` — Dedicated scalping pipeline (`FastScalpEngine`, `ScalpSignalCache`, `ScalpMomentumStrategy`, `ScalpSpreadStrategy`, `ScalpVolatilityBreakout`)
+- `Core/Risk/RiskTierManager.mqh` — Four-tier risk system (Conservative/Moderate/Aggressive/FullMargin)
+- `Core/Risk/FullMarginMode.mqh` — Position stacking with session lockout safeguards
+- `Core/Risk/SafeModeConfig.mqh` — Kill zone filter, partial profit, stricter consensus
+- `Core/Risk/CorrelationEngine.mqh` — Centralized Pearson correlation with cached matrix
+- `Core/Risk/PositionSizerModifiers.mqh` — Pluggable ADX and ATR lot modifiers
+- `Core/Risk/RiskValidationGate.mqh` — Pre-trade risk validation
+- `Core/Risk/PortfolioRiskManager.mqh` — Portfolio-level risk management
+- `Core/Orchestration/` — `ExecutionOrchestrator` and `SignalEvaluationOrchestrator`
+- `Core/Pipeline/UnifiedSignalPipeline.mqh` — Unified signal processing
+- `Core/Cache/` — `ATRCache` and `ConsensusCache`
+- `Core/Engines/` — `RegimeEngine`, `VolatilityEngine`, `TrendEngine`, `StructureEngine`, `LiquidityEngine`, `AIEngine`
+- `Core/Strategy/` — `AIStrategyAdapter`, `EnsembleAIStrategyAdapter`, `OnnxAIStrategyAdapter`, `TransformerAIStrategyAdapter`
+- `Core/Processing/` — `TickSafetyMonitor`, `SyntheticSpikeMonitor`, `BarProcessor`, `SymbolScanScheduler`
+- `Core/Signals/` — `TieredSignalValidator`, `TimeframeConsistency`, `HedgingProtection`
+- `Core/Management/` — `PositionLifecycleManager`, `DiagnosticsManager`, `EnterpriseStrategyManager`
+- `Core/Monitoring/PerformanceAnalytics.mqh` — Performance tracking
+- `AIModules/` — `NeuralNetworkStrategy`, `OnnxBrain`, `TransformerBrain`, `EnsembleMetaLearner`, `UncertaintyQuantifier`
 
-- The EA's risk parameters (10% per trade, 30% daily, 50% portfolio) are **5-10x above professional standards**, guaranteeing catastrophic drawdowns.
-- Per-tick processing is excessively heavy: 6+ strategies, AI modules, Python bridge, consensus quorum, and validation gates all fire on every tick with `SignalScanOnNewBarOnly = false`.
-- No regime detection drives strategy selection — all strategies run blindly regardless of market state.
-- Position sizing lacks Kelly/fractional logic, ATR-normalization, or drawdown-based tapering.
-- The consensus architecture is over-engineered for the signal quality it processes.
+**Key 2026 research findings:**
 
-**Bottom line:** The EA is slow because it does too much per tick, and unprofitable because risk parameters are reckless and strategies aren't adapted to market conditions. The fix requires both architectural simplification and disciplined risk math.
+1. **OrderSendAsync + event-driven architecture is the professional standard** — MQL5's `OrderSendAsync()` executes in fractions of a millisecond, returning immediately while the trade server processes. Combined with `OnTradeTransaction()` event handling, this eliminates the single biggest latency bottleneck: blocking on `OrderSend()`. The EA's `ExecutionOrchestrator` should adopt this pattern.
+
+2. **Dynamic Adaptive Kelly Criterion is the 2026 state-of-the-art** — Bayesian-updated Kelly with fractional scaling (quarter Kelly = 25% of calculated optimal) achieves ~95% of growth with 12% max drawdown vs 62% at full Kelly. The `RiskTierManager` implements tiered risk but lacks Kelly-based dynamic sizing. A 2025 research paper from CARL AI Labs demonstrates that Bayesian Kelly with robust parameter estimation significantly outperforms static allocation.
+
+3. **Drawdown circuit breakers are now mandatory** — Professional systems implement multi-level circuit breakers: 10% DD → reduce 50%, 15% DD → reduce 75%, 20% DD → full stop. Equity curve trading (reduce size when equity drops below its moving average) can reduce max drawdown by 15-30% in backtesting. The EA has `RiskValidationGate` but lacks automated equity curve management.
+
+4. **Scalping profitability requires commission-aware validation** — At $7/round-trip commission with 5-pip targets, you need >58% win rate just to break even. The `FastScalpEngine` targets 60-90 pip SL/TP which is viable, but spread/ATR ratio filtering must be strict. 2026 best practice: TP must be ≥ 2× total cost (spread + commission).
+
+5. **Regime-adaptive hybrid AI systems dominate** — A January 2026 arXiv paper demonstrated 135.49% return over 24 months using EMA+MACD trend, RSI+BB mean-reversion, FinBERT sentiment, XGBoost signals, and regime filtering. The EA's `RegimeEngine` + `OnnxAIStrategyAdapter` pipeline can replicate this. ONNX Runtime with CUDA support is now native in MT5 (build 3580+), enabling GPU-accelerated inference directly inside the EA.
+
+6. **Three-regime HMM detection is the practical sweet spot** — A former Two Sigma developer's production system uses only 3 regimes (Momentum 38%, Mean Reversion 49%, Crisis 13%) with 47 features. The top 4 features (realized/implied vol ratio, cross-asset correlation eigenvalue, order flow persistence, intraday volatility clustering) account for 71% of classification accuracy. The EA's `RegimeEngine` should adopt this feature set.
 
 ---
 
-## 2. Research Findings
+## 2. Findings from Research
 
 ### 2.1 Faster Execution Techniques
 
-#### 2.1.1 The Single-Thread Constraint
+#### 2.1.1 The Six-Component Latency Chain
 
-MT5's "multi-threaded" marketing refers to **inter-EA parallelism** (each EA/indicator gets its own thread), NOT intra-EA parallelism. A single EA can only use one CPU core. Heavy computation inside one EA is a hard bottleneck regardless of VPS specs.
+Every trade in MT5 traverses this chain:
 
-**Source:** [ai-mql.com — MT5 Parallel Processing Trap](https://ai-mql.com/archives/277)
+```
+EA Computation → Terminal Processing → Network → Broker Bridge → LP Fill → Confirmation
+     1-5ms          1-3ms          1-50ms       1-10ms       1-5ms       1-5ms
+```
 
-#### 2.1.2 OnTick Optimization — The IsNewBar Gate
+**Critical insight from 2026 research:** Below 20ms total network latency, spread and commission become the dominant execution costs (10-100× larger than latency-based slippage). The biggest single win is moving from home internet (50-300ms) to a VPS in the broker's datacenter (1-10ms). Below that, diminishing returns are steep.
 
-The single most impactful optimization. OnTick fires on every price quote — potentially hundreds of times per second on liquid pairs. Without a new-bar gate, the EA recalculates everything on every tick even when the bar hasn't changed.
+#### 2.1.2 OrderSendAsync — Non-Blocking Trade Submission
+
+MQL5's `OrderSendAsync()` is the single most impactful execution optimization available:
 
 ```mql5
-bool IsNewBar() {
-   static datetime lastBarTime = 0;
-   datetime currentBarTime = iTime(_Symbol, _Period, 0);
-   if(currentBarTime != lastBarTime) {
-      lastBarTime = currentBarTime;
-      return true;
+// Non-blocking: returns immediately, server processes in background
+MqlTradeRequest request = {};
+MqlTradeResult  result  = {};
+// ... fill request ...
+OrderSendAsync(request);  // Returns in <1ms
+
+// Confirmation via event handler
+void OnTradeTransaction(const MqlTradeTransaction& trans,
+                        const MqlTradeRequest& request,
+                        const MqlTradeResult& result)
+{
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+   {
+      // Process fill confirmation asynchronously
    }
-   return false;
-}
-
-void OnTick() {
-   if(!IsNewBar()) return;  // Early exit — skip 90%+ of ticks
-   // ... heavy logic only on new bars
 }
 ```
 
-**Impact:** Reduces CPU load by 90%+ on high-tick instruments. Essential for strategies that don't need per-tick precision.
+**Per MQL5 official docs:** "The OrderSendAsync asynchronous function is executed in fractions of a millisecond, orders are processed on a trade server in no time, while price and Depth of Market updates are delivered to the terminal without delay."
 
-**Source:** [finance.trgy.co.jp — OnTick Optimization](https://finance.trgy.co.jp/en/mql5-en/reference-en/mql5-ontick-explained/)
+**Key advantage:** While `OrderSend()` blocks the entire EA thread (dropping incoming ticks), `OrderSendAsync()` allows the EA to continue processing the next tick immediately. For scalping systems processing multiple symbols, this is the difference between catching a move and missing it.
 
-#### 2.1.3 OnTimer vs OnTick Separation
+#### 2.1.3 Tick Processing Optimization — The Discard Problem
 
-| Handler | Best For | Frequency |
-|---------|----------|-----------|
-| `OnTick` | Signal detection, entry/exit logic | Every price change |
-| `OnTimer` | Risk monitoring, equity protection, housekeeping | Fixed interval (100ms-60s) |
-| `OnTradeTransaction` | Order confirmation, position tracking | On trade events |
+MT5 does **not** queue ticks. If `OnTick()` is still processing when a new tick arrives, the new tick is **dropped**. This means:
 
-**Best practice:** Use OnTick for signal detection only. Move risk management and position monitoring to OnTimer. Use OnTradeTransaction for order confirmation instead of polling OrderSelect() in OnTick. This eliminates race conditions and reduces CPU usage.
+- A 50ms `OnTick()` processing time at 100 ticks/second = ~5 ticks dropped per second
+- A 5ms `OnTick()` processing time = near-zero tick loss
 
-```mql5
-int OnInit() {
-   EventSetMillisecondTimer(100);  // 100ms risk checks
-   return INIT_SUCCEEDED;
-}
+**Solutions from 2026 research:**
+1. **Timer-decoupled architecture** — Move heavy computation (indicator recalculation, signal evaluation) to `OnTimer()` at 1-second intervals. Use `OnTick()` only for ultra-fast tasks: price cache update, spread check, pending order management.
+2. **Two-tier processing** — Fast path (tick-level): update cached prices, check spread filters, manage pending orders. Slow path (bar-level): recalculate indicators, evaluate signals, run consensus.
+3. **SymbolInfoTick() over CopyBuffer()** — For price data, `SymbolInfoTick()` is 10-100× faster than `CopyBuffer()` calls. The EA's `ScalpSignalCache` already implements this pattern correctly.
 
-void OnTimer() {
-   CheckDrawdownLimits();
-   CheckMarginLevel();
-   ManageTrailingStops();
-}
-```
+#### 2.1.4 VPS and Infrastructure Optimization
 
-**Source:** [eahub.cn — MT5 Programming Guide](https://www.eahub.cn/thread-155475-1-1.html)
+| Optimization | Impact | Difficulty |
+|---|---|---|
+| VPS in broker datacenter (Equinix NY4/LD4) | 50-300ms → 1-10ms latency | Easy |
+| Strip Market Watch to traded symbols only | Reduces tick processing overhead | Easy |
+| Disable unused chart objects/indicators | Frees CPU for EA computation | Easy |
+| CPU affinity (single-core lock for MT5) | Prevents context switching | Medium |
+| Disable Windows services on VPS | Frees 5-15% CPU | Medium |
+| Co-located server with broker | Sub-millisecond latency | Hard/Costly |
 
-#### 2.1.4 Async Order Submission
+**2026 benchmark:** QuantVPS reports sub-0.52ms latency to CME with AMD EPYC + DDR5 + NVMe configurations at $99-199/month.
 
-`OrderSendAsync()` sends the request and returns immediately without waiting for the server response. Critical for:
-- Batch position closing (close all positions simultaneously)
-- Multi-symbol strategies needing parallel order submission
-- High-frequency strategies where waiting for confirmation costs pips
+#### 2.1.5 CopyBuffer Pre-Warming
 
-**Implementation note:** Must handle results via `OnTradeTransaction()` callback. Track pending requests using a request ID map.
+The first call to `CopyBuffer()` for an indicator handle incurs ~100ms initialization overhead. Subsequent calls are near-instant. **Pre-warm all indicator handles in `OnInit()`** by making an initial `CopyBuffer()` call for each handle. The EA's `CIndicatorManager` singleton pattern supports this — ensure all handles are created and warmed during `OnInit()`.
 
-**Pros:** Eliminates blocking; enables parallel order submission.
-**Cons:** No immediate confirmation; must implement result tracking; error handling is more complex.
-
-#### 2.1.5 Indicator Handle Management
-
-The #1 performance killer in MQL5 EAs is creating indicator handles inside OnTick instead of OnInit:
-
-| Rule | Details |
-|------|---------|
-| Create in OnInit() | Never call `iMA()`, `iRSI()`, etc. inside OnTick() |
-| Store globally | Keep handles in global or class-member variables |
-| Validate immediately | Check for `INVALID_HANDLE` after creation |
-| Release in OnDeinit() | Always call `IndicatorRelease()` for every handle |
-| Copy minimum data | `CopyBuffer(handle, 0, 0, 3, buffer)` not 5000 |
-
-```mql5
-// OnInit: create once
-int ma_handle = iMA(_Symbol, _Period, 14, 0, MODE_EMA, PRICE_CLOSE);
-
-// OnTick: copy minimum
-double ma[3];
-CopyBuffer(ma_handle, 0, 0, 3, ma);  // Only what you need
-
-// OnDeinit: release always
-IndicatorRelease(ma_handle);
-```
-
-**Source:** [trading-strategies.academy — Indicator Handle](https://trading-strategies.academy/archives/14198)
-
-#### 2.1.6 VPS Proximity & Network Optimization
-
-- **Co-locate VPS** in the same datacenter as your broker's server (LD4 London, NY4 New York, TY3 Tokyo). Reduces round-trip latency from 50-200ms (home) to 1-3ms (VPS).
-- **MT5 vs MT4**: MT5's 64-bit multi-threaded architecture processes orders in parallel. MT5 reduces local execution latency from ~150-200ms to <10ms with a quality VPS.
-- **ECN/STP brokers** with raw spread accounts typically have faster execution.
-
-**Source:** [switchmarkets.com — Improve Trade Execution Speed](https://www.switchmarkets.com/learn/improve-trade-execution-speed)
-
-#### 2.1.7 Memory & Object Management
-
-- **Avoid object creation in hot paths**: Don't create/destroy CTrade, CPositionInfo objects inside OnTick. Initialize once in OnInit, reuse.
-- **Minimize string operations**: String concatenation and formatting are expensive. Avoid `StringFormat()`, `DoubleToString()` inside tick-critical code.
-- **Pre-allocated arrays**: Use fixed-size arrays with circular buffer patterns rather than dynamic arrays that resize.
-
-```mql5
-// BAD: frequent reallocations
-for(int i = 0; i < N; i++) {
-   ArrayResize(arr, i + 1);  // Reallocates every iteration
-   arr[i] = value;
-}
-
-// GOOD: pre-allocate with reserve
-ArrayResize(arr, N, 1000);  // Allocate N with 1000 reserve
-```
-
-**Source:** [trading-strategies.academy — Strategy Tester Optimization](https://trading-strategies.academy/archives/122)
-
-#### 2.1.8 Logging Discipline
-
-- **Disable verbose logging in production**: `Print()` statements create I/O bottlenecks. Use conditional compilation (`#ifdef DEBUG`) to strip logging from release builds.
-- **Log only state changes**: Don't log every tick; log only when positions open/close, signals fire, or errors occur.
-
-#### 2.1.9 Pre-Computed Signal Caches
-
-Instead of recalculating all indicators on every tick:
-1. Compute indicators once per new bar
-2. Store results in a signal cache structure
-3. OnTick only reads the cache and checks execution conditions
-4. This reduces per-tick computation from O(n) indicators to O(1) cache lookup
+**Mapping to current codebase:**
+- `ScalpSignalCache.mqh` already implements tick-level cached indicators with bar-time validation — this is the correct pattern
+- `ATRCache.mqh` caches ATR values per symbol+timeframe — good
+- `ConsensusCache.mqh` caches consensus results — good
+- **Gap:** The main consensus path (`SignalEvaluationOrchestrator` → `UnifiedSignalPipeline`) does not appear to use a fast-path cache. Every tick recalculates from scratch.
 
 ---
 
 ### 2.2 Modern Money Management Frameworks
 
-#### 2.2.1 Kelly Criterion
+#### 2.2.1 Dynamic Adaptive Kelly Criterion — 2026 State of the Art
 
-**Formula:** `f* = (bp - q) / b` where f* = fraction to risk, b = reward/risk ratio, p = win probability, q = 1-p.
+The 2025 CARL AI Labs research paper "Dynamic Adaptive Kelly Criterion: Bridging Theory and Practice for Modern Portfolio Optimization" establishes the current best practice:
 
-**Trading adaptation:** `Kelly % = W - [(1-W) / R]` where W = win rate, R = average win/average loss.
+**Core formula:**
+```
+f* = (p × b - q) / b
+```
+Where: f* = optimal fraction, p = win probability, b = payout ratio, q = 1 - p
 
-**Critical insight:** Full Kelly produces maximum geometric growth but also maximum drawdown (50-80%). Professional traders universally use **Fractional Kelly** (0.25-0.5x Kelly):
-- Quarter Kelly: ~75% of the growth rate with dramatically reduced drawdowns
-- Half Kelly: ~89% of the growth rate with significantly smoother equity curves
+**For continuous multi-asset portfolios:**
+```
+f* = (μ - r) / σ²
+```
+Where: μ = expected return, r = risk-free rate, σ² = variance
+
+**Key findings from the research:**
+
+| Strategy | Growth Capture | Max Drawdown | Recovery Time |
+|---|---|---|---|
+| Full Kelly (100%) | 100% | 40-70% | Months to years |
+| Half Kelly (50%) | 75% | 20-35% | Weeks to months |
+| Quarter Kelly (25%) | ~95% | 12-18% | Days to weeks |
+
+**The quarter-Kelly result is counterintuitive but mathematically proven:** Quarter Kelly captures 95% of the long-term growth rate while keeping drawdowns survivable. Full Kelly's theoretical growth advantage is destroyed by the variance drag of deep drawdowns.
+
+**Case study from SignalPilot education (2026):** Lisa Chang, options trader with 68% WR, 2.1:1 R:R. Full Kelly = 16.8% per trade. A 6-trade losing streak (0.1% probability) caused -62% drawdown in one week. Switched to 1/4 Kelly (4.2%): recovered $94K → $147K in 6 months, max DD -12%.
+
+**Bayesian updating for Kelly:** The CARL AI Labs paper demonstrates that combining Kelly with Bayesian parameter estimation (Beta priors updated with observed win/loss data) significantly outperforms static Kelly. The win probability p is not fixed — it's a distribution that narrows with more observations:
 
 ```mql5
-double CalculateKellyFraction(double winRate, double avgWin, double avgLoss) {
-   double R = avgWin / MathAbs(avgLoss);
-   double kelly = winRate - (1.0 - winRate) / R;
-   return kelly * 0.25; // Quarter Kelly — conservative
-}
+// Bayesian Kelly modifier — adapts win probability with evidence
+class CBayesianKellyModifier : public CPositionSizerModifier
+{
+private:
+   double m_alpha;  // Beta prior alpha (wins + 1)
+   double m_beta;   // Beta prior beta (losses + 1)
+   double m_kellyFraction; // Fraction of Kelly to use (0.25 = quarter)
+   
+public:
+   double CalculateKellyFraction()
+   {
+      double p = m_alpha / (m_alpha + m_beta);  // Posterior mean
+      double q = 1.0 - p;
+      double b = m_avgWin / m_avgLoss;  // Payout ratio
+      
+      double fullKelly = (p * b - q) / b;
+      if(fullKelly <= 0) return 0;  // No edge — no trade
+      
+      return MathMin(fullKelly * m_kellyFraction, m_maxRiskPct);
+   }
+   
+   void Update(bool won, double pnl)
+   {
+      if(won) { m_alpha += 1.0; m_avgWin = (m_avgWin * (m_alpha-1) + pnl) / m_alpha; }
+      else    { m_beta  += 1.0; m_avgLoss = (m_avgLoss * (m_beta-1) + MathAbs(pnl)) / m_beta; }
+   }
+};
 ```
 
-**Pros:** Mathematically optimal for long-term growth; adjusts size to edge.
-**Cons:** Extremely sensitive to parameter estimation errors; full Kelly is too aggressive for most traders.
+**Mapping to current codebase:**
+- `PositionSizerModifiers.mqh` has the abstract `CPositionSizerModifier` interface with `AdjustLotSize()` — perfect for plugging in a `CBayesianKellyModifier`
+- `CADXLotModifier` already exists as a modifier — Kelly would be another modifier in the chain
+- `RiskTierManager.mqh` defines risk per trade percentages (0.5% to 5%) but these are static — Kelly would make them dynamic based on observed edge
 
-**Source:** [traderspost.io — Position Sizing Algorithms](https://blog.traderspost.io/article/position-sizing-algorithms)
+#### 2.2.2 Volatility-Adjusted Position Sizing
 
-#### 2.2.2 Fixed Fractional
+The 2026 professional standard is ATR-normalized position sizing:
 
-Risk a fixed percentage of account equity per trade (typically 0.5-2%). Position size = (Account x Risk%) / (Entry - StopLoss).
+```
+Position Size = (Account × Risk%) / (ATR × ATR_Multiplier × Point_Value)
+```
 
-**Pros:** Simple; automatically scales with account; impossible to blow up with proper stops.
-**Cons:** Doesn't adapt to varying trade quality or market conditions; slow recovery from drawdowns.
+This ensures that a 1% risk on EUR/USD (ATR ~0.005) and a 1% risk on XAUUSD (ATR ~30) represent the same **dollar volatility** exposure.
 
-#### 2.2.3 Optimal-f (Ralph Vince)
+**FerroQuant's 2026 framework** extends this with per-market leverage limits and cross-market diversification enforcement:
+- Crypto futures: max 3 concurrent longs
+- Single asset class: max 20% of portfolio
+- Cross-market spread: crypto + forex + commodities reduces correlation
 
-Computes the ideal fraction based on the entire distribution of historical trade P&L, not just win rate and average ratios like Kelly.
+**Mapping to current codebase:**
+- `PositionSizer.mqh` already uses ATR-based sizing
+- `ATRCache.mqh` caches ATR values per symbol+timeframe
+- `PositionSizerModifiers.mqh` has `CADXLotModifier` for ADX-tiered multipliers
+- **Gap:** No volatility regime adjustment — when ATR exceeds 1.5× its average, position size should be reduced by 25-50% automatically
 
-**Calculation:** Find f that maximizes TWR (Terminal Wealth Relative) = Product of (1 + f x Trade_i / LargestLoss) across all trades.
+#### 2.2.3 Equity Curve Trading — The Meta-Strategy
 
-**Secure-f variant:** Finds the highest f that stays within your maximum acceptable drawdown. More practical than raw optimal-f.
+Equity curve trading (ECT) is a 2026 best practice where the system monitors its own performance and adjusts behavior:
 
-**Critical warning:** Full optimal-f often suggests 20-40% risk per trade, producing 50-80% drawdowns. Vince himself recommends using a fraction. Quarter optimal-f achieves ~75% of growth with much lower drawdowns.
+1. **Filter mode:** Only trade when equity > equity moving average (e.g., 20-day MA)
+2. **Throttle mode:** Scale lot size proportionally to equity vs. equity MA
+3. **Circuit breaker mode:** Stop trading when drawdown exceeds threshold
 
-**Source:** [protraderdashboard.com — Optimal-f Position Sizing](https://protraderdashboard.com/blog/optimal-f-position-sizing/)
+**Quantified impact from ClearEdge Trading (2026):** "Equity curve trading can reduce max drawdown by 15-30% in backtesting according to multiple quantitative studies."
 
-#### 2.2.4 Anti-Martingale (Drawdown-Based Tapering)
+**FibaIgo's 2026 recommendation:** "When your account drops below your 20-day moving average equity, reduce position size by 50%. This automatic circuit breaker prevents revenge trading and emotional decisions during drawdowns."
 
-Increase position size after wins, decrease after losses. This is the mathematically correct approach for positive-expectancy systems.
+**Implementation pattern for the EA:**
 
-**Graduated step-down for drawdowns:**
+```mql5
+class CEquityCurveManager
+{
+private:
+   double m_equityHistory[100];  // Rolling equity window
+   int    m_maPeriod;            // e.g., 20
+   double m_currentEquityMA;
+   
+public:
+   enum ECTAction { ECT_FULL_SIZE, ECT_HALF_SIZE, ECT_QUARTER_SIZE, ECT_STOP };
+   
+   ECTAction EvaluateAction()
+   {
+      double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      m_currentEquityMA = CalculateEquityMA();
+      
+      double ratio = currentEquity / m_currentEquityMA;
+      
+      if(ratio >= 1.0)  return ECT_FULL_SIZE;     // Equity above MA — full size
+      if(ratio >= 0.97) return ECT_HALF_SIZE;      // 3% below MA — reduce 50%
+      if(ratio >= 0.93) return ECT_QUARTER_SIZE;   // 7% below MA — reduce 75%
+      return ECT_STOP;                             // 7%+ below MA — stop trading
+   }
+};
+```
 
-| Drawdown Level | Position Size |
-|----------------|---------------|
-| 0-3% DD | 100% (full size) |
-| 3-5% DD | 75% |
-| 5-8% DD | 50% |
-| 8-10% DD | 25% |
-| >10% DD | Stop trading |
-
-**MQL5 adaptation:** Track peak equity and current drawdown; apply a multiplier to base position size.
-
-#### 2.2.5 ATR/Volatility-Based Position Sizing
-
-Position size = (Account x Risk%) / (ATR x ATR_Multiplier). This normalizes risk across instruments with different volatility levels.
-
-**Pros:** Adapts to market conditions automatically; wider stops in volatile markets, tighter in calm markets.
-**Cons:** Requires ATR calculation; may under-size during volatility spikes.
-
-#### 2.2.6 Equity Curve Trading
-
-The system monitors its own equity curve and adjusts behavior:
-- **Equity curve above its moving average**: Trade normally (system is performing well)
-- **Equity curve below its moving average**: Reduce size or stop trading (system is in a drawdown)
-
-**Research finding:** Equity curve trading can reduce max drawdown by 15-30% in backtesting, though it may slightly reduce total return.
-
-#### 2.2.7 Risk Parity
-
-Allocate capital so each strategy/instrument contributes equally to portfolio risk. Weight_i proportional to 1/sigma_i (inverse volatility weighting), with correlation adjustment.
-
-**Source:** [gov.capital — 7 Advanced Position Sizing Strategies](https://gov.capital/master-your-trades-7-advanced-position-sizing-strategies-that-outperform-kelly-martingale/)
+**Mapping to current codebase:**
+- `PerformanceAnalytics.mqh` tracks performance metrics
+- `RiskValidationGate.mqh` performs pre-trade validation
+- **Gap:** No equity curve trading logic exists. The `RiskValidationGate` should incorporate equity curve state.
 
 ---
 
 ### 2.3 Advanced Risk Control Methods
 
-#### 2.3.1 Multi-Layer Risk Framework
+#### 2.3.1 Multi-Level Drawdown Circuit Breakers
 
-Professional risk management operates in four layers:
+The 2026 professional standard implements drawdown limits at multiple levels with automated responses:
 
-| Layer | Control | Typical Threshold |
-|-------|---------|-------------------|
-| 1. Position Sizing | Risk per trade | 0.5-1% |
-| 2. Correlation Control | Max correlation between positions | < 0.7 |
-| 3. Portfolio Heat | Total exposure | 5-10% |
-| 4. VAR & Tail Risk | Stress testing | 95% VAR |
+| Drawdown Level | Action | Duration |
+|---|---|---|
+| 5% from peak | Reduce position size 25% | Until equity recovers |
+| 10% from peak | Reduce position size 50%, review strategy | Until equity recovers |
+| 15% from peak | Reduce position size 75%, pause new positions | Until equity recovers |
+| 20% from peak | Complete stop, comprehensive review | Minimum 1 day |
+| 30% from peak | Mandatory break | Minimum 1 month |
 
-**Source:** [signalpilot.io — Advanced Risk Management](https://education.signalpilot.io/curriculum/intermediate/46-advanced-risk-management.html)
+**Mathematical imperative from 2026 research:**
 
-#### 2.3.2 Tiered Drawdown Circuit Breakers
+| Drawdown | Recovery Gain Needed | Probability of Recovery |
+|---|---|---|
+| 10% | 11.1% | High |
+| 20% | 25.0% | Moderate |
+| 30% | 42.9% | Difficult |
+| 50% | 100.0% | Very Low |
+| 70% | 233.3% | Nearly Impossible |
 
-| Drawdown Level | Action |
-|----------------|--------|
-| < 5% | Normal trading |
-| 5-10% | Reduce position sizes by 50% |
-| 10-15% | Only allow closing existing positions, no new entries |
-| > 15% | Close all positions, stop all strategies |
+**The drawdown death spiral:** At 5% risk per trade, 10 consecutive losses = 40.1% drawdown, requiring 66.7% recovery. This is why the `FullMarginMode` config's 5% per trade + 25% daily risk is flagged as reckless.
 
-**Critical implementation details:**
-- Use **equity-based** drawdown (from peak equity), NOT balance-based — balance doesn't reflect floating losses
-- Initialize peak equity on EA start, not from account balance
-- Handle VPS restart: persist peak equity via `GlobalVariableSet()`
-- Protect against zero-division when calculating drawdown percentage
+**Mapping to current codebase:**
+- `RiskTierManager.mqh` defines `ddWarningPct` and `ddCriticalPct` per tier
+- `SafeModeConfig.mqh` has conservative drawdown controls
+- `FullMarginMode.mqh` has `ddWarningPct=5.0`, `ddCriticalPct=10.0`, `dailyLossLimitPct=25.0`
+- **Gap:** No automated position size reduction at intermediate drawdown levels. The system needs graduated circuit breakers, not just warning/critical binary states.
 
-**Source:** [finance.trgy.co.jp — Drawdown Control](https://finance.trgy.co.jp/mql5/reference/mql5-drawdown-control/)
+#### 2.3.2 Correlation-Aware Portfolio Risk
 
-#### 2.3.3 Correlation-Based Exposure Limits
+**The correlation trap:** Running 5 EAs on EUR-pairs is not diversification — it's one giant EUR bet. During market stress, correlations converge to 1.0, and diversification benefits collapse.
 
-**Key insight:** Position count is NOT diversification. 8 correlated USD pairs = 1 giant bet.
-
-**Effective position count formula:** N_effective = N / sqrt(average_correlation x N). With 0.85 correlation across 8 positions, effective N = 1.8, not 8.
-
-```mql5
-bool IsCorrelationLimitExceeded(string newSymbol, ENUM_ORDER_TYPE type, double threshold = 0.7) {
-   for(int i = 0; i < PositionsTotal(); i++) {
-      string currentSymbol = PositionGetSymbol(i);
-      if(currentSymbol != newSymbol) {
-         double correlation = CalculateCorrelation(currentSymbol, newSymbol, PERIOD_H1, 100);
-         if(MathAbs(correlation) > threshold) return true;
-      }
-   }
-   return false;
-}
+**Effective portfolio size formula:**
+```
+N_effective = N / √(avg_correlation × N)
 ```
 
-**Source:** [fxeaprime.com — Multi-Currency Hedging](https://www.fxeaprime.com/132921/)
+Example: 10 positions with average correlation 0.6 → N_effective = 10 / √(0.6 × 10) = 10 / 2.45 = 4.08 effective positions. You thought you had 10 independent bets; you actually have 4.
 
-#### 2.3.4 Trailing Stop Algorithms
+**2026 best practices from AlgoBulls:**
+- Rolling correlation coefficients (not static)
+- Principal component analysis for identifying relationship changes
+- Cluster analysis for grouping correlated positions
+- Regime detection algorithms that flag correlation breakdown
 
-**ATR-Based Trailing (Chandelier Exit):**
-Stop = Highest_High - k x ATR (k = 2-3 for swing, 1.5 for scalping). Adapts to volatility automatically.
+**FerroQuant's 2026 approach:**
+- Track open positions per market and per direction
+- Enforce configurable limits per correlated group
+- Intentionally spread across crypto futures, spot, forex, and commodities
+- Maximum 3 simultaneous long positions in any correlated group
 
-**Stepped Trailing:** Move stop in fixed increments (e.g., every 10 pips of profit, trail by 5 pips). Reduces whipsaw compared to continuous trailing.
+**Mapping to current codebase:**
+- `CorrelationEngine.mqh` implements Pearson correlation with cached matrix (20 symbols, 300s refresh)
+- `IsCorrelatedCluster()` and `CountCorrelatedPositions()` methods exist
+- **Gap:** `CorrelationEngine` is not wired into the `RiskValidationGate`. The risk gate should query `IsCorrelatedCluster()` before approving new positions and reduce position count/size when correlation exceeds thresholds.
 
-**Hybrid Partial Close + Trail:** Close 50% at 1R profit, move stop to breakeven, trail remaining 50% with ATR-based stop.
+#### 2.3.3 Conditional Value at Risk (CVaR) — Beyond VaR
 
-#### 2.3.5 Break-Even Logic
+**VaR's fatal flaw:** VaR tells you the threshold at which losses exceed X% with Y% confidence, but says nothing about the magnitude of losses beyond that threshold. You could lose $500K or $50M — VaR doesn't care.
 
-Move stop to entry (plus spread/commission) when price reaches a threshold (typically 1R or 0.5R). This eliminates risk on the trade while allowing unlimited upside.
+**CVaR (Expected Shortfall)** answers the critical question: "When things go wrong, how wrong do they go?"
 
-#### 2.3.6 Partial Close Strategies
+```
+CVaR_95 = E[Loss | Loss > VaR_95]
+```
 
-- **Scale-out at targets:** Close 1/3 at 1R, 1/3 at 2R, let 1/3 run with trailing stop
-- **Volatility-adjusted:** Close more aggressively in high-volatility regimes
-- **Time-based:** If position hasn't reached 0.5R within N bars, close 50%
+**2026 regulatory context:** Basel III now requires banks to use Expected Shortfall (CVaR) instead of VaR for market risk capital requirements.
 
-#### 2.3.7 Time-Based Exits
+**Practical implementation for the EA:**
 
-- **Session exits:** Close all positions before high-impact news or at session end
-- **Inactivity exit:** If position hasn't moved meaningfully in N bars, exit
-- **Weekend exit:** Close all before Friday close to avoid gap risk
+```mql5
+class CPortfolioCVaR
+{
+private:
+   double m_returns[252];  // Daily returns history
+   double m_confidence;    // e.g., 0.95
+   
+public:
+   double CalculateCVaR()
+   {
+      // Sort returns ascending
+      ArraySort(m_returns);
+      
+      int cutoffIdx = (int)(m_returns.Size() * (1.0 - m_confidence));
+      
+      // Average of worst (1-confidence)% returns
+      double sum = 0;
+      for(int i = 0; i <= cutoffIdx; i++)
+         sum += m_returns[i];
+      
+      return sum / (cutoffIdx + 1);  // Expected loss in tail
+   }
+};
+```
 
-#### 2.3.8 Multi-Strategy Risk Aggregation
+**Mapping to current codebase:**
+- `PortfolioRiskManager.mqh` exists but needs CVaR implementation
+- `PerformanceAnalytics.mqh` tracks returns — can feed into CVaR calculator
+- **Gap:** No CVaR or VaR calculation exists. The `PortfolioRiskManager` should compute CVaR and use it as a portfolio-level risk constraint.
 
-When running multiple strategies on one account:
-- **Aggregate portfolio heat**: Sum of all strategy risks should not exceed 5-10%
-- **Cross-strategy correlation**: Monitor if strategies are taking the same side simultaneously
-- **Strategy-level circuit breakers**: Each strategy should have its own DD limit independent of portfolio
-- **Magic number isolation**: Each strategy instance must use a unique magic number for per-strategy tracking
+#### 2.3.4 Pre-Trade Risk Control Framework
 
-**Source:** [steadyflowfx.com — EA Portfolio Guide](https://steadyflowfx.com/blog/how-to-build-ea-portfolio/)
+The 2026 professional standard from ForexDailyFeed defines a pre-trade risk control architecture:
+
+1. **Position size validation** — Every order checked against maximum exposure per asset, sector, portfolio
+2. **Instrument-level risk budget allocation** — Capital distributed by confidence level and risk profile
+3. **Real-time margin requirement calculation** — Verify sufficient margin before execution
+4. **Correlation check** — Reject trades that would create concentrated correlation exposure
+5. **Regime-aware gating** — Reduce or block new positions during crisis regimes
+
+**Mapping to current codebase:**
+- `RiskValidationGate.mqh` implements pre-trade validation
+- `UnifiedRiskManager.mqh` provides the unified risk contract
+- **Gap:** The validation gate should incorporate regime state from `RegimeEngine` and correlation state from `CorrelationEngine`.
 
 ---
 
 ### 2.4 Scalping Strategies — Fast & Profitable
 
-#### 2.4.1 Tick Scalping
+#### 2.4.1 Commission-Aware Scalping Validation
 
-Use tick charts (not time-based) to identify micro-momentum shifts. Tick charts build a new bar every N transactions, revealing order flow intensity.
+**The fundamental scalping equation:**
+```
+Breakeven Win Rate = Total Cost / (Total Cost + Target Profit)
+```
 
-| Strategy | Entry Signal | Exit | Tools |
-|----------|-------------|------|-------|
-| Level 2 Order Book + Tick | Bid/ask imbalance (stacked bids, iceberg orders) | 1-2 tick profit target | DOM, Time & Sales, 100-tick chart |
-| EMA Crossover + Tick | 9-EMA crosses 21-EMA | Opposite crossover or preset target | 9 & 21 EMAs, Volume, 100-tick |
-| Pivot Point + Volume Spike | Reversal at pivot + volume surge | Momentum fade or next pivot | Pivot Points, Volume, 50/100-tick |
-| Pure Price Action | Double tops, failed breakouts | Fading momentum | 70-tick chart, 20-EMA reference |
+Where Total Cost = Spread + Commission (both directions)
 
-**Optimal tick values:** 100-tick for liquid forex, 233-tick for futures, 70-tick for pure tape reading.
+**2026 real-world costs:**
 
-**Source:** [opofinance.com — Tick Chart Scalping Strategies](https://blog.opofinance.com/en/tick-chart-scalping-strategy/)
+| Broker | EUR/USD Spread | Commission/RT | Total Cost | 5-pip Target Breakeven WR |
+|---|---|---|---|---|
+| IC Markets Raw | 0.0-0.1 pips | $7/lot | ~0.8 pips | 14% |
+| Exness Zero | 0.0-0.1 pips | $3.50/lot | ~0.5 pips | 9% |
+| Typical Market Maker | 1.0-2.0 pips | $0 | 1.5 pips | 23% |
 
-#### 2.4.2 Momentum Scalping
+**Critical rule from 2026 research:** TP must be ≥ 2× total cost. If total cost is 0.8 pips, minimum TP should be 1.6 pips. For the EA's `FastScalpEngine` with 90-pip TP targets, this is easily satisfied — but the spread/ATR ratio filter (`maxSpreadATRRatio=0.30`) must be strictly enforced.
 
-Jump onto micro-trends on 1-5 minute charts using EMA pullbacks.
+**Commission erosion example:** At 10 trades/day × $7 commission (round trip) = $70/day just to break even. You need consistent edge above this threshold every single day.
 
-**Setup:** EMA 8 and 21 on 1-minute chart + MACD histogram.
-- **Entry:** Price pulls back to 8 EMA; MACD histogram confirms direction.
-- **Exit:** 5-8 pips target; 3-4 pip stop.
-- **R:R:** Typically 1:1.5 to 1:2.
+#### 2.4.2 Proven Scalping Setups from 2026 Research
 
-#### 2.4.3 Spread Scalping
+**Setup 1: EMA + RSI Scalper (5-Minute)**
 
-Exploit bid-ask spread variations, particularly around liquidity events. Buy at bid, sell at ask when spread narrows.
+| Parameter | Value |
+|---|---|
+| Timeframe | M5 entries, M15 trend filter |
+| Indicators | EMA 9/21, RSI 14 |
+| Entry (Buy) | 9 EMA crosses above 21 EMA, RSI crosses above 50, M15 trend bullish |
+| Entry (Sell) | 9 EMA crosses below 21 EMA, RSI crosses below 50, M15 trend bearish |
+| Stop Loss | 8-12 pips below entry (below recent M5 swing low) |
+| Take Profit | 10-15 pips (1:1 to 1:2 R:R) |
+| Risk per trade | 0.5-1% of account |
+| Best session | London/NY overlap (13:00-16:00 GMT) |
 
-**Requirements:** ECN account with raw spreads; sub-millisecond execution; high liquidity instruments (EURUSD, USDJPY).
+**Setup 2: Bollinger Band Squeeze Breakout (1-Minute)**
 
-**Pros:** Very high win rate when conditions align.
-**Cons:** Requires extremely low latency; broker-dependent; limited opportunity window.
+| Parameter | Value |
+|---|---|
+| Timeframe | M1 |
+| Indicators | BB(20,2), Stochastic(5,3,3) |
+| Entry | BB squeeze (bandwidth < 10-pip average) → price breaks band + Stochastic confirms |
+| Stop Loss | Opposite band + 2 pips |
+| Take Profit | 5-10 pips |
+| Risk per trade | ≤1% |
+| Filter | Only during high-liquidity sessions |
 
-#### 2.4.4 News Scalping
+**Setup 3: Momentum Scalper (The EA's Existing Architecture)**
 
-Trade the initial price whipsaw around high-impact releases (NFP, CPI, rate decisions).
+The EA's `ScalpMomentumStrategy.mqh` and `ScalpVolatilityBreakout.mqh` already implement momentum and volatility breakout strategies. The `ScalpSignalCache` provides tick-level cached indicators for zero-computation fast path evaluation.
 
-**Implementation:**
-1. Place pending buy/sell stops a few pips above/below pre-news range
-2. Use very small position size (0.25-0.5% risk)
-3. Close triggered order after 3-5 pips
-4. Time-based stop: close any open trade after 60 seconds
+**Key 2026 insight:** The most profitable scalping systems combine multiple micro-strategies and switch between them based on regime. The EA's `FastScalpEngine` with three sub-strategies (Momentum, Spread, VolatilityBreakout) is architecturally correct — the missing piece is regime-based strategy selection.
 
-**Pros:** Captures high-velocity moves; defined risk.
-**Cons:** Extreme slippage risk; requotes; spread widening; broker restrictions.
+#### 2.4.3 Spread Management and Execution Quality
 
-#### 2.4.5 Grid Scalping (Ranged Markets Only)
+**2026 best practices from Elirox and ForexSpeech:**
 
-Place buy/sell orders at fixed intervals around current price, capturing oscillations in ranging markets.
+1. **Effective spread monitoring** — Track quoted spread + commission converted to pips. Require it stays within predefined maximum during trading window.
+2. **Limit orders for entries** — Control entry price precisely; accept that fast moves may cause missed fills.
+3. **Session-aware trading** — Only scalp during London Open (8:00-10:00 GMT) and London/NY overlap (13:00-16:00 GMT). Avoid Asian session for EUR/USD (low volume, choppy) and Friday afternoon (thin liquidity).
+4. **News avoidance** — Spreads widen 3-10× during news releases. The EA's `SafeModeConfig` has `avoidNewsEvents=true` but this needs a real-time economic calendar feed.
 
-**Risk management (mandatory):** Hard stop below the grid; maximum number of levels; total exposure cap; time-restrict to stable sessions only.
-
-**Pros:** Profits in ranging markets; systematic.
-**Cons:** Catastrophic in trending markets; requires strict risk caps; margin-intensive.
-
-#### 2.4.6 Statistical Arbitrage
-
-Identify temporary price divergences between correlated instruments (e.g., EURUSD vs GBPUSD) and trade the convergence.
-
-**Implementation:** Calculate rolling z-score of the spread; enter when z-score exceeds +/-2; exit at mean reversion.
-
-**MQL5:** Requires multi-symbol data handling; `CopyClose()` for both instruments; rolling regression for hedge ratio.
-
-#### 2.4.7 Latency Arbitrage
-
-Exploit price-feed delays between a slow broker and a faster reference source (CME futures, LMAX, Integral OCX).
-
-**Reality in 2026:** Brokers actively detect and block this. Contractually prohibited by most prop firms and brokers. **Not recommended for retail traders.**
-
-**Source:** [traderspost.io — Scalping Strategies Guide](https://blog.traderspost.io/article/scalping-strategies-guide)
+**Mapping to current codebase:**
+- `ScalpSignalCache.mqh` caches bid/ask/spread at tick level — correct
+- `FastScalpEngine.mqh` has `maxSpreadATRRatio=0.30` — good
+- `SafeModeConfig.mqh` has `tradeOnlyKillZones=true` — good
+- `SessionManager.mqh` exists for session management
+- **Gap:** No real-time economic calendar integration. The `avoidNewsEvents` flag exists but has no data source.
 
 ---
 
 ### 2.5 Algorithmic Improvements & Intelligent Trading Logic
 
-#### 2.5.1 Machine Learning for Signal Generation (ONNX)
+#### 2.5.1 Regime Detection — The Three-State Model
 
-MT5 natively supports ONNX Runtime with CUDA acceleration (Build 3500+). Workflow:
-1. Train model in Python (TensorFlow, PyTorch, scikit-learn)
-2. Export to ONNX format
-3. Load in MQL5 via `OnnxCreate()` and `OnnxRun()`
+**The most impactful 2026 finding for this EA:** A former Two Sigma developer's production system uses only 3 regimes, and this simplicity is a feature, not a limitation:
 
-**Realistic ML impact:** Well-engineered ML EAs add 10-30% net profit factor improvement over rules-based strategies. Not transformative, but meaningful.
+| Regime | Market Time | Characteristics | Strategy |
+|---|---|---|---|
+| **Momentum** | 38% | Persistent directional moves, pullbacks < 38.2% Fib, correlations positive, vol expands gradually | Full trend-following size |
+| **Mean Reversion** | 49% | Vol contracts, ranges hold, correlations mean-revert | Range-trading, smaller size |
+| **Crisis** | 13% | All correlations → 1 or -1, vol explodes, liquidity vanishes | Cut size 75%, vol arbitrage only |
 
-**Model types for retail EAs:**
-- **Tree ensembles (XGBoost, LightGBM):** Most common; interpretable; robust to noise; fast training
-- **Shallow neural networks (2-4 hidden layers):** More flexible but less interpretable
-- **LSTM/Transformers:** Rare in retail; compute requirements exceed VPS capacity
+**Key insight:** Regimes cluster. Crisis follows compression 73% of the time. Momentum follows crisis 67% of the time. This sequencing gives you an edge.
 
-**Critical: Walk-forward validation** — Train on rolling windows. Single-pass training produces backtests that look great but fail live.
+**The 4 features that matter most (71% of classification accuracy):**
 
-**Feature engineering (60-80% of effort):**
-- Price-based: returns, log-returns, ATR, candlestick patterns (numerical)
-- Indicator-based: RSI, MACD, Bollinger width, MA slopes
-- Microstructure: bid-ask spread, tick volume, time-of-last-tick
-- Temporal: time-of-day (sin/cos encoded), day-of-week, session flag
-- Regime: ADX trend strength, volatility regime, recent correlation
+1. **Realized/Implied volatility ratio** across multiple timeframes
+2. **Cross-asset correlation eigenvalue** (largest eigenvalue of rolling correlation matrix)
+3. **Order flow imbalance persistence** (how long directional pressure lasts)
+4. **Intraday volatility clustering** (fear shows up in 15-minute bars before daily)
 
-**Optimal feature count:** 30-80 carefully engineered features. Above 100, models memorize noise.
+**2026 ensemble-HMM voting frameworks** (from PickMyTrade research): Combine XGBoost/Bagging with HMM via hybrid voting. On Russell 3000 and S&P 500 ETFs, these deliver Sharpe ratios up to 1.68, lower drawdowns, and fewer false signals than standalone models.
 
-**Source:** [trading-strategies.academy — MQL5 + Neural Networks](https://trading-strategies.academy/archives/3976)
-
-#### 2.5.2 Adaptive Indicators
-
-**Kaufman Adaptive Moving Average (KAMA):** Adjusts smoothing based on market efficiency ratio. Fast in trending markets, slow in choppy markets.
-
-**SuperTrend ML Adaptive:** Native MQL5 indicator that scores each candle in real-time using body size, wick ratio, volatility (ATR), and CCI strength. No external models or training required.
-
-**Adaptive MACD:** Adjusts fast/slow EMA periods based on real-time volatility. Reacts faster during strong moves; reduces noise during slow markets.
-
-**Source:** [forex-station.com — SuperTrend ML Adaptive](https://forex-station.com/native-ml-machine-learning-indicator-s-t8476120.html)
-
-#### 2.5.3 Regime Detection
-
-**Hidden Markov Models (HMM):** The most effective approach per former Two Sigma developers. Three regimes that actually matter:
-
-| Regime | Frequency | Best Strategy |
-|--------|-----------|---------------|
-| Momentum | 38% of time | Trend following |
-| Mean Reversion | 49% of time | Oscillators, range trading |
-| Crisis | 13% of time | Cut size by 75%; volatility arbitrage only |
-
-**Key features for regime detection (71% classification accuracy):**
-1. Realized/Implied volatility ratios across multiple timeframes
-2. Cross-asset correlation matrices (bonds + stocks moving together = regime shift)
-3. Order flow imbalance persistence
-4. Intraday volatility clustering (fear shows in 15-min bars before daily)
-
-**Regime sequencing insight:** Crisis follows compression 73% of the time. Momentum follows crisis 67% of the time. This sequencing provides a predictive edge.
-
-**Lightweight MQL5 implementation:**
+**Lightweight alternative for MQL5:** ADX + ATR regime detection:
 
 ```mql5
-enum MARKET_REGIME { REGIME_TRENDING, REGIME_RANGING, REGIME_VOLATILE };
+enum REGIME_STATE { REGIME_MOMENTUM, REGIME_MEAN_REVERSION, REGIME_CRISIS };
 
-MARKET_REGIME ClassifyMarketState() {
-   double adx = iADX(_Symbol, _Period, 14, PRICE_CLOSE, 0);
-   double atr = iATR(_Symbol, _Period, 14, 0);
-   double atrPercentile = GetATRPercentile(atr, 100);
-
-   if(adx > 25 && atrPercentile < 70) return REGIME_TRENDING;
-   if(adx < 20 && atrPercentile < 50) return REGIME_RANGING;
-   return REGIME_VOLATILE;
+REGIME_STATE DetectRegime(double adx, double atr, double atrAvg, double corrEigenvalue)
+{
+   // Crisis: high vol + high correlation
+   if(atr > atrAvg * 2.0 && corrEigenvalue > 0.8)
+      return REGIME_CRISIS;
+   
+   // Momentum: strong trend + expanding vol
+   if(adx > 30.0 && atr > atrAvg * 1.2)
+      return REGIME_MOMENTUM;
+   
+   // Mean reversion: weak trend + contracting vol
+   return REGIME_MEAN_REVERSION;
 }
 ```
 
-**Source:** [fibalgo.com — Market Regime Detection](https://fibalgo.com/education/market-regime-detection-trading-machine-learning)
+**Mapping to current codebase:**
+- `RegimeEngine.mqh` exists — should implement the three-state model
+- `VolatilityEngine.mqh` provides ATR/volatility data
+- `CorrelationEngine.mqh` can provide correlation eigenvalue
+- `TrendEngine.mqh` provides ADX data
+- **Gap:** The `RegimeEngine` needs to be wired into the `SignalEvaluationOrchestrator` to filter/adjust strategy selection based on regime state.
 
-#### 2.5.4 Dynamic Parameter Adjustment
+#### 2.5.2 ONNX Runtime Integration — Native ML in MT5
 
-Adjust strategy parameters based on detected regime:
+**2026 breakthrough:** MT5 build 3580+ natively supports ONNX Runtime with CUDA GPU acceleration. This means:
 
-| Regime | Stop Width | Position Size | Strategy Focus | Trade Frequency |
-|--------|-----------|---------------|----------------|-----------------|
-| Trending | Wider (2.5x ATR) | Normal (1%) | Trend-following | Normal |
-| Ranging | Tighter (1.5x ATR) | Reduced (0.75%) | Mean reversion | Higher |
-| Volatile | Widest (3x ATR) | Halved (0.5%) | Breakout only | Reduced |
+- Train models in Python (TensorFlow, PyTorch, scikit-learn, XGBoost)
+- Export to `.onnx` format
+- Load directly in MQL5 using `OnnxCreate()` / `OnnxCreateFromBuffer()`
+- Run inference with `OnnxRun()` — no Python runtime needed in production
+- GPU acceleration available via CUDA for complex models
 
-#### 2.5.5 Ensemble Methods
+**Integration workflow (from Barmenteros and Traidies 2026):**
 
-**Multi-model approach:** Run multiple strategy models simultaneously:
-- Turtle (trend) + Scalper (mean reversion) running in parallel
-- When one is in drawdown, the other may profit -> smoother equity curve
-- Weight models by recent performance (Sharpe ratio or win rate over last N trades)
+```mql5
+// In OnInit():
+long onnxHandle = OnnxCreate("::Models\\strategy_model.onnx", ONNX_DEFAULT);
+OnnxSetInputShape(onnxHandle, 0, {1, 10});  // Batch=1, Features=10
 
-**Signal confirmation filters:**
-- Require 2+ independent signals to agree before entry
-- Use higher timeframe trend as filter for lower timeframe entries
-- Volume confirmation for breakout signals
+// In OnTick() / OnBar():
+matrixf inputs(1, 10);
+// ... fill feature vector ...
+vectorf prediction;
+OnnxRun(onnxHandle, ONNX_DEFAULT, inputs, prediction);
 
-#### 2.5.6 Multi-Timeframe Analysis (Triple Screen)
+// prediction[0] = signal confidence (0-1)
+```
 
-**Alexander Elder's Triple Screen:**
-1. **Screen 1 (Highest TF):** Identify trend direction (MACD histogram, MA)
-2. **Screen 2 (Intermediate TF):** Identify setup (RSI oversold in uptrend)
-3. **Screen 3 (Lowest TF):** Precise entry trigger (candle pattern, MA cross)
+**Critical pitfall — normalization contamination:** The #1 failure mode in Python-to-MT5 integration is normalization mismatch. The model was trained with `StandardScaler.fit_transform()` on historical data, but MQL5 normalizes using live data. The fix: extract training-fold mean/std for each feature and embed them as constants in MQL5.
 
-**Timeframe combinations:**
-- Scalping: M15 (trend) -> M5 (signal) -> M1 (entry)
-- Day trading: H4 (trend) -> M30 (signal) -> M5 (entry)
+**Mapping to current codebase:**
+- `OnnxAIStrategyAdapter.mqh` exists — should use `OnnxCreateFromBuffer()` to embed model in EA binary
+- `AIFeatureVectorBuilder.mqh` builds feature vectors — must match Python training pipeline exactly
+- `PipelineScaler.mqh` exists — must embed training statistics as constants
+- `NNModelStorage.mqh` manages model storage
+- `Resources/scaler.bin` — scaler parameters file exists
+- **Gap:** Need to verify that `PipelineScaler` uses training-fold statistics (not live statistics) for normalization.
 
-**Source:** [korafx.com — Multi-Timeframe Analysis](https://korafx.com/blog/multi-timeframe-analysis-trading)
+#### 2.5.3 Hybrid AI Trading Architecture
 
-#### 2.5.7 Order Book Analysis (Depth of Market)
+The January 2026 arXiv paper "Generating Alpha: A Hybrid AI-Driven Trading System" (Pillai et al., Amrita University) demonstrated 135.49% return over 24 months using a five-component hybrid:
 
-Available in MQL5 via `MarketBookGet()`. Use for:
-- Detecting iceberg orders (large hidden liquidity)
-- Identifying support/resistance from order clusters
-- Confirming breakout validity via order book imbalance
+1. **Trend-following** — EMA + MACD for directional momentum capture
+2. **Mean-reversion** — RSI + Bollinger Bands for price normalization detection
+3. **Sentiment analysis** — FinBERT for market psychological interpretation
+4. **Machine learning** — XGBoost for signal generation
+5. **Regime filtering** — Volatility + return environment classification
 
-**OnBookEvent:** Subscribe to DOM updates for real-time order flow analysis.
+**Key results:**
+- Final portfolio: $235,492.83 from $100,000 initial (135.49% return)
+- Outperformed S&P 500 and NASDAQ-100 over the same period
+- Lower downside risk with superior profits
+- Regime filter was critical — trades only allowed during bullish regimes
+
+**Architecture for the EA:**
+
+```
+RegimeEngine → [MOMENTUM | MEAN_REVERSION | CRISIS]
+     ↓
+SignalEvaluationOrchestrator
+     ├── TrendEngine (EMA, MACD) ────────→ Momentum signals
+     ├── VolatilityEngine (BB, ATR) ─────→ Mean-reversion signals  
+     ├── AIEngine (ONNX models) ─────────→ ML signals
+     ├── StructureEngine (SMC, OB) ──────→ Structure signals
+     └── Consensus voting ──────────────→ Final signal
+     ↓
+RiskValidationGate (regime-aware)
+     ├── CorrelationEngine check
+     ├── Equity curve check
+     ├── Drawdown circuit breaker check
+     └── CVaR portfolio risk check
+     ↓
+ExecutionOrchestrator (OrderSendAsync)
+```
+
+**Mapping to current codebase:**
+- All engine components exist (`TrendEngine`, `VolatilityEngine`, `AIEngine`, `StructureEngine`, `RegimeEngine`)
+- `SignalEvaluationOrchestrator` and `ExecutionOrchestrator` exist
+- `EnsembleAIStrategyAdapter.mqh` and `TransformerAIStrategyAdapter.mqh` exist
+- **Gap:** The regime filter is not wired into the signal evaluation pipeline. The orchestrator should weight strategies differently based on regime state.
+
+#### 2.5.4 Reinforcement Learning for Strategy Adaptation
+
+**2026 research from CSDN (AI Quant Revolution 2.0):**
+
+- **State space:** 200+ dimensions (price, volume, order book depth, funding rates)
+- **Action space:** 12 trading behaviors (open/close/add/reduce/hedge)
+- **Reward function:** Sharpe ratio + max drawdown composite — avoids overfitting
+- **Result:** RL model after 10 billion trade iterations generated an "anti-fragile" strategy: trend-following in calm markets, statistical arbitrage in volatile markets. Annual return 42%, max drawdown 8%.
+
+**Practical MQL5 approach:** The EA doesn't need full RL. A simpler approach is **adaptive weight adjustment** — the `DynamicThresholdManager.mqh` and `AIPerformanceFeedback.mqh` already provide the infrastructure for adjusting strategy weights based on performance feedback.
+
+#### 2.5.5 Order Flow and Microstructure Analysis
+
+**2026 insight from fibalgo.com:** The top features for regime detection are microstructure-based, not indicator-based:
+
+1. **Order flow imbalance persistence** — How long directional pressure lasts (measurable via tick volume and price change correlation)
+2. **Intraday volatility clustering** — Fear shows up in 15-minute bars before it appears on daily charts
+3. **Cross-asset correlation eigenvalue** — When the largest eigenvalue of the correlation matrix spikes, regime shift is imminent
+
+**Mapping to current codebase:**
+- `SyntheticSpikeMonitor.mqh` monitors for synthetic price spikes
+- `TickSafetyMonitor.mqh` provides tick-level safety checks
+- `LiquidityEngine.mqh` analyzes liquidity conditions
+- **Gap:** No order flow imbalance persistence calculation. The `LiquidityEngine` should track directional tick volume persistence as a regime indicator.
 
 ---
 
-## 3. Identified Issues in the Current EA
+## 3. Identified Issues in Typical EAs
 
-Based on codebase analysis of `metatrader-multistrategy-ea`, the following specific issues were identified:
+Based on the 2026 research and analysis of the current codebase:
 
-### 3.1 Reckless Risk Parameters
+### 3.1 Execution Issues
 
-| Parameter | Current Value | Professional Standard | Risk |
-|-----------|--------------|----------------------|------|
-| `InpMaxRiskPerTrade` | 10.0% | 0.5-2.0% | 5-20x over safe limit |
-| `InpMaxDailyRisk` | 30.0% | 2-3% | 10-15x over safe limit |
-| `InpMaxPortfolioRisk` | 50.0% | 5-10% | 5-10x over safe limit |
-| `InpMaxDrawdown` | 10.0% | 15-20% (but with proper per-trade limits) | Contradicts per-trade risk |
+| # | Issue | Impact | Evidence |
+|---|---|---|---|
+| E1 | `OrderSend()` blocks EA thread, dropping ticks | Missed scalping opportunities | MQL5 docs: "OrderSendAsync is executed in fractions of a millisecond"; CSDN: "synchronous blocking causes thread suspension" |
+| E2 | No two-tier processing (fast/slow path) | Heavy computation blocks tick processing | Research: "Move heavy computation to OnTimer(), use OnTick() only for ultra-fast tasks" |
+| E3 | Indicator handles not pre-warmed | 100ms first-call overhead per handle | Research: "First CopyBuffer() call incurs initialization overhead" |
+| E4 | No `OnTradeTransaction()` event handling | Missed fill confirmations with async orders | MQL5 docs: "Use OnTradeTransaction for asynchronous order tracking" |
 
-**Impact:** At 10% risk per trade, 3 consecutive losses = 27% drawdown. At 30% daily risk, a single bad day can wipe out a month of gains. These parameters guarantee catastrophic drawdowns.
+### 3.2 Money Management Issues
 
-### 3.2 Excessive Per-Tick Processing
+| # | Issue | Impact | Evidence |
+|---|---|---|---|
+| M1 | Static risk percentages (no Kelly sizing) | Over/under-betting relative to edge | CARL AI Labs: "Dynamic Adaptive Kelly significantly outperforms static allocation" |
+| M2 | No equity curve trading | No self-awareness of performance degradation | ClearEdge: "ECT reduces max drawdown by 15-30%" |
+| M3 | No volatility regime adjustment to position size | Same size in low-vol and high-vol environments | FibaIgo: "When ATR exceeds 1.5× average, reduce size by 25-50%" |
+| M4 | FullMargin tier parameters are reckless | 5% per trade + 25% daily = account destruction | SignalPilot: "5% risk × 10 losses = 40.1% DD, needing 66.7% recovery" |
 
-- `InpSignalScanOnNewBarOnly = false` — all strategies, AI modules, consensus quorum, and validation gates fire on **every tick**
-- 6+ strategies (Momentum, Trend, S/R, Candlestick, MeanReversion, VolatilityBreakout) each with their own indicator calculations
-- AI modules (Neural Network, ONNX, Python bridge) add network I/O and model inference on every tick
-- Consensus quorum with weighted voting, conflict deadband, and support floor calculations on every tick
-- Validation gate with confluence, quality, and confidence scoring on every tick
+### 3.3 Risk Control Issues
 
-**Impact:** On a liquid pair with 100+ ticks per minute, this creates massive CPU load and delayed execution.
+| # | Issue | Impact | Evidence |
+|---|---|---|---|
+| R1 | `CorrelationEngine` not wired into risk gate | Concentrated correlation exposure | FerroQuant: "Track positions per correlated group, enforce limits" |
+| R2 | Binary drawdown control (warning/critical only) | No graduated response | Sentinel: "10% DD → reduce 50%, 15% → reduce 75%, 20% → stop" |
+| R3 | No CVaR calculation | Portfolio risk underestimated | Basel III: "Requires Expected Shortfall (CVaR) instead of VaR" |
+| R4 | No regime-aware risk gating | Same risk parameters in all market states | fibalgo: "Cut position sizes by 75% during crisis regimes" |
 
-### 3.3 No Regime-Driven Strategy Selection
+### 3.4 Scalping Issues
 
-All strategies run regardless of market state. MeanReversion runs during strong trends (guaranteed losses). TrendFollowing runs during ranges (whipsawed). No mechanism to detect which regime is active and which strategies should be prioritized.
+| # | Issue | Impact | Evidence |
+|---|---|---|---|
+| S1 | No commission-aware scalp validation | Unprofitable trades due to cost erosion | ForexSpeech: "At $7/RT, need >58% WR with 5-pip targets just to break even" |
+| S2 | No real-time economic calendar | Spreads widen 3-10× during news | Elirox: "Spreads widen during news releases; avoid news events" |
+| S3 | No regime-based strategy selection | Wrong strategy for current market state | fibalgo: "3 regimes actually impact P&L; strategy must adapt" |
 
-### 3.4 No Drawdown-Based Position Tapering
+### 3.5 Algorithmic Issues
 
-The EA has a single `InpMaxDrawdown = 10%` hard stop but no graduated tapering. Position size stays at maximum until the hard stop triggers, then everything shuts down. There's no gradual reduction as drawdown increases.
-
-### 3.5 No Kelly/Fractional Position Sizing
-
-Position sizing uses fixed percentage risk (`InpMaxRiskPerTrade`) without:
-- Kelly criterion adjustment based on win rate and reward/risk ratio
-- ATR-normalization across instruments with different volatility
-- Equity curve trading (reducing size when equity curve drops below its moving average)
-
-### 3.6 Over-Engineered Consensus Architecture
-
-The consensus system has 15+ input parameters controlling quorum thresholds, conflict deadbands, support floors, sparse intrabar admission, and authority gates. This complexity:
-- Makes it nearly impossible to tune correctly
-- Creates many failure modes where good signals are rejected
-- Adds latency to every signal evaluation
-- Is difficult to debug when trades aren't being taken
-
-### 3.7 High Slippage Tolerance
-
-`InpTradeSlippagePoints = 50` and `InpMaxEntrySpreadPoints = 120` are extremely high for scalping. At 50 points slippage, a 5-pip scalping target can be entirely consumed by execution costs.
-
-### 3.8 No Spread Filter for Scalping
-
-No mechanism to skip entries when spread exceeds a percentage of ATR. The `InpPipelineMaxSpreadToAtrRatio = 0.50` exists but 50% of ATR is still very high for scalping (professional scalpers use 10-25%).
-
-### 3.9 Python Bridge Overhead
-
-The Python bridge (`InpPythonBridgeMode`, HTTP endpoint, 5-second timeout) adds network latency on every signal evaluation. Even in OBSERVE mode, the heartbeat and telemetry add overhead.
-
-### 3.10 No Session-Aware Trading
-
-No mechanism to restrict trading to high-liquidity sessions (London/NY overlap). Trading during Asian session on synthetic indices or low-liquidity periods increases slippage and false signals.
+| # | Issue | Impact | Evidence |
+|---|---|---|---|
+| A1 | `RegimeEngine` not wired into signal pipeline | Strategies don't adapt to regime | arXiv 2601.19504: "Regime filter critical — trades only during bullish regimes" |
+| A2 | No normalization contamination guard in ONNX pipeline | Live predictions diverge from training | Barmenteros: "Normalization contamination is the #1 failure mode" |
+| A3 | No order flow persistence tracking | Missing key regime indicator | fibalgo: "Order flow persistence = 71% of regime classification accuracy" |
+| A4 | No adaptive weight adjustment based on performance | Static strategy weights regardless of performance | CSDN: "RL models adapt strategy weights based on market state" |
 
 ---
 
 ## 4. Proposed Solutions
 
-### 4.1 Fix Risk Parameters (Immediate, No Code Changes)
+### 4.1 Execution Solutions
 
-| Parameter | Current | Proposed (Conservative) | Proposed (Aggressive) |
-|-----------|---------|------------------------|----------------------|
-| `InpMaxRiskPerTrade` | 10.0% | 1.0% | 2.0% |
-| `InpMaxDailyRisk` | 30.0% | 3.0% | 6.0% |
-| `InpMaxPortfolioRisk` | 50.0% | 6.0% | 12.0% |
-| `InpMaxDrawdown` | 10.0% | 15.0% | 20.0% |
-| `InpTradeSlippagePoints` | 50 | 10 | 20 |
-| `InpMaxEntrySpreadPoints` | 120 | 30 | 50 |
-
-### 4.2 Enable New-Bar-Only Scanning (Immediate)
-
-Set `InpSignalScanOnNewBarOnly = true`. This single change eliminates 90%+ of per-tick processing. For scalping, use the intrabar scan timer (`InpIntrabarScanSeconds = 5`) for periodic re-evaluation instead of per-tick.
-
-### 4.3 Implement Regime Detection (Code Change)
-
-Add a lightweight regime classifier using ADX + ATR percentile:
+**S-E1: Implement OrderSendAsync with OnTradeTransaction**
 
 ```mql5
-enum MARKET_REGIME { REGIME_TRENDING, REGIME_RANGING, REGIME_VOLATILE };
-
-class CRegimeDetector {
+// In ExecutionOrchestrator.mqh
+class CAsyncTradeExecutor
+{
 private:
-   int m_adxHandle;
-   int m_atrHandle;
-   double m_atrHistory[100];
-   int m_atrHistoryCount;
-
+   struct SPendingOrder
+   {
+      ulong    m_ticket;
+      string   m_symbol;
+      double   m_volume;
+      double   m_price;
+      datetime m_submitTime;
+      bool     m_confirmed;
+   };
+   SPendingOrder m_pendingOrders[50];
+   int           m_pendingCount;
+   
 public:
-   MARKET_REGIME Detect(string symbol, ENUM_TIMEFRAMES tf) {
-      double adxMain[1], atrVal[1];
-      CopyBuffer(m_adxHandle, 0, 0, 1, adxMain);
-      CopyBuffer(m_atrHandle, 0, 0, 1, atrVal);
-
-      double atrPercentile = GetATRPercentile(atrVal[0]);
-
-      if(adxMain[0] > 25 && atrPercentile < 70) return REGIME_TRENDING;
-      if(adxMain[0] < 20 && atrPercentile < 50) return REGIME_RANGING;
-      return REGIME_VOLATILE;
+   bool SubmitAsync(const MqlTradeRequest &request)
+   {
+      if(!OrderSendAsync(request))
+      {
+         // Log error, implement exponential backoff retry
+         return false;
+      }
+      // Track pending order for OnTradeTransaction confirmation
+      m_pendingOrders[m_pendingCount].m_symbol = request.symbol;
+      m_pendingOrders[m_pendingCount].m_submitTime = TimeCurrent();
+      m_pendingOrders[m_pendingCount].m_confirmed = false;
+      m_pendingCount++;
+      return true;
    }
-
-   double GetStrategyWeightMultiplier(MARKET_REGIME regime, string strategyType) {
-      if(regime == REGIME_TRENDING && strategyType == "Trend") return 1.5;
-      if(regime == REGIME_TRENDING && strategyType == "MeanReversion") return 0.3;
-      if(regime == REGIME_RANGING && strategyType == "MeanReversion") return 1.5;
-      if(regime == REGIME_RANGING && strategyType == "Trend") return 0.3;
-      if(regime == REGIME_VOLATILE) return 0.5; // Reduce all
-      return 1.0;
+   
+   void OnTradeEvent(const MqlTradeTransaction &trans)
+   {
+      if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+      {
+         // Find and confirm pending order
+         for(int i = 0; i < m_pendingCount; i++)
+         {
+            if(!m_pendingOrders[i].m_confirmed)
+            {
+               m_pendingOrders[i].m_confirmed = true;
+               m_pendingOrders[i].m_ticket = trans.deal;
+               break;
+            }
+         }
+      }
    }
 };
 ```
 
-### 4.4 Implement Drawdown-Based Position Tapering (Code Change)
+**S-E2: Two-Tier Processing Architecture**
 
 ```mql5
-double GetDrawdownScaleFactor() {
-   double peakEquity = GetPeakEquity(); // Persisted via GlobalVariableSet
-   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-   double drawdownPct = (peakEquity - currentEquity) / peakEquity * 100.0;
+// In MultiStrategyAutonomousEA.mq5
+void OnTick()
+{
+   // FAST PATH (< 1ms): Update caches, check spread, manage pending orders
+   g_scalpCache.UpdateTickData();    // Tick-level price/spread cache
+   g_tickSafety.CheckTickSafety();   // Tick-level safety checks
+   
+   // Only run slow path on new bar
+   static datetime s_lastBarTime = 0;
+   datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+   if(currentBarTime != s_lastBarTime)
+   {
+      s_lastBarTime = currentBarTime;
+      // SLOW PATH (5-20ms): Recalculate indicators, evaluate signals, run consensus
+      g_barProcessor.ProcessNewBar();
+      g_signalEval.EvaluateSignals();
+   }
+}
 
-   if(drawdownPct < 3.0)  return 1.0;   // Full size
-   if(drawdownPct < 5.0)  return 0.75;  // 75%
-   if(drawdownPct < 8.0)  return 0.50;  // 50%
-   if(drawdownPct < 10.0) return 0.25;  // 25%
-   return 0.0;                           // Stop trading
+void OnTimer()
+{
+   // Periodic tasks: position management, risk checks, performance tracking
+   g_tradeManager.ManageAllPositions();
+   g_equityCurve.Update();
+   g_riskGate.ValidatePortfolioRisk();
 }
 ```
 
-### 4.5 Implement ATR-Normalized Position Sizing (Code Change)
+**S-E3: Pre-warm all indicator handles in OnInit()**
 
 ```mql5
-double CalculateATRPositionSize(string symbol, double riskPercent, double accountEquity) {
-   double atr = iATR(symbol, PERIOD_CURRENT, 14);
-   double atrMultiplier = 2.0; // 2x ATR stop distance
-   double stopDistance = atr * atrMultiplier;
-   double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-   double pipValue = tickValue / tickSize;
-
-   double riskAmount = accountEquity * riskPercent / 100.0;
-   double lotSize = riskAmount / (stopDistance * pipValue);
-
-   // Apply drawdown tapering
-   lotSize *= GetDrawdownScaleFactor();
-
-   // Clamp to min/max
-   double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-   double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-   return MathMax(minLot, MathMin(maxLot, lotSize));
-}
-```
-
-### 4.6 Simplify Consensus Architecture (Code Change)
-
-Reduce consensus parameters from 15+ to 5 essential ones:
-1. `QuorumThreshold` (0.55-0.65)
-2. `MinVoters` (2)
-3. `MinConfidence` (0.60)
-4. `RegimeWeightMultiplier` (from regime detector)
-5. `DrawdownScaleFactor` (from drawdown tapering)
-
-Remove: conflict deadband, support floors, sparse intrabar admission, authority gates (unless AI is enabled).
-
-### 4.7 Add Spread/ATR Filter for Scalping (Code Change)
-
-```mql5
-bool IsSpreadAcceptable(string symbol) {
-   double spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
-   double atr = iATR(symbol, PERIOD_CURRENT, 14);
-   double spreadToATR = spread / (atr / _Point);
-
-   // Professional scalping: spread should be < 20% of ATR
-   return spreadToATR < 0.20;
-}
-```
-
-### 4.8 Add Session-Aware Trading (Code Change)
-
-```mql5
-bool IsHighLiquiditySession() {
-   int hour = TimeHour(TimeCurrent());
-   // London: 8-16 GMT, NY: 13-22 GMT, Overlap: 13-16 GMT
-   return (hour >= 8 && hour <= 22); // Adjust for broker timezone
-}
-```
-
-### 4.9 Separate OnTick and OnTimer Concerns (Code Change)
-
-Move risk monitoring, equity protection, and trailing stop management from OnTick to OnTimer:
-
-```mql5
-void OnTimer() {
-   // Risk & equity monitoring (100ms interval)
-   CheckDrawdownLimits();
-   CheckMarginLevel();
-   UpdatePeakEquity();
-
-   // Position management (1-second interval)
-   static int posManageCounter = 0;
-   if(++posManageCounter >= 10) {
-      posManageCounter = 0;
-      ManageTrailingStops();
-      CheckTimeBasedExits();
+// In InitializationManager.mqh
+void PreWarmIndicators()
+{
+   double buffer[];
+   // Force initialization of all indicator handles
+   for(int h = 0; h < g_indicatorManager.HandleCount(); h++)
+   {
+      int handle = g_indicatorManager.GetHandle(h);
+      CopyBuffer(handle, 0, 0, 1, buffer);  // First call = warm-up
    }
 }
 ```
 
-### 4.10 Disable Python Bridge in Production (Immediate)
+### 4.2 Money Management Solutions
 
-Set `InpPythonBridgeMode = PYTHON_BRIDGE_OBSERVE` or disable entirely. The HTTP overhead (5-second timeout, heartbeat checks) adds latency to every signal evaluation cycle.
+**S-M1: Bayesian Kelly Modifier**
+
+Add a `CBayesianKellyModifier` to `PositionSizerModifiers.mqh` (see code in section 2.2.1). This modifier plugs into the existing `CPositionSizerModifier` chain and dynamically adjusts lot size based on observed edge.
+
+**S-M2: Equity Curve Manager**
+
+Add a `CEquityCurveManager` class (see code in section 2.2.3). Wire it into `RiskValidationGate` so that position size is automatically reduced when equity drops below its moving average.
+
+**S-M3: Volatility Regime Adjustment**
+
+```mql5
+// Add to PositionSizerModifiers.mqh
+class CVolatilityRegimeModifier : public CPositionSizerModifier
+{
+private:
+   double m_atrMultiplier;  // e.g., 1.5
+   
+public:
+   virtual double AdjustLotSize(double baseLot, const string symbol)
+   {
+      double currentATR = g_atrCache.GetATR(symbol, PERIOD_CURRENT);
+      double avgATR = g_atrCache.GetAverageATR(symbol, PERIOD_CURRENT, 20);
+      
+      if(currentATR > avgATR * m_atrMultiplier)
+         return baseLot * 0.5;  // High vol regime — halve position
+      
+      if(currentATR > avgATR * (m_atrMultiplier * 0.8))
+         return baseLot * 0.75;  // Elevated vol — reduce 25%
+      
+      return baseLot;  // Normal vol — full size
+   }
+};
+```
+
+**S-M4: Rationalize FullMargin Parameters**
+
+The current `FullMarginMode` config has 5% per trade and 25% daily risk — mathematically unsustainable. Recommended changes:
+
+| Parameter | Current | Proposed | Rationale |
+|---|---|---|---|
+| `riskPerTradePct` | 5.0% | 3.0% | 10 losses at 3% = 26.3% DD (recoverable) vs 40.1% at 5% |
+| `dailyRiskPct` | 25.0% | 15.0% | 25% daily loss needs 33% recovery; 15% needs 17.6% |
+| `ddCriticalPct` | 10.0% | 8.0% | Earlier circuit breaker activation |
+| `maxBreachesPerDay` | 2 | 1 | Limit cascading losses |
+
+### 4.3 Risk Control Solutions
+
+**S-R1: Wire CorrelationEngine into RiskValidationGate**
+
+```mql5
+// In RiskValidationGate.mqh
+bool CRiskValidationGate::ValidateTrade(const STradeCandidate &candidate)
+{
+   // ... existing checks ...
+   
+   // NEW: Correlation cluster check
+   if(g_correlationEngine.IsCorrelatedCluster(candidate.symbol, 0.7))  // 70% correlation threshold
+   {
+      int correlatedPositions = g_correlationEngine.CountCorrelatedPositions(candidate.symbol, 0.7);
+      int maxCorrelated = g_riskTierManager.GetMaxCorrelatedPositions();
+      
+      if(correlatedPositions >= maxCorrelated)
+      {
+         LOG("[RISK-GATE] Rejected: correlation cluster full for %s (%d/%d positions)",
+             candidate.symbol, correlatedPositions, maxCorrelated);
+         return false;
+      }
+      
+      // Reduce size for correlated positions
+      double correlationPenalty = 1.0 - (0.2 * correlatedPositions);  // 20% reduction per correlated position
+      candidate.adjustedLot *= MathMax(correlationPenalty, 0.3);
+   }
+   
+   return true;
+}
+```
+
+**S-R2: Graduated Drawdown Circuit Breakers**
+
+```mql5
+// Add to RiskValidationGate.mqh
+double CRiskValidationGate::ApplyDrawdownScaling()
+{
+   double peakEquity = g_performanceAnalytics.GetPeakEquity();
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double drawdownPct = (peakEquity - currentEquity) / peakEquity * 100.0;
+   
+   // Graduated response
+   if(drawdownPct >= 20.0) return 0.0;     // Full stop
+   if(drawdownPct >= 15.0) return 0.25;    // 75% reduction
+   if(drawdownPct >= 10.0) return 0.50;    // 50% reduction
+   if(drawdownPct >= 5.0)  return 0.75;    // 25% reduction
+   return 1.0;                              // Full size
+}
+```
+
+**S-R3: CVaR Portfolio Risk Constraint**
+
+Add `CPortfolioCVaR` class (see code in section 2.3.3). Wire into `PortfolioRiskManager` as a portfolio-level risk constraint. If CVaR exceeds threshold, block new positions.
+
+**S-R4: Regime-Aware Risk Gating**
+
+```mql5
+// In RiskValidationGate.mqh
+double CRiskValidationGate::GetRegimeRiskMultiplier()
+{
+   REGIME_STATE regime = g_regimeEngine.GetCurrentRegime();
+   
+   switch(regime)
+   {
+      case REGIME_MOMENTUM:     return 1.0;   // Full risk in trending markets
+      case REGIME_MEAN_REVERSION: return 0.75; // Reduced risk in ranging markets
+      case REGIME_CRISIS:       return 0.25;   // Minimal risk in crisis
+      default:                  return 0.5;    // Unknown — conservative
+   }
+}
+```
+
+### 4.4 Scalping Solutions
+
+**S-S1: Commission-Aware Scalp Validation**
+
+```mql5
+// Add to FastScalpEngine.mqh
+bool CFastScalpEngine::ValidateScalpTrade(const string symbol, double tpPips)
+{
+   double spreadPips = g_scalpCache.GetSpreadPips(symbol);
+   double commissionPips = GetCommissionPips(symbol);  // Convert $/lot to pips
+   double totalCostPips = spreadPips + commissionPips;
+   
+   // Rule: TP must be >= 2× total cost
+   if(tpPips < totalCostPips * 2.0)
+   {
+      LOG("[SCALP-REJECT] TP %.1f pips < 2× cost %.1f pips for %s",
+          tpPips, totalCostPips * 2.0, symbol);
+      return false;
+   }
+   
+   // Rule: Spread must be < maxSpreadATRRatio × ATR
+   double atr = g_atrCache.GetATR(symbol, PERIOD_M5);
+   if(spreadPips > m_config.maxSpreadATRRatio * atr / _Point)
+   {
+      LOG("[SCALP-REJECT] Spread %.1f > max %.1f for %s",
+          spreadPips, m_config.maxSpreadATRRatio * atr / _Point, symbol);
+      return false;
+   }
+   
+   return true;
+}
+```
+
+**S-S2: Economic Calendar Integration**
+
+Use `WebRequest()` to fetch economic calendar data from a free API (e.g., ForexFactory, Investing.com RSS). Pause scalping 15 minutes before and 5 minutes after high-impact events.
+
+**S-S3: Regime-Based Strategy Selection**
+
+```mql5
+// In FastScalpEngine.mqh
+ENUM_SCALP_STRATEGY CFastScalpEngine::SelectStrategy(REGIME_STATE regime)
+{
+   switch(regime)
+   {
+      case REGIME_MOMENTUM:      return SCALP_MOMENTUM;      // Trend-following scalps
+      case REGIME_MEAN_REVERSION: return SCALP_SPREAD;       // Range-bound scalps
+      case REGIME_CRISIS:        return SCALP_NONE;          // No scalping in crisis
+      default:                   return SCALP_VOLATILITY;    // Breakout scalps
+   }
+}
+```
+
+### 4.5 Algorithmic Solutions
+
+**S-A1: Wire RegimeEngine into SignalEvaluationOrchestrator**
+
+The `SignalEvaluationOrchestrator` should query `RegimeEngine` and weight strategies accordingly:
+- Momentum regime: boost `TrendEngine` and `ScalpMomentumStrategy` weights
+- Mean reversion regime: boost `VolatilityEngine` and `ScalpSpreadStrategy` weights
+- Crisis regime: suppress all strategies, allow only hedging
+
+**S-A2: Normalization Contamination Guard**
+
+In `PipelineScaler.mqh`, verify that normalization uses **training-fold statistics** (embedded as constants), not live statistics computed from recent data. Add a validation check in `OnInit()` that compares scaler output against known test vectors.
+
+**S-A3: Order Flow Persistence Tracker**
+
+```mql5
+// Add to LiquidityEngine.mqh
+class COrderFlowTracker
+{
+private:
+   double m_tickVolumeDirection[100];  // +1 for up-tick, -1 for down-tick
+   int    m_persistenceWindow;         // e.g., 20 ticks
+   
+public:
+   double GetFlowPersistence()
+   {
+      // Calculate autocorrelation of tick direction
+      double sum = 0;
+      for(int i = m_persistenceWindow; i < 100; i++)
+      {
+         sum += m_tickVolumeDirection[i] * m_tickVolumeDirection[i - m_persistenceWindow];
+      }
+      return sum / (100 - m_persistenceWindow);  // -1 to +1
+   }
+};
+```
+
+**S-A4: Adaptive Weight Adjustment**
+
+The `AIPerformanceFeedback.mqh` and `DynamicThresholdManager.mqh` already provide the infrastructure. Wire them into the `SignalEvaluationOrchestrator` so that strategy weights are adjusted based on recent performance:
+
+```mql5
+// In SignalEvaluationOrchestrator.mqh
+void CSignalEvaluationOrchestrator::UpdateStrategyWeights()
+{
+   for(int i = 0; i < m_strategyCount; i++)
+   {
+      double recentWR = m_strategies[i].GetRecentWinRate(50);  // Last 50 trades
+      double baseWeight = m_strategies[i].GetBaseWeight();
+      
+      // Boost winning strategies, suppress losing ones
+      if(recentWR > 0.55) baseWeight *= 1.2;
+      else if(recentWR < 0.40) baseWeight *= 0.6;
+      
+      m_strategies[i].SetCurrentWeight(baseWeight);
+   }
+}
+```
 
 ---
 
@@ -776,290 +1023,252 @@ Set `InpPythonBridgeMode = PYTHON_BRIDGE_OBSERVE` or disable entirely. The HTTP 
 
 ### 5.1 Conservative Approach (Safe Trading)
 
-**Goal:** Consistent profitability with minimal drawdown. Suitable for accounts that cannot afford significant losses.
+**Target:** Capital preservation with steady growth. Suitable for live accounts, prop firm challenges, and risk-averse traders.
 
-#### Risk Parameters
+**Risk Tier:** `RISK_TIER_CONSERVATIVE`
 
 | Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Risk per trade | 0.5-1.0% | Professional standard; survives 10+ consecutive losses |
-| Daily loss limit | 2-3% | Prevents cascade losses |
-| Weekly loss limit | 5% | Allows recovery time |
-| Max drawdown | 15% | Equity-based, from peak |
-| Max open positions | 3-4 | Reduces correlation risk |
-| Position sizing | Quarter Kelly + ATR-normalized | Conservative growth with volatility adaptation |
+|---|---|---|
+| Risk per trade | 0.5% | 10 losses = 4.9% DD (easily recoverable) |
+| Daily risk limit | 2.0% | Hard stop after 4 consecutive losses |
+| Portfolio risk | 6.0% | Maximum total exposure |
+| Max positions | 3 | Limited concurrent exposure |
+| Scalp budget | 0% | No scalping in conservative mode |
+| Kelly fraction | Quarter Kelly (25%) | 95% of growth, 12% max DD |
+| Drawdown circuit breaker | 5% → reduce 25%, 10% → reduce 50%, 15% → stop | Graduated protection |
+| Equity curve filter | Equity < 20-day MA → reduce 50% | Self-awareness |
+| Regime filter | Only trade in Momentum and Mean Reversion regimes | Avoid crisis |
+| Correlation limit | Max 2 positions per correlated cluster (ρ > 0.6) | Prevent concentration |
+| Session filter | London/NY overlap only | Best liquidity |
+| News filter | No trading 15min before/5min after high-impact events | Spread protection |
+| Commission validation | TP ≥ 3× total cost | Extra safety margin |
 
-#### Strategy Selection
+**Strategy allocation:**
 
-| Strategy | Regime | Weight | Timeframe |
-|----------|--------|--------|-----------|
-| Trend Following | Trending | 1.5 | M15 -> H1 |
-| Mean Reversion | Ranging | 1.5 | M5 -> M15 |
-| S/R + Fib Confluence | All | 1.0 | M15 -> H1 |
-| Volatility Breakout | Volatile | 0.8 | M5 -> M15 |
+| Strategy | Weight | Regime Activation |
+|---|---|---|
+| TrendFollowing (EMA+MACD) | 40% | Momentum only |
+| MeanReversion (RSI+BB) | 30% | Mean Reversion only |
+| ICT/SMC (Order Blocks) | 20% | Both regimes |
+| AI/ONNX Ensemble | 10% | Both regimes (confidence filter > 0.7) |
 
-**Disable:** Candlestick (too noisy for conservative), Unicorn Model, Power of Three, all AI modules initially.
-
-#### Execution Rules
-
-- **New-bar-only scanning** on M5 or M15
-- **Spread filter:** Skip entries when spread > 15% of ATR
-- **Session filter:** Trade only during London/NY sessions
-- **No intrabar scanning** — wait for bar close confirmation
-- **Trailing stop:** ATR-based (2.5x ATR), activated at 1R profit
-- **Break-even:** Move to entry + spread at 0.5R profit
-- **Partial close:** Close 50% at 1.5R, trail remaining 50%
-
-#### Position Management
-
-```mql5
-// Conservative position sizing
-double lotSize = CalculateATRPositionSize(symbol, 0.75, equity); // 0.75% risk
-lotSize *= GetDrawdownScaleFactor(); // Taper on drawdown
-lotSize *= regimeWeightMultiplier;   // Reduce in wrong regime
-```
-
-#### Expected Performance (Based on Research)
-
-| Metric | Expected Range |
-|--------|---------------|
-| Win rate | 45-55% |
-| Profit factor | 1.3-1.8 |
-| Max drawdown | 5-12% |
-| Average trade duration | 30 min - 4 hours |
-| Trades per week | 10-25 |
-
----
+**Expected performance (based on 2026 research):**
+- Annual return: 15-30%
+- Max drawdown: 5-12%
+- Sharpe ratio: 1.0-1.5
+- Win rate: 50-55%
+- Average R:R: 1.5:1
 
 ### 5.2 Aggressive Approach (Full-Margin Fast Scalping)
 
-**Goal:** Maximum capital utilization with high trade frequency. Suitable for accounts that can tolerate significant drawdowns and have sufficient capital reserves.
+**Target:** Maximum growth with controlled aggression. Suitable for experienced traders with capital they can afford to lose. **This is not recommended for prop firm accounts.**
 
-#### Risk Parameters
+**Risk Tier:** `RISK_TIER_AGGRESSIVE` (NOT FullMargin — FullMargin is mathematically unsustainable)
 
 | Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Risk per trade | 2.0-3.0% | Aggressive but survivable with high win rate |
-| Daily loss limit | 5-6% | Allows 2-3 consecutive full losses |
-| Weekly loss limit | 10% | Hard stop for the week |
-| Max drawdown | 20% | Equity-based, from peak |
-| Max open positions | 6-8 | Higher throughput |
-| Position sizing | Half Kelly + ATR-normalized | Faster growth with drawdown tapering |
+|---|---|---|
+| Risk per trade | 2.0% | 10 losses = 18.3% DD (challenging but recoverable) |
+| Daily risk limit | 10.0% | Hard stop after 5 consecutive losses |
+| Portfolio risk | 30.0% | Significant concurrent exposure |
+| Max positions | 8 | Multiple concurrent positions |
+| Scalp budget | 8% | Dedicated scalp allocation |
+| Kelly fraction | Half Kelly (50%) | 75% of growth, 20-35% max DD |
+| Drawdown circuit breaker | 5% → reduce 25%, 10% → reduce 50%, 15% → reduce 75%, 20% → stop | Graduated protection |
+| Equity curve filter | Equity < 20-day MA → reduce 50% | Self-awareness |
+| Regime filter | Full size in Momentum, 75% in Mean Reversion, 25% in Crisis | Adaptive |
+| Correlation limit | Max 3 positions per correlated cluster (ρ > 0.6) | Allow some concentration |
+| Session filter | London Open + London/NY overlap | Extended window |
+| News filter | No trading 5min before/after high-impact events | Minimal disruption |
+| Commission validation | TP ≥ 2× total cost | Standard margin |
 
-#### Strategy Selection
+**Strategy allocation:**
 
-| Strategy | Regime | Weight | Timeframe |
-|----------|--------|--------|-----------|
-| Momentum Scalping | Trending | 2.0 | M1 -> M5 |
-| Mean Reversion Scalping | Ranging | 2.0 | M1 -> M5 |
-| Volatility Breakout | Volatile | 1.5 | M1 -> M5 |
-| Tick Scalping (EMA cross) | All | 1.0 | Tick chart / M1 |
-| ONNX AI | All | 1.0 | M5 |
+| Strategy | Weight | Regime Activation |
+|---|---|---|
+| ScalpMomentum | 25% | Momentum only |
+| ScalpVolatilityBreakout | 20% | Mean Reversion → Momentum transition |
+| ScalpSpread | 15% | Mean Reversion only |
+| TrendFollowing | 15% | Momentum only |
+| AI/ONNX Ensemble | 15% | All regimes (confidence filter > 0.6) |
+| StatisticalArbitrage | 10% | Mean Reversion only |
 
-**Enable:** All strategies with regime-based weight adjustment. ONNX AI as a confirmation filter, not primary signal.
+**Scalping-specific parameters:**
 
-#### Execution Rules
+| Parameter | Conservative | Aggressive |
+|---|---|---|
+| Scalp SL | 60 pips | 40 pips |
+| Scalp TP | 90 pips | 60 pips |
+| Max scalp positions | 0 | 3 |
+| Max spread/ATR ratio | 0.15 | 0.30 |
+| Use pending orders | Yes | Yes |
+| Partial close | Yes (50% at 1R) | Yes (50% at 0.5R) |
+| Scalp session | London/NY only | London Open + London/NY |
 
-- **Hybrid cadence:** New-bar primary scan + 5-second intrabar secondary scan
-- **Spread filter:** Skip entries when spread > 25% of ATR
-- **Session filter:** Trade London/NY overlap with highest priority; Asian session only for specific pairs
-- **Intrabar scanning:** Enabled for momentum and candlestick strategies only
-- **Trailing stop:** ATR-based (1.5x ATR for scalping), activated at 0.5R profit
-- **Break-even:** Move to entry + spread at 0.3R profit
-- **Partial close:** Close 50% at 1R, trail remaining 50%
-- **Time-based exit:** Close any position open > 30 minutes without reaching 0.5R
+**Expected performance (based on 2026 research):**
+- Annual return: 40-80%
+- Max drawdown: 15-25%
+- Sharpe ratio: 0.8-1.3
+- Win rate: 55-65%
+- Average R:R: 1:1 to 1.5:1
+- Trades per day: 5-15
 
-#### Scalping-Specific Configuration
+**Why NOT FullMargin tier:** The current FullMargin config (5% per trade, 25% daily risk) has a mathematical expectation of account destruction. At 5% risk per trade:
+- 4 consecutive losses = 18.5% DD
+- 8 consecutive losses = 33.6% DD
+- 10 consecutive losses = 40.1% DD (needing 66.7% recovery)
 
-```mql5
-// Aggressive scalping position sizing
-double lotSize = CalculateATRPositionSize(symbol, 2.0, equity); // 2% risk
-lotSize *= GetDrawdownScaleFactor(); // Taper on drawdown
-lotSize *= regimeWeightMultiplier;   // Boost in right regime
-
-// Tighter execution parameters
-input int InpTradeSlippagePoints = 15;       // Tight slippage for scalping
-input double InpMaxEntrySpreadPoints = 40.0;  // Tight spread limit
-input double InpPipelineMaxSpreadToAtrRatio = 0.25; // 25% of ATR max
-```
-
-#### Momentum Scalping Entry Logic
-
-```mql5
-bool CheckMomentumScalpEntry(string symbol) {
-   // 1. Regime check
-   MARKET_REGIME regime = regimeDetector.Detect(symbol, PERIOD_M5);
-   if(regime != REGIME_TRENDING) return false;
-
-   // 2. Spread check
-   if(!IsSpreadAcceptable(symbol)) return false;
-
-   // 3. EMA pullback on M1
-   double ema8 = iMA(symbol, PERIOD_M1, 8, 0, MODE_EMA, PRICE_CLOSE);
-   double ema21 = iMA(symbol, PERIOD_M1, 21, 0, MODE_EMA, PRICE_CLOSE);
-   if(ema8 <= ema21) return false; // Only buy pullbacks in uptrend
-
-   // 4. Price near EMA8 (pullback)
-   double close = iClose(symbol, PERIOD_M1, 0);
-   double emaDistance = MathAbs(close - ema8) / ema8;
-   if(emaDistance > 0.001) return false; // Too far from EMA8
-
-   // 5. MACD confirmation
-   double macdMain = iMACD(symbol, PERIOD_M1, 12, 26, 9, PRICE_CLOSE);
-   if(macdMain < 0) return false;
-
-   return true;
-}
-```
-
-#### Expected Performance (Based on Research)
-
-| Metric | Expected Range |
-|--------|---------------|
-| Win rate | 55-65% |
-| Profit factor | 1.5-2.5 |
-| Max drawdown | 10-20% |
-| Average trade duration | 2-15 minutes |
-| Trades per day | 10-30 |
-
-**Warning:** Aggressive scalping requires:
-- VPS co-located with broker (< 5ms latency)
-- ECN account with raw spreads
-- Stable internet connection
-- Continuous monitoring during first 2-4 weeks of live operation
-- Sufficient capital to survive worst-case drawdown scenarios
+Even with a positive edge, the variance drag from deep drawdowns destroys long-term growth. The Aggressive tier (2% per trade) captures most of the growth while keeping drawdowns survivable.
 
 ---
 
 ## 6. Implementation Notes
 
-### 6.1 Priority Order
+### 6.1 Priority Implementation Order
 
-| Priority | Change | Type | Impact |
-|----------|--------|------|--------|
-| 1 | Fix risk parameters | Config only | Prevents account blowup |
-| 2 | Enable `SignalScanOnNewBarOnly = true` | Config only | 90%+ CPU reduction |
-| 3 | Add drawdown-based tapering | Code | 15-30% drawdown reduction |
-| 4 | Add ATR-normalized position sizing | Code | Consistent risk across instruments |
-| 5 | Add regime detection | Code | Strategy-market alignment |
-| 6 | Add spread/ATR filter | Code | Prevents bad entries |
-| 7 | Simplify consensus | Code | Faster signal evaluation |
-| 8 | Separate OnTick/OnTimer | Code | Cleaner execution flow |
-| 9 | Add session filter | Code | Better fill quality |
-| 10 | Disable Python bridge in production | Config | Reduced latency |
+| Priority | Solution | Impact | Effort | Files Affected |
+|---|---|---|---|---|
+| P0 | S-E1: OrderSendAsync + OnTradeTransaction | Eliminates tick-dropping | Medium | `ExecutionOrchestrator.mqh`, `MultiStrategyAutonomousEA.mq5` |
+| P0 | S-R1: Wire CorrelationEngine into RiskValidationGate | Prevents concentration risk | Low | `RiskValidationGate.mqh` |
+| P0 | S-R2: Graduated drawdown circuit breakers | Prevents account destruction | Low | `RiskValidationGate.mqh` |
+| P1 | S-M1: Bayesian Kelly Modifier | Dynamic position sizing | Medium | `PositionSizerModifiers.mqh` |
+| P1 | S-M2: Equity Curve Manager | Self-aware performance management | Medium | New class + `RiskValidationGate.mqh` |
+| P1 | S-A1: Wire RegimeEngine into signal pipeline | Strategy adaptation | Medium | `SignalEvaluationOrchestrator.mqh` |
+| P1 | S-S1: Commission-aware scalp validation | Prevents unprofitable scalps | Low | `FastScalpEngine.mqh` |
+| P2 | S-E2: Two-tier processing | Faster tick handling | Medium | `MultiStrategyAutonomousEA.mq5` |
+| P2 | S-M3: Volatility regime modifier | Vol-adjusted sizing | Low | `PositionSizerModifiers.mqh` |
+| P2 | S-M4: Rationalize FullMargin params | Prevent reckless trading | Low | `FullMarginMode.mqh`, `RiskTierManager.mqh` |
+| P2 | S-R4: Regime-aware risk gating | Adaptive risk | Low | `RiskValidationGate.mqh` |
+| P2 | S-S3: Regime-based strategy selection | Right strategy, right time | Low | `FastScalpEngine.mqh` |
+| P3 | S-E3: Pre-warm indicator handles | Eliminate 100ms overhead | Low | `InitializationManager.mqh` |
+| P3 | S-R3: CVaR portfolio risk | Better risk measurement | Medium | `PortfolioRiskManager.mqh` |
+| P3 | S-A2: Normalization guard | Prevent ONNX prediction drift | Low | `PipelineScaler.mqh` |
+| P3 | S-A3: Order flow persistence | Better regime detection | Medium | `LiquidityEngine.mqh` |
+| P3 | S-A4: Adaptive weight adjustment | Strategy self-optimization | Medium | `SignalEvaluationOrchestrator.mqh` |
 
-### 6.2 Backtesting Requirements
+### 6.2 Architecture Integration Map
 
-Before deploying any changes:
-1. **Use tick data** — not OHLC. M1 data with real spreads.
-2. **Minimum 5 years** of out-of-sample data.
-3. **Walk-forward analysis** — optimize 2 years, test 1 year, roll forward.
-4. **Parameter plateau check** — if only one specific parameter value works, it's curve-fitted.
-5. **Transaction costs** — include realistic spread (not zero), commission, and slippage.
-6. **Limit optimizable parameters to 4-6** — more than this invites over-fitting.
+```
+MultiStrategyAutonomousEA.mq5
+├── OnInit()
+│   ├── InitializationManager → PreWarmIndicators() [S-E3]
+│   └── Load ONNX models via OnnxCreateFromBuffer() [S-A2]
+├── OnTick() [S-E2: Two-tier]
+│   ├── Fast Path (< 1ms)
+│   │   ├── ScalpSignalCache.UpdateTickData()
+│   │   ├── TickSafetyMonitor.CheckTickSafety()
+│   │   └── AsyncTradeExecutor.OnTradeEvent() [S-E1]
+│   └── Slow Path (new bar only)
+│       ├── BarProcessor.ProcessNewBar()
+│       ├── RegimeEngine.DetectRegime() → [MOMENTUM|MEAN_REVERSION|CRISIS]
+│       └── SignalEvaluationOrchestrator.EvaluateSignals()
+│           ├── Strategy weights adjusted by regime [S-A1]
+│           ├── Strategy weights adjusted by performance [S-A4]
+│           └── Consensus voting
+├── OnTimer()
+│   ├── TradeManager.ManageAllPositions()
+│   ├── EquityCurveManager.Update() [S-M2]
+│   └── RiskValidationGate.ValidatePortfolioRisk()
+│       ├── CorrelationEngine.IsCorrelatedCluster() [S-R1]
+│       ├── Drawdown circuit breaker [S-R2]
+│       ├── Regime risk multiplier [S-R4]
+│       └── CVaR portfolio check [S-R3]
+└── OnTradeTransaction() [S-E1]
+    └── AsyncTradeExecutor.OnTradeEvent()
+```
 
-### 6.3 Over-Optimization Red Flags
+### 6.3 Testing Protocol
 
-| Red Flag | What It Means |
-|----------|---------------|
-| Profit factor > 2.5 | Likely curve-fitted |
-| Win rate > 65% | Too good to be true |
-| Parameters precise to decimals (SL = 41.5 pips) | No economic rationale |
-| Only one parameter combination works | Random noise fitting |
-| Great backtest, poor live | Look-ahead bias or over-fitting |
+1. **Compile check** — All changes must compile without errors
+2. **Backtest in Strategy Tester** — Use "Every tick based on real ticks" mode
+3. **Shadow mode** — Run on demo with `[SHADOW-TRADE]` logging before live
+4. **Gradual rollout** — Implement P0 items first, validate, then P1, then P2
+5. **Log verification** — After each change, verify these log signatures:
+   - `[HEARTBEAT]` — EA is alive
+   - `[CONSENSUS-DIAG]` — Strategy consensus is working
+   - `[SIGNAL-REJECTED]` — Risk gate is filtering
+   - `[AI-VOTE]` — AI module is participating (if enabled)
+   - `[SCALP-REJECT]` — Scalp validation is filtering (new)
+   - `[RISK-GATE]` — Risk validation is gating (enhanced)
+   - `[REGIME-CHANGE]` — Regime detection is working (new)
 
-**Source:** [algo-studio.com — 5 Costly Mistakes](https://algo-studio.com/blog/5-mistakes-automating-trading-strategies)
+### 6.4 Key Metrics to Track
 
-### 6.4 VPS Requirements for Scalping
-
-| Requirement | Specification |
-|-------------|---------------|
-| Location | Same datacenter as broker (LD4/NY4/TY3) |
-| Latency | < 5ms round-trip to broker |
-| CPU | 2+ cores (one for EA, one for indicators) |
-| RAM | 4GB+ (MT5 + indicators + ONNX model) |
-| OS | Windows Server 2019+ |
-| Network | Dedicated connection, not shared hosting |
-
-### 6.5 Indicator Handle Lifecycle (Critical)
-
-The current `CIndicatorManager` singleton pattern is correct but must ensure:
-1. All handles are created in `OnInit()` or on first access (lazy init is OK)
-2. `DestroyInstance()` is always called in `OnDeinit()`
-3. No handles are created inside `OnTick()` or `OnTimer()`
-4. `CopyBuffer()` uses the minimum data count needed
-5. `ReleaseUnused()` is called periodically (every 5 minutes) to free stale handles
-
-### 6.6 ONNX Model Integration Notes
-
-The EA already has ONNX support (`#resource "Resources\\model.onnx"`). For improved ML:
-1. Train LightGBM/XGBoost in Python with 30-80 features
-2. Export to ONNX via `onnxmltools` or `hummingbird`
-3. Load via `OnnxCreateFromBuffer()` in OnInit
-4. Run inference via `OnnxRun()` — keep input tensor small (< 100 features)
-5. Use model output as a **confirmation filter**, not primary signal
-6. Retrain monthly with rolling window data
-
-### 6.7 Monitoring & Validation Checklist
-
-After implementing changes, verify these log signatures are present:
-- `[HEARTBEAT]` — EA is alive and processing
-- `[CONSENSUS-DIAG]` — Consensus is producing decisions
-- `[SIGNAL-REJECTED]` — Signals are being filtered (good — means filters work)
-- `[REGIME-DETECT]` — Regime classification is active (new)
-- `[DRAWDOWN-TAPER]` — Position tapering is active (new)
-- `[SPREAD-FILTER]` — Spread filtering is active (new)
+| Metric | Target (Conservative) | Target (Aggressive) |
+|---|---|---|
+| Max drawdown | < 12% | < 25% |
+| Sharpe ratio | > 1.0 | > 0.8 |
+| Calmar ratio | > 1.0 | > 0.8 |
+| Recovery factor | > 3.0 | > 2.0 |
+| Win rate | > 50% | > 55% |
+| Average R:R | > 1.5:1 | > 1.0:1 |
+| Commission/return ratio | < 30% | < 40% |
+| Tick processing time | < 5ms | < 5ms |
+| Order execution latency | < 50ms | < 50ms |
 
 ---
 
 ## 7. References
 
-### Academic & Books
+1. Trading Strategies Academy, "HFT EA Development with MQL: Key Considerations," 2026. [Link](https://trading-strategies.academy/archives/14219)
 
-1. **Ralph Vince** — *Portfolio Management Formulas* (1990), *The Mathematics of Money Management* (1992), *The Leverage Space Trading Model* (2009)
-2. **Edward Thorp** — *Beat the Dealer* (1966) — Original Kelly Criterion application
-3. **Alexander Elder** — *Trading for a Living* (1993) — Triple Screen method
-4. **Ryan Jones** — *The Trading Game* (1999) — Fixed Ratio position sizing
-5. **John Kelly** — *A New Interpretation of Information Rate* (1956) — Original Kelly paper
-6. **Marcos Lopez de Prado** — *Advances in Financial Machine Learning* (2018) — ML for finance
+2. CSDN, "如何解决MQL中订单执行延迟问题" (How to Solve MQL Order Execution Delay), 2025. [Link](https://ask.csdn.net/questions/8875574)
 
-### Web Sources
+3. MQL5 Tutorial, "Como Criar um Robô de Scalping em MQL5," March 2026. [Link](https://www.mql5tutorial.com.br/como-criar-robo-scalping-mql5/)
 
-7. [ai-mql.com — MT5 Parallel Processing Trap](https://ai-mql.com/archives/277)
-8. [trading-strategies.academy — Indicator Handle Management](https://trading-strategies.academy/archives/14198)
-9. [trading-strategies.academy — Strategy Tester Optimization](https://trading-strategies.academy/archives/122)
-10. [trading-strategies.academy — MQL5 + Neural Networks](https://trading-strategies.academy/archives/3976)
-11. [trading-strategies.academy — Margin Calculation](https://trading-strategies.academy/archives/3076)
-12. [eahub.cn — MT5 Programming Guide](https://www.eahub.cn/thread-155475-1-1.html)
-13. [finance.trgy.co.jp — CopyBuffer Guide](https://finance.trgy.co.jp/en/mql5-en/reference-en/copybuffer/)
-14. [finance.trgy.co.jp — OnTick Optimization](https://finance.trgy.co.jp/en/mql5-en/reference-en/mql5-ontick-explained/)
-15. [finance.trgy.co.jp — Drawdown Control](https://finance.trgy.co.jp/mql5/reference/mql5-drawdown-control/)
-16. [algo-studio.com — 5 Costly Mistakes in Automated Trading](https://algo-studio.com/blog/5-mistakes-automating-trading-strategies)
-17. [algo-studio.com — Risk Management for Trading Bots](https://algo-studio.com/blog/risk-management-trading-bots)
-18. [fxeaprime.com — Backtest Traps](https://www.fxeaprime.com/132902/)
-19. [fxeaprime.com — Multi-Currency Hedging](https://www.fxeaprime.com/132921/)
-20. [forexalgos.com — Overfitting/Over-optimization](https://forexalgos.com/forex-robots-glossary/overfitting-over-optimization/)
-21. [steadyflowfx.com — How to Build an EA Portfolio](https://steadyflowfx.com/blog/how-to-build-ea-portfolio/)
-22. [doittrading.com — MultiStrategy Pro Setup](https://doittrading.com/insights/strategies/doit-multistrategy-pro-complete-setup-guide/)
-23. [signalpilot.io — Advanced Risk Management](https://education.signalpilot.io/curriculum/intermediate/46-advanced-risk-management.html)
-24. [clearedge.trading — Drawdown Recovery Strategies](https://clearedge.trading/post/drawdown-recovery-algorithmic-trading-strategies)
-25. [traderspost.io — Position Sizing Algorithms](https://blog.traderspost.io/article/position-sizing-algorithms)
-26. [traderspost.io — Scalping Strategies Guide](https://blog.traderspost.io/article/scalping-strategies-guide)
-27. [traderspost.io — Stop-Loss Strategies for Algo Trading](https://blog.traderspost.io/article/stop-loss-strategies-algorithmic-trading)
-28. [protraderdashboard.com — Optimal-f Position Sizing](https://protraderdashboard.com/blog/optimal-f-position-sizing/)
-29. [gov.capital — 7 Advanced Position Sizing Strategies](https://gov.capital/master-your-trades-7-advanced-position-sizing-strategies-that-outperform-kelly-martingale/)
-30. [opofinance.com — Tick Chart Scalping Strategies](https://blog.opofinance.com/en/tick-chart-scalping-strategy/)
-31. [fibalgo.com — Market Regime Detection with ML](https://fibalgo.com/education/market-regime-detection-trading-machine-learning)
-32. [korafx.com — Multi-Timeframe Analysis](https://korafx.com/blog/multi-timeframe-analysis-trading)
-33. [forex-station.com — SuperTrend ML Adaptive Indicator](https://forex-station.com/native-ml-machine-learning-indicator-s-t8476120.html)
-34. [switchmarkets.com — Improve Trade Execution Speed](https://www.switchmarkets.com/learn/improve-trade-execution-speed)
-35. [smartchinaeducation.com — Forex EA Strategies for Scalping](https://www.smartchinaeducation.com/en/forex-ea-strategies-for-scalping-to-trade-faster-and-smarter/)
-36. [pineify.app — MT5 EA Complete Guide 2025](https://uat.pineify.app/resources/blog/mt5-ea-complete-guide-2025-building-choosing-scaling-metatrader-expert-advisors)
-37. [forex92.com — Troubleshooting Low-Performance Forex EAs](https://www.forex92.com/blog/troubleshooting-low-performance-forex-eas/)
-38. [nexus-fx.jp — Avoid Backtest Traps](https://nexus-fx.jp/2025/06/23/avoid-backtest-traps/)
-39. [cryptoweir.com — Drawdown Limiter Tools](https://www.cryptoweir.com/drawdown-limiter-tools-master-risk-management/)
-40. [journalplus.co — Drawdown Management Guide](https://journalplus.co/learn/guides/drawdown-management-guide/)
+4. MQL5 Official Documentation, "MQL5 Expert Advisors." [Link](https://docs.mql4.com/mql5_language/mql5_experts)
+
+5. CARL AI Labs / Gunnar Cuevas, "Dynamic Adaptive Kelly Criterion: Bridging Theory and Practice for Modern Portfolio Optimization," August 2025. [Link](https://investwithcarl.com/learning-center/investment-basics/dynamic-adaptive-kelly-criterion-bridging-theory-and-practice-for-modern-portfolio-optimization)
+
+6. FX Research Japan, "長期複利シミュレーション × ケリー再投資戦略" (Long-term Compound Simulation × Kelly Reinvestment Strategy), October 2025. [Link](https://fx-researc.jp/kelly-compound-strategy-final/)
+
+7. East Money, "凯利公式：资金管理的终极数学法则" (Kelly Formula: The Ultimate Mathematical Law of Money Management), May 2026. [Link](https://caifuhao.eastmoney.com/news/20260516224555215211860)
+
+8. SignalPilot Education, "Portfolio Construction: Building an Edge-Based System," 2026. [Link](https://education.signalpilot.io/curriculum/intermediate/47-portfolio-construction-kelly.html)
+
+9. FerroQuant, "Risk Management in Automated Trading: Position Sizing and Drawdown Control," April 2026. [Link](https://ferroquant.com/blog/risk-management-automated-trading)
+
+10. AlgoBulls, "Risk Management in Algo Trading: Beyond Stop-Loss Orders — A 2026 Guide," September 2025. [Link](https://algobulls.com/blog/algo-trading/risk-management-in-algo-trading-india-2026)
+
+11. ForexDailyFeed, "Advanced Risk Management for Algorithmic Trading," September 2025. [Link](https://forexdailyfeed.com/advanced-risk-management-for-algorithmic-trading/)
+
+12. Nurp, "7 Risk Management Strategies for Algo Trading," April 2026. [Link](https://nurp.com/algorithmic-trading-blog/7-risk-management-strategies-for-algorithmic-trading/)
+
+13. Surmount, "Risk Models & Drawdown Control: Techniques in Algorithmic Investing," October 2025. [Link](https://surmount.ai/blogs/risk-models-drawdown-control-algorithmic-investing)
+
+14. Elirox, "Forex Scalping Strategy: 1m & 5m Setup for Active Traders," May 2026. [Link](https://elirox.com/strategies/forex-scalping-strategy-guide-1m-5m/)
+
+15. ForexSpeech, "Forex Scalping Strategy," 2026. [Link](https://forexspeech.com/scalping-strategy-forex/)
+
+16. PipRider, "1 Minute Scalping Strategy: High-Frequency Profit Setups," March 2026. [Link](https://piprider.com/1-minute-scalping-strategy/)
+
+17. CSDN, "智能量化革命2.0：AI策略与夹子机器人的双核驱动交易系统开发指南" (Intelligent Quant Revolution 2.0), February 2026. [Link](https://blog.csdn.net/2501_91377248/article/details/157734077)
+
+18. Pillai, Kannan, Ajith, and Sumesh, "Generating Alpha: A Hybrid AI-Driven Trading System Integrating Technical Analysis, Machine Learning and Financial Sentiment for Regime-Adaptive Equity Strategies," arXiv:2601.19504, January 2026. [Link](https://arxiv.org/html/2601.19504v1/)
+
+19. fibalgo / Alex Petrov, "Market Regimes Change Fast. Your Strategy Should Too," May 2026. [Link](https://fibalgo.com/education/market-regime-detection-trading-machine-learning)
+
+20. PickMyTrade, "Regime Detection: Measuring Market Regime Shifts 2026," 2026. [Link](https://blog.pickmytrade.trade/regime-detection-measuring-market-regime-shifts-2026/)
+
+21. AI2.Work, "Algorithmic Trading in 2025: Harnessing Advanced AI Reasoning Models," August 2025. [Link](https://ai2.work/blog/ai-finance-algorithmic-trading-strategies-2025)
+
+22. MetaTrader 5 Release Notes, "ONNX CUDA Support," 2026. [Link](https://www.metatrader5.com/zh/releasenotes)
+
+23. QuantVPS / Max Powell, "How to Run AI Trading Bots on QuantVPS: Setup Guide," April 2026. [Link](https://entrylab.io/learn/how-to-run-ai-trading-bots-on-quantvps-2026)
+
+24. Traidies, "Optimizing Risk Management with AI in MQL5," March 2026. [Link](https://www.traidies.com/blog/optimizing-risk-management-with-ai-mql5)
+
+25. Barmenteros, "Python to MetaTrader Integration Service," 2026. [Link](https://barmenteros.com/python-metatrader-integration/)
+
+26. Sentinel, "Equity Curve and Drawdown Management: How to Survive Trading Winters," March 2026. [Link](https://sentinel.redclawey.com/blog/equity-curve-drawdown-management-guide-en)
+
+27. ClearEdge Trading, "Top Drawdown Recovery Algorithmic Trading Strategies to Protect Capital," 2026. [Link](https://clearedge.trading/post/drawdown-recovery-algorithmic-trading-strategies)
+
+28. TradingHack Japan, "エクイティカーブ・トレーディング（ECT）実践ガイド" (Equity Curve Trading Practice Guide), September 2025. [Link](https://tradinghack.net/systemtrading/equity-curve-trading-mql4-ect-guide/)
+
+29. CSDN, "趋势交易的双引擎：精通风险控制与资金部署的策略与代码实践" (Twin Engines of Trend Trading), April 2025. [Link](https://blog.csdn.net/zhangyunchou2015/article/details/147378059)
+
+30. fibalgo / Rachel Morgan, "Position Sizing Trading Rules That Saved My Account in 2026," February 2026. [Link](https://fibalgo.com/education/position-sizing-trading-rules-saved-account)
 
 ---
 
-*Report generated 2026-06-10. Research covers sources from 2024-2026. All code examples are MQL5-compatible and designed for direct adaptation into the metatrader-multistrategy-ea codebase.*
+*Report generated: 2026-06-10 | Version 3.0 | Research sources: 30 references from 2025-2026 web publications*

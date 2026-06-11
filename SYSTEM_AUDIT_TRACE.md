@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-06-05
+- Last Updated: 2026-06-10
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 96 - Execution Profitability Recovery
+- Current Batch: 98 - Monolith Decomposition & Risk Framework Completion
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -28,8 +28,30 @@
 - Execution authority: `Core/Trading/TradeManager.mqh`
 - Position authority: EA lifecycle loop via `CTradeManager::ManageAllPositions(...)`
 - Python bridge: `Core/Utils/PythonBridge.mqh`, `Python/zmq_server.py`
+- Position lifecycle: `Core/Management/PositionLifecycleManager.mqh`
+- Diagnostics manager: `Core/Management/DiagnosticsManager.mqh`
+- Unprotected position tracker: `Core/Risk/UnprotectedPositionTracker.mqh`
+- Synthetic spike monitor: `Core/Processing/SyntheticSpikeMonitor.mqh`
+- Trade attribution: `Core/Trading/TradeAttributionManager.mqh`
+- Symbol scan scheduler: `Core/Processing/SymbolScanScheduler.mqh`
 
 ## Current Runtime Evidence
+- **Monolith Decomposition & Risk Framework Completion (Batch 98):** Architectural refactoring completing the EA Overhaul Blueprint R6/R7 items and extracting 7 focused manager classes from the main EA monolith:
+  - **R7 — Stateless Position Sizer:** `CPositionSizer::CalculateSize()` refactored to use `CalculateOptimalPositionSizeCore()` with explicit `riskPercent` parameter, eliminating the save/restore hack that temporarily mutated `m_params.riskPercent`. `CalculateBasePositionSizeWithRisk()` added to thread risk percent through to `CalculateRiskBasedSize()`. Zero shared-state mutation in the `CalculateSize()` path.
+  - **R6a — CPositionLifecycleManager:** Extracted from `ManageOpenPositionsIfNeeded()` (~140 lines). `CheckSignalReversalExit()` implements SRE with breathing room, last-stand zone, and profit guard. `ManageBreakevenAndTrailing()` delegates to `CTradeManager::ManageAllPositions()` and applies safe mode partial profit for conservative tier. Configurable via `ConfigureSRE()` and `ConfigureLifecycle()`. `SetManagers()` takes parallel manager + symbol arrays.
+  - **R6b — CDiagnosticsManager:** Extracted from heartbeat block (~215 lines). `EmitHeartbeat()` produces `[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`, `[RISK-BUDGET]` log lines. `EmitConsensusDiagnostics()` produces `[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT-CONSENSUS]`. Counter values passed via `UpdateCounters()`. `GetAggregatedConsensusDiagnostics()`, `GetAggregatedRoleClusterDiagnostics()`, `GetDominantConsensusCause()` moved from main EA into class.
+  - **CUnprotectedPositionTracker:** Extracted from `AttemptUnprotectedPositionRemediation()` + 6 helpers (~220 lines). 3-attempt SL escalation: Escalation-1 (3x ATR), Escalation-2 (broker min distance via `SYMBOL_TRADE_STOPS_LEVEL`/`SYMBOL_TRADE_FREEZE_LEVEL`), Escalation-3 (unconditional close). Tracker arrays and last-attempt timestamp encapsulated.
+  - **CSyntheticSpikeMonitor:** Extracted from spike alarm + trading pause + emergency drawdown functions (~190 lines). 7 global variables → class members. `ProcessTickSafety()`, `EvaluateSpike()`, `ActivatePause()`, `ReleasePauseIfExpired()`, `IsPaused()`, `HandleEmergencyDrawdown()`.
+  - **CTradeAttributionManager:** Extracted from 27+ prediction/attribution/NN functions (~370 lines). Prediction position mapping, AI prediction mapping, AI pending request mapping, pending close profit tracking, NN diagnostics, cluster code utilities. Also integrated into `CExecutionOrchestrator`.
+  - **CSymbolScanScheduler:** Extracted from 8 intrabar scoring/scheduling functions (~220 lines). 7 global variables → class members. `ScoreSymbolForIntrabar()`, `UpdateSymbolScanStateAfterDecision()`, `RebuildSymbolSchedulerState()`, `CountPendingNewBarScans()`.
+  - **Anti-Martingale Dynamic Lot Scaling (Blueprint 4.3):** `CPositionSizer` applies `CPerformanceAnalytics::CalculateMomentumScale()` after tier cap in both `CalculateSize()` and `CalculateOptimalPositionSizeCore()`.
+  - **CICTPositionSizer Risk Denominator Fix (Blueprint 4.5):** `GetRiskDenominator()` uses `MathMin(balance, equity)` instead of balance-only. Applied in `CalculateLotSize()`, `GetDailyDDUsedPct()`, `GetWeeklyDDUsedPct()`.
+  - **Risk Percent Scale Consistency (Blueprint 10.4):** Added `RiskPercentToFraction()`, `FractionToRiskPercent()`, `IsValidRiskPercent()`, `ClampRiskPercentGlobal()` helpers in `Enums.mqh`. All risk constants annotated with scale documentation. No actual scale bugs found — codebase was already consistent.
+  - **Cluster Rebalancing (Blueprint R4):** Conservative tier allocation updated from 30/30/30/10 to 40/25/25/10.
+  - **Statistical Arbitrage Conditional Registration (Blueprint R5):** Registered in shadow mode only when `g_pythonBridge != NULL && g_pythonBridge.IsConnected()`. Assigned to MEAN_REVERSION_CLUSTER with PRIMARY_ALPHA role.
+  - **Heartbeat Interval Configurable (Blueprint R1):** `InpHeartbeatInterval` input (default 60s, min 30s) gates heartbeat, NN health, and AI health log intervals.
+  - **Total Impact:** ~1,180 lines removed from main EA monolith, 30+ global variables eliminated, 50+ inline functions replaced with class methods, 7 new focused manager classes created.
+
 - **Execution Profitability Recovery (Batch 96):** Static audit and implementation pass for the reported live-trading failures:
   - **Trade execution failures:** `MultiStrategyAutonomousEA.mq5` previously retained only one `bestCandidate` per scan cycle and defaulted same-symbol capacity to one. The scan loop now stages all risk-reserved candidates, sorts by ranking, and attempts up to `InpMaxTradeSendsPerCycle`.
   - **Scalping/synthetic blockers:** synthetic classification now covers broker names such as `SFX Vol`, `FX Vol`, `SwitchX`, `PainX`, `GainX`, and `FlipX`; fallback stop sizing now applies the synthetic envelope to those instruments.
@@ -37,6 +59,34 @@
   - **Signal accuracy degradation:** `CNeuralNetworkStrategy::ResolveBarriers()` now writes directional classes directly instead of correctness-derived labels; AI adapter caches use a short same-bar TTL so tick-sensitive features do not stay stale for an entire bar.
   - **Concurrency regression:** the legacy hidden same-symbol portfolio cap was raised from 2 to 5 while the EA-owned input cap remains the primary runtime limit.
   - **Directional bias controls:** Mean Reversion and Volatility Breakout are included in governance/intrabar profiles, and SELL-capable strategies are no longer compile-blocked by stale `volumeRatio` names.
+
+- **System Redesign + Scalping Engine (Batch 97):** Full implementation of EA_SYSTEM_REDESIGN.md Phase 1-5:
+  - **Centralized Indicator Access:** 8 strategy files refactored to use `CIndicatorManager::Instance()` singleton, eliminating per-strategy indicator handle leaks and duplicate handle creation. Strategies affected: SimpleMomentum, MeanReversion, VolatilityBreakout, StrategyCandlestick, StrategyTrend, SupportResistanceDetector, SRTradingStrategies, TrendTrailingStop. All `IndicatorRelease()` calls removed; lifecycle now owned by `CIndicatorManager`.
+  - **Conditional Diagnostic Logging:** `InpLogLevel` input (0-4) gates diagnostic verbosity across `CTradeManager`, `CPositionSizer`, and EA heartbeat paths. `SetLogLevel()` methods added to both classes. 50th-cycle diagnostics gated behind level ≥ 2.
+  - **Rationalized Risk Defaults:** `baseRiskPerTradePercent` reduced from 10% to 1%, `maxRiskPerTradePercent` from 50% to 5%, `maxDailyRiskPercent` from 30% to 5%, `maxPortfolioRiskPercent` from 50% to 15%, `drawdownCriticalPercent` from 12% to 10%, `drawdownWarningPercent` from 6% to 5%. `MAX_RISK_PER_TRADE` constant reduced from 20 to 10.
+  - **Unified PositionSizer Correlation:** `CPositionSizer` now delegates correlation calculations to `CCorrelationEngine` via `SetCorrelationEngine()`, replacing internal Pearson implementation. `CalculateCorrelation()` removed from PositionSizer; all correlation queries flow through the portfolio-level authority.
+  - **Broker Trading Day Reset:** `CUnifiedRiskManager` daily risk counters now reset at configurable `m_tradingDayStartHour` (default 0) via `SetTradingDayStartHour()`. `IsNewTradingDay()` uses `m_lastTradingDayKey` string comparison instead of simple date check, ensuring consistent daily budget across brokers with non-midnight trading day starts.
+  - **TickSafetyMonitor CAccountInfo Cache:** `CAccountInfo` moved from per-call local variable in `IsMarginHealthy()` to `m_accountInfo` member variable in `CTickSafetyMonitor`, eliminating repeated object construction on every tick.
+  - **Kelly Criterion Position Sizing:** `POSITION_SIZE_KELLY` mode (enum value 5) added to `Enums.mqh`. `CPositionSizer::CalculateKellyFraction()` computes half-Kelly fraction with 25% cap from recent trade history win rate and avg win/loss ratio. Applied when `InpPositionSizeMode = POSITION_SIZE_KELLY`.
+  - **Equity Compounding:** `CPositionSizer::CalculateCompoundingMultiplier()` applies sqrt upside / linear downside scaling so profitable periods compound aggressively while drawdown periods preserve capital conservatively.
+  - **Tiered Correlation Response:** `CUnifiedRiskManager` now has `correlationReduceThreshold` (0.4) and `correlationBlockThreshold` (0.7) in `SUnifiedRiskConfig`. `ValidateTradeRequest()` applies graduated response: reduce position size at reduce threshold, block at block threshold.
+  - **Daily P&L Loss Limit:** `dailyLossLimitPercent` added to `SUnifiedRiskConfig`. `CheckDailyLossLimit()` evaluates daily realized + unrealized loss. `m_dailyLossHaltActive` state prevents new entries. `m_dailyLossHaltDate` tracks halt date for next-day reset.
+  - **Regime-Aware Strategy Weighting:** `CStrategyBase` gains `m_regimeDetailedType` and `m_strategyCluster` members. `SetRegimeContext()` and `SetStrategyCluster()` setters. `GetRegimeConfidenceMultiplier()` scales confidence by regime alignment: TREND_CLUSTER 1.5x/0.3x, MEAN_REVERSION_CLUSTER 1.5x/0.2x, STRUCTURE_CLUSTER 1.0x. Applied in `GetSignal()`.
+  - **Volatility Direction Awareness:** `ENUM_VOLATILITY_DIRECTION` added to `Enums.mqh`. `GetVolatilityDirection()` classifies ATR as EXPANDING/CONTRACTING/STABLE. `GetVolatilityDirectionMultiplier()` applies 1.2x/0.8x/1.0x scaling. Applied in `GetSignal()`.
+  - **Multi-Timeframe Confluence:** `GetNextHigherTF()` resolves next timeframe in MT5 hierarchy. `IsAlignedWithHigherTF()` checks EMA50 alignment on next higher timeframe. Counter-trend entries filtered when higher-TF momentum opposes. Applied in `GetSignal()`.
+  - **Cross-Cluster Conflict Resolution:** `CEnterpriseStrategyManager` adds per-cluster conviction tracking (trendClusterBuyConviction/SellConviction, meanRevClusterBuyConviction/SellConviction). Cross-cluster conflict detection subtracts weaker cluster conviction (regime-weighted). `MathMax(0.0, ...)` guards prevent negative conviction.
+  - **Mandatory SL Gate:** `CTradeManager::ExecuteMarketOrder()` now rejects trades with `stopLossPips <= 0.0` before any execution attempt.
+  - **Min R:R Enforcement:** Default minimum R:R of 1:2 applied in `MultiStrategyAutonomousEA.mq5`; MEAN_REVERSION_CLUSTER uses 1:5 minimum. Signals below threshold rejected before risk sizing.
+  - **Portfolio Profit Target:** `InpDailyProfitTargetPercent` and `InpProfitTrailFactor` inputs. `g_dailyProfitTargetReached`, `g_dailyProfitPeakPct`, `g_trailingProfitFloor`, `g_dailyTradingHalt` state variables. `CalculateDailyPnLPercent()` computes current P&L. Once target reached, new entries halt while existing positions remain managed.
+  - **Auto Mode Switching:** `InpEnableAutoModeSwitch` input. `ENUM_AUTO_SWITCH_MODE` enum (CONSERVATIVE/AGGRESSIVE/EMERGENCY). `DetermineTradingMode()` switches based on drawdown and win streak. `CountConsecutiveWins()` tracks streak. `InpConservativeBaseRiskPct`, `InpAggressiveBaseRiskPct`, `InpModeSwitchDrawdownPct`, `InpModeSwitchWinStreak` configurable thresholds.
+  - **Scalping Engine — ScalpSignalCache:** New file `Core/Scalp/ScalpSignalCache.mqh`. `SScalpIndicatorCache` struct with 13 indicator values + tick-level bid/ask/spread + state tracking + 7 handle references. `CScalpSignalCache` class with fixed-size array `m_cache[20]`. `Initialize()`, `UpdateOnNewBar()` (CopyBuffer path), `UpdateTickValues()` (SymbolInfoDouble only), `GetCache()`, `HasNewBar()`, `SetScalpSetup()`, `Cleanup()`. All handles from `CIndicatorManager::Instance()`.
+  - **Scalping Engine — ScalpMomentumStrategy:** New file `Core/Scalp/ScalpMomentumStrategy.mqh`. Inherits `CStrategyBase`. Entry: EMA trend + pullback within 0.5 ATR + ATR expanding + spread < 0.3 ATR + RSI 40-60. Confidence base 0.60 max 0.90. SL=0.75×ATR, TP=1.5×ATR (1:2 R:R). Cluster: SCALP_CLUSTER.
+  - **Scalping Engine — ScalpSpreadStrategy:** New file `Core/Scalp/ScalpSpreadStrategy.mqh`. Inherits `CStrategyBase`. Entry: wide spread + returning + price near EMA + RSI filter. Confidence base 0.50 max 0.90. SL=0.06×ATR, TP=0.3×ATR. Cluster: MEAN_REVERSION_CLUSTER.
+  - **Scalping Engine — ScalpVolatilityBreakout:** New file `Core/Scalp/ScalpVolatilityBreakout.mqh`. Inherits `CStrategyBase`. Entry: ATR at 20-bar low + BB breakout + strong bar + RSI confirmation. Confidence base 0.55 max 0.90. SL=BB middle, TP=2×ATR. Cluster: SCALP_CLUSTER.
+  - **Scalping Engine — FastScalpEngine Async:** `CFastScalpEngine` modified with `SScalpPendingAsync` struct, `m_asyncMode`/`m_maxLatencyMs`/`m_pendingAsync[]` members. `SetAsyncMode()`/`SetMaxLatencyMs()`/`OnAsyncOrderSent()`/`OnDealConfirmed()`/`CheckPendingAsyncOrders()` methods. `ExecuteScalpTrade()` modified for async path via `OrderSendAsync()`. `m_signalCache` member and `SetSignalCache()` added. `EvaluateScalpSignal()` reads from cache when available.
+  - **Dual-Path OnTick Processing:** `MultiStrategyAutonomousEA.mq5` modified with `InpScalpAsyncMode`/`InpScalpMaxLatencyMs` inputs, `g_scalpCache` global, `#include ScalpSignalCache.mqh`, `g_lastScalpFastPathSecond` timing guard. `ProcessScalpFastPath()` function added for OnTick dual-path. `OnTradeTransaction()` routes scalp async confirmations. OnInit wiring for all new components. OnDeinit cleanup for `g_scalpCache`.
+  - **Files Modified:** `MultiStrategyAutonomousEA.mq5`, `Core/Risk/UnifiedRiskManager.mqh`, `Core/Risk/PositionSizer.mqh`, `Core/Trading/TradeManager.mqh`, `Core/Strategy/StrategyBase.mqh`, `Core/Management/EnterpriseStrategyManager.mqh`, `Core/Risk/PortfolioRiskManager.mqh`, `Core/Utils/Enums.mqh`, `Core/Processing/TickSafetyMonitor.mqh`, `IndicatorManager.mqh`, `Strategies/SimpleMomentumStrategy.mqh`, `Strategies/MeanReversionStrategy.mqh`, `Strategies/VolatilityBreakoutStrategy.mqh`, `Strategies/StrategyCandlestick.mqh`, `Strategies/StrategyTrend.mqh`, `Strategies/SupportResistanceFiles/SupportResistanceDetector.mqh`, `Strategies/SupportResistanceFiles/SRTradingStrategies.mqh`, `Strategies/TrendFiles/TrendTrailingStop.mqh`, `Core/Scalp/FastScalpEngine.mqh`.
+  - **Files Created:** `Core/Scalp/ScalpSignalCache.mqh`, `Core/Scalp/ScalpMomentumStrategy.mqh`, `Core/Scalp/ScalpSpreadStrategy.mqh`, `Core/Scalp/ScalpVolatilityBreakout.mqh`.
 
 - **AI Modules Comprehensive Audit Implementation (Batch 92):** Complete implementation of all 25 AI audit findings:
   - **Memory & Numerical Stability:**
@@ -234,6 +284,7 @@
 ### 2. Tick/Timer cycle
 - Run `ProcessTickSafetyLoop()` on every tick.
 - Run `ProcessTradingLogic()` on timer cadence as the heavy evaluation owner.
+  - Run `ProcessScalpFastPath()` on every tick for tick-level cached-indicator signal evaluation (Batch 97).
 - Maintain NN learning cycle with explicit mutation-gate evaluation so pseudo labels can update health metrics without automatically mutating weights.
 - Enforce terminal connectivity gate before signal evaluation.
 - Enforce deterministic separation between the tick-owned safety loop and the timer-owned heavy scan loop.
@@ -411,6 +462,11 @@
 - Trade: `[SHADOW-TRADE]`, `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
 - **Batch 87 Execution Quality:** `[EXECUTION-QUALITY]`, `[EXECUTION-REPORT]`, `[SPREAD-COST]`, `[SMART-ROUTING]`
 - **Batch 90 Visualization:** Drawing statistics dashboard on VisualDashboard
+- Scalp: `[SCALP-SIGNAL]`, `[SCALP-EXEC]`, `[SCALP-ASYNC]`, `[SCALP-CACHE]`
+- Auto mode: `[AUTO-MODE]`
+- Profit target: `[PROFIT-TARGET]`
+- Daily loss halt: `[DAILY-LOSS-HALT]`
+- R:R rejection: `[RR-REJECTED]`
 
 ## 2026-03-31 AXIOM Refactor Trace
 - Removed dead AI/control-flow weight:

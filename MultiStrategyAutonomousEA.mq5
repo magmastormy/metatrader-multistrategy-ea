@@ -16,11 +16,13 @@ input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
 input bool InpUseEnhancedRisk = true;      // Enable adaptive sizing inside unified risk manager
 input double InpMaxRiskPerTrade = 5.0;    // Max risk per trade; authority gate can scale this down
-input double InpMaxDailyRisk = 5.0;       // Max daily risk
-input double InpMaxPortfolioRisk = 15.0;  // Max total portfolio risk
-input double InpMaxDrawdown = 10.0;       // Max drawdown
+input double InpMaxDailyRisk = 40.0;      // Max daily risk (raised for small accounts: 0.10 min lot on $179 = ~18% per trade)
+input double InpMaxPortfolioRisk = 60.0;  // Max total portfolio risk (raised for small accounts: 3 symbols x ~18% = 54%)
+input double InpMaxDrawdown = 25.0;       // Max drawdown (raised for small accounts)
 input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE; // Risk Tier
-input string InpSymbolsToTrade = "SFX Vol 20,FX Vol 40,SwitchX 1200,PainX 400,PainX 600";               // Comprehensive test symbols
+input bool   InpAllowMinLotRoundUp = true;  // Allow rounding up to broker min lot when calculated lot is below minimum
+input double InpMinLotRiskMultiplier = 15.0; // Max risk multiplier for min-lot round-up (e.g., 15.0 = risk at min lot <= 15x intended)
+input string InpSymbolsToTrade = "SFX Vol 20,FX Vol 20,FX Vol 40,SwitchX 1200,PainX 400,PainX 600";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 10;     // Cooldown in seconds between trade cycles
 input int    InpMaxPositionsTotal = 8;            // Global position limit under authority gate
 input int    InpMaxTradeSendsPerCycle = 3;        // Max ranked candidates the EA may send per scan cycle
@@ -94,7 +96,7 @@ input double InpAIDrawdownSizingLimit = 0.20;  // Drawdown fraction used for AI 
 
 //--- Live authority gate
 input group "Live Authority Gate"
-input bool   InpEnableLiveAuthorityGate = true;       // Route candidates through AI/strategy live-authority logic
+input bool   InpEnableLiveAuthorityGate = false;      // Route candidates through AI/strategy live-authority logic (OFF: all approved trades go live when shadow_mode=false)
 input bool   InpAllowAIWarmStartLive = true;          // Allow high-quality AI/ONNX signals live while evidence is building
 input bool   InpAllowHybridAIStandalone = true;       // Allow high-confidence AI-only packets in HYBRID mode
 input double InpAIStandaloneMinConfidence = 0.65;     // Min confidence for AI-only HYBRID admission
@@ -130,7 +132,9 @@ input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microst
 input double InpPipelineMaxSpreadToAtrRatio = 0.50;   // Max spread/ATR ratio (relaxed from 0.25)
 input int InpPipelineSpreadShockCooldownSec = 90;     // Spread shock cooldown window
 input double InpPipelineLateEntryZScoreLimit = 4.00;  // Late-entry z-score limit (relaxed from 2.50)
+input double InpAtrCrisisRatioThreshold = 2.5;        // ATR14/ATR50 crisis gate threshold (2.5 accommodates synthetics)
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
+input int  InpHeartbeatInterval = 60;                  // Heartbeat logging interval in seconds (minimum 30)
 input bool InpEnableMomentumScalping = true;          // Allow momentum continuation scalp signals between crossover events
 input int  InpMomentumScalpCooldownSeconds = 20;      // Minimum seconds between momentum scalp signals
 input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5; // Lower timeframe used by Momentum when chart TF is higher
@@ -175,7 +179,7 @@ input double InpValidatorIntrabarMinConfidence  = 0.60; // Post-consensus confid
 input group "Execution Safety"
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC; // Preferred order filling policy
 input int InpTradeSlippagePoints = 50;                                  // Max slippage (relaxed from 20)
-input double InpMaxEntrySpreadPoints = 120.0;                           // Hard pre-send spread limit (increased from 50 to accommodate synthetic indices)
+input double InpMaxEntrySpreadPoints = 1500.0;                        // Hard pre-send spread limit (raised for synthetic CFDs: FX Vol 40 ~1046 pts, SFX Vol 20 ~590 pts)
 input double InpMaxEntryDriftPoints = 80.0;                              // Hard drift from signal price before send; volatility-aware in trade manager; <=0 disables
 input int InpProtectiveModifyCooldownSec = 5;                           // Minimum seconds between routine stop modifications
 input bool InpEnableSignalReversalExit = true;                 // Close position immediately if primary strategy signals reversal
@@ -260,11 +264,15 @@ input int    InpLogLevel = 1;                        // Log verbosity: 0=Silent,
 #include "Core\Risk\UnifiedRiskManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
 #include "Core\Risk\RiskTierManager.mqh"
+#include "Core\Risk\UnprotectedPositionTracker.mqh"
 #include "Core\Monitoring\PerformanceAnalytics.mqh"
 #include "Core\AI\AIPerformanceFeedback.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Trading\PositionStateManager.mqh"
+#include "Core\Trading\TradeAttributionManager.mqh"
 #include "Core\Processing\TickSafetyMonitor.mqh"
+#include "Core\Processing\SyntheticSpikeMonitor.mqh"
+#include "Core\Processing\SymbolScanScheduler.mqh"
 #include "Core\Engines\MarketAnalysis.mqh"
 #include "Core\Strategy\StrategyBase.mqh"
 #include "Strategies\SimpleMomentumStrategy.mqh"
@@ -285,6 +293,8 @@ input int    InpLogLevel = 1;                        // Log verbosity: 0=Silent,
 #include "Core\Engines\LiquidityEngine.mqh"
 #include "Core\Engines\VolatilityEngine.mqh"
 #include "Core\Cache\ConsensusCache.mqh"
+#include "Core\Management\PositionLifecycleManager.mqh"    // Blueprint R6a
+#include "Core\Management\DiagnosticsManager.mqh"          // Blueprint R6b
 
 // Enhanced Strategies
 // ELLIOTT WAVE REMOVED - Include deleted
@@ -319,9 +329,11 @@ CSymbolInfo globalSymbol;
 CAccountInfo g_accountInfo;
 CEnhancedErrorHandler errorHandler;
 CUnifiedRiskManager unifiedRiskManager;
+CUnprotectedPositionTracker g_unprotectedTracker;
 CRiskTierManager g_riskTierManager;
 CPerformanceAnalytics performanceAnalytics;
 CAIPerformanceFeedback aiFeedback;
+CSymbolScanScheduler g_scanScheduler;
 
 CNextGenStrategyBrain aiNextGenBrain;
 CNeuralNetworkStrategy* neuralNetStrategy = NULL;
@@ -333,18 +345,14 @@ bool g_aiEngineReady = false;
 bool g_aiFeedbackReady = false;
 bool g_aiTopologyLogged = false;
 CPositionStateManager g_positionStateManager;  // Unified position state manager
-uint g_aiPendingRequestIds[];
-string g_aiPendingSymbols[];
-datetime g_aiPendingPredictionTimes[];
-ENUM_TRADE_SIGNAL g_aiPendingPredictionSignals[];
-ulong g_pendingClosePositionIds[];
-double g_pendingCloseNetProfit[];
+CTradeAttributionManager g_attributionManager;  // Trade attribution & NN prediction mapping
 CPositionSizer positionSizer;
 CMarketAnalysis marketAnalysis;
 CInstrumentRegistry instrumentRegistry;
 CTickSafetyMonitor g_tickSafetyMonitor;
+CSyntheticSpikeMonitor g_spikeMonitor;
 bool g_onnxSessionDisabled = false;
-CPythonBridge g_pythonBridge; // Python bridge instance
+CPythonBridge* g_pythonBridge; // Python bridge instance
 
 CTradeManager tradeManager;
 CEnterpriseStrategyManager* g_enterpriseManagers[];      // Per-symbol managers
@@ -356,6 +364,8 @@ CFastScalpEngine g_scalpEngine;                            // Fast Scalp Engine 
 CScalpSignalCache g_scalpCache;                            // Scalp signal cache for fast-path evaluation
 CFullMarginMode  g_fullMarginMode;                          // Full-margin aggressive mode (Phase 6)
 CSafeMode        g_safeMode;                                // Conservative safe mode (Phase 6)
+CPositionLifecycleManager g_lifecycleManager;               // Position lifecycle (Blueprint R6a)
+CDiagnosticsManager g_diagnosticsManager;                   // Heartbeat/diagnostics (Blueprint R6b)
 CChartDrawingManager* g_drawingManagers[]; // Per-symbol drawing managers
 string g_drawingManagerSymbols[];          // Symbol mapping for drawing managers
 
@@ -389,33 +399,7 @@ double g_correlationMatrix[10][10];
 datetime g_lastTradeTime = 0;
 int g_totalActivePositions = 0;
 string g_activePairs[];
-datetime g_lastSymbolBarTimes[];
-datetime g_lastIntrabarScanTime[];
-bool g_pendingNewBarScans[];
-struct SSymbolScanState
-{
-    int consecutiveRawNone;
-    int consecutiveZeroVote;
-    int consecutiveReadinessFault;
-    int nearMissCount;
-    datetime lastGeneratedTime;
-    datetime lastNearMissTime;
-    datetime nextEligibleIntrabarTime;
-    int intrabarBackoffTier;
-
-    void Reset()
-    {
-        consecutiveRawNone = 0;
-        consecutiveZeroVote = 0;
-        consecutiveReadinessFault = 0;
-        nearMissCount = 0;
-        lastGeneratedTime = 0;
-        lastNearMissTime = 0;
-        nextEligibleIntrabarTime = 0;
-        intrabarBackoffTier = 0;
-    }
-};
-SSymbolScanState g_symbolScanStates[];
+// g_lastSymbolBarTimes, g_lastIntrabarScanTime, g_pendingNewBarScans, SSymbolScanState, g_symbolScanStates moved to CSymbolScanScheduler
 int g_minTimeBetweenTrades = 120;
 int g_maxPositionsAllowed = 10;
 string g_symbolsToTrade = "";
@@ -423,14 +407,6 @@ bool g_beastModeProtection = true;
 bool systemInitialized = false;
 bool tradingEnabled = false;
 int g_logLevel = 1;  // Set from InpLogLevel in OnInit()
-
-// NN attribution diagnostics counters
-int g_nnDiagEntryMapCount = 0;
-int g_nnDiagCloseByIdCount = 0;
-int g_nnDiagCloseFallbackCount = 0;
-int g_nnDiagCloseMissCount = 0;
-int g_nnDiagPartialCloseCount = 0;
-datetime g_nnDiagLastSummaryTime = 0;
 
 // Runtime heartbeat + rejection telemetry
 ulong g_hbScansAttempted = 0;
@@ -453,35 +429,14 @@ ulong g_hbSignalsRiskApproved = 0;
 ulong g_hbSignalsSent = 0;
 ulong g_hbSyntheticSpikeEvents = 0;
 
-// Previous heartbeat snapshots for windowed conversion-rate logging
-ulong g_prevHbScansAttempted = 0;
-ulong g_prevHbNoSignalCount = 0;
-ulong g_prevHbSignalsGenerated = 0;
-ulong g_prevHbSignalsAfterPipeline = 0;
-ulong g_prevHbSignalsAfterQuorum = 0;
-ulong g_prevHbSignalsValidated = 0;
-ulong g_prevHbSignalsRiskApproved = 0;
-ulong g_prevHbSignalsSent = 0;
-
 datetime g_lastHeartbeatLogTime = 0;
 datetime g_lastNNHealthLogTime = 0;
-datetime g_lastSignalEvalSecond = 0;
-datetime g_lastScalpFastPathSecond = 0;
-int g_symbolEvalStartIndex = 0;
-datetime g_lastExternalCapacityLogTime = 0;
-datetime g_lastUnprotectedRemediationAttempt = 0;
-datetime g_lastNoSignalAlertTime = 0;
-datetime g_syntheticTickRateWindowStart = 0;
-datetime g_syntheticSpikeConfirmStart = 0; // Start time for spike confirmation window
-int g_syntheticSpikeConfirmCount = 0;       // Number of consecutive windows above threshold
-datetime g_tradingPauseUntil = 0;
+// g_lastSignalEvalSecond, g_lastScalpFastPathSecond, g_symbolEvalStartIndex, g_lastExternalCapacityLogTime moved to CSymbolScanScheduler
+// g_lastNoSignalAlertTime moved to CDiagnosticsManager
+// g_syntheticTickRateWindowStart, g_syntheticSpikeConfirmStart, g_syntheticSpikeConfirmCount,
+// g_tradingPauseUntil, g_syntheticTickRateWindowCount, g_syntheticTickRateBaseline,
+// g_tradingPaused — moved to CSyntheticSpikeMonitor
 ulong g_scanCycleSequence = 0;
-ulong g_unprotectedPositionTickets[];
-ulong g_predictionPositionIds[];
-int g_unprotectedPositionAttempts[];
-int g_syntheticTickRateWindowCount = 0;
-double g_syntheticTickRateBaseline = 0.0;
-bool g_tradingPaused = false;
 
 // Diagnostics logger (Blueprint 3.6: off-journal logging)
 CDiagnosticsLogger g_diagLogger;
@@ -827,223 +782,9 @@ bool TryResolveAtrValue(const string symbol, const ENUM_TIMEFRAMES timeframe, co
     return false;
 }
 
-void ResetSymbolScanStates(const int size)
-{
-    ArrayResize(g_symbolScanStates, size);
-    for(int i = 0; i < size; i++)
-        g_symbolScanStates[i].Reset();
-
-    ArrayResize(g_pendingNewBarScans, size);
-    for(int i = 0; i < size; i++)
-        g_pendingNewBarScans[i] = false;
-}
-
-bool IsSymbolSchedulerStateAligned()
-{
-    int size = ArraySize(g_activePairs);
-    return (ArraySize(g_lastSymbolBarTimes) == size &&
-            ArraySize(g_lastIntrabarScanTime) == size &&
-            ArraySize(g_pendingNewBarScans) == size &&
-            ArraySize(g_symbolScanStates) == size);
-}
-
-void RebuildSymbolSchedulerState(const string reason)
-{
-    int size = ArraySize(g_activePairs);
-    ArrayResize(g_lastSymbolBarTimes, size);
-    ArrayInitialize(g_lastSymbolBarTimes, 0);
-    ArrayResize(g_lastIntrabarScanTime, size);
-    ArrayInitialize(g_lastIntrabarScanTime, 0);
-    ResetSymbolScanStates(size);
-    
-    // Prime pending scans inline
-    if(ArraySize(g_pendingNewBarScans) != size)
-        ArrayResize(g_pendingNewBarScans, size);
-    
-    for(int i = 0; i < size; i++)
-    {
-        g_pendingNewBarScans[i] = true;
-        if(i < ArraySize(g_symbolScanStates))
-        {
-            g_symbolScanStates[i].intrabarBackoffTier = 0;
-            g_symbolScanStates[i].nextEligibleIntrabarTime = 0;
-        }
-    }
-
-    PrintFormat("[SCHEDULER-STATE] reason=%s | symbols=%d | last_bar=%d | intrabar=%d | pending=%d | scan_states=%d",
-                reason,
-                size,
-                ArraySize(g_lastSymbolBarTimes),
-                ArraySize(g_lastIntrabarScanTime),
-                ArraySize(g_pendingNewBarScans),
-                ArraySize(g_symbolScanStates));
-}
-
-int CountPendingNewBarScans()
-{
-    int total = 0;
-    for(int i = 0; i < ArraySize(g_pendingNewBarScans); i++)
-    {
-        if(g_pendingNewBarScans[i])
-            total++;
-    }
-    return total;
-}
-
-bool IsReadinessRelatedVeto(const string vetoCode)
-{
-    return (StringFind(vetoCode, "readiness") >= 0 ||
-            vetoCode == "context_gate" ||
-            vetoCode == "cost_gate");
-}
-
-int GetIntrabarBackoffSeconds(const int tier)
-{
-    int baseInterval = MathMax(1, InpIntrabarScanSeconds);
-    int maxBackoff = MathMax(baseInterval, InpIntrabarBackoffMaxSeconds);
-    if(tier >= 2)
-        return MathMin(maxBackoff, MathMax(60, baseInterval));
-    if(tier == 1)
-        return MathMin(maxBackoff, MathMax(30, baseInterval));
-    return baseInterval;
-}
-
-double ScoreSymbolForIntrabar(const int symIdx, const datetime nowTime, const bool allowScheduledOverride = false)
-{
-    if(symIdx < 0 || symIdx >= ArraySize(g_symbolScanStates))
-        return -1000000.0;
-
-    SSymbolScanState state = g_symbolScanStates[symIdx];
-    if(state.intrabarBackoffTier >= 3 && !allowScheduledOverride)
-        return -1000000.0;
-    if(state.nextEligibleIntrabarTime > 0 && nowTime < state.nextEligibleIntrabarTime && !allowScheduledOverride)
-        return -1000000.0;
-
-    double score = 0.0;
-    int recentNearMissAge = (state.lastNearMissTime > 0) ? (int)(nowTime - state.lastNearMissTime) : 999999;
-    int recentGeneratedAge = (state.lastGeneratedTime > 0) ? (int)(nowTime - state.lastGeneratedTime) : 999999;
-
-    if(recentNearMissAge <= 90)
-        score += 4.0;
-    if(recentGeneratedAge <= 120)
-        score += 2.5;
-    if(state.consecutiveReadinessFault == 0)
-        score += 1.0;
-
-    score += MathMin(3.0, (double)state.nearMissCount * 0.25);
-    score -= MathMin(3.0, (double)state.consecutiveRawNone * 0.20);
-    score -= MathMin(3.0, (double)state.consecutiveZeroVote * 0.25);
-    score -= (double)state.intrabarBackoffTier * 0.50;
-    if(allowScheduledOverride)
-    {
-        if(state.intrabarBackoffTier >= 3)
-            score -= 1.25;
-        if(state.nextEligibleIntrabarTime > 0 && nowTime < state.nextEligibleIntrabarTime)
-            score -= 0.75;
-    }
-
-    return score;
-}
-
-void UpdateSymbolScanStateAfterDecision(const string symbol,
-                                        const ulong cycleId,
-                                        const int symIdx,
-                                        const bool intrabarMode,
-                                        const int cycleSignalsGenerated,
-                                        const int cycleSignalsAfterPipeline,
-                                        const SConsensusDecisionContext &context,
-                                        const datetime nowTime)
-{
-    if(symIdx < 0 || symIdx >= ArraySize(g_symbolScanStates))
-        return;
-
-    SSymbolScanState state = g_symbolScanStates[symIdx];
-    if(context.signal != TRADE_SIGNAL_NONE || cycleSignalsGenerated > 0)
-        state.lastGeneratedTime = nowTime;
-
-    if(!intrabarMode)
-    {
-        state.nextEligibleIntrabarTime = nowTime;
-        state.intrabarBackoffTier = 0;
-        if(context.signal != TRADE_SIGNAL_NONE)
-        {
-            state.consecutiveRawNone = 0;
-            state.consecutiveZeroVote = 0;
-            state.consecutiveReadinessFault = 0;
-            state.nearMissCount = 0;
-        }
-        g_symbolScanStates[symIdx] = state;
-        return;
-    }
-
-    if(context.signal != TRADE_SIGNAL_NONE)
-    {
-        state.consecutiveRawNone = 0;
-        state.consecutiveZeroVote = 0;
-        state.consecutiveReadinessFault = 0;
-        state.nearMissCount = 0;
-        state.intrabarBackoffTier = 0;
-        state.nextEligibleIntrabarTime = nowTime + GetIntrabarBackoffSeconds(0);
-        g_symbolScanStates[symIdx] = state;
-        return;
-    }
-
-    if(cycleSignalsGenerated <= 0)
-        state.consecutiveRawNone++;
-    else
-        state.consecutiveRawNone = 0;
-
-    if(context.vetoCode == "zero_voter")
-        state.consecutiveZeroVote++;
-    else if(cycleSignalsAfterPipeline > 0)
-        state.consecutiveZeroVote = 0;
-
-    if(IsReadinessRelatedVeto(context.vetoCode))
-        state.consecutiveReadinessFault++;
-    else if(context.vetoCode != "")
-        state.consecutiveReadinessFault = 0;
-
-    bool nearMiss = (context.quorumGap > 0.0 && context.quorumGap <= 0.20) ||
-                    context.vetoCode == "single_voter_confidence" ||
-                    context.vetoCode == "sparse_support";
-    if(nearMiss)
-    {
-        state.nearMissCount++;
-        state.lastNearMissTime = nowTime;
-    }
-    else if(context.vetoCode != "")
-    {
-        state.nearMissCount = 0;
-    }
-
-    int nextTier = 0;
-    if(state.consecutiveRawNone >= 15 || state.consecutiveZeroVote >= 15)
-        nextTier = 3;
-    else if(state.consecutiveRawNone >= 8 || state.consecutiveZeroVote >= 8)
-        nextTier = 2;
-    else if(state.consecutiveRawNone >= 3 || state.consecutiveZeroVote >= 3)
-        nextTier = 1;
-
-    if(nextTier != state.intrabarBackoffTier)
-    {
-        PrintFormat("[INTRABAR-BACKOFF] cycle=%I64u | %s | tier=%d | raw_none=%d | zero_vote=%d | readiness=%d | veto=%s",
-                    cycleId,
-                    symbol,
-                    nextTier,
-                    state.consecutiveRawNone,
-                    state.consecutiveZeroVote,
-                    state.consecutiveReadinessFault,
-                    context.vetoCode);
-        state.intrabarBackoffTier = nextTier;
-    }
-
-    if(state.intrabarBackoffTier >= 3)
-        state.nextEligibleIntrabarTime = nowTime + MathMax(300, GetIntrabarBackoffSeconds(2));
-    else
-        state.nextEligibleIntrabarTime = nowTime + GetIntrabarBackoffSeconds(state.intrabarBackoffTier);
-
-    g_symbolScanStates[symIdx] = state;
-}
+// ResetSymbolScanStates, IsSymbolSchedulerStateAligned, RebuildSymbolSchedulerState,
+// CountPendingNewBarScans, IsReadinessRelatedVeto, GetIntrabarBackoffSeconds,
+// ScoreSymbolForIntrabar, UpdateSymbolScanStateAfterDecision moved to CSymbolScanScheduler
 
 //+------------------------------------------------------------------+
 //| Helper: Initialize AI systems                                    |
@@ -1369,201 +1110,6 @@ double EstimateMinimumLotMarginRequirement(const string symbol)
 }
 
 
-int FindUnprotectedTrackerIndex(const ulong ticket)
-{
-    for(int i = 0; i < ArraySize(g_unprotectedPositionTickets); i++)
-    {
-        if(g_unprotectedPositionTickets[i] == ticket)
-            return i;
-    }
-    return -1;
-}
-
-int GetUnprotectedTrackerAttempts(const ulong ticket)
-{
-    int idx = FindUnprotectedTrackerIndex(ticket);
-    if(idx < 0 || idx >= ArraySize(g_unprotectedPositionAttempts))
-        return 0;
-    return g_unprotectedPositionAttempts[idx];
-}
-
-void SetUnprotectedTrackerAttempts(const ulong ticket, const int attempts)
-{
-    int idx = FindUnprotectedTrackerIndex(ticket);
-    if(idx < 0)
-    {
-        int size = ArraySize(g_unprotectedPositionTickets);
-        const int MAX_UNPROTECTED_TRACKERS = 1000;
-        if(size >= MAX_UNPROTECTED_TRACKERS)
-        {
-            // Remove oldest entry if at limit
-            int last = size - 1;
-            if(last >= 0)
-            {
-                if(0 != last)
-                {
-                    g_unprotectedPositionTickets[0] = g_unprotectedPositionTickets[last];
-                    g_unprotectedPositionAttempts[0] = g_unprotectedPositionAttempts[last];
-                }
-                ArrayResize(g_unprotectedPositionTickets, last);
-                ArrayResize(g_unprotectedPositionAttempts, last);
-                size = last;
-            }
-        }
-        
-        ArrayResize(g_unprotectedPositionTickets, size + 1);
-        ArrayResize(g_unprotectedPositionAttempts, size + 1);
-        g_unprotectedPositionTickets[size] = ticket;
-        g_unprotectedPositionAttempts[size] = MathMax(0, attempts);
-        return;
-    }
-
-    g_unprotectedPositionAttempts[idx] = MathMax(0, attempts);
-}
-
-void ClearUnprotectedTrackerTicket(const ulong ticket)
-{
-    int idx = FindUnprotectedTrackerIndex(ticket);
-    if(idx < 0)
-        return;
-
-    int last = ArraySize(g_unprotectedPositionTickets) - 1;
-    if(last < 0)
-        return;
-
-    g_unprotectedPositionTickets[idx] = g_unprotectedPositionTickets[last];
-    g_unprotectedPositionAttempts[idx] = g_unprotectedPositionAttempts[last];
-    ArrayResize(g_unprotectedPositionTickets, last);
-    ArrayResize(g_unprotectedPositionAttempts, last);
-}
-
-void CleanupUnprotectedTracker()
-{
-    for(int i = ArraySize(g_unprotectedPositionTickets) - 1; i >= 0; i--)
-    {
-        ulong ticket = g_unprotectedPositionTickets[i];
-        if(ticket == 0 || !PositionSelectByTicket(ticket) || PositionGetDouble(POSITION_SL) > 0.0)
-            ClearUnprotectedTrackerTicket(ticket);
-    }
-}
-
-double BuildUnprotectedFallbackStopPoints(const string symbol, const double referencePrice)
-{
-    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-    if(point <= 0.0)
-        point = 0.00001;
-
-    int stopLevelPts = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
-    double fallbackByStops = MathMax(50.0, (double)stopLevelPts * 2.0);
-    double fallbackByPrice = (referencePrice > 0.0) ? ((referencePrice * 0.01) / point) : fallbackByStops;
-    return MathMax(fallbackByStops, fallbackByPrice);
-}
-
-void AttemptUnprotectedPositionRemediation()
-{
-    int unprotectedDetected = unifiedRiskManager.GetUnprotectedPositionCount();
-    if(unprotectedDetected <= 0)
-    {
-        CleanupUnprotectedTracker();
-        return;
-    }
-
-    datetime nowTime = TimeCurrent();
-    int remediationInterval = MathMax(5, InpUnprotectedRemediationIntervalSec);
-    if(g_lastUnprotectedRemediationAttempt != 0 &&
-       (nowTime - g_lastUnprotectedRemediationAttempt) < remediationInterval)
-    {
-        return;
-    }
-    g_lastUnprotectedRemediationAttempt = nowTime;
-    CleanupUnprotectedTracker();
-
-    int restoredCount = 0;
-    int restoreFailedCount = 0;
-    int forcedClosedCount = 0;
-    int externalUnprotectedCount = 0;
-
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket == 0 || !PositionSelectByTicket(ticket))
-            continue;
-
-        if(PositionGetDouble(POSITION_SL) > 0.0)
-        {
-            ClearUnprotectedTrackerTicket(ticket);
-            continue;
-        }
-
-        long positionMagic = PositionGetInteger(POSITION_MAGIC);
-        if(!IsEAOwnedMagic(positionMagic))
-        {
-            externalUnprotectedCount++;
-            continue;
-        }
-
-        string symbol = PositionGetString(POSITION_SYMBOL);
-        ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-        double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
-        if(currentPrice <= 0.0)
-        {
-            currentPrice = (posType == POSITION_TYPE_BUY) ?
-                           SymbolInfoDouble(symbol, SYMBOL_BID) :
-                           SymbolInfoDouble(symbol, SYMBOL_ASK);
-        }
-
-        if(currentPrice <= 0.0)
-        {
-            restoreFailedCount++;
-            SetUnprotectedTrackerAttempts(ticket, GetUnprotectedTrackerAttempts(ticket) + 1);
-            continue;
-        }
-
-        double fallbackStopPoints = BuildUnprotectedFallbackStopPoints(symbol, currentPrice);
-        double fallbackTakeProfitPoints = fallbackStopPoints * 2.0;
-        ENUM_ORDER_TYPE syntheticOrderType = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-        double newSL = tradeManager.CalculateStopLoss(symbol, syntheticOrderType, currentPrice, fallbackStopPoints);
-        double newTP = tradeManager.CalculateTakeProfit(symbol, syntheticOrderType, currentPrice, fallbackTakeProfitPoints);
-
-        if(newSL > 0.0 && tradeManager.ModifyPosition(ticket, newSL, newTP))
-        {
-            restoredCount++;
-            ClearUnprotectedTrackerTicket(ticket);
-            continue;
-        }
-
-        int attempts = GetUnprotectedTrackerAttempts(ticket) + 1;
-        SetUnprotectedTrackerAttempts(ticket, attempts);
-        restoreFailedCount++;
-
-        int maxRestoreAttempts = MathMax(1, InpUnprotectedMaxRestoreAttempts);
-        if(InpCloseUnprotectedOnRemediationFailure && attempts >= maxRestoreAttempts)
-        {
-            if(tradeManager.ClosePosition(ticket, "Unprotected SL remediation failure"))
-            {
-                forcedClosedCount++;
-                ClearUnprotectedTrackerTicket(ticket);
-            }
-            else
-            {
-                PrintFormat("[RISK-UNPROTECTED] Forced close failed | ticket=%I64u | attempts=%d",
-                            ticket, attempts);
-            }
-        }
-    }
-
-    int remainingUnprotected = unifiedRiskManager.GetUnprotectedPositionCount();
-    PrintFormat("[RISK-UNPROTECTED] detected=%d | restored=%d | failed=%d | forced_closed=%d | external=%d | remaining=%d",
-                unprotectedDetected, restoredCount, restoreFailedCount,
-                forcedClosedCount, externalUnprotectedCount, remainingUnprotected);
-
-    if(externalUnprotectedCount > 0)
-    {
-        PrintFormat("[RISK-UNPROTECTED] External unprotected positions are blocking entries (count=%d)",
-                    externalUnprotectedCount);
-    }
-}
-
 void RefreshAccountRuntimeMetrics()
 {
     currentTime = TimeCurrent();
@@ -1582,356 +1128,13 @@ void RefreshAccountRuntimeMetrics()
 
 void ManageOpenPositionsIfNeeded()
 {
-    if(PositionsTotal() <= 0)
-        return;
-
-    // --- Signal Reversal Exit (High Speed Scalp Logic) ---
-    if(InpEnableSignalReversalExit)
-    {
-        for(int i = PositionsTotal() - 1; i >= 0; i--)
-        {
-            ulong ticket = PositionGetTicket(i);
-            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
-
-            string sym = PositionGetString(POSITION_SYMBOL);
-            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            
-            CEnterpriseStrategyManager* manager = GetEnterpriseManagerForSymbol(sym);
-            if(manager == NULL) continue;
-
-            double confidence = 0;
-            int confluence = 0;
-            // Use INTRABAR mode for fast reversal detection
-            ENUM_TRADE_SIGNAL currentSignal;
-            if(!g_consensusCache.TryGet(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence))
-            {
-                currentSignal = manager.GetConsensusSignalForSymbolWithConfluenceMode(sym, confidence, confluence, EVAL_MODE_INTRABAR);
-                g_consensusCache.Store(sym, EVAL_MODE_INTRABAR, currentSignal, confidence, confluence);
-            }
-            
-            bool reversalDetected = false;
-            bool isBuy = (type == POSITION_TYPE_BUY);
-            bool opposingSignal = (isBuy && currentSignal == TRADE_SIGNAL_SELL) || (!isBuy && currentSignal == TRADE_SIGNAL_BUY);
-            
-            if(opposingSignal)
-            {
-                double currentProfit = PositionGetDouble(POSITION_PROFIT);
-                bool inLoss = (currentProfit < 0);
-                
-                // --- BREATHING ROOM CHECKS ---
-                datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
-                int durationSec = (int)(TimeCurrent() - openTime);
-                
-                double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-                double slPrice = PositionGetDouble(POSITION_SL);
-                double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
-                double slDistance = MathAbs(openPrice - slPrice);
-                double posCurrentDrawdown = MathAbs(openPrice - currentPrice);
-                
-                // Calculate loss as fraction of SL distance (R-value)
-                double lossR = (slDistance > 0) ? (posCurrentDrawdown / slDistance) : 0.0;
-                
-                bool hasBreathingRoom = (durationSec < InpSignalReversalMinTimeSec);
-                bool isMinorNoise = (inLoss && lossR < InpSignalReversalMinLossR);
-                bool isLastStandZone = (inLoss && lossR > InpSignalReversalMaxLossR);
-                
-                // 1. High Confidence Reversal
-                if(confidence >= InpSignalReversalMinConfidence)
-                {
-                    // "No-Man's Land" Protection: If we are already 82% of the way to SL, 
-                    // we disable SRE. At this point, the saving is too small (e.g. 10 pips) 
-                    // compared to the risk of exiting right before a bounce.
-                    if(isLastStandZone)
-                    {
-                        // Log once to explain why we aren't closing
-                        static datetime lastLastStandLog = 0;
-                        if(TimeCurrent() - lastLastStandLog > 60)
-                        {
-                            PrintFormat("[SRE-LAST-STAND] %s | ignoring reversal signal | lossR=%.2f exceeds %.2f | Let hard SL decide", sym, lossR, InpSignalReversalMaxLossR);
-                            lastLastStandLog = TimeCurrent();
-                        }
-                    }
-                    else
-                    {
-                        // Only bail if we've exhausted our breathing room AND the loss is meaningful
-                        // OR if it's a massive move (lossR > 0.5) regardless of time
-                        if(!hasBreathingRoom || lossR > 0.50)
-                        {
-                            if(!InpSignalReversalProfitGuard || (inLoss && !isMinorNoise))
-                                reversalDetected = true;
-                        }
-                    }
-                }
-                
-                // 2. Structural Invalidation (Emergency Exit)
-                // If ICT/Structure flips, we bail regardless of ProfitGuard, but still respect a tiny noise floor
-                if(InpEnableStructuralInvalidation && !reversalDetected)
-                {
-                    SConsensusDecisionContext context;
-                    if(manager.GetLastDecisionContext(context))
-                    {
-                        if(context.dominantCluster == STRUCTURE_CLUSTER && confidence >= 0.45)
-                        {
-                            if(lossR > 0.10 || !inLoss) // Respect a 10% SL noise floor for structural bails
-                            {
-                                PrintFormat("[STRUCTURAL-EXIT] %s | trend invalidated | conf=%.2f | lossR=%.2f", sym, confidence, lossR);
-                                reversalDetected = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if(reversalDetected)
-            {
-                PrintFormat("[SCALP-EXIT] Reversal detected on %s | type=%s | signal=%s | conf=%.2f",
-                            sym, EnumToString(type), EnumToString(currentSignal), confidence);
-                tradeManager.ClosePosition(ticket, "Signal Reversal");
-            }
-        }
-    }
-
-    if(!InpEnablePositionLifecycleManager)
-        return;
-
-    static datetime s_lastPositionManageTime = 0;
-    datetime nowManage = TimeCurrent();
-    if(s_lastPositionManageTime == 0 || (nowManage - s_lastPositionManageTime) >= 1)
-    {
-        tradeManager.ManageAllPositions(g_riskTierManager.GetBreakevenBufferPts(),
-                                        g_riskTierManager.GetTrailingDistancePts(),
-                                        InpLifecycleTrailingStepPoints,
-                                        InpLifecycleUseATRTrailing,
-                                        InpLifecycleATRMultiplier);
-
-        // Phase 6: Safe mode partial profit taking for swing positions
-        if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
-        {
-            g_safeMode.ManageSafeModePositions(&tradeManager);
-        }
-
-        s_lastPositionManageTime = nowManage;
-    }
+    // Blueprint R6a: Fully delegated to CPositionLifecycleManager
+    g_lifecycleManager.ManagePositions();
 }
 
-void ReleaseTradingPauseIfExpired()
-{
-    if(!g_tradingPaused)
-        return;
-
-    datetime now = TimeCurrent();
-    if(now < g_tradingPauseUntil)
-        return;
-
-    g_tradingPaused = false;
-    g_tradingPauseUntil = 0;
-    Print("[SPIKE-PAUSE] Trading pause expired; new entries re-enabled");
-}
-
-bool IsTradingPauseActive()
-{
-    ReleaseTradingPauseIfExpired();
-    return g_tradingPaused;
-}
-
-void ActivateTradingPause(const string reason, const int seconds)
-{
-    int pauseSeconds = MathMax(5, seconds);
-    g_tradingPaused = true;
-    g_tradingPauseUntil = TimeCurrent() + pauseSeconds;
-    PrintFormat("[SPIKE-PAUSE] Activated | reason=%s | pause_seconds=%d | until=%s",
-                reason,
-                pauseSeconds,
-                TimeToString(g_tradingPauseUntil, TIME_SECONDS));
-}
-
-bool HandleEmergencyDrawdownStop(const string reasonTag)
-{
-    if(currentDrawdown <= InpMaxDrawdown)
-        return false;
-
-    // Check market volatility before closing positions
-    double volatilityMultiplier = 1.0;
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket == 0 || !PositionSelectByTicket(ticket))
-            continue;
-            
-        string posSymbol = PositionGetString(POSITION_SYMBOL);
-        double atr = 0;
-        TryResolveAtrValue(posSymbol, PERIOD_CURRENT, 14, atr);
-        double currentPrice = SymbolInfoDouble(posSymbol, SYMBOL_BID);
-        
-        if(atr > 0 && currentPrice > 0)
-        {
-            double normalizedAtr = atr / currentPrice;
-            if(normalizedAtr > 0.05) // 5% volatility is very high
-            {
-                // High volatility - log warning but still close
-                PrintFormat("[EMERGENCY-WARNING] High volatility detected for %s (ATR: %.2f%%)", posSymbol, normalizedAtr * 100);
-            }
-        }
-    }
-
-    tradingEnabled = false;
-    Alert("[EMERGENCY] Maximum drawdown exceeded! Trading halted!");
-    Comment("EMERGENCY STOP - Drawdown: ", NormalizeDouble(currentDrawdown, 2), "%");
-
-    int closedCount = 0;
-    int skippedCount = 0;
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket == 0 || !PositionSelectByTicket(ticket))
-            continue;
-
-        bool shouldClose = InpEmergencyFlattenAllAccountPositions ||
-                           IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC));
-        if(shouldClose)
-        {
-            if(tradeManager.ClosePosition(ticket, "Emergency Stop"))
-                closedCount++;
-        }
-        else
-        {
-            skippedCount++;
-        }
-    }
-
-    PrintFormat("[EMERGENCY] Flatten completed | reason=%s | closed=%d | skipped=%d | account_wide=%s",
-                reasonTag,
-                closedCount,
-                skippedCount,
-                InpEmergencyFlattenAllAccountPositions ? "true" : "false");
-    return true;
-}
-
-void TriggerSyntheticSpikeAlarm(const double currentRate, const double baselineRate)
-{
-    g_hbSyntheticSpikeEvents++;
-    PrintFormat("[SPIKE-ALARM] %s | rate=%.2f ticks/sec | baseline=%.2f | multiplier=%.2f",
-                _Symbol,
-                currentRate,
-                baselineRate,
-                InpSyntheticSpikeVelocityMultiplier);
-
-    int closedCount = 0;
-    int skippedCount = 0;
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket == 0 || !PositionSelectByTicket(ticket))
-            continue;
-
-        string positionSymbol = PositionGetString(POSITION_SYMBOL);
-        bool ownPosition = IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC));
-        bool shouldClose = InpEmergencyFlattenAllAccountPositions ||
-                           (ownPosition && positionSymbol == _Symbol);
-        if(shouldClose)
-        {
-            if(tradeManager.ClosePosition(ticket, "Synthetic spike alarm"))
-                closedCount++;
-        }
-        else
-        {
-            skippedCount++;
-        }
-    }
-
-    PrintFormat("[SPIKE-ALARM] Flatten completed | symbol=%s | closed=%d | skipped=%d | account_wide=%s",
-                _Symbol,
-                closedCount,
-                skippedCount,
-                InpEmergencyFlattenAllAccountPositions ? "true" : "false");
-
-    ActivateTradingPause("synthetic_spike_alarm", InpSyntheticSpikePauseSeconds);
-}
-
-void EvaluateSyntheticSpikeAlarm()
-{
-    if(InpSyntheticSpikeVelocityMultiplier <= 0.0)
-        return;
-
-    if(!IsSyntheticIndexSymbolName(_Symbol))
-        return;
-
-    MqlTick tick;
-    if(!g_tickSafetyMonitor.ValidateTick(_Symbol, tick))
-        return;
-
-    datetime now = TimeCurrent();
-    if(g_syntheticTickRateWindowStart == 0)
-    {
-        g_syntheticTickRateWindowStart = now;
-        g_syntheticTickRateWindowCount = 0;
-        g_syntheticTickRateBaseline = 0.0;
-    }
-
-    g_syntheticTickRateWindowCount++;
-    int elapsedSeconds = (int)(now - g_syntheticTickRateWindowStart);
-    if(elapsedSeconds < 1)
-        return;
-
-    double currentRate = (double)g_syntheticTickRateWindowCount / (double)MathMax(1, elapsedSeconds);
-    double baselineRate = (g_syntheticTickRateBaseline > 0.0) ? g_syntheticTickRateBaseline : currentRate;
-    double thresholdRate = MathMax(1.0, baselineRate) * MathMax(1.5, InpSyntheticSpikeVelocityMultiplier);
-
-    g_syntheticTickRateBaseline = (g_syntheticTickRateBaseline <= 0.0)
-                                  ? currentRate
-                                  : ((g_syntheticTickRateBaseline * 0.85) + (currentRate * 0.15));
-    g_syntheticTickRateWindowStart = now;
-    g_syntheticTickRateWindowCount = 0;
-
-    bool rateExceedsThreshold = (currentRate > thresholdRate);
-    int requiredConfirmWindows = MathMax(1, InpSpikeConfirmWindows); // Configurable confirmation windows
-
-    if(IsTradingPauseActive())
-    {
-        g_syntheticSpikeConfirmCount = 0;
-        g_syntheticSpikeConfirmStart = 0;
-        return;
-    }
-
-    if(rateExceedsThreshold)
-    {
-        if(g_syntheticSpikeConfirmCount == 0)
-        {
-            g_syntheticSpikeConfirmStart = now;
-            g_syntheticSpikeConfirmCount = 1;
-            PrintFormat("[SYNTHETIC-SPIKE] Potential spike detected | Rate: %.1f/sec | Threshold: %.1f/sec | Confirming (Window 1/%d)",
-                        currentRate, thresholdRate, requiredConfirmWindows);
-        }
-        else
-        {
-            g_syntheticSpikeConfirmCount++;
-            if(g_syntheticSpikeConfirmCount >= requiredConfirmWindows)
-            {
-                PrintFormat("[SYNTHETIC-SPIKE] Spike confirmed! | Rate: %.1f/sec | Threshold: %.1f/sec | Consecutive windows: %d",
-                            currentRate, thresholdRate, g_syntheticSpikeConfirmCount);
-                TriggerSyntheticSpikeAlarm(currentRate, MathMax(1.0, baselineRate));
-                g_syntheticSpikeConfirmCount = 0;
-                g_syntheticSpikeConfirmStart = 0;
-            }
-            else
-            {
-                PrintFormat("[SYNTHETIC-SPIKE] Continuing confirmation | Rate: %.1f/sec | Window %d/%d",
-                            currentRate, g_syntheticSpikeConfirmCount, requiredConfirmWindows);
-            }
-        }
-    }
-    else
-    {
-        if(g_syntheticSpikeConfirmCount > 0)
-        {
-            PrintFormat("[SYNTHETIC-SPIKE] Confirmation reset | Rate: %.1f/sec | Below threshold: %.1f/sec",
-                        currentRate, thresholdRate);
-        }
-        g_syntheticSpikeConfirmCount = 0;
-        g_syntheticSpikeConfirmStart = 0;
-    }
-}
+// ReleaseTradingPauseIfExpired, IsTradingPauseActive, ActivateTradingPause,
+// HandleEmergencyDrawdownStop, TriggerSyntheticSpikeAlarm, EvaluateSyntheticSpikeAlarm
+// — moved to CSyntheticSpikeMonitor
 
 void ProcessTickSafetyLoop()
 {
@@ -1939,7 +1142,7 @@ void ProcessTickSafetyLoop()
         return;
 
     lastTickTime = TimeCurrent();
-    ReleaseTradingPauseIfExpired();
+    g_spikeMonitor.ReleasePauseIfExpired();
 
     if(!g_tickSafetyMonitor.IsTradingAllowed())
         return;
@@ -1952,10 +1155,16 @@ void ProcessTickSafetyLoop()
     RefreshAccountRuntimeMetrics();
     unifiedRiskManager.MonitorMarginHealth();
     tradeManager.CheckPendingConfirmations();  // Phase 1.4: non-blocking execution confirmation
-    AttemptUnprotectedPositionRemediation();
+    g_unprotectedTracker.AttemptRemediation();
     ManageOpenPositionsIfNeeded();
-    EvaluateSyntheticSpikeAlarm();
-    HandleEmergencyDrawdownStop("tick");
+    g_spikeMonitor.EvaluateSpike(InpSyntheticSpikeVelocityMultiplier, InpSpikeConfirmWindows,
+                                  InpSyntheticSpikePauseSeconds, InpEmergencyFlattenAllAccountPositions);
+    if(g_spikeMonitor.HandleEmergencyDrawdown("tick", currentDrawdown, InpMaxDrawdown, InpEmergencyFlattenAllAccountPositions))
+        tradingEnabled = false;
+
+    // Sync spike event counter to heartbeat counter
+    g_hbSyntheticSpikeEvents += g_spikeMonitor.GetSpikeEventCount();
+    g_spikeMonitor.ResetSpikeEventCount();
 
     // Fast Scalp Engine: tick-level position management (NOT throttled)
     if(InpEnableScalpEngine && g_scalpEngine.IsInitialized())
@@ -1964,375 +1173,6 @@ void ProcessTickSafetyLoop()
         g_scalpEngine.CheckPendingScalpOrders();
         g_scalpEngine.CheckPendingAsyncOrders();
     }
-}
-
-string ExtractPredictionIdFromComment(const string comment)
-{
-    int marker = StringFind(comment, "|N:");
-    if(marker < 0)
-        return "";
-
-    int start = marker + 3;
-    if(start >= StringLen(comment))
-        return "";
-
-    return StringSubstr(comment, start);
-}
-
-string BuildTradeCommentWithPrediction(const string baseComment, const string predictionId)
-{
-    string comment = baseComment;
-    if(predictionId == "")
-        return comment;
-
-    string suffix = "|N:" + predictionId;
-    const int maxCommentLength = 31;
-    int availableBase = maxCommentLength - StringLen(suffix);
-    if(availableBase < 0)
-        return StringSubstr(suffix, 0, maxCommentLength);
-
-    if(StringLen(comment) > availableBase)
-        comment = StringSubstr(comment, 0, availableBase);
-
-    return comment + suffix;
-}
-
-string NormalizeClusterCode(const string clusterCode)
-{
-    if(clusterCode == "T" || clusterCode == "R" || clusterCode == "S" || clusterCode == "N")
-        return clusterCode;
-    return "N";
-}
-
-//+------------------------------------------------------------------+
-//| Convert cluster code string to numeric value for magic encoding   |
-//+------------------------------------------------------------------+
-int ClusterCodeToNumeric(const string clusterCode)
-{
-    if(clusterCode == "T") return (int)TREND_CLUSTER;            // 1
-    if(clusterCode == "R") return (int)MEAN_REVERSION_CLUSTER;   // 2
-    if(clusterCode == "S") return (int)STRUCTURE_CLUSTER;        // 3
-    return 0; // STRATEGY_CLUSTER_NONE
-}
-
-string BuildClusterTaggedTradeComment(const string clusterCode, const string predictionId)
-{
-    string compactBase = "K:" + NormalizeClusterCode(clusterCode) + "|EA";
-    return BuildTradeCommentWithPrediction(compactBase, predictionId);
-}
-
-bool ContributorsIncludeAI(const string &contributors[])
-{
-    for(int i = 0; i < ArraySize(contributors); i++)
-    {
-        if(IsAIContributorName(contributors[i]))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool ContributorsIncludeName(const string &contributors[], const string contributorName)
-{
-    for(int i = 0; i < ArraySize(contributors); i++)
-    {
-        if(contributors[i] == contributorName)
-            return true;
-    }
-    return false;
-}
-
-bool ContributorsIncludeONNX(const string &contributors[])
-{
-    return ContributorsIncludeName(contributors, "ONNX AI");
-}
-
-// ContributorsIncludeElliott REMOVED - Elliott Wave strategy removed from system
-
-int CountIndicatorContributors(const string &contributors[])
-{
-    int count = 0;
-    for(int i = 0; i < ArraySize(contributors); i++)
-    {
-        if(contributors[i] == "" || IsAIContributorName(contributors[i]))
-            continue;
-        count++;
-    }
-    return count;
-}
-
-int FindPredictionPositionIndex(const ulong positionId)
-{
-    return g_positionStateManager.FindStateIndex(positionId);
-}
-
-void UpsertPredictionPositionMap(const ulong positionId, const string predictionId)
-{
-    g_positionStateManager.UpsertPredictionId(positionId, predictionId);
-}
-
-string GetPredictionIdForPosition(const ulong positionId)
-{
-    return g_positionStateManager.GetPredictionId(positionId);
-}
-
-void RemovePredictionPositionMap(const ulong positionId)
-{
-    g_positionStateManager.RemovePrediction(positionId);
-}
-
-int FindAIPredictionPositionIndex(const ulong positionId)
-{
-    return g_positionStateManager.FindStateIndex(positionId);
-}
-
-void UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
-{
-    g_positionStateManager.UpsertAIPrediction(positionId, predictionTime, predictionSignal);
-}
-
-datetime GetAIPredictionTimeForPosition(const ulong positionId)
-{
-    return g_positionStateManager.GetAIPredictionTime(positionId);
-}
-
-ENUM_TRADE_SIGNAL GetAIPredictionSignalForPosition(const ulong positionId)
-{
-    return g_positionStateManager.GetAIPredictionSignal(positionId);
-}
-
-void RemoveAIPredictionPositionMap(const ulong positionId)
-{
-    g_positionStateManager.RemoveAIPrediction(positionId);
-}
-
-int FindAIPendingRequestIndex(const uint requestId)
-{
-    for(int i = 0; i < ArraySize(g_aiPendingRequestIds); i++)
-    {
-        if(g_aiPendingRequestIds[i] == requestId)
-            return i;
-    }
-    return -1;
-}
-
-void UpsertAIPendingRequestMap(const uint requestId, const string symbol, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
-{
-    if(requestId == 0 || symbol == "" || predictionTime <= 0 || predictionSignal == TRADE_SIGNAL_NONE)
-        return;
-
-    int idx = FindAIPendingRequestIndex(requestId);
-    if(idx >= 0)
-    {
-        g_aiPendingSymbols[idx] = symbol;
-        g_aiPendingPredictionTimes[idx] = predictionTime;
-        g_aiPendingPredictionSignals[idx] = predictionSignal;
-        return;
-    }
-
-    int size = ArraySize(g_aiPendingRequestIds);
-    ArrayResize(g_aiPendingRequestIds, size + 1);
-    ArrayResize(g_aiPendingSymbols, size + 1);
-    ArrayResize(g_aiPendingPredictionTimes, size + 1);
-    ArrayResize(g_aiPendingPredictionSignals, size + 1);
-    g_aiPendingRequestIds[size] = requestId;
-    g_aiPendingSymbols[size] = symbol;
-    g_aiPendingPredictionTimes[size] = predictionTime;
-    g_aiPendingPredictionSignals[size] = predictionSignal;
-}
-
-bool ConsumeAIPendingRequestMap(const uint requestId, const string symbol, datetime &predictionTime, ENUM_TRADE_SIGNAL &predictionSignal)
-{
-    predictionTime = 0;
-    predictionSignal = TRADE_SIGNAL_NONE;
-
-    int idx = -1;
-    if(requestId > 0)
-        idx = FindAIPendingRequestIndex(requestId);
-
-    if(idx < 0 && symbol != "")
-    {
-        for(int i = ArraySize(g_aiPendingRequestIds) - 1; i >= 0; i--)
-        {
-            if(g_aiPendingSymbols[i] == symbol)
-            {
-                idx = i;
-                break;
-            }
-        }
-    }
-
-    if(idx < 0)
-        return false;
-
-    predictionTime = g_aiPendingPredictionTimes[idx];
-    predictionSignal = g_aiPendingPredictionSignals[idx];
-
-    int last = ArraySize(g_aiPendingRequestIds) - 1;
-    if(last >= 0)
-    {
-        if(idx != last)
-        {
-            g_aiPendingRequestIds[idx] = g_aiPendingRequestIds[last];
-            g_aiPendingSymbols[idx] = g_aiPendingSymbols[last];
-            g_aiPendingPredictionTimes[idx] = g_aiPendingPredictionTimes[last];
-            g_aiPendingPredictionSignals[idx] = g_aiPendingPredictionSignals[last];
-        }
-        ArrayResize(g_aiPendingRequestIds, last);
-        ArrayResize(g_aiPendingSymbols, last);
-        ArrayResize(g_aiPendingPredictionTimes, last);
-        ArrayResize(g_aiPendingPredictionSignals, last);
-    }
-
-    return true;
-}
-
-int FindPendingCloseProfitIndex(const ulong positionId)
-{
-    for(int i = 0; i < ArraySize(g_pendingClosePositionIds); i++)
-    {
-        if(g_pendingClosePositionIds[i] == positionId)
-            return i;
-    }
-    return -1;
-}
-
-void AccumulatePendingCloseProfit(const ulong positionId, const double netProfit)
-{
-    if(positionId == 0)
-        return;
-
-    int idx = FindPendingCloseProfitIndex(positionId);
-    if(idx >= 0)
-    {
-        g_pendingCloseNetProfit[idx] += netProfit;
-        return;
-    }
-
-    int size = ArraySize(g_pendingClosePositionIds);
-    ArrayResize(g_pendingClosePositionIds, size + 1);
-    ArrayResize(g_pendingCloseNetProfit, size + 1);
-    g_pendingClosePositionIds[size] = positionId;
-    g_pendingCloseNetProfit[size] = netProfit;
-}
-
-double ConsumePendingCloseProfit(const ulong positionId)
-{
-    int idx = FindPendingCloseProfitIndex(positionId);
-    if(idx < 0)
-        return 0.0;
-
-    double accumulated = g_pendingCloseNetProfit[idx];
-    int last = ArraySize(g_pendingClosePositionIds) - 1;
-    if(last >= 0)
-    {
-        if(idx != last)
-        {
-            g_pendingClosePositionIds[idx] = g_pendingClosePositionIds[last];
-            g_pendingCloseNetProfit[idx] = g_pendingCloseNetProfit[last];
-        }
-        ArrayResize(g_pendingClosePositionIds, last);
-        ArrayResize(g_pendingCloseNetProfit, last);
-    }
-
-    return accumulated;
-}
-
-void ClearPendingCloseProfit(const ulong positionId)
-{
-    int idx = FindPendingCloseProfitIndex(positionId);
-    if(idx < 0)
-        return;
-
-    int last = ArraySize(g_pendingClosePositionIds) - 1;
-    if(last >= 0)
-    {
-        if(idx != last)
-        {
-            g_pendingClosePositionIds[idx] = g_pendingClosePositionIds[last];
-            g_pendingCloseNetProfit[idx] = g_pendingCloseNetProfit[last];
-        }
-        ArrayResize(g_pendingClosePositionIds, last);
-        ArrayResize(g_pendingCloseNetProfit, last);
-    }
-}
-
-bool IsPositionIdStillOpen(const ulong positionId)
-{
-    if(positionId == 0)
-        return false;
-
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket == 0 || !PositionSelectByTicket(ticket))
-            continue;
-
-        ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
-        if(identifier == positionId)
-            return true;
-    }
-
-    return false;
-}
-
-void NNDiagLog(const string message)
-{
-    if(InpEnableNNAttributionDiagnostics)
-        Print("[NN-DIAG] ", message);
-}
-
-void NNDiagPrintSummary(const string context = "")
-{
-    if(!InpEnableNNAttributionDiagnostics)
-        return;
-
-    string tag = (context == "") ? "runtime" : context;
-    PrintFormat("[NN-DIAG] Summary (%s) | EntryMap=%d | CloseById=%d | CloseFallback=%d | CloseMiss=%d | PartialClose=%d | ActiveMap=%d",
-                tag,
-                g_nnDiagEntryMapCount,
-                g_nnDiagCloseByIdCount,
-                g_nnDiagCloseFallbackCount,
-                g_nnDiagCloseMissCount,
-                g_nnDiagPartialCloseCount,
-                ArraySize(g_predictionPositionIds));
-    g_nnDiagLastSummaryTime = TimeCurrent();
-}
-
-bool RunNNAttributionSelfTest()
-{
-    if(!InpRunNNAttributionSelfTest)
-        return true;
-
-    NNDiagLog("Self-test started");
-    bool ok = true;
-
-    string testPrediction = "12345678901234";
-    string comment = BuildTradeCommentWithPrediction("Enterprise AI Signal", testPrediction);
-    string extracted = ExtractPredictionIdFromComment(comment);
-    if(extracted != testPrediction)
-    {
-        ok = false;
-        NNDiagLog("Self-test failed: comment prediction extraction mismatch");
-    }
-
-    const ulong testPositionId = 999001;
-    UpsertPredictionPositionMap(testPositionId, testPrediction);
-    if(GetPredictionIdForPosition(testPositionId) != testPrediction)
-    {
-        ok = false;
-        NNDiagLog("Self-test failed: position->prediction map upsert/get mismatch");
-    }
-    RemovePredictionPositionMap(testPositionId);
-    if(GetPredictionIdForPosition(testPositionId) != "")
-    {
-        ok = false;
-        NNDiagLog("Self-test failed: position->prediction map remove mismatch");
-    }
-
-    NNDiagLog(ok ? "Self-test passed" : "Self-test failed");
-    return ok;
 }
 
 //+------------------------------------------------------------------+
@@ -3049,7 +1889,7 @@ bool EvaluateEAModeCandidateAdmission(const string &contributors[],
     rejectReason = "";
     confidenceBonus = 0.0;
 
-    bool hasAIContributor = ContributorsIncludeAI(contributors);
+    bool hasAIContributor = g_attributionManager.ContributorsIncludeAI(contributors);
     bool hasIndicatorContributor = ContributorsIncludeIndicator(contributors);
     ENUM_EA_MODE effectiveMode = ResolveEffectiveEAMode();
     int activeIndicators = g_strategyRegistry.GetActiveIndicatorCount();
@@ -3246,7 +2086,7 @@ bool ResolveLiveAuthority(const string symbol,
 
         if(InpAllowAIWarmStartLive &&
            tradeConfidence >= InpAIStandaloneMinConfidence &&
-           qualityScore >= 0.70 &&
+           qualityScore >= 0.65 &&
            convictionScore >= 0.45)
         {
             riskMultiplier = MathMax(0.10, InpAIBootstrapRiskMultiplier);
@@ -3785,188 +2625,6 @@ int GetTotalActiveBrainStrategyCount()
     return total;
 }
 
-void GetAggregatedConsensusDiagnostics(ulong &rawNone,
-                                       ulong &filteredOut,
-                                       ulong &quorumFailed,
-                                       ulong &intrabarNotEligible,
-                                       ulong &signalsGenerated,
-                                       ulong &signalsAfterPipeline,
-                                       ulong &signalsAfterQuorum,
-                                       ulong &momentumNone,
-                                       ulong &momentumCooldown,
-                                       ulong &momentumLowVolatility,
-                                       ulong &momentumNoCrossover,
-                                       ulong &momentumTrendMisaligned,
-                                       ulong &momentumNotReady,
-                                       ulong &uictNone,
-                                       ulong &uictNeutralBias,
-                                       ulong &uictOtherFilters,
-                                       ulong &reasonTotal)
-{
-    rawNone = 0;
-    filteredOut = 0;
-    quorumFailed = 0;
-    intrabarNotEligible = 0;
-    signalsGenerated = 0;
-    signalsAfterPipeline = 0;
-    signalsAfterQuorum = 0;
-    momentumNone = 0;
-    momentumCooldown = 0;
-    momentumLowVolatility = 0;
-    momentumNoCrossover = 0;
-    momentumTrendMisaligned = 0;
-    momentumNotReady = 0;
-    uictNone = 0;
-    uictNeutralBias = 0;
-    uictOtherFilters = 0;
-    reasonTotal = 0;
-
-    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
-    {
-        CEnterpriseStrategyManager* manager = g_enterpriseManagers[i];
-        if(manager == NULL)
-            continue;
-
-        ulong managerRawNone = 0;
-        ulong managerFilteredOut = 0;
-        ulong managerQuorumFailed = 0;
-        ulong managerIntrabarNotEligible = 0;
-        ulong managerSignalsGenerated = 0;
-        ulong managerSignalsAfterPipeline = 0;
-        ulong managerSignalsAfterQuorum = 0;
-        ulong managerMomentumNone = 0;
-        ulong managerMomentumCooldown = 0;
-        ulong managerMomentumLowVolatility = 0;
-        ulong managerMomentumNoCrossover = 0;
-        ulong managerMomentumTrendMisaligned = 0;
-        ulong managerMomentumNotReady = 0;
-        ulong managerUICTNone = 0;
-        ulong managerUICTNeutralBias = 0;
-        ulong managerUICTOtherFilters = 0;
-        ulong managerReasonTotal = 0;
-        manager.GetConsensusDiagnosticsSnapshot(managerRawNone,
-                                               managerFilteredOut,
-                                               managerQuorumFailed,
-                                               managerIntrabarNotEligible,
-                                               managerSignalsGenerated,
-                                               managerSignalsAfterPipeline,
-                                               managerSignalsAfterQuorum,
-                                               managerMomentumNone,
-                                               managerMomentumCooldown,
-                                               managerMomentumLowVolatility,
-                                               managerMomentumNoCrossover,
-                                               managerMomentumTrendMisaligned,
-                                               managerMomentumNotReady,
-                                               managerUICTNone,
-                                               managerUICTNeutralBias,
-                                               managerUICTOtherFilters,
-                                               managerReasonTotal);
-
-        rawNone += managerRawNone;
-        filteredOut += managerFilteredOut;
-        quorumFailed += managerQuorumFailed;
-        intrabarNotEligible += managerIntrabarNotEligible;
-        signalsGenerated += managerSignalsGenerated;
-        signalsAfterPipeline += managerSignalsAfterPipeline;
-        signalsAfterQuorum += managerSignalsAfterQuorum;
-        momentumNone += managerMomentumNone;
-        momentumCooldown += managerMomentumCooldown;
-        momentumLowVolatility += managerMomentumLowVolatility;
-        momentumNoCrossover += managerMomentumNoCrossover;
-        momentumTrendMisaligned += managerMomentumTrendMisaligned;
-        momentumNotReady += managerMomentumNotReady;
-        uictNone += managerUICTNone;
-        uictNeutralBias += managerUICTNeutralBias;
-        uictOtherFilters += managerUICTOtherFilters;
-        reasonTotal += managerReasonTotal;
-    }
-}
-
-void GetAggregatedRoleClusterDiagnostics(ulong &primarySignals,
-                                         ulong &featureSignals,
-                                         ulong &shadowSignals,
-                                         ulong &voteSuppressed,
-                                         ulong &trendClusterSignals,
-                                         ulong &meanReversionClusterSignals,
-                                         ulong &structureClusterSignals,
-                                         ulong &noneClusterSignals)
-{
-    primarySignals = 0;
-    featureSignals = 0;
-    shadowSignals = 0;
-    voteSuppressed = 0;
-    trendClusterSignals = 0;
-    meanReversionClusterSignals = 0;
-    structureClusterSignals = 0;
-    noneClusterSignals = 0;
-
-    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
-    {
-        CEnterpriseStrategyManager* manager = g_enterpriseManagers[i];
-        if(manager == NULL)
-            continue;
-
-        ulong managerPrimary = 0;
-        ulong managerFeature = 0;
-        ulong managerShadow = 0;
-        ulong managerSuppressed = 0;
-        ulong managerTrend = 0;
-        ulong managerMeanRev = 0;
-        ulong managerStructure = 0;
-        ulong managerNone = 0;
-
-        manager.GetRoleClusterDiagnosticsTotals(managerPrimary,
-                                                managerFeature,
-                                                managerShadow,
-                                                managerSuppressed,
-                                                managerTrend,
-                                                managerMeanRev,
-                                                managerStructure,
-                                                managerNone);
-
-        primarySignals += managerPrimary;
-        featureSignals += managerFeature;
-        shadowSignals += managerShadow;
-        voteSuppressed += managerSuppressed;
-        trendClusterSignals += managerTrend;
-        meanReversionClusterSignals += managerMeanRev;
-        structureClusterSignals += managerStructure;
-        noneClusterSignals += managerNone;
-    }
-}
-
-string GetDominantConsensusCause(const ulong rawNone,
-                                 const ulong filteredOut,
-                                 const ulong quorumFailed,
-                                 const ulong intrabarNotEligible)
-{
-    string dominant = "none";
-    ulong maxCount = 0;
-
-    if(intrabarNotEligible > maxCount)
-    {
-        maxCount = intrabarNotEligible;
-        dominant = "intrabar_not_eligible";
-    }
-    if(quorumFailed > maxCount)
-    {
-        maxCount = quorumFailed;
-        dominant = "quorum_failed";
-    }
-    if(filteredOut > maxCount)
-    {
-        maxCount = filteredOut;
-        dominant = "filtered_out";
-    }
-    if(rawNone > maxCount)
-    {
-        maxCount = rawNone;
-        dominant = "raw_none";
-    }
-
-    return dominant;
-}
-
 string BuildQualifiedStrategyName(const string symbol, const string strategyName)
 {
     return symbol + "::" + strategyName;
@@ -4007,11 +2665,8 @@ void ReleaseEnterpriseManagers()
     }
     ArrayResize(g_drawingManagers, 0);
     ArrayResize(g_drawingManagerSymbols, 0);
-    
-    ArrayResize(g_lastSymbolBarTimes, 0);
-    ArrayResize(g_lastIntrabarScanTime, 0);
-    ArrayResize(g_pendingNewBarScans, 0);
-    ArrayResize(g_symbolScanStates, 0);
+
+    g_scanScheduler.Cleanup();
 }
 
 int FindNeuralNetStrategyIndex(const string symbol)
@@ -4045,12 +2700,7 @@ void ReleaseNeuralNetStrategies()
     ArrayResize(g_neuralNetStrategies, 0);
     ArrayResize(g_neuralNetStrategySymbols, 0);
     g_positionStateManager.ClearAll();
-    ArrayResize(g_aiPendingRequestIds, 0);
-    ArrayResize(g_aiPendingSymbols, 0);
-    ArrayResize(g_aiPendingPredictionTimes, 0);
-    ArrayResize(g_aiPendingPredictionSignals, 0);
-    ArrayResize(g_pendingClosePositionIds, 0);
-    ArrayResize(g_pendingCloseNetProfit, 0);
+    g_attributionManager.ClearAll();
     neuralNetStrategy = NULL;
 }
 
@@ -4313,7 +2963,7 @@ int OnInit()
     PrintFormat("[LOG-LEVEL] Set to %d (0=Silent, 1=Critical, 2=Normal, 3=Verbose, 4=Debug)", g_logLevel);
 
     // Initialize diagnostics logger (Blueprint 3.6: off-journal logging)
-    g_diagLogger.Initialize("MultiStrategyEA", InpLogLevel);
+    g_diagLogger.Initialize("MultiStrategyEA", InpLogLevel, MathMax(30, InpHeartbeatInterval));
 
     // Validate MetaTrader 5 environment
     if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
@@ -4352,37 +3002,16 @@ int OnInit()
     g_tickSafetyMonitor.SetMinFreeMarginPercent(20.0);
     g_tickSafetyMonitor.SetMinMarginLevel(150.0);
     g_tickSafetyMonitor.SetEmergencyStop(false);
+    g_spikeMonitor.Initialize(tradeManager, unifiedRiskManager, g_tickSafetyMonitor);
+    g_spikeMonitor.SetMagicNumber(InpMagicNumber);
+    g_spikeMonitor.SetSymbolCount(ArraySize(g_enterpriseManagerSymbols));
     g_consensusCache.InvalidateAll();
     g_aiBrainReady = false;
     g_aiEngineReady = false;
     g_aiFeedbackReady = false;
 
-    // Initialize Fast Scalp Engine (Phase 4)
-    if(InpEnableScalpEngine)
-    {
-        if(!g_scalpEngine.Initialize(&tradeManager, &unifiedRiskManager, &positionSizer, &g_riskTierManager))
-            Print("[SCALP-ENGINE] WARNING: Failed to initialize — scalp engine disabled");
-        else
-        {
-            g_scalpEngine.SetMagicNumber((uint)InpMagicNumber);
-            g_scalpEngine.SetAsyncMode(InpScalpAsyncMode);
-            g_scalpEngine.SetMaxLatencyMs(InpScalpMaxLatencyMs);
-
-            // Initialize scalp signal cache for fast-path evaluation
-            if(g_scalpCache.Initialize(g_activePairs, ArraySize(g_activePairs), PERIOD_M1))
-            {
-                // Wire cache to scalp engine for zero-CopyBuffer fast path
-                g_scalpEngine.SetSignalCache(GetPointer(g_scalpCache));
-                Print("[SCALP-CACHE] Fast-path dual-path architecture enabled");
-            }
-            else
-                Print("[SCALP-CACHE] WARNING: Cache initialization failed — falling back to per-call indicators");
-        }
-    }
-    else
-    {
-        Print("[SCALP-ENGINE] Disabled by user input (InpEnableScalpEngine=false)");
-    }
+    // Scalp cache initialization deferred until after symbol universe is built (below)
+    // to avoid SCALP-CACHE ERROR: Invalid symbolCount=0
 
     // Validate account type and permissions
     ENUM_ACCOUNT_TRADE_MODE tradeMode = (ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE);
@@ -4465,6 +3094,7 @@ int OnInit()
     unifiedRiskConfig.enableAdaptiveSizing    = InpUseEnhancedRisk;
     unifiedRiskConfig.enableAuditLogging      = true;
     unifiedRiskConfig.auditLogFile            = "risk_audit_" + _Symbol + ".log";
+    unifiedRiskConfig.minLotRiskMultiplier    = InpMinLotRiskMultiplier;
 
     if(!unifiedRiskManager.Initialize(unifiedRiskConfig, &performanceAnalytics))
     {
@@ -4513,13 +3143,17 @@ int OnInit()
 
     // Apply risk tier configuration to risk manager, position sizer, and trade manager
     g_riskTierManager.SetTier(InpRiskTier);
-    g_riskTierManager.ApplyToRiskManager(unifiedRiskManager, &performanceAnalytics);
-    g_riskTierManager.ApplyToPositionSizer(positionSizer);
+    g_riskTierManager.ApplyToRiskManager(unifiedRiskManager, &performanceAnalytics,
+                                         InpMaxDailyRisk, InpMaxPortfolioRisk,
+                                         InpMaxDrawdown * 0.7, InpMaxDrawdown);
+    g_riskTierManager.ApplyToPositionSizer(positionSizer, InpMaxRiskPerTrade);
     g_riskTierManager.ApplyToTradeManager(tradeManager);
 
     // Wire PositionSizer to unified correlation engine via portfolio risk manager
     positionSizer.SetCorrelationEngine(unifiedRiskManager.GetPortfolioRiskManager().GetCorrelationEngine());
     positionSizer.SetLogLevel(InpLogLevel);
+    positionSizer.SetAllowMinLotRoundUp(InpAllowMinLotRoundUp);
+    positionSizer.SetMinLotRiskMultiplier(InpMinLotRiskMultiplier);
 
     unifiedRiskManager.ConfigureClusterGovernance(InpEnableClusterRiskGovernance,
                                                   MathMax(1, InpRiskMaxConcurrentPerCluster),
@@ -4529,6 +3163,11 @@ int OnInit()
                 g_riskTierManager.GetTierName(),
                 g_riskTierManager.GetBreakevenBufferPts(),
                 g_riskTierManager.GetTrailingDistancePts());
+
+    // Initialize unprotected position tracker
+    g_unprotectedTracker.Initialize(&tradeManager, &unifiedRiskManager,
+                                    InpMagicNumber, ArraySize(g_enterpriseManagerSymbols),
+                                    InpUnprotectedRemediationIntervalSec, InpUnprotectedMaxRestoreAttempts);
 
     // Phase 6: Initialize full-margin mode or safe mode based on risk tier
     if(InpRiskTier == RISK_TIER_FULL_MARGIN)
@@ -4547,6 +3186,34 @@ int OnInit()
         else
             Print("[INIT] Conservative safe mode ENABLED — kill zone filter, partial profit taking active");
     }
+
+    // Blueprint R6a: Initialize position lifecycle manager
+    if(g_lifecycleManager.Initialize(&tradeManager, &g_consensusCache, &g_riskTierManager, &g_safeMode, InpMagicNumber))
+    {
+        g_lifecycleManager.ConfigureSRE(InpEnableSignalReversalExit, InpSignalReversalMinConfidence,
+                                         InpSignalReversalProfitGuard, InpSignalReversalMinLossR,
+                                         InpSignalReversalMaxLossR, InpSignalReversalMinTimeSec,
+                                         InpEnableStructuralInvalidation);
+        g_lifecycleManager.ConfigureLifecycle(InpEnablePositionLifecycleManager, (int)InpLifecycleTrailingStepPoints,
+                                               InpLifecycleUseATRTrailing, InpLifecycleATRMultiplier);
+        Print("[INIT] PositionLifecycleManager initialized (Blueprint R6a)");
+    }
+    else
+        Print("[INIT] WARNING: PositionLifecycleManager initialization failed — using inline fallback");
+
+    // Blueprint R6b: Initialize diagnostics manager
+    if(g_diagnosticsManager.Initialize(&unifiedRiskManager, &g_riskTierManager, InpHeartbeatInterval))
+    {
+        g_diagnosticsManager.SetScalpEngine(&g_scalpEngine);
+        g_diagnosticsManager.SetFullMarginMode(&g_fullMarginMode);
+        g_diagnosticsManager.SetSafeMode(&g_safeMode);
+        g_diagnosticsManager.SetAIConfig(InpEnableAIMode, InpEnableNeuralNetwork, InpEnableNNOnlineTraining);
+        g_diagnosticsManager.SetRiskTier(InpRiskTier);
+        g_diagnosticsManager.SetShadowMode(InpShadowMode);
+        Print("[INIT] DiagnosticsManager initialized (Blueprint R6b)");
+    }
+    else
+        Print("[INIT] WARNING: DiagnosticsManager initialization failed — using inline heartbeat");
 
     // AIEngine will be initialized after enterprise managers are created (manager-owned adaptation).
 
@@ -4610,7 +3277,7 @@ int OnInit()
     }
 
     SSymbolValidationConfig validationConfig;
-    validationConfig.maxSpreadPoints = 500;
+    validationConfig.maxSpreadPoints = 1500;  // Accommodate synthetic CFDs (FX Vol 40 ~1043 pts)
     validationConfig.minDailyVolumeLots = 1000;
     validationConfig.enableVolumeCheck = true;
     
@@ -4628,6 +3295,33 @@ int OnInit()
     Print("[SYMBOLS] ", ArraySize(g_activePairs), " symbols validated and ready for trading");
     LogAccountCapacityDiagnostics();
     g_symbolsToTrade = InpSymbolsToTrade;
+
+    // Initialize Fast Scalp Engine (Phase 4) — must be after symbol universe is built
+    if(InpEnableScalpEngine)
+    {
+        if(!g_scalpEngine.Initialize(&tradeManager, &unifiedRiskManager, &positionSizer, &g_riskTierManager))
+            Print("[SCALP-ENGINE] WARNING: Failed to initialize — scalp engine disabled");
+        else
+        {
+            g_scalpEngine.SetMagicNumber((uint)InpMagicNumber);
+            g_scalpEngine.SetAsyncMode(InpScalpAsyncMode);
+            g_scalpEngine.SetMaxLatencyMs(InpScalpMaxLatencyMs);
+
+            // Initialize scalp signal cache for fast-path evaluation
+            if(g_scalpCache.Initialize(g_activePairs, ArraySize(g_activePairs), PERIOD_M1))
+            {
+                // Wire cache to scalp engine for zero-CopyBuffer fast path
+                g_scalpEngine.SetSignalCache(GetPointer(g_scalpCache));
+                Print("[SCALP-CACHE] Fast-path dual-path architecture enabled");
+            }
+            else
+                Print("[SCALP-CACHE] WARNING: Cache initialization failed — falling back to per-call indicators");
+        }
+    }
+    else
+    {
+        Print("[SCALP-ENGINE] Disabled by user input (InpEnableScalpEngine=false)");
+    }
 
     // Initialize enterprise manager per symbol
     Print("[ENTERPRISE] Initializing per-symbol strategy managers...");
@@ -4668,7 +3362,9 @@ int OnInit()
                 InpMagicNumber, symbolCount, magicRangeMax, MAGIC_SYMBOL_MULTIPLIER);
 
 
-    RebuildSymbolSchedulerState("post_manager_init");
+    g_scanScheduler.SetManagers(g_enterpriseManagers, g_enterpriseManagerSymbols, ArraySize(g_enterpriseManagers));
+    g_scanScheduler.SetInputParams(InpIntrabarScanSeconds, InpIntrabarBackoffMaxSeconds);
+    g_scanScheduler.RebuildSymbolSchedulerState("post_manager_init");
 
 
     RecoverTradeTimingStateOnInit();
@@ -4740,18 +3436,18 @@ int OnInit()
         return INIT_FAILED;
     }
 
+    // Wire attribution manager with position state manager BEFORE self-test (Blueprint R6 chain-fix)
+    g_attributionManager.SetPositionStateManager(g_positionStateManager);
+    g_attributionManager.SetNNDiagnosticsEnabled(InpEnableNNAttributionDiagnostics);
+    g_attributionManager.SetRunSelfTest(InpRunNNAttributionSelfTest);
+
     if(InpEnableNNAttributionDiagnostics)
     {
-        g_nnDiagEntryMapCount = 0;
-        g_nnDiagCloseByIdCount = 0;
-        g_nnDiagCloseFallbackCount = 0;
-        g_nnDiagCloseMissCount = 0;
-        g_nnDiagPartialCloseCount = 0;
-        g_nnDiagLastSummaryTime = TimeCurrent();
-        NNDiagLog("NN attribution diagnostics enabled");
+        g_attributionManager.ResetNNDiagnostics();
+        g_attributionManager.NNDiagLog("NN attribution diagnostics enabled");
     }
 
-    if(!RunNNAttributionSelfTest())
+    if(!g_attributionManager.RunNNAttributionSelfTest())
     {
         Print("[NN-DIAG] Self-test failed; initialization aborted by diagnostic gate");
         return INIT_FAILED;
@@ -4780,34 +3476,16 @@ int OnInit()
     g_hbSignalsRiskApproved = 0;
     g_hbSignalsSent = 0;
     g_hbSyntheticSpikeEvents = 0;
-    g_prevHbScansAttempted = 0;
-    g_prevHbNoSignalCount = 0;
-    g_prevHbSignalsGenerated = 0;
-    g_prevHbSignalsAfterPipeline = 0;
-    g_prevHbSignalsAfterQuorum = 0;
-    g_prevHbSignalsValidated = 0;
-    g_prevHbSignalsRiskApproved = 0;
-    g_prevHbSignalsSent = 0;
     g_lastHeartbeatLogTime = TimeCurrent();
     g_lastNNHealthLogTime = TimeCurrent();
-    g_lastSignalEvalSecond = 0;
-    g_symbolEvalStartIndex = 0;
-    g_lastExternalCapacityLogTime = 0;
-    g_lastUnprotectedRemediationAttempt = 0;
-    g_lastNoSignalAlertTime = 0;
-    g_syntheticTickRateWindowStart = 0;
-    g_syntheticTickRateWindowCount = 0;
-    g_syntheticTickRateBaseline = 0.0;
-    g_syntheticSpikeConfirmStart = 0;
-    g_syntheticSpikeConfirmCount = 0;
+    g_scanScheduler.ResetOnInit();
+    g_unprotectedTracker.Reset();
+    // Spike monitor state now encapsulated in CSyntheticSpikeMonitor
     g_onnxSessionDisabled = false;
-    g_tradingPaused = false;
-    g_tradingPauseUntil = 0;
     g_scanCycleSequence = 0;
-    ArrayResize(g_unprotectedPositionTickets, 0);
-    ArrayResize(g_unprotectedPositionAttempts, 0);
 
     // Initialize Python Bridge
+    g_pythonBridge = new CPythonBridge();
     g_pythonBridge.Initialize(
         InpPythonBridgeEndpoint,
         InpPythonBridgeMode,
@@ -4818,7 +3496,7 @@ int OnInit()
     );
     
     // Check Python bridge version compatibility
-    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF)
+    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL)
     {
         Print("[PYTHON-BRIDGE] Checking version compatibility...");
         bool versionOk = g_pythonBridge.CheckVersion();
@@ -4855,7 +3533,7 @@ int OnInit()
     }
     
     // Python Bridge Check
-    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF) {
+    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL) {
         if(!g_pythonBridge.IsConnected()) {
             Print("[HEALTH-CHECK] WARNING: Python bridge not connected - using local AI fallback");
         }
@@ -4880,9 +3558,16 @@ int OnInit()
     else {
         Print("[HEALTH-CHECK] Position state manager: OK");
     }
-    
+
     Print("[HEALTH-CHECK] Startup validation complete");
-    
+
+    // Blueprint R6a: Wire lifecycle manager with enterprise managers (after all managers are created)
+    if(g_lifecycleManager.IsInitialized())
+        g_lifecycleManager.SetManagers(g_enterpriseManagers, g_enterpriseManagerSymbols, ArraySize(g_enterpriseManagers));
+
+    // Wire diagnostics manager with enterprise managers for consensus diagnostics
+    g_diagnosticsManager.SetManagers(g_enterpriseManagers, ArraySize(g_enterpriseManagers));
+
     EventSetTimer(1);
     Print("[MULTI-STRATEGY-EA] Initialization complete - EA is READY;");
     Print("[MULTI-STRATEGY-EA] ========================================");
@@ -4911,17 +3596,21 @@ void OnDeinit(const int reason)
     EventKillTimer();
 
     // Shutdown Python bridge
-    g_pythonBridge.Shutdown();
+    if(g_pythonBridge != NULL)
+    {
+        g_pythonBridge.Shutdown();
+        delete g_pythonBridge;
+        g_pythonBridge = NULL;
+    }
 
     // Properly delete all dynamic objects to prevent memory leaks
     ReleaseEnterpriseManagers();
     
 
-    NNDiagPrintSummary("deinit");
+    g_attributionManager.NNDiagPrintSummary("deinit");
     
     ReleaseNeuralNetStrategies();
-    ArrayResize(g_unprotectedPositionTickets, 0);
-    ArrayResize(g_unprotectedPositionAttempts, 0);
+    g_unprotectedTracker.Reset();
     
     if(g_AIEngine != NULL)
     {
@@ -4973,11 +3662,12 @@ string GetDeInitReasonText(int reasonCode)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-    // Periodic AI Health Check (every 60 seconds)
+    // Periodic AI Health Check (every InpHeartbeatInterval seconds, min 30)
     static datetime lastAIHealthCheck = 0;
     static datetime lastPythonBridgeCheck = 0;
     datetime now = TimeCurrent();
-    if(lastAIHealthCheck == 0 || (now - lastAIHealthCheck) >= 60)
+    int healthCheckInterval = MathMax(30, InpHeartbeatInterval);
+    if(lastAIHealthCheck == 0 || (now - lastAIHealthCheck) >= healthCheckInterval)
     {
         if(InpEnableAIMode)
         {
@@ -5006,7 +3696,7 @@ void OnTimer()
         }
         
         // Python Bridge status
-        if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF)
+        if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL)
         {
             SPythonBridgeHealthStatus bridgeStatus = g_pythonBridge.GetHealthStatus();
             string bridgeStatusStr = "[PYTHON-BRIDGE-DASHBOARD] ";
@@ -5046,14 +3736,14 @@ void OnTimer()
     }
 
     // Periodic Python Bridge Check (every heartbeat timeout seconds)
-    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF &&
+    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL &&
        (lastPythonBridgeCheck == 0 || (now - lastPythonBridgeCheck) >= InpPythonBridgeHeartbeatTimeoutSec))
     {
         g_pythonBridge.SendHeartbeat();
         lastPythonBridgeCheck = now;
     }
 
-    ReleaseTradingPauseIfExpired();
+    g_spikeMonitor.ReleasePauseIfExpired();
     ProcessTradingLogic(true);  // true = called from timer
 }
 
@@ -5081,14 +3771,21 @@ void ProcessScalpFastPath()
     // Throttle: max once per second for signal evaluation
     // (position management in ProcessTickSafetyLoop runs every tick)
     datetime currentSecond = TimeCurrent();
-    if(currentSecond == g_lastScalpFastPathSecond) return;
-    g_lastScalpFastPathSecond = currentSecond;
+    if(currentSecond == g_scanScheduler.GetLastScalpFastPathSecond()) return;
+    g_scanScheduler.SetLastScalpFastPathSecond(currentSecond);
 
     // Skip if daily trading halt is active
     if(g_dailyTradingHalt) return;
 
-    // Skip if scalp cache not initialized
-    if(!g_scalpCache.IsInitialized()) return;
+    // Lazy-init scalp cache if not yet initialized (safety net for deferred init)
+    if(!g_scalpCache.IsInitialized())
+    {
+        if(!g_scalpCache.EnsureInitialized(g_activePairs, ArraySize(g_activePairs), PERIOD_M1))
+            return;
+        // Wire cache to scalp engine on first successful init
+        g_scalpEngine.SetSignalCache(GetPointer(g_scalpCache));
+        Print("[SCALP-CACHE] Lazy-init completed in OnTick path");
+    }
 
     // Update tick-level cache values (zero computation — just reads SymbolInfoDouble)
     g_scalpCache.UpdateTickValues();
@@ -5107,17 +3804,18 @@ void ProcessScalpFastPath()
     for(int i = 0; i < ArraySize(g_activePairs); i++)
     {
         string symbol = g_activePairs[i];
-        SScalpIndicatorCache* cache = g_scalpCache.GetCache(symbol);
-        if(cache == NULL) continue;
+        SScalpIndicatorCache cache;
+        if(!g_scalpCache.GetCache(symbol, cache)) continue;
         if(!cache.isValid) continue;
 
         // Only evaluate if pre-qualified for scalping
         if(!cache.scalpSetupActive) continue;
 
         // Quick spread gate (zero computation — uses cached spread)
-        if(cache.pointSize > 0.0 && cache.atrValue > 0.0)
+        double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        if(pointSize > 0.0 && cache.atrValue > 0.0)
         {
-            double maxSpreadPoints = cache.atrValue * 0.3 / cache.pointSize;
+            double maxSpreadPoints = cache.atrValue * 0.3 / pointSize;
             if(cache.spreadPoints > maxSpreadPoints) continue;
         }
 
@@ -5228,7 +3926,7 @@ void ProcessTradingLogic(bool fromTimer)
         return;
     }
 
-    ReleaseTradingPauseIfExpired();
+    g_spikeMonitor.ReleasePauseIfExpired();
 
     // Refresh unified risk state (daily reset + adaptive risk level)
     unifiedRiskManager.RefreshRuntimeState();
@@ -5299,7 +3997,7 @@ void ProcessTradingLogic(bool fromTimer)
     }
 
     // Deterministic remediation loop for unprotected-position veto states.
-    AttemptUnprotectedPositionRemediation();
+    g_unprotectedTracker.AttemptRemediation();
     bool unprotectedPositionsActive = unifiedRiskManager.HasUnprotectedPositions();
     if(unprotectedPositionsActive && callCount % 50 == 0 && g_logLevel >= 2)
     {
@@ -5336,8 +4034,8 @@ void ProcessTradingLogic(bool fromTimer)
 
     if(ArraySize(g_enterpriseManagers) > 0 && ArraySize(g_activePairs) > 0)
     {
-        if(!IsSymbolSchedulerStateAligned())
-            RebuildSymbolSchedulerState("runtime_reconcile");
+        if(!g_scanScheduler.IsSymbolSchedulerStateAligned())
+            g_scanScheduler.RebuildSymbolSchedulerState("runtime_reconcile");
 
         for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
         {
@@ -5346,18 +4044,13 @@ void ProcessTradingLogic(bool fromTimer)
             if(currentBarTime <= 0)
                 continue;
 
-            if(currentBarTime != g_lastSymbolBarTimes[symIdx])
+            if(currentBarTime != g_scanScheduler.GetLastSymbolBarTime(symIdx))
             {
-                g_lastSymbolBarTimes[symIdx] = currentBarTime;
+                g_scanScheduler.SetLastSymbolBarTime(symIdx, currentBarTime);
                 anyNewBarDetected = true;
                 g_consensusCache.Invalidate(symbolForBar);
-                if(symIdx < ArraySize(g_pendingNewBarScans))
-                    g_pendingNewBarScans[symIdx] = true;
-                if(symIdx < ArraySize(g_symbolScanStates))
-                {
-                    g_symbolScanStates[symIdx].intrabarBackoffTier = 0;
-                    g_symbolScanStates[symIdx].nextEligibleIntrabarTime = 0;
-                }
+                g_scanScheduler.SetPendingNewBarScan(symIdx, true);
+                g_scanScheduler.ResetIntrabarBackoff(symIdx);
 
                 CEnterpriseStrategyManager* barManager = GetEnterpriseManagerForSymbol(symbolForBar);
                 if(barManager != NULL)
@@ -5393,10 +4086,10 @@ void ProcessTradingLogic(bool fromTimer)
     // even when both OnTick and OnTimer are active.
     bool allowSignalEvaluation = true;
     datetime signalEvalNow = TimeCurrent();
-    if(g_lastSignalEvalSecond == signalEvalNow)
+    if(g_scanScheduler.GetLastSignalEvalSecond() == signalEvalNow)
         allowSignalEvaluation = false;
     else
-        g_lastSignalEvalSecond = signalEvalNow;
+        g_scanScheduler.SetLastSignalEvalSecond(signalEvalNow);
     if(!allowSignalEvaluation)
         g_hbQuietCadenceHold++;
 
@@ -5441,13 +4134,13 @@ void ProcessTradingLogic(bool fromTimer)
         int secondsSinceLastTrade = (int)(tickTime - g_lastTradeTime);
         bool cooldownBlocked = (secondsSinceLastTrade < InpMinSecondsBetweenTrades && g_lastTradeTime > 0);
         bool unprotectedEntryBlocked = unprotectedPositionsActive;
-        bool tradingPauseBlocked = IsTradingPauseActive();
+        bool tradingPauseBlocked = g_spikeMonitor.IsPaused();
 
         if(cooldownBlocked && callCount % 100 == 0 && g_logLevel >= 2)
             Print("[ENTERPRISE-BLOCKED] Cooldown active: ", secondsSinceLastTrade, " / ", InpMinSecondsBetweenTrades, " seconds");
         if(tradingPauseBlocked && callCount % 50 == 0 && g_logLevel >= 2)
             PrintFormat("[SPIKE-PAUSE] New entries paused until %s",
-                        TimeToString(g_tradingPauseUntil, TIME_SECONDS));
+                        TimeToString(g_spikeMonitor.GetPauseUntilTime(), TIME_SECONDS));
 
         // Check position limit - count only THIS EA's positions by magic number
         int eaPositions = GetEAPositionCount();
@@ -5473,18 +4166,18 @@ void ProcessTradingLogic(bool fromTimer)
 
         if(symbolCount > 0)
         {
-            if(g_symbolEvalStartIndex < 0)
-                g_symbolEvalStartIndex = 0;
-            rotationStart = g_symbolEvalStartIndex % symbolCount;
-            g_symbolEvalStartIndex = (g_symbolEvalStartIndex + 1) % symbolCount;
+            if(g_scanScheduler.GetSymbolEvalStartIndex() < 0)
+                g_scanScheduler.SetSymbolEvalStartIndex(0);
+            rotationStart = g_scanScheduler.GetSymbolEvalStartIndex() % symbolCount;
+            g_scanScheduler.SetSymbolEvalStartIndex((g_scanScheduler.GetSymbolEvalStartIndex() + 1) % symbolCount);
         }
 
-        int pendingNewBarCount = CountPendingNewBarScans();
+        int pendingNewBarCount = g_scanScheduler.CountPendingNewBarScans();
         int newBarSelectedCount = 0;
         for(int candidateOffset = 0; candidateOffset < symbolCount && newBarSelectedCount < signalEvalBudget; candidateOffset++)
         {
             int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
-            if(candidateIdx >= ArraySize(g_pendingNewBarScans) || !g_pendingNewBarScans[candidateIdx])
+            if(!g_scanScheduler.IsPendingNewBarScan(candidateIdx))
                 continue;
 
             newBarSelected[candidateIdx] = true;
@@ -5507,14 +4200,14 @@ void ProcessTradingLogic(bool fromTimer)
                 {
                     int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
                     if(intrabarSelected[candidateIdx] || newBarSelected[candidateIdx] ||
-                       (candidateIdx < ArraySize(g_pendingNewBarScans) && g_pendingNewBarScans[candidateIdx]))
+                       g_scanScheduler.IsPendingNewBarScan(candidateIdx))
                         continue;
 
                     string candidateSymbol = g_activePairs[candidateIdx];
                     if(InpIntrabarChartSymbolOnly && candidateSymbol != _Symbol)
                         continue;
 
-                    double candidateScore = ScoreSymbolForIntrabar(candidateIdx, tickTime);
+                    double candidateScore = g_scanScheduler.ScoreSymbolForIntrabar(candidateIdx, tickTime);
                     if(candidateScore > bestScore)
                     {
                         bestScore = candidateScore;
@@ -5537,14 +4230,14 @@ void ProcessTradingLogic(bool fromTimer)
                 {
                     int candidateIdx = (rotationStart + candidateOffset) % symbolCount;
                     if(intrabarSelected[candidateIdx] || newBarSelected[candidateIdx] ||
-                       (candidateIdx < ArraySize(g_pendingNewBarScans) && g_pendingNewBarScans[candidateIdx]))
+                       g_scanScheduler.IsPendingNewBarScan(candidateIdx))
                         continue;
 
                     string candidateSymbol = g_activePairs[candidateIdx];
                     if(InpIntrabarChartSymbolOnly && candidateSymbol != _Symbol)
                         continue;
 
-                    double candidateScore = ScoreSymbolForIntrabar(candidateIdx, tickTime, true);
+                    double candidateScore = g_scanScheduler.ScoreSymbolForIntrabar(candidateIdx, tickTime, true);
                     if(candidateScore > bestKeepaliveScore)
                     {
                         bestKeepaliveScore = candidateScore;
@@ -5608,8 +4301,7 @@ void ProcessTradingLogic(bool fromTimer)
 
                 if(runIntrabarScan)
                 {
-                    if(symIdx < ArraySize(g_lastIntrabarScanTime))
-                        g_lastIntrabarScanTime[symIdx] = tickTime;
+                    g_scanScheduler.SetLastIntrabarScanTime(symIdx, tickTime);
                     g_hbIntrabarScansExecuted++;
                 }
 
@@ -5631,15 +4323,15 @@ void ProcessTradingLogic(bool fromTimer)
                 g_hbSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
                 if(cycleSignalAfterQuorum)
                     g_hbSignalsAfterQuorum++;
-                if(runNewBarScan && symIdx < ArraySize(g_pendingNewBarScans))
-                    g_pendingNewBarScans[symIdx] = false;
+                if(runNewBarScan)
+                    g_scanScheduler.SetPendingNewBarScan(symIdx, false);
 
                 if(enterpriseSignal == TRADE_SIGNAL_NONE)
                 {
                     g_hbNoSignalCount++;
                     SConsensusDecisionContext noTradeContext;
                     symbolManager.GetLastDecisionContext(noTradeContext);
-                    UpdateSymbolScanStateAfterDecision(currentSymbol,
+                    g_scanScheduler.UpdateSymbolScanStateAfterDecision(currentSymbol,
                                                        scanCycleId,
                                                        symIdx,
                                                        runIntrabarScan,
@@ -5673,7 +4365,7 @@ void ProcessTradingLogic(bool fromTimer)
 
                     SConsensusDecisionContext decisionContext;
                     symbolManager.GetLastDecisionContext(decisionContext);
-                    UpdateSymbolScanStateAfterDecision(currentSymbol,
+                    g_scanScheduler.UpdateSymbolScanStateAfterDecision(currentSymbol,
                                                        scanCycleId,
                                                        symIdx,
                                                        runIntrabarScan,
@@ -5721,11 +4413,11 @@ void ProcessTradingLogic(bool fromTimer)
                     }
                     if(exogenousPass && atrReady && atrLongReady && atrLongValue > 1e-9)
                     {
-                        if(atrRatio > 2.0)
+                        if(atrRatio > InpAtrCrisisRatioThreshold)
                         {
                             exogenousPass = false;
-                            exogenousReason = StringFormat("ATR ratio crisis gate: %.3f > 2.000 (ATR14 %.5f / ATR50 %.5f)",
-                                                           atrRatio, atrValue, atrLongValue);
+                            exogenousReason = StringFormat("ATR ratio crisis gate: %.3f > %.3f (ATR14 %.5f / ATR50 %.5f)",
+                                                           atrRatio, InpAtrCrisisRatioThreshold, atrValue, atrLongValue);
                         }
                         else if(atrRatio > 1.5)
                         {
@@ -5799,7 +4491,7 @@ void ProcessTradingLogic(bool fromTimer)
                             if(blockReason != "")
                                 blockReason += " | ";
                             blockReason += StringFormat("spike pause until %s",
-                                                        TimeToString(g_tradingPauseUntil, TIME_SECONDS));
+                                                        TimeToString(g_spikeMonitor.GetPauseUntilTime(), TIME_SECONDS));
                         }
                         if(symbolPositionCapBlocked)
                         {
@@ -5823,7 +4515,7 @@ void ProcessTradingLogic(bool fromTimer)
                         if(symbolPositionCapBlocked && externalSymbolPositions > 0)
                         {
                             datetime capLogNow = TimeCurrent();
-                            if(g_lastExternalCapacityLogTime == 0 || (capLogNow - g_lastExternalCapacityLogTime) >= 60)
+                            if(g_scanScheduler.GetLastExternalCapacityLogTime() == 0 || (capLogNow - g_scanScheduler.GetLastExternalCapacityLogTime()) >= 60)
                             {
                                 PrintFormat("[CAPACITY-EXTERNAL] %s blocked by non-EA positions | external=%d | ea=%d | total=%d | cap=%d | magic=%d",
                                             currentSymbol,
@@ -5832,7 +4524,7 @@ void ProcessTradingLogic(bool fromTimer)
                                             symbolPositionCount,
                                             InpPortfolioMaxPositionsPerSymbol,
                                             InpMagicNumber);
-                                g_lastExternalCapacityLogTime = capLogNow;
+                                g_scanScheduler.SetLastExternalCapacityLogTime(capLogNow);
                             }
                         }
                         continue;
@@ -5981,11 +4673,11 @@ void ProcessTradingLogic(bool fromTimer)
 
                     string contributorsList[];
                     symbolManager.GetLastSignalContributors(contributorsList);
-                    bool hasAIContributor = ContributorsIncludeAI(contributorsList);
+                    bool hasAIContributor = g_attributionManager.ContributorsIncludeAI(contributorsList);
                     bool hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
-                    bool hasONNXContributor = ContributorsIncludeONNX(contributorsList);
+                    bool hasONNXContributor = g_attributionManager.ContributorsIncludeONNX(contributorsList);
                     // hasElliottContributor REMOVED — Elliott Wave strategy removed
-                    int indicatorContributorCount = CountIndicatorContributors(contributorsList);
+                    int indicatorContributorCount = g_attributionManager.CountIndicatorContributors(contributorsList);
 
                     if(contributorSummary == "")
                     {
@@ -6091,6 +4783,15 @@ void ProcessTradingLogic(bool fromTimer)
                         {
                             // Stateless sizing — no shared state mutation (Blueprint 10.5)
                             double lotSize = positionSizer.CalculateSize(currentSymbol, orderType, stopLossPips, proposedRisk, tradeConfidence);
+
+                            // If position sizer returned 0 (trade skipped due to min-lot risk cap), skip immediately
+                            if(lotSize <= 0.0)
+                            {
+                                PrintFormat("[POSITION-SIZER-SKIP] %s | lotSize=0.00 — trade skipped by position sizer (below-minimum lot with risk cap exceeded)",
+                                            currentSymbol);
+                                continue;
+                            }
+
                             double drawdownMultiplier = 1.0;
                             if(peakEquity > 0.0 && InpAIDrawdownSizingLimit > 0.0)
                             {
@@ -6368,18 +5069,54 @@ tradeReq.lotSize = lotSize;
                         if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
                             symbolNet.ReservePredictionForSignal(bestCandidate.signal, predictionId, 600);
 
-                        string tradeComment = BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
+                        string tradeComment = g_attributionManager.BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
 
                         // Per-symbol magic number: BASE + symbolIndex*100 + clusterCode
                         int symbolIdx = FindEnterpriseManagerIndex(bestCandidate.symbol);
                         if(symbolIdx < 0) symbolIdx = 0;
-                        int clusterNum = ClusterCodeToNumeric(bestCandidate.strategyClusterCode);
+                        int clusterNum = g_attributionManager.ClusterCodeToNumeric(bestCandidate.strategyClusterCode);
                         uint perSymbolMagic = (uint)GenerateMagicNumber(symbolIdx, clusterNum);
+
+                        // Confidence-based lot scaling: scale UP from broker min lot
+                        // for high-quality signals to maximize growth on comfortable trades.
+                        // Scale: conf>=0.75 → 2x min, conf>=0.85 → 3x min, conf>=0.92 → 4x min
+                        double brokerMinLot = SymbolInfoDouble(bestCandidate.symbol, SYMBOL_VOLUME_MIN);
+                        double lotStep = SymbolInfoDouble(bestCandidate.symbol, SYMBOL_VOLUME_STEP);
+                        double maxLot = SymbolInfoDouble(bestCandidate.symbol, SYMBOL_VOLUME_MAX);
+                        if(lotStep <= 0.0) lotStep = brokerMinLot;
+                        double scaledLot = bestCandidate.lotSize;
+                        if(scaledLot >= brokerMinLot && brokerMinLot > 0.0)
+                        {
+                            double confScale = 1.0;
+                            if(bestCandidate.tradeConfidence >= 0.92 && bestCandidate.qualityScore >= 0.80)
+                                confScale = 4.0;
+                            else if(bestCandidate.tradeConfidence >= 0.85 && bestCandidate.qualityScore >= 0.75)
+                                confScale = 3.0;
+                            else if(bestCandidate.tradeConfidence >= 0.75 && bestCandidate.qualityScore >= 0.70)
+                                confScale = 2.0;
+
+                            if(confScale > 1.0)
+                            {
+                                double targetLot = brokerMinLot * confScale;
+                                // Round to lot step
+                                targetLot = MathFloor(targetLot / lotStep) * lotStep;
+                                targetLot = MathMin(targetLot, maxLot);
+                                // Verify risk budget allows it
+                                double riskRatio = targetLot / scaledLot;
+                                if(riskRatio <= InpMinLotRiskMultiplier)
+                                {
+                                    PrintFormat("[LOT-SCALE] %s | %.2f -> %.2f (conf=%.2f quality=%.2f scale=%.1fx)",
+                                                bestCandidate.symbol, scaledLot, targetLot,
+                                                bestCandidate.tradeConfidence, bestCandidate.qualityScore, confScale);
+                                    scaledLot = targetLot;
+                                }
+                            }
+                        }
 
                         bool tradeSuccess = tradeManager.OpenPosition(
                             bestCandidate.symbol,
                             bestCandidate.orderType,
-                            bestCandidate.lotSize,
+                            scaledLot,
                             bestCandidate.entryPrice,
                             bestCandidate.stopLossPips,
                             bestCandidate.takeProfitPips,
@@ -6481,7 +5218,7 @@ tradeReq.lotSize = lotSize;
                                         executionReceipt.roundTripMs);
 
                             if(aiPredictionRecorded && executionReceipt.requestId > 0)
-                                UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
+                                g_attributionManager.UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
                         }
                     }
                 }
@@ -6532,196 +5269,46 @@ tradeReq.lotSize = lotSize;
     }
 
     datetime heartbeatNow = TimeCurrent();
-    int heartbeatIntervalSec = MathMax(10, InpDeadlockAttributionIntervalSec);
+    int heartbeatIntervalSec = MathMax(30, InpHeartbeatInterval);
+
+    // Blueprint R6b: Core heartbeat delegated to DiagnosticsManager
+    // DiagnosticsManager emits: [HEARTBEAT], [HEARTBEAT-FUNNEL], [CONVERSION-RATES],
+    // [NO-SIGNAL-ALERT], [RISK-BUDGET], indicator cleanup, and prev-window updates.
+    if(g_diagnosticsManager.IsInitialized())
+    {
+        g_diagnosticsManager.UpdateTradingPaused(g_spikeMonitor.IsPaused());
+        g_diagnosticsManager.UpdateCounters(
+            g_hbScansAttempted, g_hbIntrabarScansExecuted, g_hbNoSignalCount,
+            g_hbValidatorRejects, g_hbRiskRejects, g_hbTradesOpened, g_hbShadowTrades,
+            g_hbSyntheticSpikeEvents,
+            g_hbSignalsGenerated, g_hbSignalsAfterPipeline, g_hbSignalsAfterQuorum,
+            g_hbSignalsValidated, g_hbSignalsRiskApproved, g_hbSignalsSent,
+            g_hbEntryBlocked, g_hbSizingRejects,
+            g_hbQuietNoNewBar, g_hbQuietCadenceHold, g_hbQuietMissingManager);
+        g_diagnosticsManager.EmitHeartbeat();
+    }
+
+    // Consensus-specific diagnostics delegated to DiagnosticsManager
     if(g_lastHeartbeatLogTime == 0 || (heartbeatNow - g_lastHeartbeatLogTime) >= heartbeatIntervalSec)
     {
-        ulong diagRawNone = 0;
-        ulong diagFilteredOut = 0;
-        ulong diagQuorumFailed = 0;
-        ulong diagIntrabarNotEligible = 0;
-        ulong diagSignalsGenerated = 0;
-        ulong diagSignalsAfterPipeline = 0;
-        ulong diagSignalsAfterQuorum = 0;
-        ulong diagMomentumNone = 0;
-        ulong diagMomentumCooldown = 0;
-        ulong diagMomentumLowVolatility = 0;
-        ulong diagMomentumNoCrossover = 0;
-        ulong diagMomentumTrendMisaligned = 0;
-        ulong diagMomentumNotReady = 0;
-        ulong diagUICTNone = 0;
-        ulong diagUICTNeutralBias = 0;
-        ulong diagUICTOtherFilters = 0;
-        ulong diagReasonTotal = 0;
-        ulong rolePrimarySignals = 0;
-        ulong roleFeatureSignals = 0;
-        ulong roleShadowSignals = 0;
-        ulong roleVoteSuppressed = 0;
-        ulong clusterTrendSignals = 0;
-        ulong clusterMeanReversionSignals = 0;
-        ulong clusterStructureSignals = 0;
-        ulong clusterNoneSignals = 0;
-        GetAggregatedConsensusDiagnostics(diagRawNone,
-                                          diagFilteredOut,
-                                          diagQuorumFailed,
-                                          diagIntrabarNotEligible,
-                                          diagSignalsGenerated,
-                                          diagSignalsAfterPipeline,
-                                          diagSignalsAfterQuorum,
-                                          diagMomentumNone,
-                                          diagMomentumCooldown,
-                                          diagMomentumLowVolatility,
-                                          diagMomentumNoCrossover,
-                                          diagMomentumTrendMisaligned,
-                                          diagMomentumNotReady,
-                                          diagUICTNone,
-                                          diagUICTNeutralBias,
-                                          diagUICTOtherFilters,
-                                          diagReasonTotal);
-        GetAggregatedRoleClusterDiagnostics(rolePrimarySignals,
-                                            roleFeatureSignals,
-                                            roleShadowSignals,
-                                            roleVoteSuppressed,
-                                            clusterTrendSignals,
-                                            clusterMeanReversionSignals,
-                                            clusterStructureSignals,
-                                            clusterNoneSignals);
+        g_diagnosticsManager.EmitConsensusDiagnostics(g_hbQuietNoNewBar,
+                                                       g_hbQuietCadenceHold,
+                                                       g_hbQuietMissingManager,
+                                                       g_hbNoSignalCount,
+                                                       g_hbValidatorRejects,
+                                                       g_hbRiskRejects,
+                                                       g_hbEntryBlocked,
+                                                       g_hbSizingRejects,
+                                                       g_diagnosticsManager.GetWindowScans(),
+                                                       g_diagnosticsManager.GetWindowNoSignal(),
+                                                       g_diagnosticsManager.GetNoSignalRate(),
+                                                       heartbeatNow);
 
-        PrintFormat("[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | shadow_trades=%I64u | spike_events=%I64u | pause_active=%s",
-                    g_hbScansAttempted, g_hbIntrabarScansExecuted, g_hbNoSignalCount,
-                    g_hbValidatorRejects, g_hbRiskRejects, g_hbTradesOpened, g_hbShadowTrades,
-                    g_hbSyntheticSpikeEvents,
-                    IsTradingPauseActive() ? "true" : "false");
-        PrintFormat("[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | shadow_or_live_sent=%I64u",
-                    g_hbSignalsGenerated,
-                    g_hbSignalsAfterPipeline,
-                    g_hbSignalsAfterQuorum,
-                    g_hbSignalsValidated,
-                    g_hbSignalsRiskApproved,
-                    g_hbSignalsSent);
-
-        // Scalp engine heartbeat diagnostics
-        if(InpEnableScalpEngine && g_scalpEngine.IsInitialized())
-            g_scalpEngine.PrintDiagnostics();
-
-        // Phase 6: Full-margin / safe mode heartbeat diagnostics
-        if(InpRiskTier == RISK_TIER_FULL_MARGIN && g_fullMarginMode.IsInitialized())
-            g_fullMarginMode.PrintDiagnostics();
-        if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
-            g_safeMode.PrintDiagnostics();
-        PrintFormat("[CONSENSUS-SNAPSHOT] generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u",
-                    diagSignalsGenerated,
-                    diagSignalsAfterPipeline,
-                    diagSignalsAfterQuorum,
-                    diagRawNone,
-                    diagFilteredOut,
-                    diagQuorumFailed,
-                    diagIntrabarNotEligible,
-                    diagReasonTotal);
-        PrintFormat("[STRATEGY-REJECTS] momentum_none=%I64u | momentum_cooldown=%I64u | momentum_low_vol=%I64u | momentum_no_crossover=%I64u | momentum_trend_misaligned=%I64u | momentum_not_ready=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u | uict_other_filters=%I64u",
-                    diagMomentumNone,
-                    diagMomentumCooldown,
-                    diagMomentumLowVolatility,
-                    diagMomentumNoCrossover,
-                    diagMomentumTrendMisaligned,
-                    diagMomentumNotReady,
-                    diagUICTNone,
-                    diagUICTNeutralBias,
-                    diagUICTOtherFilters);
-        PrintFormat("[ROLE-CLUSTER] primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
-                    rolePrimarySignals,
-                    roleFeatureSignals,
-                    roleShadowSignals,
-                    roleVoteSuppressed,
-                    clusterTrendSignals,
-                    clusterMeanReversionSignals,
-                    clusterStructureSignals,
-                    clusterNoneSignals);
-        PrintFormat("[QUIET-REASONS] no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u | entry_blocked=%I64u | sizing=%I64u",
-                    g_hbQuietNoNewBar,
-                    g_hbQuietCadenceHold,
-                    g_hbQuietMissingManager,
-                    g_hbNoSignalCount,
-                    g_hbValidatorRejects,
-                    g_hbRiskRejects,
-                    g_hbEntryBlocked,
-                    g_hbSizingRejects);
-
-        ulong windowScans = g_hbScansAttempted - g_prevHbScansAttempted;
-        ulong windowNoSignal = g_hbNoSignalCount - g_prevHbNoSignalCount;
-        ulong windowGenerated = g_hbSignalsGenerated - g_prevHbSignalsGenerated;
-        ulong windowAfterPipeline = g_hbSignalsAfterPipeline - g_prevHbSignalsAfterPipeline;
-        ulong windowAfterQuorum = g_hbSignalsAfterQuorum - g_prevHbSignalsAfterQuorum;
-        ulong windowValidated = g_hbSignalsValidated - g_prevHbSignalsValidated;
-        ulong windowRiskApproved = g_hbSignalsRiskApproved - g_prevHbSignalsRiskApproved;
-        ulong windowSent = g_hbSignalsSent - g_prevHbSignalsSent;
-
-        double rateAfterPipeline = (windowGenerated > 0) ? (100.0 * (double)windowAfterPipeline / (double)windowGenerated) : 0.0;
-        double rateAfterQuorum = (windowAfterPipeline > 0) ? (100.0 * (double)windowAfterQuorum / (double)windowAfterPipeline) : 0.0;
-        double rateValidated = (windowAfterQuorum > 0) ? (100.0 * (double)windowValidated / (double)windowAfterQuorum) : 0.0;
-        double rateRiskApproved = (windowValidated > 0) ? (100.0 * (double)windowRiskApproved / (double)windowValidated) : 0.0;
-        double rateSent = (windowRiskApproved > 0) ? (100.0 * (double)windowSent / (double)windowRiskApproved) : 0.0;
-        double noSignalRate = (windowScans > 0) ? (100.0 * (double)windowNoSignal / (double)windowScans) : 0.0;
-        PrintFormat("[CONVERSION-RATES] window_scans=%I64u | generated=%I64u | after_pipeline=%.1f%% | after_quorum=%.1f%% | validated=%.1f%% | risk_approved=%.1f%% | sent=%.1f%% | no_signal=%.1f%%",
-                    windowScans,
-                    windowGenerated,
-                    rateAfterPipeline,
-                    rateAfterQuorum,
-                    rateValidated,
-                    rateRiskApproved,
-                    rateSent,
-                    noSignalRate);
-
-        string dominantConsensusCause = GetDominantConsensusCause(diagRawNone,
-                                                                  diagFilteredOut,
-                                                                  diagQuorumFailed,
-                                                                  diagIntrabarNotEligible);
-        if(windowScans >= 20 &&
-           noSignalRate >= 80.0 &&
-           (g_lastNoSignalAlertTime == 0 || (heartbeatNow - g_lastNoSignalAlertTime) >= heartbeatIntervalSec))
-        {
-            PrintFormat("[NO-SIGNAL-ALERT] window_scans=%I64u | no_signal=%I64u (%.1f%%) | dominant=%s | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u | momentum_none=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u",
-                        windowScans,
-                        windowNoSignal,
-                        noSignalRate,
-                        dominantConsensusCause,
-                        diagRawNone,
-                        diagFilteredOut,
-                        diagQuorumFailed,
-                        diagIntrabarNotEligible,
-                        diagReasonTotal,
-                        diagMomentumNone,
-                        diagUICTNone,
-                        diagUICTNeutralBias);
-            g_lastNoSignalAlertTime = heartbeatNow;
-        }
-
-        SUnifiedRiskSnapshot heartbeatRisk = unifiedRiskManager.GetSnapshot();
-        PrintFormat("[RISK-BUDGET] effective=%.2f/%.2f | entry=%.2f | mtm=%.2f | open_exposure=%.2f | conservative=%s | emergency=%s",
-                    heartbeatRisk.dailyRiskUsedPercent,
-                    heartbeatRisk.maxDailyRiskPercent,
-                    heartbeatRisk.dailyEntryRiskUsedPercent,
-                    heartbeatRisk.dailyMarkToMarketLossPercent,
-                    heartbeatRisk.openExposureRiskPercent,
-                    heartbeatRisk.conservativeMode ? "true" : "false",
-                    heartbeatRisk.emergencyMode ? "true" : "false");
-
-        CIndicatorManager* indicatorManager = CIndicatorManager::Instance();
-        if(indicatorManager != NULL)
-            indicatorManager.ReleaseUnused(300);
-
-        g_prevHbScansAttempted = g_hbScansAttempted;
-        g_prevHbNoSignalCount = g_hbNoSignalCount;
-        g_prevHbSignalsGenerated = g_hbSignalsGenerated;
-        g_prevHbSignalsAfterPipeline = g_hbSignalsAfterPipeline;
-        g_prevHbSignalsAfterQuorum = g_hbSignalsAfterQuorum;
-        g_prevHbSignalsValidated = g_hbSignalsValidated;
-        g_prevHbSignalsRiskApproved = g_hbSignalsRiskApproved;
-        g_prevHbSignalsSent = g_hbSignalsSent;
         g_lastHeartbeatLogTime = heartbeatNow;
     }
 
     if(InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining &&
-       (g_lastNNHealthLogTime == 0 || (heartbeatNow - g_lastNNHealthLogTime) >= 60))
+       (g_lastNNHealthLogTime == 0 || (heartbeatNow - g_lastNNHealthLogTime) >= heartbeatIntervalSec))
     {
         for(int nnIdx = 0; nnIdx < ArraySize(g_neuralNetStrategies); nnIdx++)
         {
@@ -6751,8 +5338,11 @@ tradeReq.lotSize = lotSize;
 
     ManageOpenPositionsIfNeeded();
 
-    if(HandleEmergencyDrawdownStop("timer"))
+    if(g_spikeMonitor.HandleEmergencyDrawdown("timer", currentDrawdown, InpMaxDrawdown, InpEmergencyFlattenAllAccountPositions))
+    {
+        tradingEnabled = false;
         return;
+    }
 
     // Collect market data for AI analysis from unified risk + performance snapshots
     SUnifiedRiskSnapshot riskSnapshot = unifiedRiskManager.GetSnapshot();
@@ -6815,17 +5405,17 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                 // Capture entry-time mapping from comment to position for exact close labeling
                 if((dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT) && positionId > 0)
                 {
-                    string openPredictionId = ExtractPredictionIdFromComment(dealComment);
+                    string openPredictionId = g_attributionManager.ExtractPredictionIdFromComment(dealComment);
                     if(openPredictionId != "")
                     {
-                        UpsertPredictionPositionMap(positionId, openPredictionId);
-                        g_nnDiagEntryMapCount++;
-                        NNDiagLog(StringFormat("Entry mapped | Symbol=%s | PositionID=%I64u | PredictionID=%s",
+                        g_attributionManager.UpsertPredictionPositionMap(positionId, openPredictionId);
+                        g_attributionManager.IncrementNNDiagEntryMapCount();
+                        g_attributionManager.NNDiagLog(StringFormat("Entry mapped | Symbol=%s | PositionID=%I64u | PredictionID=%s",
                                                trans.symbol, positionId, openPredictionId));
                     }
                     else
                     {
-                        NNDiagLog(StringFormat("Entry without prediction ID | Symbol=%s | PositionID=%I64u | Comment=%s",
+                        g_attributionManager.NNDiagLog(StringFormat("Entry without prediction ID | Symbol=%s | PositionID=%I64u | Comment=%s",
                                                trans.symbol, positionId, dealComment));
                     }
 
@@ -6833,9 +5423,9 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                     ENUM_TRADE_SIGNAL aiPredictionSignal = TRADE_SIGNAL_NONE;
                     uint aiRequestId = result.request_id;
                     if(InpEnableAIMode &&
-                       ConsumeAIPendingRequestMap(aiRequestId, trans.symbol, aiPredictionTime, aiPredictionSignal))
+                       g_attributionManager.ConsumeAIPendingRequestMap(aiRequestId, trans.symbol, aiPredictionTime, aiPredictionSignal))
                     {
-                        UpsertAIPredictionPositionMap(positionId, aiPredictionTime, aiPredictionSignal);
+                        g_attributionManager.UpsertAIPredictionPositionMap(positionId, aiPredictionTime, aiPredictionSignal);
                     }
 
                     PrintFormat("[TRADE-CONFIRMED] %s | entry=%s | deal=%I64u | position_id=%I64u | price=%.5f | volume=%.2f | request_id=%u",
@@ -6854,7 +5444,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                     double dealSwap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);
                     double dealCommission = HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
                     double netProfit = dealProfit + dealSwap + dealCommission;
-                    bool positionStillOpen = (positionId > 0 && IsPositionIdStillOpen(positionId));
+                    bool positionStillOpen = (positionId > 0 && g_attributionManager.IsPositionIdStillOpen(positionId));
                     double totalNetProfit = netProfit;
                     bool finalCloseRecorded = false;
 
@@ -6862,13 +5452,13 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                     {
                         if(positionId > 0)
                         {
-                            AccumulatePendingCloseProfit(positionId, netProfit);
+                            g_attributionManager.AccumulatePendingCloseProfit(positionId, netProfit);
                         }
                     }
                     else
                     {
                         if(positionId > 0)
-                            totalNetProfit += ConsumePendingCloseProfit(positionId);
+                            totalNetProfit += g_attributionManager.ConsumePendingCloseProfit(positionId);
 
                         performanceAnalytics.RecordClosedTrade((positionId > 0) ? positionId : trans.deal,
                                                                totalNetProfit);
@@ -6886,8 +5476,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
                     if(!positionStillOpen && g_aiFeedbackReady)
                     {
-                        datetime aiPredictionTime = (positionId > 0) ? GetAIPredictionTimeForPosition(positionId) : 0;
-                        ENUM_TRADE_SIGNAL aiPredictionSignal = (positionId > 0) ? GetAIPredictionSignalForPosition(positionId) : TRADE_SIGNAL_NONE;
+                        datetime aiPredictionTime = (positionId > 0) ? g_attributionManager.GetAIPredictionTimeForPosition(positionId) : 0;
+                        ENUM_TRADE_SIGNAL aiPredictionSignal = (positionId > 0) ? g_attributionManager.GetAIPredictionSignalForPosition(positionId) : TRADE_SIGNAL_NONE;
                         if(aiPredictionTime > 0 && aiPredictionSignal != TRADE_SIGNAL_NONE)
                         {
                             ENUM_TRADE_SIGNAL actualOutcome = aiPredictionSignal;
@@ -6906,8 +5496,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                        InpEnableNeuralNetwork &&
                        InpEnableNNOnlineTraining)
                     {
-                        string predictionIdFromComment = ExtractPredictionIdFromComment(dealComment);
-                        string predictionIdFromMap = (positionId > 0) ? GetPredictionIdForPosition(positionId) : "";
+                        string predictionIdFromComment = g_attributionManager.ExtractPredictionIdFromComment(dealComment);
+                        string predictionIdFromMap = (positionId > 0) ? g_attributionManager.GetPredictionIdForPosition(positionId) : "";
                         string resolvedPredictionId = (predictionIdFromComment != "") ? predictionIdFromComment : predictionIdFromMap;
                         bool hasPredictionContext = (resolvedPredictionId != "");
 
@@ -6915,8 +5505,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                         {
                             if(positionId > 0 && hasPredictionContext)
                             {
-                                g_nnDiagPartialCloseCount++;
-                                NNDiagLog(StringFormat("Partial close deferred | Symbol=%s | PositionID=%I64u | DealNet=%.2f",
+                                g_attributionManager.IncrementNNDiagPartialCloseCount();
+                                g_attributionManager.NNDiagLog(StringFormat("Partial close deferred | Symbol=%s | PositionID=%I64u | DealNet=%.2f",
                                                        trans.symbol, positionId, netProfit));
                             }
                         }
@@ -6935,45 +5525,45 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
                                 if(updatedById)
                                 {
-                                    g_nnDiagCloseByIdCount++;
-                                    NNDiagLog(StringFormat("Close labeled by ID | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
+                                    g_attributionManager.IncrementNNDiagCloseByIdCount();
+                                    g_attributionManager.NNDiagLog(StringFormat("Close labeled by ID | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
                                                            trans.symbol, positionId, resolvedPredictionId, totalNetProfit));
                                 }
                                 else if(updatedByFallback)
                                 {
-                                    g_nnDiagCloseFallbackCount++;
-                                    NNDiagLog(StringFormat("Close labeled by fallback | Symbol=%s | PositionID=%I64u | Net=%.2f",
+                                    g_attributionManager.IncrementNNDiagCloseFallbackCount();
+                                    g_attributionManager.NNDiagLog(StringFormat("Close labeled by fallback | Symbol=%s | PositionID=%I64u | Net=%.2f",
                                                            trans.symbol, positionId, totalNetProfit));
                                 }
                                 else
                                 {
-                                    g_nnDiagCloseMissCount++;
-                                    NNDiagLog(StringFormat("Close label miss | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
+                                    g_attributionManager.IncrementNNDiagCloseMissCount();
+                                    g_attributionManager.NNDiagLog(StringFormat("Close label miss | Symbol=%s | PositionID=%I64u | PredictionID=%s | Net=%.2f",
                                                            trans.symbol, positionId, resolvedPredictionId, totalNetProfit));
                                 }
                             }
                             else if(symbolNet == NULL && hasPredictionContext)
                             {
-                                g_nnDiagCloseMissCount++;
-                                NNDiagLog(StringFormat("Close label miss: no NN instance | Symbol=%s | PositionID=%I64u",
+                                g_attributionManager.IncrementNNDiagCloseMissCount();
+                                g_attributionManager.NNDiagLog(StringFormat("Close label miss: no NN instance | Symbol=%s | PositionID=%I64u",
                                                        trans.symbol, positionId));
                             }
                             else if(!hasPredictionContext)
                             {
-                                NNDiagLog(StringFormat("Close skipped: no prediction context | Symbol=%s | PositionID=%I64u",
+                                g_attributionManager.NNDiagLog(StringFormat("Close skipped: no prediction context | Symbol=%s | PositionID=%I64u",
                                                        trans.symbol, positionId));
                             }
                         }
                     }
 
-                    if(positionId > 0 && !IsPositionIdStillOpen(positionId))
+                    if(positionId > 0 && !g_attributionManager.IsPositionIdStillOpen(positionId))
                     {
-                        RemovePredictionPositionMap(positionId);
-                        RemoveAIPredictionPositionMap(positionId);
-                        ClearPendingCloseProfit(positionId);
+                        g_attributionManager.RemovePredictionPositionMap(positionId);
+                        g_attributionManager.RemoveAIPredictionPositionMap(positionId);
+                        g_attributionManager.ClearPendingCloseProfit(positionId);
                         if(finalCloseRecorded)
                         {
-                            NNDiagLog(StringFormat("Position map cleared | Symbol=%s | PositionID=%I64u",
+                            g_attributionManager.NNDiagLog(StringFormat("Position map cleared | Symbol=%s | PositionID=%I64u",
                                                    trans.symbol, positionId));
                         }
                     }

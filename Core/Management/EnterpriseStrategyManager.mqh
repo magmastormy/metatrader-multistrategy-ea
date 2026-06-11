@@ -22,6 +22,7 @@
 #include "../../Strategies/CPowerOfThreeStrategy.mqh"
 #include "../../Strategies/MeanReversionStrategy.mqh"
 #include "../../Strategies/VolatilityBreakoutStrategy.mqh"
+#include "../../Strategies/StatisticalArbitrageStrategy.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -35,6 +36,10 @@ class CPositionSizer;
 class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
+class CPythonBridge;
+
+// External reference to global Python bridge instance
+extern CPythonBridge* g_pythonBridge;
 
 //+------------------------------------------------------------------+
 //| Strategy Registration Entry                                     |
@@ -2134,6 +2139,19 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     // 10: Volatility Breakout (live primary voter) - Tier 1 - TREND_CLUSTER
     if(size > 10 && flags[10]) RegisterStrategy(new CVolatilityBreakoutStrategy(), "Volatility Breakout", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, true,
                                                PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+
+    // 11: Statistical Arbitrage - Requires Python Bridge for real-time correlation matrix
+    // Conditionally registered only when Python bridge is available
+    if(g_pythonBridge != NULL && g_pythonBridge.IsConnected())
+    {
+        if(size > 11 && flags[11]) RegisterStrategy(new CStatisticalArbitrageStrategy(), "Statistical Arbitrage", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, false,
+                                                    PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, true);
+        Print("[EnterpriseStrategyManager] Python Bridge available - Statistical Arbitrage strategy registered in shadow mode");
+    }
+    else
+    {
+        Print("[EnterpriseStrategyManager] Python Bridge not available - Skipping Statistical Arbitrage registration");
+    }
 
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
           GetActiveStrategyCount());

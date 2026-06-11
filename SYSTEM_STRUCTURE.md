@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-06-05
+- Last Updated: 2026-06-10
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 96 - Execution Profitability Recovery
+- Current Batch: 98 - Monolith Decomposition & Risk Framework Completion
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -28,6 +28,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 
 - Batch 96 restores profitable execution mechanics: scan cycles retain multiple `CUnifiedRiskManager`-reserved candidates instead of replacing them with one winner, `InpMaxTradeSendsPerCycle` controls ranked multi-send throughput, same-symbol capacity counts EA-owned positions, synthetic symbol detection covers SFX/FX Vol/SwitchX/PainX/GainX/FlipX, and `CTradeManager` stop lifecycle management is magic-filtered and volatility-aware.
 
+- Batch 97 implements the full EA_SYSTEM_REDESIGN.md Phase 1-5: centralized indicator access across 8 strategy files, conditional diagnostic logging with `InpLogLevel`, rationalized risk defaults (1% base risk, 5% max per trade, 5% daily, 15% portfolio), unified PositionSizer correlation via `CCorrelationEngine`, broker trading day reset with configurable start hour, TickSafetyMonitor CAccountInfo caching, Kelly Criterion position sizing (`POSITION_SIZE_KELLY`), equity compounding with sqrt upside/linear downside, tiered correlation response (reduce at 0.4, block at 0.7), daily P&L loss limit circuit breaker, regime-aware strategy weighting (`GetRegimeConfidenceMultiplier`), volatility direction awareness (`GetVolatilityDirection`), multi-timeframe confluence (`IsAlignedWithHigherTF`), cross-cluster conflict resolution in consensus, mandatory SL gate in `CTradeManager`, min R:R enforcement (1:2 default, 1:5 mean-reversion), portfolio profit target with trailing floor, auto mode switching (conservative/aggressive/emergency), and a dedicated scalping engine with `CScalpSignalCache`, three scalp strategies (Momentum, Spread, VolatilityBreakout), async order execution via `OrderSendAsync()`, and dual-path OnTick/OnTimer processing.
+
+- Batch 98 completes the EA Overhaul Blueprint monolith decomposition (R6/R7) and risk framework items: `CPositionSizer::CalculateSize()` is now truly stateless via `CalculateOptimalPositionSizeCore()` (no save/restore hack); position lifecycle management extracted into `CPositionLifecycleManager`; heartbeat/diagnostics extracted into `CDiagnosticsManager` with consensus diagnostics; unprotected position tracking extracted into `CUnprotectedPositionTracker` with 3-attempt SL escalation; synthetic spike monitoring extracted into `CSyntheticSpikeMonitor`; trade attribution and NN prediction mapping extracted into `CTradeAttributionManager`; symbol scan scheduling extracted into `CSymbolScanScheduler`; anti-Martingale dynamic lot scaling added; CICTPositionSizer risk denominator fixed to use `MathMin(balance, equity)`; risk percent scale consistency verified with conversion helpers; cluster rebalancing updated for Conservative tier; Statistical Arbitrage conditionally registered when Python Bridge is connected; heartbeat interval made configurable. Total ~1,180 lines extracted from the main EA monolith into 7 focused manager classes.
+
 ## 2. Top-Level Runtime Topology
 
 ### 2.1 Entrypoint and orchestration
@@ -41,6 +45,12 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - reconstruct cooldown/trade-timing state from EA-owned open positions and deal history on startup
   - keep `OnTimer()` as the single heavy-evaluation owner and keep `OnTick()` constrained to safety/lifecycle work
   - maintain cadence loops (new-bar/intrabar)
+  - delegate position lifecycle management to `CPositionLifecycleManager` (SRE, structural invalidation, breakeven/trailing, safe mode)
+  - delegate heartbeat and diagnostics to `CDiagnosticsManager` (core heartbeat, consensus diagnostics, conversion rates, risk budget snapshot)
+  - delegate unprotected position tracking and SL remediation to `CUnprotectedPositionTracker` (3-attempt escalation)
+  - delegate synthetic tick spike monitoring and trading pause to `CSyntheticSpikeMonitor`
+  - delegate trade attribution and NN prediction mapping to `CTradeAttributionManager`
+  - delegate symbol scan scheduling and intrabar scoring to `CSymbolScanScheduler`
   - budget heavy signal evaluations across both new-bar and intrabar paths via `InpMaxSignalEvaluationsPerCycle`, carrying deferred new-bar symbols forward to later cycles
   - budget intrabar scans by symbol yield instead of blindly scanning the whole intrabar universe every cycle
   - apply per-symbol intrabar backoff after repeated low-yield or readiness-faulted scans
@@ -91,7 +101,61 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - retain last-contributor context for attribution
   - host the new ICT expansion modules (`CUnicornModelStrategy`, `CPowerOfThreeStrategy`) alongside existing `Unified ICT`
 
-### 2.3 Pipeline domain
+### 2.3 Extracted Lifecycle Managers
+
+#### CPositionLifecycleManager
+- File: `Core/Management/PositionLifecycleManager.mqh`
+- Responsibilities:
+  - Signal Reversal Exit (SRE) with breathing room, last-stand zone, profit guard
+  - Structural Invalidation exit (ICT/Structure trend flip)
+  - Breakeven and trailing stop delegation to `CTradeManager`
+  - Safe mode partial profit taking for conservative tier
+  - Configurable via `ConfigureSRE()` and `ConfigureLifecycle()` from EA inputs
+
+#### CDiagnosticsManager
+- File: `Core/Management/DiagnosticsManager.mqh`
+- Responsibilities:
+  - Core heartbeat emission (`[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`, `[RISK-BUDGET]`)
+  - Consensus diagnostics (`[CONSENSUS-SNAPSHOT]`, `[STRATEGY-REJECTS]`, `[ROLE-CLUSTER]`, `[QUIET-REASONS]`, `[NO-SIGNAL-ALERT-CONSENSUS]`)
+  - Windowed conversion-rate calculations
+  - Indicator manager cleanup
+  - NN health checks
+  - Counter values passed via `UpdateCounters()` (MQL5-safe)
+
+#### CUnprotectedPositionTracker
+- File: `Core/Risk/UnprotectedPositionTracker.mqh`
+- Responsibilities:
+  - Track positions without stop-loss protection
+  - 3-attempt SL escalation: Escalation-1 (3x ATR), Escalation-2 (broker min distance), Escalation-3 (unconditional close)
+  - Fallback stop calculation for synthetic instruments
+
+#### CSyntheticSpikeMonitor
+- File: `Core/Processing/SyntheticSpikeMonitor.mqh`
+- Responsibilities:
+  - Synthetic tick velocity spike detection
+  - Trading pause activation and release
+  - Emergency drawdown stop
+  - Tick safety loop processing
+
+#### CTradeAttributionManager
+- File: `Core/Trading/TradeAttributionManager.mqh`
+- Responsibilities:
+  - Prediction position mapping (prediction ID ↔ position ID)
+  - AI prediction position mapping with signal/time tracking
+  - AI pending request mapping
+  - Pending close profit accumulation
+  - NN diagnostics logging and self-test
+  - Cluster code utilities and trade comment building
+
+#### CSymbolScanScheduler
+- File: `Core/Processing/SymbolScanScheduler.mqh`
+- Responsibilities:
+  - Symbol scan state management (new-bar, intrabar, pending)
+  - Intrabar scoring and backoff logic
+  - Symbol scheduler state alignment and rebuild
+  - Evaluation budget tracking and symbol rotation
+
+### 2.4 Pipeline domain
 - Class: `CUnifiedSignalPipeline`
 - Responsibilities:
   - cache structural/indicator context once per symbol/timeframe/bar for reuse across strategy votes
@@ -111,7 +175,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - emit threshold-source telemetry (`[PIPELINE-THRESHOLD]`)
   - emit regime/cost veto telemetry (`[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`)
 
-### 2.4 Shared AI feature contract
+### 2.5 Shared AI feature contract
 - Class: `CAIFeatureVectorBuilder`
 - The canonical runtime/training feature width is now `57`.
 - Features `0..54` remain the original OHLCV/indicator-derived contract.
@@ -122,7 +186,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - normalize decision hygiene before final consensus acceptance without hot-path hedging neutralization
   - keep runtime diagnostics authoritative in the manager/runtime layer rather than spinning local `SignalDiagnostics` sinks per pipeline instance
 
-### 2.4 AI adaptation domain
+### 2.6 AI adaptation domain
 - Runtime owner: `CAIEngine`
 - Strategy-vote owners: symbol-scoped adapters in `Core/Strategy/`
 - Responsibilities:
@@ -170,7 +234,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Runtime control: `ConfigureExternalLLM()`, `SetExternalLLMEnabled(bool)`, `IsExternalLLMEnabled()`
   - Runtime observability: `[EXT-LLM]` now covers init, endpoint config, query start/success/failure, reasoning capture, feedback, and shutdown so "enabled but unused" states are visible from logs
 
-### 2.4 AI Modular Architecture (Batch 92 - GOD TIER Refactoring)
+### 2.7 AI Modular Architecture (Batch 92 - GOD TIER Refactoring)
 - **Modular Component Decomposition:**
   - `CNeuralCore.mqh`: Core neural operations (ReLU, Softmax with temperature, CrossEntropy loss, gradient computation, gradient clipping)
   - `CNeuralTrainingDataManager.mqh`: Training examples and barrier buffer management (SMTrainingExample, SMBarrierEntry)
@@ -198,7 +262,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - `SaveCheckpoint()`: Force checkpoint save
   - `GetLastLoadStatus()`: Diagnostics string
 
-### 2.5 Risk domain
+### 2.8 Risk domain
 - Class: `CUnifiedRiskManager`
 - Responsibilities:
   - single pre-trade veto authority
@@ -212,6 +276,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - executed-risk registration after successful synchronous sends, scaled by actual fill ratio
   - portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
   - progressively throttle recommended per-trade risk as daily and portfolio utilization rise, instead of waiting for the final hard-cap stage
+  - enforce tiered correlation response: reduce position size at `correlationReduceThreshold` (0.4) and block at `correlationBlockThreshold` (0.7)
+  - enforce daily P&L loss limit circuit breaker via `dailyLossLimitPercent`, `CheckDailyLossLimit()`, and `m_dailyLossHaltActive` state
+  - reset daily risk counters at configurable `m_tradingDayStartHour` instead of relying on MT5 server day boundary
+  - apply rationalized safe defaults: 1% base risk, 5% max per trade, 5% daily, 15% portfolio
   - maintain a scan-time `CVirtualPositionBook` so cycle-best reservations count against projected daily and portfolio usage before the final execution winner is sent
 - **Module 4 Hardening (Batch 85):**
   - Safe default risk limits (2% per trade, 6% daily, 10% portfolio) when config values are invalid
@@ -219,7 +287,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - 20% margin buffer (uses max 80% of free margin) for volatile period safety
   - Volatility adjustment uses minimum price threshold to prevent exaggerated ratios on low-priced symbols
 
-### 2.6 Execution domain
+### 2.9 Execution domain
 - Class: `CTradeManager`
 - Responsibilities:
   - convert approved intent into actual order send
@@ -244,7 +312,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Configurable synthetic spike detection confirmation window (default: 2 consecutive windows)
   - `GenerateExecutionQualityReport()` for detailed execution analytics
 
-### 2.6.1 Live authority domain
+### 2.9.1 Live authority domain
 - Owner: `MultiStrategyAutonomousEA.mq5`
 - Responsibilities:
   - decide whether each risk-approved candidate is live-send eligible or candidate-level shadow-only
@@ -254,7 +322,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - demote mature families to shadow when forward evidence degrades
   - emit `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, and `[AUTHORITY-RESULT]` telemetry for every authority decision lifecycle
 
-### 2.7 Position lifecycle domain
+### 2.10 Position lifecycle domain
 - Owner: `MultiStrategyAutonomousEA.mq5` safety/timer lifecycle loop using `CTradeManager::ManageAllPositions(...)`
 - The generic EA-level breakeven/trailing lifecycle is now operator-controlled through:
   - `InpEnablePositionLifecycleManager` (Enabled by default in Batch 82)
@@ -278,7 +346,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - run from the lightweight safety loop once per second instead of inside the heavy symbol-scan path
   - managed by EA magic scope
 
-### 2.8 Shared indicator domain
+### 2.11 Shared indicator domain
 - Class: `CIndicatorManager`
 - Responsibilities:
   - indicator handle cache and shared access
@@ -286,7 +354,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - explicit singleton teardown on deinit
   - remain the first ATR source for validator/execution sizing, with raw-rate fallback in the EA entry path when a direct ATR handle read misses
 
-### 2.9 Chart visualization domain (Batch 58, Batch 86, Batch 90)
+### 2.12 Chart visualization domain (Batch 58, Batch 86, Batch 90)
 - Class: `CChartDrawingManager`
 - Responsibilities:
   - centralized chart drawing coordination across all strategies
@@ -325,7 +393,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
     - Integrated drawing statistics into VisualDashboard showing global/per-strategy counts
     - Added UpdateDrawingStats() and DrawLabelAt() to VisualDashboard
 
-### 2.10 Regime Detection Robustness (Batch 86)
+### 2.13 Regime Detection Robustness (Batch 86)
 - Class: `CRegimeEngine`
 - Enhancements:
   - Added `regimeConfidence` (0.0-1.0) to track detection confidence level
@@ -334,14 +402,14 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Enhanced `[REGIME-STATE]` logging to include confidence and stability metrics
   - Prevents rapid regime flipping and reduces overfitting to noisy market data
 
-### 2.11 Volatility Engine Validation (Batch 86)
+### 2.14 Volatility Engine Validation (Batch 86)
 - Class: `CVolatilityEngine`
 - Enhancements:
   - Added `ValidateAtrCalculation()` test function for runtime ATR verification
   - Validates boundary conditions and array access safety
   - Emits `[ATR-VALIDATE]` telemetry with validation results
 
-### 2.12 Python Bridge Integration (Batch 85)
+### 2.15 Python Bridge Integration (Batch 85)
 - Class: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
 - Files: `Python/zmq_server.py`, `Core/Utils/Enums.mqh`
 - Responsibilities:
@@ -361,7 +429,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - `GET /version`: Get server version information
 - Observability: Emits `[PYTHON-BRIDGE-DASHBOARD]` telemetry with connection state, version, and request stats
 
-### 2.13 Shared Engine & Scalability (Batch 91)
+### 2.16 Shared Engine & Scalability (Batch 91)
 - Class: `CSharedEngineManager` in `Core/Management/SharedEngineManager.mqh`
 - Responsibilities:
   - Shared read-only TrendEngine, VolatilityEngine, and RegimeEngine across symbols to reduce memory and computation footprint
@@ -380,6 +448,58 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Configurable weight mix (spread: 40%, volume:40%, manual:20%)
   - Sorts symbols by priority each recalculation interval
 - **Observability**: GetSharingStatus() returns sharing mode, active symbol count, and engine health
+
+### 2.17 Scalping Engine domain
+- Class: `CFastScalpEngine` in `Core/Scalp/FastScalpEngine.mqh`
+- Signal Cache: `CScalpSignalCache` in `Core/Scalp/ScalpSignalCache.mqh`
+- Responsibilities:
+  - provide tick-level signal evaluation via cached indicator values, bypassing the full consensus pipeline for low-latency scalping entries
+  - manage `SScalpIndicatorCache` struct (13 indicator values + tick-level bid/ask/spread + 7 handle references) per symbol, fixed-size array for 20 symbols
+  - separate `UpdateOnNewBar()` (CopyBuffer path) from `UpdateTickValues()` (SymbolInfoDouble-only path) to minimize per-tick computation
+  - all indicator handles sourced from `CIndicatorManager::Instance()` singleton
+  - support async order execution via `OrderSendAsync()` with `SScalpPendingAsync` tracking and `OnDealConfirmed()` callback
+  - track execution latency via `InpScalpMaxLatencyMs` and timeout pending async orders
+  - integrate with `OnTradeTransaction()` for async order confirmation routing
+- **Scalp Strategies:**
+  - `CScalpMomentumStrategy` (`Core/Scalp/ScalpMomentumStrategy.mqh`): EMA trend + pullback + ATR expanding + spread filter + RSI 40-60; SL=0.75×ATR, TP=1.5×ATR (1:2 R:R); SCALP_CLUSTER; confidence 0.60-0.90
+  - `CScalpSpreadStrategy` (`Core/Scalp/ScalpSpreadStrategy.mqh`): Spread normalization + price near EMA + RSI filter; SL=0.06×ATR, TP=0.3×ATR; MEAN_REVERSION_CLUSTER; confidence 0.50-0.90
+  - `CScalpVolatilityBreakout` (`Core/Scalp/ScalpVolatilityBreakout.mqh`): ATR squeeze + BB breakout + strong bar + RSI confirmation; SL=BB middle, TP=2×ATR; SCALP_CLUSTER; confidence 0.55-0.90
+- **Dual-Path Processing:**
+  - `OnTick()` runs `ProcessScalpFastPath()` for tick-level cached-indicator signal evaluation alongside the existing safety loop
+  - `OnTimer()` retains full consensus logic (pipeline → manager → validator → risk → execution)
+  - Scalp fast path reads from `CScalpSignalCache` for zero-computation indicator access
+  - Scalp entries still pass through `CUnifiedRiskManager` pre-trade gating (AGENTS.md invariant #1 preserved)
+
+### 2.18 Risk Enhancement domain (Batch 97)
+- Enhancements to `CUnifiedRiskManager`:
+  - Tiered correlation response: `correlationReduceThreshold` (0.4) reduces position size, `correlationBlockThreshold` (0.7) blocks trade entirely
+  - Daily P&L loss limit: `dailyLossLimitPercent` circuit breaker halts trading when daily loss exceeds threshold, tracked via `CheckDailyLossLimit()` and `m_dailyLossHaltActive`
+  - Broker trading day reset: `m_tradingDayStartHour` (configurable, default 0) ensures daily risk counters reset at the correct broker trading day boundary
+  - Rationalized defaults: baseRiskPerTradePercent=1%, maxRiskPerTradePercent=5%, maxDailyRiskPercent=5%, maxPortfolioRiskPercent=15%
+- Enhancements to `CPositionSizer`:
+  - `POSITION_SIZE_KELLY` mode: half-Kelly fraction with 25% cap, `CalculateKellyFraction()` computes from recent trade history
+  - Equity compounding: `CalculateCompoundingMultiplier()` with sqrt upside / linear downside scaling
+  - Unified correlation: `SetCorrelationEngine()` delegates to `CCorrelationEngine` instead of internal Pearson
+  - Conditional logging: `m_logLevel` + `SetLogLevel()` gates `LogSizingDecision()` output
+  - **Batch 98 stateless refactor**: `CalculateSize()` is now truly stateless via `CalculateOptimalPositionSizeCore()` — the save/restore hack on `m_lots` has been removed; callers receive the computed size without side effects on internal state
+
+### 2.19 Strategy Intelligence domain (Batch 97)
+- Enhancements to `CStrategyBase`:
+  - Regime-aware weighting: `GetRegimeConfidenceMultiplier()` scales confidence by regime alignment (TREND_CLUSTER: 1.5x strong/0.3x range; MEAN_REVERSION_CLUSTER: 1.5x range/0.2x strong; STRUCTURE_CLUSTER: 1.0x)
+  - Volatility direction: `GetVolatilityDirection()` classifies ATR as EXPANDING/CONTRACTING/STABLE; `GetVolatilityDirectionMultiplier()` applies 1.2x/0.8x/1.0x
+  - Multi-timeframe confluence: `IsAlignedWithHigherTF()` checks EMA50 on next higher timeframe
+  - All intelligence factors applied in `GetSignal()` before returning to manager consensus
+- Enhancements to `CEnterpriseStrategyManager`:
+  - Per-cluster conviction tracking (trendClusterBuyConviction/SellConviction, meanRevClusterBuyConviction/SellConviction)
+  - Cross-cluster conflict resolution: opposing cluster conviction subtracted, regime-weighted
+  - `MathMax(0.0, ...)` guards on conviction subtraction to prevent negative values from floating-point precision
+- Enhancements to `CTradeManager`:
+  - Mandatory SL gate: `ExecuteMarketOrder()` rejects trades with `stopLossPips <= 0.0`
+  - Conditional logging: `m_logLevel` + `SetLogLevel()` gates execution quality reports
+- EA-level risk controls in `MultiStrategyAutonomousEA.mq5`:
+  - Min R:R enforcement: 1:2 default, 1:5 for MEAN_REVERSION_CLUSTER
+  - Portfolio profit target: `InpDailyProfitTargetPercent` with `InpProfitTrailFactor` trailing floor
+  - Auto mode switching: `InpEnableAutoModeSwitch` with CONSERVATIVE/AGGRESSIVE/EMERGENCY modes based on drawdown and win streak
 
 ## 3. Managed Strategies
 

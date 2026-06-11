@@ -146,7 +146,7 @@ public:
     // Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
     {
-        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer))
+        if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
             return false;
         
         // Note: Stat Arb doesn't use traditional indicators on chart symbol
@@ -249,13 +249,24 @@ public:
         {
             // For stat arb, we validate each leg separately
             //TODO: This is a simplified check - full implementation needs pair validation
-            double dummySL = 0, dummyTP = 0;
-            if(!m_riskManager->ValidateTrade(signal.direction, 0, dummySL, dummyTP, signal.confidence))
+            STradeValidationRequest validationReq;
+            ZeroMemory(validationReq);
+            validationReq.symbol = m_symbol;
+            validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            validationReq.lotSize = 0;
+            validationReq.stopLossPips = 0;
+            validationReq.takeProfitPips = 0;
+            validationReq.confidence = signal.confidence;
+            validationReq.strategy = m_name;
+            validationReq.requestTime = TimeCurrent();
+
+            SValidationResult validationResult = m_riskManager.ValidateTradeRequest(validationReq);
+            if(!validationResult.approved)
             {
                 SetDecisionReasonTag("STATARB_RISK_REJECTED");
-                PrintFormat("[STATARB] Risk rejected %s spread (Z=%.2f Conf=%.1f%%)",
+                PrintFormat("[STATARB] Risk rejected %s spread (Z=%.2f Conf=%.1f%%) | %s",
                            signal.direction == TRADE_SIGNAL_BUY ? "LONG" : "SHORT",
-                           signal.zScore, signal.confidence * 100);
+                           signal.zScore, signal.confidence * 100, validationResult.message);
                 return TRADE_SIGNAL_NONE;
             }
         }
@@ -268,7 +279,6 @@ public:
         m_activeSpreadStdDev = spreadStdDev;
         m_pairLastUpdateTime = TimeCurrent();
         
-        m_signalsGenerated++;
         RecordSignal();
         SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "STATARB_SIGNAL_LONG_SPREAD" : "STATARB_SIGNAL_SHORT_SPREAD");
         confidence = signal.confidence;
@@ -310,37 +320,37 @@ private:
         if(m_pythonBridge == NULL)
             return false;
         
-        return m_pythonBridge->IsConnected();
+        return m_pythonBridge.IsConnected();
     }
     
     // Update correlation matrix from Python Bridge
     void UpdateCorrelationMatrix()
     {
-        if(m_pythonBridge == NULL || !m_pythonBridge->IsConnected())
+        if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return;
         
         // Fetch correlation matrix from Python Bridge
-        double matrix[];
+        double corrMatrix[];
         int size;
-        string symbols[];
-        
-        if(m_pythonBridge->GetCorrelationMatrix(matrix, size, symbols))
+        string corrSymbols[];
+
+        if(m_pythonBridge.GetCorrelationMatrix(corrMatrix, size, corrSymbols))
         {
-            PrintFormat("[STATARB] Correlation matrix updated | Size=%dx%d | Symbols=%d", size, size, ArraySize(symbols));
+            PrintFormat("[STATARB] Correlation matrix updated | Size=%dx%d | Symbols=%d", size, size, ArraySize(corrSymbols));
         }
     }
     
     // Find best correlated pair for given symbol
     string FindBestCorrelatedPair(const string symbol)
     {
-        if(m_pythonBridge == NULL || !m_pythonBridge->IsConnected())
+        if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return "";
         
         // Query Python Bridge for best correlated pair
         string bestPair;
         double correlation;
         
-        if(m_pythonBridge->FindBestCorrelatedPair(symbol, bestPair, correlation))
+        if(m_pythonBridge.FindBestCorrelatedPair(symbol, bestPair, correlation))
         {
             if(correlation >= m_minCorrelation)
             {
@@ -355,10 +365,10 @@ private:
     // Get correlation between two symbols
     double GetPairCorrelation(const string symbol1, const string symbol2)
     {
-        if(m_pythonBridge == NULL || !m_pythonBridge->IsConnected())
+        if(m_pythonBridge == NULL || !m_pythonBridge.IsConnected())
             return 0.0;
         
-        return m_pythonBridge->GetPairCorrelation(symbol1, symbol2);
+        return m_pythonBridge.GetPairCorrelation(symbol1, symbol2);
     }
     
     // Calculate spread statistics (mean, std dev) over lookback period

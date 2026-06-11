@@ -534,13 +534,13 @@ ENUM_VOLATILITY_DIRECTION CStrategyBase::GetVolatilityDirection()
     if(copied < 6)
         return VOL_STABLE;
 
-    double currentATR = atrValues[0];
+    double strategyATR = atrValues[0];
     double prevATR = atrValues[5];
 
     if(prevATR <= 0.0)
         return VOL_STABLE;
 
-    double ratio = currentATR / prevATR;
+    double ratio = strategyATR / prevATR;
 
     if(ratio > 1.15) return VOL_EXPANDING;
     if(ratio < 0.85) return VOL_CONTRACTING;

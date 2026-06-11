@@ -145,7 +145,7 @@ public:
       return true;
    }
 
-   const SSafeModeConfig& GetConfig() const { return m_config; }
+   SSafeModeConfig GetConfig() const { return m_config; }
 
    //+------------------------------------------------------------------+
    //| Kill Zone Filter: London 07-10 UTC, New York 12-15 UTC           |
@@ -287,24 +287,23 @@ public:
    //| - Move SL to breakeven at 0.5R profit                            |
    //| - Close 50% of position at 1R profit                             |
    //+------------------------------------------------------------------+
-   void ManageSafeModePositions(CTradeManager* tradeManager)
+   void ManageSafeModePositions(CTradeManager* safeModeTradeMgr)
    {
       if(!m_initialized || !m_config.partialProfitTaking)
          return;
 
-      if(tradeManager == NULL)
+      if(safeModeTradeMgr == NULL)
          return;
 
       for(int i = 0; i < m_trackedCount; i++)
       {
-         SSafeModePositionState &state = m_trackedPositions[i];
-         if(!state.isActive)
+         if(!m_trackedPositions[i].isActive)
             continue;
 
-         ulong ticket = state.ticket;
+         ulong ticket = m_trackedPositions[i].ticket;
          if(!PositionSelectByTicket(ticket))
          {
-            state.isActive = false;
+            m_trackedPositions[i].isActive = false;
             continue;
          }
 
@@ -320,22 +319,22 @@ public:
 
          // Calculate current profit in R
          double profitR = 0.0;
-         if(state.riskDistance > 0.0)
+         if(m_trackedPositions[i].riskDistance > 0.0)
          {
             if(posType == POSITION_TYPE_BUY)
-               profitR = (currentPrice - state.entryPrice) / state.riskDistance;
+               profitR = (currentPrice - m_trackedPositions[i].entryPrice) / m_trackedPositions[i].riskDistance;
             else
-               profitR = (state.entryPrice - currentPrice) / state.riskDistance;
+               profitR = (m_trackedPositions[i].entryPrice - currentPrice) / m_trackedPositions[i].riskDistance;
          }
 
          // 1. Move SL to breakeven at breakevenTriggerR (0.5R)
-         if(!state.breakevenSet && profitR >= m_config.breakevenTriggerR)
+         if(!m_trackedPositions[i].breakevenSet && profitR >= m_config.breakevenTriggerR)
          {
             double beSL = 0.0;
             if(posType == POSITION_TYPE_BUY)
-               beSL = NormalizeDouble(state.entryPrice + point, digits); // Entry + 1 point buffer
+               beSL = NormalizeDouble(m_trackedPositions[i].entryPrice + point, digits); // Entry + 1 point buffer
             else
-               beSL = NormalizeDouble(state.entryPrice - point, digits);
+               beSL = NormalizeDouble(m_trackedPositions[i].entryPrice - point, digits);
 
             // Only move SL if it improves the position
             bool shouldMove = false;
@@ -346,9 +345,9 @@ public:
 
             if(shouldMove)
             {
-               if(tradeManager.ModifyPosition(ticket, beSL, currentTP))
+               if(safeModeTradeMgr.ModifyPosition(ticket, beSL, currentTP))
                {
-                  state.breakevenSet = true;
+                  m_trackedPositions[i].breakevenSet = true;
                   PrintFormat("[SAFE-MODE-BREAKEVEN] %s | ticket=%I64u | SL=%.5f | profitR=%.2fR | trigger=%.1fR",
                               posSymbol, ticket, beSL, profitR, m_config.breakevenTriggerR);
                }
@@ -356,7 +355,7 @@ public:
          }
 
          // 2. Close 50% at 1R profit
-         if(!state.partialClosed && profitR >= 1.0)
+         if(!m_trackedPositions[i].partialClosed && profitR >= 1.0)
          {
             double minVol  = SymbolInfoDouble(posSymbol, SYMBOL_VOLUME_MIN);
             double stepVol = SymbolInfoDouble(posSymbol, SYMBOL_VOLUME_STEP);
@@ -368,9 +367,9 @@ public:
 
             if(halfVol >= minVol && halfVol < volume)
             {
-               if(tradeManager.ClosePositionPartial(ticket, halfVol, "SAFE|1R-PARTIAL"))
+               if(safeModeTradeMgr.ClosePositionPartial(ticket, halfVol, "SAFE|1R-PARTIAL"))
                {
-                  state.partialClosed = true;
+                  m_trackedPositions[i].partialClosed = true;
                   PrintFormat("[SAFE-MODE-PARTIAL] %s | ticket=%I64u | closed=%.2f | profitR=%.2fR",
                               posSymbol, ticket, halfVol, profitR);
                }

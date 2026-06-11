@@ -51,7 +51,7 @@ public:
     {
         datetime currentBarTime = iTime(symbol, tf, 0);
         if(currentBarTime == 0)
-            return INVALID_VALUE;
+            return EMPTY_VALUE;
 
         for(int i = 0; i < m_count; i++)
         {
@@ -64,11 +64,11 @@ public:
                 else
                 {
                     m_entries[i].isActive = false;
-                    return INVALID_VALUE;
+                    return EMPTY_VALUE;
                 }
             }
         }
-        return INVALID_VALUE;
+        return EMPTY_VALUE;
     }
 
     void StoreATR(const string symbol, const ENUM_TIMEFRAMES tf, const double value, const datetime barTime)

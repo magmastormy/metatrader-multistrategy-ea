@@ -15,6 +15,7 @@
 #include "..\Risk\FullMarginMode.mqh"
 #include "..\Risk\SafeModeConfig.mqh"
 #include "..\Monitoring\PerformanceAnalytics.mqh"
+#include "..\Trading\TradeAttributionManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Approved trade candidate struct (mirrors main EA definition)      |
@@ -121,6 +122,7 @@ private:
    CFullMarginMode*        m_fullMarginMode;     // not owned
    CSafeMode*              m_safeMode;           // not owned
    CPerformanceAnalytics*  m_performanceAnalytics; // not owned
+   CTradeAttributionManager* m_attributionManager;  // not owned
    bool                    m_initialized;
 
 public:
@@ -132,6 +134,7 @@ public:
       m_fullMarginMode(NULL),
       m_safeMode(NULL),
       m_performanceAnalytics(NULL),
+      m_attributionManager(NULL),
       m_initialized(false)
    {
    }
@@ -139,7 +142,8 @@ public:
    bool Initialize(CTradeManager* tradeMgr, CUnifiedRiskManager* riskMgr,
                    CPositionSizer* sizer, CRiskTierManager* tierMgr,
                    CFullMarginMode* fmMode, CSafeMode* safeMode,
-                   CPerformanceAnalytics* perfAnalytics)
+                   CPerformanceAnalytics* perfAnalytics,
+                   CTradeAttributionManager* attributionMgr = NULL)
    {
       if(tradeMgr == NULL || riskMgr == NULL || sizer == NULL || tierMgr == NULL)
          return false;
@@ -151,6 +155,7 @@ public:
       m_fullMarginMode = fmMode;
       m_safeMode = safeMode;
       m_performanceAnalytics = perfAnalytics;
+      m_attributionManager = attributionMgr;
       m_initialized = true;
       return true;
    }
@@ -183,9 +188,13 @@ public:
       }
 
       // Live execution path
-      string tradeComment = BuildClusterTaggedTradeComment(candidate.strategyClusterCode, "");
+      string tradeComment = (m_attributionManager != NULL)
+         ? m_attributionManager.BuildClusterTaggedTradeComment(candidate.strategyClusterCode, "")
+         : "K:" + candidate.strategyClusterCode + "|EA";
       int symbolIdx = 0; // Caller must provide mapping; simplified here
-      int clusterNum = ClusterCodeToNumeric(candidate.strategyClusterCode);
+      int clusterNum = (m_attributionManager != NULL)
+         ? m_attributionManager.ClusterCodeToNumeric(candidate.strategyClusterCode)
+         : 0;
       uint perSymbolMagic = (uint)GenerateMagicNumber(symbolIdx, clusterNum);
 
       bool tradeSuccess = m_tradeManager.OpenPosition(

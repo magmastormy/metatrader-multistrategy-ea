@@ -95,7 +95,7 @@ public:
         }
 
         //--- Read ATR (need squeezeLookback bars for 20-bar low check)
-        int atrHandle = indMgr->GetATRHandle(m_symbol, m_timeframe, m_atrPeriod);
+        int atrHandle = indMgr.GetATRHandle(m_symbol, m_timeframe, m_atrPeriod);
         if(atrHandle == INVALID_HANDLE)
         {
             SetDecisionReasonTag("SCALP_VBRK_NO_ATR");
@@ -111,7 +111,7 @@ public:
         }
 
         //--- Read Bollinger Bands (upper=1, middle=0, lower=2)
-        int bbHandle = indMgr->GetBandsHandle(m_symbol, m_timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
+        int bbHandle = indMgr.GetBandsHandle(m_symbol, m_timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         if(bbHandle == INVALID_HANDLE)
         {
             SetDecisionReasonTag("SCALP_VBRK_NO_BB");
@@ -132,7 +132,7 @@ public:
         }
 
         //--- Read RSI
-        int rsiHandle = indMgr->GetRSIHandle(m_symbol, m_timeframe, m_rsiPeriod, PRICE_CLOSE);
+        int rsiHandle = indMgr.GetRSIHandle(m_symbol, m_timeframe, m_rsiPeriod, PRICE_CLOSE);
         if(rsiHandle == INVALID_HANDLE)
         {
             SetDecisionReasonTag("SCALP_VBRK_NO_RSI");
