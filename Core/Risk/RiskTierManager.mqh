@@ -175,7 +175,8 @@ public:
     //+------------------------------------------------------------------+
     void ApplyToRiskManager(CUnifiedRiskManager &riskManager, CPerformanceAnalytics* perfAnalytics = NULL,
                             double inputDailyFloor = 0.0, double inputPortfolioFloor = 0.0,
-                            double inputDdWarningFloor = 0.0, double inputDdCriticalFloor = 0.0)
+                            double inputDdWarningFloor = 0.0, double inputDdCriticalFloor = 0.0,
+                            double inputDailyLossLimit = 0.0)
     {
         // Tier values are defaults, but user input params serve as floors —
         // the effective value is the higher of tier preset and user input.
@@ -191,9 +192,13 @@ public:
         cfg.maxDailyRiskPercent     = effectiveDaily;
         cfg.maxPortfolioRiskPercent = effectivePortfolio;
         cfg.correlationThreshold    = 0.7;
+        cfg.correlationReduceThreshold = 0.4;
+        cfg.correlationBlockThreshold  = 0.7;
         cfg.maxPositionsSameBase    = m_config.maxPositions;
         cfg.drawdownWarningPercent  = effectiveDdWarning;
         cfg.drawdownCriticalPercent = effectiveDdCritical;
+        cfg.dailyLossLimitPercent   = (inputDailyLossLimit > 0.0) ? inputDailyLossLimit : 15.0;
+        cfg.minLotRiskMultiplier    = riskManager.GetMinLotRiskMultiplier();  // Preserve user input; Initialize validates floor
         cfg.adaptationMinTrades     = 10;
         cfg.enableAdaptiveSizing    = true;
         cfg.enableAuditLogging      = true;

@@ -41,9 +41,57 @@ private:
     int             m_barCounter;
     datetime        m_voteWindowStart;  // Rolling vote window start time
     
+    // Direction calibration rolling window (last 20 predictions)
+    int  m_directionWindow[20];  // 1=BUY, -1=SELL, 0=NONE
+    int  m_directionWindowIdx;   // Circular buffer index
+    int  m_directionWindowCount; // Number of filled slots (0..20)
+    uint m_lastCalibrationWarningTick;  // Throttle calibration warning logs (GetTickCount-based, Issue 12.3)
+    int  m_consecutiveBiasedVotes;  // Consecutive degenerate-vote counter
+    datetime m_lastNoSignalDiagTime; // Throttle NO_SIGNAL diagnostic logs
+    
     bool IsValidConfidence(const double conf) const
     {
         return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
+    }
+
+    void RecordDirectionPrediction(ENUM_TRADE_SIGNAL signal)
+    {
+        int dirValue = 0;
+        if(signal == TRADE_SIGNAL_BUY) dirValue = 1;
+        else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
+        
+        m_directionWindow[m_directionWindowIdx] = dirValue;
+        m_directionWindowIdx = (m_directionWindowIdx + 1) % 20;
+        if(m_directionWindowCount < 20)
+            m_directionWindowCount++;
+        
+        // Check and log degenerate detection
+        if(IsDirectionDegenerate())
+        {
+            m_consecutiveBiasedVotes++;
+            uint currentTick = GetTickCount();
+            if(m_lastCalibrationWarningTick == 0 || (currentTick - m_lastCalibrationWarningTick) >= 60000)
+            {
+                int buyCount = 0, sellCount = 0;
+                for(int i = 0; i < m_directionWindowCount; i++)
+                {
+                    if(m_directionWindow[i] == 1) buyCount++;
+                    else if(m_directionWindow[i] == -1) sellCount++;
+                }
+                double windowBuyRatio = (double)buyCount / (double)m_directionWindowCount;
+                double windowSellRatio = (double)sellCount / (double)m_directionWindowCount;
+                int directionalCount = buyCount + sellCount;
+                double dirBuyRatio = (directionalCount > 0) ? (double)buyCount / (double)directionalCount : 0.0;
+                double dirSellRatio = (directionalCount > 0) ? (double)sellCount / (double)directionalCount : 0.0;
+                PrintFormat("[AI-CALIBRATION-WARNING] Model degenerate: window_buy=%.2f, window_sell=%.2f, dir_buy=%.2f, dir_sell=%.2f, consecutive=%d | %s",
+                           windowBuyRatio, windowSellRatio, dirBuyRatio, dirSellRatio, m_consecutiveBiasedVotes, m_symbol);
+                m_lastCalibrationWarningTick = currentTick;
+            }
+        }
+        else
+        {
+            m_consecutiveBiasedVotes = 0;
+        }
     }
 
     void LogVoteHeartbeat()
@@ -72,7 +120,7 @@ public:
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
         m_lastDecisionReasonTag = "ONNX_UNSET";
-        m_minConfidence = 0.70;
+        m_minConfidence = 0.50;
         m_scalerWatchPath = "EAModels\\ONNX\\scaler.bin";
         m_lastScalerCheckTime = 0;
         m_voteCount = 0;
@@ -82,6 +130,12 @@ public:
         m_lastVoteLogTime = 0;
         m_barCounter = 0;
         m_voteWindowStart = TimeCurrent();
+        m_directionWindowIdx = 0;
+        m_directionWindowCount = 0;
+        m_lastCalibrationWarningTick = 0;
+        m_consecutiveBiasedVotes = 0;
+        m_lastNoSignalDiagTime = 0;
+        ArrayInitialize(m_directionWindow, 0);
     }
 
     virtual ~COnnxAIStrategyAdapter() {}
@@ -248,7 +302,19 @@ public:
             m_noneVotes++;
             m_lastDecisionReasonTag = "ONNX_NO_SIGNAL";
             confidence = 0.0;
+            // Throttled diagnostic: log raw ONNX output once every 60 seconds
+            datetime diagNow = TimeCurrent();
+            if(m_lastNoSignalDiagTime == 0 || (diagNow - m_lastNoSignalDiagTime) >= 60)
+            {
+                PrintFormat("[AI-VOTE][ONNX] %s | onnxSignal=%d | confidence=%.3f | reason=%s | minConf=%.2f",
+                            m_symbol, onnxSignal, confidence > 0.0 ? confidence : m_brain.GetConfidence(),
+                            m_lastDecisionReasonTag, m_minConfidence);
+                m_lastNoSignalDiagTime = diagNow;
+            }
         }
+
+        // Record prediction for direction calibration
+        RecordDirectionPrediction(signal);
 
         LogVoteHeartbeat();
         return signal;
@@ -260,8 +326,53 @@ public:
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
     virtual void SetEnabled(const bool enabled) override { m_enabled = enabled; }
-    virtual double GetWeight(void) const override { return m_weight; }
+    virtual double GetWeight(void) const override { return GetCalibratedWeight(m_weight); }
     virtual void SetWeight(const double weight) override { m_weight = weight; }
+    
+    virtual bool IsDirectionDegenerate(void) const override
+    {
+        if(m_directionWindowCount < 20)
+            return false;
+        int buyCount = 0, sellCount = 0;
+        for(int i = 0; i < 20; i++)
+        {
+            if(m_directionWindow[i] == 1) buyCount++;
+            else if(m_directionWindow[i] == -1) sellCount++;
+        }
+        int directionalCount = buyCount + sellCount;
+        if(directionalCount < 5) return false;  // Not enough directional data
+        double buyRatio = (double)buyCount / (double)directionalCount;
+        double sellRatio = (double)sellCount / (double)directionalCount;
+        return (buyRatio > 0.70 || sellRatio > 0.70);
+    }
+    
+    double GetDirectionalBias(void) const
+    {
+        if(m_directionWindowCount < 20) return 0.0;
+        int buyCount = 0, sellCount = 0;
+        for(int i = 0; i < 20; i++)
+        {
+            if(m_directionWindow[i] == 1) buyCount++;
+            else if(m_directionWindow[i] == -1) sellCount++;
+        }
+        int directionalCount = buyCount + sellCount;
+        if(directionalCount < 5) return 0.0;
+        return (double)buyCount / (double)directionalCount;
+    }
+    
+    virtual double GetCalibratedWeight(double baseWeight) const override
+    {
+        if(!IsDirectionDegenerate())
+            return baseWeight;
+        double bias = GetDirectionalBias();
+        if(bias > 0.95 || bias < 0.05)
+            return baseWeight * 0.10;  // Extreme bias: 90% penalty
+        if(bias > 0.90 || bias < 0.10)
+            return baseWeight * 0.25;  // Severe bias: 75% penalty
+        if(bias > 0.80 || bias < 0.20)
+            return baseWeight * 0.50;  // Moderate bias: 50% penalty
+        return baseWeight * 0.70;      // Mild bias: 30% penalty
+    }
     virtual bool ValidateParameters(void) override { return m_brain.IsLoaded(); }
     virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }

@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-06-10
+- Last Updated: 2026-06-12
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 98 - Monolith Decomposition & Risk Framework Completion
+- Current Batch: 101 - Advanced Mathematical Engines
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -38,6 +38,17 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Trade attribution: `CTradeAttributionManager` (Batch 98)
 - Symbol scan scheduling: `CSymbolScanScheduler` (Batch 98)
 - Position sizing (stateless): `CPositionSizer::CalculateSize()` → `CalculateOptimalPositionSizeCore()` (Batch 98)
+- AI calibration: `IAIStrategy::GetCalibratedWeight()` (Batch 99)
+- Equity curve: `CEquityCurveManager` (Batch 99)
+- CVaR risk: `CPortfolioRiskManager::IsCVaRLimitExceeded()` (Batch 99)
+- Commission-aware scalp: `CFastScalpEngine::IsScalpCostViable()` (Batch 99)
+- Async execution: `CTradeManager::SendTradeAsync()` + `ProcessTradeTransaction()` (Batch 99)
+- Bayesian Kelly: `CBayesianKellyModifier` (Batch 99)
+- Spike hunting: `CSpikeHunterEngine` (Batch 100)
+- Hurst persistence engine: `CHurstEngine` (Batch 101)
+- OU mean-reversion engine: `COrnsteinUhlenbeckEngine` (Batch 101)
+- OFI proxy engine: `COrderFlowImbalanceEngine` (Batch 101)
+- VPIN toxicity filter: `CVPINFilter` (Batch 101)
 
 ## End-to-End Flow
 
@@ -67,6 +78,17 @@ flowchart TD
   D0F -->|Yes| D0G[Flatten and halt trading]
   D0F -->|No| D0H[Return]
 
+  D0H --> D0I{Spike hunter enabled?}
+  D0I -->|Yes| D0J[CSpikeHunterEngine EvaluateTick]
+  D0I -->|No| D0K[Continue]
+  D0J --> D0L{2/3 spike confluence?}
+  D0L -->|Yes| D0M[Open spike trade - log SPIKE-HUNT-TRADE]
+  D0L -->|No| D0N[Log SPIKE-HUNT-SKIP]
+  D0M --> D0O{Spike cooldown active?}
+  D0O -->|Yes| D0P[Delay long-term entry - log SPIKE-COOLDOWN]
+  D0O -->|No| D0K
+  D0N --> D0K
+
   D --> D1{Terminal connected?}
   D1 -->|No| D2[Skip evaluation, wait reconnect]
   D1 -->|Yes| D_MGMT[g_lifecycleManager.ManagePositions]
@@ -95,25 +117,53 @@ flowchart TD
   G --> J
   J --> J0[Strategy role/cluster governance applied]
   J0 --> J1[Pipeline regime + cost viability gate + filter attribution]
-  J1 --> J2[Multi-Tier Signal Validation & Conflict Resolution]
-  J2 --> J3[Weighted Decision considering Setup Quality & Reliability]
-  J3 --> K{Signal NONE?}
+  J1 --> J1A{AI direction ratio > 0.80?}
+  J1A -->|Yes| J1B[Reduce AI weight 50% - log AI-CALIBRATION-WARNING]
+  J1A -->|No| J2
+  J1B --> J2[Multi-Tier Signal Validation & Conflict Resolution]
+  J2 --> J2A{OFI contradicts consensus?}
+  J2A -->|Yes| J2B[Reject signal - log SIGNAL-REJECTED reason=ofi_contradiction]
+  J2A -->|No| J3[Weighted Decision considering Setup Quality & Reliability]
+  J3 --> J3A{TREND_BEARISH_STRONG + BUY?}
+  J3A -->|Yes| J3B[Raise quorum to 0.70 - log CONSENSUS-TREND-BIAS]
+  J3A -->|No| K
+  J3B --> K{Signal NONE?}
   K -->|Yes| L[Increment no-signal telemetry]
   K -->|No| M[Resolve ATR then run exogenous validation: spread/time/session/volatility/cost]
 
-  M --> N{Validator pass?}
+  M --> M1{Breakeven WR > 70%?}
+  M1 -->|Yes| M2[Reject scalp - log SCALP-COST-REJECTED]
+  M1 -->|No| N
+  M2 --> O[Log SIGNAL-REJECTED]
+  N{Validator pass?}
   N -->|No| O[Log SIGNAL-REJECTED]
   N -->|Yes| P{Entry gate open?}
   P -->|No| P2[Log ENTERPRISE-BLOCKED]
   P -->|Yes| Q[Build ATR SL/TP + risk request with role/cluster/contributors]
 
-  Q --> R[UnifiedRisk pre-size validation]
-  R --> S{Pass?}
+  Q --> Q1{VPIN extreme toxicity?}
+  Q1 -->|Yes| Q2[Block new position - log VPIN-BLOCK]
+  Q1 -->|No| R[UnifiedRisk pre-size validation]
+  Q2 --> T[Risk rejection]
+
+  R --> R1{Profitable position?}
+  R1 -->|Yes| R2[Reduce used risk - log RISK-BUDGET-PNL-ADJUSTED]
+  R1 -->|No| S
+  R2 --> S{Pass?}
   S -->|No| T[Risk rejection]
   S -->|Yes| U[Position sizing]
 
-  U --> V[UnifiedRisk post-size validation]
-  V --> W{Pass?}
+  U --> U0[Apply VPIN position size multiplier 1.0 to 0.0 based on toxicity]
+
+  U0 --> U1{Lot > margin limit?}
+  U1 -->|Yes| U2[Cap lot to margin limit - log SCALP-LOT-CAPPED]
+  U1 -->|No| V
+  U2 --> V[UnifiedRisk post-size validation]
+  V --> V1{CVaR limit exceeded?}
+  V1 -->|Yes| V2[Block trade - log CVAR-CHECK]
+  V1 -->|No| W
+  V2 --> T[Risk rejection]
+  W{Pass?}
   W -->|No| T
   W -->|Yes| X[Reserve virtual risk and stage approved candidate]
 
@@ -293,6 +343,36 @@ The main EA delegates to the following extracted managers instead of inline logi
   - synthetics: structure-first roster, no ADX-dependent trend engine path, lighter higher-timeframe mapping for ICT/Elliott alignment, and a narrower intrabar live roster to keep M1 synthetic quorum from becoming a 7-strategy noise funnel
 
 ## Strategy Intelligence (Batch 97)
+
+### Advanced Mathematical Engines (Batch 101)
+
+#### Hurst Persistence Engine
+- `CHurstEngine` computes the Hurst exponent per symbol to classify persistence vs mean-reversion tendency
+- After regime engine update, `ApplyHurstWeightModifiers()` adjusts regime-based strategy weights:
+  - H > 0.6 (persistent/trending): boosts TREND_CLUSTER weights, suppresses MEAN_REVERSION_CLUSTER
+  - H < 0.4 (anti-persistent/mean-reverting): boosts MEAN_REVERSION_CLUSTER weights, suppresses TREND_CLUSTER
+  - 0.4 ≤ H ≤ 0.6 (random walk): no weight modification
+- Applied after `CRegimeEngine` state update, before consensus quorum evaluation
+
+#### OU Mean-Reversion Engine
+- `COrnsteinUhlenbeckEngine` fits an Ornstein-Uhlenbeck process to estimate mean-reversion speed (θ), equilibrium level (μ), and volatility (σ)
+- In `StatisticalArbitrageStrategy`, OU-adjusted z-score is blended with simple z-score when OU quality > 0.5:
+  - blended z-score = `(1 - ouQuality) * simpleZScore + ouQuality * ouZScore`
+  - OU quality derived from parameter estimation confidence and residual fit
+- Provides more accurate mean-reversion entry/exit timing than simple Bollinger-based z-scores
+
+#### OFI Proxy Engine
+- `COrderFlowImbalanceEngine` estimates order flow imbalance from tick-level price and volume data as a proxy for Level 2 order book data
+- OFI contradiction check runs after multi-tier signal validation:
+  - If OFI signal direction contradicts consensus direction, signal is rejected
+  - Logged as `[SIGNAL-REJECTED] reason=ofi_contradiction`
+  - Prevents entries against detected institutional order flow pressure
+
+#### VPIN Toxicity Filter
+- `CVPINFilter` computes Volume-Synchronized Probability of Informed Trading (VPIN) to detect toxic order flow
+- Two decision points in the execution path:
+  1. **Pre-risk VPIN block**: if VPIN exceeds extreme toxicity threshold, new positions are blocked entirely — logged as `[VPIN-BLOCK]`
+  2. **Post-sizing VPIN multiplier**: position size is scaled by VPIN-based multiplier (1.0 at low toxicity → 0.0 at extreme toxicity), applied after position sizing and before margin limit check
 
 ### Regime-Aware Strategy Weighting
 - `CStrategyBase::GetRegimeConfidenceMultiplier()` scales confidence by regime alignment:
@@ -548,6 +628,41 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Execution preflight and ambiguous broker responses: `[EXECUTION-BLOCKED]`, `[EXECUTION-UNCONFIRMED]`
 - `[COST-GATE]` now prints both raw spread/ATR values and the ratio so tiny non-zero spread conditions are distinguishable from true zero-cost states.
 - Duplicate component-local `SignalDiagnostics` sinks have been removed from Elliott, pipeline, and orchestrator paths; manager/runtime logs are the authoritative observability surface.
+- **Batch 99 log signatures:**
+  - `[S/R-LOT-DEFERRED]` — S/R lot validation deferred to risk manager
+  - `[CONSENSUS-TREND-BIAS]` — Trend bias raising quorum
+  - `[ONNX-CPU-FALLBACK]` — ONNX using CPU instead of CUDA
+  - `[AI-CALIBRATION-WARNING]` — Degenerate AI model detected
+  - `[SCALP-LOT-CAPPED]` — Scalp lot capped by margin
+  - `[SCALP-LOT-MIN]` — Scalp lot below minimum
+  - `[SCALP-COST-REJECTED]` — Scalp cost too high
+  - `[SCALP-COST-OK]` — Scalp cost viable
+  - `[HYBRID-GATE-RELAXED]` — AI threshold lowered
+  - `[HYBRID-GATE-RESTORED]` — AI threshold restored
+  - `[RISK-BUDGET-PNL-ADJUSTED]` — Risk budget adjusted by P&L
+  - `[KELLY-ADJUSTMENT]` — Bayesian Kelly lot adjustment
+  - `[EQUITY-CURVE-BELOW]` — Equity below EMA
+  - `[EQUITY-CURVE-ABOVE]` — Equity above EMA
+  - `[CVAR-RECORD]` — Trade return recorded for CVaR
+  - `[CVAR-CHECK]` — CVaR limit check
+  - `[ASYNC-TRADE-SENT]` — Async trade submitted
+  - `[ASYNC-TRADE-CONFIRMED]` — Async trade confirmed
+  - `[ASYNC-TRADE-TIMEOUT]` — Async trade timed out
+  - **Batch 100 log signatures:**
+  - `[SPIKE-HUNT-DETECTED]` — 3-layer spike confluence detected on synthetic symbol
+  - `[SPIKE-HUNT-TRADE]` — Spike trade opened with independent magic number
+  - `[SPIKE-HUNT-SKIP]` — Spike detection failed confluence threshold
+  - `[SPIKE-HUNT-ALERT]` — Push notification sent for spike detection
+  - `[SPIKE-HUNT-ALERT-THROTTLED]` — Push alert suppressed by 120s throttle
+  - `[SPIKE-COOLDOWN]` — Long-term entry delayed by spike cooldown
+  - `[SPIKE-HUNTER-STATS]` — Periodic spike hunter statistics
+  - `[SPIKE-HUNT-ENGINE]` — Spike hunter engine lifecycle events
+  - **Batch 101 log signatures:**
+    - `[SIGNAL-REJECTED] reason=ofi_contradiction` — OFI signal contradicts consensus direction
+    - `[VPIN-BLOCK]` — VPIN extreme toxicity blocking new position
+    - `[HURST-WEIGHT]` — Hurst weight modifier applied to strategy weights
+    - `[OU-ZSCORE]` — OU-adjusted z-score blended in StatisticalArbitrageStrategy
+    - `[OFI-SIGNAL]` — OFI proxy engine signal output
 
 ## 2026-03-25 Decision-Path Refinement
 - Same-bar structural cache reuse now preserves original engine readiness rather than forcing later scans to assume all engines are ready.

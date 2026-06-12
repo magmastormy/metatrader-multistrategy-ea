@@ -11,6 +11,7 @@
 #define CORE_RISK_POSITION_SIZER_MODIFIERS_MQH
 
 #include "../../IndicatorManager.mqh"
+#include "EquityCurveManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Abstract modifier interface                                      |
@@ -298,6 +299,160 @@ public:
     }
 
     virtual string GetName() override { return "Kelly"; }
+};
+
+//+------------------------------------------------------------------+
+//| Bayesian Kelly Lot Modifier                                      |
+//| Uses Beta-Binomial conjugate priors to estimate win rate, then   |
+//| applies the Kelly Criterion with a configurable fraction.        |
+//| Quarter Kelly (0.25) is the default: ~95% of growth with 12% DD |
+//| vs 62% at full Kelly. Self-contained — tracks its own stats.     |
+//+------------------------------------------------------------------+
+class CBayesianKellyModifier : public CPositionSizerModifier
+{
+private:
+    // Beta-Binomial conjugate priors
+    double m_alpha;           // Beta prior alpha (win count + prior)
+    double m_beta;            // Beta prior beta (loss count + prior)
+    double m_kellyFraction;   // Fraction of Kelly to use (0.25 = quarter Kelly)
+    double m_avgWinPct;       // Average win as % of risk
+    double m_avgLossPct;      // Average loss as % of risk
+    int    m_totalTrades;     // Total trades observed
+    int    m_wins;            // Win count
+
+public:
+    CBayesianKellyModifier(double kellyFraction = 0.25,
+                           double priorAlpha = 2.0,
+                           double priorBeta = 2.0) :
+        m_alpha(priorAlpha),
+        m_beta(priorBeta),
+        m_kellyFraction(MathMax(0.01, MathMin(1.0, kellyFraction))),
+        m_avgWinPct(1.0),
+        m_avgLossPct(1.0),
+        m_totalTrades(0),
+        m_wins(0)
+    {}
+
+    // CPositionSizerModifier interface
+    virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
+    {
+        // Need at least 1 trade observation to adjust
+        if(m_totalTrades <= 0)
+            return baseLot;
+
+        // Bayesian posterior mean win rate
+        double W = m_alpha / (m_alpha + m_beta);
+
+        // Win/loss ratio R
+        double R = (m_avgLossPct > 0.0) ? m_avgWinPct / m_avgLossPct : 1.0;
+
+        // Kelly criterion: K = W - (1-W)/R
+        double K = W - ((1.0 - W) / R);
+
+        // Clamp K to [0, 1] — never go above full Kelly
+        K = MathMax(0.0, MathMin(1.0, K));
+
+        double kellyLot;
+        if(K <= 0.0)
+        {
+            // Kelly says don't bet — reduce to half
+            kellyLot = baseLot * 0.5;
+            PrintFormat("[KELLY-ADJUSTMENT] WR=%.2f K=%.2f fraction=%.2f lot_adj=0.50x (Kelly<=0, reduce to half)",
+                        W, K, m_kellyFraction);
+        }
+        else
+        {
+            // Apply fraction of Kelly
+            double fractionK = K * m_kellyFraction;
+            kellyLot = baseLot * fractionK;
+            PrintFormat("[KELLY-ADJUSTMENT] WR=%.2f K=%.2f fraction=%.2f lot_adj=%.2fx",
+                        W, K, m_kellyFraction, fractionK);
+        }
+
+        return kellyLot;
+    }
+
+    virtual string GetName() override { return "BayesianKelly"; }
+
+    // Update with trade result — call after each closed trade
+    void UpdateTradeResult(bool isWin, double profitPct, double lossPct)
+    {
+        m_totalTrades++;
+
+        if(isWin)
+        {
+            m_wins++;
+            m_alpha += 1.0;  // Beta-Binomial conjugate update
+            if(profitPct > 0.0)
+            {
+                // Running average of win percentage
+                m_avgWinPct = ((m_avgWinPct * (m_wins - 1)) + profitPct) / m_wins;
+            }
+        }
+        else
+        {
+            m_beta += 1.0;   // Beta-Binomial conjugate update
+            if(lossPct > 0.0)
+            {
+                int losses = m_totalTrades - m_wins;
+                m_avgLossPct = ((m_avgLossPct * (losses - 1)) + lossPct) / losses;
+            }
+        }
+    }
+
+    // Get current effective Kelly fraction (K * m_kellyFraction)
+    double GetCurrentKellyFraction() const
+    {
+        if(m_totalTrades <= 0)
+            return 0.0;
+        double W = m_alpha / (m_alpha + m_beta);
+        double R = (m_avgLossPct > 0.0) ? m_avgWinPct / m_avgLossPct : 1.0;
+        double K = W - ((1.0 - W) / R);
+        K = MathMax(0.0, MathMin(1.0, K));
+        return K * m_kellyFraction;
+    }
+
+    // Get estimated Bayesian win rate (posterior mean)
+    double GetEstimatedWinRate() const
+    {
+        if(m_totalTrades <= 0)
+            return 0.5;  // Prior mean with default alpha=beta=2
+        return m_alpha / (m_alpha + m_beta);
+    }
+};
+
+//+------------------------------------------------------------------+
+//| Equity Curve Lot Modifier                                        |
+//| Wraps CEquityCurveManager to scale lot size based on whether    |
+//| equity is above or below its EMA. Below EMA → reduce position   |
+//| size by reductionFactor. Above EMA → normal sizing.             |
+//+------------------------------------------------------------------+
+class CEquityCurveLotModifier : public CPositionSizerModifier
+{
+private:
+    CEquityCurveManager* m_equityCurveManager;
+
+public:
+    CEquityCurveLotModifier(CEquityCurveManager* ecm) :
+        m_equityCurveManager(ecm)
+    {}
+
+    virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
+    {
+        if(m_equityCurveManager == NULL)
+            return baseLot;
+
+        double multiplier = m_equityCurveManager.GetPositionSizeMultiplier();
+        if(MathAbs(multiplier - 1.0) < 0.001)
+            return baseLot;  // No adjustment needed
+
+        double adjusted = baseLot * multiplier;
+        PrintFormat("[EQUITY-CURVE-MODIFIER] %s | multiplier=%.2f | lot %.2f->%.2f",
+                    symbol, multiplier, baseLot, adjusted);
+        return adjusted;
+    }
+
+    virtual string GetName() override { return "EquityCurve"; }
 };
 
 #endif // CORE_RISK_POSITION_SIZER_MODIFIERS_MQH

@@ -31,7 +31,9 @@ public:
         m_drawingManager(NULL),
         m_atrHandle(INVALID_HANDLE),
         m_ema50Handle(INVALID_HANDLE),
-        m_ema200Handle(INVALID_HANDLE)
+        m_ema200Handle(INVALID_HANDLE),
+        m_lastRejectReasonTag(""),
+        m_lastRejectLogTime(0)
     {
         m_weight = 1.5;
         OverrideMinConfidence(0.60);
@@ -128,12 +130,34 @@ public:
 
     virtual double CalculateStopLoss(ENUM_TRADE_SIGNAL signal, double entryPrice, double atr)
     {
+        // ATR availability guard: when ATR=0 (indicator not ready), use stops level as fallback
+        if(atr <= 0.0)
+        {
+            double stopsLevel = (double)SymbolInfoInteger(m_symbol, SYMBOL_TRADE_STOPS_LEVEL);
+            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            if(stopsLevel > 0 && point > 0)
+                atr = stopsLevel * point * 3.0;  // 3x stops level as ATR proxy
+            else
+            {
+                // No ATR and no stops level -- reject signal
+                return 0.0;  // Will be caught by SL > 0 check downstream
+            }
+        }
+
         int barIndex = 1;
 
         // Use array-based CopyLow for efficiency instead of manual loop
         double prices[5];
         if(CopyLow(m_symbol, m_timeframe, 1, 5, prices) < 5)
-            return (signal == TRADE_SIGNAL_BUY) ? entryPrice - (atr * 2.0) : entryPrice + (atr * 2.0);
+        {
+            double sl = (signal == TRADE_SIGNAL_BUY) ? entryPrice - (atr * 2.0) : entryPrice + (atr * 2.0);
+            // Final validation: SL must be different from entry price
+            if(signal == TRADE_SIGNAL_BUY && sl >= entryPrice)
+                return 0.0;
+            if(signal == TRADE_SIGNAL_SELL && sl <= entryPrice)
+                return 0.0;
+            return sl;
+        }
 
         double slDistance = atr * 1.5;
 
@@ -149,6 +173,10 @@ public:
             if(entryPrice - sl > atr * 3.0)
                 sl = entryPrice - (atr * 2.0);
 
+            // Final validation: SL must be below entry price for BUY
+            if(sl >= entryPrice)
+                return 0.0;
+
             return sl;
         }
         else if(signal == TRADE_SIGNAL_SELL)
@@ -156,7 +184,12 @@ public:
             // Find swing high using ArrayMaximum
             double highPrices[5];
             if(CopyHigh(m_symbol, m_timeframe, 1, 5, highPrices) < 5)
-                return entryPrice + (atr * 2.0);
+            {
+                double sl = entryPrice + (atr * 2.0);
+                if(sl <= entryPrice)
+                    return 0.0;
+                return sl;
+            }
 
             int maxIdx = ArrayMaximum(highPrices);
             double swingHigh = highPrices[maxIdx];
@@ -166,6 +199,10 @@ public:
             // Cap SL distance to 3x ATR
             if(sl - entryPrice > atr * 3.0)
                 sl = entryPrice + (atr * 2.0);
+
+            // Final validation: SL must be above entry price for SELL
+            if(sl <= entryPrice)
+                return 0.0;
 
             return sl;
         }
@@ -254,18 +291,22 @@ protected:
                 confidence = pinBar.strength;
                 DrawPatternSignal(pinBar.time, pinBar.nosePrice, pinBar.strength, pinBar.type == PIN_BAR_BULLISH, "Pin Bar");
 
+                // Validate SL before proceeding (regardless of risk manager availability)
+                double atr = GetATR(barIndex);
+                double sl = CalculateStopLoss(isBullishPin ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, pinBar.nosePrice, atr);
+                if(sl <= 0.0 || sl == pinBar.nosePrice)
+                    return RejectSignal("CANDLE_SL_INVALID");
+
                 // Validate through UnifiedRiskManager before returning signal
                 CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
                 if(riskMgr != NULL)
                 {
-                    double atr = GetATR(barIndex);
-                    double sl = CalculateStopLoss(isBullishPin ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, pinBar.nosePrice, atr);
                     double tp = CalculateTakeProfit(isBullishPin ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, pinBar.nosePrice, sl);
 
                     STradeValidationRequest request;
                     request.symbol = m_symbol;
                     request.orderType = (isBullishPin) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                    request.lotSize = 0.01;
+                    request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
                     request.stopLossPips = (sl > 0) ? MathAbs(pinBar.nosePrice - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
                     request.takeProfitPips = (tp > 0) ? MathAbs(tp - pinBar.nosePrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
                     request.confidence = confidence;
@@ -318,18 +359,22 @@ protected:
                 confidence = engulfing.strength;
                 DrawPatternSignal(engulfing.time, engulfing.engulfingClose, engulfing.strength, engulfing.isBullish, "Engulfing");
 
+                // Validate SL before proceeding (regardless of risk manager availability)
+                double atr = GetATR(barIndex);
+                double sl = CalculateStopLoss(engulfing.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, engulfing.engulfingClose, atr);
+                if(sl <= 0.0 || sl == engulfing.engulfingClose)
+                    return RejectSignal("CANDLE_SL_INVALID");
+
                 // Validate through UnifiedRiskManager before returning signal
                 CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
                 if(riskMgr != NULL)
                 {
-                    double atr = GetATR(barIndex);
-                    double sl = CalculateStopLoss(engulfing.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, engulfing.engulfingClose, atr);
                     double tp = CalculateTakeProfit(engulfing.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, engulfing.engulfingClose, sl);
 
                     STradeValidationRequest request;
                     request.symbol = m_symbol;
                     request.orderType = (engulfing.isBullish) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                    request.lotSize = 0.01;
+                    request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
                     request.stopLossPips = (sl > 0) ? MathAbs(engulfing.engulfingClose - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
                     request.takeProfitPips = (tp > 0) ? MathAbs(tp - engulfing.engulfingClose) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
                     request.confidence = confidence;
@@ -372,6 +417,30 @@ protected:
     }
 
 private:
+    string            m_lastRejectReasonTag;
+    datetime          m_lastRejectLogTime;
+
+    void LogRejectEvent(const string reasonTag)
+    {
+        datetime nowTime = TimeCurrent();
+        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
+            return;
+        if((nowTime - m_lastRejectLogTime) < 5)
+            return;
+
+        PrintFormat("[CANDLESTICK] Filtered: %s | Symbol=%s | TF=%s",
+                    reasonTag, m_symbol, EnumToString(m_timeframe));
+        m_lastRejectReasonTag = reasonTag;
+        m_lastRejectLogTime = nowTime;
+    }
+
+    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
+    {
+        SetDecisionReasonTag(reasonTag);
+        LogRejectEvent(reasonTag);
+        return TRADE_SIGNAL_NONE;
+    }
+
     // Helper method to get current ATR value
     double GetATR(int barIndex)
     {

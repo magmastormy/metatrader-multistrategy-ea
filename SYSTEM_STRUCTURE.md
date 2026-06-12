@@ -1,10 +1,10 @@
 # SYSTEM_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-06-10
+- Last Updated: 2026-06-12
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 98 - Monolith Decomposition & Risk Framework Completion
+- Current Batch: 101
 
 ## 1. System Goal
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
@@ -31,6 +31,12 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - Batch 97 implements the full EA_SYSTEM_REDESIGN.md Phase 1-5: centralized indicator access across 8 strategy files, conditional diagnostic logging with `InpLogLevel`, rationalized risk defaults (1% base risk, 5% max per trade, 5% daily, 15% portfolio), unified PositionSizer correlation via `CCorrelationEngine`, broker trading day reset with configurable start hour, TickSafetyMonitor CAccountInfo caching, Kelly Criterion position sizing (`POSITION_SIZE_KELLY`), equity compounding with sqrt upside/linear downside, tiered correlation response (reduce at 0.4, block at 0.7), daily P&L loss limit circuit breaker, regime-aware strategy weighting (`GetRegimeConfidenceMultiplier`), volatility direction awareness (`GetVolatilityDirection`), multi-timeframe confluence (`IsAlignedWithHigherTF`), cross-cluster conflict resolution in consensus, mandatory SL gate in `CTradeManager`, min R:R enforcement (1:2 default, 1:5 mean-reversion), portfolio profit target with trailing floor, auto mode switching (conservative/aggressive/emergency), and a dedicated scalping engine with `CScalpSignalCache`, three scalp strategies (Momentum, Spread, VolatilityBreakout), async order execution via `OrderSendAsync()`, and dual-path OnTick/OnTimer processing.
 
 - Batch 98 completes the EA Overhaul Blueprint monolith decomposition (R6/R7) and risk framework items: `CPositionSizer::CalculateSize()` is now truly stateless via `CalculateOptimalPositionSizeCore()` (no save/restore hack); position lifecycle management extracted into `CPositionLifecycleManager`; heartbeat/diagnostics extracted into `CDiagnosticsManager` with consensus diagnostics; unprotected position tracking extracted into `CUnprotectedPositionTracker` with 3-attempt SL escalation; synthetic spike monitoring extracted into `CSyntheticSpikeMonitor`; trade attribution and NN prediction mapping extracted into `CTradeAttributionManager`; symbol scan scheduling extracted into `CSymbolScanScheduler`; anti-Martingale dynamic lot scaling added; CICTPositionSizer risk denominator fixed to use `MathMin(balance, equity)`; risk percent scale consistency verified with conversion helpers; cluster rebalancing updated for Conservative tier; Statistical Arbitrage conditionally registered when Python Bridge is connected; heartbeat interval made configurable. Total ~1,180 lines extracted from the main EA monolith into 7 focused manager classes.
+
+- Batch 99 implements log-evidence-driven fixes and research solutions: S/R lot validation ordering fix unblocks 79 SELL signals on PainX 400; ONNX CPU fallback enables signals when CUDA unavailable; AI degenerate model detection downweights 100% BUY/SELL models by 50%; trend bias consensus check raises quorum for counter-trend signals; scalp margin-aware lot cap prevents oversized orders; hybrid gate relaxation lowers AI standalone threshold after indicator drought; P&L-adjusted risk budget enables re-entries on profitable positions; Bayesian Kelly modifier with Beta-Binomial priors; equity curve manager reduces size when equity < EMA; CVaR portfolio risk integration; commission-aware scalp validation; async trade executor with OrderSendAsync + OnTradeTransaction confirmation.
+
+- Batch 100 adds CSpikeHunterEngine for synthetic CFD indices: 3-layer spike detection (tick velocity ≥ 2.5× average, direction accumulation ≥ 12 ticks, ATR compression ≤ 60%), symbol-aware direction mapping (PainX→SELL, GainX→BUY, etc.), independent spike trades with separate magic numbers (offset 9000), push notification alerts throttled at 120s, and long-term entry cooldown of 60s to prevent re-entry into fading spikes.
+
+- Batch 101 adds four advanced mathematical engines for no-API-required quantitative analysis: CHurstEngine (fractal persistence via variance-time Hurst exponent, regime-based strategy weight multipliers integrated into CRegimeEngine), CVPINFilter (volume-synchronized probability of informed trading from tick data, toxicity-based position sizing and trade blocking), COrnsteinUhlenbeckEngine (mean-reversion speed estimation via OLS, OU-adjusted z-scores integrated into StatisticalArbitrageStrategy), COrderFlowImbalanceEngine (proxy order flow imbalance from tick classification at 3 time scales, Welford z-score normalization, directional confirmation filter in consensus pipeline). Python ML ensemble expanded with CatBoost and XGBoost training scripts, and train_stacker.py updated to accept both as optional meta-feature sources (6→12 columns, backwards compatible).
 
 ## 2. Top-Level Runtime Topology
 
@@ -100,6 +106,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - emit consensus diagnostics
   - retain last-contributor context for attribution
   - host the new ICT expansion modules (`CUnicornModelStrategy`, `CPowerOfThreeStrategy`) alongside existing `Unified ICT`
+  - apply trend-direction bias check: raise effectiveQualityThreshold to 0.70 when strong trend opposes consensus direction
+  - apply AI calibration: degenerate models (direction ratio > 0.80 in last 20 predictions) have effective weight reduced by 50% via `GetCalibratedWeight()`
 
 ### 2.3 Extracted Lifecycle Managers
 
@@ -501,6 +509,100 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Portfolio profit target: `InpDailyProfitTargetPercent` with `InpProfitTrailFactor` trailing floor
   - Auto mode switching: `InpEnableAutoModeSwitch` with CONSERVATIVE/AGGRESSIVE/EMERGENCY modes based on drawdown and win streak
 
+### 2.20 Equity Curve Manager domain (Batch 99)
+- Class: `CEquityCurveManager` in `Core/Risk/EquityCurveManager.mqh`
+- Responsibilities:
+  - Track equity EMA (period=20) to establish adaptive equity baseline
+  - Provide position size multiplier: 0.50 when equity < EMA (drawdown protection), 1.0 when equity >= EMA
+  - Reduce position sizing during equity drawdowns without halting trading entirely
+  - Integrate with `CPositionSizer` as a pre-sizing modifier
+
+### 2.21 Bayesian Kelly Modifier domain (Batch 99)
+- Class: `CBayesianKellyModifier` in `Core/Risk/PositionSizerModifiers.mqh`
+- Responsibilities:
+  - Beta-Binomial conjugate priors for win-rate estimation with uncertainty quantification
+  - Quarter Kelly fraction (25% of full Kelly) for conservative position sizing
+  - Prior: Beta(α=2, β=2) as weakly informative starting distribution
+  - Posterior updates from realized trade outcomes (wins/losses)
+  - Shrink toward prior when sample size is small to prevent overfitting to early results
+
+### 2.22 CVaR Portfolio Risk domain (Batch 99)
+- Extension to `CPortfolioRiskManager`
+- Responsibilities:
+  - CVaR (Conditional Value at Risk) calculation at 95% confidence level
+  - 10% max CVaR risk limit across portfolio
+  - 100-trade lookback window for historical tail-risk estimation
+  - `IsCVaRLimitExceeded()` gate blocks new entries when portfolio tail risk exceeds threshold
+  - Integrates with `CUnifiedRiskManager` as an additional pre-trade veto check
+
+### 2.23 Async Trade Executor domain (Batch 99)
+- Extension to `CTradeManager`
+- Responsibilities:
+  - `SendTradeAsync()`: non-blocking order execution via `OrderSendAsync()` for low-latency scalping entries
+  - `ProcessTradeTransaction()`: `OnTradeTransaction()` callback handler for async order confirmation
+  - `CheckAsyncTimeouts()`: timeout monitoring for pending async orders with configurable deadline
+  - Async order state tracking with `SAsyncPendingOrder` struct (request ID, submit time, expected volume)
+  - Fallback to synchronous execution when async path fails or times out
+
+### 2.24 Commission-Aware Scalp Validation domain (Batch 99)
+- Extension to `CFastScalpEngine`
+- Method: `IsScalpCostViable()`
+- Responsibilities:
+  - Reject scalp entries when breakeven win-rate requirement > 70% (after commissions)
+  - Reject scalp entries when commission cost > 25% of take-profit target
+  - Calculate commission-adjusted breakeven win-rate: `WR_be = cost / (cost + TP_net)`
+  - Integrate spread, swap, and per-lot commission into total cost estimation
+  - Emit `[SCALP-COST-VETO]` when cost viability fails
+
+### 2.25 Spike Hunter Engine domain (Batch 100)
+- Class: `CSpikeHunterEngine` in `Core/Scalp/SpikeHunterEngine.mqh`
+- Responsibilities:
+  - 3-layer spike detection for synthetic CFD indices:
+    - Layer 1: tick velocity ≥ 2.5× rolling average
+    - Layer 2: direction accumulation ≥ 12 consecutive ticks in same direction
+    - Layer 3: ATR compression ≤ 60% (price squeeze before spike)
+  - Symbol-aware direction mapping: PainX→SELL, GainX→BUY, Volatility Index→directional, Jump Index→momentum continuation
+  - Independent spike trades with separate magic numbers (magic offset 9000)
+  - Push notification alerts throttled at 120s to prevent alert spam
+  - Long-term entry cooldown of 60s to prevent re-entry into fading spikes
+  - Emit `[SPIKE-HUNT-DETECTED]`, `[SPIKE-HUNT-TRADE]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`, `[SPIKE-COOLDOWN]`, `[SPIKE-HUNTER-STATS]`, `[SPIKE-HUNT-ENGINE]` log signatures
+
+### 2.26 Hurst Engine domain (Batch 101)
+- Class: `CHurstEngine` in `Core/Engines/HurstEngine.mqh`
+- Responsibilities:
+  - Fractal persistence estimation via variance-time Hurst exponent
+  - Regime-based strategy weight multipliers integrated into `CRegimeEngine`
+  - Classify market persistence: H > 0.5 (trending), H ≈ 0.5 (random walk), H < 0.5 (mean-reverting)
+  - Provide `GetHurstExponent()` and `GetPersistenceMultiplier()` for strategy weight scaling
+  - Emit `[HURST-ENGINE]` telemetry with exponent value and regime classification
+
+### 2.27 OU Process Engine domain (Batch 101)
+- Class: `COrnsteinUhlenbeckEngine` in `Core/Engines/OrnsteinUhlenbeckEngine.mqh`
+- Responsibilities:
+  - Mean-reversion speed estimation via OLS regression on price series
+  - OU-adjusted z-scores integrated into `StatisticalArbitrageStrategy`
+  - Estimate mean-reversion half-life from OU parameters (θ, μ, σ)
+  - Provide `GetOUZScore()`, `GetHalfLife()`, `GetMeanReversionSpeed()` for signal conditioning
+  - Emit `[OU-ENGINE]` telemetry with parameter estimates and z-score values
+
+### 2.28 OFI Proxy Engine domain (Batch 101)
+- Class: `COrderFlowImbalanceEngine` in `Core/Engines/OrderFlowImbalanceEngine.mqh`
+- Responsibilities:
+  - Proxy order flow imbalance from tick classification (buyer/seller initiated) at 3 time scales
+  - Welford online z-score normalization for streaming OFI values
+  - Directional confirmation filter integrated into consensus pipeline
+  - Provide `GetOFIZScore()`, `GetImbalanceDirection()`, `GetMultiScaleOFI()` for consensus augmentation
+  - Emit `[OFI-ENGINE]` telemetry with imbalance values and z-scores per time scale
+
+### 2.29 VPIN Filter domain (Batch 101)
+- Class: `CVPINFilter` in `Core/Risk/VPINFilter.mqh`
+- Responsibilities:
+  - Volume-synchronized probability of informed trading (VPIN) from tick data
+  - Toxicity-based position sizing: reduce size when VPIN exceeds threshold
+  - Trade blocking when informed trading probability is critically high
+  - Provide `GetVPIN()`, `GetToxicityLevel()`, `GetSizeMultiplier()` for risk integration
+  - Emit `[VPIN-FILTER]` telemetry with VPIN value, toxicity classification, and sizing multiplier
+
 ## 3. Managed Strategies
 
 ### 3.1 Core retained set
@@ -719,6 +821,12 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 ### 5.3 Execution centralization
 - Runtime decision path executes through `CTradeManager`.
 
+### 5.4 Domain authority registry (Batch 99)
+- AI calibration authority: `IAIStrategy::GetCalibratedWeight()` — runtime degenerate model detection; models with direction ratio > 0.80 in last 20 predictions have effective weight reduced by 50%
+- Equity curve authority: `CEquityCurveManager` — position size modulation based on equity vs EMA; multiplier 0.50 when equity < EMA, 1.0 when above
+- CVaR authority: `CPortfolioRiskManager::IsCVaRLimitExceeded()` — portfolio risk capped by historical tail risk; 95% confidence, 10% max risk, 100-trade lookback
+- Spike hunting authority: `CSpikeHunterEngine` — 3-layer spike detection and independent spike trade execution for synthetic CFD indices; symbol-aware direction mapping, magic offset 9000, push alerts throttled 120s, entry cooldown 60s
+
 ## 6. Runtime Modes
 
 ### 6.1 Shadow mode
@@ -756,6 +864,8 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Shadow actions: `[SHADOW-TRADE]`
 - Execution outcomes: `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
 - Python bridge health: `[PYTHON-BRIDGE-DASHBOARD]`
+- Scalp cost viability: `[SCALP-COST-VETO]`
+- Spike hunting: `[SPIKE-HUNT-DETECTED]`, `[SPIKE-HUNT-TRADE]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`, `[SPIKE-COOLDOWN]`, `[SPIKE-HUNTER-STATS]`, `[SPIKE-HUNT-ENGINE]`
 
 ### 7.2 Primary operational KPIs
 - no-signal ratio

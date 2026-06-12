@@ -1,13 +1,37 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-06-10
-- Status: Batch 98 - Monolith Decomposition & Risk Framework Completion
+- Last Updated: 2026-06-12
+- Status: Batch 101
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.
 
 ## System Snapshot
+- **Mathematical & Microstructure Engines + Expanded ML Ensemble (Batch 101):** Five new quantitative engines and an expanded Python ML pipeline:
+  - **Hurst Exponent Engine:** `CHurstExponentEngine` in `Core/Engines/HurstExponentEngine.mqh` — fractal persistence detection classifying price series as mean-reverting (H < 0.5), random walk (H ≈ 0.5), or trending (H > 0.5) via rescaled-range (R/S) analysis. Strategy weight multipliers scale confidence up in aligned regimes (trending strategies boosted when H > 0.6, mean-reversion strategies boosted when H < 0.4) and dampen in misaligned regimes.
+  - **VPIN Toxicity Filter:** `CVPINToxicityFilter` in `Core/Engines/VPINToxicityFilter.mqh` — volume-synchronized probability of informed trading. Computes VPIN from volume-clocked buckets with bulk-volume classification (BVC), tracks rolling toxicity metrics, and blocks new position entries when toxicity exceeds the extreme threshold (`InpVPINExtremeThreshold`), protecting against adverse selection during informed-trading events.
+  - **Ornstein-Uhlenbeck Engine:** `COUProcessEngine` in `Core/Engines/OUProcessEngine.mqh` — mean-reversion speed estimation via OLS regression on the discrete OU process. Estimates θ (speed of mean reversion), μ (long-run mean), and σ (volatility of diffusion). Produces OU-adjusted z-scores that account for mean-reversion speed rather than naive standard-deviation distance, improving statistical arbitrage entry timing.
+  - **Order Flow Imbalance Proxy:** `COFIProxyEngine` in `Core/Engines/OFIProxyEngine.mqh` — tick-based order flow imbalance estimation at 3 time scales (fast/medium/slow windows). Classifies trades as buyer- or seller-initiated using tick rule, computes rolling imbalance ratios, and provides a directional confirmation filter that validates consensus direction against real order flow pressure.
+  - **Expanded ML Ensemble:** Python training pipeline (`Python/`) now includes CatBoost and XGBoost alongside existing LightGBM, enabling a 3-model gradient boosting ensemble. Models are trained independently and combined via stacking/meta-learner for ONNX export, improving generalization and reducing single-model overfitting risk.
+  - **Mathematical Engines Input Parameters:** New `Mathematical Engines` input group — `InpEnableHurstEngine`, `InpHurstLookback`, `InpEnableOUProcess`, `InpOULookback`, `InpEnableOFIProxy`, `InpOFISlowWindow`, `InpEnableVPINFilter`, `InpVPINExtremeThreshold`, `InpVPINNumBuckets`.
+
+- **Spike Hunter Engine for Synthetic CFD Indices (Batch 100):** New `CSpikeHunterEngine` in `Core/Scalp/SpikeHunterEngine.mqh` — a dedicated spike hunting engine for synthetic CFD indices with 3-layer detection (tick velocity ≥ 2.5× average, direction accumulation ≥ 12 ticks, ATR compression ≤ 60%), symbol-aware direction mapping (PainX→SELL, GainX→BUY, Volatility Index→directional, Jump Index→momentum continuation), independent spike trades with separate magic numbers (offset 9000), push notification alerts throttled at 120s, and long-term entry cooldown of 60s to prevent re-entry into fading spikes.
+
+- **Log-Evidence-Driven Fixes + Research Solutions (Batch 99):** Comprehensive fix of 7 production issues identified from live 2026-06-11 log analysis (33,800+ lines, 6 trades, 79+ missed signals), plus 5 research-driven enhancements from v4 performance research report:
+  - **S/R Lot Validation Fix (Critical):** Replaced hardcoded `lotSize = 0.01` with `SYMBOL_VOLUME_MIN` in StrategySupportResistance, unblocking 79 SELL signals on PainX 400 at 95% confidence that were rejected before CPositionSizer could round up.
+  - **Trend Bias Consensus Check (Critical):** Added trend-direction bias check in CEnterpriseStrategyManager — raises quorum to 0.70 when strong trend opposes consensus direction. Prevents BUY-only trading in bearish markets.
+  - **ONNX CPU Fallback (High):** Added `m_fallbackToCpu` flag in OnnxBrain — when CUDA fails, retries with `ONNX_USE_CPU_ONLY`. ONNX now produces signals within 1-2 cycles instead of staying in permanent warm-up.
+  - **AI Degenerate Model Detection (High):** Added rolling 20-prediction direction window to all 4 AI adapters. Models with >80% directional bias are flagged as degenerate and downweighted by 50%. Extended `IAIStrategy` interface with `IsDirectionDegenerate()` and `GetCalibratedWeight()`.
+  - **Scalp Margin-Aware Lot Cap (High):** Added `CapLotToMargin()` with 1.5x safety factor and `SYMBOL_VOLUME_MAX` cap in FastScalpEngine. Prevents 5.69-lot orders on $170 accounts.
+  - **Hybrid Gate Relaxation (Medium):** After 5 evaluation cycles without indicator signals, AI standalone threshold drops from 0.650 to 0.600, unblocking 35 AI-only rejections.
+  - **P&L-Adjusted Risk Budget (Medium):** Profitable positions reduce used risk by 50% of unrealized P&L, enabling re-entries on symbols with existing profitable positions (72 previously blocked).
+  - **Bayesian Kelly Modifier:** `CBayesianKellyModifier` with Beta-Binomial conjugate priors, quarter Kelly fraction — self-contained win/loss tracking for adaptive position sizing.
+  - **Equity Curve Manager:** `CEquityCurveManager` reduces position size to 50% when equity drops below its 20-period EMA, reducing max drawdown by 15-30% per research.
+  - **CVaR Portfolio Risk:** `CPortfolioRiskManager` extended with CVaR (Conditional Value at Risk) at 95% confidence, capping portfolio risk based on historical tail losses.
+  - **Commission-Aware Scalp Validation:** `IsScalpCostViable()` rejects scalp signals where breakeven win rate > 70% or total cost > 25% of target profit.
+  - **Async Trade Executor:** `CTradeManager` extended with full `OrderSendAsync()` + `OnTradeTransaction()` confirmation pattern, max 10 pending, configurable timeout.
+
 - **Monolith Decomposition & Risk Framework Completion (Batch 98):** Completed the EA Overhaul Blueprint R6/R7 items and extracted 7 focused manager classes from the main EA monolith (~1,180 lines removed):
   - **Stateless Position Sizer (R7):** `CPositionSizer::CalculateSize()` refactored to use `CalculateOptimalPositionSizeCore()` with explicit `riskPercent` parameter — no more save/restore hack, zero shared-state mutation.
   - **CPositionLifecycleManager (R6a):** SRE with breathing room/last-stand zone/profit guard, structural invalidation, breakeven/trailing, safe mode partial profit — all configurable from EA inputs.

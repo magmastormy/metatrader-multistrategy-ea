@@ -76,6 +76,17 @@ private:
     datetime m_lastRejectLogTime;
     bool m_inSqueeze;         // Track if we're in a squeeze state
     
+    bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
+    {
+        for(int attempt = 0; attempt < 3; attempt++)
+        {
+            if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
+                return true;
+            Sleep(10);  // 10ms wait for indicator calculation
+        }
+        return false;
+    }
+
     // Logging helper
     void LogRejectEvent(const string reasonTag)
     {
@@ -203,11 +214,11 @@ public:
         double atrBuffer[12];  // Current + lookback for comparison
         double volumeBuffer[11];
         
-        if(CopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) < 2 ||  // Upper band
-           CopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) < 2 || // Middle band
-           CopyBuffer(m_bbHandle, 2, 1, 2, bbLower) < 2 ||  // Lower band
-           CopyBuffer(m_atrHandle, 0, 1, 12, atrBuffer) < 12 ||
-           CopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer) < 11)
+        if(!SafeCopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) ||  // Upper band
+           !SafeCopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) || // Middle band
+           !SafeCopyBuffer(m_bbHandle, 2, 1, 2, bbLower) ||  // Lower band
+           !SafeCopyBuffer(m_atrHandle, 0, 1, 12, atrBuffer) ||
+           !SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer))
         {
             return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
         }
@@ -266,7 +277,7 @@ public:
             STradeValidationRequest request;
             request.symbol = m_symbol;
             request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = 0.01;
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
             request.stopLossPips = (signal.stopLoss > 0) ? MathAbs(signal.entryPrice - signal.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.takeProfitPips = (signal.takeProfit > 0) ? MathAbs(signal.takeProfit - signal.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.confidence = signal.confidence;
@@ -333,9 +344,9 @@ private:
         double bbUpperHist[], bbLowerHist[], bbMiddleHist[];
         int historySize = m_lookbackPeriods + 2;
         
-        if(CopyBuffer(m_bbHandle, 1, 1, historySize, bbUpperHist) < historySize ||
-           CopyBuffer(m_bbHandle, 2, 1, historySize, bbLowerHist) < historySize ||
-           CopyBuffer(m_bbHandle, 0, 1, historySize, bbMiddleHist) < historySize)
+        if(!SafeCopyBuffer(m_bbHandle, 1, 1, historySize, bbUpperHist) ||
+           !SafeCopyBuffer(m_bbHandle, 2, 1, historySize, bbLowerHist) ||
+           !SafeCopyBuffer(m_bbHandle, 0, 1, historySize, bbMiddleHist))
         {
             return false; // Cannot determine
         }

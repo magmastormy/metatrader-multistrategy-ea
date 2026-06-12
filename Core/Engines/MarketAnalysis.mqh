@@ -759,7 +759,9 @@ public:
            StringFind(symbolName, "SFX Vol") >= 0 ||
            StringFind(symbolName, "GainX") >= 0 ||
            StringFind(symbolName, "FX Vol") >= 0 ||
-           StringFind(symbolName, "FlipX") >= 0)
+           StringFind(symbolName, "FlipX") >= 0 ||
+           StringFind(symbolName, "Volatility") >= 0 ||  // Deriv synthetic family
+           StringFind(symbolName, "Jump") >= 0)           // Deriv Jump indices
             return true;
 
         return false;

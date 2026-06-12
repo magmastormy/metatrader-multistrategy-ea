@@ -56,6 +56,23 @@ struct SPendingConfirmation
     bool     isActive;
 };
 
+// Async trade request tracking for OrderSendAsync + OnTradeTransaction pattern
+struct SAsyncTradeRequest
+{
+    ulong           ticket;       // Order ticket assigned by broker
+    string          symbol;       // Trading symbol
+    ENUM_ORDER_TYPE orderType;    // Order type (BUY/SELL)
+    double          lot;          // Lot size
+    double          price;        // Expected execution price
+    double          sl;           // Stop loss
+    double          tp;           // Take profit
+    ulong           magic;        // Magic number
+    datetime        submitTime;   // When the request was submitted
+    int             timeoutMs;    // Confirmation timeout in milliseconds
+    bool            confirmed;    // Whether the trade was confirmed
+    bool            expired;      // Whether the request timed out
+};
+
 // Trade execution settings
 #define MAX_TRADE_RETRIES 4
 #define TRADE_RETRY_DELAY 150 // ms
@@ -187,6 +204,11 @@ private:
     // Pending confirmation tracking for non-blocking execution
     SPendingConfirmation m_pendingConfirmations[MAX_PENDING_CONFIRMATIONS];
     int m_pendingConfirmationCount;
+
+    // Async trade execution tracking
+    SAsyncTradeRequest m_pendingAsyncTrades[];  // Dynamic array of pending async confirmations
+    int                m_maxPendingAsync;        // Maximum pending async trades (default 10)
+    bool               m_asyncModeEnabled;       // Whether async mode is active
     
     // Trade execution state
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
@@ -749,6 +771,8 @@ public:
         m_emergencyStop(false),
         m_logLevel(1),
         m_pendingConfirmationCount(0),
+        m_maxPendingAsync(10),
+        m_asyncModeEnabled(false),
         m_pendingOrderCount(0),
         m_stateCount(0),
         m_totalTrades(0),
@@ -803,6 +827,26 @@ public:
         m_maxEntrySpreadPoints = MathMax(0.0, maxEntrySpreadPoints);
         m_maxEntryDriftPoints = MathMax(0.0, maxEntryDriftPoints);
     }
+
+    //--- Async trade execution interface (OrderSendAsync + OnTradeTransaction)
+    // Enable or disable async mode
+    void SetAsyncMode(bool enabled) { m_asyncModeEnabled = enabled; }
+
+    // Submit trade asynchronously via OrderSendAsync
+    bool SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
+                        double lot, double price, double sl, double tp,
+                        ulong magic, int timeoutMs = 5000);
+
+    // Process trade transaction event (call from OnTradeTransaction)
+    void ProcessTradeTransaction(const MqlTradeTransaction &trans,
+                                const MqlTradeRequest &request,
+                                const MqlTradeResult &result);
+
+    // Check for timed-out async trades (call from OnTimer)
+    void CheckAsyncTimeouts();
+
+    // Get pending async trade count
+    int  GetPendingAsyncCount() const;
 
     // Calculate dynamic slippage based on ATR volatility
     uint GetDynamicSlippage(const string symbol)
@@ -1432,29 +1476,55 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
     }
     
     string localSymbol = m_positionInfo.Symbol();
-    
+
+    // Capture TP/SL before close for calibration warning
+    double posTP = m_positionInfo.TakeProfit();
+    double posSL = m_positionInfo.StopLoss();
+    double posOpenPrice = m_positionInfo.PriceOpen();
+
     // Check if market is open for trading
     // SYMBOL_TRADE_MODE_CLOSEONLY allows closing positions, so we allow it
     // SYMBOL_TRADE_MODE_DISABLED means no trading at all
     ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(localSymbol, SYMBOL_TRADE_MODE);
     if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
     {
-        PrintFormat("[POSITION-MANAGEMENT] Skipping position closure for %s - trading disabled (trade mode: %s)", 
+        PrintFormat("[POSITION-MANAGEMENT] Skipping position closure for %s - trading disabled (trade mode: %s)",
                     localSymbol, EnumToString(tradeMode));
         return false;
     }
-    
+
     ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)m_positionInfo.Type();
     double volume = m_positionInfo.Volume();
     double profit = m_positionInfo.Profit();
-    
+
     bool result = m_trade.PositionClose(ticket);
-    
+
     if(result)
     {
+        // TP/SL calibration warning: if closed by profit-target before TP hit, log remaining distance
+        if(posTP > 0.0 && reason != "")
+        {
+            double currentPrice = (orderType == ORDER_TYPE_BUY)
+                                  ? SymbolInfoDouble(localSymbol, SYMBOL_BID)
+                                  : SymbolInfoDouble(localSymbol, SYMBOL_ASK);
+            if(currentPrice > 0.0)
+            {
+                double pointCal = SymbolInfoDouble(localSymbol, SYMBOL_POINT);
+                if(pointCal <= 0.0)
+                    pointCal = 0.00001;
+                double distRemainingTP = MathAbs(posTP - currentPrice) / pointCal;
+                double originalDistTP = MathAbs(posTP - posOpenPrice) / pointCal;
+                if(distRemainingTP > 0.0 && originalDistTP > 0.0)
+                {
+                    PrintFormat("[TP-CALIBRATION-WARNING] %s | Closed before TP hit. TP dist remaining: %.0f pts (%.1f%% of original %.0f pts) | reason=%s",
+                                localSymbol, distRemainingTP, distRemainingTP / originalDistTP * 100.0, originalDistTP, reason);
+                }
+            }
+        }
+
         LogTradeOperation("CLOSE", localSymbol, orderType, volume, true,
                          StringFormat("Profit: %.2f, Reason: %s", profit, reason));
-            
+
         UpdatePerformanceMetrics(ticket, profit, profit > 0);
     }
     else
@@ -1944,6 +2014,23 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                         m_lastExecutionReceipt.slippagePoints,
                         m_lastExecutionReceipt.roundTripMs,
                         TimeToString(m_lastExecutionReceipt.submitTime, TIME_DATE | TIME_SECONDS));
+
+            // TP/SL calibration diagnostic: log distance to TP and SL at entry
+            if(stopLoss > 0.0 || takeProfit > 0.0)
+            {
+                double entryPrice = m_lastExecutionReceipt.averagePrice;
+                if(entryPrice <= 0.0)
+                    entryPrice = executionPrice;
+                double pointCal = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+                if(pointCal <= 0.0)
+                    pointCal = 0.00001;
+                string dirStr = (orderType == ORDER_TYPE_BUY) ? "BUY" : "SELL";
+                double distToTP = (takeProfit > 0.0) ? MathAbs(takeProfit - entryPrice) / pointCal : 0.0;
+                double distToSL = (stopLoss > 0.0) ? MathAbs(stopLoss - entryPrice) / pointCal : 0.0;
+                PrintFormat("[TP-SL-CALIBRATION] %s %s | entry=%.2f tp=%.2f sl=%.2f | distTP=%.0f pts distSL=%.0f pts | ratio=%.2f",
+                            symbolName, dirStr, entryPrice, takeProfit, stopLoss, distToTP, distToSL,
+                            distToSL > 0.0 ? distToTP / distToSL : 0.0);
+            }
             if(!executionConfirmed && !m_lastExecutionReceipt.accepted)
             {
                 PrintFormat("[EXECUTION-UNCONFIRMED] %s | request_id=%u | order=%I64u | deal=%I64u | retcode=%u | note=%s",
@@ -2560,6 +2647,247 @@ bool CTradeManager::NormalizeAndValidateStops(const string symbol,
     }
     
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Send trade asynchronously via OrderSendAsync                     |
+//+------------------------------------------------------------------+
+bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
+                                   double lot, double price, double sl, double tp,
+                                   ulong magic, int timeoutMs)
+{
+    // Guard: async mode must be enabled
+    if(!m_asyncModeEnabled)
+    {
+        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=AsyncModeDisabled", symbol);
+        return false;
+    }
+
+    // Validate inputs
+    if(symbol == "")
+    {
+        Print("[ASYNC-TRADE-REJECTED] reason=EmptySymbol");
+        return false;
+    }
+    if(lot <= 0.0)
+    {
+        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=InvalidLot lot=%.2f", symbol, lot);
+        return false;
+    }
+
+    // Enforce maximum pending limit
+    int pendingCount = ArraySize(m_pendingAsyncTrades);
+    if(pendingCount >= m_maxPendingAsync)
+    {
+        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=MaxPendingReached count=%d max=%d",
+                    symbol, pendingCount, m_maxPendingAsync);
+        return false;
+    }
+
+    // Normalize volume and price
+    double normalizedLot = NormalizeVolume(symbol, lot);
+    if(normalizedLot <= 0.0)
+    {
+        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=NormalizedLotZero requested=%.2f", symbol, lot);
+        return false;
+    }
+
+    double executionPrice = price;
+    if(executionPrice <= 0.0)
+        executionPrice = GetCurrentExecutionPrice(symbol, orderType);
+    executionPrice = NormalizePrice(symbol, executionPrice);
+    if(executionPrice <= 0.0)
+    {
+        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=InvalidPrice", symbol);
+        return false;
+    }
+
+    // Preflight validation
+    string preflightReason = "";
+    if(!ValidateExecutionPreflight(symbol, orderType, executionPrice, price, preflightReason))
+    {
+        PrintFormat("[ASYNC-TRADE-BLOCKED] %s | reason=%s", symbol, preflightReason);
+        return false;
+    }
+
+    // Apply filling mode and dynamic slippage
+    ApplyFillingModeForSymbol(symbol);
+    UpdateDynamicSlippage(symbol);
+
+    // Build the trade request
+    MqlTradeRequest request = {};
+    request.action    = TRADE_ACTION_DEAL;
+    request.symbol    = symbol;
+    request.volume    = normalizedLot;
+    request.type      = orderType;
+    request.price     = executionPrice;
+    request.sl        = sl;
+    request.tp        = tp;
+    request.magic     = magic;
+    request.comment   = "AsyncTrade";
+    request.deviation = m_slippage;
+    request.type_filling = m_orderFillMode;
+
+    // Submit via OrderSendAsync
+    MqlTradeResult result = {};
+    bool sent = OrderSendAsync(request, result);
+
+    if(!sent)
+    {
+        PrintFormat("[ASYNC-TRADE-FAILED] %s | retcode=%u | comment=%s | err=%d",
+                    symbol, result.retcode, result.comment, GetLastError());
+        return false;
+    }
+
+    // Store in pending array for later confirmation via OnTradeTransaction
+    int newSize = ArraySize(m_pendingAsyncTrades) + 1;
+    ArrayResize(m_pendingAsyncTrades, newSize);
+    int idx = newSize - 1;
+
+    m_pendingAsyncTrades[idx].ticket      = result.order;
+    m_pendingAsyncTrades[idx].symbol      = symbol;
+    m_pendingAsyncTrades[idx].orderType   = orderType;
+    m_pendingAsyncTrades[idx].lot         = normalizedLot;
+    m_pendingAsyncTrades[idx].price       = executionPrice;
+    m_pendingAsyncTrades[idx].sl          = sl;
+    m_pendingAsyncTrades[idx].tp          = tp;
+    m_pendingAsyncTrades[idx].magic       = magic;
+    m_pendingAsyncTrades[idx].submitTime  = TimeCurrent();
+    m_pendingAsyncTrades[idx].timeoutMs   = timeoutMs;
+    m_pendingAsyncTrades[idx].confirmed   = false;
+    m_pendingAsyncTrades[idx].expired     = false;
+
+    PrintFormat("[ASYNC-TRADE-SENT] Symbol=%s Type=%s Lot=%.2f Price=%.5f Ticket=%I64u",
+                symbol, EnumToString(orderType), normalizedLot, executionPrice, result.order);
+
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Process trade transaction event (call from OnTradeTransaction)    |
+//+------------------------------------------------------------------+
+void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
+                                            const MqlTradeRequest &request,
+                                            const MqlTradeResult &result)
+{
+    // Only process deal-add transactions (completed fills)
+    if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
+        return;
+
+    int pendingCount = ArraySize(m_pendingAsyncTrades);
+    if(pendingCount == 0)
+        return;
+
+    ulong dealOrder = (ulong)trans.order;
+
+    // Search for matching pending request by order ticket
+    for(int i = pendingCount - 1; i >= 0; i--)
+    {
+        if(m_pendingAsyncTrades[i].ticket == dealOrder && !m_pendingAsyncTrades[i].confirmed)
+        {
+            // Mark as confirmed
+            m_pendingAsyncTrades[i].confirmed = true;
+
+            // Calculate slippage
+            double pointSize = SymbolInfoDouble(m_pendingAsyncTrades[i].symbol, SYMBOL_POINT);
+            double slippage = 0.0;
+            if(pointSize > 0.0 && trans.price > 0.0 && m_pendingAsyncTrades[i].price > 0.0)
+                slippage = MathAbs(trans.price - m_pendingAsyncTrades[i].price) / pointSize;
+
+            PrintFormat("[ASYNC-TRADE-CONFIRMED] Ticket=%I64u Price=%.5f (expected=%.5f slippage=%.1f pts)",
+                        m_pendingAsyncTrades[i].ticket,
+                        trans.price,
+                        m_pendingAsyncTrades[i].price,
+                        slippage);
+
+            // Update execution quality metrics
+            STradeExecutionReceipt receipt;
+            receipt.accepted        = true;
+            receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
+            receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
+            receipt.filledVolume    = trans.volume;
+            receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
+            receipt.averagePrice    = trans.price;
+            receipt.slippagePoints  = slippage;
+            receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
+            receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
+            receipt.symbol          = m_pendingAsyncTrades[i].symbol;
+            receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
+            receipt.note            = "async_confirmed";
+            if(m_pendingAsyncTrades[i].submitTime > 0)
+            {
+                ulong elapsedMs = (ulong)(TimeCurrent() - m_pendingAsyncTrades[i].submitTime) * 1000;
+                receipt.roundTripMs = elapsedMs;
+            }
+            UpdateExecutionMetrics(receipt);
+
+            // Remove confirmed entry by shifting remaining elements
+            for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
+                m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
+            ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
+
+            break;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check for timed-out async trades (call from OnTimer)              |
+//+------------------------------------------------------------------+
+void CTradeManager::CheckAsyncTimeouts()
+{
+    int pendingCount = ArraySize(m_pendingAsyncTrades);
+    if(pendingCount == 0)
+        return;
+
+    datetime checkTime = TimeCurrent();
+
+    for(int i = pendingCount - 1; i >= 0; i--)
+    {
+        if(m_pendingAsyncTrades[i].confirmed || m_pendingAsyncTrades[i].expired)
+            continue;
+
+        // Calculate elapsed time in milliseconds
+        long elapsedMs = (long)(checkTime - m_pendingAsyncTrades[i].submitTime) * 1000;
+
+        if(elapsedMs > m_pendingAsyncTrades[i].timeoutMs)
+        {
+            m_pendingAsyncTrades[i].expired = true;
+
+            PrintFormat("[ASYNC-TRADE-TIMEOUT] Ticket=%I64u expired after %I64dms (limit=%dms)",
+                        m_pendingAsyncTrades[i].ticket,
+                        elapsedMs,
+                        m_pendingAsyncTrades[i].timeoutMs);
+
+            // Update execution metrics for the timeout
+            STradeExecutionReceipt receipt;
+            receipt.accepted        = false;
+            receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
+            receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
+            receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
+            receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
+            receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
+            receipt.symbol          = m_pendingAsyncTrades[i].symbol;
+            receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
+            receipt.note            = "async_timeout";
+            if(m_pendingAsyncTrades[i].submitTime > 0)
+                receipt.roundTripMs = (ulong)elapsedMs;
+            UpdateExecutionMetrics(receipt);
+
+            // Remove expired entry by shifting remaining elements
+            for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
+                m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
+            ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get pending async trade count                                     |
+//+------------------------------------------------------------------+
+int CTradeManager::GetPendingAsyncCount() const
+{
+    return ArraySize(m_pendingAsyncTrades);
 }
 
 #endif // CORE_TRADE_MANAGER_MQH

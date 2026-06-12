@@ -232,7 +232,7 @@ public:
             STradeValidationRequest request;
             request.symbol = m_symbol;
             request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = 0.01;
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
             request.stopLossPips = slPips;
             request.takeProfitPips = slPips * 2.0; // 1:2 R:R ratio
             request.confidence = confidence;

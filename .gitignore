@@ -38,3 +38,10 @@ visualization_audit.md
 frontend.md
 agent_modules/
 .windsurf
+
+# Dashboard
+Dashboard/client/node_modules/
+Dashboard/client/dist/
+Dashboard/server/.venv-ea-dashboard/
+Dashboard/server/__pycache__/
+

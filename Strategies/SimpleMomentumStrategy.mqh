@@ -42,6 +42,17 @@ private:
     ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
     ENUM_TIMEFRAMES m_maxScalpTimeframe;  // Maximum allowed timeframe for scalping (default: M15)
 
+    bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
+    {
+        for(int attempt = 0; attempt < 3; attempt++)
+        {
+            if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
+                return true;
+            Sleep(10);  // 10ms wait for indicator calculation
+        }
+        return false;
+    }
+
     void LogRejectEvent(const string reasonTag)
     {
         datetime nowTime = TimeCurrent();
@@ -77,8 +88,8 @@ private:
         double fastBuffer[];
         double slowBuffer[];
         
-        if(CopyBuffer(m_fastHandle, 0, 1, maxBars, fastBuffer) < requiredBars ||
-           CopyBuffer(m_slowHandle, 0, 1, maxBars, slowBuffer) < requiredBars)
+        if(!SafeCopyBuffer(m_fastHandle, 0, 1, maxBars, fastBuffer) ||
+           !SafeCopyBuffer(m_slowHandle, 0, 1, maxBars, slowBuffer))
         {
             PrintFormat("[MOMENTUM] Failed to fetch %d bars for crossover validation", maxBars);
             return false;
@@ -129,7 +140,7 @@ private:
         // Need at least 5 bars for divergence detection
         double priceBuffer[6], rsiBuffer[6];
         if(CopyClose(m_symbol, m_timeframe, 1, 6, priceBuffer) < 6 ||
-           CopyBuffer(m_rsiHandle, 0, 1, 6, rsiBuffer) < 6)
+           !SafeCopyBuffer(m_rsiHandle, 0, 1, 6, rsiBuffer))
             return false; // Skip on data error
         
         // Look for divergence over last 3-5 bars
@@ -189,8 +200,8 @@ private:
         double slowBuffer[2];
 
         // Closed-bar values: current signal bar = shift 1, previous = shift 2
-        if(CopyBuffer(m_fastHandle, 0, 1, 2, fastBuffer) < 2) return false;
-        if(CopyBuffer(m_slowHandle, 0, 1, 2, slowBuffer) < 2) return false;
+        if(!SafeCopyBuffer(m_fastHandle, 0, 1, 2, fastBuffer)) return false;
+        if(!SafeCopyBuffer(m_slowHandle, 0, 1, 2, slowBuffer)) return false;
 
         fastNow = fastBuffer[0];
         fastPrev = fastBuffer[1];
@@ -205,7 +216,7 @@ private:
         double fastBuffer[3];
 
         // Closed-bar values: shift 1 (current signal), shift 2 (previous), shift 3 (2-bars-ago)
-        if(CopyBuffer(m_fastHandle, 0, 1, 3, fastBuffer) < 3) return false;
+        if(!SafeCopyBuffer(m_fastHandle, 0, 1, 3, fastBuffer)) return false;
 
         emaNow = fastBuffer[0];
         emaPrev = fastBuffer[1];
@@ -442,7 +453,7 @@ public:
 
         // --- VOLATILITY FILTER ---
         double atrWindow[2];
-        if(CopyBuffer(m_atrHandle, 0, 1, 2, atrWindow) < 2)
+        if(!SafeCopyBuffer(m_atrHandle, 0, 1, 2, atrWindow))
             return RejectSignal("MOMENTUM_ATR_UNAVAILABLE");
         if(atrWindow[0] < m_minVolatility) 
         {
@@ -456,7 +467,7 @@ public:
 
         // --- EXHAUSTION FILTER (RSI) ---
         double rsiBuffer[1];
-        if(CopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer) < 1)
+        if(!SafeCopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer))
             return RejectSignal("MOMENTUM_RSI_UNAVAILABLE");
         double rsi = rsiBuffer[0];
 
@@ -577,7 +588,7 @@ public:
             // Calculate ATR-based stop loss for risk validation
             double atrBuffer[2];
             double atr = 0.0;
-            if(CopyBuffer(m_atrHandle, 0, 1, 2, atrBuffer) >= 1)
+            if(SafeCopyBuffer(m_atrHandle, 0, 1, 2, atrBuffer))
                 atr = atrBuffer[0];
             double currentPrice = (signal == TRADE_SIGNAL_BUY) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK) : SymbolInfoDouble(m_symbol, SYMBOL_BID);
             double slDistance = (atr > 0) ? (atr * 2.0) : (currentPrice * 0.01); // 2x ATR or 1% fallback

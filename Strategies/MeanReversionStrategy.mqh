@@ -74,6 +74,17 @@ private:
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
     
+    bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
+    {
+        for(int attempt = 0; attempt < 3; attempt++)
+        {
+            if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
+                return true;
+            Sleep(10);  // 10ms wait for indicator calculation
+        }
+        return false;
+    }
+
     // Logging helper
     void LogRejectEvent(const string reasonTag)
     {
@@ -108,7 +119,7 @@ public:
         m_rsiPeriod(14),
         m_rsiOverbought(70.0),
         m_rsiOversold(30.0),
-        m_minVolumeRatio(1.2),
+        m_minVolumeRatio(0.8),
         m_riskManager(NULL),
         m_lastSignalBar(0),
         m_signalsGenerated(0),
@@ -198,11 +209,11 @@ public:
         double rsiBuffer[2];
         double volumeBuffer[11];
         
-        if(CopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) < 2 ||  // Upper band
-           CopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) < 2 || // Middle band
-           CopyBuffer(m_bbHandle, 2, 1, 2, bbLower) < 2 ||  // Lower band
-           CopyBuffer(m_rsiHandle, 0, 1, 2, rsiBuffer) < 2 ||
-           CopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer) < 11)
+        if(!SafeCopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) ||  // Upper band
+           !SafeCopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) || // Middle band
+           !SafeCopyBuffer(m_bbHandle, 2, 1, 2, bbLower) ||  // Lower band
+           !SafeCopyBuffer(m_rsiHandle, 0, 1, 2, rsiBuffer) ||
+           !SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer))
         {
             return RejectSignal("MEANREV_DATA_UNAVAILABLE");
         }
@@ -258,7 +269,7 @@ public:
             STradeValidationRequest request;
             request.symbol = m_symbol;
             request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = 0.01;  // Placeholder - will be sized by PositionSizer
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Use broker minimum instead of hardcoded 0.01
             request.stopLossPips = slPips;
             request.takeProfitPips = tpPips;
             request.confidence = signal.confidence;
@@ -333,9 +344,9 @@ public:
         double bbUpper[1], bbLower[1];
         double rsiBuffer[1];
 
-        if(CopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) < 1 ||
-           CopyBuffer(m_bbHandle, 2, 1, 1, bbLower) < 1 ||
-           CopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer) < 1)
+        if(!SafeCopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) ||
+           !SafeCopyBuffer(m_bbHandle, 2, 1, 1, bbLower) ||
+           !SafeCopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer))
             return TRADE_SIGNAL_NONE;
 
         double currentPrice = iClose(m_symbol, m_timeframe, 1);

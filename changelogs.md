@@ -2,6 +2,170 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file.
 
+## [Unreleased] - 2026-06-11
+
+### Batch 101: Advanced Mathematical Engines — Hurst, VPIN, OU Process, OFI Proxy + CatBoost/XGBoost (2026-06-12)
+
+#### Implementation Summary
+
+1. **CHurstEngine** — New fractal persistence engine in `Core/Engines/HurstEngine.mqh`:
+   - Variance-time method Hurst exponent estimation (log-variance vs log-lag regression)
+   - Regime classification: MEAN_REVERTING (H<0.45), RANDOM_WALK (0.45-0.55), TRENDING (H>0.55)
+   - Strategy weight multipliers: mean-reverting regime boosts mean-reversion (1.5×), trending regime boosts momentum/trend (1.5×), random walk reduces all (0.7×)
+   - Integrated into CRegimeEngine via `ApplyHurstWeightModifiers()` — Hurst persistence weights multiply regime-based weights
+   - Configurable lookback (default 200 bars), power-of-2 lag series (2-128), warmup guard
+
+2. **CVPINFilter** — New toxicity filter in `Core/Risk/VPINFilter.mqh`:
+   - Volume-synchronized probability of informed trading (VPIN) from tick data
+   - Tick rule classification (uptick=buy, downtick=sell, unchanged=previous)
+   - Volume-bucket accumulation (auto-calculated from average bar volume × 0.5)
+   - Rolling VPIN over 50 buckets with ring buffer
+   - Toxicity regimes: LOW (<0.3, mult=1.0), MEDIUM (0.3-0.5, mult=0.5), HIGH (0.5-0.7, mult=0.25), EXTREME (>0.7, mult=0.0)
+   - Pre-trade risk gate: blocks new positions when VPIN > 0.7 (extreme toxicity)
+   - Position size multiplier applied after momentum scaling
+
+3. **COrnsteinUhlenbeckEngine** — New mean-reversion engine in `Core/Engines/OrnsteinUhlenbeckEngine.mqh`:
+   - OLS-based OU parameter estimation: theta (speed), mu (mean), sigma (volatility)
+   - OU-adjusted z-score: `(X - mu) / (sigma / sqrt(2*theta))` — accounts for mean-reversion speed
+   - Half-life calculation: `ln(2) / theta`
+   - Signal quality scoring: theta significance (t-stat), half-life reasonableness, Jarque-Bera residual normality
+   - Integrated into StatisticalArbitrageStrategy: blends OU z-score with simple z-score weighted by signal quality
+
+4. **COrderFlowImbalanceEngine** — New OFI proxy engine in `Core/Engines/OrderFlowImbalanceEngine.mqh`:
+   - Proxy order flow imbalance from tick data (no LOB required)
+   - Multi-level OFI at 3 time scales: fast (5 ticks), medium (20 ticks), slow (100 ticks)
+   - Welford's online algorithm for numerically stable z-score normalization
+   - Composite OFI with configurable weights (default: 0.5/0.3/0.2)
+   - Directional confirmation filter: rejects consensus signals that contradict OFI direction
+   - Works with both synthetic CFDs and forex pairs
+
+5. **Python ML Ensemble Expansion**:
+   - `train_catboost.py`: CatBoost training with Ordered Boosting, categorical feature support, ONNX export
+   - `train_xgboost.py`: XGBoost training with GPU support, ONNX export
+   - `train_stacker.py` updated: accepts `--catboost-pkl` and `--xgboost-pkl` for expanded meta features (6→9→12 columns)
+   - Backwards compatible: omitting new args preserves original 6-column behavior
+
+6. **Main EA Integration** — `MultiStrategyAutonomousEA.mq5`:
+   - 8 new input parameters in "Mathematical Engines" group
+   - Per-symbol engine instances (Hurst, OU, OFI, VPIN) initialized alongside enterprise managers
+   - OnTick: VPIN and OFI fed tick data (bid, ask, volume)
+   - OnTimer: Hurst and OU updated per bar; Hurst weight modifiers applied to regime engine
+   - Risk gating: VPIN extreme toxicity blocks new positions before unified risk validation
+   - Position sizing: VPIN toxicity multiplier applied after momentum scaling
+   - Signal validation: OFI contradiction filter rejects consensus signals opposing order flow
+   - Full cleanup in OnDeinit
+
+### Batch 100: Spike Hunter Engine for Synthetic CFD Indices (2026-06-11)
+
+#### Root Cause Analysis
+- The existing `CSyntheticSpikeMonitor` detects spikes but **closes positions and pauses trading** — the opposite of what's needed for spike trading on synthetic indices.
+- Synthetic indices (PainX, GainX, Crash, Boom) have **directionally certain spikes**: PainX always spikes DOWN, GainX always spikes UP, Crash always spikes DOWN, Boom always spikes UP.
+- Research shows 3 key pre-spike indicators: tick velocity acceleration (2.5× baseline), consecutive tick direction accumulation (≥12 ticks), and ATR compression (≤60% of average).
+- No push notification alerts existed for spike detection events.
+
+#### Implementation Summary
+
+1. **CSpikeHunterEngine** — New spike hunting engine in `Core/Scalp/SpikeHunterEngine.mqh`:
+   - **3-layer detection system** requiring 2/3 confluence:
+     - Layer 1: Tick velocity — tick rate exceeds baseline × 2.5 (lower than safety monitor's 3.0× for earlier detection)
+     - Layer 2: Direction accumulation — ≥12 consecutive ticks in one direction within 60 seconds
+     - Layer 3: ATR compression — ATR(14) ≤ 60% of ATR SMA(50), detecting "coiling" before spikes
+   - **Symbol-aware direction mapping**: PainX→SELL, GainX→BUY, Boom→BUY, Crash→SELL, others→detected direction
+   - **Independent spike trades**: Spike trades use separate magic number range (baseMagic + 9000 + symbolIndex), allowing them to coexist with long-term positions even in opposite directions
+   - **ATR-based SL/TP**: SL = 1.5× ATR, TP = 3.0× ATR
+   - **Push notification alerts**: Throttled to 1 per 120 seconds via `SendNotification()`
+   - **Long-term entry cooldown**: 60-second cooldown on consensus/scalp entries after spike detection, preventing opening long-term positions right before a spike
+   - **Margin-aware lot sizing**: Uses CPositionSizer with margin cap
+   - **Max 3 concurrent spike positions**, 60-second cooldown between spike trades
+
+2. **Main EA Integration** — `MultiStrategyAutonomousEA.mq5`:
+   - 14 new input parameters in "=== Spike Hunter ===" group
+   - `g_spikeHunter` global instance initialized in OnInit()
+   - ProcessTick() called every tick in OnTick()
+   - Cooldown check before consensus/scalp entries: `g_spikeHunter.IsSymbolInSpikeCooldown()`
+   - Deinit cleanup and heartbeat diagnostics
+
+3. **Coexistence with CSyntheticSpikeMonitor**:
+   - Safety monitor (existing) still handles extreme spike events and emergency drawdown
+   - Spike hunter (new) handles pre-spike detection and directional trading
+   - Two systems operate independently with different thresholds and purposes
+
+#### Files Created
+- `Core/Scalp/SpikeHunterEngine.mqh` — CSpikeHunterEngine class (~800 lines)
+
+#### Files Modified
+- `MultiStrategyAutonomousEA.mq5` — Include, inputs, init, tick processing, cooldown check, deinit, heartbeat
+
+#### Compile Result
+- 0 errors, 0 warnings
+
+### Batch 99: Log-Evidence-Driven Fixes + Research Solutions Implementation (2026-06-11)
+
+#### Root Cause Analysis
+- **S/R lot validation ordering bug:** StrategySupportResistance validated lot size (0.010 < 0.100) before CPositionSizer could round up to 0.100, blocking 79 SELL signals on PainX 400 at 95% confidence during a bearish market.
+- **ONNX warm-up never completes:** CUDA initialization failure (no GPU) caused OnnxBrain to never exit warm-up state, producing zero signals for entire session (204 instances).
+- **AI models 100% BUY bias:** Transformer + Ensemble AI produced zero SELL signals across all 6 symbols during TREND_BEARISH_STRONG, indicating degenerate model behavior.
+- **Scalp lot calculation oversized:** FastScalpEngine calculated 5.69 lots on $170 account, rejected by margin (19x) and volume limits (17x).
+- **Hybrid gate deadlock:** AI confidence always 0.58-0.649 < 0.650 threshold while no indicator strategy co-signed, blocking 35 AI-only signals.
+- **Symbol risk budget lockout:** Single PainX 400 position consumed 17%/33% budget, permanently blocking all re-entries (72 rejections).
+- **No SELL trades in bearish market:** All 6 executed trades were BUY despite TREND_BEARISH_STRONG, caused by S/R SELL blocking + AI BUY bias.
+
+#### Implementation Summary
+
+**Phase 1 — Critical Log Fixes:**
+
+1. **L1 — S/R Lot Validation Fix (Critical):** Replaced hardcoded `lotSize = 0.01` in StrategySupportResistance with `SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN)`, ensuring the validation gate never rejects on lot size before CPositionSizer can round up. Added `[S/R-LOT-DEFERRED]` log.
+
+2. **L7 — Trend Bias Consensus Check (Critical):** Added trend-direction bias check in CEnterpriseStrategyManager: if TREND_BEARISH_STRONG and consensus favors BUY (or TREND_BULLISH_STRONG and consensus favors SELL), raises effectiveQualityThreshold to 0.70. Logs `[CONSENSUS-TREND-BIAS]`.
+
+3. **L2 — ONNX CPU Fallback (High):** Added `m_fallbackToCpu` flag in OnnxBrain. When CUDA session creation fails, retries with `ONNX_USE_CPU_ONLY`. Subsequent calls skip CUDA entirely. Logs `[ONNX-CPU-FALLBACK]`.
+
+4. **L3 — AI Degenerate Model Detection (High):** Added rolling 20-prediction direction window to all 4 AI adapters (Neural Network, Transformer, Ensemble, ONNX). If buy_ratio > 0.80 or sell_ratio > 0.80, model is flagged as degenerate and effective weight reduced by 50%. Added `IsDirectionDegenerate()` and `GetCalibratedWeight()` to IAIStrategy interface. Logs `[AI-CALIBRATION-WARNING]`.
+
+5. **L6 — Scalp Margin-Aware Lot Cap (High):** Added `CapLotToMargin()` method in FastScalpEngine that caps lot to `MathMin(calculatedLot, freeMargin / (marginPerLot * 1.5), symbolMaxVolume)`. Added minimum lot gate that skips scalp if capped lot < SYMBOL_VOLUME_MIN. Logs `[SCALP-LOT-CAPPED]` and `[SCALP-LOT-MIN]`.
+
+**Phase 2 — Medium Log Fixes:**
+
+6. **L4 — Hybrid Gate Relaxation (Medium):** Added `g_cyclesSinceIndicatorSignal` counter in MultiStrategyAutonomousEA.mq5. When no indicator signals for 5+ cycles, AI standalone threshold drops from 0.650 to 0.600. New inputs: `InpAIStandaloneRelaxedConfidence=0.60`, `InpHybridGateRelaxAfterCycles=5`. Logs `[HYBRID-GATE-RELAXED]` and `[HYBRID-GATE-RESTORED]`.
+
+7. **L5 — P&L-Adjusted Risk Budget (Medium):** Added `ApplyPnlRiskAdjustment()` in CUnifiedRiskManager. When a symbol has profitable open positions, unrealized profit reduces "used risk" by 50%, enabling re-entries. `m_riskReductionFactor=0.5`. Logs `[RISK-BUDGET-PNL-ADJUSTED]`.
+
+**Phase 3 — Research Solutions:**
+
+8. **S1 — Bayesian Kelly Modifier:** Added `CBayesianKellyModifier` to PositionSizerModifiers.mqh. Uses Beta-Binomial conjugate priors (alpha=2.0, beta=2.0), quarter Kelly fraction (0.25), K = W - (1-W)/R clamped to [0,1]. Self-contained win/loss tracking. Logs `[KELLY-ADJUSTMENT]`.
+
+9. **S2 — Equity Curve Manager:** Created `Core/Risk/EquityCurveManager.mqh`. Tracks equity EMA (period=20), reduces position size to 50% when equity < EMA, restores to 100% when equity >= EMA. Circular buffer, SMA-seeded EMA. Logs `[EQUITY-CURVE-BELOW]` and `[EQUITY-CURVE-ABOVE]`.
+
+10. **S3 — CVaR Portfolio Risk:** Extended PortfolioRiskManager.mqh with CVaR calculation. Circular buffer of 100 trade returns, ArraySort for tail calculation, 95% confidence level, 10% max portfolio risk. `IsCVaRLimitExceeded()` blocks trades exceeding CVaR limit (requires 20+ samples). Logs `[CVAR-RECORD]` and `[CVAR-CHECK]`.
+
+11. **S4 — Commission-Aware Scalp Validation:** Added `IsScalpCostViable()` in FastScalpEngine.mqh. Estimates commission from tick value profit/loss difference (MQL5 has no SYMBOL_TRADE_COMMISSION). Rejects if breakeven WR > 70% or total cost > 25% of TP. Logs `[SCALP-COST-REJECTED]` and `[SCALP-COST-OK]`.
+
+12. **S5 — Async Trade Executor:** Extended TradeManager.mqh with full OrderSendAsync + OnTradeTransaction pattern. `SAsyncTradeRequest` struct, `SendTradeAsync()`, `ProcessTradeTransaction()`, `CheckAsyncTimeouts()`. Max 10 pending, configurable timeout. Synchronous path remains default. Logs `[ASYNC-TRADE-SENT]`, `[ASYNC-TRADE-CONFIRMED]`, `[ASYNC-TRADE-TIMEOUT]`.
+
+#### Files Modified
+- `Strategies/StrategySupportResistance.mqh` — L1: lot validation fix
+- `Core/Management/EnterpriseStrategyManager.mqh` — L7: trend bias check, L3: calibrated weight in consensus
+- `AIModules/OnnxBrain.mqh` — L2: CPU fallback
+- `Core/Strategy/AIStrategyAdapter.mqh` — L3: degenerate detection
+- `Core/Strategy/TransformerAIStrategyAdapter.mqh` — L3: degenerate detection
+- `Core/Strategy/EnsembleAIStrategyAdapter.mqh` — L3: degenerate detection
+- `Core/Strategy/OnnxAIStrategyAdapter.mqh` — L3: degenerate detection
+- `Interfaces/IAIStrategy.mqh` — L3: IsDirectionDegenerate/GetCalibratedWeight interface
+- `Core/Scalp/FastScalpEngine.mqh` — L6: margin-aware lot cap, S4: commission-aware validation
+- `MultiStrategyAutonomousEA.mq5` — L4: hybrid gate relaxation
+- `Core/Risk/UnifiedRiskManager.mqh` — L5: P&L-adjusted risk budget
+- `Core/Risk/PositionSizerModifiers.mqh` — S1: Bayesian Kelly modifier
+- `Core/Risk/PortfolioRiskManager.mqh` — S3: CVaR calculation
+- `Core/Trading/TradeManager.mqh` — S5: async trade executor
+
+#### Files Created
+- `Core/Risk/EquityCurveManager.mqh` — S2: equity curve trading
+- `IMPLEMENTATION_PLAN.md` — Implementation plan document
+- `EA_PERFORMANCE_RESEARCH_REPORT.md` — v4 research report (updated with Appendix D live log evidence)
+
+#### Compile Result
+- 0 errors, 0 warnings
+
 ## [Unreleased] - 2026-06-10
 
 ### Batch 98: EA Overhaul Blueprint — Monolith Decomposition & Risk Framework Completion (2026-06-10)

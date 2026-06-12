@@ -881,13 +881,16 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
             double close_prev = iClose(m_symbol, m_timeframe, 1);
             double displacement = MathAbs(close_prev - open_prev);
             
-            // Require displacement >= 1.5x ATR for strong institutional move
-            if(displacement < atr * 1.5)
+            // Require displacement >= configurable multiplier of ATR for strong institutional move
+            // Lower multiplier for synthetic CFDs where ATR is very large
+            double dispMult = 0.4;  // Default for synthetics (was 1.5, then 0.8 -- still too high)
+            if(displacement < atr * dispMult)
             {
                 return RejectSignal("UICT_WEAK_DISPLACEMENT",
-                    StringFormat("[UICT] Filtered: Weak displacement %.1f pts (need >= %.1f pts)",
+                    StringFormat("[UICT] Filtered: Weak displacement %.1f pts (need >= %.1f pts, %.1fx ATR)",
                                  displacement / SymbolInfoDouble(m_symbol, SYMBOL_POINT),
-                                 (atr * 1.5) / SymbolInfoDouble(m_symbol, SYMBOL_POINT)));
+                                 (atr * dispMult) / SymbolInfoDouble(m_symbol, SYMBOL_POINT),
+                                 dispMult));
             }
         }
     }
@@ -1074,7 +1077,7 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
             STradeValidationRequest request;
             request.symbol = m_symbol;
             request.orderType = (result == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = 0.01;
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
             request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(bestEntry.entryPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.takeProfitPips = (bestEntry.takeProfit1 > 0) ? MathAbs(bestEntry.takeProfit1 - bestEntry.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.confidence = confidence;

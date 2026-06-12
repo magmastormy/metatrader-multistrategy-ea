@@ -126,6 +126,9 @@ private:
     int m_symbolBudgetCount;
     datetime m_lastBudgetRefresh;
 
+    // Profit-adjusted risk budget: fraction of unrealized profit that frees up risk budget
+    double m_riskReductionFactor;
+
 public:
     CUnifiedRiskManager();
     ~CUnifiedRiskManager();
@@ -158,6 +161,7 @@ public:
     void RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio = 1.0);
 
     double GetActiveRiskPerTradePercent() const { return m_activeRiskPerTradePercent; }
+    double GetMinLotRiskMultiplier() const { return m_config.minLotRiskMultiplier; }
     double GetRecommendedRiskPerTradePercent(const double requestedRiskPercent = 0.0);
     double GetRemainingDailyRiskPercent();
     double GetRemainingPortfolioRiskPercent();
@@ -211,6 +215,7 @@ private:
     double GetCurrentOpenExposureRiskPercent();
     double GetEffectiveDailyRiskUsedPercent(const double additionalRiskPercent = 0.0);
     double CalculateMinLotRiskPercent(const string symbol);
+    double ApplyPnlRiskAdjustment(const string symbol, const double rawUsedRisk);
 };
 
 //+------------------------------------------------------------------+
@@ -257,7 +262,8 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_cbMaxRecoveryAttempts(3),
     m_cbRecoveryCooldownMin(30),
     m_symbolBudgetCount(0),
-    m_lastBudgetRefresh(0)
+    m_lastBudgetRefresh(0),
+    m_riskReductionFactor(0.5)
 {
     m_config.baseRiskPerTradePercent = 1.0;   // Blueprint 10.4: 0-100 scale (1.0 = 1%)
     m_config.minRiskPerTradePercent = 0.1;    // Blueprint 10.4: 0-100 scale (0.1 = 0.1%)
@@ -318,6 +324,8 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
         m_config.drawdownWarningPercent = 5.0;
     if(m_config.drawdownCriticalPercent <= m_config.drawdownWarningPercent)
         m_config.drawdownCriticalPercent = m_config.drawdownWarningPercent + 4.0;
+    if(m_config.minLotRiskMultiplier <= 0.0)
+        m_config.minLotRiskMultiplier = 15.0;
 
     if(!m_portfolioRiskManager.Initialize(m_config.maxPortfolioRiskPercent, m_config.correlationThreshold))
     {
@@ -1601,15 +1609,21 @@ void CUnifiedRiskManager::RefreshSymbolBudgets()
 
 //+------------------------------------------------------------------+
 //| Get used risk for a specific symbol from open positions           |
+//| Profitable positions reduce used risk via unrealized P&L credit   |
 //+------------------------------------------------------------------+
 double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol)
 {
     RefreshSymbolBudgets();
 
+    // Check cached budget first
     for(int i = 0; i < m_symbolBudgetCount; i++)
     {
         if(m_symbolBudgets[i].symbol == symbol)
-            return m_symbolBudgets[i].usedPct;
+        {
+            double rawUsedRisk = m_symbolBudgets[i].usedPct;
+            double adjustedUsedRisk = ApplyPnlRiskAdjustment(symbol, rawUsedRisk);
+            return adjustedUsedRisk;
+        }
     }
 
     // Symbol not in budget list — calculate on the fly
@@ -1623,7 +1637,9 @@ double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol)
         if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
         usedRisk += CalculatePositionRiskPercent(ticket);
     }
-    return usedRisk;
+
+    double adjustedUsedRisk = ApplyPnlRiskAdjustment(symbol, usedRisk);
+    return adjustedUsedRisk;
 }
 
 //+------------------------------------------------------------------+
@@ -1752,6 +1768,53 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
 
     double riskAmount = minLot * slDistancePoints * tickValue * (point / tickSize);
     return (riskAmount / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
+}
+
+//+------------------------------------------------------------------+
+//| Apply unrealized P&L adjustment to symbol used risk               |
+//| Profitable positions free up risk budget for re-entries           |
+//| Formula: adjustedUsedRisk = rawUsedRisk - Max(0, profit * factor) |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const double rawUsedRisk)
+{
+    if(rawUsedRisk <= 0.0 || m_riskReductionFactor <= 0.0)
+        return MathMax(0.0, rawUsedRisk);
+
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    if(equity <= 0.0)
+        return MathMax(0.0, rawUsedRisk);
+
+    // Sum unrealized profit for all open positions on this symbol
+    double unrealizedProfit = 0.0;
+    int totalPositions = PositionsTotal();
+    for(int i = 0; i < totalPositions; i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+        if(!PositionSelectByTicket(ticket)) continue;
+        if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+
+        double posProfit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+        if(posProfit > 0.0)
+            unrealizedProfit += posProfit;
+    }
+
+    if(unrealizedProfit <= 0.0)
+        return MathMax(0.0, rawUsedRisk);
+
+    // Convert unrealized profit to risk-percent terms
+    double profitRiskPct = (unrealizedProfit / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
+    double reduction = MathMax(0.0, profitRiskPct * m_riskReductionFactor);
+    double adjustedUsedRisk = rawUsedRisk - reduction;
+    adjustedUsedRisk = MathMax(0.0, adjustedUsedRisk);
+
+    if(adjustedUsedRisk < rawUsedRisk)
+    {
+        PrintFormat("[RISK-BUDGET-PNL-ADJUSTED] Symbol=%s, usedRisk=%.2f%% reduced to %.2f%% (unrealized profit=%.2f, factor=%.1f)",
+                    symbol, rawUsedRisk, adjustedUsedRisk, unrealizedProfit, m_riskReductionFactor);
+    }
+
+    return adjustedUsedRisk;
 }
 
 #endif // CORE_RISK_UNIFIED_RISK_MANAGER_MQH

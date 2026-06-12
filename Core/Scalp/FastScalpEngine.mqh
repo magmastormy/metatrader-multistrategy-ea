@@ -133,6 +133,7 @@ private:
    double                    m_usedScalpRiskPct;     // Tracked scalp risk budget used
    uint                      m_magicNumber;          // EA magic number for pending orders
    bool                      m_initialized;
+   bool                      m_shadowMode;           // Shadow mode: log signals without executing
 
    // Pending order tracking
    SPendingScalpOrder        m_pendingOrders[10];
@@ -331,6 +332,75 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Check if scalp is cost-viable given spread + commission           |
+   //| Rejects if breakeven WR > 70% or total cost > 25% of TP          |
+   //| Returns true if commission data is unavailable (pass-through)     |
+   //+------------------------------------------------------------------+
+   bool IsScalpCostViable(const string symbol, double slPoints, double tpPoints)
+   {
+      // Get total transaction cost
+      double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+
+      // MQL5 does not have SYMBOL_TRADE_COMMISSION — estimate commission from
+      // SYMBOL_TRADE_TICK_VALUE_PROFIT and SYMBOL_TRADE_CONTRACT_SIZE
+      // For synthetic CFDs, commission is often embedded in the spread.
+      // We use a conservative estimate: commission ≈ 0 if not detectable.
+      double commissionPerLot = 0.0;
+
+      // Try to detect commission from the difference between tick value profit and loss
+      double tickValueProfit = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_PROFIT);
+      double tickValueLoss   = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+      if(tickValueProfit > 0.0 && tickValueLoss > 0.0)
+      {
+         // If tick values differ, the difference is broker commission per tick
+         double commissionPerTick = MathAbs(tickValueProfit - tickValueLoss);
+         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+         if(tickSize > 0.0)
+            commissionPerLot = commissionPerTick * (1.0 / tickSize); // Convert to per-lot
+      }
+
+      // Total cost = spread + estimated commission (round-trip)
+      double commissionPoints = 0.0;
+      if(commissionPerLot > 0.0)
+      {
+         double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+         double tickSize  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+         if(tickValue > 0.0 && tickSize > 0.0)
+         {
+            double pointValue = tickValue / tickSize;
+            commissionPoints = commissionPerLot * 2.0 * pointValue; // Round-trip
+         }
+      }
+
+      double totalCostPoints = spreadPoints + commissionPoints;
+
+      // Breakeven win rate
+      double breakevenWR = totalCostPoints / (totalCostPoints + tpPoints);
+
+      // Reject if cost is too high relative to target
+      if(breakevenWR > 0.70)
+      {
+         Print("[SCALP-COST-REJECTED] ", symbol, " cost too high: spread=", spreadPoints,
+               " comm=", commissionPoints, " total=", totalCostPoints,
+               " tp=", tpPoints, " breakevenWR=", DoubleToString(breakevenWR, 3),
+               " > 0.70");
+         return false;
+      }
+
+      // Also reject if total cost > 25% of TP
+      if(totalCostPoints > tpPoints * 0.25)
+      {
+         Print("[SCALP-COST-REJECTED] ", symbol, " cost ratio too high: ",
+               DoubleToString(totalCostPoints / tpPoints * 100.0, 1), "% of TP");
+         return false;
+      }
+
+      Print("[SCALP-COST-OK] ", symbol, " cost viable: totalCost=", totalCostPoints,
+            " tp=", tpPoints, " breakevenWR=", DoubleToString(breakevenWR, 3));
+      return true;
+   }
+
+   //+------------------------------------------------------------------+
    //| Check RSI confirmation: not overbought for BUY, not oversold     |
    //+------------------------------------------------------------------+
    bool IsRSIConfirmed(ENUM_TRADE_SIGNAL signal)
@@ -344,6 +414,29 @@ private:
          return (m_cachedRSI > m_config.rsiOversold);
 
       return false;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Cap lot size to available margin and symbol volume limits         |
+   //| Prevents margin rejections (retcode=10018) and volume limit       |
+   //| rejections (retcode=10034) on small accounts                     |
+   //+------------------------------------------------------------------+
+   double CapLotToMargin(double calculatedLot, string symbol)
+   {
+      double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+      double marginPerLot = 0;
+      double askPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+      if(!OrderCalcMargin(ORDER_TYPE_BUY, symbol, 1.0, askPrice, marginPerLot) || marginPerLot <= 0.0)
+         return calculatedLot;
+      double maxLotByMargin = freeMargin / (marginPerLot * 1.5); // 1.5x safety factor
+      double symbolMaxVolume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+      double cappedLot = MathMin(calculatedLot, MathMin(maxLotByMargin, symbolMaxVolume));
+      if(cappedLot < calculatedLot)
+      {
+         Print("[SCALP-LOT-CAPPED] ", symbol, " lot capped from ", calculatedLot, " to ", cappedLot,
+               " (margin_max=", maxLotByMargin, " vol_max=", symbolMaxVolume, ")");
+      }
+      return cappedLot;
    }
 
    //+------------------------------------------------------------------+
@@ -413,6 +506,7 @@ public:
       m_usedScalpRiskPct(0.0),
       m_magicNumber(123456),
       m_initialized(false),
+      m_shadowMode(false),
       m_pendingOrderCount(0),
       m_scalpPositionCount(0),
       m_pendingAsyncCount(0),
@@ -537,6 +631,11 @@ public:
       m_maxLatencyMs = (maxMs > 0) ? maxMs : 500;
       PrintFormat("[SCALP-ASYNC] Max latency set to %u ms", m_maxLatencyMs);
    }
+
+   //+------------------------------------------------------------------+
+   //| Set shadow mode (log signals without executing trades)            |
+   //+------------------------------------------------------------------+
+   void SetShadowMode(bool enabled) { m_shadowMode = enabled; }
 
    //+------------------------------------------------------------------+
    //| Get pending async order count                                     |
@@ -706,6 +805,11 @@ public:
       if(lotSize <= 0.0)
          return false;
 
+      // Commission-aware cost validation: reject if total cost (spread + commission)
+      // makes the scalp unviable (breakeven WR > 70% or cost > 25% of TP)
+      if(!IsScalpCostViable(symbol, (double)m_config.scalpSLPips, (double)m_config.scalpTPPips))
+         return false;
+
       // Risk validation through CUnifiedRiskManager
       if(m_riskManager != NULL && m_riskManager.IsInitialized())
       {
@@ -737,6 +841,18 @@ public:
             lotSize = result.adjustedLotSize;
       }
 
+      // Cap lot size to available margin and symbol volume limits
+      lotSize = CapLotToMargin(lotSize, symbol);
+
+      // Minimum lot check: skip scalp signal if capped lot is below symbol minimum
+      double symbolMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+      if(lotSize < symbolMinLot)
+      {
+         PrintFormat("[SCALP-LOT-MIN] %s | capped lot %.2f < min lot %.2f — skipping scalp signal",
+                     symbol, lotSize, symbolMinLot);
+         return false;
+      }
+
       return true;
    }
 
@@ -749,6 +865,32 @@ public:
    {
       if(m_tradeManager == NULL)
          return false;
+
+      // Shadow mode: log signal without executing trade
+      if(m_shadowMode)
+      {
+         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+         double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+         double price = (signal == TRADE_SIGNAL_BUY) ? ask : bid;
+         double sl = 0.0, tp = 0.0;
+         if(point > 0.0)
+         {
+            if(signal == TRADE_SIGNAL_BUY)
+            {
+               sl = price - m_config.scalpSLPips * point;
+               tp = price + m_config.scalpTPPips * point;
+            }
+            else
+            {
+               sl = price + m_config.scalpSLPips * point;
+               tp = price - m_config.scalpTPPips * point;
+            }
+         }
+         PrintFormat("[SHADOW-TRADE] %s %s %.2f @ %.2f | SL=%.2f TP=%.2f | Would execute but shadow mode active",
+                     symbol, signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL", lotSize, price, sl, tp);
+         return false;
+      }
 
       ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
@@ -923,6 +1065,15 @@ public:
          return false;
       if(m_pendingOrderCount >= ArraySize(m_pendingOrders))
          return false;
+
+      // Shadow mode: log signal without placing pending order
+      if(m_shadowMode)
+      {
+         PrintFormat("[SHADOW-TRADE] %s %s %.2f | PENDING %s | Would execute but shadow mode active",
+                     symbol, signal == TRADE_SIGNAL_BUY ? "BUY_LIMIT" : "SELL_LIMIT", lotSize,
+                     signal == TRADE_SIGNAL_BUY ? "BUY_LIMIT" : "SELL_LIMIT");
+         return false;
+      }
 
       double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
       if(point <= 0.0)

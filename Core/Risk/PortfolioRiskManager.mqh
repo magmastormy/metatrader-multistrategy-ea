@@ -54,7 +54,14 @@ private:
 
     SCachedPortfolioRisk m_riskCache;
     int                  m_cacheRefreshIntervalSec;  // Full refresh interval (default 60)
-    
+
+    // CVaR (Conditional Value at Risk) tracking
+    double m_tradeReturns[];     // Rolling trade returns (P&L as % of equity)
+    int    m_maxReturnHistory;   // Max history size (default 100)
+    int    m_returnCount;        // Current count
+    double m_cvarConfidence;     // CVaR confidence level (0.95 = 95%)
+    double m_cvarMaxRisk;        // Max portfolio risk as CVaR fraction (0.10 = 10%)
+
 public:
     CPortfolioRiskManager();
     ~CPortfolioRiskManager();
@@ -80,6 +87,12 @@ public:
     void OnPositionClosed(string symbol, double riskPct);
     void InvalidateRiskCache();
     void SetCacheRefreshInterval(int seconds) { m_cacheRefreshIntervalSec = (seconds > 0 ? seconds : 60); }
+
+    // CVaR (Conditional Value at Risk) — public interface
+    void   RecordTradeReturn(double pnlPercent);
+    double CalculateCVaR(double confidence = 0.95) const;
+    bool   IsCVaRLimitExceeded(double proposedRiskPct) const;
+    double GetCurrentCVaR() const;
 
 private:
     double GetPositionRisk(ulong ticket);
@@ -110,7 +123,11 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_lastBlockReason(""),
     m_lastPrintedBlockReason(""),
     m_lastPrintedBlockTime(0),
-    m_cacheRefreshIntervalSec(60)
+    m_cacheRefreshIntervalSec(60),
+    m_maxReturnHistory(100),
+    m_returnCount(0),
+    m_cvarConfidence(0.95),
+    m_cvarMaxRisk(0.10)
 {
     m_riskCache.totalRiskPct = 0.0;
     m_riskCache.lastFullRefresh = 0;
@@ -118,6 +135,8 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_riskCache.isValid = false;
     ArrayResize(m_riskCache.perSymbolRisk, 0);
     ArrayResize(m_riskCache.perSymbolName, 0);
+    ArrayResize(m_tradeReturns, m_maxReturnHistory);
+    ArrayInitialize(m_tradeReturns, 0.0);
 }
 
 //+------------------------------------------------------------------+
@@ -600,6 +619,92 @@ void CPortfolioRiskManager::OnPositionClosed(string symbol, double riskPct)
 void CPortfolioRiskManager::InvalidateRiskCache()
 {
     m_riskCache.isValid = false;
+}
+
+//+------------------------------------------------------------------+
+//| Record a closed trade P&L as percentage of equity                |
+//+------------------------------------------------------------------+
+void CPortfolioRiskManager::RecordTradeReturn(double pnlPercent)
+{
+    // Circular buffer: overwrite oldest entry when full
+    if(m_returnCount < m_maxReturnHistory)
+    {
+        m_tradeReturns[m_returnCount] = pnlPercent;
+        m_returnCount++;
+    }
+    else
+    {
+        // Shift left and append at end (oldest discarded)
+        for(int i = 0; i < m_maxReturnHistory - 1; i++)
+            m_tradeReturns[i] = m_tradeReturns[i + 1];
+        m_tradeReturns[m_maxReturnHistory - 1] = pnlPercent;
+    }
+
+    PrintFormat("[CVAR-RECORD] Trade return recorded: %.2f%% (total samples: %d)", pnlPercent, m_returnCount);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate CVaR (Conditional Value at Risk) at given confidence   |
+//+------------------------------------------------------------------+
+double CPortfolioRiskManager::CalculateCVaR(double confidence) const
+{
+    if(m_returnCount < 2)
+        return 0.0;
+
+    // Copy returns to a local array for sorting (const method cannot modify members)
+    double sortedReturns[];
+    ArrayResize(sortedReturns, m_returnCount);
+    for(int i = 0; i < m_returnCount; i++)
+        sortedReturns[i] = m_tradeReturns[i];
+
+    // Sort ascending — worst returns first
+    ArraySort(sortedReturns);
+
+    // Tail index: (1 - confidence) percentile
+    int tailIndex = (int)(m_returnCount * (1.0 - confidence));
+    if(tailIndex < 1)
+        tailIndex = 1;
+
+    // CVaR = average of the worst tail returns
+    double tailSum = 0.0;
+    for(int i = 0; i < tailIndex; i++)
+        tailSum += sortedReturns[i];
+
+    double cvar = tailSum / tailIndex;
+
+    return cvar; // Negative value = expected loss
+}
+
+//+------------------------------------------------------------------+
+//| Check if new position would exceed CVaR limit                    |
+//+------------------------------------------------------------------+
+bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
+{
+    // Not enough data to make a reliable CVaR estimate — don't block
+    if(m_returnCount < 20)
+        return false;
+
+    double cvar = CalculateCVaR(m_cvarConfidence);
+    double absCvar = MathAbs(cvar);
+
+    if(absCvar + proposedRiskPct > m_cvarMaxRisk)
+    {
+        PrintFormat("[CVAR-CHECK] CVaR=%.2f%% + proposed=%.2f%% vs limit=%.2f%% → BLOCKED",
+                    absCvar * 100.0, proposedRiskPct * 100.0, m_cvarMaxRisk * 100.0);
+        return true;
+    }
+
+    PrintFormat("[CVAR-CHECK] CVaR=%.2f%% + proposed=%.2f%% vs limit=%.2f%% → ALLOWED",
+                absCvar * 100.0, proposedRiskPct * 100.0, m_cvarMaxRisk * 100.0);
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Get current CVaR value at stored confidence level                |
+//+------------------------------------------------------------------+
+double CPortfolioRiskManager::GetCurrentCVaR() const
+{
+    return CalculateCVaR(m_cvarConfidence);
 }
 
 #endif // CORE_RISK_PORTFOLIO_MANAGER_MQH
