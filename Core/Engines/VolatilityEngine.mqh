@@ -76,6 +76,7 @@ private:
     datetime m_lastReuseLogTime;
     datetime m_lastStateLogTime;
     ENUM_VOLATILITY_STATE m_lastLoggedState;
+    datetime m_lastBarTime;  // Bar-change detection: skip recalc if bar hasn't changed
     
     VolatilityMetrics m_metrics;
     VolatilityMetrics m_lastValidMetrics;
@@ -126,12 +127,12 @@ public:
     bool ValidateAtrCalculation(const string symbol, const ENUM_TIMEFRAMES timeframe);
 };
 
-CVolatilityEngine::CVolatilityEngine() : 
+CVolatilityEngine::CVolatilityEngine() :
     m_atrPeriod(14), m_bbPeriod(20), m_bbDeviation(2.0), m_hvPeriod(20),
     m_handleATR(INVALID_HANDLE), m_handleBB(INVALID_HANDLE), m_handleStdDev(INVALID_HANDLE),
     m_indicatorSymbol(""), m_indicatorTimeframe(PERIOD_CURRENT),
     m_consecutiveDataFaults(0), m_lastFaultLogTime(0), m_lastReuseLogTime(0), m_lastStateLogTime(0),
-    m_lastLoggedState(VOLATILITY_LOW),
+    m_lastLoggedState(VOLATILITY_LOW), m_lastBarTime(0),
     m_diagnostics(NULL)
 {
 }
@@ -171,6 +172,7 @@ void CVolatilityEngine::ResetHandles()
         IndicatorRelease(m_handleStdDev);
         m_handleStdDev = INVALID_HANDLE;
     }
+    m_lastBarTime = 0;  // Force recalculation after handle reset
 }
 
 int CVolatilityEngine::GetReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) const
@@ -411,6 +413,7 @@ bool CVolatilityEngine::ApplyFallbackMetrics(const string symbol,
 
     m_lastValidMetrics = m_metrics;
     m_consecutiveDataFaults = 0;
+    m_lastBarTime = iTime(symbol, timeframe, 0);  // Update bar cache on fallback calculation
 
     datetime nowTime = TimeCurrent();
     if(m_lastFaultLogTime == 0 || (nowTime - m_lastFaultLogTime) >= 30)
@@ -431,6 +434,16 @@ bool CVolatilityEngine::ApplyFallbackMetrics(const string symbol,
 
 bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
+    // Bar-change detection: skip recalculation if the bar hasn't changed
+    datetime currentBarTime = iTime(symbol, timeframe, 0);
+    if(currentBarTime > 0 && currentBarTime == m_lastBarTime &&
+       symbol == m_indicatorSymbol && timeframe == m_indicatorTimeframe &&
+       m_metrics.lastUpdate > 0 && m_lastValidMetrics.lastUpdate > 0)
+    {
+        // Same bar — reuse cached metrics, no recalculation needed
+        return true;
+    }
+
     if(!EnsureHandles(symbol, timeframe))
     {
         int handleErr = GetLastError();
@@ -537,6 +550,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
 
     m_lastValidMetrics = m_metrics;
     m_consecutiveDataFaults = 0;
+    m_lastBarTime = currentBarTime;  // Update bar cache on successful calculation
     MaybeLogState(symbol, timeframe);
 
     return true;

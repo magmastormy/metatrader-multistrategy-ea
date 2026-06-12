@@ -32,7 +32,7 @@ public:
         {
             case STRATEGY_TIER_1: return 0.25; // Reduced from 0.30
             case STRATEGY_TIER_2: return 0.45; // Reduced from 0.50
-            case STRATEGY_TIER_3: return 0.62; // Tier 3 needs high confluence to be taken seriously (Reduced from 0.70)
+            case STRATEGY_TIER_3: return 0.50; // Tier 3: reduced to allow indicator-only signals (was 0.62)
             default: return 0.45;
         }
     }

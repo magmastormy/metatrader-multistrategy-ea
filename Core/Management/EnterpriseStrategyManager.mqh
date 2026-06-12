@@ -9,6 +9,7 @@
 #include "../Visualization/DrawingCoordinator.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
 #include "../../Interfaces/IStrategy.mqh"
+#include "../../Interfaces/IAIStrategy.mqh"
 
 // Retained production strategy inventory (7 kept in codebase)
 #include "../../Strategies/SimpleMomentumStrategy.mqh"
@@ -1058,6 +1059,11 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         if(liveVoter)
         {
             strategyWeight = MathMax(0.0, m_strategies[i].weight);
+            
+            // Apply AI direction calibration: downweight degenerate models
+            IAIStrategy* aiStrat = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
+            if(aiStrat != NULL)
+                strategyWeight = aiStrat.GetCalibratedWeight(strategyWeight);
             if(strategyWeight <= 0.0)
             {
                 liveEligibleForThisEval = false;
@@ -1556,11 +1562,22 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     }
 
     int effectiveMinVoters = MathMax(1, m_minQuorum);
-    
+
     // Single-voter quorum is only allowed when the configured live-voter floor permits it.
     if(activeLiveStrategies <= 3 && m_minQuorum <= 1)
     {
         effectiveMinVoters = 1;
+    }
+
+    // INDICATOR_ONLY adaptive: when only 1 voter produced a signal and it has
+    // high directional quality (>=0.70), allow single-voter quorum. This prevents
+    // deadlock in indicator-only mode where AI voters are disabled and getting
+    // 2+ agreeing voters is rare.
+    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) == 1)
+    {
+        double singleVoterQuality = (buyVotes == 1) ? buyDirectionalQuality : sellDirectionalQuality;
+        if(singleVoterQuality >= 0.70)
+            effectiveMinVoters = 1;
     }
     
     if(evalMode == EVAL_MODE_INTRABAR)
@@ -1571,13 +1588,69 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             effectiveMinVoters = 2;
     }
 
+    // Trend-direction bias: raise quorum threshold when consensus opposes a strong trend
+    // Prevents counter-trend entries that pass default quorum but fight the dominant direction
+    double trendBiasOriginalThreshold = effectiveQualityThreshold;
+    double buyQuorum = effectiveQualityThreshold;
+    double sellQuorum = effectiveQualityThreshold;
+    if(m_pipeline != NULL)
+    {
+        CTrendEngine* trendEng = m_pipeline.GetTrendEngine();
+        if(trendEng != NULL)
+        {
+            ENUM_TREND_TYPE trendState = trendEng.GetCurrentTrend();
+            if((trendState == TREND_BEARISH_STRONG && buyScore > sellScore) ||
+               (trendState == TREND_BULLISH_STRONG && sellScore > buyScore))
+            {
+                double trendBiasThreshold = 0.70;
+                if(effectiveQualityThreshold < trendBiasThreshold)
+                {
+                    effectiveQualityThreshold = trendBiasThreshold;
+                    // Apply the raised threshold to the counter-trend direction
+                    if(trendState == TREND_BEARISH_STRONG && buyScore > sellScore)
+                        buyQuorum = trendBiasThreshold;
+                    else if(trendState == TREND_BULLISH_STRONG && sellScore > buyScore)
+                        sellQuorum = trendBiasThreshold;
+                    PrintFormat("[CONSENSUS-TREND-BIAS] %s | Strong opposing trend detected (state=%s), quorum raised from %.2f to %.2f",
+                                symbol, EnumToString(trendState), trendBiasOriginalThreshold, trendBiasThreshold);
+                }
+            }
+
+            // CONSENSUS-TREND-FLIP: When AI is degenerate (directional-only) and opposes
+            // the strong trend, lower the quorum for the trend-aligned direction so that
+            // S/R or other non-AI signals can still pass consensus.
+            if(trendState == TREND_BEARISH_STRONG && buyVotes >= 2 && sellVotes == 0)
+            {
+                // AI is BUY-only in a bearish market - lower SELL quorum
+                double originalSellQuorum = sellQuorum;
+                sellQuorum = MathMax(0.30, sellQuorum - 0.10);
+                if(sellQuorum != originalSellQuorum)
+                {
+                    PrintFormat("[CONSENSUS-TREND-FLIP] %s | BEARISH_STRONG + BUY-only AI | SELL quorum %.2f -> %.2f",
+                                symbol, originalSellQuorum, sellQuorum);
+                }
+            }
+            else if(trendState == TREND_BULLISH_STRONG && sellVotes >= 2 && buyVotes == 0)
+            {
+                // AI is SELL-only in a bullish market - lower BUY quorum
+                double originalBuyQuorum = buyQuorum;
+                buyQuorum = MathMax(0.30, buyQuorum - 0.10);
+                if(buyQuorum != originalBuyQuorum)
+                {
+                    PrintFormat("[CONSENSUS-TREND-FLIP] %s | BULLISH_STRONG + SELL-only AI | BUY quorum %.2f -> %.2f",
+                                symbol, originalBuyQuorum, buyQuorum);
+                }
+            }
+        }
+    }
+
     bool buyQuorumMet = (readyWeightMet &&
                          buyVotes >= effectiveMinVoters &&
-                         buyDirectionalQuality >= effectiveQualityThreshold &&
+                         buyDirectionalQuality >= buyQuorum &&
                          buySupportRatio >= supportFloor);
     bool sellQuorumMet = (readyWeightMet &&
                           sellVotes >= effectiveMinVoters &&
-                          sellDirectionalQuality >= effectiveQualityThreshold &&
+                          sellDirectionalQuality >= sellQuorum &&
                           sellSupportRatio >= supportFloor);
 
     ENUM_TRADE_SIGNAL finalSignal = TRADE_SIGNAL_NONE;
@@ -3083,6 +3156,20 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
                     avgParticipation,
                     dormantLiveCount,
                     dormantStrategies);
+
+        // Dormant strategy warning (Issue 12.1): alert when more than half of strategies are dormant
+        if(dormantLiveCount >= 8)
+        {
+            static datetime s_lastDormantWarning = 0;
+            datetime warnNow = TimeCurrent();
+            if(s_lastDormantWarning == 0 || (warnNow - s_lastDormantWarning) >= 300)
+            {
+                PrintFormat("[STRATEGY-DORMANT-WARNING] %s | dormant_live=%d | avg_participation=%.2f | More than half of strategies are dormant",
+                            symbol, dormantLiveCount, avgParticipation);
+                s_lastDormantWarning = warnNow;
+            }
+        }
+
         PrintFormat("[CONSENSUS-CLUSTER] %s | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
                     symbol,
                     intervalClusterTrendSignals,

@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-06-10
+- Last Updated: 2026-06-12
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 98 - Monolith Decomposition & Risk Framework Completion
+- Current Batch: 101
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -34,8 +34,40 @@
 - Synthetic spike monitor: `Core/Processing/SyntheticSpikeMonitor.mqh`
 - Trade attribution: `Core/Trading/TradeAttributionManager.mqh`
 - Symbol scan scheduler: `Core/Processing/SymbolScanScheduler.mqh`
+- Equity curve manager: `Core/Risk/EquityCurveManager.mqh`
+- Spike hunter engine: `Core/Scalp/SpikeHunterEngine.mqh`
+- Hurst engine: `Core/Engines/HurstEngine.mqh`
+- OU process engine: `Core/Engines/OrnsteinUhlenbeckEngine.mqh`
+- OFI proxy engine: `Core/Engines/OrderFlowImbalanceEngine.mqh`
+- VPIN filter: `Core/Risk/VPINFilter.mqh`
+- CatBoost trainer: `Python/train_catboost.py`
+- XGBoost trainer: `Python/train_xgboost.py`
+- Implementation plan: `IMPLEMENTATION_PLAN.md`
+- Research report: `EA_PERFORMANCE_RESEARCH_REPORT.md`
 
 ## Current Runtime Evidence
+- **Spike Hunter Engine for Synthetic CFD Indices (Batch 100):** New `CSpikeHunterEngine` in `Core/Scalp/SpikeHunterEngine.mqh` providing dedicated spike hunting for synthetic CFD indices:
+  - **3-Layer Spike Detection:** Tick velocity ≥ 2.5× rolling average (Layer 1), direction accumulation ≥ 12 consecutive ticks in same direction (Layer 2), ATR compression ≤ 60% indicating price squeeze before spike (Layer 3). Requires 2/3 confluence to trigger.
+  - **Symbol-Aware Direction Mapping:** PainX→SELL (crash indices spike down), GainX→BUY (boom indices spike up), Volatility Index→directional (follows detected direction), Jump Index→momentum continuation (follows pre-spike momentum).
+  - **Independent Spike Trades:** Separate magic numbers using offset 9000 from base EA magic, allowing independent position tracking and risk management for spike-specific entries.
+  - **Push Notification Alerts:** Mobile push notifications on spike detection, throttled at 120-second minimum interval to prevent alert spam during sustained volatile conditions.
+  - **Long-Term Entry Cooldown:** 60-second cooldown after spike trade prevents re-entry into fading spikes, protecting against whipsaw losses in post-spike consolidation.
+  - **Log Signatures:** `[SPIKE-HUNT-DETECTED]`, `[SPIKE-HUNT-TRADE]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`, `[SPIKE-COOLDOWN]`, `[SPIKE-HUNTER-STATS]`, `[SPIKE-HUNT-ENGINE]`.
+
+- **Log-Evidence-Driven Fixes + Research Solutions (Batch 99):** Comprehensive fix of 7 critical/high/medium issues identified from live 2026-06-11 log analysis (33,800+ lines), plus 5 research-driven enhancements:
+  - **L1 — S/R Lot Validation Fix (Critical):** StrategySupportResistance used hardcoded `lotSize = 0.01` which was rejected by CRiskValidationGate on PainX 400 (min lot 0.100) before CPositionSizer could round up. Fixed by using `SYMBOL_VOLUME_MIN` as the request lot size, deferring actual sizing to the risk manager's post-size phase. Unblocked 79 SELL signals at 95% confidence.
+  - **L7 — Trend Bias Consensus Check (Critical):** All 6 executed trades were BUY despite TREND_BEARISH_STRONG. Added trend-direction bias check in CEnterpriseStrategyManager: when strong trend opposes consensus direction, effectiveQualityThreshold raised to 0.70. Prevents counter-trend consensus with weak support.
+  - **L2 — ONNX CPU Fallback (High):** OnnxBrain never exited warm-up because CUDA initialization failed (no GPU, GPU=-1). Added `m_fallbackToCpu` flag; after CUDA failure, retries with `ONNX_USE_CPU_ONLY`. Subsequent calls skip CUDA entirely. ONNX now produces signals within 1-2 cycles.
+  - **L3 — AI Degenerate Model Detection (High):** Transformer + Ensemble produced 100% BUY signals across all symbols in bearish market. Added rolling 20-prediction direction window to all 4 AI adapters. If direction ratio > 0.80, model flagged as degenerate and effective weight reduced by 50%. `IAIStrategy` interface extended with `IsDirectionDegenerate()` and `GetCalibratedWeight()`. CEnterpriseStrategyManager applies calibrated weights in consensus.
+  - **L6 — Scalp Margin-Aware Lot Cap (High):** Scalp calculated 5.69 lots on $170 account, rejected by margin (19x) and volume limits (17x). Added `CapLotToMargin()` with 1.5x safety factor and `SYMBOL_VOLUME_MAX` cap. Minimum lot gate skips scalp if capped lot < `SYMBOL_VOLUME_MIN`.
+  - **L4 — Hybrid Gate Relaxation (Medium):** AI confidence always 0.58-0.649 < 0.650 threshold while no indicator co-signed, blocking 35 signals. Added `g_cyclesSinceIndicatorSignal` counter; after 5 cycles without indicator signals, AI standalone threshold drops from 0.650 to 0.600. New inputs: `InpAIStandaloneRelaxedConfidence`, `InpHybridGateRelaxAfterCycles`.
+  - **L5 — P&L-Adjusted Risk Budget (Medium):** Single PainX 400 position consumed 17%/33% budget, permanently blocking re-entries. Added `ApplyPnlRiskAdjustment()` in CUnifiedRiskManager: profitable positions reduce used risk by 50% of unrealized P&L, enabling re-entries.
+  - **S1 — Bayesian Kelly Modifier:** `CBayesianKellyModifier` with Beta-Binomial conjugate priors (alpha=2.0, beta=2.0), quarter Kelly fraction (0.25). Self-contained win/loss tracking.
+  - **S2 — Equity Curve Manager:** `CEquityCurveManager` tracks equity EMA (period=20), reduces position size to 50% when equity < EMA. Circular buffer, SMA-seeded.
+  - **S3 — CVaR Portfolio Risk:** `CPortfolioRiskManager` extended with CVaR at 95% confidence, 10% max risk, 100-trade lookback. `IsCVaRLimitExceeded()` blocks trades exceeding CVaR limit.
+  - **S4 — Commission-Aware Scalp Validation:** `CFastScalpEngine::IsScalpCostViable()` estimates commission from tick value profit/loss difference. Rejects if breakeven WR > 70% or total cost > 25% of TP.
+  - **S5 — Async Trade Executor:** `CTradeManager` extended with `SendTradeAsync()`, `ProcessTradeTransaction()`, `CheckAsyncTimeouts()`. Max 10 pending, configurable timeout. Synchronous path remains default.
+
 - **Monolith Decomposition & Risk Framework Completion (Batch 98):** Architectural refactoring completing the EA Overhaul Blueprint R6/R7 items and extracting 7 focused manager classes from the main EA monolith:
   - **R7 — Stateless Position Sizer:** `CPositionSizer::CalculateSize()` refactored to use `CalculateOptimalPositionSizeCore()` with explicit `riskPercent` parameter, eliminating the save/restore hack that temporarily mutated `m_params.riskPercent`. `CalculateBasePositionSizeWithRisk()` added to thread risk percent through to `CalculateRiskBasedSize()`. Zero shared-state mutation in the `CalculateSize()` path.
   - **R6a — CPositionLifecycleManager:** Extracted from `ManageOpenPositionsIfNeeded()` (~140 lines). `CheckSignalReversalExit()` implements SRE with breathing room, last-stand zone, and profit guard. `ManageBreakevenAndTrailing()` delegates to `CTradeManager::ManageAllPositions()` and applies safe mode partial profit for conservative tier. Configurable via `ConfigureSRE()` and `ConfigureLifecycle()`. `SetManagers()` takes parallel manager + symbol arrays.

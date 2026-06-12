@@ -464,15 +464,15 @@ public:
         // NOTE: Consensus diagnostics are now handled by EmitConsensusDiagnostics()
         // which is called from the main EA's heartbeat cycle.
 
-        //--- Windowed conversion rates
-        ulong windowScans        = m_hbScansAttempted - m_prevScansAttempted;
-        ulong windowNoSignal     = m_hbNoSignalCount - m_prevNoSignalCount;
-        ulong windowGenerated    = m_hbSignalsGenerated - m_prevSignalsGenerated;
-        ulong windowAfterPipeline = m_hbSignalsAfterPipeline - m_prevSignalsAfterPipeline;
-        ulong windowAfterQuorum  = m_hbSignalsAfterQuorum - m_prevSignalsAfterQuorum;
-        ulong windowValidated    = m_hbSignalsValidated - m_prevSignalsValidated;
-        ulong windowRiskApproved = m_hbSignalsRiskApproved - m_prevSignalsRiskApproved;
-        ulong windowSent         = m_hbSignalsSent - m_prevSignalsSent;
+        //--- Windowed conversion rates (guard against underflow on reinit)
+        ulong windowScans        = (m_hbScansAttempted >= m_prevScansAttempted)       ? (m_hbScansAttempted - m_prevScansAttempted)       : m_hbScansAttempted;
+        ulong windowNoSignal     = (m_hbNoSignalCount >= m_prevNoSignalCount)        ? (m_hbNoSignalCount - m_prevNoSignalCount)        : m_hbNoSignalCount;
+        ulong windowGenerated    = (m_hbSignalsGenerated >= m_prevSignalsGenerated)  ? (m_hbSignalsGenerated - m_prevSignalsGenerated)  : m_hbSignalsGenerated;
+        ulong windowAfterPipeline = (m_hbSignalsAfterPipeline >= m_prevSignalsAfterPipeline) ? (m_hbSignalsAfterPipeline - m_prevSignalsAfterPipeline) : m_hbSignalsAfterPipeline;
+        ulong windowAfterQuorum  = (m_hbSignalsAfterQuorum >= m_prevSignalsAfterQuorum)   ? (m_hbSignalsAfterQuorum - m_prevSignalsAfterQuorum)   : m_hbSignalsAfterQuorum;
+        ulong windowValidated    = (m_hbSignalsValidated >= m_prevSignalsValidated)   ? (m_hbSignalsValidated - m_prevSignalsValidated)   : m_hbSignalsValidated;
+        ulong windowRiskApproved = (m_hbSignalsRiskApproved >= m_prevSignalsRiskApproved) ? (m_hbSignalsRiskApproved - m_prevSignalsRiskApproved) : m_hbSignalsRiskApproved;
+        ulong windowSent         = (m_hbSignalsSent >= m_prevSignalsSent)            ? (m_hbSignalsSent - m_prevSignalsSent)            : m_hbSignalsSent;
 
         double rateAfterPipeline = (windowGenerated > 0)    ? (100.0 * (double)windowAfterPipeline / (double)windowGenerated) : 0.0;
         double rateAfterQuorum   = (windowAfterPipeline > 0) ? (100.0 * (double)windowAfterQuorum / (double)windowAfterPipeline) : 0.0;

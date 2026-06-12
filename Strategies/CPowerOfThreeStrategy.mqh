@@ -226,7 +226,7 @@ public:
             STradeValidationRequest request;
             request.symbol = m_symbol;
             request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = 0.01;
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
             request.stopLossPips = 0;  // PO3 doesn't calculate SL/TP here
             request.takeProfitPips = 0;
             request.confidence = confidence;

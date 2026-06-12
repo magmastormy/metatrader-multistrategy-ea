@@ -35,6 +35,7 @@ private:
     int    m_shadowSignal;
     double m_shadowConfidence;
     bool   m_hasShadowPrediction;
+    bool   m_fallbackToCpu;
 
     bool ConfigureHandle(const long handle)
     {
@@ -65,14 +66,39 @@ private:
         if(ArraySize(buffer) <= 0)
             return false;
 
-        // Note: CUDA initialization failures are from external ONNX Runtime library.
-        // The library falls back to CPU automatically; per-session gating higher up
-        // avoids repeating this path for every symbol after the first hard failure.
+        // If CUDA already failed on a previous session, skip straight to CPU-only.
+        if(m_fallbackToCpu)
+        {
+            Print("[ONNX-CPU-FALLBACK] CUDA unavailable, using CPU execution provider");
+            handle = OnnxCreateFromBuffer(buffer, ONNX_USE_CPU_ONLY);
+            if(handle != INVALID_HANDLE && ConfigureHandle(handle))
+                return true;
+            PrintFormat("[ONNX] ERROR: CPU-only session also failed | err=%d", GetLastError());
+            if(handle != INVALID_HANDLE)
+            {
+                OnnxRelease(handle);
+                handle = INVALID_HANDLE;
+            }
+            return false;
+        }
+
+        // First attempt: default backend (may attempt CUDA).
         Print("[ONNX] Initializing with default backend (may attempt CUDA, will fallback to CPU)...");
         handle = OnnxCreateFromBuffer(buffer, ONNX_DEFAULT);
-        
+
         if(handle == INVALID_HANDLE)
+        {
+            // CUDA initialization failed — retry with CPU-only execution provider.
+            Print("[ONNX-CPU-FALLBACK] CUDA unavailable, using CPU execution provider");
+            m_fallbackToCpu = true;
+            handle = OnnxCreateFromBuffer(buffer, ONNX_USE_CPU_ONLY);
+        }
+
+        if(handle == INVALID_HANDLE)
+        {
+            PrintFormat("[ONNX] ERROR: Both default and CPU-only sessions failed | err=%d", GetLastError());
             return false;
+        }
 
         if(!ConfigureHandle(handle))
         {
@@ -149,6 +175,7 @@ public:
         m_shadowSignal = 1;
         m_shadowConfidence = 0.0;
         m_hasShadowPrediction = false;
+        m_fallbackToCpu = false;
         for(int i = 0; i < ONNX_SEQ_LEN; i++)
             for(int j = 0; j < ONNX_FEAT_DIM; j++)
                 m_featureBuf[i][j] = 0.0f;
@@ -193,6 +220,7 @@ public:
         m_activeTotal = 0.0;
         m_shadowWarmup = 0;
         m_hasShadowPrediction = false;
+        m_fallbackToCpu = false;
     }
 
     void PushFeatures(const double &features[], const int size)

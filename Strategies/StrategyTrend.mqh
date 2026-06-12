@@ -36,6 +36,12 @@ private:
     int                 m_htfHandleADX;  // ADX handle for HTF
     int                 m_tradeParamATRHandle;  // Cached ATR handle for GetTradeParameters
 
+    // Configurable ADX thresholds (lowered for synthetic CFDs)
+    double              m_adxNoTrendThreshold;
+    double              m_adxWeakThreshold;
+    double              m_adxNormalThreshold;
+    double              m_adxStrongThreshold;
+
     void LogRejectEvent(const string reasonTag)
     {
         datetime nowTime = TimeCurrent();
@@ -70,9 +76,21 @@ public:
         m_lastRejectLogTime(0),
         m_signalsGenerated(0),
         m_htf(PERIOD_CURRENT),
-        m_htfHandleADX(INVALID_HANDLE)
+        m_htfHandleADX(INVALID_HANDLE),
+        m_adxNoTrendThreshold(0),
+        m_adxWeakThreshold(25.0),
+        m_adxNormalThreshold(30.0),
+        m_adxStrongThreshold(40.0)
     {
         m_minConfidence = 0.55; // use base class field
+    }
+    //--- Set ADX thresholds (called from EA input parameters)
+    void SetADXThresholds(double noTrend, double weak, double normal, double strong)
+    {
+        m_adxNoTrendThreshold = noTrend;
+        m_adxWeakThreshold = weak;
+        m_adxNormalThreshold = normal;
+        m_adxStrongThreshold = strong;
     }
     //--- Destructor
     ~CStrategyTrend()
@@ -129,6 +147,13 @@ public:
         {
             Print("[TREND v2.0] Failed to initialize ADX Sizing");
             return false;
+        }
+        // Apply configurable ADX thresholds (lowered for synthetic CFDs)
+        if(m_adxSizing != NULL && m_adxNoTrendThreshold > 0)
+        {
+            m_adxSizing.SetThresholds(m_adxNoTrendThreshold, m_adxWeakThreshold, m_adxNormalThreshold, m_adxStrongThreshold);
+            PrintFormat("[TREND v2.0] ADX thresholds: noTrend=%.0f weak=%.0f normal=%.0f strong=%.0f",
+                        m_adxNoTrendThreshold, m_adxWeakThreshold, m_adxNormalThreshold, m_adxStrongThreshold);
         }
 
         // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
@@ -223,7 +248,7 @@ public:
             STradeValidationRequest request;
             request.symbol = m_symbol;
             request.orderType = (bestEntry.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = 0.01;  // Placeholder
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Use broker minimum
             request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(bestEntry.entryPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.takeProfitPips = (bestEntry.takeProfit > 0) ? MathAbs(bestEntry.takeProfit - bestEntry.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.confidence = confidence;

@@ -11,6 +11,7 @@
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "../Core/Utils/PythonBridge.mqh"
+#include "../Core/Engines/OrnsteinUhlenbeckEngine.mqh"
 
 //+------------------------------------------------------------------+
 //| Statistical Arbitrage Signal Structure                           |
@@ -79,6 +80,9 @@ private:
     // Python Bridge reference (for correlation matrix)
     CPythonBridge* m_pythonBridge;
     
+    // Batch 100: OU Process Engine for mean-reversion-aware z-scores
+    COrnsteinUhlenbeckEngine* m_ouEngine;
+    
     // Logging helper
     void LogRejectEvent(const string reasonTag)
     {
@@ -122,7 +126,8 @@ public:
         m_activeSpreadStdDev(0),
         m_pairLastUpdateTime(0),
         m_riskManager(NULL),
-        m_pythonBridge(NULL)
+        m_pythonBridge(NULL),
+        m_ouEngine(NULL)
     {
         m_minConfidence = 0.70; // High threshold for stat arb (complex strategy)
     }
@@ -141,7 +146,11 @@ public:
         // Risk manager and Python bridge are not owned by this strategy - do NOT delete
         m_riskManager = NULL;
         m_pythonBridge = NULL;
+        m_ouEngine = NULL;  // Not owned - do NOT delete
     }
+    
+    // Batch 100: Set OU engine reference for mean-reversion-aware z-scores
+    void SetOUEngine(COrnsteinUhlenbeckEngine* ouEngine) { m_ouEngine = ouEngine; }
     
     // Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
@@ -226,6 +235,21 @@ public:
         // Calculate current z-score
         double currentSpread = GetCurrentSpread(leg1Symbol, leg2Symbol);
         double zScore = (spreadStdDev > 0) ? ((currentSpread - spreadMean) / spreadStdDev) : 0;
+        
+        // Batch 100: Use OU-adjusted z-score when OU engine is available and mean-reverting
+        if(m_ouEngine != NULL && m_ouEngine.IsWarmedUp() && m_ouEngine.IsMeanReverting())
+        {
+            double ouZScore = m_ouEngine.GetOUZScore();
+            double ouQuality = m_ouEngine.GetSignalQuality();
+            if(ouQuality > 0.5)  // Only use OU z-score if quality is reasonable
+            {
+                // Blend: weight OU z-score by quality, simple z-score by (1-quality)
+                zScore = zScore * (1.0 - ouQuality * 0.6) + ouZScore * (ouQuality * 0.6);
+                PrintFormat("[STATARB-OU] %s | simple_z=%.2f ou_z=%.2f quality=%.2f blended_z=%.2f",
+                           m_symbol, (spreadStdDev > 0) ? ((currentSpread - spreadMean) / spreadStdDev) : 0,
+                           ouZScore, ouQuality, zScore);
+            }
+        }
         
         // Detect signal
         SStatArbSignal signal = DetectStatArbSignal(

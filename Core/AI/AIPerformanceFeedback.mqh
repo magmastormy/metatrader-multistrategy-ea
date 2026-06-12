@@ -135,7 +135,14 @@ private:
     int m_retrainingInterval; // seconds
     int m_retrainingCount;
     string m_lastRetrainingReason;
-    
+
+    // Retrain effectiveness tracking (Issue 12.2)
+    int m_consecutiveFailedRetrains;
+    datetime m_retrainPauseUntil;
+    double m_preRetrainAccuracy;
+    double m_preRetrainProfitability;
+    double m_preRetrainSharpe;
+
     // Performance tracking
     datetime m_lastMetricsUpdate;
     int m_metricsUpdateInterval;
@@ -234,6 +241,11 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_retrainingInterval(86400), // 24 hours
     m_retrainingCount(0),
     m_lastRetrainingReason(""),
+    m_consecutiveFailedRetrains(0),
+    m_retrainPauseUntil(0),
+    m_preRetrainAccuracy(0.0),
+    m_preRetrainProfitability(0.0),
+    m_preRetrainSharpe(0.0),
     m_lastMetricsUpdate(0),
     m_metricsUpdateInterval(300), // 5 minutes
     m_initialized(false)
@@ -572,7 +584,42 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
     if(!m_initialized)
         return;
 
+    // Check retrain pause (Issue 12.2): skip if paused due to consecutive failures
+    if(TimeCurrent() < m_retrainPauseUntil)
+    {
+        PrintFormat("[AI-RETRAIN-PAUSED] Retraining paused until %s - last %d attempts produced no improvement",
+                    TimeToString(m_retrainPauseUntil), m_consecutiveFailedRetrains);
+        return;
+    }
+
+    // Save pre-retrain metrics for effectiveness comparison (Issue 12.2)
+    m_preRetrainAccuracy = m_currentMetrics.accuracy;
+    m_preRetrainProfitability = m_currentMetrics.profitability;
+    m_preRetrainSharpe = m_currentMetrics.sharpeRatio;
+
     UpdateMetrics();
+
+    // Check if metrics improved since last retrain (Issue 12.2)
+    if(m_retrainingCount > 0)
+    {
+        bool metricsUnchanged = (MathAbs(m_currentMetrics.accuracy - m_preRetrainAccuracy) < 0.001 &&
+                                 MathAbs(m_currentMetrics.profitability - m_preRetrainProfitability) < 0.0001 &&
+                                 MathAbs(m_currentMetrics.sharpeRatio - m_preRetrainSharpe) < 0.001);
+        if(metricsUnchanged)
+        {
+            m_consecutiveFailedRetrains++;
+            if(m_consecutiveFailedRetrains >= 3)
+            {
+                m_retrainPauseUntil = TimeCurrent() + 3600;  // 1 hour pause
+                PrintFormat("[AI-RETRAIN-PAUSED] 3 consecutive ineffective retrain attempts. Pausing for 1 hour.");
+                return;
+            }
+        }
+        else
+        {
+            m_consecutiveFailedRetrains = 0;
+        }
+    }
 
     m_lastRetrainingTime = TimeCurrent();
     m_retrainingCount++;
@@ -731,10 +778,18 @@ string CAIPerformanceFeedback::GetPerformanceSummary(void)
 void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
 {
     if(!m_initialized) return;
-    
+
     // Update metrics first
     UpdateMetrics();
-    
+
+    // Check retrain pause (Issue 12.2): skip if paused due to consecutive failures
+    if(TimeCurrent() < m_retrainPauseUntil)
+    {
+        PrintFormat("[AI-RETRAIN-PAUSED] Retraining paused until %s - last %d attempts produced no improvement",
+                    TimeToString(m_retrainPauseUntil), m_consecutiveFailedRetrains);
+        return;
+    }
+
     // Check multiple retraining conditions
     bool needsRetraining = false;
     string retrainingReason = "";

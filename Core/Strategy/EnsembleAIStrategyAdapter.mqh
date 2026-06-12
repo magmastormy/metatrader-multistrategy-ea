@@ -40,9 +40,47 @@ private:
     bool m_ownsModels;  // Track ownership to prevent double-delete
     datetime m_voteWindowStart;  // Rolling vote window start time
     
+    // Direction calibration rolling window (last 20 predictions)
+    int  m_directionWindow[20];  // 1=BUY, -1=SELL, 0=NONE
+    int  m_directionWindowIdx;   // Circular buffer index
+    int  m_directionWindowCount; // Number of filled slots (0..20)
+    datetime m_lastCalibrationWarningTime;  // Throttle calibration warning logs
+    
     bool IsValidConfidence(const double conf) const
     {
         return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
+    }
+
+    void RecordDirectionPrediction(ENUM_TRADE_SIGNAL signal)
+    {
+        int dirValue = 0;
+        if(signal == TRADE_SIGNAL_BUY) dirValue = 1;
+        else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
+        
+        m_directionWindow[m_directionWindowIdx] = dirValue;
+        m_directionWindowIdx = (m_directionWindowIdx + 1) % 20;
+        if(m_directionWindowCount < 20)
+            m_directionWindowCount++;
+        
+        // Check and log degenerate detection
+        if(IsDirectionDegenerate())
+        {
+            datetime now = TimeCurrent();
+            if(m_lastCalibrationWarningTime == 0 || (now - m_lastCalibrationWarningTime) >= 60)
+            {
+                int buyCount = 0, sellCount = 0;
+                for(int i = 0; i < m_directionWindowCount; i++)
+                {
+                    if(m_directionWindow[i] == 1) buyCount++;
+                    else if(m_directionWindow[i] == -1) sellCount++;
+                }
+                double buyRatio = (double)buyCount / (double)m_directionWindowCount;
+                double sellRatio = (double)sellCount / (double)m_directionWindowCount;
+                PrintFormat("[AI-CALIBRATION-WARNING] Model degenerate: buy_ratio=%.2f, sell_ratio=%.2f, weight reduced by 50%% | %s",
+                           buyRatio, sellRatio, m_symbol);
+                m_lastCalibrationWarningTime = now;
+            }
+        }
     }
 
 
@@ -137,6 +175,10 @@ public:
         m_minConfidence = 0.70;
         m_ownsModels = false;
         m_voteWindowStart = TimeCurrent();
+        m_directionWindowIdx = 0;
+        m_directionWindowCount = 0;
+        m_lastCalibrationWarningTime = 0;
+        ArrayInitialize(m_directionWindow, 0);
     }
 
     virtual ~CEnsembleAIStrategyAdapter()
@@ -319,6 +361,9 @@ public:
         // FIX: Final NaN validation before returning
         if(!MathIsValidNumber(confidence))
             confidence = 0.0;
+        
+        // Record prediction for direction calibration
+        RecordDirectionPrediction(signal);
             
         LogVoteHeartbeat();
         return signal;
@@ -331,8 +376,30 @@ public:
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
     virtual void SetEnabled(const bool enabled) override { m_enabled = enabled; }
-    virtual double GetWeight(void) const override { return m_weight; }
+    virtual double GetWeight(void) const override { return GetCalibratedWeight(m_weight); }
     virtual void SetWeight(const double weight) override { m_weight = weight; }
+    
+    virtual bool IsDirectionDegenerate(void) const override
+    {
+        if(m_directionWindowCount < 20)
+            return false;
+        int buyCount = 0, sellCount = 0;
+        for(int i = 0; i < 20; i++)
+        {
+            if(m_directionWindow[i] == 1) buyCount++;
+            else if(m_directionWindow[i] == -1) sellCount++;
+        }
+        double buyRatio = (double)buyCount / 20.0;
+        double sellRatio = (double)sellCount / 20.0;
+        return (buyRatio > 0.80 || sellRatio > 0.80);
+    }
+    
+    virtual double GetCalibratedWeight(double baseWeight) const override
+    {
+        if(IsDirectionDegenerate())
+            return baseWeight * 0.5;
+        return baseWeight;
+    }
     virtual bool ValidateParameters(void) override { return true; }
     virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }

@@ -1,4 +1,4 @@
-# sync_and_compile.ps1 — Sync project files to Weltrade MT5 terminal and compile
+# sync_and_compile.ps1 — Sync project files to Deriv MT5 terminal and compile
 # Usage: .\sync_and_compile.ps1 [-SkipCompile] [-KeepLog]
 
 param(
@@ -10,9 +10,9 @@ $ErrorActionPreference = "Stop"
 
 # --- Configuration ---
 $ProjectRoot = "D:\TraeProjects\metatrader-multistrategy-ea"
-$TerminalHash = "37DFD387E83142603765C3D8E280A1B5"
+$TerminalHash = "FB9A56D617EDDDFE29EE54EBEFFE96C1"
 $MQL5Dir = "$env:APPDATA\MetaQuotes\Terminal\$TerminalHash\MQL5"
-$MetaEditor = "C:\Program Files\Weltrade MT5 Terminal\MetaEditor64.exe"
+$MetaEditor = "C:\Program Files\MetaTrader 5 Terminal\MetaEditor64.exe"
 $MainEA = "MultiStrategyAutonomousEA.mq5"
 $EAFolder = "MultiStrategyAutonomousEA"  # All files go under Experts/MultiStrategyAutonomousEA/
 
@@ -23,6 +23,9 @@ if (-not (Test-Path $MetaEditor)) { throw "MetaEditor not found: $MetaEditor" }
 
 # Base destination: Experts/MultiStrategyAutonomousEA/
 $EADst = Join-Path $MQL5Dir "Experts\$EAFolder"
+
+# --- Excluded directories (not synced to MT5) ---
+$ExcludedDirs = @("Dashboard", "node_modules", ".venv-ea-dashboard", ".trae")
 
 # --- Sync functions ---
 function Sync-Directory($Src, $Dst) {
@@ -57,7 +60,7 @@ function Sync-AllFiles($Src, $Dst) {
 
 function Sync-Recursive($Src, $Dst) {
     $total = Sync-Directory $Src $Dst
-    Get-ChildItem $Src -Directory | ForEach-Object {
+    Get-ChildItem $Src -Directory | Where-Object { $ExcludedDirs -notcontains $_.Name } | ForEach-Object {
         $childDst = Join-Path $Dst $_.Name
         $total += Sync-Recursive $_.FullName $childDst
     }
@@ -66,7 +69,7 @@ function Sync-Recursive($Src, $Dst) {
 
 function Sync-RecursiveAll($Src, $Dst) {
     $total = Sync-AllFiles $Src $Dst
-    Get-ChildItem $Src -Directory | ForEach-Object {
+    Get-ChildItem $Src -Directory | Where-Object { $ExcludedDirs -notcontains $_.Name } | ForEach-Object {
         $childDst = Join-Path $Dst $_.Name
         $total += Sync-RecursiveAll $_.FullName $childDst
     }

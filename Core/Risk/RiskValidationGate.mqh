@@ -467,10 +467,12 @@ bool CRiskValidationGate::ValidateBasicParameters(const STradeValidationRequest 
     if(request.lotSize < minLot)
     {
         // On small accounts, the calculated lot may be below broker minimum.
-        // If the lot is at least 10% of minLot, allow a round-up rather than
-        // rejecting outright. The PositionSizer will handle the risk assessment.
-        // This prevents the validation gate from being a hard blocker for small accounts.
-        if(request.lotSize >= minLot * 0.1)
+        // If the lot is within the minLotRiskMultiplier tolerance, allow a round-up
+        // rather than rejecting outright. The PositionSizer will handle the risk assessment.
+        // This prevents the validation gate from being a hard blocker for small accounts
+        // or symbols with high minimum lots (e.g., Deriv Volatility 25 Index min=0.50).
+        double riskRatio = (request.lotSize > 0.0) ? (minLot / request.lotSize) : 999.0;
+        if(riskRatio <= 15.0)  // Allow round-up if within 15x risk tolerance
         {
             // Don't reject — the caller (UnifiedRiskManager) will re-calculate
             // with the min lot and assess whether the risk is acceptable

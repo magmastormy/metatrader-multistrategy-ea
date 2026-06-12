@@ -803,6 +803,21 @@ public:
         return m_lastSnapshot;
     }
 
+    // Batch 100: Apply Hurst exponent weight multipliers on top of regime multipliers
+    // This modifies the snapshot's weight multipliers in-place by multiplying
+    // regime-based weights with Hurst-based persistence weights
+    void ApplyHurstWeightModifiers(double hurstMeanRevMult,
+                                    double hurstMomentumMult,
+                                    double hurstTrendMult,
+                                    double hurstBreakoutMult)
+    {
+        m_lastSnapshot.meanRevWeightMult *= hurstMeanRevMult;
+        m_lastSnapshot.momentumWeightMult *= hurstMomentumMult;
+        m_lastSnapshot.trendWeightMult *= hurstTrendMult;
+        m_lastSnapshot.breakoutWeightMult *= hurstBreakoutMult;
+        // ICT weight is not modified by Hurst (ICT has its own regime logic)
+    }
+
     string GetStateTag() const
     {
         return RegimeToString(m_lastSnapshot.state);

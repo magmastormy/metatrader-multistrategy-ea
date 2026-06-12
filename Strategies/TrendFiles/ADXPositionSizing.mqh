@@ -238,8 +238,9 @@ bool CADXPositionSizing::IsDirectionallyClear()
     
     // There must be a clear separation between bulls (+DI) and bears (-DI).
     // Tangled DI lines mean high-volatility chop (ranging trap).
+    // Lowered from 5.0 to 2.0 for synthetic CFDs where DI lines are typically close
     double diSpread = MathAbs(pDI[0] - mDI[0]);
-    if(diSpread < 5.0) return false; // Chop zone lockout
+    if(diSpread < 2.0) return false; // Chop zone lockout
     
     return true;
 }

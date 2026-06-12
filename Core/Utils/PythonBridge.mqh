@@ -129,6 +129,7 @@ private:
    int                 m_success_count;     // Successful requests count
    int                 m_error_count;       // Failed requests count
    string              m_last_error;        // Last error message
+   datetime            m_lastNotConfiguredLogTime; // Throttle NOT_CONFIGURED dashboard logs
    
    // Internal methods
    string              EscapeJsonString(const string &str);
@@ -176,6 +177,7 @@ public:
    
    // Getters
    ENUM_PYTHON_BRIDGE_STATE GetState() const { return m_state; }
+   ENUM_PYTHON_BRIDGE_MODE  GetMode() const { return m_mode; }
    bool              IsConnected() const { return m_state == PYTHON_BRIDGE_CONNECTED; }
    bool              IsInitialized() const { return m_initialized; }
    string            GetEndpoint() const { return m_endpoint; }
@@ -186,6 +188,7 @@ public:
    
    // Utility
    bool              AttemptReconnect();
+   bool              ShouldLogNotConfigured();  // Returns true if 300s elapsed since last NOT_CONFIGURED log
 };
 
 //+------------------------------------------------------------------+
@@ -208,6 +211,7 @@ CPythonBridge::CPythonBridge()
    m_success_count = 0;
    m_error_count = 0;
    m_last_error = "";
+   m_lastNotConfiguredLogTime = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -556,8 +560,17 @@ bool CPythonBridge::AttemptReconnect()
    {
       if(m_state != PYTHON_BRIDGE_ERROR)
       {
-         m_state = PYTHON_BRIDGE_ERROR;
-         LogBridgeState("Max reconnection attempts reached - using local AI fallback", ERROR_LEVEL_ERROR);
+         // In OBSERVE mode, Python sidecar is optional — stay DISCONNECTED, not ERROR
+         if(m_mode == PYTHON_BRIDGE_OBSERVE)
+         {
+            m_state = PYTHON_BRIDGE_DISCONNECTED;
+            LogBridgeState("Max reconnection attempts reached - Python sidecar not available (OBSERVE mode, using local AI fallback)", ERROR_LEVEL_WARNING);
+         }
+         else
+         {
+            m_state = PYTHON_BRIDGE_ERROR;
+            LogBridgeState("Max reconnection attempts reached - using local AI fallback", ERROR_LEVEL_ERROR);
+         }
       }
       return false;
    }
@@ -887,6 +900,20 @@ bool CPythonBridge::FindBestCorrelatedPair(const string symbol, string &bestPair
    
    bestPair = "";
    correlation = 0.0;
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Should log NOT_CONFIGURED dashboard entry (throttled to 300s)    |
+//+------------------------------------------------------------------+
+bool CPythonBridge::ShouldLogNotConfigured()
+{
+   datetime now = TimeCurrent();
+   if(m_lastNotConfiguredLogTime == 0 || (now - m_lastNotConfiguredLogTime) >= 300)
+   {
+      m_lastNotConfiguredLogTime = now;
+      return true;
+   }
    return false;
 }
 

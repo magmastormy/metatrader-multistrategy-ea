@@ -511,7 +511,15 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
             STradeValidationRequest request;
             request.symbol = m_symbol;
             request.orderType = (bestResult.signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = 0.01;  // Placeholder
+            // LOT VALIDATION DEFERRED: Lot size is an execution parameter, not a signal-quality
+            // parameter. Setting to broker minimum so the validation gate does not reject on lot
+            // size before CPositionSizer has a chance to round up. Actual sizing happens in the
+            // risk manager's post-size validation phase (AGENTS.md invariant #1).
+            double brokerMinLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+            if(brokerMinLot <= 0.0) brokerMinLot = 0.01;
+            request.lotSize = brokerMinLot;
+            PrintFormat("[S/R-LOT-DEFERRED] Lot validation deferred to risk manager | placeholder=%.3f (broker min)",
+                        brokerMinLot);
             request.stopLossPips = (bestResult.stopLoss > 0) ? MathAbs(bestResult.entryPrice - bestResult.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.takeProfitPips = (bestResult.takeProfit1 > 0) ? MathAbs(bestResult.takeProfit1 - bestResult.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
             request.confidence = confidence;
