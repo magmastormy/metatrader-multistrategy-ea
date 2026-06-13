@@ -227,8 +227,24 @@ public:
             request.symbol = m_symbol;
             request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
             request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = 0;  // PO3 doesn't calculate SL/TP here
-            request.takeProfitPips = 0;
+            // SL below manipulation level, TP at distribution target
+            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            double slPrice = state.manipulationLevel;
+            double slDistance = MathAbs(currentPrice - slPrice);
+            double tpPrice = state.distributionTarget;
+            double tpDistance = MathAbs(tpPrice - currentPrice);
+            if(slDistance <= 0 || tpDistance <= 0)
+            {
+                double atrBuf[];
+                ArraySetAsSeries(atrBuf, true);
+                int atrH = iATR(m_symbol, m_timeframe, 14);
+                if(atrH != INVALID_HANDLE && CopyBuffer(atrH, 0, 0, 1, atrBuf) > 0 && atrBuf[0] > 0)
+                { slDistance = atrBuf[0] * 1.5; tpDistance = atrBuf[0] * 3.0; }
+                else
+                { slDistance = currentPrice * 0.01; tpDistance = currentPrice * 0.02; }
+            }
+            request.stopLossPips = (point > 0) ? (slDistance / point) : 100.0;
+            request.takeProfitPips = (point > 0) ? (tpDistance / point) : 200.0;
             request.confidence = confidence;
             request.strategy = GetName();
             request.clusterCode = "";

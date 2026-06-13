@@ -143,6 +143,7 @@ private:
     CICTKillZones*              m_killZones;
     CSMCPremiumDiscount*        m_premiumDiscount;
     CChartDrawingManager*       m_drawingManager;
+    double                      m_displacementPenalty;  // Soft filter penalty from GetSignal
 
     // P1-C, P2-A, P2-B: New ICT Modules
     CICTPositionSizer*          m_ictPositionSizer;
@@ -263,6 +264,7 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_killZones(NULL),
     m_premiumDiscount(NULL),
     m_drawingManager(NULL),
+    m_displacementPenalty(0.0),
     m_ictPositionSizer(NULL),
     m_gapDetector(NULL),
     m_amdDetector(NULL),
@@ -871,26 +873,29 @@ ENUM_TRADE_SIGNAL CStrategyUnifiedICT::GetSignal(double &confidence)
     
     // ENHANCEMENT: Validate displacement magnitude (Batch 93 - Week 1)
     // ICT concepts require strong displacement to confirm institutional intent
+    // NOTE: This is a SOFT filter, not a hard gate. Weak displacement reduces
+    // confidence but does not block signals entirely, because on synthetics and
+    // ranging markets, the last bar may not show displacement even when a valid
+    // ICT setup exists (OB/FVG/confluence from earlier bars).
+    m_displacementPenalty = 0.0;
     if(m_structureAnalyzer != NULL)
     {
         double atr = m_structureAnalyzer.GetATR(14);
         if(atr > 0)
         {
-            // Check last completed bar for displacement
             double open_prev = iOpen(m_symbol, m_timeframe, 1);
             double close_prev = iClose(m_symbol, m_timeframe, 1);
             double displacement = MathAbs(close_prev - open_prev);
-            
-            // Require displacement >= configurable multiplier of ATR for strong institutional move
-            // Lower multiplier for synthetic CFDs where ATR is very large
-            double dispMult = 0.4;  // Default for synthetics (was 1.5, then 0.8 -- still too high)
+            double dispMult = 0.3;
+
             if(displacement < atr * dispMult)
             {
-                return RejectSignal("UICT_WEAK_DISPLACEMENT",
-                    StringFormat("[UICT] Filtered: Weak displacement %.1f pts (need >= %.1f pts, %.1fx ATR)",
-                                 displacement / SymbolInfoDouble(m_symbol, SYMBOL_POINT),
-                                 (atr * dispMult) / SymbolInfoDouble(m_symbol, SYMBOL_POINT),
-                                 dispMult));
+                // Soft penalty: reduce confidence by 0.10 instead of blocking
+                m_displacementPenalty = 0.10;
+                LogFilterEvent(StringFormat("[UICT] Weak displacement %.1f pts (threshold %.1f pts, %.1fx ATR) - applying confidence penalty",
+                             displacement / SymbolInfoDouble(m_symbol, SYMBOL_POINT),
+                             (atr * dispMult) / SymbolInfoDouble(m_symbol, SYMBOL_POINT),
+                             dispMult));
             }
         }
     }
@@ -1457,6 +1462,9 @@ double CStrategyUnifiedICT::ComputeEntryConfidence(const SICTEntrySetup &entry, 
         conf += 0.05 * CRankingMatrix::GetTierMultiplier(STRATEGY_TIER_1); // 0.125
 
     // Phase 3.3: Removed SMT, Anchored VWAP, Cumulative Delta confidence boosts
+
+    // Apply displacement penalty (soft filter from GetSignal)
+    conf -= m_displacementPenalty;
 
     return MathMin(0.95, MathMax(0.0, conf));
 }

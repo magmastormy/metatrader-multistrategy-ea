@@ -67,6 +67,14 @@ private:
     int             m_nyOpenESTHour;        // 8
     int             m_brokerGMTOffset;
 
+    // Price-action AMD for synthetics (no session dependency)
+    bool            m_isSynthetic;          // True for synthetic indices
+    double          m_paAccumHigh;          // Price-action accumulation range high
+    double          m_paAccumLow;           // Price-action accumulation range low
+    int             m_paConsolidationBars;  // Bars in consolidation (accumulation)
+    int             m_paBarsSinceSweep;     // Bars since manipulation sweep
+    int             m_paAtrHandle;          // ATR handle for price-action AMD
+
     // Internal helpers
     int             GetCurrentESTHour();
     bool            IsAsianSession();
@@ -76,6 +84,7 @@ private:
     void            BuildAccumulationRange();
     void            CheckManipulation();
     void            CheckDistributionEntry();
+    void            UpdatePriceActionAMD();   // Price-action AMD for synthetics
 
 public:
                     CAMDDetector();
@@ -112,7 +121,13 @@ CAMDDetector::CAMDDetector() :
     m_asianEndESTHour(2),
     m_londonOpenESTHour(2),
     m_nyOpenESTHour(8),
-    m_brokerGMTOffset(2)
+    m_brokerGMTOffset(2),
+    m_isSynthetic(false),
+    m_paAccumHigh(0),
+    m_paAccumLow(DBL_MAX),
+    m_paConsolidationBars(0),
+    m_paBarsSinceSweep(0),
+    m_paAtrHandle(INVALID_HANDLE)
 {}
 
 //+------------------------------------------------------------------+
@@ -132,7 +147,21 @@ bool CAMDDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
 
     m_state = SAMDState();
 
-    Print("[AMD] Initialized for ", symbol, " TF=", EnumToString(timeframe));
+    // Detect synthetic indices (no forex session structure)
+    m_isSynthetic = (StringFind(symbol, "Volatility") >= 0 ||
+                     StringFind(symbol, "Boom") >= 0 ||
+                     StringFind(symbol, "Crash") >= 0 ||
+                     StringFind(symbol, "Jump") >= 0 ||
+                     StringFind(symbol, "Step") >= 0);
+
+    m_paAccumHigh = 0;
+    m_paAccumLow = DBL_MAX;
+    m_paConsolidationBars = 0;
+    m_paBarsSinceSweep = 0;
+    m_paAtrHandle = INVALID_HANDLE;
+
+    Print("[AMD] Initialized for ", symbol, " TF=", EnumToString(timeframe),
+          " mode=", m_isSynthetic ? "PRICE_ACTION" : "SESSION_BASED");
     return true;
 }
 
@@ -290,10 +319,173 @@ void CAMDDetector::CheckDistributionEntry()
 }
 
 //+------------------------------------------------------------------+
+//| Price-Action AMD for Synthetic Indices                           |
+//+------------------------------------------------------------------+
+// Synthetics trade 24/7 with no session structure. Instead of using
+// time-based session windows, detect AMD phases from price action:
+//   ACCUMULATION = price consolidating in a range (low ATR ratio)
+//   MANIPULATION = spike outside range with reversal (liquidity sweep)
+//   DISTRIBUTION = breakout in true direction after manipulation
+void CAMDDetector::UpdatePriceActionAMD()
+{
+    // Get ATR using member handle
+    if(m_paAtrHandle == INVALID_HANDLE)
+        m_paAtrHandle = iATR(m_symbol, m_timeframe, 14);
+    if(m_paAtrHandle == INVALID_HANDLE) return;
+    double atrBuf[];
+    ArraySetAsSeries(atrBuf, true);
+    if(CopyBuffer(m_paAtrHandle, 0, 0, 1, atrBuf) <= 0) return;
+    double atr = atrBuf[0];
+    if(atr <= 0) return;
+
+    double close0 = iClose(m_symbol, m_timeframe, 0);
+    double high0  = iHigh(m_symbol, m_timeframe, 0);
+    double low0   = iLow(m_symbol, m_timeframe, 0);
+    double range0 = high0 - low0;
+
+    // --- ACCUMULATION detection ---
+    // A bar is "consolidating" if its range is < 0.7x ATR (tight relative to avg)
+    bool isConsolidating = (range0 < atr * 0.7);
+
+    if(m_state.phase == AMD_PHASE_UNKNOWN || m_state.phase == AMD_PHASE_POST_DISTRIBUTION)
+    {
+        // Start fresh accumulation
+        if(isConsolidating)
+        {
+            m_paConsolidationBars++;
+            if(m_paConsolidationBars >= 3)  // Need at least 3 bars of consolidation
+            {
+                m_state.phase = AMD_PHASE_ACCUMULATION;
+                // Build accumulation range from last N consolidating bars
+                m_paAccumHigh = 0;
+                m_paAccumLow = DBL_MAX;
+                int lookback = MathMin(m_paConsolidationBars + 2, 20);
+                for(int i = 0; i < lookback; i++)
+                {
+                    double h = iHigh(m_symbol, m_timeframe, i);
+                    double l = iLow(m_symbol, m_timeframe, i);
+                    if(h > m_paAccumHigh) m_paAccumHigh = h;
+                    if(l < m_paAccumLow)  m_paAccumLow = l;
+                }
+                m_state.accumulationHigh = m_paAccumHigh;
+                m_state.accumulationLow  = m_paAccumLow;
+            }
+        }
+        else
+        {
+            m_paConsolidationBars = 0;
+        }
+        return;
+    }
+
+    if(m_state.phase == AMD_PHASE_ACCUMULATION)
+    {
+        // Update accumulation range
+        if(isConsolidating)
+        {
+            m_paConsolidationBars++;
+            if(high0 > m_state.accumulationHigh) m_state.accumulationHigh = high0;
+            if(low0 < m_state.accumulationLow)   m_state.accumulationLow = low0;
+        }
+
+        // Check for manipulation: spike outside range with reversal
+        // Bullish manipulation: wick below range low, close inside
+        if(low0 < m_state.accumulationLow && close0 > m_state.accumulationLow)
+        {
+            m_state.isBullishManipulation = true;
+            m_state.isBearishManipulation = false;
+            m_state.manipulationLevel     = low0;
+            m_state.manipulationTime      = iTime(m_symbol, m_timeframe, 0);
+            m_state.liquiditySwept        = true;
+            m_state.confidence            = 0.70;
+            m_state.phase                 = AMD_PHASE_MANIPULATION;
+            m_paBarsSinceSweep = 0;
+            return;
+        }
+
+        // Bearish manipulation: wick above range high, close inside
+        if(high0 > m_state.accumulationHigh && close0 < m_state.accumulationHigh)
+        {
+            m_state.isBearishManipulation = true;
+            m_state.isBullishManipulation = false;
+            m_state.manipulationLevel     = high0;
+            m_state.manipulationTime      = iTime(m_symbol, m_timeframe, 0);
+            m_state.liquiditySwept        = true;
+            m_state.confidence            = 0.70;
+            m_state.phase                 = AMD_PHASE_MANIPULATION;
+            m_paBarsSinceSweep = 0;
+            return;
+        }
+
+        // If range expands significantly without manipulation, reset
+        if(!isConsolidating && range0 > atr * 1.5)
+        {
+            m_state = SAMDState();
+            m_paConsolidationBars = 0;
+        }
+        return;
+    }
+
+    if(m_state.phase == AMD_PHASE_MANIPULATION)
+    {
+        m_paBarsSinceSweep++;
+
+        // Check for distribution: breakout in true direction
+        if(m_state.isBullishManipulation && close0 > m_state.accumulationHigh)
+        {
+            m_state.phase               = AMD_PHASE_DISTRIBUTION;
+            m_state.chochAfterSweep     = true;
+            m_state.distributionTarget  = m_state.accumulationHigh +
+                                          (m_state.accumulationHigh - m_state.manipulationLevel) * 2.0;
+            m_state.confidence          = MathMin(1.0, m_state.confidence + 0.20);
+            return;
+        }
+
+        if(m_state.isBearishManipulation && close0 < m_state.accumulationLow)
+        {
+            m_state.phase               = AMD_PHASE_DISTRIBUTION;
+            m_state.chochAfterSweep     = true;
+            m_state.distributionTarget  = m_state.accumulationLow -
+                                          (m_state.manipulationLevel - m_state.accumulationLow) * 2.0;
+            m_state.confidence          = MathMin(1.0, m_state.confidence + 0.20);
+            return;
+        }
+
+        // If too many bars pass without distribution, reset
+        if(m_paBarsSinceSweep > 10)
+        {
+            m_state = SAMDState();
+            m_paConsolidationBars = 0;
+        }
+        return;
+    }
+
+    if(m_state.phase == AMD_PHASE_DISTRIBUTION)
+    {
+        // Stay in distribution for up to 5 bars, then transition to post-distribution
+        m_paBarsSinceSweep++;
+        if(m_paBarsSinceSweep > 5)
+        {
+            m_state.phase = AMD_PHASE_POST_DISTRIBUTION;
+            m_paConsolidationBars = 0;
+        }
+        return;
+    }
+}
+
+//+------------------------------------------------------------------+
 //| Update                                                           |
 //+------------------------------------------------------------------+
 void CAMDDetector::Update()
 {
+    // Use price-action AMD for synthetics (no session dependency)
+    if(m_isSynthetic)
+    {
+        UpdatePriceActionAMD();
+        return;
+    }
+
+    // Session-based AMD for forex/commodities
     if(IsAsianSession())
     {
         // Reset state at start of each Asian session
