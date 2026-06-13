@@ -196,10 +196,17 @@ public:
 
         double overlapTop = MathMin(ob.top, imb.top);
         double overlapBottom = MathMax(ob.bottom, imb.bottom);
-        if(overlapTop <= overlapBottom)
+        bool hasOverlap = (overlapTop > overlapBottom);
+
+        // OB/FVG overlap is a strong confluence but not a hard requirement.
+        // On synthetics, OBs and FVGs can form at different price levels
+        // due to rapid price movements. Penalize confidence instead of blocking.
+        double overlapPenalty = 0.0;
+        if(!hasOverlap)
         {
-            SetDecisionReasonTag("UNICORN_NO_OB_FVG_OVERLAP");
-            return TRADE_SIGNAL_NONE;
+            overlapPenalty = 0.10;  // Reduce confidence when no spatial overlap
+            Print(StringFormat("[UNICORN] OB/FVG no overlap - applying confidence penalty (OB: %.2f-%.2f, FVG: %.2f-%.2f)",
+                         ob.bottom, ob.top, imb.bottom, imb.top));
         }
 
         double score = 0.55;
@@ -208,6 +215,8 @@ public:
         score += cisdAligned ? 0.07 : 0.0;
         score += ltfAligned ? 0.04 : 0.0;
         score += (ob.type == OB_BREAKER_BULL || ob.type == OB_BREAKER_BEAR) ? 0.05 : 0.0;
+        score += hasOverlap ? 0.05 : 0.0;  // Bonus for OB/FVG overlap
+        score -= overlapPenalty;             // Penalty when no overlap
         confidence = MathMin(0.95, score);
 
         if(confidence < m_minConfidence)
@@ -224,7 +233,7 @@ public:
         double slPrice = bullish ? MathMin(ob.bottom, imb.bottom) : MathMax(ob.top, imb.top);
         double slDistance = MathAbs(currentPrice - slPrice);
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 50.0; // Fallback to 50 pips
+        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0; // No fallback - skip if SL invalid
         
         // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
         if(m_riskManager != NULL)

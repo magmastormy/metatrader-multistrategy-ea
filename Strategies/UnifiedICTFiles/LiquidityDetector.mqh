@@ -570,9 +570,10 @@ bool CLiquidityDetector::HasRecentSweep(bool &isBuyside)
     {
         if(m_liquidityPools[i].isSwept && m_liquidityPools[i].confirmedReversal)
         {
-            // Check if sweep was recent (within last 5 bars)
+            // Check if sweep was recent (within last 15 bars — widened from 5 for synthetics
+            // where liquidity sweeps may take more bars to develop on M15+)
             int barsAgo = iBarShift(m_symbol, m_timeframe, m_liquidityPools[i].sweptTime);
-            if(barsAgo >= 0 && barsAgo <= 5)
+            if(barsAgo >= 0 && barsAgo <= 15)
             {
                 isBuyside = (m_liquidityPools[i].type == UICT_LIQ_EQUAL_HIGHS ||
                             m_liquidityPools[i].type == UICT_LIQ_SWING_HIGH ||

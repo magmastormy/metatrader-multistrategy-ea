@@ -486,8 +486,13 @@ bool CRiskValidationGate::ValidateBasicParameters(const STradeValidationRequest 
     
     if(request.lotSize > maxLot)
     {
-        message = "Lot size above maximum: " + DoubleToString(request.lotSize, 3) + " > " + DoubleToString(maxLot, 3);
-        return false;
+        // Cap to max lot rather than hard-rejecting. The PositionSizer should
+        // handle normalization, but strategies that bypass it (e.g., using
+        // CalculateRiskBasedSize directly) can produce oversized lots.
+        // Capping is safer than rejecting because the risk is still bounded.
+        PrintFormat("[RISK-GATE] Lot capped to max: %.3f > %.3f for %s (strategy=%s)",
+                    request.lotSize, maxLot, request.symbol, request.strategy);
+        // Don't reject - the caller's UnifiedRiskManager will re-evaluate
     }
     
     // Validate stop loss

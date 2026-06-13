@@ -598,14 +598,16 @@ public:
             // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
             if(m_riskManager != NULL)
             {
-                // Calculate lot size using position sizer instead of placeholder 0.01
-                double calculatedLot = 0.01;
+                // Calculate lot size using position sizer with full normalization pipeline
+                // (CalculateSize clamps to SYMBOL_VOLUME_MAX, applies margin checks, etc.)
+                double calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
                 if(m_positionSizer != NULL)
                 {
                     SPositionSizingParams sizerParams = m_positionSizer.GetParameters();
-                    calculatedLot = m_positionSizer.CalculateRiskBasedSize(m_symbol, slPips, sizerParams.riskPercent);
+                    ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+                    calculatedLot = m_positionSizer.CalculateSize(m_symbol, orderType, slPips, sizerParams.riskPercent, confidence);
                     if(calculatedLot <= 0.0)
-                        calculatedLot = 0.01;  // Fallback
+                        calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Fallback to broker min
                 }
 
                 STradeValidationRequest request;

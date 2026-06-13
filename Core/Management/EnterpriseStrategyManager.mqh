@@ -1569,23 +1569,24 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         effectiveMinVoters = 1;
     }
 
-    // INDICATOR_ONLY adaptive: when only 1 voter produced a signal and it has
-    // high directional quality (>=0.70), allow single-voter quorum. This prevents
-    // deadlock in indicator-only mode where AI voters are disabled and getting
-    // 2+ agreeing voters is rare.
-    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) == 1)
-    {
-        double singleVoterQuality = (buyVotes == 1) ? buyDirectionalQuality : sellDirectionalQuality;
-        if(singleVoterQuality >= 0.70)
-            effectiveMinVoters = 1;
-    }
-    
     if(evalMode == EVAL_MODE_INTRABAR)
     {
         int intrabarFloor = MathMax(1, m_intrabarMinQuorum);
         effectiveMinVoters = intrabarFloor;
         if(m_intrabarDynamicQuorumEnabled && eligibleLiveVoterCount >= 4 && effectiveMinVoters < 2)
             effectiveMinVoters = 2;
+    }
+
+    // INDICATOR_ONLY adaptive: when only 1 voter produced a signal and it has
+    // high directional quality (>=0.70), allow single-voter quorum. This prevents
+    // deadlock in indicator-only mode where AI voters are disabled and getting
+    // 2+ agreeing voters is rare.
+    // IMPORTANT: This must come AFTER the intrabar override so it takes precedence.
+    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) == 1)
+    {
+        double singleVoterQuality = (buyVotes == 1) ? buyDirectionalQuality : sellDirectionalQuality;
+        if(singleVoterQuality >= 0.70)
+            effectiveMinVoters = 1;
     }
 
     // Trend-direction bias: raise quorum threshold when consensus opposes a strong trend
@@ -1641,6 +1642,22 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                 symbol, originalBuyQuorum, buyQuorum);
                 }
             }
+        }
+    }
+
+    // Single-voter quorum relaxation: when only 1 voter with quality >= 0.70,
+    // don't let trend bias raise the quorum above the voter's quality.
+    // This prevents a valid single-voter signal from being vetoed because
+    // trend bias raised buyQuorum to 0.70 while quality is 0.701 (razor-thin).
+    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) == 1 && effectiveMinVoters == 1)
+    {
+        double singleVoterQuality = (buyVotes == 1) ? buyDirectionalQuality : sellDirectionalQuality;
+        if(singleVoterQuality >= 0.70)
+        {
+            if(buyQuorum > singleVoterQuality && buyVotes == 1)
+                buyQuorum = singleVoterQuality;
+            if(sellQuorum > singleVoterQuality && sellVotes == 1)
+                sellQuorum = singleVoterQuality;
         }
     }
 

@@ -262,7 +262,7 @@ public:
             // Calculate volatility-based SL from signal structure
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
             double slDistance = MathAbs(signal.entryPrice - signal.stopLoss);
-            double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 50.0; // Fallback to 50 pips
+            double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0; // No fallback - skip if SL invalid
             double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
             double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 2.0;
             

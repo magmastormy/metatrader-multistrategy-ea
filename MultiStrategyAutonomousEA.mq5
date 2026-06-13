@@ -36,7 +36,9 @@ input bool InpEnableTrend = true;           // Enable Trend Strategy
 // Elliott Wave REMOVED - subjective pattern recognition, unsuitable for automation
 input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines + Fib Confluence
 input bool InpEnableUnifiedICT = true;         // Enable Unified ICT Strategy (Phase 3.3: simplified gate structure)
+input bool InpICTRequireKillZone = false;     // ICT requires Kill Zone timing (false = signals anytime, good for synthetics)
 input bool InpEnableCandlestick = true;      // Enable Candlestick Patterns Strategy
+input bool InpCandlestickRequireTrend = false; // Candlestick requires EMA50/200 trend alignment (false = more signals on synthetics)
 input bool InpEnableUnicornModel = true;      // Enable Unicorn Model (Phase 3.3: simplified gates, lower confidence)
 input bool InpEnablePowerOfThree = true;      // Enable Power of Three (Phase 3.3: removed SMT, lower confidence)
 input bool InpEnableMeanReversion = true;     // NEW: Mean Reversion Strategy (Batch 93 - Counterbalance for ranging markets)
@@ -145,7 +147,7 @@ input bool InpPipelineEnableRegimeCostGate = true;    // Enable regime + microst
 input double InpPipelineMaxSpreadToAtrRatio = 0.50;   // Max spread/ATR ratio (relaxed from 0.25)
 input int InpPipelineSpreadShockCooldownSec = 90;     // Spread shock cooldown window
 input double InpPipelineLateEntryZScoreLimit = 4.00;  // Late-entry z-score limit (relaxed from 2.50)
-input double InpAtrCrisisRatioThreshold = 2.5;        // ATR14/ATR50 crisis gate threshold (2.5 accommodates synthetics)
+input double InpAtrCrisisRatioThreshold = 5.0;         // ATR14/ATR50 crisis gate threshold (5.0 accommodates XAUUSD volatility spikes)
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
 input int  InpHeartbeatInterval = 60;                  // Heartbeat logging interval in seconds (minimum 30)
 input bool InpEnableMomentumScalping = true;          // Allow momentum continuation scalp signals between crossover events
@@ -2539,9 +2541,17 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
     else if(strategyName == "Support/Resistance")
         registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     else if(strategyName == "Unified ICT")
-        registered = manager.RegisterStrategy(new CStrategyUnifiedICT(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    {
+        CStrategyUnifiedICT* ict = new CStrategyUnifiedICT();
+        ict.SetRequireKillZone(InpICTRequireKillZone);
+        registered = manager.RegisterStrategy(ict, strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    }
     else if(strategyName == "Candlestick")
-        registered = manager.RegisterStrategy(new CStrategyCandlestick(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    {
+        CStrategyCandlestick* cs = new CStrategyCandlestick();
+        cs.SetRequireTrendAlignment(InpCandlestickRequireTrend);
+        registered = manager.RegisterStrategy(cs, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    }
     else if(strategyName == "Unicorn Model")
         registered = manager.RegisterStrategy(new CUnicornModelStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
     else if(strategyName == "Power of Three")

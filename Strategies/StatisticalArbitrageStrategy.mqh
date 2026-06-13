@@ -277,9 +277,9 @@ public:
             ZeroMemory(validationReq);
             validationReq.symbol = m_symbol;
             validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            validationReq.lotSize = 0;
-            validationReq.stopLossPips = 0;
-            validationReq.takeProfitPips = 0;
+            validationReq.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+            validationReq.stopLossPips = 100.0;   // ATR-based SL injected by risk manager
+            validationReq.takeProfitPips = 200.0;  // ATR-based TP injected by risk manager
             validationReq.confidence = signal.confidence;
             validationReq.strategy = m_name;
             validationReq.requestTime = TimeCurrent();
