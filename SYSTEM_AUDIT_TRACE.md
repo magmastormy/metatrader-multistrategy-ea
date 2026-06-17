@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-06-12
+- Last Updated: 2026-06-17
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 101
+- Current Batch: 103
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -40,12 +40,160 @@
 - OU process engine: `Core/Engines/OrnsteinUhlenbeckEngine.mqh`
 - OFI proxy engine: `Core/Engines/OrderFlowImbalanceEngine.mqh`
 - VPIN filter: `Core/Risk/VPINFilter.mqh`
+- Deriv asset profiler: `Core/Processing/DerivAssetProfiler.mqh`
+- Multi-asset class profiler: `Core/Processing/MultiAssetProfiler.mqh`
+- Grid recovery engine: `Core/Scalp/GridRecoveryEngine.mqh`
+- ATR scalping engine: `Core/Scalp/ATRScalpingEngine.mqh`
+- Statistical Arbitrage strategy: `Strategies/StatisticalArbitrageStrategy.mqh`
+- Candlestick confluence scorer: `Strategies/CandlestickFiles/CandleConfluenceScorer.mqh`
+- Candlestick pattern detectors: `Strategies/CandlestickFiles/DojiDetector.mqh`, `HammerDetector.mqh`, `StarDetector.mqh`, `HaramiDetector.mqh`, `ThreeSoldiersDetector.mqh`, `PiercingDetector.mqh`
 - CatBoost trainer: `Python/train_catboost.py`
 - XGBoost trainer: `Python/train_xgboost.py`
 - Implementation plan: `IMPLEMENTATION_PLAN.md`
 - Research report: `EA_PERFORMANCE_RESEARCH_REPORT.md`
 
 ## Current Runtime Evidence
+- **EA Enterprise Vision Implementation (Batch 103, 2026-06-17):** Upgrades the multi-strategy EA to an enterprise consensus engine with 11 strategies:
+  - **A1 — Candlestick v2.0:** 7 new pattern detectors (CDojiDetector, CHammerDetector, CStarDetector, CHaramiDetector, CThreeSoldiersDetector, CPiercingDetector) + CCandleConfluenceScorer (0-100 scoring, threshold ≥70). Confidence = score/100.0. Files: `Strategies/CandlestickFiles/DojiDetector.mqh`, `HammerDetector.mqh`, `StarDetector.mqh`, `HaramiDetector.mqh`, `ThreeSoldiersDetector.mqh`, `PiercingDetector.mqh`, `CandleConfluenceScorer.mqh`. Modified: `Strategies/StrategyCandlestick.mqh`.
+  - **A2 — Momentum v2.0:** MACD histogram confirmation, ADX strong trend filter (ADX > 25), pullback entry mode (EMA pullback within 0.5×ATR), freshness confidence modifier (+10%), volume confidence modifier (+8%). File: `Strategies/SimpleMomentumStrategy.mqh`.
+  - **A3 — Volatility Breakout v2.0:** TTM Squeeze detection (BB inside KC = squeeze active, breakout on BB exit), ADX rising filter (ADX slope > 0), breakout retest entry, breakout failure reversal (counter-direction at 0.65 confidence). File: `Strategies/VolatilityBreakoutStrategy.mqh`.
+  - **A4 — Mean Reversion v2.0:** Stochastic extreme confirmation (Stoch < 20 BUY, > 80 SELL), Hurst regime lockout (H < 0.45 → reject "MR_HURST_NOT_MEAN_REVERTING"), BB width filter (BB width < 20th percentile), no-divergence check, dynamic TP. Hurst engine injection via SetHurstEngine() (pointer-based, migrated from index-based). File: `Strategies/MeanReversionStrategy.mqh`.
+  - **A5 — Statistical Arbitrage:** New strategy for pair trading via Python Bridge. OU half-life filter (half-life < 50 bars), z-score detection (entry at |z| > 2.0, exit at |z| < 0.5). OU engine injection via SetOUEngine(). MEAN_REVERSION_CLUSTER, weight 1.5. Conditionally registered when Python Bridge is connected. File: `Strategies/StatisticalArbitrageStrategy.mqh`.
+  - **B1 — Regime Weight Wiring:** CEnterpriseStrategyManager reads CRegimeEngine weight multipliers via GetRegimeCategoryMultiplier(). Regime category weights applied to strategy weights before consensus quorum. File: `Core/Management/EnterpriseStrategyManager.mqh`.
+  - **B2 — VPIN Toxicity Integration:** VPIN toxicity gating in consensus: VPIN_EXTREME blocks all entries (consensus veto), VPIN_HIGH reduces strategy weights by 50%, VPIN_MEDIUM reduces strategy weights by 25%. File: `Core/Management/EnterpriseStrategyManager.mqh`.
+  - **B3 — 0-100 Consensus Scoring:** rawConsensusScore = directionalQuality × supportRatio × 100, threshold = 60/100. Graduated scoring: 60-70 marginal (×0.75 sizing), 70-85 standard, 85+ strong (priority ranking boost). File: `Core/Management/EnterpriseStrategyManager.mqh`.
+  - **B4 — OFI Regime Integration:** OFI confirms/contradicts regime category weights: aligned → 1.2× boost, contradicts → 0.7× penalty. Applied after regime weight wiring, before consensus scoring. File: `Core/Management/EnterpriseStrategyManager.mqh`.
+  - **Engine Wiring:** EnterpriseStrategyManager VPIN/OFI wired from EA per-symbol loop. MeanReversion Hurst engine wired (pointer-based, migrated from index-based). StatisticalArbitrage OU engine wired from EA per-symbol loop. A5 registration with Python Bridge check. File: `MultiStrategyAutonomousEA.mq5`.
+  - **New log signatures:** `[CANDLE_CONFLUENCE]`, `[MR-HURST-NOT-MEAN-REVERTING]`, `[MR-STOCH-NOT-EXTREME]`, `[MR-BB-WIDTH-HIGH]`, `[MR-DIVERGENCE-DETECTED]`, `[STATARB]`, `[TTM_SQUEEZE]`, `[BREAKOUT_RETEST]`, `[BREAKOUT_FAILURE_REVERSAL]`, `[CONSENSUS-SCORE]`, `[VPIN-HIGH]`, `[VPIN-MEDIUM]`, `[OFI-REGIME-BOOST]`, `[OFI-REGIME-PENALTY]`.
+  - **Files Changed:** `Strategies/StrategyCandlestick.mqh`, `Strategies/CandlestickFiles/DojiDetector.mqh`, `HammerDetector.mqh`, `StarDetector.mqh`, `HaramiDetector.mqh`, `ThreeSoldiersDetector.mqh`, `PiercingDetector.mqh`, `CandleConfluenceScorer.mqh` (new), `Strategies/SimpleMomentumStrategy.mqh`, `Strategies/VolatilityBreakoutStrategy.mqh`, `Strategies/MeanReversionStrategy.mqh`, `Strategies/StatisticalArbitrageStrategy.mqh` (new), `Core/Management/EnterpriseStrategyManager.mqh`, `MultiStrategyAutonomousEA.mq5`.
+  - **Compilation:** 0 errors, 0 warnings.
+
+- **Multi-Asset Class Profiler (Batch 103):** Full multi-asset support extending beyond Deriv synthetics to Forex, Metals, Indices, and Energies:
+  - **CMultiAssetProfiler** in `Core/Processing/MultiAssetProfiler.mqh`: Central profiler using composition (wraps `CDerivAssetProfiler` internally). `ENUM_ASSET_CLASS` with 10 values (ASSET_FOREX through ASSET_UNIVERSAL). `SAssetProfile` with 14 fields. Detection priority: Deriv first, then Metals, Indices, Energies, Forex, Universal. Methods: `DetectAssetClass()`, `GetProfile()`, `GetMagicNumber()`, `GetAssetClassName()`, `GetFeatureSetSize()`, `GetPythonModelFamily()`, `GetDerivProfiler()`, `DerivFamilyToAssetClass()`, `PrintProfile()`.
+  - **Instruments.mqh** extensions: `IsMetalsSymbolName()`, `IsIndicesSymbolName()`, `IsEnergiesSymbolName()`, `DetectAssetClassId()` (0-9), `GetInstrumentExecutionProfileName()` updated with FOREX/METALS/INDICES/ENERGIES.
+  - **PythonBridge.mqh** extensions: `asset_class`/`asset_class_name` in `SPythonBridgeResponse`, `PredictMultiAsset()` convenience method, JSON payload includes both fields, `ParsePredictionResponse()` parses both.
+  - **EnterpriseStrategyManager.mqh** extensions: `SetMultiAssetProfiler()`, `ApplyAssetClassEngineWeights()` with per-class multipliers (Forex: Trend 1.3x/VolBreakout 1.2x/MeanRevert 0.7x; Metals: VolBreakout 1.5x/MeanRevert 0.5x; Indices: MeanRevert 1.5x/VolBreakout 0.5x/Trend 0.8x; Energies: VolBreakout 1.4x/Trend 1.2x). Deriv symbols delegate to `ApplyFamilyEngineWeights()`.
+  - **DiagnosticsManager.mqh** extensions: `SetMultiAssetProfiler()`, `[HEARTBEAT-ASSET-CLASS]` logging for non-Deriv symbols.
+  - **MultiStrategyAutonomousEA.mq5** integration: `g_multiAssetProfiler` replaces `g_derivProfiler`, `InpMultiAssetProfilerEnabled` input, OnInit applies `SAssetProfile` for all symbols then Deriv-specific config, `GetFamilyPrediction()` uses `PredictMultiAsset()` with `DetectAssetClassId()`.
+  - **Python data_pipeline.py** extensions: `build_forex_features()` (3), `build_metals_features()` (4), `build_indices_features()` (4), `build_energies_features()` (3), `get_asset_class_feature_count()`, `asset_class` param in `build_feature_matrix()`, `build_dataset_splits()`, `build_scaled_dataset_splits()`.
+  - **Python zmq_server.py** extensions: `ASSET_CLASS_NAMES` (10 entries), `ASSET_CLASS_FEATURE_COUNTS`, `_load_asset_class_models()`, `_predict_asset_class()`, routing by `asset_class` 0-3.
+  - **Python trainers** (4 new): `train_forex_lgbm.py`, `train_metals_catboost.py`, `train_indices_xgboost.py`, `train_energies_xgboost.py`.
+  - **New log signatures:** `[HEARTBEAT-ASSET-CLASS]`, `[ASSET-CLASS-WEIGHT]`, `[MULTI-ASSET-PROFILER]`.
+  - **Compilation:** Python 0 errors; MQL5 verified by code review.
+
+- **Trend & S/R Strategy Enhancement (Batch 103 cont.):** Targeted fixes for Trend (45-55% → 55-65% win rate) and S/R bounce (50-60% → 60-70%):
+  - **CTrendSignalEnhancer** in `Strategies/TrendFiles/TrendSignalEnhancers.mqh`: EMA slope momentum (3-bar slope > 0.1 ATR-normalized) and trend freshness scoring (consistency<10 → +15%, >50 → -10%).
+  - **CSRSignalScorer** in `Strategies/SupportResistanceFiles/SRSignalScorer.mqh`: Weighted soft confluence scoring (0-100) replacing hard AND logic. Weights: PriceAtLevel=30, CandleRejection=25, EMAAligned=20, TrendlineConfluence=15, MultipleTouches=10. Threshold ≥60/100.
+  - **CStrategyTrend v2.1** in `Strategies/StrategyTrend.mqh`: Hurst regime filter (H<0.50 → "TREND_HURST_MEAN_REVERTING"), VPIN toxicity filter (VPIN>0.5 → "TREND_VPIN_TOXIC"), EMA momentum bonus (+10%), freshness multiplier, trailing stop integration (breakeven at 1R + CTrendTrailingStop hybrid trail), asset-class ADX thresholds via `InitForAssetClass()`. Engine injection via `SetHurstEngine()`/`SetVPINFilter()` (not owned).
+  - **CStrategySupportResistance** in `Strategies/StrategySupportResistance.mqh`: Hurst filter (H>0.55 in bounce → "SR_HURST_TRENDING_NO_BOUNCE"), VPIN filter (VPIN>0.5 → "SR_VPIN_TOXIC"), drawing throttle (every 5 bars). Engine injection via `SetHurstEngine()`/`SetVPINFilter()` (not owned).
+  - **CSRBreakoutStrategy::FalseBreakoutDetected()**: 3-bar lookback for price breaking above resistance or below support then returning; ATR tolerance; counter-signal at 0.70 confidence.
+  - **CSupportResistanceDetector::CalculateStrength()**: Exponential decay `0.99^barsOld` (capped 500 bars) replacing step-function.
+  - **CADXPositionSizing::InitForAssetClass()**: Per-class ADX thresholds (Forex/Metals: 20/25/30/35, Deriv: 15/20/25/30, Indices: 18/23/28/33).
+  - **CEnterpriseStrategyManager::GetStrategyByName()**: Returns `IStrategy*` by name. Used for `dynamic_cast` wiring.
+  - **EA Wiring** (`MultiStrategyAutonomousEA.mq5`): Batch 103 block — iterates `g_mathEngineSymbols[]`, `GetStrategyByName()` + `dynamic_cast`, injects Hurst/VPIN. Emits `[BATCH103]`.
+  - **New log signatures:** `[BATCH103]`, `TREND_HURST_MEAN_REVERTING`, `TREND_VPIN_TOXIC`, `SR_HURST_TRENDING_NO_BOUNCE`, `SR_VPIN_TOXIC`.
+  - **Compilation:** MQL5 0 errors, 0 warnings.
+
+- **ICT/SMC Strategy Overhaul (Batch 103 cont.):** Five new ICT/Smart Money Concepts strategies, two utility classes, and three component upgrades:
+  - **CFVGScalperStrategy** in `Strategies/FVGScalperStrategy.mqh`: FVG gap detection with OB freshness filter + rejection candle confirmation. Finds strongest FVG imbalance zone, checks price inside FVG, confirms with bullish/bearish wick rejection. Confidence: base 0.55 + structure alignment (+0.08) + fast CHOCH (+0.07) + CISD displacement (+0.05), capped 0.95. SL 0.5×ATR beyond FVG boundary, TP 1.5R. Tier 2, STRUCTURE_CLUSTER, weight 1.8. Owned: `CImbalanceDetector`, `CMarketStructureAnalyzer(swings=3)`. Log: `[FVG-SCALPER]`. Enum: `STRATEGY_FVG_SCALPER=11`.
+  - **CTurtleSoupStrategy** in `Strategies/TurtleSoupStrategy.mqh`: Liquidity sweep (Turtle Soup) detection via `CLiquidityDetector::DetectTurtleSoup()` + CHOCH/CISD confirmation + FVG confluence bonus. Confidence: base 0.50 + turtleSoup.confidence×0.15 + structure (+0.10) + FVG (+0.08) + CHOCH (+0.07), capped 0.95. SL beyond sweep extreme + 0.3×ATR, TP 2R. Tier 2, STRUCTURE_CLUSTER, weight 1.6. Owned: `CLiquidityDetector(atrMultiplier=5.0)`, `CImbalanceDetector`, `CMarketStructureAnalyzer(swings=3)`. Log: `[TURTLE-SOUP]`. Enum: `STRATEGY_TURTLE_SOUP=12`.
+  - **CBreakerBlockStrategy** in `Strategies/BreakerBlockStrategy.mqh`: Failed OB → breaker conversion + price retest + opposing FVG + CISD displacement + structure alignment. Scans for unmitigated breaker OBs (OB_BREAKER_BULL/OB_BREAKER_BEAR). Confidence: base 0.55 + freshness > 0.7 (+0.08) + FVG (+0.10) + CISD (+0.05) + structure (+0.07), capped 0.95. SL 0.5×ATR beyond breaker boundary, TP 2R. Tier 2, STRUCTURE_CLUSTER, weight 1.7. Owned: `CMarketStructureAnalyzer(swings=3)`, `CAdvancedOrderBlockDetector`, `CImbalanceDetector`. Log: `[BREAKER-BLOCK]`. Enum: `STRATEGY_BREAKER_BLOCK=13`.
+  - **CNYOpenGapStrategy** in `Strategies/NYOpenGapStrategy.mqh`: NY session open gap (NDOG) fade during 13:30-14:00 UTC. Gap size > 0.5×ATR(14,D1). Fades gap direction. Confidence: base 0.50 + FVG (+0.10) + large gap >1.0×ATR (+0.08) + near gap level (+0.07), capped 0.95. SL beyond gap extreme + 0.5×ATR, TP at previous close. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: skips Volatility/Boom/Crash/Jump/Step. Owned: `CSessionGapDetector(PERIOD_D1)`, `CImbalanceDetector`. Log: `[NYGAP]`. Enum: `STRATEGY_NY_OPEN_GAP=14`.
+  - **CAsianRangeBreakStrategy** in `Strategies/AsianRangeBreakStrategy.mqh`: Asian session range (00:00-06:00 UTC) breakout during London open (07:00-07:30 UTC). Requires tight range < 0.8×ATR. Confidence: base 0.50 + range compression < 0.5×ATR (+0.10) + structure (+0.08) + fast CHOCH (+0.07), capped 0.95. SL at opposite range boundary, TP 2× range size. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: same as NY Open Gap. Owned: `CICTKillZones(sessionCount=2, autoDetect=true)`, `CMarketStructureAnalyzer(swings=3)`. Log: `[ASIANRB]`. Enum: `STRATEGY_ASIAN_RANGE_BREAK=15`.
+  - **CPartialCloseManager** in `Strategies/UnifiedICTFiles/PartialCloseManager.mqh`: 3-step exit management — 50% close at 1R, breakeven move after 1R (SL → entry + 0.1% buffer, validates SYMBOL_TRADE_STOPS_LEVEL), ATR trailing after 2R (1.5×ATR(M5,14) from price, only moves favorably). Max 50 tracked positions with periodic compaction. Internal: `SPartialCloseState` per position. Log: `[PARTIAL-CLOSE]`.
+  - **CTimeframeConfluence** in `Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`: Multi-TF alignment scorer with 3 `CMarketStructureAnalyzer` instances (H1, M15, M5). Scoring: H1=40pts, M15=30pts, M5=30pts (max 100). `IsMajorityAligned()` requires ≥2/3 timeframes. Per-bar caching via `STFAlignmentCache`. Log: `[TF-CONF]`.
+  - **AdvancedOrderBlocks.mqh** upgrade: `GetFreshness(int obIndex)` returns 0.0-1.0 freshness decay for order blocks. Used by BreakerBlockStrategy.
+  - **MarketStructureAnalyzer.mqh** upgrade: 5 fast structure detection methods — `DetectFastCHOCH()`, `DetectWickBOS()`, `DetectCISDDisplacement()`, `GetSwingHighLevel()`, `GetSwingLowLevel()`. Used by FVGScalper, TurtleSoup, BreakerBlock, AsianRangeBreak.
+  - **LiquidityDetector.mqh** upgrade: `SExternalLiquidityPool` struct + `DetectExternalSwingLiquidity()` for swing-based external liquidity detection. Used by TurtleSoupStrategy.
+  - **EnterpriseStrategyManager.mqh** extensions: `m_maxStrategies` 20→25, `GetStrategyByName(const string name)` returning `IStrategy*`, 5 new `RegisterStrategy()` calls.
+  - **Enums.mqh** additions: `STRATEGY_FVG_SCALPER=11`, `STRATEGY_TURTLE_SOUP=12`, `STRATEGY_BREAKER_BLOCK=13`, `STRATEGY_NY_OPEN_GAP=14`, `STRATEGY_ASIAN_RANGE_BREAK=15`.
+  - **MultiStrategyAutonomousEA.mq5** additions: 5 new input parameters (`InpEnableFVGScalper`, `InpEnableTurtleSoup`, `InpEnableBreakerBlock`, `InpEnableNYOpenGap`, `InpEnableAsianRangeBreak`), `BuildStrategyFlags()` indices 12-16.
+  - **New log signatures:** `[FVG-SCALPER]`, `[TURTLE-SOUP]`, `[BREAKER-BLOCK]`, `[NYGAP]`, `[ASIANRB]`, `[PARTIAL-CLOSE]`, `[TF-CONF]`.
+  - **Compilation:** MQL5 0 errors, 0 warnings.
+
+- **Deriv Asset Profiler & Family-Specific Engines (Batch 102):** Complete 18-family Deriv synthetic index auto-detection and per-family engine optimization system:
+  - **CDerivAssetProfiler** in `Core/Processing/DerivAssetProfiler.mqh`: Central profiler auto-detects which of 18 Deriv index families a symbol belongs to via `DetectFamily(symbol)` using 13 family-specific symbol-name matchers from `Instruments.mqh`. Returns `SDerivProfile` with 20 fields: `family`, `familyName`, `spikeThreshold`, `atrCompressionRatio`, `atrMultiplierSL`, `atrMultiplierTP`, `hurstThreshold`, `riskPerTrade`, `magicOffset`, `maxDrawdownPercent`, `enableSpikeHunter`, `enableGridRecovery`, `enableHurstRegime`, `enableOUFilter`, `gridFactorATR`, `maxGridLevels`, `gridProgressionFactor`, `spikeCooldownSec`, `spikeWindowBars`. `ENUM_DERIV_FAMILY` has 19 values (18 families + DERIV_UNKNOWN). Methods: `DetectFamily()`, `GetProfile()`, `GetMagicOffset()`, `GetFamilyName()`, `PrintProfile()`.
+  - **CGridRecoveryEngine** in `Core/Scalp/GridRecoveryEngine.mqh`: Grid recovery for mean-reverting synthetic families. `ENUM_GRID_PROGRESSION` supports Modified Martingale (`GRID_PROGRESSION_MARTINGALE`: lot × factor^level, factor=1.5) and Fibonacci (`GRID_PROGRESSION_FIBONACCI`: lot × fib(level)). `SGridRecoveryConfig` with 12 fields including `activationHurstThreshold` (0.45). Grid activates only when Hurst < threshold. Per-level SL = ATR × 1.5, TP = 0.5 × grid spacing. Magic offset 8000. Max 8 levels, 15% drawdown cap. Methods: `SetFamilyConfig()`, `SetHurstRegime()`, `AddSymbol()`, `ProcessTick()`, `Deinit()`.
+  - **CATRScalpingEngine** in `Core/Scalp/ATRScalpingEngine.mqh`: ATR-based between-spike scalping for Jump, DEX, and Hybrid families. `SATRScalpingConfig` with 14 fields. Spike window avoidance: `NotifySpikeDetected(symbol)` and `SetSpikeInterval(symbol, intervalSec)` learn spike timing from `CSpikeHunterEngine`; avoids trading `spikeWindowAvoidMinutes` (5) before expected spikes. Entry: EMA fast/slow trend + RSI 30-70 + spread < 0.3×ATR. SL=1.5×ATR, TP=2.0×ATR. Magic offset 7000. Max 3 concurrent positions per symbol. Methods: `AddSymbol()`, `ProcessTick()`, `NotifySpikeDetected()`, `SetSpikeInterval()`, `Deinit()`.
+  - **SSpikeHunterFamilyOverrides** in `Core/Scalp/SpikeHunterEngine.mqh`: Per-family spike parameter overrides with 8 `GetEffective*()` methods. Profiler-driven via `SetFamilyOverrides()`. CrashBoom: velocity 2.8×, Jump: 3.0×, Volatility: 3.5× (vs default 2.5×). Each family gets tailored SL/TP ATR multipliers, magic offsets (9000-9900), cooldowns, and minimum confluence thresholds.
+  - **SSymbolRiskOverride** in `Core/Risk/UnifiedRiskManager.mqh`: Per-family risk and drawdown scaling. CrashBoom: 1.5% risk, 15% drawdown; Volatility: 1.0% risk, 10% drawdown; Step: 0.8% risk, 8% drawdown; Jump: 2.0% risk, 20% drawdown; DEX: 1.5% risk, 15% drawdown. Applied during pre-trade risk validation via `m_riskOverrides[]` array.
+  - **CEnterpriseStrategyManager** integration: `SetDerivProfiler()` stores profiler reference; `ApplyFamilyEngineWeights()` adjusts strategy weights based on family profile.
+  - **CTradeManager** integration: `SSymbolMagicOffset` struct for per-family magic offset logic in position tracking.
+  - **CDiagnosticsManager** integration: `SetDerivProfiler()` enables `[HEARTBEAT-FAMILY]` logging with per-family engine status.
+  - **Instruments.mqh** additions: 13 new family detection functions (`IsCrashBoomSyntheticSymbolName`, `IsVolatilitySyntheticSymbolName`, `IsStepSyntheticSymbolName`, `IsJumpSyntheticSymbolName`, `IsDEXSyntheticSymbolName`, `IsMultiStepSyntheticSymbolName`, `IsExponentialSyntheticSymbolName`, `IsHybridSyntheticSymbolName`, `IsRangeBreakSyntheticSymbolName`, `IsSkewStepSyntheticSymbolName`, `IsVolSwitchSyntheticSymbolName`, `IsDriftSwitchSyntheticSymbolName`, plus existing `IsStableSpreadSyntheticSymbolName`, `IsPairsArbitrageSyntheticSymbolName`, `IsSpotVolatilitySyntheticSymbolName`), updated `IsSyntheticIndexSymbolName()`, new `GetInstrumentExecutionProfileName()`.
+  - **New Input Parameters:** `InpDerivProfilerEnabled` (default true), `InpGridRecoveryEnabled` (default true), `InpATRScalpingEnabled` (default true).
+  - **Magic Number Allocation Table:**
+
+    | Offset | Engine/Family |
+    |--------|---------------|
+    | 7000 | ATR Scalping Engine |
+    | 8000 | Grid Recovery Engine |
+    | 9000 | Spike Hunter (CrashBoom base) |
+    | 9100 | Volatility family |
+    | 9200 | Step family |
+    | 9300 | Jump family |
+    | 9400 | DEX family |
+    | 9500 | MultiStep family |
+    | 9600 | Exponential family |
+    | 9700 | Hybrid family |
+    | 9800 | RangeBreak family |
+    | 9900 | SkewStep–SpotVolatility families |
+
+  - **Family-Specific Risk Parameter Ranges:**
+
+    | Family | Risk/Trade | Max Drawdown | SpikeHunter | GridRecovery | ATRScalping |
+    |--------|:----------:|:------------:|:-----------:|:------------:|:-----------:|
+    | CrashBoom | 1.50% | 15% | ✓ | ✓ | |
+    | Volatility | 1.00% | 10% | | ✓ | |
+    | Step | 0.80% | 8% | | ✓ | |
+    | Jump | 2.00% | 20% | ✓ | | ✓ |
+    | DEX | 1.50% | 15% | ✓ | | ✓ |
+    | Hybrid | 1.50% | 15% | ✓ | | ✓ |
+    | RangeBreak | 1.20% | 12% | ✓ | | |
+
+  - **OnInit Integration Trace:**
+    1. If `InpDerivProfilerEnabled`: profiler auto-detects family for each managed symbol, logs `[PROFILER-DETECT]`
+    2. If `InpGridRecoveryEnabled` and symbol is synthetic: initialize `CGridRecoveryEngine` with default config, add family-enabled symbols with `SetFamilyConfig()` from profiler profiles, set Hurst regime from `CHurstEngine`
+    3. If `InpATRScalpingEnabled` and symbol is synthetic: initialize `CATRScalpingEngine` with default config, add Jump/DEX/Hybrid symbols with spike intervals from `CSpikeHunterEngine`
+    4. Pass profiler reference to `CEnterpriseStrategyManager::SetDerivProfiler()` for family-weight adjustment
+    5. Pass profiler reference to `CDiagnosticsManager::SetDerivProfiler()` for `[HEARTBEAT-FAMILY]` logging
+    6. Populate `SSymbolRiskOverride` in `CUnifiedRiskManager` from profiler profiles
+    7. Populate `SSpikeHunterFamilyOverrides` in `CSpikeHunterEngine` from profiler profiles
+    8. Populate `SSymbolMagicOffset` in `CTradeManager` from profiler profiles
+  - **OnTick Integration Trace:**
+    1. If `InpDerivProfilerEnabled` and `InpGridRecoveryEnabled`: `g_gridRecovery.ProcessTick(symbol, bid, ask)`
+    2. If `InpDerivProfilerEnabled` and `InpATRScalpingEnabled`: `g_atrScalping.ProcessTick(symbol, bid, ask)`
+  - **OnDeinit Integration Trace:**
+    1. If `InpGridRecoveryEnabled`: `g_gridRecovery.Deinit()`
+    2. If `InpATRScalpingEnabled`: `g_atrScalping.Deinit()`
+  - **Compilation:** 0 errors, 0 warnings.
+
+- **Deriv Python ML Stack Integration (Batch 102, cont.):** Family-aware feature engineering, training scripts, server routing, and MQL5 bridge protocol for per-family ML model selection:
+  - **Python Feature Pipeline** (`Python/data_pipeline.py`):
+    - `build_deriv_family_features(close, high, low, volume, family_id)` returns 26 feature columns (8 signal + 18 one-hot)
+    - `get_feature_count(family_id)`: 57 for universal, 83 for Deriv families
+    - `build_feature_matrix()` and all downstream functions accept `family_id` param
+  - **Python Training Scripts** (4 new files):
+    - `Python/train_deriv_catboost.py` — `--family-id` arg; family-specific hyperparams (CrashBoom/DEX: iterations=1500/depth=8/l2=5.0/class_weights; Hybrid: iterations=1200/depth=7)
+    - `Python/train_deriv_xgboost.py` — `--family-id` arg; Step/MultiStep/SkewStep overrides (gamma=1.0, reg_alpha=0.5, reg_lambda=2.0)
+    - `Python/train_deriv_lgbm.py` — `--family-id` arg; Volatility override (num_leaves=31, lr=0.02)
+    - `Python/train_deriv_stacker.py` — `--family-id` arg; optional `--catboost-pkl`/`--xgboost-pkl`; bundle includes `family_id` and `n_base_models`
+    - All auto-override seq_len=120 for Jump (3) and DEX (4)
+  - **Python Server** (`Python/zmq_server.py` v1.1.0):
+    - `FAMILY_IDS` dict (18 families), `_load_family_models()`, `_detect_family_from_symbol()`, `_predict_family()`
+    - `GET /families`, `GET /family/{family_id}` endpoints
+    - `/predict` accepts `family_id` and `symbol` fields; backward compatible
+  - **MQL5 Bridge Protocol Changes**:
+    - `DetectFamilyId(symbol)` in `Instruments.mqh`: priority-ordered cascade, returns 0-17 or -1
+    - `CPythonBridge::Predict()` extended with `family_id` (default -1) and `symbol` (default "") params
+    - `CPythonBridge::PredictFamily()` convenience method added
+    - `SPythonBridgeResponse` extended with 8 new fields: `family_id` (int), `family_name` (string), `catboost_buy/sell`, `xgboost_buy/sell`, `onnx_buy/sell` (6 doubles)
+    - `ParsePredictionResponse()` parses all new fields; backward compatible
+    - `GetFamilyPrediction(symbol, features, size)` global helper in `MultiStrategyAutonomousEA.mq5`
+  - **Integration Trace:**
+    - On-demand: `GetFamilyPrediction(symbol, features[], size)` → `DetectFamilyId(symbol)` → `PredictFamily(features, size, family_id, symbol)` → HTTP POST to Python `/predict` → family-specific model inference → `SPythonBridgeResponse`
+  - **Compilation:** 0 errors, 0 warnings.
+
 - **Spike Hunter Engine for Synthetic CFD Indices (Batch 100):** New `CSpikeHunterEngine` in `Core/Scalp/SpikeHunterEngine.mqh` providing dedicated spike hunting for synthetic CFD indices:
   - **3-Layer Spike Detection:** Tick velocity ≥ 2.5× rolling average (Layer 1), direction accumulation ≥ 12 consecutive ticks in same direction (Layer 2), ATR compression ≤ 60% indicating price squeeze before spike (Layer 3). Requires 2/3 confluence to trigger.
   - **Symbol-Aware Direction Mapping:** PainX→SELL (crash indices spike down), GainX→BUY (boom indices spike up), Volatility Index→directional (follows detected direction), Jump Index→momentum continuation (follows pre-spike momentum).

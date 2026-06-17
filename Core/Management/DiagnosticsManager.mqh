@@ -17,6 +17,8 @@
 #include "../Monitoring/PerformanceAnalytics.mqh"
 #include "../../IndicatorManager.mqh"
 #include "EnterpriseStrategyManager.mqh"
+#include "../Processing/DerivAssetProfiler.mqh"
+#include "../Processing/MultiAssetProfiler.mqh"
 
 // Forward declarations for AI modules
 class CNeuralNetworkStrategy;
@@ -37,6 +39,8 @@ private:
     CFastScalpEngine*        m_scalpEngine;
     CFullMarginMode*         m_fullMarginMode;
     CSafeMode*               m_safeMode;
+    CDerivAssetProfiler*     m_derivProfiler;
+    CMultiAssetProfiler*     m_multiAssetProfiler;
     bool                     m_initialized;
 
     // Heartbeat state
@@ -93,6 +97,8 @@ private:
     // Enterprise managers for consensus diagnostics
     CEnterpriseStrategyManager* m_managers[];
     int                         m_managerCount;
+    string                      m_symbols[];
+    int                         m_symbolCount;
 
     //+------------------------------------------------------------------+
     //| Collect aggregated consensus diagnostics from all managers        |
@@ -292,6 +298,8 @@ public:
         m_scalpEngine(NULL),
         m_fullMarginMode(NULL),
         m_safeMode(NULL),
+        m_derivProfiler(NULL),
+        m_multiAssetProfiler(NULL),
         m_initialized(false),
         m_heartbeatIntervalSec(60),
         m_lastHeartbeatTime(0),
@@ -330,7 +338,8 @@ public:
         m_riskTier(RISK_TIER_MODERATE),
         m_shadowMode(true),
         m_tradingPaused(false),
-        m_managerCount(0)
+        m_managerCount(0),
+        m_symbolCount(0)
     {}
 
     ~CDiagnosticsManager() {}
@@ -404,6 +413,15 @@ public:
             m_managers[i] = managers[i];
         m_managerCount = count;
     }
+    void SetDerivProfiler(CDerivAssetProfiler* profiler) { m_derivProfiler = profiler; }
+    void SetMultiAssetProfiler(CMultiAssetProfiler* profiler) { m_multiAssetProfiler = profiler; }
+    void SetSymbols(string &symbols[], int count)
+    {
+        ArrayResize(m_symbols, count);
+        for(int i = 0; i < count; i++)
+            m_symbols[i] = symbols[i];
+        m_symbolCount = count;
+    }
 
     //+------------------------------------------------------------------+
     //| Windowed-value getters — use the correctly-maintained m_prev*     |
@@ -460,6 +478,51 @@ public:
             m_fullMarginMode.PrintDiagnostics();
         if(m_riskTier == RISK_TIER_CONSERVATIVE && m_safeMode != NULL && m_safeMode.IsInitialized())
             m_safeMode.PrintDiagnostics();
+
+        //--- Per-symbol family detection diagnostics
+        if(m_derivProfiler != NULL && m_symbolCount > 0)
+        {
+            for(int i = 0; i < m_symbolCount; i++)
+            {
+                if(m_multiAssetProfiler != NULL && !m_multiAssetProfiler.IsDerivSymbol(m_symbols[i]))
+                {
+                    // Non-Deriv symbol: log asset class info
+                    string assetClassName = m_multiAssetProfiler.GetAssetClassName(m_symbols[i]);
+                    SAssetProfile profile = m_multiAssetProfiler.GetProfile(m_symbols[i]);
+                    PrintFormat("[HEARTBEAT-ASSET-CLASS] symbol=%s | class=%s | atrSL=%.2f | atrTP=%.2f | risk=%.2f%% | scalp=%s | grid=%s | breakout=%s",
+                                m_symbols[i], assetClassName,
+                                profile.atrMultiplierSL, profile.atrMultiplierTP,
+                                profile.riskPerTrade,
+                                profile.enableScalpEngine ? "Y" : "N",
+                                profile.enableGridRecovery ? "Y" : "N",
+                                profile.enableBreakoutEngine ? "Y" : "N");
+                }
+                else
+                {
+                    // Deriv synthetic: log family info
+                    string familyName = m_derivProfiler.GetFamilyName(m_symbols[i]);
+                    PrintFormat("[HEARTBEAT-FAMILY] symbol=%s | family=%s", m_symbols[i], familyName);
+                }
+            }
+        }
+
+        //--- Grid-recovery and scalp position counts
+        int gridRecoveryCount = 0;
+        int atrScalpCount = 0;
+        int totalPositions = PositionsTotal();
+        for(int posIdx = 0; posIdx < totalPositions; posIdx++)
+        {
+            ulong ticket = PositionGetTicket(posIdx);
+            if(ticket == 0)
+                continue;
+            string comment = PositionGetString(POSITION_COMMENT);
+            if(StringFind(comment, "GRID-RECOVERY") >= 0)
+                gridRecoveryCount++;
+            if(StringFind(comment, "ATR-SCALP") >= 0)
+                atrScalpCount++;
+        }
+        PrintFormat("[HEARTBEAT-POSITIONS] total=%d | grid_recovery=%d | atr_scalp=%d",
+                    totalPositions, gridRecoveryCount, atrScalpCount);
 
         // NOTE: Consensus diagnostics are now handled by EmitConsensusDiagnostics()
         // which is called from the main EA's heartbeat cycle.

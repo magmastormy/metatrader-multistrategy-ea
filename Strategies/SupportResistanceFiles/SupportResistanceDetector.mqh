@@ -489,13 +489,17 @@ void CSupportResistanceDetector::CalculateStrength()
         // Increase strength for multiple touches
         strength += (m_levels[i].touches - 1) * 0.05;
         strength = MathMin(1.0, strength);
-        
-        // Decrease strength for old levels
+
+        // Batch 103: Exponential decay based on bar age (replaces step-function)
+        // 0.99^barsOld provides smooth degradation instead of hard cutoff at 30 days
         if(m_levels[i].createdTime > 0)
         {
-            int age = (int)((TimeCurrent() - m_levels[i].createdTime) / PeriodSeconds(PERIOD_D1));
-            if(age > 30)
-                strength -= 0.10;
+            int barsOld = iBarShift(m_symbol, m_timeframe, m_levels[i].createdTime, false);
+            if(barsOld > 0)
+            {
+                double decayFactor = pow(0.99, (double)MathMin(barsOld, 500));
+                strength *= decayFactor;
+            }
         }
         
         m_levels[i].strength = MathMax(0.3, strength);

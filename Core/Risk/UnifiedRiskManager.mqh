@@ -53,6 +53,26 @@ struct SUnifiedRiskConfig
 };
 
 //+------------------------------------------------------------------+
+//| Per-Symbol Risk Override (family-specific risk parameters)        |
+//| Allows per-symbol risk limits that are lower than global defaults |
+//+------------------------------------------------------------------+
+struct SSymbolRiskOverride
+{
+    string   symbol;
+    double   riskPerTradePercent;   // 0 = use global default
+    double   maxDrawdownPercent;    // 0 = use global default
+    bool     hasOverrides;
+
+    SSymbolRiskOverride()
+    {
+        symbol              = "";
+        riskPerTradePercent = 0.0;
+        maxDrawdownPercent  = 0.0;
+        hasOverrides        = false;
+    }
+};
+
+//+------------------------------------------------------------------+
 //| Unified risk runtime snapshot                                    |
 //| Blueprint 10.4: All percent fields use 0-100 scale               |
 //+------------------------------------------------------------------+
@@ -129,6 +149,10 @@ private:
     // Profit-adjusted risk budget: fraction of unrealized profit that frees up risk budget
     double m_riskReductionFactor;
 
+    // Per-symbol risk overrides (family-specific risk parameters)
+    SSymbolRiskOverride m_riskOverrides[];
+    int m_riskOverrideCount;
+
 public:
     CUnifiedRiskManager();
     ~CUnifiedRiskManager();
@@ -144,6 +168,12 @@ public:
 
     // Set base risk per trade percent (used by dual-mode auto-switching)
     void SetBaseRiskPerTrade(double riskPercent);
+
+    // Per-symbol risk overrides (family-specific risk parameters)
+    void SetRiskPerTrade(const string symbol, double riskPct);
+    void SetMaxDrawdownForFamily(const string symbol, double maxDDPct);
+    double GetEffectiveRiskPerTrade(const string symbol) const;
+    double GetEffectiveMaxDrawdown(const string symbol) const;
 
     // Single trade validation authority.
     SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime");
@@ -238,6 +268,94 @@ void CUnifiedRiskManager::SetBaseRiskPerTrade(double riskPercent)
 }
 
 //+------------------------------------------------------------------+
+//| Set per-symbol risk per trade override                            |
+//+------------------------------------------------------------------+
+void CUnifiedRiskManager::SetRiskPerTrade(const string symbol, double riskPct)
+{
+    // Find existing override
+    for(int i = 0; i < m_riskOverrideCount; i++)
+    {
+        if(m_riskOverrides[i].symbol == symbol)
+        {
+            m_riskOverrides[i].riskPerTradePercent = riskPct;
+            m_riskOverrides[i].hasOverrides = true;
+            return;
+        }
+    }
+    // Add new override using temp struct pattern for string members
+    int newSize = m_riskOverrideCount + 1;
+    SSymbolRiskOverride tempOverrides[];
+    ArrayResize(tempOverrides, newSize);
+    for(int i = 0; i < m_riskOverrideCount; i++)
+        tempOverrides[i] = m_riskOverrides[i];
+    ArrayResize(m_riskOverrides, newSize);
+    for(int i = 0; i < m_riskOverrideCount; i++)
+        m_riskOverrides[i] = tempOverrides[i];
+    m_riskOverrides[m_riskOverrideCount].symbol = symbol;
+    m_riskOverrides[m_riskOverrideCount].riskPerTradePercent = riskPct;
+    m_riskOverrides[m_riskOverrideCount].hasOverrides = true;
+    m_riskOverrideCount++;
+    PrintFormat("[RISK-FAMILY] Set risk per trade for %s: %.2f%%", symbol, riskPct);
+}
+
+//+------------------------------------------------------------------+
+//| Set per-symbol max drawdown override                              |
+//+------------------------------------------------------------------+
+void CUnifiedRiskManager::SetMaxDrawdownForFamily(const string symbol, double maxDDPct)
+{
+    for(int i = 0; i < m_riskOverrideCount; i++)
+    {
+        if(m_riskOverrides[i].symbol == symbol)
+        {
+            m_riskOverrides[i].maxDrawdownPercent = maxDDPct;
+            m_riskOverrides[i].hasOverrides = true;
+            return;
+        }
+    }
+    int newSize = m_riskOverrideCount + 1;
+    SSymbolRiskOverride tempOverrides[];
+    ArrayResize(tempOverrides, newSize);
+    for(int i = 0; i < m_riskOverrideCount; i++)
+        tempOverrides[i] = m_riskOverrides[i];
+    ArrayResize(m_riskOverrides, newSize);
+    for(int i = 0; i < m_riskOverrideCount; i++)
+        m_riskOverrides[i] = tempOverrides[i];
+    m_riskOverrides[m_riskOverrideCount].symbol = symbol;
+    m_riskOverrides[m_riskOverrideCount].maxDrawdownPercent = maxDDPct;
+    m_riskOverrides[m_riskOverrideCount].hasOverrides = true;
+    m_riskOverrideCount++;
+    PrintFormat("[RISK-FAMILY] Set max drawdown for %s: %.1f%%", symbol, maxDDPct);
+}
+
+//+------------------------------------------------------------------+
+//| Get effective risk per trade for a symbol                         |
+//| Returns the LOWER of family-specific and global max limit         |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::GetEffectiveRiskPerTrade(const string symbol) const
+{
+    for(int i = 0; i < m_riskOverrideCount; i++)
+    {
+        if(m_riskOverrides[i].symbol == symbol && m_riskOverrides[i].hasOverrides && m_riskOverrides[i].riskPerTradePercent > 0.0)
+            return MathMin(m_riskOverrides[i].riskPerTradePercent, m_config.maxRiskPerTradePercent);
+    }
+    return m_config.baseRiskPerTradePercent;
+}
+
+//+------------------------------------------------------------------+
+//| Get effective max drawdown for a symbol                           |
+//| Returns the LOWER of family-specific and global critical limit    |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::GetEffectiveMaxDrawdown(const string symbol) const
+{
+    for(int i = 0; i < m_riskOverrideCount; i++)
+    {
+        if(m_riskOverrides[i].symbol == symbol && m_riskOverrides[i].hasOverrides && m_riskOverrides[i].maxDrawdownPercent > 0.0)
+            return MathMin(m_riskOverrides[i].maxDrawdownPercent, m_config.drawdownCriticalPercent);
+    }
+    return m_config.drawdownCriticalPercent;
+}
+
+//+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
 CUnifiedRiskManager::CUnifiedRiskManager() :
@@ -263,7 +381,8 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_cbRecoveryCooldownMin(30),
     m_symbolBudgetCount(0),
     m_lastBudgetRefresh(0),
-    m_riskReductionFactor(0.5)
+    m_riskReductionFactor(0.5),
+    m_riskOverrideCount(0)
 {
     m_config.baseRiskPerTradePercent = 1.0;   // Blueprint 10.4: 0-100 scale (1.0 = 1%)
     m_config.minRiskPerTradePercent = 0.1;    // Blueprint 10.4: 0-100 scale (0.1 = 0.1%)
@@ -458,6 +577,19 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         return result;
     }
 
+    // Family-specific drawdown check: if this symbol has a tighter drawdown limit,
+    // reject trades on it even when the global circuit breaker hasn't tripped
+    double familyMaxDD = GetEffectiveMaxDrawdown(request.symbol);
+    if(familyMaxDD < m_config.drawdownCriticalPercent && m_maxDrawdownFromPeak >= familyMaxDD)
+    {
+        result.message = StringFormat("Family drawdown limit reached for %s: %.2f%% >= %.1f%%",
+                                      request.symbol, m_maxDrawdownFromPeak, familyMaxDD);
+        result.severity = ERROR_LEVEL_WARNING;
+        PrintFormat("[RISK-FAMILY] Drawdown block | %s | DD=%.2f%% >= family limit=%.1f%%",
+                    request.symbol, m_maxDrawdownFromPeak, familyMaxDD);
+        return result;
+    }
+
     CheckAndResetDailyLimits();
 
     double reservedRisk = GetReservedVirtualRiskPercent();
@@ -524,7 +656,7 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         int virtualReservationCount = GetVirtualReservationCount();
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
 
-        if(isColdStart && result.riskPercent <= m_config.maxRiskPerTradePercent)
+        if(isColdStart && result.riskPercent <= GetEffectiveRiskPerTrade(request.symbol))
         {
             PrintFormat("[RISK-SYMBOL-BUDGET] Bootstrap bypass | %s | used=%.2f%% + new=%.2f%% > alloc=%.2f%% (cold start, per-trade risk OK)",
                         request.symbol, used, result.riskPercent, allocation);
@@ -552,7 +684,7 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         int virtualReservationCount = GetVirtualReservationCount();
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
 
-        if(isColdStart && result.riskPercent > 0.0 && result.riskPercent <= m_config.maxRiskPerTradePercent)
+        if(isColdStart && result.riskPercent > 0.0 && result.riskPercent <= GetEffectiveRiskPerTrade(request.symbol))
         {
             // Bootstrap: allow this trade as the first entry on cold start
             // The portfolio cap is effectively distributed: each requesting symbol

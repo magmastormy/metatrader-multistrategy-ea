@@ -147,6 +147,86 @@ bool IsGainFlipSyntheticSymbolName(const string symbol)
             StringFind(normalized, "FLIP ") >= 0);
 }
 
+//--- Batch 102: Extended Deriv family detection (18 families)
+
+bool IsDexSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "DEX ") >= 0);
+}
+
+bool IsMultiStepSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "MULTI") >= 0 && StringFind(normalized, "STEP") >= 0);
+}
+
+bool IsExponentialSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "EXP") >= 0 || StringFind(normalized, "GROWTH") >= 0);
+}
+
+bool IsHybridSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "HYBRID") >= 0);
+}
+
+bool IsSkewStepSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "SKEW") >= 0 && StringFind(normalized, "STEP") >= 0);
+}
+
+bool IsVolSwitchSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "VOL") >= 0 && StringFind(normalized, "SWITCH") >= 0);
+}
+
+bool IsDriftSwitchSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "DRIFT") >= 0 && StringFind(normalized, "SWITCH") >= 0);
+}
+
+bool IsTrekSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "TREK") >= 0);
+}
+
+bool IsTacticalSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "TACTICAL") >= 0);
+}
+
+bool IsDerivedSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "DERIVED") >= 0);
+}
+
+bool IsStableSpreadSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "STABLE") >= 0);
+}
+
+bool IsSpotVolatilitySyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "SPOT VOL") >= 0);
+}
+
+bool IsPairsArbitrageSyntheticSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "PAIRS") >= 0);
+}
+
 bool IsSyntheticIndexSymbolName(const string symbol)
 {
     return (IsVolatilitySyntheticSymbolName(symbol) ||
@@ -156,7 +236,139 @@ bool IsSyntheticIndexSymbolName(const string symbol)
             IsRangeBreakSyntheticSymbolName(symbol) ||
             IsPainSyntheticSymbolName(symbol) ||
             IsSwitchSyntheticSymbolName(symbol) ||
-            IsGainFlipSyntheticSymbolName(symbol));
+            IsGainFlipSyntheticSymbolName(symbol) ||
+            IsDexSyntheticSymbolName(symbol) ||
+            IsMultiStepSyntheticSymbolName(symbol) ||
+            IsExponentialSyntheticSymbolName(symbol) ||
+            IsHybridSyntheticSymbolName(symbol) ||
+            IsSkewStepSyntheticSymbolName(symbol) ||
+            IsVolSwitchSyntheticSymbolName(symbol) ||
+            IsDriftSwitchSyntheticSymbolName(symbol) ||
+            IsTrekSyntheticSymbolName(symbol) ||
+            IsTacticalSyntheticSymbolName(symbol) ||
+            IsDerivedSyntheticSymbolName(symbol) ||
+            IsStableSpreadSyntheticSymbolName(symbol) ||
+            IsSpotVolatilitySyntheticSymbolName(symbol) ||
+            IsPairsArbitrageSyntheticSymbolName(symbol));
+}
+
+//+------------------------------------------------------------------+
+//| Detect Deriv family ID from symbol name                          |
+//| Priority order matches CDerivAssetProfiler::DetectFamily()       |
+//| Returns: 0-17 for known families, -1 for non-Deriv symbols      |
+//+------------------------------------------------------------------+
+int DetectFamilyId(const string symbol)
+{
+    if(IsBoomCrashSyntheticSymbolName(symbol))    return 0;   // DERIV_CRASH_BOOM
+    if(IsDexSyntheticSymbolName(symbol))           return 4;   // DERIV_DEX
+    if(IsJumpSyntheticSymbolName(symbol))           return 3;   // DERIV_JUMP
+    if(IsVolSwitchSyntheticSymbolName(symbol))      return 10;  // DERIV_VOL_SWITCH (before Volatility!)
+    if(IsDriftSwitchSyntheticSymbolName(symbol))    return 11;  // DERIV_DRIFT_SWITCH
+    if(IsSkewStepSyntheticSymbolName(symbol))       return 9;   // DERIV_SKEW_STEP
+    if(IsMultiStepSyntheticSymbolName(symbol))      return 5;   // DERIV_MULTISTEP
+    if(IsStepSyntheticSymbolName(symbol))           return 2;   // DERIV_STEP
+    if(IsVolatilitySyntheticSymbolName(symbol))     return 1;   // DERIV_VOLATILITY
+    if(IsExponentialSyntheticSymbolName(symbol))    return 6;   // DERIV_EXPONENTIAL
+    if(IsHybridSyntheticSymbolName(symbol))         return 7;   // DERIV_HYBRID
+    if(IsRangeBreakSyntheticSymbolName(symbol))     return 8;   // DERIV_RANGE_BREAK
+    if(IsTrekSyntheticSymbolName(symbol))           return 12;  // DERIV_TREK
+    if(IsTacticalSyntheticSymbolName(symbol))       return 13;  // DERIV_TACTICAL
+    if(IsDerivedSyntheticSymbolName(symbol))        return 14;  // DERIV_DERIVED
+    if(IsStableSpreadSyntheticSymbolName(symbol))   return 15;  // DERIV_STABLE_SPREAD
+    if(IsPairsArbitrageSyntheticSymbolName(symbol)) return 16;  // DERIV_PAIRS_ARBITRAGE
+    if(IsSpotVolatilitySyntheticSymbolName(symbol)) return 17;  // DERIV_SPOT_VOLATILITY
+    return -1;
+}
+
+//+------------------------------------------------------------------+
+//| Batch 103: Non-Deriv asset class detection functions             |
+//+------------------------------------------------------------------+
+
+bool IsMetalsSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "XAU") >= 0 ||
+            StringFind(normalized, "XAG") >= 0 ||
+            StringFind(normalized, "XPT") >= 0 ||
+            StringFind(normalized, "XPD") >= 0 ||
+            StringFind(normalized, "GOLD") >= 0 ||
+            StringFind(normalized, "SILVER") >= 0);
+}
+
+bool IsIndicesSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "US30") >= 0 ||
+            StringFind(normalized, "US500") >= 0 ||
+            StringFind(normalized, "US100") >= 0 ||
+            StringFind(normalized, "NAS100") >= 0 ||
+            StringFind(normalized, "GER40") >= 0 ||
+            StringFind(normalized, "UK100") >= 0 ||
+            StringFind(normalized, "DOW") >= 0 ||
+            StringFind(normalized, "NAS") >= 0 ||
+            StringFind(normalized, "DAX") >= 0 ||
+            StringFind(normalized, "SPX") >= 0 ||
+            StringFind(normalized, "SP500") >= 0 ||
+            StringFind(normalized, "FTSE") >= 0 ||
+            StringFind(normalized, "NIKKEI") >= 0);
+}
+
+bool IsEnergiesSymbolName(const string symbol)
+{
+    string normalized = NormalizeInstrumentSymbolName(symbol);
+    return (StringFind(normalized, "WTI") >= 0 ||
+            StringFind(normalized, "OIL") >= 0 ||
+            StringFind(normalized, "BRENT") >= 0 ||
+            StringFind(normalized, "NGAS") >= 0 ||
+            StringFind(normalized, "NATGAS") >= 0 ||
+            StringFind(normalized, "XTI") >= 0 ||
+            StringFind(normalized, "XBR") >= 0 ||
+            StringFind(normalized, "WTICO") >= 0);
+}
+
+//+------------------------------------------------------------------+
+//| Detect asset class ID from symbol name                           |
+//| Priority: Deriv > Metals > Indices > Energies > Forex > Unknown  |
+//| Returns: 0-9 for known asset classes (ENUM_ASSET_CLASS values)   |
+//+------------------------------------------------------------------+
+int DetectAssetClassId(const string symbol)
+{
+    // Deriv synthetics first (most specific)
+    if(IsSyntheticIndexSymbolName(symbol))
+    {
+        if(IsBoomCrashSyntheticSymbolName(symbol) ||
+           IsExponentialSyntheticSymbolName(symbol) ||
+           IsHybridSyntheticSymbolName(symbol))
+           return 4;   // ASSET_DERIV_CRASHBOOM
+        if(IsVolatilitySyntheticSymbolName(symbol) ||
+           IsVolSwitchSyntheticSymbolName(symbol) ||
+           IsDriftSwitchSyntheticSymbolName(symbol) ||
+           IsRangeBreakSyntheticSymbolName(symbol) ||
+           IsSpotVolatilitySyntheticSymbolName(symbol))
+           return 5;   // ASSET_DERIV_VOLATILITY
+        if(IsStepSyntheticSymbolName(symbol) ||
+           IsMultiStepSyntheticSymbolName(symbol) ||
+           IsSkewStepSyntheticSymbolName(symbol) ||
+           IsStableSpreadSyntheticSymbolName(symbol) ||
+           IsPairsArbitrageSyntheticSymbolName(symbol) ||
+           IsTrekSyntheticSymbolName(symbol) ||
+           IsTacticalSyntheticSymbolName(symbol) ||
+           IsDerivedSyntheticSymbolName(symbol))
+           return 6;   // ASSET_DERIV_STEP
+        if(IsJumpSyntheticSymbolName(symbol))
+           return 7;   // ASSET_DERIV_JUMP
+        if(IsDexSyntheticSymbolName(symbol))
+           return 8;   // ASSET_DERIV_DEX
+        return 9;      // ASSET_UNIVERSAL (unclassified Deriv)
+    }
+
+    // Traditional asset classes
+    if(IsMetalsSymbolName(symbol))    return 1;  // ASSET_METALS
+    if(IsIndicesSymbolName(symbol))   return 2;  // ASSET_INDICES
+    if(IsEnergiesSymbolName(symbol))  return 3;  // ASSET_ENERGIES
+    if(IsForexPairSymbolName(symbol)) return 0;  // ASSET_FOREX
+
+    return 9;  // ASSET_UNIVERSAL
 }
 
 bool IsForexCurrencyCode(const string code)
@@ -182,16 +394,42 @@ bool IsForexPairSymbolName(const string symbol)
 
 string GetInstrumentExecutionProfileName(const string symbol)
 {
-    if(IsVolatilitySyntheticSymbolName(symbol))
-        return "SYNTHETIC_VOLATILITY";
-    if(IsJumpSyntheticSymbolName(symbol))
-        return "SYNTHETIC_JUMP";
-    if(IsStepSyntheticSymbolName(symbol))
-        return "SYNTHETIC_STEP";
     if(IsBoomCrashSyntheticSymbolName(symbol))
         return "SYNTHETIC_BOOM_CRASH";
+    if(IsVolatilitySyntheticSymbolName(symbol))
+        return "SYNTHETIC_VOLATILITY";
+    if(IsStepSyntheticSymbolName(symbol) && !IsSkewStepSyntheticSymbolName(symbol) && !IsMultiStepSyntheticSymbolName(symbol))
+        return "SYNTHETIC_STEP";
+    if(IsJumpSyntheticSymbolName(symbol))
+        return "SYNTHETIC_JUMP";
+    if(IsDexSyntheticSymbolName(symbol))
+        return "SYNTHETIC_DEX";
+    if(IsMultiStepSyntheticSymbolName(symbol))
+        return "SYNTHETIC_MULTI_STEP";
+    if(IsExponentialSyntheticSymbolName(symbol))
+        return "SYNTHETIC_EXPONENTIAL";
+    if(IsHybridSyntheticSymbolName(symbol))
+        return "SYNTHETIC_HYBRID";
     if(IsRangeBreakSyntheticSymbolName(symbol))
         return "SYNTHETIC_RANGE_BREAK";
+    if(IsSkewStepSyntheticSymbolName(symbol))
+        return "SYNTHETIC_SKEW_STEP";
+    if(IsVolSwitchSyntheticSymbolName(symbol))
+        return "SYNTHETIC_VOL_SWITCH";
+    if(IsDriftSwitchSyntheticSymbolName(symbol))
+        return "SYNTHETIC_DRIFT_SWITCH";
+    if(IsTrekSyntheticSymbolName(symbol))
+        return "SYNTHETIC_TREK";
+    if(IsTacticalSyntheticSymbolName(symbol))
+        return "SYNTHETIC_TACTICAL";
+    if(IsDerivedSyntheticSymbolName(symbol))
+        return "SYNTHETIC_DERIVED";
+    if(IsStableSpreadSyntheticSymbolName(symbol))
+        return "SYNTHETIC_STABLE_SPREAD";
+    if(IsSpotVolatilitySyntheticSymbolName(symbol))
+        return "SYNTHETIC_SPOT_VOLATILITY";
+    if(IsPairsArbitrageSyntheticSymbolName(symbol))
+        return "SYNTHETIC_PAIRS_ARBITRAGE";
     if(IsPainSyntheticSymbolName(symbol))
         return "SYNTHETIC_PAIN";
     if(IsSwitchSyntheticSymbolName(symbol))
@@ -200,6 +438,12 @@ string GetInstrumentExecutionProfileName(const string symbol)
         return "SYNTHETIC_GAIN_FLIP";
     if(IsForexPairSymbolName(symbol))
         return "FOREX";
+    if(IsMetalsSymbolName(symbol))
+        return "METALS";
+    if(IsIndicesSymbolName(symbol))
+        return "INDICES";
+    if(IsEnergiesSymbolName(symbol))
+        return "ENERGIES";
     return "GENERIC";
 }
 

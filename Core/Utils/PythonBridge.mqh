@@ -90,7 +90,17 @@ struct SPythonBridgeResponse
    string             ts;              // Timestamp
    string             mode;            // Response mode
    double             adapted_features[]; // Adapted features (for doubleadapt)
-   
+   int                family_id;       // Deriv family ID (-1 = universal)
+   string             family_name;     // Family name from Python
+   double             catboost_buy;    // CatBoost buy probability
+   double             catboost_sell;   // CatBoost sell probability
+   double             xgboost_buy;     // XGBoost buy probability
+   double             xgboost_sell;    // XGBoost sell probability
+   double             onnx_buy;        // ONNX buy probability (family-specific)
+   double             onnx_sell;       // ONNX sell probability (family-specific)
+   int                asset_class;     // Asset class ID (-1 = not specified)
+   string             asset_class_name; // Asset class name
+
    SPythonBridgeResponse()
    {
       success = false;
@@ -104,6 +114,16 @@ struct SPythonBridgeResponse
       ts = "";
       mode = "";
       ArrayResize(adapted_features, 0);
+      family_id = -1;
+      family_name = "";
+      catboost_buy = 0.0;
+      catboost_sell = 0.0;
+      xgboost_buy = 0.0;
+      xgboost_sell = 0.0;
+      onnx_buy = 0.0;
+      onnx_sell = 0.0;
+      asset_class = -1;
+      asset_class_name = "";
    }
 };
 
@@ -166,9 +186,18 @@ public:
    
    // Prediction methods
    SPythonBridgeResponse Predict(const double &features[], int features_size,
-                                  const string mode);
+                                  const string mode,
+                                  int family_id = -1,
+                                  const string symbol = "",
+                                  int asset_class = -1,
+                                  const string asset_class_name = "");
    SPythonBridgeResponse PredictDoubleAdapt(const double &features[], int features_size);
    SPythonBridgeResponse PredictMamlPpo(const double &features[], int features_size);
+   SPythonBridgeResponse PredictFamily(const double &features[], int features_size,
+                                        int family_id, const string symbol);
+   SPythonBridgeResponse PredictMultiAsset(const double &features[], int features_size,
+                                            int asset_class, const string asset_class_name,
+                                            int family_id, const string symbol);
    
    // ENHANCEMENT: Correlation Matrix Methods (Batch 93 - Week 4)
    bool              GetCorrelationMatrix(double &corrMatrix[], int &size, string &symbols[]);
@@ -430,7 +459,115 @@ SPythonBridgeResponse CPythonBridge::ParsePredictionResponse(const string &json_
       if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
       result.stacker_signal = StringToDouble(val_str);
    }
-   
+
+   // family_id
+   pos = StringFind(json_str, "\"family_id\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 12);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.family_id = (int)StringToInteger(val_str);
+   }
+
+   // family_name
+   pos = StringFind(json_str, "\"family_name\":");
+   if(pos != -1)
+   {
+      int val_start = StringFind(json_str, "\"", pos + 14);
+      int val_end = StringFind(json_str, "\"", val_start + 1);
+      if(val_start != -1 && val_end != -1)
+         result.family_name = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
+   }
+
+   // asset_class
+   pos = StringFind(json_str, "\"asset_class\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 14);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.asset_class = (int)StringToInteger(val_str);
+   }
+
+   // asset_class_name
+   pos = StringFind(json_str, "\"asset_class_name\":");
+   if(pos != -1)
+   {
+      int val_start = StringFind(json_str, "\"", pos + 20);
+      int val_end = StringFind(json_str, "\"", val_start + 1);
+      if(val_start != -1 && val_end != -1)
+         result.asset_class_name = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
+   }
+
+   // catboost_buy
+   pos = StringFind(json_str, "\"catboost_buy\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 15);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.catboost_buy = StringToDouble(val_str);
+   }
+
+   // catboost_sell
+   pos = StringFind(json_str, "\"catboost_sell\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 16);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.catboost_sell = StringToDouble(val_str);
+   }
+
+   // xgboost_buy
+   pos = StringFind(json_str, "\"xgboost_buy\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 14);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.xgboost_buy = StringToDouble(val_str);
+   }
+
+   // xgboost_sell
+   pos = StringFind(json_str, "\"xgboost_sell\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 15);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.xgboost_sell = StringToDouble(val_str);
+   }
+
+   // onnx_buy
+   pos = StringFind(json_str, "\"onnx_buy\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 11);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.onnx_buy = StringToDouble(val_str);
+   }
+
+   // onnx_sell
+   pos = StringFind(json_str, "\"onnx_sell\":");
+   if(pos != -1)
+   {
+      string val_str = StringSubstr(json_str, pos + 12);
+      int end_pos = StringFind(val_str, ",");
+      if(end_pos == -1) end_pos = StringFind(val_str, "}");
+      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+      result.onnx_sell = StringToDouble(val_str);
+   }
+
    // ts
    pos = StringFind(json_str, "\"ts\":");
    if(pos != -1)
@@ -609,7 +746,11 @@ bool CPythonBridge::AttemptReconnect()
 //| Send prediction request                                          |
 //+------------------------------------------------------------------+
 SPythonBridgeResponse CPythonBridge::Predict(const double &features[], int features_size,
-                                              const string mode)
+                                              const string mode,
+                                              int family_id,
+                                              const string symbol,
+                                              int asset_class,
+                                              const string asset_class_name)
 {
    SPythonBridgeResponse result;
    
@@ -636,7 +777,17 @@ SPythonBridgeResponse CPythonBridge::Predict(const double &features[], int featu
       if(i > 0) json += ",";
       json += DoubleToString(features[i], 10);
    }
-   json += "],\"mode\":\"" + EscapeJsonString(mode) + "\"}";
+   json += "],\"mode\":\"" + EscapeJsonString(mode) + "\"";
+   if(family_id >= 0)
+      json += ",\"family_id\":" + IntegerToString(family_id);
+   if(symbol != "")
+      json += ",\"symbol\":\"" + EscapeJsonString(symbol) + "\"";
+   // Batch 103: Multi-asset class routing
+   if(asset_class >= 0)
+      json += ",\"asset_class\":" + IntegerToString(asset_class);
+   if(asset_class_name != "")
+      json += ",\"asset_class_name\":\"" + EscapeJsonString(asset_class_name) + "\"";
+   json += "}";
    
    // Send request
    string response;
@@ -671,6 +822,25 @@ SPythonBridgeResponse CPythonBridge::PredictDoubleAdapt(const double &features[]
 SPythonBridgeResponse CPythonBridge::PredictMamlPpo(const double &features[], int features_size)
 {
    return Predict(features, features_size, "maml_ppo");
+}
+
+//+------------------------------------------------------------------+
+//| Family-aware prediction                                          |
+//+------------------------------------------------------------------+
+SPythonBridgeResponse CPythonBridge::PredictFamily(const double &features[], int features_size,
+                                                    int family_id, const string symbol)
+{
+   return Predict(features, features_size, "ensemble", family_id, symbol);
+}
+
+//+------------------------------------------------------------------+
+//| Multi-asset class prediction (Batch 103)                         |
+//+------------------------------------------------------------------+
+SPythonBridgeResponse CPythonBridge::PredictMultiAsset(const double &features[], int features_size,
+                                                        int asset_class, const string asset_class_name,
+                                                        int family_id, const string symbol)
+{
+   return Predict(features, features_size, "ensemble", family_id, symbol, asset_class, asset_class_name);
 }
 
 //+------------------------------------------------------------------+

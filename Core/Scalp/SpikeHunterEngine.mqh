@@ -94,30 +94,65 @@ struct SSpikeSymbolState
 };
 
 //+------------------------------------------------------------------+
+//| Per-symbol family override parameters (Batch 102)                 |
+//+------------------------------------------------------------------+
+struct SSpikeHunterFamilyOverrides
+{
+   string   symbol;
+   double   velocityMultiplier;
+   int      minConsecutiveTicks;
+   double   atrCompressionRatio;
+   double   slAtrMultiplier;
+   double   tpAtrMultiplier;
+   int      magicOffset;
+   int      cooldownMs;
+   int      minConfluence;
+   bool     hasOverrides;
+
+   SSpikeHunterFamilyOverrides()
+   {
+      symbol                = "";
+      velocityMultiplier    = 0.0;    // 0 = use default config
+      minConsecutiveTicks   = 0;      // 0 = use default config
+      atrCompressionRatio   = 0.0;    // 0 = use default config
+      slAtrMultiplier       = 0.0;    // 0 = use default config
+      tpAtrMultiplier       = 0.0;    // 0 = use default config
+      magicOffset           = 0;      // 0 = use default config
+      cooldownMs            = 0;      // 0 = use default config
+      minConfluence         = 0;      // 0 = use default config
+      hasOverrides          = false;
+   }
+};
+
+//+------------------------------------------------------------------+
 //| CSpikeHunterEngine — Spike hunting engine for synthetic CFDs      |
 //+------------------------------------------------------------------+
 class CSpikeHunterEngine
 {
 private:
-   SSpikeHunterConfig       m_config;
-   SSpikeSymbolState        m_symbolStates[];
-   int                      m_symbolCount;
-   int                      m_baseMagic;
-   CPositionSizer*          m_positionSizer;
-   CTrade                   m_trade;                // For synchronous order execution
+   SSpikeHunterConfig              m_config;
+   SSpikeSymbolState               m_symbolStates[];
+   int                             m_symbolCount;
+   int                             m_baseMagic;
+   CPositionSizer*                 m_positionSizer;
+   CTrade                          m_trade;                // For synchronous order execution
+
+   // Family-specific overrides (Batch 102)
+   SSpikeHunterFamilyOverrides     m_familyOverrides[];
+   int                             m_familyOverrideCount;
 
    // Alert throttling
-   datetime                 m_lastPushAlertTime;
-   int                      m_pushAlertCount;
+   datetime                        m_lastPushAlertTime;
+   int                             m_pushAlertCount;
 
    // ATR handle cache
-   int                      m_atrHandles[];         // ATR indicator handles per symbol
+   int                             m_atrHandles[];         // ATR indicator handles per symbol
    // ATR SMA is computed manually from ATR buffer (MQL5 cannot apply MA to indicator output)
 
    // Statistics
-   int                      m_totalDetections;
-   int                      m_totalTradesOpened;
-   int                      m_totalTradesSkipped;
+   int                             m_totalDetections;
+   int                             m_totalTradesOpened;
+   int                             m_totalTradesSkipped;
 
    //+------------------------------------------------------------------+
    //| Find symbol index in the states array                             |
@@ -130,6 +165,107 @@ private:
             return i;
       }
       return -1;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Find family override index for a symbol (Batch 102)               |
+   //+------------------------------------------------------------------+
+   int FindFamilyOverrideIndex(const string symbol) const
+   {
+      for(int i = 0; i < m_familyOverrideCount; i++)
+      {
+         if(m_familyOverrides[i].symbol == symbol)
+            return i;
+      }
+      return -1;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective velocity multiplier for a symbol (Batch 102)        |
+   //+------------------------------------------------------------------+
+   double GetEffectiveVelocityMultiplier(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].velocityMultiplier > 0.0)
+         return m_familyOverrides[oi].velocityMultiplier;
+      return m_config.velocityMultiplier;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective min consecutive ticks for a symbol (Batch 102)      |
+   //+------------------------------------------------------------------+
+   int GetEffectiveMinConsecutiveTicks(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].minConsecutiveTicks > 0)
+         return m_familyOverrides[oi].minConsecutiveTicks;
+      return m_config.minConsecutiveTicks;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective ATR compression ratio for a symbol (Batch 102)      |
+   //+------------------------------------------------------------------+
+   double GetEffectiveATRCompressionRatio(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].atrCompressionRatio > 0.0)
+         return m_familyOverrides[oi].atrCompressionRatio;
+      return m_config.atrCompressionRatio;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective SL ATR multiplier for a symbol (Batch 102)          |
+   //+------------------------------------------------------------------+
+   double GetEffectiveSLAtrMultiplier(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].slAtrMultiplier > 0.0)
+         return m_familyOverrides[oi].slAtrMultiplier;
+      return m_config.slAtrMultiplier;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective TP ATR multiplier for a symbol (Batch 102)          |
+   //+------------------------------------------------------------------+
+   double GetEffectiveTPAtrMultiplier(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].tpAtrMultiplier > 0.0)
+         return m_familyOverrides[oi].tpAtrMultiplier;
+      return m_config.tpAtrMultiplier;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective magic offset for a symbol (Batch 102)               |
+   //+------------------------------------------------------------------+
+   int GetEffectiveMagicOffset(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].magicOffset > 0)
+         return m_familyOverrides[oi].magicOffset;
+      return m_config.magicOffset;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective cooldown for a symbol (Batch 102)                   |
+   //+------------------------------------------------------------------+
+   int GetEffectiveCooldownMs(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].cooldownMs > 0)
+         return m_familyOverrides[oi].cooldownMs;
+      return m_config.cooldownMs;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get effective min confluence for a symbol (Batch 102)             |
+   //+------------------------------------------------------------------+
+   int GetEffectiveMinConfluence(int idx) const
+   {
+      int oi = FindFamilyOverrideIndex(m_symbolStates[idx].symbol);
+      if(oi >= 0 && m_familyOverrides[oi].hasOverrides && m_familyOverrides[oi].minConfluence > 0)
+         return m_familyOverrides[oi].minConfluence;
+      return m_config.minConfluence;
    }
 
    //+------------------------------------------------------------------+
@@ -182,7 +318,7 @@ private:
          m_symbolStates[idx].tickRateBaseline = m_symbolStates[idx].tickRateBaseline * 0.85 + currentRate * 0.15;
 
       // Check trigger: currentRate > baseline * velocityMultiplier
-      double threshold = MathMax(1.0, m_symbolStates[idx].tickRateBaseline) * m_config.velocityMultiplier;
+      double threshold = MathMax(1.0, m_symbolStates[idx].tickRateBaseline) * GetEffectiveVelocityMultiplier(idx);
       m_symbolStates[idx].velocityTriggered = (currentRate > threshold);
 
       // Reset window
@@ -239,12 +375,13 @@ private:
       m_symbolStates[idx].lastBid = bid;
 
       // Check trigger
-      if(m_symbolStates[idx].consecutiveUpTicks >= m_config.minConsecutiveTicks)
+      int effectiveMinTicks = GetEffectiveMinConsecutiveTicks(idx);
+      if(m_symbolStates[idx].consecutiveUpTicks >= effectiveMinTicks)
       {
          m_symbolStates[idx].directionTriggered = true;
          m_symbolStates[idx].directionSign      = 1;
       }
-      else if(m_symbolStates[idx].consecutiveDownTicks >= m_config.minConsecutiveTicks)
+      else if(m_symbolStates[idx].consecutiveDownTicks >= effectiveMinTicks)
       {
          m_symbolStates[idx].directionTriggered = true;
          m_symbolStates[idx].directionSign      = -1;
@@ -297,7 +434,7 @@ private:
       if(m_symbolStates[idx].atrSMA > 0.0 && m_symbolStates[idx].currentATR > 0.0)
       {
          m_symbolStates[idx].compressionTriggered =
-            (m_symbolStates[idx].currentATR <= m_symbolStates[idx].atrSMA * m_config.atrCompressionRatio);
+            (m_symbolStates[idx].currentATR <= m_symbolStates[idx].atrSMA * GetEffectiveATRCompressionRatio(idx));
       }
       else
       {
@@ -377,12 +514,12 @@ private:
    //+------------------------------------------------------------------+
    bool CanOpenSpikeTrade(int idx) const
    {
-      // Check cooldown
+      // Check cooldown (use family-specific cooldown)
       datetime now = TimeCurrent();
       if(m_symbolStates[idx].lastSpikeTradeTime > 0)
       {
          ulong elapsedMs = (ulong)((now - m_symbolStates[idx].lastSpikeTradeTime) * 1000);
-         if(elapsedMs < (ulong)m_config.cooldownMs)
+         if(elapsedMs < (ulong)GetEffectiveCooldownMs(idx))
             return false;
       }
 
@@ -407,9 +544,9 @@ private:
          return false;
       }
 
-      // Calculate SL and TP distances in price
-      double slDistance = atr * m_config.slAtrMultiplier;
-      double tpDistance = atr * m_config.tpAtrMultiplier;
+      // Calculate SL and TP distances in price (use family-specific multipliers)
+      double slDistance = atr * GetEffectiveSLAtrMultiplier(idx);
+      double tpDistance = atr * GetEffectiveTPAtrMultiplier(idx);
 
       // Convert SL distance to pips for position sizer
       double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -487,8 +624,8 @@ private:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
-      // Calculate magic number: baseMagic + magicOffset + symbolIndex
-      int magic = m_baseMagic + m_config.magicOffset + idx;
+      // Calculate magic number: baseMagic + familyMagicOffset + symbolIndex
+      int magic = m_baseMagic + GetEffectiveMagicOffset(idx) + idx;
 
       // Set up trade object
       m_trade.SetExpertMagicNumber(magic);
@@ -563,6 +700,7 @@ public:
    CSpikeHunterEngine() :
       m_symbolCount(0),
       m_baseMagic(0),
+      m_familyOverrideCount(0),
       m_positionSizer(NULL),
       m_lastPushAlertTime(0),
       m_pushAlertCount(0),
@@ -690,7 +828,7 @@ public:
       m_symbolStates[idx].confluenceCount = CountConfluence(idx);
 
       // Check if spike is confirmed
-      if(m_symbolStates[idx].confluenceCount < m_config.minConfluence)
+      if(m_symbolStates[idx].confluenceCount < GetEffectiveMinConfluence(idx))
       {
          // Diagnostic: log near-miss confluence once per minute per symbol
          if(m_symbolStates[idx].confluenceCount > 0)
@@ -812,6 +950,57 @@ public:
    //| Get configuration                                                 |
    //+------------------------------------------------------------------+
    const SSpikeHunterConfig GetConfig() const { return m_config; }
+
+   //+------------------------------------------------------------------+
+   //| Set family-specific overrides for a symbol (Batch 102)            |
+   //+------------------------------------------------------------------+
+   void SetFamilyOverrides(const string symbol, double velMult, int minTicks, double atrRatio,
+                           double slMult, double tpMult, int magicOff, int cooldown, int minConf)
+   {
+      // Check if override already exists for this symbol
+      int oi = FindFamilyOverrideIndex(symbol);
+      if(oi >= 0)
+      {
+         // Update existing override
+         m_familyOverrides[oi].velocityMultiplier  = velMult;
+         m_familyOverrides[oi].minConsecutiveTicks = minTicks;
+         m_familyOverrides[oi].atrCompressionRatio = atrRatio;
+         m_familyOverrides[oi].slAtrMultiplier     = slMult;
+         m_familyOverrides[oi].tpAtrMultiplier     = tpMult;
+         m_familyOverrides[oi].magicOffset         = magicOff;
+         m_familyOverrides[oi].cooldownMs          = cooldown;
+         m_familyOverrides[oi].minConfluence       = minConf;
+         m_familyOverrides[oi].hasOverrides        = true;
+         PrintFormat("[SPIKE-HUNT-FAMILY] Updated overrides for %s: vel=%.1f ticks=%d atrRatio=%.2f sl=%.1f tp=%.1f magic=%d cooldown=%d conf=%d",
+                     symbol, velMult, minTicks, atrRatio, slMult, tpMult, magicOff, cooldown, minConf);
+         return;
+      }
+
+      // Add new override using temp struct pattern for string members
+      int newSize = m_familyOverrideCount + 1;
+      SSpikeHunterFamilyOverrides tempOverrides[];
+      ArrayResize(tempOverrides, newSize);
+      for(int i = 0; i < m_familyOverrideCount; i++)
+         tempOverrides[i] = m_familyOverrides[i];
+      ArrayResize(m_familyOverrides, newSize);
+      for(int i = 0; i < m_familyOverrideCount; i++)
+         m_familyOverrides[i] = tempOverrides[i];
+
+      m_familyOverrides[m_familyOverrideCount].symbol                = symbol;
+      m_familyOverrides[m_familyOverrideCount].velocityMultiplier    = velMult;
+      m_familyOverrides[m_familyOverrideCount].minConsecutiveTicks   = minTicks;
+      m_familyOverrides[m_familyOverrideCount].atrCompressionRatio   = atrRatio;
+      m_familyOverrides[m_familyOverrideCount].slAtrMultiplier       = slMult;
+      m_familyOverrides[m_familyOverrideCount].tpAtrMultiplier       = tpMult;
+      m_familyOverrides[m_familyOverrideCount].magicOffset           = magicOff;
+      m_familyOverrides[m_familyOverrideCount].cooldownMs            = cooldown;
+      m_familyOverrides[m_familyOverrideCount].minConfluence         = minConf;
+      m_familyOverrides[m_familyOverrideCount].hasOverrides          = true;
+      m_familyOverrideCount++;
+
+      PrintFormat("[SPIKE-HUNT-FAMILY] Set overrides for %s: vel=%.1f ticks=%d atrRatio=%.2f sl=%.1f tp=%.1f magic=%d cooldown=%d conf=%d",
+                  symbol, velMult, minTicks, atrRatio, slMult, tpMult, magicOff, cooldown, minConf);
+   }
 
    //+------------------------------------------------------------------+
    //| Print diagnostics                                                 |

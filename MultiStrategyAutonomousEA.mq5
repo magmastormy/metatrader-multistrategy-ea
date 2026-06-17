@@ -43,7 +43,14 @@ input bool InpEnableUnicornModel = true;      // Enable Unicorn Model (Phase 3.3
 input bool InpEnablePowerOfThree = true;      // Enable Power of Three (Phase 3.3: removed SMT, lower confidence)
 input bool InpEnableMeanReversion = true;     // NEW: Mean Reversion Strategy (Batch 93 - Counterbalance for ranging markets)
 input bool InpEnableVolatilityBreakout = true; // NEW: Volatility Breakout Strategy (Batch 93 - Week 3 - Captures explosive moves)
+input bool InpEnableFVGScalper = true;        // NEW: FVG Scalper Strategy (Batch 103 - FVG rejection entries)
+input bool InpEnableTurtleSoup = true;        // NEW: Turtle Soup Strategy (Batch 103 - False break reversals)
+input bool InpEnableBreakerBlock = true;      // NEW: Breaker Block Strategy (Batch 103 - Broken OB retest)
+input bool InpEnableNYOpenGap = true;         // NEW: NY Open Gap Strategy (Batch 103 - Gap fade at NY open, FX/metals/indices only)
+input bool InpEnableAsianRangeBreak = true;   // NEW: Asian Range Break Strategy (Batch 103 - London open breakout, FX/metals/indices only)
+input bool InpEnableStatisticalArbitrage = false; // NEW: Statistical Arbitrage Strategy (Batch 103 - Pair trading, requires Python Bridge)
 input double InpTrendADXNoTrendThreshold = 12.0; // ADX below this = no trade (lower for synthetic CFDs)
+input double InpSyntheticADXNoTrendThreshold = 10.0; // ADX no-trend threshold for synthetics (lower = more signals)
 input double InpICTDisplacementMultiplier = 0.8;  // ICT displacement as fraction of ATR (lower for synthetic CFDs)
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
 input bool InpUseSymbolClassProfiles = false;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
@@ -81,6 +88,7 @@ input double InpWeightUnicornModel      = 1.2; // Unicorn Model weight (reduced 
 input double InpWeightPowerOfThree      = 1.2; // Power of Three / ICT 2025 weight (reduced from 2.3)
 input double InpWeightMeanReversion     = 1.8; // Mean Reversion weight (NEW: Batch 93 - High confidence in ranging markets)
 input double InpWeightVolatilityBreakout = 2.0; // Volatility Breakout weight (NEW: Batch 93 - Week 3 - High-conviction breakouts)
+input double InpWeightStatisticalArbitrage = 1.5; // Statistical Arbitrage weight (NEW: Batch 103 - Pair trading)
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -238,10 +246,10 @@ input int InpSpikeConfirmWindows = 2;                                    // Cons
 
 input group "=== Spike Hunter ==="
 input bool   InpSpikeHunterEnabled          = true;    // Enable spike hunter engine
-input double InpSpikeHunterVelocityMult     = 2.5;    // Tick velocity multiplier (lower = earlier detection)
-input int    InpSpikeHunterMinConsecTicks   = 12;     // Min consecutive ticks in one direction
+input double InpSpikeHunterVelocityMult     = 1.8;    // Tick velocity multiplier (lower = earlier detection) - Synthetic: 1.8 (was 2.5)
+input int    InpSpikeHunterMinConsecTicks   = 8;      // Min consecutive ticks in one direction - Synthetic: 8 (was 12)
 input int    InpSpikeHunterConsecWindowMs   = 60000;  // Direction accumulation window (ms)
-input double InpSpikeHunterATRCompression   = 0.60;   // ATR compression ratio threshold
+input double InpSpikeHunterATRCompression   = 0.80;   // ATR compression ratio threshold - Synthetic: 0.80 (was 0.60)
 input double InpSpikeHunterSLAtrMult        = 1.5;    // SL = ATR × this
 input double InpSpikeHunterTPAtrMult        = 3.0;    // TP = ATR × this
 input int    InpSpikeHunterMaxPositions     = 3;      // Max concurrent spike positions
@@ -250,6 +258,12 @@ input int    InpSpikeHunterLongTermCooldownMs = 60000; // Long-term entry cooldo
 input bool   InpSpikeHunterPushAlerts       = true;   // Send push notifications on spike
 input int    InpSpikeHunterAlertThrottle    = 120;    // Min seconds between push alerts
 input int    InpSpikeHunterMinConfluence    = 2;      // Min detection layers to confirm (2 or 3)
+
+input group "=== Multi-Asset Profiler (Batch 103) ==="
+input bool   InpMultiAssetProfilerEnabled  = true;    // Enable multi-asset class auto-detection
+input bool   InpDerivProfilerEnabled        = true;    // Enable Deriv asset family auto-detection (subset)
+input bool   InpGridRecoveryEnabled         = true;    // Enable grid recovery engine for mean-reversion families
+input bool   InpATRScalpingEnabled          = true;    // Enable ATR scalping engine for between-spike trading
 
 //--- Advanced Mathematical Engines (Batch 100)
 input group "Mathematical Engines"
@@ -354,6 +368,7 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 // to avoid duplicate inclusion and preprocessor directive conflicts
 #include "Strategies\MeanReversionStrategy.mqh"  // NEW: Mean Reversion Strategy (Batch 93)
 #include "Strategies\VolatilityBreakoutStrategy.mqh"  // NEW: Volatility Breakout Strategy (Batch 93 - Week 3)
+#include "Strategies\StatisticalArbitrageStrategy.mqh"  // NEW: Statistical Arbitrage Strategy (Batch 103 - Week 4)
 
 // Advanced Position Management
 #include "Core\Strategy\AIStrategyAdapter.mqh"
@@ -374,9 +389,13 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Scalp\FastScalpEngine.mqh"
 #include "Core\Scalp\SpikeHunterEngine.mqh"
 #include "Core\Scalp\ScalpSignalCache.mqh"
+#include "Core\Scalp\GridRecoveryEngine.mqh"
+#include "Core\Scalp\ATRScalpingEngine.mqh"
 #include "Core\Risk\FullMarginMode.mqh"
 #include "Core\Risk\SafeModeConfig.mqh"
 #include "Core\Risk\EquityCurveManager.mqh"
+#include "Core\Processing\DerivAssetProfiler.mqh"
+#include "Core\Processing\MultiAssetProfiler.mqh"
 
 //+------------------------------------------------------------------+
 //| Forward declarations
@@ -422,6 +441,9 @@ CConsensusCache g_consensusCache;                        // Consensus result cac
 CVisualDashboard g_dashboard;
 CFastScalpEngine g_scalpEngine;                            // Fast Scalp Engine (Phase 4)
 CSpikeHunterEngine g_spikeHunter;                           // Spike Hunter Engine
+CGridRecoveryEngine g_gridRecovery;                         // Grid Recovery Engine (Batch 102)
+CATRScalpingEngine g_atrScalping;                           // ATR Scalping Engine (Batch 102)
+CMultiAssetProfiler g_multiAssetProfiler;                   // Multi-Asset Profiler (Batch 103)
 CScalpSignalCache g_scalpCache;                            // Scalp signal cache for fast-path evaluation
 CFullMarginMode  g_fullMarginMode;                          // Full-margin aggressive mode (Phase 6)
 CSafeMode        g_safeMode;                                // Conservative safe mode (Phase 6)
@@ -1290,6 +1312,25 @@ void RefreshAccountRuntimeMetrics()
         currentDrawdown = 0.0;
 }
 
+//+------------------------------------------------------------------+
+//| Get family-aware prediction from Python bridge                   |
+//| Batch 103: Multi-asset class + Deriv family ML model routing     |
+//+------------------------------------------------------------------+
+SPythonBridgeResponse GetFamilyPrediction(const string symbol, const double &features[], int featuresSize)
+{
+   if(g_pythonBridge == NULL || !g_pythonBridge.IsConnected())
+   {
+      SPythonBridgeResponse empty;
+      empty.success = false;
+      return empty;
+   }
+
+   int familyId = DetectFamilyId(symbol);
+   int assetClass = DetectAssetClassId(symbol);
+   string assetClassName = g_multiAssetProfiler.GetAssetClassName(symbol);
+   return g_pythonBridge.PredictMultiAsset(features, featuresSize, assetClass, assetClassName, familyId, symbol);
+}
+
 void ManageOpenPositionsIfNeeded()
 {
     // Blueprint R6a: Fully delegated to CPositionLifecycleManager
@@ -1341,6 +1382,16 @@ void ProcessTickSafetyLoop()
     // Process spike hunter
     if(InpSpikeHunterEnabled)
         g_spikeHunter.ProcessTick(_Symbol, SymbolInfoDouble(_Symbol, SYMBOL_BID), SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+
+    // Batch 103: Process grid recovery and ATR scalping engines
+    if(InpMultiAssetProfilerEnabled)
+    {
+        if(InpGridRecoveryEnabled && IsSyntheticIndexSymbolName(_Symbol))
+            g_gridRecovery.ProcessTick(_Symbol, SymbolInfoDouble(_Symbol, SYMBOL_BID), SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+
+        if(InpATRScalpingEnabled && IsSyntheticIndexSymbolName(_Symbol))
+            g_atrScalping.ProcessTick(_Symbol, SymbolInfoDouble(_Symbol, SYMBOL_BID), SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -1672,6 +1723,12 @@ void BuildStrategyFlagsForSymbol(const string symbol,
         symbolStrategyFlags[0] = false;
     if(size > 1)
         symbolStrategyFlags[1] = false;
+    // Batch 103: Session-specific strategies auto-skip synthetics internally,
+    // but also disable them in the roster for synthetics to avoid wasted cycles
+    if(size > 15)
+        symbolStrategyFlags[15] = false;  // NY Open Gap - not applicable to synthetics
+    if(size > 16)
+        symbolStrategyFlags[16] = false;  // Asian Range Break - not applicable to synthetics
 }
 
 string GetSymbolStrategyProfileLabel(const string symbol, const bool &baseStrategyFlags[])
@@ -1983,6 +2040,8 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 9 && strategyFlags[9]), false, InpWeightMeanReversion);
     RegisterStrategyDefinitionIfEnabled("Volatility Breakout", STRATEGY_VOLATILITY_BREAKOUT, false,
                                         (ArraySize(strategyFlags) > 10 && strategyFlags[10]), false, InpWeightVolatilityBreakout);
+    RegisterStrategyDefinitionIfEnabled("Statistical Arbitrage", STRATEGY_STATISTICAL_ARBITRAGE, false,
+                                        InpEnableStatisticalArbitrage, false, InpWeightStatisticalArbitrage);
 
     }
 
@@ -2529,7 +2588,11 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
     {
         CStrategyTrend* trendStrategy = new CStrategyTrend();
         if(trendStrategy != NULL)
-            trendStrategy.SetADXThresholds(InpTrendADXNoTrendThreshold, 25.0, 30.0, 40.0);
+        {
+            // Use synthetic ADX threshold for synthetic indices (Batch 105)
+            double adxNoTrend = IsSyntheticIndexSymbolName(_Symbol) ? InpSyntheticADXNoTrendThreshold : InpTrendADXNoTrendThreshold;
+            trendStrategy.SetADXThresholds(adxNoTrend, 20.0, 25.0, 35.0);
+        }
         registered = manager.RegisterStrategy(trendStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     }
     // FIBONACCI DISABLED - Logic merged into CStrategySupportResistance via CFibConfluence module
@@ -2558,10 +2621,29 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
         registered = manager.RegisterStrategy(new CPowerOfThreeStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
     // NEW: Mean Reversion Strategy (Batch 93 - Week 3)
     else if(strategyName == "Mean Reversion")
-        registered = manager.RegisterStrategy(new CMeanReversionStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    {
+        CMeanReversionStrategy* mrStrategy = new CMeanReversionStrategy();
+        if(mrStrategy != NULL)
+        {
+            // Enable synthetic mode for synthetic indices (Batch 105)
+            mrStrategy.SetSyntheticMode(IsSyntheticIndexSymbolName(_Symbol));
+        }
+        registered = manager.RegisterStrategy(mrStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    }
     // NEW: Volatility Breakout Strategy (Batch 93 - Week 3)
     else if(strategyName == "Volatility Breakout")
         registered = manager.RegisterStrategy(new CVolatilityBreakoutStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    // NEW: Statistical Arbitrage Strategy (Batch 103 - Week 4)
+    else if(strategyName == "Statistical Arbitrage")
+    {
+        CStatisticalArbitrageStrategy* statArb = new CStatisticalArbitrageStrategy();
+        if(statArb != NULL)
+        {
+            statArb.SetPythonBridge(g_pythonBridge);
+            // OU engine is per-symbol, wired later in symbol initialization
+        }
+        registered = manager.RegisterStrategy(statArb, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    }
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_register_failed");
     return registered;
@@ -2628,7 +2710,7 @@ void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager,
 //+------------------------------------------------------------------+
 void BuildStrategyFlags(bool &strategyFlags[])
 {
-    ArrayResize(strategyFlags, 11);  // Increased from 10 to 11 for Volatility Breakout (Batch 93 - Week 3)
+    ArrayResize(strategyFlags, 17);  // Increased from 11 to 17 for Batch 103 ICT/SMC strategies
     strategyFlags[0]  = InpEnableMomentum;
     strategyFlags[1]  = InpEnableTrend;
     strategyFlags[2]  = false; // Fibonacci REMOVED - always false, slot preserved for index stability
@@ -2640,12 +2722,19 @@ void BuildStrategyFlags(bool &strategyFlags[])
     strategyFlags[8]  = InpEnablePowerOfThree;
     strategyFlags[9]  = InpEnableMeanReversion;  // NEW: Batch 93
     strategyFlags[10] = InpEnableVolatilityBreakout;  // NEW: Batch 93 - Week 3
+    strategyFlags[11] = InpEnableStatisticalArbitrage;  // Statistical Arbitrage (Batch 103 - requires Python Bridge)
+    // Batch 103: New ICT/SMC strategies
+    strategyFlags[12] = InpEnableFVGScalper;       // NEW: Batch 103
+    strategyFlags[13] = InpEnableTurtleSoup;       // NEW: Batch 103
+    strategyFlags[14] = InpEnableBreakerBlock;     // NEW: Batch 103
+    strategyFlags[15] = InpEnableNYOpenGap;        // NEW: Batch 103
+    strategyFlags[16] = InpEnableAsianRangeBreak;  // NEW: Batch 103
 
     if(!InpUseCuratedStrategySet)
         return;
 
     bool curatedBaseline[];
-    ArrayResize(curatedBaseline, 11);  // Increased from 10 to 11 for Volatility Breakout (Batch 93 - Week 3)
+    ArrayResize(curatedBaseline, 17);  // Increased from 11 to 17 for Batch 103
     curatedBaseline[0] = false; // Momentum
     curatedBaseline[1] = false; // Trend
     curatedBaseline[2] = false; // Fibonacci REMOVED - merged into SR
@@ -2657,6 +2746,12 @@ void BuildStrategyFlags(bool &strategyFlags[])
     curatedBaseline[8] = true;  // Power of Three
     curatedBaseline[9] = true;  // Mean Reversion (NEW: Batch 93 - Counterbalance for ranging markets)
     curatedBaseline[10] = true; // Volatility Breakout (NEW: Batch 93 - Captures explosive moves)
+    curatedBaseline[11] = true; // Statistical Arbitrage (conditional on Python Bridge)
+    curatedBaseline[12] = true; // FVG Scalper (NEW: Batch 103)
+    curatedBaseline[13] = true; // Turtle Soup (NEW: Batch 103)
+    curatedBaseline[14] = true; // Breaker Block (NEW: Batch 103)
+    curatedBaseline[15] = true; // NY Open Gap (NEW: Batch 103)
+    curatedBaseline[16] = true; // Asian Range Break (NEW: Batch 103)
 
     int enabledCount = 0;
     int curatedCount = 0;
@@ -3698,6 +3793,168 @@ int OnInit()
             Print("[SPIKE-HUNTER] Initialization FAILED");
     }
 
+    //--- Batch 103: Multi-Asset Profiler + Deriv Family-Specific Engine Configuration ---
+    if(InpMultiAssetProfilerEnabled)
+    {
+        Print("[MULTI-ASSET-PROFILER] Initializing multi-asset class auto-detection...");
+
+        // Apply multi-asset class profiles for all symbols
+        for(int i = 0; i < ArraySize(g_activePairs); i++)
+        {
+            string sym = g_activePairs[i];
+            if(sym == "") continue;
+
+            SAssetProfile profile = g_multiAssetProfiler.GetProfile(sym);
+            unifiedRiskManager.SetRiskPerTrade(sym, profile.riskPerTrade);
+            unifiedRiskManager.SetMaxDrawdownForFamily(sym, (double)profile.maxDrawdownPercent);
+            tradeManager.SetMagicOffsetForSymbol(sym, profile.magicOffset);
+            PrintFormat("[MULTI-ASSET-PROFILER] %s class=%s → risk=%.2f%% maxDD=%d%% magic=+%d",
+                        sym, profile.className, profile.riskPerTrade, profile.maxDrawdownPercent, profile.magicOffset);
+        }
+
+        // Deriv-specific sub-profiler: family overrides, grid recovery, ATR scalping
+        if(InpDerivProfilerEnabled)
+        {
+            Print("[DERIV-PROFILER] Initializing Deriv asset family auto-detection (subset)...");
+            CDerivAssetProfiler* derivProfiler = g_multiAssetProfiler.GetDerivProfiler();
+
+            // Apply family-specific parameters to SpikeHunter
+            if(InpSpikeHunterEnabled && derivProfiler != NULL)
+            {
+                for(int i = 0; i < ArraySize(g_activePairs); i++)
+                {
+                    string sym = g_activePairs[i];
+                    if(sym == "") continue;
+                    if(!IsSyntheticIndexSymbolName(sym)) continue;
+
+                    SDerivProfile profile = derivProfiler.GetProfile(sym);
+                    if(profile.enableSpikeHunter)
+                    {
+                        g_spikeHunter.SetFamilyOverrides(sym,
+                            profile.spikeThreshold,
+                            6,    // minConsecutiveTicks (family-adjusted)
+                            profile.atrCompressionRatio,
+                            profile.atrMultiplierSL,
+                            profile.atrMultiplierTP,
+                            profile.magicOffset,
+                            profile.spikeCooldownSec * 1000,
+                            2);   // minConfluence
+                        PrintFormat("[DERIV-PROFILER] %s family=%s → SpikeHunter overrides applied", sym, profile.familyName);
+                    }
+                }
+            }
+
+            // Initialize Grid Recovery Engine for mean-reversion families
+            if(InpGridRecoveryEnabled)
+            {
+                SGridRecoveryConfig gridConfig;
+                gridConfig.gridFactorATR           = 0.25;
+                gridConfig.maxGridLevels           = 8;
+                gridConfig.progressionType         = GRID_PROGRESSION_MARTINGALE;
+                gridConfig.progressionFactor       = 1.5;
+                gridConfig.activationHurstThreshold = 0.45;
+                gridConfig.atrPeriod               = 14;
+                gridConfig.slAtrMultiplier         = 1.0;
+                gridConfig.tpAtrMultiplier         = 0.5;
+                gridConfig.magicOffset             = 8000;
+                gridConfig.maxDrawdownPercent      = 10;
+                gridConfig.cooldownMs              = 30000;
+
+                if(g_gridRecovery.Init(gridConfig, InpMagicNumber, &positionSizer))
+                {
+                    for(int i = 0; i < ArraySize(g_activePairs); i++)
+                    {
+                        string sym = g_activePairs[i];
+                        if(sym == "") continue;
+                        if(!IsSyntheticIndexSymbolName(sym)) continue;
+
+                        SDerivProfile profile = derivProfiler.GetProfile(sym);
+                        if(profile.enableGridRecovery)
+                        {
+                            g_gridRecovery.AddSymbol(sym);
+                            g_gridRecovery.SetFamilyConfig(
+                                profile.gridFactorATR,
+                                profile.maxGridLevels,
+                                profile.gridProgressionFactor,
+                                profile.atrMultiplierSL,
+                                profile.atrMultiplierTP,
+                                profile.magicOffset);
+                            PrintFormat("[DERIV-PROFILER] %s family=%s → GridRecovery enabled (gridATR=%.2f levels=%d prog=%.1f)",
+                                        sym, profile.familyName, profile.gridFactorATR, profile.maxGridLevels, profile.gridProgressionFactor);
+                        }
+                    }
+                    Print("[GRID-RECOVERY] Initialized for mean-reversion families");
+                }
+                else
+                    Print("[GRID-RECOVERY] Initialization FAILED");
+            }
+
+            // Initialize ATR Scalping Engine for between-spike families
+            if(InpATRScalpingEnabled)
+            {
+                SATRScalpingConfig scalpConfig;
+                scalpConfig.atrPeriod              = 14;
+                scalpConfig.emaFastPeriod          = 5;
+                scalpConfig.emaSlowPeriod          = 13;
+                scalpConfig.rsiPeriod              = 7;
+                scalpConfig.spreadMaxATRRatio      = 0.30;
+                scalpConfig.slAtrMultiplier        = 2.0;
+                scalpConfig.tpAtrMultiplier        = 2.5;
+                scalpConfig.magicOffset            = 7000;
+                scalpConfig.maxPositions           = 3;
+                scalpConfig.cooldownMs             = 30000;
+                scalpConfig.spikeWindowAvoidMinutes = 5;
+
+                if(g_atrScalping.Init(scalpConfig, InpMagicNumber, &positionSizer))
+                {
+                    for(int i = 0; i < ArraySize(g_activePairs); i++)
+                    {
+                        string sym = g_activePairs[i];
+                        if(sym == "") continue;
+                        if(!IsSyntheticIndexSymbolName(sym)) continue;
+
+                        SDerivProfile profile = derivProfiler.GetProfile(sym);
+                        // ATR scalping for Jump and DEX families (between-spike trading)
+                        if(profile.family == DERIV_JUMP || profile.family == DERIV_DEX || profile.family == DERIV_HYBRID)
+                        {
+                            int spikeIntervalSec = 0;
+                            if(profile.family == DERIV_JUMP) spikeIntervalSec = 1200;  // ~3 jumps/hour = 1200s
+                            if(profile.family == DERIV_DEX)
+                            {
+                                // Try to detect DEX interval from symbol name
+                                if(StringFind(sym, "900") >= 0) spikeIntervalSec = 900;
+                                else if(StringFind(sym, "1500") >= 0) spikeIntervalSec = 1500;
+                                else if(StringFind(sym, "2600") >= 0) spikeIntervalSec = 2600;
+                                else spikeIntervalSec = 900; // default
+                            }
+                            g_atrScalping.AddSymbol(sym, spikeIntervalSec);
+                            PrintFormat("[DERIV-PROFILER] %s family=%s → ATRScalping enabled (spikeInterval=%ds)",
+                                        sym, profile.familyName, spikeIntervalSec);
+                        }
+                    }
+                    Print("[ATR-SCALP] Initialized for between-spike families");
+                }
+                else
+                    Print("[ATR-SCALP] Initialization FAILED");
+            }
+        }
+
+        // Set both profilers on diagnostics manager
+        g_diagnosticsManager.SetDerivProfiler(g_multiAssetProfiler.GetDerivProfiler());
+        g_diagnosticsManager.SetMultiAssetProfiler(&g_multiAssetProfiler);
+        string profilerSymbols[];
+        ArrayResize(profilerSymbols, ArraySize(g_activePairs));
+        for(int i = 0; i < ArraySize(g_activePairs); i++)
+            profilerSymbols[i] = g_activePairs[i];
+        g_diagnosticsManager.SetSymbols(profilerSymbols, ArraySize(g_activePairs));
+
+        Print("[MULTI-ASSET-PROFILER] Batch 103 initialization complete");
+    }
+    else
+    {
+        Print("[MULTI-ASSET-PROFILER] Disabled by user input");
+    }
+
     // Initialize enterprise manager per symbol
     Print("[ENTERPRISE] Initializing per-symbol strategy managers...");
     ReleaseEnterpriseManagers();
@@ -3731,7 +3988,80 @@ int OnInit()
     for(int mi = 0; mi < ArraySize(g_enterpriseManagers); mi++)
     {
         if(g_enterpriseManagers[mi] != NULL)
+        {
             g_enterpriseManagers[mi].SetManagedMagicRangeMax((long)magicRangeMax);
+            // Batch 103: Set profilers for asset-class-based engine weighting
+            if(InpMultiAssetProfilerEnabled)
+            {
+                g_enterpriseManagers[mi].SetDerivProfiler(g_multiAssetProfiler.GetDerivProfiler());
+                g_enterpriseManagers[mi].SetMultiAssetProfiler(&g_multiAssetProfiler);
+                g_enterpriseManagers[mi].ApplyAssetClassEngineWeights(g_enterpriseManagerSymbols[mi]);
+            }
+
+            // Batch 103: Wire Hurst/VPIN/OFI/OU engines to strategies and manager
+            {
+                string sym = g_enterpriseManagerSymbols[mi];
+                int mathIdx = -1;
+                for(int k = 0; k < ArraySize(g_mathEngineSymbols); k++)
+                {
+                    if(g_mathEngineSymbols[k] == sym) { mathIdx = k; break; }
+                }
+                if(mathIdx >= 0)
+                {
+                    // Wire EnterpriseStrategyManager-level engines (consensus gating)
+                    g_enterpriseManagers[mi].SetVPINFilter(g_vpinFilters[mathIdx]);
+                    g_enterpriseManagers[mi].SetOFIEngine(g_ofiEngines[mathIdx]);
+                    PrintFormat("[BATCH103] VPIN/OFI wired to EnterpriseManager | Symbol=%s", sym);
+
+                    // Find and wire Trend strategy
+                    IStrategy* trendStrat = g_enterpriseManagers[mi].GetStrategyByName("Trend");
+                    if(trendStrat != NULL)
+                    {
+                        CStrategyTrend* trendPtr = dynamic_cast<CStrategyTrend*>(trendStrat);
+                        if(trendPtr != NULL)
+                        {
+                            trendPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
+                            trendPtr.SetVPINFilter(g_vpinFilters[mathIdx]);
+                            PrintFormat("[BATCH103] Hurst/VPIN wired to Trend | Symbol=%s", sym);
+                        }
+                    }
+                    // Find and wire S/R strategy
+                    IStrategy* srStrat = g_enterpriseManagers[mi].GetStrategyByName("Support/Resistance");
+                    if(srStrat != NULL)
+                    {
+                        CStrategySupportResistance* srPtr = dynamic_cast<CStrategySupportResistance*>(srStrat);
+                        if(srPtr != NULL)
+                        {
+                            srPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
+                            srPtr.SetVPINFilter(g_vpinFilters[mathIdx]);
+                            PrintFormat("[BATCH103] Hurst/VPIN wired to S/R | Symbol=%s", sym);
+                        }
+                    }
+                    // Wire Mean Reversion Hurst engine (v2.0 regime lockout)
+                    IStrategy* mrStrat = g_enterpriseManagers[mi].GetStrategyByName("Mean Reversion");
+                    if(mrStrat != NULL)
+                    {
+                        CMeanReversionStrategy* mrPtr = dynamic_cast<CMeanReversionStrategy*>(mrStrat);
+                        if(mrPtr != NULL)
+                        {
+                            mrPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
+                            PrintFormat("[BATCH103] Hurst wired to Mean Reversion | Symbol=%s", sym);
+                        }
+                    }
+                    // Wire Statistical Arbitrage OU engine (half-life filter)
+                    IStrategy* saStrat = g_enterpriseManagers[mi].GetStrategyByName("Statistical Arbitrage");
+                    if(saStrat != NULL)
+                    {
+                        CStatisticalArbitrageStrategy* saPtr = dynamic_cast<CStatisticalArbitrageStrategy*>(saStrat);
+                        if(saPtr != NULL)
+                        {
+                            saPtr.SetOUEngine(g_ouEngines[mathIdx]);
+                            PrintFormat("[BATCH103] OU wired to Statistical Arbitrage | Symbol=%s", sym);
+                        }
+                    }
+                }
+            }
+        }
     }
     PrintFormat("[MAGIC-RANGE] base=%d | symbols=%d | range_max=%u | encoding=BASE+symbolIndex*%d+clusterCode",
                 InpMagicNumber, symbolCount, magicRangeMax, MAGIC_SYMBOL_MULTIPLIER);
@@ -4074,6 +4404,12 @@ void OnDeinit(const int reason)
 
     if(InpSpikeHunterEnabled)
         g_spikeHunter.Deinit();
+
+    // Batch 102: Cleanup new engines
+    if(InpGridRecoveryEnabled)
+        g_gridRecovery.Deinit();
+    if(InpATRScalpingEnabled)
+        g_atrScalping.Deinit();
 
     CIndicatorManager::DestroyInstance();
     PrintFormat("[EMERGENCY-CLEANUP] Complete. Indicators released.");
