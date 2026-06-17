@@ -137,6 +137,7 @@ public:
     int                 FindActiveOBAtPrice(double price, double tolerance);
     int                 FindBestBullishOB();
     int                 FindBestBearishOB();
+    double              GetFreshness(int obIndex);  // Batch 103: OB freshness decay 0.0-1.0
 };
 
 //+------------------------------------------------------------------+
@@ -1394,6 +1395,38 @@ int CAdvancedOrderBlockDetector::FindBestBearishOB()
     }
     
     return bestIndex;
+}
+
+//+------------------------------------------------------------------+
+//| Get Freshness — Batch 103: OB freshness decay 0.0-1.0            |
+//| Fresh OBs (0-5 bars old) = 1.0, linear decay to 0.0 over 50 bars|
+//+------------------------------------------------------------------+
+double CAdvancedOrderBlockDetector::GetFreshness(int obIndex)
+{
+    if(obIndex < 0 || obIndex >= m_obCount)
+        return 0.0;
+
+    SAdvancedOrderBlock ob;
+    if(!GetOrderBlock(obIndex, ob))
+        return 0.0;
+
+    int currentBar = iBars(m_symbol, m_timeframe);
+    if(currentBar <= 0)
+        return 0.5;  // Unknown — return neutral
+
+    int obBar = iBarShift(m_symbol, m_timeframe, ob.time, false);
+    if(obBar < 0)
+        return 0.5;  // Cannot determine age
+
+    int ageBars = obBar;  // How many bars since OB formed
+
+    if(ageBars <= 5)
+        return 1.0;   // Fresh — full weight
+    if(ageBars >= 50)
+        return 0.0;   // Stale — no weight
+
+    // Linear decay: 1.0 at bar 5 → 0.0 at bar 50
+    return 1.0 - ((double)(ageBars - 5) / 45.0);
 }
 
 #endif // __UICT_ADVANCED_ORDER_BLOCKS_MQH__

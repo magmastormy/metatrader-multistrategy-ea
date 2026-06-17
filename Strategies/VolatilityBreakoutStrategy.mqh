@@ -19,7 +19,10 @@ enum ENUM_VB_ENTRY_TYPE
     VB_ENTRY_NONE = 0,
     VB_ENTRY_SQUEEZE_BREAKOUT,     // Breakout from BB squeeze
     VB_ENTRY_ATR_EXPANSION,        // ATR expansion breakout
-    VB_ENTRY_COMBINED_SIGNAL       // Squeeze + ATR + Volume (highest confidence)
+    VB_ENTRY_COMBINED_SIGNAL,       // Squeeze + ATR + Volume (highest confidence)
+    VB_ENTRY_DOUBLE_SQUEEZE,       // BB + KC double squeeze (TTM Squeeze)
+    VB_ENTRY_RETEST,               // Breakout + retest confirmation
+    VB_ENTRY_FAILURE_REVERSAL      // Breakout failure reversal
 };
 
 //+------------------------------------------------------------------+
@@ -75,6 +78,13 @@ private:
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
     bool m_inSqueeze;         // Track if we're in a squeeze state
+    int     m_kcEmaHandle;        // Keltner Channel EMA midline (v2.0)
+    int     m_adxHandle;          // ADX rising filter (v2.0)
+    double  m_squeezeHighPrice;   // Price level when squeeze detected (for retest)
+    double  m_squeezeLowPrice;    // Price level when squeeze detected (for retest)
+    int     m_squeezeBar;         // Bar index when squeeze was detected
+    bool    m_breakoutFailed;     // Breakout failure reversal flag
+    ENUM_TRADE_SIGNAL m_breakoutFailedDirection; // Direction of failed breakout reversal
     
     bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
     {
@@ -111,7 +121,7 @@ private:
     
 public:
     // Constructor
-    CVolatilityBreakoutStrategy(const string name = "Volatility Breakout v1.0", int magic = 0) :
+    CVolatilityBreakoutStrategy(const string name = "Volatility Breakout v2.0", int magic = 0) :
         CStrategyBase(name, magic),
         m_bbHandle(INVALID_HANDLE),
         m_atrHandle(INVALID_HANDLE),
@@ -128,7 +138,14 @@ public:
         m_signalsGenerated(0),
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0),
-        m_inSqueeze(false)
+        m_inSqueeze(false),
+        m_kcEmaHandle(INVALID_HANDLE),
+        m_adxHandle(INVALID_HANDLE),
+        m_squeezeHighPrice(0),
+        m_squeezeLowPrice(0),
+        m_squeezeBar(0),
+        m_breakoutFailed(false),
+        m_breakoutFailedDirection(TRADE_SIGNAL_NONE)
     {
         m_minConfidence = 0.65; // Higher threshold for breakout trades
     }
@@ -146,6 +163,8 @@ public:
         m_bbHandle = INVALID_HANDLE;
         m_atrHandle = INVALID_HANDLE;
         m_volumeHandle = INVALID_HANDLE;
+        m_kcEmaHandle = INVALID_HANDLE;
+        m_adxHandle = INVALID_HANDLE;
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
     }
@@ -160,6 +179,10 @@ public:
         m_bbHandle = CIndicatorManager::Instance().GetBandsHandle(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         m_atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, timeframe, m_atrPeriod);
         m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(symbol, timeframe, VOLUME_TICK);
+
+        // v2.0: Keltner Channel EMA and ADX handles
+        m_kcEmaHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
+        m_adxHandle = CIndicatorManager::Instance().GetADXHandle(m_symbol, m_timeframe, 14);
         
         if(m_bbHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE)
         {
@@ -271,6 +294,14 @@ public:
             return RejectSignal("VOLBREAK_LOW_CONFIDENCE");
         }
         
+        // v2.0: ADX rising filter for breakout entries
+        if(signal.entryType != VB_ENTRY_FAILURE_REVERSAL && !ADXRising())
+        {
+            // ADX not rising = volatility not expanding, skip breakout entries
+            // Exception: failure reversals don't need ADX rising
+            return RejectSignal("VOLBREAK_ADX_NOT_RISING");
+        }
+        
         // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
         if(m_riskManager != NULL)
         {
@@ -336,6 +367,34 @@ public:
     // Strategy Type
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_VOLATILITY_BREAKOUT; }
     
+    // Fast probe signal for two-tier consensus path (v2.0)
+    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
+    {
+        if(!m_is_enabled || !m_is_initialized)
+            return TRADE_SIGNAL_NONE;
+        
+        if(m_bbHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
+            return TRADE_SIGNAL_NONE;
+        
+        // Quick check: price at BB extreme + squeeze state
+        double bbUpper[1], bbLower[1];
+        if(!SafeCopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) ||
+           !SafeCopyBuffer(m_bbHandle, 2, 1, 1, bbLower))
+            return TRADE_SIGNAL_NONE;
+        
+        double close1 = iClose(m_symbol, m_timeframe, 1);
+        
+        // Price near upper band = potential buy breakout
+        if(close1 > bbUpper[0] - (bbUpper[0] - bbLower[0]) * 0.05)
+            return TRADE_SIGNAL_BUY;
+        
+        // Price near lower band = potential sell breakout
+        if(close1 < bbLower[0] + (bbUpper[0] - bbLower[0]) * 0.05)
+            return TRADE_SIGNAL_SELL;
+        
+        return TRADE_SIGNAL_NONE;
+    }
+    
 private:
     // Detect if market is in squeeze state
     bool DetectSqueezeState(double currentBBWidthPercent)
@@ -391,7 +450,33 @@ private:
         bool isInSqueeze)
     {
         SVolatilityBreakoutSignal signal;
-        
+
+        // v2.0: Breakout Failure Reversal
+        ENUM_TRADE_SIGNAL failureDirection;
+        if(DetectBreakoutFailure(failureDirection))
+        {
+            signal.entryType = VB_ENTRY_FAILURE_REVERSAL;
+            signal.direction = failureDirection;
+            signal.confidence = 0.70;
+            signal.reason = "Breakout failure reversal";
+            PrintFormat("[VOL-BREAKOUT] Breakout failure reversal | Direction=%s",
+                       failureDirection == TRADE_SIGNAL_BUY ? "BUY" : "SELL");
+            return signal;
+        }
+
+        // v2.0: Retest entry after breakout
+        ENUM_TRADE_SIGNAL retestDirection = (price > bbMiddle) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+        if(BreakoutWithRetest(retestDirection))
+        {
+            signal.entryType = VB_ENTRY_RETEST;
+            signal.direction = retestDirection;
+            signal.confidence = 0.78;
+            signal.reason = "Breakout + retest confirmation";
+            PrintFormat("[VOL-BREAKOUT] Retest entry | Direction=%s",
+                       retestDirection == TRADE_SIGNAL_BUY ? "BUY" : "SELL");
+            return signal;
+        }
+
         // Check for bullish breakout
         bool brokeAboveBB = (price > bbUpper && prevPrice <= bbUpper);
         bool atrExpanding = (atrRatio >= m_atrExpansionMult);
@@ -399,7 +484,26 @@ private:
         
         if(brokeAboveBB)
         {
-            if(isInSqueeze && atrExpanding && volumeSurge)
+            // v2.0: Double Squeeze (BB + KC) - highest confidence
+            if(DoubleSqueeze() && isInSqueeze)
+            {
+                signal.entryType = VB_ENTRY_DOUBLE_SQUEEZE;
+                signal.direction = TRADE_SIGNAL_BUY;
+                signal.entryPrice = price;
+                signal.stopLoss = bbMiddle;
+                signal.takeProfit = price + (curATR * 2.5);
+                signal.confidence = 0.85;
+                signal.reason = "BB+KC Double Squeeze (TTM Squeeze)";
+
+                // Store squeeze levels for retest/failure detection
+                m_squeezeHighPrice = iHigh(m_symbol, m_timeframe, 1);
+                m_squeezeLowPrice = iLow(m_symbol, m_timeframe, 1);
+                m_squeezeBar = iBars(m_symbol, m_timeframe);
+
+                PrintFormat("[VOL-BREAKOUT] Double Squeeze detected | BB inside KC | Conf=%.2f", signal.confidence);
+                return signal;
+            }
+            else if(isInSqueeze && atrExpanding && volumeSurge)
             {
                 // COMBINED SIGNAL: Highest confidence
                 signal.entryType = VB_ENTRY_COMBINED_SIGNAL;
@@ -452,7 +556,26 @@ private:
         
         if(brokeBelowBB)
         {
-            if(isInSqueeze && atrExpanding && volumeSurge)
+            // v2.0: Double Squeeze (BB + KC) - highest confidence
+            if(DoubleSqueeze() && isInSqueeze)
+            {
+                signal.entryType = VB_ENTRY_DOUBLE_SQUEEZE;
+                signal.direction = TRADE_SIGNAL_SELL;
+                signal.entryPrice = price;
+                signal.stopLoss = bbMiddle;
+                signal.takeProfit = price - (curATR * 2.5);
+                signal.confidence = 0.85;
+                signal.reason = "BB+KC Double Squeeze (TTM Squeeze)";
+
+                // Store squeeze levels for retest/failure detection
+                m_squeezeHighPrice = iHigh(m_symbol, m_timeframe, 1);
+                m_squeezeLowPrice = iLow(m_symbol, m_timeframe, 1);
+                m_squeezeBar = iBars(m_symbol, m_timeframe);
+
+                PrintFormat("[VOL-BREAKOUT] Double Squeeze detected | BB inside KC | Conf=%.2f", signal.confidence);
+                return signal;
+            }
+            else if(isInSqueeze && atrExpanding && volumeSurge)
             {
                 // COMBINED SIGNAL: Highest confidence
                 signal.entryType = VB_ENTRY_COMBINED_SIGNAL;
@@ -502,6 +625,98 @@ private:
         
         // No signal
         return signal;
+    }
+
+    // Double Squeeze Detection: BB inside KC = TTM Squeeze (v2.0)
+    bool DoubleSqueeze()
+    {
+        if(m_bbHandle == INVALID_HANDLE || m_kcEmaHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
+            return false;
+
+        double bbUpper[1], bbLower[1], kcEma[1], atr[1];
+        if(!SafeCopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) ||  // Upper band
+           !SafeCopyBuffer(m_bbHandle, 2, 1, 1, bbLower) ||  // Lower band
+           !SafeCopyBuffer(m_kcEmaHandle, 0, 1, 1, kcEma) ||
+           !SafeCopyBuffer(m_atrHandle, 0, 1, 1, atr))
+            return false;
+
+        // Keltner Channels: EMA ± 2*ATR
+        double kcUpper = kcEma[0] + 2.0 * atr[0];
+        double kcLower = kcEma[0] - 2.0 * atr[0];
+
+        // BB inside KC = strong squeeze
+        return (bbUpper[0] < kcUpper && bbLower[0] > kcLower);
+    }
+
+    // ADX Rising Filter (v2.0)
+    bool ADXRising()
+    {
+        if(m_adxHandle == INVALID_HANDLE)
+            return true;  // No ADX = don't block
+
+        double adx[2];
+        if(!SafeCopyBuffer(m_adxHandle, 0, 1, 2, adx))
+            return true;
+
+        return adx[0] > adx[1];  // ADX increasing = volatility expanding
+    }
+
+    // Breakout with Retest Confirmation (v2.0)
+    bool BreakoutWithRetest(ENUM_TRADE_SIGNAL direction)
+    {
+        // Check if we recently detected a squeeze and price broke out
+        if(m_squeezeBar == 0) return false;
+
+        int barsSinceSqueeze = iBars(m_symbol, m_timeframe) - m_squeezeBar;
+        if(barsSinceSqueeze > 5 || barsSinceSqueeze < 1) return false;  // Must be 1-5 bars ago
+
+        double close1 = iClose(m_symbol, m_timeframe, 1);
+        double low1 = iLow(m_symbol, m_timeframe, 1);
+        double high1 = iHigh(m_symbol, m_timeframe, 1);
+
+        if(direction == TRADE_SIGNAL_BUY)
+        {
+            // Broke above squeeze high, now retesting (price near squeeze high)
+            return (close1 > m_squeezeHighPrice && low1 <= m_squeezeHighPrice * 1.002);
+        }
+        else
+        {
+            // Broke below squeeze low, now retesting
+            return (close1 < m_squeezeLowPrice && high1 >= m_squeezeLowPrice * 0.998);
+        }
+    }
+
+    // Breakout Failure Reversal Detection (v2.0)
+    bool DetectBreakoutFailure(ENUM_TRADE_SIGNAL &outDirection)
+    {
+        if(m_squeezeBar == 0) return false;
+
+        int barsSinceSqueeze = iBars(m_symbol, m_timeframe) - m_squeezeBar;
+        if(barsSinceSqueeze > 5 || barsSinceSqueeze < 2) return false;
+
+        double close1 = iClose(m_symbol, m_timeframe, 1);
+        double high1 = iHigh(m_symbol, m_timeframe, 1);
+        double low1 = iLow(m_symbol, m_timeframe, 1);
+
+        // Broke up, then closed back inside = bearish reversal
+        if(high1 > m_squeezeHighPrice && close1 < m_squeezeHighPrice)
+        {
+            outDirection = TRADE_SIGNAL_SELL;
+            m_breakoutFailed = true;
+            m_breakoutFailedDirection = TRADE_SIGNAL_SELL;
+            return true;
+        }
+
+        // Broke down, then closed back inside = bullish reversal
+        if(low1 < m_squeezeLowPrice && close1 > m_squeezeLowPrice)
+        {
+            outDirection = TRADE_SIGNAL_BUY;
+            m_breakoutFailed = true;
+            m_breakoutFailedDirection = TRADE_SIGNAL_BUY;
+            return true;
+        }
+
+        return false;
     }
 };
 

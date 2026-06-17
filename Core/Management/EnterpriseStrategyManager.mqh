@@ -8,6 +8,10 @@
 #include "../Pipeline/UnifiedSignalPipeline.mqh"
 #include "../Visualization/DrawingCoordinator.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
+#include "../Processing/DerivAssetProfiler.mqh"
+#include "../Processing/MultiAssetProfiler.mqh"
+#include "../Risk/VPINFilter.mqh"
+#include "../Engines/OrderFlowImbalanceEngine.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
 
@@ -24,6 +28,13 @@
 #include "../../Strategies/MeanReversionStrategy.mqh"
 #include "../../Strategies/VolatilityBreakoutStrategy.mqh"
 #include "../../Strategies/StatisticalArbitrageStrategy.mqh"
+
+// Batch 103: New ICT/SMC strategies
+#include "../../Strategies/FVGScalperStrategy.mqh"
+#include "../../Strategies/TurtleSoupStrategy.mqh"
+#include "../../Strategies/BreakerBlockStrategy.mqh"
+#include "../../Strategies/NYOpenGapStrategy.mqh"
+#include "../../Strategies/AsianRangeBreakStrategy.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -206,7 +217,11 @@ private:
     CTradeManager* m_tradeManager;   // CRITICAL FIX: Store for strategy initialization
     CPositionSizer* m_positionSizer; // CRITICAL FIX: Store for strategy initialization
     CUnifiedRiskManager* m_unifiedRiskManager; // Unified risk validation gate (injected)
+    CDerivAssetProfiler* m_derivProfiler;      // Deriv family profiler for engine weighting
+    CMultiAssetProfiler* m_multiAssetProfiler;  // Multi-asset profiler (Batch 103)
     CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
+    CVPINFilter* m_vpinFilter;        // VPIN toxicity filter for consensus (Batch 104)
+    COrderFlowImbalanceEngine* m_ofiEngine;  // OFI for regime integration (Batch 104)
     
     StrategyEntry m_strategies[];
     int m_strategyCount;
@@ -379,7 +394,8 @@ private:
     bool IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
     double CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const;
     bool IsTrendingRegime() const;
-    
+    double GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const;
+
 public:
     CEnterpriseStrategyManager();
     ~CEnterpriseStrategyManager();
@@ -471,6 +487,7 @@ public:
                                      const bool shadowOnly);
     bool SetStrategyConfidenceThresholdByName(const string name, const double threshold);
     int GetRegisteredStrategyCount() const { return m_strategyCount; }
+    IStrategy* GetStrategyByName(const string name);  // Batch 103: Lookup strategy by name
     string GetRegisteredStrategyName(const int index) const;
     double GetRegisteredStrategyWeight(const int index) const;
     string GetRegisteredStrategyRole(const int index) const;
@@ -557,6 +574,14 @@ public:
     
     // Auto-registration
     void AutoRegisterStrategies(bool &enabledFlags[]);
+
+    // Deriv family-based engine weighting
+    void SetDerivProfiler(CDerivAssetProfiler* profiler) { m_derivProfiler = profiler; }
+    void SetMultiAssetProfiler(CMultiAssetProfiler* profiler) { m_multiAssetProfiler = profiler; }
+    void SetVPINFilter(CVPINFilter* vpin) { m_vpinFilter = vpin; }
+    void SetOFIEngine(COrderFlowImbalanceEngine* ofi) { m_ofiEngine = ofi; }
+    void ApplyFamilyEngineWeights(const string symbol);
+    void ApplyAssetClassEngineWeights(const string symbol);
 };
 
 //+------------------------------------------------------------------+
@@ -567,8 +592,12 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_tfConsistency(NULL),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
+    m_derivProfiler(NULL),
+    m_multiAssetProfiler(NULL),
+    m_vpinFilter(NULL),
+    m_ofiEngine(NULL),
     m_strategyCount(0),
-    m_maxStrategies(20),
+    m_maxStrategies(25),
     m_managedMagic(0),
     m_managedMagicRangeMax(0),
     m_initialized(false),
@@ -1074,10 +1103,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             // Apply Tier Multiplier from Ranking Matrix
             double tierMultiplier = CRankingMatrix::GetTierMultiplier(m_strategies[i].tier);
             
+            // Apply regime-aware dynamic weight multiplier
+            double regimeCategoryMult = GetRegimeCategoryMultiplier(m_strategies[i].strategy.GetType());
+
             adjustedStrategyWeight = strategyWeight * tierMultiplier *
                                      GetStrategyRoleVoteMultiplier(i) *
                                      GetStrategyReliabilityMultiplier(i) *
-                                     GetStrategyParticipationMultiplier(i);
+                                     GetStrategyParticipationMultiplier(i) *
+                                     regimeCategoryMult;
                                      
             if(liveEligibleForThisEval)
             {
@@ -1506,6 +1539,57 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                     isTrendingRegime ? "TRENDING" : "RANGING");
     }
 
+    // Log regime weight multiplier application (Batch 104)
+    if(m_pipeline != NULL)
+    {
+        CRegimeEngine* regimeEng = m_pipeline.GetRegimeEngine();
+        if(regimeEng != NULL)
+        {
+            SRegimeSnapshot snap = regimeEng.GetSnapshot();
+            PrintFormat("[CONSENSUS-REGIME] %s | Regime=%s | Weights: Mom=%.2f Trend=%.2f MR=%.2f Break=%.2f ICT=%.2f",
+                       symbol, EnumToString(snap.confirmedState),
+                       snap.momentumWeightMult, snap.trendWeightMult,
+                       snap.meanRevWeightMult, snap.breakoutWeightMult,
+                       snap.ictWeightMult);
+        }
+    }
+
+    // VPIN toxicity integration (Batch 104)
+    double vpinWeightMultiplier = 1.0;
+    if(m_vpinFilter != NULL)
+    {
+        double vpin = m_vpinFilter.GetVPIN();
+        ENUM_VPIN_TOXICITY toxicity = m_vpinFilter.GetToxicityRegime();
+
+        if(toxicity == VPIN_TOXICITY_EXTREME)  // VPIN > 0.7
+        {
+            // Skip all new entries at consensus level
+            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f EXTREME | All entries blocked", symbol, vpin);
+            return TRADE_SIGNAL_NONE;
+        }
+        else if(toxicity == VPIN_TOXICITY_HIGH)  // VPIN 0.5-0.7
+        {
+            vpinWeightMultiplier = 0.50;  // Reduce all weights by 50%
+            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f HIGH | Weights reduced 50%%", symbol, vpin);
+        }
+        else if(toxicity == VPIN_TOXICITY_MEDIUM)  // VPIN 0.3-0.5
+        {
+            vpinWeightMultiplier = 0.75;  // Reduce trend/breakout weights by 25%
+            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f MEDIUM | Weights reduced 25%%", symbol, vpin);
+        }
+        else
+        {
+            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f LOW | No adjustment", symbol, vpin);
+        }
+    }
+
+    // Apply VPIN weight multiplier to conviction values
+    if(vpinWeightMultiplier < 1.0)
+    {
+        buyConviction *= vpinWeightMultiplier;
+        sellConviction *= vpinWeightMultiplier;
+    }
+
     double minReadyWeight = totalLiveWeight * m_minReadyWeightRatio;
     bool readyWeightMet = (readyLiveWeight >= minReadyWeight);
     double readyCoverage = (totalLiveWeight > 0.0) ? ClampUnitValue(readyLiveWeight / totalLiveWeight) : 0.0;
@@ -1519,6 +1603,39 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     double sellDirectionalQuality = (sellWeightSum > 0.0) ? ClampUnitValue(sellConviction / sellWeightSum) : 0.0;
     double buySupportRatio = (readyLiveWeight > 0.0) ? ClampUnitValue(buyWeightSum / readyLiveWeight) : 0.0;
     double sellSupportRatio = (readyLiveWeight > 0.0) ? ClampUnitValue(sellWeightSum / readyLiveWeight) : 0.0;
+
+    // Consensus score 0-100 (Batch 104)
+    double rawConsensusScore = 0.0;
+    ENUM_TRADE_SIGNAL consensusDirection = TRADE_SIGNAL_NONE;
+    double winningDirectionalQuality = 0.0;
+    double winningSupportRatio = 0.0;
+
+    if(buyConviction > sellConviction && buyConviction > 0.0)
+    {
+        consensusDirection = TRADE_SIGNAL_BUY;
+        winningDirectionalQuality = buyDirectionalQuality;
+        winningSupportRatio = buySupportRatio;
+        rawConsensusScore = buyDirectionalQuality * buySupportRatio * 100.0;
+    }
+    else if(sellConviction > buyConviction && sellConviction > 0.0)
+    {
+        consensusDirection = TRADE_SIGNAL_SELL;
+        winningDirectionalQuality = sellDirectionalQuality;
+        winningSupportRatio = sellSupportRatio;
+        rawConsensusScore = sellDirectionalQuality * sellSupportRatio * 100.0;
+    }
+
+    int consensusScore = (int)MathMin(100, MathMax(0, MathRound(rawConsensusScore)));
+
+    // Log consensus score
+    if(consensusScore > 0)
+    {
+        PrintFormat("[CONSENSUS-SCORE] %s | Score=%d/100 | Direction=%s | Quality=%.2f | Support=%.2f | Threshold=60",
+                   symbol, consensusScore,
+                   consensusDirection == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                   winningDirectionalQuality, winningSupportRatio);
+    }
+
     double buyAverageReadiness = (buyWeightSum > 0.0) ? ClampUnitValue(buyReadinessSum / buyWeightSum) : 0.0;
     double sellAverageReadiness = (sellWeightSum > 0.0) ? ClampUnitValue(sellReadinessSum / sellWeightSum) : 0.0;
     double buyAverageContext = (buyWeightSum > 0.0) ? ClampUnitValue(buyContextSum / buyWeightSum) : 0.0;
@@ -2243,6 +2360,27 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
         Print("[EnterpriseStrategyManager] Python Bridge not available - Skipping Statistical Arbitrage registration");
     }
 
+    // Batch 103: New ICT/SMC strategies
+    // 12: FVG Scalper - Tier 2 - STRUCTURE_CLUSTER
+    if(size > 12 && flags[12]) RegisterStrategy(new CFVGScalperStrategy(), "FVG Scalper", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, false,
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
+    // 13: Turtle Soup - Tier 2 - STRUCTURE_CLUSTER
+    if(size > 13 && flags[13]) RegisterStrategy(new CTurtleSoupStrategy(), "Turtle Soup", true, 1.6, STRATEGY_TIER_2, PERIOD_CURRENT, false,
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
+    // 14: Breaker Block - Tier 2 - STRUCTURE_CLUSTER
+    if(size > 14 && flags[14]) RegisterStrategy(new CBreakerBlockStrategy(), "Breaker Block", true, 1.7, STRATEGY_TIER_2, PERIOD_CURRENT, false,
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
+    // 15: NY Open Gap - Tier 3 - STRUCTURE_CLUSTER (session-limited)
+    if(size > 15 && flags[15]) RegisterStrategy(new CNYOpenGapStrategy(), "NY Open Gap", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, false,
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
+    // 16: Asian Range Break - Tier 3 - STRUCTURE_CLUSTER (session-limited)
+    if(size > 16 && flags[16]) RegisterStrategy(new CAsianRangeBreakStrategy(), "Asian Range Break", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, false,
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
           GetActiveStrategyCount());
 }
@@ -2749,6 +2887,17 @@ int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
     return -1;
 }
 
+//+------------------------------------------------------------------+
+//| Get Strategy By Name — Batch 103: returns strategy pointer       |
+//+------------------------------------------------------------------+
+IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
+{
+    int idx = FindStrategyIndexByName(name);
+    if(idx < 0 || idx >= m_strategyCount)
+        return NULL;
+    return m_strategies[idx].strategy;
+}
+
 double CEnterpriseStrategyManager::ClampUnitValue(const double value) const
 {
     if(!MathIsValidNumber(value))
@@ -2840,6 +2989,82 @@ bool CEnterpriseStrategyManager::IsTrendingRegime() const
 
     // Default: assume ranging (conservative)
     return false;
+}
+
+double CEnterpriseStrategyManager::GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const
+{
+    // Default multiplier if regime engine unavailable
+    double defaultMult = 1.0;
+
+    if(m_pipeline == NULL)
+        return defaultMult;
+
+    CRegimeEngine* regimeEngine = m_pipeline.GetRegimeEngine();
+    if(regimeEngine == NULL)
+        return defaultMult;
+
+    SRegimeSnapshot snapshot = regimeEngine.GetSnapshot();
+
+    // Map strategy type to regime weight category
+    double categoryMult = defaultMult;
+    switch(strategyType)
+    {
+        case STRATEGY_MOMENTUM:
+            categoryMult = snapshot.momentumWeightMult;
+            break;
+        case STRATEGY_TREND:
+            categoryMult = snapshot.trendWeightMult;
+            break;
+        case STRATEGY_MEAN_REVERSION:
+        case STRATEGY_STATISTICAL_ARBITRAGE:
+            categoryMult = snapshot.meanRevWeightMult;
+            break;
+        case STRATEGY_VOLATILITY_BREAKOUT:
+            categoryMult = snapshot.breakoutWeightMult;
+            break;
+        case STRATEGY_UNIFIED_ICT:
+        case STRATEGY_SUPPORT_RESISTANCE:
+        case STRATEGY_CANDLESTICK:
+        case STRATEGY_FVG_SCALPER:
+        case STRATEGY_TURTLE_SOUP:
+        case STRATEGY_BREAKER_BLOCK:
+        case STRATEGY_NY_OPEN_GAP:
+        case STRATEGY_ASIAN_RANGE_BREAK:
+            categoryMult = snapshot.ictWeightMult;
+            break;
+        default:
+            categoryMult = defaultMult;
+            break;
+    }
+
+    // OFI regime integration (Batch 104)
+    // If OFI engine is available, adjust category multiplier based on order flow alignment
+    if(m_ofiEngine != NULL && m_ofiEngine.IsWarmedUp())
+    {
+        double ofiValue = m_ofiEngine.GetOFI();
+        bool isTrending = (snapshot.confirmedState == REGIME_TREND);
+
+        // OFI-aligned regime: boost relevant category
+        // OFI-contradicting regime: reduce relevant category
+        if(isTrending)
+        {
+            // Trending regime: positive OFI confirms bullish trend, negative confirms bearish
+            if((strategyType == STRATEGY_MOMENTUM || strategyType == STRATEGY_TREND) && MathAbs(ofiValue) > 0.3)
+                categoryMult *= 1.2;  // OFI confirms trend
+            else if((strategyType == STRATEGY_MEAN_REVERSION || strategyType == STRATEGY_STATISTICAL_ARBITRAGE) && MathAbs(ofiValue) > 0.3)
+                categoryMult *= 0.7;  // OFI contradicts mean reversion in trend
+        }
+        else
+        {
+            // Ranging regime: strong OFI contradicts range
+            if((strategyType == STRATEGY_MEAN_REVERSION || strategyType == STRATEGY_STATISTICAL_ARBITRAGE) && MathAbs(ofiValue) < 0.15)
+                categoryMult *= 1.2;  // Low OFI confirms range = good for mean reversion
+            else if((strategyType == STRATEGY_MOMENTUM || strategyType == STRATEGY_TREND) && MathAbs(ofiValue) > 0.3)
+                categoryMult *= 0.7;  // Strong OFI in range = trend trying to form
+        }
+    }
+
+    return categoryMult;
 }
 
 bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) const
@@ -3724,6 +3949,219 @@ void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
     
     PrintFormat("[QUORUM-PROFILE] Applied %s profile | minQuorum=%d | quorumThreshold=%.2f | pipelineMinConfidence=%.2f",
                 profileName, m_minQuorum, m_quorumThreshold, m_pipelineMinConfidence);
+}
+
+//+------------------------------------------------------------------+
+//| Apply family-based engine weights for Deriv synthetic indices    |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::ApplyFamilyEngineWeights(const string symbol)
+{
+    if(m_derivProfiler == NULL)
+        return;
+
+    SDerivProfile profile = m_derivProfiler.GetProfile(symbol);
+    ENUM_DERIV_FAMILY family = profile.family;
+
+    // Strategy name constants matching AutoRegisterStrategies registration names
+    const string VOL_BREAKOUT = "Volatility Breakout";
+    const string MEAN_REVERT  = "Mean Reversion";
+    const string TREND        = "Trend";
+    const string MOMENTUM     = "Momentum";
+    const string STAT_ARB     = "Statistical Arbitrage";
+
+    double volBreakoutMult = 1.0;
+    double meanRevertMult  = 1.0;
+    double trendMult       = 1.0;
+    double momentumMult    = 1.0;
+    double statArbMult     = 1.0;
+
+    switch(family)
+    {
+        case DERIV_CRASH_BOOM:
+            volBreakoutMult = 1.5;
+            meanRevertMult  = 0.5;
+            momentumMult    = 0.5;
+            statArbMult     = 0.0;
+            break;
+        case DERIV_VOLATILITY:
+            volBreakoutMult = 0.3;
+            meanRevertMult  = 1.5;
+            trendMult       = 0.5;
+            momentumMult    = 0.5;
+            statArbMult     = 0.0;
+            break;
+        case DERIV_STEP:
+            meanRevertMult  = 1.5;
+            volBreakoutMult = 0.5;
+            momentumMult    = 0.5;
+            statArbMult     = 0.0;
+            break;
+        case DERIV_JUMP:
+            volBreakoutMult = 1.5;
+            meanRevertMult  = 0.5;
+            momentumMult    = 0.5;
+            statArbMult     = 0.0;
+            break;
+        case DERIV_DEX:
+            volBreakoutMult = 1.5;
+            meanRevertMult  = 0.3;
+            momentumMult    = 0.5;
+            statArbMult     = 0.0;
+            break;
+        default:
+            return;
+    }
+
+    // Apply multipliers to current weights
+    int idx;
+
+    if(volBreakoutMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(VOL_BREAKOUT);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * volBreakoutMult;
+            UpdateStrategyWeightByName(VOL_BREAKOUT, newWeight);
+            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, VOL_BREAKOUT, volBreakoutMult, newWeight);
+        }
+    }
+
+    if(meanRevertMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(MEAN_REVERT);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * meanRevertMult;
+            UpdateStrategyWeightByName(MEAN_REVERT, newWeight);
+            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, MEAN_REVERT, meanRevertMult, newWeight);
+        }
+    }
+
+    if(trendMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(TREND);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * trendMult;
+            UpdateStrategyWeightByName(TREND, newWeight);
+            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, TREND, trendMult, newWeight);
+        }
+    }
+
+    if(momentumMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(MOMENTUM);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * momentumMult;
+            UpdateStrategyWeightByName(MOMENTUM, newWeight);
+            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, MOMENTUM, momentumMult, newWeight);
+        }
+    }
+
+    if(statArbMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(STAT_ARB);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * statArbMult;
+            UpdateStrategyWeightByName(STAT_ARB, newWeight);
+            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, STAT_ARB, statArbMult, newWeight);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Apply asset-class-based engine weights using multi-asset profiler|
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::ApplyAssetClassEngineWeights(const string symbol)
+{
+    // Fallback to family-based weighting if profiler not set
+    if(m_multiAssetProfiler == NULL)
+    {
+        ApplyFamilyEngineWeights(symbol);
+        return;
+    }
+
+    ENUM_ASSET_CLASS assetClass = m_multiAssetProfiler.GetAssetClassForSymbol(symbol);
+
+    // Strategy name constants matching AutoRegisterStrategies registration names
+    const string VOL_BREAKOUT = "Volatility Breakout";
+    const string MEAN_REVERT  = "Mean Reversion";
+    const string TREND        = "Trend";
+
+    // Deriv asset classes (4-8) delegate to existing family-based logic
+    if(assetClass >= ASSET_DERIV_CRASHBOOM && assetClass <= ASSET_DERIV_DEX)
+    {
+        ApplyFamilyEngineWeights(symbol);
+        return;
+    }
+
+    double volBreakoutMult = 1.0;
+    double meanRevertMult  = 1.0;
+    double trendMult       = 1.0;
+
+    switch(assetClass)
+    {
+        case ASSET_FOREX:
+            trendMult       = 1.3;
+            volBreakoutMult = 1.2;
+            meanRevertMult  = 0.7;
+            break;
+        case ASSET_METALS:
+            volBreakoutMult = 1.5;
+            meanRevertMult  = 0.5;
+            break;
+        case ASSET_INDICES:
+            meanRevertMult  = 1.5;
+            volBreakoutMult = 0.5;
+            trendMult       = 0.8;
+            break;
+        case ASSET_ENERGIES:
+            volBreakoutMult = 1.4;
+            trendMult       = 1.2;
+            break;
+        case ASSET_UNIVERSAL:
+        default:
+            // No adjustment for universal/unknown
+            return;
+    }
+
+    // Apply multipliers to current weights
+    int idx;
+
+    if(volBreakoutMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(VOL_BREAKOUT);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * volBreakoutMult;
+            UpdateStrategyWeightByName(VOL_BREAKOUT, newWeight);
+            PrintFormat("[ASSET-CLASS-WEIGHT] %s | %s x%.1f => %.3f", symbol, VOL_BREAKOUT, volBreakoutMult, newWeight);
+        }
+    }
+
+    if(meanRevertMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(MEAN_REVERT);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * meanRevertMult;
+            UpdateStrategyWeightByName(MEAN_REVERT, newWeight);
+            PrintFormat("[ASSET-CLASS-WEIGHT] %s | %s x%.1f => %.3f", symbol, MEAN_REVERT, meanRevertMult, newWeight);
+        }
+    }
+
+    if(trendMult != 1.0)
+    {
+        idx = FindStrategyIndexByName(TREND);
+        if(idx >= 0)
+        {
+            double newWeight = m_strategies[idx].weight * trendMult;
+            UpdateStrategyWeightByName(TREND, newWeight);
+            PrintFormat("[ASSET-CLASS-WEIGHT] %s | %s x%.1f => %.3f", symbol, TREND, trendMult, newWeight);
+        }
+    }
 }
 
 #endif // ENTERPRISE_STRATEGY_MANAGER_MQH

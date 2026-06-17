@@ -134,6 +134,20 @@ public:
     bool                IsNearLiquidity(double price, double tolerancePips = 20);
     bool                HasBuysideLiquidity(double price);
     bool                HasSellsideLiquidity(double price);
+
+    // Batch 103: External swing liquidity mapping
+    struct SExternalLiquidityPool
+    {
+        double price;
+        double strength;        // 0.0-1.0
+        bool   isHigh;          // true = swing high liquidity, false = swing low
+        bool   isSwept;
+        int    barAge;          // Bars since the swing formed
+
+        SExternalLiquidityPool() : price(0), strength(0), isHigh(false), isSwept(false), barAge(0) {}
+    };
+
+    int                 DetectExternalSwingLiquidity(SExternalLiquidityPool &pools[], int maxPools = 10, int lookback = 100);
 };
 
 //+------------------------------------------------------------------+
@@ -809,6 +823,92 @@ bool CLiquidityDetector::HasBuysideLiquidity(double price)
 bool CLiquidityDetector::HasSellsideLiquidity(double price)
 {
     return (FindNearestLiquidity(price, false) >= 0);
+}
+
+//+------------------------------------------------------------------+
+//| Detect External Swing Liquidity — Batch 103                      |
+//| Scans for swing highs/lows that align with daily/weekly levels   |
+//| Returns count of pools found, fills the pools array              |
+//+------------------------------------------------------------------+
+int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &pools[], int maxPools = 10, int lookback = 100)
+{
+    ArrayResize(pools, 0);
+    int found = 0;
+
+    // Scan for swing highs (external buy-side liquidity)
+    for(int i = 2; i < lookback - 2 && found < maxPools; i++)
+    {
+        double h = iHigh(m_symbol, m_timeframe, i);
+        double hLeft = iHigh(m_symbol, m_timeframe, i + 1);
+        double hRight = iHigh(m_symbol, m_timeframe, i - 1);
+        if(h <= 0 || hLeft <= 0 || hRight <= 0) continue;
+
+        if(h > hLeft && h > hRight)
+        {
+            // Check if this swing high has been swept (current price above it)
+            double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+            bool swept = (currentPrice > h);
+
+            SExternalLiquidityPool pool;
+            pool.price = h;
+            pool.isHigh = true;
+            pool.isSwept = swept;
+            pool.barAge = i;
+            // Strength based on how many touches near this level
+            pool.strength = 0.5;
+            // Check for equal highs (multiple bars near same price = stronger liquidity)
+            for(int j = i + 2; j < MathMin(i + 20, lookback - 2); j++)
+            {
+                double h2 = iHigh(m_symbol, m_timeframe, j);
+                if(h2 > 0 && MathAbs(h2 - h) < m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT))
+                {
+                    pool.strength = MathMin(1.0, pool.strength + 0.15);
+                    break;
+                }
+            }
+
+            ArrayResize(pools, found + 1);
+            pools[found] = pool;
+            found++;
+        }
+    }
+
+    // Scan for swing lows (external sell-side liquidity)
+    for(int i = 2; i < lookback - 2 && found < maxPools; i++)
+    {
+        double l = iLow(m_symbol, m_timeframe, i);
+        double lLeft = iLow(m_symbol, m_timeframe, i + 1);
+        double lRight = iLow(m_symbol, m_timeframe, i - 1);
+        if(l <= 0 || lLeft <= 0 || lRight <= 0) continue;
+
+        if(l < lLeft && l < lRight)
+        {
+            double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+            bool swept = (currentPrice < l);
+
+            SExternalLiquidityPool pool;
+            pool.price = l;
+            pool.isHigh = false;
+            pool.isSwept = swept;
+            pool.barAge = i;
+            pool.strength = 0.5;
+            for(int j = i + 2; j < MathMin(i + 20, lookback - 2); j++)
+            {
+                double l2 = iLow(m_symbol, m_timeframe, j);
+                if(l2 > 0 && MathAbs(l2 - l) < m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT))
+                {
+                    pool.strength = MathMin(1.0, pool.strength + 0.15);
+                    break;
+                }
+            }
+
+            ArrayResize(pools, found + 1);
+            pools[found] = pool;
+            found++;
+        }
+    }
+
+    return found;
 }
 
 #endif // __UICT_LIQUIDITY_DETECTOR_MQH__

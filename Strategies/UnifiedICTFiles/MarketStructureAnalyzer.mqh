@@ -191,6 +191,13 @@ public:
     int                 GetSwingLowCount() const { return m_lowCount; }
     bool                GetLastSwingHigh(SStructuralPoint &swing);
     bool                GetLastSwingLow(SStructuralPoint &swing);
+
+    // Batch 103: Fast structure detection (opt-in, no change to existing methods)
+    bool                DetectFastCHOCH();              // 1-bar close beyond structure level
+    bool                DetectWickBOS();                 // Wick penetration = immediate BOS
+    bool                DetectCISDDisplacement();        // Displacement > 1.5 ATR = CISD confirmation
+    double              GetSwingHighLevel(int lookback = 20);  // Get nearest swing high price
+    double              GetSwingLowLevel(int lookback = 20);   // Get nearest swing low price
 };
 
 //+------------------------------------------------------------------+
@@ -903,6 +910,88 @@ bool CMarketStructureAnalyzer::GetLastSwingLow(SStructuralPoint &swing)
     if(m_lowCount <= 0) return false;
     swing = m_lows[0];
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Fast CHOCH — Batch 103: 1-bar close beyond structure      |
+//| Returns true if current bar closes beyond the nearest swing level |
+//+------------------------------------------------------------------+
+bool CMarketStructureAnalyzer::DetectFastCHOCH()
+{
+    double close0 = iClose(m_symbol, m_timeframe, 0);
+    if(close0 <= 0) return false;
+
+    // Check if close is above the nearest swing high (bullish CHoCH)
+    double swingHigh = GetSwingHighLevel(20);
+    if(swingHigh > 0 && close0 > swingHigh)
+        return true;
+
+    // Check if close is below the nearest swing low (bearish CHoCH)
+    double swingLow = GetSwingLowLevel(20);
+    if(swingLow > 0 && close0 < swingLow)
+        return true;
+
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Wick BOS — Batch 103: wick penetration = immediate BOS    |
+//| Returns true if current bar's wick penetrates a swing level      |
+//+------------------------------------------------------------------+
+bool CMarketStructureAnalyzer::DetectWickBOS()
+{
+    double high0 = iHigh(m_symbol, m_timeframe, 0);
+    double low0 = iLow(m_symbol, m_timeframe, 0);
+    if(high0 <= 0 || low0 <= 0) return false;
+
+    // Wick above swing high = bullish BOS
+    double swingHigh = GetSwingHighLevel(10);
+    if(swingHigh > 0 && high0 > swingHigh)
+        return true;
+
+    // Wick below swing low = bearish BOS
+    double swingLow = GetSwingLowLevel(10);
+    if(swingLow > 0 && low0 < swingLow)
+        return true;
+
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Detect CISD Displacement — Batch 103: displacement > 1.5 ATR    |
+//| Returns true if the 5-bar displacement exceeds 1.5 ATR          |
+//+------------------------------------------------------------------+
+bool CMarketStructureAnalyzer::DetectCISDDisplacement()
+{
+    double close0 = iClose(m_symbol, m_timeframe, 0);
+    double close5 = iClose(m_symbol, m_timeframe, 5);
+    if(close0 <= 0 || close5 <= 0) return false;
+
+    double displacement = MathAbs(close0 - close5);
+    double atr = GetATR(14);
+    if(atr <= 0) return false;
+
+    return displacement > 1.5 * atr;
+}
+
+//+------------------------------------------------------------------+
+//| Get Swing High Level — Batch 103: nearest swing high price       |
+//+------------------------------------------------------------------+
+double CMarketStructureAnalyzer::GetSwingHighLevel(int lookback = 20)
+{
+    int highestBar = iHighest(m_symbol, m_timeframe, MODE_HIGH, lookback, 1);
+    if(highestBar < 0) return 0.0;
+    return iHigh(m_symbol, m_timeframe, highestBar);
+}
+
+//+------------------------------------------------------------------+
+//| Get Swing Low Level — Batch 103: nearest swing low price         |
+//+------------------------------------------------------------------+
+double CMarketStructureAnalyzer::GetSwingLowLevel(int lookback = 20)
+{
+    int lowestBar = iLowest(m_symbol, m_timeframe, MODE_LOW, lookback, 1);
+    if(lowestBar < 0) return 0.0;
+    return iLow(m_symbol, m_timeframe, lowestBar);
 }
 
 #endif // __UICT_MARKET_STRUCTURE_ANALYZER_MQH__

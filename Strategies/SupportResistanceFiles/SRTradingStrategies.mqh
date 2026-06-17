@@ -12,6 +12,7 @@
 
 #include "SupportResistanceDetector.mqh"
 #include "TrendlineDetector.mqh"
+#include "SRSignalScorer.mqh"
 #include "../../IndicatorManager.mqh"
 
 //+------------------------------------------------------------------+
@@ -126,21 +127,21 @@ bool CSRBounceStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefram
 }
 
 //+------------------------------------------------------------------+
-//| Get Bounce Signal                                                |
+//| Get Bounce Signal (Batch 103: Soft confluence scoring)           |
 //+------------------------------------------------------------------+
 SSRSignalResult CSRBounceStrategy::GetSignal()
 {
     SSRSignalResult result;
-    
+
     if(m_srDetector == NULL)
         return result;
-    
+
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+
     // Find nearest S/R level
     int nearestIdx = m_srDetector.FindNearestLevel(price, 15);
-    
+
     if(nearestIdx < 0)
         return result;
 
@@ -151,77 +152,79 @@ SSRSignalResult CSRBounceStrategy::GetSignal()
 
     double distance = MathAbs(price - nearestLevel.price);
     double tolerance = (atr > 0) ? (atr * 0.20) : (15 * SymbolInfoDouble(m_symbol, SYMBOL_POINT));
-    
-    // Must be AT the level
-    if(distance > tolerance)
-        return result;
-    
-    // Determine if support or resistance
+
+    // Batch 103: Soft confluence scoring (0-100) replaces hard AND logic
+    CSRSignalScorer scorer;
+    scorer.Reset();
+    scorer.AddPriceAtLevel(distance <= tolerance);                                    // 30 pts
+    scorer.AddCandleRejection(HasBullishRejection() || HasBearishRejection());        // 25 pts
+    scorer.AddEMAAligned(IsTrendAlignedBullish() || IsTrendAlignedBearish());         // 20 pts
+    if(m_trendDetector != NULL)
+    {
+        int touchedLineIdx = -1;
+        scorer.AddTrendlineConfluence(m_trendDetector.IsAtTrendline(price, touchedLineIdx)); // 15 pts
+    }
+    scorer.AddMultipleTouches(nearestLevel.touches >= 3);                             // 10 pts
+
+    if(!scorer.HasSignal())
+        return result;  // Score < 60 → no signal
+
+    // Determine direction from rejection pattern
     bool isSupport = (price >= nearestLevel.price);
-    
+
+    if(isSupport && HasBullishRejection())
+    {
+        result.signal = TRADE_SIGNAL_BUY;
+        result.reason = "Bullish bounce from support";
+    }
+    else if(!isSupport && HasBearishRejection())
+    {
+        result.signal = TRADE_SIGNAL_SELL;
+        result.reason = "Bearish bounce from resistance";
+    }
+    else
+        return result;  // No directional rejection candle
+
+    // Confidence from score (60-100 → 0.60-1.00)
+    result.confidence = scorer.GetScore() / 100.0;
+    result.entryPrice = price;
+
     atr = GetATR(14);
-    double atrTargetMultiplier = 2.0; 
+    double atrTargetMultiplier = 2.0;
     double atrStopMultiplier = 1.0;
-    
     double defaultTarget = (atr > 0) ? (atr * atrTargetMultiplier) : (40 * point);
     double defaultStop = (atr > 0) ? (atr * atrStopMultiplier) : (20 * point);
 
     if(isSupport)
     {
-        // Look for bullish bounce from support
-        if(HasBullishRejection() && IsTrendAlignedBullish())
-        {
-            result.signal = TRADE_SIGNAL_BUY;
-            result.confidence = nearestLevel.strength;
-            result.entryPrice = price;
-            result.stopLoss = nearestLevel.price - defaultStop;
-            result.takeProfit1 = price + defaultTarget;
-            result.takeProfit2 = price + (defaultTarget * 2.0);
-            result.reason = "Bullish bounce from support";
-        }
+        result.stopLoss = nearestLevel.price - defaultStop;
+        result.takeProfit1 = price + defaultTarget;
+        result.takeProfit2 = price + (defaultTarget * 2.0);
     }
     else
     {
-        // Look for bearish bounce from resistance
-        if(HasBearishRejection() && IsTrendAlignedBearish())
-        {
-            result.signal = TRADE_SIGNAL_SELL;
-            result.confidence = nearestLevel.strength;
-            result.entryPrice = price;
-            result.stopLoss = nearestLevel.price + defaultStop;
-            result.takeProfit1 = price - defaultTarget;
-            result.takeProfit2 = price - (defaultTarget * 2.0);
-            result.reason = "Bearish bounce from resistance";
-        }
+        result.stopLoss = nearestLevel.price + defaultStop;
+        result.takeProfit1 = price - defaultTarget;
+        result.takeProfit2 = price - (defaultTarget * 2.0);
     }
-    
-    // Bonus confidence for multiple touches
-    if(nearestLevel.touches >= 3)
-    {
-        result.confidence += 0.10;
-        result.hasMultipleTouches = true;
-    }
-    
-    // Bonus for confluence with trendline
+
+    // Track confluence flags
+    result.hasMultipleTouches = (nearestLevel.touches >= 3);
     if(m_trendDetector != NULL)
     {
         int touchedLineIdx = -1;
-        if(m_trendDetector.IsAtTrendline(price, touchedLineIdx))
-        {
-            result.confidence += 0.15;
-            result.hasTrendlineConfluence = true;
-        }
+        result.hasTrendlineConfluence = m_trendDetector.IsAtTrendline(price, touchedLineIdx);
     }
-    
+
     result.confidence = MathMin(1.0, result.confidence);
-    
+
     // Minimum threshold
     if(result.confidence < m_minConfidence)
     {
         result.signal = TRADE_SIGNAL_NONE;
         result.confidence = 0;
     }
-    
+
     return result;
 }
 
@@ -350,6 +353,7 @@ private:
     
     bool                HasVolumeConfirmation();
     double              GetATR(int period = 14);
+    bool                FalseBreakoutDetected(int &outDirection);
     
 public:
                         CSRBreakoutStrategy();
@@ -400,52 +404,89 @@ bool CSRBreakoutStrategy::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
 }
 
 //+------------------------------------------------------------------+
-//| Get Breakout Signal                                              |
+//| Get Breakout Signal (Batch 103: False breakout detection added)  |
 //+------------------------------------------------------------------+
 SSRSignalResult CSRBreakoutStrategy::GetSignal()
 {
     SSRSignalResult result;
-    
+
     if(m_srDetector == NULL)
         return result;
-    
+
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
-    
-    // Check for recent breakout
+
+    // Batch 103: Check for false breakout first (higher-value signal)
+    int falseBreakDir = 0;
+    if(FalseBreakoutDetected(falseBreakDir))
+    {
+        double atr = GetATR(14);
+        double defaultTarget = (atr > 0) ? (atr * 1.5) : (30 * point);
+        double defaultStop = (atr > 0) ? (atr * 0.8) : (15 * point);
+
+        if(falseBreakDir == 1)  // False breakout down → buy
+        {
+            result.signal = TRADE_SIGNAL_BUY;
+            result.entryPrice = price;
+            result.stopLoss = price - defaultStop;
+            result.takeProfit1 = price + defaultTarget;
+            result.takeProfit2 = price + (defaultTarget * 2.0);
+            result.reason = "False breakout below support";
+            result.confidence = 0.70;
+        }
+        else if(falseBreakDir == -1)  // False breakout up → sell
+        {
+            result.signal = TRADE_SIGNAL_SELL;
+            result.entryPrice = price;
+            result.stopLoss = price + defaultStop;
+            result.takeProfit1 = price - defaultTarget;
+            result.takeProfit2 = price - (defaultTarget * 2.0);
+            result.reason = "False breakout above resistance";
+            result.confidence = 0.70;
+        }
+
+        if(result.confidence < m_minConfidence)
+        {
+            result.signal = TRADE_SIGNAL_NONE;
+            result.confidence = 0;
+        }
+        return result;
+    }
+
+    // Standard breakout detection
     int brokenLevelIdx = -1;
     if(!m_srDetector.DetectBreakout(price, brokenLevelIdx))
         return result;
-    
+
     if(brokenLevelIdx < 0)
         return result;
-    
+
     SSupportResistance brokenLevel;
     if(!m_srDetector.GetLevel(brokenLevelIdx, brokenLevel))
         return result;
-    
+
     double atr = GetATR(14);
     // Check if price is retesting the broken level
     double retestDistance = MathAbs(price - brokenLevel.price);
     double retestTolerance = (atr > 0) ? (atr * 0.15) : (15 * point);
-    
+
     if(retestDistance > retestTolerance)
         return result; // Not retesting yet
-    
+
     // Validate breakout (body > 60% of range)
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
     if(CopyRates(m_symbol, m_timeframe, 1, 2, rates) != 2)
         return result;
-    
+
     double body = MathAbs(rates[0].close - rates[0].open);
     double range = rates[0].high - rates[0].low;
-    
+
     if(range > 0 && body < range * 0.6)
         return result; // Weak breakout
-    
+
     result.confidence = 0.75;
-    
+
     atr = GetATR(14);
     double defaultTarget = (atr > 0) ? (atr * 1.5) : (30 * point);
     double defaultStop = (atr > 0) ? (atr * 0.8) : (15 * point);
@@ -472,23 +513,23 @@ SSRSignalResult CSRBreakoutStrategy::GetSignal()
         result.reason = "Breakout retest - support became resistance";
         brokenLevel.roleReversed = true;
     }
-    
+
     // Bonus for strong level
     if(brokenLevel.strength > 0.80)
         result.confidence += 0.10;
-    
+
     // Bonus for volume confirmation
     if(HasVolumeConfirmation())
         result.confidence += 0.10;
-    
+
     result.confidence = MathMin(1.0, result.confidence);
-    
+
     if(result.confidence < m_minConfidence)
     {
         result.signal = TRADE_SIGNAL_NONE;
         result.confidence = 0;
     }
-    
+
     return result;
 }
 
@@ -521,6 +562,69 @@ double CSRBreakoutStrategy::GetATR(int period)
         return atrBuf[0];
 
     return 0;
+}
+
+//+------------------------------------------------------------------+
+//| Detect False Breakout (Batch 103)                                |
+//| Level broken within last 3 bars then reclaimed = counter signal  |
+//+------------------------------------------------------------------+
+bool CSRBreakoutStrategy::FalseBreakoutDetected(int &outDirection)
+{
+    outDirection = 0;
+    if(m_srDetector == NULL) return false;
+
+    double price = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    double atr = GetATR(14);
+    double tolerance = (atr > 0) ? atr * 0.20 : 15 * point;
+
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    if(CopyRates(m_symbol, m_timeframe, 0, 4, rates) != 4) return false;
+
+    // Check false breakout above resistance
+    int nearestResIdx = m_srDetector.FindNearestResistance(price);
+    if(nearestResIdx >= 0)
+    {
+        SSupportResistance resLevel;
+        if(m_srDetector.GetLevel(nearestResIdx, resLevel))
+        {
+            bool brokeAbove = false;
+            for(int i = 1; i <= 3; i++)
+            {
+                if(rates[i].high > resLevel.price + tolerance) { brokeAbove = true; break; }
+            }
+            bool backBelow = price < resLevel.price;
+            if(brokeAbove && backBelow)
+            {
+                outDirection = -1;  // Sell signal
+                return true;
+            }
+        }
+    }
+
+    // Check false breakout below support
+    int nearestSupIdx = m_srDetector.FindNearestSupport(price);
+    if(nearestSupIdx >= 0)
+    {
+        SSupportResistance supLevel;
+        if(m_srDetector.GetLevel(nearestSupIdx, supLevel))
+        {
+            bool brokeBelow = false;
+            for(int i = 1; i <= 3; i++)
+            {
+                if(rates[i].low < supLevel.price - tolerance) { brokeBelow = true; break; }
+            }
+            bool backAbove = price > supLevel.price;
+            if(brokeBelow && backAbove)
+            {
+                outDirection = 1;  // Buy signal
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 //+------------------------------------------------------------------+

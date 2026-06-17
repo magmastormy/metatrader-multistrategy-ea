@@ -22,6 +22,8 @@ enum ENUM_ADX_TIER
     ADX_VERY_STRONG     // ADX > 45 - 1.5x size
 };
 
+#include "../../Core/Utils/Instruments.mqh"
+
 //+------------------------------------------------------------------+
 //| ADX Position Sizing Class                                        |
 //+------------------------------------------------------------------+
@@ -84,6 +86,7 @@ public:
     void                SetBaseRiskPercent(double risk) { m_baseRiskPercent = risk; }
     void                SetMultipliers(double weak, double normal, double strong, double veryStrong);
     void                SetThresholds(double noTrend, double weak, double normal, double strong);
+    void                InitForAssetClass(int assetClass);
 };
 
 //+------------------------------------------------------------------+
@@ -330,6 +333,47 @@ void CADXPositionSizing::SetThresholds(double noTrend, double weak, double norma
     m_weakThreshold = weak;
     m_normalThreshold = normal;
     m_strongThreshold = strong;
+}
+
+//+------------------------------------------------------------------+
+//| Initialize ADX thresholds based on asset class                   |
+//| Synthetics have lower ADX due to algorithmic price generation    |
+//+------------------------------------------------------------------+
+void CADXPositionSizing::InitForAssetClass(int assetClass)
+{
+    switch(assetClass)
+    {
+        case ASSET_FOREX:
+        case ASSET_METALS:
+            m_noTrendThreshold = 20.0;
+            m_weakThreshold = 25.0;
+            m_normalThreshold = 30.0;
+            m_strongThreshold = 35.0;
+            break;
+
+        case ASSET_DERIV_CRASHBOOM:
+        case ASSET_DERIV_VOLATILITY:
+        case ASSET_DERIV_STEP:
+        case ASSET_DERIV_JUMP:
+        case ASSET_DERIV_DEX:
+            // Synthetics have lower ADX due to algorithmic generation
+            m_noTrendThreshold = 15.0;
+            m_weakThreshold = 20.0;
+            m_normalThreshold = 25.0;
+            m_strongThreshold = 30.0;
+            break;
+
+        case ASSET_INDICES:
+            m_noTrendThreshold = 18.0;
+            m_weakThreshold = 23.0;
+            m_normalThreshold = 28.0;
+            m_strongThreshold = 33.0;
+            break;
+
+        default:
+            // Keep defaults (20/25/30/40)
+            break;
+    }
 }
 
 #endif // __TREND_ADX_POSITION_SIZING_MQH__

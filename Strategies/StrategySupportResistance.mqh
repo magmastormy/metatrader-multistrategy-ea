@@ -15,6 +15,9 @@
 #include "../Core/Engines/FibConfluence.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+// Batch 103: Hurst/VPIN engine access
+#include "../Core/Engines/HurstEngine.mqh"
+#include "../Core/Risk/VPINFilter.mqh"
 // Subsystem Logger for separated log files
 #include "../Core/Utils/SubsystemLogger.mqh"
 
@@ -54,10 +57,15 @@ private:
     // Risk Management (AGENTS.md invariant #1)
     CUnifiedRiskManager*        m_riskManager;
     CSubsystemLogger*           m_logger;  // Subsystem logger for drawing diagnostics
-    
+
+    // Batch 103: Per-symbol engine references (not owned)
+    CHurstEngine*               m_hurstEngine;
+    CVPINFilter*                m_vpinFilter;
+
     // Configuration
     ENUM_SR_STRATEGY_MODE       m_mode;
     int                         m_lastBarProcessed;
+    int                         m_drawBarCounter;  // Batch 103: Throttle drawing
     
     // Statistics
     int                         m_signalsGenerated;
@@ -75,6 +83,11 @@ public:
     virtual ENUM_TRADE_SIGNAL   GetSignal(double &confidence) override;
     virtual string              GetName() const override { return m_name; }
     virtual ENUM_STRATEGY_TYPE  GetType() const override { return STRATEGY_SUPPORT_RESISTANCE; }
+
+    // Batch 103: Set per-symbol Hurst engine (not owned)
+    void SetHurstEngine(CHurstEngine* engine) { m_hurstEngine = engine; }
+    // Batch 103: Set per-symbol VPIN filter (not owned)
+    void SetVPINFilter(CVPINFilter* filter) { m_vpinFilter = filter; }
     
 private:
     double                      ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, double price, double confidence);
@@ -106,8 +119,11 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
     m_trendlineStrategy(NULL),
     m_drawingManager(NULL),
     m_riskManager(NULL),
+    m_hurstEngine(NULL),
+    m_vpinFilter(NULL),
     m_mode(SR_MODE_ALL),
     m_lastBarProcessed(0),
+    m_drawBarCounter(0),
     m_signalsGenerated(0),
     m_levelsDetected(0),
     m_trendlinesDetected(0)
@@ -138,6 +154,9 @@ void CStrategySupportResistance::Cleanup()
     if(m_logger != NULL) { delete m_logger; m_logger = NULL; }  // Clean up logger
     // Risk manager is not owned by this strategy - do NOT delete
     m_riskManager = NULL;
+    // Hurst/VPIN engines are not owned - do NOT delete
+    m_hurstEngine = NULL;
+    m_vpinFilter = NULL;
 }
 
 //+------------------------------------------------------------------+
@@ -303,9 +322,14 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
     // Regular cleanup to prevent object accumulation
     if(m_drawingManager != NULL)
         m_drawingManager.CleanupOldObjects();
-    
-    DrawLevels();
-    DrawTrendlines();
+
+    // Batch 103: Throttle drawing to every 5 bars
+    m_drawBarCounter++;
+    if(m_drawBarCounter % 5 == 0)
+    {
+        DrawLevels();
+        DrawTrendlines();
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -460,6 +484,28 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
     // Update components
     if(m_srDetector != NULL) m_srDetector.Update();
     if(m_trendDetector != NULL) m_trendDetector.Update();
+
+    // Batch 103: Hurst regime filter — S/R bounce works best in mean-reverting regime
+    // Skip bounce mode if strongly trending (H > 0.55)
+    if(m_hurstEngine != NULL && m_hurstEngine.IsWarmedUp())
+    {
+        double hurst = m_hurstEngine.GetSnapshot().hurstValue;
+        if(hurst > 0.55 && m_mode == SR_MODE_BOUNCE)
+        {
+            SetDecisionReasonTag("SR_HURST_TRENDING_NO_BOUNCE");
+            return TRADE_SIGNAL_NONE;
+        }
+    }
+
+    // Batch 103: VPIN toxicity filter — skip during high toxicity
+    if(m_vpinFilter != NULL && m_vpinFilter.IsWarmedUp())
+    {
+        if(m_vpinFilter.GetVPIN() > 0.5)
+        {
+            SetDecisionReasonTag("SR_VPIN_TOXIC");
+            return TRADE_SIGNAL_NONE;
+        }
+    }
     
     SSRSignalResult bestResult;
     bestResult.signal = TRADE_SIGNAL_NONE;

@@ -44,4 +44,5 @@ Dashboard/client/node_modules/
 Dashboard/client/dist/
 Dashboard/server/.venv-ea-dashboard/
 Dashboard/server/__pycache__/
-
+docs/doc*.md
+!docs/changelogs_old.md

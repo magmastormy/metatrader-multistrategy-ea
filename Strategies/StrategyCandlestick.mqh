@@ -11,6 +11,39 @@
 #include "CandlestickFiles/CandleAnalyzer.mqh"
 #include "CandlestickFiles/PinBarDetector.mqh"
 #include "CandlestickFiles/EngulfingDetector.mqh"
+#include "CandlestickFiles/DojiDetector.mqh"
+#include "CandlestickFiles/HammerDetector.mqh"
+#include "CandlestickFiles/StarDetector.mqh"
+#include "CandlestickFiles/HaramiDetector.mqh"
+#include "CandlestickFiles/ThreeSoldiersDetector.mqh"
+#include "CandlestickFiles/PiercingDetector.mqh"
+#include "CandlestickFiles/CandleConfluenceScorer.mqh"
+
+//+------------------------------------------------------------------+
+//| Candle Pattern Types (v2.0 - 15 patterns)                       |
+//+------------------------------------------------------------------+
+enum ENUM_CANDLE_PATTERN
+{
+    PATTERN_NONE = 0,
+    PATTERN_PINBAR_BULL,
+    PATTERN_PINBAR_BEAR,
+    PATTERN_ENGULFING_BULL,
+    PATTERN_ENGULFING_BEAR,
+    PATTERN_DOJI_STANDARD,
+    PATTERN_DOJI_DRAGONFLY,
+    PATTERN_DOJI_GRAVESTONE,
+    PATTERN_HAMMER,
+    PATTERN_INVERTED_HAMMER,
+    PATTERN_SHOOTING_STAR,
+    PATTERN_MORNING_STAR,
+    PATTERN_EVENING_STAR,
+    PATTERN_HARAMI_BULL,
+    PATTERN_HARAMI_BEAR,
+    PATTERN_THREE_WHITE_SOLDIERS,
+    PATTERN_THREE_BLACK_CROWS,
+    PATTERN_PIERCING_LINE,
+    PATTERN_DARK_CLOUD
+};
 
 class CStrategyCandlestick : public CStrategyBase
 {
@@ -18,6 +51,16 @@ private:
     CCandleAnalyzer   m_analyzer;
     CPinBarDetector   m_pinBar;
     CEngulfingDetector m_engulfing;
+    CDojiDetector          m_doji;
+    CHammerDetector        m_hammer;
+    CStarDetector          m_star;
+    CHaramiDetector        m_harami;
+    CThreeSoldiersDetector m_threeSoldiers;
+    CPiercingDetector      m_piercing;
+    CCandleConfluenceScorer m_confluence;
+
+    int               m_ema8Handle;
+    int               m_ema21Handle;
 
     bool              m_requireTrendAlignment;
     CChartDrawingManager* m_drawingManager;
@@ -32,6 +75,8 @@ public:
         m_atrHandle(INVALID_HANDLE),
         m_ema50Handle(INVALID_HANDLE),
         m_ema200Handle(INVALID_HANDLE),
+        m_ema8Handle(INVALID_HANDLE),
+        m_ema21Handle(INVALID_HANDLE),
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0)
     {
@@ -74,6 +119,10 @@ public:
             }
         }
 
+        // Create EMA8/EMA21 for short-term trend alignment (confluence scoring)
+        m_ema8Handle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 8, 0, MODE_EMA, PRICE_CLOSE);
+        m_ema21Handle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 21, 0, MODE_EMA, PRICE_CLOSE);
+
         if(!m_analyzer.Initialize(m_symbol, m_timeframe))
         {
             m_lastDecisionReasonTag = "CANDLE_INIT_FAILED";
@@ -88,6 +137,12 @@ public:
 
         m_pinBar.SetAnalyzer(&m_analyzer);
         m_engulfing.SetAnalyzer(&m_analyzer);
+        m_doji.SetAnalyzer(&m_analyzer);
+        m_hammer.SetAnalyzer(&m_analyzer);
+        m_star.SetAnalyzer(&m_analyzer);
+        m_harami.SetAnalyzer(&m_analyzer);
+        m_threeSoldiers.SetAnalyzer(&m_analyzer);
+        m_piercing.SetAnalyzer(&m_analyzer);
 
         m_drawingManager = new CChartDrawingManager();
         if(m_drawingManager != NULL)
@@ -108,6 +163,8 @@ public:
         m_atrHandle = INVALID_HANDLE;
         m_ema50Handle = INVALID_HANDLE;
         m_ema200Handle = INVALID_HANDLE;
+        m_ema8Handle = INVALID_HANDLE;
+        m_ema21Handle = INVALID_HANDLE;
 
         // Cleanup drawing objects
         if(m_drawingManager != NULL)
@@ -243,29 +300,34 @@ public:
 
         // Priority 1: Pin Bar — single-candle, O(1)
         SPinBar pinBar;
-        if(m_pinBar.DetectPinBar(barIndex, pinBar))
+        if(m_pinBar.DetectPinBar(barIndex, pinBar) && pinBar.strength >= 0.60)
         {
-            // Quick strength filter: only return if pattern is strong enough
-            if(pinBar.strength >= 0.60)
-            {
-                if(pinBar.type == PIN_BAR_BULLISH)
-                    return TRADE_SIGNAL_BUY;
-                if(pinBar.type == PIN_BAR_BEARISH)
-                    return TRADE_SIGNAL_SELL;
-            }
+            if(pinBar.type == PIN_BAR_BULLISH) return TRADE_SIGNAL_BUY;
+            if(pinBar.type == PIN_BAR_BEARISH) return TRADE_SIGNAL_SELL;
         }
 
         // Priority 2: Engulfing — two-candle, O(1)
         SEngulfingPattern engulfing;
-        if(m_engulfing.DetectEngulfing(barIndex, engulfing))
+        if(m_engulfing.DetectEngulfing(barIndex, engulfing) && engulfing.strength >= 0.60)
         {
-            if(engulfing.strength >= 0.60)
-            {
-                if(engulfing.isBullish)
-                    return TRADE_SIGNAL_BUY;
-                else
-                    return TRADE_SIGNAL_SELL;
-            }
+            if(engulfing.isBullish) return TRADE_SIGNAL_BUY;
+            else return TRADE_SIGNAL_SELL;
+        }
+
+        // Priority 3: Hammer / Shooting Star
+        SHammerPattern hammer;
+        if(m_hammer.DetectHammer(barIndex, hammer) && hammer.strength >= 0.60)
+        {
+            if(hammer.isBullish) return TRADE_SIGNAL_BUY;
+            else return TRADE_SIGNAL_SELL;
+        }
+
+        // Priority 4: Doji (Dragonfly/Gravestone only for probe)
+        SDojiPattern doji;
+        if(m_doji.DetectDoji(barIndex, doji) && doji.strength >= 0.65 && doji.type != DOJI_STANDARD)
+        {
+            if(doji.isBullish) return TRADE_SIGNAL_BUY;
+            else return TRADE_SIGNAL_SELL;
         }
 
         return TRADE_SIGNAL_NONE;
@@ -281,132 +343,164 @@ protected:
         m_lastDecisionReasonTag = "CANDLE_UNSET";
         int barIndex = 1;
 
-        // Priority 1: Pin Bar (highest single-candle reliability)
+        // Collect all detected patterns with their scores
+        // Priority: 3-candle > 2-candle > 1-candle patterns
+
+        // === 3-CANDLE PATTERNS (highest reliability) ===
+
+        // Morning Star / Evening Star
+        SStarPattern star;
+        if(m_star.DetectStar(barIndex, star))
+        {
+            int score = BuildConfluenceScore(true, star.patternPrice, star.isBullish, barIndex);
+            if(m_confluence.HasSignal())
+            {
+                confidence = star.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(star.time, star.patternPrice, confidence, star.isBullish,
+                                  star.type == STAR_MORNING ? "Morning Star" : "Evening Star");
+                PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
+                           m_symbol, star.isBullish ? "Morning Star" : "Evening Star",
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(star.isBullish, star.patternPrice, confidence, barIndex,
+                                               star.isBullish ? "CANDLE_MORNING_STAR" : "CANDLE_EVENING_STAR");
+            }
+        }
+
+        // Three White Soldiers / Three Black Crows
+        SThreeSoldiersPattern soldiers;
+        if(m_threeSoldiers.DetectThreeSoldiers(barIndex, soldiers))
+        {
+            int score = BuildConfluenceScore(true, soldiers.patternPrice, soldiers.isBullish, barIndex);
+            if(m_confluence.HasSignal())
+            {
+                confidence = soldiers.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(soldiers.time, soldiers.patternPrice, confidence, soldiers.isBullish,
+                                  soldiers.isBullish ? "Three White Soldiers" : "Three Black Crows");
+                PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
+                           m_symbol, soldiers.isBullish ? "Three White Soldiers" : "Three Black Crows",
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(soldiers.isBullish, soldiers.patternPrice, confidence, barIndex,
+                                               soldiers.isBullish ? "CANDLE_THREE_SOLDIERS" : "CANDLE_THREE_CROWS");
+            }
+        }
+
+        // === 2-CANDLE PATTERNS ===
+
+        // Engulfing (existing, enhanced with confluence)
+        SEngulfingPattern engulfing;
+        if(m_engulfing.DetectEngulfing(barIndex, engulfing))
+        {
+            int score = BuildConfluenceScore(true, engulfing.engulfingClose, engulfing.isBullish, barIndex);
+            if(m_confluence.HasSignal())
+            {
+                confidence = engulfing.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(engulfing.time, engulfing.engulfingClose, confidence, engulfing.isBullish, "Engulfing");
+                PrintFormat("[CANDLE-PATTERN] %s | Engulfing %s | Score=%d/100 | %s",
+                           m_symbol, engulfing.isBullish ? "BULL" : "BEAR",
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(engulfing.isBullish, engulfing.engulfingClose, confidence, barIndex,
+                                               engulfing.isBullish ? "CANDLE_ENGULFING_BUY" : "CANDLE_ENGULFING_SELL");
+            }
+            else
+            {
+                m_lastDecisionReasonTag = "CANDLE_ENGULFING_LOW_CONFLUENCE";
+            }
+        }
+
+        // Harami
+        SHaramiPattern harami;
+        if(m_harami.DetectHarami(barIndex, harami))
+        {
+            int score = BuildConfluenceScore(true, harami.patternPrice, harami.isBullish, barIndex);
+            if(m_confluence.HasSignal())
+            {
+                confidence = harami.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(harami.time, harami.patternPrice, confidence, harami.isBullish,
+                                  harami.isBullish ? "Bullish Harami" : "Bearish Harami");
+                PrintFormat("[CANDLE-PATTERN] %s | Harami %s | Score=%d/100 | %s",
+                           m_symbol, harami.isBullish ? "BULL" : "BEAR",
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(harami.isBullish, harami.patternPrice, confidence, barIndex,
+                                               harami.isBullish ? "CANDLE_HARAMI_BUY" : "CANDLE_HARAMI_SELL");
+            }
+        }
+
+        // Piercing Line / Dark Cloud Cover
+        SPiercingPattern piercing;
+        if(m_piercing.DetectPiercing(barIndex, piercing))
+        {
+            int score = BuildConfluenceScore(true, piercing.patternPrice, piercing.isBullish, barIndex);
+            if(m_confluence.HasSignal())
+            {
+                confidence = piercing.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(piercing.time, piercing.patternPrice, confidence, piercing.isBullish,
+                                  piercing.isBullish ? "Piercing Line" : "Dark Cloud Cover");
+                PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
+                           m_symbol, piercing.isBullish ? "Piercing Line" : "Dark Cloud",
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(piercing.isBullish, piercing.patternPrice, confidence, barIndex,
+                                               piercing.isBullish ? "CANDLE_PIERCING_BUY" : "CANDLE_DARK_CLOUD_SELL");
+            }
+        }
+
+        // === 1-CANDLE PATTERNS ===
+
+        // Pin Bar (existing, enhanced with confluence)
         SPinBar pinBar;
         if(m_pinBar.DetectPinBar(barIndex, pinBar))
         {
             bool isBullishPin = (pinBar.type == PIN_BAR_BULLISH);
-            if(ValidatePattern(pinBar.nosePrice, isBullishPin, barIndex))
+            int score = BuildConfluenceScore(true, pinBar.nosePrice, isBullishPin, barIndex);
+            if(m_confluence.HasSignal())
             {
-                confidence = pinBar.strength;
-                DrawPatternSignal(pinBar.time, pinBar.nosePrice, pinBar.strength, pinBar.type == PIN_BAR_BULLISH, "Pin Bar");
-
-                // Validate SL before proceeding (regardless of risk manager availability)
-                double atr = GetATR(barIndex);
-                double sl = CalculateStopLoss(isBullishPin ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, pinBar.nosePrice, atr);
-                if(sl <= 0.0 || sl == pinBar.nosePrice)
-                    return RejectSignal("CANDLE_SL_INVALID");
-
-                // Validate through UnifiedRiskManager before returning signal
-                CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
-                if(riskMgr != NULL)
-                {
-                    double tp = CalculateTakeProfit(isBullishPin ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, pinBar.nosePrice, sl);
-
-                    STradeValidationRequest request;
-                    request.symbol = m_symbol;
-                    request.orderType = (isBullishPin) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                    request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-                    request.stopLossPips = (sl > 0) ? MathAbs(pinBar.nosePrice - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-                    request.takeProfitPips = (tp > 0) ? MathAbs(tp - pinBar.nosePrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-                    request.confidence = confidence;
-                    request.strategy = GetName();
-                    request.clusterCode = "";
-
-                    SValidationResult result;
-                    ZeroMemory(result);
-                    result = riskMgr.ValidateTradeRequest(request, "CANDLE");
-                    if(!result.approved)
-                    {
-                        m_lastDecisionReasonTag = "CANDLE_RISK_REJECTED";
-                        PrintFormat("[CANDLESTICK] Risk rejected Pin Bar at %.5f", pinBar.nosePrice);
-                        return TRADE_SIGNAL_NONE;
-                    }
-                    confidence *= result.confidenceMultiplier;
-                }
-
-                // Log to consensus protocol
-                PrintFormat("[CONSENSUS-DIAG] %s | %s | Pattern: Pin Bar | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                           m_symbol,
-                           isBullishPin ? "BUY" : "SELL",
-                           confidence * 100.0,
-                           m_weight,
-                           m_lastDecisionReasonTag);
-
-                if(isBullishPin)
-                {
-                    m_lastDecisionReasonTag = "CANDLE_SIGNAL_BUY";
-                    return TRADE_SIGNAL_BUY;
-                }
-                else if(pinBar.type == PIN_BAR_BEARISH)
-                {
-                    m_lastDecisionReasonTag = "CANDLE_SIGNAL_SELL";
-                    return TRADE_SIGNAL_SELL;
-                }
+                confidence = pinBar.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(pinBar.time, pinBar.nosePrice, confidence, isBullishPin, "Pin Bar");
+                PrintFormat("[CANDLE-PATTERN] %s | Pin Bar %s | Score=%d/100 | %s",
+                           m_symbol, isBullishPin ? "BULL" : "BEAR",
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(isBullishPin, pinBar.nosePrice, confidence, barIndex,
+                                               isBullishPin ? "CANDLE_PINBAR_BUY" : "CANDLE_PINBAR_SELL");
             }
             else
             {
-                m_lastDecisionReasonTag = "CANDLE_PINBAR_FILTERED";
+                m_lastDecisionReasonTag = "CANDLE_PINBAR_LOW_CONFLUENCE";
             }
         }
 
-        // Priority 2: Engulfing (strong reversal)
-        SEngulfingPattern engulfing;
-        if(m_engulfing.DetectEngulfing(barIndex, engulfing))
+        // Hammer / Shooting Star
+        SHammerPattern hammer;
+        if(m_hammer.DetectHammer(barIndex, hammer))
         {
-            if(ValidatePattern(engulfing.engulfingClose, engulfing.isBullish, barIndex))
+            int score = BuildConfluenceScore(true, hammer.patternPrice, hammer.isBullish, barIndex);
+            if(m_confluence.HasSignal())
             {
-                confidence = engulfing.strength;
-                DrawPatternSignal(engulfing.time, engulfing.engulfingClose, engulfing.strength, engulfing.isBullish, "Engulfing");
-
-                // Validate SL before proceeding (regardless of risk manager availability)
-                double atr = GetATR(barIndex);
-                double sl = CalculateStopLoss(engulfing.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, engulfing.engulfingClose, atr);
-                if(sl <= 0.0 || sl == engulfing.engulfingClose)
-                    return RejectSignal("CANDLE_SL_INVALID");
-
-                // Validate through UnifiedRiskManager before returning signal
-                CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
-                if(riskMgr != NULL)
-                {
-                    double tp = CalculateTakeProfit(engulfing.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, engulfing.engulfingClose, sl);
-
-                    STradeValidationRequest request;
-                    request.symbol = m_symbol;
-                    request.orderType = (engulfing.isBullish) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                    request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-                    request.stopLossPips = (sl > 0) ? MathAbs(engulfing.engulfingClose - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-                    request.takeProfitPips = (tp > 0) ? MathAbs(tp - engulfing.engulfingClose) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-                    request.confidence = confidence;
-                    request.strategy = GetName();
-                    request.clusterCode = "";
-
-                    SValidationResult result;
-                    ZeroMemory(result);
-                    result = riskMgr.ValidateTradeRequest(request, "CANDLE");
-                    if(!result.approved)
-                    {
-                        m_lastDecisionReasonTag = "CANDLE_RISK_REJECTED";
-                        PrintFormat("[CANDLESTICK] Risk rejected Engulfing at %.5f", engulfing.engulfingClose);
-                        return TRADE_SIGNAL_NONE;
-                    }
-                    confidence *= result.confidenceMultiplier;
-                }
-
-                // Log to consensus protocol
-                PrintFormat("[CONSENSUS-DIAG] %s | %s | Pattern: Engulfing | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                           m_symbol,
-                           engulfing.isBullish ? "BUY" : "SELL",
-                           confidence * 100.0,
-                           m_weight,
-                           m_lastDecisionReasonTag);
-
-                m_lastDecisionReasonTag = engulfing.isBullish ? "CANDLE_SIGNAL_BUY" : "CANDLE_SIGNAL_SELL";
-                return engulfing.isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+                confidence = hammer.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(hammer.time, hammer.patternPrice, confidence, hammer.isBullish,
+                                  hammer.type == HAMMER_SHOOTING_STAR ? "Shooting Star" : "Hammer");
+                PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
+                           m_symbol, hammer.type == HAMMER_SHOOTING_STAR ? "Shooting Star" : "Hammer",
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(hammer.isBullish, hammer.patternPrice, confidence, barIndex,
+                                               hammer.isBullish ? "CANDLE_HAMMER_BUY" : "CANDLE_SHOOTING_STAR_SELL");
             }
-            else
+        }
+
+        // Doji
+        SDojiPattern doji;
+        if(m_doji.DetectDoji(barIndex, doji))
+        {
+            int score = BuildConfluenceScore(true, doji.patternPrice, doji.isBullish, barIndex);
+            if(m_confluence.HasSignal())
             {
-                m_lastDecisionReasonTag = "CANDLE_ENGULFING_FILTERED";
+                confidence = doji.strength * m_confluence.GetConfidence();
+                DrawPatternSignal(doji.time, doji.patternPrice, confidence, doji.isBullish,
+                                  doji.type == DOJI_DRAGONFLY ? "Dragonfly Doji" :
+                                  doji.type == DOJI_GRAVESTONE ? "Gravestone Doji" : "Doji");
+                PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
+                           m_symbol, EnumToString(doji.type),
+                           score, m_confluence.GetBreakdown());
+                return ValidateAndReturnSignal(doji.isBullish, doji.patternPrice, confidence, barIndex,
+                                               doji.isBullish ? "CANDLE_DOJI_BUY" : "CANDLE_DOJI_SELL");
             }
         }
 
@@ -439,6 +533,57 @@ private:
         SetDecisionReasonTag(reasonTag);
         LogRejectEvent(reasonTag);
         return TRADE_SIGNAL_NONE;
+    }
+
+    // Common validation + signal return for all pattern types
+    ENUM_TRADE_SIGNAL ValidateAndReturnSignal(bool isBullish, double patternPrice, double &confidence, int barIndex, const string reasonTag)
+    {
+        // Validate SL
+        double atr = GetATR(barIndex);
+        double sl = CalculateStopLoss(isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, patternPrice, atr);
+        if(sl <= 0.0 || sl == patternPrice)
+            return RejectSignal("CANDLE_SL_INVALID");
+
+        // Validate through UnifiedRiskManager
+        CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
+        if(riskMgr != NULL)
+        {
+            double tp = CalculateTakeProfit(isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, patternPrice, sl);
+
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = isBullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+            request.stopLossPips = (sl > 0) ? MathAbs(patternPrice - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.takeProfitPips = (tp > 0) ? MathAbs(tp - patternPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+
+            SValidationResult result;
+            ZeroMemory(result);
+            result = riskMgr.ValidateTradeRequest(request, "CANDLE");
+            if(!result.approved)
+            {
+                m_lastDecisionReasonTag = "CANDLE_RISK_REJECTED";
+                PrintFormat("[CANDLESTICK] Risk rejected %s at %.5f", reasonTag, patternPrice);
+                return TRADE_SIGNAL_NONE;
+            }
+            confidence *= result.confidenceMultiplier;
+        }
+
+        // Log to consensus protocol
+        PrintFormat("[CONSENSUS-DIAG] %s | %s | Pattern: %s | Conf: %.1f%% | Weight: %.2f | Confluence: %d | Reason: %s",
+                   m_symbol,
+                   isBullish ? "BUY" : "SELL",
+                   reasonTag,
+                   confidence * 100.0,
+                   m_weight,
+                   m_confluence.GetScore(),
+                   reasonTag);
+
+        m_lastDecisionReasonTag = reasonTag;
+        return isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
     }
 
     // Helper method to get current ATR value
@@ -492,6 +637,77 @@ private:
             return;
 
         m_drawingManager.DrawEntrySignal(time, price, isBullish, strength, "Candlestick", patternName);
+    }
+
+    // Check if pattern price is at a key level (S/R, EMA, FVG)
+    bool IsAtKeyLevel(double patternPrice, int barIndex)
+    {
+        double atr = GetATR(barIndex);
+        if(atr <= 0) return false;
+
+        // Check EMA proximity (EMA21 and EMA50)
+        if(m_ema21Handle != INVALID_HANDLE)
+        {
+            double ema21[1];
+            if(CopyBuffer(m_ema21Handle, 0, barIndex, 1, ema21) > 0)
+            {
+                if(MathAbs(patternPrice - ema21[0]) < atr * 0.3)
+                    return true;
+            }
+        }
+
+        if(m_ema50Handle != INVALID_HANDLE)
+        {
+            double ema50[1];
+            if(CopyBuffer(m_ema50Handle, 0, barIndex, 1, ema50) > 0)
+            {
+                if(MathAbs(patternPrice - ema50[0]) < atr * 0.3)
+                    return true;
+            }
+        }
+
+        // Check recent swing highs/lows as S/R proxy
+        double highs[20], lows[20];
+        if(CopyHigh(m_symbol, m_timeframe, 1, 20, highs) >= 20 &&
+           CopyLow(m_symbol, m_timeframe, 1, 20, lows) >= 20)
+        {
+            for(int i = 0; i < 20; i++)
+            {
+                if(MathAbs(patternPrice - highs[i]) < atr * 0.3)
+                    return true;
+                if(MathAbs(patternPrice - lows[i]) < atr * 0.3)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Check short-term trend alignment (EMA8 vs EMA21)
+    bool IsShortTermTrendAligned(bool isBullish, int barIndex)
+    {
+        if(m_ema8Handle == INVALID_HANDLE || m_ema21Handle == INVALID_HANDLE)
+            return true;  // No data = don't block
+
+        double ema8[1], ema21[1];
+        if(CopyBuffer(m_ema8Handle, 0, barIndex, 1, ema8) <= 0 ||
+           CopyBuffer(m_ema21Handle, 0, barIndex, 1, ema21) <= 0)
+            return true;
+
+        if(isBullish)
+            return ema8[0] > ema21[0];  // Bullish pattern in uptrend
+        else
+            return ema8[0] < ema21[0];  // Bearish pattern in downtrend
+    }
+
+    // Build confluence score for a detected pattern
+    int BuildConfluenceScore(bool patternValid, double patternPrice, bool isBullish, int barIndex)
+    {
+        m_confluence.Reset();
+        m_confluence.AddValidPattern(patternValid);
+        m_confluence.AddAtKeyLevel(IsAtKeyLevel(patternPrice, barIndex));
+        m_confluence.AddTrendAligned(IsShortTermTrendAligned(isBullish, barIndex));
+        return m_confluence.GetScore();
     }
 };
 

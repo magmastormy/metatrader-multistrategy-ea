@@ -1,13 +1,16 @@
-# SYSTEM_STRUCTURE.md
+# SYSTEM\_STRUCTURE.md
 
 ## Document Metadata
-- Last Updated: 2026-06-12
+
+- Last Updated: 2026-06-17
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 101
+- Current Batch: 103
 
 ## 1. System Goal
+
 Provide autonomous, multi-strategy trade decisions with clear ownership boundaries:
+
 - signal generation and consensus
 - robust session-aware execution
 - adaptive AI thresholding
@@ -24,23 +27,20 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - Batch 90 fixes visualization system vulnerabilities: hardcoded chart ID 0 in StrategyUnifiedICT caused cross-chart contamination; StrategyUnifiedICT/StrategyFibonacci bypassed CChartDrawingManager; no global object counter for MT5 1000-object limit; excessive object retention with maxObjectAge=500; debug logging ran in production; bitwise OR colors caused inconsistent rendering; no coordinate validation for invalid time/price values. All strategies now use CChartDrawingManager with per-strategy object limits, global count alerts at 800/900/950, coordinate validation, explicit RGB colors, and periodic cleanup with maxObjectAge=150. Drawing statistics added to VisualDashboard.
 - Batch 91 implements comprehensive enterprise 12-layer audit fixes: addresses circular initialization dependencies, memory leaks, pipeline fail-closed logic, and scalability across all components; adds SharedEngineManager for multi-symbol efficiency, enhanced error aggregation, and configurable verbosity levels.
 - Batch 92 implements comprehensive AI modules audit: all 25 findings addressed including memory management, numerical stability, training integrity, checkpoint integrity, and GOD TIER architectural refactoring; adds IAIStrategy interface for unified AI adapter contract.
-- Batch 93 implements systematic strategy refactoring for full AGENTS.md architectural compliance: UnifiedICT simplified from 4 to 2 entry types (2,194 → 2,012 lines), StrategyTrend cleaned up (300 → 259 lines), ElliottWave removed (~1,600 lines), Fibonacci merged into SupportResistance as CFibConfluence module, all 7 active strategies now validate through CUnifiedRiskManager with [CONSENSUS-DIAG] logging.
-
+- Batch 93 implements systematic strategy refactoring for full AGENTS.md architectural compliance: UnifiedICT simplified from 4 to 2 entry types (2,194 → 2,012 lines), StrategyTrend cleaned up (300 → 259 lines), ElliottWave removed (\~1,600 lines), Fibonacci merged into SupportResistance as CFibConfluence module, all 7 active strategies now validate through CUnifiedRiskManager with \[CONSENSUS-DIAG] logging.
 - Batch 96 restores profitable execution mechanics: scan cycles retain multiple `CUnifiedRiskManager`-reserved candidates instead of replacing them with one winner, `InpMaxTradeSendsPerCycle` controls ranked multi-send throughput, same-symbol capacity counts EA-owned positions, synthetic symbol detection covers SFX/FX Vol/SwitchX/PainX/GainX/FlipX, and `CTradeManager` stop lifecycle management is magic-filtered and volatility-aware.
-
-- Batch 97 implements the full EA_SYSTEM_REDESIGN.md Phase 1-5: centralized indicator access across 8 strategy files, conditional diagnostic logging with `InpLogLevel`, rationalized risk defaults (1% base risk, 5% max per trade, 5% daily, 15% portfolio), unified PositionSizer correlation via `CCorrelationEngine`, broker trading day reset with configurable start hour, TickSafetyMonitor CAccountInfo caching, Kelly Criterion position sizing (`POSITION_SIZE_KELLY`), equity compounding with sqrt upside/linear downside, tiered correlation response (reduce at 0.4, block at 0.7), daily P&L loss limit circuit breaker, regime-aware strategy weighting (`GetRegimeConfidenceMultiplier`), volatility direction awareness (`GetVolatilityDirection`), multi-timeframe confluence (`IsAlignedWithHigherTF`), cross-cluster conflict resolution in consensus, mandatory SL gate in `CTradeManager`, min R:R enforcement (1:2 default, 1:5 mean-reversion), portfolio profit target with trailing floor, auto mode switching (conservative/aggressive/emergency), and a dedicated scalping engine with `CScalpSignalCache`, three scalp strategies (Momentum, Spread, VolatilityBreakout), async order execution via `OrderSendAsync()`, and dual-path OnTick/OnTimer processing.
-
-- Batch 98 completes the EA Overhaul Blueprint monolith decomposition (R6/R7) and risk framework items: `CPositionSizer::CalculateSize()` is now truly stateless via `CalculateOptimalPositionSizeCore()` (no save/restore hack); position lifecycle management extracted into `CPositionLifecycleManager`; heartbeat/diagnostics extracted into `CDiagnosticsManager` with consensus diagnostics; unprotected position tracking extracted into `CUnprotectedPositionTracker` with 3-attempt SL escalation; synthetic spike monitoring extracted into `CSyntheticSpikeMonitor`; trade attribution and NN prediction mapping extracted into `CTradeAttributionManager`; symbol scan scheduling extracted into `CSymbolScanScheduler`; anti-Martingale dynamic lot scaling added; CICTPositionSizer risk denominator fixed to use `MathMin(balance, equity)`; risk percent scale consistency verified with conversion helpers; cluster rebalancing updated for Conservative tier; Statistical Arbitrage conditionally registered when Python Bridge is connected; heartbeat interval made configurable. Total ~1,180 lines extracted from the main EA monolith into 7 focused manager classes.
-
-- Batch 99 implements log-evidence-driven fixes and research solutions: S/R lot validation ordering fix unblocks 79 SELL signals on PainX 400; ONNX CPU fallback enables signals when CUDA unavailable; AI degenerate model detection downweights 100% BUY/SELL models by 50%; trend bias consensus check raises quorum for counter-trend signals; scalp margin-aware lot cap prevents oversized orders; hybrid gate relaxation lowers AI standalone threshold after indicator drought; P&L-adjusted risk budget enables re-entries on profitable positions; Bayesian Kelly modifier with Beta-Binomial priors; equity curve manager reduces size when equity < EMA; CVaR portfolio risk integration; commission-aware scalp validation; async trade executor with OrderSendAsync + OnTradeTransaction confirmation.
-
+- Batch 97 implements the full EA\_SYSTEM\_REDESIGN.md Phase 1-5: centralized indicator access across 8 strategy files, conditional diagnostic logging with `InpLogLevel`, rationalized risk defaults (1% base risk, 5% max per trade, 5% daily, 15% portfolio), unified PositionSizer correlation via `CCorrelationEngine`, broker trading day reset with configurable start hour, TickSafetyMonitor CAccountInfo caching, Kelly Criterion position sizing (`POSITION_SIZE_KELLY`), equity compounding with sqrt upside/linear downside, tiered correlation response (reduce at 0.4, block at 0.7), daily P\&L loss limit circuit breaker, regime-aware strategy weighting (`GetRegimeConfidenceMultiplier`), volatility direction awareness (`GetVolatilityDirection`), multi-timeframe confluence (`IsAlignedWithHigherTF`), cross-cluster conflict resolution in consensus, mandatory SL gate in `CTradeManager`, min R:R enforcement (1:2 default, 1:5 mean-reversion), portfolio profit target with trailing floor, auto mode switching (conservative/aggressive/emergency), and a dedicated scalping engine with `CScalpSignalCache`, three scalp strategies (Momentum, Spread, VolatilityBreakout), async order execution via `OrderSendAsync()`, and dual-path OnTick/OnTimer processing.
+- Batch 98 completes the EA Overhaul Blueprint monolith decomposition (R6/R7) and risk framework items: `CPositionSizer::CalculateSize()` is now truly stateless via `CalculateOptimalPositionSizeCore()` (no save/restore hack); position lifecycle management extracted into `CPositionLifecycleManager`; heartbeat/diagnostics extracted into `CDiagnosticsManager` with consensus diagnostics; unprotected position tracking extracted into `CUnprotectedPositionTracker` with 3-attempt SL escalation; synthetic spike monitoring extracted into `CSyntheticSpikeMonitor`; trade attribution and NN prediction mapping extracted into `CTradeAttributionManager`; symbol scan scheduling extracted into `CSymbolScanScheduler`; anti-Martingale dynamic lot scaling added; CICTPositionSizer risk denominator fixed to use `MathMin(balance, equity)`; risk percent scale consistency verified with conversion helpers; cluster rebalancing updated for Conservative tier; Statistical Arbitrage conditionally registered when Python Bridge is connected; heartbeat interval made configurable. Total \~1,180 lines extracted from the main EA monolith into 7 focused manager classes.
+- Batch 99 implements log-evidence-driven fixes and research solutions: S/R lot validation ordering fix unblocks 79 SELL signals on PainX 400; ONNX CPU fallback enables signals when CUDA unavailable; AI degenerate model detection downweights 100% BUY/SELL models by 50%; trend bias consensus check raises quorum for counter-trend signals; scalp margin-aware lot cap prevents oversized orders; hybrid gate relaxation lowers AI standalone threshold after indicator drought; P\&L-adjusted risk budget enables re-entries on profitable positions; Bayesian Kelly modifier with Beta-Binomial priors; equity curve manager reduces size when equity < EMA; CVaR portfolio risk integration; commission-aware scalp validation; async trade executor with OrderSendAsync + OnTradeTransaction confirmation.
 - Batch 100 adds CSpikeHunterEngine for synthetic CFD indices: 3-layer spike detection (tick velocity ≥ 2.5× average, direction accumulation ≥ 12 ticks, ATR compression ≤ 60%), symbol-aware direction mapping (PainX→SELL, GainX→BUY, etc.), independent spike trades with separate magic numbers (offset 9000), push notification alerts throttled at 120s, and long-term entry cooldown of 60s to prevent re-entry into fading spikes.
-
-- Batch 101 adds four advanced mathematical engines for no-API-required quantitative analysis: CHurstEngine (fractal persistence via variance-time Hurst exponent, regime-based strategy weight multipliers integrated into CRegimeEngine), CVPINFilter (volume-synchronized probability of informed trading from tick data, toxicity-based position sizing and trade blocking), COrnsteinUhlenbeckEngine (mean-reversion speed estimation via OLS, OU-adjusted z-scores integrated into StatisticalArbitrageStrategy), COrderFlowImbalanceEngine (proxy order flow imbalance from tick classification at 3 time scales, Welford z-score normalization, directional confirmation filter in consensus pipeline). Python ML ensemble expanded with CatBoost and XGBoost training scripts, and train_stacker.py updated to accept both as optional meta-feature sources (6→12 columns, backwards compatible).
+- Batch 101 adds four advanced mathematical engines for no-API-required quantitative analysis: CHurstEngine (fractal persistence via variance-time Hurst exponent, regime-based strategy weight multipliers integrated into CRegimeEngine), CVPINFilter (volume-synchronized probability of informed trading from tick data, toxicity-based position sizing and trade blocking), COrnsteinUhlenbeckEngine (mean-reversion speed estimation via OLS, OU-adjusted z-scores integrated into StatisticalArbitrageStrategy), COrderFlowImbalanceEngine (proxy order flow imbalance from tick classification at 3 time scales, Welford z-score normalization, directional confirmation filter in consensus pipeline). Python ML ensemble expanded with CatBoost and XGBoost training scripts, and train\_stacker.py updated to accept both as optional meta-feature sources (6→12 columns, backwards compatible).
+- Batch 102 adds the Deriv Asset Profiler system for 18-family synthetic index auto-detection and per-family engine optimization: CDerivAssetProfiler (auto-detects family from symbol name, provides SDerivProfile with 20 fields per family), CGridRecoveryEngine (Hurst-activated grid recovery for mean-reverting families with Modified Martingale and Fibonacci progression), CATRScalpingEngine (ATR-based between-spike scalping with spike window avoidance for Jump/DEX/Hybrid families), SSpikeHunterFamilyOverrides (8 GetEffective*() methods for per-family spike parameter tuning), SSymbolRiskOverride (per-family risk/drawdown scaling in CUnifiedRiskManager). Magic number offsets 7000-9900 allocated per engine and family. New input parameters: InpDerivProfilerEnabled, InpGridRecoveryEnabled, InpATRScalpingEnabled.
+- Batch 103 (Enterprise Vision) upgrades the multi-strategy EA to an enterprise consensus engine with 11 strategies: Candlestick v2.0 (7 new pattern detectors + CCandleConfluenceScorer with 0-100 scoring, threshold ≥70), Momentum v2.0 (MACD confirmation, ADX strong trend filter, pullback entry, freshness/volume confidence modifiers), Volatility Breakout v2.0 (TTM Squeeze detection, ADX rising filter, breakout retest, breakout failure reversal), Mean Reversion v2.0 (Stochastic extreme confirmation, Hurst regime lockout H<0.45, BB width filter, no-divergence check, dynamic TP), Statistical Arbitrage (new strategy: pair trading via Python Bridge, OU half-life filter, z-score detection). Consensus engine improvements: regime weight wiring via GetRegimeCategoryMultiplier(), VPIN toxicity integration (EXTREME→block, HIGH→50%, MEDIUM→25%), 0-100 consensus scoring (rawConsensusScore = directionalQuality × supportRatio × 100, threshold=60), OFI regime integration (1.2× boost aligned, 0.7× penalty contradicted). Engine wiring: VPIN/OFI at EnterpriseStrategyManager level, Hurst at MeanReversion level (pointer-based migration), OU at StatisticalArbitrage level.
 
 ## 2. Top-Level Runtime Topology
 
 ### 2.1 Entrypoint and orchestration
+
 - File: `MultiStrategyAutonomousEA.mq5`
 - Responsibilities:
   - initialize mandatory runtime subsystems first and isolate optional AI/bootstrap failures behind readiness flags
@@ -78,6 +78,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - handle runtime telemetry and deinitialization
 
 ### 2.2 Per-symbol strategy domain
+
 - Class: `CEnterpriseStrategyManager`
 - One manager per managed symbol.
 - Responsibilities:
@@ -112,6 +113,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 ### 2.3 Extracted Lifecycle Managers
 
 #### CPositionLifecycleManager
+
 - File: `Core/Management/PositionLifecycleManager.mqh`
 - Responsibilities:
   - Signal Reversal Exit (SRE) with breathing room, last-stand zone, profit guard
@@ -121,6 +123,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Configurable via `ConfigureSRE()` and `ConfigureLifecycle()` from EA inputs
 
 #### CDiagnosticsManager
+
 - File: `Core/Management/DiagnosticsManager.mqh`
 - Responsibilities:
   - Core heartbeat emission (`[HEARTBEAT]`, `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`, `[NO-SIGNAL-ALERT]`, `[RISK-BUDGET]`)
@@ -131,6 +134,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Counter values passed via `UpdateCounters()` (MQL5-safe)
 
 #### CUnprotectedPositionTracker
+
 - File: `Core/Risk/UnprotectedPositionTracker.mqh`
 - Responsibilities:
   - Track positions without stop-loss protection
@@ -138,6 +142,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Fallback stop calculation for synthetic instruments
 
 #### CSyntheticSpikeMonitor
+
 - File: `Core/Processing/SyntheticSpikeMonitor.mqh`
 - Responsibilities:
   - Synthetic tick velocity spike detection
@@ -146,6 +151,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Tick safety loop processing
 
 #### CTradeAttributionManager
+
 - File: `Core/Trading/TradeAttributionManager.mqh`
 - Responsibilities:
   - Prediction position mapping (prediction ID ↔ position ID)
@@ -156,6 +162,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Cluster code utilities and trade comment building
 
 #### CSymbolScanScheduler
+
 - File: `Core/Processing/SymbolScanScheduler.mqh`
 - Responsibilities:
   - Symbol scan state management (new-bar, intrabar, pending)
@@ -164,6 +171,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Evaluation budget tracking and symbol rotation
 
 ### 2.4 Pipeline domain
+
 - Class: `CUnifiedSignalPipeline`
 - Responsibilities:
   - cache structural/indicator context once per symbol/timeframe/bar for reuse across strategy votes
@@ -171,7 +179,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - apply trend/volatility/liquidity/structure/confidence filters
   - apply deterministic regime + cost viability pre-gate via `CRegimeEngine`
   - recover ATR/Bollinger inputs from raw `CopyRates(...)` data when volatility/regime indicator buffers fault or warm slowly despite mature price history
-  - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass`, readiness class, reuse/staleness flags)
+  - produce reusable evidence snapshot data (`readinessScore`, `contextScore`, `costScore`, effective confidence floor, soft-threshold pass\`, readiness class, reuse/staleness flags)
   - retain the last rejecting filter name and reason for manager-level no-signal summaries
   - allow bounded soft-threshold promotion when near-threshold confidence is supported by strong readiness/context evidence
   - attenuate surviving signal confidence by context/readiness/staleness after threshold admission so weak evidence cannot carry fake certainty into quorum/validator stages
@@ -184,6 +192,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - emit regime/cost veto telemetry (`[REGIME-STATE]`, `[COST-GATE]`, `[ENTRY-VETO]`)
 
 ### 2.5 Shared AI feature contract
+
 - Class: `CAIFeatureVectorBuilder`
 - The canonical runtime/training feature width is now `57`.
 - Features `0..54` remain the original OHLCV/indicator-derived contract.
@@ -195,6 +204,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - keep runtime diagnostics authoritative in the manager/runtime layer rather than spinning local `SignalDiagnostics` sinks per pipeline instance
 
 ### 2.6 AI adaptation domain
+
 - Runtime owner: `CAIEngine`
 - Strategy-vote owners: symbol-scoped adapters in `Core/Strategy/`
 - Responsibilities:
@@ -243,6 +253,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Runtime observability: `[EXT-LLM]` now covers init, endpoint config, query start/success/failure, reasoning capture, feedback, and shutdown so "enabled but unused" states are visible from logs
 
 ### 2.7 AI Modular Architecture (Batch 92 - GOD TIER Refactoring)
+
 - **Modular Component Decomposition:**
   - `CNeuralCore.mqh`: Core neural operations (ReLU, Softmax with temperature, CrossEntropy loss, gradient computation, gradient clipping)
   - `CNeuralTrainingDataManager.mqh`: Training examples and barrier buffer management (SMTrainingExample, SMBarrierEntry)
@@ -271,6 +282,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - `GetLastLoadStatus()`: Diagnostics string
 
 ### 2.8 Risk domain
+
 - Class: `CUnifiedRiskManager`
 - Responsibilities:
   - single pre-trade veto authority
@@ -285,10 +297,11 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - portfolio correlation fallback uses bounded value (0.65, capped to `m_maxCorrelation`) when correlation data is unavailable, avoiding hard blocks while preserving safety
   - progressively throttle recommended per-trade risk as daily and portfolio utilization rise, instead of waiting for the final hard-cap stage
   - enforce tiered correlation response: reduce position size at `correlationReduceThreshold` (0.4) and block at `correlationBlockThreshold` (0.7)
-  - enforce daily P&L loss limit circuit breaker via `dailyLossLimitPercent`, `CheckDailyLossLimit()`, and `m_dailyLossHaltActive` state
+  - enforce daily P\&L loss limit circuit breaker via `dailyLossLimitPercent`, `CheckDailyLossLimit()`, and `m_dailyLossHaltActive` state
   - reset daily risk counters at configurable `m_tradingDayStartHour` instead of relying on MT5 server day boundary
   - apply rationalized safe defaults: 1% base risk, 5% max per trade, 5% daily, 15% portfolio
   - maintain a scan-time `CVirtualPositionBook` so cycle-best reservations count against projected daily and portfolio usage before the final execution winner is sent
+  - **Batch 102 family-specific risk overrides:** `SSymbolRiskOverride` struct provides per-family risk and drawdown scaling. CrashBoom: 1.5% risk, 15% drawdown; Volatility: 1.0% risk, 10% drawdown; Step: 0.8% risk, 8% drawdown; Jump: 2.0% risk, 20% drawdown; DEX: 1.5% risk, 15% drawdown. Applied during pre-trade risk validation via `m_riskOverrides[]` array populated from `CDerivAssetProfiler` profiles.
 - **Module 4 Hardening (Batch 85):**
   - Safe default risk limits (2% per trade, 6% daily, 10% portfolio) when config values are invalid
   - Currency-aware position sizing via `CPositionSizer::CalculateRiskPerLot()` conversion
@@ -296,6 +309,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Volatility adjustment uses minimum price threshold to prevent exaggerated ratios on low-priced symbols
 
 ### 2.9 Execution domain
+
 - Class: `CTradeManager`
 - Responsibilities:
   - convert approved intent into actual order send
@@ -321,6 +335,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - `GenerateExecutionQualityReport()` for detailed execution analytics
 
 ### 2.9.1 Live authority domain
+
 - Owner: `MultiStrategyAutonomousEA.mq5`
 - Responsibilities:
   - decide whether each risk-approved candidate is live-send eligible or candidate-level shadow-only
@@ -331,6 +346,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - emit `[LIVE-AUTHORITY]`, `[AUTHORITY-TRIAL]`, and `[AUTHORITY-RESULT]` telemetry for every authority decision lifecycle
 
 ### 2.10 Position lifecycle domain
+
 - Owner: `MultiStrategyAutonomousEA.mq5` safety/timer lifecycle loop using `CTradeManager::ManageAllPositions(...)`
 - The generic EA-level breakeven/trailing lifecycle is now operator-controlled through:
   - `InpEnablePositionLifecycleManager` (Enabled by default in Batch 82)
@@ -355,6 +371,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - managed by EA magic scope
 
 ### 2.11 Shared indicator domain
+
 - Class: `CIndicatorManager`
 - Responsibilities:
   - indicator handle cache and shared access
@@ -363,6 +380,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - remain the first ATR source for validator/execution sizing, with raw-rate fallback in the EA entry path when a direct ATR handle read misses
 
 ### 2.12 Chart visualization domain (Batch 58, Batch 86, Batch 90)
+
 - Class: `CChartDrawingManager`
 - Responsibilities:
   - centralized chart drawing coordination across all strategies
@@ -370,7 +388,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - drawing configuration per feature type (structure, SR, OB, FVG, etc.)
   - **Chart Visualization Hardening (Batch 58):**
     - Elliott Wave strategy draws comprehensive Fib target levels for all waves (W1-W5)
-    - Trend lines use thin dashed style (STYLE_DOT, width 1) with muted colors
+    - Trend lines use thin dashed style (STYLE\_DOT, width 1) with muted colors
     - ICT drawing colors (OB, FVG, Liquidity, BOS, CHOCH) reduced in intensity using 0x909090 mask
     - SupportResistance trendlines aligned to thin dashed style for consistency
     - All chart elements use consistent thin dashed styling for improved clarity
@@ -385,23 +403,24 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
     - Fixed hardcoded chart ID 0 in StrategyUnifiedICT that caused cross-chart contamination
     - Converted StrategyUnifiedICT to use CChartDrawingManager (DrawOrderBlock, DrawFVG)
     - Converted StrategyFibonacci to use CChartDrawingManager (DrawHorizontalLevel)
-    - Added m_chartID member to strategies initialized with ChartID()
+    - Added m\_chartID member to strategies initialized with ChartID()
     - Added global object counter with tiered alerts (800=warning, 900=critical, 950=emergency)
     - Implemented periodic logging of object counts with `[DRAWING-STATS]` telemetry
     - Reduced maxObjectAge from 500 to 150 bars for faster cleanup of stale objects
     - Added coordinate validation (ValidateTime, ValidatePrice, ValidateCoordinates)
     - Validates time > 0, time <= current + 1 day, price > 0, reasonable price range
     - Replaced bitwise OR color operations with explicit RGB values
-    - Colors: ORDERBLOCK_BULL (0x8787CC), ORDERBLOCK_BEAR (0xCC6B6B), FVG_BULL (0x6BAB8A), FVG_BEAR (0xCC786B), LIQUIDITY (0xCCBC6B), STRUCTURE_BOS (0xCC6BCC), STRUCTURE_CHOCH (0xCC986B)
+    - Colors: ORDERBLOCK\_BULL (0x8787CC), ORDERBLOCK\_BEAR (0xCC6B6B), FVG\_BULL (0x6BAB8A), FVG\_BEAR (0xCC786B), LIQUIDITY (0xCCBC6B), STRUCTURE\_BOS (0xCC6BCC), STRUCTURE\_CHOCH (0xCC986B)
     - Wrapped debug logging in `if(m_config.enableDebugMode)`
     - Added SafeObjectsDeleteAll with verification of deletion counts and discrepancy logging
     - Added per-strategy object limit enforcement (maxObjectsPerStrategy)
-    - Added dirty-flag optimization (m_isDirty, SetDirty, IsDirty, ShouldRedraw)
+    - Added dirty-flag optimization (m\_isDirty, SetDirty, IsDirty, ShouldRedraw)
     - Added LogStatistics() method for periodic drawing metrics logging
     - Integrated drawing statistics into VisualDashboard showing global/per-strategy counts
     - Added UpdateDrawingStats() and DrawLabelAt() to VisualDashboard
 
 ### 2.13 Regime Detection Robustness (Batch 86)
+
 - Class: `CRegimeEngine`
 - Enhancements:
   - Added `regimeConfidence` (0.0-1.0) to track detection confidence level
@@ -411,13 +430,15 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Prevents rapid regime flipping and reduces overfitting to noisy market data
 
 ### 2.14 Volatility Engine Validation (Batch 86)
+
 - Class: `CVolatilityEngine`
 - Enhancements:
   - Added `ValidateAtrCalculation()` test function for runtime ATR verification
   - Validates boundary conditions and array access safety
   - Emits `[ATR-VALIDATE]` telemetry with validation results
 
-### 2.15 Python Bridge Integration (Batch 85)
+### 2.15 Python Bridge Integration (Batch 85, updated Batch 102)
+
 - Class: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
 - Files: `Python/zmq_server.py`, `Core/Utils/Enums.mqh`
 - Responsibilities:
@@ -430,14 +451,18 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Version compatibility check (requires server version `1.0.0+`)
   - Health monitoring dashboard with real-time telemetry
   - Local AI fallback mode when bridge is unavailable
+  - **Family-aware prediction routing (Batch 102)**: `Predict()` accepts `family_id` and `symbol` params; `PredictFamily()` convenience method routes to family-specific ML models; `SPythonBridgeResponse` includes 8 new fields (family_id, family_name, catboost_buy/sell, xgboost_buy/sell, onnx_buy/sell)
 - HTTP Endpoints in Python server (`Python/zmq_server.py`):
-  - `POST /predict`: Get predictions from ensemble/dual-adapt/maml-ppo models
+  - `POST /predict`: Get predictions from ensemble/dual-adapt/maml-ppo models; accepts `family_id` and `symbol` for family-specific routing (Batch 102)
   - `GET /health`: Check server health status
   - `GET /heartbeat`: Periodic health check (updates last heartbeat timestamp)
   - `GET /version`: Get server version information
+  - `GET /families`: List loaded family-specific models and status (Batch 102)
+  - `GET /family/{family_id}`: Status of specific family's models (Batch 102)
 - Observability: Emits `[PYTHON-BRIDGE-DASHBOARD]` telemetry with connection state, version, and request stats
 
 ### 2.16 Shared Engine & Scalability (Batch 91)
+
 - Class: `CSharedEngineManager` in `Core/Management/SharedEngineManager.mqh`
 - Responsibilities:
   - Shared read-only TrendEngine, VolatilityEngine, and RegimeEngine across symbols to reduce memory and computation footprint
@@ -458,6 +483,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - **Observability**: GetSharingStatus() returns sharing mode, active symbol count, and engine health
 
 ### 2.17 Scalping Engine domain
+
 - Class: `CFastScalpEngine` in `Core/Scalp/FastScalpEngine.mqh`
 - Signal Cache: `CScalpSignalCache` in `Core/Scalp/ScalpSignalCache.mqh`
 - Responsibilities:
@@ -469,9 +495,9 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - track execution latency via `InpScalpMaxLatencyMs` and timeout pending async orders
   - integrate with `OnTradeTransaction()` for async order confirmation routing
 - **Scalp Strategies:**
-  - `CScalpMomentumStrategy` (`Core/Scalp/ScalpMomentumStrategy.mqh`): EMA trend + pullback + ATR expanding + spread filter + RSI 40-60; SL=0.75×ATR, TP=1.5×ATR (1:2 R:R); SCALP_CLUSTER; confidence 0.60-0.90
-  - `CScalpSpreadStrategy` (`Core/Scalp/ScalpSpreadStrategy.mqh`): Spread normalization + price near EMA + RSI filter; SL=0.06×ATR, TP=0.3×ATR; MEAN_REVERSION_CLUSTER; confidence 0.50-0.90
-  - `CScalpVolatilityBreakout` (`Core/Scalp/ScalpVolatilityBreakout.mqh`): ATR squeeze + BB breakout + strong bar + RSI confirmation; SL=BB middle, TP=2×ATR; SCALP_CLUSTER; confidence 0.55-0.90
+  - `CScalpMomentumStrategy` (`Core/Scalp/ScalpMomentumStrategy.mqh`): EMA trend + pullback + ATR expanding + spread filter + RSI 40-60; SL=0.75×ATR, TP=1.5×ATR (1:2 R:R); SCALP\_CLUSTER; confidence 0.60-0.90
+  - `CScalpSpreadStrategy` (`Core/Scalp/ScalpSpreadStrategy.mqh`): Spread normalization + price near EMA + RSI filter; SL=0.06×ATR, TP=0.3×ATR; MEAN\_REVERSION\_CLUSTER; confidence 0.50-0.90
+  - `CScalpVolatilityBreakout` (`Core/Scalp/ScalpVolatilityBreakout.mqh`): ATR squeeze + BB breakout + strong bar + RSI confirmation; SL=BB middle, TP=2×ATR; SCALP\_CLUSTER; confidence 0.55-0.90
 - **Dual-Path Processing:**
   - `OnTick()` runs `ProcessScalpFastPath()` for tick-level cached-indicator signal evaluation alongside the existing safety loop
   - `OnTimer()` retains full consensus logic (pipeline → manager → validator → risk → execution)
@@ -479,9 +505,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Scalp entries still pass through `CUnifiedRiskManager` pre-trade gating (AGENTS.md invariant #1 preserved)
 
 ### 2.18 Risk Enhancement domain (Batch 97)
+
 - Enhancements to `CUnifiedRiskManager`:
   - Tiered correlation response: `correlationReduceThreshold` (0.4) reduces position size, `correlationBlockThreshold` (0.7) blocks trade entirely
-  - Daily P&L loss limit: `dailyLossLimitPercent` circuit breaker halts trading when daily loss exceeds threshold, tracked via `CheckDailyLossLimit()` and `m_dailyLossHaltActive`
+  - Daily P\&L loss limit: `dailyLossLimitPercent` circuit breaker halts trading when daily loss exceeds threshold, tracked via `CheckDailyLossLimit()` and `m_dailyLossHaltActive`
   - Broker trading day reset: `m_tradingDayStartHour` (configurable, default 0) ensures daily risk counters reset at the correct broker trading day boundary
   - Rationalized defaults: baseRiskPerTradePercent=1%, maxRiskPerTradePercent=5%, maxDailyRiskPercent=5%, maxPortfolioRiskPercent=15%
 - Enhancements to `CPositionSizer`:
@@ -492,8 +519,9 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - **Batch 98 stateless refactor**: `CalculateSize()` is now truly stateless via `CalculateOptimalPositionSizeCore()` — the save/restore hack on `m_lots` has been removed; callers receive the computed size without side effects on internal state
 
 ### 2.19 Strategy Intelligence domain (Batch 97)
+
 - Enhancements to `CStrategyBase`:
-  - Regime-aware weighting: `GetRegimeConfidenceMultiplier()` scales confidence by regime alignment (TREND_CLUSTER: 1.5x strong/0.3x range; MEAN_REVERSION_CLUSTER: 1.5x range/0.2x strong; STRUCTURE_CLUSTER: 1.0x)
+  - Regime-aware weighting: `GetRegimeConfidenceMultiplier()` scales confidence by regime alignment (TREND\_CLUSTER: 1.5x strong/0.3x range; MEAN\_REVERSION\_CLUSTER: 1.5x range/0.2x strong; STRUCTURE\_CLUSTER: 1.0x)
   - Volatility direction: `GetVolatilityDirection()` classifies ATR as EXPANDING/CONTRACTING/STABLE; `GetVolatilityDirectionMultiplier()` applies 1.2x/0.8x/1.0x
   - Multi-timeframe confluence: `IsAlignedWithHigherTF()` checks EMA50 on next higher timeframe
   - All intelligence factors applied in `GetSignal()` before returning to manager consensus
@@ -505,11 +533,12 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Mandatory SL gate: `ExecuteMarketOrder()` rejects trades with `stopLossPips <= 0.0`
   - Conditional logging: `m_logLevel` + `SetLogLevel()` gates execution quality reports
 - EA-level risk controls in `MultiStrategyAutonomousEA.mq5`:
-  - Min R:R enforcement: 1:2 default, 1:5 for MEAN_REVERSION_CLUSTER
+  - Min R:R enforcement: 1:2 default, 1:5 for MEAN\_REVERSION\_CLUSTER
   - Portfolio profit target: `InpDailyProfitTargetPercent` with `InpProfitTrailFactor` trailing floor
   - Auto mode switching: `InpEnableAutoModeSwitch` with CONSERVATIVE/AGGRESSIVE/EMERGENCY modes based on drawdown and win streak
 
 ### 2.20 Equity Curve Manager domain (Batch 99)
+
 - Class: `CEquityCurveManager` in `Core/Risk/EquityCurveManager.mqh`
 - Responsibilities:
   - Track equity EMA (period=20) to establish adaptive equity baseline
@@ -518,6 +547,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Integrate with `CPositionSizer` as a pre-sizing modifier
 
 ### 2.21 Bayesian Kelly Modifier domain (Batch 99)
+
 - Class: `CBayesianKellyModifier` in `Core/Risk/PositionSizerModifiers.mqh`
 - Responsibilities:
   - Beta-Binomial conjugate priors for win-rate estimation with uncertainty quantification
@@ -527,6 +557,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Shrink toward prior when sample size is small to prevent overfitting to early results
 
 ### 2.22 CVaR Portfolio Risk domain (Batch 99)
+
 - Extension to `CPortfolioRiskManager`
 - Responsibilities:
   - CVaR (Conditional Value at Risk) calculation at 95% confidence level
@@ -536,6 +567,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Integrates with `CUnifiedRiskManager` as an additional pre-trade veto check
 
 ### 2.23 Async Trade Executor domain (Batch 99)
+
 - Extension to `CTradeManager`
 - Responsibilities:
   - `SendTradeAsync()`: non-blocking order execution via `OrderSendAsync()` for low-latency scalping entries
@@ -545,6 +577,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Fallback to synchronous execution when async path fails or times out
 
 ### 2.24 Commission-Aware Scalp Validation domain (Batch 99)
+
 - Extension to `CFastScalpEngine`
 - Method: `IsScalpCostViable()`
 - Responsibilities:
@@ -555,6 +588,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Emit `[SCALP-COST-VETO]` when cost viability fails
 
 ### 2.25 Spike Hunter Engine domain (Batch 100)
+
 - Class: `CSpikeHunterEngine` in `Core/Scalp/SpikeHunterEngine.mqh`
 - Responsibilities:
   - 3-layer spike detection for synthetic CFD indices:
@@ -566,8 +600,10 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Push notification alerts throttled at 120s to prevent alert spam
   - Long-term entry cooldown of 60s to prevent re-entry into fading spikes
   - Emit `[SPIKE-HUNT-DETECTED]`, `[SPIKE-HUNT-TRADE]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`, `[SPIKE-COOLDOWN]`, `[SPIKE-HUNTER-STATS]`, `[SPIKE-HUNT-ENGINE]` log signatures
+  - **Batch 102 family override integration:** `SSpikeHunterFamilyOverrides` struct provides per-family spike parameter overrides with 8 `GetEffective*()` methods. Profiler-driven configuration via `SetFamilyOverrides()` applies family-specific velocity multipliers (CrashBoom 2.8×, Jump 3.0×, Volatility 3.5×), ATR compression ratios, SL/TP multipliers, magic offsets, cooldowns, and minimum confluence thresholds.
 
 ### 2.26 Hurst Engine domain (Batch 101)
+
 - Class: `CHurstEngine` in `Core/Engines/HurstEngine.mqh`
 - Responsibilities:
   - Fractal persistence estimation via variance-time Hurst exponent
@@ -577,6 +613,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Emit `[HURST-ENGINE]` telemetry with exponent value and regime classification
 
 ### 2.27 OU Process Engine domain (Batch 101)
+
 - Class: `COrnsteinUhlenbeckEngine` in `Core/Engines/OrnsteinUhlenbeckEngine.mqh`
 - Responsibilities:
   - Mean-reversion speed estimation via OLS regression on price series
@@ -586,6 +623,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Emit `[OU-ENGINE]` telemetry with parameter estimates and z-score values
 
 ### 2.28 OFI Proxy Engine domain (Batch 101)
+
 - Class: `COrderFlowImbalanceEngine` in `Core/Engines/OrderFlowImbalanceEngine.mqh`
 - Responsibilities:
   - Proxy order flow imbalance from tick classification (buyer/seller initiated) at 3 time scales
@@ -595,6 +633,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Emit `[OFI-ENGINE]` telemetry with imbalance values and z-scores per time scale
 
 ### 2.29 VPIN Filter domain (Batch 101)
+
 - Class: `CVPINFilter` in `Core/Risk/VPINFilter.mqh`
 - Responsibilities:
   - Volume-synchronized probability of informed trading (VPIN) from tick data
@@ -603,38 +642,272 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Provide `GetVPIN()`, `GetToxicityLevel()`, `GetSizeMultiplier()` for risk integration
   - Emit `[VPIN-FILTER]` telemetry with VPIN value, toxicity classification, and sizing multiplier
 
+### 2.30 Deriv Asset Profiler domain (Batch 102)
+
+- Class: `CDerivAssetProfiler` in `Core/Processing/DerivAssetProfiler.mqh`
+- Enum: `ENUM_DERIV_FAMILY` (19 values: DERIV_CRASH_BOOM through DERIV_UNKNOWN)
+- Struct: `SDerivProfile` (20 fields per family)
+- Responsibilities:
+  - Auto-detect which of 18 Deriv synthetic index families a symbol belongs to via `DetectFamily(symbol)` using 13 family-specific symbol-name matchers from `Instruments.mqh`
+  - Provide per-family trading parameters via `GetProfile(symbol)` returning `SDerivProfile`
+  - Map families to magic number offsets via `GetMagicOffset(symbol)` (offsets 9000-9900)
+  - Provide human-readable family names via `GetFamilyName(symbol)`
+  - Print full profile diagnostics via `PrintProfile(symbol)`
+  - Integrate with `CEnterpriseStrategyManager` via `SetDerivProfiler()` and `ApplyFamilyEngineWeights()`
+  - Integrate with `CDiagnosticsManager` via `SetDerivProfiler()` for `[HEARTBEAT-FAMILY]` logging
+- Data flow: symbol name → DetectFamily() → SDerivProfile → engine config / risk override / magic offset
+- Per-family parameters include: `spikeThreshold`, `atrCompressionRatio`, `atrMultiplierSL`, `atrMultiplierTP`, `hurstThreshold`, `riskPerTrade`, `magicOffset`, `maxDrawdownPercent`, `enableSpikeHunter`, `enableGridRecovery`, `enableHurstRegime`, `enableOUFilter`, `gridFactorATR`, `maxGridLevels`, `gridProgressionFactor`, `spikeCooldownSec`, `spikeWindowBars`
+- Emit `[PROFILER-DETECT]` telemetry with detected family and profile summary
+
+### 2.31 Grid Recovery Engine domain (Batch 102)
+
+- Class: `CGridRecoveryEngine` in `Core/Scalp/GridRecoveryEngine.mqh`
+- Enum: `ENUM_GRID_PROGRESSION` (GRID_PROGRESSION_MARTINGALE, GRID_PROGRESSION_FIBONACCI)
+- Struct: `SGridRecoveryConfig` (12 fields)
+- Responsibilities:
+  - Provide grid recovery for mean-reverting synthetic families (Volatility, Step, StableSpread, MultiStep, Exponential, SkewStep, VolSwitch, DriftSwitch, Trek, Tactical, Derived)
+  - Activate only when Hurst exponent < `activationHurstThreshold` (0.45), confirming mean-reversion regime
+  - Support two progression modes: Modified Martingale (lot × factor^level, factor=1.5) and Fibonacci (lot × fib(level))
+  - Per-level SL = ATR × `slAtrMultiplier` (1.5), TP = `tpAtrMultiplier` × grid spacing (0.5)
+  - Magic offset 8000 from base EA magic
+  - Max 8 grid levels with configurable `maxDrawdownPercent` (15%) cap
+  - Cooldown between grid entries via `cooldownMs` (30000ms default)
+  - Configure per-family grid parameters via `SetFamilyConfig(symbol, gridFactorATR, maxGridLevels, progressionFactor)`
+  - Update Hurst regime state via `SetHurstRegime(symbol, hurstValue)` — grid entries only placed when Hurst confirms mean-reversion
+  - Emit `[GRID-RECOVERY-ENTRY]`, `[GRID-RECOVERY-LEVEL]`, `[GRID-RECOVERY-CLOSE]`, `[GRID-RECOVERY-DRAWDOWN]` telemetry
+
+### 2.32 ATR Scalping Engine domain (Batch 102)
+
+- Class: `CATRScalpingEngine` in `Core/Scalp/ATRScalpingEngine.mqh`
+- Struct: `SATRScalpingConfig` (14 fields), `SATRScalpSymbolState`
+- Responsibilities:
+  - Provide ATR-based scalping for between-spike/between-jump trading on Jump, DEX, and Hybrid families
+  - Implement spike window avoidance: learn spike intervals from `CSpikeHunterEngine` via `NotifySpikeDetected(symbol)` and `SetSpikeInterval(symbol, intervalSec)`; avoid trading `spikeWindowAvoidMinutes` (default 5) before expected spikes
+  - Entry conditions: EMA fast/slow trend alignment + RSI filter (30-70) + spread < `spreadMaxATRRatio` × ATR (0.30)
+  - SL = ATR × `slAtrMultiplier` (1.5), TP = ATR × `tpAtrMultiplier` (2.0)
+  - Magic offset 7000 from base EA magic
+  - Max `maxPositions` (3) concurrent scalp positions per symbol
+  - Cooldown between scalp entries via `cooldownMs` (30000ms default)
+  - Emit `[ATR-SCALP-ENTRY]`, `[ATR-SCALP-EXIT]`, `[ATR-SCALP-SPIKE-WINDOW]`, `[ATR-SCALP-COOLDOWN]` telemetry
+
+### 2.33 Deriv Python ML Stack (Batch 102)
+
+- **Feature Pipeline** (`Python/data_pipeline.py`):
+  - `build_deriv_family_features(close, high, low, volume, family_id)` returns 26 feature columns: 8 signal features (tick velocity z-score, direction accumulation, ATR compression ratio, spike magnitude z-score, OU residual, step frequency, range bound score, bars-since-extreme) + 18 family one-hot encoding columns
+  - `get_feature_count(family_id)`: returns 57 for universal (family_id=-1), 83 for Deriv families
+  - `build_feature_matrix()` accepts `family_id` param; extends base 57 features to 83 when family_id >= 0
+  - All downstream functions (`build_dataset_splits`, `build_pipeline`, `build_scaled_dataset_splits`, `build_symbol_sequences`) pass `family_id` through
+
+- **Family-Specific Training Scripts**:
+  - `Python/train_deriv_catboost.py` — `--family-id` arg; CrashBoom/DEX (iterations=1500, depth=8, l2_leaf_reg=5.0, class_weights=[1.0,0.5,1.0]), Hybrid (iterations=1200, depth=7)
+  - `Python/train_deriv_xgboost.py` — `--family-id` arg; Step/MultiStep/SkewStep (gamma=1.0, reg_alpha=0.5, reg_lambda=2.0)
+  - `Python/train_deriv_lgbm.py` — `--family-id` arg; Volatility (num_leaves=31, learning_rate=0.02)
+  - `Python/train_deriv_stacker.py` — `--family-id` arg; optional `--catboost-pkl`/`--xgboost-pkl` for expanded meta features (6→12→15 columns); bundle includes `family_id` and `n_base_models`
+  - All scripts auto-override seq_len=120 for Jump (3) and DEX (4) families
+
+- **Server Routing** (`Python/zmq_server.py` v1.1.0):
+  - `FAMILY_IDS` dict: 18 families mapped from symbol keyword → family_id
+  - `_load_family_models(family_id)`: loads `{prefix}_patchtst.onnx`, `{prefix}_catboost.pkl`, `{prefix}_xgboost.pkl`, `{prefix}_lgbm.pkl`, `{prefix}_stacker.pkl`
+  - `_detect_family_from_symbol(symbol)`: uppercase match against FAMILY_IDS keys (longest key first)
+  - `_predict_family()`: dynamic seq_len (60/120) and feat_count (83) per family; ONNX + GBDT + stacking inference
+  - `GET /families` and `GET /family/{family_id}` endpoints for model status
+  - Backward compatible: requests without `family_id` fall through to universal model path
+
+- **MQL5 Bridge Protocol**:
+  - `DetectFamilyId(symbol)` in `Instruments.mqh`: priority-ordered cascade returning integer 0-17 or -1, matching `CDerivAssetProfiler::DetectFamily()` exactly
+  - `CPythonBridge::Predict()` extended with `family_id` and `symbol` params (default -1/"")
+  - `CPythonBridge::PredictFamily()` convenience method: `Predict(features, size, "ensemble", family_id, symbol)`
+  - `SPythonBridgeResponse` extended with: `family_id` (int), `family_name` (string), `catboost_buy/sell`, `xgboost_buy/sell`, `onnx_buy/sell` (6 doubles)
+  - `ParsePredictionResponse()` parses all new fields; backward compatible with old server responses
+  - `GetFamilyPrediction(symbol, features, size)` global helper in `MultiStrategyAutonomousEA.mq5`
+
+### 2.34 Multi-Asset Class Profiler domain (Batch 103)
+
+- Class: `CMultiAssetProfiler` in `Core/Processing/MultiAssetProfiler.mqh`
+- Enum: `ENUM_ASSET_CLASS` (10 values: ASSET_FOREX(0) through ASSET_UNIVERSAL(9))
+- Struct: `SAssetProfile` (14 fields per asset class)
+- Responsibilities:
+  - Auto-detect which of 10 asset classes a symbol belongs to via `DetectAssetClass(symbol)` using priority-ordered detection (Deriv first, then Metals, Indices, Energies, Forex, Universal)
+  - Provide per-asset-class trading parameters via `GetProfile(symbol)` returning `SAssetProfile`
+  - Map asset classes to magic number offsets via `GetMagicNumber(symbol)` (Forex=+7000, Metals=+7100, Indices=+7200, Energies=+7300, Deriv=+9000-9400)
+  - Provide human-readable class names via `GetAssetClassName(symbol)`
+  - Provide feature set sizes via `GetFeatureSetSize(symbol)` (Forex=60, Metals=61, Indices=61, Energies=60, Deriv=70, Universal=57)
+  - Provide Python model family identifiers via `GetPythonModelFamily(symbol)`
+  - Print full profile diagnostics via `PrintProfile(symbol)`
+  - Wrap `CDerivAssetProfiler` internally for fine-grained Deriv family detection; expose via `GetDerivProfiler()`
+  - Map 18 Deriv families to 5 coarse asset classes via `DerivFamilyToAssetClass()`
+  - Integrate with `CEnterpriseStrategyManager` via `SetMultiAssetProfiler()` and `ApplyAssetClassEngineWeights()`
+  - Integrate with `CDiagnosticsManager` via `SetMultiAssetProfiler()` for `[HEARTBEAT-ASSET-CLASS]` logging
+- Data flow: symbol name → DetectAssetClass() → SAssetProfile → engine config / risk / magic offset / feature count
+- Per-asset-class parameters include: `atrMultiplierSL`, `atrMultiplierTP`, `hurstThreshold`, `riskPerTrade`, `magicOffset`, `maxDrawdownPercent`, `enableScalp`, `enableGrid`, `enableBreakout`, `featureSetSize`, `pythonModelFamily`
+- Emit `[MULTI-ASSET-PROFILER]` telemetry with detected class and profile summary
+
+### 2.35 Multi-Asset Python ML Stack (Batch 103)
+
+- **Asset-Class Feature Pipeline** (`Python/data_pipeline.py`):
+  - `build_forex_features(close, high, low, volume, spread)` returns 3 features: spread_z, corr_proxy, carry
+  - `build_metals_features(close, high, low, volume)` returns 4 features: vol_of_vol, session_ny, trend_strength, vol_regime
+  - `build_indices_features(close, high, low, volume, timestamps=None)` returns 4 features: overnight_gap, circadian, bb_width, vol_spike
+  - `build_energies_features(close, high, low, volume)` returns 3 features: inventory_proxy, seasonality, contango
+  - `get_asset_class_feature_count(asset_class)`: returns 60 (Forex), 61 (Metals/Indices), 60 (Energies)
+  - `build_feature_matrix()` accepts `asset_class` param; extends base 57 features with asset-class-specific features when asset_class >= 0
+  - All downstream functions (`build_dataset_splits`, `build_scaled_dataset_splits`) pass `asset_class` through
+
+- **Asset-Class Training Scripts**:
+  - `Python/train_forex_lgbm.py` — asset_class=0; LightGBM, lr=0.025, num_leaves=31, n_estimators=800
+  - `Python/train_metals_catboost.py` — asset_class=1; CatBoost (depth=6, iterations=1000) + XGBoost (depth=5, estimators=800)
+  - `Python/train_indices_xgboost.py` — asset_class=2; XGBoost, lr=0.025, depth=5, n_estimators=800
+  - `Python/train_energies_xgboost.py` — asset_class=3; XGBoost, lr=0.03, depth=6, n_estimators=600
+
+- **Server Routing** (`Python/zmq_server.py`):
+  - `ASSET_CLASS_NAMES` dict: 10 entries mapping IDs 0-9 to string names
+  - `ASSET_CLASS_FEATURE_COUNTS` dict: Forex=60, Metals=61, Indices=61, Energies=60
+  - `_load_asset_class_models()`: loads ONNX + GBDT models from `models/{asset_class_name}/`
+  - `_predict_asset_class()`: ONNX sequence + GBDT flat + stacking inference
+  - `_process_request()` routes asset_class 0-3 to `_predict_asset_class()`, 4-8 to Deriv family routing, -1 to universal
+  - Backward compatible: requests without `asset_class` fall through to existing family/universal paths
+
+- **MQL5 Bridge Protocol**:
+  - `DetectAssetClassId(symbol)` in `Instruments.mqh`: priority-ordered detection returning 0-9
+  - `CPythonBridge::PredictMultiAsset()` convenience method: `Predict(features, size, "ensemble", -1, "", asset_class, asset_class_name)`
+  - `SPythonBridgeResponse` extended with: `asset_class` (int, default -1), `asset_class_name` (string, default "")
+  - `ParsePredictionResponse()` parses both new fields; backward compatible
+  - `GetFamilyPrediction()` in `MultiStrategyAutonomousEA.mq5` now calls `PredictMultiAsset()` with `DetectAssetClassId()` + `GetAssetClassName()`
+
+### 2.36 Asset-Class Engine Weight Adjustment (Batch 103)
+
+- Method: `CEnterpriseStrategyManager::ApplyAssetClassEngineWeights(symbol)`
+- Applies per-asset-class strategy weight multipliers after consensus:
+  - **Forex**: Trend 1.3x, VolBreakout 1.2x, MeanRevert 0.7x
+  - **Metals**: VolBreakout 1.5x, MeanRevert 0.5x
+  - **Indices**: MeanRevert 1.5x, VolBreakout 0.5x, Trend 0.8x
+  - **Energies**: VolBreakout 1.4x, Trend 1.2x
+- Deriv symbols (asset_class 4-8) delegate to existing `ApplyFamilyEngineWeights()`
+- Emit `[ASSET-CLASS-WEIGHT]` telemetry with class name and applied multipliers
+
+### 2.37 Trend & S/R Strategy Enhancement (Batch 103 cont.)
+
+- **CTrendSignalEnhancer** (`Strategies/TrendFiles/TrendSignalEnhancers.mqh`): EMA slope momentum detection (3-bar slope > 0.1 ATR-normalized) and trend freshness scoring (consistency<10 → +15%, >50 → -10%). Uses CMultiEMASystem reference and CIndicatorManager ATR handle.
+- **CSRSignalScorer** (`Strategies/SupportResistanceFiles/SRSignalScorer.mqh`): Weighted soft confluence scoring (0-100) replacing hard AND logic for S/R bounce. Weights: PriceAtLevel=30, CandleRejection=25, EMAAligned=20, TrendlineConfluence=15, MultipleTouches=10. Signal threshold ≥60/100.
+- **CStrategyTrend v2.1** (`Strategies/StrategyTrend.mqh`): Hurst regime filter (H<0.50 → reject), VPIN toxicity filter (VPIN>0.5 → reject), EMA momentum bonus (+10%), freshness multiplier, trailing stop integration (breakeven at 1R + CTrendTrailingStop hybrid trail), asset-class ADX thresholds via `CADXPositionSizing::InitForAssetClass()`. Engine injection via `SetHurstEngine()`/`SetVPINFilter()` setters (not owned).
+- **CStrategySupportResistance** (`Strategies/StrategySupportResistance.mqh`): Hurst filter (H>0.55 in bounce → reject), VPIN filter (VPIN>0.5 → reject), drawing throttle (every 5 bars). Engine injection via `SetHurstEngine()`/`SetVPINFilter()` setters (not owned).
+- **CSRBreakoutStrategy::FalseBreakoutDetected()**: 3-bar lookback for price breaking above resistance or below support then returning; ATR-based tolerance; counter-signal at 0.70 confidence.
+- **CSupportResistanceDetector::CalculateStrength()**: Exponential decay `0.99^barsOld` (capped at 500 bars) replacing step-function age penalty.
+- **CEnterpriseStrategyManager::GetStrategyByName()**: Returns `IStrategy*` by name (wraps `FindStrategyIndexByName()`). Used by EA wiring code for `dynamic_cast` to concrete strategy types.
+- **EA Wiring** (`MultiStrategyAutonomousEA.mq5`): Batch 103 block after `ApplyAssetClassEngineWeights()` — iterates `g_mathEngineSymbols[]`, finds matching symbol index, calls `GetStrategyByName("Trend")`/`GetStrategyByName("Support/Resistance")`, `dynamic_cast` to concrete types, injects Hurst/VPIN engine pointers. Emits `[BATCH103]` log.
+
+### 2.38 ICT/SMC Strategy Overhaul (Batch 103 cont.)
+
+- **CFVGScalperStrategy** (`Strategies/FVGScalperStrategy.mqh`): FVG gap detection + OB freshness filter + rejection candle confirmation. Finds strongest FVG imbalance zone, checks price inside FVG, confirms with bullish/bearish wick rejection. Confidence: base 0.55 + structure alignment (+0.08) + fast CHOCH (+0.07) + CISD displacement (+0.05), capped 0.95. SL 0.5×ATR beyond FVG boundary, TP 1.5R. Tier 2, STRUCTURE_CLUSTER, weight 1.8. Owned components: `CImbalanceDetector`, `CMarketStructureAnalyzer(swings=3)`. Log: `[FVG-SCALPER]`.
+
+- **CTurtleSoupStrategy** (`Strategies/TurtleSoupStrategy.mqh`): Liquidity sweep (Turtle Soup) detection via `CLiquidityDetector::DetectTurtleSoup()` + CHOCH/CISD confirmation + FVG confluence bonus. Confidence: base 0.50 + turtleSoup.confidence×0.15 + structure alignment (+0.10) + FVG confluence (+0.08) + fast CHOCH (+0.07), capped 0.95. SL beyond sweep extreme + 0.3×ATR, TP 2R. Tier 2, STRUCTURE_CLUSTER, weight 1.6. Owned components: `CLiquidityDetector(atrMultiplier=5.0)`, `CImbalanceDetector`, `CMarketStructureAnalyzer(swings=3)`. Log: `[TURTLE-SOUP]`.
+
+- **CBreakerBlockStrategy** (`Strategies/BreakerBlockStrategy.mqh`): Failed OB → breaker conversion + price retest + opposing FVG + CISD displacement + structure alignment. Scans for unmitigated breaker OBs (OB_BREAKER_BULL/OB_BREAKER_BEAR), waits for price retest. Confidence: base 0.55 + freshness > 0.7 (+0.08) + FVG confluence (+0.10) + CISD displacement (+0.05) + structure alignment (+0.07), capped 0.95. SL 0.5×ATR beyond breaker boundary, TP 2R. Tier 2, STRUCTURE_CLUSTER, weight 1.7. Owned components: `CMarketStructureAnalyzer(swings=3)`, `CAdvancedOrderBlockDetector`, `CImbalanceDetector`. Log: `[BREAKER-BLOCK]`.
+
+- **CNYOpenGapStrategy** (`Strategies/NYOpenGapStrategy.mqh`): NY session open gap (NDOG) fade during 13:30-14:00 UTC. Gap size > 0.5×ATR(14,D1). Fades gap direction (gap up = SELL, gap down = BUY). Confidence: base 0.50 + FVG confluence (+0.10) + large gap >1.0×ATR (+0.08) + near gap level (+0.07), capped 0.95. SL beyond gap extreme + 0.5×ATR, TP at previous close. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: skips Volatility/Boom/Crash/Jump/Step. Owned components: `CSessionGapDetector(PERIOD_D1)`, `CImbalanceDetector`. Log: `[NYGAP]`.
+
+- **CAsianRangeBreakStrategy** (`Strategies/AsianRangeBreakStrategy.mqh`): Asian session range (00:00-06:00 UTC) breakout during London open (07:00-07:30 UTC). Requires tight range < 0.8×ATR. Trades breakout above/below Asian range. Confidence: base 0.50 + range compression < 0.5×ATR (+0.10) + structure alignment (+0.08) + fast CHOCH (+0.07), capped 0.95. SL at opposite range boundary, TP 2× range size. Tier 3, STRUCTURE_CLUSTER, weight 1.3, session-limited. Synthetic symbol filter: same as NY Open Gap. Owned components: `CICTKillZones(sessionCount=2, autoDetect=true)`, `CMarketStructureAnalyzer(swings=3)`. Log: `[ASIANRB]`.
+
+- **CPartialCloseManager** (`Strategies/UnifiedICTFiles/PartialCloseManager.mqh`): 3-step exit management for ICT strategy positions. Step 1: 50% close at 1R profit (respects SYMBOL_VOLUME_MIN/STEP). Step 2: Breakeven move after 1R (SL → entry + 0.1% buffer, validates against SYMBOL_TRADE_STOPS_LEVEL). Step 3: ATR trailing after 2R (1.5×ATR(M5,14) from price, only moves favorably). Max 50 tracked positions with periodic compaction every 5 minutes. Internal state: `SPartialCloseState` per position. Log: `[PARTIAL-CLOSE]`.
+
+- **CTimeframeConfluence** (`Strategies/UnifiedICTFiles/TimeframeConfluence.mqh`): Multi-TF alignment scorer. Creates 3 `CMarketStructureAnalyzer` instances for H1, M15, M5 (each swing lookback=3). Scoring: H1 alignment = 40pts, M15 = 30pts, M5 = 30pts (max 100). `IsMajorityAligned()` requires ≥2/3 timeframes aligned. Per-bar caching via `STFAlignmentCache` (invalidated on new bar via `iTime` comparison). Log: `[TF-CONF]`.
+
+- **Component Upgrades**:
+  - `AdvancedOrderBlocks.mqh`: `GetFreshness(int obIndex)` returns 0.0-1.0 freshness decay for order blocks. Used by BreakerBlockStrategy for freshness > 0.7 confidence bonus.
+  - `MarketStructureAnalyzer.mqh`: 5 fast structure detection methods — `DetectFastCHOCH()` (3-swing CHOCH), `DetectWickBOS()` (wick-based BOS), `DetectCISDDisplacement()` (CISD displacement), `GetSwingHighLevel()`, `GetSwingLowLevel()`. Used by FVGScalper, TurtleSoup, BreakerBlock, AsianRangeBreak for rapid structure confirmation without full re-analysis.
+  - `LiquidityDetector.mqh`: `SExternalLiquidityPool` struct + `DetectExternalSwingLiquidity()` for swing-based external liquidity detection. Used by TurtleSoupStrategy for liquidity sweep identification.
+
+- **EnterpriseStrategyManager Extensions**: `m_maxStrategies` increased 20→25 to accommodate 5 new strategies. `GetStrategyByName(const string name)` returns `IStrategy*` by name (wraps `FindStrategyIndexByName()`). 5 new `RegisterStrategy()` calls with tier/cluster/weight assignments.
+
+- **Synthetic Symbol Filtering**: Session-based strategies (NY Open Gap, Asian Range Break) skip synthetic symbols (Volatility, Boom/Crash, Jump, Step) since these CFDs have no real session gaps. Filtered via `IsVolatilitySyntheticSymbolName()`, `IsBoomCrashSyntheticSymbolName()`, `IsJumpSyntheticSymbolName()`, `IsStepSyntheticSymbolName()`.
+
+- **Enum Additions** (`Core/Utils/Enums.mqh`): `STRATEGY_FVG_SCALPER=11`, `STRATEGY_TURTLE_SOUP=12`, `STRATEGY_BREAKER_BLOCK=13`, `STRATEGY_NY_OPEN_GAP=14`, `STRATEGY_ASIAN_RANGE_BREAK=15`.
+
+- **EA Input Parameters** (`MultiStrategyAutonomousEA.mq5`): `InpEnableFVGScalper`, `InpEnableTurtleSoup`, `InpEnableBreakerBlock`, `InpEnableNYOpenGap`, `InpEnableAsianRangeBreak` (all bool, default true). Mapped in `BuildStrategyFlags()` at indices 12-16.
+
+### 2.39 EA Enterprise Vision — Strategy v2.0 Enhancements (Batch 103 cont.)
+
+- **CCandleConfluenceScorer** (`Strategies/CandlestickFiles/CandleConfluenceScorer.mqh`): 0-100 confluence scoring across all pattern detectors. Each detector contributes weighted points; total score ≥70 required for signal generation. Confidence = score/100.0. Detectors: CDojiDetector, CHammerDetector, CStarDetector, CHaramiDetector, CThreeSoldiersDetector, CPiercingDetector.
+- **Candlestick v2.0** (`Strategies/StrategyCandlestick.mqh`): Integrated 7 new pattern detectors + CCandleConfluenceScorer. Confluence score ≥70 required for signal; confidence scaled by score/100.0.
+- **Momentum v2.0** (`Strategies/SimpleMomentumStrategy.mqh`): MACD histogram confirmation (MACD line above signal = BUY confirmation), ADX strong trend filter (ADX > 25 required for trend entries), pullback entry mode (EMA pullback within 0.5×ATR), freshness confidence modifier (recent signal boost +10%), volume confidence modifier (above-average volume boost +8%).
+- **Volatility Breakout v2.0** (`Strategies/VolatilityBreakoutStrategy.mqh`): TTM Squeeze detection (BB inside KC = squeeze active, breakout on BB exit), ADX rising filter (ADX slope > 0 required for breakout confirmation), breakout retest entry (price retests breakout level before entry), breakout failure reversal (failed breakout → counter-direction signal at 0.65 confidence).
+- **Mean Reversion v2.0** (`Strategies/MeanReversionStrategy.mqh`): Stochastic extreme confirmation (Stoch < 20 for BUY, > 80 for SELL), Hurst regime lockout (H < 0.45 → reject "MR_HURST_NOT_MEAN_REVERTING"), BB width filter (BB width < 20th percentile required), no-divergence check (price vs indicator divergence blocks entry), dynamic TP (TP adjusts by BB width percentile). Hurst engine injection via `SetHurstEngine()` (pointer-based, not owned).
+- **Statistical Arbitrage** (`Strategies/StatisticalArbitrageStrategy.mqh`): New strategy for pair trading via Python Bridge. OU half-life filter (half-life < 50 bars required), z-score detection (entry at |z| > 2.0, exit at |z| < 0.5). OU engine injection via `SetOUEngine()` (pointer-based, not owned). MEAN_REVERSION_CLUSTER, weight 1.5. Conditionally registered when Python Bridge is connected.
+
+### 2.40 EA Enterprise Vision — Consensus Engine Improvements (Batch 103 cont.)
+
+- **Regime Weight Wiring (B1)**: `CEnterpriseStrategyManager` now reads `CRegimeEngine` weight multipliers via `GetRegimeCategoryMultiplier()`. Regime category weights applied to strategy weights before consensus quorum evaluation.
+- **VPIN Toxicity Integration (B2)**: VPIN toxicity gating in consensus flow:
+  - `VPIN_EXTREME`: blocks all entries (consensus veto), logged as `[VPIN-BLOCK]`
+  - `VPIN_HIGH`: reduces strategy weights by 50%
+  - `VPIN_MEDIUM`: reduces strategy weights by 25%
+- **0-100 Consensus Scoring (B3)**: New graduated consensus scoring replacing binary quorum:
+  - `rawConsensusScore = directionalQuality × supportRatio × 100`
+  - Threshold = 60/100 for consensus pass
+  - Scores 60-70: marginal consensus (reduced position sizing)
+  - Scores 70-85: standard consensus
+  - Scores 85+: strong consensus (full position sizing)
+- **OFI Regime Integration (B4)**: OFI confirms/contradicts regime category weights:
+  - OFI aligned with regime → 1.2× boost on regime category multiplier
+  - OFI contradicts regime → 0.7× penalty on regime category multiplier
+  - Applied after regime weight wiring, before consensus scoring
+
+### 2.41 EA Enterprise Vision — Engine Wiring (Batch 103 cont.)
+
+- **EnterpriseStrategyManager VPIN/OFI Wiring**: VPIN filter and OFI engine wired from EA per-symbol loop in `MultiStrategyAutonomousEA.mq5`. Each symbol's `CEnterpriseStrategyManager` receives VPIN and OFI engine pointers via `SetVPINFilter()` and `SetOFIEngine()` setters (not owned).
+- **MeanReversion Hurst Engine Wiring**: Hurst engine pointer wired from EA per-symbol loop via `GetStrategyByName("Mean Reversion")` + `dynamic_cast<CStrategyMeanReversion*>`, then `SetHurstEngine()`. Migrated from index-based to pointer-based injection.
+- **StatisticalArbitrage OU Engine Wiring**: OU engine pointer wired from EA per-symbol loop via `GetStrategyByName("Statistical Arbitrage")` + `dynamic_cast<CStatisticalArbitrageStrategy*>`, then `SetOUEngine()`. Registration gated by Python Bridge connection check.
+- **A5 Strategy Registration**: StatisticalArbitrage registered in `BuildStrategyFlags()` with Python Bridge availability check; shadow mode when bridge disconnected, live mode when connected.
+
 ## 3. Managed Strategies
 
 ### 3.1 Core retained set
+
 - **Momentum** (SimpleMomentumStrategy.mqh)
+  - v2.0: MACD histogram confirmation, ADX strong trend filter (ADX > 25), pullback entry mode (EMA pullback within 0.5×ATR), freshness confidence modifier (+10%), volume confidence modifier (+8%)
   - Optional scalp-continuation mode is configured by `InpEnableMomentumScalping` and `InpMomentumScalpCooldownSeconds`; it shortens cooldown only for momentum itself and still sends every entry through manager consensus, unified risk, and trade-manager execution.
   - Optional scalp timeframe registration is configured by `InpMomentumScalpTimeframe`; when this is lower than the attached chart timeframe, Momentum evaluates on that lower timeframe instead of waiting on the chart bar cadence.
-  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Trend** (StrategyTrend.mqh)
   - Simplified from 300 → 259 lines (-13.7%), removed timeframe auto-stepping and dead trailing stop code
-  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Support/Resistance** (StrategySupportResistance.mqh)
   - Integrated CFibConfluence module (Fibonacci merge), replaced bubble sort with ArraySort()
-  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Unified ICT** (StrategyUnifiedICT.mqh)
   - Simplified from 4 to 2 entry types (2,194 → 2,012 lines, -8.3%)
-  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Candlestick** (StrategyCandlestick.mqh)
+  - v2.0: 7 new pattern detectors (Doji, Hammer, Star, Harami, ThreeSoldiers, Piercing) + CCandleConfluenceScorer (0-100 scoring, threshold ≥70); confidence scaled by confluence score
   - Optional intrabar timeframe registration is configured by `InpCandlestickIntrabarTimeframe`; when this is lower than the attached chart timeframe and candlestick intrabar eligibility is enabled, Candlestick evaluates its own lower-timeframe bar stream.
-  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Power of Three** (CPowerOfThreeStrategy.mqh)
   - ICT AMD (Accumulation-Manipulation-Distribution) phase detection
-  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
 - **Unicorn Model** (CUnicornModelStrategy.mqh)
   - ICT breaker/OB + FVG overlap pattern detection
-  - Risk management integrated with [CONSENSUS-DIAG] logging (Batch 93)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
+- **Volatility Breakout** (VolatilityBreakoutStrategy.mqh)
+  - v2.0: TTM Squeeze detection (BB inside KC = squeeze active, breakout on BB exit), ADX rising filter (ADX slope > 0 required), breakout retest entry (price retests breakout level before entry), breakout failure reversal (failed breakout → counter-direction signal at 0.65 confidence)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
+- **Mean Reversion** (MeanReversionStrategy.mqh)
+  - v2.0: Stochastic extreme confirmation (Stoch < 20 for BUY, > 80 for SELL), Hurst regime lockout (H < 0.45 → reject "MR_HURST_NOT_MEAN_REVERTING"), BB width filter (BB width < 20th percentile required), no-divergence check (price vs indicator divergence blocks entry), dynamic TP (TP adjusts by BB width percentile)
+  - Hurst engine injection via SetHurstEngine() (pointer-based, not owned)
+  - Risk management integrated with \[CONSENSUS-DIAG] logging (Batch 93)
+- **Statistical Arbitrage** (StatisticalArbitrageStrategy.mqh)
+  - Pair trading via Python Bridge, OU half-life filter (half-life < 50 bars required), z-score detection (entry at |z| > 2.0, exit at |z| < 0.5)
+  - OU engine injection via SetOUEngine() (pointer-based, not owned)
+  - Conditionally registered when Python Bridge is connected
+  - MEAN_REVERSION_CLUSTER, weight 1.5
 
 **Removed Strategies:**
-- ~~Elliott Wave~~ - Deleted (~1,600 lines removed, unreliable)
+
+- ~~Elliott Wave~~ - Deleted (\~1,600 lines removed, unreliable)
 - ~~Fibonacci~~ - Merged into SupportResistance as CFibConfluence module
 - ~~RSI, Mean Reversion, Swing, Volatility, MACD, Bollinger, Ichimoku, Harmonic, legacy SMC wrapper~~ - Previously retired
 
 ### 3.2 AI strategy adapters
+
 - Neural Network adapter (`CAIStrategyAdapter`)
 - Transformer adapter (`CTransformerAIStrategyAdapter`)
 - Ensemble adapter (`CEnsembleAIStrategyAdapter`)
@@ -643,6 +916,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 
 **Memory Safety**: All AI adapters implement RAII patterns with proper cleanup of transformer models and comprehensive error handling. Constants are used throughout to eliminate magic numbers.
 **Runtime Efficiency**:
+
 - inference is cached per bar in the adapter or backing AI module so repeated same-bar `GetSignal(...)` calls do not rerun transformer/NN forward passes
 - feature-build/inference failures are cached as `NONE` for the rest of the bar to avoid hot-loop retries on unchanged data
 - `CNextGenStrategyBrain` now runs as a local-only transformer path and exposes dashboard-safe readiness/runtime-mode state instead of legacy cloud/hybrid labels
@@ -656,13 +930,16 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 - `CPipelineScaler` keeps the ONNX feature normalization path aligned with Python `StandardScaler` exports and can hot-reload updated scaler parameters without restarting the EA
 
 ### 3.3 Curated runtime profile
+
 Curated mode is now a baseline recommendation while live-authority defaults decide whether a candidate can actually send.
+
 - **Default authority roster** (Batch 78): AI/ONNX and retained indicator strategies can contribute; ordinary live trades require quorum, while high-confidence AI/ONNX packets can use the explicit authority gate.
 - Earlier Batch 41 work reduced denominator bloat by recommending a lean roster; Batch 78 keeps that lesson but avoids globally muting profitable AI/ONNX paths.
 - Explicit per-strategy enable flags still control registration, but Elliott-only execution is candidate-level shadow unless evidence/confluence earns authority.
 - Disabled strategies are not registered into managers/orchestrator by default, so dormant code stays available for testing without inflating runtime weight pools, scan time, or duplicate logs.
 
 ### 3.4 Institutional governance roles
+
 - Strategy registration now includes explicit governance metadata:
   - role: `PRIMARY_ALPHA`, `CONTEXT_FEATURE`, `SHADOW_RESEARCH`
   - cluster: `TREND_CLUSTER`, `MEAN_REVERSION_CLUSTER`, `STRUCTURE_CLUSTER`, `NONE`
@@ -687,7 +964,9 @@ Curated mode is now a baseline recommendation while live-authority defaults deci
 - Manager-level controls are exposed by strategy name for role, cluster, live-vote eligibility, and shadow mode.
 
 ### 3.5 Unified ICT Architecture
+
 The `StrategyUnifiedICT` module operates as a dedicated institutional-flow container with strict rule adherence:
+
 - **FVG & Order Block Models:** detection is strictly gap-based (no body color/size filters), and mitigation requires a full boundary close, not just midpoint touches. Source order blocks are dynamically anchored to 3-bar displacement impulses.
 - **Session Context:** `CSessionGapDetector` tracks NDOG/NWOG opening gaps and fill percentages. `CICTKillZones` enforces Silver Bullet windows. `CAMDDetector` defines Accumulation/Manipulation/Distribution phase sweeps to time structural reversals.
 - **Institutional References & Order Flow:** `CLiquidityDetector` now injects monthly/quarterly highs-lows plus NY midnight and quarterly opens, `CAnchoredVWAP` anchors to the latest institutional reference, and `CCumulativeDelta` contributes directional pressure confirmation into POI scoring.
@@ -698,7 +977,9 @@ The `StrategyUnifiedICT` module operates as a dedicated institutional-flow conta
 - **Position Scaling:** `CICTPositionSizer` governs trade volume using an equity-aware point distance formula, half-Kelly caps from recent symbol-specific closed-deal stats, and hard daily/weekly drawdown guards.
 
 ### 3.6 Support/Resistance & Trendline Architecture
+
 The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, non-repainting framework optimized for look-ahead safety and chart performance:
+
 - **ATR-Driven Clustering:** S/R levels and Trendline swings are normalized using dynamic ATR thresholds. The clustering algorithm merges nodes not by an arithmetic average, but by promoting the highest-strength focal line.
 - **Look-Ahead Bias Elimination:** All logic within `CTrendEntryTypes`, `CSRBounceStrategy`, `CSRBreakoutStrategy`, and `CSupportResistanceDetector` strictly evaluates signal breaks and touches against `bar[1]` (completed-bar confirmation), blocking forward-sniffing.
 - **Dynamic Chart Optimization:** Instead of emitting unlimited background markers, graphical line rendering passes through a bubble-sort array capping output strictly to the Top 8 highest-strength horizontal zones and Top 6 slope-validated trendlines.
@@ -706,6 +987,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - **Indicator Handle Hygiene:** clean detector paths now cache ATR handles at initialization and reuse them during repeated detection/touch passes instead of creating and releasing indicator handles inside hot methods.
 
 ## 3.7 AXIOM Refactor Notes
+
 - The AXIOM refactor batch was a structural efficiency pass, not a strategy-logic rewrite.
 - Main outcomes:
   - removed dead AI/control-flow branches and no-op lifecycle surface
@@ -717,6 +999,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 ## 4. Decision Pipeline (Signal to Execution)
 
 ### 4.1 Cadence selection
+
 - Startup emits per-symbol `[ACCOUNT-CAPACITY]` diagnostics before the first live scan and reconstructs `[TRADE-STATE]` so inherited EA positions carry cooldown forward across restarts.
 - Shared validator spread-shock state is symbol-scoped, not portfolio-global, so cross-symbol spread contamination cannot veto otherwise valid candidates.
 - New-bar path: conservative scan cadence.
@@ -730,6 +1013,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Per-symbol intrabar backoff tiers escalate from base cadence to `30s`, then `60s`, then suspension until a new bar resets the symbol.
 
 ### 4.2 Consensus
+
 - Manager computes strategy votes and confidence.
 - Mixed-timeframe conflicts are resolved with `CTimeframeConsistency` before final consensus acceptance.
 - Quorum is evaluated via normalized weighted conviction pooling:
@@ -765,6 +1049,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Untagged placeholder abstentions (`BASE_INITIALIZED`, empty override tags) are defensively downgraded before ready-live weighting so broken strategy telemetry cannot silently bloat the quorum denominator.
 
 ### 4.3 Validation
+
 - `CAdvancedSignalValidator` now runs in manager-owned admission mode during normal runtime.
 - In that mode, validator is exogenous-only: it enforces spread, time, session, volatility, and cost-viability sanity after manager quorum has already admitted the packet.
 - Structural confidence / confluence / quality / support admission remains manager-owned and is not re-adjudicated by validator when `SetManagerOwnedAdmission(true)` is active.
@@ -779,6 +1064,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Cost viability parameters are explicit (`spread/ATR`, spread-shock cooldown).
 
 ### 4.4 Risk gate
+
 - Pre-size validation to accept/reject candidate conditions.
 - Position sizing computes lot.
 - Post-size validation with actual lot before execution.
@@ -786,6 +1072,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Trade requests carry role/cluster/contributor context for cluster-aware risk governance.
 
 ### 4.5 Execution branch
+
 - Cooldown and capacity logic are entry-only gates; they do not suppress consensus or validator execution.
 - The runtime stages every risk-approved opportunity as a candidate and ranks them across the full symbol scan before sending.
 - Shadow mode: logs virtual trade, no send.
@@ -797,12 +1084,14 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Execution receipts and fill deltas are surfaced to the EA so post-send accounting uses actual fill state rather than requested size alone.
 
 ### 4.6 Post-trade feedback
+
 - Successful trades register executed risk usage.
 - Close transactions feed manager/orchestrator adaptation and `PerformanceAnalytics`.
 - NN attribution maps prediction IDs through close labeling.
 - AI performance feedback records prediction/outcome pairs using position-mapped prediction times.
 
 ### 4.7 Deterministic event separation
+
 - Tick and timer handlers share a second-level signal-evaluation gate.
 - This prevents duplicate strategy consensus passes in the same wall-clock second.
 - Connectivity gating blocks signal evaluation while terminal connection is down.
@@ -810,18 +1099,22 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 ## 5. Data and Control Boundaries
 
 ### 5.1 What can veto a trade
+
 - Validator failure.
 - Unified risk rejection.
 - Execution failure after approval.
 
 ### 5.2 What cannot bypass risk
+
 - Strategy confidence alone does not bypass unified risk gate.
 - AI strategy adapter votes do not bypass validator or risk stages.
 
 ### 5.3 Execution centralization
+
 - Runtime decision path executes through `CTradeManager`.
 
 ### 5.4 Domain authority registry (Batch 99)
+
 - AI calibration authority: `IAIStrategy::GetCalibratedWeight()` — runtime degenerate model detection; models with direction ratio > 0.80 in last 20 predictions have effective weight reduced by 50%
 - Equity curve authority: `CEquityCurveManager` — position size modulation based on equity vs EMA; multiplier 0.50 when equity < EMA, 1.0 when above
 - CVaR authority: `CPortfolioRiskManager::IsCVaRLimitExceeded()` — portfolio risk capped by historical tail risk; 95% confidence, 10% max risk, 100-trade lookback
@@ -830,16 +1123,19 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 ## 6. Runtime Modes
 
 ### 6.1 Shadow mode
+
 - Full stack decisioning, no live order send.
 - Used for burn-in and diagnostics.
 
 ### 6.2 Live mode
+
 - Full stack decisioning with real execution.
 - Requires extra monitoring window post-activation.
 
 ## 7. Observability Model
 
 ### 7.1 Key log families
+
 - Decision heartbeat: `[HEARTBEAT]`
 - Startup state: `[ACCOUNT-CAPACITY]`, `[TRADE-STATE]`
 - Conversion funnel: `[HEARTBEAT-FUNNEL]`, `[CONVERSION-RATES]`
@@ -868,6 +1164,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Spike hunting: `[SPIKE-HUNT-DETECTED]`, `[SPIKE-HUNT-TRADE]`, `[SPIKE-HUNT-SKIP]`, `[SPIKE-HUNT-ALERT]`, `[SPIKE-HUNT-ALERT-THROTTLED]`, `[SPIKE-COOLDOWN]`, `[SPIKE-HUNTER-STATS]`, `[SPIKE-HUNT-ENGINE]`
 
 ### 7.2 Primary operational KPIs
+
 - no-signal ratio
 - validator rejection ratio
 - risk rejection ratio
@@ -880,6 +1177,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 ## 8. Configuration Surface
 
 ### 8.1 Runtime controls
+
 - Symbol basket and cadence controls
 - Strategy enable flags
 - AI feature toggles
@@ -887,6 +1185,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - shadow mode toggle
 
 ### 8.2 Tester profiles
+
 - `TrainingDataExporter.ini`
 - `shadow_session_mt5_tester.ini`
 - `shadow_session.set`
@@ -894,17 +1193,22 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 ## 9. Lifecycle Safety
 
 ### 9.1 Init safety
+
 - component initialization order ensures execution/risk dependencies are ready before runtime.
 
 ### 9.2 Deinit safety
+
 - dynamic allocations released
 - singleton indicator manager explicitly destroyed
 
 ### 9.3 Build artifact hygiene
+
 - compile script is expected to clean generated compile `.log/.txt` artifacts after run unless explicitly preserved.
 
 ## 10. Future Change Rules (Structure-Level)
+
 Any structural change must update all of:
+
 - `SYSTEM_STRUCTURE.md`
 - `RUNTIME_DECISION_GRAPH.md`
 - `SYSTEM_AUDIT_TRACE.md`
@@ -912,6 +1216,7 @@ Any structural change must update all of:
 - `changelogs.md`
 
 ## 11. 2026-03-25 Runtime Integrity Deltas
+
 - `CUnifiedSignalPipeline` now owns two distinct layers of state:
   - current-cycle evidence (`m_lastEvidence`)
   - same-bar structural cache (`m_cachedStructuralEvidence`)
@@ -927,6 +1232,7 @@ Any structural change must update all of:
 - The EA scan loop now carries a cycle identifier across no-trade, validation, block, candidate, decision, and execution logs for one-cycle traceability.
 
 ## 12. 2026-04-01 Default Runtime Remediation
+
 - `CTrendEngine` still owns trend-readiness state, but ATR mature-series failures are now treated as recoverable data faults:
   - attempt bounded ATR fallback from price series
   - if fallback succeeds, emit degraded readiness-state telemetry and continue with valid evidence
@@ -936,6 +1242,7 @@ Any structural change must update all of:
 - `CStrategyElliottWaveEnhanced` ownership is unchanged; this batch only repaired MT5 enum usage and removed local min-confidence shadowing so the inherited base threshold remains authoritative.
 
 ## 13. 2026-04-01 Strategy Registry + AI Runtime Extension
+
 - `CStrategyRegistry` is now the activation authority for strategy families and EA mode (`InpEAMode`):
   - indicator strategies and AI adapters are registered from one roster
   - unsupported mixes degrade to a viable effective mode during startup
@@ -959,6 +1266,7 @@ Any structural change must update all of:
   - NN tail features can be augmented with transformer-encoded context rather than relying on raw handcrafted tail features only
 
 ## 14. 2026-04-08 Synthetic Assets 24/7 Hardening
+
 - `CAdvancedSignalValidator` explicitly filters `PainX`, `SFX Vol`, `GainX`, `FX Vol`, and `FlipX` as synthetic 24/7 symbols, allowing them to bypass MT5 weekend and off-hours session blocking.
 - `CTradeManager` recognizes the same extended list of synthetics, ensuring live execution paths remain open globally.
 - `CMarketAnalysis` safely classifies these assets for specialized indicator handling to prevent volatility/ADX calculation faults unique to their tick profiles.

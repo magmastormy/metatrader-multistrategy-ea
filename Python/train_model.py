@@ -164,10 +164,17 @@ def main() -> None:
     parser.add_argument("--cpcv-splits", type=int, default=6)
     parser.add_argument("--min-ic", type=float, default=0.02)
     parser.add_argument("--force-export", action="store_true")
+    parser.add_argument("--family-id", type=int, default=-1,
+                        help="Deriv family ID (0-17). -1=universal (57 features)")
     args = parser.parse_args()
 
     torch.manual_seed(42)
     np.random.seed(42)
+
+    # Jump family (3) and DEX (4) use longer sequence
+    seq_len = args.seq_len
+    if args.family_id in (3, 4) and seq_len == 60:
+        seq_len = 120
 
     scaler_output = args.scaler_output
     if scaler_output is None:
@@ -175,10 +182,11 @@ def main() -> None:
 
     train_split, val_split, test_split, metadata = build_scaled_dataset_splits(
         args.csv,
-        seq_len=args.seq_len,
+        seq_len=seq_len,
         k=args.k,
         vertical_bars=args.vert,
         scaler_output=scaler_output,
+        family_id=args.family_id,
     )
 
     print(

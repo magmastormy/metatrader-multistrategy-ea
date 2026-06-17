@@ -23,6 +23,10 @@ private:
     int     m_slowHandle;
     int     m_atrHandle;           // Volatility filter
     int     m_rsiHandle;          // RSI for momentum trap filter
+    int     m_macdHandle;         // MACD histogram confirmation (v2.0)
+    int     m_adxHandle;          // ADX trend strength filter (v2.0)
+    int     m_volumeHandle;       // Volume surge detection (v2.0)
+    int     m_crossoverBar;       // Bar index of last crossover (for freshness)
     double  m_lastDiff;
     datetime m_lastSignalBar;      // Track last bar where signal was generated
     bool     m_enableScalping;     // Allow rapid signals
@@ -178,15 +182,132 @@ private:
         return false;
     }
 
+    // MACD Histogram Confirmation (v2.0)
+    // Returns true if MACD histogram confirms the signal direction
+    bool MACDConfirmed(ENUM_TRADE_SIGNAL signal)
+    {
+        if(m_macdHandle == INVALID_HANDLE)
+            return true;  // No MACD = don't block
+
+        double macdMain[2], macdSignal[2];
+        if(!SafeCopyBuffer(m_macdHandle, 0, 1, 2, macdMain) ||
+           !SafeCopyBuffer(m_macdHandle, 1, 1, 2, macdSignal))
+            return true;  // Data unavailable = don't block
+
+        double histNow = macdMain[0] - macdSignal[0];
+        double histPrev = macdMain[1] - macdSignal[1];
+
+        if(signal == TRADE_SIGNAL_BUY)
+            return (histNow > 0 && histNow > histPrev);  // Rising positive histogram
+        else
+            return (histNow < 0 && histNow < histPrev);  // Falling negative histogram
+    }
+
+    // ADX Trend Strength Filter (v2.0)
+    // Returns true if ADX indicates a trending market (ADX > 20)
+    bool StrongTrend()
+    {
+        if(m_adxHandle == INVALID_HANDLE)
+            return true;  // No ADX = don't block
+
+        double adxBuffer[1];
+        if(!SafeCopyBuffer(m_adxHandle, 0, 1, 1, adxBuffer))
+            return true;
+
+        return adxBuffer[0] > 20.0;
+    }
+
+    // Pullback Entry Detection (v2.0)
+    // Crossover confirmed + price pulled back to EMA21 + rejection candle
+    bool PullbackEntry(ENUM_TRADE_SIGNAL signal)
+    {
+        if(m_slowHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
+            return false;
+
+        // Get EMA21 value
+        double ema21[1];
+        if(!SafeCopyBuffer(m_slowHandle, 0, 1, 1, ema21))
+            return false;
+
+        double atr[1];
+        if(!SafeCopyBuffer(m_atrHandle, 0, 1, 1, atr))
+            return false;
+
+        double low1 = iLow(m_symbol, m_timeframe, 1);
+        double high1 = iHigh(m_symbol, m_timeframe, 1);
+        double close1 = iClose(m_symbol, m_timeframe, 1);
+        double open1 = iOpen(m_symbol, m_timeframe, 1);
+
+        // Price near EMA21 (within 0.2 * ATR)
+        bool atEMA21 = false;
+        if(signal == TRADE_SIGNAL_BUY)
+            atEMA21 = (MathAbs(low1 - ema21[0]) < atr[0] * 0.2);
+        else
+            atEMA21 = (MathAbs(high1 - ema21[0]) < atr[0] * 0.2);
+
+        if(!atEMA21)
+            return false;
+
+        // Rejection candle: close near high for buy, near low for sell
+        double bodySize = MathAbs(close1 - open1);
+        double totalRange = high1 - low1;
+        if(totalRange <= 0) return false;
+
+        if(signal == TRADE_SIGNAL_BUY)
+            return (close1 - low1) > 2.0 * (high1 - close1);  // Close near high
+        else
+            return (high1 - close1) > 2.0 * (close1 - low1);  // Close near low
+    }
+
+    // Momentum Freshness + Volume Surge Confidence (v2.0)
+    // Returns confidence modifier based on crossover freshness and volume
+    double GetMomentumFreshnessConfidence(ENUM_TRADE_SIGNAL signal)
+    {
+        double confidenceMod = 1.0;
+
+        // Fresh crossover (< 3 bars since crossover) = +15%
+        int currentBar = iBars(m_symbol, m_timeframe);
+        if(m_crossoverBar > 0 && (currentBar - m_crossoverBar) < 3)
+            confidenceMod *= 1.15;
+
+        // Volume surge on crossover bar
+        if(m_volumeHandle != INVALID_HANDLE)
+        {
+            double volBuffer[11];
+            if(SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volBuffer))
+            {
+                double currentVol = volBuffer[0];
+                double avgVol = 0;
+                for(int i = 1; i < 11; i++)
+                    avgVol += volBuffer[i];
+                avgVol /= 10.0;
+
+                if(avgVol > 0 && currentVol > avgVol * 1.5)
+                {
+                    confidenceMod *= 1.10;  // Volume surge = +10%
+                    PrintFormat("[MOMENTUM-ENHANCED] Volume surge | Vol=%.0f Avg=%.0f Ratio=%.2f",
+                               currentVol, avgVol, currentVol / avgVol);
+                }
+            }
+        }
+
+        return confidenceMod;
+    }
+
     bool CreateHandles()
     {
         m_fastHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_fastPeriod, 0, MODE_EMA, PRICE_CLOSE);
         m_slowHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, m_slowPeriod, 0, MODE_EMA, PRICE_CLOSE);
         m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
         m_rsiHandle = CIndicatorManager::Instance().GetRSIHandle(m_symbol, m_timeframe, 14, PRICE_CLOSE);
+        m_macdHandle = CIndicatorManager::Instance().GetMACDHandle(m_symbol, m_timeframe, 12, 26, 9, PRICE_CLOSE);
+        m_adxHandle = CIndicatorManager::Instance().GetADXHandle(m_symbol, m_timeframe, 14);
+        m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(m_symbol, m_timeframe, VOLUME_TICK);
 
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE ||
-           m_atrHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE)
+           m_atrHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE ||
+           m_macdHandle == INVALID_HANDLE || m_adxHandle == INVALID_HANDLE ||
+           m_volumeHandle == INVALID_HANDLE)
         {
             PrintFormat("[MOMENTUM-STRATEGY] Failed to create indicator handles for %s", m_symbol);
             return false;
@@ -244,6 +365,10 @@ public:
         m_minVolatility(0.0005),
         m_atrThresholdMult(0.20),
         m_rsiHandle(INVALID_HANDLE),
+        m_macdHandle(INVALID_HANDLE),
+        m_adxHandle(INVALID_HANDLE),
+        m_volumeHandle(INVALID_HANDLE),
+        m_crossoverBar(0),
         m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
         m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
@@ -270,6 +395,10 @@ public:
         m_minVolatility(0.0005),     // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
         m_atrThresholdMult(0.20),     // ADAPTIVE FILTER: Crossover gap must exceed 20% of ATR
         m_rsiHandle(INVALID_HANDLE),
+        m_macdHandle(INVALID_HANDLE),
+        m_adxHandle(INVALID_HANDLE),
+        m_volumeHandle(INVALID_HANDLE),
+        m_crossoverBar(0),
         m_minConfirmationBars(MathMax(1, minConfirmationBars)),  // Hysteresis: min bars for crossover confirmation
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
         m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
@@ -404,6 +533,9 @@ public:
         m_slowHandle = INVALID_HANDLE;
         m_atrHandle = INVALID_HANDLE;
         m_rsiHandle = INVALID_HANDLE;
+        m_macdHandle = INVALID_HANDLE;
+        m_adxHandle = INVALID_HANDLE;
+        m_volumeHandle = INVALID_HANDLE;
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
         CStrategyBase::Deinit();
@@ -558,6 +690,29 @@ public:
         if(signal == TRADE_SIGNAL_SELL && rsi < 28.0)
             return RejectSignal("MOMENTUM_RSI_OVERSOLD");
 
+        // === v2.0 ENHANCEMENTS ===
+
+        // ADX Trend Strength Filter: require trending market for standard entries
+        if(!StrongTrend())
+        {
+            // Weak trend: only allow pullback entries or very strong momentum
+            if(!PullbackEntry(signal) && MathAbs(diffNow) < threshold * 2.0)
+                return RejectSignal("MOMENTUM_ADX_WEAK_TREND");
+        }
+
+        // MACD Histogram Confirmation
+        if(!MACDConfirmed(signal))
+        {
+            // MACD doesn't confirm: reduce confidence but don't block
+            // (MACD is a confirmation filter, not a hard gate)
+            PrintFormat("[MOMENTUM-ENHANCED] MACD not confirmed for %s | Confidence reduced",
+                       signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL");
+        }
+
+        // Track crossover bar for freshness calculation
+        if(crossedUp || crossedDown)
+            m_crossoverBar = iBars(m_symbol, m_timeframe);
+
         if(signal != TRADE_SIGNAL_NONE)
         {
             // Simplified confidence calculation
@@ -582,6 +737,16 @@ public:
             // ENHANCEMENT: ROC Acceleration Multiplier (Phase 3.4)
             // Boost confidence if momentum accelerating, reduce if decelerating
             momentumConfidence *= rocMultiplier;
+
+            // v2.0: Momentum freshness + volume surge confidence modifier
+            double freshnessMod = GetMomentumFreshnessConfidence(signal);
+            momentumConfidence *= freshnessMod;
+
+            // v2.0: MACD confirmation bonus/penalty
+            if(MACDConfirmed(signal))
+                momentumConfidence *= 1.10;  // MACD confirmed = +10%
+            else
+                momentumConfidence *= 0.85;  // MACD unconfirmed = -15%
 
             confidence = MathMin(1.0, MathMax(0.0, momentumConfidence));
             
@@ -644,11 +809,13 @@ public:
             SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
             
             // CONSENSUS LOGGING (AGENTS.md requirement)
-            PrintFormat("[CONSENSUS-DIAG] %s | %s | Cross: %.1f pts | RSI: %.1f | Conf: %.1f%% | Weight: %.2f | Reason: %s",
+            PrintFormat("[CONSENSUS-DIAG] %s | %s | Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
                        m_symbol,
                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
                        diffNow / point,
                        rsi,
+                       MACDConfirmed(signal) ? "YES" : "NO",
+                       StrongTrend() ? "STRONG" : "WEAK",
                        confidence * 100,
                        m_weight,
                        m_lastDecisionReasonTag);

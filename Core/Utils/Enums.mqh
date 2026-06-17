@@ -79,6 +79,11 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_MEAN_REVERSION = 8,   // Mean Reversion strategy (NEW: Batch 93)
     STRATEGY_VOLATILITY_BREAKOUT = 9, // Volatility Breakout strategy (NEW: Batch 93 - Week 3)
     STRATEGY_STATISTICAL_ARBITRAGE = 10, // Statistical Arbitrage strategy (NEW: Batch 93 - Week 4 - ADVANCED)
+    STRATEGY_FVG_SCALPER = 11,      // FVG Scalper strategy (NEW: Batch 103)
+    STRATEGY_TURTLE_SOUP = 12,      // Turtle Soup strategy (NEW: Batch 103)
+    STRATEGY_BREAKER_BLOCK = 13,    // Breaker Block strategy (NEW: Batch 103)
+    STRATEGY_NY_OPEN_GAP = 14,      // NY Open Gap strategy (NEW: Batch 103)
+    STRATEGY_ASIAN_RANGE_BREAK = 15, // Asian Range Break strategy (NEW: Batch 103)
     STRATEGY_CUSTOM = 99,          // Custom strategy
     STRATEGY_BRAIN = 100,          // Strategy brain type
     STRATEGY_AI_ENHANCED = 101     // AI enhanced strategy type

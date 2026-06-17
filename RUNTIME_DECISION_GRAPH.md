@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-06-12
+- Last Updated: 2026-06-17
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 101 - Advanced Mathematical Engines
+- Current Batch: 103 - EA Enterprise Vision Implementation
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -49,6 +49,27 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - OU mean-reversion engine: `COrnsteinUhlenbeckEngine` (Batch 101)
 - OFI proxy engine: `COrderFlowImbalanceEngine` (Batch 101)
 - VPIN toxicity filter: `CVPINFilter` (Batch 101)
+- Deriv asset profiler: `CDerivAssetProfiler` (Batch 102)
+- Grid recovery engine: `CGridRecoveryEngine` (Batch 102)
+- ATR scalping engine: `CATRScalpingEngine` (Batch 102)
+- SpikeHunter family overrides: `SSpikeHunterFamilyOverrides` (Batch 102)
+- Family risk overrides: `SSymbolRiskOverride` in `CUnifiedRiskManager` (Batch 102)
+- Multi-asset class profiler: `CMultiAssetProfiler` (Batch 103)
+- Asset-class engine weights: `CEnterpriseStrategyManager::ApplyAssetClassEngineWeights()` (Batch 103)
+- Asset-class heartbeat: `CDiagnosticsManager` `[HEARTBEAT-ASSET-CLASS]` (Batch 103)
+- Partial close management: `CPartialCloseManager` (Batch 103)
+- Multi-timeframe confluence: `CTimeframeConfluence` (Batch 103)
+- FVG Scalper strategy: `CFVGScalperStrategy` (Batch 103)
+- Turtle Soup strategy: `CTurtleSoupStrategy` (Batch 103)
+- Breaker Block strategy: `CBreakerBlockStrategy` (Batch 103)
+- NY Open Gap strategy: `CNYOpenGapStrategy` (Batch 103)
+- Asian Range Break strategy: `CAsianRangeBreakStrategy` (Batch 103)
+- Candlestick confluence scorer: `CCandleConfluenceScorer` (Batch 103)
+- Statistical Arbitrage strategy: `CStatisticalArbitrageStrategy` (Batch 103)
+- VPIN toxicity consensus gate: `CEnterpriseStrategyManager` VPIN integration (Batch 103)
+- OFI regime weight adjustment: `CEnterpriseStrategyManager` OFI integration (Batch 103)
+- Consensus scoring (0-100): `CEnterpriseStrategyManager` graduated scoring (Batch 103)
+- Regime weight wiring: `CEnterpriseStrategyManager` → `CRegimeEngine::GetRegimeCategoryMultiplier()` (Batch 103)
 
 ## End-to-End Flow
 
@@ -345,6 +366,377 @@ The main EA delegates to the following extracted managers instead of inline logi
 ## Strategy Intelligence (Batch 97)
 
 ### Advanced Mathematical Engines (Batch 101)
+
+#### Multi-Asset Class Detection & Routing (Batch 103)
+
+- `CMultiAssetProfiler::DetectAssetClass(symbol)` runs during OnInit for each managed symbol
+- Detection priority: Deriv first (via `IsSyntheticIndexSymbolName()`), then Metals (`IsMetalsSymbolName()`), Indices (`IsIndicesSymbolName()`), Energies (`IsEnergiesSymbolName()`), Forex (`IsForexPairSymbolName()`), Universal fallback
+- Result: `ENUM_ASSET_CLASS` value (10 classes: FOREX through UNIVERSAL)
+- `SAssetProfile` provides per-class parameters: ATR SL/TP multipliers, risk/drawdown limits, engine enable flags, feature set size, magic offset
+- For Deriv symbols (asset_class 4-8): delegates to `CDerivAssetProfiler` for fine-grained 18-family detection, then maps to coarse Deriv asset class via `DerivFamilyToAssetClass()`
+- Engine routing based on class:
+  - **Forex**: Trend 1.3x, VolBreakout 1.2x, MeanRevert 0.7x weight multipliers
+  - **Metals**: VolBreakout 1.5x, MeanRevert 0.5x weight multipliers
+  - **Indices**: MeanRevert 1.5x, VolBreakout 0.5x, Trend 0.8x weight multipliers
+  - **Energies**: VolBreakout 1.4x, Trend 1.2x weight multipliers
+  - **Deriv**: delegates to existing `ApplyFamilyEngineWeights()` for 18-family granularity
+- Python bridge routing: `DetectAssetClassId()` + `GetAssetClassName()` → `PredictMultiAsset()` → server routes asset_class 0-3 to asset-class models, 4-8 to Deriv family models, -1 to universal
+- `CDiagnosticsManager` emits `[HEARTBEAT-ASSET-CLASS]` for non-Deriv symbols (class name, ATR SL/TP, risk%, engine enables)
+- Emit `[ASSET-CLASS-WEIGHT]` with class name and applied weight multipliers
+
+#### Trend Strategy Signal Path (Batch 103 cont.)
+
+```
+CStrategyTrend::GetSignal()
+  ├─ Hurst filter: H < 0.50 → REJECT "TREND_HURST_MEAN_REVERTING"
+  ├─ VPIN filter: VPIN > 0.5 → REJECT "TREND_VPIN_TOXIC"
+  ├─ ADX sizing: InitForAssetClass() sets per-class thresholds
+  │   ├─ Forex/Metals: 20/25/30/35
+  │   ├─ Deriv: 15/20/25/30
+  │   └─ Indices: 18/23/28/33
+  ├─ EMA momentum: HasEMAMomentum() → confidence × 1.10
+  ├─ Freshness: GetTrendFreshnessMultiplier()
+  │   ├─ consistency < 10 → × 1.15
+  │   └─ consistency > 50 → × 0.90
+  └─ Signal output → consensus pipeline
+```
+
+- Trailing stop lifecycle: breakeven at 1R (5 pip buffer), then `CTrendTrailingStop::CalculateTrailingStop()` with TRAIL_HYBRID method; SL only moves in favorable direction
+- Engine injection: `SetHurstEngine()`/`SetVPINFilter()` wired in EA OnInit via `GetStrategyByName("Trend")` + `dynamic_cast<CStrategyTrend*>`
+
+#### S/R Strategy Signal Path (Batch 103 cont.)
+
+```
+CStrategySupportResistance::GetSignal()
+  ├─ Hurst filter: H > 0.55 + SR_MODE_BOUNCE → REJECT "SR_HURST_TRENDING_NO_BOUNCE"
+  ├─ VPIN filter: VPIN > 0.5 → REJECT "SR_VPIN_TOXIC"
+  ├─ Bounce sub-strategy (CSRSignalScorer):
+  │   ├─ AddPriceAtLevel(30) + AddCandleRejection(25) + AddEMAAligned(20)
+  │   ├─ + AddTrendlineConfluence(15) + AddMultipleTouches(10)
+  │   └─ Score ≥ 60/100 → signal (confidence = score/100.0)
+  ├─ Breakout sub-strategy:
+  │   ├─ FalseBreakoutDetected() → counter-signal (0.70 confidence)
+  │   └─ Standard breakout with retest confirmation
+  └─ Signal output → consensus pipeline
+```
+
+- Level decay: `CalculateStrength()` applies `0.99^barsOld` (capped at 500 bars)
+- Drawing throttle: chart updates every 5 bars (m_drawBarCounter % 5)
+- Engine injection: `SetHurstEngine()`/`SetVPINFilter()` wired in EA OnInit via `GetStrategyByName("Support/Resistance")` + `dynamic_cast<CStrategySupportResistance*>`
+
+#### FVG Scalper Signal Path (Batch 103 cont.)
+
+```
+CFVGScalperStrategy::GetSignal()
+  ├─ CImbalanceDetector: find strongest FVG zone
+  ├─ Price inside FVG? → No → REJECT "FVG_SCALPER_PRICE_OUTSIDE_FVG"
+  ├─ Rejection candle: bullish wick (BUY) or bearish wick (SELL)
+  │   ├─ No bull rejection → REJECT "FVG_SCALPER_NO_BULL_REJECTION"
+  │   └─ No bear rejection → REJECT "FVG_SCALPER_NO_BEAR_REJECTION"
+  ├─ Confidence: base 0.55 + structure alignment (+0.08) + fast CHOCH (+0.07) + CISD displacement (+0.05)
+  ├─ SL: 0.5×ATR beyond FVG boundary
+  ├─ TP: 1.5R
+  └─ Signal output → consensus pipeline (Tier 2, STRUCTURE_CLUSTER, weight 1.8)
+```
+
+- Log: `[FVG-SCALPER]`
+
+#### Turtle Soup Signal Path (Batch 103 cont.)
+
+```
+CTurtleSoupStrategy::GetSignal()
+  ├─ CLiquidityDetector::DetectTurtleSoup() → no signal → REJECT "TURTLE_NO_SIGNAL"
+  ├─ Structure alignment OR fast CHOCH required
+  │   └─ Neither confirmed → REJECT "TURTLE_STRUCTURE_NOT_ALIGNED"
+  ├─ Confidence: base 0.50 + turtleSoup.confidence×0.15 + structure (+0.10) + FVG (+0.08) + CHOCH (+0.07)
+  ├─ SL: beyond sweep extreme + 0.3×ATR
+  ├─ TP: 2R
+  └─ Signal output → consensus pipeline (Tier 2, STRUCTURE_CLUSTER, weight 1.6)
+```
+
+- Log: `[TURTLE-SOUP]`
+
+#### Breaker Block Signal Path (Batch 103 cont.)
+
+```
+CBreakerBlockStrategy::GetSignal()
+  ├─ CAdvancedOrderBlockDetector: scan for OB_BREAKER_BULL/OB_BREAKER_BEAR
+  ├─ Price retest of breaker zone? → No → REJECT "BREAKER_NO_BREAKER_RETEST"
+  ├─ Confidence: base 0.55 + freshness > 0.7 (+0.08) + FVG confluence (+0.10) + CISD (+0.05) + structure (+0.07)
+  ├─ SL: 0.5×ATR beyond breaker boundary
+  ├─ TP: 2R
+  └─ Signal output → consensus pipeline (Tier 2, STRUCTURE_CLUSTER, weight 1.7)
+```
+
+- Log: `[BREAKER-BLOCK]`
+
+#### NY Open Gap Signal Path (Batch 103 cont.)
+
+```
+CNYOpenGapStrategy::GetSignal()
+  ├─ Synthetic symbol filter: Volatility/Boom/Crash/Jump/Step → REJECT "NYGAP_SYNTHETIC_SKIP"
+  ├─ Session window: 13:30-14:00 UTC only → outside → REJECT "NYGAP_OUTSIDE_WINDOW"
+  ├─ CSessionGapDetector: gap between prev close and current open
+  │   └─ Gap size < 0.5×ATR(14,D1) → REJECT "NYGAP_GAP_TOO_SMALL"
+  ├─ Direction: gap up → SELL (fade), gap down → BUY (fade)
+  ├─ Confidence: base 0.50 + FVG confluence (+0.10) + large gap >1.0×ATR (+0.08) + near gap level (+0.07)
+  ├─ SL: beyond gap extreme + 0.5×ATR
+  ├─ TP: at previous close (gap fill target)
+  └─ Signal output → consensus pipeline (Tier 3, STRUCTURE_CLUSTER, weight 1.3)
+```
+
+- Log: `[NYGAP]`
+
+#### Asian Range Break Signal Path (Batch 103 cont.)
+
+```
+CAsianRangeBreakStrategy::GetSignal()
+  ├─ Synthetic symbol filter: Volatility/Boom/Crash/Jump/Step → REJECT "ASIANRB_SYNTHETIC_SKIP"
+  ├─ Session window: London open 07:00-07:30 UTC only → outside → REJECT "ASIANRB_OUTSIDE_LONDON_OPEN"
+  ├─ CICTKillZones: measure Asian range (00:00-06:00 UTC)
+  │   └─ Range > 0.8×ATR → REJECT "ASIANRB_RANGE_TOO_WIDE"
+  ├─ Breakout: price above Asian high → BUY, below Asian low → SELL
+  │   └─ No breakout → REJECT "ASIANRB_NO_BREAKOUT"
+  ├─ Confidence: base 0.50 + range compression < 0.5×ATR (+0.10) + structure (+0.08) + fast CHOCH (+0.07)
+  ├─ SL: opposite range boundary
+  ├─ TP: 2× range size
+  └─ Signal output → consensus pipeline (Tier 3, STRUCTURE_CLUSTER, weight 1.3)
+```
+
+- Log: `[ASIANRB]`
+
+#### Partial Close Manager Lifecycle (Batch 103 cont.)
+
+```
+CPartialCloseManager::ManagePosition(ticket)
+  ├─ Find or auto-register position in SPartialCloseState[]
+  ├─ Step 1: profit ≥ 1R → close 50% volume (respect SYMBOL_VOLUME_MIN/STEP)
+  │   └─ Log [PARTIAL-CLOSE] with ticket, volume, profit
+  ├─ Step 2: after 1R hit → move SL to entry + 0.1% buffer
+  │   └─ Validate against SYMBOL_TRADE_STOPS_LEVEL
+  └─ Step 3: profit ≥ 2R → trail SL at 1.5×ATR(M5,14) from price
+      └─ SL only moves in favorable direction
+```
+
+- Periodic cleanup: every 5 minutes, compact closed positions from state array (max 50 tracked)
+
+#### Timeframe Confluence Scoring (Batch 103 cont.)
+
+```
+CTimeframeConfluence::GetAlignmentScore(direction)
+  ├─ H1 CMarketStructureAnalyzer: bullish/bearish → 40 points
+  ├─ M15 CMarketStructureAnalyzer: bullish/bearish → 30 points
+  ├─ M5 CMarketStructureAnalyzer: bullish/bearish → 30 points
+  └─ Total: 0-100 (all 3 aligned = 100)
+```
+
+- `IsMajorityAligned(bullish)`: true if ≥2/3 timeframes aligned in given direction
+- Per-bar caching: `STFAlignmentCache` invalidated when `iTime(tf, 0)` changes
+
+#### Mean Reversion v2.0 Signal Path (Batch 103 cont.)
+
+```
+CStrategyMeanReversion::GetSignal()
+  ├─ Hurst regime lockout: H < 0.45 → REJECT "MR_HURST_NOT_MEAN_REVERTING"
+  ├─ Stochastic extreme confirmation:
+  │   ├─ BUY: Stoch < 20 (oversold)
+  │   └─ SELL: Stoch > 80 (overbought)
+  │   └─ Neither extreme → REJECT "MR_STOCH_NOT_EXTREME"
+  ├─ BB width filter: BB width < 20th percentile required
+  │   └─ BB width too wide → REJECT "MR_BB_WIDTH_HIGH"
+  ├─ No-divergence check: price vs indicator divergence → REJECT "MR_DIVERGENCE_DETECTED"
+  ├─ Dynamic TP: TP adjusts by BB width percentile (tighter BB → smaller TP)
+  ├─ Confidence: base 0.55 + Stoch depth (+0.10) + BB compression (+0.08)
+  └─ Signal output → consensus pipeline (MEAN_REVERSION_CLUSTER, weight 1.4)
+```
+
+- Engine injection: `SetHurstEngine()` wired in EA OnInit via `GetStrategyByName("Mean Reversion")` + `dynamic_cast<CStrategyMeanReversion*>`
+- Log: `[MR-HURST-NOT-MEAN-REVERTING]`, `[MR-STOCH-NOT-EXTREME]`, `[MR-BB-WIDTH-HIGH]`, `[MR-DIVERGENCE-DETECTED]`
+
+#### Statistical Arbitrage Signal Path (Batch 103 cont.)
+
+```
+CStatisticalArbitrageStrategy::GetSignal()
+  ├─ Python Bridge connected? → No → REJECT "STATARB_NO_PYTHON_BRIDGE"
+  ├─ OU engine available? → No → REJECT "STATARB_NO_OU_ENGINE"
+  ├─ OU half-life filter: half-life < 50 bars required
+  │   └─ half-life ≥ 50 → REJECT "STATARB_HALFLIFE_TOO_LONG"
+  ├─ Z-score detection:
+  │   ├─ Entry: |z-score| > 2.0
+  │   └─ Exit: |z-score| < 0.5
+  │   └─ |z-score| between 0.5 and 2.0 → REJECT "STATARB_ZSCORE_NEUTRAL"
+  ├─ Direction: z-score > 2.0 → SELL (mean reversion down), z-score < -2.0 → BUY (mean reversion up)
+  ├─ Confidence: base 0.55 + OU quality bonus (+0.10) + half-life speed bonus (+0.08)
+  └─ Signal output → consensus pipeline (MEAN_REVERSION_CLUSTER, weight 1.5)
+```
+
+- Engine injection: `SetOUEngine()` wired in EA OnInit via `GetStrategyByName("Statistical Arbitrage")` + `dynamic_cast<CStatisticalArbitrageStrategy*>`
+- Conditionally registered when Python Bridge is connected
+- Log: `[STATARB]`
+
+#### Candlestick v2.0 Signal Path (Batch 103 cont.)
+
+```
+CStrategyCandlestick::GetSignal()
+  ├─ CCandleConfluenceScorer: aggregate all pattern detectors
+  │   ├─ CDojiDetector: Doji pattern (body/shadow ratio)
+  │   ├─ CHammerDetector: Hammer/Inverted Hammer
+  │   ├─ CStarDetector: Morning/Evening Star
+  │   ├─ CHaramiDetector: Bullish/Bearish Harami
+  │   ├─ CThreeSoldiersDetector: Three White Soldiers/Three Black Crows
+  │   └─ CPiercingDetector: Piercing/Dark Cloud Cover
+  ├─ Confluence score ≥ 70/100 required
+  │   └─ Score < 70 → REJECT "CANDLE_CONFLUENCE_LOW"
+  ├─ Confidence = confluenceScore / 100.0
+  └─ Signal output → consensus pipeline (NONE cluster, weight 1.0)
+```
+
+- Log: `[CANDLE_CONFLUENCE]`
+
+#### Volatility Breakout v2.0 Signal Path (Batch 103 cont.)
+
+```
+CVolatilityBreakoutStrategy::GetSignal()
+  ├─ TTM Squeeze detection: BB inside KC → squeeze active
+  │   └─ No squeeze → REJECT "VB_NO_SQUEEZE"
+  ├─ Breakout: price exits BB on squeeze release
+  │   └─ No breakout → REJECT "VB_NO_BREAKOUT"
+  ├─ ADX rising filter: ADX slope > 0 required
+  │   └─ ADX falling → REJECT "VB_ADX_NOT_RISING"
+  ├─ Breakout retest: price retests breakout level before entry
+  │   └─ No retest → reduced confidence (-0.10)
+  ├─ Breakout failure reversal: failed breakout → counter-direction at 0.65 confidence
+  ├─ Confidence: base 0.55 + squeeze strength (+0.10) + ADX rising (+0.08) + retest confirmed (+0.07)
+  └─ Signal output → consensus pipeline (SCALP_CLUSTER, weight 1.3)
+```
+
+- Log: `[TTM_SQUEEZE]`, `[BREAKOUT_RETEST]`, `[BREAKOUT_FAILURE_REVERSAL]`
+
+#### Momentum v2.0 Signal Path (Batch 103 cont.)
+
+```
+CSimpleMomentumStrategy::GetSignal()
+  ├─ EMA trend alignment (existing)
+  ├─ MACD histogram confirmation: MACD line above signal → BUY confirmed
+  │   └─ MACD not confirming → REJECT "MOM_MACD_NOT_CONFIRMING"
+  ├─ ADX strong trend filter: ADX > 25 required for trend entries
+  │   └─ ADX ≤ 25 → REJECT "MOM_ADX_WEAK"
+  ├─ Pullback entry: EMA pullback within 0.5×ATR
+  ├─ Freshness modifier: recent signal → confidence +10%
+  ├─ Volume modifier: above-average volume → confidence +8%
+  └─ Signal output → consensus pipeline (TREND_CLUSTER, weight 1.2)
+```
+
+#### VPIN Toxicity Gating in Consensus Flow (Batch 103 cont.)
+
+```
+CEnterpriseStrategyManager::EvaluateConsensus()
+  ├─ ... existing quorum evaluation ...
+  ├─ VPIN toxicity check (after quorum, before final consensus):
+  │   ├─ VPIN_EXTREME → BLOCK all entries (consensus veto)
+  │   │   └─ Log [VPIN-BLOCK] with VPIN value and toxicity level
+  │   ├─ VPIN_HIGH → reduce all strategy weights by 50%
+  │   │   └─ Log [VPIN-HIGH] with adjusted weights
+  │   └─ VPIN_MEDIUM → reduce all strategy weights by 25%
+  │       └─ Log [VPIN-MEDIUM] with adjusted weights
+  └─ Continue to consensus scoring
+```
+
+- VPIN toxicity levels from `CVPINFilter::GetToxicityLevel()`: `VPIN_LOW`, `VPIN_MEDIUM`, `VPIN_HIGH`, `VPIN_EXTREME`
+- Applied per-symbol in the consensus evaluation path
+
+#### OFI Regime Weight Adjustment (Batch 103 cont.)
+
+```
+CEnterpriseStrategyManager::ApplyRegimeCategoryWeights()
+  ├─ Get regime category multiplier from CRegimeEngine::GetRegimeCategoryMultiplier()
+  ├─ OFI alignment check:
+  │   ├─ OFI direction aligned with regime category → 1.2× boost
+  │   │   └─ Log [OFI-REGIME-BOOST] with direction and multiplier
+  │   └─ OFI direction contradicts regime category → 0.7× penalty
+  │       └─ Log [OFI-REGIME-PENALTY] with direction and multiplier
+  └─ Apply adjusted multiplier to strategy weights
+```
+
+- OFI direction from `COrderFlowImbalanceEngine::GetImbalanceDirection()`
+- Applied after regime weight wiring, before consensus scoring
+
+#### 0-100 Consensus Scoring (Batch 103 cont.)
+
+```
+CEnterpriseStrategyManager::ComputeConsensusScore()
+  ├─ rawConsensusScore = directionalQuality × supportRatio × 100
+  ├─ Score interpretation:
+  │   ├─ < 60: consensus FAIL (no signal)
+  │   ├─ 60-70: marginal consensus (position sizing × 0.75)
+  │   ├─ 70-85: standard consensus (position sizing × 1.0)
+  │   └─ 85+: strong consensus (position sizing × 1.0, priority ranking boost)
+  ├─ Log [CONSENSUS-SCORE] with raw score, quality, support, and tier
+  └─ Pass/fail replaces binary quorum threshold
+```
+
+- Threshold = 60/100 (configurable)
+- Graduated scoring enables proportional position sizing based on consensus quality
+
+- `CDerivAssetProfiler::DetectFamily(symbol)` runs during OnInit for each managed symbol
+- Symbol name matched against 13 family-specific detection functions in `Instruments.mqh`
+- Result: `ENUM_DERIV_FAMILY` value (18 families + UNKNOWN)
+- `SDerivProfile` provides per-family parameters: engine enable flags, risk/drawdown limits, ATR multipliers, grid config, spike config
+- Engine routing based on profile flags:
+  - `enableSpikeHunter=true` → symbol added to `CSpikeHunterEngine` with family-specific overrides via `SSpikeHunterFamilyOverrides`
+  - `enableGridRecovery=true` → symbol added to `CGridRecoveryEngine` with family-specific grid config via `SetFamilyConfig()`
+  - ATR scalping enabled for Jump/DEX/Hybrid families → symbol added to `CATRScalpingEngine` with spike interval from `CSpikeHunterEngine`
+  - `enableHurstRegime=true` → Hurst regime detection active for this family's grid recovery activation
+  - `enableOUFilter=true` → OU filter active for this family's mean-reversion confirmation
+- `CEnterpriseStrategyManager::ApplyFamilyEngineWeights()` adjusts strategy weights based on family profile
+- `CUnifiedRiskManager` applies `SSymbolRiskOverride` per-family risk/drawdown scaling during pre-trade validation
+- `CTradeManager` applies `SSymbolMagicOffset` per-family magic offset for position tracking
+- Emit `[PROFILER-DETECT]` with detected family and enabled engines
+
+#### Grid Recovery Activation Flow (Batch 102)
+
+- Grid recovery only activates when Hurst exponent confirms mean-reversion regime:
+  1. `CHurstEngine` computes Hurst exponent per symbol
+  2. `CGridRecoveryEngine::SetHurstRegime(symbol, hurstValue)` receives updated Hurst value
+  3. If `hurstValue < activationHurstThreshold` (0.45): grid entries permitted
+  4. If `hurstValue >= activationHurstThreshold`: grid entries suppressed (market not mean-reverting)
+- Grid level progression:
+  - Modified Martingale: `lot = baseLot × factor^level` (factor=1.5)
+  - Fibonacci: `lot = baseLot × fib(level)`
+- Per-level SL = ATR × 1.5, TP = 0.5 × grid spacing
+- Max 8 levels with 15% drawdown cap per family
+- 30-second cooldown between grid entries
+- Emit `[GRID-RECOVERY-ENTRY]`, `[GRID-RECOVERY-LEVEL]`, `[GRID-RECOVERY-CLOSE]`, `[GRID-RECOVERY-DRAWDOWN]`
+
+#### ATR Scalping Spike Window Avoidance (Batch 102)
+
+- ATR scalping trades only in calm periods between spikes/jumps:
+  1. `CSpikeHunterEngine` detects spikes and calls `CATRScalpingEngine::NotifySpikeDetected(symbol)`
+  2. `CATRScalpingEngine` learns spike intervals: `SetSpikeInterval(symbol, intervalSec)`
+  3. Before each scalp entry, engine checks if current time is within `spikeWindowAvoidMinutes` (5) of expected next spike
+  4. If within spike window: skip entry, emit `[ATR-SCALP-SPIKE-WINDOW]`
+  5. If outside spike window: evaluate entry conditions (EMA trend + RSI + spread filter)
+- Entry: EMA fast > slow (BUY) or fast < slow (SELL) + RSI 30-70 + spread < 0.3×ATR
+- SL=1.5×ATR, TP=2.0×ATR
+- Max 3 concurrent positions per symbol, 30-second cooldown
+- Emit `[ATR-SCALP-ENTRY]`, `[ATR-SCALP-EXIT]`, `[ATR-SCALP-COOLDOWN]`
+
+#### SpikeHunter Family Override Decision Path (Batch 102)
+
+- Per-family spike parameters override defaults via `SSpikeHunterFamilyOverrides`:
+  1. `CDerivAssetProfiler` provides family profile for each symbol
+  2. `CSpikeHunterEngine::SetFamilyOverrides()` populates `m_familyOverrides[]` array
+  3. Each detection/trade method calls `GetEffective*()` methods instead of raw constants:
+     - `GetEffectiveVelocityMultiplier(idx)` — CrashBoom 2.8×, Jump 3.0×, Volatility 3.5× (vs default 2.5×)
+     - `GetEffectiveMinConsecutiveTicks(idx)` — family-specific tick count threshold
+     - `GetEffectiveATRCompressionRatio(idx)` — family-specific compression ratio
+     - `GetEffectiveSLAtrMultiplier(idx)` — family-specific SL distance
+     - `GetEffectiveTPAtrMultiplier(idx)` — family-specific TP distance
+     - `GetEffectiveMagicOffset(idx)` — family-specific magic offset (9000-9900)
+     - `GetEffectiveCooldownMs(idx)` — family-specific cooldown between spike trades
+     - `GetEffectiveMinConfluence(idx)` — family-specific minimum confluence layers
+  4. If no family override exists for a symbol, defaults are used
+- SpikeHunter keeps direct execution (no CUnifiedRiskManager gating) per design decision
 
 #### Hurst Persistence Engine
 - `CHurstEngine` computes the Hurst exponent per symbol to classify persistence vs mean-reversion tendency
@@ -663,6 +1055,82 @@ The main EA delegates to the following extracted managers instead of inline logi
     - `[HURST-WEIGHT]` — Hurst weight modifier applied to strategy weights
     - `[OU-ZSCORE]` — OU-adjusted z-score blended in StatisticalArbitrageStrategy
     - `[OFI-SIGNAL]` — OFI proxy engine signal output
+  - **Batch 102 log signatures:**
+    - `[PROFILER-DETECT]` — Deriv family auto-detection result per symbol
+    - `[GRID-RECOVERY-ENTRY]` — Grid recovery level entry
+    - `[GRID-RECOVERY-LEVEL]` — Grid level progression detail
+    - `[GRID-RECOVERY-CLOSE]` — Grid recovery position close
+    - `[GRID-RECOVERY-DRAWDOWN]` — Grid drawdown cap reached
+    - `[ATR-SCALP-ENTRY]` — ATR scalp trade entry
+    - `[ATR-SCALP-EXIT]` — ATR scalp trade exit
+    - `[ATR-SCALP-SPIKE-WINDOW]` — ATR scalp skipped due to spike window
+    - `[ATR-SCALP-COOLDOWN]` — ATR scalp cooldown active
+    - `[HEARTBEAT-FAMILY]` — Per-family engine status in heartbeat
+  - **Batch 102 Python ML Stack log signatures:**
+    - `[PYTHON-BRIDGE-DASHBOARD]` — Bridge state with family routing info (existing, now includes family_id when available)
+  - **Batch 103 Enterprise Vision log signatures:**
+    - `[CANDLE_CONFLUENCE]` — Candlestick confluence score details
+    - `[MR-HURST-NOT-MEAN-REVERTING]` — Mean Reversion rejected (Hurst < 0.45)
+    - `[MR-STOCH-NOT-EXTREME]` — Mean Reversion rejected (Stochastic not at extreme)
+    - `[MR-BB-WIDTH-HIGH]` — Mean Reversion rejected (BB width above 20th percentile)
+    - `[MR-DIVERGENCE-DETECTED]` — Mean Reversion rejected (price/indicator divergence)
+    - `[STATARB]` — Statistical Arbitrage signal details
+    - `[TTM_SQUEEZE]` — TTM Squeeze detection status
+    - `[BREAKOUT_RETEST]` — Breakout retest entry confirmation
+    - `[BREAKOUT_FAILURE_REVERSAL]` — Failed breakout reversal signal
+    - `[CONSENSUS-SCORE]` — 0-100 consensus scoring result
+    - `[VPIN-HIGH]` — VPIN high toxicity reducing strategy weights
+    - `[VPIN-MEDIUM]` — VPIN medium toxicity reducing strategy weights
+    - `[OFI-REGIME-BOOST]` — OFI aligned with regime, weight boost applied
+    - `[OFI-REGIME-PENALTY]` — OFI contradicts regime, weight penalty applied
+
+## Batch 102 Python ML Stack: Family-Aware Prediction Routing
+
+### Decision Flow: MQL5 → Python → MQL5
+
+```
+1. Strategy/Engine calls GetFamilyPrediction(symbol, features[], size)
+2. DetectFamilyId(symbol) → family_id (0-17) or -1
+3. CPythonBridge::PredictFamily(features, size, family_id, symbol)
+4. JSON payload: {"features":[...], "mode":"ensemble", "family_id":N, "symbol":"..."}
+5. Python server receives /predict request
+6. If family_id >= 0 and family_models[family_id] loaded:
+   a. _predict_family(features, family_id, mode)
+   b. Dynamic seq_len: 120 for Jump/DEX, 60 otherwise
+   c. Dynamic feat_count: 83 for Deriv families
+   d. ONNX inference → onnx_buy, onnx_sell
+   e. GBDT inference (catboost/xgboost/lgbm) → {model}_buy, {model}_sell
+   f. Stacking inference (if stacker available) → stacker_signal
+   g. Return: {family_id, family_name, buy_prob, sell_prob, hold_prob, onnx_*, catboost_*, xgboost_*, lgbm_*, stacker_signal}
+7. Else: fallback to universal model (57 features, seq_len=60)
+8. MQL5 ParsePredictionResponse() → SPythonBridgeResponse with all fields
+9. Response available for strategy voting integration (future)
+```
+
+### Feature Engineering Decision
+
+```
+Is symbol a Deriv synthetic? ──Yes──→ family_id = DetectFamilyId(symbol)
+       │                                    │
+       No                                   family_id >= 0?
+       │                                    │         │
+       ▼                                   Yes        No (unknown synthetic)
+  Universal pipeline                  Deriv pipeline   │
+  57 features                         83 features      ▼
+                                      (57 + 8 signal   Universal pipeline
+                                       + 18 one-hot)   57 features
+```
+
+### Training Script Selection
+
+```
+For each family_id (0-17):
+  1. train_model.py --family-id N → {prefix}_patchtst.onnx
+  2. train_deriv_catboost.py --family-id N → {prefix}_catboost.pkl
+  3. train_deriv_xgboost.py --family-id N → {prefix}_xgboost.pkl
+  4. train_deriv_lgbm.py --family-id N → {prefix}_lgbm.pkl
+  5. train_deriv_stacker.py --family-id N --catboost-pkl ... --xgboost-pkl ... → {prefix}_stacker.pkl
+```
 
 ## 2026-03-25 Decision-Path Refinement
 - Same-bar structural cache reuse now preserves original engine readiness rather than forcing later scans to assume all engines are ready.

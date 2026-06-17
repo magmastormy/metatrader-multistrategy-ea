@@ -124,6 +124,21 @@ struct STradeExecutionReceipt
     }
 };
 
+// Per-symbol magic offset for family-specific magic number differentiation
+struct SSymbolMagicOffset
+{
+    string   symbol;
+    int      magicOffset;
+    bool     hasOffset;
+
+    SSymbolMagicOffset()
+    {
+        symbol      = "";
+        magicOffset = 0;
+        hasOffset   = false;
+    }
+};
+
 //+------------------------------------------------------------------+
 //| Trade Manager Class                                            |
 //+------------------------------------------------------------------+
@@ -242,6 +257,10 @@ private:
     };
     SPositionState m_positionStates[100]; // Track up to 100 positions
     int m_stateCount;
+
+    // Per-symbol magic offset for family-specific magic number differentiation
+    SSymbolMagicOffset m_magicOffsets[];
+    int m_magicOffsetCount;
 
     //+------------------------------------------------------------------+
     //| Find position state by ticket with enhanced validation           |
@@ -775,6 +794,7 @@ public:
         m_asyncModeEnabled(false),
         m_pendingOrderCount(0),
         m_stateCount(0),
+        m_magicOffsetCount(0),
         m_totalTrades(0),
         m_successfulTrades(0),
         m_failedTrades(0),
@@ -807,6 +827,44 @@ public:
     void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
     void SetMagicRangeMax(const uint magicRangeMax) { m_magicRangeMax = magicRangeMax; }
     bool IsEAOwnedMagic(const uint magic) const { return (m_magicRangeMax > m_magicNumber) ? (magic >= m_magicNumber && magic <= m_magicRangeMax) : (magic == m_magicNumber); }
+
+    //--- Per-symbol magic offset for family-specific magic number differentiation
+    void SetMagicOffsetForSymbol(const string symbol, int offset)
+    {
+        // Find existing
+        for(int i = 0; i < m_magicOffsetCount; i++)
+        {
+            if(m_magicOffsets[i].symbol == symbol)
+            {
+                m_magicOffsets[i].magicOffset = offset;
+                m_magicOffsets[i].hasOffset = true;
+                return;
+            }
+        }
+        // Add new using temp struct pattern for string members
+        int newSize = m_magicOffsetCount + 1;
+        SSymbolMagicOffset tempOffsets[];
+        ArrayResize(tempOffsets, newSize);
+        for(int i = 0; i < m_magicOffsetCount; i++)
+            tempOffsets[i] = m_magicOffsets[i];
+        ArrayResize(m_magicOffsets, newSize);
+        for(int i = 0; i < m_magicOffsetCount; i++)
+            m_magicOffsets[i] = tempOffsets[i];
+        m_magicOffsets[m_magicOffsetCount].symbol = symbol;
+        m_magicOffsets[m_magicOffsetCount].magicOffset = offset;
+        m_magicOffsets[m_magicOffsetCount].hasOffset = true;
+        m_magicOffsetCount++;
+    }
+
+    int GetMagicOffsetForSymbol(const string symbol) const
+    {
+        for(int i = 0; i < m_magicOffsetCount; i++)
+        {
+            if(m_magicOffsets[i].symbol == symbol && m_magicOffsets[i].hasOffset)
+                return m_magicOffsets[i].magicOffset;
+        }
+        return 0;
+    }
     void SetOrderFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_orderFillMode = mode; }
     void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
     void SetLogLevel(const int level) { m_logLevel = MathMax(0, MathMin(4, level)); }
@@ -2553,11 +2611,11 @@ bool CTradeManager::OpenPosition(const string symbol,
     // Update magic number if provided
     if(magicNumber > 0)
     {
-        m_trade.SetExpertMagicNumber(magicNumber);
+        m_trade.SetExpertMagicNumber(magicNumber + GetMagicOffsetForSymbol(symbol));
     }
     else
     {
-        m_trade.SetExpertMagicNumber(m_magicNumber);
+        m_trade.SetExpertMagicNumber(m_magicNumber + GetMagicOffsetForSymbol(symbol));
     }
 
     double validationPrice = price;

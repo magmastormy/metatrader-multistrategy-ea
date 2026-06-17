@@ -13,6 +13,25 @@ from torch.utils.data import DataLoader, Dataset
 
 
 FEATURE_COUNT = 57
+BASE_FEATURE_COUNT = 57
+DERIV_SIGNAL_FEATURES = 8
+DERIV_FAMILY_COUNT = 18
+DERIV_FEATURE_COUNT = DERIV_SIGNAL_FEATURES + DERIV_FAMILY_COUNT  # 26
+
+
+def get_feature_count(family_id: int = -1, asset_class: int = -1) -> int:
+    """Return feature count based on family_id or asset_class.
+
+    Priority: family_id (Deriv) > asset_class (non-Deriv) > base only.
+    - family_id >= 0 → 57 + 26 = 83 (Deriv family features)
+    - asset_class >= 0 → 57 + asset-class extras (3/4/4/3)
+    - neither → 57 (universal base)
+    """
+    if family_id >= 0:
+        return BASE_FEATURE_COUNT + DERIV_FEATURE_COUNT
+    if asset_class >= 0:
+        return get_asset_class_feature_count(asset_class)
+    return BASE_FEATURE_COUNT
 
 
 @dataclass
@@ -235,12 +254,140 @@ def _parkinson_vol(high: np.ndarray, low: np.ndarray, period: int = 14) -> np.nd
     return np.sqrt(pd.Series(factor * log_hl).rolling(period, min_periods=1).mean().values)
 
 
+def build_deriv_family_features(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    volume: np.ndarray,
+    family_id: int,
+) -> List[np.ndarray]:
+    """Deriv synthetic index family-specific features (26 columns: 8 signal + 18 one-hot).
+
+    Family IDs aligned with MQL5 ENUM_DERIV_FAMILY:
+      0=CrashBoom, 1=Volatility, 2=Step, 3=Jump, 4=DEX,
+      5=MultiStep, 6=Exponential, 7=Hybrid, 8=RangeBreak,
+      9=SkewStep, 10=VolSwitch, 11=DriftSwitch, 12=Trek,
+      13=Tactical, 14=Derived, 15=StableSpread, 16=PairsArbitrage,
+      17=SpotVolatility
+    """
+    n = len(close)
+    atr14 = compute_atr(high, low, close, 14)
+    atr5 = compute_atr(high, low, close, 5)
+
+    deriv_features: List[np.ndarray] = []
+
+    # === SIGNAL FEATURE 1: Tick velocity z-score ===
+    tick_velocity = np.concatenate([[0.0], np.diff(close)])
+    deriv_features.append(_rolling_zscore(tick_velocity, 20))
+
+    # === SIGNAL FEATURE 2: Direction accumulation (consecutive same-direction ticks) ===
+    direction = np.sign(np.diff(close, prepend=close[0]))
+    dir_accum = np.zeros(n, dtype=np.float64)
+    for i in range(1, n):
+        if direction[i] == direction[i - 1] and direction[i] != 0:
+            dir_accum[i] = dir_accum[i - 1] + 1
+        else:
+            dir_accum[i] = 0
+    deriv_features.append(dir_accum / 20.0)
+
+    # === SIGNAL FEATURE 3: ATR compression ratio (pre-spike "coiling") ===
+    atr_ratio = atr14 / (_sma(atr14, 50) + 1e-9)
+    deriv_features.append(atr_ratio)
+
+    # === SIGNAL FEATURE 4: Spike magnitude z-score ===
+    spike_mag = np.abs(np.diff(close, prepend=close[0])) / (atr14 + 1e-9)
+    deriv_features.append(_rolling_zscore(spike_mag, 50))
+
+    # === SIGNAL FEATURE 5: OU process residual (mean-reversion strength) ===
+    ou_residual = (close - _ema(close, 50)) / (atr14 + 1e-9)
+    deriv_features.append(ou_residual)
+
+    # === SIGNAL FEATURE 6: Step frequency (discrete movement detection) ===
+    step_changes = np.abs(np.diff(close, prepend=close[0])) > 0
+    step_freq = pd.Series(step_changes.astype(np.float64)).rolling(20).mean().fillna(0).values
+    deriv_features.append(step_freq)
+
+    # === SIGNAL FEATURE 7: Range bound score (distance from BB midpoint) ===
+    bb_pct = _bb_pct_b(close, 20, 2.0)
+    range_score = 2.0 * np.abs(bb_pct - 0.5)
+    deriv_features.append(range_score)
+
+    # === SIGNAL FEATURE 8: Bars since last extreme move ===
+    extreme_move = np.abs(np.diff(close, prepend=close[0])) > (2.0 * atr14)
+    bars_since_extreme = np.zeros(n, dtype=np.float64)
+    for i in range(1, n):
+        if extreme_move[i]:
+            bars_since_extreme[i] = 0
+        else:
+            bars_since_extreme[i] = bars_since_extreme[i - 1] + 1
+    deriv_features.append(np.clip(bars_since_extreme / 100.0, 0, 1))
+
+    # === FAMILY ONE-HOT ENCODING (18 families) ===
+    for fid in range(DERIV_FAMILY_COUNT):
+        deriv_features.append(np.full(n, 1.0 if family_id == fid else 0.0, dtype=np.float64))
+
+    return deriv_features
+
+
+# Batch 103: Asset-class-specific feature builders
+
+def build_forex_features(close, high, low, volume, spread):
+    """Forex-specific features: spread z-score, correlation proxy, carry return."""
+    n = len(close)
+    spread_z = _rolling_zscore(spread, 20) if len(spread) >= 20 else np.zeros(n)
+    corr_proxy = _rolling_zscore(close, 50) if n >= 50 else np.zeros(n)
+    carry = np.zeros(n)  # Populated from broker swap data
+    return np.column_stack([spread_z, corr_proxy, carry])
+
+
+def build_metals_features(close, high, low, volume):
+    """Metals-specific features: vol-of-vol, session timing, trend strength, vol regime."""
+    n = len(close)
+    atr14 = compute_atr(high, low, close, 14) if n >= 14 else np.ones(n)
+    vol_of_vol = _rolling_zscore(atr14, 50) if n >= 50 else np.zeros(n)
+    # Session proxy (simplified - real implementation uses timestamps)
+    session_ny = np.zeros(n)  # Placeholder: populated from timestamps
+    trend_strength = (close - _ema(close, 50)) / (atr14 + 1e-9) if n >= 50 else np.zeros(n)
+    vol_regime = atr14 / (_sma(atr14, 50) + 1e-9) if n >= 50 else np.ones(n)
+    return np.column_stack([vol_of_vol, session_ny, trend_strength, vol_regime])
+
+
+def build_indices_features(close, high, low, volume, timestamps=None):
+    """Indices-specific features: overnight gap, circadian, BB width, vol spike."""
+    n = len(close)
+    overnight_gap = np.zeros(n)
+    if n > 1:
+        overnight_gap[1:] = close[1:] / close[:-1] - 1.0
+    circadian = np.zeros(n)  # Placeholder: populated from timestamps
+    bb_width = _bb_width(close, 20, 2.0) if n >= 20 else np.ones(n)
+    vol_spike = volume / (_sma(volume, 20) + 1e-9) if n >= 20 else np.ones(n)
+    return np.column_stack([overnight_gap, circadian, bb_width, vol_spike])
+
+
+def build_energies_features(close, high, low, volume):
+    """Energies-specific features: inventory proxy, seasonality, contango."""
+    n = len(close)
+    inventory_proxy = _rolling_zscore(close, 50) if n >= 50 else np.zeros(n)
+    seasonality = np.zeros(n)  # Placeholder: populated from timestamps
+    contango = np.zeros(n)  # Placeholder: populated from futures curve
+    return np.column_stack([inventory_proxy, seasonality, contango])
+
+
+def get_asset_class_feature_count(asset_class: int) -> int:
+    """Get total feature count for a non-Deriv asset class."""
+    base = BASE_FEATURE_COUNT
+    extras = {0: 3, 1: 4, 2: 4, 3: 3}  # forex, metals, indices, energies
+    return base + extras.get(asset_class, 0)
+
+
 def build_feature_matrix(
     open_: np.ndarray,
     high: np.ndarray,
     low: np.ndarray,
     close: np.ndarray,
     volume: np.ndarray,
+    family_id: int = -1,
+    asset_class: int = -1,
 ) -> np.ndarray:
     n = len(close)
     log_ret = np.concatenate([[0.0], np.log(close[1:] / (close[:-1] + 1e-12))])
@@ -307,6 +454,23 @@ def build_feature_matrix(
         np.zeros(n, dtype=np.float64),
         np.ones(n, dtype=np.float64),
     ]
+
+    # Extend with Deriv family-specific features if family_id is set
+    if family_id >= 0:
+        deriv_feats = build_deriv_family_features(close, high, low, volume, family_id)
+        cols.extend(deriv_feats)
+    elif asset_class >= 0:
+        if asset_class == 0:      # FOREX
+            ext = build_forex_features(close, high, low, volume, volume)
+        elif asset_class == 1:    # METALS
+            ext = build_metals_features(close, high, low, volume)
+        elif asset_class == 2:    # INDICES
+            ext = build_indices_features(close, high, low, volume)
+        elif asset_class == 3:    # ENERGIES
+            ext = build_energies_features(close, high, low, volume)
+        else:
+            ext = np.zeros((n, 0))
+        cols.extend([ext[:, i] for i in range(ext.shape[1])])
 
     features = np.column_stack(cols).astype(np.float32)
     return np.nan_to_num(features, nan=0.0, posinf=3.0, neginf=-3.0)
@@ -406,6 +570,8 @@ def build_dataset_splits(
     vertical_bars: int = 20,
     train_ratio: float = 0.70,
     val_ratio: float = 0.15,
+    family_id: int = -1,
+    asset_class: int = -1,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], float]:
     required = {"date", "open", "high", "low", "close", "volume"}
     missing = required.difference(df.columns)
@@ -439,7 +605,7 @@ def build_dataset_splits(
             features = symbol_df[feature_cols].to_numpy(dtype=np.float32)
             features = np.nan_to_num(features, nan=0.0, posinf=3.0, neginf=-3.0)
         else:
-            features = build_feature_matrix(open_, high, low, close, volume)
+            features = build_feature_matrix(open_, high, low, close, volume, family_id=family_id, asset_class=asset_class)
             features = add_calendar_features(features, pd.DatetimeIndex(symbol_df["date"]))
 
         atr = compute_atr(high, low, close, 14)
@@ -520,6 +686,7 @@ def build_pipeline(
     val_ratio: float = 0.15,
     batch_size: int = 64,
     scaler_output: Optional[str] = None,
+    family_id: int = -1,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, PipelineMetadata]:
     df = pd.read_csv(csv_path)
     train, val, test, annualization = build_dataset_splits(
@@ -529,6 +696,7 @@ def build_pipeline(
         vertical_bars=vertical_bars,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
+        family_id=family_id,
     )
     train, val, test, _ = _scale_splits(train, val, test, scaler_output=scaler_output)
 
@@ -556,6 +724,8 @@ def build_scaled_dataset_splits(
     train_ratio: float = 0.70,
     val_ratio: float = 0.15,
     scaler_output: Optional[str] = None,
+    family_id: int = -1,
+    asset_class: int = -1,
 ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...], PipelineMetadata]:
     df = pd.read_csv(csv_path)
     train, val, test, annualization = build_dataset_splits(
@@ -565,6 +735,8 @@ def build_scaled_dataset_splits(
         vertical_bars=vertical_bars,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
+        family_id=family_id,
+        asset_class=asset_class,
     )
     train, val, test, _ = _scale_splits(train, val, test, scaler_output=scaler_output)
     metadata = PipelineMetadata(
@@ -585,6 +757,7 @@ def build_symbol_sequences(
     k: float = 1.5,
     vertical_bars: int = 20,
     train_ratio: float = 0.80,
+    family_id: int = -1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     train, val, _test, _annualization = build_dataset_splits(
         df,
@@ -593,5 +766,6 @@ def build_symbol_sequences(
         vertical_bars=vertical_bars,
         train_ratio=train_ratio,
         val_ratio=max(0.05, (1.0 - train_ratio) * 0.5),
+        family_id=family_id,
     )
     return train[0], train[1], val[0], val[1]
