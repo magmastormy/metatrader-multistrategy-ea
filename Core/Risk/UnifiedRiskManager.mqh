@@ -169,6 +169,16 @@ public:
     // Set base risk per trade percent (used by dual-mode auto-switching)
     void SetBaseRiskPerTrade(double riskPercent);
 
+    // Apply tier overrides without reinitializing the entire risk manager.
+    // Updates only the parameters that the tier system controls (daily risk,
+    // portfolio risk, drawdown thresholds, daily loss limit) while preserving
+    // runtime state (circuit breaker, daily risk used, virtual positions, etc.)
+    void ApplyTierOverrides(double tierRiskPerTradePct,
+                            int tierMaxPositions,
+                            double effectiveDaily, double effectivePortfolio,
+                            double effectiveDdWarning, double effectiveDdCritical,
+                            double effectiveDailyLossLimit);
+
     // Per-symbol risk overrides (family-specific risk parameters)
     void SetRiskPerTrade(const string symbol, double riskPct);
     void SetMaxDrawdownForFamily(const string symbol, double maxDDPct);
@@ -215,6 +225,14 @@ public:
     void ResetCircuitBreaker();
     bool CheckCircuitBreakerRecovery();
     bool CheckCorrelationRisk(const string symbol, double newRiskPercent);
+
+    // Crash recovery: get/set circuit breaker state for persistence across restarts
+    double GetPeakEquity() const;
+    double GetDailyStartEquity() const;
+    int    GetDrawdownBreachCount() const;
+    double GetMaxDrawdownFromPeak() const;
+    void   RestoreCircuitBreakerState(double savedPeakEquity, double savedDailyStartEquity,
+                                      int savedBreachCount, double savedMaxDrawdown);
 
     // Daily P&L Loss Limit circuit breaker
     bool CheckDailyLossLimit();
@@ -265,6 +283,44 @@ void CUnifiedRiskManager::SetBaseRiskPerTrade(double riskPercent)
 {
     m_config.baseRiskPerTradePercent = ClampRiskPercent(riskPercent);
     m_activeRiskPerTradePercent = ClampRiskPercent(riskPercent);
+}
+
+//+------------------------------------------------------------------+
+//| Apply tier overrides without full reinitialization                |
+//| Updates only tier-controlled parameters, preserving runtime state |
+//+------------------------------------------------------------------+
+void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
+                                             int tierMaxPositions,
+                                             double effectiveDaily, double effectivePortfolio,
+                                             double effectiveDdWarning, double effectiveDdCritical,
+                                             double effectiveDailyLossLimit)
+{
+    // Update config parameters controlled by tier system
+    m_config.baseRiskPerTradePercent = tierRiskPerTradePct;
+    m_config.maxRiskPerTradePercent  = MathMax(tierRiskPerTradePct * 2.0, 50.0);
+    m_config.maxDailyRiskPercent     = effectiveDaily;
+    m_config.maxPortfolioRiskPercent = effectivePortfolio;
+    m_config.drawdownWarningPercent  = effectiveDdWarning;
+    m_config.drawdownCriticalPercent = effectiveDdCritical;
+    m_config.dailyLossLimitPercent   = effectiveDailyLossLimit;
+    m_config.maxPositionsSameBase    = tierMaxPositions;
+
+    // Update active risk per trade
+    m_activeRiskPerTradePercent = ClampRiskPercent(m_config.baseRiskPerTradePercent);
+
+    // Update validation gate thresholds (no reinitialization)
+    m_validationGate.SetMaxRiskPerTrade(m_config.maxRiskPerTradePercent);
+    m_validationGate.SetMaxPortfolioRisk(m_config.maxPortfolioRiskPercent);
+
+    // Update portfolio risk manager limits (no reinitialization)
+    m_portfolioRiskManager.SetMaxPortfolioRisk(effectivePortfolio);
+
+    PrintFormat("[RISK-INIT-SINGLE] Tier overrides applied (no reinit) | risk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%%",
+                m_config.baseRiskPerTradePercent,
+                m_config.maxDailyRiskPercent,
+                m_config.maxPortfolioRiskPercent,
+                m_config.drawdownWarningPercent,
+                m_config.drawdownCriticalPercent);
 }
 
 //+------------------------------------------------------------------+
@@ -1235,6 +1291,47 @@ void CUnifiedRiskManager::ResetCircuitBreaker()
     m_maxDrawdownFromPeak = 0.0;
 
     Print("[RISK-CIRCUIT-BREAKER] Manually reset by operator | Trading resumed");
+}
+
+//+------------------------------------------------------------------+
+//| Crash recovery getters for circuit breaker state                  |
+//+------------------------------------------------------------------+
+double CUnifiedRiskManager::GetPeakEquity() const
+{
+    return m_peakEquity;
+}
+
+double CUnifiedRiskManager::GetDailyStartEquity() const
+{
+    return m_dailyStartEquity;
+}
+
+int CUnifiedRiskManager::GetDrawdownBreachCount() const
+{
+    return m_drawdownBreachCount;
+}
+
+double CUnifiedRiskManager::GetMaxDrawdownFromPeak() const
+{
+    return m_maxDrawdownFromPeak;
+}
+
+//+------------------------------------------------------------------+
+//| Restore circuit breaker state from crash recovery file            |
+//+------------------------------------------------------------------+
+void CUnifiedRiskManager::RestoreCircuitBreakerState(double savedPeakEquity, double savedDailyStartEquity,
+                                                     int savedBreachCount, double savedMaxDrawdown)
+{
+    if(savedPeakEquity > 0.0)
+        m_peakEquity = savedPeakEquity;
+    if(savedDailyStartEquity > 0.0)
+        m_dailyStartEquity = savedDailyStartEquity;
+    m_drawdownBreachCount = savedBreachCount;
+    if(savedMaxDrawdown >= 0.0)
+        m_maxDrawdownFromPeak = savedMaxDrawdown;
+
+    PrintFormat("[RISK-CIRCUIT-BREAKER] Restored from crash recovery | peakEquity=%.2f | dailyStartEquity=%.2f | breachCount=%d | maxDD=%.2f%%",
+                m_peakEquity, m_dailyStartEquity, m_drawdownBreachCount, m_maxDrawdownFromPeak);
 }
 
 //+------------------------------------------------------------------+

@@ -1,8 +1,8 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-06-16
-- Status: Batch 103
+- Last Updated: 2026-06-18
+- Status: Batch 104
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.

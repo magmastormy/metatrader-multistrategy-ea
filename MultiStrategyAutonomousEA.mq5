@@ -302,7 +302,7 @@ input int    InpDailyHaltCooldownMinutes = 30;      // Minutes before trading re
 
 //--- Dual-Mode Auto-Switching
 input group "Dual-Mode Auto-Switching"
-input bool   InpEnableAutoModeSwitch = false;       // Enable automatic mode switching
+input bool   InpEnableAutoModeSwitch = true;       // Enable automatic mode switching
 input double InpConservativeBaseRiskPct = 1.0;      // Conservative: base risk per trade %
 input double InpAggressiveBaseRiskPct = 3.0;        // Aggressive: base risk per trade %
 input double InpModeSwitchDrawdownPct = 5.0;        // Downgrade to conservative at this drawdown %
@@ -464,6 +464,7 @@ COrnsteinUhlenbeckEngine* g_ouEngines[];          // Per-symbol OU process engin
 COrderFlowImbalanceEngine* g_ofiEngines[];         // Per-symbol OFI proxy engines
 CVPINFilter*           g_vpinFilters[];           // Per-symbol VPIN toxicity filters
 string g_mathEngineSymbols[];                      // Symbol mapping for math engines
+bool   g_gridHurstBridgeLogged[];                   // Per-symbol: true after first [GRID-HURST-BRIDGE] log
 
 //--- Performance tracking
 // Centralized in CPerformanceAnalytics but kept here for display compatibility
@@ -1492,15 +1493,21 @@ string GetStrategyNameByIndex(const int index)
     {
         case 0: return "Momentum";
         case 1: return "Trend";
-        // case 2: Fibonacci REMOVED - merged into Support/Resistance
-        // case 3: Elliott Wave REMOVED
+        case 2: return "Fibonacci";          // REMOVED - merged into Support/Resistance
+        case 3: return "Elliott Wave";       // REMOVED
         case 4: return "Support/Resistance";
         case 5: return "Unified ICT";
         case 6: return "Candlestick";
         case 7: return "Unicorn Model";
         case 8: return "Power of Three";
-        case 9: return "Mean Reversion";  // NEW: Batch 93
-        case 10: return "Volatility Breakout";  // NEW: Batch 93 - Week 3
+        case 9: return "Mean Reversion";
+        case 10: return "Volatility Breakout";
+        case 11: return "Statistical Arbitrage";   // Batch 103
+        case 12: return "FVG Scalper";             // Batch 103
+        case 13: return "Turtle Soup";             // Batch 103
+        case 14: return "Breaker Block";           // Batch 103
+        case 15: return "NY Open Gap";             // Batch 103
+        case 16: return "Asian Range Break";       // Batch 103
         default: return "Unknown";
     }
 }
@@ -3215,6 +3222,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         ArrayResize(g_mathEngineSymbols, mSize + 1);
         g_mathEngineSymbols[mSize] = symbol;
 
+        // Batch 29a: Track first bridge log per symbol
+        ArrayResize(g_gridHurstBridgeLogged, mSize + 1);
+        g_gridHurstBridgeLogged[mSize] = false;
+
         // Hurst Engine
         ArrayResize(g_hurstEngines, mSize + 1);
         g_hurstEngines[mSize] = NULL;
@@ -3502,7 +3513,54 @@ int OnInit()
     }
     // Cluster governance configured after RiskTierManager applies tier overrides (see below)
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
-    
+
+    // Crash recovery: restore circuit breaker state from previous session if state file exists
+    {
+        string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
+        int fh = FileOpen(stateFileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+        if(fh != INVALID_HANDLE)
+        {
+            double recoveredEquityBaseline = 0.0;
+            double recoveredPeakEquity = 0.0;
+            int    recoveredDdBreachCount = 0;
+            double recoveredDdMax = 0.0;
+            string recoveredTimestamp = "";
+
+            while(!FileIsEnding(fh))
+            {
+                string line = FileReadString(fh);
+                int eqPos = StringFind(line, "=");
+                if(eqPos < 0)
+                    continue;
+                string key = StringSubstr(line, 0, eqPos);
+                string val = StringSubstr(line, eqPos + 1);
+
+                if(key == "equity_baseline")     recoveredEquityBaseline = StringToDouble(val);
+                else if(key == "peak_equity")    recoveredPeakEquity = StringToDouble(val);
+                else if(key == "dd_breach_count") recoveredDdBreachCount = (int)StringToInteger(val);
+                else if(key == "dd_max")         recoveredDdMax = StringToDouble(val);
+                else if(key == "timestamp")      recoveredTimestamp = val;
+            }
+            FileClose(fh);
+
+            if(recoveredEquityBaseline > 0.0 || recoveredPeakEquity > 0.0)
+            {
+                unifiedRiskManager.RestoreCircuitBreakerState(recoveredPeakEquity, recoveredEquityBaseline,
+                                                              recoveredDdBreachCount, recoveredDdMax);
+                PrintFormat("[RECOVERY-STATE] Circuit breaker restored from previous session | equity_baseline=%.2f | peak_equity=%.2f | dd_breach_count=%d | dd_max=%.2f | saved_at=%s",
+                            recoveredEquityBaseline, recoveredPeakEquity, recoveredDdBreachCount, recoveredDdMax, recoveredTimestamp);
+            }
+            else
+            {
+                Print("[RECOVERY-STATE] State file found but contained no valid data — using fresh initialization");
+            }
+        }
+        else
+        {
+            Print("[RECOVERY-STATE] No previous state file found — clean start (first run or clean shutdown)");
+        }
+    }
+
     // Log initial account capacity diagnostics
     LogAccountCapacityDiagnostics();
 
@@ -3629,7 +3687,10 @@ int OnInit()
                                          InpSignalReversalProfitGuard, InpSignalReversalMinLossR,
                                          InpSignalReversalMaxLossR, InpSignalReversalMinTimeSec,
                                          InpEnableStructuralInvalidation);
-        g_lifecycleManager.ConfigureLifecycle(InpEnablePositionLifecycleManager, (int)InpLifecycleTrailingStepPoints,
+        g_lifecycleManager.ConfigureLifecycle(InpEnablePositionLifecycleManager,
+                                               InpLifecycleBreakevenBufferPoints,
+                                               InpLifecycleTrailingDistancePoints,
+                                               (int)InpLifecycleTrailingStepPoints,
                                                InpLifecycleUseATRTrailing, InpLifecycleATRMultiplier);
         Print("[INIT] PositionLifecycleManager initialized (Blueprint R6a)");
     }
@@ -4286,6 +4347,17 @@ int OnInit()
     g_diagnosticsManager.SetManagers(g_enterpriseManagers, ArraySize(g_enterpriseManagers));
 
     EventSetTimer(1);
+
+    // Delete crash recovery state file — only needed for crash recovery, not after clean init
+    {
+        string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
+        if(FileIsExist(stateFileName, FILE_COMMON))
+        {
+            FileDelete(stateFileName, FILE_COMMON);
+            PrintFormat("[RECOVERY-STATE] State file %s deleted after successful init", stateFileName);
+        }
+    }
+
     Print("[MULTI-STRATEGY-EA] Initialization complete - EA is READY;");
     Print("[MULTI-STRATEGY-EA] ========================================");
 
@@ -4297,8 +4369,36 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+    Print("[DEINIT-START] Deinitialization begun | reason=%d (%s)", reason, GetDeInitReasonText(reason));
+
     systemInitialized = false;
     tradingEnabled = false;
+
+    // Save circuit breaker state for crash recovery before any cleanup
+    {
+        string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
+        int fh = FileOpen(stateFileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+        if(fh != INVALID_HANDLE)
+        {
+            FileWrite(fh, "equity_baseline=" + DoubleToString(unifiedRiskManager.GetDailyStartEquity(), 2));
+            FileWrite(fh, "peak_equity=" + DoubleToString(unifiedRiskManager.GetPeakEquity(), 2));
+            FileWrite(fh, "dd_breach_count=" + IntegerToString(unifiedRiskManager.GetDrawdownBreachCount()));
+            FileWrite(fh, "dd_max=" + DoubleToString(unifiedRiskManager.GetMaxDrawdownFromPeak(), 2));
+            FileWrite(fh, "timestamp=" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
+            FileClose(fh);
+            PrintFormat("[DEINIT-STATE] Circuit breaker state saved to %s | equity_baseline=%.2f | peak_equity=%.2f | dd_breach_count=%d | dd_max=%.2f",
+                        stateFileName,
+                        unifiedRiskManager.GetDailyStartEquity(),
+                        unifiedRiskManager.GetPeakEquity(),
+                        unifiedRiskManager.GetDrawdownBreachCount(),
+                        unifiedRiskManager.GetMaxDrawdownFromPeak());
+        }
+        else
+        {
+            PrintFormat("[DEINIT-STATE] WARNING: Failed to save circuit breaker state to %s (error=%d)", stateFileName, GetLastError());
+        }
+    }
+
     PrintFormat("[TERMINATION-SNAPSHOT] reason=%d (%s) | scans=%I64u | intrabar=%I64u | no_signal=%I64u | validated=%I64u | risk_approved=%I64u | sent=%I64u",
                 reason,
                 GetDeInitReasonText(reason),
@@ -4395,6 +4495,7 @@ void OnDeinit(const int reason)
     ArrayResize(g_ofiEngines, 0);
     ArrayResize(g_vpinFilters, 0);
     ArrayResize(g_mathEngineSymbols, 0);
+    ArrayResize(g_gridHurstBridgeLogged, 0);
 
     // Deinitialize diagnostics logger (Blueprint 3.6)
     g_diagLogger.Deinit();
@@ -4420,6 +4521,8 @@ void OnDeinit(const int reason)
     Print("[MULTI-STRATEGY-EA] ========================================");
     Print("[MULTI-STRATEGY-EA] Shutdown complete - Memory cleaned");
     Print("[MULTI-STRATEGY-EA] ========================================");
+
+    Print("[DEINIT-COMPLETE] Deinitialization finished cleanly | reason=%d (%s)", reason, GetDeInitReasonText(reason));
 }
 
 //+------------------------------------------------------------------+
@@ -4577,6 +4680,18 @@ void OnTimer()
             g_hurstEngines[i].Update();
         if(g_ouEngines[i] != NULL)
             g_ouEngines[i].Update();
+
+        // Batch 29a: Bridge Hurst output to GridRecoveryEngine
+        if(InpGridRecoveryEnabled && g_hurstEngines[i] != NULL && g_hurstEngines[i].IsWarmedUp())
+        {
+            double hurstVal = g_hurstEngines[i].GetSnapshot().hurstValue;
+            g_gridRecovery.SetHurstRegime(g_mathEngineSymbols[i], hurstVal);
+            if(!g_gridHurstBridgeLogged[i])
+            {
+                PrintFormat("[GRID-HURST-BRIDGE] %s | Hurst=%.3f — first bridge to GridRecoveryEngine", g_mathEngineSymbols[i], hurstVal);
+                g_gridHurstBridgeLogged[i] = true;
+            }
+        }
     }
 
     // Batch 100: Apply Hurst weight modifiers to regime engine
@@ -5787,11 +5902,18 @@ void ProcessTradingLogic(bool fromTimer)
                             }
 
                             double drawdownMultiplier = 1.0;
+                            const double DRAWDOWN_SIZING_MIN_THRESHOLD = 0.02; // Skip sizing adjustments below 2% drawdown
                             if(peakEquity > 0.0 && InpAIDrawdownSizingLimit > 0.0)
                             {
                                 double dd = (peakEquity - currentEquity) / peakEquity;
                                 if(dd > 0.0)
                                     drawdownMultiplier = MathMax(0.10, MathMin(1.0, 1.0 - (dd / MathMax(0.01, InpAIDrawdownSizingLimit))));
+                                if(dd > 0.0 && dd < DRAWDOWN_SIZING_MIN_THRESHOLD)
+                                {
+                                    PrintFormat("[RISK-ADAPT-SKIP] Drawdown-aware sizing skipped | dd=%.3f threshold=%.3f — drawdown below minimum threshold",
+                                                dd, DRAWDOWN_SIZING_MIN_THRESHOLD);
+                                    drawdownMultiplier = 1.0;
+                                }
                             }
                             if(drawdownMultiplier < 0.999)
                             {

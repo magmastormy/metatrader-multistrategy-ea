@@ -27,6 +27,7 @@
 #include "../Engines/MarketAnalysis.mqh"
 #include "../../IndicatorManager.mqh"
 #include "../Cache/ATRCache.mqh"
+#include "../Utils/Instruments.mqh"
 
 
 
@@ -661,9 +662,22 @@ private:
                     m_atrCache.StoreATR(symbolName, PERIOD_CURRENT, atr, barTime);
                 }
             }
+
+            // Fix #12-13: Symbol-class-aware drift limits for synthetic indices
+            bool isSynthetic = IsSyntheticIndexSymbolName(symbolName);
+            double atrMultiplier = isSynthetic ? 0.50 : 0.30;
+            double spreadFloorMultiplier = isSynthetic ? 3.0 : 2.0;
+
             if(atr > 0.0)
-                effectiveDriftLimit = MathMax(effectiveDriftLimit, (atr / point) * 0.30);
-            effectiveDriftLimit = MathMax(effectiveDriftLimit, spreadPoints * 2.0);
+                effectiveDriftLimit = MathMax(effectiveDriftLimit, (atr / point) * atrMultiplier);
+            effectiveDriftLimit = MathMax(effectiveDriftLimit, spreadPoints * spreadFloorMultiplier);
+
+            if(isSynthetic)
+            {
+                PrintFormat("[DRIFT-SYNTHETIC] symbol=%s | atr_mult=%.2f | spread_floor_mult=%.1f | drift_limit=%.1f | atr_pts=%.1f",
+                            symbolName, atrMultiplier, spreadFloorMultiplier, effectiveDriftLimit,
+                            (atr > 0.0) ? (atr / point) : 0.0);
+            }
 
             if(driftPoints > effectiveDriftLimit)
             {
@@ -1520,6 +1534,8 @@ bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
     
     if(!IsModificationNeeded(ticket, newSL, currentTP)) return false;
 
+    PrintFormat("[BE-APPLIED] %s | ticket=%d | SL %.5f -> %.5f | buffer=%.0f pts",
+                positionSymbol, ticket, currentSL, newSL, buffer);
     return ModifyPosition(ticket, newSL, currentTP);
 }
 
@@ -2461,40 +2477,11 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
             
             if(breakevenBuffer > 0)
             {
-                double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
-                if(point <= 0.0)
-                    point = 0.00001;
-
-                double profitPoints = 0;
-                double profitPercent = 0.0;
-                if(type == POSITION_TYPE_BUY)
-                {
-                    profitPoints = (currentPriceValue - openPrice) / point;
-                    if(openPrice > 0.0)
-                        profitPercent = ((currentPriceValue - openPrice) / openPrice) * 100.0;
-                }
-                else
-                {
-                    profitPoints = (openPrice - currentPriceValue) / point;
-                    if(openPrice > 0.0)
-                        profitPercent = ((openPrice - currentPriceValue) / openPrice) * 100.0;
-                }
-
-                // Require BOTH: sufficient points buffer AND minimum 0.3% profit.
-                // On synthetics with tiny point values (e.g., PainX point=0.01),
-                // 120 points = only 0.0013% move — noise, not a real profit signal.
-                // The 0.3% gate ensures breakeven only triggers on meaningful moves.
-                bool breakevenNeeded = false;
-                if(type == POSITION_TYPE_BUY)
-                    breakevenNeeded = (profitPoints >= breakevenBuffer && profitPercent >= 0.3 && (stopLoss == 0.0 || stopLoss < openPrice));
-                else
-                    breakevenNeeded = (profitPoints >= breakevenBuffer && profitPercent >= 0.3 && (stopLoss == 0.0 || stopLoss > openPrice));
-
-                if(breakevenNeeded)
-                {
-                    double newStopLoss = NormalizePrice(symbolName, openPrice);
-                    ModifyPosition(ticket, newStopLoss, takeProfit);
-                }
+                // Batch104-BUG2+BUG3: Use MoveToBreakeven() instead of broken inline logic.
+                // The old inline code required BOTH profitPoints >= buffer AND profitPercent >= 0.3,
+                // which made breakeven nearly impossible on forex (0.3% = 300+ pips on EURUSD).
+                // MoveToBreakeven() correctly checks only if price exceeds entry + buffer*point.
+                MoveToBreakeven(ticket, breakevenBuffer);
             }
             
             if(useATRTrailing || (trailingDistance > 0 && trailingStep > 0))
@@ -2534,7 +2521,12 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
         return true;
 
     double newStopLoss = 0;
-    double activationPoints = MathMax(step, distance);
+    // Batch104-BUG4: Lower trailing activation threshold.
+    // Old: activationPoints = MathMax(step, distance) = max(120, 300) = 300 points
+    // This required 300 points profit before trailing started — too aggressive for forex.
+    // New: activationPoints = distance (the trailing distance itself is the minimum
+    // profit needed for the trailing stop to sit above entry for BUY positions).
+    double activationPoints = distance;
     
     if(useATR)
     {
@@ -2580,7 +2572,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
         }
     }
     
-    if(newStopLoss > 0 && newStopLoss != currentStopLoss)
+    if(newStopLoss > 0 && MathAbs(newStopLoss - currentStopLoss) > point * 0.5)
     {
         newStopLoss = NormalizePrice(symbolName, newStopLoss);
         return ModifyPosition(ticket, newStopLoss, currentTakeProfit);

@@ -537,13 +537,46 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     }
 
     m_metrics.atr = atr[0];
-    m_metrics.atrPercent = (atr[0] / price) * 100.0;
+
+    // Batch104-C1: ATR sanity validation — corrupted multi-symbol indicator handles
+    // can return values 1000x-100000x too high (e.g., 115783 for USDJPY instead of ~0.16).
+    // If ATR exceeds 10x the asset price, the data is clearly corrupted.
+    bool atrCorrupted = false;
+    if(atr[0] > price * 10.0)
+    {
+        atrCorrupted = true;
+        PrintFormat("[VOLATILITY-SANITY] ATR_CORRUPTED | symbol=%s | timeframe=%s | atr=%.5f | price=%.5f | ratio=%.1f",
+                    symbol, EnumToString(timeframe), atr[0], price, atr[0] / price);
+    }
+
+    if(atrCorrupted)
+    {
+        // Use fallback metrics from raw rates data instead of corrupted indicator
+        if(ApplyFallbackMetrics(symbol, timeframe, "ATR_CORRUPTED", 0))
+            return true;
+        // If fallback also fails, clamp atrPercent to prevent downstream damage
+        m_metrics.atrPercent = 100.0;
+        m_metrics.state = VOLATILITY_EXTREME;
+    }
+    else
+    {
+        m_metrics.atrPercent = (atr[0] / price) * 100.0;
+        // Clamp atrPercent to 100.0% — anything above is clearly corrupted data
+        if(m_metrics.atrPercent > 100.0)
+        {
+            PrintFormat("[VOLATILITY-SANITY] ATR_PCT_CLAMPED | symbol=%s | timeframe=%s | raw_pct=%.2f | clamped=100.00",
+                        symbol, EnumToString(timeframe), m_metrics.atrPercent);
+            m_metrics.atrPercent = 100.0;
+        }
+        m_metrics.state = DetermineState(m_metrics.atrPercent);
+    }
+
     m_metrics.bollinger_width = MathMax(0.0, bb_upper[0] - bb_lower[0]);
     m_metrics.historical_volatility = MathMax(0.0, stddev[0]);
     m_metrics.relative_volatility = (m_metrics.historical_volatility > 0.0)
                                     ? (m_metrics.atr / m_metrics.historical_volatility)
                                     : 1.0;
-    m_metrics.state = DetermineState(m_metrics.atrPercent);
+    // Note: m_metrics.state already set above via DetermineState() or corruption path
     m_metrics.isExpanding = atr[0] > atr[1] * 1.1;
     m_metrics.isContracting = atr[0] < atr[1] * 0.9;
     m_metrics.lastUpdate = TimeCurrent();

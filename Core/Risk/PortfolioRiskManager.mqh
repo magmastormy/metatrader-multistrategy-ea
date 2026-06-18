@@ -75,6 +75,7 @@ public:
     bool   CheckCorrelationLimits(string symbol);
     bool   IsEmergencyMode() const { return m_emergencyMode; }
     void   SetEmergencyMode(bool state) { m_emergencyMode = state; }
+    void   SetMaxPortfolioRisk(double maxRiskPercent) { m_maxPortfolioRisk = maxRiskPercent; }
     bool   HasUnprotectedPositions() const { return m_missingStopDetected; }
     int    GetUnprotectedPositionCount() const { return m_missingStopCount; }
     string GetLastBlockReason() const { return m_lastBlockReason; }
@@ -108,6 +109,10 @@ private:
     void   RemovePositionFromCache(string symbol, double riskPct);
     int    FindSymbolInCache(string symbol);
     void   RefreshRiskCache();
+
+    // Asset-class-aware correlation
+    bool   IsSameAssetClass(string symbol1, string symbol2);
+    double GetEffectiveCorrelationThreshold(string symbol1, string symbol2);
 };
 
 //+------------------------------------------------------------------+
@@ -276,6 +281,7 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
     {
         double maxAbsCorrelation = 0.0;
         string mostCorrelatedSymbol = "";
+        double effectiveThreshold = m_maxCorrelation; // Default; refined per-pair below
 
         for(int i = 0; i < PositionsTotal(); i++)
         {
@@ -288,18 +294,30 @@ bool CPortfolioRiskManager::CheckCorrelationLimits(string symbol)
                 continue;
 
             double correlation = MathAbs(CalculateSymbolCorrelation(symbol, existingSymbol));
+
+            // Asset-class-aware threshold: same-class pairs get a higher limit
+            double pairThreshold = GetEffectiveCorrelationThreshold(symbol, existingSymbol);
+
             if(correlation > maxAbsCorrelation)
             {
                 maxAbsCorrelation = correlation;
                 mostCorrelatedSymbol = existingSymbol;
+                effectiveThreshold = pairThreshold;
             }
         }
 
-        if(maxAbsCorrelation > m_maxCorrelation)
+        // Log when asset-class-aware threshold is applied (same-class pair)
+        if(effectiveThreshold != m_maxCorrelation)
+        {
+            PrintFormat("[CORR-ASSET-CLASS] %s vs %s — same asset class, effective threshold %.2f (default %.2f)",
+                        symbol, mostCorrelatedSymbol, effectiveThreshold, m_maxCorrelation);
+        }
+
+        if(maxAbsCorrelation > effectiveThreshold)
         {
             RecordBlockReason(StringFormat("Correlation %.2f > Max %.2f (%s vs %s)",
                                            maxAbsCorrelation,
-                                           m_maxCorrelation,
+                                           effectiveThreshold,
                                            symbol,
                                            mostCorrelatedSymbol));
             return false;
@@ -619,6 +637,101 @@ void CPortfolioRiskManager::OnPositionClosed(string symbol, double riskPct)
 void CPortfolioRiskManager::InvalidateRiskCache()
 {
     m_riskCache.isValid = false;
+}
+
+//+------------------------------------------------------------------+
+//| Determine if two symbols belong to the same asset class          |
+//+------------------------------------------------------------------+
+bool CPortfolioRiskManager::IsSameAssetClass(string symbol1, string symbol2)
+{
+    // Asset class heuristics based on symbol name patterns
+    string syntheticKeywords[] = {"Index", "Volatility", "Boom", "Crash", "Jump", "Step"};
+    string forexCcyKeywords[]  = {"USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF"};
+    string metalsKeywords[]    = {"XAU", "XAG"};
+
+    // --- Classify symbol1 ---
+    bool sym1IsSynthetic = false;
+    for(int i = 0; i < ArraySize(syntheticKeywords); i++)
+    {
+        if(StringFind(symbol1, syntheticKeywords[i]) >= 0)
+        {
+            sym1IsSynthetic = true;
+            break;
+        }
+    }
+
+    bool sym1IsMetal = false;
+    for(int i = 0; i < ArraySize(metalsKeywords); i++)
+    {
+        if(StringFind(symbol1, metalsKeywords[i]) >= 0)
+        {
+            sym1IsMetal = true;
+            break;
+        }
+    }
+
+    bool sym1IsForex = false;
+    if(!sym1IsSynthetic && !sym1IsMetal)
+    {
+        for(int i = 0; i < ArraySize(forexCcyKeywords); i++)
+        {
+            if(StringFind(symbol1, forexCcyKeywords[i]) >= 0)
+            {
+                sym1IsForex = true;
+                break;
+            }
+        }
+    }
+
+    // --- Classify symbol2 ---
+    bool sym2IsSynthetic = false;
+    for(int i = 0; i < ArraySize(syntheticKeywords); i++)
+    {
+        if(StringFind(symbol2, syntheticKeywords[i]) >= 0)
+        {
+            sym2IsSynthetic = true;
+            break;
+        }
+    }
+
+    bool sym2IsMetal = false;
+    for(int i = 0; i < ArraySize(metalsKeywords); i++)
+    {
+        if(StringFind(symbol2, metalsKeywords[i]) >= 0)
+        {
+            sym2IsMetal = true;
+            break;
+        }
+    }
+
+    bool sym2IsForex = false;
+    if(!sym2IsSynthetic && !sym2IsMetal)
+    {
+        for(int i = 0; i < ArraySize(forexCcyKeywords); i++)
+        {
+            if(StringFind(symbol2, forexCcyKeywords[i]) >= 0)
+            {
+                sym2IsForex = true;
+                break;
+            }
+        }
+    }
+
+    // Same class if both belong to the same category
+    return (sym1IsForex && sym2IsForex) ||
+           (sym1IsSynthetic && sym2IsSynthetic) ||
+           (sym1IsMetal && sym2IsMetal);
+}
+
+//+------------------------------------------------------------------+
+//| Get effective correlation threshold based on asset class         |
+//+------------------------------------------------------------------+
+double CPortfolioRiskManager::GetEffectiveCorrelationThreshold(string symbol1, string symbol2)
+{
+    if(IsSameAssetClass(symbol1, symbol2))
+        return 0.85;
+
+    return m_maxCorrelation;
 }
 
 //+------------------------------------------------------------------+

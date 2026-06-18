@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-05-23
+- Last Updated: 2026-06-18
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Module 2 - Strategy Engine Fixes (Batch 88)
+- Latest Batch: Batch 104 - SL/BE/Trailing + Chart Drawing Bug Fixes
 
 ## 1. Mission
 Maintain and evolve `metatrader-multistrategy-ea` with production-safe discipline:

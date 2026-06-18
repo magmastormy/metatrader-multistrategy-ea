@@ -185,37 +185,55 @@ public:
         double effectiveDdWarning = (inputDdWarningFloor > 0.0) ? MathMax(m_config.ddWarningPct, inputDdWarningFloor) : m_config.ddWarningPct;
         double effectiveDdCritical= (inputDdCriticalFloor > 0.0)? MathMax(m_config.ddCriticalPct, inputDdCriticalFloor): m_config.ddCriticalPct;
 
-        SUnifiedRiskConfig cfg;
-        cfg.baseRiskPerTradePercent = m_config.riskPerTradePct;  // Blueprint 10.4: 0-100 scale
-        cfg.minRiskPerTradePercent  = 0.1;                       // Blueprint 10.4: 0-100 scale
-        cfg.maxRiskPerTradePercent  = MathMax(m_config.riskPerTradePct * 2.0, 50.0);  // Blueprint 10.4: 0-100 scale
-        cfg.maxDailyRiskPercent     = effectiveDaily;
-        cfg.maxPortfolioRiskPercent = effectivePortfolio;
-        cfg.correlationThreshold    = 0.7;
-        cfg.correlationReduceThreshold = 0.4;
-        cfg.correlationBlockThreshold  = 0.7;
-        cfg.maxPositionsSameBase    = m_config.maxPositions;
-        cfg.drawdownWarningPercent  = effectiveDdWarning;
-        cfg.drawdownCriticalPercent = effectiveDdCritical;
-        cfg.dailyLossLimitPercent   = (inputDailyLossLimit > 0.0) ? inputDailyLossLimit : 15.0;
-        cfg.minLotRiskMultiplier    = riskManager.GetMinLotRiskMultiplier();  // Preserve user input; Initialize validates floor
-        cfg.adaptationMinTrades     = 10;
-        cfg.enableAdaptiveSizing    = true;
-        cfg.enableAuditLogging      = true;
-        cfg.auditLogFile            = "risk_audit_" + _Symbol + ".log";
+        // Floor cap: if effective value exceeds 2x the tier preset, cap at 2x tier preset.
+        // This prevents floor values from overriding tier-defined risk constraints
+        // (e.g., daily 5%→40%, portfolio 15%→60%, riskPerTrade 1%→10%).
+        double dailyCap     = m_config.dailyRiskPct * 2.0;
+        double portfolioCap = m_config.portfolioRiskPct * 2.0;
+        double ddWarningCap = m_config.ddWarningPct * 2.0;
+        double ddCriticalCap= m_config.ddCriticalPct * 2.0;
 
-        if(!riskManager.Initialize(cfg, perfAnalytics))
+        if(effectiveDaily > dailyCap)
         {
-            Print("[RISK-TIER] ERROR: Failed to re-initialize UnifiedRiskManager with tier config");
+            PrintFormat("[RISK-TIER-FLOOR-CAP] daily capped: floor=%.1f%% -> capped=%.1f%% (tier=%.1f%% x2=%.1f%%)",
+                        effectiveDaily, dailyCap, m_config.dailyRiskPct, dailyCap);
+            effectiveDaily = dailyCap;
         }
-        else
+        if(effectivePortfolio > portfolioCap)
         {
-            PrintFormat("[RISK-TIER] Applied to RiskManager | risk=%.1f%% | daily=%.1f%% (tier=%.1f floor=%.1f) | portfolio=%.1f%% (tier=%.1f floor=%.1f) | ddWarn=%.1f%% | ddCrit=%.1f%%",
-                        m_config.riskPerTradePct,
-                        effectiveDaily, m_config.dailyRiskPct, inputDailyFloor,
-                        effectivePortfolio, m_config.portfolioRiskPct, inputPortfolioFloor,
-                        effectiveDdWarning, effectiveDdCritical);
+            PrintFormat("[RISK-TIER-FLOOR-CAP] portfolio capped: floor=%.1f%% -> capped=%.1f%% (tier=%.1f%% x2=%.1f%%)",
+                        effectivePortfolio, portfolioCap, m_config.portfolioRiskPct, portfolioCap);
+            effectivePortfolio = portfolioCap;
         }
+        if(effectiveDdWarning > ddWarningCap)
+        {
+            PrintFormat("[RISK-TIER-FLOOR-CAP] ddWarning capped: floor=%.1f%% -> capped=%.1f%% (tier=%.1f%% x2=%.1f%%)",
+                        effectiveDdWarning, ddWarningCap, m_config.ddWarningPct, ddWarningCap);
+            effectiveDdWarning = ddWarningCap;
+        }
+        if(effectiveDdCritical > ddCriticalCap)
+        {
+            PrintFormat("[RISK-TIER-FLOOR-CAP] ddCritical capped: floor=%.1f%% -> capped=%.1f%% (tier=%.1f%% x2=%.1f%%)",
+                        effectiveDdCritical, ddCriticalCap, m_config.ddCriticalPct, ddCriticalCap);
+            effectiveDdCritical = ddCriticalCap;
+        }
+
+        double effectiveDailyLossLimit = (inputDailyLossLimit > 0.0) ? inputDailyLossLimit : 15.0;
+
+        // Apply tier overrides without reinitializing the entire risk manager.
+        // This avoids dual initialization of circuit breaker, correlation engine,
+        // portfolio risk manager, and other runtime state.
+        riskManager.ApplyTierOverrides(m_config.riskPerTradePct,
+                                       m_config.maxPositions,
+                                       effectiveDaily, effectivePortfolio,
+                                       effectiveDdWarning, effectiveDdCritical,
+                                       effectiveDailyLossLimit);
+
+        PrintFormat("[RISK-TIER] Applied to RiskManager | risk=%.1f%% | daily=%.1f%% (tier=%.1f floor=%.1f) | portfolio=%.1f%% (tier=%.1f floor=%.1f) | ddWarn=%.1f%% | ddCrit=%.1f%%",
+                    m_config.riskPerTradePct,
+                    effectiveDaily, m_config.dailyRiskPct, inputDailyFloor,
+                    effectivePortfolio, m_config.portfolioRiskPct, inputPortfolioFloor,
+                    effectiveDdWarning, effectiveDdCritical);
     }
 
     //+------------------------------------------------------------------+
@@ -227,6 +245,16 @@ public:
     {
         SPositionSizingParams params = sizer.GetParameters();
         double effectiveRisk = (inputRiskFloor > 0.0) ? MathMax(m_config.riskPerTradePct, inputRiskFloor) : m_config.riskPerTradePct;
+
+        // Floor cap: if effective risk exceeds 2x the tier preset, cap at 2x tier preset
+        double riskCap = m_config.riskPerTradePct * 2.0;
+        if(effectiveRisk > riskCap)
+        {
+            PrintFormat("[RISK-TIER-FLOOR-CAP] riskPerTrade capped: floor=%.1f%% -> capped=%.1f%% (tier=%.1f%% x2=%.1f%%)",
+                        effectiveRisk, riskCap, m_config.riskPerTradePct, riskCap);
+            effectiveRisk = riskCap;
+        }
+
         params.riskPercent = effectiveRisk;  // Blueprint 10.4: 0-100 scale
 
         if(!sizer.SetParameters(params))

@@ -172,6 +172,7 @@ string ConsensusDecisionClassToString(const ENUM_CONSENSUS_DECISION_CLASS decisi
         case CONSENSUS_DECISION_FULL_QUORUM: return "FULL_QUORUM";
         case CONSENSUS_DECISION_SPARSE_INTRABAR: return "SPARSE_INTRABAR";
         case CONSENSUS_DECISION_VETOED: return "VETOED";
+        case CONSENSUS_DECISION_MARGINAL_ADMIT: return "MARGINAL_ADMIT";
         case CONSENSUS_DECISION_NONE:
         default:
             return "NONE";
@@ -1869,36 +1870,57 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             double bestQuality = MathMax(buyDirectionalQuality, sellDirectionalQuality);
             double bestSupport = MathMax(buySupportRatio, sellSupportRatio);
 
-            if(bestQuality < effectiveQualityThreshold)
+            double marginalQualityFloor = effectiveQualityThreshold * 0.92;
+
+            if(bestQuality >= effectiveQualityThreshold)
             {
-                vetoCode = "insufficient_quality";
-                vetoReason = StringFormat("quality=%.3f (need %.3f) | votes=%d | support=%.3f",
-                                          bestQuality, effectiveQualityThreshold,
-                                          activeVoterCount, bestSupport);
+                // Full admission — quality meets threshold (handled by support/quorum checks below)
+                if(bestSupport < supportFloor)
+                {
+                    vetoCode = "insufficient_support";
+                    vetoReason = StringFormat("support=%.3f (need %.3f) | votes=%d | quality=%.3f",
+                                              bestSupport, supportFloor,
+                                              activeVoterCount, bestQuality);
+                }
+                else
+                {
+                    vetoCode = "direction_quorum_not_met";
+                    vetoReason = StringFormat("buy=%.3f|%.3f vs sell=%.3f|%.3f",
+                                              buyDirectionalQuality, buySupportRatio,
+                                              sellDirectionalQuality, sellSupportRatio);
+                }
             }
-            else if(bestSupport < supportFloor)
+            else if(bestQuality >= marginalQualityFloor)
             {
-                vetoCode = "insufficient_support";
-                vetoReason = StringFormat("support=%.3f (need %.3f) | votes=%d | quality=%.3f",
-                                          bestSupport, supportFloor,
-                                          activeVoterCount, bestQuality);
+                // Soft-admit band: quality is marginal but within 8% of threshold
+                // Allow the signal through with a confidence penalty
+                finalSignal = (buyDirectionalQuality >= sellDirectionalQuality) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+                decisionClass = CONSENSUS_DECISION_MARGINAL_ADMIT;
+                // vetoCode remains "" so the signal is not treated as vetoed
+                PrintFormat("[CONSENSUS-NEARMISS-ADMITTED] %s | quality=%.3f | threshold=%.3f | marginalFloor=%.3f | confidencePenalty=0.70 | signal=%s | votes=%d | support=%.3f",
+                            symbol,
+                            bestQuality, effectiveQualityThreshold, marginalQualityFloor,
+                            TradeSignalToString(finalSignal),
+                            activeVoterCount, bestSupport);
             }
             else
             {
-                vetoCode = "direction_quorum_not_met";
-                vetoReason = StringFormat("buy=%.3f|%.3f vs sell=%.3f|%.3f",
-                                          buyDirectionalQuality, buySupportRatio,
-                                          sellDirectionalQuality, sellSupportRatio);
+                // Hard veto — quality too far below threshold
+                vetoCode = "insufficient_quality";
+                vetoReason = StringFormat("quality=%.3f (need %.3f, marginalFloor=%.3f) | votes=%d | support=%.3f",
+                                          bestQuality, effectiveQualityThreshold, marginalQualityFloor,
+                                          activeVoterCount, bestSupport);
             }
         }
 
-        if((buyVotes + sellVotes) > 0)
+        if((buyVotes + sellVotes) > 0 && decisionClass != CONSENSUS_DECISION_MARGINAL_ADMIT)
             cycleQuorumFailed++;
     }
 
     if(finalSignal != TRADE_SIGNAL_NONE)
     {
-        decisionClass = CONSENSUS_DECISION_FULL_QUORUM;
+        if(decisionClass != CONSENSUS_DECISION_MARGINAL_ADMIT)
+            decisionClass = CONSENSUS_DECISION_FULL_QUORUM;
         if(finalSignal == TRADE_SIGNAL_BUY)
         {
             finalConfluence = buyVotes;
@@ -1927,6 +1949,9 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             ArrayCopy(selectedContributors, sellContributors);
             ArrayCopy(selectedContributorIndices, sellContributorIndices);
         }
+        // Apply confidence penalty for marginal-admit signals
+        if(decisionClass == CONSENSUS_DECISION_MARGINAL_ADMIT)
+            finalConfidence = ClampUnitValue(finalConfidence * 0.70);
     }
     else if(evalMode == EVAL_MODE_INTRABAR && m_allowSparseIntrabarSingleVoter)
     {
@@ -2064,7 +2089,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             vetoCode = "timeframe_conflict";
             vetoReason = (reasoning != "") ? reasoning : "timeframe_conflict";
         }
-        else if(resolvedSignal == TRADE_SIGNAL_NONE || resolvedSignal != finalSignal)
+        else if(resolvedSignal == TRADE_SIGNAL_NONE)
         {
             cycleQuorumFailed++;
             vetoCode = "timeframe_conflict";
@@ -2081,6 +2106,22 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             finalConfluence = 0;
             ArrayResize(selectedContributors, 0);
             ArrayResize(selectedContributorIndices, 0);
+        }
+        else if(resolvedSignal != finalSignal)
+        {
+            double tfConflictPenalty = 0.5;
+            vetoCode = "timeframe_conflict_attenuated";
+            vetoReason = (reasoning != "") ? reasoning : "timeframe_conflict_attenuated";
+            finalConfidence = ClampUnitValue(finalConfidence * tfConflictPenalty);
+            finalConvictionScore = finalConvictionScore * tfConflictPenalty;
+            finalDirectionalQuality = ClampUnitValue(finalDirectionalQuality * tfConflictPenalty);
+            finalSupportRatio = ClampUnitValue(finalSupportRatio * tfConflictPenalty);
+            finalDirectionalWeight = finalDirectionalWeight * tfConflictPenalty;
+            finalReadinessScore = ClampUnitValue(finalReadinessScore * tfConflictPenalty);
+            finalContextScore = ClampUnitValue(finalContextScore * tfConflictPenalty);
+            finalCostScore = ClampUnitValue(finalCostScore * tfConflictPenalty);
+            PrintFormat("[TF-CONFLICT-ATTENUATED] %s | consensus=%s | tfResolved=%s | penalty=%.2f",
+                        symbol, TradeSignalToString(finalSignal), TradeSignalToString(resolvedSignal), tfConflictPenalty);
         }
         else if(resolvedConfidence > 0.0)
         {

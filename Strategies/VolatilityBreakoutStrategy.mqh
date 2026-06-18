@@ -97,6 +97,61 @@ private:
         return false;
     }
 
+    // Fallback BB calculation from raw price data when indicator handle fails
+    bool CalculateFallbackBB(double &outUpper, double &outMiddle, double &outLower)
+    {
+        MqlRates rates[];
+        ArraySetAsSeries(rates, true);
+        int needed = m_bbPeriod + 5;
+        int copied = CopyRates(m_symbol, m_timeframe, 0, needed, rates);
+        if(copied < m_bbPeriod)
+            return false;
+
+        // Compute mean of close prices over bbPeriod bars (starting from bar 1)
+        double sum = 0;
+        for(int i = 0; i < m_bbPeriod; i++)
+            sum += rates[i].close;
+        double mean = sum / m_bbPeriod;
+
+        // Compute standard deviation
+        double sumSqDiff = 0;
+        for(int i = 0; i < m_bbPeriod; i++)
+        {
+            double diff = rates[i].close - mean;
+            sumSqDiff += diff * diff;
+        }
+        double stdDev = MathSqrt(sumSqDiff / m_bbPeriod);
+
+        outUpper  = mean + m_bbDeviation * stdDev;
+        outMiddle = mean;
+        outLower  = mean - m_bbDeviation * stdDev;
+        return true;
+    }
+
+    // Fallback ATR calculation from raw price data when indicator handle fails
+    bool CalculateFallbackATR(double &outATR)
+    {
+        MqlRates rates[];
+        ArraySetAsSeries(rates, true);
+        int needed = m_atrPeriod + 5;
+        int copied = CopyRates(m_symbol, m_timeframe, 0, needed, rates);
+        if(copied < m_atrPeriod + 1)  // Need prev close for True Range
+            return false;
+
+        // Compute True Range for each bar, then average over atrPeriod bars (starting from bar 1)
+        double sumTR = 0;
+        for(int i = 0; i < m_atrPeriod; i++)
+        {
+            double highLow    = rates[i].high - rates[i].low;
+            double highPrevCl = MathAbs(rates[i].high - rates[i + 1].close);
+            double lowPrevCl  = MathAbs(rates[i].low  - rates[i + 1].close);
+            double tr = MathMax(highLow, MathMax(highPrevCl, lowPrevCl));
+            sumTR += tr;
+        }
+        outATR = sumTR / m_atrPeriod;
+        return true;
+    }
+
     // Logging helper
     void LogRejectEvent(const string reasonTag)
     {
@@ -232,16 +287,58 @@ public:
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("VOLBREAK_DISABLED_OR_UNINIT");
         
-        // Fetch indicator data
+        // Fetch BB indicator data (with fallback)
         double bbUpper[2], bbMiddle[2], bbLower[2];
-        double atrBuffer[12];  // Current + lookback for comparison
-        double volumeBuffer[11];
-        
+        bool bbFromFallback = false;
         if(!SafeCopyBuffer(m_bbHandle, 1, 1, 2, bbUpper) ||  // Upper band
            !SafeCopyBuffer(m_bbHandle, 0, 1, 2, bbMiddle) || // Middle band
-           !SafeCopyBuffer(m_bbHandle, 2, 1, 2, bbLower) ||  // Lower band
-           !SafeCopyBuffer(m_atrHandle, 0, 1, 12, atrBuffer) ||
-           !SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer))
+           !SafeCopyBuffer(m_bbHandle, 2, 1, 2, bbLower))    // Lower band
+        {
+            // Fallback: compute BB from raw price data
+            double fbUpper, fbMiddle, fbLower;
+            if(CalculateFallbackBB(fbUpper, fbMiddle, fbLower))
+            {
+                bbUpper[0]  = fbUpper;
+                bbUpper[1]  = fbUpper;
+                bbMiddle[0] = fbMiddle;
+                bbMiddle[1] = fbMiddle;
+                bbLower[0]  = fbLower;
+                bbLower[1]  = fbLower;
+                bbFromFallback = true;
+                PrintFormat("[VOLBREAK-FALLBACK] BB calculated from raw rates | Upper=%.5f Middle=%.5f Lower=%.5f | Symbol=%s TF=%s",
+                           fbUpper, fbMiddle, fbLower, m_symbol, EnumToString(m_timeframe));
+            }
+            else
+            {
+                return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
+            }
+        }
+
+        // Fetch ATR indicator data (with fallback)
+        double atrBuffer[12];  // Current + lookback for comparison
+        bool atrFromFallback = false;
+        if(!SafeCopyBuffer(m_atrHandle, 0, 1, 12, atrBuffer))
+        {
+            // Fallback: compute ATR from raw price data
+            double fbATR;
+            if(CalculateFallbackATR(fbATR))
+            {
+                // Fill buffer with fallback value for current and historical comparison
+                for(int i = 0; i < 12; i++)
+                    atrBuffer[i] = fbATR;
+                atrFromFallback = true;
+                PrintFormat("[VOLBREAK-FALLBACK] ATR calculated from raw rates | ATR=%.5f | Symbol=%s TF=%s",
+                           fbATR, m_symbol, EnumToString(m_timeframe));
+            }
+            else
+            {
+                return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
+            }
+        }
+
+        // Fetch volume data (no fallback — volume is confirmation-only)
+        double volumeBuffer[11];
+        if(!SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer))
         {
             return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
         }

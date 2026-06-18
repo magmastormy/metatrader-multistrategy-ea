@@ -135,6 +135,11 @@ private:
     int m_adxFailureReinitThreshold;
     datetime m_lastAdxHealthLogTime;
     datetime m_lastAdxReinitAttemptTime;
+    datetime m_lastGoodAdxTime;
+    double m_lastGoodAdxValue;
+    double m_lastGoodPlusDI;
+    double m_lastGoodMinusDI;
+    int m_adxCacheReuseTtlSeconds;
     int m_consecutiveReadinessFaults;
     int m_readinessFailureReinitThreshold;
     datetime m_lastReadinessReinitAttemptTime;
@@ -271,9 +276,14 @@ CTrendEngine::CTrendEngine() :
     m_lastAdxValid(true),
     m_consecutiveAdxFailures(0),
     m_lastAdxRawValue(0.0),
-    m_adxFailureReinitThreshold(3),
+    m_adxFailureReinitThreshold(7),
     m_lastAdxHealthLogTime(0),
     m_lastAdxReinitAttemptTime(0),
+    m_lastGoodAdxTime(0),
+    m_lastGoodAdxValue(0.0),
+    m_lastGoodPlusDI(0.0),
+    m_lastGoodMinusDI(0.0),
+    m_adxCacheReuseTtlSeconds(60),
     m_consecutiveReadinessFaults(0),
     m_readinessFailureReinitThreshold(3),
     m_lastReadinessReinitAttemptTime(0),
@@ -448,7 +458,7 @@ bool CTrendEngine::IndicatorsReadyForRead(int minBars)
     }
 
     bool partialReady = (fastBars < minBars || medBars < minBars || slowBars < minBars ||
-                         (useAdxModel && adxBars < minBars) || atrBars < minBars);
+                         (useAdxModel && adxBars < minBars * 2) || atrBars < minBars);
     if(partialReady)
     {
         datetime nowTime = TimeCurrent();
@@ -946,15 +956,43 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
         int adxCopyErr = GetLastError();
         if(adxCopyRet != 1 || plusCopyRet != 1 || minusCopyRet != 1)
         {
+            // Single retry with 50ms delay to handle transient race conditions
+            Sleep(50);
+            ResetLastError();
+            adxCopyRet = CopyBuffer(m_handleADX, 0, 0, 1, adx);
+            plusCopyRet = CopyBuffer(m_handleADX, 1, 0, 1, plusDI);
+            minusCopyRet = CopyBuffer(m_handleADX, 2, 0, 1, minusDI);
+            adxCopyErr = GetLastError();
+        }
+        if(adxCopyRet != 1 || plusCopyRet != 1 || minusCopyRet != 1)
+        {
             adxValid = false;
-            RecordAdxFailure(symbol,
-                             timeframe,
-                             "ADX_BUFFER_COPY_FAILED",
-                             adxCopyRet,
-                             plusCopyRet,
-                             minusCopyRet,
-                             adxCopyErr,
-                             adx[0]);
+            // Attempt cached ADX reuse before recording failure
+            datetime adxNowTime = TimeCurrent();
+            if(m_lastGoodAdxTime != 0 && (int)(adxNowTime - m_lastGoodAdxTime) <= m_adxCacheReuseTtlSeconds)
+            {
+                adx[0] = m_lastGoodAdxValue;
+                plusDI[0] = m_lastGoodPlusDI;
+                minusDI[0] = m_lastGoodMinusDI;
+                adxValid = true;
+                adxModeLabel = "CACHED-REUSE";
+                PrintFormat("[ADX-CACHED-REUSE] symbol=%s | timeframe=%s | adx=%.2f | plusDI=%.2f | minusDI=%.2f | age=%ds | copyErr=%d",
+                            symbol, EnumToString(timeframe),
+                            m_lastGoodAdxValue, m_lastGoodPlusDI, m_lastGoodMinusDI,
+                            (int)(adxNowTime - m_lastGoodAdxTime), adxCopyErr);
+                SetReadinessState(TREND_READINESS_TRANSIENT_COPY_FAULT, "ADX_CACHED_REUSE", false, 0);
+            }
+            else
+            {
+                RecordAdxFailure(symbol,
+                                 timeframe,
+                                 "ADX_BUFFER_COPY_FAILED",
+                                 adxCopyRet,
+                                 plusCopyRet,
+                                 minusCopyRet,
+                                 adxCopyErr,
+                                 adx[0]);
+            }
         }
         else
         {
@@ -982,8 +1020,13 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
             minusDI[0] = 0.0;
             adxModeLabel = "DEGRADED";
         }
-        else
+        else if(adxModeLabel != "CACHED-REUSE")
         {
+            // Cache good ADX values for future reuse on copy failure
+            m_lastGoodAdxTime = TimeCurrent();
+            m_lastGoodAdxValue = adx[0];
+            m_lastGoodPlusDI = plusDI[0];
+            m_lastGoodMinusDI = minusDI[0];
             m_lastAdxValid = true;
             m_consecutiveAdxFailures = 0;
         }
@@ -1508,6 +1551,10 @@ void CTrendEngine::Reset()
     m_lastAdxRawValue = 0.0;
     m_lastAdxHealthLogTime = 0;
     m_lastAdxReinitAttemptTime = 0;
+    m_lastGoodAdxTime = 0;
+    m_lastGoodAdxValue = 0.0;
+    m_lastGoodPlusDI = 0.0;
+    m_lastGoodMinusDI = 0.0;
     m_consecutiveReadinessFaults = 0;
     m_lastReadinessReinitAttemptTime = 0;
     m_readinessSnapshot = STrendReadinessSnapshot();

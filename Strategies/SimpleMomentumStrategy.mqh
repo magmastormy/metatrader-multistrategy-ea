@@ -315,19 +315,109 @@ private:
         return true;
     }
 
+    //+------------------------------------------------------------------+
+    //| CalculateEmaFallback                                              |
+    //| Purpose: Compute EMA from raw price data when SafeCopyBuffer      |
+    //|         fails for MA handles, preventing MOMENTUM_MA_UNAVAILABLE  |
+    //|                                                                  |
+    //| Algorithm:                                                        |
+    //|   1. Fetch period*3 bars of close prices via CopyRates           |
+    //|   2. Initialize with SMA of first 'period' closes               |
+    //|   3. Apply standard EMA formula forward:                         |
+    //|      EMA = price * multiplier + prevEMA * (1 - multiplier)       |
+    //|      where multiplier = 2 / (period + 1)                        |
+    //|   4. Return EMA at shift 1 (emaNow) and shift 2 (emaPrev)       |
+    //|                                                                  |
+    //| Parameters:                                                      |
+    //|   period:  EMA period (e.g., m_fastPeriod or m_slowPeriod)       |
+    //|   emaNow:  [out] EMA value at bar shift 1 (last closed bar)      |
+    //|   emaPrev: [out] EMA value at bar shift 2 (bar before last)      |
+    //|                                                                  |
+    //| Returns: true if fallback calculation succeeded, false otherwise  |
+    //+------------------------------------------------------------------+
+    bool CalculateEmaFallback(const int period, double &emaNow, double &emaPrev)
+    {
+        if(period <= 0)
+            return false;
+
+        int requiredBars = period * 3;
+        MqlRates rates[];
+        ArraySetAsSeries(rates, false);  // oldest first for forward EMA calculation
+        int copied = CopyRates(m_symbol, m_timeframe, 0, requiredBars, rates);
+        if(copied < period + 2)  // Need at least period bars for SMA init + 2 for output
+            return false;
+
+        double multiplier = 2.0 / ((double)period + 1.0);
+        double invMultiplier = 1.0 - multiplier;
+
+        // Initialize with SMA of first 'period' bars (stable starting point)
+        double smaSum = 0.0;
+        for(int i = 0; i < period; i++)
+            smaSum += rates[i].close;
+        double ema = smaSum / (double)period;
+
+        // Calculate EMA forward through bars up to shift 2 (index copied-3)
+        // rates[copied-1] = shift 0 (current forming bar)
+        // rates[copied-2] = shift 1 (last closed bar) -> emaNow
+        // rates[copied-3] = shift 2 -> emaPrev
+        for(int i = period; i < copied - 2; i++)
+        {
+            ema = multiplier * rates[i].close + invMultiplier * ema;
+        }
+        emaPrev = ema;  // EMA at shift 2
+
+        // One more step to shift 1 (last closed bar)
+        ema = multiplier * rates[copied - 2].close + invMultiplier * ema;
+        emaNow = ema;  // EMA at shift 1
+
+        return true;
+    }
+
     bool FetchAverages(double &fastNow, double &fastPrev, double &slowNow, double &slowPrev)
     {
         double fastBuffer[2];
         double slowBuffer[2];
 
         // Closed-bar values: current signal bar = shift 1, previous = shift 2
-        if(!SafeCopyBuffer(m_fastHandle, 0, 1, 2, fastBuffer)) return false;
-        if(!SafeCopyBuffer(m_slowHandle, 0, 1, 2, slowBuffer)) return false;
+        bool fastOk = SafeCopyBuffer(m_fastHandle, 0, 1, 2, fastBuffer);
+        bool slowOk = SafeCopyBuffer(m_slowHandle, 0, 1, 2, slowBuffer);
 
-        fastNow = fastBuffer[0];
-        fastPrev = fastBuffer[1];
-        slowNow = slowBuffer[0];
-        slowPrev = slowBuffer[1];
+        // Try fallback EMA calculation when primary method fails
+        bool fastFallback = false;
+        bool slowFallback = false;
+
+        if(fastOk)
+        {
+            fastNow = fastBuffer[0];
+            fastPrev = fastBuffer[1];
+        }
+        else
+        {
+            fastFallback = CalculateEmaFallback(m_fastPeriod, fastNow, fastPrev);
+            if(fastFallback)
+                PrintFormat("[MOMENTUM-MA-FALLBACK] Fast EMA(%d) fallback used | Symbol=%s | TF=%s",
+                           m_fastPeriod, m_symbol, EnumToString(m_timeframe));
+        }
+
+        if(slowOk)
+        {
+            slowNow = slowBuffer[0];
+            slowPrev = slowBuffer[1];
+        }
+        else
+        {
+            slowFallback = CalculateEmaFallback(m_slowPeriod, slowNow, slowPrev);
+            if(slowFallback)
+                PrintFormat("[MOMENTUM-MA-FALLBACK] Slow EMA(%d) fallback used | Symbol=%s | TF=%s",
+                           m_slowPeriod, m_symbol, EnumToString(m_timeframe));
+        }
+
+        // Only fail if both primary and fallback failed for either fast or slow
+        if(!fastOk && !fastFallback)
+            return false;
+        if(!slowOk && !slowFallback)
+            return false;
+
         return true;
     }
 
