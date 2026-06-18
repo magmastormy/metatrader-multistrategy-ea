@@ -73,6 +73,15 @@ private:
     // Margin check thresholds (configurable for broker differences)
     double m_maxFreeMarginUsage;      // Maximum free margin usage percentage (default 0.8 = 80%)
     double m_minMarginLevel;         // Minimum acceptable margin level (default 200.0 = 200%)
+
+    // Opposing same-symbol conflict cooldown cache (Fix #9)
+    int    m_opposingConflictCooldownSec;  // Cooldown period in seconds (default 120)
+    datetime m_lastOpposingConflictTime;   // Last time an opposing conflict was detected
+    string m_lastOpposingConflictSymbol;   // Symbol that had the last opposing conflict
+
+    // Per-cluster risk caps (Fix #11)
+    string m_clusterRiskCapCodes[];        // Cluster codes for per-cluster caps
+    double m_clusterRiskCapValues[];       // Cap values (0-100 scale) per cluster
     
     // Audit trail
     bool m_auditLogging;
@@ -140,6 +149,12 @@ public:
                                     const int maxConcurrentPerCluster,
                                     const double maxClusterRiskPercent,
                                     const bool enableMutex);
+
+    // Opposing conflict cooldown cache (Fix #9)
+    void ClearOpposingConflictCache(const string symbol);
+
+    // Per-cluster risk caps (Fix #11)
+    void SetClusterRiskCap(const string clusterCode, const double capPercent);
     
 private:
     // Portfolio helper accessors
@@ -228,10 +243,13 @@ CRiskValidationGate::CRiskValidationGate() : m_portfolioRiskManager(NULL),
                                            m_emergencyRiskOverride(5.0),
                                            m_clusterGovernanceEnabled(true),
                                            m_clusterMutexEnabled(true),
-                                           m_maxConcurrentPerCluster(3),
+                                           m_maxConcurrentPerCluster(5),
                                            m_maxClusterRiskPercent(5.0),
                                            m_maxFreeMarginUsage(0.8),
                                            m_minMarginLevel(200.0),
+                                           m_opposingConflictCooldownSec(120),
+                                           m_lastOpposingConflictTime(0),
+                                           m_lastOpposingConflictSymbol(""),
                                            m_auditLogging(true),
                                            m_auditLogFile("RiskValidation.log"),
                                            m_validationCount(0),
@@ -240,6 +258,13 @@ CRiskValidationGate::CRiskValidationGate() : m_portfolioRiskManager(NULL),
                                            m_lastValidation(0),
                                            m_avgValidationTime(0.0)
 {
+    // Per-cluster risk caps (Fix #11): default overrides
+    ArrayResize(m_clusterRiskCapCodes, 2);
+    ArrayResize(m_clusterRiskCapValues, 2);
+    m_clusterRiskCapCodes[0] = "T";
+    m_clusterRiskCapValues[0] = 10.0;  // Trend cluster gets 10% cap
+    m_clusterRiskCapCodes[1] = "R";
+    m_clusterRiskCapValues[1] = 5.0;   // Reversion cluster stays at default 5%
 }
 
 //+------------------------------------------------------------------+
@@ -856,11 +881,52 @@ void CRiskValidationGate::ConfigureClusterGovernance(const bool enabled,
     m_maxConcurrentPerCluster = MathMax(1, maxConcurrentPerCluster);
     m_maxClusterRiskPercent = MathMax(0.1, maxClusterRiskPercent);
 
+    PrintFormat("[RISK-CLUSTER-CAP] Cluster position cap applied | max_positions=%d | max_risk=%.2f%%",
+                m_maxConcurrentPerCluster, m_maxClusterRiskPercent);
+
     PrintFormat("[RISK-CLUSTER] governance=%s | mutex=%s | max_positions=%d | max_risk=%.2f%%",
                 m_clusterGovernanceEnabled ? "enabled" : "disabled",
                 m_clusterMutexEnabled ? "enabled" : "disabled",
                 m_maxConcurrentPerCluster,
                 m_maxClusterRiskPercent);
+}
+
+//+------------------------------------------------------------------+
+//| Clear opposing conflict cooldown cache for a symbol (Fix #9)    |
+//+------------------------------------------------------------------+
+void CRiskValidationGate::ClearOpposingConflictCache(const string symbol)
+{
+    if(m_lastOpposingConflictSymbol == symbol)
+    {
+        m_lastOpposingConflictTime = 0;
+        m_lastOpposingConflictSymbol = "";
+        PrintFormat("[RISK-MUTEX-COOLDOWN] cache cleared for symbol=%s", symbol);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Set per-cluster risk cap (Fix #11)                              |
+//+------------------------------------------------------------------+
+void CRiskValidationGate::SetClusterRiskCap(const string clusterCode, const double capPercent)
+{
+    string normalizedCode = NormalizeClusterCode(clusterCode);
+    // Update existing entry if found
+    for(int i = 0; i < ArraySize(m_clusterRiskCapCodes); i++)
+    {
+        if(m_clusterRiskCapCodes[i] == normalizedCode)
+        {
+            m_clusterRiskCapValues[i] = MathMax(0.1, capPercent);
+            PrintFormat("[RISK-CLUSTER-CAP-PER] Updated cluster=%s cap=%.2f%%", normalizedCode, m_clusterRiskCapValues[i]);
+            return;
+        }
+    }
+    // Add new entry
+    int newSize = ArraySize(m_clusterRiskCapCodes) + 1;
+    ArrayResize(m_clusterRiskCapCodes, newSize);
+    ArrayResize(m_clusterRiskCapValues, newSize);
+    m_clusterRiskCapCodes[newSize - 1] = normalizedCode;
+    m_clusterRiskCapValues[newSize - 1] = MathMax(0.1, capPercent);
+    PrintFormat("[RISK-CLUSTER-CAP-PER] Added cluster=%s cap=%.2f%%", normalizedCode, m_clusterRiskCapValues[newSize - 1]);
 }
 
 //+------------------------------------------------------------------+
@@ -980,6 +1046,22 @@ bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationReques
     if(requestClusterCode == "N")
         return true;
 
+    // Fix #9: Opposing conflict cooldown cache — skip full scan if recently rejected for same symbol
+    if(m_clusterMutexEnabled &&
+       m_lastOpposingConflictSymbol == request.symbol &&
+       m_lastOpposingConflictTime > 0 &&
+       (TimeCurrent() - m_lastOpposingConflictTime) < m_opposingConflictCooldownSec)
+    {
+        message = StringFormat("Opposing conflict cooldown active for %s (%ds remaining)",
+                               request.symbol,
+                               m_opposingConflictCooldownSec - (int)(TimeCurrent() - m_lastOpposingConflictTime));
+        PrintFormat("[RISK-MUTEX-COOLDOWN] symbol=%s | cooldown_remaining=%ds | last_conflict=%s",
+                    request.symbol,
+                    m_opposingConflictCooldownSec - (int)(TimeCurrent() - m_lastOpposingConflictTime),
+                    TimeToString(m_lastOpposingConflictTime, TIME_DATE | TIME_SECONDS));
+        return false;
+    }
+
     int clusterOpenPositions = 0;
     double clusterOpenRiskPercent = 0.0;
 
@@ -1006,6 +1088,10 @@ bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationReques
             if(oppositeDirection &&
                (existingClusterCode == "N" || existingClusterCode != requestClusterCode))
             {
+                // Fix #9: Update cooldown cache when a new opposing conflict is detected
+                m_lastOpposingConflictTime = TimeCurrent();
+                m_lastOpposingConflictSymbol = request.symbol;
+
                 message = StringFormat("Opposing same-symbol cluster conflict (request=%s existing=%s ticket=%I64u)",
                                        requestClusterCode, existingClusterCode, ticket);
                 PrintFormat("[RISK-MUTEX-BLOCK] symbol=%s | request_cluster=%s | existing_cluster=%s | request_side=%s | existing_side=%s | ticket=%I64u",
@@ -1029,6 +1115,19 @@ bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationReques
     int projectedPositions = clusterOpenPositions + 1;
     double projectedRisk = clusterOpenRiskPercent + MathMax(0.0, tradeRiskPercent);
 
+    // Fix #11: Look up per-cluster risk cap first; fall back to global default
+    double effectiveClusterRiskCap = m_maxClusterRiskPercent;
+    for(int c = 0; c < ArraySize(m_clusterRiskCapCodes); c++)
+    {
+        if(m_clusterRiskCapCodes[c] == requestClusterCode)
+        {
+            effectiveClusterRiskCap = m_clusterRiskCapValues[c];
+            PrintFormat("[RISK-CLUSTER-CAP-PER] cluster=%s | per_cluster_cap=%.2f%% applied",
+                        requestClusterCode, effectiveClusterRiskCap);
+            break;
+        }
+    }
+
     PrintFormat("[RISK-CLUSTER] cluster=%s | open_positions=%d | projected_positions=%d | open_risk=%.2f%% | projected_risk=%.2f%% | caps=%d/%.2f%%",
                 requestClusterCode,
                 clusterOpenPositions,
@@ -1036,7 +1135,7 @@ bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationReques
                 clusterOpenRiskPercent,
                 projectedRisk,
                 m_maxConcurrentPerCluster,
-                m_maxClusterRiskPercent);
+                effectiveClusterRiskCap);
 
     if(projectedPositions > m_maxConcurrentPerCluster)
     {
@@ -1045,10 +1144,10 @@ bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationReques
         return false;
     }
 
-    if(projectedRisk > m_maxClusterRiskPercent)
+    if(projectedRisk > effectiveClusterRiskCap)
     {
         message = StringFormat("Cluster risk cap exceeded (%.2f%% > %.2f%%) for cluster %s",
-                               projectedRisk, m_maxClusterRiskPercent, requestClusterCode);
+                               projectedRisk, effectiveClusterRiskCap, requestClusterCode);
         return false;
     }
 

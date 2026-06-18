@@ -944,64 +944,64 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
             LogFilterResult("RegimeCostGate", false, regimeVetoReason);
         }
     }
-    
+
     if(m_filters.enableTrendFilter)
     {
         bool trendPassed = ApplyTrendFilter(signal, confidence);
         if(!trendPassed)
         {
             passed = false;
-            LogFilterResult("TrendFilter", false, "Trend strength below minimum threshold");
+            // Note: TrendFilter logs its own filter result internally
         }
     }
-    
+
     if(m_filters.enableVolatilityFilter)
     {
         bool volPassed = ApplyVolatilityFilter(signal, confidence);
         if(!volPassed)
         {
             passed = false;
-            LogFilterResult("VolatilityFilter", false, "Volatility outside acceptable range");
+            // Note: VolatilityFilter logs its own filter result internally
         }
     }
-    
+
     if(m_filters.enableLiquidityFilter)
     {
         bool liqPassed = ApplyLiquidityFilter(signal, confidence, symbol);
         if(!liqPassed)
         {
             passed = false;
-            LogFilterResult("LiquidityFilter", false, "Insufficient liquidity");
+            // Note: LiquidityFilter logs its own filter result internally
         }
     }
-    
+
     if(m_filters.enableStructureFilter)
     {
         bool structPassed = ApplyStructureFilter(signal, confidence);
         if(!structPassed)
         {
             passed = false;
-            LogFilterResult("StructureFilter", false, "Market structure misalignment");
+            // Note: StructureFilter logs its own filter result internally
         }
     }
-    
+
     if(m_filters.enableTimeFilter)
     {
         bool timePassed = ApplyTimeFilter(signal, symbol);
         if(!timePassed)
         {
             passed = false;
-            LogFilterResult("TimeFilter", false, "Time-based filter rejection");
+            // Note: TimeFilter logs its own filter result internally
         }
     }
-    
+
     if(m_filters.enableSessionFilter)
     {
         bool sessionPassed = ApplySessionFilter(symbol);
         if(!sessionPassed)
         {
             passed = false;
-            LogFilterResult("SessionFilter", false, "Session-based filter rejection");
+            // Note: SessionFilter logs its own filter result internally
         }
     }
 

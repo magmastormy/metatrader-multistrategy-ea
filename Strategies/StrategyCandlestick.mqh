@@ -64,6 +64,7 @@ private:
 
     bool              m_requireTrendAlignment;
     CChartDrawingManager* m_drawingManager;
+    bool              m_drawOnChartSymbolOnly;  // Only draw when strategy symbol matches chart symbol
     int               m_atrHandle;
     int               m_ema50Handle;
     int               m_ema200Handle;
@@ -72,6 +73,7 @@ public:
     CStrategyCandlestick(int magic = 0) : CStrategyBase("Candlestick Patterns", magic),
         m_requireTrendAlignment(true),
         m_drawingManager(NULL),
+        m_drawOnChartSymbolOnly(true),
         m_atrHandle(INVALID_HANDLE),
         m_ema50Handle(INVALID_HANDLE),
         m_ema200Handle(INVALID_HANDLE),
@@ -634,6 +636,8 @@ private:
     void DrawPatternSignal(datetime time, double price, double strength, bool isBullish, const string patternName)
     {
         if(m_drawingManager == NULL)
+            return;
+        if(m_drawOnChartSymbolOnly && m_symbol != _Symbol)
             return;
 
         m_drawingManager.DrawEntrySignal(time, price, isBullish, strength, "Candlestick", patternName);

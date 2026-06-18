@@ -35,7 +35,7 @@ struct SSpikeHunterConfig
    int      magicOffset;               // Magic number offset from base (default 9000)
    bool     enablePushAlerts;          // Send push notifications (default true)
    int      alertThrottleSeconds;      // Min seconds between push alerts (default 120)
-   int      minConfluence;             // Min detection layers to confirm (default 2)
+   int      minConfluence;             // Min detection layers to confirm (default 1)
 
    // Default constructor with production defaults
    SSpikeHunterConfig()
@@ -54,7 +54,7 @@ struct SSpikeHunterConfig
       magicOffset               = 9000;
       enablePushAlerts          = true;
       alertThrottleSeconds      = 120;
-      minConfluence             = 2;
+      minConfluence             = 1;
    }
 };
 
@@ -738,6 +738,21 @@ public:
                   m_config.cooldownMs,
                   m_config.minConfluence,
                   m_config.magicOffset);
+
+      // Log effective confluence config per symbol family
+      PrintFormat("[SPIKE-HUNTER-CONFIG] Base minConfluence=%d/3 | familyOverrides=%d",
+                  m_config.minConfluence, m_familyOverrideCount);
+      for(int i = 0; i < m_familyOverrideCount; i++)
+      {
+         if(m_familyOverrides[i].hasOverrides)
+         {
+            int effConf = (m_familyOverrides[i].minConfluence > 0) ? m_familyOverrides[i].minConfluence : m_config.minConfluence;
+            PrintFormat("[SPIKE-HUNTER-CONFIG] %s | effectiveMinConfluence=%d/3 (override=%d base=%d)",
+                        m_familyOverrides[i].symbol, effConf,
+                        m_familyOverrides[i].minConfluence, m_config.minConfluence);
+         }
+      }
+
       return true;
    }
 
@@ -785,6 +800,11 @@ public:
 
       PrintFormat("[SPIKE-HUNT-ENGINE] Symbol added: %s (index=%d atrHandle=%d)",
                   symbol, m_symbolCount - 1, atrHandle);
+
+      // Log effective confluence config for this symbol
+      int effConf = GetEffectiveMinConfluence(m_symbolCount - 1);
+      PrintFormat("[SPIKE-HUNTER-CONFIG] %s | effectiveMinConfluence=%d/3",
+                  symbol, effConf);
       return true;
    }
 
@@ -842,7 +862,7 @@ public:
                            m_symbolStates[idx].velocityTriggered ? "ON" : "off",
                            m_symbolStates[idx].directionTriggered ? "ON" : "off",
                            m_symbolStates[idx].compressionTriggered ? "ON" : "off",
-                           m_symbolStates[idx].confluenceCount, m_config.minConfluence);
+                           m_symbolStates[idx].confluenceCount, GetEffectiveMinConfluence(idx));
             }
          }
          return;

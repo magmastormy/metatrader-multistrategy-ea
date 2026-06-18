@@ -639,7 +639,17 @@ public:
         double adxBuffer[1];
         double adxValue = 0.0;
         if(m_adxHandle != INVALID_HANDLE && CopyBuffer(m_adxHandle, 0, 0, 1, adxBuffer) == 1)
+        {
             adxValue = adxBuffer[0];
+            // Batch104-C2: ADX domain validation — corrupted multi-symbol indicator handles
+            // can return values like 115185.3 (valid ADX range is 0-100)
+            if(adxValue < 0.0 || adxValue > 100.0 || !MathIsValidNumber(adxValue))
+            {
+                PrintFormat("[REGIME-ADX-SANITY] ADX_OUT_OF_RANGE | symbol=%s | timeframe=%s | raw_adx=%.1f | clamped=100.0",
+                            symbol, EnumToString(timeframe), adxValue);
+                adxValue = MathMin(100.0, MathMax(0.0, MathIsValidNumber(adxValue) ? adxValue : 0.0));
+            }
+        }
         
         m_lastSnapshot.trendStrength = adxValue;
         m_lastSnapshot.detailedRegime = CalculateDetailedRegime(adxValue, zScore, bbWidthAtrRatio, compression);

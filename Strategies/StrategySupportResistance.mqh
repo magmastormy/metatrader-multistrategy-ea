@@ -66,6 +66,7 @@ private:
     ENUM_SR_STRATEGY_MODE       m_mode;
     int                         m_lastBarProcessed;
     int                         m_drawBarCounter;  // Batch 103: Throttle drawing
+    bool                        m_drawOnChartSymbolOnly;  // Only draw when strategy symbol matches chart symbol
     
     // Statistics
     int                         m_signalsGenerated;
@@ -124,6 +125,7 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
     m_mode(SR_MODE_ALL),
     m_lastBarProcessed(0),
     m_drawBarCounter(0),
+    m_drawOnChartSymbolOnly(true),
     m_signalsGenerated(0),
     m_levelsDetected(0),
     m_trendlinesDetected(0)
@@ -323,9 +325,9 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
     if(m_drawingManager != NULL)
         m_drawingManager.CleanupOldObjects();
 
-    // Batch 103: Throttle drawing to every 5 bars
+    // Batch 103: Throttle drawing to every 2 bars (reduced from 5 to prevent cleanup deleting objects between draws)
     m_drawBarCounter++;
-    if(m_drawBarCounter % 5 == 0)
+    if(m_drawBarCounter % 2 == 0)
     {
         DrawLevels();
         DrawTrendlines();
@@ -337,6 +339,8 @@ void CStrategySupportResistance::OnNewBar(const string symbol, const ENUM_TIMEFR
 //+------------------------------------------------------------------+
 void CStrategySupportResistance::DrawLevels()
 {
+    if(m_drawOnChartSymbolOnly && m_symbol != _Symbol)
+        return;
     if(m_srDetector == NULL || m_drawingManager == NULL) return;
     
     SSupportResistance levels[];
@@ -422,6 +426,8 @@ void CStrategySupportResistance::DrawLevels()
 //+------------------------------------------------------------------+
 void CStrategySupportResistance::DrawTrendlines()
 {
+    if(m_drawOnChartSymbolOnly && m_symbol != _Symbol)
+        return;
     if(m_trendDetector == NULL || m_drawingManager == NULL) return;
     
     STrendline lines[];

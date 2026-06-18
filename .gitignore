@@ -46,3 +46,5 @@ Dashboard/server/.venv-ea-dashboard/
 Dashboard/server/__pycache__/
 docs/doc*.md
 !docs/changelogs_old.md
+log_problems.md
+

@@ -38,6 +38,8 @@ private:
 
     // Lifecycle config
     bool   m_lifecycleEnabled;
+    double m_breakevenBufferPts;
+    double m_trailingDistancePts;
     int    m_trailingStepPoints;
     bool   m_useATRTrailing;
     double m_atrMultiplier;
@@ -62,6 +64,8 @@ public:
         m_sreMinTimeSec(45),
         m_structuralInvalidationEnabled(true),
         m_lifecycleEnabled(true),
+        m_breakevenBufferPts(120.0),
+        m_trailingDistancePts(300.0),
         m_trailingStepPoints(5),
         m_useATRTrailing(false),
         m_atrMultiplier(1.5),
@@ -109,9 +113,12 @@ public:
         m_structuralInvalidationEnabled = structuralInvalidation;
     }
 
-    void ConfigureLifecycle(bool enabled, int trailingStep, bool useATR, double atrMult)
+    void ConfigureLifecycle(bool enabled, double breakevenBuffer, double trailingDistance,
+                           int trailingStep, bool useATR, double atrMult)
     {
         m_lifecycleEnabled = enabled;
+        m_breakevenBufferPts = breakevenBuffer;
+        m_trailingDistancePts = trailingDistance;
         m_trailingStepPoints = trailingStep;
         m_useATRTrailing = useATR;
         m_atrMultiplier = atrMult;
@@ -261,8 +268,8 @@ public:
         if(m_lastManageTime != 0 && (nowManage - m_lastManageTime) < 1)
             return;
 
-        m_tradeManager.ManageAllPositions(m_riskTierManager.GetBreakevenBufferPts(),
-                                          m_riskTierManager.GetTrailingDistancePts(),
+        m_tradeManager.ManageAllPositions(m_breakevenBufferPts,
+                                          m_trailingDistancePts,
                                           m_trailingStepPoints,
                                           m_useATRTrailing,
                                           m_atrMultiplier);

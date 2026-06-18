@@ -106,7 +106,7 @@ private:
     // Helper methods
     string GenerateObjectName(const string objectType, const string uniqueId);
     string BuildScopedPrefix(const string basePrefix, const string symbol, ENUM_TIMEFRAMES tf);
-    void PrepareSnapshotDraw();
+    bool PrepareSnapshotDraw();
     bool IsObjectOld(const string objName, int maxAge);
     void DeleteOldObjects(const string prefix, int maxAge);
     bool CheckObjectLimitAndCleanup();
@@ -271,7 +271,8 @@ bool CChartDrawingManager::DrawHorizontalLevel(double price, color levelColor, c
     {
         m_objectsDrawn++;
     }
-    
+
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -350,7 +351,7 @@ string CChartDrawingManager::GenerateObjectName(const string objectType, const s
 //| - Ensures no stale objects from previous bars remain              |
 //| - Safe to call multiple times (deduplicates by bar time)          |
 //+------------------------------------------------------------------+
-void CChartDrawingManager::PrepareSnapshotDraw()
+bool CChartDrawingManager::PrepareSnapshotDraw()
 {
     // Check per-strategy object limit before drawing
     if(IsObjectLimitReached())
@@ -359,15 +360,18 @@ void CChartDrawingManager::PrepareSnapshotDraw()
         CleanupOldObjects();
         if(m_config.enableDebugMode)
             PrintFormat("[ChartDrawing] Skipping draw - per-strategy limit reached (%s)", m_prefix);
-        return;
+        return false;
     }
-    
+
     CheckObjectLimitAndCleanup();
     CDrawingCoordinator* coordPtr = GetDrawingCoordinator();
     if(coordPtr != NULL)
     {
         bool result = coordPtr.PreparePrefixForCurrentBar(m_chartID, m_symbol, m_timeframe, m_prefix);
+        if(!result)
+            return false;
     }
+    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -397,6 +401,7 @@ bool CChartDrawingManager::DrawSwingHigh(datetime time, double price, const stri
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_BOTTOM);
     
     m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -427,6 +432,7 @@ bool CChartDrawingManager::DrawSwingLow(datetime time, double price, const strin
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_TOP);
     
     m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -461,6 +467,7 @@ bool CChartDrawingManager::DrawBOS(datetime time1, double price1, datetime time2
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
     
     m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -493,8 +500,9 @@ bool CChartDrawingManager::DrawCHOCH(datetime time1, double price1, datetime tim
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 9);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
-    
+
     m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -531,8 +539,9 @@ bool CChartDrawingManager::DrawICT_CHOCH(datetime time, double price, bool isBul
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, COLOR_SCHEME_STRUCTURE_CHOCH);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 10);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, isBullish ? ANCHOR_BOTTOM : ANCHOR_TOP);
-    
+
     m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -734,8 +743,9 @@ bool CChartDrawingManager::DrawLiquidityLevel(datetime time1, datetime time2, do
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, isSwept ? clrGray : COLOR_SCHEME_LIQUIDITY);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 8);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_LEFT);
-    
+
     m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -771,8 +781,9 @@ bool CChartDrawingManager::DrawEntrySignal(datetime time, double price, bool isB
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, clrWhite);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 7);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, isBuy ? ANCHOR_BOTTOM : ANCHOR_TOP);
-    
+
     m_objectsDrawn += 2;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -809,17 +820,21 @@ void CChartDrawingManager::CleanupOldObjects()
 void CChartDrawingManager::DeleteOldObjects(const string prefix, int maxAge)
 {
     int totalObjects = ObjectsTotal(m_chartID);
-    datetime localCurrentTime = TimeCurrent();
-    
+
     for(int i = totalObjects - 1; i >= 0; i--)
     {
         string objName = ObjectName(m_chartID, i);
         if(StringFind(objName, prefix) == 0)  // Starts with prefix
         {
-            if(maxAge > 0 && (localCurrentTime - (datetime)ObjectGetInteger(m_chartID, objName, OBJPROP_TIME)) > maxAge)
+            if(maxAge > 0)
             {
-                ObjectDelete(m_chartID, objName);
-                m_objectsDeleted++;
+                datetime objTime = (datetime)ObjectGetInteger(m_chartID, objName, OBJPROP_TIME);
+                int objBar = iBarShift(m_symbol, m_timeframe, objTime);
+                if(objBar > maxAge)
+                {
+                    ObjectDelete(m_chartID, objName);
+                    m_objectsDeleted++;
+                }
             }
         }
     }
@@ -957,7 +972,8 @@ bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, dateti
         string objName3 = GenerateObjectName("EQH_M3", TimeToString(time3));
         ObjectCreate(m_chartID, objName3, OBJ_ARROW_STOP, 0, time3, price);
     }
-        
+
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -984,7 +1000,8 @@ bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetim
         string objName3 = GenerateObjectName("EQL_M3", TimeToString(time3));
         ObjectCreate(m_chartID, objName3, OBJ_ARROW_CHECK, 0, time3, price);
     }
-        
+
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -1045,6 +1062,7 @@ bool CChartDrawingManager::DrawExitSignal(datetime time, double price, bool wasP
     }
     
     m_objectsDrawn++;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -1082,8 +1100,9 @@ bool CChartDrawingManager::DrawTrendLine(datetime time1, double price1, datetime
     ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, width);
     ObjectSetInteger(m_chartID, objName, OBJPROP_STYLE, style);
     ObjectSetInteger(m_chartID, objName, OBJPROP_RAY_RIGHT, true);
-    
+
     m_objectsDrawn++;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -1105,8 +1124,9 @@ bool CChartDrawingManager::DrawTextLabel(datetime time, double price, const stri
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, textColor);
     ObjectSetInteger(m_chartID, objName, OBJPROP_FONTSIZE, fontSize);
     ObjectSetInteger(m_chartID, objName, OBJPROP_ANCHOR, anchor);
-    
+
     m_objectsDrawn++;
+    ChartRedraw(m_chartID);
     return true;
 }
 
@@ -1136,7 +1156,8 @@ bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[
         ObjectSetInteger(m_chartID, segName, OBJPROP_RAY_RIGHT, false);
         m_objectsDrawn++;
     }
-    
+
+    ChartRedraw(m_chartID);
     return success;
 }
 

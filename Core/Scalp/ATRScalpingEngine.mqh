@@ -24,7 +24,7 @@ struct SATRScalpingConfig
    int      emaFastPeriod;            // Fast EMA period (default 5)
    int      emaSlowPeriod;            // Slow EMA period (default 13)
    int      rsiPeriod;                // RSI period (default 7)
-   double   spreadMaxATRRatio;        // Max spread as fraction of ATR (default 0.30)
+   double   spreadMaxATRRatio;        // Max spread as fraction of ATR (default 0.50 — widened for synthetic indices)
    double   slAtrMultiplier;          // SL = ATR * this (default 1.5)
    double   tpAtrMultiplier;          // TP = ATR * this (default 2.0)
    int      magicOffset;              // Magic number offset (default 7000)
@@ -243,8 +243,15 @@ private:
       }
       else  // Bearish cross — SELL
       {
-         if(rsi <= 0.0 || rsi <= m_config.rsiOversold)
+         // Fix #29b: RSI must be above oversold (not below) for SELL signal
+         // Old condition `rsi <= m_config.rsiOversold` blocked SELL at the exact zone
+         // where bearish cross mean-reversion signals are valid
+         if(rsi <= 0.0 || rsi < m_config.rsiOversold || rsi >= m_config.rsiOverbought)
             return 0;
+         // Log when the fixed condition allows a signal that would have been blocked before
+         if(rsi >= m_config.rsiOversold && rsi <= m_config.rsiOversold + 5.0)
+            PrintFormat("[ATR-SCALP-RSI-FIX] %s | RSI=%.1f oversold=%.1f — SELL allowed by fixed condition",
+                        m_symbolStates[idx].symbol, rsi, m_config.rsiOversold);
       }
 
       // Spread gate: spread < spreadMaxATRRatio * ATR

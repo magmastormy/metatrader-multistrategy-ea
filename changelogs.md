@@ -1,5 +1,27 @@
 # Changelogs
 
+## 2026-06-18 — Batch 104: SL/BE/Trailing + Chart Drawing Bug Fixes
+
+### Modified Files (5)
+- `Core/Trading/TradeManager.mqh` — Fixed broken breakeven/trailing logic: replaced inline `MoveToBreakeven()` logic with proper call to `CPositionLifecycleManager::MoveToBreakeven()`, removed double-gate requiring `profitPercent >= 0.3%` (impossible for forex), changed `activationPoints = distance` from `MathMax(step, distance)`, fixed double comparison checks in trailing activation
+- `Core/Management/PositionLifecycleManager.mqh` — Fixed dead input parameters: `breakevenBuffer` and `trailingDistance` now properly passed through to internal methods instead of being ignored
+- `Core/Visualization/ChartDrawingManager.mqh` — Fixed 3 critical drawing bugs: (1) Added `ChartRedraw(m_chartID)` to 14 drawing methods for visibility, (2) Fixed `DeleteOldObjects()` using seconds instead of bars for maxAge comparison — now uses `iBarShift()`, (3) `PrepareSnapshotDraw()` now returns bool and propagates coordinator refusal
+- `Strategies/StrategySupportResistance.mqh` — Added symbol guard (`m_drawOnChartSymbolOnly`) to prevent drawing on wrong symbol, reduced drawing throttle from every bar to every 5 bars
+- `Strategies/StrategyCandlestick.mqh` — Added symbol guard to prevent drawing on wrong symbol
+
+### Bug Fixes (6)
+| Issue | Root Cause | Fix |
+|-------|------------|-----|
+| Breakeven never triggering | Required `profitPoints >= 120` AND `profitPercent >= 0.3%` (double-gate, forex can't meet 0.3%) | Removed `profitPercent >= 0.3%` gate, only checks `profitPoints >= breakevenBuffer` |
+| Trailing stop activation too high | `activationPoints = MathMax(step, distance)` requiring 300+ points | Changed to `activationPoints = distance` (120 points = 12 pips) |
+| Chart objects invisible but in Object List | Missing `ChartRedraw()` in 14 drawing methods | Added `ChartRedraw(m_chartID)` to all affected methods |
+| DeleteOldObjects() using wrong age unit | Used time difference (seconds) instead of bars | Replaced with `iBarShift()` for proper bars comparison |
+| Objects drawn on wrong symbol | No symbol guard in S/R and Candlestick strategies | Added `m_drawOnChartSymbolOnly` check |
+| S/R drawing spam | Drawing every bar without throttle | Reduced throttle to every 5 bars |
+
+### Compilation Status
+- MQL5: 0 errors, 0 warnings
+
 ## 2026-06-16 — Batch 103: Multi-Asset EA System
 
 ### New Files (5)

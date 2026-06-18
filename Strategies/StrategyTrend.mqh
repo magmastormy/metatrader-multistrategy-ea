@@ -258,12 +258,22 @@ public:
         m_emaSystem.Update();
         m_entryTypes.Update();
 
-        // Batch 103: Hurst regime filter — only trade in trending regime (H > 0.50)
+        // Batch 103: Hurst regime filter — relaxed threshold
+        // Hurst < 0.45: strongly mean-reverting, fully abstain
+        // Hurst 0.45–0.50: weakly mean-reverting, attenuate confidence by 0.6
+        // Hurst >= 0.50: trending regime, proceed normally
+        double hurstAttenuation = 1.0;
         if(m_hurstEngine != NULL && m_hurstEngine.IsWarmedUp())
         {
             double hurst = m_hurstEngine.GetSnapshot().hurstValue;
-            if(hurst < 0.50)
+            if(hurst < 0.45)
                 return RejectSignal("TREND_HURST_MEAN_REVERTING");
+            if(hurst < 0.50)
+            {
+                hurstAttenuation = 0.6;
+                PrintFormat("[TREND-HURST-ATTENUATED] Hurst=%.4f | Attenuation=%.2f | Symbol=%s",
+                           hurst, hurstAttenuation, m_symbol);
+            }
         }
 
         // Batch 103: VPIN toxicity filter — skip during high toxicity
@@ -302,6 +312,9 @@ public:
             confidence *= m_signalEnhancer.GetTrendFreshnessMultiplier();
 
         confidence = MathMin(1.0, confidence);
+
+        // Apply Hurst attenuation for weakly mean-reverting regime (0.45 <= H < 0.50)
+        confidence *= hurstAttenuation;
 
         // Minimum confidence filter
         if(confidence < m_minConfidence)
