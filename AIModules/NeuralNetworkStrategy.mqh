@@ -37,7 +37,6 @@ private:
     double m_scores[];
     int    m_head;
     int    m_count;
-    double m_alpha;
     double m_alphaACI;
     double m_gammaACI;
     double m_quantile;
@@ -69,7 +68,6 @@ public:
         ArrayInitialize(m_scores, 1.0);
         m_head = 0;
         m_count = 0;
-        m_alpha = alpha;
         m_alphaACI = alpha;
         m_gammaACI = 0.005;
         m_quantile = 1.0;
@@ -86,7 +84,7 @@ public:
 
     void UpdateACI(const bool correct)
     {
-        m_alphaACI += m_gammaACI * ((correct ? 0.0 : 1.0) - m_alpha);
+        m_alphaACI += m_gammaACI * ((correct ? 0.0 : 1.0) - m_alphaACI);
         m_alphaACI = MathMax(0.005, MathMin(0.5, m_alphaACI));
         Recompute();
     }
@@ -98,33 +96,36 @@ public:
 
     double GetQuantile() const { return m_quantile; }
     double GetAlpha() const { return m_alphaACI; }
-    double GetLastUncertainty() const { return m_quantile; }
 };
 
 class CNeuralRegimeTracker
 {
 private:
     double m_probs[4];
+    double m_atrThreshold;
+    double m_trendThreshold;
 
 public:
     void Init()
     {
         for(int i = 0; i < 4; i++)
             m_probs[i] = 0.25;
+        m_atrThreshold = 1.35;
+        m_trendThreshold = 0.02;
     }
 
     void Update(const double atrRatio, const double trendSignal)
     {
         double target[4] = {0.0, 0.0, 0.0, 0.0};
-        if(atrRatio > 1.35)
+        if(atrRatio > m_atrThreshold)
         {
             target[3] = 1.0;
         }
-        else if(trendSignal > 0.02)
+        else if(trendSignal > m_trendThreshold)
         {
             target[0] = 1.0;
         }
-        else if(trendSignal < -0.02)
+        else if(trendSignal < -m_trendThreshold)
         {
             target[1] = 1.0;
         }
@@ -194,150 +195,7 @@ public:
     void LogTopFeatures(const int topN = 10);
 };
 
-struct STrainingExample
-{
-    double   inputs[FEATURE_VECTOR_SIZE];
-    int      labelClass;
-    datetime time;
-    bool     linkedToTrade;
-    string   predictionId;
-    double   signalConfidence;
-    double   metaInput[ML_INPUT];
-
-    void Reset()
-    {
-        ArrayInitialize(inputs, 0.0);
-        labelClass = 1;
-        time = 0;
-        linkedToTrade = false;
-        predictionId = "";
-        signalConfidence = 0.0;
-        ArrayInitialize(metaInput, 0.0);
-    }
-
-    STrainingExample()
-    {
-        Reset();
-    }
-};
-
-struct SBarrierEntry
-{
-    int      signalClass;
-    double   entryPrice;
-    double   upperBarrier;
-    double   lowerBarrier;
-    datetime expiryTime;
-    double   featureSnapshot[FEATURE_VECTOR_SIZE];
-    int      featureSize;
-    int      label;
-    bool     resolved;
-    string   predictionId;
-    bool     linkedToTrade;
-    double   signalConfidence;
-    double   metaInput[ML_INPUT];
-    datetime entryBarTime;
-
-    void Reset()
-    {
-        signalClass = 0;
-        entryPrice = 0.0;
-        upperBarrier = 0.0;
-        lowerBarrier = 0.0;
-        expiryTime = 0;
-        ArrayInitialize(featureSnapshot, 0.0);
-        featureSize = 0;
-        label = 0;
-        resolved = false;
-        predictionId = "";
-        linkedToTrade = false;
-        signalConfidence = 0.0;
-        ArrayInitialize(metaInput, 0.0);
-        entryBarTime = 0;
-    }
-
-    SBarrierEntry()
-    {
-        Reset();
-    }
-};
-
-class CNeuralOptimizer
-{
-private:
-    double m_adamM[];
-    double m_adamV[];
-    long   m_adamStep;
-    double m_adamBeta1;
-    double m_adamBeta2;
-    double m_adamEps;
-    double m_adamWD;
-    double m_adamLR;
-
-public:
-    void Init(const int paramCount)
-    {
-        if(paramCount <= 0) return;
-        
-        int currentSizeM = ArraySize(m_adamM);
-        int currentSizeV = ArraySize(m_adamV);
-        
-        if(currentSizeM != paramCount)
-            ArrayResize(m_adamM, paramCount);
-        if(currentSizeV != paramCount)
-            ArrayResize(m_adamV, paramCount);
-        
-        ArrayInitialize(m_adamM, 0.0);
-        ArrayInitialize(m_adamV, 0.0);
-        m_adamStep = 0;
-        m_adamBeta1 = 0.9;
-        m_adamBeta2 = 0.999;
-        m_adamEps = 1e-8;
-        m_adamWD = 1e-4;
-        m_adamLR = 3e-4;
-    }
-    
-    double GetCyclicLR() const
-    {
-        int cycleLen = 1000;
-        double progress = (double)(m_adamStep % cycleLen) / (double)cycleLen;
-        return m_adamLR * (0.1 + 0.9 * 0.5 * (1.0 + MathCos(M_PI * progress)));
-    }
-    
-    void Update(double &param, const int paramIndex, const double grad)
-    {
-        m_adamM[paramIndex] = m_adamBeta1 * m_adamM[paramIndex] + (1.0 - m_adamBeta1) * grad;
-        m_adamV[paramIndex] = m_adamBeta2 * m_adamV[paramIndex] + (1.0 - m_adamBeta2) * grad * grad;
-        double mHat = m_adamM[paramIndex] / (1.0 - MathPow(m_adamBeta1, (double)m_adamStep));
-        double vHat = m_adamV[paramIndex] / (1.0 - MathPow(m_adamBeta2, (double)m_adamStep));
-        double lr = GetCyclicLR();
-        param -= lr * ((mHat / (MathSqrt(vHat) + m_adamEps)) + (m_adamWD * param));
-        m_adamStep++;
-    }
-    
-    long GetStep() const { return m_adamStep; }
-    void SetStep(const long step) { m_adamStep = step; }
-    
-    void GetState(double &adamM[], double &adamV[])
-    {
-        ArrayResize(adamM, ArraySize(m_adamM));
-        ArrayResize(adamV, ArraySize(m_adamV));
-        ArrayCopy(adamM, m_adamM);
-        ArrayCopy(adamV, m_adamV);
-    }
-    
-    void SetState(const double &adamM[], const double &adamV[])
-    {
-        int size = MathMin(ArraySize(adamM), ArraySize(m_adamM));
-        ArrayResize(m_adamM, size);
-        ArrayResize(m_adamV, size);
-        ArrayCopy(m_adamM, adamM, 0, 0, size);
-        ArrayCopy(m_adamV, adamV, 0, 0, size);
-    }
-};
-
-// NOTE: CNeuralCore is now defined in CNeuralCore.mqh (included above)
-// The inline definition has been removed to avoid duplicate class errors
+// STrainingExample and SBarrierEntry are defined in CNeuralTrainingDataManager.mqh (included via CNeuralCore.mqh)
 
 class CBarrierLabelResolver
 {
@@ -349,12 +207,9 @@ public:
         if(exitPrice <= 0.0 || entryPrice <= 0.0)
             return 0;
         
-        double upperDist = MathAbs(upperBarrier - entryPrice);
-        double lowerDist = MathAbs(entryPrice - lowerBarrier);
-        
-        if(upperDist < lowerDist)
+        if(exitPrice >= upperBarrier)
             return 2;
-        else if(lowerDist < upperDist)
+        else if(exitPrice <= lowerBarrier)
             return 1;
         else
             return 0;
@@ -433,6 +288,7 @@ private:
     datetime         m_lastSignalLogTime;
     datetime         m_lastCheckpointTimestamp;
     datetime         m_lastNormalizationBarTime;
+    int              m_featureLogCounter;
     datetime         m_lastResolvedBarTime;
     datetime         m_lastSelfRecordBarTime;
     datetime         m_lastFeatureImportanceLogTime;
@@ -500,9 +356,11 @@ private:
 
     double RandNormal()
     {
-        double u1 = (NextRand() + 1.0) / (4294967296.0 + 1.0);
-        double u2 = (NextRand() + 1.0) / (4294967296.0 + 1.0);
-        return MathSqrt(-2.0 * MathLog(MathMax(u1, 1e-10))) * MathCos(2.0 * M_PI * u2);
+        double u1 = NextRand();
+        while(u1 <= 1e-10)
+            u1 = NextRand();
+        double u2 = NextRand();
+        return MathSqrt(-2.0 * MathLog(u1)) * MathCos(2.0 * M_PI * u2);
     }
 
     void InitWeights()
@@ -643,9 +501,8 @@ private:
             m_lastNormalizationBarTime = barTime;
             
             // Log raw features every 20 bars for AI visualization
-            static int s_featureLogCounter = 0;
-            s_featureLogCounter++;
-            if(s_featureLogCounter % 20 == 0)
+            m_featureLogCounter++;
+            if(m_featureLogCounter % 20 == 0)
             {
                 string featureSummary = StringFormat("[FEATURES-RAW] Bar=%s | RSI=%.2f | ATR=%.5f | Vol=%.0f | ROC=%.4f",
                                                      TimeToString(barTime, TIME_DATE|TIME_MINUTES),
@@ -668,25 +525,6 @@ private:
     double ReLU(const double value) const
     {
         return MathMax(0.0, value);
-    }
-
-    void Softmax(double &values[], const int size, const double temperature = 1.0) const
-    {
-        double maxVal = values[0];
-        for(int i = 1; i < size; i++)
-            maxVal = MathMax(maxVal, values[i]);
-
-        double safeTemp = MathMax(1e-6, temperature);
-        double sum = 0.0;
-        for(int i = 0; i < size; i++)
-        {
-            values[i] = MathExp((values[i] - maxVal) / safeTemp);
-            sum += values[i];
-        }
-        if(sum <= 1e-12)
-            sum = 1.0;
-        for(int i = 0; i < size; i++)
-            values[i] /= sum;
     }
 
     void ForwardDetailed(const double &inputs[],
@@ -746,7 +584,7 @@ private:
     {
         if(targetClass < 0 || targetClass >= 3 || ArraySize(outputs) != 3)
             return 0.0;
-        return -MathLog(MathMax(outputs[targetClass], 1e-10));
+        return -MathLog(MathMax(outputs[targetClass], 1e-15));
     }
 
     void BackpropagateAndUpdate(const double &inputs[], const int targetClass)
@@ -1010,7 +848,7 @@ private:
                                    m_barrierBuffer[i].signalConfidence,
                                    m_barrierBuffer[i].metaInput);
                 m_conformal.AddScore(1.0 - m_barrierBuffer[i].signalConfidence);
-                m_conformal.UpdateACI(false);  // HOLD is not a correct directional prediction
+                m_conformal.UpdateACI(true);  // HOLD is the correct label when nothing happened
                 m_metaLabeler.AddSample(m_barrierBuffer[i].metaInput, 0);  // Not profitable
                 resolvedThisPass++;
                 continue;
@@ -1127,7 +965,9 @@ private:
         }
 
         int signalClass = (signal == TRADE_SIGNAL_BUY) ? 1 : 2;
-        double atr = rawFeatures[4] * iClose(m_symbol, m_timeframe, 1);
+        double atr = 0.0;
+        if(ArraySize(rawFeatures) > 4 && MathIsValidNumber(rawFeatures[4]) && rawFeatures[4] > 0.0)
+            atr = rawFeatures[4] * iClose(m_symbol, m_timeframe, 1);
         if(atr <= 0.0)
             atr = SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 100.0;
 
@@ -1257,7 +1097,7 @@ private:
     {
         ulong hash1 = 0x123456789ABCDEF0;
         ulong hash2 = 0xFEDCBA9876543210;
-        
+
         for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             for(int j = 0; j < 32; j++)
             {
@@ -1265,7 +1105,7 @@ private:
                 hash2 ^= (ulong)(i * 31 + j);
                 hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
             }
-        
+
         for(int i = 0; i < 32; i++)
             for(int j = 0; j < 16; j++)
             {
@@ -1273,7 +1113,7 @@ private:
                 hash1 ^= (ulong)(i * 17 + j);
                 hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
             }
-        
+
         for(int i = 0; i < 16; i++)
             for(int j = 0; j < 8; j++)
             {
@@ -1281,7 +1121,7 @@ private:
                 hash2 ^= (ulong)(i * 13 + j);
                 hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
             }
-        
+
         for(int i = 0; i < 8; i++)
             for(int j = 0; j < 3; j++)
             {
@@ -1289,7 +1129,35 @@ private:
                 hash1 ^= (ulong)(i * 7 + j);
                 hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
             }
-        
+
+        for(int i = 0; i < 32; i++)
+        {
+            hash1 ^= (ulong)(B1[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < 16; i++)
+        {
+            hash2 ^= (ulong)(B2[i] * 1000000.0);
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < 8; i++)
+        {
+            hash1 ^= (ulong)(B3[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < 3; i++)
+        {
+            hash2 ^= (ulong)(B4[i] * 1000000.0);
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+
+        for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
+        {
+            hash1 ^= (ulong)(m_featureMean[i] * 1000000.0);
+            hash2 ^= (ulong)(m_featureM2[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+
         return hash1 ^ (hash2 << 1);
     }
 
@@ -1352,6 +1220,14 @@ private:
             return false;
         }
 
+        if(FileIsEnding(fh))
+        {
+            FileClose(fh);
+            m_lastLoadStatus = "REJECTED_TRUNCATED_HEADER";
+            PrintFormat("[NEURAL-NET] %s Checkpoint truncated after header", m_symbol);
+            return false;
+        }
+
         m_lastCheckpointTimestamp = (datetime)FileReadLong(fh);
         bool persistedOnlineTraining = (FileReadInteger(fh) != 0);
         bool persistedSelfLabeling = (FileReadInteger(fh) != 0);
@@ -1395,6 +1271,14 @@ private:
         for(int i = 0; i < 16; i++) B2[i] = FileReadDouble(fh);
         for(int i = 0; i < 8; i++) B3[i] = FileReadDouble(fh);
         for(int i = 0; i < 3; i++) B4[i] = FileReadDouble(fh);
+
+        if(FileIsEnding(fh))
+        {
+            FileClose(fh);
+            m_lastLoadStatus = "REJECTED_TRUNCATED_WEIGHTS";
+            PrintFormat("[NEURAL-NET] %s Checkpoint truncated after weights", m_symbol);
+            return false;
+        }
 
         m_trainHead = 0;
         m_trainCount = MathMin(FileReadInteger(fh), NN_MAX_TRAINING_EXAMPLES);
@@ -1472,7 +1356,7 @@ private:
 public:
     CNeuralNetworkStrategy()
     {
-        m_randomState = 20260419;
+        m_randomState = (uint)((ulong)TimeCurrent() * 2654435761ULL);
         m_initialized = false;
         m_enableOnlineTraining = true;
         m_enableSelfLabeling = true;
@@ -1496,6 +1380,7 @@ public:
         m_lastSignalLogTime = 0;
         m_lastCheckpointTimestamp = 0;
         m_lastNormalizationBarTime = 0;
+        m_featureLogCounter = 0;
         m_lastResolvedBarTime = 0;
         m_lastSelfRecordBarTime = 0;
         m_lastFeatureImportanceLogTime = 0;
@@ -1601,7 +1486,7 @@ public:
 
     double GetLastUncertainty() const
     {
-        return m_conformal.GetLastUncertainty();
+        return m_conformal.GetQuantile();
     }
 
     bool IsTraining() const
@@ -1713,6 +1598,7 @@ public:
 
     bool ReservePredictionForSignal(const ENUM_TRADE_SIGNAL signal, string &predictionId, const int maxAgeSec = 600)
     {
+        if(maxAgeSec < 0) {}
         predictionId = "";
         if(!m_enableOnlineTraining)
             return false;
@@ -1837,7 +1723,10 @@ public:
         totalObservations = m_totalObservations;
         tradeLinkedLabels = m_tradeLinkedLabels;
         pseudoLabels = (int)m_resolvedLabelCount;
-        pendingLabels = m_barrierCount;
+        pendingLabels = 0;
+        for(int i = 0; i < m_barrierCount && i < NN_MAX_PERSISTED_SAMPLES; i++)
+            if(!m_barrierBuffer[i].resolved)
+                pendingLabels++;
         trainingSteps = m_trainingSteps;
         checkpointWrites = m_checkpointWrites;
         epoch = m_epoch;

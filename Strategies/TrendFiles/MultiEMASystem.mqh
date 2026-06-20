@@ -10,6 +10,8 @@
 #ifndef __TREND_MULTI_EMA_SYSTEM_MQH__
 #define __TREND_MULTI_EMA_SYSTEM_MQH__
 
+#include "../../IndicatorManager.mqh"
+
 //+------------------------------------------------------------------+
 //| Trend State Structure                                            |
 //+------------------------------------------------------------------+
@@ -167,13 +169,13 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
     m_symbol = symbol;
     m_timeframe = timeframe;
     
-    // Create EMA handles
-    m_ema8Handle = iMA(symbol, timeframe, 8, 0, MODE_EMA, PRICE_CLOSE);
-    m_ema21Handle = iMA(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE);
-    m_ema50Handle = iMA(symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
-    m_ema200Handle = iMA(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
-    m_adxHandle = iADX(symbol, timeframe, 14);
-    m_atrHandle = iATR(symbol, timeframe, 14);
+    // Create indicator handles via CIndicatorManager (owned by singleton, do NOT release individually)
+    m_ema8Handle = CIndicatorManager::Instance().GetMAHandle(symbol, timeframe, 8, 0, MODE_EMA, PRICE_CLOSE);
+    m_ema21Handle = CIndicatorManager::Instance().GetMAHandle(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE);
+    m_ema50Handle = CIndicatorManager::Instance().GetMAHandle(symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
+    m_ema200Handle = CIndicatorManager::Instance().GetMAHandle(symbol, timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
+    m_adxHandle = CIndicatorManager::Instance().GetADXHandle(symbol, timeframe, 14);
+    m_atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, timeframe, 14);
     
     if(m_ema8Handle == INVALID_HANDLE || m_ema21Handle == INVALID_HANDLE ||
        m_ema50Handle == INVALID_HANDLE || m_ema200Handle == INVALID_HANDLE ||
@@ -194,12 +196,14 @@ bool CMultiEMASystem::Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
 //+------------------------------------------------------------------+
 void CMultiEMASystem::Deinit()
 {
-    if(m_ema8Handle != INVALID_HANDLE) { IndicatorRelease(m_ema8Handle); m_ema8Handle = INVALID_HANDLE; }
-    if(m_ema21Handle != INVALID_HANDLE) { IndicatorRelease(m_ema21Handle); m_ema21Handle = INVALID_HANDLE; }
-    if(m_ema50Handle != INVALID_HANDLE) { IndicatorRelease(m_ema50Handle); m_ema50Handle = INVALID_HANDLE; }
-    if(m_ema200Handle != INVALID_HANDLE) { IndicatorRelease(m_ema200Handle); m_ema200Handle = INVALID_HANDLE; }
-    if(m_adxHandle != INVALID_HANDLE) { IndicatorRelease(m_adxHandle); m_adxHandle = INVALID_HANDLE; }
-    if(m_atrHandle != INVALID_HANDLE) { IndicatorRelease(m_atrHandle); m_atrHandle = INVALID_HANDLE; }
+    // Handles owned by CIndicatorManager — do NOT release individually.
+    // CIndicatorManager::DestroyInstance() handles cleanup on EA deinit.
+    m_ema8Handle = INVALID_HANDLE;
+    m_ema21Handle = INVALID_HANDLE;
+    m_ema50Handle = INVALID_HANDLE;
+    m_ema200Handle = INVALID_HANDLE;
+    m_adxHandle = INVALID_HANDLE;
+    m_atrHandle = INVALID_HANDLE;
 }
 
 //+------------------------------------------------------------------+

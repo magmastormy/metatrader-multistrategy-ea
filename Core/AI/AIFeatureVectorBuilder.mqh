@@ -16,7 +16,6 @@
 #define TRANSFORMER_D_FF_B_DEFAULT          96
 #define TRANSFORMER_MAX_SEQ_LEN_DEFAULT     60
 #define TRANSFORMER_SHORT_SEQ_LEN_DEFAULT   10
-#define TRANSFORMER_DROPOUT_DEFAULT TRANSFORMER_MAX_SEQ_LEN_DEFAULT
 #define TRANSFORMER_LR_A_DEFAULT           0.001
 #define TRANSFORMER_LR_B_DEFAULT          0.0015
 #define FEATURE_VECTOR_SIZE               57
@@ -464,8 +463,7 @@ private:
         }
 
         double scaled = ofi / 1000.0;
-        double tanhApprox = (MathExp(2.0 * scaled) - 1.0) / (MathExp(2.0 * scaled) + 1.0 + 1e-9);
-        return ClampValue(tanhApprox, -1.0, 1.0);
+        return ClampValue(MathTanh(scaled), -1.0, 1.0);
     }
 
     static double ComputeTimeSinceLastSpikeNormalized(const string symbol, const int lookbackTicks = 256)
@@ -549,7 +547,7 @@ public:
         int hEma21 = ind.GetMAHandle(symbol, timeframe, 21, 0, MODE_EMA, PRICE_CLOSE);
         int hEma50 = ind.GetMAHandle(symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
         int hEma100 = ind.GetMAHandle(symbol, timeframe, 100, 0, MODE_EMA, PRICE_CLOSE);
-        int hEma200 = ind.GetMAHandle(symbol, timeframe, 200, 0, MODE_SMA, PRICE_CLOSE);
+        int hSma200 = ind.GetMAHandle(symbol, timeframe, 200, 0, MODE_SMA, PRICE_CLOSE);
         int hRsi14 = ind.GetRSIHandle(symbol, timeframe, 14, PRICE_CLOSE);
         int hRsi7 = ind.GetRSIHandle(symbol, timeframe, 7, PRICE_CLOSE);
         int hAtr14 = ind.GetATRHandle(symbol, timeframe, 14);
@@ -566,8 +564,7 @@ public:
         double ema21 = GetIndicatorValue(hEma21, 0, barShift);
         double ema50 = GetIndicatorValue(hEma50, 0, barShift);
         double ema100 = GetIndicatorValue(hEma100, 0, barShift);
-        double ma50 = GetIndicatorValue(hEma50, 0, barShift);
-        double ma200 = GetIndicatorValue(hEma200, 0, barShift);
+        double ma200 = GetIndicatorValue(hSma200, 0, barShift);
         double rsi14 = GetIndicatorValue(hRsi14, 0, barShift) / 100.0;
         double rsi7 = GetIndicatorValue(hRsi7, 0, barShift) / 100.0;
         double rsi14Lag1 = GetIndicatorValue(hRsi14, 0, barShift + 1) / 100.0;
@@ -657,7 +654,7 @@ public:
         features[45] = ComputeRollingZScoreIndicator(hAtr14, barShift, 20);
         features[46] = GetLogReturn(symbol, timeframe, barShift + 10);
         features[47] = GetLogReturn(symbol, timeframe, barShift + 15);
-        features[48] = (atr14 > 1e-9) ? ((close - ma50) / (atr14 + 1e-9)) : 0.0;
+        features[48] = (atr14 > 1e-9) ? ((close - ema100) / (atr14 + 1e-9)) : 0.0;
         features[49] = (atr14 > 1e-9) ? ((close - ma200) / (atr14 + 1e-9)) : 0.0;
         features[50] = ComputeAutocorrProxyZScore(symbol, timeframe, barShift, 1, 20);
         features[51] = ComputeAutocorrProxyZScore(symbol, timeframe, barShift, 5, 20);

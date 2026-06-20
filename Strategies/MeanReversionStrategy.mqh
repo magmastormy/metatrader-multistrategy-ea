@@ -12,6 +12,7 @@
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 // Hurst Engine for regime lockout (v2.0)
 #include "../Core/Engines/HurstEngine.mqh"
+#include "../Utilities/SafeCopyBuffer.mqh"
 
 //+------------------------------------------------------------------+
 //| Mean Reversion Entry Types                                       |
@@ -84,17 +85,6 @@ private:
     int m_signalsGenerated;
     string m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
-    
-    bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
-    {
-        for(int attempt = 0; attempt < 3; attempt++)
-        {
-            if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
-                return true;
-            Sleep(10);  // 10ms wait for indicator calculation
-        }
-        return false;
-    }
 
     // Logging helper
     void LogRejectEvent(const string reasonTag)
@@ -175,8 +165,8 @@ public:
         m_rsiHandle = CIndicatorManager::Instance().GetRSIHandle(symbol, timeframe, m_rsiPeriod, PRICE_CLOSE);
         m_volumeHandle = CIndicatorManager::Instance().GetVolumesHandle(symbol, timeframe, VOLUME_TICK);
 
-        // v2.0: Stochastic for extreme confirmation
-        m_stochHandle = iStochastic(m_symbol, m_timeframe, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
+        // v2.0: Stochastic for extreme confirmation (via CIndicatorManager)
+        m_stochHandle = CIndicatorManager::Instance().GetStochasticHandle(m_symbol, m_timeframe, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
 
         if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE)
         {
@@ -451,14 +441,13 @@ public:
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
         
-        // Calculate ATR for spike detection
-        int atrHandle = iATR(m_symbol, m_timeframe, 14);
+        // Calculate ATR for spike detection (via CIndicatorManager — no per-call release)
+        int atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
         if(atrHandle == INVALID_HANDLE)
             return RejectSignal("MEANREV_SYN_ATR_HANDLE");
         
         double atrBuffer[1];
         bool atrOk = CopyBuffer(atrHandle, 0, 1, 1, atrBuffer) > 0;
-        IndicatorRelease(atrHandle);
         
         if(!atrOk || atrBuffer[0] <= 0.0)
             return RejectSignal("MEANREV_SYN_ATR_DATA");
@@ -522,7 +511,7 @@ public:
             
             SValidationResult result;
             ZeroMemory(result);
-            if(m_riskManager.ValidateTradeRequest(request, "MEANREV_SYN").approved)
+            if(m_riskManager != NULL && m_riskManager.ValidateTradeRequest(request, "MEANREV_SYN").approved)
             {
                 m_lastSignalBar = iBars(m_symbol, m_timeframe);
                 m_signalsGenerated++;

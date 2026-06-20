@@ -8,6 +8,7 @@
 #define __VOLATILITY_BREAKOUT_STRATEGY_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Utilities/SafeCopyBuffer.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
@@ -86,17 +87,6 @@ private:
     bool    m_breakoutFailed;     // Breakout failure reversal flag
     ENUM_TRADE_SIGNAL m_breakoutFailedDirection; // Direction of failed breakout reversal
     
-    bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
-    {
-        for(int attempt = 0; attempt < 3; attempt++)
-        {
-            if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
-                return true;
-            Sleep(10);  // 10ms wait for indicator calculation
-        }
-        return false;
-    }
-
     // Fallback BB calculation from raw price data when indicator handle fails
     bool CalculateFallbackBB(double &outUpper, double &outMiddle, double &outLower)
     {

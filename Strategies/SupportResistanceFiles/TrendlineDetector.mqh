@@ -10,6 +10,8 @@
 #ifndef __SR_TRENDLINE_DETECTOR_MQH__
 #define __SR_TRENDLINE_DETECTOR_MQH__
 
+#include "../../IndicatorManager.mqh"
+
 //+------------------------------------------------------------------+
 //| Trendline Type Enum                                              |
 //+------------------------------------------------------------------+
@@ -209,7 +211,7 @@ void CTrendlineDetector::DetectTrendlines(int lookback)
 //+------------------------------------------------------------------+
 double CTrendlineDetector::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
 
     double atr[];
@@ -218,7 +220,6 @@ double CTrendlineDetector::GetATR(int period)
     if(CopyBuffer(handle, 0, 0, 1, atr) > 0)
         result = atr[0];
 
-    IndicatorRelease(handle);
     return result;
 }
 

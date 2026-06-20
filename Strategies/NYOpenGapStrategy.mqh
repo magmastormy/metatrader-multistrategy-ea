@@ -12,6 +12,7 @@
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "../Core/Utils/Instruments.mqh"
+#include "../IndicatorManager.mqh"
 #include "UnifiedICTFiles/SessionGapDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
@@ -118,7 +119,8 @@ public:
         // --- Time filter: only trade during 13:30-14:00 UTC (9:30-10:00 AM EST) ---
         MqlDateTime dt;
         TimeCurrent(dt);
-        if(dt.hour != 13 || dt.min > 30)
+        bool inWindow = (dt.hour == 13 && dt.min >= 30) || (dt.hour == 14 && dt.min == 0);
+        if(!inWindow)
         {
             SetDecisionReasonTag("NYGAP_OUTSIDE_WINDOW");
             return TRADE_SIGNAL_NONE;
@@ -151,14 +153,13 @@ public:
 
         // --- Gap must be > 0.5 * ATR(14) to be significant ---
         double atr = 0;
-        int atrHandle = iATR(m_symbol, PERIOD_D1, 14);
+        int atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, PERIOD_D1, 14);
         if(atrHandle != INVALID_HANDLE)
         {
             double atrBuf[];
             ArraySetAsSeries(atrBuf, true);
             if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)
                 atr = atrBuf[0];
-            IndicatorRelease(atrHandle);
         }
 
         if(atr <= 0)

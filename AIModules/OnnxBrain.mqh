@@ -27,6 +27,7 @@ private:
     long   m_shadowHandle;
     int    m_shadowBarsCount;
     int    m_shadowBarsNeeded;
+    double m_promotionThreshold;
     double m_shadowWins;
     double m_shadowTotal;
     double m_activeWins;
@@ -36,6 +37,7 @@ private:
     double m_shadowConfidence;
     bool   m_hasShadowPrediction;
     bool   m_fallbackToCpu;
+    double m_temperature;
 
     bool ConfigureHandle(const long handle)
     {
@@ -142,10 +144,15 @@ private:
         if(sumExp <= 1e-9f)
             sumExp = 1.0f;
 
-        signalOut = 1;
+        signalOut = 0;
         for(int i = 0; i < ONNX_N_CLASSES; i++)
         {
             probsOut[i] /= sumExp;
+            if(!MathIsValidNumber(probsOut[i]) || probsOut[i] < 0.0f)
+            {
+                PrintFormat("[ONNX] Softmax output invalid at class %d: %f", i, probsOut[i]);
+                return false;
+            }
             if(probsOut[i] > probsOut[signalOut])
                 signalOut = i;
         }
@@ -167,6 +174,7 @@ public:
         m_shadowHandle = INVALID_HANDLE;
         m_shadowBarsCount = 0;
         m_shadowBarsNeeded = 100;
+        m_promotionThreshold = 0.01;
         m_shadowWins = 0.0;
         m_shadowTotal = 0.0;
         m_activeWins = 0.0;
@@ -190,7 +198,9 @@ public:
 
     bool Init(const uchar &modelBuffer[])
     {
+        bool prevFallback = m_fallbackToCpu;
         Deinit();
+        m_fallbackToCpu = prevFallback;
         if(!InitHandleFromBuffer(modelBuffer, m_handle))
         {
             PrintFormat("[ONNX] Model unavailable or invalid | err=%d | expected_shape=[1,%d,%d] | note=re-export ONNX after the 57-feature contract upgrade",
@@ -221,6 +231,7 @@ public:
         m_shadowWarmup = 0;
         m_hasShadowPrediction = false;
         m_fallbackToCpu = false;
+        m_temperature = 1.0;
     }
 
     void PushFeatures(const double &features[], const int size)
@@ -241,7 +252,7 @@ public:
         for(int i = 0; i < ONNX_N_CLASSES; i++)
             m_probs[i] = probs[i];
 
-        if(m_shadowHandle != INVALID_HANDLE)
+        if(m_shadowHandle != INVALID_HANDLE && m_shadowWarmup >= ONNX_SEQ_LEN)
         {
             float shadowProbs[];
             if(RunHandle(m_shadowHandle, m_shadowSignal, m_shadowConfidence, shadowProbs))
@@ -259,6 +270,11 @@ public:
 
     int GetSignal() const { return m_signal; }           // 0=SELL,1=NEUTRAL,2=BUY
     double GetConfidence() const { return m_confidence; }
+    double GetActiveAccuracy() const { return (m_activeTotal > 0) ? (m_activeWins / m_activeTotal) : 0.0; }
+    int GetActiveTotal() const { return (int)m_activeTotal; }
+    int GetActiveWins() const { return (int)m_activeWins; }
+    double GetTemperature() const { return m_temperature; }
+    void SetTemperature(const double temperature) { m_temperature = MathMax(0.1, MathMin(5.0, temperature)); }
     bool IsReady() const { return m_loaded && m_full; }
     bool IsLoaded() const { return m_loaded; }
     void GetProbs(float &out[]) const
@@ -293,10 +309,20 @@ public:
 
         uchar newModelBuf[];
         int bytes = (int)FileSize(fh);
+        if(bytes <= 0 || bytes > 50 * 1024 * 1024)
+        {
+            FileClose(fh);
+            PrintFormat("[ONNX] Hot-swap: invalid file size %d bytes", bytes);
+            return;
+        }
         ArrayResize(newModelBuf, bytes);
-        if(bytes > 0)
-            FileReadArray(fh, newModelBuf, 0, bytes);
+        uint bytesRead = FileReadArray(fh, newModelBuf, 0, bytes);
         FileClose(fh);
+        if((int)bytesRead != bytes)
+        {
+            PrintFormat("[ONNX] Hot-swap: read mismatch expected=%d got=%d", bytes, bytesRead);
+            return;
+        }
 
         if(m_shadowHandle != INVALID_HANDLE)
             OnnxRelease(m_shadowHandle);
@@ -341,7 +367,7 @@ public:
 
         double activeAcc = m_activeWins / (m_activeTotal + 1e-9);
         double shadowAcc = m_shadowWins / (m_shadowTotal + 1e-9);
-        if(shadowAcc > activeAcc + 0.01)
+        if(shadowAcc > activeAcc + m_promotionThreshold)
         {
             if(m_handle != INVALID_HANDLE)
                 OnnxRelease(m_handle);
@@ -358,6 +384,10 @@ public:
         }
 
         m_shadowBarsCount = 0;
+        m_shadowWins = 0.0;
+        m_shadowTotal = 0.0;
+        m_activeWins = 0.0;
+        m_activeTotal = 0.0;
         m_hasShadowPrediction = false;
     }
 

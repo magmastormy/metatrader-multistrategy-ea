@@ -13,7 +13,10 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
+#include "../Risk/RiskValidationGate.mqh"
 #include <Trade\Trade.mqh>
+
+class CUnifiedRiskManager;
 
 //+------------------------------------------------------------------+
 //| Grid progression type                                             |
@@ -101,6 +104,7 @@ private:
    int                       m_symbolCount;
    int                       m_baseMagic;
    CPositionSizer*           m_positionSizer;
+   CUnifiedRiskManager*      m_riskManager;
    CTrade                    m_trade;
 
    // ATR indicator handles per symbol
@@ -287,8 +291,9 @@ public:
    CGridRecoveryEngine() :
       m_symbolCount(0),
       m_baseMagic(0),
-      m_positionSizer(NULL),
-      m_totalGridsOpened(0),
+       m_positionSizer(NULL),
+       m_riskManager(NULL),
+       m_totalGridsOpened(0),
       m_totalGridsClosed(0),
       m_totalLevelsPlaced(0)
    {
@@ -305,11 +310,12 @@ public:
    //+------------------------------------------------------------------+
    //| Initialize the engine with config and dependencies               |
    //+------------------------------------------------------------------+
-   bool Init(const SGridRecoveryConfig &config, int baseMagic, CPositionSizer *pSizer)
+   bool Init(const SGridRecoveryConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL)
    {
       m_config         = config;
       m_baseMagic      = baseMagic;
       m_positionSizer  = pSizer;
+      m_riskManager    = pRiskManager;
       m_symbolCount    = 0;
 
       PrintFormat("[GRID-RECOVERY] Initialized | gridATR=%.2f | maxLevels=%d | progression=%s | factor=%.2f | hurst=%.2f | slATR=%.1f | tpATR=%.1f | magicOffset=%d | maxDD=%d%% | cooldown=%dms",
@@ -611,6 +617,29 @@ public:
 
       // Calculate magic number: baseMagic + magicOffset + symbolIndex
       int magic = m_baseMagic + m_config.magicOffset + idx;
+
+      // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
+      if(m_riskManager != NULL)
+      {
+         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+         double slPips = (point > 0.0) ? (slDistance / point) : 0.0;
+         STradeValidationRequest riskReq;
+         ZeroMemory(riskReq);
+         riskReq.symbol       = symbol;
+         riskReq.orderType    = orderType;
+         riskReq.lotSize      = lotSize;
+         riskReq.stopLossPips = slPips;
+         riskReq.confidence   = 0.6;
+         riskReq.strategy     = "GRID-RECOVERY";
+         riskReq.requestTime  = TimeCurrent();
+
+         SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "grid-pretrade");
+         if(!riskResult.approved)
+         {
+            PrintFormat("[GRID-RECOVERY] REJECTED by risk manager | symbol=%s level=%d | reason=%s", symbol, level, riskResult.reason);
+            return false;
+         }
+      }
 
       // Set up trade object
       m_trade.SetExpertMagicNumber(magic);

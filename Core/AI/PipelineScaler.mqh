@@ -67,11 +67,25 @@ public:
         ArrayResize(m_means, featureCount);
         ArrayResize(m_scales, featureCount);
         for(int i = 0; i < featureCount; i++)
+        {
+            if(FileIsEnding(handle))
+            {
+                FileClose(handle);
+                m_loaded = false;
+                return false;
+            }
             m_means[i] = FileReadDouble(handle);
+        }
         for(int i = 0; i < featureCount; i++)
         {
+            if(FileIsEnding(handle))
+            {
+                FileClose(handle);
+                m_loaded = false;
+                return false;
+            }
             double scale = FileReadDouble(handle);
-            m_scales[i] = (MathAbs(scale) > 1e-12) ? scale : 1.0;
+            m_scales[i] = (MathAbs(scale) > 1e-6) ? scale : 1.0;
         }
 
         m_lastModified = (long)FileGetInteger(handle, FILE_MODIFY_DATE);

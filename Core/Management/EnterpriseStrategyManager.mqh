@@ -12,6 +12,7 @@
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../Risk/VPINFilter.mqh"
 #include "../Engines/OrderFlowImbalanceEngine.mqh"
+#include "../Utils/Enums.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
 
@@ -39,13 +40,11 @@
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
-class CHedgingProtection;
 class CMarketAnalysis;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
 class CPositionSizer;
-class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
 class CPythonBridge;
@@ -550,6 +549,8 @@ public:
         return MARKET_REGIME_UNKNOWN;
     }
     string GetStrategyWeightsJSON() const;
+    string GetStrategyListJSON() const;
+    string GetConsensusContextJSON() const;
     void UpdateStrategyWeights();
     void CheckStrategyDisabling();
     void CheckStrategyReEnabling();
@@ -1180,7 +1181,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         // SPECIAL BYPASS: Trend + Support/Resistance Reversal Override
         // If they have "good" confidence (>0.65), they bypass the tier floor 
         // to ensure reversals are heard even during strong Tier 1 (ICT) moves.
-        // Fibonacci REMOVED — S/R now carries the confluence module
+        // Fibonacci REMOVED �?S/R now carries the confluence module
         bool bypassTierFloor = false;
         if(m_strategies[i].name == "Trend" || m_strategies[i].name == "Support/Resistance")
         {
@@ -1658,8 +1659,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     // Scale thresholds based on total registered live voters, not just active voters.
     if(m_adaptiveQuorumEnabled && activeLiveStrategies > 0 && activeLiveStrategies <= 3 && evalMode != EVAL_MODE_INTRABAR)
     {
-        supportFloor = m_adaptiveSupportFloor_1voter;    // 0.15 — achievable with 1/3 voters
-        effectiveQualityThreshold = adaptiveQualityThreshold1; // 0.40 — relaxed for sparse consensus
+        supportFloor = m_adaptiveSupportFloor_1voter;    // 0.15 �?achievable with 1/3 voters
+        effectiveQualityThreshold = adaptiveQualityThreshold1; // 0.40 �?relaxed for sparse consensus
     }
 
     // Adaptive quorum: adjust thresholds based on actual active voter count
@@ -1874,7 +1875,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
             if(bestQuality >= effectiveQualityThreshold)
             {
-                // Full admission — quality meets threshold (handled by support/quorum checks below)
+                // Full admission �?quality meets threshold (handled by support/quorum checks below)
                 if(bestSupport < supportFloor)
                 {
                     vetoCode = "insufficient_support";
@@ -1905,7 +1906,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             }
             else
             {
-                // Hard veto — quality too far below threshold
+                // Hard veto �?quality too far below threshold
                 vetoCode = "insufficient_quality";
                 vetoReason = StringFormat("quality=%.3f (need %.3f, marginalFloor=%.3f) | votes=%d | support=%.3f",
                                           bestQuality, effectiveQualityThreshold, marginalQualityFloor,
@@ -2550,6 +2551,49 @@ string CEnterpriseStrategyManager::GetStrategyWeightsJSON() const
     return json;
 }
 
+string CEnterpriseStrategyManager::GetStrategyListJSON() const
+{
+    string json = "[";
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(i > 0)
+            json += ",";
+        json += "{";
+        json += "\"name\":\"" + EscapeJsonString(m_strategies[i].name) + "\",";
+        json += "\"symbol\":\"" + EscapeJsonString(m_symbol) + "\",";
+        json += "\"role\":\"" + StrategyRoleToString((ENUM_STRATEGY_ROLE)m_strategies[i].role) + "\",";
+        json += "\"mode\":\"" + (m_strategies[i].shadowOnly ? "SHADOW" : (m_strategies[i].enabled && m_strategies[i].liveVotingEnabled ? "ACTIVE" : "DISABLED")) + "\",";
+        json += "\"weight\":" + DoubleToString(m_strategies[i].weight, 2) + ",";
+        json += "\"health_score\":" + DoubleToString(m_strategies[i].healthScore, 2) + ",";
+        json += "\"win_rate\":" + DoubleToString(m_strategies[i].recentWinRate, 2) + ",";
+        json += "\"cluster\":\"" + StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster) + "\"";
+        json += "}";
+    }
+    json += "]";
+    return json;
+}
+
+string CEnterpriseStrategyManager::GetConsensusContextJSON() const
+{
+    SConsensusDecisionContext ctx = m_lastDecisionContext;
+    string json = "{";
+    json += "\"symbol\":\"" + EscapeJsonString(ctx.symbol) + "\",";
+    json += "\"signal\":\"" + TradeSignalToString(ctx.signal) + "\",";
+    json += "\"confidence\":" + DoubleToString(ctx.confidence, 3) + ",";
+    json += "\"buy_score\":" + DoubleToString(ctx.buyScore, 3) + ",";
+    json += "\"sell_score\":" + DoubleToString(ctx.sellScore, 3) + ",";
+    json += "\"quorum_met\":" + (ctx.signal != TRADE_SIGNAL_NONE ? "true" : "false") + ",";
+    json += "\"veto_code\":\"" + EscapeJsonString(ctx.vetoCode) + "\",";
+    json += "\"active_strategies\":" + IntegerToString(m_strategyCount) + ",";
+    json += "\"voted_strategies\":" + IntegerToString(ctx.eligibleLiveVoterCount) + ",";
+    json += "\"dominant_cluster\":\"" + StrategyClusterToString(ctx.dominantCluster) + "\",";
+    json += "\"quorum_mode\":\"" + EscapeJsonString(ctx.quorumMode) + "\",";
+    json += "\"confluence\":" + IntegerToString(ctx.confluence) + ",";
+    json += "\"reason\":\"" + EscapeJsonString(ctx.reason) + "\"";
+    json += "}";
+    return json;
+}
+
 void CEnterpriseStrategyManager::UpdateStrategyWeights()
 {
     for(int i = 0; i < m_strategyCount; i++)
@@ -2929,7 +2973,7 @@ int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
 }
 
 //+------------------------------------------------------------------+
-//| Get Strategy By Name — Batch 103: returns strategy pointer       |
+//| Get Strategy By Name �?Batch 103: returns strategy pointer       |
 //+------------------------------------------------------------------+
 IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 {
