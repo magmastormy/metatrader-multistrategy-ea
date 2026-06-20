@@ -43,20 +43,6 @@ private:
         return true;
     }
 
-    bool IsBullishOBType(const ENUM_ORDER_BLOCK_TYPE type) const
-    {
-        return (type == OB_BREAKER_BULL || type == OB_PROPULSION_BULL ||
-                type == OB_REJECTION_BULL || type == OB_VACUUM_BULL ||
-                type == OB_CONTINUATION_BULL || type == OB_SOURCE_BULLISH);
-    }
-
-    bool IsBearishOBType(const ENUM_ORDER_BLOCK_TYPE type) const
-    {
-        return (type == OB_BREAKER_BEAR || type == OB_PROPULSION_BEAR ||
-                type == OB_REJECTION_BEAR || type == OB_VACUUM_BEAR ||
-                type == OB_CONTINUATION_BEAR || type == OB_SOURCE_BEARISH);
-    }
-
 public:
     CUnicornModelStrategy(const string name = "Unicorn Model") :
         CStrategyBase(name, 0),
@@ -183,12 +169,12 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        if(bullish && !IsBullishOBType(ob.type))
+        if(bullish && !m_obDetector.IsBullishOBType(ob.type))
         {
             SetDecisionReasonTag("UNICORN_OB_TYPE_MISMATCH");
             return TRADE_SIGNAL_NONE;
         }
-        if(!bullish && !IsBearishOBType(ob.type))
+        if(!bullish && !m_obDetector.IsBearishOBType(ob.type))
         {
             SetDecisionReasonTag("UNICORN_OB_TYPE_MISMATCH");
             return TRADE_SIGNAL_NONE;

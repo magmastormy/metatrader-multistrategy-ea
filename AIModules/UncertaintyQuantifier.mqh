@@ -166,10 +166,10 @@ public:
     }
     
     // Update prediction history
-    bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0) {
+    bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0, bool hasOutcome = false) {
         RingPush(m_predictionHistory, m_predictionHead, m_predictionCount, prediction);
-        
-        if(actualOutcome != 0.0) {
+
+        if(hasOutcome) {
             double error = prediction - actualOutcome;
             RingPush(m_errorHistory, m_errorHead, m_errorCount, error);
         }
@@ -215,9 +215,14 @@ public:
         result.uncertainty = MathMax(0.0, MathMin(1.0, result.uncertainty));
         
         // Calculate confidence bounds using t-distribution approximation
-        double tValue = 1.96; // 95% confidence for normal distribution
-        if(m_confidenceLevel == 0.99) tValue = 2.58;
-        else if(m_confidenceLevel == 0.90) tValue = 1.64;
+        double tValue = 1.96;
+        if(m_confidenceLevel >= 0.999) tValue = 3.29;
+        else if(m_confidenceLevel >= 0.99) tValue = 2.58;
+        else if(m_confidenceLevel >= 0.975) tValue = 2.24;
+        else if(m_confidenceLevel >= 0.95) tValue = 1.96;
+        else if(m_confidenceLevel >= 0.90) tValue = 1.64;
+        else if(m_confidenceLevel >= 0.80) tValue = 1.28;
+        else tValue = 1.96;
         
         double margin = tValue * result.uncertainty;
         result.lowerBound = result.prediction - margin;
@@ -268,11 +273,15 @@ public:
     // Calculate Value at Risk (VaR) based on uncertainty
     double CalculateVaR(double position, const SPredictionWithUncertainty &prediction, 
                        double confidenceLevel = 0.95) {
-        // Use lower bound as worst-case scenario
+        if(MathAbs(position) < 1e-9)
+            return 0.0;
+        
         double worstCase = (position > 0) ? prediction.lowerBound : prediction.upperBound;
         double expectedLoss = MathAbs(position * worstCase);
         
-        return expectedLoss;
+        // Scale by confidence level (higher confidence → more conservative VaR)
+        double confidenceScale = 1.0 + (confidenceLevel - 0.95) * 4.0;
+        return expectedLoss * confidenceScale;
     }
     
     // Bayesian confidence update
@@ -335,7 +344,7 @@ public:
 };
 
 // Global uncertainty quantifier
-CUncertaintyQuantifier* g_uncertaintyQuantifier = NULL;
+CUncertaintyQuantifier* g_uncertaintyQuantifier;
 
 //+------------------------------------------------------------------+
 //| Initialize Uncertainty Quantifier                              |
@@ -367,7 +376,7 @@ bool UncertaintyQuantify(double buySignal, double sellSignal, double holdSignal,
 //+------------------------------------------------------------------+
 bool UncertaintyUpdate(double prediction, double actualOutcome) {
     if(!g_uncertaintyQuantifier) return false;
-    return g_uncertaintyQuantifier.UpdatePredictionHistory(prediction, actualOutcome);
+    return g_uncertaintyQuantifier.UpdatePredictionHistory(prediction, actualOutcome, true);
 }
 
 //+------------------------------------------------------------------+

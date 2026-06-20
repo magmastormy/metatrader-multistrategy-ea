@@ -166,8 +166,8 @@ private:
                 double dProfit = pProfit - target;
                 
                 // Calculate binary cross-entropy loss
-                double eps = 1e-15;
-                double loss = -target * MathLog(MathMax(pProfit, eps)) - (1.0 - target) * MathLog(MathMax(1.0 - pProfit, eps));
+                double logEps = 1e-15;
+                double loss = -target * MathLog(MathMax(pProfit, logEps)) - (1.0 - target) * MathLog(MathMax(1.0 - pProfit, logEps));
                 batchTotalLoss += loss;
                 lossCount++;
                 double dOut[ML_OUT];
@@ -391,7 +391,7 @@ public:
 
     void AddSample(const double &inp[], const int label)
     {
-        if(ArraySize(inp) < ML_INPUT)
+        if(ArraySize(inp) < ML_INPUT || ArraySize(m_bufX) == 0)
             return;
 
         int slot = m_bufHead % m_bufMax;

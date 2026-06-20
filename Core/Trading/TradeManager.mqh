@@ -36,13 +36,11 @@
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
-class CHedgingProtection;
 class CMarketAnalysis;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
 class CPositionSizer;
-class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
 
@@ -718,7 +716,7 @@ private:
         datetime historyFrom = TimeCurrent() - 300;
         datetime historyTo = TimeCurrent() + 60;
 
-        // Single non-blocking check â€” no Sleep loop
+        // Single non-blocking check â€?no Sleep loop
         if(HistorySelect(historyFrom, historyTo))
         {
             if(tradeResult.deal > 0 && HistoryDealSelect(tradeResult.deal))
@@ -750,7 +748,7 @@ private:
             }
         }
 
-        // Deal not found yet â€” defer to pending confirmation for later resolution
+        // Deal not found yet â€?defer to pending confirmation for later resolution
         if(tradeResult.order > 0 && m_pendingConfirmationCount < MAX_PENDING_CONFIRMATIONS)
         {
             int idx = m_pendingConfirmationCount;
@@ -765,7 +763,7 @@ private:
                         symbolName, tradeResult.order);
         }
 
-        // Optimistic return â€” broker accepted the order, confirmation deferred
+        // Optimistic return â€?broker accepted the order, confirmation deferred
         m_lastExecutionReceipt.accepted = true;
         if(m_lastExecutionReceipt.averagePrice <= 0.0)
             m_lastExecutionReceipt.averagePrice = fallbackPrice;
@@ -1910,7 +1908,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         return false;
     }
 
-    // MANDATORY STOP-LOSS GATE: Defense-in-depth â€” execution layer enforces SL invariant
+    // MANDATORY STOP-LOSS GATE: Defense-in-depth â€?execution layer enforces SL invariant
     if(stopLossPips <= 0.0)
     {
         LogError("EXECUTION BLOCKED: Stop-loss is mandatory. Trade rejected", symbolName);
@@ -2523,7 +2521,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     double newStopLoss = 0;
     // Batch104-BUG4: Lower trailing activation threshold.
     // Old: activationPoints = MathMax(step, distance) = max(120, 300) = 300 points
-    // This required 300 points profit before trailing started â€” too aggressive for forex.
+    // This required 300 points profit before trailing started â€?too aggressive for forex.
     // New: activationPoints = distance (the trailing distance itself is the minimum
     // profit needed for the trailing stop to sit above entry for BUY positions).
     double activationPoints = distance;

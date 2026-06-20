@@ -41,20 +41,6 @@ private:
         return true;
     }
 
-    bool IsBullishOBType(const ENUM_ORDER_BLOCK_TYPE type) const
-    {
-        return (type == OB_BREAKER_BULL || type == OB_PROPULSION_BULL ||
-                type == OB_REJECTION_BULL || type == OB_VACUUM_BULL ||
-                type == OB_CONTINUATION_BULL || type == OB_SOURCE_BULLISH);
-    }
-
-    bool IsBearishOBType(const ENUM_ORDER_BLOCK_TYPE type) const
-    {
-        return (type == OB_BREAKER_BEAR || type == OB_PROPULSION_BEAR ||
-                type == OB_REJECTION_BEAR || type == OB_VACUUM_BEAR ||
-                type == OB_CONTINUATION_BEAR || type == OB_SOURCE_BEARISH);
-    }
-
 public:
     CBreakerBlockStrategy(const string name = "Breaker Block") :
         CStrategyBase(name, 0),
@@ -134,8 +120,8 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 1: Find breaker OBs that are NOT mitigated ---
-        double currentClose = iClose(m_symbol, m_timeframe, 0);
+        // --- Step 1: Find breaker OBs that are NOT mitigated (use bar 1 = last closed bar) ---
+        double currentClose = iClose(m_symbol, m_timeframe, 1);
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
         int bestBreakerIdx = -1;

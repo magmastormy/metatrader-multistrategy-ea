@@ -121,7 +121,7 @@ public:
         m_cachedConfidence = 0.0;
         m_lastDecisionReasonTag = "ONNX_UNSET";
         m_minConfidence = 0.50;
-        m_scalerWatchPath = "EAModels\\ONNX\\scaler.bin";
+        m_scalerWatchPath = "Resources\\scaler.bin";
         m_lastScalerCheckTime = 0;
         m_voteCount = 0;
         m_buyVotes = 0;
@@ -381,13 +381,13 @@ public:
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {
         signals = (int)m_voteCount;
-        successful = 0;
-        accuracy = 0.0;
+        successful = m_brain.GetActiveWins();
+        accuracy = m_brain.GetActiveAccuracy();
     }
     
     virtual double GetUncertainty(void) override
     {
-        return 0.5;
+        return 1.0 - m_brain.GetConfidence();
     }
     
     virtual bool IsModelHealthy(void) const override
@@ -402,21 +402,22 @@ public:
     
     virtual int GetTrainingSteps(void) const override
     {
-        return 0;
+        return m_brain.IsLoaded() ? 1 : 0;
     }
     
     virtual double GetTemperature(void) const override
     {
-        return 1.0;
+        return m_brain.GetTemperature();
     }
     
     virtual void SetTemperature(const double temperature) override
     {
+        m_brain.SetTemperature(temperature);
     }
     
     virtual int GetRegimeState(void) const override
     {
-        return -1;
+        return 0;
     }
     
     virtual bool SaveCheckpoint(void) override

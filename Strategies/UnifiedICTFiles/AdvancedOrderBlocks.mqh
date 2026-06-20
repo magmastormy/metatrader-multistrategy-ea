@@ -138,6 +138,20 @@ public:
     int                 FindBestBullishOB();
     int                 FindBestBearishOB();
     double              GetFreshness(int obIndex);  // Batch 103: OB freshness decay 0.0-1.0
+
+    // OB type classification helpers (consolidated from strategy files)
+    bool                IsBullishOBType(ENUM_ORDER_BLOCK_TYPE type) const
+    {
+        return (type == OB_BREAKER_BULL || type == OB_PROPULSION_BULL ||
+                type == OB_REJECTION_BULL || type == OB_VACUUM_BULL ||
+                type == OB_CONTINUATION_BULL || type == OB_SOURCE_BULLISH);
+    }
+    bool                IsBearishOBType(ENUM_ORDER_BLOCK_TYPE type) const
+    {
+        return (type == OB_BREAKER_BEAR || type == OB_PROPULSION_BEAR ||
+                type == OB_REJECTION_BEAR || type == OB_VACUUM_BEAR ||
+                type == OB_CONTINUATION_BEAR || type == OB_SOURCE_BEARISH);
+    }
 };
 
 //+------------------------------------------------------------------+

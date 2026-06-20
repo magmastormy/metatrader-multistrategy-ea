@@ -11,6 +11,11 @@
 #include "Enums.mqh"
 #include "ErrorHandling.mqh"
 
+class CEnterpriseStrategyManager;
+
+extern CEnterpriseStrategyManager* g_enterpriseManagers[];
+extern string g_enterpriseManagerSymbols[];
+
 //+------------------------------------------------------------------+
 //| Dashboard Bridge Class                                           |
 //+------------------------------------------------------------------+
@@ -192,6 +197,12 @@ bool CDashboardBridge::SendHttpRequest(const string &method, const string &url,
       return false;
    }
 
+   if(res >= 400)
+   {
+      m_lastError = "HTTP " + IntegerToString(res) + " from " + url;
+      return false;
+   }
+
    response = CharArrayToString(response_array);
    return true;
 }
@@ -273,8 +284,23 @@ string CDashboardBridge::BuildStateJson()
    json += "\"avg_loss\":0";
    json += "},";
 
-   // Consensus (placeholder)
-   json += "\"consensus\":{\"symbols\":{}},";
+   // Consensus - real data from enterprise managers
+   json += "\"consensus\":{";
+   json += "\"symbols\":{";
+   int managerCount = ArraySize(g_enterpriseManagers);
+   int consensusAdded = 0;
+   for(int m = 0; m < managerCount; m++)
+   {
+      if(g_enterpriseManagers[m] == NULL) continue;
+      string sym = g_enterpriseManagerSymbols[m];
+      if(StringLen(sym) == 0) continue;
+      
+      string consensusJson = g_enterpriseManagers[m].GetConsensusContextJSON();
+      if(consensusAdded > 0) json += ",";
+      json += "\"" + EscapeJsonString(sym) + "\":" + consensusJson;
+      consensusAdded++;
+   }
+   json += "}},";
 
    // AI (placeholder)
    json += "\"ai\":{";
@@ -284,8 +310,20 @@ string CDashboardBridge::BuildStateJson()
    json += "\"nn\":{\"active\":false}";
    json += "},";
 
-   // Strategies (placeholder)
-   json += "\"strategies\":[],";
+   // Strategies - real data from enterprise managers
+   json += "\"strategies\":[";
+   int strategiesAdded = 0;
+   for(int m = 0; m < managerCount; m++)
+   {
+      if(g_enterpriseManagers[m] == NULL) continue;
+      string strategyList = g_enterpriseManagers[m].GetStrategyListJSON();
+      if(StringLen(strategyList) < 3) continue;
+      string inner = StringSubstr(strategyList, 1, StringLen(strategyList) - 2);
+      if(strategiesAdded > 0 && StringLen(inner) > 0) json += ",";
+      json += inner;
+      strategiesAdded++;
+   }
+   json += "],";
 
    // Scalp (placeholder)
    json += "\"scalp\":{";
@@ -316,7 +354,158 @@ string CDashboardBridge::BuildStateJson()
    json += "\"requests\":0,";
    json += "\"ok\":0,";
    json += "\"errors\":0";
+   json += "},";
+
+   // Candles - last 100 M1 bars for active symbols (max 5 symbols)
+   json += "\"candles\":{";
+   posTotal = PositionsTotal();
+   string activeSymbols[];
+   int symbolCount = 0;
+   ArrayResize(activeSymbols, 10);
+   
+   // Collect unique symbols from open positions
+   for(int i = 0; i < posTotal; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      
+      string sym = PositionGetString(POSITION_SYMBOL);
+      bool found = false;
+      for(int j = 0; j < symbolCount; j++)
+      {
+         if(activeSymbols[j] == sym)
+         {
+            found = true;
+            break;
+         }
+      }
+      if(!found && symbolCount < 10)
+      {
+         activeSymbols[symbolCount] = sym;
+         symbolCount++;
+      }
+   }
+   
+   // Limit to max 5 symbols and ensure they have enough bars
+   int maxSymbols = MathMin(symbolCount, 5);
+   int symbolsAdded = 0;
+   
+   for(int i = 0; i < maxSymbols; i++)
+   {
+      string sym = activeSymbols[i];
+      
+      // Check if symbol has at least 10 bars of M1 data
+      if(!SymbolSelect(sym, true))
+         continue;
+      
+      int bars = iBars(sym, PERIOD_M1);
+      if(bars < 10)
+         continue;
+      
+      if(symbolsAdded > 0)
+         json += ",";
+      
+      json += "\"" + sym + "\":{";
+      json += "\"timeframe\":\"M1\",";
+      json += "\"bars\":[";
+      
+      int maxBars = MathMin(bars, 100);
+      int barsAdded = 0;
+      
+      for(int j = maxBars - 1; j >= 0; j--)
+      {
+         datetime barTime = iTime(sym, PERIOD_M1, j);
+         if(barTime == 0)
+            continue;
+         
+         // Convert to Unix timestamp (seconds)
+         int unixTime = (int)barTime;
+         
+         double open = iOpen(sym, PERIOD_M1, j);
+         double high = iHigh(sym, PERIOD_M1, j);
+         double low = iLow(sym, PERIOD_M1, j);
+         double close = iClose(sym, PERIOD_M1, j);
+         long volume = (long)iVolume(sym, PERIOD_M1, j);
+         
+         if(barsAdded > 0)
+            json += ",";
+         
+         json += "{";
+         json += "\"time\":" + IntegerToString(unixTime) + ",";
+         json += "\"open\":" + DoubleToString(open, 5) + ",";
+         json += "\"high\":" + DoubleToString(high, 5) + ",";
+         json += "\"low\":" + DoubleToString(low, 5) + ",";
+         json += "\"close\":" + DoubleToString(close, 5) + ",";
+         json += "\"volume\":" + IntegerToString(volume);
+         json += "}";
+         
+         barsAdded++;
+      }
+      
+      json += "]";
+      json += "}";
+      symbolsAdded++;
+   }
+   
    json += "}";
+
+   // Closed trades (recent history from deal cache)
+   json += "\"closed_trades\":[";
+   datetime fromTime = TimeCurrent() - 7*24*3600; // Last 7 days
+   datetime toTime = TimeCurrent();
+   HistorySelect(fromTime, toTime);
+   int dealsTotal = HistoryDealsTotal();
+   int tradesAdded = 0;
+   for(int i = 0; i < dealsTotal && tradesAdded < 50; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0) continue;
+
+      // Only process position close deals
+      if(HistoryDealGetInteger(dealTicket, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
+
+      // Get position ID to find the entry deal
+      ulong positionId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+      datetime openTime = 0;
+      double openPrice = 0;
+      string symbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+
+      // Find the entry deal for this position
+      HistorySelectByPosition(positionId);
+      int posDealsTotal = HistoryDealsTotal();
+      for(int j = 0; j < posDealsTotal; j++)
+      {
+         ulong entryDealTicket = HistoryDealGetTicket(j);
+         if(entryDealTicket == 0) continue;
+         if(HistoryDealGetInteger(entryDealTicket, DEAL_ENTRY) == DEAL_ENTRY_IN)
+         {
+            openTime = (datetime)HistoryDealGetInteger(entryDealTicket, DEAL_TIME);
+            openPrice = HistoryDealGetDouble(entryDealTicket, DEAL_PRICE);
+            break;
+         }
+      }
+      HistorySelect(fromTime, toTime); // Restore original selection
+
+      if(tradesAdded > 0) json += ",";
+      json += "{";
+      json += "\"ticket\":" + IntegerToString((long)dealTicket) + ",";
+      json += "\"symbol\":\"" + EscapeJsonString(symbol) + "\",";
+      json += "\"type\":\"" + (HistoryDealGetInteger(dealTicket, DEAL_TYPE) == DEAL_TYPE_BUY ? "BUY" : "SELL") + "\",";
+      json += "\"lots\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_VOLUME), 2) + ",";
+      json += "\"open_price\":" + DoubleToString(openPrice, 5) + ",";
+      json += "\"close_price\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PRICE), 5) + ",";
+      json += "\"profit\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PROFIT), 2) + ",";
+      json += "\"open_time\":\"" + TimeToString(openTime, TIME_DATE|TIME_SECONDS) + "\",";
+      json += "\"close_time\":\"" + TimeToString((datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME), TIME_DATE|TIME_SECONDS) + "\",";
+      int durationMin = 0;
+      if(openTime > 0)
+         durationMin = (int)((HistoryDealGetInteger(dealTicket, DEAL_TIME) - openTime) / 60);
+      json += "\"duration_min\":" + IntegerToString(durationMin);
+      json += "}";
+      tradesAdded++;
+   }
+   json += "]";
 
    json += "}";
 

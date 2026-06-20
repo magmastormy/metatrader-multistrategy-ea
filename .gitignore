@@ -47,4 +47,8 @@ Dashboard/server/__pycache__/
 docs/doc*.md
 !docs/changelogs_old.md
 log_problems.md
-
+issues.md
+grok_problems.md
+problems.md
+*.exe
+mimo.exe

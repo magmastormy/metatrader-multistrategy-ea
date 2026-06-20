@@ -12,6 +12,7 @@
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../IndicatorManager.mqh"
 #include "UnifiedICTFiles/AMDDetector.mqh"
 #include "UnifiedICTFiles/LiquidityDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
@@ -237,7 +238,7 @@ public:
             {
                 double atrBuf[];
                 ArraySetAsSeries(atrBuf, true);
-                int atrH = iATR(m_symbol, m_timeframe, 14);
+                int atrH = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
                 if(atrH != INVALID_HANDLE && CopyBuffer(atrH, 0, 0, 1, atrBuf) > 0 && atrBuf[0] > 0)
                 { slDistance = atrBuf[0] * 1.5; tpDistance = atrBuf[0] * 3.0; }
                 else

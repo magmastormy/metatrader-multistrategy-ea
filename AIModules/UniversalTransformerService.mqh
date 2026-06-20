@@ -47,25 +47,6 @@ public:
     int GetNumLayers() const { return m_transformer.GetNumLayers(); }
 };
 
-class CDummyTransformerEncoder : public ITransformerEncoder {
-private:
-    int m_dModel;
-public:
-    CDummyTransformerEncoder(const int dModel = 32) { m_dModel = dModel; }
-    bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[]) {
-        ArrayResize(outputs, 3);
-        outputs[0] = 0.33;
-        outputs[1] = 0.33;
-        outputs[2] = 0.34;
-        return true;
-    }
-    bool SaveHeadState(const string &path) { return true; }
-    bool LoadHeadState(const string &path) { return true; }
-    int GetDModel() const { return m_dModel; }
-    int GetNumHeads() const { return 4; }
-    int GetNumLayers() const { return 2; }
-};
-
 //+------------------------------------------------------------------+
 //| Symbol Adaptation Head - Lightweight symbol-specific processing  |
 //+------------------------------------------------------------------+
@@ -345,14 +326,14 @@ public:
             }
             avgPerformance /= m_performanceCount;
             
-            // Slight weight adjustment based on performance
+            // Slight weight adjustment based on performance (clamped to prevent drift)
             if(avgPerformance > 0.6) {
                 for(int i = 0; i < 32; i++) {
-                    m_adaptationWeights[i] *= 1.01;
+                    m_adaptationWeights[i] = MathMin(10.0, m_adaptationWeights[i] * 1.01);
                 }
             } else if(avgPerformance < 0.4) {
                 for(int i = 0; i < 32; i++) {
-                    m_adaptationWeights[i] *= 0.99;
+                    m_adaptationWeights[i] = MathMax(0.01, m_adaptationWeights[i] * 0.99);
                 }
             }
         }
@@ -487,6 +468,11 @@ public:
             delete m_universalEncoder;
             m_universalEncoder = NULL;
         }
+        for(int i = m_symbolAdaptationHeads.Total() - 1; i >= 0; i--)
+        {
+            CSymbolAdaptationHead* head = m_symbolAdaptationHeads.At(i);
+            if(head != NULL) delete head;
+        }
         m_symbolAdaptationHeads.Clear();
         m_registeredSymbols.Clear();
     }
@@ -515,8 +501,10 @@ public:
             return false;
         }
         
-        if(!m_universalEncoder.IsWarmedUp(0)) {
-            Print("[UNIVERSAL-TRANSFORMER] Universal encoder created successfully");
+        if(m_universalEncoder.IsWarmedUp(0)) {
+            Print("[UNIVERSAL-TRANSFORMER] Universal encoder ready with existing weights");
+        } else {
+            Print("[UNIVERSAL-TRANSFORMER] Universal encoder created (cold start — no pre-trained weights)");
         }
         
         m_cacheSize = 0;
@@ -686,8 +674,7 @@ public:
     
     int GetUniversalEncoderTrainingSteps() const {
         if(m_universalEncoder == NULL) return 0;
-        // This would need to be added to CTransformerBrain
-        return 0; // Placeholder
+        return m_universalEncoder.GetTrainingSteps();
     }
     
     void GetServiceStatus(string& status) {

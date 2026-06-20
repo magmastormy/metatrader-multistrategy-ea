@@ -54,7 +54,6 @@ input double InpSyntheticADXNoTrendThreshold = 10.0; // ADX no-trend threshold f
 input double InpICTDisplacementMultiplier = 0.8;  // ICT displacement as fraction of ATR (lower for synthetic CFDs)
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
 input bool InpUseSymbolClassProfiles = false;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
-input bool InpEnableSoftQuarantine = true;     // Legacy (deprecated): retained for backward compatibility; all enabled strategies vote live
 
 //--- EA operating mode
 input group "EA Operating Mode"
@@ -1660,6 +1659,18 @@ int GetStrategyIndexByName(const string strategyName)
         return 9;
     if(strategyName == "Volatility Breakout")  // NEW: Batch 93 - Week 3
         return 10;
+    if(strategyName == "Statistical Arbitrage")
+        return 11;
+    if(strategyName == "FVG Scalper")
+        return 12;
+    if(strategyName == "Turtle Soup")
+        return 13;
+    if(strategyName == "Breaker Block")
+        return 14;
+    if(strategyName == "NY Open Gap")
+        return 15;
+    if(strategyName == "Asian Range Break")
+        return 16;
     return -1;
 }
 
@@ -1833,6 +1844,12 @@ bool IsStrategyIntrabarEnabledByInput(const int index)
         case 8: return InpIntrabarEligibilityPowerOfThree;
         case 9: return InpIntrabarEligibilityMeanReversion;
         case 10: return InpIntrabarEligibilityVolatilityBreakout;
+        case 11: return false; // Statistical Arbitrage — bar-closed only
+        case 12: return false; // FVG Scalper — bar-closed only
+        case 13: return false; // Turtle Soup — bar-closed only
+        case 14: return false; // Breaker Block — bar-closed only
+        case 15: return false; // NY Open Gap — session-limited, bar-closed only
+        case 16: return false; // Asian Range Break — session-limited, bar-closed only
         default: return false;
     }
 }
@@ -2039,9 +2056,9 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 5 && strategyFlags[5]), false, InpWeightUnifiedICT);
     RegisterStrategyDefinitionIfEnabled("Candlestick", STRATEGY_CANDLESTICK, false,
                                         (ArraySize(strategyFlags) > 6 && strategyFlags[6]), false, InpWeightCandlestick);
-    RegisterStrategyDefinitionIfEnabled("Unicorn Model", STRATEGY_UNIFIED_ICT, false,
+    RegisterStrategyDefinitionIfEnabled("Unicorn Model", STRATEGY_UNICORN_MODEL, false,
                                         (ArraySize(strategyFlags) > 7 && strategyFlags[7]), false, InpWeightUnicornModel);
-    RegisterStrategyDefinitionIfEnabled("Power of Three", STRATEGY_UNIFIED_ICT, false,
+    RegisterStrategyDefinitionIfEnabled("Power of Three", STRATEGY_POWER_OF_THREE, false,
                                         (ArraySize(strategyFlags) > 8 && strategyFlags[8]), false, InpWeightPowerOfThree);
     RegisterStrategyDefinitionIfEnabled("Mean Reversion", STRATEGY_MEAN_REVERSION, false,
                                         (ArraySize(strategyFlags) > 9 && strategyFlags[9]), false, InpWeightMeanReversion);
@@ -2049,6 +2066,17 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 10 && strategyFlags[10]), false, InpWeightVolatilityBreakout);
     RegisterStrategyDefinitionIfEnabled("Statistical Arbitrage", STRATEGY_STATISTICAL_ARBITRAGE, false,
                                         InpEnableStatisticalArbitrage, false, InpWeightStatisticalArbitrage);
+    // Batch 103: ICT/SMC strategies
+    RegisterStrategyDefinitionIfEnabled("FVG Scalper", STRATEGY_FVG_SCALPER, false,
+                                        (ArraySize(strategyFlags) > 12 && strategyFlags[12]), false, 1.8);
+    RegisterStrategyDefinitionIfEnabled("Turtle Soup", STRATEGY_TURTLE_SOUP, false,
+                                        (ArraySize(strategyFlags) > 13 && strategyFlags[13]), false, 1.6);
+    RegisterStrategyDefinitionIfEnabled("Breaker Block", STRATEGY_BREAKER_BLOCK, false,
+                                        (ArraySize(strategyFlags) > 14 && strategyFlags[14]), false, 1.7);
+    RegisterStrategyDefinitionIfEnabled("NY Open Gap", STRATEGY_NY_OPEN_GAP, false,
+                                        (ArraySize(strategyFlags) > 15 && strategyFlags[15]), false, 1.3);
+    RegisterStrategyDefinitionIfEnabled("Asian Range Break", STRATEGY_ASIAN_RANGE_BREAK, false,
+                                        (ArraySize(strategyFlags) > 16 && strategyFlags[16]), false, 1.3);
 
     }
 
@@ -2597,7 +2625,7 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
         if(trendStrategy != NULL)
         {
             // Use synthetic ADX threshold for synthetic indices (Batch 105)
-            double adxNoTrend = IsSyntheticIndexSymbolName(_Symbol) ? InpSyntheticADXNoTrendThreshold : InpTrendADXNoTrendThreshold;
+            double adxNoTrend = IsSyntheticIndexSymbolName(symbol) ? InpSyntheticADXNoTrendThreshold : InpTrendADXNoTrendThreshold;
             trendStrategy.SetADXThresholds(adxNoTrend, 20.0, 25.0, 35.0);
         }
         registered = manager.RegisterStrategy(trendStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
@@ -2633,7 +2661,7 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
         if(mrStrategy != NULL)
         {
             // Enable synthetic mode for synthetic indices (Batch 105)
-            mrStrategy.SetSyntheticMode(IsSyntheticIndexSymbolName(_Symbol));
+            mrStrategy.SetSyntheticMode(IsSyntheticIndexSymbolName(symbol));
         }
         registered = manager.RegisterStrategy(mrStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     }
@@ -2651,6 +2679,17 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
         }
         registered = manager.RegisterStrategy(statArb, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     }
+    // Batch 103: ICT/SMC strategies
+    else if(strategyName == "FVG Scalper")
+        registered = manager.RegisterStrategy(new CFVGScalperStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    else if(strategyName == "Turtle Soup")
+        registered = manager.RegisterStrategy(new CTurtleSoupStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    else if(strategyName == "Breaker Block")
+        registered = manager.RegisterStrategy(new CBreakerBlockStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    else if(strategyName == "NY Open Gap")
+        registered = manager.RegisterStrategy(new CNYOpenGapStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
+    else if(strategyName == "Asian Range Break")
+        registered = manager.RegisterStrategy(new CAsianRangeBreakStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_register_failed");
     return registered;
@@ -2940,17 +2979,6 @@ string BuildQualifiedStrategyName(const string symbol, const string strategyName
     return symbol + "::" + strategyName;
 }
 
-void RegisterManagerStrategiesWithOrchestrator(const string symbol, CEnterpriseStrategyManager* manager)
-{
-    if(symbol == "__unused__" && manager == NULL)
-        return;
-}
-
-void SyncOrchestratorWeightsToManagers()
-{
-    // Orchestrator removed in Phase 2; manager owns weights directly.
-}
-
 void ReleaseEnterpriseManagers()
 {
     for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
@@ -3207,8 +3235,6 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
     RegisterManagerStrategiesFromRegistry(manager, symbol, strategyFlags);
     ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
     ApplyStrategyWeights(manager, symbol, strategyFlags);
-
-    RegisterManagerStrategiesWithOrchestrator(symbol, manager);
 
     int size = ArraySize(g_enterpriseManagers);
     ArrayResize(g_enterpriseManagers, size + 1);
@@ -3840,7 +3866,7 @@ int OnInit()
         spikeConfig.alertThrottleSeconds     = InpSpikeHunterAlertThrottle;
         spikeConfig.minConfluence            = InpSpikeHunterMinConfluence;
 
-        if(g_spikeHunter.Init(spikeConfig, InpMagicNumber, &positionSizer))
+        if(g_spikeHunter.Init(spikeConfig, InpMagicNumber, &positionSizer, &unifiedRiskManager))
         {
             // Add all configured symbols
             for(int i = 0; i < ArraySize(g_activePairs); i++)
@@ -3921,7 +3947,7 @@ int OnInit()
                 gridConfig.maxDrawdownPercent      = 10;
                 gridConfig.cooldownMs              = 30000;
 
-                if(g_gridRecovery.Init(gridConfig, InpMagicNumber, &positionSizer))
+                if(g_gridRecovery.Init(gridConfig, InpMagicNumber, &positionSizer, &unifiedRiskManager))
                 {
                     for(int i = 0; i < ArraySize(g_activePairs); i++)
                     {
@@ -3966,7 +3992,7 @@ int OnInit()
                 scalpConfig.cooldownMs             = 30000;
                 scalpConfig.spikeWindowAvoidMinutes = 5;
 
-                if(g_atrScalping.Init(scalpConfig, InpMagicNumber, &positionSizer))
+                if(g_atrScalping.Init(scalpConfig, InpMagicNumber, &positionSizer, &unifiedRiskManager))
                 {
                     for(int i = 0; i < ArraySize(g_activePairs); i++)
                     {
@@ -4512,6 +4538,7 @@ void OnDeinit(const int reason)
     if(InpATRScalpingEnabled)
         g_atrScalping.Deinit();
 
+    UncertaintyDeinit();
     CIndicatorManager::DestroyInstance();
     PrintFormat("[EMERGENCY-CLEANUP] Complete. Indicators released.");
 
@@ -4846,6 +4873,18 @@ void ProcessTradingLogic(bool fromTimer)
         firstCall = false;
     }
 
+    // Compute dashboard values (always, not gated by log level)
+    int activeStrats = 0;
+    int eaPositions = 0;
+    if(ArraySize(g_enterpriseManagers) > 0)
+    {
+        activeStrats = GetTotalActiveStrategyCount();
+        eaPositions = GetEAPositionCount();
+    }
+
+    // --- Update Dashboard (always, not gated by log level) ---
+    g_dashboard.Update(activeStrats, eaPositions, accountBalance, accountEquity, g_aiBrainReady ? &aiNextGenBrain : NULL, neuralNetStrategy, g_AIEngine);
+
     // Enhanced logging every 50 calls to show pipeline activity
     if(callCount % 50 == 0 && g_logLevel >= 3)
     {
@@ -4854,9 +4893,6 @@ void ProcessTradingLogic(bool fromTimer)
         Print("[DEBUG-STATUS] Current symbol: ", _Symbol);
 
         // Show Enterprise Manager status
-        int activeStrats = 0;
-        int eaPositions = 0;
-
         if(ArraySize(g_enterpriseManagers) > 0)
         {
             int activeStrategyInstances = GetTotalActiveStrategyCount();
@@ -4865,10 +4901,8 @@ void ProcessTradingLogic(bool fromTimer)
             int uniqueActiveStrategies = g_strategyRegistry.GetActiveCount();
             int uniqueActiveCoreStrategies = g_strategyRegistry.GetActiveIndicatorCount();
             int uniqueActiveAIStrategies = g_strategyRegistry.GetActiveAICount();
-            eaPositions = GetEAPositionCount();  // Count only THIS EA's positions
             int cooldownSecs = g_lastTradeTime > 0 ? (int)(TimeCurrent() - g_lastTradeTime) : 0;
             int managerCount = ArraySize(g_enterpriseManagers);
-            activeStrats = activeStrategyInstances;
             Print("[ENTERPRISE-STATUS] Active strategy instances: ", activeStrategyInstances,
                   " (Core: ", activeCoreStrategyInstances, ", AI: ", activeBrainStrategyInstances, ")",
                   " | Unique runtime strategies: ", uniqueActiveStrategies,
@@ -4879,9 +4913,6 @@ void ProcessTradingLogic(bool fromTimer)
                   " | Account Total: ", PositionsTotal(),
                   " | Last trade: ", g_lastTradeTime > 0 ? TimeToString(g_lastTradeTime) : "Never");
         }
-        
-        // --- Update Dashboard ---
-        g_dashboard.Update(activeStrats, eaPositions, accountBalance, accountEquity, g_aiBrainReady ? &aiNextGenBrain : NULL, neuralNetStrategy, g_AIEngine);
     }
 
     if(!systemInitialized || !tradingEnabled)

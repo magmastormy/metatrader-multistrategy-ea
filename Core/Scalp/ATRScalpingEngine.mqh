@@ -13,7 +13,11 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
+#include "../Risk/RiskValidationGate.mqh"
+#include "../../IndicatorManager.mqh"
 #include <Trade\Trade.mqh>
+
+class CUnifiedRiskManager;
 
 //+------------------------------------------------------------------+
 //| ATR scalping configuration struct                                 |
@@ -83,6 +87,7 @@ private:
    int                      m_symbolCount;
    int                      m_baseMagic;
    CPositionSizer*          m_positionSizer;
+   CUnifiedRiskManager*     m_riskManager;
    CTrade                   m_trade;
 
    // Indicator handles per symbol
@@ -374,6 +379,27 @@ private:
       // Calculate magic number: baseMagic + magicOffset + symbolIndex
       int magic = m_baseMagic + m_config.magicOffset + idx;
 
+      // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
+      if(m_riskManager != NULL)
+      {
+         STradeValidationRequest riskReq;
+         ZeroMemory(riskReq);
+         riskReq.symbol       = symbol;
+         riskReq.orderType    = orderType;
+         riskReq.lotSize      = lotSize;
+         riskReq.stopLossPips = slPips;
+         riskReq.confidence   = 0.7;
+         riskReq.strategy     = "ATR-SCALP";
+         riskReq.requestTime  = TimeCurrent();
+
+         SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "atr-scalp-pretrade");
+         if(!riskResult.approved)
+         {
+            PrintFormat("[ATR-SCALP] REJECTED by risk manager | symbol=%s | reason=%s", symbol, riskResult.reason);
+            return false;
+         }
+      }
+
       // Set up trade object
       m_trade.SetExpertMagicNumber(magic);
       m_trade.SetDeviationInPoints(50);
@@ -541,8 +567,9 @@ public:
    CATRScalpingEngine() :
       m_symbolCount(0),
       m_baseMagic(0),
-      m_positionSizer(NULL),
-      m_totalTradesOpened(0),
+       m_positionSizer(NULL),
+       m_riskManager(NULL),
+       m_totalTradesOpened(0),
       m_totalTradesSkipped(0),
       m_totalSpikeWindowBlocks(0)
    {
@@ -559,11 +586,12 @@ public:
    //+------------------------------------------------------------------+
    //| Initialize the engine with config and dependencies               |
    //+------------------------------------------------------------------+
-   bool Init(const SATRScalpingConfig &config, int baseMagic, CPositionSizer *pSizer)
+   bool Init(const SATRScalpingConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL)
    {
       m_config         = config;
       m_baseMagic      = baseMagic;
       m_positionSizer  = pSizer;
+      m_riskManager    = pRiskManager;
       m_symbolCount    = 0;
 
       PrintFormat("[ATR-SCALP-ENGINE] Initialized | atrPeriod=%d | emaFast=%d | emaSlow=%d | rsi=%d | slATR=%.1f | tpATR=%.1f | maxPos=%d | cooldown=%dms | spikeAvoid=%dmin | magicOffset=%d",
@@ -593,37 +621,31 @@ public:
          return false;
       }
 
-      // Create indicator handles
-      int atrHandle = iATR(symbol, PERIOD_M1, m_config.atrPeriod);
+      // Create indicator handles via CIndicatorManager (owned by singleton)
+      int atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, PERIOD_M1, m_config.atrPeriod);
       if(atrHandle == INVALID_HANDLE)
       {
          PrintFormat("[ATR-SCALP-ENGINE] Failed to create ATR handle for %s", symbol);
          return false;
       }
 
-      int emaFastHandle = iMA(symbol, PERIOD_M1, m_config.emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
+      int emaFastHandle = CIndicatorManager::Instance().GetMAHandle(symbol, PERIOD_M1, m_config.emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
       if(emaFastHandle == INVALID_HANDLE)
       {
-         IndicatorRelease(atrHandle);
          PrintFormat("[ATR-SCALP-ENGINE] Failed to create EMA fast handle for %s", symbol);
          return false;
       }
 
-      int emaSlowHandle = iMA(symbol, PERIOD_M1, m_config.emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
+      int emaSlowHandle = CIndicatorManager::Instance().GetMAHandle(symbol, PERIOD_M1, m_config.emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
       if(emaSlowHandle == INVALID_HANDLE)
       {
-         IndicatorRelease(atrHandle);
-         IndicatorRelease(emaFastHandle);
          PrintFormat("[ATR-SCALP-ENGINE] Failed to create EMA slow handle for %s", symbol);
          return false;
       }
 
-      int rsiHandle = iRSI(symbol, PERIOD_M1, m_config.rsiPeriod, PRICE_CLOSE);
+      int rsiHandle = CIndicatorManager::Instance().GetRSIHandle(symbol, PERIOD_M1, m_config.rsiPeriod, PRICE_CLOSE);
       if(rsiHandle == INVALID_HANDLE)
       {
-         IndicatorRelease(atrHandle);
-         IndicatorRelease(emaFastHandle);
-         IndicatorRelease(emaSlowHandle);
          PrintFormat("[ATR-SCALP-ENGINE] Failed to create RSI handle for %s", symbol);
          return false;
       }

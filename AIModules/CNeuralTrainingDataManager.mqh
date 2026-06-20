@@ -7,16 +7,14 @@
 
 // ENHANCEMENT: Neural network buffer size constants (Batch 93)
 #ifndef NN_MAX_TRAINING_EXAMPLES
-#define NN_MAX_TRAINING_EXAMPLES 1000
+#define NN_MAX_TRAINING_EXAMPLES 2000
 #endif
 
 #ifndef NN_MAX_PERSISTED_SAMPLES
-#define NN_MAX_PERSISTED_SAMPLES 500
+#define NN_MAX_PERSISTED_SAMPLES 300
 #endif
 
-#define MAX_META_INPUT 16
-
-struct SMTrainingExample
+struct STrainingExample
 {
     double   inputs[FEATURE_VECTOR_SIZE];
     int      labelClass;
@@ -37,13 +35,13 @@ struct SMTrainingExample
         ArrayInitialize(metaInput, 0.0);
     }
 
-    SMTrainingExample()
+    STrainingExample()
     {
         Reset();
     }
 };
 
-struct SMBarrierEntry
+struct SBarrierEntry
 {
     int      signalClass;
     double   entryPrice;
@@ -78,7 +76,7 @@ struct SMBarrierEntry
         entryBarTime = 0;
     }
 
-    SMBarrierEntry()
+    SBarrierEntry()
     {
         Reset();
     }
@@ -87,10 +85,10 @@ struct SMBarrierEntry
 class CTrainingDataManager
 {
 private:
-    SMTrainingExample m_trainingBuffer[NN_MAX_TRAINING_EXAMPLES];
+    STrainingExample m_trainingBuffer[NN_MAX_TRAINING_EXAMPLES];
     int              m_trainHead;
     int              m_trainCount;
-    SMBarrierEntry   m_barrierBuffer[NN_MAX_PERSISTED_SAMPLES];
+    SBarrierEntry   m_barrierBuffer[NN_MAX_PERSISTED_SAMPLES];
     int              m_barrierHead;
     int              m_barrierCount;
     double           m_barrierK;
@@ -120,8 +118,8 @@ public:
 
     void SetBarrierParams(const double k, const int vertBars)
     {
-        m_barrierK = k;
-        m_barrierVertBars = MathMax(5, vertBars);
+        m_barrierK = MathMax(0.5, MathMin(5.0, k));
+        m_barrierVertBars = MathMax(5, MathMin(200, vertBars));
     }
 
     int AddTrainingExample(const double &inputs[], const int labelClass, const datetime time,
@@ -201,7 +199,8 @@ public:
         return idx;
     }
 
-    int ResolveExpiredBarriers(const datetime timeNow, const double currentPrice)
+    int ResolveExpiredBarriers(const datetime timeNow, const double currentPrice,
+                               const string symbol = "", const ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT)
     {
         int resolved = 0;
         for(int i = 0; i < m_barrierCount && i < NN_MAX_PERSISTED_SAMPLES; i++)
@@ -210,8 +209,38 @@ public:
                 continue;
             if(timeNow < m_barrierBuffer[i].expiryTime)
                 continue;
-            
+
             double exitPrice = currentPrice;
+
+            if(symbol != "" && m_barrierBuffer[i].entryBarTime > 0)
+            {
+                datetime barTime = iTime(symbol, timeframe, 0);
+                if(barTime > m_barrierBuffer[i].entryBarTime)
+                {
+                    double high = iHigh(symbol, timeframe, 1);
+                    double low = iLow(symbol, timeframe, 1);
+                    if(high > 0 && low > 0)
+                    {
+                        if(high >= m_barrierBuffer[i].upperBarrier)
+                        {
+                            m_barrierBuffer[i].label = 2;
+                            m_barrierBuffer[i].resolved = true;
+                            m_resolvedLabelCount++;
+                            resolved++;
+                            continue;
+                        }
+                        if(low <= m_barrierBuffer[i].lowerBarrier)
+                        {
+                            m_barrierBuffer[i].label = 1;
+                            m_barrierBuffer[i].resolved = true;
+                            m_resolvedLabelCount++;
+                            resolved++;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             int label = CBarrierLabelResolver::ResolveLabel(
                 m_barrierBuffer[i].upperBarrier,
                 m_barrierBuffer[i].lowerBarrier,
@@ -220,14 +249,11 @@ public:
                 m_barrierBuffer[i].expiryTime,
                 timeNow
             );
-            
-            if(label != 0)
-            {
-                m_barrierBuffer[i].label = label;
-                m_barrierBuffer[i].resolved = true;
-                m_resolvedLabelCount++;
-                resolved++;
-            }
+
+            m_barrierBuffer[i].label = label;
+            m_barrierBuffer[i].resolved = true;
+            m_resolvedLabelCount++;
+            resolved++;
         }
         return resolved;
     }
@@ -236,7 +262,7 @@ public:
     int GetBarrierResolvedCount() const { return (int)m_resolvedLabelCount; }
     int GetTrainingCount() const { return m_trainCount; }
 
-    bool GetBarrierAt(const int idx, SMBarrierEntry &entry) const
+    bool GetBarrierAt(const int idx, SBarrierEntry &entry) const
     {
         if(idx < 0 || idx >= m_barrierCount || idx >= NN_MAX_PERSISTED_SAMPLES)
             return false;
@@ -244,17 +270,17 @@ public:
         return true;
     }
 
-    SMTrainingExample GetTrainingExample(const int idx) const
+    STrainingExample GetTrainingExample(const int idx) const
     {
         if(idx < 0 || idx >= m_trainCount || idx >= NN_MAX_TRAINING_EXAMPLES)
-            return SMTrainingExample();
+            return STrainingExample();
         return m_trainingBuffer[idx];
     }
 
     int GetPersistedSampleCount() const { return MathMin(m_barrierCount, NN_MAX_PERSISTED_SAMPLES); }
     int GetPersistedTrainingCount() const { return MathMin(m_trainCount, NN_MAX_TRAINING_EXAMPLES); }
 
-    void GetBarrierAtIndex(const int idx, SMBarrierEntry &entry) const
+    void GetBarrierAtIndex(const int idx, SBarrierEntry &entry) const
     {
         if(idx < 0 || idx >= NN_MAX_PERSISTED_SAMPLES)
         {
@@ -264,7 +290,7 @@ public:
         entry = m_barrierBuffer[idx];
     }
 
-    void GetTrainingAtIndex(const int idx, SMTrainingExample &example) const
+    void GetTrainingAtIndex(const int idx, STrainingExample &example) const
     {
         if(idx < 0 || idx >= NN_MAX_TRAINING_EXAMPLES)
         {

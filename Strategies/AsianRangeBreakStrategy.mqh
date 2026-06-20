@@ -173,8 +173,8 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 8: Breakout confirmation
-        double currentClose = iClose(m_symbol, m_timeframe, 0);
+        // Step 8: Breakout confirmation (use bar 1 = last closed bar)
+        double currentClose = iClose(m_symbol, m_timeframe, 1);
         if(currentClose <= 0)
         {
             SetDecisionReasonTag("ASIANRB_PRICE_UNAVAILABLE");

@@ -206,7 +206,7 @@ public:
         m_symbol = symbol;
         m_timeframe = timeframe;
         if(m_transformer == NULL)
-            m_transformer = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_DROPOUT_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
+            m_transformer = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_MAX_SEQ_LEN_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
         if(m_transformer == NULL)
             return false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
@@ -347,14 +347,15 @@ public:
     {
         if(m_directionWindowCount < 20)
             return false;
+        int windowSize = MathMin(m_directionWindowCount, 20);
         int buyCount = 0, sellCount = 0;
-        for(int i = 0; i < 20; i++)
+        for(int i = 0; i < windowSize; i++)
         {
             if(m_directionWindow[i] == 1) buyCount++;
             else if(m_directionWindow[i] == -1) sellCount++;
         }
-        double buyRatio = (double)buyCount / 20.0;
-        double sellRatio = (double)sellCount / 20.0;
+        double buyRatio = (double)buyCount / (double)windowSize;
+        double sellRatio = (double)sellCount / (double)windowSize;
         return (buyRatio > 0.80 || sellRatio > 0.80);
     }
     
@@ -378,7 +379,8 @@ public:
     
     virtual double GetUncertainty(void) override
     {
-        return 0.5;
+        if(m_transformer == NULL) return 0.5;
+        return 1.0 - m_cachedConfidence;
     }
     
     virtual bool IsModelHealthy(void) const override
@@ -398,11 +400,13 @@ public:
     
     virtual double GetTemperature(void) const override
     {
-        return 1.0;
+        return (m_transformer != NULL) ? m_transformer.GetTemperature() : 1.0;
     }
     
     virtual void SetTemperature(const double temperature) override
     {
+        if(m_transformer != NULL)
+            m_transformer.SetTemperature(temperature);
     }
     
     virtual int GetRegimeState(void) const override
