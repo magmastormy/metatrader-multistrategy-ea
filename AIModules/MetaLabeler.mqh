@@ -7,9 +7,11 @@
 #ifndef __META_LABELER_MQH__
 #define __META_LABELER_MQH__
 
-#define ML_INPUT  16
-#define ML_H1     24
-#define ML_OUT     2
+#include "AIConfig.mqh"
+
+#define ML_INPUT  AI_MLP_INPUT
+#define ML_H1     AI_MLP_HIDDEN
+#define ML_OUT    AI_MLP_OUTPUT
 
 class CMetaLabeler
 {
@@ -40,6 +42,17 @@ private:
     int    m_earlyStoppingPatience;
     double m_earlyStoppingThreshold;
     int    m_consecutiveNoImprovement;
+    
+    // Training cooldown to prevent overfitting
+    int    m_samplesSinceLastTrain;
+    int    m_trainCooldown;
+
+    // Recent model performance tracking for enriched meta-features
+    double m_recentWinRate;
+    double m_recentAvgConfidence;
+    int    m_recentCorrect;
+    int    m_recentTotal;
+    int    m_perfWindowHead;
 
     double Sigmoid(const double value) const
     {
@@ -272,9 +285,16 @@ public:
         ArrayInitialize(m_lossHistory, 0.0);
         m_lossHead = 0;
         m_lossCount = 0;
-        m_earlyStoppingPatience = 10;
-        m_earlyStoppingThreshold = 1e-4;
+        m_earlyStoppingPatience = AI_META_EARLY_STOP_PATIENCE;
+        m_earlyStoppingThreshold = AI_META_EARLY_STOP_THRESHOLD;
         m_consecutiveNoImprovement = 0;
+        m_samplesSinceLastTrain = 0;
+        m_trainCooldown = AI_META_TRAIN_COOLDOWN;
+        m_recentWinRate = 0.5;
+        m_recentAvgConfidence = 0.5;
+        m_recentCorrect = 0;
+        m_recentTotal = 0;
+        m_perfWindowHead = 0;
 
         MathSrand((int)(TimeLocal() % 2147483647));
         double scale1 = MathSqrt(2.0 / (double)ML_INPUT);
@@ -310,19 +330,46 @@ public:
 
     void Deinit() {}
 
+    // Enhanced meta-input layout (24 features):
+    // [0]    primaryConf
+    // [1..4] regimeProbs (4 HMM states)
+    // [5]    barVolRatio
+    // [6..9] signal probabilities (none, buy, sell, entropy)
+    // [10]   conformalUncertainty
+    // [11]   recentWinRate
+    // [12]   recentAvgConfidence
+    // [13..22] featSubset (first 10 normalized features)
+    // [23]   momentum (price change ratio)
     void BuildInput(const double primaryConf,
                     const double &regimeProbs[],
                     const double barVolRatio,
+                    const double noneProb,
+                    const double buyProb,
+                    const double sellProb,
+                    const double entropy,
+                    const double conformalUncertainty,
+                    const double recentWinRate,
+                    const double recentAvgConfidence,
                     const double &featSubset[],
+                    const double momentum,
                     double &out[])
     {
-        ArrayResize(out, ML_INPUT);
+        ArrayResize(out, AI_MLP_INPUT);
+        ArrayInitialize(out, 0.0);
         out[0] = primaryConf;
         for(int i = 0; i < 4; i++)
             out[1 + i] = (i < ArraySize(regimeProbs)) ? regimeProbs[i] : 0.0;
         out[5] = barVolRatio;
+        out[6] = noneProb;
+        out[7] = buyProb;
+        out[8] = sellProb;
+        out[9] = entropy;
+        out[10] = conformalUncertainty;
+        out[11] = recentWinRate;
+        out[12] = recentAvgConfidence;
         for(int i = 0; i < 10; i++)
-            out[6 + i] = (i < ArraySize(featSubset)) ? featSubset[i] : 0.0;
+            out[13 + i] = (i < ArraySize(featSubset)) ? featSubset[i] : 0.0;
+        out[23] = momentum;
     }
 
     double Predict(const double &inp[])
@@ -356,8 +403,30 @@ public:
         return Predict(inp) >= thresh;
     }
 
+    // Track meta-labeler prediction outcomes for enriched features
+    void RecordOutcome(const bool correct, const double confidence)
+    {
+        m_recentTotal++;
+        if(correct)
+            m_recentCorrect++;
+        // Rolling window of last 50 outcomes
+        if(m_recentTotal > 50)
+        {
+            m_recentTotal = 50;
+            m_recentCorrect = (int)(m_recentWinRate * 50.0);
+        }
+        m_recentWinRate = (m_recentTotal > 0) ? ((double)m_recentCorrect / (double)m_recentTotal) : 0.5;
+        m_recentAvgConfidence = 0.85 * m_recentAvgConfidence + 0.15 * confidence;
+    }
+
+    double GetRecentWinRate() const { return m_recentWinRate; }
+    double GetRecentAvgConfidence() const { return m_recentAvgConfidence; }
+
     bool ShouldStopEarly() const
     {
+        // Never stop early until minimum training has occurred
+        if(m_step < AI_META_MIN_TRAIN_STEPS)
+            return false;
         if(m_lossCount < m_earlyStoppingPatience)
             return false;
         
@@ -402,8 +471,19 @@ public:
         if(m_bufCount < m_bufMax)
             m_bufCount++;
 
-        if(m_bufCount >= 50 && !ShouldStopEarly())
+        m_samplesSinceLastTrain++;
+        if(m_bufCount >= 50 && !ShouldStopEarly() && m_samplesSinceLastTrain >= m_trainCooldown)
+        {
             TrainStep(8, 12);
+            m_samplesSinceLastTrain = 0;
+            static datetime s_lastTrainLog = 0;
+            if(s_lastTrainLog == 0 || (TimeCurrent() - s_lastTrainLog) >= 60)
+            {
+                PrintFormat("[AI-META-TRAIN] samples=%d | step=%I64d | loss_count=%d | buf=%d/%d",
+                            m_bufCount, m_step, m_lossCount, m_bufCount, m_bufMax);
+                s_lastTrainLog = TimeCurrent();
+            }
+        }
     }
 };
 

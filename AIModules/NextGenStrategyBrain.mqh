@@ -1,6 +1,12 @@
 //+------------------------------------------------------------------+
 //| Next-Generation Strategy Brain Integration                       |
 //| Local runtime adapter over shared transformer feature paths       |
+//|                                                                   |
+//| ROLE: Feature provider ONLY. This class produces features and    |
+//| uncertainty estimates for the AI adapters (Transformer/Ensemble/  |
+//| ONNX). It is NOT a direct live voter. Signals must flow through  |
+//| IAIStrategy adapters → EnterpriseStrategyManager consensus.      |
+//| Do NOT use GenerateSignal() output as a direct TRADE_SIGNAL.     |
 //+------------------------------------------------------------------+
 #ifndef __NEXTGEN_STRATEGY_BRAIN_MQH__
 #define __NEXTGEN_STRATEGY_BRAIN_MQH__
@@ -260,6 +266,16 @@ public:
         {
             SPredictionWithUncertainty quantified;
             m_uncertaintyQuantifier.UpdatePredictionHistory(MathMax(buyProb, sellProb));
+
+            // Feed realized price return for proper volatility calculation
+            double close0 = iClose(m_symbol, m_timeframe, 0);
+            double close1 = iClose(m_symbol, m_timeframe, 1);
+            if(close1 > 0.0)
+            {
+                double priceReturn = (close0 - close1) / close1;
+                m_uncertaintyQuantifier.UpdateRealizedVolatility(priceReturn);
+            }
+
             if(m_uncertaintyQuantifier.QuantifyUncertainty(buyProb, sellProb, noneProb, quantified))
             {
                 signal.uncertainty = quantified.uncertainty;

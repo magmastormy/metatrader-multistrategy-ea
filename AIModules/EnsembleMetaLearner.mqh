@@ -10,6 +10,7 @@
 #include <Arrays/ArrayObj.mqh>
 #include "TransformerBrain.mqh"
 #include "UniversalTransformerService.mqh"
+#include "AIConfig.mqh"
 
 #define HMM_STATES 4
 #define HMM_OBS 3
@@ -151,7 +152,7 @@ public:
             if(regimeChanged)
             {
                 int newRegime = m_lastRegime;
-                PrintFormat("[REGIME] Changed from %d to %d", m_lastRegime, newRegime);
+                PrintFormat("[AI-REGIME] Changed from %d to %d", m_lastRegime, newRegime);
             }
         }
     }
@@ -285,6 +286,15 @@ private:
     int                  m_lastModelSignal[];
     double               m_lastModelConfidence[];
     int                  m_resolvedTradeCount;
+    double               m_minConfidence;
+
+    // Per-model per-regime performance tracking for adaptive regime multipliers
+    #define REGIME_PERF_WINDOW 30
+    #define REGIME_PERF_MODELS 8
+    #define REGIME_PERF_REGS   4
+    double m_regimePerfBuf[REGIME_PERF_MODELS * REGIME_PERF_REGS * REGIME_PERF_WINDOW];
+    int    m_regimePerfHead[REGIME_PERF_MODELS];
+    int    m_regimePerfCount[REGIME_PERF_MODELS * REGIME_PERF_REGS];
 
     double ClampValue(const double value, const double minValue, const double maxValue)
     {
@@ -307,16 +317,14 @@ private:
         ArrayResize(m_lastModelSignal, total);
         ArrayResize(m_lastModelConfidence, total);
 
-        // Zero-initialize new slots to prevent garbage values
-        for(int i = oldSize; i < total; i++)
+        // Per-regime performance tracking
+        for(int i = oldSize; i < total && i < REGIME_PERF_MODELS; i++)
         {
-            m_modelPerformanceHistory[i] = 0.0;
-            m_modelRecentAccuracy[i] = 0.0;
-            m_modelWinRate[i] = 0.0;
-            m_modelAvgWin[i] = 0.0;
-            m_modelAvgLoss[i] = 0.0;
-            m_modelWeights[i] = 0.0;
+            m_regimePerfHead[i] = 0;
+            for(int r = 0; r < REGIME_PERF_REGS; r++)
+                m_regimePerfCount[i * REGIME_PERF_REGS + r] = 0;
         }
+        ArrayInitialize(m_regimePerfBuf, 0.0);
 
         for(int i = 0; i < total; i++)
         {
@@ -437,6 +445,7 @@ public:
         m_lastRegimeUpdate = 0;
         m_lastDetectedRegime = MARKET_REGIME_RANGING;
         m_resolvedTradeCount = 0;
+        m_minConfidence = AI_MIN_CONFIDENCE;
         m_hmm.Init();
         m_regimeRepo.Init();
     }
@@ -564,6 +573,15 @@ public:
         ensembleSellSignal /= totalWeight;
         double ensembleNone = noneWeight / totalWeight;
         confidence = MathMax(0.0, MathMin(1.0, MathMax(MathMax(ensembleBuySignal, ensembleSellSignal), 1.0 - ensembleNone)));
+
+        if(confidence < m_minConfidence)
+        {
+            ensembleBuySignal = 0.0;
+            ensembleSellSignal = 0.0;
+            confidence = 0.0;
+            return false;
+        }
+
         m_lastConfidence = confidence;
         return true;
     }
@@ -620,6 +638,54 @@ public:
         if(m_modelRollCount[modelIndex] < ENSEMBLE_ROLLING_WINDOW)
             m_modelRollCount[modelIndex]++;
         RecomputeRollingStats(modelIndex);
+
+        // Track per-regime performance
+        int regime = (int)m_lastDetectedRegime;
+        if(regime >= 0 && regime < REGIME_PERF_REGS && modelIndex < REGIME_PERF_MODELS)
+        {
+            int base = modelIndex * REGIME_PERF_REGS * REGIME_PERF_WINDOW + regime * REGIME_PERF_WINDOW;
+            int rSlot = m_regimePerfHead[modelIndex] % REGIME_PERF_WINDOW;
+            m_regimePerfBuf[base + rSlot] = result;
+            m_regimePerfHead[modelIndex]++;
+            int cntIdx = modelIndex * REGIME_PERF_REGS + regime;
+            if(m_regimePerfCount[cntIdx] < REGIME_PERF_WINDOW)
+                m_regimePerfCount[cntIdx]++;
+        }
+    }
+
+    // Compute adaptive regime multiplier from per-regime performance history
+    double GetAdaptiveRegimeMultiplier(const int modelIndex, const ENUM_MARKET_REGIME regime) const
+    {
+        int regimeIdx = (int)regime;
+        if(modelIndex < 0 || modelIndex >= m_models.Total() || modelIndex >= REGIME_PERF_MODELS ||
+           regimeIdx < 0 || regimeIdx >= REGIME_PERF_REGS)
+            return 1.0;
+
+        int cntIdx = modelIndex * REGIME_PERF_REGS + regimeIdx;
+        int count = m_regimePerfCount[cntIdx];
+        if(count < 5)
+            return 1.0;  // Not enough data — neutral
+
+        // Compute regime-specific win rate from performance history
+        int wins = 0;
+        double sumResult = 0.0;
+        int base = modelIndex * REGIME_PERF_REGS * REGIME_PERF_WINDOW + regimeIdx * REGIME_PERF_WINDOW;
+        for(int i = 0; i < count; i++)
+        {
+            double val = m_regimePerfBuf[base + i];
+            sumResult += val;
+            if(val > 0.0)
+                wins++;
+        }
+        double regimeWinRate = (double)wins / (double)count;
+        double regimeExpectancy = sumResult / (double)count;
+
+        // Map performance to multiplier: bad (0.3) → 0.7, neutral (0.5) → 1.0, good (0.7) → 1.3
+        // Using expectancy as the primary driver (more meaningful than winrate alone)
+        double multiplier = 1.0 + (regimeExpectancy * 2.0);
+        multiplier = MathMax(0.5, MathMin(2.0, multiplier));
+
+        return multiplier;
     }
 
     double CalculateModelWeight(const int modelIndex, const ENUM_MARKET_REGIME regime)
@@ -631,16 +697,8 @@ public:
         double accuracy = m_modelRecentAccuracy[modelIndex];
         double winRate = m_modelWinRate[modelIndex];
 
-        double regimeMultiplier = 1.0;
-        int totalModels = m_models.Total();
-        if(totalModels > 0)
-        {
-            double position = (double)modelIndex / (double)totalModels;
-            if(regime == MARKET_REGIME_TRENDING)
-                regimeMultiplier = 1.15 - (position * 0.10);
-            else if(regime == MARKET_REGIME_VOLATILE)
-                regimeMultiplier = (position > 0.5) ? 1.20 : 0.95;
-        }
+        // Adaptive regime multiplier learned from per-regime performance
+        double regimeMultiplier = GetAdaptiveRegimeMultiplier(modelIndex, regime);
 
         double momentumBoost = 1.0 + MathMin(0.25, MathAbs(m_momentum) * 0.5);
         return MathMax(0.05, (performance * 0.40 + accuracy * 0.30 + winRate * 0.30) * regimeMultiplier * momentumBoost);
@@ -778,7 +836,7 @@ public:
         }
 
         m_resolvedTradeCount++;
-        if((m_resolvedTradeCount % 10) == 0)
+        if((m_resolvedTradeCount % AI_KELLY_UPDATE_INTERVAL) == 0)
             UpdateKellyWeights();
 
         if(m_usesSharedTransformer && m_symbol != "")

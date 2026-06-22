@@ -11,6 +11,7 @@
 #include "PortfolioRiskManager.mqh"
 #include "RiskValidationGate.mqh"
 #include "VirtualPosition.mqh"
+#include "../Utils/TradeJournal.mqh"
 #include <Trade/Trade.mqh>
 
 //+------------------------------------------------------------------+
@@ -140,6 +141,7 @@ private:
     int m_cbRecoveryAttempts;        // Number of auto-recovery attempts made
     int m_cbMaxRecoveryAttempts;     // Max auto-recovery attempts (default 3)
     int m_cbRecoveryCooldownMin;     // Cooldown in minutes before recovery attempt (default 30)
+    datetime m_cbLastRecoverySuccessTime; // When last successful recovery occurred (for reset after stable period)
 
     // Per-Symbol Risk Budgeting (Phase 5)
     SSymbolRiskBudget m_symbolBudgets[];
@@ -224,8 +226,6 @@ public:
     bool IsTradingEnabled() const;
     void ResetCircuitBreaker();
     bool CheckCircuitBreakerRecovery();
-    bool CheckCorrelationRisk(const string symbol, double newRiskPercent);
-
     // Crash recovery: get/set circuit breaker state for persistence across restarts
     double GetPeakEquity() const;
     double GetDailyStartEquity() const;
@@ -434,7 +434,8 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_cbTriggeredAt(0),
     m_cbRecoveryAttempts(0),
     m_cbMaxRecoveryAttempts(3),
-    m_cbRecoveryCooldownMin(30),
+    m_cbRecoveryCooldownMin(5),
+    m_cbLastRecoverySuccessTime(0),
     m_symbolBudgetCount(0),
     m_lastBudgetRefresh(0),
     m_riskReductionFactor(0.5),
@@ -595,6 +596,15 @@ void CUnifiedRiskManager::CheckAndResetDailyLimits()
         if(m_dailyStartEquity <= 0.0)
             m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
         m_lastDailyReset = nowTime;
+
+        // Reset circuit breaker recovery counter on new trading day
+        if(m_cbRecoveryAttempts > 0)
+        {
+            PrintFormat("[RISK-UNIFIED] Daily reset: circuit breaker recovery counter %d->0", m_cbRecoveryAttempts);
+            m_cbRecoveryAttempts = 0;
+            m_cbLastRecoverySuccessTime = 0;
+        }
+
         Print("[RISK-UNIFIED] Daily risk usage reset");
     }
 }
@@ -791,8 +801,9 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         // REDUCE tier: correlation exceeds reduce threshold — scale lot size proportionally
         if(maxCorrelation >= m_config.correlationReduceThreshold)
         {
-            double reduceFactor = 1.0 - ((maxCorrelation - m_config.correlationReduceThreshold) /
-                                         (m_config.correlationBlockThreshold - m_config.correlationReduceThreshold));
+            double denom = m_config.correlationBlockThreshold - m_config.correlationReduceThreshold;
+            if(denom <= 0.001) denom = 0.001;  // Prevent division by zero
+            double reduceFactor = 1.0 - ((maxCorrelation - m_config.correlationReduceThreshold) / denom);
             reduceFactor = MathMax(0.25, MathMin(1.0, reduceFactor));
             double originalLot = result.adjustedLotSize;
             result.adjustedLotSize = NormalizeDouble(result.adjustedLotSize * reduceFactor, 2);
@@ -1248,12 +1259,26 @@ bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
         return true;
     }
     
-    // Reset conservative mode if drawdown recovers
-    if(m_maxDrawdownFromPeak < m_config.drawdownWarningPercent * 0.5 && m_conservativeMode)
+    // Reset conservative mode if drawdown recovers below 60% of critical (closes gap with 50% trading-resume threshold)
+    if(m_maxDrawdownFromPeak < m_config.drawdownCriticalPercent * 0.6 && m_conservativeMode)
     {
         m_conservativeMode = false;
-        PrintFormat("[RISK-CIRCUIT-BREAKER] Recovery | Drawdown=%.2f%% < Half-Warning=%.2f%% | Normal mode restored",
-                   m_maxDrawdownFromPeak, m_config.drawdownWarningPercent * 0.5);
+        PrintFormat("[RISK-CIRCUIT-BREAKER] Recovery | Drawdown=%.2f%% < threshold=%.2f%% | Normal mode restored",
+                   m_maxDrawdownFromPeak, m_config.drawdownCriticalPercent * 0.6);
+    }
+    
+    // Reset recovery counter after stable period — equity must stay below warning for 60 minutes
+    if(m_cbRecoveryAttempts > 0 && m_cbLastRecoverySuccessTime > 0 &&
+       m_maxDrawdownFromPeak < m_config.drawdownWarningPercent * 0.5)
+    {
+        int stableMinutes = (int)((TimeCurrent() - m_cbLastRecoverySuccessTime) / 60);
+        if(stableMinutes >= 60)
+        {
+            PrintFormat("[RISK-CIRCUIT-BREAKER] Recovery counter reset | Stable for %d min (>=60) | Attempts %d->0",
+                       stableMinutes, m_cbRecoveryAttempts);
+            m_cbRecoveryAttempts = 0;
+            m_cbLastRecoverySuccessTime = 0;
+        }
     }
     
     return true;
@@ -1285,6 +1310,7 @@ void CUnifiedRiskManager::ResetCircuitBreaker()
     m_drawdownBreachCount = 0;
     m_cbTriggeredAt = 0;
     m_cbRecoveryAttempts = 0;
+    m_cbLastRecoverySuccessTime = 0;
 
     // Reset peak to current equity
     m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -1332,60 +1358,6 @@ void CUnifiedRiskManager::RestoreCircuitBreakerState(double savedPeakEquity, dou
 
     PrintFormat("[RISK-CIRCUIT-BREAKER] Restored from crash recovery | peakEquity=%.2f | dailyStartEquity=%.2f | breachCount=%d | maxDD=%.2f%%",
                 m_peakEquity, m_dailyStartEquity, m_drawdownBreachCount, m_maxDrawdownFromPeak);
-}
-
-//+------------------------------------------------------------------+
-//| ENHANCEMENT: Correlation-Aware Risk Check (Batch 93 - Week 1)     |
-//| Prevents overexposure to highly correlated positions              |
-//+------------------------------------------------------------------+
-bool CUnifiedRiskManager::CheckCorrelationRisk(const string symbol, double newRiskPercent)
-{
-    if(!m_initialized || m_config.correlationThreshold <= 0.0)
-        return true; // Skip if not configured
-    
-    // Get all open positions and calculate correlated risk
-    double totalCorrelatedRisk = 0.0;
-    int totalPositions = PositionsTotal();
-    
-    for(int i = 0; i < totalPositions; i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0) continue;
-        
-        string posSymbol = PositionGetString(POSITION_SYMBOL);
-        if(posSymbol == symbol) continue; // Skip same symbol
-        
-        // Check correlation with new symbol
-        double correlation = GetSymbolCorrelation(symbol, posSymbol);
-        
-        // If highly correlated, add to correlated risk
-        if(correlation > m_config.correlationThreshold)
-        {
-            double posRisk = CalculatePositionRiskPercent(ticket);
-            totalCorrelatedRisk += posRisk;
-            
-            PrintFormat("[RISK-CORRELATION] High correlation detected | %s <-> %s = %.2f | Pos Risk=%.2f%%",
-                       symbol, posSymbol, correlation, posRisk);
-        }
-    }
-    
-    // Add new position risk
-    totalCorrelatedRisk += newRiskPercent;
-    
-    // Check if correlated risk exceeds portfolio limit
-    double maxCorrelatedRisk = m_config.maxPortfolioRiskPercent * 0.5; // Max 50% of portfolio in correlated positions
-    
-    if(totalCorrelatedRisk > maxCorrelatedRisk)
-    {
-        PrintFormat("[RISK-CORRELATION] REJECTED | Correlated risk=%.2f%% > Limit=%.2f%% (50%% of portfolio)",
-                   totalCorrelatedRisk, maxCorrelatedRisk);
-        return false;
-    }
-    
-    PrintFormat("[RISK-CORRELATION] Approved | Correlated risk=%.2f%% < Limit=%.2f%%",
-               totalCorrelatedRisk, maxCorrelatedRisk);
-    
-    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -1513,6 +1485,7 @@ bool CUnifiedRiskManager::CheckCircuitBreakerRecovery()
     m_tradingEnabled = true;
     m_conservativeMode = true;
     m_cbTriggeredAt = 0; // Clear trigger time
+    m_cbLastRecoverySuccessTime = now; // Record recovery time for stable-period reset
 
     // Reset peak to current equity for fresh drawdown tracking
     m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -1553,11 +1526,25 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
         for(int i = totalPositions - 1; i >= 0; i--)
         {
             ulong ticket = PositionGetTicket(i);
-            if(ticket > 0)
+            if(ticket > 0 && PositionSelectByTicket(ticket))
             {
+                // Journal before close for crash recovery
+                ENUM_ORDER_TYPE closeType = (ENUM_ORDER_TYPE)PositionGetInteger(POSITION_TYPE);
+                double closeVol = PositionGetDouble(POSITION_VOLUME);
+                double closePrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                double closeSL = PositionGetDouble(POSITION_SL);
+                double closeTP = PositionGetDouble(POSITION_TP);
+                long closeMagic = PositionGetInteger(POSITION_MAGIC);
+                double closeProfit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+                string closeSymbol = PositionGetString(POSITION_SYMBOL);
                 // Use MT5 trade object for emergency close
                 CTrade emergencyTrade;
-                emergencyTrade.PositionClose(ticket);
+                if(emergencyTrade.PositionClose(ticket))
+                {
+                    string journalReason = "emergency_margin_breach | P&L=" + DoubleToString(closeProfit, 2);
+                    WriteTradeJournalEntry("CLOSE", ticket, closeSymbol, closeType, closeVol,
+                                           0.0, closeSL, closeTP, closeMagic, journalReason);
+                }
             }
         }
 
@@ -1590,10 +1577,19 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
             }
         }
 
-        if(worstTicket > 0)
+        if(worstTicket > 0 && PositionSelectByTicket(worstTicket))
         {
+            ENUM_ORDER_TYPE critType = (ENUM_ORDER_TYPE)PositionGetInteger(POSITION_TYPE);
+            double critVol = PositionGetDouble(POSITION_VOLUME);
+            double critSL = PositionGetDouble(POSITION_SL);
+            double critTP = PositionGetDouble(POSITION_TP);
+            long critMagic = PositionGetInteger(POSITION_MAGIC);
+            string critSymbol = PositionGetString(POSITION_SYMBOL);
             CTrade criticalTrade;
             criticalTrade.PositionClose(worstTicket);
+            string critJournalReason = "emergency_margin_critical | P&L=" + DoubleToString(worstProfit, 2);
+            WriteTradeJournalEntry("CLOSE", worstTicket, critSymbol, critType, critVol,
+                                   0.0, critSL, critTP, critMagic, critJournalReason);
             PrintFormat("[RISK-MARGIN] Closed worst position | ticket=%I64u | profit=%.2f", worstTicket, worstProfit);
         }
 

@@ -71,6 +71,7 @@ private:
     // Synthetic mode parameters
     bool m_isSynthetic;       // Synthetic mode flag
     double m_syntheticBbDeviation; // BB deviation for synthetics (1.5σ)
+    int m_syntheticBbHandle;  // Cached BB handle for synthetic mode (created once, released in Cleanup)
     
     // Risk Management (AGENTS.md invariant #1)
     CUnifiedRiskManager* m_riskManager;
@@ -123,6 +124,7 @@ public:
         m_minVolumeRatio(0.8),
         m_isSynthetic(false),
         m_syntheticBbDeviation(1.5),
+        m_syntheticBbHandle(INVALID_HANDLE),
         m_riskManager(NULL),
         m_stochHandle(INVALID_HANDLE),
         m_hurstEngine(NULL),
@@ -150,6 +152,8 @@ public:
         m_volumeHandle = INVALID_HANDLE;
         // v2.0: Stochastic handle is self-managed
         if(m_stochHandle != INVALID_HANDLE) { IndicatorRelease(m_stochHandle); m_stochHandle = INVALID_HANDLE; }
+        // Synthetic BB handle is self-managed (not via CIndicatorManager due to custom deviation)
+        if(m_syntheticBbHandle != INVALID_HANDLE) { IndicatorRelease(m_syntheticBbHandle); m_syntheticBbHandle = INVALID_HANDLE; }
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
     }
@@ -419,24 +423,24 @@ public:
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("MEANREV_DISABLED_OR_UNINIT");
         
-        // For synthetic mode, create temporary BB with 1.5σ
-        int syntheticBbHandle = iBands(m_symbol, m_timeframe, m_bbPeriod, 0, m_syntheticBbDeviation, PRICE_CLOSE);
-        if(syntheticBbHandle == INVALID_HANDLE)
+        // For synthetic mode, use cached BB handle with 1.5σ (created once, released in Cleanup)
+        if(m_syntheticBbHandle == INVALID_HANDLE)
         {
-            Print("[MEANREV-SYN] Failed to create synthetic BB handle");
-            return RejectSignal("MEANREV_SYN_BB_HANDLE");
+            m_syntheticBbHandle = iBands(m_symbol, m_timeframe, m_bbPeriod, 0, m_syntheticBbDeviation, PRICE_CLOSE);
+            if(m_syntheticBbHandle == INVALID_HANDLE)
+            {
+                Print("[MEANREV-SYN] Failed to create synthetic BB handle");
+                return RejectSignal("MEANREV_SYN_BB_HANDLE");
+            }
         }
         
         double bbUpper[2], bbMiddle[2], bbLower[2];
-        if(CopyBuffer(syntheticBbHandle, 1, 1, 2, bbUpper) <= 0 ||
-           CopyBuffer(syntheticBbHandle, 0, 1, 2, bbMiddle) <= 0 ||
-           CopyBuffer(syntheticBbHandle, 2, 1, 2, bbLower) <= 0)
+        if(!SafeCopyBuffer(m_syntheticBbHandle, 1, 1, 2, bbUpper) ||
+           !SafeCopyBuffer(m_syntheticBbHandle, 0, 1, 2, bbMiddle) ||
+           !SafeCopyBuffer(m_syntheticBbHandle, 2, 1, 2, bbLower))
         {
-            IndicatorRelease(syntheticBbHandle);
             return RejectSignal("MEANREV_SYN_DATA_UNAVAILABLE");
         }
-        
-        IndicatorRelease(syntheticBbHandle);
         
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
@@ -447,7 +451,7 @@ public:
             return RejectSignal("MEANREV_SYN_ATR_HANDLE");
         
         double atrBuffer[1];
-        bool atrOk = CopyBuffer(atrHandle, 0, 1, 1, atrBuffer) > 0;
+        bool atrOk = SafeCopyBuffer(atrHandle, 0, 1, 1, atrBuffer);
         
         if(!atrOk || atrBuffer[0] <= 0.0)
             return RejectSignal("MEANREV_SYN_ATR_DATA");

@@ -38,6 +38,9 @@ private:
     CHurstEngine*           m_hurstEngine;
     CVPINFilter*            m_vpinFilter;
 
+    // Asset class (detected at Init, used for filter relaxation)
+    int    m_assetClassId;
+
     // Configuration
     int    m_lastBarProcessed;
     string m_lastRejectReasonTag;
@@ -87,6 +90,7 @@ public:
         m_riskManager(NULL),
         m_hurstEngine(NULL),
         m_vpinFilter(NULL),
+        m_assetClassId(9),  // ASSET_UNIVERSAL until Init detects actual class
         m_lastBarProcessed(0),
         m_lastRejectReasonTag(""),
         m_lastRejectLogTime(0),
@@ -175,14 +179,15 @@ public:
         // Batch 103: Apply asset-class-specific ADX thresholds if no EA overrides
         if(m_adxNoTrendThreshold <= 0)
         {
-            int assetClass = DetectAssetClassId(symbol);
-            m_adxSizing.InitForAssetClass(assetClass);
+            m_assetClassId = DetectAssetClassId(symbol);
+            m_adxSizing.InitForAssetClass(m_assetClassId);
             PrintFormat("[TREND v2.1] Asset-class ADX thresholds applied | Class=%d | Symbol=%s",
-                        assetClass, symbol);
+                        m_assetClassId, symbol);
         }
         else
         {
             // EA input overrides take precedence
+            m_assetClassId = DetectAssetClassId(symbol);
             m_adxSizing.SetThresholds(m_adxNoTrendThreshold, m_adxWeakThreshold, m_adxNormalThreshold, m_adxStrongThreshold);
         }
         PrintFormat("[TREND v2.1] ADX thresholds applied | Symbol=%s | Source=%s",
@@ -258,21 +263,27 @@ public:
         m_emaSystem.Update();
         m_entryTypes.Update();
 
-        // Batch 103: Hurst regime filter — relaxed threshold
-        // Hurst < 0.45: strongly mean-reverting, fully abstain
-        // Hurst 0.45–0.50: weakly mean-reverting, attenuate confidence by 0.6
-        // Hurst >= 0.50: trending regime, proceed normally
+        // Batch 103: Hurst regime filter — asset-class-adjusted thresholds
+        // Real instruments: Hurst < 0.45 reject, 0.45–0.50 attenuate by 0.6
+        // Synthetics: Hurst < 0.35 reject (algorithmic mean-reversion is inherent)
         double hurstAttenuation = 1.0;
         if(m_hurstEngine != NULL && m_hurstEngine.IsWarmedUp())
         {
             double hurst = m_hurstEngine.GetSnapshot().hurstValue;
-            if(hurst < 0.45)
+            bool isSynthetic = (m_assetClassId >= 4 && m_assetClassId <= 8);
+            double rejectThreshold = isSynthetic ? 0.35 : 0.45;
+            double attenuateThreshold = isSynthetic ? 0.40 : 0.50;
+            if(hurst < rejectThreshold)
+            {
+                PrintFormat("[TREND-HURST-REJECTED] Hurst=%.4f < %.2f (%s) | Symbol=%s",
+                           hurst, rejectThreshold, isSynthetic ? "SYNTHETIC" : "REAL", m_symbol);
                 return RejectSignal("TREND_HURST_MEAN_REVERTING");
-            if(hurst < 0.50)
+            }
+            if(hurst < attenuateThreshold)
             {
                 hurstAttenuation = 0.6;
-                PrintFormat("[TREND-HURST-ATTENUATED] Hurst=%.4f | Attenuation=%.2f | Symbol=%s",
-                           hurst, hurstAttenuation, m_symbol);
+                PrintFormat("[TREND-HURST-ATTENUATED] Hurst=%.4f | Attenuation=%.2f | %s | Symbol=%s",
+                           hurst, hurstAttenuation, isSynthetic ? "SYNTHETIC" : "REAL", m_symbol);
             }
         }
 
@@ -540,10 +551,13 @@ private:
 
         double htfADX = adxBuffer[0];
 
-        // HTF must have sufficient trend strength (ADX > 25)
-        if(htfADX < 25.0)
+        // HTF must have sufficient trend strength — lower threshold for synthetics
+        bool isSynthetic = (m_assetClassId >= 4 && m_assetClassId <= 8);
+        double htfThreshold = isSynthetic ? 20.0 : 25.0;
+        if(htfADX < htfThreshold)
         {
-            PrintFormat("[TREND-HTF] Rejected: Weak HTF trend (ADX=%.1f < 25.0)", htfADX);
+            PrintFormat("[TREND-HTF] Rejected: Weak HTF trend (ADX=%.1f < %.1f, %s)",
+                       htfADX, htfThreshold, isSynthetic ? "SYNTHETIC" : "REAL");
             return false;
         }
 

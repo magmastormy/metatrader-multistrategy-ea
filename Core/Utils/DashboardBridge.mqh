@@ -29,6 +29,7 @@ private:
    int                 m_requestTimeout;    // Request timeout (ms)
    datetime            m_lastPushTime;      // Last successful state push
    datetime            m_lastPollTime;      // Last command poll time
+   bool                m_pushInProgress;    // Guard against stacked pushes
    int                 m_pushCount;         // Total pushes sent
    int                 m_pushSuccessCount;  // Successful pushes
    int                 m_pushErrorCount;    // Failed pushes
@@ -53,21 +54,60 @@ public:
    // Initialization
    bool              Initialize(const string &endpoint, bool enabled = true,
                                 bool controlEnabled = false, int pushIntervalSec = 5,
-                                int requestTimeoutMs = 3000);
+                                int requestTimeoutMs = 1000);
    void              Shutdown();
 
    // Operations
    bool              PushState();
    bool              PollCommands();
 
-   // Getters
-   bool              IsEnabled() const { return m_enabled; }
-   bool              IsConnected() const { return m_connected; }
-   bool              IsControlEnabled() const { return m_controlEnabled; }
-   int               GetPushCount() const { return m_pushCount; }
-   int               GetSuccessCount() const { return m_pushSuccessCount; }
-   int               GetErrorCount() const { return m_pushErrorCount; }
-   datetime          GetLastPushTime() const { return m_lastPushTime; }
+    // Getters
+    bool              IsEnabled() const { return m_enabled; }
+    bool              IsConnected() const { return m_connected; }
+    bool              IsControlEnabled() const { return m_controlEnabled; }
+    int               GetPushCount() const { return m_pushCount; }
+    int               GetSuccessCount() const { return m_pushSuccessCount; }
+    int               GetErrorCount() const { return m_pushErrorCount; }
+    datetime          GetLastPushTime() const { return m_lastPushTime; }
+
+   // Setters
+   void              SetEnabled(bool enabled) { m_enabled = enabled; }
+
+   // AI data injection — called from main loop before PushState
+   void              SetAIData(bool nnActive, const string &nnSignal, double nnConf,
+                               int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
+                               int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
+                               int nnTradeLinked, bool nnNormReady,
+                               const string &regime, double regimeTrend, double regimeRange,
+                               double regimeVolatile, double regimeSpike,
+                               int metaFeatures, int metaCooldown, int metaEarlyStop,
+                               double metaWinRate, double metaAvgConf, int metaSamplesSince);
+
+private:
+   // Stored AI data
+   bool   m_aiNnActive;
+   string m_aiNnSignal;
+   double m_aiNnConf;
+   int    m_aiNnLabels;
+   int    m_aiNnSteps;
+   double m_aiNnConformalQ;
+   double m_aiNnConformalAlpha;
+   int    m_aiNnAssetClass;
+   double m_aiNnBarrierK;
+   int    m_aiNnBarrierVertBars;
+   int    m_aiNnTradeLinked;
+   bool   m_aiNnNormReady;
+   string m_aiRegime;
+   double m_aiRegimeTrend;
+   double m_aiRegimeRange;
+   double m_aiRegimeVolatile;
+   double m_aiRegimeSpike;
+   int    m_aiMetaFeatures;
+   int    m_aiMetaCooldown;
+   int    m_aiMetaEarlyStop;
+   double m_aiMetaWinRate;
+   double m_aiMetaAvgConf;
+   int    m_aiMetaSamplesSince;
 };
 
 //+------------------------------------------------------------------+
@@ -79,7 +119,7 @@ CDashboardBridge::CDashboardBridge()
    m_enabled = true;
    m_controlEnabled = false;
    m_pushInterval = 5;
-   m_requestTimeout = 3000;
+   m_requestTimeout = 1000;
    m_lastPushTime = 0;
    m_lastPollTime = 0;
    m_pushCount = 0;
@@ -89,6 +129,66 @@ CDashboardBridge::CDashboardBridge()
    m_lastError = "";
    m_lastErrorLogTime = 0;
    m_initialized = false;
+   m_pushInProgress = false;
+
+   // AI data defaults
+   m_aiNnActive = false;
+   m_aiNnSignal = "NONE";
+   m_aiNnConf = 0.0;
+   m_aiNnLabels = 0;
+   m_aiNnSteps = 0;
+   m_aiNnConformalQ = 1.0;
+   m_aiNnConformalAlpha = 0.05;
+   m_aiNnAssetClass = 9;
+   m_aiNnBarrierK = 1.5;
+   m_aiNnBarrierVertBars = 20;
+   m_aiNnTradeLinked = 0;
+   m_aiNnNormReady = false;
+   m_aiRegime = "RANGE";
+   m_aiRegimeTrend = 0.25;
+   m_aiRegimeRange = 0.25;
+   m_aiRegimeVolatile = 0.25;
+   m_aiRegimeSpike = 0.25;
+   m_aiMetaFeatures = 65;
+   m_aiMetaCooldown = 50;
+   m_aiMetaEarlyStop = 20;
+   m_aiMetaWinRate = 0.5;
+   m_aiMetaAvgConf = 0.5;
+   m_aiMetaSamplesSince = 0;
+}
+
+void CDashboardBridge::SetAIData(bool nnActive, const string &nnSignal, double nnConf,
+                                  int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
+                                  int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
+                                  int nnTradeLinked, bool nnNormReady,
+                                  const string &regime, double regimeTrend, double regimeRange,
+                                  double regimeVolatile, double regimeSpike,
+                                  int metaFeatures, int metaCooldown, int metaEarlyStop,
+                                  double metaWinRate, double metaAvgConf, int metaSamplesSince)
+{
+   m_aiNnActive = nnActive;
+   m_aiNnSignal = nnSignal;
+   m_aiNnConf = nnConf;
+   m_aiNnLabels = nnLabels;
+   m_aiNnSteps = nnSteps;
+   m_aiNnConformalQ = nnConformalQ;
+   m_aiNnConformalAlpha = nnConformalAlpha;
+   m_aiNnAssetClass = nnAssetClass;
+   m_aiNnBarrierK = nnBarrierK;
+   m_aiNnBarrierVertBars = nnBarrierVertBars;
+   m_aiNnTradeLinked = nnTradeLinked;
+   m_aiNnNormReady = nnNormReady;
+   m_aiRegime = regime;
+   m_aiRegimeTrend = regimeTrend;
+   m_aiRegimeRange = regimeRange;
+   m_aiRegimeVolatile = regimeVolatile;
+   m_aiRegimeSpike = regimeSpike;
+   m_aiMetaFeatures = metaFeatures;
+   m_aiMetaCooldown = metaCooldown;
+   m_aiMetaEarlyStop = metaEarlyStop;
+   m_aiMetaWinRate = metaWinRate;
+   m_aiMetaAvgConf = metaAvgConf;
+   m_aiMetaSamplesSince = metaSamplesSince;
 }
 
 //+------------------------------------------------------------------+
@@ -127,10 +227,11 @@ bool CDashboardBridge::Initialize(const string &endpoint, bool enabled,
       m_connected = true;
       LogState("Dashboard bridge connected to " + m_endpoint);
    }
-   else
+    else
    {
       m_connected = false;
       LogState("Dashboard bridge server not reachable - will retry on push", true);
+      return false;
    }
 
    return true;
@@ -302,13 +403,46 @@ string CDashboardBridge::BuildStateJson()
    }
    json += "}},";
 
-   // AI (placeholder)
-   json += "\"ai\":{";
-   json += "\"onnx\":{\"active\":false},";
-   json += "\"ensemble\":{\"active\":false},";
-   json += "\"transformer\":{\"active\":false},";
-   json += "\"nn\":{\"active\":false}";
-   json += "},";
+    // AI — real data from injected state
+    json += "\"ai\":{";
+    json += "\"onnx\":{\"active\":false},";
+    json += "\"ensemble\":{\"active\":false},";
+    json += "\"transformer\":{\"active\":false},";
+    json += "\"nn\":{\"active\":false},";
+    // Neural network detailed data
+    json += "\"neural_net\":{";
+    json += "\"active\":" + string(m_aiNnActive ? "true" : "false") + ",";
+    json += "\"signal\":\"" + EscapeJsonString(m_aiNnSignal) + "\",";
+    json += "\"confidence\":" + DoubleToString(m_aiNnConf, 4) + ",";
+    json += "\"labels_resolved\":" + IntegerToString(m_aiNnLabels) + ",";
+    json += "\"training_steps\":" + IntegerToString(m_aiNnSteps) + ",";
+    json += "\"conformal_quantile\":" + DoubleToString(m_aiNnConformalQ, 4) + ",";
+    json += "\"conformal_alpha\":" + DoubleToString(m_aiNnConformalAlpha, 4) + ",";
+    json += "\"asset_class\":" + IntegerToString(m_aiNnAssetClass) + ",";
+    json += "\"barrier_k\":" + DoubleToString(m_aiNnBarrierK, 2) + ",";
+    json += "\"barrier_vert_bars\":" + IntegerToString(m_aiNnBarrierVertBars) + ",";
+    json += "\"trade_linked_labels\":" + IntegerToString(m_aiNnTradeLinked) + ",";
+    json += "\"normalization_ready\":" + string(m_aiNnNormReady ? "true" : "false");
+    json += "},";
+    // Regime data
+    json += "\"regime\":{";
+    json += "\"current\":\"" + EscapeJsonString(m_aiRegime) + "\",";
+    json += "\"trend_prob\":" + DoubleToString(m_aiRegimeTrend, 4) + ",";
+    json += "\"range_prob\":" + DoubleToString(m_aiRegimeRange, 4) + ",";
+    json += "\"volatile_prob\":" + DoubleToString(m_aiRegimeVolatile, 4) + ",";
+    json += "\"spike_prob\":" + DoubleToString(m_aiRegimeSpike, 4);
+    json += "},";
+    // Meta-labeler data
+    json += "\"meta_labeler\":{";
+    json += "\"features\":" + IntegerToString(m_aiMetaFeatures) + ",";
+    json += "\"cooldown\":" + IntegerToString(m_aiMetaCooldown) + ",";
+    json += "\"early_stop_patience\":" + IntegerToString(m_aiMetaEarlyStop) + ",";
+    json += "\"recent_win_rate\":" + DoubleToString(m_aiMetaWinRate, 4) + ",";
+    json += "\"recent_avg_confidence\":" + DoubleToString(m_aiMetaAvgConf, 4) + ",";
+    json += "\"samples_since_train\":" + IntegerToString(m_aiMetaSamplesSince);
+    json += "},";
+    json += "\"features_total\":" + IntegerToString(m_aiMetaFeatures);
+    json += "},";
 
    // Strategies - real data from enterprise managers
    json += "\"strategies\":[";
@@ -406,9 +540,9 @@ string CDashboardBridge::BuildStateJson()
       if(symbolsAdded > 0)
          json += ",";
       
-      json += "\"" + sym + "\":{";
-      json += "\"timeframe\":\"M1\",";
-      json += "\"bars\":[";
+       json += "\"" + EscapeJsonString(sym) + "\":{";
+       json += "\"timeframe\":\"M1\",";
+       json += "\"bars\":[";
       
       int maxBars = MathMin(bars, 100);
       int barsAdded = 0;
@@ -420,7 +554,7 @@ string CDashboardBridge::BuildStateJson()
             continue;
          
          // Convert to Unix timestamp (seconds)
-         int unixTime = (int)barTime;
+         long unixTime = (long)barTime;
          
          double open = iOpen(sym, PERIOD_M1, j);
          double high = iHigh(sym, PERIOD_M1, j);
@@ -520,16 +654,26 @@ bool CDashboardBridge::PushState()
    if(!m_initialized || !m_enabled)
       return false;
 
+   // Guard against stacked pushes — skip if previous push still in progress
+   if(m_pushInProgress)
+      return false;
+
+   m_pushInProgress = true;
    string json = BuildStateJson();
    string response;
    string stateUrl = m_endpoint + "/state";
 
-   m_pushCount++;
+    m_pushCount++;
 
-   if(SendHttpRequest("POST", stateUrl, json, response))
+    // Debug: log first 200 chars of JSON
+    if(m_pushCount <= 3)
+        PrintFormat("[DASHBOARD-BRIDGE] Push #%d JSON preview: %s", m_pushCount, StringSubstr(json, 0, 200));
+
+    if(SendHttpRequest("POST", stateUrl, json, response))
    {
       m_pushSuccessCount++;
       m_lastPushTime = TimeCurrent();
+      m_pushInProgress = false;
       if(!m_connected)
       {
          m_connected = true;
@@ -540,6 +684,7 @@ bool CDashboardBridge::PushState()
    else
    {
       m_pushErrorCount++;
+      m_pushInProgress = false;
       if(m_connected)
       {
          m_connected = false;
@@ -573,33 +718,35 @@ bool CDashboardBridge::PollCommands()
       // Parse commands from JSON response
       if(StringFind(response, "\"commands\"") != -1 && StringFind(response, "[]") == -1)
       {
-         // Extract command entries - basic parsing
+         // Extract command entries - bounded to each command object
          int searchPos = 0;
          while(true)
          {
             int cmdStart = StringFind(response, "\"id\":", searchPos);
             if(cmdStart == -1) break;
 
-            // Extract command id
+            int cmdEnd = StringFind(response, "}", cmdStart);
+            if(cmdEnd == -1) break;
+
+            // Extract command id (bounded to current command object)
             int idStart = cmdStart + 5;
-            int idEnd = StringFind(response, "\"", StringFind(response, "\"", idStart) + 1);
             string cmdId = "";
             int q1 = StringFind(response, "\"", idStart);
-            if(q1 != -1)
+            if(q1 != -1 && q1 < cmdEnd)
             {
                int q2 = StringFind(response, "\"", q1 + 1);
-               if(q2 != -1)
+               if(q2 != -1 && q2 < cmdEnd)
                   cmdId = StringSubstr(response, q1 + 1, q2 - q1 - 1);
             }
 
-            // Extract command type
+            // Extract command type (bounded to current command object)
             int typePos = StringFind(response, "\"type\":", cmdStart);
             string cmdType = "";
-            if(typePos != -1)
+            if(typePos != -1 && typePos < cmdEnd)
             {
                int tq1 = StringFind(response, "\"", typePos + 7);
                int tq2 = StringFind(response, "\"", tq1 + 1);
-               if(tq1 != -1 && tq2 != -1)
+               if(tq1 != -1 && tq2 != -1 && tq2 < cmdEnd)
                   cmdType = StringSubstr(response, tq1 + 1, tq2 - tq1 - 1);
             }
 
@@ -613,7 +760,7 @@ bool CDashboardBridge::PollCommands()
                SendHttpRequest("POST", ackUrl, "", ackResponse);
             }
 
-            searchPos = cmdStart + 10;
+            searchPos = cmdEnd + 1;
             if(searchPos >= StringLen(response)) break;
          }
       }
@@ -628,11 +775,8 @@ bool CDashboardBridge::PollCommands()
 //+------------------------------------------------------------------+
 void CDashboardBridge::LogState(string message, bool isError)
 {
-   string prefix = "[DASHBOARD-BRIDGE] ";
-   if(isError)
-      Print(prefix + message);
-   else
-      Print(prefix + message);
+   string prefix = isError ? "[DASHBOARD-BRIDGE-ERROR] " : "[DASHBOARD-BRIDGE] ";
+   Print(prefix + message);
 }
 
 //+------------------------------------------------------------------+

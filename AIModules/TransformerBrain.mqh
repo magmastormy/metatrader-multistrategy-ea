@@ -8,6 +8,7 @@
 #define __TRANSFORMER_BRAIN_MQH__
 
 #include <Arrays/ArrayObj.mqh>
+#include "AIConfig.mqh"
 
 #define TRANSFORMER_HEAD_STATE_MAGIC   1414677859
 #define TRANSFORMER_HEAD_STATE_VERSION 2
@@ -101,6 +102,7 @@ public:
                 int odd = even + 1;
                 if(odd >= m_dModel)
                     break;
+                // Store at pair index (i) so Apply() can read at vec_index/2
                 m_cos[Offset(pos, i)] = cosTheta;
                 m_sin[Offset(pos, i)] = sinTheta;
             }
@@ -109,16 +111,19 @@ public:
 
     void Apply(double &vec[], const int pos)
     {
-        if(pos < 0 || pos >= m_maxSeqLen || ArraySize(vec) < 2)
+        if(pos < 0 || ArraySize(vec) < 2)
             return;
 
         int width = MathMin(ArraySize(vec), m_dModel);
+        // Clamp position to precomputed range; beyond maxSeqLen use last computed rotation
+        int safePos = MathMin(pos, m_maxSeqLen - 1);
         for(int i = 0; i < width - 1; i += 2)
         {
             double v0 = vec[i];
             double v1 = vec[i + 1];
-            double c = m_cos[Offset(pos, i / 2)];
-            double s = m_sin[Offset(pos, i / 2)];
+            int pairIdx = i / 2;
+            double c = m_cos[Offset(safePos, pairIdx)];
+            double s = m_sin[Offset(safePos, pairIdx)];
             vec[i]     = v0 * c - v1 * s;
             vec[i + 1] = v0 * s + v1 * c;
         }
@@ -576,7 +581,8 @@ private:
 
     int GradSqOffset(const int row, const int col) const
     {
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         if(total <= 0)
             return 0;
         return row * total + col;
@@ -625,9 +631,11 @@ private:
         ArrayInitialize(m_patternBiases, 0.0);
 
         int totalClassParams = classWeightCount + ArraySize(m_classificationBiases);
-        m_ewc.Init(totalClassParams);
+        int totalPatternParams = patternWeightCount + ArraySize(m_patternBiases);
+        int totalHeadParams = totalClassParams + totalPatternParams;
+        m_ewc.Init(totalHeadParams);
         m_gradBufWindowSize = 50;
-        ArrayResize(m_gradSqBuffer, m_gradBufWindowSize * totalClassParams);
+        ArrayResize(m_gradSqBuffer, m_gradBufWindowSize * totalHeadParams);
         ArrayInitialize(m_gradSqBuffer, 0.0);
         m_gradBufHead = 0;
         m_gradBufCount = 0;
@@ -784,7 +792,8 @@ private:
         }
 
         int completedRow = m_gradBufHead % m_gradBufWindowSize;
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         for(int clearIdx = ewcIndex; clearIdx < total; clearIdx++)
             m_gradSqBuffer[GradSqOffset(completedRow, clearIdx)] = 0.0;
         m_gradBufHead++;
@@ -798,6 +807,9 @@ private:
             return;
 
         m_adamStep++;
+        int classParamCount = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        double cachedWeights[];
+        GetWeights(cachedWeights);
         for(int c = 0; c < 10; c++)
         {
             double target = (c == targetClass) ? 1.0 : 0.0;
@@ -806,19 +818,29 @@ private:
             for(int i = 0; i < m_dModel; i++)
             {
                 int idx = rowOffset + i;
-                AdamWUpdate(m_patternWeights, m_patternAdamM, m_patternAdamV, idx, error * features[i], false, -1);
+                int ewcIdx = classParamCount + idx;
+                double totalGrad = error * features[i];
+                if(m_ewc.IsAnchored())
+                    totalGrad += m_ewc.PenaltyGrad(cachedWeights, ewcIdx);
+                StoreGradSq(ewcIdx, totalGrad * totalGrad);
+                AdamWUpdateRaw(m_patternWeights, m_patternAdamM, m_patternAdamV, idx, totalGrad);
             }
-            AdamWUpdate(m_patternBiases, m_patternBiasAdamM, m_patternBiasAdamV, c, error, false, -1);
+            int biasEwcIdx = classParamCount + ArraySize(m_patternWeights) + c;
+            double totalGradBias = error;
+            if(m_ewc.IsAnchored())
+                totalGradBias += m_ewc.PenaltyGrad(cachedWeights, biasEwcIdx);
+            StoreGradSq(biasEwcIdx, totalGradBias * totalGradBias);
+            AdamWUpdateRaw(m_patternBiases, m_patternBiasAdamM, m_patternBiasAdamV, c, totalGradBias);
         }
     }
 
 public:
-    CTransformerBrain(const int dModel = 32,
-                      const int numHeads = 4,
-                      const int numLayers = 2,
-                      const int dFF = 64,
-                      const int maxSeqLen = 60,
-                      const double learningRate = 0.001)
+    CTransformerBrain(const int dModel = AI_DEFAULT_DMODEL,
+                      const int numHeads = AI_DEFAULT_NUM_HEADS,
+                      const int numLayers = AI_DEFAULT_NUM_LAYERS,
+                      const int dFF = AI_DEFAULT_DFF,
+                      const int maxSeqLen = AI_DEFAULT_MAX_SEQ_LEN,
+                      const double learningRate = AI_DEFAULT_LR)
     {
         m_dModel = MathMax(2, dModel);
         m_numHeads = MathMax(1, numHeads);
@@ -1050,7 +1072,8 @@ public:
 
     void GetRecentFisherApprox(double &out[])
     {
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         ArrayResize(out, total);
         ArrayInitialize(out, 0.0);
         if(m_gradBufCount <= 0)
@@ -1067,13 +1090,18 @@ public:
 
     void GetWeights(double &out[])
     {
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         ArrayResize(out, total);
         int idx = 0;
         for(int i = 0; i < ArraySize(m_classificationWeights); i++)
             out[idx++] = m_classificationWeights[i];
         for(int i = 0; i < ArraySize(m_classificationBiases); i++)
             out[idx++] = m_classificationBiases[i];
+        for(int i = 0; i < ArraySize(m_patternWeights); i++)
+            out[idx++] = m_patternWeights[i];
+        for(int i = 0; i < ArraySize(m_patternBiases); i++)
+            out[idx++] = m_patternBiases[i];
     }
 
     void AnchorEWC(const double &fisherApprox[])

@@ -7,9 +7,21 @@
 #ifndef __ONNX_BRAIN_MQH__
 #define __ONNX_BRAIN_MQH__
 
-#define ONNX_SEQ_LEN    60
+#include "AIConfig.mqh"
+
+#ifndef ONNX_SEQ_LEN
+#define ONNX_SEQ_LEN    AI_ONNX_SEQ_LEN
+#endif
 #define ONNX_FEAT_DIM   FEATURE_VECTOR_SIZE
-#define ONNX_N_CLASSES  3
+#ifndef ONNX_N_CLASSES
+#define ONNX_N_CLASSES  AI_ONNX_N_CLASSES
+#endif
+
+int OnnxPositiveMod(const int value, const int modulus)
+{
+    int mod = value % modulus;
+    return (mod < 0) ? mod + modulus : mod;
+}
 
 class COnnxBrain
 {
@@ -32,6 +44,12 @@ private:
     double m_shadowTotal;
     double m_activeWins;
     double m_activeTotal;
+    double m_shadowPnl;
+    double m_activePnl;
+    double m_shadowMaxDD;
+    double m_activeMaxDD;
+    double m_shadowPeakPnl;
+    double m_activePeakPnl;
     int    m_shadowWarmup;
     int    m_shadowSignal;
     double m_shadowConfidence;
@@ -120,7 +138,7 @@ private:
         xInput.Resize(ONNX_SEQ_LEN, ONNX_FEAT_DIM);
         for(int t = 0; t < ONNX_SEQ_LEN; t++)
         {
-            int src = (m_head - ONNX_SEQ_LEN + t + ONNX_SEQ_LEN * 1000) % ONNX_SEQ_LEN;
+            int src = OnnxPositiveMod(m_head - ONNX_SEQ_LEN + t, ONNX_SEQ_LEN);
             for(int f = 0; f < ONNX_FEAT_DIM; f++)
                 xInput[t][f] = m_featureBuf[src][f];
         }
@@ -179,6 +197,12 @@ public:
         m_shadowTotal = 0.0;
         m_activeWins = 0.0;
         m_activeTotal = 0.0;
+        m_shadowPnl = 0.0;
+        m_activePnl = 0.0;
+        m_shadowMaxDD = 0.0;
+        m_activeMaxDD = 0.0;
+        m_shadowPeakPnl = 0.0;
+        m_activePeakPnl = 0.0;
         m_shadowWarmup = 0;
         m_shadowSignal = 1;
         m_shadowConfidence = 0.0;
@@ -203,7 +227,7 @@ public:
         m_fallbackToCpu = prevFallback;
         if(!InitHandleFromBuffer(modelBuffer, m_handle))
         {
-            PrintFormat("[ONNX] Model unavailable or invalid | err=%d | expected_shape=[1,%d,%d] | note=re-export ONNX after the 57-feature contract upgrade",
+            PrintFormat("[ONNX] Model unavailable or invalid | err=%d | expected_shape=[1,%d,%d] | note=re-export ONNX after the 65-feature contract upgrade",
                         GetLastError(), ONNX_SEQ_LEN, ONNX_FEAT_DIM);
             return false;
         }
@@ -228,6 +252,12 @@ public:
         m_shadowTotal = 0.0;
         m_activeWins = 0.0;
         m_activeTotal = 0.0;
+        m_shadowPnl = 0.0;
+        m_activePnl = 0.0;
+        m_shadowMaxDD = 0.0;
+        m_activeMaxDD = 0.0;
+        m_shadowPeakPnl = 0.0;
+        m_activePeakPnl = 0.0;
         m_shadowWarmup = 0;
         m_hasShadowPrediction = false;
         m_fallbackToCpu = false;
@@ -345,6 +375,11 @@ public:
 
     void RecordOutcome(const bool activeCorrect, const bool shadowCorrect)
     {
+        RecordOutcomePnl(activeCorrect, shadowCorrect, 0.0);
+    }
+
+    void RecordOutcomePnl(const bool activeCorrect, const bool shadowCorrect, const double tradePnl)
+    {
         if(m_shadowHandle == INVALID_HANDLE)
             return;
 
@@ -362,25 +397,61 @@ public:
             m_shadowWins++;
         m_shadowTotal++;
 
+        m_activePnl += tradePnl;
+        m_shadowPnl += tradePnl;
+        if(m_activePnl > m_activePeakPnl)
+            m_activePeakPnl = m_activePnl;
+        if(m_shadowPnl > m_shadowPeakPnl)
+            m_shadowPeakPnl = m_shadowPnl;
+        double activeDD = m_activePeakPnl - m_activePnl;
+        double shadowDD = m_shadowPeakPnl - m_shadowPnl;
+        if(activeDD > m_activeMaxDD)
+            m_activeMaxDD = activeDD;
+        if(shadowDD > m_shadowMaxDD)
+            m_shadowMaxDD = shadowDD;
+
         if(m_shadowBarsCount < m_shadowBarsNeeded)
             return;
 
         double activeAcc = m_activeWins / (m_activeTotal + 1e-9);
         double shadowAcc = m_shadowWins / (m_shadowTotal + 1e-9);
-        if(shadowAcc > activeAcc + m_promotionThreshold)
+        double activeExpectancy = (m_activeTotal > 0) ? (m_activePnl / m_activeTotal) : 0.0;
+        double shadowExpectancy = (m_shadowTotal > 0) ? (m_shadowPnl / m_shadowTotal) : 0.0;
+        double activePF = 0.0;
+        double shadowPF = 0.0;
+        if(m_activeMaxDD > 1e-9)
+            activePF = (m_activePnl > 0) ? (m_activePnl / m_activeMaxDD) : 0.0;
+        if(m_shadowMaxDD > 1e-9)
+            shadowPF = (m_shadowPnl > 0) ? (m_shadowPnl / m_shadowMaxDD) : 0.0;
+
+        bool shadowWins = false;
+        if(shadowExpectancy > activeExpectancy + m_promotionThreshold)
+        {
+            if(m_shadowMaxDD <= m_activeMaxDD * 1.5)
+                shadowWins = true;
+        }
+        if(!shadowWins && shadowAcc > activeAcc + m_promotionThreshold + 0.02)
+        {
+            if(m_shadowMaxDD <= m_activeMaxDD * 1.2)
+                shadowWins = true;
+        }
+
+        if(shadowWins)
         {
             if(m_handle != INVALID_HANDLE)
                 OnnxRelease(m_handle);
             m_handle = m_shadowHandle;
             m_shadowHandle = INVALID_HANDLE;
             m_loaded = true;
-            PrintFormat("[ONNX] Hot-swap promoted shadow model | shadow=%.3f | active=%.3f", shadowAcc, activeAcc);
+            PrintFormat("[AI-HOT-SWAP] PROMOTED shadow model | shadow_acc=%.3f acc=%.3f | shadow_exp=%.4f active_exp=%.4f | shadow_pf=%.3f active_pf=%.3f",
+                        shadowAcc, activeAcc, shadowExpectancy, activeExpectancy, shadowPF, activePF);
         }
         else
         {
             OnnxRelease(m_shadowHandle);
             m_shadowHandle = INVALID_HANDLE;
-            PrintFormat("[ONNX] Hot-swap rejected shadow model | shadow=%.3f | active=%.3f", shadowAcc, activeAcc);
+            PrintFormat("[AI-HOT-SWAP] REJECTED shadow model | shadow_acc=%.3f acc=%.3f | shadow_exp=%.4f active_exp=%.4f | shadow_pf=%.3f active_pf=%.3f",
+                        shadowAcc, activeAcc, shadowExpectancy, activeExpectancy, shadowPF, activePF);
         }
 
         m_shadowBarsCount = 0;
@@ -388,6 +459,12 @@ public:
         m_shadowTotal = 0.0;
         m_activeWins = 0.0;
         m_activeTotal = 0.0;
+        m_shadowPnl = 0.0;
+        m_activePnl = 0.0;
+        m_shadowMaxDD = 0.0;
+        m_activeMaxDD = 0.0;
+        m_shadowPeakPnl = 0.0;
+        m_activePeakPnl = 0.0;
         m_hasShadowPrediction = false;
     }
 

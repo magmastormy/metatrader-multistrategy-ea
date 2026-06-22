@@ -216,7 +216,7 @@ CChartDrawingManager::CChartDrawingManager() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
     m_prefix("CHART_"),
-    m_maxObjects(900), // Stay under MT5's 1000 limit
+    m_maxObjects(450), // Stay under MT5's 500-object limit
     m_objectsDrawn(0),
     m_objectsDeleted(0),
     m_lastCleanup(0),

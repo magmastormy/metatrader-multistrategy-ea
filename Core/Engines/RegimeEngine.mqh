@@ -821,11 +821,27 @@ public:
                                     double hurstTrendMult,
                                     double hurstBreakoutMult)
     {
+        // Validate Hurst inputs — corrupted indicator handles can produce inf/NaN
+        if(!MathIsValidNumber(hurstMeanRevMult) || hurstMeanRevMult < 0.01 || hurstMeanRevMult > 10.0)
+            hurstMeanRevMult = 1.0;
+        if(!MathIsValidNumber(hurstMomentumMult) || hurstMomentumMult < 0.01 || hurstMomentumMult > 10.0)
+            hurstMomentumMult = 1.0;
+        if(!MathIsValidNumber(hurstTrendMult) || hurstTrendMult < 0.01 || hurstTrendMult > 10.0)
+            hurstTrendMult = 1.0;
+        if(!MathIsValidNumber(hurstBreakoutMult) || hurstBreakoutMult < 0.01 || hurstBreakoutMult > 10.0)
+            hurstBreakoutMult = 1.0;
+
         m_lastSnapshot.meanRevWeightMult *= hurstMeanRevMult;
         m_lastSnapshot.momentumWeightMult *= hurstMomentumMult;
         m_lastSnapshot.trendWeightMult *= hurstTrendMult;
         m_lastSnapshot.breakoutWeightMult *= hurstBreakoutMult;
-        // ICT weight is not modified by Hurst (ICT has its own regime logic)
+
+        // Clamp all weight multipliers to sane bounds [0.01, 10.0]
+        m_lastSnapshot.meanRevWeightMult = MathMax(0.01, MathMin(10.0, m_lastSnapshot.meanRevWeightMult));
+        m_lastSnapshot.momentumWeightMult = MathMax(0.01, MathMin(10.0, m_lastSnapshot.momentumWeightMult));
+        m_lastSnapshot.trendWeightMult = MathMax(0.01, MathMin(10.0, m_lastSnapshot.trendWeightMult));
+        m_lastSnapshot.breakoutWeightMult = MathMax(0.01, MathMin(10.0, m_lastSnapshot.breakoutWeightMult));
+        m_lastSnapshot.ictWeightMult = MathMax(0.01, MathMin(10.0, m_lastSnapshot.ictWeightMult));
     }
 
     string GetStateTag() const

@@ -887,7 +887,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
     m_strategies[m_strategyCount].healthScore = 0.75;
-    m_strategies[m_strategyCount].participationScore = 0.75;
+    m_strategies[m_strategyCount].participationScore = 0.90;
     m_strategies[m_strategyCount].avgConfidence = 0;
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
     m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
@@ -1113,6 +1113,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                      GetStrategyReliabilityMultiplier(i) *
                                      GetStrategyParticipationMultiplier(i) *
                                      regimeCategoryMult;
+
+            // Final safety: clamp adjusted weight to sane bounds
+            if(!MathIsValidNumber(adjustedStrategyWeight) || adjustedStrategyWeight < 0.001 || adjustedStrategyWeight > 100.0)
+                adjustedStrategyWeight = strategyWeight;
                                      
             if(liveEligibleForThisEval)
             {
@@ -1214,7 +1218,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
         double previousParticipation = m_strategies[i].participationScore;
         if(previousParticipation <= 0.0)
-            previousParticipation = 0.75;
+            previousParticipation = 0.90;
         m_strategies[i].participationScore = MathMax(0.35,
                                                      MathMin(1.0,
                                                              (previousParticipation * 0.85) +
@@ -1415,6 +1419,24 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         if(signal == TRADE_SIGNAL_BUY && stratConf >= signalConfidenceFloor)
         {
             double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
+            // AI uncertainty discount: reduce conviction when model is uncertain
+            IAIStrategy* aiStratConv = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
+            if(aiStratConv != NULL)
+            {
+                double uncertainty = aiStratConv.GetUncertainty();
+                double uncertaintyDiscount = 1.0 - (0.30 * MathMax(0.0, MathMin(1.0, uncertainty)));
+                conviction *= uncertaintyDiscount;
+                if(uncertainty > 0.5)
+                {
+                    static datetime s_lastUncLog = 0;
+                    if(s_lastUncLog == 0 || (TimeCurrent() - s_lastUncLog) >= 60)
+                    {
+                        PrintFormat("[AI-UNCERTAINTY-DISCOUNT] %s | strategy=%s | uncertainty=%.3f | discount=%.3f | conviction=%.4f",
+                                    symbol, m_strategies[i].name, uncertainty, uncertaintyDiscount, conviction);
+                        s_lastUncLog = TimeCurrent();
+                    }
+                }
+            }
             if(liveVoter && liveEligibleForThisEval)
             {
                 buyVotes++;
@@ -1456,6 +1478,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         else if(signal == TRADE_SIGNAL_SELL && stratConf >= signalConfidenceFloor)
         {
             double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
+            // AI uncertainty discount: reduce conviction when model is uncertain
+            IAIStrategy* aiStratConvSell = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
+            if(aiStratConvSell != NULL)
+            {
+                double uncertainty = aiStratConvSell.GetUncertainty();
+                double uncertaintyDiscount = 1.0 - (0.30 * MathMax(0.0, MathMin(1.0, uncertainty)));
+                conviction *= uncertaintyDiscount;
+            }
             if(liveVoter && liveEligibleForThisEval)
             {
                 sellVotes++;
@@ -3122,6 +3152,14 @@ double CEnterpriseStrategyManager::GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYP
             break;
     }
 
+    // Defense-in-depth: reject inf/NaN/corrupted weight values
+    if(!MathIsValidNumber(categoryMult) || categoryMult < 0.01 || categoryMult > 10.0)
+    {
+        PrintFormat("[REGIME-WEIGHT-GUARD] categoryMult=%.4f out of range for strategy=%d, resetting to 1.0",
+                    categoryMult, (int)strategyType);
+        categoryMult = defaultMult;
+    }
+
     // OFI regime integration (Batch 104)
     // If OFI engine is available, adjust category multiplier based on order flow alignment
     if(m_ofiEngine != NULL && m_ofiEngine.IsWarmedUp())
@@ -3184,7 +3222,7 @@ double CEnterpriseStrategyManager::GetStrategyParticipationMultiplier(const int 
 
     double participationScore = m_strategies[strategyIndex].participationScore;
     if(participationScore <= 0.0)
-        participationScore = 0.75;
+        participationScore = 0.90;
 
     return MathMax(0.55, MathMin(1.05, 0.40 + (0.65 * participationScore)));
 }

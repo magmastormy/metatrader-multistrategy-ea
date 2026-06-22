@@ -8,13 +8,14 @@
 #include "CNeuralCore.mqh"
 #include "../Core/AI/NNModelStorage.mqh"
 #include "CNeuralTrainingDataManager.mqh"
+#include "AIConfig.mqh"
 
 // Checkpoint version and magic constants — must match NeuralNetworkStrategy.mqh
 #ifndef NN_CHECKPOINT_VERSION
-#define NN_CHECKPOINT_VERSION 7
+#define NN_CHECKPOINT_VERSION AI_NN_CHECKPOINT_VERSION
 #endif
 #ifndef NN_CHECKPOINT_MAGIC
-#define NN_CHECKPOINT_MAGIC 1313758027
+#define NN_CHECKPOINT_MAGIC AI_NN_CHECKPOINT_MAGIC
 #endif
 
 class CCheckpointManager
@@ -191,7 +192,67 @@ public:
 
         FileWriteDouble(fh, temperature);
 
-        ulong checksum = (ulong)(temperature * 1000000.0) ^ (ulong)barrierCount ^ (ulong)trainCount;
+        ulong hash1 = 0x123456789ABCDEF0;
+        ulong hash2 = 0xFEDCBA9876543210;
+        for(int i = 0; i < ArraySize(featureMean) && i < FEATURE_VECTOR_SIZE; i++)
+        {
+            hash1 ^= (ulong)(featureMean[i] * 1000000.0);
+            hash2 ^= (ulong)(featureM2[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArrayRange(W1, 0); i++)
+            for(int j = 0; j < ArrayRange(W1, 1); j++)
+            {
+                hash1 ^= (ulong)(W1[i][j] * 1000000.0);
+                hash2 ^= (ulong)(i * 31 + j);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArrayRange(W2, 0); i++)
+            for(int j = 0; j < ArrayRange(W2, 1); j++)
+            {
+                hash2 ^= (ulong)(W2[i][j] * 1000000.0);
+                hash1 ^= (ulong)(i * 17 + j);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArrayRange(W3, 0); i++)
+            for(int j = 0; j < ArrayRange(W3, 1); j++)
+            {
+                hash1 ^= (ulong)(W3[i][j] * 1000000.0);
+                hash2 ^= (ulong)(i * 13 + j);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArrayRange(W4, 0); i++)
+            for(int j = 0; j < ArrayRange(W4, 1); j++)
+            {
+                hash2 ^= (ulong)(W4[i][j] * 1000000.0);
+                hash1 ^= (ulong)(i * 7 + j);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArraySize(B1); i++)
+        {
+            hash1 ^= (ulong)(B1[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArraySize(B2); i++)
+        {
+            hash2 ^= (ulong)(B2[i] * 1000000.0);
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArraySize(B3); i++)
+        {
+            hash1 ^= (ulong)(B3[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArraySize(B4); i++)
+        {
+            hash2 ^= (ulong)(B4[i] * 1000000.0);
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        hash1 ^= (ulong)trainCount;
+        hash2 ^= (ulong)barrierCount;
+        hash1 ^= (ulong)(temperature * 1000000.0);
+        ulong checksum = hash1 ^ (hash2 << 1);
         FileWriteLong(fh, (long)checksum);
 
         FileClose(fh);
@@ -347,12 +408,72 @@ public:
         if(!FileIsEnding(fh))
         {
             ulong storedChecksum = (ulong)FileReadLong(fh);
-            ulong computedChecksum = (ulong)(temperature * 1000000.0) ^ (ulong)barrierCount ^ (ulong)trainCount;
+            ulong hash1 = 0x123456789ABCDEF0;
+            ulong hash2 = 0xFEDCBA9876543210;
+            for(int i = 0; i < ArraySize(featureMean) && i < FEATURE_VECTOR_SIZE; i++)
+            {
+                hash1 ^= (ulong)(featureMean[i] * 1000000.0);
+                hash2 ^= (ulong)(featureM2[i] * 1000000.0);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArrayRange(W1, 0); i++)
+                for(int j = 0; j < ArrayRange(W1, 1); j++)
+                {
+                    hash1 ^= (ulong)(W1[i][j] * 1000000.0);
+                    hash2 ^= (ulong)(i * 31 + j);
+                    hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArrayRange(W2, 0); i++)
+                for(int j = 0; j < ArrayRange(W2, 1); j++)
+                {
+                    hash2 ^= (ulong)(W2[i][j] * 1000000.0);
+                    hash1 ^= (ulong)(i * 17 + j);
+                    hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArrayRange(W3, 0); i++)
+                for(int j = 0; j < ArrayRange(W3, 1); j++)
+                {
+                    hash1 ^= (ulong)(W3[i][j] * 1000000.0);
+                    hash2 ^= (ulong)(i * 13 + j);
+                    hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArrayRange(W4, 0); i++)
+                for(int j = 0; j < ArrayRange(W4, 1); j++)
+                {
+                    hash2 ^= (ulong)(W4[i][j] * 1000000.0);
+                    hash1 ^= (ulong)(i * 7 + j);
+                    hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArraySize(B1); i++)
+            {
+                hash1 ^= (ulong)(B1[i] * 1000000.0);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArraySize(B2); i++)
+            {
+                hash2 ^= (ulong)(B2[i] * 1000000.0);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArraySize(B3); i++)
+            {
+                hash1 ^= (ulong)(B3[i] * 1000000.0);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArraySize(B4); i++)
+            {
+                hash2 ^= (ulong)(B4[i] * 1000000.0);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            hash1 ^= (ulong)trainCount;
+            hash2 ^= (ulong)barrierCount;
+            hash1 ^= (ulong)(temperature * 1000000.0);
+            ulong computedChecksum = hash1 ^ (hash2 << 1);
             if(storedChecksum != computedChecksum)
             {
                 FileClose(fh);
-                m_lastLoadStatus = "CHECKSUM_MISMATCH";
-                PrintFormat("[CHECKPOINT-MGR] %s Checksum mismatch", m_symbol);
+                m_lastLoadStatus = "REJECTED_CHECKSUM_MISMATCH";
+                PrintFormat("[CHECKPOINT-MGR] %s REJECTED_CHECKSUM_MISMATCH", m_symbol);
                 return false;
             }
         }

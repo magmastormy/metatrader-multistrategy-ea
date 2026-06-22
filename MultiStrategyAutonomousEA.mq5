@@ -98,7 +98,7 @@ input bool InpEnableEnsemble = false;         // MT5-native Ensemble live voter 
 input bool InpEnableOnnxAI = false;           // Python-trained ONNX model live voter hosted inside MT5
 input ENUM_PYTHON_BRIDGE_MODE InpPythonBridgeMode = PYTHON_BRIDGE_OFF; // Python sidecar expectation mode (OFF for indicator-only testing)
 input string InpPythonBridgeEndpoint = "http://127.0.0.1:8000"; // Python bridge HTTP endpoint
-input int InpPythonBridgeRequestTimeoutMs = 5000; // Python bridge request timeout (ms)
+input int InpPythonBridgeRequestTimeoutMs = 2000; // Python bridge request timeout (ms)
 input int InpPythonBridgeHeartbeatTimeoutSec = 30; // Python bridge heartbeat timeout (seconds)
 input int InpPythonBridgeMaxReconnectAttempts = 5; // Max reconnect attempts before falling back
 input int InpPythonBridgeReconnectBackoffMs = 2000; // Initial reconnect backoff (ms, exponential)
@@ -535,6 +535,8 @@ datetime g_lastNNHealthLogTime = 0;
 ulong g_scanCycleSequence = 0;
 int   g_cyclesSinceIndicatorSignal = 0;  // Tracks evaluation cycles since any indicator strategy produced a signal
 bool  g_hybridGateRelaxed = false;       // True when AI standalone threshold is relaxed due to indicator drought
+int   g_consecutiveZeroSignalCycles = 0; // Tracks consecutive scan cycles with zero consensus signals (fallback diagnostic)
+int   g_zeroSignalFallbackThreshold = 20; // Cycles of zero signals before FALLBACK warning fires
 
 // Diagnostics logger (Blueprint 3.6: off-journal logging)
 CDiagnosticsLogger g_diagLogger;
@@ -775,17 +777,17 @@ void AppendApprovedTradeCandidate(SApprovedTradeCandidate &candidates[],
 void SortApprovedTradeCandidatesByRank(SApprovedTradeCandidate &candidates[])
 {
     int count = ArraySize(candidates);
-    for(int i = 0; i < count - 1; i++)
+    for(int i = 1; i < count; i++)
     {
-        for(int j = i + 1; j < count; j++)
+        SApprovedTradeCandidate key = candidates[i];
+        double keyScore = key.rankingScore;
+        int j = i - 1;
+        while(j >= 0 && candidates[j].rankingScore < keyScore)
         {
-            if(candidates[j].rankingScore > candidates[i].rankingScore)
-            {
-                SApprovedTradeCandidate swap = candidates[i];
-                candidates[i] = candidates[j];
-                candidates[j] = swap;
-            }
+            candidates[j + 1] = candidates[j];
+            j--;
         }
+        candidates[j + 1] = key;
     }
 }
 
@@ -955,6 +957,10 @@ bool IsEAOwnedDeal(ulong dealTicket)
 
 //+------------------------------------------------------------------+
 //| Helper: Count EA Positions (by magic number range)                |
+//| PERF-DUPLICATION: Iterates all positions each call. Same iteration |
+//| is performed by GetOpenPositionCountForSymbol() and inline loops  |
+//| at ~L5878 and ~L6053. Consider a cached position snapshot per EA   |
+//| cycle to avoid redundant PositionsTotal() traversal.               |
 //+------------------------------------------------------------------+
 int GetEAPositionCount()
 {
@@ -971,6 +977,8 @@ int GetEAPositionCount()
     return count;
 }
 
+// PERF-DUPLICATION: Same position iteration pattern as GetEAPositionCount() and
+// inline loops at ~L5878 and ~L6053. Consider a cached position snapshot per EA cycle.
 int GetOpenPositionCountForSymbol(const string symbol, const bool onlyThisEAMagic = false)
 {
     if(symbol == "")
@@ -1110,22 +1118,37 @@ bool SelectiveCloseToRecoverFloor(double hardFloorPct)
         {
             PrintFormat("[PROFIT-TARGET] Hard floor breached: %.2f%% < %.2f%%. Closing all remaining positions.",
                         dailyPct, hardFloorPct);
+            datetime closeStart = TimeCurrent();
             tradeManager.CloseAllPositions("");
+            if(TimeCurrent() - closeStart > 5)
+                PrintFormat("[EMERGENCY] CloseAllPositions took %d seconds (hard floor breach)",
+                            (int)(TimeCurrent() - closeStart));
             return true;  // All closed, hard floor breach
         }
 
-        // Close this worst position
+        // Close this worst position, capturing profit before close for P&L estimation
+        double closedProfit = 0.0;
         if(PositionSelectByTicket(posTickets[i]))
         {
             string posSymbol = PositionGetString(POSITION_SYMBOL);
+            closedProfit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
             PrintFormat("[PROFIT-TARGET] Selective close: Symbol=%s Profit=%.2f (trailing floor recovery)",
-                        posSymbol, posProfits[i]);
+                        posSymbol, closedProfit);
             tradeManager.ClosePosition(posTickets[i]);
         }
 
-        // Recalculate daily P&L after close
-        dailyPct = CalculateDailyPnLPercent();
+        // Estimate P&L change: the closed position's profit+swap moves from unrealized
+        // to realized in deal history (approximately net-zero on total P&L). The only
+        // material change is the close commission (small negative). Approximate by
+        // subtracting the closed position's P&L contribution from the cached percentage.
+        // A full recalculation at the end of the loop corrects any estimation drift.
+        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+        if(equity > 1.0)
+            dailyPct -= (closedProfit / equity) * 100.0;
     }
+
+    // Full recalculation after all closes to verify final state
+    dailyPct = CalculateDailyPnLPercent(true);
 
     // All positions closed
     return true;
@@ -1134,13 +1157,22 @@ bool SelectiveCloseToRecoverFloor(double hardFloorPct)
 //+------------------------------------------------------------------+
 //| Calculate daily P&L as percentage of starting equity              |
 //+------------------------------------------------------------------+
-double CalculateDailyPnLPercent()
+double CalculateDailyPnLPercent(bool force = false)
 {
+    static double s_cachedDailyPnL = 0.0;
+    static datetime s_lastPnLCalcTime = 0;
+    datetime now = TimeCurrent();
+    if(!force && now - s_lastPnLCalcTime < 5) return s_cachedDailyPnL;
+
     // Sum today's realized P&L from deal history
     double realizedPnL = 0.0;
     datetime dayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
 
-    HistorySelect(dayStart, TimeCurrent());
+    if(!HistorySelect(dayStart, TimeCurrent()))
+    {
+        PrintFormat("[DAILY-PNL] WARNING | HistorySelect failed | err=%d", GetLastError());
+        return 0.0;
+    }
     int totalDeals = HistoryDealsTotal();
     for(int i = 0; i < totalDeals; i++)
     {
@@ -1169,7 +1201,10 @@ double CalculateDailyPnLPercent()
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
     double denominator = MathMax(MathMin(balance, equity), 1.0);
 
-    return (realizedPnL + unrealizedPnL) / denominator * 100.0;
+    double result = (realizedPnL + unrealizedPnL) / denominator * 100.0;
+    s_cachedDailyPnL = result;
+    s_lastPnLCalcTime = now;
+    return result;
 }
 
 //+------------------------------------------------------------------+
@@ -1178,7 +1213,11 @@ double CalculateDailyPnLPercent()
 int CountConsecutiveWins()
 {
     int count = 0;
-    HistorySelect(0, TimeCurrent());
+    if(!HistorySelect(0, TimeCurrent()))
+    {
+        PrintFormat("[CONSECUTIVE-WINS] WARNING | HistorySelect failed | err=%d", GetLastError());
+        return 0;
+    }
     int totalDeals = HistoryDealsTotal();
     for(int i = totalDeals - 1; i >= 0; i--)
     {
@@ -1356,20 +1395,30 @@ void ProcessTickSafetyLoop()
     if(!g_tickSafetyMonitor.ValidateTick(_Symbol, tick))
         return;
 
-    unifiedRiskManager.RefreshRuntimeState();
-    RefreshAccountRuntimeMetrics();
-    unifiedRiskManager.MonitorMarginHealth();
-    tradeManager.CheckPendingConfirmations();  // Phase 1.4: non-blocking execution confirmation
-    g_unprotectedTracker.AttemptRemediation();
-    ManageOpenPositionsIfNeeded();
-    g_spikeMonitor.EvaluateSpike(InpSyntheticSpikeVelocityMultiplier, InpSpikeConfirmWindows,
-                                  InpSyntheticSpikePauseSeconds, InpEmergencyFlattenAllAccountPositions);
-    if(g_spikeMonitor.HandleEmergencyDrawdown("tick", currentDrawdown, InpMaxDrawdown, InpEmergencyFlattenAllAccountPositions))
-        tradingEnabled = false;
+    // Throttle heavy management calls to 200ms (lightweight safety checks above run every tick)
+    {
+        static uint s_lastManagementCycle = 0;
+        uint nowMs = GetTickCount();
+        if(nowMs - s_lastManagementCycle >= 200)
+        {
+            unifiedRiskManager.RefreshRuntimeState();
+            RefreshAccountRuntimeMetrics();
+            unifiedRiskManager.MonitorMarginHealth();
+            tradeManager.CheckPendingConfirmations();  // Phase 1.4: non-blocking execution confirmation
+            g_unprotectedTracker.AttemptRemediation();
+            ManageOpenPositionsIfNeeded();
+            g_spikeMonitor.EvaluateSpike(InpSyntheticSpikeVelocityMultiplier, InpSpikeConfirmWindows,
+                                          InpSyntheticSpikePauseSeconds, InpEmergencyFlattenAllAccountPositions);
+            if(g_spikeMonitor.HandleEmergencyDrawdown("tick", currentDrawdown, InpMaxDrawdown, InpEmergencyFlattenAllAccountPositions))
+                tradingEnabled = false;
 
-    // Sync spike event counter to heartbeat counter
-    g_hbSyntheticSpikeEvents += g_spikeMonitor.GetSpikeEventCount();
-    g_spikeMonitor.ResetSpikeEventCount();
+            // Sync spike event counter to heartbeat counter
+            g_hbSyntheticSpikeEvents += g_spikeMonitor.GetSpikeEventCount();
+            g_spikeMonitor.ResetSpikeEventCount();
+
+            s_lastManagementCycle = nowMs;
+        }
+    }
 
     // Fast Scalp Engine: tick-level position management (NOT throttled)
     if(InpEnableScalpEngine && g_scalpEngine.IsInitialized())
@@ -2107,6 +2156,10 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
 
 ENUM_EA_MODE ResolveEffectiveEAMode()
 {
+    // NOTE: This function is called from multiple per-symbol and per-cycle paths
+    // (lines ~2096, 2131, 2176, 2831, 3081, 3755, 4181, 5823). Each call is O(1) and
+    // reads live registry state, so caching would risk stale reads. If profiling shows
+    // this as a hotspot, cache per-cycle with a static dirty flag on registry changes.
     ENUM_EA_MODE configuredMode = g_strategyRegistry.GetMode();
     int activeIndicators = g_strategyRegistry.GetActiveIndicatorCount();
     int activeAI = g_strategyRegistry.GetActiveAICount();
@@ -3303,7 +3356,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         CDrawingCoordinator* coordinator = GetDrawingCoordinator();
         if(coordinator != NULL)
         {
-            int maxObjs = MathMin(900, InpMaxVisualObjects);
+            int maxObjs = MathMin(450, InpMaxVisualObjects);
             coordinator.SetGlobalMaxObjects(maxObjs);
         }
 
@@ -3316,7 +3369,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
                 drawConfig.enableDrawing = true;
                 drawConfig.maxObjectAge = InpMaxVisualObjects;
                 draw.SetConfiguration(drawConfig);
-                draw.SetMaxObjects(MathMin(900, InpMaxVisualObjects)); // Cap at 900 for safety
+                draw.SetMaxObjects(MathMin(450, InpMaxVisualObjects)); // Cap at 450 for safety
                 
                 int dSize = ArraySize(g_drawingManagers);
                 ArrayResize(g_drawingManagers, dSize + 1);
@@ -3393,7 +3446,8 @@ int OnInit()
     Print("[MULTI-STRATEGY-EA] Advanced AI Trading System v2.0 Starting");
     Print("[MULTI-STRATEGY-EA] ========================================");
 
-    // Set global log level from input
+    // Set global log level from input (requires EA restart to change at runtime)
+    // Note: Only respected in MultiStrategyAutonomousEA.mq5 (not in .mqh subsystem headers)
     g_logLevel = InpLogLevel;
     PrintFormat("[LOG-LEVEL] Set to %d (0=Silent, 1=Critical, 2=Normal, 3=Verbose, 4=Debug)", g_logLevel);
 
@@ -3522,6 +3576,8 @@ int OnInit()
     unifiedRiskConfig.maxDailyRiskPercent     = InpMaxDailyRisk;
     unifiedRiskConfig.maxPortfolioRiskPercent = InpMaxPortfolioRisk;
     unifiedRiskConfig.correlationThreshold    = 0.7;
+    unifiedRiskConfig.correlationReduceThreshold = 0.4;
+    unifiedRiskConfig.correlationBlockThreshold  = 0.7;
     unifiedRiskConfig.maxPositionsSameBase    = InpMaxPositionsSameBase;
     unifiedRiskConfig.drawdownWarningPercent  = InpMaxDrawdown * 0.7;
     unifiedRiskConfig.drawdownCriticalPercent = InpMaxDrawdown;
@@ -3586,6 +3642,9 @@ int OnInit()
             Print("[RECOVERY-STATE] No previous state file found — clean start (first run or clean shutdown)");
         }
     }
+
+    // Reconcile trade journal — detect orphaned trades from previous sessions
+    ReconcileTradeJournal(InpMagicNumber);
 
     // Log initial account capacity diagnostics
     LogAccountCapacityDiagnostics();
@@ -4277,8 +4336,9 @@ int OnInit()
     g_scanCycleSequence = 0;
     g_cyclesSinceIndicatorSignal = 0;
     g_hybridGateRelaxed = false;
+    g_consecutiveZeroSignalCycles = 0;
 
-    // Initialize Python Bridge
+    // Initialize Python Bridge — skip health check during init to avoid blocking WebRequest
     g_pythonBridge = new CPythonBridge();
     g_pythonBridge.Initialize(
         InpPythonBridgeEndpoint,
@@ -4289,32 +4349,23 @@ int OnInit()
         InpPythonBridgeReconnectBackoffMs
     );
     
-    // Check Python bridge version compatibility
+    // Version check deferred to first timer tick to avoid blocking OnInit
     if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL)
     {
-        Print("[PYTHON-BRIDGE] Checking version compatibility...");
-        bool versionOk = g_pythonBridge.CheckVersion();
-        if(versionOk)
-        {
-            SPythonBridgeVersion version = g_pythonBridge.GetServerVersion();
-            PrintFormat("[PYTHON-BRIDGE] Version OK: %s (compatible: %s)", 
-                       version.version, version.compatible ? "true" : "false");
-        }
-        else
-        {
-            Print("[PYTHON-BRIDGE] Version check failed - will use local AI fallback");
-        }
+        Print("[PYTHON-BRIDGE] Initialized - version check deferred to first timer tick");
     }
 
-    // Initialize Dashboard Bridge
+    // Initialize Dashboard Bridge — skip health check during init to avoid blocking WebRequest
     g_dashboardBridge = new CDashboardBridge();
     g_dashboardBridge.Initialize(
         InpDashboardEndpoint,
-        InpDashboardEnabled,
+        false,  // enabled=false during init to skip blocking health check
         InpDashboardControlEnabled,
         InpDashboardPushIntervalSec,
-        3000  // request timeout ms
+        1000
     );
+    // Re-enable after init so timer handler can push state
+    g_dashboardBridge.SetEnabled(InpDashboardEnabled);
 
     // Initialize Dashboard
     g_dashboard.Initialize();
@@ -4688,13 +4739,70 @@ void OnTimer()
         datetime lastPush = g_dashboardBridge.GetLastPushTime();
         if(lastPush == 0 || (now - lastPush) >= InpDashboardPushIntervalSec)
         {
-            g_dashboardBridge.PushState();
-            if(g_dashboardBridge.IsControlEnabled())
+            // Inject AI data before push
+            if(neuralNetStrategy != NULL)
+            {
+                double nnConf = 0.0;
+                ENUM_TRADE_SIGNAL nnSig = neuralNetStrategy.GetNeuralSignal(nnConf);
+                string nnSigText = "NONE";
+                if(nnSig == TRADE_SIGNAL_BUY) nnSigText = "BUY";
+                else if(nnSig == TRADE_SIGNAL_SELL) nnSigText = "SELL";
+
+                // Get real regime probabilities
+                double regimeProbs[];
+                neuralNetStrategy.GetRegimeProbs(regimeProbs);
+                double rTrend = (ArraySize(regimeProbs) > 0) ? regimeProbs[0] : 0.25;
+                double rRange = (ArraySize(regimeProbs) > 1) ? regimeProbs[1] : 0.25;
+                double rVolatile = (ArraySize(regimeProbs) > 2) ? regimeProbs[2] : 0.25;
+                double rSpike = (ArraySize(regimeProbs) > 3) ? regimeProbs[3] : 0.25;
+                string regimeName = "RANGE";
+                int regimeIdx = neuralNetStrategy.GetCurrentRegime();
+                if(regimeIdx == 0) regimeName = "TREND";
+                else if(regimeIdx == 1) regimeName = "RANGE";
+                else if(regimeIdx == 2) regimeName = "VOLAT";
+                else if(regimeIdx == 3) regimeName = "SPIKE";
+
+                g_dashboardBridge.SetAIData(
+                    true, nnSigText, nnConf,
+                    neuralNetStrategy.GetCompletedTradesCount(), neuralNetStrategy.GetTrainingSteps(),
+                    neuralNetStrategy.GetLastUncertainty(), 0.05,
+                    neuralNetStrategy.GetAssetClass(), neuralNetStrategy.GetBarrierK(), neuralNetStrategy.GetBarrierVertBars(),
+                    0, true,
+                    regimeName, rTrend, rRange, rVolatile, rSpike,
+                    65, 50, 20, 0.5, 0.5, 0
+                );
+            }
+
+            if(g_dashboardBridge.PushState() && g_dashboardBridge.IsControlEnabled())
                 g_dashboardBridge.PollCommands();
         }
     }
 
     g_spikeMonitor.ReleasePauseIfExpired();
+
+    // Periodic chart object cleanup (every 5 minutes)
+    {
+        static datetime s_lastChartObjCleanup = 0;
+        if(s_lastChartObjCleanup == 0 || (now - s_lastChartObjCleanup) >= 300)
+        {
+            CDrawingCoordinator* coord = GetDrawingCoordinator();
+            if(coord != NULL)
+            {
+                int totalBefore = ObjectsTotal(0);
+                if(totalBefore > 400)
+                {
+                    PrintFormat("[CHART-OBJECTS] WARNING: %d/500 objects — cleanup triggered", totalBefore);
+                    coord.CleanupStaleObjects(0, 60);
+                    for(int d = 0; d < ArraySize(g_drawingManagers); d++)
+                    {
+                        if(g_drawingManagers[d] != NULL)
+                            g_drawingManagers[d].CleanupOldObjects();
+                    }
+                }
+            }
+            s_lastChartObjCleanup = now;
+        }
+    }
 
     // Batch 99: Update EquityCurveManager on every timer tick
     if(g_equityCurveManager != NULL)
@@ -4746,19 +4854,27 @@ void OnTick()
 {
     ProcessTickSafetyLoop();
 
-    // Batch 100: Feed tick data to VPIN and OFI engines
-    for(int i = 0; i < ArraySize(g_mathEngineSymbols); i++)
+    // Batch 100: Feed tick data to VPIN and OFI engines (throttled to 200ms)
     {
-        string sym = g_mathEngineSymbols[i];
-        double tickPrice = SymbolInfoDouble(sym, SYMBOL_BID);
-        double tickVolume = (double)SymbolInfoInteger(sym, SYMBOL_VOLUME);
-        double bid = SymbolInfoDouble(sym, SYMBOL_BID);
-        double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+        static uint s_lastVpinOfiFeed = 0;
+        uint nowMs = GetTickCount();
+        if(nowMs - s_lastVpinOfiFeed >= 200)
+        {
+            for(int i = 0; i < ArraySize(g_mathEngineSymbols); i++)
+            {
+                string sym = g_mathEngineSymbols[i];
+                double tickPrice = SymbolInfoDouble(sym, SYMBOL_BID);
+                double tickVolume = (double)SymbolInfoInteger(sym, SYMBOL_VOLUME);
+                double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+                double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
 
-        if(g_vpinFilters[i] != NULL)
-            g_vpinFilters[i].OnTick(tickPrice, tickVolume);
-        if(g_ofiEngines[i] != NULL)
-            g_ofiEngines[i].OnTick(tickPrice, tickVolume, bid, ask);
+                if(g_vpinFilters[i] != NULL)
+                    g_vpinFilters[i].OnTick(tickPrice, tickVolume);
+                if(g_ofiEngines[i] != NULL)
+                    g_ofiEngines[i].OnTick(tickPrice, tickVolume, bid, ask);
+            }
+            s_lastVpinOfiFeed = nowMs;
+        }
     }
 
     // Fast-path scalp signal evaluation on ticks (dual-path architecture)
@@ -4828,6 +4944,7 @@ void ProcessScalpFastPath()
 
         // Delegate to scalp engine for signal evaluation and execution
         // The scalp engine uses the cached values instead of computing them
+        if(!g_scalpEngine.IsInitialized()) continue;
         ENUM_TRADE_SIGNAL scalpSignal = TRADE_SIGNAL_NONE;
         double scalpConfidence = 0.0;
         double scalpLotSize = 0.0;
@@ -4882,8 +4999,16 @@ void ProcessTradingLogic(bool fromTimer)
         eaPositions = GetEAPositionCount();
     }
 
-    // --- Update Dashboard (always, not gated by log level) ---
-    g_dashboard.Update(activeStrats, eaPositions, accountBalance, accountEquity, g_aiBrainReady ? &aiNextGenBrain : NULL, neuralNetStrategy, g_AIEngine);
+    if(!systemInitialized || !tradingEnabled)
+    {
+        PrintFormat("[DEBUG-PROCESS] EA blocked: System initialized: %s, Trading enabled: %s",
+                   systemInitialized ? "YES" : "NO",
+                   tradingEnabled ? "YES" : "NO");
+        return;
+    }
+
+    // --- Update Dashboard (after init check) ---
+    g_dashboard.Update(neuralNetStrategy, g_aiBrainReady ? &aiNextGenBrain : NULL, activeStrats, eaPositions, accountBalance, accountEquity, totalTrades, winningTrades, totalProfit);
 
     // Enhanced logging every 50 calls to show pipeline activity
     if(callCount % 50 == 0 && g_logLevel >= 3)
@@ -4913,14 +5038,6 @@ void ProcessTradingLogic(bool fromTimer)
                   " | Account Total: ", PositionsTotal(),
                   " | Last trade: ", g_lastTradeTime > 0 ? TimeToString(g_lastTradeTime) : "Never");
         }
-    }
-
-    if(!systemInitialized || !tradingEnabled)
-    {
-        PrintFormat("[DEBUG-PROCESS] EA blocked: System initialized: %s, Trading enabled: %s",
-                   systemInitialized ? "YES" : "NO",
-                   tradingEnabled ? "YES" : "NO");
-        return;
     }
 
     // Check if trading is still allowed
@@ -5036,7 +5153,11 @@ void ProcessTradingLogic(bool fromTimer)
                 unifiedRiskManager.SetBaseRiskPerTrade(InpAggressiveBaseRiskPct);
             else if(g_currentTradingMode == AUTO_MODE_EMERGENCY)
             {
+                datetime closeStart = TimeCurrent();
                 tradeManager.CloseAllPositions("");
+                if(TimeCurrent() - closeStart > 5)
+                    PrintFormat("[EMERGENCY] CloseAllPositions took %d seconds (auto mode switch)",
+                                (int)(TimeCurrent() - closeStart));
                 g_dailyTradingHalt = true;
                 g_dailyTradingHaltStartTime = TimeCurrent();
             }
@@ -5304,8 +5425,11 @@ void ProcessTradingLogic(bool fromTimer)
 
         int deferredNewBarCount = MathMax(0, pendingNewBarCount - newBarSelectedCount);
         bool activeScanWork = (newBarSelectedCount > 0 || intrabarSelectedCount > 0);
-        if(activeScanWork || (callCount % 60 == 0))
+        static datetime s_lastScanBudgetLog = 0;
+        bool skipScanBudgetLog = (TimeCurrent() - s_lastScanBudgetLog < 60);
+        if((activeScanWork || (callCount % 60 == 0)) && !skipScanBudgetLog)
         {
+            s_lastScanBudgetLog = TimeCurrent();
             PrintFormat("[SCAN-BUDGET] cycle=%I64u | symbols=%d | pending_newbar=%d | selected_newbar=%d | deferred_newbar=%d | intrabar_selected=%d | eval_budget=%d | intrabar_budget=%d | intrabar_keepalive=%s | chart_only=%s | hybrid=%s | newbar_only=%s | active_work=%s",
                         scanCycleId,
                         symbolCount,
@@ -5328,8 +5452,19 @@ void ProcessTradingLogic(bool fromTimer)
         }
         else
         {
+            int cycleTotalSignalsGenerated = 0;
+            datetime scanEvalStartTime = TimeCurrent();
+            const int SCAN_EVAL_TIMEOUT_SECONDS = 8;
             for(int scanOffset = 0; scanOffset < symbolCount; scanOffset++)
             {
+                if(TimeCurrent() - scanEvalStartTime > SCAN_EVAL_TIMEOUT_SECONDS)
+                {
+                    if(g_logLevel >= 2)
+                        PrintFormat("[SCAN-TIMEOUT] cycle=%I64u | Signal eval timeout after %d seconds, %d/%d symbols evaluated",
+                                    scanCycleId, SCAN_EVAL_TIMEOUT_SECONDS, scanOffset, symbolCount);
+                    break;
+                }
+
                 int symIdx = (rotationStart + scanOffset) % symbolCount;
                 bool runNewBarScan = (symIdx < ArraySize(newBarSelected) && newBarSelected[symIdx]);
                 bool runIntrabarScan = (!runNewBarScan && symIdx < ArraySize(intrabarSelected) && intrabarSelected[symIdx]);
@@ -5360,8 +5495,15 @@ void ProcessTradingLogic(bool fromTimer)
                 // Get signal with confluence tracking (per-symbol analysis)
                 double confidence = 0;
                 int confluence = 0;
+                datetime consensusStartTime = TimeCurrent();
                 ENUM_TRADE_SIGNAL enterpriseSignal = symbolManager.GetConsensusSignalForSymbolWithConfluenceMode(
                     currentSymbol, confidence, confluence, evalMode);
+                datetime consensusElapsed = TimeCurrent() - consensusStartTime;
+                if(consensusElapsed > 2)
+                {
+                    if(g_logLevel >= 3)
+                        PrintFormat("[SCAN-SLOW] %s consensus took %d ms", currentSymbol, (int)consensusElapsed * 1000);
+                }
 
                 int cycleSignalsGenerated = 0;
                 int cycleSignalsAfterPipeline = 0;
@@ -5369,6 +5511,7 @@ void ProcessTradingLogic(bool fromTimer)
                 symbolManager.GetLastCycleFunnel(cycleSignalsGenerated, cycleSignalsAfterPipeline, cycleSignalAfterQuorum);
                 g_hbSignalsGenerated += (ulong)MathMax(0, cycleSignalsGenerated);
                 g_hbSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
+                cycleTotalSignalsGenerated += MathMax(0, cycleSignalsGenerated);
                 if(cycleSignalAfterQuorum)
                     g_hbSignalsAfterQuorum++;
                 if(runNewBarScan)
@@ -5871,6 +6014,8 @@ void ProcessTradingLogic(bool fromTimer)
                                 authoritySizingMultiplier,
                                 liveAuthorityReason);
 
+                    // PERF-DUPLICATION: This inline position iteration duplicates GetEAPositionCount()
+                    // and GetOpenPositionCountForSymbol(). Consider a cached position snapshot per EA cycle.
                     // Per-symbol position count check (before lot sizing to avoid wasted computation)
                     if(InpMaxPositionsPerSymbol > 0)
                     {
@@ -6043,6 +6188,8 @@ void ProcessTradingLogic(bool fromTimer)
                                 }
                             }
 
+                            // PERF-DUPLICATION: This inline position iteration duplicates GetEAPositionCount()
+                            // and GetOpenPositionCountForSymbol(). Consider a cached position snapshot per EA cycle.
                             // Phase 6: Safe mode — block stacking entirely
                             if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
                             {
@@ -6167,6 +6314,35 @@ tradeReq.lotSize = lotSize;
                 }
             }
 
+            // Fallback resilience: track consecutive scan cycles with zero consensus signals
+            if(cycleTotalSignalsGenerated <= 0)
+            {
+                g_consecutiveZeroSignalCycles++;
+                ENUM_EA_MODE fallbackMode = ResolveEffectiveEAMode();
+                if(g_consecutiveZeroSignalCycles >= g_zeroSignalFallbackThreshold && fallbackMode == EA_MODE_INDICATOR_ONLY)
+                {
+                    if(g_consecutiveZeroSignalCycles % g_zeroSignalFallbackThreshold == 0)
+                    {
+                        PrintFormat("[FALLBACK] Consensus unproductive for %d cycles in INDICATOR_ONLY mode — consider enabling standalone strategies or checking strategy health | cycle=%I64u | scanned=%d | mode=%s",
+                                    g_consecutiveZeroSignalCycles,
+                                    scanCycleId,
+                                    symbolCount,
+                                    EAModeToString(fallbackMode));
+                    }
+                }
+            }
+            else
+            {
+                if(g_consecutiveZeroSignalCycles > 0 && ResolveEffectiveEAMode() == EA_MODE_INDICATOR_ONLY)
+                {
+                    PrintFormat("[FALLBACK] Consensus recovered after %d zero-signal cycles in INDICATOR_ONLY mode | cycle=%I64u | signals=%d",
+                                g_consecutiveZeroSignalCycles,
+                                scanCycleId,
+                                cycleTotalSignalsGenerated);
+                }
+                g_consecutiveZeroSignalCycles = 0;
+            }
+
             int approvedCandidateCount = ArraySize(approvedCandidates);
             if(approvedCandidateCount > 0)
             {
@@ -6177,9 +6353,16 @@ tradeReq.lotSize = lotSize;
                 if(maxSendsThisCycle > approvedCandidateCount)
                     maxSendsThisCycle = approvedCandidateCount;
                 int attemptedThisCycle = 0;
+                datetime scanStartTime = TimeCurrent();
 
                 for(int sendIdx = 0; sendIdx < approvedCandidateCount && attemptedThisCycle < maxSendsThisCycle; sendIdx++)
                 {
+                    if(TimeCurrent() - scanStartTime > 10)
+                    {
+                        PrintFormat("[SCAN-TIMEOUT] cycle=%I64u | %d/%d sends completed in 10s, breaking candidate loop",
+                                    scanCycleId, attemptedThisCycle, approvedCandidateCount);
+                        break;
+                    }
                     SApprovedTradeCandidate bestCandidate = approvedCandidates[sendIdx];
                     if(!bestCandidate.valid)
                         continue;
@@ -6423,32 +6606,42 @@ tradeReq.lotSize = lotSize;
 
     // Fast Scalp Engine: evaluate and execute scalp signals (Phase 4)
     // Runs every signal evaluation cycle, bypasses full consensus pipeline
-    if(InpEnableScalpEngine && g_scalpEngine.IsInitialized() && allowSignalEvaluation)
+    // Guard: skip if ProcessScalpFastPath already evaluated this second (prevents duplicate scalp trades)
     {
-        for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
+        static datetime s_lastScalpEval = 0;
+        datetime nowSec = TimeCurrent();
+        bool fastPathAlreadyRan = (nowSec == g_scanScheduler.GetLastScalpFastPathSecond());
+        if(!fastPathAlreadyRan && nowSec != s_lastScalpEval)
         {
-            string scalpSymbol = g_activePairs[symIdx];
-            ENUM_TRADE_SIGNAL scalpSignal = TRADE_SIGNAL_NONE;
-            double scalpConfidence = 0.0;
-            double scalpLotSize = 0.0;
-
-            if(g_scalpEngine.ShouldEnterScalp(scalpSymbol, scalpSignal, scalpConfidence, scalpLotSize))
+            s_lastScalpEval = nowSec;
+            if(InpEnableScalpEngine && g_scalpEngine.IsInitialized() && allowSignalEvaluation)
             {
-                if(InpShadowMode || InpShadowModeEnabled)
+                for(int symIdx = 0; symIdx < ArraySize(g_activePairs); symIdx++)
                 {
-                    PrintFormat("[SHADOW-SCALP] %s | %s | lot=%.2f | confidence=%.2f | SHADOW MODE — no order sent",
-                                scalpSymbol,
-                                scalpSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                                scalpLotSize,
-                                scalpConfidence);
-                }
-                else
-                {
-                    // Use pending orders if configured, otherwise market order
-                    if(g_scalpEngine.GetConfig().usePendingOrders)
-                        g_scalpEngine.PlaceScalpPendingOrder(scalpSymbol, scalpSignal, scalpLotSize);
-                    else
-                        g_scalpEngine.ExecuteScalpTrade(scalpSymbol, scalpSignal, scalpLotSize, scalpConfidence);
+                    string scalpSymbol = g_activePairs[symIdx];
+                    ENUM_TRADE_SIGNAL scalpSignal = TRADE_SIGNAL_NONE;
+                    double scalpConfidence = 0.0;
+                    double scalpLotSize = 0.0;
+
+                    if(g_scalpEngine.ShouldEnterScalp(scalpSymbol, scalpSignal, scalpConfidence, scalpLotSize))
+                    {
+                        if(InpShadowMode || InpShadowModeEnabled)
+                        {
+                            PrintFormat("[SHADOW-SCALP] %s | %s | lot=%.2f | confidence=%.2f | SHADOW MODE — no order sent",
+                                        scalpSymbol,
+                                        scalpSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                                        scalpLotSize,
+                                        scalpConfidence);
+                        }
+                        else
+                        {
+                            // Use pending orders if configured, otherwise market order
+                            if(g_scalpEngine.GetConfig().usePendingOrders)
+                                g_scalpEngine.PlaceScalpPendingOrder(scalpSymbol, scalpSignal, scalpLotSize);
+                            else
+                                g_scalpEngine.ExecuteScalpTrade(scalpSymbol, scalpSignal, scalpLotSize, scalpConfidence);
+                        }
+                    }
                 }
             }
         }

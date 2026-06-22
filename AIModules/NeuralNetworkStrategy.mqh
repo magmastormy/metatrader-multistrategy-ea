@@ -18,66 +18,111 @@
 
 // Checkpoint constants - only define if not already defined by CNeuralCheckpointManager
 #ifndef NN_CHECKPOINT_MAGIC
-#define NN_CHECKPOINT_MAGIC 1313758027
+#define NN_CHECKPOINT_MAGIC AI_NN_CHECKPOINT_MAGIC
 #endif
 #ifndef NN_CHECKPOINT_VERSION
-#define NN_CHECKPOINT_VERSION 7
+#define NN_CHECKPOINT_VERSION AI_NN_CHECKPOINT_VERSION
 #endif
 #ifndef NN_MAX_PERSISTED_SAMPLES
-#define NN_MAX_PERSISTED_SAMPLES 300
+#define NN_MAX_PERSISTED_SAMPLES AI_MAX_PERSISTED_SAMPLES
 #endif
 #ifndef NN_MAX_TRAINING_EXAMPLES
-#define NN_MAX_TRAINING_EXAMPLES 2000
+#define NN_MAX_TRAINING_EXAMPLES AI_MAX_TRAINING_EXAMPLES
 #endif
-#define NN_MIN_NORMALIZATION_SAMPLES 30
+#define NN_MIN_NORMALIZATION_SAMPLES AI_MIN_NORM_SAMPLES
 
 class CConformalPredictor
 {
 private:
+    #define CONFORMAL_BUF_SIZE 200
+    #define CONFORMAL_REGIMES  4
+
     double m_scores[];
+    int    m_regimes[];
     int    m_head;
     int    m_count;
+
     double m_alphaACI;
     double m_gammaACI;
-    double m_quantile;
+    double m_regimeQuantiles[];
+    double m_globalQuantile;
+    int    m_currentRegime;
+
+    double ComputeQuantile(const double &scores[], const int count) const
+    {
+        if(count < 10)
+            return 1.0;
+
+        double values[];
+        ArrayResize(values, count);
+        for(int i = 0; i < count; i++)
+            values[i] = scores[i];
+        ArraySort(values);
+
+        double quantileLevel = (1.0 - m_alphaACI) * (1.0 + 1.0 / (double)count);
+        int idx = (int)MathCeil(quantileLevel * (double)count) - 1;
+        idx = MathMax(0, MathMin(idx, count - 1));
+        return values[idx];
+    }
 
     void Recompute()
     {
-        if(m_count < 10)
+        // Per-regime quantiles
+        for(int r = 0; r < CONFORMAL_REGIMES; r++)
         {
-            m_quantile = 1.0;
-            return;
+            double regimeScores[];
+            int regimeCount = 0;
+            ArrayResize(regimeScores, m_count);
+
+            for(int i = 0; i < m_count; i++)
+            {
+                if(m_regimes[i] == r)
+                {
+                    regimeScores[regimeCount] = m_scores[i];
+                    regimeCount++;
+                }
+            }
+
+            if(regimeCount >= 10)
+                m_regimeQuantiles[r] = ComputeQuantile(regimeScores, regimeCount);
+            else
+                m_regimeQuantiles[r] = m_globalQuantile;
         }
 
-        double values[];
-        ArrayResize(values, m_count);
-        for(int i = 0; i < m_count; i++)
-            values[i] = m_scores[i];
-        ArraySort(values);
-
-        double quantileLevel = (1.0 - m_alphaACI) * (1.0 + 1.0 / (double)m_count);
-        int idx = (int)MathCeil(quantileLevel * (double)m_count) - 1;
-        idx = MathMax(0, MathMin(idx, m_count - 1));
-        m_quantile = values[idx];
+        // Global quantile
+        m_globalQuantile = ComputeQuantile(m_scores, m_count);
     }
 
 public:
     void Init(const double alpha = 0.05)
     {
-        ArrayResize(m_scores, 200);
-        ArrayInitialize(m_scores, 1.0);
-        m_head = 0;
-        m_count = 0;
         m_alphaACI = alpha;
         m_gammaACI = 0.005;
-        m_quantile = 1.0;
+        m_globalQuantile = 1.0;
+        m_head = 0;
+        m_count = 0;
+        m_currentRegime = 2;
+
+        ArrayResize(m_scores, CONFORMAL_BUF_SIZE);
+        ArrayResize(m_regimes, CONFORMAL_BUF_SIZE);
+        ArrayResize(m_regimeQuantiles, CONFORMAL_REGIMES);
+        ArrayInitialize(m_scores, 1.0);
+        ArrayInitialize(m_regimes, 0);
+        for(int r = 0; r < CONFORMAL_REGIMES; r++)
+            m_regimeQuantiles[r] = 1.0;
+    }
+
+    void SetCurrentRegime(const int regime)
+    {
+        m_currentRegime = MathMax(0, MathMin(CONFORMAL_REGIMES - 1, regime));
     }
 
     void AddScore(const double score)
     {
-        m_scores[m_head % ArraySize(m_scores)] = score;
+        m_scores[m_head % CONFORMAL_BUF_SIZE] = score;
+        m_regimes[m_head % CONFORMAL_BUF_SIZE] = m_currentRegime;
         m_head++;
-        if(m_count < ArraySize(m_scores))
+        if(m_count < CONFORMAL_BUF_SIZE)
             m_count++;
         Recompute();
     }
@@ -91,11 +136,27 @@ public:
 
     bool Approve(const double predictedConfidence) const
     {
-        return (1.0 - predictedConfidence) <= m_quantile;
+        double effectiveQuantile = (m_count >= 10) ?
+                                    m_regimeQuantiles[m_currentRegime] : m_globalQuantile;
+        return (1.0 - predictedConfidence) <= effectiveQuantile;
     }
 
-    double GetQuantile() const { return m_quantile; }
+    double GetQuantile() const
+    {
+        return (m_count >= 10) ? m_regimeQuantiles[m_currentRegime] : m_globalQuantile;
+    }
+
+    double GetGlobalQuantile() const { return m_globalQuantile; }
     double GetAlpha() const { return m_alphaACI; }
+    int GetCurrentRegime() const { return m_currentRegime; }
+    int GetRegimeScoreCount(const int regime) const
+    {
+        if(regime < 0 || regime >= CONFORMAL_REGIMES) return 0;
+        int cnt = 0;
+        for(int i = 0; i < m_count; i++)
+            if(m_regimes[i] == regime) cnt++;
+        return cnt;
+    }
 };
 
 class CNeuralRegimeTracker
@@ -266,6 +327,13 @@ private:
     int              m_barrierCount;
     double           m_barrierK;
     int              m_barrierVertBars;
+
+    // Per-asset-class barrier parameters
+    // [0]=Forex, [1]=Metals, [2]=Indices, [3]=Energies,
+    // [4]=CrashBoom, [5]=Volatility, [6]=Step, [7]=Jump, [8]=DEX, [9]=Universal
+    double           m_barrierKByClass[];
+    int              m_barrierVertBarsByClass[];
+    int              m_assetClassId;
     long             m_resolvedLabelCount;
 
     string           m_symbol;
@@ -305,6 +373,7 @@ private:
     CMetaLabeler       m_metaLabeler;
     CNeuralRegimeTracker m_regimeTracker;
     CFeatureImportance  m_featureImportance;
+    bool                m_featureImportanceEnabled;
 
     int TotalParamCount() const
     {
@@ -330,6 +399,52 @@ private:
     {
         ulong timePart = (ulong)(GetMicrosecondCount() % 1000000000);
         return StringFormat("%s_%09I64u_%d", m_symbol, timePart, m_totalObservations + m_trainCount + m_barrierHead);
+    }
+
+    // Lightweight asset class detection from symbol name (no external dependencies)
+    int DetectAssetClassFromSymbol(const string &sym) const
+    {
+        string upper = sym;
+        StringToUpper(upper);
+
+        // Deriv synthetics (check first — most specific)
+        if(StringFind(upper, "CRASH") >= 0 || StringFind(upper, "BOOM") >= 0)
+            return 4;  // ASSET_DERIV_CRASHBOOM
+        if(StringFind(upper, "VOLATILITY") >= 0 || StringFind(upper, "VIX") >= 0)
+            return 5;  // ASSET_DERIV_VOLATILITY
+        if(StringFind(upper, "STEP") >= 0)
+            return 6;  // ASSET_DERIV_STEP
+        if(StringFind(upper, "JUMP") >= 0)
+            return 7;  // ASSET_DERIV_JUMP
+        if(StringFind(upper, "DEX") >= 0)
+            return 8;  // ASSET_DERIV_DEX
+
+        // Energies
+        if(StringFind(upper, "WTI") >= 0 || StringFind(upper, "BRENT") >= 0 || StringFind(upper, "NATGAS") >= 0 || StringFind(upper, "NG") >= 0)
+            return 3;  // ASSET_ENERGIES
+
+        // Metals
+        if(StringFind(upper, "XAU") >= 0 || StringFind(upper, "XAG") >= 0 || StringFind(upper, "GOLD") >= 0 || StringFind(upper, "SILVER") >= 0)
+            return 1;  // ASSET_METALS
+
+        // Indices
+        if(StringFind(upper, "US30") >= 0 || StringFind(upper, "US100") >= 0 || StringFind(upper, "GER40") >= 0 ||
+           StringFind(upper, "UK100") >= 0 || StringFind(upper, "JP225") >= 0 || StringFind(upper, "NASDAQ") >= 0 ||
+           StringFind(upper, "SPX") >= 0 || StringFind(upper, "DAX") >= 0)
+            return 2;  // ASSET_INDICES
+
+        // Forex (has common currency pair patterns)
+        if(StringLen(upper) >= 6)
+        {
+            string currencies[] = {"EUR", "GBP", "USD", "JPY", "AUD", "NZD", "CAD", "CHF"};
+            for(int i = 0; i < 8; i++)
+            {
+                if(StringFind(upper, currencies[i]) >= 0)
+                    return 0;  // ASSET_FOREX
+            }
+        }
+
+        return 9;  // ASSET_UNIVERSAL (fallback)
     }
 
     bool WriteCheckpointString(const int fileHandle, const string value)
@@ -705,7 +820,28 @@ private:
         for(int i = 0; i < 10; i++)
             featSubset[i] = (i < ArraySize(normalizedFeatures)) ? normalizedFeatures[i] : 0.0;
 
-        m_metaLabeler.BuildInput(confidence, regimeProbs, rawFeatures[15], featSubset, metaInput);
+        // Calculate signal entropy for meta-feature
+        double logEps = 1e-15;
+        double entropy = 0.0;
+        if(noneProb > 0) entropy -= noneProb * MathLog(MathMax(noneProb, logEps));
+        if(buyProb > 0) entropy -= buyProb * MathLog(MathMax(buyProb, logEps));
+        if(sellProb > 0) entropy -= sellProb * MathLog(MathMax(sellProb, logEps));
+        entropy /= MathLog(3.0);
+
+        // Conformal uncertainty
+        double conformalUnc = m_conformal.GetQuantile();
+
+        // Momentum from raw features
+        double momentum = 0.0;
+        if(ArraySize(rawFeatures) > 20 && MathIsValidNumber(rawFeatures[20]))
+            momentum = rawFeatures[20];
+
+        m_metaLabeler.BuildInput(confidence, regimeProbs, rawFeatures[15],
+                                 noneProb, buyProb, sellProb, entropy,
+                                 conformalUnc,
+                                 m_metaLabeler.GetRecentWinRate(),
+                                 m_metaLabeler.GetRecentAvgConfidence(),
+                                 featSubset, momentum, metaInput);
 
         if(signal != TRADE_SIGNAL_NONE)
         {
@@ -847,6 +983,7 @@ private:
                                    m_barrierBuffer[i].predictionId,
                                    m_barrierBuffer[i].signalConfidence,
                                    m_barrierBuffer[i].metaInput);
+                m_conformal.SetCurrentRegime(m_regimeTracker.GetCurrentRegime());
                 m_conformal.AddScore(1.0 - m_barrierBuffer[i].signalConfidence);
                 m_conformal.UpdateACI(true);  // HOLD is the correct label when nothing happened
                 m_metaLabeler.AddSample(m_barrierBuffer[i].metaInput, 0);  // Not profitable
@@ -857,6 +994,17 @@ private:
             bool upperHit = (currentHigh >= m_barrierBuffer[i].upperBarrier);
             bool lowerHit = (currentLow <= m_barrierBuffer[i].lowerBarrier);
             bool verticalHit = (TimeCurrent() >= m_barrierBuffer[i].expiryTime);
+
+            // Minimum barrier width filter: reject labels where barriers are too tight
+            // This prevents noisy labels from slippage/spread on small moves
+            if(!verticalHit && m_barrierBuffer[i].entryPrice > 0.0)
+            {
+                double upperDist = MathAbs(m_barrierBuffer[i].upperBarrier - m_barrierBuffer[i].entryPrice);
+                double lowerDist = MathAbs(m_barrierBuffer[i].entryPrice - m_barrierBuffer[i].lowerBarrier);
+                double minBarrierWidth = SymbolInfoDouble(m_symbol, SYMBOL_POINT) * AI_MIN_BARRIER_WIDTH_POINTS;
+                if(upperDist < minBarrierWidth && lowerDist < minBarrierWidth)
+                    continue;
+            }
 
             int directionalLabel = -1;
             if(upperHit)
@@ -879,9 +1027,14 @@ private:
                                m_barrierBuffer[i].predictionId,
                                m_barrierBuffer[i].signalConfidence,
                                m_barrierBuffer[i].metaInput);
+            m_conformal.SetCurrentRegime(m_regimeTracker.GetCurrentRegime());
             m_conformal.AddScore(1.0 - m_barrierBuffer[i].signalConfidence);
             m_conformal.UpdateACI(directionalCorrect);
             m_metaLabeler.AddSample(m_barrierBuffer[i].metaInput, directionalCorrect ? 1 : 0);
+            // Track meta-labeler's own accuracy for enriched features
+            double metaPred = m_metaLabeler.Predict(m_barrierBuffer[i].metaInput);
+            bool metaCorrect = ((metaPred >= 0.5 && directionalCorrect) || (metaPred < 0.5 && !directionalCorrect));
+            m_metaLabeler.RecordOutcome(metaCorrect, m_barrierBuffer[i].signalConfidence);
             resolvedThisPass++;
         }
 
@@ -1360,8 +1513,8 @@ public:
         m_initialized = false;
         m_enableOnlineTraining = true;
         m_enableSelfLabeling = true;
-        m_sampleIntervalSec = 15;
-        m_checkpointEveryLabeled = 10;
+        m_sampleIntervalSec = AI_DEFAULT_SAMPLE_INTERVAL_SEC;
+        m_checkpointEveryLabeled = AI_DEFAULT_CHECKPOINT_EVERY;
         m_labeledSinceCheckpoint = 0;
         m_epoch = 0;
         m_lastLoss = 0.0;
@@ -1373,9 +1526,27 @@ public:
         m_resolvedLabelCount = 0;
         m_barrierHead = 0;
         m_barrierCount = 0;
-        m_barrierK = 1.5;
-        m_barrierVertBars = 20;
-        m_minConfidence = 0.70;
+        m_barrierK = AI_DEFAULT_BARRIER_K;
+        m_barrierVertBars = AI_DEFAULT_BARRIER_VERT_BARS;
+        m_assetClassId = 9;  // Default: Universal
+
+        // Per-asset-class barrier parameters
+        // Forex: standard K=1.5, 20 bars
+        // Metals/Indices/Energies: slightly wider
+        // Synthetics (CrashBoom, Volatility, Step, Jump, DEX): wider barriers, longer horizons
+        ArrayResize(m_barrierKByClass, 10);
+        ArrayResize(m_barrierVertBarsByClass, 10);
+        m_barrierKByClass[0] = 1.5;   m_barrierVertBarsByClass[0] = 20;  // Forex
+        m_barrierKByClass[1] = 1.8;   m_barrierVertBarsByClass[1] = 25;  // Metals
+        m_barrierKByClass[2] = 1.8;   m_barrierVertBarsByClass[2] = 25;  // Indices
+        m_barrierKByClass[3] = 2.0;   m_barrierVertBarsByClass[3] = 30;  // Energies
+        m_barrierKByClass[4] = 2.5;   m_barrierVertBarsByClass[4] = 40;  // Crash/Boom
+        m_barrierKByClass[5] = 2.5;   m_barrierVertBarsByClass[5] = 40;  // Volatility
+        m_barrierKByClass[6] = 2.0;   m_barrierVertBarsByClass[6] = 30;  // Step
+        m_barrierKByClass[7] = 2.5;   m_barrierVertBarsByClass[7] = 40;  // Jump
+        m_barrierKByClass[8] = 2.0;   m_barrierVertBarsByClass[8] = 30;  // DEX
+        m_barrierKByClass[9] = 1.5;   m_barrierVertBarsByClass[9] = 20;  // Universal (fallback)
+        m_minConfidence = AI_MIN_CONFIDENCE;
         m_lastObservationTime = 0;
         m_lastSignalLogTime = 0;
         m_lastCheckpointTimestamp = 0;
@@ -1402,7 +1573,7 @@ public:
         ArrayInitialize(m_featureM2, 0.0);
         m_featureCount = 0;
         m_normalizationReady = false;
-        m_normalizationDecay = 0.001;  // EMA decay factor (small value for slow adaptation)
+        m_normalizationDecay = AI_DEFAULT_NORM_DECAY;
         for(int i = 0; i < NN_MAX_TRAINING_EXAMPLES; i++)
             m_trainingBuffer[i].Reset();
         for(int i = 0; i < NN_MAX_PERSISTED_SAMPLES; i++)
@@ -1412,7 +1583,8 @@ public:
         m_conformal.Init(0.05);
         m_metaLabeler.Init(500);
         m_regimeTracker.Init();
-        m_featureImportance.Init(FEATURE_VECTOR_SIZE, 100);
+        m_featureImportance.Init(FEATURE_VECTOR_SIZE, AI_FEATURE_IMPORTANCE_INTERVAL);
+        m_featureImportanceEnabled = true;
     }
 
     virtual ~CNeuralNetworkStrategy()
@@ -1427,14 +1599,21 @@ public:
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
+
+        // Auto-detect asset class from symbol name
+        m_assetClassId = DetectAssetClassFromSymbol(symbol);
+        m_barrierK = m_barrierKByClass[m_assetClassId];
+        m_barrierVertBars = m_barrierVertBarsByClass[m_assetClassId];
+
         m_initialized = true;
         if(!LoadCheckpoint())
         {
             m_lastLoadStatus = "COLD_START";
             SaveCheckpointAtomic(true);
         }
-        PrintFormat("[NEURAL-NET] Initialized | Symbol=%s | TF=%s | Load=%s",
-                    m_symbol, EnumToString(m_timeframe), m_lastLoadStatus);
+        PrintFormat("[NEURAL-NET] Initialized | Symbol=%s | TF=%s | AssetClass=%d | barrierK=%.2f | vertBars=%d | Load=%s",
+                    m_symbol, EnumToString(m_timeframe), m_assetClassId,
+                    m_barrierK, m_barrierVertBars, m_lastLoadStatus);
         return true;
     }
 
@@ -1476,8 +1655,38 @@ public:
 
     void SetTemperature(const double temperature)
     {
-        m_temperature = MathMax(0.1, MathMin(10.0, temperature));
+        m_temperature = MathMax(AI_MIN_TEMPERATURE, MathMin(AI_MAX_TEMPERATURE, temperature));
     }
+
+    void SetNormalizationDecay(const double decay)
+    {
+        m_normalizationDecay = MathMax(0.001, MathMin(0.2, decay));
+    }
+
+    void SetFeatureImportanceEnabled(const bool enabled) { m_featureImportanceEnabled = enabled; }
+    bool IsFeatureImportanceEnabled() const { return m_featureImportanceEnabled; }
+
+    // Set asset class and update barrier parameters accordingly
+    void SetAssetClass(const int assetClassId)
+    {
+        m_assetClassId = MathMax(0, MathMin(9, assetClassId));
+        m_barrierK = m_barrierKByClass[m_assetClassId];
+        m_barrierVertBars = m_barrierVertBarsByClass[m_assetClassId];
+        PrintFormat("[NEURAL-NET] Asset class set to %d | barrierK=%.2f | vertBars=%d | Symbol=%s",
+                    m_assetClassId, m_barrierK, m_barrierVertBars, m_symbol);
+    }
+
+    int GetAssetClass() const { return m_assetClassId; }
+    double GetBarrierK() const { return m_barrierK; }
+    int GetBarrierVertBars() const { return m_barrierVertBars; }
+
+    // Expose regime probabilities for dashboard
+    void GetRegimeProbs(double &out[])
+    {
+        m_regimeTracker.GetProbabilities(out);
+    }
+
+    double GetNormalizationDecay() const { return m_normalizationDecay; }
 
     double GetTemperature() const
     {
@@ -1541,7 +1750,8 @@ public:
 
         if(signal != TRADE_SIGNAL_NONE)
         {
-            m_featureImportance.Update(normalizedFeatures, FEATURE_VECTOR_SIZE, confidence, *this);
+            if(m_featureImportanceEnabled)
+                m_featureImportance.Update(normalizedFeatures, FEATURE_VECTOR_SIZE, confidence, *this);
             if(m_lastFeatureImportanceLogTime == 0 || (TimeCurrent() - m_lastFeatureImportanceLogTime) >= 500)
             {
                 m_featureImportance.LogTopFeatures(10);
@@ -1552,10 +1762,11 @@ public:
         datetime now = TimeCurrent();
         if(m_lastSignalLogTime == 0 || (now - m_lastSignalLogTime) >= 10)
         {
-            PrintFormat("[NEURAL-NET] Signal=%s | conf=%.3f | none=%.3f | buy=%.3f | sell=%.3f | conformal_q=%.3f | alpha=%.3f | labels=%d/%d | norm=%s",
+            PrintFormat("[NEURAL-NET] Signal=%s | conf=%.3f | none=%.3f | buy=%.3f | sell=%.3f | conformal_q=%.3f(global=%.3f) | alpha=%.3f | regime=%d | labels=%d/%d | norm=%s",
                         TradeSignalToString(signal), confidence,
                         probabilities[0], probabilities[1], probabilities[2],
-                        m_conformal.GetQuantile(), m_conformal.GetAlpha(),
+                        m_conformal.GetQuantile(), m_conformal.GetGlobalQuantile(),
+                        m_conformal.GetAlpha(), m_conformal.GetCurrentRegime(),
                         m_resolvedLabelCount, NN_MIN_NORMALIZATION_SAMPLES,
                         m_normalizationReady ? "READY" : "COLD");
             m_lastSignalLogTime = now;
@@ -1653,8 +1864,18 @@ public:
     {
         if(!m_enableOnlineTraining)
             return;
-        if(m_resolvedLabelCount < 10 || m_trainCount < 10)
+        if(m_resolvedLabelCount < AI_MIN_RESOLVED_LABELS || m_trainCount < AI_MIN_RESOLVED_LABELS)
             return;
+        if(m_tradeLinkedLabels < AI_MIN_TRADE_LINKED_LABELS)
+        {
+            static datetime s_lastGateLog = 0;
+            if(s_lastGateLog == 0 || (TimeCurrent() - s_lastGateLog) >= 300)
+            {
+                PrintFormat("[NEURAL-NET] TRAIN-BLOCKED tradeLinkedLabels=%d < 5 | Symbol=%s", m_tradeLinkedLabels, m_symbol);
+                s_lastGateLog = TimeCurrent();
+            }
+            return;
+        }
 
         int maxSamples = MathMin(m_trainCount, 256);
         int start = MathMax(0, m_trainCount - maxSamples);
