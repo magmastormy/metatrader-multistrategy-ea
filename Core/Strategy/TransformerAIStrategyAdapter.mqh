@@ -13,6 +13,7 @@
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
 #include "../../AIModules/TransformerBrain.mqh"
+#include "../../AIModules/AIConfig.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
 
 class CTransformerAIStrategyAdapter : public IAIStrategy
@@ -168,7 +169,7 @@ public:
         m_cacheTimeframe = PERIOD_CURRENT;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "TRANSFORMER_UNSET";
-        m_minConfidence = 0.70;
+        m_minConfidence = AI_MIN_CONFIDENCE;
         m_voteWindowStart = TimeCurrent();
         m_directionWindowIdx = 0;
         m_directionWindowCount = 0;

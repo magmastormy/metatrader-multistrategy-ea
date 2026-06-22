@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-06-18
+- Last Updated: 2026-06-21
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 104 - SL/BE/Trailing + Chart Drawing Bug Fixes
+- Current Batch: 116
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.

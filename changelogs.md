@@ -1,5 +1,91 @@
 # Changelogs
 
+## 2026-06-21 — Batch 105: Phase 1-10 Codebase Audit & Fix
+
+### Scope
+Full codebase audit and systematic fix of 145 documented issues across 10 phases, plus 33 AI module fixes.
+
+### Phase 1-8: MQL5 Core Fixes (Batch 105)
+**Modified Files (30+):**
+- `MultiStrategyAutonomousEA.mq5` — Fixed dashboard update gating (ISSUE-116), `_Symbol`→`symbol` parameter bugs (ISSUE-117), removed deprecated input (ISSUE-083), removed dead orchestrator stubs (ISSUE-026), extended `GetStrategyIndexByName`/`IsStrategyIntrabarEnabledByInput` for Batch 103 (ISSUE-001/022/027), added Batch 103 to `BuildStrategyRegistry`/`RegisterIndicatorStrategyByName`, passed `&unifiedRiskManager` to scalp engines, added distinct enum types for Unicorn/PowerOfThree
+- `Core/Scalp/SpikeHunterEngine.mqh` — Added `CUnifiedRiskManager*` member, updated `Init()` signature, added pre-trade risk validation (ISSUE-003-006)
+- `Core/Scalp/ATRScalpingEngine.mqh` — Same pattern + replaced 4 raw indicator handles with CIndicatorManager (ISSUE-059)
+- `Core/Scalp/GridRecoveryEngine.mqh` — Same risk gating pattern
+- `IndicatorManager.mqh` — Added `GetStochasticHandle()` method
+- `Core/Utils/Enums.mqh` — Added `STRATEGY_UNICORN_MODEL`/`STRATEGY_POWER_OF_THREE` enum values, removed duplicate `#define` constants (ISSUE-137)
+- `Core/Utils/DashboardBridge.mqh` — Added HTTP status code checking (ISSUE-114)
+- `Core/Strategy/OnnxAIStrategyAdapter.mqh` — Fixed scaler path (ISSUE-142)
+- `Strategies/FVGScalperStrategy.mqh` — Fixed bar 0→bar 1 repainting risk (ISSUE-129)
+- `Strategies/BreakerBlockStrategy.mqh` — Fixed bar 0→bar 1, removed dead OB type methods
+- `Strategies/AsianRangeBreakStrategy.mqh` — Fixed bar 0→bar 1 (ISSUE-130)
+- `Strategies/NYOpenGapStrategy.mqh` — Fixed time window logic bug (ISSUE-131), replaced raw iATR with CIndicatorManager
+- `Strategies/MeanReversionStrategy.mqh` — Added null guard for risk manager (ISSUE-132), replaced iStochastic/iATR with CIndicatorManager, extracted SafeCopyBuffer
+- `Strategies/CPowerOfThreeStrategy.mqh` — Fixed iATR handle leak, replaced with CIndicatorManager
+- `Strategies/CandlestickFiles/CandleAnalyzer.mqh` — Replaced raw iATR with CIndicatorManager
+- `Strategies/TrendFiles/MultiEMASystem.mqh` — Replaced 6 raw handles with CIndicatorManager, removed manual IndicatorRelease from Deinit
+- `Strategies/TrendFiles/ADXPositionSizing.mqh` — Replaced raw iADX with CIndicatorManager
+- `Strategies/SupportResistanceFiles/TrendlineDetector.mqh` — Replaced per-call iATR with CIndicatorManager
+- `Strategies/UnifiedICTFiles/PartialCloseManager.mqh` — Replaced per-call iATR with CIndicatorManager
+- `Strategies/UnifiedICTFiles/AdvancedOrderBlocks.mqh` — Added `IsBullishOBType()`/`IsBearishOBType()` (ISSUE-133)
+- `Strategies/CUnicornModelStrategy.mqh` — Removed duplicate OB type methods, uses detector
+- `Strategies/SimpleMomentumStrategy.mqh` — Extracted SafeCopyBuffer to shared utility
+- `Strategies/VolatilityBreakoutStrategy.mqh` — Same
+- `Utilities/SafeCopyBuffer.mqh` — New shared utility (ISSUE-134)
+- `Dashboard/server/dashboard_server.py` — Wired MT5LogTailer, fixed alert field name (ISSUE-110/112)
+- `Dashboard/client/src/hooks/useEAState.ts` — Fixed sendCommand format, alert field name (ISSUE-111/112)
+- `Dashboard/client/src/hooks/useWebSocket.ts` — Removed hardcoded port (ISSUE-115)
+- 19 `.mqh` files — Removed ghost `CStrategyManager` forward declarations (ISSUE-120)
+- 18 `.mqh` files — Removed ghost `CHedgingProtection` forward declarations (ISSUE-078)
+
+**Deleted Files (16):**
+- `Core/Signals/HedgingProtection.mqh`, `Core/Orchestration/ExecutionOrchestrator.mqh`, `Core/Orchestration/SignalEvaluationOrchestrator.mqh`, `Core/Management/SharedEngineManager.mqh`, `Core/Management/InitializationManager.mqh`, `Core/Signals/TieredSignalValidator.mqh`, `Core/Utils/EnsembleTypes.mqh`, `Core/AI/DynamicThresholdManager.mqh`, `Core/Scalp/ScalpMomentumStrategy.mqh`, `Core/Scalp/ScalpSpreadStrategy.mqh`, `AIModules/UniversalTransformerIntegrationExample.mqh`, `Utilities/File.mqh`, `Utilities/FileTxt.mqh`, `Utilities/Utilities.mqh`, `Include/Indicators/Oscillators.mqh`, `Include/Indicators/RSI.mqh`
+
+### Phase 9: AI Module Deep-Dive (Batch 116)
+**33 AI issues fixed across 12 files:**
+
+| ID | Fix | File |
+|----|-----|------|
+| AI-001 | RoPE formula corrected (v0*cos-v1*sin, v0*sin+v1*cos) | `TransformerBrain.mqh` |
+| AI-002 | RegimeDetector Changed() — save regime before Update, compare after | `EnsembleMetaLearner.mqh` |
+| AI-003 | RandNormal Box-Muller — use NextRand() directly, guard against log(0) | `NeuralNetworkStrategy.mqh` |
+| AI-004 | Buffer size constants unified to 2000/300 | `CNeuralTrainingDataManager.mqh` |
+| AI-006 | Static updateCounter → member variable m_updateCounter | `EnsembleMetaLearner.mqh` |
+| AI-007 | O(n²) Adam — cached weights before loop, added AdamWUpdateRaw | `TransformerBrain.mqh` |
+| AI-008 | ResetTraining now resets m_adamStep | `TransformerBrain.mqh` |
+| AI-009 | signal.isValid set on success | `NextGenStrategyBrain.mqh` |
+| AI-010 | Features array bounds check (< 31 elements) | `NextGenStrategyBrain.mqh` |
+| AI-011 | OnnxBrain resets accumulators after evaluation | `OnnxBrain.mqh` |
+| AI-012 | Deinit preserves m_fallbackToCpu | `OnnxBrain.mqh` |
+| AI-013 | Barrier resolver uses actual exitPrice | `NeuralNetworkStrategy.mqh` |
+| AI-014 | Adam step 0 division fixed in CNeuralOptimizer | `NeuralNetworkStrategy.mqh` |
+| AI-019 | Recent metrics divide by labeledCount not recentCount | `AIPerformanceFeedback.mqh` |
+| AI-020 | Calibration uses actual return scale, not hardcoded 2% | `AIPerformanceFeedback.mqh` |
+| AI-021 | Removed unimplemented method declarations | `AIPerformanceFeedback.mqh` |
+| AI-022 | EnsureModelArrays zero-initializes new slots | `EnsembleMetaLearner.mqh` |
+| AI-025/026 | IsDirectionDegenerate divides by windowSize, not constant 20 | `TransformerAIStrategyAdapter.mqh`, `EnsembleAIStrategyAdapter.mqh` |
+| AI-027 | Memory leak fixed — delete m_modelA on modelB failure | `EnsembleAIStrategyAdapter.mqh` |
+| AI-030 | TransformerBrain SaveHeadState saves Adam moments | `TransformerBrain.mqh` |
+| AI-044 | Static s_featureLogCounter → member m_featureLogCounter | `NeuralNetworkStrategy.mqh` |
+| AI-045 | HOLD conformity score corrected (HOLD is valid) | `NeuralNetworkStrategy.mqh` |
+| AI-057 | Duplicate ma50/ema50 feature deduplicated | `AIFeatureVectorBuilder.mqh` |
+| AI-058 | OFI overflow fixed — MathExp replaced with MathTanh | `AIFeatureVectorBuilder.mqh` |
+| AI-059 | TRANSFORMER_DROPOUT_DEFAULT renamed to TRANSFORMER_MAX_SEQ_LEN_DEFAULT | `AIFeatureVectorBuilder.mqh` |
+| AI-061 | PipelineScaler scale threshold 1e-12 → 1e-6 | `PipelineScaler.mqh` |
+| AI-063 | Adaptation weights clamped to [0.01, 10.0] | `UniversalTransformerService.mqh` |
+| AI-064 | Inverted log condition fixed | `UniversalTransformerService.mqh` |
+| AI-067 | MetaLabeler eps shadowing fixed (renamed to logEps) | `MetaLabeler.mqh` |
+| AI-068 | MetaLabeler AddSample guards against use-before-Init | `MetaLabeler.mqh` |
+| AI-070 | VaR calculation uses confidence scaling | `UncertaintyQuantifier.mqh` |
+| AI-071 | maxUncertainty uses proper calculation | `UncertaintyQuantifier.mqh` |
+
+**New Files (1):**
+- `Utilities/SafeCopyBuffer.mqh` — Shared retry-safe CopyBuffer wrapper
+
+### Compilation Status
+- MQL5: 0 errors, 0 warnings
+
+---
+
 ## 2026-06-18 — Batch 104: SL/BE/Trailing + Chart Drawing Bug Fixes
 
 ### Modified Files (5)

@@ -50,7 +50,7 @@ struct SAssetProfile
    bool              enableSpikeHunter;   // Enable spike hunter engine
    bool              enableBreakoutEngine;// Enable volatility breakout
    bool              enableOUMeanReversion; // Enable OU mean-reversion filter
-   int               featureSetSize;      // 57 = universal, 70 = deriv
+   int               featureSetSize;      // 65 = universal, 73 = deriv
    string            pythonModelFamily;   // Python model directory name
 
    // Default constructor — MQL5 requires explicit string initialization
@@ -69,7 +69,7 @@ struct SAssetProfile
       enableSpikeHunter   = false;
       enableBreakoutEngine= false;
       enableOUMeanReversion = false;
-      featureSetSize      = 57;
+      featureSetSize      = 65;
       pythonModelFamily   = "";
    }
 };
@@ -106,7 +106,7 @@ private:
       m_profiles[ASSET_FOREX].enableSpikeHunter    = false;
       m_profiles[ASSET_FOREX].enableBreakoutEngine = true;
       m_profiles[ASSET_FOREX].enableOUMeanReversion= false;
-      m_profiles[ASSET_FOREX].featureSetSize       = 60;  // 57 + 3 forex-specific
+      m_profiles[ASSET_FOREX].featureSetSize       = 68;  // 65 + 3 forex-specific
       m_profiles[ASSET_FOREX].pythonModelFamily    = "forex";
 
       // === ASSET 1: METALS (GOLD/SILVER) ===
@@ -123,7 +123,7 @@ private:
       m_profiles[ASSET_METALS].enableSpikeHunter   = false;
       m_profiles[ASSET_METALS].enableBreakoutEngine= true;
       m_profiles[ASSET_METALS].enableOUMeanReversion= false;
-      m_profiles[ASSET_METALS].featureSetSize      = 61;  // 57 + 4 metals-specific
+      m_profiles[ASSET_METALS].featureSetSize      = 69;  // 65 + 4 metals-specific
       m_profiles[ASSET_METALS].pythonModelFamily   = "metals";
 
       // === ASSET 2: INDICES (US30, US100, etc.) ===
@@ -140,7 +140,7 @@ private:
       m_profiles[ASSET_INDICES].enableSpikeHunter  = false;
       m_profiles[ASSET_INDICES].enableBreakoutEngine= false;
       m_profiles[ASSET_INDICES].enableOUMeanReversion= true;
-      m_profiles[ASSET_INDICES].featureSetSize     = 61;  // 57 + 4 indices-specific
+      m_profiles[ASSET_INDICES].featureSetSize     = 69;  // 65 + 4 indices-specific
       m_profiles[ASSET_INDICES].pythonModelFamily  = "indices";
 
       // === ASSET 3: ENERGIES ===
@@ -157,7 +157,7 @@ private:
       m_profiles[ASSET_ENERGIES].enableSpikeHunter = true;
       m_profiles[ASSET_ENERGIES].enableBreakoutEngine= true;
       m_profiles[ASSET_ENERGIES].enableOUMeanReversion= false;
-      m_profiles[ASSET_ENERGIES].featureSetSize    = 60;  // 57 + 3 energies-specific
+      m_profiles[ASSET_ENERGIES].featureSetSize    = 68;  // 65 + 3 energies-specific
       m_profiles[ASSET_ENERGIES].pythonModelFamily = "energies";
 
       // === ASSET 4: DERIV CRASH/BOOM ===
@@ -259,7 +259,7 @@ private:
       m_profiles[ASSET_UNIVERSAL].enableSpikeHunter         = false;
       m_profiles[ASSET_UNIVERSAL].enableBreakoutEngine      = false;
       m_profiles[ASSET_UNIVERSAL].enableOUMeanReversion     = false;
-      m_profiles[ASSET_UNIVERSAL].featureSetSize            = 57;
+      m_profiles[ASSET_UNIVERSAL].featureSetSize            = 65;
       m_profiles[ASSET_UNIVERSAL].pythonModelFamily         = "universal";
    }
 

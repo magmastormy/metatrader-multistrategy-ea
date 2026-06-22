@@ -686,6 +686,10 @@ public:
 };
 
 // Global service instance
+// SAFETY: In MT5, each chart/EA has its own program memory space — globals are
+// per-chart, not cross-chart. Per-symbol state is keyed internally (registered
+// symbols, feature cache, embeddings). Multiple charts with this EA each get
+// their own independent service instance.
 CUniversalTransformerService g_universalTransformerService;
 
 #endif // __UNIVERSAL_TRANSFORMER_SERVICE_MQH__

@@ -326,24 +326,24 @@ public:
             }
         }
 
-        // Fetch volume data (no fallback — volume is confirmation-only)
+        // Fetch volume data (confirmation-only — treat failure as volume unavailable)
         double volumeBuffer[11];
-        if(!SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer))
-        {
-            return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
-        }
+        bool volumeAvailable = SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer);
         
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
         
         // --- VOLUME CONFIRMATION ---
-        double currentVol = volumeBuffer[0];
-        double avgVol = 0;
-        for(int i = 1; i < 11; i++)
-            avgVol += volumeBuffer[i];
-        avgVol /= 10.0;
-        
-        double volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
+        double volRatio = 1.0;
+        if(volumeAvailable)
+        {
+            double currentVol = volumeBuffer[0];
+            double avgVol = 0;
+            for(int i = 1; i < 11; i++)
+                avgVol += volumeBuffer[i];
+            avgVol /= 10.0;
+            volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
+        }
         
         // --- VOLATILITY ANALYSIS ---
         double curATR = atrBuffer[0];

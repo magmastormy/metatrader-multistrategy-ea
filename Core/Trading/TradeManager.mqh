@@ -28,6 +28,7 @@
 #include "../../IndicatorManager.mqh"
 #include "../Cache/ATRCache.mqh"
 #include "../Utils/Instruments.mqh"
+#include "../Utils/TradeJournal.mqh"
 
 
 
@@ -716,7 +717,7 @@ private:
         datetime historyFrom = TimeCurrent() - 300;
         datetime historyTo = TimeCurrent() + 60;
 
-        // Single non-blocking check â€?no Sleep loop
+        // Single non-blocking check ï¿½?no Sleep loop
         if(HistorySelect(historyFrom, historyTo))
         {
             if(tradeResult.deal > 0 && HistoryDealSelect(tradeResult.deal))
@@ -748,7 +749,7 @@ private:
             }
         }
 
-        // Deal not found yet â€?defer to pending confirmation for later resolution
+        // Deal not found yet ï¿½?defer to pending confirmation for later resolution
         if(tradeResult.order > 0 && m_pendingConfirmationCount < MAX_PENDING_CONFIRMATIONS)
         {
             int idx = m_pendingConfirmationCount;
@@ -763,7 +764,7 @@ private:
                         symbolName, tradeResult.order);
         }
 
-        // Optimistic return â€?broker accepted the order, confirmation deferred
+        // Optimistic return ï¿½?broker accepted the order, confirmation deferred
         m_lastExecutionReceipt.accepted = true;
         if(m_lastExecutionReceipt.averagePrice <= 0.0)
             m_lastExecutionReceipt.averagePrice = fallbackPrice;
@@ -1573,6 +1574,13 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
 
     if(result)
     {
+        long journalMagic = (long)PositionGetInteger(POSITION_MAGIC);
+        double exitPrice = (orderType == ORDER_TYPE_BUY)
+                              ? SymbolInfoDouble(localSymbol, SYMBOL_BID)
+                              : SymbolInfoDouble(localSymbol, SYMBOL_ASK);
+        JournalTradeClose(ticket, localSymbol, orderType, volume, exitPrice,
+                          posSL, posTP, journalMagic, profit, reason);
+
         // TP/SL calibration warning: if closed by profit-target before TP hit, log remaining distance
         if(posTP > 0.0 && reason != "")
         {
@@ -1664,9 +1672,18 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
     int totalPositions = PositionsTotal();
     int closedCount = 0;
     bool allSuccess = true;
+    datetime closeStartTime = TimeCurrent();
+    const int TIMEOUT_SECONDS = 10;
     
     for(int i = totalPositions - 1; i >= 0; i--)
     {
+        if(TimeCurrent() - closeStartTime > TIMEOUT_SECONDS)
+        {
+            PrintFormat("[TRADE-MANAGER] CloseAllPositions timeout after %d seconds, %d/%d positions closed",
+                        TIMEOUT_SECONDS, closedCount, totalPositions);
+            return false;
+        }
+        
         ulong ticket = PositionGetTicket(i);
         if(ticket > 0)
         {
@@ -1679,6 +1696,9 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
             }
         }
     }
+    
+    if(closedCount > 0)
+        PrintFormat("[TRADE-MANAGER] CloseAllPositions completed: %d positions closed", closedCount);
     
     return allSuccess;
 }
@@ -1908,7 +1928,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         return false;
     }
 
-    // MANDATORY STOP-LOSS GATE: Defense-in-depth â€?execution layer enforces SL invariant
+    // MANDATORY STOP-LOSS GATE: Defense-in-depth ï¿½?execution layer enforces SL invariant
     if(stopLossPips <= 0.0)
     {
         LogError("EXECUTION BLOCKED: Stop-loss is mandatory. Trade rejected", symbolName);
@@ -1923,9 +1943,20 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     bool executionConfirmed = false;
     int retryCount = 0;
     uint lastRetcode = 0;
+    datetime executionStartTime = TimeCurrent();
     
     while(retryCount < MAX_TRADE_RETRIES && !executionConfirmed)
     {
+        if(TimeCurrent() - executionStartTime > 15)
+        {
+            PrintFormat("[TRADE-TIMEOUT] %s | exceeded 15s after %d attempts | retcode=%u",
+                        symbolName, retryCount, lastRetcode);
+            m_lastExecutionReceipt.accepted = false;
+            m_lastExecutionReceipt.note = "TIMEOUT: broker unresponsive after 15s";
+            m_lastExecutionReceipt.retryCount = retryCount;
+            break;
+        }
+
         ApplyFillingModeForSymbol(symbolName);
 
         // Update dynamic slippage based on current volatility
@@ -2521,7 +2552,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     double newStopLoss = 0;
     // Batch104-BUG4: Lower trailing activation threshold.
     // Old: activationPoints = MathMax(step, distance) = max(120, 300) = 300 points
-    // This required 300 points profit before trailing started â€?too aggressive for forex.
+    // This required 300 points profit before trailing started ï¿½?too aggressive for forex.
     // New: activationPoints = distance (the trailing distance itself is the minimum
     // profit needed for the trailing stop to sit above entry for BUY positions).
     double activationPoints = distance;
@@ -2613,7 +2644,26 @@ bool CTradeManager::OpenPosition(const string symbol,
         validationPrice = GetCurrentExecutionPrice(symbol, orderType);
     
     // Execute the order using the freshest price available at send time.
-    return ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
+    bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
+
+    if(executed)
+    {
+        long journalMagic = (long)(m_magicNumber + GetMagicOffsetForSymbol(symbol));
+        double journalPrice = (m_lastExecutionReceipt.averagePrice > 0.0) ? m_lastExecutionReceipt.averagePrice : price;
+        double journalSL = 0.0;
+        double journalTP = 0.0;
+        if(stopLossPips > 0.0)
+            journalSL = CalculateStopLoss(symbol, orderType, journalPrice, stopLossPips);
+        if(takeProfitPips > 0.0)
+            journalTP = CalculateTakeProfit(symbol, orderType, journalPrice, takeProfitPips);
+        ulong journalTicket = (m_lastExecutionReceipt.dealTicket > 0) ? m_lastExecutionReceipt.dealTicket
+                             : (m_lastExecutionReceipt.orderTicket > 0) ? m_lastExecutionReceipt.orderTicket
+                             : m_trade.ResultDeal();
+        JournalTradeOpen(journalTicket, symbol, orderType, normalizedVolume,
+                         journalPrice, journalSL, journalTP, journalMagic, "entry");
+    }
+
+    return executed;
 }
 
 //+------------------------------------------------------------------+

@@ -169,7 +169,7 @@ public:
    // Initialization
    bool              Initialize(const string &endpoint, 
                                  ENUM_PYTHON_BRIDGE_MODE mode = PYTHON_BRIDGE_OBSERVE,
-                                 int request_timeout_ms = 5000,
+                                 int request_timeout_ms = 2000,
                                  int heartbeat_timeout_s = 30,
                                  int max_reconnect_attempts = 5,
                                  int reconnect_backoff_ms = 2000);
@@ -227,7 +227,7 @@ CPythonBridge::CPythonBridge()
 {
    m_endpoint = "http://127.0.0.1:8000";
    m_mode = PYTHON_BRIDGE_OBSERVE;
-   m_request_timeout = 5000;
+   m_request_timeout = 2000;
    m_heartbeat_timeout = 30;
    m_last_heartbeat = 0;
    m_last_reconnect = 0;
@@ -271,19 +271,12 @@ bool CPythonBridge::Initialize(const string &endpoint,
    
    LogBridgeState("Python bridge initialized with endpoint: " + m_endpoint);
    
-   // Attempt initial health check
+   // Attempt initial health check — skip during init to avoid blocking WebRequest
+   // Health check will happen on first timer tick instead
    if(m_mode != PYTHON_BRIDGE_OFF)
    {
-      if(CheckHealth())
-      {
-         m_state = PYTHON_BRIDGE_CONNECTED;
-         LogBridgeState("Python bridge connected successfully");
-      }
-      else
-      {
-         m_state = PYTHON_BRIDGE_DISCONNECTED;
-         LogBridgeState("Python bridge connection failed - will use local AI fallback", ERROR_LEVEL_WARNING);
-      }
+      m_state = PYTHON_BRIDGE_DISCONNECTED;
+      LogBridgeState("Python bridge initialized (health check deferred to timer)");
    }
    else
    {
@@ -335,12 +328,15 @@ bool CPythonBridge::SendHttpRequest(const string &method, const string &url,
    uchar response_array[];
    string response_headers;
    
-   // Convert post data to uchar array
-   if(StringToCharArray(post_data, request_array) < 0)
-      return false;
-   
-   // Trim null terminator
-   ArrayResize(request_array, ArraySize(request_array) - 1);
+   // Convert post data to uchar array (only for POST/PUT with data)
+   if(post_data != "")
+   {
+      if(StringToCharArray(post_data, request_array) < 0)
+         return false;
+      
+      // Trim null terminator
+      ArrayResize(request_array, ArraySize(request_array) - 1);
+   }
    
    // Send request
    int res = WebRequest(method, url, headers, m_request_timeout,
@@ -350,6 +346,13 @@ bool CPythonBridge::SendHttpRequest(const string &method, const string &url,
    {
       int err = ::GetLastError();
       LogBridgeState("HTTP request failed: " + IntegerToString(err), ERROR_LEVEL_ERROR);
+      return false;
+   }
+   
+   if(res >= 400)
+   {
+      m_state = PYTHON_BRIDGE_DISCONNECTED;
+      LogBridgeState("HTTP " + IntegerToString(res) + " from " + url, ERROR_LEVEL_ERROR);
       return false;
    }
    

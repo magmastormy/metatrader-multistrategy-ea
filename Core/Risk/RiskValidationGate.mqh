@@ -497,7 +497,7 @@ bool CRiskValidationGate::ValidateBasicParameters(const STradeValidationRequest 
         double riskRatio = (request.lotSize > 0.0) ? (minLot / request.lotSize) : 999.0;
         if(riskRatio <= 15.0)  // Allow round-up if within 15x risk tolerance
         {
-            // Don't reject â€?the caller (UnifiedRiskManager) will re-calculate
+            // Don't reject ï¿½?the caller (UnifiedRiskManager) will re-calculate
             // with the min lot and assess whether the risk is acceptable
         }
         else
@@ -636,6 +636,9 @@ bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &r
 //+------------------------------------------------------------------+
 //| Validate correlation limits                                    |
 //+------------------------------------------------------------------+
+// NOTE: Correlation is also checked in UnifiedRiskManager::ValidateTradeRequest.
+// Both paths should be kept in sync if thresholds or logic change.
+//+------------------------------------------------------------------+
 bool CRiskValidationGate::ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk)
 {
     // Check same base currency limit
@@ -733,13 +736,13 @@ bool CRiskValidationGate::ValidateAccountHealth(const STradeValidationRequest &r
         return false;
     }
 
-    // Delegate drawdown check to CUnifiedRiskManager â€?single source of truth
+    // Delegate drawdown check to CUnifiedRiskManager ï¿½?single source of truth
     if(CheckPointer(m_unifiedRiskManager) != POINTER_INVALID)
     {
         SDrawdownState ddState = m_unifiedRiskManager.GetDrawdownState();
         if(ddState.isCriticalActive)
         {
-            message = StringFormat("Drawdown critical: %.2f%% â€?trading halted by unified risk manager",
+            message = StringFormat("Drawdown critical: %.2f%% ï¿½?trading halted by unified risk manager",
                                    ddState.currentDrawdownPct);
             return false;
         }
@@ -754,7 +757,7 @@ bool CRiskValidationGate::ValidateAccountHealth(const STradeValidationRequest &r
 
         if(drawdown > DRAWDOWN_CRITICAL)
         {
-            message = StringFormat("Drawdown too high: %.2f%% (fallback â€?unified manager not linked)", drawdown);
+            message = StringFormat("Drawdown too high: %.2f%% (fallback ï¿½?unified manager not linked)", drawdown);
             return false;
         }
     }
@@ -1044,7 +1047,7 @@ bool CRiskValidationGate::ValidateClusterGovernance(const STradeValidationReques
     if(requestClusterCode == "N")
         return true;
 
-    // Fix #9: Opposing conflict cooldown cache â€?skip full scan if recently rejected for same symbol
+    // Fix #9: Opposing conflict cooldown cache ï¿½?skip full scan if recently rejected for same symbol
     if(m_clusterMutexEnabled &&
        m_lastOpposingConflictSymbol == request.symbol &&
        m_lastOpposingConflictTime > 0 &&

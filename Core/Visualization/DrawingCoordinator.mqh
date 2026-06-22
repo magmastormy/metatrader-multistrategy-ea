@@ -46,13 +46,14 @@ private:
     bool m_cycleActive;
     int m_cycleSnapshotCount;
     int m_maxSnapshots;
-    int m_globalMaxObjects; // Global object limit (default 900)
+    int m_globalMaxObjects; // Global object limit (default 450, stays under MT5's 500 limit)
     
     // Global object counter with alert thresholds
     int m_globalObjectCount;           // Current total objects
-    int m_lastAlertLevel;              // Last alert level triggered (0=none, 1=800, 2=900, 3=950)
+    int m_lastAlertLevel;              // Last alert level triggered (0=none, 1=350, 2=400, 3=450)
     datetime m_lastCountLogTime;       // Last time we logged the count
     int m_lastBarLogged;               // Last bar number when we logged
+    datetime m_lastStaleCleanup;       // Last time stale-object cleanup ran
 
     int FindPrefixState(const string key) const;
     datetime ResolveBarTime(const string symbol, ENUM_TIMEFRAMES timeframe) const;
@@ -60,11 +61,11 @@ private:
     void UpdateGlobalObjectCount(long chartId);
     bool CheckAlertThresholds(long chartId);
     int SafeObjectsDeleteAll(long chartId, const string prefix, bool verify = true);
-    
-public:
-    void SetGlobalMaxObjects(int maxObjects) { m_globalMaxObjects = MathMax(100, maxObjects); }
 
 public:
+    int CleanupStaleObjects(long chartId, int maxAgeMinutes = 60);
+    void SetGlobalMaxObjects(int maxObjects) { m_globalMaxObjects = MathMax(100, maxObjects); }
+
     CDrawingCoordinator();
 
     void SetMaxSnapshots(const int value);
@@ -101,11 +102,12 @@ CDrawingCoordinator::CDrawingCoordinator() :
     m_cycleActive(false),
     m_cycleSnapshotCount(0),
     m_maxSnapshots(2000),
-    m_globalMaxObjects(900), // Stay under MT5's 1000 limit
+    m_globalMaxObjects(450), // Stay under MT5's 500-object limit
     m_globalObjectCount(0),
     m_lastAlertLevel(0),
     m_lastCountLogTime(0),
-    m_lastBarLogged(-1)
+    m_lastBarLogged(-1),
+    m_lastStaleCleanup(0)
 {
     ArrayResize(m_snapshots, 0);
     ArrayResize(m_prefixStates, 0);
@@ -344,10 +346,10 @@ bool CDrawingCoordinator::CheckAlertThresholds(long chartId)
     int currentBar = iBarShift(_Symbol, _Period, TimeCurrent());
     bool shouldLog = (currentBar != m_lastBarLogged) || (TimeCurrent() - m_lastCountLogTime >= 60);
     
-    // Alert thresholds
-    const int THRESHOLD_WARNING = 800;
-    const int THRESHOLD_CRITICAL = 900;
-    const int THRESHOLD_EMERGENCY = 950;
+    // Alert thresholds scaled to MT5's 500-object limit
+    const int THRESHOLD_WARNING = 350;
+    const int THRESHOLD_CRITICAL = 400;
+    const int THRESHOLD_EMERGENCY = 450;
     
     int newAlertLevel = 0;
     if(m_globalObjectCount >= THRESHOLD_EMERGENCY)
@@ -363,13 +365,13 @@ bool CDrawingCoordinator::CheckAlertThresholds(long chartId)
         switch(newAlertLevel)
         {
             case 1:
-                PrintFormat("[DRAW-COORD] WARNING: Chart objects at %d (800 threshold)", m_globalObjectCount);
+                PrintFormat("[CHART-OBJECTS] WARNING: %d/500 objects — approaching limit", m_globalObjectCount);
                 break;
             case 2:
-                PrintFormat("[DRAW-COORD] CRITICAL: Chart objects at %d (900 threshold) - cleanup triggered", m_globalObjectCount);
+                PrintFormat("[CHART-OBJECTS] CRITICAL: %d/500 objects — cleanup triggered", m_globalObjectCount);
                 break;
             case 3:
-                PrintFormat("[DRAW-COORD] EMERGENCY: Chart objects at %d (950 threshold) - aggressive cleanup", m_globalObjectCount);
+                PrintFormat("[CHART-OBJECTS] EMERGENCY: %d/500 objects — aggressive cleanup", m_globalObjectCount);
                 break;
         }
     }
@@ -440,6 +442,49 @@ int CDrawingCoordinator::SafeObjectsDeleteAll(long chartId, const string prefix,
         }
     }
 
+    return deleted;
+}
+
+//+------------------------------------------------------------------+
+//| Cleanup stale objects older than maxAgeMinutes                   |
+//| Called periodically from OnTimer to prevent object limit buildup |
+//+------------------------------------------------------------------+
+int CDrawingCoordinator::CleanupStaleObjects(long chartId, int maxAgeMinutes)
+{
+    datetime cutoff = TimeCurrent() - (maxAgeMinutes * 60);
+    int totalObjects = ObjectsTotal(chartId);
+    
+    if(totalObjects < 400)
+        return 0;
+    
+    int deleted = 0;
+    for(int i = totalObjects - 1; i >= 0; i--)
+    {
+        string name = ObjectName(chartId, i);
+        bool isManaged = false;
+        for(int j = 0; j < ArraySize(m_prefixStates); j++)
+        {
+            if(StringFind(name, m_prefixStates[j].prefix) == 0)
+            {
+                isManaged = true;
+                break;
+            }
+        }
+        if(isManaged)
+        {
+            datetime objTime = (datetime)ObjectGetInteger(chartId, name, OBJPROP_TIME);
+            if(objTime > 0 && objTime < cutoff)
+            {
+                if(ObjectDelete(chartId, name))
+                    deleted++;
+            }
+        }
+    }
+    
+    if(deleted > 0)
+        PrintFormat("[CHART-OBJECTS] Cleaned %d stale objects (>%d min old, total was %d)", 
+                    deleted, maxAgeMinutes, totalObjects);
+    
     return deleted;
 }
 

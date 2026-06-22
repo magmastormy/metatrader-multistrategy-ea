@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| AIFeatureVectorBuilder.mqh                                       |
-//| Canonical 57-feature AI input builder for NN / ONNX / sequence   |
+//| Canonical 65-feature AI input builder for NN / ONNX / sequence    |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -18,7 +18,7 @@
 #define TRANSFORMER_SHORT_SEQ_LEN_DEFAULT   10
 #define TRANSFORMER_LR_A_DEFAULT           0.001
 #define TRANSFORMER_LR_B_DEFAULT          0.0015
-#define FEATURE_VECTOR_SIZE               57
+#define FEATURE_VECTOR_SIZE               65
 #define TEMPORAL_BLEND_CURRENT            0.85
 #define TEMPORAL_BLEND_LAG                0.15
 #define DMODE_BASE_FEATURE_RATIO_WARNING   6
@@ -663,6 +663,54 @@ public:
         features[54] = (atr14 > 1e-9) ? (atr50 / (atr14 + 1e-9)) : 0.0;
         features[55] = ComputeOrderFlowImbalance(symbol, 128);
         features[56] = ComputeTimeSinceLastSpikeNormalized(symbol, 256);
+
+        // Candlestick pattern features (indices 57-64)
+        // Computed from OHLC of the signal bar — lightweight, no detector dependencies
+        double body = MathAbs(close - open);
+        double upperWick = high - MathMax(open, close);
+        double lowerWick = MathMin(open, close) - low;
+        double totalRange = high - low;
+        double midPrice = (high + low) / 2.0;
+
+        // [57] Pin bar bull: long lower wick, small body, close near high
+        features[57] = (totalRange > 1e-9 && lowerWick > 2.0 * body && lowerWick > 0.6 * totalRange) ?
+                        MathMin(1.0, lowerWick / (totalRange + 1e-9)) : 0.0;
+
+        // [58] Pin bar bear: long upper wick, small body, close near low
+        features[58] = (totalRange > 1e-9 && upperWick > 2.0 * body && upperWick > 0.6 * totalRange) ?
+                        MathMin(1.0, upperWick / (totalRange + 1e-9)) : 0.0;
+
+        // [59] Engulfing: current body fully covers previous bar's body
+        double prevClose = GetCloseAt(symbol, timeframe, barShift + 1);
+        double prevOpen = GetOpenAt(symbol, timeframe, barShift + 1);
+        double prevBody = MathAbs(prevClose - prevOpen);
+        bool bullishEngulf = (close > open && prevClose < prevOpen && body > prevBody && body > 1e-9);
+        bool bearishEngulf = (close < open && prevClose > prevOpen && body > prevBody && body > 1e-9);
+        features[59] = bullishEngulf ? 1.0 : (bearishEngulf ? -1.0 : 0.0);
+
+        // [60] Doji: very small body relative to range
+        features[60] = (totalRange > 1e-9 && body < 0.1 * totalRange) ? 1.0 - (body / (totalRange + 1e-9)) : 0.0;
+
+        // [61] Hammer: small body at top, long lower wick (bullish reversal)
+        features[61] = (totalRange > 1e-9 && lowerWick > 2.0 * body && upperWick < body &&
+                        close >= open && lowerWick > 0.5 * totalRange) ? 1.0 : 0.0;
+
+        // [62] Shooting star: small body at bottom, long upper wick (bearish reversal)
+        features[62] = (totalRange > 1e-9 && upperWick > 2.0 * body && lowerWick < body &&
+                        close <= open && upperWick > 0.5 * totalRange) ? 1.0 : 0.0;
+
+        // [63] Morning star (3-bar pattern): bearish + small body + bullish close above midpoint
+        double prev2Close = GetCloseAt(symbol, timeframe, barShift + 2);
+        double prev2Open = GetOpenAt(symbol, timeframe, barShift + 2);
+        bool prev2Bearish = (prev2Close < prev2Open);
+        bool prev1Small = (MathAbs(prevClose - prevOpen) < 0.3 * MathAbs(prev2Close - prev2Open));
+        bool currBullish = (close > open && close > (prev2Open + prev2Close) / 2.0);
+        features[63] = (prev2Bearish && prev1Small && currBullish) ? 1.0 : 0.0;
+
+        // [64] Evening star (3-bar pattern): bullish + small body + bearish close below midpoint
+        bool prev2Bullish = (prev2Close > prev2Open);
+        bool currBearish = (close < open && close < (prev2Open + prev2Close) / 2.0);
+        features[64] = (prev2Bullish && prev1Small && currBearish) ? 1.0 : 0.0;
 
         for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             features[i] = SanitizeFeature(features[i]);
