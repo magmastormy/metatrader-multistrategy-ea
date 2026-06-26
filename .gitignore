@@ -1,59 +1,47 @@
+```
 # Dependencies
 node_modules/
 
-# Editors
-.vscode/
-
-# Build artifacts
+# Build outputs
 dist/
 build/
-target/
+*.js
+*.ts
+*.tsx
+*.css
+*.scss
+*.sass
 
-# Python
+# Environment variables
+.env
+.env.local
+.env.*
+
+# Logs
+*.log
+
+# Coverage reports
+coverage/
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python artifacts (if any Python files exist in the project)
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-*.tmp
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-.env
-.env.local
-.env.
-coverage/
-htmlcov/
-.pytest_cache/
-.mypy_cache/
-__pypackages__/
 
-# Compiled and binary files
-*.class
-*.o
-*.so
-*.a
-*.obj
-*.out
-*.exe
-*.dll
-*.dylib
-*.jar
-*.war
+# Compressed files
 *.zip
 *.gz
 *.tar
@@ -76,19 +64,4 @@ __pypackages__/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-
-# IDE
-.idea/
-# Dashboard
-Dashboard/client/node_modules/
-Dashboard/client/dist/
-Dashboard/server/.venv-ea-dashboard/
-Dashboard/server/__pycache__/
-docs/doc*.md
-!docs/changelogs_old.md
-log_problems.md
-issues.md
-grok_problems.md
-problems.md
-*.exe
-mimo.exe
+```

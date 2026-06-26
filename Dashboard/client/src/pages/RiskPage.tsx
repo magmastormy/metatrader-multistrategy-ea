@@ -46,19 +46,19 @@ export default function RiskPage() {
           />
 
           {/* Drawdown indicator */}
-          <div className="glass-card p-5">
-            <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">Current Drawdown</p>
+          <div className="bg-surface border border-border p-5">
+            <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-3">Current Drawdown</p>
             <div className="flex items-end gap-4">
-              <span className="text-4xl font-bold text-accent-red">
+              <span className="text-4xl font-bold text-accent-2">
                 <AnimatedCounter value={risk.current_drawdown_pct} suffix="%" />
               </span>
               <div className="flex-1">
-                <div className="h-3 bg-surface-600 rounded-full overflow-hidden">
+                <div className="h-3 bg-surface-2 overflow-hidden">
                   <div
-                    className="h-full rounded-full transition-all duration-500"
+                    className="h-full transition-all duration-500"
                     style={{
                       width: `${Math.min(risk.current_drawdown_pct, 100)}%`,
-                      background: `linear-gradient(90deg, #22d3ee, #f59e0b, #ef4444)`,
+                      background: `linear-gradient(90deg, #c8f53a, #e8541a)`,
                     }}
                   />
                 </div>
@@ -69,54 +69,54 @@ export default function RiskPage() {
 
         {/* Mode badges + gate stats */}
         <div className="col-span-4 space-y-4">
-          <div className="glass-card p-5">
-            <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-4">Mode Status</p>
+          <div className="bg-surface border border-border p-5">
+            <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-4">Mode Status</p>
             <div className="space-y-3">
               <ModeBadge label="Conservative Mode" active={risk.conservative_mode} />
               <ModeBadge label="Emergency Mode" active={risk.emergency_mode} />
             </div>
           </div>
 
-          <div className="glass-card p-5">
-            <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-4">Risk Gate</p>
+          <div className="bg-surface border border-border p-5">
+            <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-4">Risk Gate</p>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-text-muted text-xs">Approved</p>
-                <p className="text-accent-green text-2xl font-bold">
+                <p className="text-accent text-2xl font-bold">
                   <AnimatedCounter value={risk.gate_approved} decimals={0} />
                 </p>
               </div>
               <div>
                 <p className="text-text-muted text-xs">Rejected</p>
-                <p className="text-accent-red text-2xl font-bold">
+                <p className="text-accent-2 text-2xl font-bold">
                   <AnimatedCounter value={risk.gate_rejected} decimals={0} />
                 </p>
               </div>
             </div>
             <div className="mt-3">
-              <div className="h-2 bg-surface-600 rounded-full overflow-hidden flex">
+              <div className="h-2 bg-surface-2 overflow-hidden flex">
                 <div
-                  className="h-full bg-accent-green transition-all duration-500"
+                  className="h-full bg-accent transition-all duration-500"
                   style={{ width: `${risk.gate_approved / Math.max(risk.gate_approved + risk.gate_rejected, 1) * 100}%` }}
                 />
                 <div
-                  className="h-full bg-accent-red transition-all duration-500"
+                  className="h-full bg-accent-2 transition-all duration-500"
                   style={{ width: `${risk.gate_rejected / Math.max(risk.gate_approved + risk.gate_rejected, 1) * 100}%` }}
                 />
               </div>
             </div>
           </div>
 
-          <div className="glass-card p-5">
-            <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">Active Risk Per Trade</p>
-            <p className="text-3xl font-bold text-accent-cyan">
+          <div className="bg-surface border border-border p-5">
+            <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-3">Active Risk Per Trade</p>
+            <p className="text-3xl font-bold text-accent">
               <AnimatedCounter value={risk.active_risk_per_trade_pct} suffix="%" />
             </p>
           </div>
 
-          <div className="glass-card p-5">
-            <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">Daily MtM Loss</p>
-            <p className="text-3xl font-bold text-accent-amber">
+          <div className="bg-surface border border-border p-5">
+            <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-3">Daily MtM Loss</p>
+            <p className="text-3xl font-bold text-accent-2">
               <AnimatedCounter value={risk.daily_mtm_loss_pct} suffix="%" />
             </p>
           </div>
@@ -128,16 +128,16 @@ export default function RiskPage() {
 
 function GaugeBar({ label, value, max, detail }: { label: string; value: number; max: number; detail: string }) {
   const pct = Math.min((value / max) * 100, 100);
-  const color = pct > 80 ? '#ef4444' : pct > 50 ? '#f59e0b' : '#22d3ee';
+  const color = pct > 80 ? '#e8541a' : pct > 50 ? '#c8f53a' : '#8a8a8a';
   return (
-    <div className="glass-card p-5">
+    <div className="bg-surface border border-border p-5">
       <div className="flex justify-between items-center mb-2">
-        <p className="text-text-secondary text-xs uppercase tracking-wider font-medium">{label}</p>
+        <p className="text-text-muted text-xs uppercase tracking-wider font-medium">{label}</p>
         <span className="text-text-muted text-xs font-mono">{detail}</span>
       </div>
-      <div className="h-3 bg-surface-600 rounded-full overflow-hidden">
+      <div className="h-3 bg-surface-2 overflow-hidden">
         <div
-          className="h-full rounded-full transition-all duration-500"
+          className="h-full transition-all duration-500"
           style={{ width: `${pct}%`, backgroundColor: color }}
         />
       </div>
@@ -148,12 +148,12 @@ function GaugeBar({ label, value, max, detail }: { label: string; value: number;
 function ModeBadge({ label, active }: { label: string; active: boolean }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-text-secondary text-sm">{label}</span>
+      <span className="text-text-muted text-sm">{label}</span>
       <span
-        className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
+        className={`px-3 py-1 text-xs font-bold uppercase ${
           active
-            ? 'bg-accent-red/15 text-accent-red border border-accent-red/30 animate-pulse'
-            : 'bg-surface-600/50 text-text-muted border border-surface-500'
+            ? 'bg-rust-15 text-accent-2 border border-accent-2/30 animate-pulse-solid'
+            : 'bg-surface-2 text-text-muted border border-border'
         }`}
       >
         {active ? 'ACTIVE' : 'OFF'}

@@ -24,19 +24,20 @@ export default function MetricCard({
   const displayValue = typeof value === 'number'
     ? <AnimatedCounter value={value} decimals={decimals} prefix={prefix} suffix={suffix} />
     : <>{prefix}{value}{suffix}</>;
+  
   return (
-    <div className="glass-card p-4 transition-all duration-200 hover:scale-[1.02] hover:border-accent-cyan/30 hover:shadow-[0_0_20px_rgba(34,211,238,0.1)]">
-      <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">
+    <div className="bg-surface border border-border p-4 transition-all duration-200 hover:border-accent">
+      <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-1">
         {label}
       </p>
       <div className="flex items-end gap-2">
-        <span className="text-2xl font-bold text-text-primary">
+        <span className="text-2xl font-bold text-text">
           {displayValue}
         </span>
         {change !== undefined && (
           <span
             className={`text-xs font-semibold mb-1 ${
-              change >= 0 ? 'text-accent-green' : 'text-accent-red'
+              change >= 0 ? 'text-accent' : 'text-rust-30'
             }`}
           >
             {change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(2)}%
@@ -51,14 +52,14 @@ export default function MetricCard({
         >
           <defs>
             <linearGradient id={`spark-${label}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgba(34,211,238,0.3)" />
-              <stop offset="100%" stopColor="rgba(34,211,238,0)" />
+              <stop offset="0%" stopColor="rgba(200, 245, 58, 0.3)" />
+              <stop offset="100%" stopColor="rgba(200, 245, 58, 0)" />
             </linearGradient>
           </defs>
           <path
             d={sparkLinePath(sparkData)}
             fill={`url(#spark-${label})`}
-            stroke="rgba(34,211,238,0.6)"
+            stroke="rgba(200, 245, 58, 0.6)"
             strokeWidth="1.5"
           />
         </svg>
