@@ -45,8 +45,8 @@ export default function AIPage() {
       <PageContainer title="AI Monitoring">
         <div className="flex items-center justify-center h-[70vh]">
           <div className="text-center">
-            <div className="w-4 h-4 rounded-full bg-accent-red mx-auto mb-4 animate-pulse" />
-            <p className="text-text-secondary text-lg">{!isConnected ? 'Connecting...' : 'Waiting for data...'}</p>
+            <div className="w-4 h-4 bg-accent mx-auto mb-4 animate-pulse-solid" />
+            <p className="text-text-muted text-lg">{!isConnected ? 'Connecting...' : 'Waiting for data...'}</p>
           </div>
         </div>
       </PageContainer>
@@ -61,7 +61,12 @@ export default function AIPage() {
   const nnActive = nn?.active ?? false;
   const confData = confHistoryRef.current;
 
-  const signalColor = nn?.signal === 'BUY' ? 'text-accent-green' : nn?.signal === 'SELL' ? 'text-accent-red' : 'text-text-muted';
+  // Calculate liveness based on training steps and activity
+  const liveDataRate = nn?.training_steps && nn.training_steps > 0 
+    ? Math.min(0.5 + (nn.training_steps % 100) / 200, 1.0)
+    : 0.8;
+
+  const signalColor = nn?.signal === 'BUY' ? 'text-accent' : nn?.signal === 'SELL' ? 'text-rust-30' : 'text-text-muted';
 
   return (
     <PageContainer title="AI Monitoring">
@@ -96,8 +101,8 @@ export default function AIPage() {
       {/* Charts row */}
       <div className="grid grid-cols-12 gap-4 mb-6">
         {/* Neural Network Visualization */}
-        <div className="col-span-5 glass-card p-4 flex flex-col items-center justify-center">
-          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-2">Neural Network</p>
+        <div className="col-span-5 bg-surface border border-border p-4 flex flex-col items-center justify-center">
+          <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-2">Neural Network</p>
           <NeuralNetViz
             confidence={nn?.confidence ?? 0.5}
             signal={nn?.signal ?? 'NONE'}
@@ -105,40 +110,41 @@ export default function AIPage() {
             regime={regime?.current ?? 'RANGE'}
             width={380}
             height={240}
+            liveDataRate={liveDataRate}
           />
           <div className="flex items-center gap-4 mt-2 text-[10px] text-text-muted">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-accent-cyan" /> Active
+              <span className="w-2 h-2 bg-accent" /> Active
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-surface-500" /> Inactive
+              <span className="w-2 h-2 bg-slate-700" /> Inactive
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-accent-amber animate-pulse" /> Training
+              <span className="w-2 h-2 bg-rust-30 animate-pulse-solid" /> Training
             </span>
           </div>
         </div>
 
         {/* Regime Glow */}
-        <div className="col-span-3 glass-card p-4 flex flex-col items-center justify-center">
-          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-2">Market Regime</p>
+        <div className="col-span-3 bg-surface border border-border p-4 flex flex-col items-center justify-center">
+          <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-2">Market Regime</p>
           <RegimeGlow
             regime={regime?.current ?? 'RANGE'}
             confidence={Math.max(regime?.trend_prob ?? 0.25, regime?.range_prob ?? 0.25, regime?.volatile_prob ?? 0.25, regime?.spike_prob ?? 0.25)}
             size={160}
           />
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-[10px]">
-            <span className="text-blue-400">Trend: {((regime?.trend_prob ?? 0.25) * 100).toFixed(0)}%</span>
-            <span className="text-gray-400">Range: {((regime?.range_prob ?? 0.25) * 100).toFixed(0)}%</span>
-            <span className="text-orange-400">Volatile: {((regime?.volatile_prob ?? 0.25) * 100).toFixed(0)}%</span>
-            <span className="text-red-400">Spike: {((regime?.spike_prob ?? 0.25) * 100).toFixed(0)}%</span>
+            <span className="text-blue-500">Trend: {((regime?.trend_prob ?? 0.25) * 100).toFixed(0)}%</span>
+            <span className="text-text-muted">Range: {((regime?.range_prob ?? 0.25) * 100).toFixed(0)}%</span>
+            <span className="text-rust-30">Volatile: {((regime?.volatile_prob ?? 0.25) * 100).toFixed(0)}%</span>
+            <span className="text-rust-30">Spike: {((regime?.spike_prob ?? 0.25) * 100).toFixed(0)}%</span>
           </div>
         </div>
 
         {/* Confidence + Conformal chart */}
-        <div className="col-span-4 glass-card p-4">
+        <div className="col-span-4 bg-surface border border-border p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-text-secondary text-xs uppercase tracking-wider font-medium">Confidence Timeline</p>
+            <p className="text-text-muted text-xs uppercase tracking-wider font-medium">Confidence Timeline</p>
             <StatusBadge status={nnActive ? 'online' : 'offline'} label={nnActive ? 'Live' : 'Off'} />
           </div>
           <div className="h-52">
@@ -147,22 +153,22 @@ export default function AIPage() {
                 <AreaChart data={confData}>
                   <defs>
                     <linearGradient id="confGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgba(34,211,238,0.3)" />
-                      <stop offset="100%" stopColor="rgba(34,211,238,0)" />
+                      <stop offset="0%" stopColor="rgba(200,245,58,0.25)" />
+                      <stop offset="100%" stopColor="rgba(200,245,58,0)" />
                     </linearGradient>
                     <linearGradient id="conformalGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgba(249,115,22,0.3)" />
-                      <stop offset="100%" stopColor="rgba(249,115,22,0)" />
+                      <stop offset="0%" stopColor="rgba(232,84,26,0.25)" />
+                      <stop offset="100%" stopColor="rgba(232,84,26,0)" />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fill: '#64748b' }} axisLine={false} tickLine={false} domain={[0, 1]} />
+                  <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#8a8a8a' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 9, fill: '#8a8a8a' }} axisLine={false} tickLine={false} domain={[0, 1]} />
                   <Tooltip
-                    contentStyle={{ background: '#1a1f2e', border: '1px solid rgba(148,163,184,0.1)', borderRadius: 8, fontSize: 11 }}
-                    labelStyle={{ color: '#94a3b8' }}
+                    contentStyle={{ background: '#0e0e0e', border: '1px solid #2a2a2a', borderRadius: 0, fontSize: 11 }}
+                    labelStyle={{ color: '#8a8a8a' }}
                   />
-                  <Area type="monotone" dataKey="confidence" name="Conf" stroke="#22d3ee" fill="url(#confGrad)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="conformal" name="CQ" stroke="#f97316" fill="url(#conformalGrad)" strokeWidth={1.5} strokeDasharray="4 2" />
+                  <Area type="monotone" dataKey="confidence" name="Conf" stroke="#c8f53a" fill="url(#confGrad)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="conformal" name="CQ" stroke="#e8541a" fill="url(#conformalGrad)" strokeWidth={1.5} strokeDasharray="4 2" />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
@@ -175,8 +181,8 @@ export default function AIPage() {
       {/* Bottom row: NN details + Meta-labeler + Adapters */}
       <div className="grid grid-cols-12 gap-4">
         {/* Neural Network details */}
-        <div className="col-span-4 glass-card p-4">
-          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">Neural Network</p>
+        <div className="col-span-4 bg-surface border border-border p-4">
+          <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-3">Neural Network</p>
           <div className="space-y-2">
             <DetailRow label="Signal" value={nn?.signal ?? '—'} color={signalColor} />
             <DetailRow label="Confidence" value={nn?.confidence !== undefined ? `${(nn.confidence * 100).toFixed(1)}%` : '—'} />
@@ -193,8 +199,8 @@ export default function AIPage() {
         </div>
 
         {/* Meta-labeler */}
-        <div className="col-span-4 glass-card p-4">
-          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">Meta-Labeler (24 Features)</p>
+        <div className="col-span-4 bg-surface border border-border p-4">
+          <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-3">Meta-Labeler (24 Features)</p>
           <div className="space-y-2">
             <DetailRow label="Features" value={meta?.features?.toString() ?? '—'} />
             <DetailRow label="Cooldown" value={meta?.cooldown?.toString() ?? '—'} />
@@ -203,7 +209,7 @@ export default function AIPage() {
             <DetailRow label="Avg Confidence" value={meta?.recent_avg_confidence !== undefined ? `${(meta.recent_avg_confidence * 100).toFixed(1)}%` : '—'} />
             <DetailRow label="Samples Since Train" value={meta?.samples_since_train?.toString() ?? '—'} />
           </div>
-          <div className="mt-4 pt-3 border-t border-surface-600">
+          <div className="mt-4 pt-3 border-t border-border">
             <p className="text-text-muted text-[10px] uppercase tracking-wider mb-2">Input Features</p>
             <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
               <span>[0] Confidence</span>
@@ -215,14 +221,14 @@ export default function AIPage() {
               <span>[12] Avg Conf</span>
               <span>[13-22] Features</span>
               <span>[23] Momentum</span>
-              <span className="text-accent-cyan">Total: 24</span>
+              <span className="text-accent">Total: 24</span>
             </div>
           </div>
         </div>
 
         {/* AI Adapters */}
-        <div className="col-span-4 glass-card p-4">
-          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">AI Adapters</p>
+        <div className="col-span-4 bg-surface border border-border p-4">
+          <p className="text-text-muted text-xs uppercase tracking-wider font-medium mb-3">AI Adapters</p>
           <div className="space-y-3">
             {[
               { key: 'ONNX', data: ai.onnx },
@@ -230,7 +236,7 @@ export default function AIPage() {
               { key: 'Transformer', data: ai.transformer },
               { key: 'NN', data: ai.nn },
             ].map(({ key, data }) => (
-              <div key={key} className="flex items-center justify-between py-2 border-b border-surface-600 last:border-0">
+              <div key={key} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                 <div className="flex items-center gap-2">
                   <StatusBadge status={data.active ? 'online' : 'offline'} label={key} />
                 </div>
@@ -242,12 +248,12 @@ export default function AIPage() {
               </div>
             ))}
           </div>
-          <div className="mt-4 pt-3 border-t border-surface-600">
+          <div className="mt-4 pt-3 border-t border-border">
             <p className="text-text-muted text-[10px] uppercase tracking-wider mb-2">Features: {ai.features_total ?? 65}</p>
             <div className="text-[10px] text-text-muted space-y-0.5">
               <p>57 base + 8 candlestick patterns</p>
-              <p className="text-accent-cyan">PinBar Engulf Doji Hammer</p>
-              <p className="text-accent-cyan">Shooting Star Morning/Evening</p>
+              <p className="text-accent">PinBar Engulf Doji Hammer</p>
+              <p className="text-accent">Shooting Star Morning/Evening</p>
             </div>
           </div>
         </div>
@@ -258,9 +264,9 @@ export default function AIPage() {
 
 function DetailRow({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="flex justify-between items-center py-1 border-b border-surface-700/50 last:border-0">
+    <div className="flex justify-between items-center py-1 border-b border-border last:border-0">
       <span className="text-text-muted text-xs">{label}</span>
-      <span className={`text-xs font-mono ${color ?? 'text-text-primary'}`}>{value}</span>
+      <span className={`text-xs font-mono ${color ?? 'text-text'}`}>{value}</span>
     </div>
   );
 }

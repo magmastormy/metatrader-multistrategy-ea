@@ -16,11 +16,11 @@ function AppContent() {
   const executionMode = state?.execution_mode ?? 'UNKNOWN';
 
   return (
-    <div className="flex h-screen overflow-hidden bg-surface-900">
+    <div className="flex h-screen overflow-hidden bg-bg">
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0">
         <Header isConnected={isConnected} executionMode={executionMode} />
-        <main className="flex-1 overflow-auto bg-surface-900">
+        <main className="flex-1 overflow-auto bg-bg">
           <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/charts" element={<ChartsPage />} />

@@ -20,7 +20,7 @@ export default function AnimatedCounter({
   useEffect(() => {
     const start = startRef.current;
     const end = value;
-    const duration = 600;
+    const duration = 400;
     const startTime = performance.now();
 
     const animate = (now: number) => {

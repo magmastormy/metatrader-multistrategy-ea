@@ -4,20 +4,20 @@ import PageContainer from '../components/layout/PageContainer';
 
 const TAG_COLORS: Record<string, string> = {
   HEARTBEAT: 'text-blue-400',
-  'CONSENSUS-DIAG': 'text-accent-cyan',
-  'AI-VOTE': 'text-accent-purple',
-  'SIGNAL-REJECTED': 'text-accent-amber',
-  'SHADOW-TRADE': 'text-accent-green',
-  'SPIKE-ALARM': 'text-accent-red',
+  'CONSENSUS-DIAG': 'text-accent',
+  'AI-VOTE': 'text-accent-2',
+  'SIGNAL-REJECTED': 'text-rust-30',
+  'SHADOW-TRADE': 'text-accent',
+  'SPIKE-ALARM': 'text-accent-2',
 };
 
 const TAG_BG: Record<string, string> = {
   HEARTBEAT: 'bg-blue-400/10',
-  'CONSENSUS-DIAG': 'bg-accent-cyan/10',
-  'AI-VOTE': 'bg-accent-purple/10',
-  'SIGNAL-REJECTED': 'bg-accent-amber/10',
-  'SHADOW-TRADE': 'bg-accent-green/10',
-  'SPIKE-ALARM': 'bg-accent-red/10',
+  'CONSENSUS-DIAG': 'bg-accent-10',
+  'AI-VOTE': 'bg-rust-10',
+  'SIGNAL-REJECTED': 'bg-rust-10',
+  'SHADOW-TRADE': 'bg-accent-10',
+  'SPIKE-ALARM': 'bg-rust-10',
 };
 
 export default function LogsPage() {
@@ -54,7 +54,7 @@ export default function LogsPage() {
         <select
           value={tagFilter}
           onChange={(e) => setTagFilter(e.target.value)}
-          className="bg-surface-700 text-text-primary text-sm rounded-lg px-3 py-2 border border-surface-600 focus:border-accent-cyan focus:outline-none transition-colors duration-200"
+          className="bg-surface text-text text-sm px-3 py-2 border border-border focus:border-accent focus:outline-none transition-colors duration-200"
         >
           {availableTags.map((tag) => (
             <option key={tag} value={tag}>
@@ -67,34 +67,34 @@ export default function LogsPage() {
           placeholder="Search logs..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 bg-surface-700 text-text-primary text-sm rounded-lg px-3 py-2 border border-surface-600 focus:border-accent-cyan focus:outline-none placeholder:text-text-muted transition-colors duration-200"
+          className="flex-1 bg-surface text-text text-sm px-3 py-2 border border-border focus:border-accent focus:outline-none placeholder:text-text-muted transition-colors duration-200"
         />
         <span className="text-text-muted text-xs font-mono">{filtered.length} entries</span>
       </div>
 
       {/* Log list */}
-      <div className="glass-card overflow-hidden">
+      <div className="bg-surface border border-border overflow-hidden">
         <div className="max-h-[calc(100vh-220px)] overflow-auto">
           {filtered.length === 0 ? (
             <div className="p-8 text-center text-text-muted text-sm">No log entries</div>
           ) : (
             filtered.map((entry, i) => {
-              const tagColor = TAG_COLORS[entry.tag] ?? 'text-text-secondary';
-              const tagBg = TAG_BG[entry.tag] ?? 'bg-surface-600/50';
+              const tagColor = TAG_COLORS[entry.tag] ?? 'text-text-muted';
+              const tagBg = TAG_BG[entry.tag] ?? 'bg-surface-2';
               return (
                 <div
                   key={`${entry.timestamp}-${i}`}
-                  className="flex items-start gap-3 px-4 py-2 border-b border-surface-700 last:border-0 hover:bg-surface-700/30 transition-colors duration-150"
+                  className="flex items-start gap-3 px-4 py-2 border-b border-border last:border-0 hover:bg-surface-2/30 transition-colors duration-150"
                 >
                   <span className="text-text-muted text-xs font-mono flex-shrink-0 mt-0.5 w-20">
                     {new Date(entry.timestamp).toLocaleTimeString('en-GB', { hour12: false })}
                   </span>
                   <span
-                    className={`text-xs font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${tagColor} ${tagBg}`}
+                    className={`text-xs font-bold uppercase px-1.5 py-0.5 flex-shrink-0 ${tagColor} ${tagBg}`}
                   >
                     {entry.tag}
                   </span>
-                  <span className="text-text-secondary text-xs font-mono break-all leading-relaxed">
+                  <span className="text-text-muted text-xs font-mono break-all leading-relaxed">
                     {entry.raw}
                   </span>
                 </div>

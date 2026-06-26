@@ -33,6 +33,7 @@ interface NeuralNetVizProps {
   regime?: string;
   width?: number;
   height?: number;
+  liveDataRate?: number; // 0-1, controls how "alive" the network feels
 }
 
 export default function NeuralNetViz({
@@ -42,6 +43,7 @@ export default function NeuralNetViz({
   regime = 'RANGE',
   width = 400,
   height = 300,
+  liveDataRate = 0.8,
 }: NeuralNetVizProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -49,11 +51,23 @@ export default function NeuralNetViz({
   const connectionsRef = useRef<Connection[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const timeRef = useRef(0);
+  const dataPulseRef = useRef(0);
 
   const layers = useMemo(() => [65, 32, 16, 8, 3], []);
 
-  const signalColor = signal === 'BUY' ? [34, 211, 238] : signal === 'SELL' ? [239, 68, 68] : [148, 163, 184];
-  const regimeColor = regime === 'TREND' ? [59, 130, 246] : regime === 'VOLAT' ? [249, 115, 22] : regime === 'SPIKE' ? [239, 68, 68] : [107, 114, 128];
+  // Brutalist color palette
+  const acidGreen = [200, 245, 58];
+  const rustOrange = [232, 84, 26];
+  const slateGray = [138, 138, 138];
+  const boneWhite = [240, 234, 216];
+  
+  const regimeColors: Record<string, number[]> = {
+    TREND: [59, 130, 246],
+    RANGE: slateGray,
+    VOLAT: rustOrange,
+    SPIKE: rustOrange,
+  };
+  const regimeColor = regimeColors[regime] ?? slateGray;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -65,13 +79,13 @@ export default function NeuralNetViz({
     canvas.height = height * 2;
     ctx.scale(2, 2);
 
-    // Generate nodes
+    // Generate nodes with sharp rectangular forms
     const nodes: Node[] = [];
-    const padding = 40;
+    const padding = 30;
     const layerSpacing = (width - padding * 2) / (layers.length - 1);
 
     for (let l = 0; l < layers.length; l++) {
-      const count = Math.min(layers[l], 12); // Cap visible nodes
+      const count = Math.min(layers[l], 10); // Cap visible nodes for density
       const nodeSpacing = (height - padding * 2) / (count + 1);
       for (let n = 0; n < count; n++) {
         nodes.push({
@@ -79,23 +93,23 @@ export default function NeuralNetViz({
           y: padding + (n + 1) * nodeSpacing,
           layer: l,
           activation: Math.random(),
-          size: l === layers.length - 1 ? 6 : 3 + (1 - l / layers.length) * 2,
+          size: l === layers.length - 1 ? 5 : 2.5 + (1 - l / layers.length) * 2,
         });
       }
     }
     nodesRef.current = nodes;
 
-    // Generate connections
+    // Generate connections - denser for more activity
     const connections: Connection[] = [];
     let nodeIdx = 0;
     for (let l = 0; l < layers.length - 1; l++) {
-      const currentCount = Math.min(layers[l], 12);
-      const nextCount = Math.min(layers[l + 1], 12);
+      const currentCount = Math.min(layers[l], 10);
+      const nextCount = Math.min(layers[l + 1], 10);
       const currentStart = nodeIdx;
       const nextStart = nodeIdx + currentCount;
       for (let i = 0; i < currentCount; i++) {
         for (let j = 0; j < nextCount; j++) {
-          if (Math.random() < 0.3) { // Sparse connections for visual clarity
+          if (Math.random() < 0.4) { // More connections for visual activity
             connections.push({
               from: currentStart + i,
               to: nextStart + j,
@@ -112,37 +126,54 @@ export default function NeuralNetViz({
     // Animation loop
     const animate = () => {
       timeRef.current += 0.016;
+      dataPulseRef.current += 0.02 * liveDataRate; // Data pulse speeds up with live data
       const t = timeRef.current;
+      const dataPulse = dataPulseRef.current;
 
       ctx.clearRect(0, 0, width, height);
 
-      // Background glow
-      const bgGrad = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, width / 2);
-      bgGrad.addColorStop(0, `rgba(${signalColor[0]}, ${signalColor[1]}, ${signalColor[2]}, 0.03)`);
-      bgGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, width, height);
+      // Subtle background grid
+      ctx.strokeStyle = 'rgba(42, 42, 42, 0.3)';
+      ctx.lineWidth = 0.5;
+      for (let gx = 0; gx < width; gx += 20) {
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, height);
+        ctx.stroke();
+      }
+      for (let gy = 0; gy < height; gy += 20) {
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(width, gy);
+        ctx.stroke();
+      }
 
-      // Draw connections
+      // Draw connections with data flow animation
       for (const conn of connectionsRef.current) {
         const fromNode = nodesRef.current[conn.from];
         const toNode = nodesRef.current[conn.to];
         if (!fromNode || !toNode) continue;
 
-        const alpha = conn.active ? 0.15 + 0.1 * Math.sin(t * 2 + conn.from) : 0.04;
+        // Connection pulses with data flow
+        const dataFlow = Math.sin(dataPulse * 2 + conn.from * 0.5) * 0.5 + 0.5;
+        const alpha = conn.active 
+          ? 0.12 + 0.08 * dataFlow 
+          : 0.03;
         const weight = Math.abs(conn.weight);
+        
         ctx.beginPath();
         ctx.moveTo(fromNode.x, fromNode.y);
         ctx.lineTo(toNode.x, toNode.y);
         ctx.strokeStyle = conn.active
           ? `rgba(${signalColor[0]}, ${signalColor[1]}, ${signalColor[2]}, ${alpha})`
-          : `rgba(100, 100, 120, ${alpha})`;
-        ctx.lineWidth = 0.5 + weight * 0.5;
+          : `rgba(80, 80, 80, ${alpha})`;
+        ctx.lineWidth = 0.5 + weight * 0.8;
         ctx.stroke();
       }
 
-      // Spawn particles on active connections
-      if (training && Math.random() < 0.15) {
+      // Spawn particles more frequently when training/live
+      const spawnRate = training ? 0.25 * liveDataRate : 0.08;
+      if (Math.random() < spawnRate) {
         const activeConns = connectionsRef.current.filter(c => c.active);
         if (activeConns.length > 0) {
           const conn = activeConns[Math.floor(Math.random() * activeConns.length)];
@@ -155,17 +186,17 @@ export default function NeuralNetViz({
               targetX: toNode.x,
               targetY: toNode.y,
               progress: 0,
-              speed: 0.02 + Math.random() * 0.03,
+              speed: 0.03 + Math.random() * 0.04 * liveDataRate,
               color: conn.weight > 0
-                ? `rgba(${signalColor[0]}, ${signalColor[1]}, ${signalColor[2]}, 0.9)`
-                : `rgba(${regimeColor[0]}, ${regimeColor[1]}, ${regimeColor[2]}, 0.9)`,
-              size: 1.5 + Math.random() * 1.5,
+                ? `rgba(${acidGreen[0]}, ${acidGreen[1]}, ${acidGreen[2]}, 0.95)`
+                : `rgba(${rustOrange[0]}, ${rustOrange[1]}, ${rustOrange[2]}, 0.95)`,
+              size: 2 + Math.random() * 2,
             });
           }
         }
       }
 
-      // Update and draw particles
+      // Update and draw particles with trail effect
       particlesRef.current = particlesRef.current.filter(p => {
         p.progress += p.speed;
         if (p.progress >= 1) return false;
@@ -174,80 +205,87 @@ export default function NeuralNetViz({
         const px = p.x + (p.targetX - p.x) * ease;
         const py = p.y + (p.targetY - p.y) * ease;
 
-        // Glow
-        const glowGrad = ctx.createRadialGradient(px, py, 0, px, py, p.size * 3);
-        glowGrad.addColorStop(0, p.color);
-        glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = glowGrad;
-        ctx.fillRect(px - p.size * 3, py - p.size * 3, p.size * 6, p.size * 6);
+        // Particle trail
+        const trailLen = 8 * liveDataRate;
+        const trailAngle = Math.atan2(p.targetY - p.y, p.targetX - p.x);
+        for (let ti = 0; ti < trailLen; ti++) {
+          const tx = px - Math.cos(trailAngle) * ti * 0.5;
+          const ty = py - Math.sin(trailAngle) * ti * 0.5;
+          const trailAlpha = (1 - ti / trailLen) * 0.4;
+          ctx.fillStyle = p.color.replace('0.95', trailAlpha.toFixed(2));
+          ctx.fillRect(tx - p.size * 0.5, ty - p.size * 0.5, p.size, p.size);
+        }
 
-        // Core
-        ctx.beginPath();
-        ctx.arc(px, py, p.size, 0, Math.PI * 2);
+        // Particle core - sharp square
         ctx.fillStyle = p.color;
-        ctx.fill();
+        ctx.fillRect(px - p.size, py - p.size, p.size * 2, p.size * 2);
 
         return true;
       });
 
-      // Draw nodes
+      // Draw nodes as sharp squares
       for (const node of nodesRef.current) {
-        const pulse = 0.7 + 0.3 * Math.sin(t * 3 + node.x * 0.05 + node.y * 0.03);
-        const isActive = node.layer === layers.length - 1 || Math.random() < confidence * 0.3;
+        const basePulse = 0.8 + 0.2 * Math.sin(t * 3 + node.x * 0.05 + node.y * 0.03);
+        const dataPulseEffect = 1 + 0.3 * Math.sin(dataPulse * 3 + node.layer);
+        const pulse = basePulse * dataPulseEffect;
+        const isActive = node.layer === layers.length - 1 || Math.random() < confidence * 0.4;
 
-        // Outer glow
+        // Node glow when active
         if (isActive) {
-          const glowSize = node.size * 4 * pulse;
+          const glowSize = node.size * 5 * pulse;
           const glowGrad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, glowSize);
-          glowGrad.addColorStop(0, `rgba(${signalColor[0]}, ${signalColor[1]}, ${signalColor[2]}, 0.15)`);
+          glowGrad.addColorStop(0, `rgba(${signalColor[0]}, ${signalColor[1]}, ${signalColor[2]}, 0.12)`);
           glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = glowGrad;
           ctx.fillRect(node.x - glowSize, node.y - glowSize, glowSize * 2, glowSize * 2);
         }
 
-        // Node body
+        // Node body - sharp rectangle
         const nodeSize = node.size * pulse;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, nodeSize, 0, Math.PI * 2);
-
+        const halfSize = nodeSize;
+        
         if (node.layer === layers.length - 1) {
-          // Output layer — colored by signal
-          const outputAlpha = 0.6 + 0.4 * pulse;
+          // Output layer — acid green for BUY, rust for SELL
+          const outputAlpha = 0.7 + 0.3 * pulse;
           ctx.fillStyle = `rgba(${signalColor[0]}, ${signalColor[1]}, ${signalColor[2]}, ${outputAlpha})`;
         } else if (node.layer === 0) {
-          // Input layer — dim
-          ctx.fillStyle = `rgba(100, 116, 139, ${0.4 + 0.2 * pulse})`;
+          // Input layer — slate gray
+          ctx.fillStyle = `rgba(${slateGray[0]}, ${slateGray[1]}, ${slateGray[2]}, ${0.5 + 0.3 * pulse})`;
         } else {
-          // Hidden layers — activation-based
-          const activation = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 2 + node.x * 0.1));
-          ctx.fillStyle = `rgba(${signalColor[0]}, ${signalColor[1]}, ${signalColor[2]}, ${activation * 0.6})`;
+          // Hidden layers — pulsing with data
+          const activation = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * 2 + node.x * 0.1 + dataPulse));
+          ctx.fillStyle = `rgba(${acidGreen[0]}, ${acidGreen[1]}, ${acidGreen[2]}, ${activation * 0.5})`;
         }
-        ctx.fill();
+        ctx.fillRect(node.x - halfSize, node.y - halfSize, halfSize * 2, halfSize * 2);
 
-        // Inner bright core
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, nodeSize * 0.4, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 255, 255, ${isActive ? 0.6 : 0.2})`;
-        ctx.fill();
+        // Inner bright core - smaller square
+        const coreSize = nodeSize * 0.35;
+        ctx.fillStyle = `rgba(${boneWhite[0]}, ${boneWhite[1]}, ${boneWhite[2]}, ${isActive ? 0.8 : 0.3})`;
+        ctx.fillRect(node.x - coreSize, node.y - coreSize, coreSize * 2, coreSize * 2);
       }
 
-      // Layer labels
-      const layerNames = ['Input', 'Hidden 1', 'Hidden 2', 'Hidden 3', 'Output'];
-      ctx.font = '9px Consolas';
+      // Layer labels - monospace, uppercase
+      const layerNames = ['INPUT', 'HIDDEN 1', 'HIDDEN 2', 'HIDDEN 3', 'OUTPUT'];
+      ctx.font = 'bold 8px "JetBrains Mono", Consolas, monospace';
       ctx.textAlign = 'center';
       for (let l = 0; l < layers.length; l++) {
-        const x = 40 + l * ((width - 80) / (layers.length - 1));
-        ctx.fillStyle = 'rgba(148, 163, 184, 0.5)';
-        ctx.fillText(layerNames[l], x, height - 8);
-        ctx.fillStyle = 'rgba(100, 116, 139, 0.4)';
-        ctx.fillText(`${Math.min(layers[l], 12)} neurons`, x, height - 20);
+        const x = 30 + l * ((width - 60) / (layers.length - 1));
+        ctx.fillStyle = 'rgba(138, 138, 138, 0.6)';
+        ctx.fillText(layerNames[l], x, height - 12);
+        ctx.fillStyle = 'rgba(138, 138, 138, 0.3)';
+        ctx.fillText(`${Math.min(layers[l], 10)} N`, x, height - 4);
       }
 
-      // Training indicator
+      // Live data indicator bar at top
+      const liveAlpha = 0.3 + 0.2 * Math.sin(dataPulse * 4);
+      ctx.fillStyle = `rgba(${acidGreen[0]}, ${acidGreen[1]}, ${acidGreen[2]}, ${liveAlpha})`;
+      ctx.fillRect(0, 0, width, 1);
+      
+      // Training indicator - rust orange bar
       if (training) {
         const trainPulse = 0.5 + 0.5 * Math.sin(t * 4);
-        ctx.fillStyle = `rgba(34, 211, 238, ${trainPulse * 0.3})`;
-        ctx.fillRect(0, 0, width, 2);
+        ctx.fillStyle = `rgba(${rustOrange[0]}, ${rustOrange[1]}, ${rustOrange[2]}, ${trainPulse * 0.4})`;
+        ctx.fillRect(0, height - 1, width, 1);
       }
 
       animRef.current = requestAnimationFrame(animate);
@@ -258,13 +296,13 @@ export default function NeuralNetViz({
     return () => {
       cancelAnimationFrame(animRef.current);
     };
-  }, [width, height, layers, confidence, signal, training, regime, signalColor, regimeColor]);
+  }, [width, height, layers, confidence, signal, training, regime, liveDataRate, acidGreen, rustOrange, slateGray, boneWhite, signalColor, regimeColor]);
 
   return (
     <canvas
       ref={canvasRef}
       style={{ width, height }}
-      className="rounded-lg"
+      className="sharp-corners"
     />
   );
 }

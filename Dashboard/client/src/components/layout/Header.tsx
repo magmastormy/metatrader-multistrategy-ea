@@ -7,7 +7,7 @@ interface HeaderProps {
 
 export default function Header({ isConnected, executionMode }: HeaderProps) {
   const [clock, setClock] = useState('');
-
+  
   useEffect(() => {
     const tick = () => {
       const now = new Date();
@@ -19,9 +19,9 @@ export default function Header({ isConnected, executionMode }: HeaderProps) {
   }, []);
 
   return (
-    <header className="flex items-center justify-between px-6 h-14 bg-surface-800 border-b border-surface-600">
+    <header className="flex items-center justify-between px-6 h-14 bg-surface border-b border-border">
       <div className="flex items-center gap-3">
-        <h1 className="font-bold text-lg tracking-tight text-text-primary">
+        <h1 className="font-bold text-lg tracking-tight text-text">
           EA Command Center
         </h1>
       </div>
@@ -29,28 +29,28 @@ export default function Header({ isConnected, executionMode }: HeaderProps) {
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2">
           <span
-            className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+            className={`w-2.5 h-2.5 transition-all duration-300 ${
               isConnected
-                ? 'bg-accent-green animate-pulse-glow'
-                : 'bg-accent-red'
+                ? 'bg-accent animate-pulse-solid'
+                : 'bg-text-muted'
             }`}
           />
-          <span className="text-xs text-text-secondary font-medium">
+          <span className="text-xs text-text-muted font-medium">
             {isConnected ? 'Connected' : 'Disconnected'}
           </span>
         </div>
 
-        <span className="font-mono text-sm text-text-secondary tabular-nums">
+        <span className="font-mono text-sm text-text-muted tabular-nums">
           {clock}
         </span>
 
         <span
-          className={`px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide ${
+          className={`px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide border ${
             executionMode === 'LIVE'
-              ? 'bg-accent-green/15 text-accent-green border border-accent-green/30'
+              ? 'bg-accent text-bg border-accent'
               : executionMode === 'SHADOW'
-                ? 'bg-accent-amber/15 text-accent-amber border border-accent-amber/30'
-                : 'bg-surface-600/50 text-text-secondary border border-surface-500'
+                ? 'bg-rust-15 text-rust-30 border-rust-30'
+                : 'bg-surface-2 text-text-muted border-border'
           }`}
         >
           {executionMode || 'OFFLINE'}
