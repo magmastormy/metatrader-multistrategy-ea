@@ -12,6 +12,7 @@
 #define __UICT_PARTIAL_CLOSE_MANAGER_MQH__
 
 #include <Trade\Trade.mqh>
+#include "../../IndicatorManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Partial Close State per Position                                 |
@@ -97,14 +98,13 @@ private:
 
     double              GetATR(string symbol, ENUM_TIMEFRAMES tf, int period = 14)
     {
-        int handle = iATR(symbol, tf, period);
+        int handle = CIndicatorManager::Instance().GetATRHandle(symbol, tf, period);
         if(handle == INVALID_HANDLE) return 0;
         double buf[];
         ArraySetAsSeries(buf, true);
         double result = 0;
         if(CopyBuffer(handle, 0, 0, 1, buf) > 0)
             result = buf[0];
-        IndicatorRelease(handle);
         return result;
     }
 

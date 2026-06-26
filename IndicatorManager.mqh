@@ -68,6 +68,7 @@ public:
    int               GetBandsHandle(string symbol, ENUM_TIMEFRAMES tf, int period, int shift, double deviation, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
    int               GetCCIHandle(string symbol, ENUM_TIMEFRAMES tf, int period, ENUM_APPLIED_PRICE applied_price = PRICE_CLOSE);
    int               GetVolumesHandle(string symbol, ENUM_TIMEFRAMES tf, ENUM_APPLIED_VOLUME applied_volume = VOLUME_TICK);
+   int               GetStochasticHandle(string symbol, ENUM_TIMEFRAMES tf, int period_k, int period_d, int period_slow, ENUM_MA_METHOD ma_method, ENUM_STO_PRICE price_field);
    
    // General method to access a handle
    int               GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_TIMEFRAMES tf, const int &params[]);
@@ -529,6 +530,65 @@ int CIndicatorManager::GetADXHandle(string symbol, ENUM_TIMEFRAMES tf, int perio
       m_handles[size].parameters[0] = period;
       PrintFormat("[INDICATOR-MANAGER] Created ADX handle=%d for %s %s period=%d",
                   handle, symbol, EnumToString(tf), period);
+   }
+
+   return handle;
+}
+
+//+------------------------------------------------------------------+
+//| Get Stochastic handle                                             |
+//+------------------------------------------------------------------+
+int CIndicatorManager::GetStochasticHandle(string symbol, ENUM_TIMEFRAMES tf, int period_k, int period_d, int period_slow, ENUM_MA_METHOD ma_method, ENUM_STO_PRICE price_field)
+{
+   int params[5] = {period_k, period_d, period_slow, (int)ma_method, (int)price_field};
+   int handle = FindHandle(INDICATOR_STOCH, symbol, tf, params);
+
+   if(handle != INVALID_HANDLE)
+   {
+      AccessHandle(handle);
+      return handle;
+   }
+
+   if(!IsSymbolAvailable(symbol, tf))
+      return INVALID_HANDLE;
+
+   handle = iStochastic(symbol, tf, period_k, period_d, period_slow, ma_method, price_field);
+   if(handle == INVALID_HANDLE)
+   {
+      int err = GetLastError();
+      PrintFormat("[INDICATOR-MANAGER] ERROR: Failed to create Stochastic handle for %s %s k=%d d=%d slow=%d err=%d",
+                  symbol, EnumToString(tf), period_k, period_d, period_slow, err);
+   }
+   if(handle != INVALID_HANDLE)
+   {
+      int size = ArraySize(m_handles);
+      if(size >= MAX_INDICATOR_HANDLES)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: Maximum indicator handles reached (%d), releasing oldest handles", MAX_INDICATOR_HANDLES);
+         ReleaseUnused(60);
+         size = ArraySize(m_handles);
+         if(size >= MAX_INDICATOR_HANDLES)
+         {
+            PrintFormat("[INDICATOR-MANAGER] ERROR: Cannot create more indicator handles, limit reached (%d)", MAX_INDICATOR_HANDLES);
+            IndicatorRelease(handle);
+            return INVALID_HANDLE;
+         }
+      }
+      ArrayResize(m_handles, size + 1);
+      m_handles[size].handle = handle;
+      m_handles[size].lastAccess = TimeCurrent();
+      m_handles[size].symbol = symbol;
+      m_handles[size].timeframe = tf;
+      m_handles[size].type = INDICATOR_STOCH;
+      m_handles[size].paramCount = 5;
+      ArrayInitialize(m_handles[size].parameters, 0);
+      m_handles[size].parameters[0] = period_k;
+      m_handles[size].parameters[1] = period_d;
+      m_handles[size].parameters[2] = period_slow;
+      m_handles[size].parameters[3] = (int)ma_method;
+      m_handles[size].parameters[4] = (int)price_field;
+      PrintFormat("[INDICATOR-MANAGER] Created Stochastic handle=%d for %s %s k=%d d=%d slow=%d",
+                  handle, symbol, EnumToString(tf), period_k, period_d, period_slow);
    }
 
    return handle;

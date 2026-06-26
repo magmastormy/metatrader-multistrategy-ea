@@ -11,6 +11,11 @@
 #include "Enums.mqh"
 #include "ErrorHandling.mqh"
 
+class CEnterpriseStrategyManager;
+
+extern CEnterpriseStrategyManager* g_enterpriseManagers[];
+extern string g_enterpriseManagerSymbols[];
+
 //+------------------------------------------------------------------+
 //| Dashboard Bridge Class                                           |
 //+------------------------------------------------------------------+
@@ -24,6 +29,7 @@ private:
    int                 m_requestTimeout;    // Request timeout (ms)
    datetime            m_lastPushTime;      // Last successful state push
    datetime            m_lastPollTime;      // Last command poll time
+   bool                m_pushInProgress;    // Guard against stacked pushes
    int                 m_pushCount;         // Total pushes sent
    int                 m_pushSuccessCount;  // Successful pushes
    int                 m_pushErrorCount;    // Failed pushes
@@ -71,33 +77,60 @@ public:
    // Initialization
    bool              Initialize(const string &endpoint, bool enabled = true,
                                 bool controlEnabled = false, int pushIntervalSec = 5,
-                                int requestTimeoutMs = 3000);
+                                int requestTimeoutMs = 1000);
    void              Shutdown();
 
    // Operations
    bool              PushState();
    bool              PollCommands();
 
-   // Setters for external object references
-   void              SetRiskManager(void* ptr) { m_pRiskManager = ptr; }
-   void              SetPerformanceAnalytics(void* ptr) { m_pPerformanceAnalytics = ptr; }
-   void              SetAIBrain(void* ptr) { m_pAIBrain = ptr; }
-   void              SetStrategyRegistry(void* ptr) { m_pStrategyRegistry = ptr; }
-   void              SetConsensusCache(void* ptr) { m_pConsensusCache = ptr; }
-   void              SetPythonBridge(void* ptr) { m_pPythonBridge = ptr; }
-   
-   // Set heartbeat counter references
-   void              SetHeartbeatCounters(int* scans, int* signalsGen, int* signalsVal,
-                                          int* tradesOpened, int* shadowTrades, int* spikeEvents);
+    // Getters
+    bool              IsEnabled() const { return m_enabled; }
+    bool              IsConnected() const { return m_connected; }
+    bool              IsControlEnabled() const { return m_controlEnabled; }
+    int               GetPushCount() const { return m_pushCount; }
+    int               GetSuccessCount() const { return m_pushSuccessCount; }
+    int               GetErrorCount() const { return m_pushErrorCount; }
+    datetime          GetLastPushTime() const { return m_lastPushTime; }
 
-   // Getters
-   bool              IsEnabled() const { return m_enabled; }
-   bool              IsConnected() const { return m_connected; }
-   bool              IsControlEnabled() const { return m_controlEnabled; }
-   int               GetPushCount() const { return m_pushCount; }
-   int               GetSuccessCount() const { return m_pushSuccessCount; }
-   int               GetErrorCount() const { return m_pushErrorCount; }
-   datetime          GetLastPushTime() const { return m_lastPushTime; }
+   // Setters
+   void              SetEnabled(bool enabled) { m_enabled = enabled; }
+
+   // AI data injection — called from main loop before PushState
+   void              SetAIData(bool nnActive, const string &nnSignal, double nnConf,
+                               int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
+                               int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
+                               int nnTradeLinked, bool nnNormReady,
+                               const string &regime, double regimeTrend, double regimeRange,
+                               double regimeVolatile, double regimeSpike,
+                               int metaFeatures, int metaCooldown, int metaEarlyStop,
+                               double metaWinRate, double metaAvgConf, int metaSamplesSince);
+
+private:
+   // Stored AI data
+   bool   m_aiNnActive;
+   string m_aiNnSignal;
+   double m_aiNnConf;
+   int    m_aiNnLabels;
+   int    m_aiNnSteps;
+   double m_aiNnConformalQ;
+   double m_aiNnConformalAlpha;
+   int    m_aiNnAssetClass;
+   double m_aiNnBarrierK;
+   int    m_aiNnBarrierVertBars;
+   int    m_aiNnTradeLinked;
+   bool   m_aiNnNormReady;
+   string m_aiRegime;
+   double m_aiRegimeTrend;
+   double m_aiRegimeRange;
+   double m_aiRegimeVolatile;
+   double m_aiRegimeSpike;
+   int    m_aiMetaFeatures;
+   int    m_aiMetaCooldown;
+   int    m_aiMetaEarlyStop;
+   double m_aiMetaWinRate;
+   double m_aiMetaAvgConf;
+   int    m_aiMetaSamplesSince;
 };
 
 //+------------------------------------------------------------------+
@@ -109,7 +142,7 @@ CDashboardBridge::CDashboardBridge()
    m_enabled = true;
    m_controlEnabled = false;
    m_pushInterval = 5;
-   m_requestTimeout = 3000;
+   m_requestTimeout = 1000;
    m_lastPushTime = 0;
    m_lastPollTime = 0;
    m_pushCount = 0;
@@ -119,6 +152,66 @@ CDashboardBridge::CDashboardBridge()
    m_lastError = "";
    m_lastErrorLogTime = 0;
    m_initialized = false;
+   m_pushInProgress = false;
+
+   // AI data defaults
+   m_aiNnActive = false;
+   m_aiNnSignal = "NONE";
+   m_aiNnConf = 0.0;
+   m_aiNnLabels = 0;
+   m_aiNnSteps = 0;
+   m_aiNnConformalQ = 1.0;
+   m_aiNnConformalAlpha = 0.05;
+   m_aiNnAssetClass = 9;
+   m_aiNnBarrierK = 1.5;
+   m_aiNnBarrierVertBars = 20;
+   m_aiNnTradeLinked = 0;
+   m_aiNnNormReady = false;
+   m_aiRegime = "RANGE";
+   m_aiRegimeTrend = 0.25;
+   m_aiRegimeRange = 0.25;
+   m_aiRegimeVolatile = 0.25;
+   m_aiRegimeSpike = 0.25;
+   m_aiMetaFeatures = 65;
+   m_aiMetaCooldown = 50;
+   m_aiMetaEarlyStop = 20;
+   m_aiMetaWinRate = 0.5;
+   m_aiMetaAvgConf = 0.5;
+   m_aiMetaSamplesSince = 0;
+}
+
+void CDashboardBridge::SetAIData(bool nnActive, const string &nnSignal, double nnConf,
+                                  int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
+                                  int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
+                                  int nnTradeLinked, bool nnNormReady,
+                                  const string &regime, double regimeTrend, double regimeRange,
+                                  double regimeVolatile, double regimeSpike,
+                                  int metaFeatures, int metaCooldown, int metaEarlyStop,
+                                  double metaWinRate, double metaAvgConf, int metaSamplesSince)
+{
+   m_aiNnActive = nnActive;
+   m_aiNnSignal = nnSignal;
+   m_aiNnConf = nnConf;
+   m_aiNnLabels = nnLabels;
+   m_aiNnSteps = nnSteps;
+   m_aiNnConformalQ = nnConformalQ;
+   m_aiNnConformalAlpha = nnConformalAlpha;
+   m_aiNnAssetClass = nnAssetClass;
+   m_aiNnBarrierK = nnBarrierK;
+   m_aiNnBarrierVertBars = nnBarrierVertBars;
+   m_aiNnTradeLinked = nnTradeLinked;
+   m_aiNnNormReady = nnNormReady;
+   m_aiRegime = regime;
+   m_aiRegimeTrend = regimeTrend;
+   m_aiRegimeRange = regimeRange;
+   m_aiRegimeVolatile = regimeVolatile;
+   m_aiRegimeSpike = regimeSpike;
+   m_aiMetaFeatures = metaFeatures;
+   m_aiMetaCooldown = metaCooldown;
+   m_aiMetaEarlyStop = metaEarlyStop;
+   m_aiMetaWinRate = metaWinRate;
+   m_aiMetaAvgConf = metaAvgConf;
+   m_aiMetaSamplesSince = metaSamplesSince;
 }
 
 //+------------------------------------------------------------------+
@@ -157,10 +250,11 @@ bool CDashboardBridge::Initialize(const string &endpoint, bool enabled,
       m_connected = true;
       LogState("Dashboard bridge connected to " + m_endpoint);
    }
-   else
+    else
    {
       m_connected = false;
       LogState("Dashboard bridge server not reachable - will retry on push", true);
+      return false;
    }
 
    return true;
@@ -224,6 +318,12 @@ bool CDashboardBridge::SendHttpRequest(const string &method, const string &url,
    {
       int err = ::GetLastError();
       m_lastError = "HTTP request failed: " + IntegerToString(err);
+      return false;
+   }
+
+   if(res >= 400)
+   {
+      m_lastError = "HTTP " + IntegerToString(res) + " from " + url;
       return false;
    }
 
@@ -308,19 +408,79 @@ string CDashboardBridge::BuildStateJson()
    json += "\"avg_loss\":0";
    json += "},";
 
-   // Consensus (placeholder)
-   json += "\"consensus\":{\"symbols\":{}},";
+   // Consensus - real data from enterprise managers
+   json += "\"consensus\":{";
+   json += "\"symbols\":{";
+   int managerCount = ArraySize(g_enterpriseManagers);
+   int consensusAdded = 0;
+   for(int m = 0; m < managerCount; m++)
+   {
+      if(g_enterpriseManagers[m] == NULL) continue;
+      string sym = g_enterpriseManagerSymbols[m];
+      if(StringLen(sym) == 0) continue;
+      
+      string consensusJson = g_enterpriseManagers[m].GetConsensusContextJSON();
+      if(consensusAdded > 0) json += ",";
+      json += "\"" + EscapeJsonString(sym) + "\":" + consensusJson;
+      consensusAdded++;
+   }
+   json += "}},";
 
-   // AI (placeholder)
-   json += "\"ai\":{";
-   json += "\"onnx\":{\"active\":false},";
-   json += "\"ensemble\":{\"active\":false},";
-   json += "\"transformer\":{\"active\":false},";
-   json += "\"nn\":{\"active\":false}";
-   json += "},";
+    // AI — real data from injected state
+    json += "\"ai\":{";
+    json += "\"onnx\":{\"active\":false},";
+    json += "\"ensemble\":{\"active\":false},";
+    json += "\"transformer\":{\"active\":false},";
+    json += "\"nn\":{\"active\":false},";
+    // Neural network detailed data
+    json += "\"neural_net\":{";
+    json += "\"active\":" + string(m_aiNnActive ? "true" : "false") + ",";
+    json += "\"signal\":\"" + EscapeJsonString(m_aiNnSignal) + "\",";
+    json += "\"confidence\":" + DoubleToString(m_aiNnConf, 4) + ",";
+    json += "\"labels_resolved\":" + IntegerToString(m_aiNnLabels) + ",";
+    json += "\"training_steps\":" + IntegerToString(m_aiNnSteps) + ",";
+    json += "\"conformal_quantile\":" + DoubleToString(m_aiNnConformalQ, 4) + ",";
+    json += "\"conformal_alpha\":" + DoubleToString(m_aiNnConformalAlpha, 4) + ",";
+    json += "\"asset_class\":" + IntegerToString(m_aiNnAssetClass) + ",";
+    json += "\"barrier_k\":" + DoubleToString(m_aiNnBarrierK, 2) + ",";
+    json += "\"barrier_vert_bars\":" + IntegerToString(m_aiNnBarrierVertBars) + ",";
+    json += "\"trade_linked_labels\":" + IntegerToString(m_aiNnTradeLinked) + ",";
+    json += "\"normalization_ready\":" + string(m_aiNnNormReady ? "true" : "false");
+    json += "},";
+    // Regime data
+    json += "\"regime\":{";
+    json += "\"current\":\"" + EscapeJsonString(m_aiRegime) + "\",";
+    json += "\"trend_prob\":" + DoubleToString(m_aiRegimeTrend, 4) + ",";
+    json += "\"range_prob\":" + DoubleToString(m_aiRegimeRange, 4) + ",";
+    json += "\"volatile_prob\":" + DoubleToString(m_aiRegimeVolatile, 4) + ",";
+    json += "\"spike_prob\":" + DoubleToString(m_aiRegimeSpike, 4);
+    json += "},";
+    // Meta-labeler data
+    json += "\"meta_labeler\":{";
+    json += "\"features\":" + IntegerToString(m_aiMetaFeatures) + ",";
+    json += "\"cooldown\":" + IntegerToString(m_aiMetaCooldown) + ",";
+    json += "\"early_stop_patience\":" + IntegerToString(m_aiMetaEarlyStop) + ",";
+    json += "\"recent_win_rate\":" + DoubleToString(m_aiMetaWinRate, 4) + ",";
+    json += "\"recent_avg_confidence\":" + DoubleToString(m_aiMetaAvgConf, 4) + ",";
+    json += "\"samples_since_train\":" + IntegerToString(m_aiMetaSamplesSince);
+    json += "},";
+    json += "\"features_total\":" + IntegerToString(m_aiMetaFeatures);
+    json += "},";
 
-   // Strategies (placeholder)
-   json += "\"strategies\":[],";
+   // Strategies - real data from enterprise managers
+   json += "\"strategies\":[";
+   int strategiesAdded = 0;
+   for(int m = 0; m < managerCount; m++)
+   {
+      if(g_enterpriseManagers[m] == NULL) continue;
+      string strategyList = g_enterpriseManagers[m].GetStrategyListJSON();
+      if(StringLen(strategyList) < 3) continue;
+      string inner = StringSubstr(strategyList, 1, StringLen(strategyList) - 2);
+      if(strategiesAdded > 0 && StringLen(inner) > 0) json += ",";
+      json += inner;
+      strategiesAdded++;
+   }
+   json += "],";
 
    // Scalp (placeholder)
    json += "\"scalp\":{";
@@ -351,7 +511,158 @@ string CDashboardBridge::BuildStateJson()
    json += "\"requests\":0,";
    json += "\"ok\":0,";
    json += "\"errors\":0";
-   json += "}";
+   json += "},";
+
+   // Candles - last 100 M1 bars for active symbols (max 5 symbols)
+   json += "\"candles\":{";
+   posTotal = PositionsTotal();
+   string activeSymbols[];
+   int symbolCount = 0;
+   ArrayResize(activeSymbols, 10);
+   
+   // Collect unique symbols from open positions
+   for(int i = 0; i < posTotal; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      
+      string sym = PositionGetString(POSITION_SYMBOL);
+      bool found = false;
+      for(int j = 0; j < symbolCount; j++)
+      {
+         if(activeSymbols[j] == sym)
+         {
+            found = true;
+            break;
+         }
+      }
+      if(!found && symbolCount < 10)
+      {
+         activeSymbols[symbolCount] = sym;
+         symbolCount++;
+      }
+   }
+   
+   // Limit to max 5 symbols and ensure they have enough bars
+   int maxSymbols = MathMin(symbolCount, 5);
+   int symbolsAdded = 0;
+   
+   for(int i = 0; i < maxSymbols; i++)
+   {
+      string sym = activeSymbols[i];
+      
+      // Check if symbol has at least 10 bars of M1 data
+      if(!SymbolSelect(sym, true))
+         continue;
+      
+      int bars = iBars(sym, PERIOD_M1);
+      if(bars < 10)
+         continue;
+      
+      if(symbolsAdded > 0)
+         json += ",";
+      
+       json += "\"" + EscapeJsonString(sym) + "\":{";
+       json += "\"timeframe\":\"M1\",";
+       json += "\"bars\":[";
+      
+      int maxBars = MathMin(bars, 100);
+      int barsAdded = 0;
+      
+      for(int j = maxBars - 1; j >= 0; j--)
+      {
+         datetime barTime = iTime(sym, PERIOD_M1, j);
+         if(barTime == 0)
+            continue;
+         
+         // Convert to Unix timestamp (seconds)
+         long unixTime = (long)barTime;
+         
+         double open = iOpen(sym, PERIOD_M1, j);
+         double high = iHigh(sym, PERIOD_M1, j);
+         double low = iLow(sym, PERIOD_M1, j);
+         double close = iClose(sym, PERIOD_M1, j);
+         long volume = (long)iVolume(sym, PERIOD_M1, j);
+         
+         if(barsAdded > 0)
+            json += ",";
+         
+         json += "{";
+         json += "\"time\":" + IntegerToString(unixTime) + ",";
+         json += "\"open\":" + DoubleToString(open, 5) + ",";
+         json += "\"high\":" + DoubleToString(high, 5) + ",";
+         json += "\"low\":" + DoubleToString(low, 5) + ",";
+         json += "\"close\":" + DoubleToString(close, 5) + ",";
+         json += "\"volume\":" + IntegerToString(volume);
+         json += "}";
+         
+         barsAdded++;
+      }
+      
+      json += "]";
+      json += "}";
+      symbolsAdded++;
+   }
+
+   json += "},";
+
+   // Closed trades (recent history from deal cache)
+   json += "\"closed_trades\":[";
+   datetime fromTime = TimeCurrent() - 7*24*3600; // Last 7 days
+   datetime toTime = TimeCurrent();
+   HistorySelect(fromTime, toTime);
+   int dealsTotal = HistoryDealsTotal();
+   int tradesAdded = 0;
+   for(int i = 0; i < dealsTotal && tradesAdded < 50; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0) continue;
+
+      // Only process position close deals
+      if(HistoryDealGetInteger(dealTicket, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
+
+      // Get position ID to find the entry deal
+      ulong positionId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+      datetime openTime = 0;
+      double openPrice = 0;
+      string symbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+
+      // Find the entry deal for this position
+      HistorySelectByPosition(positionId);
+      int posDealsTotal = HistoryDealsTotal();
+      for(int j = 0; j < posDealsTotal; j++)
+      {
+         ulong entryDealTicket = HistoryDealGetTicket(j);
+         if(entryDealTicket == 0) continue;
+         if(HistoryDealGetInteger(entryDealTicket, DEAL_ENTRY) == DEAL_ENTRY_IN)
+         {
+            openTime = (datetime)HistoryDealGetInteger(entryDealTicket, DEAL_TIME);
+            openPrice = HistoryDealGetDouble(entryDealTicket, DEAL_PRICE);
+            break;
+         }
+      }
+      HistorySelect(fromTime, toTime); // Restore original selection
+
+      if(tradesAdded > 0) json += ",";
+      json += "{";
+      json += "\"ticket\":" + IntegerToString((long)dealTicket) + ",";
+      json += "\"symbol\":\"" + EscapeJsonString(symbol) + "\",";
+      json += "\"type\":\"" + (HistoryDealGetInteger(dealTicket, DEAL_TYPE) == DEAL_TYPE_BUY ? "BUY" : "SELL") + "\",";
+      json += "\"lots\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_VOLUME), 2) + ",";
+      json += "\"open_price\":" + DoubleToString(openPrice, 5) + ",";
+      json += "\"close_price\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PRICE), 5) + ",";
+      json += "\"profit\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PROFIT), 2) + ",";
+      json += "\"open_time\":\"" + TimeToString(openTime, TIME_DATE|TIME_SECONDS) + "\",";
+      json += "\"close_time\":\"" + TimeToString((datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME), TIME_DATE|TIME_SECONDS) + "\",";
+      int durationMin = 0;
+      if(openTime > 0)
+         durationMin = (int)((HistoryDealGetInteger(dealTicket, DEAL_TIME) - openTime) / 60);
+      json += "\"duration_min\":" + IntegerToString(durationMin);
+      json += "}";
+      tradesAdded++;
+   }
+   json += "]";
 
    json += "}";
 
@@ -366,16 +677,26 @@ bool CDashboardBridge::PushState()
    if(!m_initialized || !m_enabled)
       return false;
 
+   // Guard against stacked pushes — skip if previous push still in progress
+   if(m_pushInProgress)
+      return false;
+
+   m_pushInProgress = true;
    string json = BuildStateJson();
    string response;
    string stateUrl = m_endpoint + "/state";
 
-   m_pushCount++;
+    m_pushCount++;
 
-   if(SendHttpRequest("POST", stateUrl, json, response))
+    // Debug: log first 200 chars of JSON
+    if(m_pushCount <= 3)
+        PrintFormat("[DASHBOARD-BRIDGE] Push #%d JSON preview: %s", m_pushCount, StringSubstr(json, 0, 200));
+
+    if(SendHttpRequest("POST", stateUrl, json, response))
    {
       m_pushSuccessCount++;
       m_lastPushTime = TimeCurrent();
+      m_pushInProgress = false;
       if(!m_connected)
       {
          m_connected = true;
@@ -386,6 +707,7 @@ bool CDashboardBridge::PushState()
    else
    {
       m_pushErrorCount++;
+      m_pushInProgress = false;
       if(m_connected)
       {
          m_connected = false;
@@ -419,33 +741,35 @@ bool CDashboardBridge::PollCommands()
       // Parse commands from JSON response
       if(StringFind(response, "\"commands\"") != -1 && StringFind(response, "[]") == -1)
       {
-         // Extract command entries - basic parsing
+         // Extract command entries - bounded to each command object
          int searchPos = 0;
          while(true)
          {
             int cmdStart = StringFind(response, "\"id\":", searchPos);
             if(cmdStart == -1) break;
 
-            // Extract command id
+            int cmdEnd = StringFind(response, "}", cmdStart);
+            if(cmdEnd == -1) break;
+
+            // Extract command id (bounded to current command object)
             int idStart = cmdStart + 5;
-            int idEnd = StringFind(response, "\"", StringFind(response, "\"", idStart) + 1);
             string cmdId = "";
             int q1 = StringFind(response, "\"", idStart);
-            if(q1 != -1)
+            if(q1 != -1 && q1 < cmdEnd)
             {
                int q2 = StringFind(response, "\"", q1 + 1);
-               if(q2 != -1)
+               if(q2 != -1 && q2 < cmdEnd)
                   cmdId = StringSubstr(response, q1 + 1, q2 - q1 - 1);
             }
 
-            // Extract command type
+            // Extract command type (bounded to current command object)
             int typePos = StringFind(response, "\"type\":", cmdStart);
             string cmdType = "";
-            if(typePos != -1)
+            if(typePos != -1 && typePos < cmdEnd)
             {
                int tq1 = StringFind(response, "\"", typePos + 7);
                int tq2 = StringFind(response, "\"", tq1 + 1);
-               if(tq1 != -1 && tq2 != -1)
+               if(tq1 != -1 && tq2 != -1 && tq2 < cmdEnd)
                   cmdType = StringSubstr(response, tq1 + 1, tq2 - tq1 - 1);
             }
 
@@ -459,7 +783,7 @@ bool CDashboardBridge::PollCommands()
                SendHttpRequest("POST", ackUrl, "", ackResponse);
             }
 
-            searchPos = cmdStart + 10;
+            searchPos = cmdEnd + 1;
             if(searchPos >= StringLen(response)) break;
          }
       }
@@ -474,11 +798,8 @@ bool CDashboardBridge::PollCommands()
 //+------------------------------------------------------------------+
 void CDashboardBridge::LogState(string message, bool isError)
 {
-   string prefix = "[DASHBOARD-BRIDGE] ";
-   if(isError)
-      Print(prefix + message);
-   else
-      Print(prefix + message);
+   string prefix = isError ? "[DASHBOARD-BRIDGE-ERROR] " : "[DASHBOARD-BRIDGE] ";
+   Print(prefix + message);
 }
 
 //+------------------------------------------------------------------+

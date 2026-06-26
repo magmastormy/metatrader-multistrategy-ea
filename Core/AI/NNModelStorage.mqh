@@ -131,7 +131,12 @@ bool NNModelStorage_CopyBinaryFile(const string sourceFile, const string targetF
         if(bytesRead <= 0)
             break;
 
-        FileWriteArray(dstHandle, buffer, 0, (int)bytesRead);
+        if(FileWriteArray(dstHandle, buffer, 0, (int)bytesRead) < bytesRead)
+        {
+            FileClose(srcHandle);
+            FileClose(dstHandle);
+            return false;
+        }
     }
 
     FileClose(dstHandle);
@@ -153,7 +158,11 @@ bool NNModelStorage_PromoteTempToPrimary(const string tempFile,
     }
 
     if(!NNModelStorage_CopyBinaryFile(tempFile, primaryFile))
+    {
+        if(FileIsExist(backupFile, FILE_COMMON))
+            NNModelStorage_CopyBinaryFile(backupFile, primaryFile);
         return false;
+    }
 
     FileDelete(tempFile, FILE_COMMON);
     return true;
@@ -164,7 +173,11 @@ bool NNModelStorage_ArchiveOldCheckpoint(const string sourceFile, const string a
     if(!FileIsExist(sourceFile, FILE_COMMON))
         return false;
 
-    return NNModelStorage_CopyBinaryFile(sourceFile, archivePath);
+    if(!NNModelStorage_CopyBinaryFile(sourceFile, archivePath))
+        return false;
+
+    FileDelete(sourceFile, FILE_COMMON);
+    return true;
 }
 
 bool NNModelStorage_LegacyCheckpointExists(const string symbol, const ENUM_TIMEFRAMES timeframe)

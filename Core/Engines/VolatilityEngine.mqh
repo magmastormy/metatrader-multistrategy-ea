@@ -14,13 +14,11 @@
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
-class CHedgingProtection;
 class CMarketAnalysis;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
 class CPositionSizer;
-class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
 
@@ -440,7 +438,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
        symbol == m_indicatorSymbol && timeframe == m_indicatorTimeframe &&
        m_metrics.lastUpdate > 0 && m_lastValidMetrics.lastUpdate > 0)
     {
-        // Same bar â€” reuse cached metrics, no recalculation needed
+        // Same bar â€?reuse cached metrics, no recalculation needed
         return true;
     }
 
@@ -538,7 +536,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
 
     m_metrics.atr = atr[0];
 
-    // Batch104-C1: ATR sanity validation â€” corrupted multi-symbol indicator handles
+    // Batch104-C1: ATR sanity validation â€?corrupted multi-symbol indicator handles
     // can return values 1000x-100000x too high (e.g., 115783 for USDJPY instead of ~0.16).
     // If ATR exceeds 10x the asset price, the data is clearly corrupted.
     bool atrCorrupted = false;
@@ -561,7 +559,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     else
     {
         m_metrics.atrPercent = (atr[0] / price) * 100.0;
-        // Clamp atrPercent to 100.0% â€” anything above is clearly corrupted data
+        // Clamp atrPercent to 100.0% â€?anything above is clearly corrupted data
         if(m_metrics.atrPercent > 100.0)
         {
             PrintFormat("[VOLATILITY-SANITY] ATR_PCT_CLAMPED | symbol=%s | timeframe=%s | raw_pct=%.2f | clamped=100.00",

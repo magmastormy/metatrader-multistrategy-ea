@@ -10,6 +10,8 @@
 #ifndef __TREND_ADX_POSITION_SIZING_MQH__
 #define __TREND_ADX_POSITION_SIZING_MQH__
 
+#include "../../IndicatorManager.mqh"
+
 //+------------------------------------------------------------------+
 //| ADX Tier Enum                                                    |
 //+------------------------------------------------------------------+
@@ -125,7 +127,7 @@ bool CADXPositionSizing::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
     m_symbol = symbol;
     m_timeframe = timeframe;
     
-    m_adxHandle = iADX(symbol, timeframe, 14);
+    m_adxHandle = CIndicatorManager::Instance().GetADXHandle(symbol, timeframe, 14);
     
     if(m_adxHandle == INVALID_HANDLE)
     {

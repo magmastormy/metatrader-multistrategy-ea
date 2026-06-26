@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -87,8 +87,30 @@ async def _broadcast(message: dict) -> None:
 # ---------------------------------------------------------------------------
 
 @app.post("/state")
-async def receive_state(body: dict):
+async def receive_state(request: Request):
     """Receive EA state push."""
+    raw = await request.body()
+    if not raw:
+        logger.warning("Empty state push received")
+        raise HTTPException(status_code=422, detail="Empty body")
+    try:
+        body = json.loads(raw)
+    except Exception as e:
+        # Find the problematic area
+        err_str = str(e)
+        char_pos = -1
+        if "char" in err_str:
+            try:
+                char_pos = int(err_str.split("char ")[1].rstrip(")"))
+            except:
+                pass
+        context = ""
+        if char_pos > 0:
+            start = max(0, char_pos - 50)
+            end = min(len(raw), char_pos + 50)
+            context = f"\nContext around char {char_pos}: ...{raw[start:end]}..."
+        logger.error("JSON parse error: %s | len=%d%s", e, len(raw), context)
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
     await state_manager.update_state(body)
     await _broadcast({"type": "state", "data": body})
     return {"status": "ok"}

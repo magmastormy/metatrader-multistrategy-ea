@@ -142,6 +142,117 @@ private:
         return c;
     }
 
+    // I2: Compounding tier presets — used by CCompoundingTierManager
+    static STierConfig GetMicroAggressiveConfig()
+    {
+        STierConfig c;
+        c.riskPerTradePct     = 4.0;
+        c.dailyRiskPct        = 12.0;
+        c.portfolioRiskPct    = 20.0;
+        c.maxPositions        = 2;
+        c.breakevenBufferPts  = 80;
+        c.trailingDistancePts = 200;
+        c.ddWarningPct        = 18.0;
+        c.ddCriticalPct       = 25.0;
+        c.minConfidence       = 0.45;
+        c.minVoters           = 2;
+        c.maxSpreadATRRatio   = 0.25;
+        c.scalpBudgetPct      = 10.0;
+        c.clusterAllocation.trendPct         = 30.0;
+        c.clusterAllocation.meanReversionPct = 25.0;
+        c.clusterAllocation.structurePct     = 25.0;
+        c.clusterAllocation.scalpPct         = 20.0;
+        return c;
+    }
+
+    static STierConfig GetGrowthConfig()
+    {
+        STierConfig c;
+        c.riskPerTradePct     = 5.0;
+        c.dailyRiskPct        = 14.0;
+        c.portfolioRiskPct    = 25.0;
+        c.maxPositions        = 3;
+        c.breakevenBufferPts  = 100;
+        c.trailingDistancePts = 250;
+        c.ddWarningPct        = 16.0;
+        c.ddCriticalPct       = 22.0;
+        c.minConfidence       = 0.42;
+        c.minVoters           = 2;
+        c.maxSpreadATRRatio   = 0.22;
+        c.scalpBudgetPct      = 12.0;
+        c.clusterAllocation.trendPct         = 35.0;
+        c.clusterAllocation.meanReversionPct = 20.0;
+        c.clusterAllocation.structurePct     = 25.0;
+        c.clusterAllocation.scalpPct         = 20.0;
+        return c;
+    }
+
+    static STierConfig GetAccelerationConfig()
+    {
+        STierConfig c;
+        c.riskPerTradePct     = 4.0;
+        c.dailyRiskPct        = 12.0;
+        c.portfolioRiskPct    = 22.0;
+        c.maxPositions        = 3;
+        c.breakevenBufferPts  = 110;
+        c.trailingDistancePts = 280;
+        c.ddWarningPct        = 14.0;
+        c.ddCriticalPct       = 20.0;
+        c.minConfidence       = 0.48;
+        c.minVoters           = 2;
+        c.maxSpreadATRRatio   = 0.20;
+        c.scalpBudgetPct      = 10.0;
+        c.clusterAllocation.trendPct         = 35.0;
+        c.clusterAllocation.meanReversionPct = 25.0;
+        c.clusterAllocation.structurePct     = 25.0;
+        c.clusterAllocation.scalpPct         = 15.0;
+        return c;
+    }
+
+    static STierConfig GetInstitutionalConfig()
+    {
+        STierConfig c;
+        c.riskPerTradePct     = 2.5;
+        c.dailyRiskPct        = 8.0;
+        c.portfolioRiskPct    = 18.0;
+        c.maxPositions        = 4;
+        c.breakevenBufferPts  = 120;
+        c.trailingDistancePts = 300;
+        c.ddWarningPct        = 10.0;
+        c.ddCriticalPct       = 15.0;
+        c.minConfidence       = 0.55;
+        c.minVoters           = 2;
+        c.maxSpreadATRRatio   = 0.18;
+        c.scalpBudgetPct      = 6.0;
+        c.clusterAllocation.trendPct         = 40.0;
+        c.clusterAllocation.meanReversionPct = 25.0;
+        c.clusterAllocation.structurePct     = 25.0;
+        c.clusterAllocation.scalpPct         = 10.0;
+        return c;
+    }
+
+    static STierConfig GetProfessionalConfig()
+    {
+        STierConfig c;
+        c.riskPerTradePct     = 1.5;
+        c.dailyRiskPct        = 5.0;
+        c.portfolioRiskPct    = 15.0;
+        c.maxPositions        = 5;
+        c.breakevenBufferPts  = 150;
+        c.trailingDistancePts = 350;
+        c.ddWarningPct        = 8.0;
+        c.ddCriticalPct       = 12.0;
+        c.minConfidence       = 0.60;
+        c.minVoters           = 3;
+        c.maxSpreadATRRatio   = 0.15;
+        c.scalpBudgetPct      = 3.0;
+        c.clusterAllocation.trendPct         = 40.0;
+        c.clusterAllocation.meanReversionPct = 25.0;
+        c.clusterAllocation.structurePct     = 25.0;
+        c.clusterAllocation.scalpPct         = 10.0;
+        return c;
+    }
+
 public:
     CRiskTierManager() : m_tier(RISK_TIER_MODERATE)
     {
@@ -155,11 +266,16 @@ public:
         m_tier = tier;
         switch(tier)
         {
-            case RISK_TIER_CONSERVATIVE: m_config = GetConservativeConfig(); break;
-            case RISK_TIER_MODERATE:     m_config = GetModerateConfig();     break;
-            case RISK_TIER_AGGRESSIVE:   m_config = GetAggressiveConfig();   break;
-            case RISK_TIER_FULL_MARGIN:  m_config = GetFullMarginTierPreset(); break;
-            default:                     m_config = GetModerateConfig();     break;
+            case RISK_TIER_CONSERVATIVE:      m_config = GetConservativeConfig(); break;
+            case RISK_TIER_MODERATE:          m_config = GetModerateConfig();     break;
+            case RISK_TIER_AGGRESSIVE:        m_config = GetAggressiveConfig();   break;
+            case RISK_TIER_FULL_MARGIN:       m_config = GetFullMarginTierPreset(); break;
+            case RISK_TIER_MICRO_AGGRESSIVE:  m_config = GetMicroAggressiveConfig(); break;
+            case RISK_TIER_GROWTH:            m_config = GetGrowthConfig(); break;
+            case RISK_TIER_ACCELERATION:      m_config = GetAccelerationConfig(); break;
+            case RISK_TIER_INSTITUTIONAL:     m_config = GetInstitutionalConfig(); break;
+            case RISK_TIER_PROFESSIONAL:      m_config = GetProfessionalConfig(); break;
+            default:                          m_config = GetModerateConfig();     break;
         }
         PrintFormat("[RISK-TIER] Tier set to %d | riskPerTrade=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | maxPos=%d",
                     (int)m_tier, m_config.riskPerTradePct, m_config.dailyRiskPct,
@@ -365,11 +481,16 @@ public:
     {
         switch(m_tier)
         {
-            case RISK_TIER_CONSERVATIVE: return "CONSERVATIVE";
-            case RISK_TIER_MODERATE:     return "MODERATE";
-            case RISK_TIER_AGGRESSIVE:   return "AGGRESSIVE";
-            case RISK_TIER_FULL_MARGIN:  return "FULL_MARGIN";
-            default:                     return "UNKNOWN";
+            case RISK_TIER_CONSERVATIVE:      return "CONSERVATIVE";
+            case RISK_TIER_MODERATE:          return "MODERATE";
+            case RISK_TIER_AGGRESSIVE:        return "AGGRESSIVE";
+            case RISK_TIER_FULL_MARGIN:       return "FULL_MARGIN";
+            case RISK_TIER_MICRO_AGGRESSIVE:  return "MICRO_AGGRESSIVE";
+            case RISK_TIER_GROWTH:            return "GROWTH";
+            case RISK_TIER_ACCELERATION:      return "ACCELERATION";
+            case RISK_TIER_INSTITUTIONAL:     return "INSTITUTIONAL";
+            case RISK_TIER_PROFESSIONAL:      return "PROFESSIONAL";
+            default:                          return "UNKNOWN";
         }
     }
 };

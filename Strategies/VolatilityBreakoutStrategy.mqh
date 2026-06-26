@@ -8,6 +8,7 @@
 #define __VOLATILITY_BREAKOUT_STRATEGY_MQH__
 
 #include "../Core/Strategy/StrategyBase.mqh"
+#include "../Utilities/SafeCopyBuffer.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
@@ -86,17 +87,6 @@ private:
     bool    m_breakoutFailed;     // Breakout failure reversal flag
     ENUM_TRADE_SIGNAL m_breakoutFailedDirection; // Direction of failed breakout reversal
     
-    bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
-    {
-        for(int attempt = 0; attempt < 3; attempt++)
-        {
-            if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
-                return true;
-            Sleep(10);  // 10ms wait for indicator calculation
-        }
-        return false;
-    }
-
     // Fallback BB calculation from raw price data when indicator handle fails
     bool CalculateFallbackBB(double &outUpper, double &outMiddle, double &outLower)
     {
@@ -336,24 +326,24 @@ public:
             }
         }
 
-        // Fetch volume data (no fallback — volume is confirmation-only)
+        // Fetch volume data (confirmation-only — treat failure as volume unavailable)
         double volumeBuffer[11];
-        if(!SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer))
-        {
-            return RejectSignal("VOLBREAK_DATA_UNAVAILABLE");
-        }
+        bool volumeAvailable = SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volumeBuffer);
         
         double currentPrice = iClose(m_symbol, m_timeframe, 1);
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
         
         // --- VOLUME CONFIRMATION ---
-        double currentVol = volumeBuffer[0];
-        double avgVol = 0;
-        for(int i = 1; i < 11; i++)
-            avgVol += volumeBuffer[i];
-        avgVol /= 10.0;
-        
-        double volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
+        double volRatio = 1.0;
+        if(volumeAvailable)
+        {
+            double currentVol = volumeBuffer[0];
+            double avgVol = 0;
+            for(int i = 1; i < 11; i++)
+                avgVol += volumeBuffer[i];
+            avgVol /= 10.0;
+            volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
+        }
         
         // --- VOLATILITY ANALYSIS ---
         double curATR = atrBuffer[0];

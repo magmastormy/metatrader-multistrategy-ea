@@ -84,6 +84,8 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_BREAKER_BLOCK = 13,    // Breaker Block strategy (NEW: Batch 103)
     STRATEGY_NY_OPEN_GAP = 14,      // NY Open Gap strategy (NEW: Batch 103)
     STRATEGY_ASIAN_RANGE_BREAK = 15, // Asian Range Break strategy (NEW: Batch 103)
+    STRATEGY_UNICORN_MODEL = 16,    // Unicorn Model strategy (ICT variant)
+    STRATEGY_POWER_OF_THREE = 17,   // Power of Three strategy (ICT variant)
     STRATEGY_CUSTOM = 99,          // Custom strategy
     STRATEGY_BRAIN = 100,          // Strategy brain type
     STRATEGY_AI_ENHANCED = 101     // AI enhanced strategy type
@@ -233,10 +235,15 @@ enum ENUM_MARGIN_HEALTH_LEVEL
 //+------------------------------------------------------------------+
 enum ENUM_RISK_TIER
 {
-   RISK_TIER_CONSERVATIVE,   // Conservative: low risk, tight controls
-   RISK_TIER_MODERATE,       // Moderate: balanced risk/reward
-   RISK_TIER_AGGRESSIVE,     // Aggressive: higher risk tolerance
-   RISK_TIER_FULL_MARGIN     // Full margin: maximum exposure
+   RISK_TIER_CONSERVATIVE,      // Conservative: low risk, tight controls
+   RISK_TIER_MODERATE,          // Moderate: balanced risk/reward
+   RISK_TIER_AGGRESSIVE,        // Aggressive: higher risk tolerance
+   RISK_TIER_FULL_MARGIN,       // Full margin: maximum exposure
+   RISK_TIER_MICRO_AGGRESSIVE,  // Micro aggressive: $10-25 accounts, rapid compounding
+   RISK_TIER_GROWTH,            // Growth: $25-50 accounts, balanced aggression
+   RISK_TIER_ACCELERATION,      // Acceleration: $50-100 accounts, protect gains
+   RISK_TIER_INSTITUTIONAL,     // Institutional: $100-500 accounts, capital preservation
+   RISK_TIER_PROFESSIONAL       // Professional: $500+ accounts, full institutional
 };
 
 //+------------------------------------------------------------------+
@@ -311,23 +318,12 @@ enum ENUM_POSITION_SIZING_MODE
     POSITION_SIZE_KELLY = 5            // Kelly Criterion sizing
 };
 
-// Position Sizing Constants (for backward compatibility)
-#define POSITION_SIZE_FIXED 1           // Fixed position sizing
-#define POSITION_SIZE_RISK_PERCENT 2    // Risk percentage sizing
-#define POSITION_SIZE_VOLATILITY 3      // Volatility-based sizing
-#define POSITION_SIZE_CORRELATION 4     // Correlation-based sizing
-#define POSITION_SIZE_KELLY 5           // Kelly Criterion sizing
-
 // Performance Monitoring Constants
 #define MIN_TRADES_FOR_STATS 10         // Minimum trades for statistics
 #define MAX_CONSECUTIVE_LOSSES 5        // Maximum consecutive losses
 
 // Risk Level Constants
 #define RISK_LEVEL_EXTREME 4           // Extreme risk level
-
-// Strategy Type Constants
-#define STRATEGY_BRAIN 100              // Strategy brain type
-#define STRATEGY_AI_ENHANCED 101        // AI enhanced strategy type
 
 // Extended Strategy Type Enumeration
 enum ENUM_STRATEGY_TYPE_EXTENDED
@@ -745,5 +741,19 @@ struct SEnhancedTradeSignal
         riskAdjustedSize = other.riskAdjustedSize;
     }
 };
+
+//+------------------------------------------------------------------+
+//| Escape JSON string (global utility)                              |
+//+------------------------------------------------------------------+
+string EscapeJsonString(const string &str)
+{
+    string result = str;
+    StringReplace(result, "\\", "\\\\");
+    StringReplace(result, "\"", "\\\"");
+    StringReplace(result, "\n", "\\n");
+    StringReplace(result, "\r", "\\r");
+    StringReplace(result, "\t", "\\t");
+    return result;
+}
 
 #endif // CORE_ENUMS_MQH

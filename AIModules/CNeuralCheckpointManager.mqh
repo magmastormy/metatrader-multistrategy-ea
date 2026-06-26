@@ -8,13 +8,14 @@
 #include "CNeuralCore.mqh"
 #include "../Core/AI/NNModelStorage.mqh"
 #include "CNeuralTrainingDataManager.mqh"
+#include "AIConfig.mqh"
 
-// Checkpoint version and magic constants
+// Checkpoint version and magic constants — must match NeuralNetworkStrategy.mqh
 #ifndef NN_CHECKPOINT_VERSION
-#define NN_CHECKPOINT_VERSION 1
+#define NN_CHECKPOINT_VERSION AI_NN_CHECKPOINT_VERSION
 #endif
 #ifndef NN_CHECKPOINT_MAGIC
-#define NN_CHECKPOINT_MAGIC 0x4E455552  // "NEUR" in hex
+#define NN_CHECKPOINT_MAGIC AI_NN_CHECKPOINT_MAGIC
 #endif
 
 class CCheckpointManager
@@ -54,17 +55,22 @@ private:
     // Helper methods for checkpoint I/O
     void WriteCheckpointString(const int fh, const string str)
     {
-        FileWriteInteger(fh, StringLen(str));
-        if(StringLen(str) > 0)
-            FileWriteString(fh, str, StringLen(str));
+        int len = StringLen(str);
+        FileWriteInteger(fh, len);
+        for(int i = 0; i < len; i++)
+            FileWriteInteger(fh, (int)StringGetCharacter(str, i));
     }
-    
+
     string ReadCheckpointString(const int fh)
     {
         int len = FileReadInteger(fh);
-        if(len <= 0 || len > 1024)
+        if(len <= 0 || len > 4096)
             return "";
-        return FileReadString(fh, len);
+        string result = "";
+        StringInit(result, 0, (ushort)len);
+        for(int i = 0; i < len; i++)
+            StringSetCharacter(result, i, (ushort)FileReadInteger(fh));
+        return result;
     }
 
 public:
@@ -79,8 +85,8 @@ public:
                        const int epoch, const double lastLoss, const int trainingSteps,
                        const int checkpointWrites, const int totalObs, const int tradeLinked,
                        const double temperature,
-                       const SMTrainingExample &trainingBuffer[], const int trainCount, const int trainHead,
-                       const SMBarrierEntry &barrierBuffer[], const int barrierCount, const int barrierHead,
+                       const STrainingExample &trainingBuffer[], const int trainCount, const int trainHead,
+                       const SBarrierEntry &barrierBuffer[], const int barrierCount, const int barrierHead,
                        CTrainingDataManager* dataManager)
     {
         NNModelStorage_EnsureFolders();
@@ -184,6 +190,71 @@ public:
                 FileWriteDouble(fh, barrierBuffer[i].metaInput[j]);
         }
 
+        FileWriteDouble(fh, temperature);
+
+        ulong hash1 = 0x123456789ABCDEF0;
+        ulong hash2 = 0xFEDCBA9876543210;
+        for(int i = 0; i < ArraySize(featureMean) && i < FEATURE_VECTOR_SIZE; i++)
+        {
+            hash1 ^= (ulong)(featureMean[i] * 1000000.0);
+            hash2 ^= (ulong)(featureM2[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArrayRange(W1, 0); i++)
+            for(int j = 0; j < ArrayRange(W1, 1); j++)
+            {
+                hash1 ^= (ulong)(W1[i][j] * 1000000.0);
+                hash2 ^= (ulong)(i * 31 + j);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArrayRange(W2, 0); i++)
+            for(int j = 0; j < ArrayRange(W2, 1); j++)
+            {
+                hash2 ^= (ulong)(W2[i][j] * 1000000.0);
+                hash1 ^= (ulong)(i * 17 + j);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArrayRange(W3, 0); i++)
+            for(int j = 0; j < ArrayRange(W3, 1); j++)
+            {
+                hash1 ^= (ulong)(W3[i][j] * 1000000.0);
+                hash2 ^= (ulong)(i * 13 + j);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArrayRange(W4, 0); i++)
+            for(int j = 0; j < ArrayRange(W4, 1); j++)
+            {
+                hash2 ^= (ulong)(W4[i][j] * 1000000.0);
+                hash1 ^= (ulong)(i * 7 + j);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+        for(int i = 0; i < ArraySize(B1); i++)
+        {
+            hash1 ^= (ulong)(B1[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArraySize(B2); i++)
+        {
+            hash2 ^= (ulong)(B2[i] * 1000000.0);
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArraySize(B3); i++)
+        {
+            hash1 ^= (ulong)(B3[i] * 1000000.0);
+            hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        for(int i = 0; i < ArraySize(B4); i++)
+        {
+            hash2 ^= (ulong)(B4[i] * 1000000.0);
+            hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        hash1 ^= (ulong)trainCount;
+        hash2 ^= (ulong)barrierCount;
+        hash1 ^= (ulong)(temperature * 1000000.0);
+        ulong checksum = hash1 ^ (hash2 << 1);
+        FileWriteLong(fh, (long)checksum);
+
         FileClose(fh);
         if(!NNModelStorage_PromoteTempToPrimary(tempFile, primaryFile, backupFile))
         {
@@ -206,8 +277,8 @@ public:
                        int &epoch, double &lastLoss, int &trainingSteps,
                        int &checkpointWrites, int &totalObs, int &tradeLinked,
                        double &temperature,
-                       SMTrainingExample &trainingBuffer[], int &trainCount, int &trainHead,
-                       SMBarrierEntry &barrierBuffer[], int &barrierCount, int &barrierHead,
+                       STrainingExample &trainingBuffer[], int &trainCount, int &trainHead,
+                       SBarrierEntry &barrierBuffer[], int &barrierCount, int &barrierHead,
                        CTrainingDataManager* dataManager)
     {
         NNModelStorage_EnsureFolders();
@@ -255,6 +326,7 @@ public:
         totalObs = FileReadInteger(fh);
         tradeLinked = FileReadInteger(fh);
         long resolvedCount = FileReadLong(fh);
+        if(resolvedCount < 0) {}
         featureCount = FileReadLong(fh);
         normalizationReady = (FileReadInteger(fh) != 0);
         adamStep = FileReadLong(fh);
@@ -330,6 +402,82 @@ public:
                 barrierBuffer[i].metaInput[j] = FileReadDouble(fh);
         }
 
+        if(!FileIsEnding(fh))
+            temperature = FileReadDouble(fh);
+
+        if(!FileIsEnding(fh))
+        {
+            ulong storedChecksum = (ulong)FileReadLong(fh);
+            ulong hash1 = 0x123456789ABCDEF0;
+            ulong hash2 = 0xFEDCBA9876543210;
+            for(int i = 0; i < ArraySize(featureMean) && i < FEATURE_VECTOR_SIZE; i++)
+            {
+                hash1 ^= (ulong)(featureMean[i] * 1000000.0);
+                hash2 ^= (ulong)(featureM2[i] * 1000000.0);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArrayRange(W1, 0); i++)
+                for(int j = 0; j < ArrayRange(W1, 1); j++)
+                {
+                    hash1 ^= (ulong)(W1[i][j] * 1000000.0);
+                    hash2 ^= (ulong)(i * 31 + j);
+                    hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArrayRange(W2, 0); i++)
+                for(int j = 0; j < ArrayRange(W2, 1); j++)
+                {
+                    hash2 ^= (ulong)(W2[i][j] * 1000000.0);
+                    hash1 ^= (ulong)(i * 17 + j);
+                    hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArrayRange(W3, 0); i++)
+                for(int j = 0; j < ArrayRange(W3, 1); j++)
+                {
+                    hash1 ^= (ulong)(W3[i][j] * 1000000.0);
+                    hash2 ^= (ulong)(i * 13 + j);
+                    hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArrayRange(W4, 0); i++)
+                for(int j = 0; j < ArrayRange(W4, 1); j++)
+                {
+                    hash2 ^= (ulong)(W4[i][j] * 1000000.0);
+                    hash1 ^= (ulong)(i * 7 + j);
+                    hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+                }
+            for(int i = 0; i < ArraySize(B1); i++)
+            {
+                hash1 ^= (ulong)(B1[i] * 1000000.0);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArraySize(B2); i++)
+            {
+                hash2 ^= (ulong)(B2[i] * 1000000.0);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArraySize(B3); i++)
+            {
+                hash1 ^= (ulong)(B3[i] * 1000000.0);
+                hash1 = hash1 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            for(int i = 0; i < ArraySize(B4); i++)
+            {
+                hash2 ^= (ulong)(B4[i] * 1000000.0);
+                hash2 = hash2 * 6364136223846793005ULL + 1442695040888963407ULL;
+            }
+            hash1 ^= (ulong)trainCount;
+            hash2 ^= (ulong)barrierCount;
+            hash1 ^= (ulong)(temperature * 1000000.0);
+            ulong computedChecksum = hash1 ^ (hash2 << 1);
+            if(storedChecksum != computedChecksum)
+            {
+                FileClose(fh);
+                m_lastLoadStatus = "REJECTED_CHECKSUM_MISMATCH";
+                PrintFormat("[CHECKPOINT-MGR] %s REJECTED_CHECKSUM_MISMATCH", m_symbol);
+                return false;
+            }
+        }
+
         FileClose(fh);
         m_lastLoadTime = TimeCurrent();
         m_lastLoadStatus = "LOADED";
@@ -338,7 +486,6 @@ public:
 
     bool Exists() const
     {
-        NNModelStorage_EnsureFolders();
         string primaryFile = NNModelStorage_GetPrimaryPath(m_symbol, m_timeframe, m_version);
         return FileIsExist(primaryFile, FILE_COMMON);
     }
