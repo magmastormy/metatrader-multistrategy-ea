@@ -6,6 +6,8 @@
 #property link      ""
 #property strict
 
+#include "../../IndicatorManager.mqh"
+
 //+------------------------------------------------------------------+
 //| Candle Properties Structure                                       |
 //+------------------------------------------------------------------+
@@ -45,14 +47,14 @@ private:
     
 public:
     CCandleAnalyzer() : m_atrHandle(INVALID_HANDLE) {}
-    ~CCandleAnalyzer() { if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle); }
+    ~CCandleAnalyzer() { /* ATR handle owned by CIndicatorManager — do NOT release here */ }
     
     bool Initialize(string symbol, ENUM_TIMEFRAMES timeframe)
     {
         m_symbol = symbol;
         m_timeframe = timeframe;
         
-        m_atrHandle = iATR(m_symbol, m_timeframe, 14);
+        m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
         if(m_atrHandle == INVALID_HANDLE)
         {
             Print("[CandleAnalyzer] Failed to create ATR indicator");

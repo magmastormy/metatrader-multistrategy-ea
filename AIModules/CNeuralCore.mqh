@@ -10,17 +10,6 @@
 class CNeuralCore
 {
 public:
-    static void ReLU(double &values[], const int size)
-    {
-        for(int i = 0; i < size; i++)
-            values[i] = MathMax(0.0, values[i]);
-    }
-    
-    static double ReLUDerivative(const double value)
-    {
-        return (value > 0.0) ? 1.0 : 0.0;
-    }
-    
     static void Softmax(double &values[], const int size, const double temperature = 1.0)
     {
         double maxVal = values[0];
@@ -65,8 +54,7 @@ public:
         for(int i = 0; i < outSize; i++)
             gradOutput[i] = (i == targetClass) ? output[i] - 1.0 : output[i];
         
-        ArrayResize(gradW4, ArrayRange(gradW4, 0));
-        ArrayResize(gradW4, ArrayRange(gradW4, 1));
+        ArrayResize(gradW4, h3Size, outSize);
         ArrayResize(gradB4, outSize);
         for(int i = 0; i < h3Size; i++)
             for(int j = 0; j < outSize; j++)
@@ -84,8 +72,7 @@ public:
             gradHidden3[i] *= (hidden3[i] > 0.0) ? 1.0 : 0.0;
         }
         
-        ArrayResize(gradW3, ArrayRange(gradW3, 0));
-        ArrayResize(gradW3, ArrayRange(gradW3, 1));
+        ArrayResize(gradW3, h2Size, h3Size);
         ArrayResize(gradB3, h3Size);
         for(int i = 0; i < h2Size; i++)
             for(int j = 0; j < h3Size; j++)
@@ -103,8 +90,7 @@ public:
             gradHidden2[i] *= (hidden2[i] > 0.0) ? 1.0 : 0.0;
         }
         
-        ArrayResize(gradW2, ArrayRange(gradW2, 0));
-        ArrayResize(gradW2, ArrayRange(gradW2, 1));
+        ArrayResize(gradW2, h1Size, h2Size);
         ArrayResize(gradB2, h2Size);
         for(int i = 0; i < h1Size; i++)
             for(int j = 0; j < h2Size; j++)
@@ -122,8 +108,7 @@ public:
             gradHidden1[i] *= (hidden1[i] > 0.0) ? 1.0 : 0.0;
         }
         
-        ArrayResize(gradW1, ArrayRange(gradW1, 0));
-        ArrayResize(gradW1, ArrayRange(gradW1, 1));
+        ArrayResize(gradW1, inputSize, h1Size);
         ArrayResize(gradB1, h1Size);
         for(int i = 0; i < inputSize; i++)
             for(int j = 0; j < h1Size; j++)
@@ -132,40 +117,6 @@ public:
             gradB1[j] = gradHidden1[j];
     }
     
-    static void ClipGradients(double &gradW1[][], double &gradB1[], 
-                              double &gradW2[][], double &gradB2[],
-                              const double maxNorm = 1.0)
-    {
-        double norm = 0.0;
-        
-        for(int i = 0; i < ArrayRange(gradW1, 0); i++)
-            for(int j = 0; j < ArrayRange(gradW1, 1); j++)
-                norm += gradW1[i][j] * gradW1[i][j];
-        for(int j = 0; j < ArraySize(gradB1); j++)
-            norm += gradB1[j] * gradB1[j];
-        for(int i = 0; i < ArrayRange(gradW2, 0); i++)
-            for(int j = 0; j < ArrayRange(gradW2, 1); j++)
-                norm += gradW2[i][j] * gradW2[i][j];
-        for(int j = 0; j < ArraySize(gradB2); j++)
-            norm += gradB2[j] * gradB2[j];
-        
-        norm = MathSqrt(norm);
-        if(norm > maxNorm && norm > 1e-12)
-        {
-            double scale = maxNorm / norm;
-            for(int i = 0; i < ArrayRange(gradW1, 0); i++)
-                for(int j = 0; j < ArrayRange(gradW1, 1); j++)
-                    gradW1[i][j] *= scale;
-            for(int j = 0; j < ArraySize(gradB1); j++)
-                gradB1[j] *= scale;
-            for(int i = 0; i < ArrayRange(gradW2, 0); i++)
-                for(int j = 0; j < ArrayRange(gradW2, 1); j++)
-                    gradW2[i][j] *= scale;
-            for(int j = 0; j < ArraySize(gradB2); j++)
-                gradB2[j] *= scale;
-        }
-    }
-
     static void ClipGradientsFull(double &gradW1[][], double &gradB1[], 
                                   double &gradW2[][], double &gradB2[],
                                   double &gradW3[][], double &gradB3[],

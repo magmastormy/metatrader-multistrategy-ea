@@ -12,6 +12,8 @@
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../Risk/VPINFilter.mqh"
 #include "../Engines/OrderFlowImbalanceEngine.mqh"
+#include "../Engines/FamilyStrategyWeightMatrix.mqh"
+#include "../Utils/Enums.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
 
@@ -39,13 +41,11 @@
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
-class CHedgingProtection;
 class CMarketAnalysis;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
 class CPositionSizer;
-class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
 class CPythonBridge;
@@ -223,6 +223,7 @@ private:
     CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
     CVPINFilter* m_vpinFilter;        // VPIN toxicity filter for consensus (Batch 104)
     COrderFlowImbalanceEngine* m_ofiEngine;  // OFI for regime integration (Batch 104)
+    CFamilyStrategyWeightMatrix* m_familyWeightMatrix;  // I1: Per-family cluster weight multipliers
     
     StrategyEntry m_strategies[];
     int m_strategyCount;
@@ -550,6 +551,8 @@ public:
         return MARKET_REGIME_UNKNOWN;
     }
     string GetStrategyWeightsJSON() const;
+    string GetStrategyListJSON() const;
+    string GetConsensusContextJSON() const;
     void UpdateStrategyWeights();
     void CheckStrategyDisabling();
     void CheckStrategyReEnabling();
@@ -578,6 +581,7 @@ public:
 
     // Deriv family-based engine weighting
     void SetDerivProfiler(CDerivAssetProfiler* profiler) { m_derivProfiler = profiler; }
+    void SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix) { m_familyWeightMatrix = famMatrix; }
     void SetMultiAssetProfiler(CMultiAssetProfiler* profiler) { m_multiAssetProfiler = profiler; }
     void SetVPINFilter(CVPINFilter* vpin) { m_vpinFilter = vpin; }
     void SetOFIEngine(COrderFlowImbalanceEngine* ofi) { m_ofiEngine = ofi; }
@@ -597,6 +601,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_multiAssetProfiler(NULL),
     m_vpinFilter(NULL),
     m_ofiEngine(NULL),
+    m_familyWeightMatrix(NULL),
     m_strategyCount(0),
     m_maxStrategies(25),
     m_managedMagic(0),
@@ -886,7 +891,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].successCount = 0;
     m_strategies[m_strategyCount].failCount = 0;
     m_strategies[m_strategyCount].healthScore = 0.75;
-    m_strategies[m_strategyCount].participationScore = 0.75;
+    m_strategies[m_strategyCount].participationScore = 0.90;
     m_strategies[m_strategyCount].avgConfidence = 0;
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
     m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
@@ -1107,11 +1112,31 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             // Apply regime-aware dynamic weight multiplier
             double regimeCategoryMult = GetRegimeCategoryMultiplier(m_strategies[i].strategy.GetType());
 
+            // I1: Apply per-family cluster weight multiplier
+            double familyClusterMult = 1.0;
+            if(m_familyWeightMatrix != NULL && m_familyWeightMatrix.IsInitialized() && m_derivProfiler != NULL)
+            {
+               ENUM_DERIV_FAMILY family = m_derivProfiler.DetectFamily(m_symbol);
+               ENUM_STRATEGY_CLUSTER stratCluster = (ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster;
+               familyClusterMult = m_familyWeightMatrix.GetClusterWeight(family, stratCluster);
+               // I10: Log when family weight deviates from 1.0 for Volatility indices
+               if(family == DERIV_VOLATILITY && MathAbs(familyClusterMult - 1.0) > 0.01)
+               {
+                  PrintFormat("[FAMILY-WEIGHT-VOL] %s | strategy=%s | cluster=%d | mult=%.2f",
+                              m_symbol, m_strategies[i].name, (int)stratCluster, familyClusterMult);
+               }
+            }
+
             adjustedStrategyWeight = strategyWeight * tierMultiplier *
                                      GetStrategyRoleVoteMultiplier(i) *
                                      GetStrategyReliabilityMultiplier(i) *
                                      GetStrategyParticipationMultiplier(i) *
-                                     regimeCategoryMult;
+                                     regimeCategoryMult *
+                                     familyClusterMult;
+
+            // Final safety: clamp adjusted weight to sane bounds
+            if(!MathIsValidNumber(adjustedStrategyWeight) || adjustedStrategyWeight < 0.001 || adjustedStrategyWeight > 100.0)
+                adjustedStrategyWeight = strategyWeight;
                                      
             if(liveEligibleForThisEval)
             {
@@ -1180,7 +1205,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         // SPECIAL BYPASS: Trend + Support/Resistance Reversal Override
         // If they have "good" confidence (>0.65), they bypass the tier floor 
         // to ensure reversals are heard even during strong Tier 1 (ICT) moves.
-        // Fibonacci REMOVED — S/R now carries the confluence module
+        // Fibonacci REMOVED �?S/R now carries the confluence module
         bool bypassTierFloor = false;
         if(m_strategies[i].name == "Trend" || m_strategies[i].name == "Support/Resistance")
         {
@@ -1213,7 +1238,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
         double previousParticipation = m_strategies[i].participationScore;
         if(previousParticipation <= 0.0)
-            previousParticipation = 0.75;
+            previousParticipation = 0.90;
         m_strategies[i].participationScore = MathMax(0.35,
                                                      MathMin(1.0,
                                                              (previousParticipation * 0.85) +
@@ -1414,6 +1439,24 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         if(signal == TRADE_SIGNAL_BUY && stratConf >= signalConfidenceFloor)
         {
             double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
+            // AI uncertainty discount: reduce conviction when model is uncertain
+            IAIStrategy* aiStratConv = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
+            if(aiStratConv != NULL)
+            {
+                double uncertainty = aiStratConv.GetUncertainty();
+                double uncertaintyDiscount = 1.0 - (0.30 * MathMax(0.0, MathMin(1.0, uncertainty)));
+                conviction *= uncertaintyDiscount;
+                if(uncertainty > 0.5)
+                {
+                    static datetime s_lastUncLog = 0;
+                    if(s_lastUncLog == 0 || (TimeCurrent() - s_lastUncLog) >= 60)
+                    {
+                        PrintFormat("[AI-UNCERTAINTY-DISCOUNT] %s | strategy=%s | uncertainty=%.3f | discount=%.3f | conviction=%.4f",
+                                    symbol, m_strategies[i].name, uncertainty, uncertaintyDiscount, conviction);
+                        s_lastUncLog = TimeCurrent();
+                    }
+                }
+            }
             if(liveVoter && liveEligibleForThisEval)
             {
                 buyVotes++;
@@ -1455,6 +1498,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         else if(signal == TRADE_SIGNAL_SELL && stratConf >= signalConfidenceFloor)
         {
             double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
+            // AI uncertainty discount: reduce conviction when model is uncertain
+            IAIStrategy* aiStratConvSell = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
+            if(aiStratConvSell != NULL)
+            {
+                double uncertainty = aiStratConvSell.GetUncertainty();
+                double uncertaintyDiscount = 1.0 - (0.30 * MathMax(0.0, MathMin(1.0, uncertainty)));
+                conviction *= uncertaintyDiscount;
+            }
             if(liveVoter && liveEligibleForThisEval)
             {
                 sellVotes++;
@@ -1658,8 +1709,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     // Scale thresholds based on total registered live voters, not just active voters.
     if(m_adaptiveQuorumEnabled && activeLiveStrategies > 0 && activeLiveStrategies <= 3 && evalMode != EVAL_MODE_INTRABAR)
     {
-        supportFloor = m_adaptiveSupportFloor_1voter;    // 0.15 — achievable with 1/3 voters
-        effectiveQualityThreshold = adaptiveQualityThreshold1; // 0.40 — relaxed for sparse consensus
+        supportFloor = m_adaptiveSupportFloor_1voter;    // 0.15 �?achievable with 1/3 voters
+        effectiveQualityThreshold = adaptiveQualityThreshold1; // 0.40 �?relaxed for sparse consensus
     }
 
     // Adaptive quorum: adjust thresholds based on actual active voter count
@@ -1874,7 +1925,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
 
             if(bestQuality >= effectiveQualityThreshold)
             {
-                // Full admission — quality meets threshold (handled by support/quorum checks below)
+                // Full admission �?quality meets threshold (handled by support/quorum checks below)
                 if(bestSupport < supportFloor)
                 {
                     vetoCode = "insufficient_support";
@@ -1905,7 +1956,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             }
             else
             {
-                // Hard veto — quality too far below threshold
+                // Hard veto �?quality too far below threshold
                 vetoCode = "insufficient_quality";
                 vetoReason = StringFormat("quality=%.3f (need %.3f, marginalFloor=%.3f) | votes=%d | support=%.3f",
                                           bestQuality, effectiveQualityThreshold, marginalQualityFloor,
@@ -2550,6 +2601,49 @@ string CEnterpriseStrategyManager::GetStrategyWeightsJSON() const
     return json;
 }
 
+string CEnterpriseStrategyManager::GetStrategyListJSON() const
+{
+    string json = "[";
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(i > 0)
+            json += ",";
+        json += "{";
+        json += "\"name\":\"" + EscapeJsonString(m_strategies[i].name) + "\",";
+        json += "\"symbol\":\"" + EscapeJsonString(m_symbol) + "\",";
+        json += "\"role\":\"" + StrategyRoleToString((ENUM_STRATEGY_ROLE)m_strategies[i].role) + "\",";
+        json += "\"mode\":\"" + (m_strategies[i].shadowOnly ? "SHADOW" : (m_strategies[i].enabled && m_strategies[i].liveVotingEnabled ? "ACTIVE" : "DISABLED")) + "\",";
+        json += "\"weight\":" + DoubleToString(m_strategies[i].weight, 2) + ",";
+        json += "\"health_score\":" + DoubleToString(m_strategies[i].healthScore, 2) + ",";
+        json += "\"win_rate\":" + DoubleToString(m_strategies[i].recentWinRate, 2) + ",";
+        json += "\"cluster\":\"" + StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster) + "\"";
+        json += "}";
+    }
+    json += "]";
+    return json;
+}
+
+string CEnterpriseStrategyManager::GetConsensusContextJSON() const
+{
+    SConsensusDecisionContext ctx = m_lastDecisionContext;
+    string json = "{";
+    json += "\"symbol\":\"" + EscapeJsonString(ctx.symbol) + "\",";
+    json += "\"signal\":\"" + TradeSignalToString(ctx.signal) + "\",";
+    json += "\"confidence\":" + DoubleToString(ctx.confidence, 3) + ",";
+    json += "\"buy_score\":" + DoubleToString(ctx.buyScore, 3) + ",";
+    json += "\"sell_score\":" + DoubleToString(ctx.sellScore, 3) + ",";
+    json += "\"quorum_met\":" + (ctx.signal != TRADE_SIGNAL_NONE ? "true" : "false") + ",";
+    json += "\"veto_code\":\"" + EscapeJsonString(ctx.vetoCode) + "\",";
+    json += "\"active_strategies\":" + IntegerToString(m_strategyCount) + ",";
+    json += "\"voted_strategies\":" + IntegerToString(ctx.eligibleLiveVoterCount) + ",";
+    json += "\"dominant_cluster\":\"" + StrategyClusterToString(ctx.dominantCluster) + "\",";
+    json += "\"quorum_mode\":\"" + EscapeJsonString(ctx.quorumMode) + "\",";
+    json += "\"confluence\":" + IntegerToString(ctx.confluence) + ",";
+    json += "\"reason\":\"" + EscapeJsonString(ctx.reason) + "\"";
+    json += "}";
+    return json;
+}
+
 void CEnterpriseStrategyManager::UpdateStrategyWeights()
 {
     for(int i = 0; i < m_strategyCount; i++)
@@ -2929,7 +3023,7 @@ int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
 }
 
 //+------------------------------------------------------------------+
-//| Get Strategy By Name — Batch 103: returns strategy pointer       |
+//| Get Strategy By Name �?Batch 103: returns strategy pointer       |
 //+------------------------------------------------------------------+
 IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 {
@@ -3078,6 +3172,14 @@ double CEnterpriseStrategyManager::GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYP
             break;
     }
 
+    // Defense-in-depth: reject inf/NaN/corrupted weight values
+    if(!MathIsValidNumber(categoryMult) || categoryMult < 0.01 || categoryMult > 10.0)
+    {
+        PrintFormat("[REGIME-WEIGHT-GUARD] categoryMult=%.4f out of range for strategy=%d, resetting to 1.0",
+                    categoryMult, (int)strategyType);
+        categoryMult = defaultMult;
+    }
+
     // OFI regime integration (Batch 104)
     // If OFI engine is available, adjust category multiplier based on order flow alignment
     if(m_ofiEngine != NULL && m_ofiEngine.IsWarmedUp())
@@ -3140,7 +3242,7 @@ double CEnterpriseStrategyManager::GetStrategyParticipationMultiplier(const int 
 
     double participationScore = m_strategies[strategyIndex].participationScore;
     if(participationScore <= 0.0)
-        participationScore = 0.75;
+        participationScore = 0.90;
 
     return MathMax(0.55, MathMin(1.05, 0.40 + (0.65 * participationScore)));
 }

@@ -14,7 +14,10 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
+#include "../Risk/RiskValidationGate.mqh"
 #include <Trade\Trade.mqh>
+
+class CUnifiedRiskManager;
 
 //+------------------------------------------------------------------+
 //| Spike hunter configuration struct                                 |
@@ -135,6 +138,7 @@ private:
    int                             m_symbolCount;
    int                             m_baseMagic;
    CPositionSizer*                 m_positionSizer;
+   CUnifiedRiskManager*            m_riskManager;
    CTrade                          m_trade;                // For synchronous order execution
 
    // Family-specific overrides (Batch 102)
@@ -627,6 +631,28 @@ private:
       // Calculate magic number: baseMagic + familyMagicOffset + symbolIndex
       int magic = m_baseMagic + GetEffectiveMagicOffset(idx) + idx;
 
+      // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
+      if(m_riskManager != NULL)
+      {
+         STradeValidationRequest riskReq;
+         ZeroMemory(riskReq);
+         riskReq.symbol       = symbol;
+         riskReq.orderType    = orderType;
+         riskReq.lotSize      = lotSize;
+         riskReq.stopLossPips = slPips;
+         riskReq.takeProfitPips = tpPips;
+         riskReq.confidence   = 0.8;
+         riskReq.strategy     = "SPIKE-HUNT";
+         riskReq.requestTime  = TimeCurrent();
+
+         SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "spike-pretrade");
+         if(!riskResult.approved)
+         {
+            PrintFormat("[SPIKE-HUNT-TRADE] REJECTED by risk manager | symbol=%s | reason=%s", symbol, riskResult.reason);
+            return false;
+         }
+      }
+
       // Set up trade object
       m_trade.SetExpertMagicNumber(magic);
       m_trade.SetDeviationInPoints(50);
@@ -701,8 +727,9 @@ public:
       m_symbolCount(0),
       m_baseMagic(0),
       m_familyOverrideCount(0),
-      m_positionSizer(NULL),
-      m_lastPushAlertTime(0),
+       m_positionSizer(NULL),
+       m_riskManager(NULL),
+       m_lastPushAlertTime(0),
       m_pushAlertCount(0),
       m_totalDetections(0),
       m_totalTradesOpened(0),
@@ -721,11 +748,12 @@ public:
    //+------------------------------------------------------------------+
    //| Initialize the engine with config and dependencies               |
    //+------------------------------------------------------------------+
-   bool Init(const SSpikeHunterConfig &config, int baseMagic, CPositionSizer *pSizer)
+   bool Init(const SSpikeHunterConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL)
    {
       m_config         = config;
       m_baseMagic      = baseMagic;
       m_positionSizer  = pSizer;
+      m_riskManager    = pRiskManager;
       m_symbolCount    = 0;
 
       PrintFormat("[SPIKE-HUNT-ENGINE] Initialized | velMult=%.1f | minTicks=%d | atrRatio=%.2f | slATR=%.1f | tpATR=%.1f | maxPos=%d | cooldown=%dms | confluence=%d/3 | magicOffset=%d",

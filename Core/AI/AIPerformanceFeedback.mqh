@@ -17,13 +17,11 @@
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
-class CHedgingProtection;
 class CMarketAnalysis;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
 class CPositionSizer;
-class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
 
@@ -130,6 +128,7 @@ private:
     // Retraining triggers
     double m_minAccuracyThreshold;
     double m_minProfitabilityThreshold;
+    double m_calibrationErrorThreshold;
     int m_minPredictionsForRetraining;
     datetime m_lastRetrainingTime;
     int m_retrainingInterval; // seconds
@@ -190,10 +189,6 @@ public:
     // Performance comparison
     bool CompareWithBenchmark(const double benchmarkAccuracy, const double benchmarkProfitability);
     
-    // Model selection support
-    string GetBestPerformingModel(void);
-    void RecordModelPerformance(const string modelName, const double accuracy, const double profitability);
-    
     // Enhanced retraining triggers (Task 5.3)
     void CheckAutomaticRetraining(void);
     bool ShouldRetrainBasedOnAccuracy(void);
@@ -216,9 +211,6 @@ private:
     double CalculateCalibrationError(void);
     double CalculateSharpeRatio(void);
     
-    // Validation
-    bool ValidatePredictionRecord(const SAIPredictionRecord &record);
-
     // Retraining persistence
     void PersistRetrainingRequest(const string reason);
     void ExportLabeledDataset(const string fileName, const int maxRows);
@@ -236,6 +228,7 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_bufferFull(false),
     m_minAccuracyThreshold(0.55),
     m_minProfitabilityThreshold(0.1),
+    m_calibrationErrorThreshold(0.3),
     m_minPredictionsForRetraining(50),
     m_lastRetrainingTime(0),
     m_retrainingInterval(86400), // 24 hours
@@ -353,9 +346,10 @@ void CAIPerformanceFeedback::RecordOutcome(const string &outcomeSymbol, const da
     m_predictions[index].profitabilityScore = actualReturn;
     
     // Calculate calibration score (how well confidence matched actual outcome)
-    double expectedReturn = m_predictions[index].confidence * 0.02; // Expected 2% return at full confidence
-    m_predictions[index].calibrationScore = 1.0 - MathAbs(actualReturn - expectedReturn) / 0.02;
-    m_predictions[index].calibrationScore = MathMax(0.0, m_predictions[index].calibrationScore);
+    double maxExpectedReturn = MathMax(0.01, MathAbs(actualReturn));
+    double expectedReturn = m_predictions[index].confidence * maxExpectedReturn;
+    m_predictions[index].calibrationScore = 1.0 - MathAbs(actualReturn - expectedReturn) / MathMax(0.01, maxExpectedReturn);
+    m_predictions[index].calibrationScore = MathMax(0.0, MathMin(1.0, m_predictions[index].calibrationScore));
     
     // Update metrics
     UpdateMetrics();
@@ -518,6 +512,7 @@ void CAIPerformanceFeedback::CalculateRecentMetrics(void)
     
     int recentCorrect = 0;
     double recentReturn = 0.0;
+    int labeledCount = 0;
     int startIndex = m_bufferFull ? (m_currentIndex - recentCount + m_maxRecords) % m_maxRecords : 
                                    MathMax(0, m_currentIndex - recentCount);
     
@@ -526,14 +521,16 @@ void CAIPerformanceFeedback::CalculateRecentMetrics(void)
         int index = (startIndex + i) % m_maxRecords;
         if(m_predictions[index].outcomeTime > 0)
         {
+            labeledCount++;
             if(m_predictions[index].predictionCorrect)
                 recentCorrect++;
             recentReturn += m_predictions[index].actualReturn;
         }
     }
     
-    m_currentMetrics.recentAccuracy = (double)recentCorrect / recentCount;
-    m_currentMetrics.recentProfitability = recentReturn / recentCount;
+    if(labeledCount < 10) return;
+    m_currentMetrics.recentAccuracy = (double)recentCorrect / labeledCount;
+    m_currentMetrics.recentProfitability = recentReturn / labeledCount;
 }
 
 //+------------------------------------------------------------------+
@@ -600,7 +597,7 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
     UpdateMetrics();
 
     // Check if metrics improved since last retrain (Issue 12.2)
-    if(m_retrainingCount > 0)
+    if(m_retrainingCount > 0 && m_currentMetrics.totalPredictions > m_minPredictionsForRetraining)
     {
         bool metricsUnchanged = (MathAbs(m_currentMetrics.accuracy - m_preRetrainAccuracy) < 0.001 &&
                                  MathAbs(m_currentMetrics.profitability - m_preRetrainProfitability) < 0.0001 &&
@@ -661,7 +658,7 @@ int CAIPerformanceFeedback::FindPredictionIndex(const string &searchSymbol, cons
     for(int i = 0; i < recordCount; i++)
     {
         if(m_predictions[i].symbol == searchSymbol &&
-           MathAbs(m_predictions[i].predictionTime - predictionTime) < 300) // Within 5 minutes
+           MathAbs(m_predictions[i].predictionTime - predictionTime) <= 5)
         {
             return i;
         }
@@ -813,7 +810,7 @@ void CAIPerformanceFeedback::CheckAutomaticRetraining(void)
     }
     
     // Check calibration issues
-    if(m_currentMetrics.calibrationError > 0.3)
+    if(m_currentMetrics.calibrationError > m_calibrationErrorThreshold)
     {
         needsRetraining = true;
         retrainingReason += "Poor calibration; ";
@@ -896,7 +893,11 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
 
     if(writeHeader)
     {
-        FileWriteString(handle, "timestamp,reason,total_predictions,recent_accuracy,recent_profitability,calibration_error\n");
+        if(FileWriteString(handle, "timestamp,reason,total_predictions,recent_accuracy,recent_profitability,calibration_error\n") <= 0)
+        {
+            FileClose(handle);
+            return;
+        }
     }
 
     string line = StringFormat("%s,%s,%d,%.6f,%.6f,%.6f\n",
@@ -906,7 +907,11 @@ void CAIPerformanceFeedback::PersistRetrainingRequest(const string reason)
                                m_currentMetrics.recentAccuracy,
                                m_currentMetrics.recentProfitability,
                                m_currentMetrics.calibrationError);
-    FileWriteString(handle, line);
+    if(FileWriteString(handle, line) <= 0)
+    {
+        FileClose(handle);
+        return;
+    }
     FileClose(handle);
 }
 

@@ -49,6 +49,12 @@ private:
     double m_confidenceLevel;
     bool m_initialized;
 
+    // Realized volatility from price returns (not prediction signals)
+    double m_priceReturnHistory[];
+    int m_priceReturnHead;
+    int m_priceReturnCount;
+    int m_priceReturnSize;
+
     void RingPush(double &values[], int &head, int &count, const double value)
     {
         // Validate all parameters before accessing array
@@ -113,19 +119,56 @@ private:
         return entropy / MathLog(3.0); // Normalize by max entropy
     }
     
-    // Calculate historical volatility
+    // Calculate realized volatility from price returns (replaces prediction-history based volatility)
     double CalculateHistoricalVolatility(int lookback = 20) {
+        if(m_priceReturnCount < lookback)
+        {
+            // Fallback to prediction history if price returns not available
+            if(m_predictionCount < lookback) return 1.0;
+            double mean = 0.0;
+            int startIndex = m_predictionCount - lookback;
+            for(int i = 0; i < lookback; i++)
+                mean += RingGet(m_predictionHistory, m_predictionHead, m_predictionCount, startIndex + i);
+            mean /= lookback;
+            double variance = 0.0;
+            for(int i = 0; i < lookback; i++)
+            {
+                double diff = RingGet(m_predictionHistory, m_predictionHead, m_predictionCount, startIndex + i) - mean;
+                variance += diff * diff;
+            }
+            variance /= lookback;
+            return MathSqrt(variance);
+        }
+        
+        double mean = 0.0;
+        int startIndex = m_priceReturnCount - lookback;
+        for(int i = 0; i < lookback; i++)
+            mean += RingGet(m_priceReturnHistory, m_priceReturnHead, m_priceReturnCount, startIndex + i);
+        mean /= lookback;
+        
+        double variance = 0.0;
+        for(int i = 0; i < lookback; i++)
+        {
+            double diff = RingGet(m_priceReturnHistory, m_priceReturnHead, m_priceReturnCount, startIndex + i) - mean;
+            variance += diff * diff;
+        }
+        variance /= lookback;
+        
+        return MathSqrt(variance);
+    }
+
+    double CalculateModelUncertainty(int lookback = 20) {
         if(m_predictionCount < lookback) return 1.0;
         
         double mean = 0.0;
         int startIndex = m_predictionCount - lookback;
-        for(int i = 0; i < lookback; i++) {
+        for(int i = 0; i < lookback; i++)
             mean += RingGet(m_predictionHistory, m_predictionHead, m_predictionCount, startIndex + i);
-        }
         mean /= lookback;
         
         double variance = 0.0;
-        for(int i = 0; i < lookback; i++) {
+        for(int i = 0; i < lookback; i++)
+        {
             double diff = RingGet(m_predictionHistory, m_predictionHead, m_predictionCount, startIndex + i) - mean;
             variance += diff * diff;
         }
@@ -161,21 +204,33 @@ public:
         ArrayResize(m_errorHistory, m_historySize);
         ArrayInitialize(m_predictionHistory, 0.0);
         ArrayInitialize(m_errorHistory, 0.0);
+
+        m_priceReturnSize = MathMax(8, historySize);
+        m_priceReturnHead = 0;
+        m_priceReturnCount = 0;
+        ArrayResize(m_priceReturnHistory, m_priceReturnSize);
+        ArrayInitialize(m_priceReturnHistory, 0.0);
         
         Print("[UNCERTAINTY] Quantifier initialized with ", m_historySize, " history size");
     }
     
     // Update prediction history
-    bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0) {
+    bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0, bool hasOutcome = false) {
         RingPush(m_predictionHistory, m_predictionHead, m_predictionCount, prediction);
-        
-        if(actualOutcome != 0.0) {
+
+        if(hasOutcome) {
             double error = prediction - actualOutcome;
             RingPush(m_errorHistory, m_errorHead, m_errorCount, error);
         }
 
         m_initialized = true;
         return true;
+    }
+
+    // Feed realized price return for proper volatility calculation
+    // priceReturn = (close[t] - close[t-1]) / close[t-1]  (percentage return)
+    void UpdateRealizedVolatility(const double priceReturn) {
+        RingPush(m_priceReturnHistory, m_priceReturnHead, m_priceReturnCount, priceReturn);
     }
     
     // Quantify uncertainty using multiple methods
@@ -198,10 +253,16 @@ public:
         double signalSpread = maxSignal - MathMin(MathMin(inBuySignal, inSellSignal), inHoldSignal);
         result.confidence = signalSpread; // Higher spread = higher confidence
         
-        // Historical volatility-based uncertainty
+        // Historical volatility from real price returns (not prediction signals)
         double historicalVol = 1.0;
         if(m_initialized) {
             historicalVol = CalculateHistoricalVolatility();
+        }
+        
+        // Model uncertainty from prediction history (signal instability)
+        double modelUncertainty = 0.5;
+        if(m_initialized && m_predictionCount > 10) {
+            modelUncertainty = CalculateModelUncertainty();
         }
         
         // Prediction error-based uncertainty
@@ -210,14 +271,19 @@ public:
             predictionError = CalculatePredictionError();
         }
         
-        // Combined uncertainty measure
-        result.uncertainty = (result.entropy + historicalVol + predictionError) / 3.0;
+        // Combined uncertainty: entropy + realized vol + model uncertainty + prediction error
+        result.uncertainty = (result.entropy + historicalVol + modelUncertainty + predictionError) / 4.0;
         result.uncertainty = MathMax(0.0, MathMin(1.0, result.uncertainty));
         
         // Calculate confidence bounds using t-distribution approximation
-        double tValue = 1.96; // 95% confidence for normal distribution
-        if(m_confidenceLevel == 0.99) tValue = 2.58;
-        else if(m_confidenceLevel == 0.90) tValue = 1.64;
+        double tValue = 1.96;
+        if(m_confidenceLevel >= 0.999) tValue = 3.29;
+        else if(m_confidenceLevel >= 0.99) tValue = 2.58;
+        else if(m_confidenceLevel >= 0.975) tValue = 2.24;
+        else if(m_confidenceLevel >= 0.95) tValue = 1.96;
+        else if(m_confidenceLevel >= 0.90) tValue = 1.64;
+        else if(m_confidenceLevel >= 0.80) tValue = 1.28;
+        else tValue = 1.96;
         
         double margin = tValue * result.uncertainty;
         result.lowerBound = result.prediction - margin;
@@ -268,11 +334,15 @@ public:
     // Calculate Value at Risk (VaR) based on uncertainty
     double CalculateVaR(double position, const SPredictionWithUncertainty &prediction, 
                        double confidenceLevel = 0.95) {
-        // Use lower bound as worst-case scenario
+        if(MathAbs(position) < 1e-9)
+            return 0.0;
+        
         double worstCase = (position > 0) ? prediction.lowerBound : prediction.upperBound;
         double expectedLoss = MathAbs(position * worstCase);
         
-        return expectedLoss;
+        // Scale by confidence level (higher confidence → more conservative VaR)
+        double confidenceScale = 1.0 + (confidenceLevel - 0.95) * 4.0;
+        return expectedLoss * confidenceScale;
     }
     
     // Bayesian confidence update
@@ -334,66 +404,11 @@ public:
     }
 };
 
-// Global uncertainty quantifier
-CUncertaintyQuantifier* g_uncertaintyQuantifier = NULL;
+// NOTE: g_uncertaintyQuantifier removed — dead code. Each EA instance creates
+// its own CUncertaintyQuantifier via NextGenStrategyBrain. In MT5, globals are
+// per-chart (separate program memory space), so no cross-symbol collision.
 
-//+------------------------------------------------------------------+
-//| Initialize Uncertainty Quantifier                              |
-//+------------------------------------------------------------------+
-bool UncertaintyInit(int historySize = 500, double confidenceLevel = 0.95) {
-    if(g_uncertaintyQuantifier) {
-        delete g_uncertaintyQuantifier;
-    }
-    
-    g_uncertaintyQuantifier = new CUncertaintyQuantifier(historySize, confidenceLevel);
-    return (g_uncertaintyQuantifier != NULL);
-}
-
-//+------------------------------------------------------------------+
-//| Quantify Prediction Uncertainty                                |
-//+------------------------------------------------------------------+
-bool UncertaintyQuantify(double buySignal, double sellSignal, double holdSignal,
-                        SPredictionWithUncertainty &result) {
-    if(!g_uncertaintyQuantifier) {
-        Print("[ERROR] Uncertainty quantifier not initialized");
-        return false;
-    }
-    
-    return g_uncertaintyQuantifier.QuantifyUncertainty(buySignal, sellSignal, holdSignal, result);
-}
-
-//+------------------------------------------------------------------+
-//| Update Uncertainty with Actual Outcome                         |
-//+------------------------------------------------------------------+
-bool UncertaintyUpdate(double prediction, double actualOutcome) {
-    if(!g_uncertaintyQuantifier) return false;
-    return g_uncertaintyQuantifier.UpdatePredictionHistory(prediction, actualOutcome);
-}
-
-//+------------------------------------------------------------------+
-//| Get Risk-Adjusted Position Size                                |
-//+------------------------------------------------------------------+
-double UncertaintyAdjustSize(double baseSize, double uncertainty) {
-    if(!g_uncertaintyQuantifier) return baseSize;
-    return g_uncertaintyQuantifier.GetRiskAdjustedSize(baseSize, uncertainty);
-}
-
-//+------------------------------------------------------------------+
-//| Check if Prediction is Reliable                                |
-//+------------------------------------------------------------------+
-bool UncertaintyIsReliable(const SPredictionWithUncertainty &prediction) {
-    if(!g_uncertaintyQuantifier) return false;
-    return g_uncertaintyQuantifier.IsPredictionReliable(prediction);
-}
-
-//+------------------------------------------------------------------+
-//| Cleanup                                                         |
-//+------------------------------------------------------------------+
-void UncertaintyDeinit() {
-    if(g_uncertaintyQuantifier) {
-        delete g_uncertaintyQuantifier;
-        g_uncertaintyQuantifier = NULL;
-    }
-}
+// Stub for backward compatibility (callers in main EA)
+void UncertaintyDeinit() { /* no-op: per-instance cleanup handled by owner */ }
 
 #endif // __UNCERTAINTY_QUANTIFIER_MQH__

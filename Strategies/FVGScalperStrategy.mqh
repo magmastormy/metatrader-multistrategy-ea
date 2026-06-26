@@ -155,19 +155,19 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 2: Check if current price is inside the FVG zone ---
-        double close0 = iClose(m_symbol, m_timeframe, 0);
-        double open0  = iOpen(m_symbol, m_timeframe, 0);
-        double high0  = iHigh(m_symbol, m_timeframe, 0);
-        double low0   = iLow(m_symbol, m_timeframe, 0);
+        // --- Step 2: Check if current price is inside the FVG zone (use bar 1 = last closed bar) ---
+        double close1 = iClose(m_symbol, m_timeframe, 1);
+        double open1  = iOpen(m_symbol, m_timeframe, 1);
+        double high1  = iHigh(m_symbol, m_timeframe, 1);
+        double low1   = iLow(m_symbol, m_timeframe, 1);
 
-        if(close0 <= 0)
+        if(close1 <= 0)
         {
             SetDecisionReasonTag("FVG_SCALPER_PRICE_UNAVAILABLE");
             return TRADE_SIGNAL_NONE;
         }
 
-        bool priceInZone = (close0 >= fvg.bottom && close0 <= fvg.top);
+        bool priceInZone = (close1 >= fvg.bottom && close1 <= fvg.top);
         if(!priceInZone)
         {
             SetDecisionReasonTag("FVG_SCALPER_PRICE_OUTSIDE_FVG");
@@ -177,8 +177,8 @@ public:
         // --- Step 3: Check for rejection candle pattern ---
         // Bullish rejection: close > open AND (close - low) > 2 * (high - close)
         // Bearish rejection: close < open AND (high - close) > 2 * (close - low)
-        bool bullishRejection = (close0 > open0) && ((close0 - low0) > 2.0 * (high0 - close0));
-        bool bearishRejection = (close0 < open0) && ((high0 - close0) > 2.0 * (close0 - low0));
+        bool bullishRejection = (close1 > open1) && ((close1 - low1) > 2.0 * (high1 - close1));
+        bool bearishRejection = (close1 < open1) && ((high1 - close1) > 2.0 * (close1 - low1));
 
         if(bullish && !bullishRejection)
         {

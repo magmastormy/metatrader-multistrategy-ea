@@ -8,6 +8,7 @@
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
+#include "../Utilities/SafeCopyBuffer.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
 //+------------------------------------------------------------------+
@@ -45,17 +46,6 @@ private:
     // Timeframe validation bounds for scalping mode
     ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
     ENUM_TIMEFRAMES m_maxScalpTimeframe;  // Maximum allowed timeframe for scalping (default: M15)
-
-    bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
-    {
-        for(int attempt = 0; attempt < 3; attempt++)
-        {
-            if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
-                return true;
-            Sleep(10);  // 10ms wait for indicator calculation
-        }
-        return false;
-    }
 
     void LogRejectEvent(const string reasonTag)
     {

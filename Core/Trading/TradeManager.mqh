@@ -28,6 +28,7 @@
 #include "../../IndicatorManager.mqh"
 #include "../Cache/ATRCache.mqh"
 #include "../Utils/Instruments.mqh"
+#include "../Utils/TradeJournal.mqh"
 
 
 
@@ -36,13 +37,11 @@
 // Forward declarations
 class CEnhancedErrorHandler;
 class CUtilities;
-class CHedgingProtection;
 class CMarketAnalysis;
 class CNextGenStrategyBrain;
 class CTransformerBrain;
 struct SPredictionWithUncertainty;
 class CPositionSizer;
-class CStrategyManager;
 class CTradeManager;
 class CPerformanceAnalytics;
 
@@ -718,7 +717,7 @@ private:
         datetime historyFrom = TimeCurrent() - 300;
         datetime historyTo = TimeCurrent() + 60;
 
-        // Single non-blocking check — no Sleep loop
+        // Single non-blocking check �?no Sleep loop
         if(HistorySelect(historyFrom, historyTo))
         {
             if(tradeResult.deal > 0 && HistoryDealSelect(tradeResult.deal))
@@ -750,7 +749,7 @@ private:
             }
         }
 
-        // Deal not found yet — defer to pending confirmation for later resolution
+        // Deal not found yet �?defer to pending confirmation for later resolution
         if(tradeResult.order > 0 && m_pendingConfirmationCount < MAX_PENDING_CONFIRMATIONS)
         {
             int idx = m_pendingConfirmationCount;
@@ -765,7 +764,7 @@ private:
                         symbolName, tradeResult.order);
         }
 
-        // Optimistic return — broker accepted the order, confirmation deferred
+        // Optimistic return �?broker accepted the order, confirmation deferred
         m_lastExecutionReceipt.accepted = true;
         if(m_lastExecutionReceipt.averagePrice <= 0.0)
             m_lastExecutionReceipt.averagePrice = fallbackPrice;
@@ -1536,6 +1535,15 @@ bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
 
     PrintFormat("[BE-APPLIED] %s | ticket=%d | SL %.5f -> %.5f | buffer=%.0f pts",
                 positionSymbol, ticket, currentSL, newSL, buffer);
+
+    double diagPrice = 0;
+    if(m_positionInfo.PositionType() == POSITION_TYPE_BUY)
+        diagPrice = SymbolInfoDouble(positionSymbol, SYMBOL_BID);
+    else
+        diagPrice = SymbolInfoDouble(positionSymbol, SYMBOL_ASK);
+    PrintFormat("[BE-DIAG] %s | ticket=%d | open=%.5f | price=%.5f | newSL=%.5f",
+                positionSymbol, ticket, openPrice, diagPrice, newSL);
+
     return ModifyPosition(ticket, newSL, currentTP);
 }
 
@@ -1575,6 +1583,13 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
 
     if(result)
     {
+        long journalMagic = (long)PositionGetInteger(POSITION_MAGIC);
+        double exitPrice = (orderType == ORDER_TYPE_BUY)
+                              ? SymbolInfoDouble(localSymbol, SYMBOL_BID)
+                              : SymbolInfoDouble(localSymbol, SYMBOL_ASK);
+        JournalTradeClose(ticket, localSymbol, orderType, volume, exitPrice,
+                          posSL, posTP, journalMagic, profit, reason);
+
         // TP/SL calibration warning: if closed by profit-target before TP hit, log remaining distance
         if(posTP > 0.0 && reason != "")
         {
@@ -1666,9 +1681,18 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
     int totalPositions = PositionsTotal();
     int closedCount = 0;
     bool allSuccess = true;
+    datetime closeStartTime = TimeCurrent();
+    const int TIMEOUT_SECONDS = 10;
     
     for(int i = totalPositions - 1; i >= 0; i--)
     {
+        if(TimeCurrent() - closeStartTime > TIMEOUT_SECONDS)
+        {
+            PrintFormat("[TRADE-MANAGER] CloseAllPositions timeout after %d seconds, %d/%d positions closed",
+                        TIMEOUT_SECONDS, closedCount, totalPositions);
+            return false;
+        }
+        
         ulong ticket = PositionGetTicket(i);
         if(ticket > 0)
         {
@@ -1681,6 +1705,9 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
             }
         }
     }
+    
+    if(closedCount > 0)
+        PrintFormat("[TRADE-MANAGER] CloseAllPositions completed: %d positions closed", closedCount);
     
     return allSuccess;
 }
@@ -1910,7 +1937,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         return false;
     }
 
-    // MANDATORY STOP-LOSS GATE: Defense-in-depth — execution layer enforces SL invariant
+    // MANDATORY STOP-LOSS GATE: Defense-in-depth �?execution layer enforces SL invariant
     if(stopLossPips <= 0.0)
     {
         LogError("EXECUTION BLOCKED: Stop-loss is mandatory. Trade rejected", symbolName);
@@ -1925,9 +1952,20 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     bool executionConfirmed = false;
     int retryCount = 0;
     uint lastRetcode = 0;
+    datetime executionStartTime = TimeCurrent();
     
     while(retryCount < MAX_TRADE_RETRIES && !executionConfirmed)
     {
+        if(TimeCurrent() - executionStartTime > 15)
+        {
+            PrintFormat("[TRADE-TIMEOUT] %s | exceeded 15s after %d attempts | retcode=%u",
+                        symbolName, retryCount, lastRetcode);
+            m_lastExecutionReceipt.accepted = false;
+            m_lastExecutionReceipt.note = "TIMEOUT: broker unresponsive after 15s";
+            m_lastExecutionReceipt.retryCount = retryCount;
+            break;
+        }
+
         ApplyFillingModeForSymbol(symbolName);
 
         // Update dynamic slippage based on current volatility
@@ -2523,7 +2561,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     double newStopLoss = 0;
     // Batch104-BUG4: Lower trailing activation threshold.
     // Old: activationPoints = MathMax(step, distance) = max(120, 300) = 300 points
-    // This required 300 points profit before trailing started — too aggressive for forex.
+    // This required 300 points profit before trailing started �?too aggressive for forex.
     // New: activationPoints = distance (the trailing distance itself is the minimum
     // profit needed for the trailing stop to sit above entry for BUY positions).
     double activationPoints = distance;
@@ -2532,7 +2570,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     {
         double atr = CalculateATR(symbolName, PERIOD_CURRENT, 14);
         if(atr <= 0) return false;
-        activationPoints = MathMax(activationPoints, (atr / point) * MathMax(0.75, atrMult * 0.50));
+        activationPoints = MathMax(activationPoints, (atr / point) * MathMax(0.3, atrMult * 0.20));
         if(profitPoints < activationPoints)
             return true;
         
@@ -2575,7 +2613,40 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     if(newStopLoss > 0 && MathAbs(newStopLoss - currentStopLoss) > point * 0.5)
     {
         newStopLoss = NormalizePrice(symbolName, newStopLoss);
-        return ModifyPosition(ticket, newStopLoss, currentTakeProfit);
+        bool trailResult = ModifyPosition(ticket, newStopLoss, currentTakeProfit);
+
+        // Rate-limited [TRAIL-DIAG]: once per position per 5 seconds
+        static datetime s_lastTrailDiagTime[];
+        static ulong    s_lastTrailDiagTicket[];
+        int diagArrSize = ArraySize(s_lastTrailDiagTicket);
+        int diagIdx = -1;
+        for(int d = 0; d < diagArrSize; d++)
+        {
+            if(s_lastTrailDiagTicket[d] == ticket) { diagIdx = d; break; }
+        }
+        datetime now = TimeCurrent();
+        bool shouldDiag = false;
+        if(diagIdx == -1)
+        {
+            ArrayResize(s_lastTrailDiagTicket, diagArrSize + 1);
+            ArrayResize(s_lastTrailDiagTime, diagArrSize + 1);
+            diagIdx = diagArrSize;
+            s_lastTrailDiagTicket[diagIdx] = ticket;
+            s_lastTrailDiagTime[diagIdx] = now;
+            shouldDiag = true;
+        }
+        else if(now - s_lastTrailDiagTime[diagIdx] >= 5)
+        {
+            s_lastTrailDiagTime[diagIdx] = now;
+            shouldDiag = true;
+        }
+        if(shouldDiag)
+        {
+            PrintFormat("[TRAIL-DIAG] %s | ticket=%I64u | profit=%.1f pts | activation=%.1f pts | newSL=%.5f | curSL=%.5f",
+                        symbolName, ticket, profitPoints, activationPoints, newStopLoss, currentStopLoss);
+        }
+
+        return trailResult;
     }
     
     return true;
@@ -2615,7 +2686,26 @@ bool CTradeManager::OpenPosition(const string symbol,
         validationPrice = GetCurrentExecutionPrice(symbol, orderType);
     
     // Execute the order using the freshest price available at send time.
-    return ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
+    bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
+
+    if(executed)
+    {
+        long journalMagic = (long)(m_magicNumber + GetMagicOffsetForSymbol(symbol));
+        double journalPrice = (m_lastExecutionReceipt.averagePrice > 0.0) ? m_lastExecutionReceipt.averagePrice : price;
+        double journalSL = 0.0;
+        double journalTP = 0.0;
+        if(stopLossPips > 0.0)
+            journalSL = CalculateStopLoss(symbol, orderType, journalPrice, stopLossPips);
+        if(takeProfitPips > 0.0)
+            journalTP = CalculateTakeProfit(symbol, orderType, journalPrice, takeProfitPips);
+        ulong journalTicket = (m_lastExecutionReceipt.dealTicket > 0) ? m_lastExecutionReceipt.dealTicket
+                             : (m_lastExecutionReceipt.orderTicket > 0) ? m_lastExecutionReceipt.orderTicket
+                             : m_trade.ResultDeal();
+        JournalTradeOpen(journalTicket, symbol, orderType, normalizedVolume,
+                         journalPrice, journalSL, journalTP, journalMagic, "entry");
+    }
+
+    return executed;
 }
 
 //+------------------------------------------------------------------+

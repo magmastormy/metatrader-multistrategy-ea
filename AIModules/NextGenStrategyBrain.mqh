@@ -1,6 +1,12 @@
 //+------------------------------------------------------------------+
 //| Next-Generation Strategy Brain Integration                       |
 //| Local runtime adapter over shared transformer feature paths       |
+//|                                                                   |
+//| ROLE: Feature provider ONLY. This class produces features and    |
+//| uncertainty estimates for the AI adapters (Transformer/Ensemble/  |
+//| ONNX). It is NOT a direct live voter. Signals must flow through  |
+//| IAIStrategy adapters → EnterpriseStrategyManager consensus.      |
+//| Do NOT use GenerateSignal() output as a direct TRADE_SIGNAL.     |
 //+------------------------------------------------------------------+
 #ifndef __NEXTGEN_STRATEGY_BRAIN_MQH__
 #define __NEXTGEN_STRATEGY_BRAIN_MQH__
@@ -134,6 +140,9 @@ private:
         if(!CAIFeatureVectorBuilder::BuildNNFeatureVector(m_symbol, m_timeframe, features, 1))
             return false;
 
+        if(ArraySize(features) < 31)
+            return false;
+
         double trendBias = features[5] + features[8] + features[10] - 0.5;
         double meanReversion = (features[12] - 0.5) + (features[11] - 0.5);
         double momentum = features[0] + features[22] + features[30];
@@ -174,6 +183,11 @@ public:
 
     bool Initialize(string brainSymbol, ENUM_TIMEFRAMES timeframe)
     {
+        if(brainSymbol == "" || brainSymbol == NULL)
+        {
+            Print("[NEXTGEN] Initialize failed: empty symbol");
+            return false;
+        }
         m_symbol = brainSymbol;
         m_timeframe = timeframe;
 
@@ -206,12 +220,6 @@ public:
     bool GenerateSignal(double price, double volume, const double &indicators[],
                         SEnhancedTradeSignal &signal)
     {
-        // Signature retained for compatibility; runtime features are built directly from market data.
-        price = price;
-        volume = volume;
-        int indicatorCount = ArraySize(indicators);
-        indicatorCount = indicatorCount;
-
         if(!m_initialized)
             return false;
 
@@ -258,6 +266,16 @@ public:
         {
             SPredictionWithUncertainty quantified;
             m_uncertaintyQuantifier.UpdatePredictionHistory(MathMax(buyProb, sellProb));
+
+            // Feed realized price return for proper volatility calculation
+            double close0 = iClose(m_symbol, m_timeframe, 0);
+            double close1 = iClose(m_symbol, m_timeframe, 1);
+            if(close1 > 0.0)
+            {
+                double priceReturn = (close0 - close1) / close1;
+                m_uncertaintyQuantifier.UpdateRealizedVolatility(priceReturn);
+            }
+
             if(m_uncertaintyQuantifier.QuantifyUncertainty(buyProb, sellProb, noneProb, quantified))
             {
                 signal.uncertainty = quantified.uncertainty;
@@ -279,8 +297,8 @@ public:
             double entropy = -(buyProb * MathLog(buyProb + 1e-9) +
                                sellProb * MathLog(sellProb + 1e-9) +
                                noneProb * MathLog(noneProb + 1e-9));
-            signal.uncertainty = entropy / 1.0986;
-            signal.riskAdjustedSize = 1.0 * (1.0 - signal.uncertainty);
+            signal.uncertainty = entropy / MathLog(3.0);
+            signal.riskAdjustedSize = 1.0 - signal.uncertainty;
         }
 
         if(buyProb > sellProb && buyProb > noneProb)
@@ -296,19 +314,19 @@ public:
 
         if(signal.confidence < m_confidenceThreshold)
         {
+            signal.uncertainty = 1.0 - signal.confidence;
             signal.signal = TRADE_SIGNAL_NONE;
             signal.confidence = 0.0;
             signal.reasoning += " [Low Confidence]";
         }
 
+        signal.isValid = (signal.signal != TRADE_SIGNAL_NONE && signal.confidence > 0.0);
         UpdateSignalCache(currentBarTime, signal);
         return true;
     }
 
-public:
-    bool UpdatePerformance(double tradeReturn, bool isWin, double drawdown = 0.0)
+    bool UpdatePerformance(double tradeReturn, bool isWin)
     {
-        drawdown = drawdown;
         m_totalTrades++;
         m_totalReturn += tradeReturn;
         if(isWin)
@@ -336,7 +354,7 @@ public:
         return (m_totalTrades > 0) ? (double)m_winningTrades / m_totalTrades : 0.0;
     }
 
-    int GetEpochCount()
+    int GetTradeCount()
     {
         return m_totalTrades;
     }
@@ -353,6 +371,9 @@ public:
         FileWriteInteger(handle, m_totalTrades);
         FileWriteInteger(handle, m_winningTrades);
         FileWriteLong(handle, (long)m_lastUpdate);
+        FileWriteDouble(handle, m_confidenceThreshold);
+        FileWriteDouble(handle, m_uncertaintyThreshold);
+        FileWriteInteger(handle, m_useUncertaintyFiltering ? 1 : 0);
 
         FileClose(handle);
         return true;

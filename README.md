@@ -1,11 +1,24 @@
 # metatrader-multistrategy-ea
 
 ## Document Metadata
-- Last Updated: 2026-06-18
-- Status: Batch 104
+- Last Updated: 2026-06-25
+- Status: Batch 106
 - Primary Runtime: `MultiStrategyAutonomousEA.mq5`
 
 Autonomous multi-strategy MetaTrader 5 EA with enterprise-style signal management, multi-tier validation, unified risk authority, and AI-assisted strategy voters integrated into the runtime consensus path, with explicit separation between MT5-native AI, Python-trained ONNX runtime voting, and optional external reasoning sidecars.
+
+## Batch 106: Synthetic Strategy Research + Compounding Tiers
+
+Aggressive micro-account growth infrastructure for Deriv synthetics ($10-$100):
+
+- **CCompoundingTierManager** — Auto-tier switching at $25/$50/$100/$500 milestones. 5 tiers from MICRO_AGGRESSIVE (4% risk, 25% DD) to PROFESSIONAL (1.5% risk, 12% DD). Tier transitions logged with `[COMPOUNDING-TIER-MILESTONE]` and Alert().
+- **CFamilyStrategyWeightMatrix** — Per-Deriv-family cluster weight multipliers. Crash/Boom boosts STRUCTURE 1.5x, Volatility boosts MEAN_REVERSION 1.5x, HFV boosts SCALP 2.0x.
+- **CSessionWeightManager** — Asian/London/NY/Weekend session-aware sizing. Weekend gets 1.2x sizing (tightest spreads), London/NY overlap gets 0.85x (peak volatility).
+- **CSkewStepAnalyzer** — 200-step rolling buffer phase detection for Skew Step indices. Calm phase → 1.3x sizing, post-spike → 0.6x, counter-move due → 0.5x.
+- **Per-Family Position Limits** — Crash/Boom max 2, Volatility max 3, HFV max 2 positions per family.
+- **ADX Lot Modifier** — Wired into position sizer chain (0x no trend → 1.5x very strong).
+- **PythonBridge Fixed** — 3 correlation methods now parse JSON responses instead of returning empty data.
+- **Batch 103 Weights Configurable** — 5 new InpWeight* inputs for FVG Scalper, Turtle Soup, Breaker Block, NY Open Gap, Asian Range Break.
 
 ## System Snapshot
 - **Multi-Asset Class Profiler (Batch 103):** Full multi-asset support extending beyond Deriv synthetics to Forex, Metals, Indices, and Energies:

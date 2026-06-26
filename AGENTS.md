@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-06-18
+- Last Updated: 2026-06-25
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 104 - SL/BE/Trailing + Chart Drawing Bug Fixes
+- Latest Batch: Batch 106 - Synthetic Strategy Research + Compounding Tiers + SL/BE/Trailing Fixes + Legacy Cleanup
 
 ## 1. Mission
 Maintain and evolve `metatrader-multistrategy-ea` with production-safe discipline:
@@ -72,6 +72,14 @@ After any strategy/risk/execution change, verify:
 - `[AI-VOTE]` (if AI enabled)
 - `[SHADOW-TRADE]` or live trade result logs
 - `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
+- `[COMPOUNDING-TIER-HEARTBEAT]` (if compounding tiers enabled)
+- `[COMPOUNDING-TIER-MILESTONE]` (on account milestone crosses)
+- `[FAMILY-WEIGHT-MATRIX]` (per-family cluster weighting active)
+- `[FAMILY-WEIGHT-VOL]` (volatility family weight deviation log)
+- `[SESSION-WEIGHT-HEARTBEAT]` (session-aware adjustments)
+- `[SKEW-STEP-HEARTBEAT]` (Skew Step phase analysis)
+- `[RISK-FAMILY-POS]` (family position limit blocked trade)
+- `[ADX-MODIFIER]` (ADX-based lot scaling applied)
 
 ## 7. Compile and Artifact Hygiene
 - Compilation helpers may create temporary `.log/.txt` artifacts.

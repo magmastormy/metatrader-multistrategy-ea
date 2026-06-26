@@ -10,9 +10,6 @@
 #include "../Utils/Enums.mqh"
 #include "../Engines/MarketAnalysis.mqh"
 
-// Forward declarations
-class CStrategyWrapper;
-
 //+------------------------------------------------------------------+
 //| Symbol execution context                                         |
 //+------------------------------------------------------------------+

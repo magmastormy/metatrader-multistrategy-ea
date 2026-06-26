@@ -13,6 +13,7 @@
 #include "..\Cache\ConsensusCache.mqh"
 #include "..\Risk\RiskTierManager.mqh"
 #include "..\Risk\SafeModeConfig.mqh"
+#include "..\Trading\IntelligentSLGuard.mqh"
 
 class CPositionLifecycleManager
 {
@@ -25,7 +26,7 @@ private:
     CSafeMode*                  m_safeMode;
     int                         m_symbolCount;
     bool                        m_initialized;
-    datetime                    m_lastManageTime;
+    uint                        m_lastManageTimeMs;
 
     // SRE config
     bool   m_sreEnabled;
@@ -47,6 +48,10 @@ private:
     // Magic number for position filtering
     int    m_magicNumber;
 
+    // I2: Intelligent SL Guard
+    CIntelligentSLGuard m_slGuard;
+    CRegimeEngine*      m_regimeEngine;
+
 public:
     CPositionLifecycleManager() :
         m_tradeManager(NULL),
@@ -55,7 +60,7 @@ public:
         m_safeMode(NULL),
         m_symbolCount(0),
         m_initialized(false),
-        m_lastManageTime(0),
+        m_lastManageTimeMs(0),
         m_sreEnabled(true),
         m_sreMinConfidence(0.58),
         m_sreProfitGuard(true),
@@ -69,7 +74,8 @@ public:
         m_trailingStepPoints(5),
         m_useATRTrailing(false),
         m_atrMultiplier(1.5),
-        m_magicNumber(0)
+        m_magicNumber(0),
+        m_regimeEngine(NULL)
     {}
 
     ~CPositionLifecycleManager() {}
@@ -125,6 +131,8 @@ public:
     }
 
     bool IsInitialized() const { return m_initialized; }
+
+    void SetRegimeEngine(CRegimeEngine* engine) { m_regimeEngine = engine; }
 
     //--- Check if a magic number falls within this EA's ownership range
     //--- Range: [m_magicNumber, m_magicNumber + symbolCount*100 + 99]
@@ -264,15 +272,72 @@ public:
         if(!m_lifecycleEnabled)
             return;
 
-        datetime nowManage = TimeCurrent();
-        if(m_lastManageTime != 0 && (nowManage - m_lastManageTime) < 1)
+        uint nowMs = GetTickCount();
+        if(m_lastManageTimeMs != 0 && (nowMs - m_lastManageTimeMs) < 500)
             return;
 
-        m_tradeManager.ManageAllPositions(m_breakevenBufferPts,
-                                          m_trailingDistancePts,
-                                          m_trailingStepPoints,
-                                          m_useATRTrailing,
-                                          m_atrMultiplier);
+        // I2: Check regime state — pause trailing in ranging markets
+        bool pauseTrailing = false;
+        if(m_regimeEngine != NULL)
+        {
+            SRegimeSnapshot snap = m_regimeEngine.GetSnapshot();
+            if(snap.state == REGIME_RANGE)
+            {
+                pauseTrailing = true;
+            }
+        }
+
+        if(pauseTrailing)
+        {
+            // In ranging regime, only allow breakeven moves (free money), skip trailing
+            for(int i = PositionsTotal() - 1; i >= 0; i--)
+            {
+                ulong ticket = PositionGetTicket(i);
+                if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+                if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+
+                double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+                double currentSL = PositionGetDouble(POSITION_SL);
+                ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                double point = SymbolInfoDouble(PositionGetString(POSITION_SYMBOL), SYMBOL_POINT);
+                if(point <= 0) point = 0.00001;
+
+                bool isBuy = (type == POSITION_TYPE_BUY);
+                double buffer = m_breakevenBufferPts * point;
+
+                // Only move to breakeven — no trailing in ranging market
+                if(isBuy && currentPrice >= openPrice + buffer && (currentSL < openPrice || currentSL == 0))
+                {
+                    double newSL = NormalizeDouble(openPrice + buffer * 0.1, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
+                    if(newSL > currentSL)
+                    {
+                        m_tradeManager.ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));
+                        PrintFormat("[SL-GUARD] BE applied in RANGE | %s | ticket=%d | SL=%.5f",
+                                    PositionGetString(POSITION_SYMBOL), ticket, newSL);
+                    }
+                }
+                else if(!isBuy && currentPrice <= openPrice - buffer && (currentSL > openPrice || currentSL == 0))
+                {
+                    double newSL = NormalizeDouble(openPrice - buffer * 0.1, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
+                    if(newSL < currentSL || currentSL == 0)
+                    {
+                        m_tradeManager.ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));
+                        PrintFormat("[SL-GUARD] BE applied in RANGE | %s | ticket=%d | SL=%.5f",
+                                    PositionGetString(POSITION_SYMBOL), ticket, newSL);
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Normal mode — full BE + trailing
+            m_tradeManager.ManageAllPositions(m_breakevenBufferPts,
+                                              m_trailingDistancePts,
+                                              m_trailingStepPoints,
+                                              m_useATRTrailing,
+                                              m_atrMultiplier);
+        }
 
         // Safe mode partial profit taking for swing positions
         if(m_riskTierManager.GetCurrentTier() == RISK_TIER_CONSERVATIVE && m_safeMode != NULL && m_safeMode.IsInitialized())
@@ -280,7 +345,7 @@ public:
             m_safeMode.ManageSafeModePositions(m_tradeManager);
         }
 
-        m_lastManageTime = nowManage;
+        m_lastManageTimeMs = nowMs;
     }
 };
 

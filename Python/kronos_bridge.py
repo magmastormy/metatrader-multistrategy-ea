@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
+import urllib.error
 from pathlib import Path
 from urllib import request
 
@@ -24,8 +26,12 @@ class KronosBridge:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, socket.timeout, Exception) as exc:
+            print(f"KronosBridge request failed: {exc}")
+            return None
 
 
 def main() -> None:

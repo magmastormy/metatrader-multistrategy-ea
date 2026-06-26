@@ -70,11 +70,47 @@ export interface EAAIAdapter {
   accuracy?: number;
 }
 
+export interface EAAINeuralNet {
+  active: boolean;
+  signal?: string;
+  confidence?: number;
+  labels_resolved?: number;
+  training_steps?: number;
+  conformal_quantile?: number;
+  conformal_alpha?: number;
+  asset_class?: number;
+  barrier_k?: number;
+  barrier_vert_bars?: number;
+  trade_linked_labels?: number;
+  normalization_ready?: boolean;
+}
+
+export interface EAAIRegime {
+  current?: string;
+  trend_prob?: number;
+  range_prob?: number;
+  volatile_prob?: number;
+  spike_prob?: number;
+}
+
+export interface EAAIMetaLabeler {
+  features?: number;
+  cooldown?: number;
+  early_stop_patience?: number;
+  recent_win_rate?: number;
+  recent_avg_confidence?: number;
+  samples_since_train?: number;
+}
+
 export interface EAAI {
   onnx: EAAIAdapter;
   ensemble: EAAIAdapter;
   transformer: EAAIAdapter;
   nn: EAAIAdapter;
+  neural_net?: EAAINeuralNet;
+  regime?: EAAIRegime;
+  meta_labeler?: EAAIMetaLabeler;
+  features_total?: number;
 }
 
 export interface EAStrategy {

@@ -3,7 +3,7 @@ import AnimatedCounter from './AnimatedCounter';
 
 interface MetricCardProps {
   label: string;
-  value: number;
+  value: number | string;
   decimals?: number;
   prefix?: string;
   suffix?: string;
@@ -21,6 +21,9 @@ export default function MetricCard({
   change,
   sparkData,
 }: MetricCardProps) {
+  const displayValue = typeof value === 'number'
+    ? <AnimatedCounter value={value} decimals={decimals} prefix={prefix} suffix={suffix} />
+    : <>{prefix}{value}{suffix}</>;
   return (
     <div className="glass-card p-4 transition-all duration-200 hover:scale-[1.02] hover:border-accent-cyan/30 hover:shadow-[0_0_20px_rgba(34,211,238,0.1)]">
       <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">
@@ -28,7 +31,7 @@ export default function MetricCard({
       </p>
       <div className="flex items-end gap-2">
         <span className="text-2xl font-bold text-text-primary">
-          <AnimatedCounter value={value} decimals={decimals} prefix={prefix} suffix={suffix} />
+          {displayValue}
         </span>
         {change !== undefined && (
           <span

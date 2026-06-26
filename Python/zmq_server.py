@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import pickle
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -131,6 +133,8 @@ class SignalServer:
         # ZMQ setup
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.REP)
+        self.socket.setsockopt(zmq.SNDHWM, 10)
+        self.socket.setsockopt(zmq.RCVHWM, 10)
         self.socket.bind(f"tcp://127.0.0.1:{zmq_port}")
         self.zmq_port = zmq_port
         self.heartbeat_timeout = heartbeat_timeout
@@ -138,6 +142,12 @@ class SignalServer:
 
         self.doubleadapt = DoubleAdaptBridge()
         self.rl_policy = RegimeAwarePolicy()
+
+        # Metrics tracking
+        self._start_time = time.time()
+        self._request_count = 0
+        self._request_ok_count = 0
+        self._request_error_count = 0
 
         # HTTP server setup
         self.enable_http = enable_http and HAS_HTTP
@@ -213,6 +223,10 @@ class SignalServer:
 
         return models
 
+    def _is_healthy(self) -> bool:
+        elapsed = (datetime.now(timezone.utc) - self.last_heartbeat).total_seconds()
+        return elapsed <= self.heartbeat_timeout
+
     @staticmethod
     def _detect_family_from_symbol(symbol: str) -> int:
         """Extract family ID from symbol name (sent by MQL5)."""
@@ -228,6 +242,7 @@ class SignalServer:
 
         @self.app.post("/predict")
         async def predict_endpoint(request: Request):
+            self._request_count += 1
             try:
                 data = await request.json()
                 features = np.asarray(data["features"], dtype=np.float32)
@@ -236,8 +251,10 @@ class SignalServer:
                 symbol = data.get("symbol", "")
                 asset_class = data.get("asset_class", -1)
                 result = self._process_request(features, mode, family_id=family_id, symbol=symbol, asset_class=asset_class)
+                self._request_ok_count += 1
                 return JSONResponse(content=result)
             except Exception as exc:
+                self._request_error_count += 1
                 raise HTTPException(status_code=500, detail=str(exc))
 
         @self.app.get("/health")
@@ -298,6 +315,20 @@ class SignalServer:
                 "models_loaded": list(models.keys()),
                 "feature_count": get_feature_count(family_id),
                 "ts": datetime.now(timezone.utc).isoformat(),
+            })
+
+        @self.app.get("/metrics")
+        async def metrics():
+            return JSONResponse(content={
+                "status": "healthy" if self._is_healthy() else "degraded",
+                "uptime_seconds": int(time.time() - self._start_time),
+                "requests_total": self._request_count,
+                "requests_ok": self._request_ok_count,
+                "requests_error": self._request_error_count,
+                "last_heartbeat_age": int(time.time() - self.last_heartbeat.timestamp()) if self.last_heartbeat else None,
+                "zmq_port": self.zmq_port,
+                "http_port": self.http_port if self.enable_http else None,
+                "models_loaded": len(self.asset_class_models),
             })
 
     def _process_request(self, features_flat: np.ndarray, mode: str = "ensemble",
@@ -511,11 +542,36 @@ class SignalServer:
         print(f"ZMQ server listening on tcp://127.0.0.1:{self.zmq_port}")
 
         while True:
+            # L13: Enforce heartbeat timeout
+            elapsed = (datetime.now(timezone.utc) - self.last_heartbeat).total_seconds()
+            if elapsed > self.heartbeat_timeout:
+                print(f"WARNING: Heartbeat timeout exceeded ({elapsed:.1f}s > {self.heartbeat_timeout}s). Shutting down.")
+                self.shutdown()
+                break
+
             try:
                 events = dict(poller.poll(timeout=5000))
 
                 if self.socket in events:
-                    message = self.socket.recv_json()
+                    # L16: Guard recv_json for decode errors
+                    try:
+                        message = self.socket.recv_json()
+                    except json.JSONDecodeError as exc:
+                        print(f"ZMQ JSON decode error: {exc}")
+                        try:
+                            self.socket.send_json({"error": f"Invalid JSON: {exc}"})
+                        except:
+                            pass
+                        continue
+
+                    # L16: Validate required keys
+                    if not isinstance(message, dict) or "features" not in message:
+                        try:
+                            self.socket.send_json({"error": "Missing required key: 'features'"})
+                        except:
+                            pass
+                        continue
+
                     self.last_heartbeat = datetime.now(timezone.utc)
 
                     if message.get("type") == "heartbeat":
@@ -530,7 +586,12 @@ class SignalServer:
                     family_id = message.get("family_id", -1)
                     symbol = message.get("symbol", "")
                     asset_class = message.get("asset_class", -1)
+                    self._request_count += 1
                     result = self._process_request(payload, mode, family_id=family_id, symbol=symbol, asset_class=asset_class)
+                    if "error" in result:
+                        self._request_error_count += 1
+                    else:
+                        self._request_ok_count += 1
                     self.socket.send_json(result)
 
             except KeyboardInterrupt:
@@ -560,6 +621,7 @@ class SignalServer:
             self.http_thread.start()
         self._run_zmq()
 
+    # L17: Callers should call shutdown() on exit to close socket and context cleanly.
     def shutdown(self):
         print("Shutting down server...")
         try:

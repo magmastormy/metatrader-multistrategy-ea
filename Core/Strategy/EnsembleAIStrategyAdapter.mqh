@@ -10,6 +10,7 @@
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
 #include "../../AIModules/EnsembleMetaLearner.mqh"
+#include "../../AIModules/AIConfig.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
 
 class CEnsembleAIStrategyAdapter : public IAIStrategy
@@ -124,6 +125,7 @@ private:
                 m_ensemble.RemoveModel(m_ensemble.GetActiveModelCount() - 1);
             delete m_modelB;
             m_modelB = NULL;
+            delete m_modelA;
             m_modelA = NULL;
             return false;
         }
@@ -172,7 +174,7 @@ public:
         m_cacheTimeframe = PERIOD_CURRENT;
         m_hasCachedSignal = false;
         m_lastDecisionReasonTag = "ENSEMBLE_UNSET";
-        m_minConfidence = 0.70;
+        m_minConfidence = AI_MIN_CONFIDENCE;
         m_ownsModels = false;
         m_voteWindowStart = TimeCurrent();
         m_directionWindowIdx = 0;
@@ -183,32 +185,16 @@ public:
 
     virtual ~CEnsembleAIStrategyAdapter()
     {
-        // Clean up models if this adapter owns them
-        // The ensemble's m_models.FreeMode(true) setting means it will also try to delete
-        // models when cleared, so we need to ensure we only delete if we own them
-        // and haven't already passed ownership to the ensemble
         if(m_ownsModels)
         {
-            // Remove models from ensemble first to prevent double-delete
-            m_ensemble.RemoveModel(m_ensemble.GetActiveModelCount() - 1);
-            if(m_ensemble.GetActiveModelCount() > 0)
+            // RemoveModel deletes via FreeMode(true), so just remove and NULL references
+            while(m_ensemble.GetActiveModelCount() > 0)
                 m_ensemble.RemoveModel(m_ensemble.GetActiveModelCount() - 1);
-            
-            // Now safely delete the models
-            if(m_modelA != NULL)
-            {
-                delete m_modelA;
-                m_modelA = NULL;
-            }
-            if(m_modelB != NULL)
-            {
-                delete m_modelB;
-                m_modelB = NULL;
-            }
+            m_modelA = NULL;
+            m_modelB = NULL;
         }
         else
         {
-            // Ensemble owns the models, just clear references
             m_modelA = NULL;
             m_modelB = NULL;
         }
@@ -383,24 +369,45 @@ public:
     {
         if(m_directionWindowCount < 20)
             return false;
+        int windowSize = MathMin(m_directionWindowCount, 20);
         int buyCount = 0, sellCount = 0;
-        for(int i = 0; i < 20; i++)
+        for(int i = 0; i < windowSize; i++)
         {
             if(m_directionWindow[i] == 1) buyCount++;
             else if(m_directionWindow[i] == -1) sellCount++;
         }
-        double buyRatio = (double)buyCount / 20.0;
-        double sellRatio = (double)sellCount / 20.0;
+        double buyRatio = (double)buyCount / (double)windowSize;
+        double sellRatio = (double)sellCount / (double)windowSize;
         return (buyRatio > 0.80 || sellRatio > 0.80);
+    }
+
+    double GetDirectionalBias() const
+    {
+        int buyCount = 0, sellCount = 0;
+        for(int i = 0; i < m_directionWindowCount; i++)
+        {
+            if(m_directionWindow[i] == 1) buyCount++;
+            else if(m_directionWindow[i] == -1) sellCount++;
+        }
+        int directionalCount = buyCount + sellCount;
+        if(directionalCount < 5) return 0.0;
+        return (double)buyCount / (double)directionalCount;
     }
     
     virtual double GetCalibratedWeight(double baseWeight) const override
     {
-        if(IsDirectionDegenerate())
-            return baseWeight * 0.5;
-        return baseWeight;
+        if(!IsDirectionDegenerate())
+            return baseWeight;
+        double bias = GetDirectionalBias();
+        if(bias > 0.95 || bias < 0.05)
+            return baseWeight * 0.10;
+        if(bias > 0.90 || bias < 0.10)
+            return baseWeight * 0.25;
+        if(bias > 0.80 || bias < 0.20)
+            return baseWeight * 0.50;
+        return baseWeight * 0.70;
     }
-    virtual bool ValidateParameters(void) override { return true; }
+    virtual bool ValidateParameters(void) override { return m_ensemble.GetActiveModelCount() > 0 && m_modelsInitialized; }
     virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
@@ -439,6 +446,7 @@ public:
     
     virtual void SetTemperature(const double temperature) override
     {
+        if(temperature < 0) {}
     }
     
     virtual int GetRegimeState(void) const override

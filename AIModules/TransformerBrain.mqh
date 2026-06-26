@@ -8,6 +8,7 @@
 #define __TRANSFORMER_BRAIN_MQH__
 
 #include <Arrays/ArrayObj.mqh>
+#include "AIConfig.mqh"
 
 #define TRANSFORMER_HEAD_STATE_MAGIC   1414677859
 #define TRANSFORMER_HEAD_STATE_VERSION 2
@@ -24,7 +25,7 @@ private:
 public:
     CEWCRegularizer()
     {
-        m_lambda = 400.0;
+        m_lambda = 100.0;
         m_initialized = false;
         m_weightCount = 0;
     }
@@ -101,26 +102,30 @@ public:
                 int odd = even + 1;
                 if(odd >= m_dModel)
                     break;
-                m_cos[Offset(pos, even)] = cosTheta;
-                m_cos[Offset(pos, odd)] = cosTheta;
-                m_sin[Offset(pos, even)] = -sinTheta;
-                m_sin[Offset(pos, odd)] = sinTheta;
+                // Store at pair index (i) so Apply() can read at vec_index/2
+                m_cos[Offset(pos, i)] = cosTheta;
+                m_sin[Offset(pos, i)] = sinTheta;
             }
         }
     }
 
     void Apply(double &vec[], const int pos)
     {
-        if(pos < 0 || pos >= m_maxSeqLen || ArraySize(vec) < 2)
+        if(pos < 0 || ArraySize(vec) < 2)
             return;
 
         int width = MathMin(ArraySize(vec), m_dModel);
+        // Clamp position to precomputed range; beyond maxSeqLen use last computed rotation
+        int safePos = MathMin(pos, m_maxSeqLen - 1);
         for(int i = 0; i < width - 1; i += 2)
         {
             double v0 = vec[i];
             double v1 = vec[i + 1];
-            vec[i] = v0 * m_cos[Offset(pos, i)] + v1 * m_sin[Offset(pos, i)];
-            vec[i + 1] = v0 * m_cos[Offset(pos, i + 1)] + v1 * m_sin[Offset(pos, i + 1)];
+            int pairIdx = i / 2;
+            double c = m_cos[Offset(safePos, pairIdx)];
+            double s = m_sin[Offset(safePos, pairIdx)];
+            vec[i]     = v0 * c - v1 * s;
+            vec[i + 1] = v0 * s + v1 * c;
         }
     }
 };
@@ -235,12 +240,11 @@ public:
         ArrayResize(m_w2, m_dFF * m_dModel);
         ArrayResize(m_b2, m_dModel);
 
-        double scale1 = MathSqrt(2.0 / (double)(m_dModel + m_dFF)) * m_residualScale;
-        double scale2 = MathSqrt(2.0 / (double)(m_dFF + m_dModel)) * m_residualScale;
+        double ffnScale = MathSqrt(2.0 / (double)(m_dModel + m_dFF)) * m_residualScale;
         for(int i = 0; i < ArraySize(m_w1); i++)
-            m_w1[i] = (NextRand() - 0.5) * 2.0 * scale1;
+            m_w1[i] = (NextRand() - 0.5) * 2.0 * ffnScale;
         for(int i = 0; i < ArraySize(m_w2); i++)
-            m_w2[i] = (NextRand() - 0.5) * 2.0 * scale2;
+            m_w2[i] = (NextRand() - 0.5) * 2.0 * ffnScale;
         ArrayInitialize(m_b1, 0.0);
         ArrayInitialize(m_b2, 0.0);
     }
@@ -557,6 +561,7 @@ private:
     double          m_gradSqBuffer[];
     int             m_gradBufHead;
     int             m_gradBufCount;
+    int             m_gradBufWindowSize;
     long            m_adamStep;
     double          m_adamBeta1;
     double          m_adamBeta2;
@@ -572,10 +577,12 @@ private:
     int             m_maxSeqLen;
     uint            m_state;
     CEWCRegularizer m_ewc;
+    double          m_temperature;
 
     int GradSqOffset(const int row, const int col) const
     {
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         if(total <= 0)
             return 0;
         return row * total + col;
@@ -624,8 +631,11 @@ private:
         ArrayInitialize(m_patternBiases, 0.0);
 
         int totalClassParams = classWeightCount + ArraySize(m_classificationBiases);
-        m_ewc.Init(totalClassParams);
-        ArrayResize(m_gradSqBuffer, 50 * totalClassParams);
+        int totalPatternParams = patternWeightCount + ArraySize(m_patternBiases);
+        int totalHeadParams = totalClassParams + totalPatternParams;
+        m_ewc.Init(totalHeadParams);
+        m_gradBufWindowSize = 50;
+        ArrayResize(m_gradSqBuffer, m_gradBufWindowSize * totalHeadParams);
         ArrayInitialize(m_gradSqBuffer, 0.0);
         m_gradBufHead = 0;
         m_gradBufCount = 0;
@@ -641,9 +651,9 @@ private:
     void StoreGradSq(const int index, const double gradSq)
     {
         int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
-        if(index < 0 || total <= 0 || ArraySize(m_gradSqBuffer) < (50 * total))
+        if(index < 0 || total <= 0 || ArraySize(m_gradSqBuffer) < (m_gradBufWindowSize * total))
             return;
-        int row = m_gradBufHead % 50;
+        int row = m_gradBufHead % m_gradBufWindowSize;
         if(index >= total)
             return;
         m_gradSqBuffer[GradSqOffset(row, index)] = gradSq;
@@ -670,6 +680,16 @@ private:
 
         m[index] = m_adamBeta1 * m[index] + (1.0 - m_adamBeta1) * totalGrad;
         v[index] = m_adamBeta2 * v[index] + (1.0 - m_adamBeta2) * totalGrad * totalGrad;
+        double mHat = m[index] / (1.0 - MathPow(m_adamBeta1, (double)m_adamStep));
+        double vHat = v[index] / (1.0 - MathPow(m_adamBeta2, (double)m_adamStep));
+        double lr = GetCyclicLR();
+        weights[index] -= lr * ((mHat / (MathSqrt(vHat) + m_adamEps)) + (m_adamWD * weights[index]));
+    }
+
+    void AdamWUpdateRaw(double &weights[], double &m[], double &v[], const int index, const double grad)
+    {
+        m[index] = m_adamBeta1 * m[index] + (1.0 - m_adamBeta1) * grad;
+        v[index] = m_adamBeta2 * v[index] + (1.0 - m_adamBeta2) * grad * grad;
         double mHat = m[index] / (1.0 - MathPow(m_adamBeta1, (double)m_adamStep));
         double vHat = v[index] / (1.0 - MathPow(m_adamBeta2, (double)m_adamStep));
         double lr = GetCyclicLR();
@@ -746,6 +766,8 @@ private:
 
         m_adamStep++;
         int ewcIndex = 0;
+        double cachedWeights[];
+        GetWeights(cachedWeights);
         for(int c = 0; c < 3; c++)
         {
             double target = (c == targetClass) ? 1.0 : 0.0;
@@ -755,20 +777,27 @@ private:
             for(int i = 0; i < m_dModel; i++)
             {
                 int idx = rowOffset + i;
-                AdamWUpdate(m_classificationWeights, m_classAdamM, m_classAdamV, idx, error * features[i], true, ewcIndex);
+                double ewcGrad = m_ewc.PenaltyGrad(cachedWeights, ewcIndex);
+                double totalGrad = error * features[i] + ewcGrad;
+                StoreGradSq(ewcIndex, totalGrad * totalGrad);
+                AdamWUpdateRaw(m_classificationWeights, m_classAdamM, m_classAdamV, idx, totalGrad);
                 ewcIndex++;
             }
 
-            AdamWUpdate(m_classificationBiases, m_classBiasAdamM, m_classBiasAdamV, c, error, true, ewcIndex);
+            double ewcGradBias = m_ewc.PenaltyGrad(cachedWeights, ewcIndex);
+            double totalGradBias = error + ewcGradBias;
+            StoreGradSq(ewcIndex, totalGradBias * totalGradBias);
+            AdamWUpdateRaw(m_classificationBiases, m_classBiasAdamM, m_classBiasAdamV, c, totalGradBias);
             ewcIndex++;
         }
 
-        int completedRow = m_gradBufHead % 50;
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int completedRow = m_gradBufHead % m_gradBufWindowSize;
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         for(int clearIdx = ewcIndex; clearIdx < total; clearIdx++)
             m_gradSqBuffer[GradSqOffset(completedRow, clearIdx)] = 0.0;
         m_gradBufHead++;
-        if(m_gradBufCount < 50)
+        if(m_gradBufCount < m_gradBufWindowSize)
             m_gradBufCount++;
     }
 
@@ -778,6 +807,9 @@ private:
             return;
 
         m_adamStep++;
+        int classParamCount = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        double cachedWeights[];
+        GetWeights(cachedWeights);
         for(int c = 0; c < 10; c++)
         {
             double target = (c == targetClass) ? 1.0 : 0.0;
@@ -786,19 +818,29 @@ private:
             for(int i = 0; i < m_dModel; i++)
             {
                 int idx = rowOffset + i;
-                AdamWUpdate(m_patternWeights, m_patternAdamM, m_patternAdamV, idx, error * features[i], false, -1);
+                int ewcIdx = classParamCount + idx;
+                double totalGrad = error * features[i];
+                if(m_ewc.IsAnchored())
+                    totalGrad += m_ewc.PenaltyGrad(cachedWeights, ewcIdx);
+                StoreGradSq(ewcIdx, totalGrad * totalGrad);
+                AdamWUpdateRaw(m_patternWeights, m_patternAdamM, m_patternAdamV, idx, totalGrad);
             }
-            AdamWUpdate(m_patternBiases, m_patternBiasAdamM, m_patternBiasAdamV, c, error, false, -1);
+            int biasEwcIdx = classParamCount + ArraySize(m_patternWeights) + c;
+            double totalGradBias = error;
+            if(m_ewc.IsAnchored())
+                totalGradBias += m_ewc.PenaltyGrad(cachedWeights, biasEwcIdx);
+            StoreGradSq(biasEwcIdx, totalGradBias * totalGradBias);
+            AdamWUpdateRaw(m_patternBiases, m_patternBiasAdamM, m_patternBiasAdamV, c, totalGradBias);
         }
     }
 
 public:
-    CTransformerBrain(const int dModel = 32,
-                      const int numHeads = 4,
-                      const int numLayers = 2,
-                      const int dFF = 64,
-                      const int maxSeqLen = 60,
-                      const double learningRate = 0.001)
+    CTransformerBrain(const int dModel = AI_DEFAULT_DMODEL,
+                      const int numHeads = AI_DEFAULT_NUM_HEADS,
+                      const int numLayers = AI_DEFAULT_NUM_LAYERS,
+                      const int dFF = AI_DEFAULT_DFF,
+                      const int maxSeqLen = AI_DEFAULT_MAX_SEQ_LEN,
+                      const double learningRate = AI_DEFAULT_LR)
     {
         m_dModel = MathMax(2, dModel);
         m_numHeads = MathMax(1, numHeads);
@@ -814,6 +856,7 @@ public:
         m_totalLoss = 0.0;
         m_trainingSteps = 0;
         m_state = 20260419;
+        m_temperature = 1.0;
 
         m_blocks.FreeMode(true);
         for(int i = 0; i < m_numLayers; i++)
@@ -835,6 +878,9 @@ public:
     int GetNumHeads() const { return m_numHeads; }
     int GetNumLayers() const { return m_numLayers; }
     bool IsWarmedUp(const int threshold = 100) const { return m_trainingSteps >= threshold; }
+    int GetTrainingSteps() const { return m_trainingSteps; }
+    double GetTemperature() const { return m_temperature; }
+    void SetTemperature(const double temperature) { m_temperature = MathMax(0.1, MathMin(5.0, temperature)); }
 
     bool Forward(const double &inputFeatures[], const int actualSeqLen, double &output[])
     {
@@ -873,9 +919,9 @@ public:
 
         if(m_blocks.Total() > 0)
         {
-            CTransformerBlock* first = (CTransformerBlock*)m_blocks.At(0);
-            if(first != NULL)
-                first.GetAttentionWeights(m_attentionWeights);
+            CTransformerBlock* last = (CTransformerBlock*)m_blocks.At(m_blocks.Total() - 1);
+            if(last != NULL)
+                last.GetAttentionWeights(m_attentionWeights);
         }
 
         return true;
@@ -933,7 +979,10 @@ public:
     double CalculateLoss(const double &predictions[], const int targetClass) const
     {
         if(ArraySize(predictions) != 3 || targetClass < 0 || targetClass >= 3)
+        {
+            PrintFormat("[TRANSFORMER] CalculateLoss: invalid input (size=%d, target=%d)", ArraySize(predictions), targetClass);
             return 0.0;
+        }
         return -MathLog(MathMax(predictions[targetClass], 1e-12));
     }
 
@@ -999,6 +1048,7 @@ public:
     {
         m_trainingSteps = 0;
         m_totalLoss = 0.0;
+        m_adamStep = 0;
         ArrayInitialize(m_classAdamM, 0.0);
         ArrayInitialize(m_classAdamV, 0.0);
         ArrayInitialize(m_classBiasAdamM, 0.0);
@@ -1022,7 +1072,8 @@ public:
 
     void GetRecentFisherApprox(double &out[])
     {
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         ArrayResize(out, total);
         ArrayInitialize(out, 0.0);
         if(m_gradBufCount <= 0)
@@ -1039,13 +1090,18 @@ public:
 
     void GetWeights(double &out[])
     {
-        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases);
+        int total = ArraySize(m_classificationWeights) + ArraySize(m_classificationBiases)
+                  + ArraySize(m_patternWeights) + ArraySize(m_patternBiases);
         ArrayResize(out, total);
         int idx = 0;
         for(int i = 0; i < ArraySize(m_classificationWeights); i++)
             out[idx++] = m_classificationWeights[i];
         for(int i = 0; i < ArraySize(m_classificationBiases); i++)
             out[idx++] = m_classificationBiases[i];
+        for(int i = 0; i < ArraySize(m_patternWeights); i++)
+            out[idx++] = m_patternWeights[i];
+        for(int i = 0; i < ArraySize(m_patternBiases); i++)
+            out[idx++] = m_patternBiases[i];
     }
 
     void AnchorEWC(const double &fisherApprox[])
@@ -1082,6 +1138,23 @@ public:
             FileWriteDouble(fh, m_patternWeights[i]);
         for(int i = 0; i < ArraySize(m_patternBiases); i++)
             FileWriteDouble(fh, m_patternBiases[i]);
+        // Save Adam moments for training stability across checkpoint cycles
+        for(int i = 0; i < ArraySize(m_classAdamM); i++)
+            FileWriteDouble(fh, m_classAdamM[i]);
+        for(int i = 0; i < ArraySize(m_classAdamV); i++)
+            FileWriteDouble(fh, m_classAdamV[i]);
+        for(int i = 0; i < ArraySize(m_classBiasAdamM); i++)
+            FileWriteDouble(fh, m_classBiasAdamM[i]);
+        for(int i = 0; i < ArraySize(m_classBiasAdamV); i++)
+            FileWriteDouble(fh, m_classBiasAdamV[i]);
+        for(int i = 0; i < ArraySize(m_patternAdamM); i++)
+            FileWriteDouble(fh, m_patternAdamM[i]);
+        for(int i = 0; i < ArraySize(m_patternAdamV); i++)
+            FileWriteDouble(fh, m_patternAdamV[i]);
+        for(int i = 0; i < ArraySize(m_patternBiasAdamM); i++)
+            FileWriteDouble(fh, m_patternBiasAdamM[i]);
+        for(int i = 0; i < ArraySize(m_patternBiasAdamV); i++)
+            FileWriteDouble(fh, m_patternBiasAdamV[i]);
         FileClose(fh);
         return true;
     }
@@ -1146,6 +1219,27 @@ public:
             m_patternWeights[i] = FileReadDouble(fh);
         for(int i = 0; i < ArraySize(m_patternBiases); i++)
             m_patternBiases[i] = FileReadDouble(fh);
+
+        // Load Adam moments if present (forward-compatible with older checkpoints)
+        if(!FileIsEnding(fh))
+        {
+            for(int i = 0; i < ArraySize(m_classAdamM); i++)
+                m_classAdamM[i] = FileReadDouble(fh);
+            for(int i = 0; i < ArraySize(m_classAdamV); i++)
+                m_classAdamV[i] = FileReadDouble(fh);
+            for(int i = 0; i < ArraySize(m_classBiasAdamM); i++)
+                m_classBiasAdamM[i] = FileReadDouble(fh);
+            for(int i = 0; i < ArraySize(m_classBiasAdamV); i++)
+                m_classBiasAdamV[i] = FileReadDouble(fh);
+            for(int i = 0; i < ArraySize(m_patternAdamM); i++)
+                m_patternAdamM[i] = FileReadDouble(fh);
+            for(int i = 0; i < ArraySize(m_patternAdamV); i++)
+                m_patternAdamV[i] = FileReadDouble(fh);
+            for(int i = 0; i < ArraySize(m_patternBiasAdamM); i++)
+                m_patternBiasAdamM[i] = FileReadDouble(fh);
+            for(int i = 0; i < ArraySize(m_patternBiasAdamV); i++)
+                m_patternBiasAdamV[i] = FileReadDouble(fh);
+        }
 
         FileClose(fh);
         
