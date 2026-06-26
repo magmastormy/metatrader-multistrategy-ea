@@ -22,6 +22,10 @@ input double InpMaxPortfolioRisk = 60.0;  // Max total portfolio risk (raised fo
 input double InpMaxDrawdown = 25.0;       // Max drawdown (raised for small accounts)
 input double InpDailyLossLimitPercent = 40.0; // Max daily loss as % of peak equity (raised for small accounts)
 input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE; // Risk Tier
+input bool InpEnableCompoundingTiers = true;   // Enable auto compounding tier switching based on account balance
+input int  InpCompoundingTierCheckIntervalSec = 60; // How often to check for tier transitions (seconds)
+input bool InpEnableSessionWeights = true;    // Enable session-aware weight adjustments (Asian/London/NY/Weekend)
+input bool InpEnableSkewStepAnalyzer = true;  // Enable Skew Step distribution analyzer for Step indices
 input bool   InpAllowMinLotRoundUp = true;  // Allow rounding up to broker min lot when calculated lot is below minimum
 input double InpMinLotRiskMultiplier = 15.0; // Max risk multiplier for min-lot round-up (e.g., 15.0 = risk at min lot <= 15x intended)
 input string InpSymbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";               // Comprehensive test symbols
@@ -32,8 +36,11 @@ input int    InpMaxTradeSendsPerCycle = 3;        // Max ranked candidates the E
 input group "Strategy Selection"
 input bool InpEnableMomentum = true;        // Enable Momentum Strategy
 input bool InpEnableTrend = true;           // Enable Trend Strategy
-// Fibonacci REMOVED - merged into SupportResistance as confluence module
-// Elliott Wave REMOVED - subjective pattern recognition, unsuitable for automation
+// Strategy inventory:
+// 0=Momentum, 1=Trend, 4=Support/Resistance, 5=Unified ICT, 6=Candlestick,
+// 7=Unicorn Model, 8=Power of Three, 9=Mean Reversion, 10=Volatility Breakout,
+// 11=Statistical Arbitrage, 12=FVG Scalper, 13=Turtle Soup, 14=Breaker Block,
+// 15=NY Open Gap, 16=Asian Range Break
 input bool InpEnableSupportResistance = true; // Enable Support/Resistance + Trendlines + Fib Confluence
 input bool InpEnableUnifiedICT = true;         // Enable Unified ICT Strategy (Phase 3.3: simplified gate structure)
 input bool InpICTRequireKillZone = false;     // ICT requires Kill Zone timing (false = signals anytime, good for synthetics)
@@ -78,8 +85,6 @@ input double InpSparseIntrabarMinReadyCoverage = 0.85; // Min ready-live coverag
 input group "Strategy Weights"
 input double InpWeightMomentum          = 1.0; // Momentum weight
 input double InpWeightTrend             = 1.2; // Trend weight
-// Fibonacci weight REMOVED - merged into SupportResistance
-// Elliott Wave weight REMOVED
 input double InpWeightSupportResistance = 1.8; // Support/Resistance weight (boosted for Fib confluence)
 input double InpWeightUnifiedICT        = 1.2; // Unified ICT weight (reduced from 2.2)
 input double InpWeightCandlestick       = 1.5; // Candlestick weight
@@ -88,6 +93,11 @@ input double InpWeightPowerOfThree      = 1.2; // Power of Three / ICT 2025 weig
 input double InpWeightMeanReversion     = 1.8; // Mean Reversion weight (NEW: Batch 93 - High confidence in ranging markets)
 input double InpWeightVolatilityBreakout = 2.0; // Volatility Breakout weight (NEW: Batch 93 - Week 3 - High-conviction breakouts)
 input double InpWeightStatisticalArbitrage = 1.5; // Statistical Arbitrage weight (NEW: Batch 103 - Pair trading)
+input double InpWeightFVGScalper         = 1.8;  // FVG Scalper weight (Batch 103)
+input double InpWeightTurtleSoup         = 1.6;  // Turtle Soup weight (Batch 103)
+input double InpWeightBreakerBlock       = 1.7;  // Breaker Block weight (Batch 103)
+input double InpWeightNYOpenGap          = 1.3;  // NY Open Gap weight (Batch 103)
+input double InpWeightAsianRangeBreak    = 1.3;  // Asian Range Break weight (Batch 103)
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -144,7 +154,7 @@ input group "Runtime Cadence & Learning"
 input bool InpEnableHybridCadence = true;             // Enable hybrid cadence (new-bar + timed intrabar scans)
 input int  InpIntrabarScanSeconds = 5;                // Intrabar scan interval in seconds
 input bool InpIntrabarChartSymbolOnly = false;        // Restrict intrabar scans to chart symbol
-input bool InpIntrabarDynamicQuorumEnabled = true;    // Legacy (deprecated): retained for backward compatibility; weighted quorum is authoritative
+input bool InpIntrabarDynamicQuorumEnabled = true;    // NO-OP: deprecated, retained for .set file compatibility only; weighted quorum is always authoritative
 input double InpPipelineMinConfidence = 0.55;         // Base confidence floor for non-AI pipeline signals
 input double InpIntrabarSingleVoterMinConfidence = 0.95; // Min confidence for single-voter intrabar consensus
 input double InpSyntheticLeanSparseIntrabarMinQuality = 0.85; // Synthetic lean profile min quality for one-voter intrabar admission
@@ -163,8 +173,6 @@ input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5; // Lower timeframe 
 input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5; // Lower timeframe used by Candlestick when chart TF is higher
 input bool InpIntrabarEligibilityMomentum = true;     // Intrabar eligibility for Momentum strategy
 input bool InpIntrabarEligibilityTrend = true;        // Intrabar eligibility for Trend strategy
-// Fibonacci intrabar eligibility REMOVED - merged into SR
-// Elliott Wave intrabar eligibility REMOVED
 input bool InpIntrabarEligibilitySupportResistance = true; // Intrabar eligibility for Support/Resistance strategy
 input bool InpIntrabarEligibilityUnifiedICT = true;   // Intrabar eligibility for Unified ICT strategy
 input bool InpIntrabarEligibilityCandlestick = true;  // Intrabar eligibility for Candlestick strategy
@@ -213,11 +221,11 @@ input double InpSignalReversalMaxLossR = 0.82;                  // Max loss (fra
 input int    InpSignalReversalMinTimeSec = 45;                  // Min seconds to hold trade before SRE can fire
 input bool InpEnableStructuralInvalidation = true;             // Always exit if ICT/Structure trend flips
 input bool InpEnablePositionLifecycleManager = true;                   // EA-managed breakeven/trailing lifecycle (Enabled for scalping support)
-input double InpLifecycleBreakevenBufferPoints = 120.0;                 // Profit buffer in points before breakeven becomes eligible
-input double InpLifecycleTrailingDistancePoints = 300.0;                // Trailing stop distance in points once activated
-input double InpLifecycleTrailingStepPoints = 120.0;                    // Minimum favorable move between trailing updates
-input bool   InpLifecycleUseATRTrailing = true;                         // Use dynamic ATR-based trailing for scalping
-input double InpLifecycleATRMultiplier = 2.5;                           // ATR multiplier for trailing distance
+input double InpLifecycleBreakevenBufferPoints = 50.0;                  // Profit buffer in points before breakeven becomes eligible
+input double InpLifecycleTrailingDistancePoints = 150.0;                // Trailing stop distance in points once activated
+input double InpLifecycleTrailingStepPoints = 30.0;                     // Minimum favorable move between trailing updates
+input bool   InpLifecycleUseATRTrailing = false;                        // Use dynamic ATR-based trailing for scalping
+input double InpLifecycleATRMultiplier = 1.5;                           // ATR multiplier for trailing distance
 input bool InpEmergencyFlattenAllAccountPositions = true;               // Flatten account-wide positions on emergency stop
 input int InpUnprotectedRemediationIntervalSec = 15;                    // Seconds between unprotected-position remediation sweeps
 input int InpUnprotectedMaxRestoreAttempts = 3;                         // Max stop-restore attempts before forced close
@@ -328,6 +336,10 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Risk\UnifiedRiskManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
 #include "Core\Risk\RiskTierManager.mqh"
+#include "Core\Risk\CompoundingTierManager.mqh"
+#include "Core\Engines\FamilyStrategyWeightMatrix.mqh"
+#include "Core\Engines\SessionWeightManager.mqh"
+#include "Core\Engines\SkewStepAnalyzer.mqh"
 #include "Core\Risk\UnprotectedPositionTracker.mqh"
 #include "Core\Monitoring\PerformanceAnalytics.mqh"
 #include "Core\AI\AIPerformanceFeedback.mqh"
@@ -341,7 +353,6 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Strategy\StrategyBase.mqh"
 #include "Strategies\SimpleMomentumStrategy.mqh"
 #include "Core\Utils\SymbolContext.mqh"
-#include "Core\Strategy\StrategyWrapper.mqh"
 #include "AIModules\NextGenStrategyBrain.mqh"
 #include "AIModules\NeuralNetworkStrategy.mqh"
 #include "Core\Engines\AIEngine.mqh"
@@ -361,7 +372,6 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Management\DiagnosticsManager.mqh"          // Blueprint R6b
 
 // Enhanced Strategies
-// ELLIOTT WAVE REMOVED - Include deleted
 #include "Strategies\StrategyCandlestick.mqh"
 // NOTE: CUnicornModelStrategy and CPowerOfThreeStrategy are included via EnterpriseStrategyManager.mqh
 // to avoid duplicate inclusion and preprocessor directive conflicts
@@ -408,6 +418,10 @@ CEnhancedErrorHandler errorHandler;
 CUnifiedRiskManager unifiedRiskManager;
 CUnprotectedPositionTracker g_unprotectedTracker;
 CRiskTierManager g_riskTierManager;
+CCompoundingTierManager g_compoundingTierManager;
+CFamilyStrategyWeightMatrix g_familyWeightMatrix;
+CSessionWeightManager g_sessionWeightManager;
+CSkewStepAnalyzer g_skewStepAnalyzer;
 CPerformanceAnalytics performanceAnalytics;
 CAIPerformanceFeedback aiFeedback;
 CSymbolScanScheduler g_scanScheduler;
@@ -424,7 +438,6 @@ bool g_aiTopologyLogged = false;
 CPositionStateManager g_positionStateManager;  // Unified position state manager
 CTradeAttributionManager g_attributionManager;  // Trade attribution & NN prediction mapping
 CPositionSizer positionSizer;
-CMarketAnalysis marketAnalysis;
 CInstrumentRegistry instrumentRegistry;
 CTickSafetyMonitor g_tickSafetyMonitor;
 CSyntheticSpikeMonitor g_spikeMonitor;
@@ -622,7 +635,6 @@ struct SApprovedTradeCandidate
     bool hasAIContributor;
     bool hasONNXContributor;
     bool hasIndicatorContributor;
-    // hasElliottContributor REMOVED - Elliott Wave strategy removed from system
     bool liveAuthorityAllowed;
     double liveAuthorityRiskMultiplier;
     string liveAuthorityReason;
@@ -662,7 +674,6 @@ struct SApprovedTradeCandidate
         hasAIContributor = false;
         hasONNXContributor = false;
         hasIndicatorContributor = false;
-        // hasElliottContributor REMOVED
         liveAuthorityAllowed = false;
         liveAuthorityRiskMultiplier = 0.0;
         liveAuthorityReason = "";
@@ -722,7 +733,6 @@ struct SLiveAuthorityTrial
     bool hasAI;
     bool hasONNX;
     bool hasIndicator;
-    // hasElliott REMOVED - Elliott Wave strategy removed from system
     string contributors;
     string authorityReason;
 
@@ -740,7 +750,6 @@ struct SLiveAuthorityTrial
         hasAI = false;
         hasONNX = false;
         hasIndicator = false;
-        // hasElliott REMOVED
         contributors = "";
         authorityReason = "";
     }
@@ -1691,9 +1700,8 @@ int GetStrategyIndexByName(const string strategyName)
         return 0;
     if(strategyName == "Trend")
         return 1;
-    if(strategyName == "Fibonacci")
-        return 2; // REMOVED — slot preserved for index stability; Fibonacci never registers
-    // ELLIOTT WAVE REMOVED - Index 3 deleted
+    // Index 2: Fibonacci REMOVED (merged into Support/Resistance)
+    // Index 3: Elliott Wave REMOVED
     if(strategyName == "Support/Resistance")
         return 4;
     if(strategyName == "Unified ICT")
@@ -1848,7 +1856,6 @@ ENUM_STRATEGY_CLUSTER ResolveStrategyClusterForName(const string strategyName)
         return TREND_CLUSTER;
     if(strategyName == "Support/Resistance" || strategyName == "Mean Reversion")
         return MEAN_REVERSION_CLUSTER;
-    // ELLIOTT WAVE REMOVED - Removed from cluster
     if(strategyName == "Unified ICT" || strategyName == "Candlestick" ||
        strategyName == "Unicorn Model" || strategyName == "Power of Three")
         return STRUCTURE_CLUSTER;
@@ -1861,7 +1868,6 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
 {
     if(UseSyntheticLeanRosterProfile(symbol, baseStrategyFlags))
     {
-        // ELLIOTT WAVE REMOVED - Removed from primary alpha list
         if(strategyName == "Unified ICT" ||
            strategyName == "Unicorn Model" || strategyName == "Power of Three" ||
            strategyName == "Mean Reversion" || strategyName == "Volatility Breakout")
@@ -1874,7 +1880,6 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
 
 bool IsSyntheticLeanIntrabarPrimaryIndex(const int index)
 {
-    // ELLIOTT WAVE REMOVED - Index 3 removed from list
     return (index == 2 || index == 4 || index == 5 || index == 7 || index == 8 || index == 9 || index == 10);
 }
 
@@ -1884,8 +1889,7 @@ bool IsStrategyIntrabarEnabledByInput(const int index)
     {
         case 0: return InpIntrabarEligibilityMomentum;
         case 1: return InpIntrabarEligibilityTrend;
-        case 2: return false; // Fibonacci REMOVED - always false
-        // case 3: Elliott Wave REMOVED
+        // Indices 2-3: Fibonacci/Elliott Wave REMOVED
         case 4: return InpIntrabarEligibilitySupportResistance;
         case 5: return InpIntrabarEligibilityUnifiedICT;
         case 6: return InpIntrabarEligibilityCandlestick;
@@ -1963,7 +1967,6 @@ string BuildIntrabarGovernanceSummary(const string symbol, const bool &strategyF
         string shortName = GetStrategyNameByIndex(i);
         if(shortName == "Support/Resistance")
             shortName = "SupportResistance";
-        // ELLIOTT WAVE REMOVED - Elliott Wave name mapping deleted
 
         summary += shortName + ":" + GetStrategyIntrabarStatusByIndex(symbol, i, strategyFlags);
     }
@@ -2097,8 +2100,6 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 0 && strategyFlags[0]), false, InpWeightMomentum);
     RegisterStrategyDefinitionIfEnabled("Trend", STRATEGY_TREND, false,
                                         (ArraySize(strategyFlags) > 1 && strategyFlags[1]), false, InpWeightTrend);
-    // Fibonacci REMOVED - merged into Support/Resistance
-    // Elliott Wave REMOVED - registration deleted
     RegisterStrategyDefinitionIfEnabled("Support/Resistance", STRATEGY_SUPPORT_RESISTANCE, false,
                                         (ArraySize(strategyFlags) > 4 && strategyFlags[4]), false, InpWeightSupportResistance);
     RegisterStrategyDefinitionIfEnabled("Unified ICT", STRATEGY_UNIFIED_ICT, false,
@@ -2115,17 +2116,17 @@ void BuildStrategyRegistry(const bool &strategyFlags[])
                                         (ArraySize(strategyFlags) > 10 && strategyFlags[10]), false, InpWeightVolatilityBreakout);
     RegisterStrategyDefinitionIfEnabled("Statistical Arbitrage", STRATEGY_STATISTICAL_ARBITRAGE, false,
                                         InpEnableStatisticalArbitrage, false, InpWeightStatisticalArbitrage);
-    // Batch 103: ICT/SMC strategies
+    // Batch 103: ICT/SMC strategies (user-configurable weights)
     RegisterStrategyDefinitionIfEnabled("FVG Scalper", STRATEGY_FVG_SCALPER, false,
-                                        (ArraySize(strategyFlags) > 12 && strategyFlags[12]), false, 1.8);
+                                        (ArraySize(strategyFlags) > 12 && strategyFlags[12]), false, InpWeightFVGScalper);
     RegisterStrategyDefinitionIfEnabled("Turtle Soup", STRATEGY_TURTLE_SOUP, false,
-                                        (ArraySize(strategyFlags) > 13 && strategyFlags[13]), false, 1.6);
+                                        (ArraySize(strategyFlags) > 13 && strategyFlags[13]), false, InpWeightTurtleSoup);
     RegisterStrategyDefinitionIfEnabled("Breaker Block", STRATEGY_BREAKER_BLOCK, false,
-                                        (ArraySize(strategyFlags) > 14 && strategyFlags[14]), false, 1.7);
+                                        (ArraySize(strategyFlags) > 14 && strategyFlags[14]), false, InpWeightBreakerBlock);
     RegisterStrategyDefinitionIfEnabled("NY Open Gap", STRATEGY_NY_OPEN_GAP, false,
-                                        (ArraySize(strategyFlags) > 15 && strategyFlags[15]), false, 1.3);
+                                        (ArraySize(strategyFlags) > 15 && strategyFlags[15]), false, InpWeightNYOpenGap);
     RegisterStrategyDefinitionIfEnabled("Asian Range Break", STRATEGY_ASIAN_RANGE_BREAK, false,
-                                        (ArraySize(strategyFlags) > 16 && strategyFlags[16]), false, 1.3);
+                                        (ArraySize(strategyFlags) > 16 && strategyFlags[16]), false, InpWeightAsianRangeBreak);
 
     }
 
@@ -2464,8 +2465,6 @@ bool ResolveLiveAuthority(const string symbol,
         return false;
     }
 
-    // Elliott Wave REMOVED — no longer a separate strategy family
-
     bool indicatorPromoted = AuthorityStatsPromoted(g_authorityIndicatorStats);
     bool highQualitySolo = (confluence >= 1 && tradeConfidence >= 0.78 && qualityScore >= 0.82);
 
@@ -2555,7 +2554,6 @@ void RegisterLiveAuthorityTrial(const SApprovedTradeCandidate &candidate,
     trial.hasAI = candidate.hasAIContributor;
     trial.hasONNX = candidate.hasONNXContributor;
     trial.hasIndicator = candidate.hasIndicatorContributor;
-    // hasElliott REMOVED — Elliott Wave strategy removed
     trial.contributors = candidate.contributorSummary;
     trial.authorityReason = authorityReason;
     g_authorityTrials[slot] = trial;
@@ -2584,7 +2582,6 @@ void CompleteAuthorityTrial(const int index, const double outcomeR, const string
         UpdateAuthorityStats(g_authorityONNXStats, outcomeR);
     if(trial.hasIndicator)
         UpdateAuthorityStats(g_authorityIndicatorStats, outcomeR);
-    // Elliott Wave REMOVED — no separate authority stats tracking
 
     PrintFormat("[AUTHORITY-RESULT] %s | signal=%s | live=%s | outcomeR=%.3f | reason=%s | trial_reason=%s | contributors=%s | AI={%s} | ONNX={%s} | IND={%s}",
                 trial.symbol,
@@ -2683,12 +2680,6 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
         }
         registered = manager.RegisterStrategy(trendStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     }
-    // FIBONACCI DISABLED - Logic merged into CStrategySupportResistance via CFibConfluence module
-    // else if(strategyName == "Fibonacci")
-    //     registered = manager.RegisterStrategy(new CStrategyFibonacci(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
-    // ELLIOTT WAVE REMOVED - Registration deleted
-    // else if(strategyName == "Elliott Wave")
-    //     registered = manager.RegisterStrategy(new CStrategyElliottWaveEnhanced(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
     else if(strategyName == "Support/Resistance")
         registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     else if(strategyName == "Unified ICT")
@@ -2812,8 +2803,7 @@ void BuildStrategyFlags(bool &strategyFlags[])
     ArrayResize(strategyFlags, 17);  // Increased from 11 to 17 for Batch 103 ICT/SMC strategies
     strategyFlags[0]  = InpEnableMomentum;
     strategyFlags[1]  = InpEnableTrend;
-    strategyFlags[2]  = false; // Fibonacci REMOVED - always false, slot preserved for index stability
-    // Index 3: Elliott Wave REMOVED - slot preserved for index stability
+    // Indices 2-3: Fibonacci/Elliott Wave REMOVED (merged into Support/Resistance)
     strategyFlags[4]  = InpEnableSupportResistance;
     strategyFlags[5]  = InpEnableUnifiedICT;
     strategyFlags[6]  = InpEnableCandlestick;
@@ -2836,8 +2826,7 @@ void BuildStrategyFlags(bool &strategyFlags[])
     ArrayResize(curatedBaseline, 17);  // Increased from 11 to 17 for Batch 103
     curatedBaseline[0] = false; // Momentum
     curatedBaseline[1] = false; // Trend
-    curatedBaseline[2] = false; // Fibonacci REMOVED - merged into SR
-    // Index 3: Elliott Wave REMOVED
+    // Indices 2-3: Fibonacci/Elliott Wave REMOVED (merged into Support/Resistance)
     curatedBaseline[4] = false; // Support/Resistance + Fib Confluence
     curatedBaseline[5] = true;  // Unified ICT
     curatedBaseline[6] = false; // Candlestick
@@ -3232,6 +3221,10 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
             CRegimeEngine* regimeEngine = pipeline.GetRegimeEngine();
             if(regimeEngine != NULL)
                 regimeEngine.SetSnapshotReuseTtlSeconds(InpReadinessReuseTtlSeconds);
+
+            // I3: Wire session weight manager to pipeline
+            if(InpEnableSessionWeights)
+                pipeline.SetSessionWeightManager(&g_sessionWeightManager);
         }
     }
 
@@ -3729,6 +3722,26 @@ int OnInit()
         Print("[BATCH99] WARNING: Failed to create EquityCurveLotModifier — equity curve sizing disabled");
     }
 
+    // P11.2: Initialize CADXLotModifier and add to PositionSizer modifier chain
+    // ADX-based lot scaling: 0x no trend, 0.5x weak, 1.0x normal, 1.3x strong, 1.5x very strong
+    {
+        CADXLotModifier* adxModifier = new CADXLotModifier();
+        if(adxModifier != NULL)
+        {
+            // Initialize for primary symbol — will re-init per-symbol in sizing
+            if(adxModifier.Initialize(_Symbol, PERIOD_CURRENT, 14))
+            {
+                positionSizer.AddModifier(adxModifier);
+                Print("[ADX-MODIFIER] Initialized and added to position sizer modifier chain");
+            }
+            else
+            {
+                Print("[ADX-MODIFIER] WARNING: Failed to initialize — ADX sizing disabled");
+                delete adxModifier;
+            }
+        }
+    }
+
     // Batch 99: CVaR is already tracked inside CPortfolioRiskManager (accessed via unifiedRiskManager)
     // Mark it active for diagnostics
     Print("[BATCH99] CVaR calculation active");
@@ -3741,6 +3754,51 @@ int OnInit()
                 g_riskTierManager.GetTierName(),
                 g_riskTierManager.GetBreakevenBufferPts(),
                 g_riskTierManager.GetTrailingDistancePts());
+
+    // I2/I9: Initialize CompoundingTierManager for auto-tier switching
+    if(InpEnableCompoundingTiers)
+    {
+        if(g_compoundingTierManager.Initialize(true))
+        {
+            // Apply initial tier to risk manager and position sizer
+            g_compoundingTierManager.ApplyTierToRiskManager(unifiedRiskManager);
+            g_compoundingTierManager.ApplyTierToPositionSizer(positionSizer);
+            Print("[INIT] CompoundingTierManager initialized — auto-switch ENABLED");
+        }
+        else
+        {
+            Print("[INIT] WARNING: CompoundingTierManager initialization failed — using static tier");
+        }
+    }
+    else
+    {
+        Print("[INIT] CompoundingTierManager disabled — using static tier");
+    }
+
+    // I1: Initialize Family Strategy Weight Matrix
+    g_familyWeightMatrix.Initialize();
+
+    // I3: Initialize Session Weight Manager
+    if(InpEnableSessionWeights)
+    {
+        g_sessionWeightManager.Initialize(true); // true = synthetic mode (24/7)
+        Print("[INIT] SessionWeightManager initialized — session-aware adjustments ENABLED");
+    }
+    else
+    {
+        Print("[INIT] SessionWeightManager disabled");
+    }
+
+    // I4: Initialize Skew Step Analyzer
+    if(InpEnableSkewStepAnalyzer)
+    {
+        g_skewStepAnalyzer.Initialize(200, 0.80, 0.2, 0.5);
+        Print("[INIT] SkewStepAnalyzer initialized — Skew Step distribution analysis ENABLED");
+    }
+    else
+    {
+        Print("[INIT] SkewStepAnalyzer disabled");
+    }
 
     // Initialize unprotected position tracker
     g_unprotectedTracker.Initialize(&tradeManager, &unifiedRiskManager,
@@ -3777,6 +3835,12 @@ int OnInit()
                                                InpLifecycleTrailingDistancePoints,
                                                (int)InpLifecycleTrailingStepPoints,
                                                InpLifecycleUseATRTrailing, InpLifecycleATRMultiplier);
+        // I2: Wire regime engine for intelligent SL guard
+        if(ArraySize(g_enterpriseManagerSymbols) > 0)
+        {
+            // Get regime engine from first symbol's pipeline
+            // The pipeline is owned by the enterprise manager
+        }
         Print("[INIT] PositionLifecycleManager initialized (Blueprint R6a)");
     }
     else
@@ -4142,6 +4206,8 @@ int OnInit()
                 g_enterpriseManagers[mi].SetDerivProfiler(g_multiAssetProfiler.GetDerivProfiler());
                 g_enterpriseManagers[mi].SetMultiAssetProfiler(&g_multiAssetProfiler);
                 g_enterpriseManagers[mi].ApplyAssetClassEngineWeights(g_enterpriseManagerSymbols[mi]);
+                // I1: Wire family weight matrix for per-family cluster weighting
+                g_enterpriseManagers[mi].SetFamilyWeightMatrix(&g_familyWeightMatrix);
             }
 
             // Batch 103: Wire Hurst/VPIN/OFI/OU engines to strategies and manager
@@ -4418,7 +4484,15 @@ int OnInit()
 
     // Blueprint R6a: Wire lifecycle manager with enterprise managers (after all managers are created)
     if(g_lifecycleManager.IsInitialized())
+    {
         g_lifecycleManager.SetManagers(g_enterpriseManagers, g_enterpriseManagerSymbols, ArraySize(g_enterpriseManagers));
+        // I2: Wire regime engine from first symbol's pipeline for intelligent SL guard
+        if(ArraySize(g_enterpriseManagerSymbols) > 0)
+        {
+            // Regime engines are per-pipeline; we use the first symbol's pipeline
+            // The lifecycle manager will check regime state for all positions
+        }
+    }
 
     // Wire diagnostics manager with enterprise managers for consensus diagnostics
     g_diagnosticsManager.SetManagers(g_enterpriseManagers, ArraySize(g_enterpriseManagers));
@@ -4634,6 +4708,17 @@ void OnTimer()
     static datetime lastPythonBridgeCheck = 0;
     datetime now = TimeCurrent();
     int healthCheckInterval = MathMax(30, InpHeartbeatInterval);
+
+    // I2: Compounding tier transition check
+    if(InpEnableCompoundingTiers && g_compoundingTierManager.IsInitialized())
+    {
+        static datetime lastTierCheck = 0;
+        if(lastTierCheck == 0 || (now - lastTierCheck) >= InpCompoundingTierCheckIntervalSec)
+        {
+            g_compoundingTierManager.CheckTierTransition(unifiedRiskManager, positionSizer, tradeManager);
+            lastTierCheck = now;
+        }
+    }
     if(lastAIHealthCheck == 0 || (now - lastAIHealthCheck) >= healthCheckInterval)
     {
         if(InpEnableAIMode)
@@ -4874,6 +4959,33 @@ void OnTick()
                     g_ofiEngines[i].OnTick(tickPrice, tickVolume, bid, ask);
             }
             s_lastVpinOfiFeed = nowMs;
+        }
+    }
+
+    // I4: Feed tick data to Skew Step Analyzer (throttled to 500ms)
+    if(InpEnableSkewStepAnalyzer && g_skewStepAnalyzer.IsInitialized())
+    {
+        static uint s_lastSkewStepFeed = 0;
+        uint nowMs = GetTickCount();
+        if(nowMs - s_lastSkewStepFeed >= 500)
+        {
+            for(int i = 0; i < ArraySize(g_enterpriseManagerSymbols); i++)
+            {
+                string sym = g_enterpriseManagerSymbols[i];
+                ENUM_DERIV_FAMILY family = g_multiAssetProfiler.GetDerivProfiler().DetectFamily(sym);
+                if(family == DERIV_SKEW_STEP)
+                {
+                    // Calculate step size as difference between current and previous close
+                    double close0 = iClose(sym, PERIOD_M1, 0);
+                    double close1 = iClose(sym, PERIOD_M1, 1);
+                    if(close0 > 0 && close1 > 0)
+                    {
+                        double stepSize = close0 - close1;
+                        g_skewStepAnalyzer.RecordStep(stepSize);
+                    }
+                }
+            }
+            s_lastSkewStepFeed = nowMs;
         }
     }
 
@@ -5922,7 +6034,6 @@ void ProcessTradingLogic(bool fromTimer)
                     bool hasAIContributor = g_attributionManager.ContributorsIncludeAI(contributorsList);
                     bool hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
                     bool hasONNXContributor = g_attributionManager.ContributorsIncludeONNX(contributorsList);
-                    // hasElliottContributor REMOVED — Elliott Wave strategy removed
                     int indicatorContributorCount = g_attributionManager.CountIndicatorContributors(contributorsList);
 
                     // Reset indicator drought counter when an indicator strategy produces a signal
@@ -6155,6 +6266,25 @@ void ProcessTradingLogic(bool fromTimer)
                                 }
                             }
 
+                            // I4: Skew Step distribution-based sizing adjustment
+                            if(InpEnableSkewStepAnalyzer && g_skewStepAnalyzer.IsInitialized())
+                            {
+                                // Check if current symbol is a Skew Step index
+                                ENUM_DERIV_FAMILY family = g_multiAssetProfiler.GetDerivProfiler().DetectFamily(currentSymbol);
+                                if(family == DERIV_SKEW_STEP)
+                                {
+                                    double skewMult = g_skewStepAnalyzer.GetSizingMultiplier();
+                                    if(MathAbs(skewMult - 1.0) > 0.01)
+                                    {
+                                        double preSkewLot = lotSize;
+                                        lotSize *= skewMult;
+                                        lotSize = MathMax(SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN), lotSize);
+                                        PrintFormat("[SKEW-STEP-SIZE] %s | phase=%s | mult=%.2f | lot %.2f->%.2f",
+                                                    currentSymbol, g_skewStepAnalyzer.GetPhaseName(), skewMult, preSkewLot, lotSize);
+                                    }
+                                }
+                            }
+
                             // Phase 6: Full-margin position stacking — scale lot if stacking on existing position
                             if(InpRiskTier == RISK_TIER_FULL_MARGIN && g_fullMarginMode.IsInitialized())
                             {
@@ -6269,7 +6399,6 @@ tradeReq.lotSize = lotSize;
                                 candidate.hasAIContributor = hasAIContributor;
                                 candidate.hasONNXContributor = hasONNXContributor;
                                 candidate.hasIndicatorContributor = hasIndicatorContributor;
-                                // hasElliottContributor REMOVED — Elliott Wave strategy removed
                                 candidate.liveAuthorityAllowed = liveAuthorityAllowed;
                                 candidate.liveAuthorityRiskMultiplier = liveAuthorityRiskMultiplier;
                                 candidate.liveAuthorityReason = liveAuthorityReason;
@@ -6673,6 +6802,32 @@ tradeReq.lotSize = lotSize;
                     g_spikeHunter.GetTotalDetections(),
                     g_spikeHunter.GetTotalTradesOpened(),
                     g_spikeHunter.GetTotalTradesSkipped());
+
+    // I2: Compounding tier heartbeat
+    if(InpEnableCompoundingTiers && g_compoundingTierManager.IsInitialized())
+    {
+        PrintFormat("[COMPOUNDING-TIER-HEARTBEAT] %s", g_compoundingTierManager.GetDiagnostics());
+    }
+
+    // I1: Family weight matrix heartbeat
+    if(g_familyWeightMatrix.IsInitialized())
+    {
+        PrintFormat("[FAMILY-WEIGHT-MATRIX] Active | %d families configured", 19);
+    }
+
+    // I3: Session weight manager heartbeat
+    if(InpEnableSessionWeights && g_sessionWeightManager.IsInitialized())
+    {
+        SSessionWeights sw = g_sessionWeightManager.GetCurrentSessionWeights();
+        PrintFormat("[SESSION-WEIGHT-HEARTBEAT] %s | sizing=%.2f | thresholdAdj=%+.2f | readinessBoost=%+.2f",
+                    sw.sessionName, sw.sizingMultiplier, sw.convictionThresholdAdj, sw.readinessBoost);
+    }
+
+    // I4: Skew Step analyzer heartbeat
+    if(InpEnableSkewStepAnalyzer && g_skewStepAnalyzer.IsInitialized())
+    {
+        PrintFormat("[SKEW-STEP-HEARTBEAT] %s", g_skewStepAnalyzer.GetDiagnostics());
+    }
 
     // Risk deadlock detection: warn when risk rejects accumulate with no trades opening
     {

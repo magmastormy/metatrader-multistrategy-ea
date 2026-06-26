@@ -1,10 +1,10 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-06-21
+- Last Updated: 2026-06-25
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 116
+- Current Batch: 106
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -70,6 +70,12 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - OFI regime weight adjustment: `CEnterpriseStrategyManager` OFI integration (Batch 103)
 - Consensus scoring (0-100): `CEnterpriseStrategyManager` graduated scoring (Batch 103)
 - Regime weight wiring: `CEnterpriseStrategyManager` → `CRegimeEngine::GetRegimeCategoryMultiplier()` (Batch 103)
+- Compounding tier manager: `CCompoundingTierManager` (Batch 106)
+- Family strategy weight matrix: `CFamilyStrategyWeightMatrix` (Batch 106)
+- Session weight manager: `CSessionWeightManager` (Batch 106)
+- Skew step analyzer: `CSkewStepAnalyzer` (Batch 106)
+- Per-family position limits: `CUnifiedRiskManager` family position check (Batch 106)
+- ADX lot modifier: `CADXLotModifier` in position sizer chain (Batch 106)
 
 ## End-to-End Flow
 

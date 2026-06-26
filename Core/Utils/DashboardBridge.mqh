@@ -581,8 +581,8 @@ string CDashboardBridge::BuildStateJson()
       json += "}";
       symbolsAdded++;
    }
-   
-   json += "}";
+
+   json += "},";
 
    // Closed trades (recent history from deal cache)
    json += "\"closed_trades\":[";

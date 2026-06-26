@@ -235,10 +235,15 @@ enum ENUM_MARGIN_HEALTH_LEVEL
 //+------------------------------------------------------------------+
 enum ENUM_RISK_TIER
 {
-   RISK_TIER_CONSERVATIVE,   // Conservative: low risk, tight controls
-   RISK_TIER_MODERATE,       // Moderate: balanced risk/reward
-   RISK_TIER_AGGRESSIVE,     // Aggressive: higher risk tolerance
-   RISK_TIER_FULL_MARGIN     // Full margin: maximum exposure
+   RISK_TIER_CONSERVATIVE,      // Conservative: low risk, tight controls
+   RISK_TIER_MODERATE,          // Moderate: balanced risk/reward
+   RISK_TIER_AGGRESSIVE,        // Aggressive: higher risk tolerance
+   RISK_TIER_FULL_MARGIN,       // Full margin: maximum exposure
+   RISK_TIER_MICRO_AGGRESSIVE,  // Micro aggressive: $10-25 accounts, rapid compounding
+   RISK_TIER_GROWTH,            // Growth: $25-50 accounts, balanced aggression
+   RISK_TIER_ACCELERATION,      // Acceleration: $50-100 accounts, protect gains
+   RISK_TIER_INSTITUTIONAL,     // Institutional: $100-500 accounts, capital preservation
+   RISK_TIER_PROFESSIONAL       // Professional: $500+ accounts, full institutional
 };
 
 //+------------------------------------------------------------------+

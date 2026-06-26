@@ -13,6 +13,7 @@
 #include "../Engines/VolatilityEngine.mqh"
 #include "../Engines/RegimeEngine.mqh"
 #include "../../Interfaces/IStrategy.mqh"
+#include "../Engines/SessionWeightManager.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -169,6 +170,9 @@ private:
     
     // Protection / consistency
     CTimeframeConsistency* m_tfConsistency;
+
+    // I3: Session weight manager (injected from EA)
+    CSessionWeightManager* m_sessionWeightManager;
     
     // Settings
     SignalFilterSettings m_filters;
@@ -250,6 +254,7 @@ public:
     void SetFilters(SignalFilterSettings &settings);
     SignalFilterSettings GetFilters() const { return m_filters; }
     void SetIntrabarContext(const bool intrabarContext) { m_intrabarContext = intrabarContext; }
+    void SetSessionWeightManager(CSessionWeightManager* mgr) { m_sessionWeightManager = mgr; }
     void ApplyFilterPreset(ENUM_FILTER_PRESET preset);
     
     // Statistics
@@ -292,6 +297,7 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_volatilityEngine(NULL),
     m_regimeEngine(NULL),
     m_tfConsistency(NULL),
+    m_sessionWeightManager(NULL),
     m_signalsProcessed(0),
     m_signalsFiltered(0),
     m_signalsPassed(0),
@@ -1006,7 +1012,17 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
 
     m_lastEvidence.contextScore = ComputeContextScore(signal);
     m_lastEvidence.readinessScore = ComputeReadinessScore();
-    
+
+    // I7: Apply session-aware readiness boost (weekend = +0.05, Asian = +0.02, etc.)
+    if(m_sessionWeightManager != NULL && m_sessionWeightManager.IsInitialized())
+    {
+       double sessionBoost = m_sessionWeightManager.GetReadinessBoost();
+       if(MathAbs(sessionBoost) > 0.001)
+       {
+          m_lastEvidence.readinessScore = MathMax(0.0, MathMin(1.0, m_lastEvidence.readinessScore + sessionBoost));
+       }
+    }
+
     // Dynamic confidence threshold with bounded intrabar uplift in weak regimes.
     double baseMinConfidence = m_filters.minConfidence;
     double effectiveMinConfidence = baseMinConfidence;
@@ -1067,6 +1083,15 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
         {
             thresholdReasonTag = "REGIME_ENGINE_WARMUP";
         }
+    }
+
+    // I3: Apply session-aware threshold adjustment
+    if(m_sessionWeightManager != NULL && m_sessionWeightManager.IsInitialized())
+    {
+       SSessionWeights sessionWeights = m_sessionWeightManager.GetCurrentSessionWeights();
+       effectiveMinConfidence += sessionWeights.convictionThresholdAdj;
+       effectiveMinConfidence = MathMax(0.30, MathMin(0.95, effectiveMinConfidence));
+       thresholdReasonTag += "|" + sessionWeights.sessionName;
     }
 
     PrintFormat("[PIPELINE-THRESHOLD] base=%.2f | effective=%.2f | regime=%s | cap=%.2f | intrabar=%s",

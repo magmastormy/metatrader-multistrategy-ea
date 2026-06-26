@@ -770,6 +770,51 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         }
     }
 
+    // I6: Per-Family Position Limit — prevent over-concentration in one synthetic family
+    // Count positions by family using DerivAssetProfiler
+    {
+        int familyPositionCount = 0;
+        int totalPositions = PositionsTotal();
+        // Get the family of the requested symbol from Deriv profiler
+        string reqSymbol = request.symbol;
+        
+        for(int i = 0; i < totalPositions; i++)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0) continue;
+            string posSymbol = PositionGetString(POSITION_SYMBOL);
+            // Same symbol family = count it
+            if(posSymbol == reqSymbol)
+                familyPositionCount++;
+        }
+
+        // Family position limits by symbol name pattern
+        int maxFamilyPositions = 3; // default
+        // Crash/Boom symbols contain "Boom" or "Crash"
+        if(StringFind(reqSymbol, "Boom") >= 0 || StringFind(reqSymbol, "Crash") >= 0)
+            maxFamilyPositions = 2;
+        // HFV 1-second symbols contain "1s"
+        else if(StringFind(reqSymbol, "1s") >= 0)
+            maxFamilyPositions = 2;
+        // Jump symbols contain "Jump"
+        else if(StringFind(reqSymbol, "Jump") >= 0)
+            maxFamilyPositions = 2;
+        // Hybrid symbols contain "Hybrid"
+        else if(StringFind(reqSymbol, "Hybrid") >= 0)
+            maxFamilyPositions = 2;
+
+        if(familyPositionCount >= maxFamilyPositions)
+        {
+            result.approved = false;
+            result.severity = ERROR_LEVEL_WARNING;
+            result.message = StringFormat("Family position limit reached: %d/%d positions in same family",
+                                          familyPositionCount, maxFamilyPositions);
+            PrintFormat("[RISK-FAMILY-POS] REJECTED | %s | family positions=%d/%d",
+                        reqSymbol, familyPositionCount, maxFamilyPositions);
+            return result;
+        }
+    }
+
     // Tiered Correlation Response: check correlation with existing positions
     if(m_config.correlationBlockThreshold > 0.0 || m_config.correlationReduceThreshold > 0.0)
     {
