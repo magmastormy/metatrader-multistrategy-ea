@@ -1,5 +1,66 @@
 # Changelogs
 
+## 2026-06-25 — Batch 106: Synthetic Strategy Research + Compounding Tiers + Legacy Cleanup
+
+### Scope
+Deep research on optimal Deriv synthetic index strategies for micro-account aggressive growth ($10-$100), implementation of compounding tier system, per-family strategy weighting, session-aware adjustments, Skew Step analysis, and legacy dead code cleanup.
+
+### New Files (4)
+- `Core/Risk/CompoundingTierManager.mqh` — Auto-tier switching at $25/$50/$100/$500 milestones, 5 tiers (MICRO_AGGRESSIVE→PROFESSIONAL) with per-tier risk/drawdown/position limits
+- `Core/Engines/FamilyStrategyWeightMatrix.mqh` — Per-Deriv-family cluster weight multipliers (Crash/Boom→STRUCTURE 1.5x, Volatility→MEAN_REVERSION 1.5x, HFV→SCALP 2.0x, etc.)
+- `Core/Engines/SessionWeightManager.mqh` — Asian/London/NY/Weekend session-aware sizing and threshold adjustments (weekend 1.2x sizing, -3% threshold)
+- `Core/Engines/SkewStepAnalyzer.mqh` — 200-step rolling buffer phase detection for Skew Step indices (calm→1.3x, post-spike→0.6x, counter-due→0.5x)
+
+### Modified Files (10)
+- `Core/Utils/Enums.mqh` — Added 5 new ENUM_RISK_TIER values (MICRO_AGGRESSIVE, GROWTH, ACCELERATION, INSTITUTIONAL, PROFESSIONAL)
+- `Core/Risk/RiskTierManager.mqh` — Added 5 new tier configs + SetTier cases + GetTierName entries
+- `Core/Risk/UnifiedRiskManager.mqh` — Added per-family position limit check in ValidateTradeRequest()
+- `Core/Risk/CompoundingTierManager.mqh` — Added milestone logging in CheckTierTransition()
+- `Core/Pipeline/UnifiedSignalPipeline.mqh` — Added session weight manager member, setter, session threshold adjustment, and readiness boost
+- `Core/Management/EnterpriseStrategyManager.mqh` — Added family weight matrix member, setter, family cluster multiplier in consensus evaluation, corrected Volatility weights
+- `Core/Risk/PositionSizerModifiers.mqh` — (no changes, existing CADXLotModifier already implemented)
+- `Core/Utils/PythonBridge.mqh` — Fixed 3 TODO methods: GetPairCorrelationMatrix(), GetPairCorrelation(), FindBestCorrelatedPair() with JSON parsing
+- `Core/Utils/SymbolContext.mqh` — Removed dead CStrategyWrapper forward declaration
+- `MultiStrategyAutonomousEA.mq5` — All integrations: includes, globals, inputs, OnInit wiring, OnTimer tier checks, OnTick Skew Step data feed, lot size multiplier, heartbeat logs, Batch 103 weight inputs, legacy cleanup
+
+### Key Metrics
+| Metric | Value |
+|--------|-------|
+| New files | 4 |
+| Modified files | 10 |
+| Lines added | ~800 |
+| Lines removed (legacy) | ~50 |
+| New input parameters | 8 (InpEnableCompoundingTiers, InpCompoundingTierCheckIntervalSec, InpEnableSessionWeights, InpEnableSkewStepAnalyzer, InpWeightFVGScalper, InpWeightTurtleSoup, InpWeightBreakerBlock, InpWeightNYOpenGap, InpWeightAsianRangeBreak) |
+| New log tags | 8 ([COMPOUNDING-TIER-HEARTBEAT], [COMPOUNDING-TIER-MILESTONE], [FAMILY-WEIGHT-MATRIX], [FAMILY-WEIGHT-VOL], [SESSION-WEIGHT-HEARTBEAT], [SKEW-STEP-HEARTBEAT], [RISK-FAMILY-POS], [ADX-MODIFIER]) |
+
+### Compounding Tier Table
+| Tier | Balance | Risk/Trade | Max Daily | DD Crit | Max Pos | Daily Loss |
+|------|---------|-----------|-----------|---------|---------|-----------|
+| MICRO_AGGRESSIVE | $10-25 | 4.0% | 12% | 25% | 2 | 15% |
+| GROWTH | $25-50 | 5.0% | 14% | 22% | 3 | 18% |
+| ACCELERATION | $50-100 | 4.0% | 12% | 20% | 3 | 20% |
+| INSTITUTIONAL | $100-500 | 2.5% | 8% | 15% | 4 | 25% |
+| PROFESSIONAL | $500+ | 1.5% | 5% | 12% | 5 | 30% |
+
+### Family Strategy Weight Matrix (Volatility Override)
+| Cluster | Before | After | Rationale |
+|---------|--------|-------|-----------|
+| TREND | 1.4x | 0.6x | Suppress — no directional bias in pure volatility |
+| MEAN_REVERSION | 0.8x | 1.5x | Boost — continuous volatility favors reversion |
+| STRUCTURE | 0.6x | 0.5x | Suppress — no order blocks/FVG in pure volatility |
+| SCALP | 1.3x | 1.3x | Keep — tick-level processing effective |
+
+### Legacy Cleanup
+- Removed `#include "Core\Strategy\StrategyWrapper.mqh"` (dead include)
+- Removed `CMarketAnalysis marketAnalysis;` global (unused, enterprise pipeline superseded)
+- Removed `class CStrategyWrapper;` forward declaration from SymbolContext.mqh
+- Cleaned 34+ dead "REMOVED" comments for Fibonacci/Elliott Wave
+- Removed commented-out Fibonacci/Elliott Wave registration blocks
+- Fixed PythonBridge correlation methods (3 TODO stubs → working JSON parsing)
+- Made Batch 103 strategy weights user-configurable (5 new InpWeight* inputs)
+
+---
+
 ## 2026-06-21 — Batch 105: Phase 1-10 Codebase Audit & Fix
 
 ### Scope

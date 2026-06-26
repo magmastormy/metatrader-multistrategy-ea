@@ -1535,6 +1535,15 @@ bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
 
     PrintFormat("[BE-APPLIED] %s | ticket=%d | SL %.5f -> %.5f | buffer=%.0f pts",
                 positionSymbol, ticket, currentSL, newSL, buffer);
+
+    double diagPrice = 0;
+    if(m_positionInfo.PositionType() == POSITION_TYPE_BUY)
+        diagPrice = SymbolInfoDouble(positionSymbol, SYMBOL_BID);
+    else
+        diagPrice = SymbolInfoDouble(positionSymbol, SYMBOL_ASK);
+    PrintFormat("[BE-DIAG] %s | ticket=%d | open=%.5f | price=%.5f | newSL=%.5f",
+                positionSymbol, ticket, openPrice, diagPrice, newSL);
+
     return ModifyPosition(ticket, newSL, currentTP);
 }
 
@@ -2561,7 +2570,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     {
         double atr = CalculateATR(symbolName, PERIOD_CURRENT, 14);
         if(atr <= 0) return false;
-        activationPoints = MathMax(activationPoints, (atr / point) * MathMax(0.75, atrMult * 0.50));
+        activationPoints = MathMax(activationPoints, (atr / point) * MathMax(0.3, atrMult * 0.20));
         if(profitPoints < activationPoints)
             return true;
         
@@ -2604,7 +2613,40 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     if(newStopLoss > 0 && MathAbs(newStopLoss - currentStopLoss) > point * 0.5)
     {
         newStopLoss = NormalizePrice(symbolName, newStopLoss);
-        return ModifyPosition(ticket, newStopLoss, currentTakeProfit);
+        bool trailResult = ModifyPosition(ticket, newStopLoss, currentTakeProfit);
+
+        // Rate-limited [TRAIL-DIAG]: once per position per 5 seconds
+        static datetime s_lastTrailDiagTime[];
+        static ulong    s_lastTrailDiagTicket[];
+        int diagArrSize = ArraySize(s_lastTrailDiagTicket);
+        int diagIdx = -1;
+        for(int d = 0; d < diagArrSize; d++)
+        {
+            if(s_lastTrailDiagTicket[d] == ticket) { diagIdx = d; break; }
+        }
+        datetime now = TimeCurrent();
+        bool shouldDiag = false;
+        if(diagIdx == -1)
+        {
+            ArrayResize(s_lastTrailDiagTicket, diagArrSize + 1);
+            ArrayResize(s_lastTrailDiagTime, diagArrSize + 1);
+            diagIdx = diagArrSize;
+            s_lastTrailDiagTicket[diagIdx] = ticket;
+            s_lastTrailDiagTime[diagIdx] = now;
+            shouldDiag = true;
+        }
+        else if(now - s_lastTrailDiagTime[diagIdx] >= 5)
+        {
+            s_lastTrailDiagTime[diagIdx] = now;
+            shouldDiag = true;
+        }
+        if(shouldDiag)
+        {
+            PrintFormat("[TRAIL-DIAG] %s | ticket=%I64u | profit=%.1f pts | activation=%.1f pts | newSL=%.5f | curSL=%.5f",
+                        symbolName, ticket, profitPoints, activationPoints, newStopLoss, currentStopLoss);
+        }
+
+        return trailResult;
     }
     
     return true;

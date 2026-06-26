@@ -12,6 +12,7 @@
 #include "../Processing/MultiAssetProfiler.mqh"
 #include "../Risk/VPINFilter.mqh"
 #include "../Engines/OrderFlowImbalanceEngine.mqh"
+#include "../Engines/FamilyStrategyWeightMatrix.mqh"
 #include "../Utils/Enums.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
@@ -222,6 +223,7 @@ private:
     CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
     CVPINFilter* m_vpinFilter;        // VPIN toxicity filter for consensus (Batch 104)
     COrderFlowImbalanceEngine* m_ofiEngine;  // OFI for regime integration (Batch 104)
+    CFamilyStrategyWeightMatrix* m_familyWeightMatrix;  // I1: Per-family cluster weight multipliers
     
     StrategyEntry m_strategies[];
     int m_strategyCount;
@@ -579,6 +581,7 @@ public:
 
     // Deriv family-based engine weighting
     void SetDerivProfiler(CDerivAssetProfiler* profiler) { m_derivProfiler = profiler; }
+    void SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix) { m_familyWeightMatrix = famMatrix; }
     void SetMultiAssetProfiler(CMultiAssetProfiler* profiler) { m_multiAssetProfiler = profiler; }
     void SetVPINFilter(CVPINFilter* vpin) { m_vpinFilter = vpin; }
     void SetOFIEngine(COrderFlowImbalanceEngine* ofi) { m_ofiEngine = ofi; }
@@ -598,6 +601,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_multiAssetProfiler(NULL),
     m_vpinFilter(NULL),
     m_ofiEngine(NULL),
+    m_familyWeightMatrix(NULL),
     m_strategyCount(0),
     m_maxStrategies(25),
     m_managedMagic(0),
@@ -1108,11 +1112,27 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             // Apply regime-aware dynamic weight multiplier
             double regimeCategoryMult = GetRegimeCategoryMultiplier(m_strategies[i].strategy.GetType());
 
+            // I1: Apply per-family cluster weight multiplier
+            double familyClusterMult = 1.0;
+            if(m_familyWeightMatrix != NULL && m_familyWeightMatrix.IsInitialized() && m_derivProfiler != NULL)
+            {
+               ENUM_DERIV_FAMILY family = m_derivProfiler.DetectFamily(m_symbol);
+               ENUM_STRATEGY_CLUSTER stratCluster = (ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster;
+               familyClusterMult = m_familyWeightMatrix.GetClusterWeight(family, stratCluster);
+               // I10: Log when family weight deviates from 1.0 for Volatility indices
+               if(family == DERIV_VOLATILITY && MathAbs(familyClusterMult - 1.0) > 0.01)
+               {
+                  PrintFormat("[FAMILY-WEIGHT-VOL] %s | strategy=%s | cluster=%d | mult=%.2f",
+                              m_symbol, m_strategies[i].name, (int)stratCluster, familyClusterMult);
+               }
+            }
+
             adjustedStrategyWeight = strategyWeight * tierMultiplier *
                                      GetStrategyRoleVoteMultiplier(i) *
                                      GetStrategyReliabilityMultiplier(i) *
                                      GetStrategyParticipationMultiplier(i) *
-                                     regimeCategoryMult;
+                                     regimeCategoryMult *
+                                     familyClusterMult;
 
             // Final safety: clamp adjusted weight to sane bounds
             if(!MathIsValidNumber(adjustedStrategyWeight) || adjustedStrategyWeight < 0.001 || adjustedStrategyWeight > 100.0)
