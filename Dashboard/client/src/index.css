@@ -46,12 +46,67 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes number-roll {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes data-pulse {
+  0% { background-color: rgba(34, 211, 238, 0); }
+  50% { background-color: rgba(34, 211, 238, 0.1); }
+  100% { background-color: rgba(34, 211, 238, 0); }
+}
+
+@keyframes critical-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.2); }
+  50% { box-shadow: 0 0 24px rgba(239, 68, 68, 0.4); }
+}
+
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
 .animate-fade-in {
   animation: fade-in 0.3s ease-out;
+}
+
+.animate-number-change {
+  animation: number-roll 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.live-update {
+  animation: data-pulse 1.5s ease-out;
+}
+
+.stagger-enter > * {
+  opacity: 0;
+  animation: fade-in-up 0.3s ease-out forwards;
+}
+
+.stagger-enter > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-enter > *:nth-child(2) { animation-delay: 50ms; }
+.stagger-enter > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-enter > *:nth-child(4) { animation-delay: 150ms; }
+.stagger-enter > *:nth-child(n+5) { animation-delay: 200ms; }
+
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
 .glass-card {
@@ -64,4 +119,49 @@ body {
 .glass-card:hover {
   border-color: rgba(34, 211, 238, 0.2);
   transition: border-color 0.2s ease;
+}
+
+/* Custom card variations for visual hierarchy */
+.card-primary {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.08) 0%, rgba(26, 31, 46, 0.8) 100%);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  box-shadow: 0 4px 24px rgba(34, 211, 238, 0.1);
+}
+
+.card-warning {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(26, 31, 46, 0.8) 100%);
+  border-left: 3px solid rgba(245, 158, 11, 0.5);
+}
+
+.card-critical {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(26, 31, 46, 0.9) 100%);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  animation: critical-pulse 3s ease-in-out infinite;
+}
+
+.card-minimal {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  padding: 12px 0;
+}
+
+/* Typography enhancements */
+.text-numeral {
+  font-feature-settings: "tnum" tabular-nums, "pnum" proportional-nums;
+  letter-spacing: -0.02em;
+}
+
+.space-natural > * + * {
+  margin-top: clamp(0.5rem, 1vw, 1.5rem);
+}
+
+.display-metric {
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  font-weight: 700;
+  background: linear-gradient(135deg, #e2e8f0 0%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1.1;
 }

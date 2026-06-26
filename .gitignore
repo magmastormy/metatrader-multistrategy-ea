@@ -1,50 +1,81 @@
-.kiro
-.joycode
-.sixth
-.trunk
-.windsurf
-.vscode
-.trae
-*.ps1
-*.ex5
-Documentation/
-CRITICAL_FIXES.mqh
-ICT_Implementation_Spec.md
-SR_Trendline_Implementation_Spec.md
-# Documentation is intentionally versioned.
-# Keep markdown/text system docs tracked.
-*.log
-*.ini
-*.set
+# Dependencies
+node_modules/
+
+# Editors
+.vscode/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Python
 __pycache__/
-*.pyo
 *.pyc
+*.pyo
 *.pyd
-*.csv
-*.onnx
-*.h5
-ai_upgrade_one.md
-ai_upgrade_two.md
-debloat.md
-.windsurf/
-.trunk/
-.joycode/
-enterprise_components_audit.md
-Audit.md
-Mqh_AI_audit.md
-*.ex5
-Strategy_audit_trace.md
-visualization_audit.md
-frontend.md
-agent_modules/
-.windsurf
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.env
+.env.local
+.env.
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+__pypackages__/
 
-# Dashboard
-Dashboard/client/node_modules/
-Dashboard/client/dist/
-Dashboard/server/.venv-ea-dashboard/
-Dashboard/server/__pycache__/
-docs/doc*.md
-!docs/changelogs_old.md
-log_problems.md
+# Compiled and binary files
+*.class
+*.o
+*.so
+*.a
+*.obj
+*.out
+*.exe
+*.dll
+*.dylib
+*.jar
+*.war
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 
+# IDE
+.idea/
