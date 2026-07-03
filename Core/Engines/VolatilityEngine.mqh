@@ -75,6 +75,8 @@ private:
     datetime m_lastStateLogTime;
     ENUM_VOLATILITY_STATE m_lastLoggedState;
     datetime m_lastBarTime;  // Bar-change detection: skip recalc if bar hasn't changed
+    datetime m_lastSuccessfulIndicatorCopy;  // When BB/ATR were last copied from indicator handles
+    int m_bbStalenessThresholdBars;  // Max bars before fallback is considered stale
     
     VolatilityMetrics m_metrics;
     VolatilityMetrics m_lastValidMetrics;
@@ -131,6 +133,7 @@ CVolatilityEngine::CVolatilityEngine() :
     m_indicatorSymbol(""), m_indicatorTimeframe(PERIOD_CURRENT),
     m_consecutiveDataFaults(0), m_lastFaultLogTime(0), m_lastReuseLogTime(0), m_lastStateLogTime(0),
     m_lastLoggedState(VOLATILITY_LOW), m_lastBarTime(0),
+    m_lastSuccessfulIndicatorCopy(0), m_bbStalenessThresholdBars(50),
     m_diagnostics(NULL)
 {
 }
@@ -381,6 +384,44 @@ bool CVolatilityEngine::ApplyFallbackMetrics(const string symbol,
                                              const string reasonTag,
                                              const int errorCode)
 {
+    bool isStale = false;
+    int stalenessBars = 0;
+    if(m_lastSuccessfulIndicatorCopy > 0)
+    {
+        int barSeconds = PeriodSeconds(timeframe);
+        if(barSeconds <= 0) barSeconds = 60;
+        int ageSeconds = (int)(TimeCurrent() - m_lastSuccessfulIndicatorCopy);
+        stalenessBars = ageSeconds / barSeconds;
+        if(stalenessBars > m_bbStalenessThresholdBars)
+            isStale = true;
+    }
+    else if(m_lastValidMetrics.lastUpdate > 0)
+    {
+        int barSeconds = PeriodSeconds(timeframe);
+        if(barSeconds <= 0) barSeconds = 60;
+        int ageSeconds = (int)(TimeCurrent() - m_lastValidMetrics.lastUpdate);
+        stalenessBars = ageSeconds / barSeconds;
+        if(stalenessBars > m_bbStalenessThresholdBars)
+            isStale = true;
+    }
+
+    if(isStale)
+    {
+        datetime nowTime = TimeCurrent();
+        if(m_lastFaultLogTime == 0 || (nowTime - m_lastFaultLogTime) >= 30)
+        {
+            PrintFormat("[VOL-FALLBACK] STALE_DATA_REJECTED | symbol=%s | timeframe=%s | reason=%s | err=%d | staleness_bars=%d | threshold=%d",
+                        symbol,
+                        EnumToString(timeframe),
+                        reasonTag,
+                        errorCode,
+                        stalenessBars,
+                        m_bbStalenessThresholdBars);
+            m_lastFaultLogTime = nowTime;
+        }
+        return false;
+    }
+
     double atrCurrent = 0.0;
     double atrPrevious = 0.0;
     double bbUpper = 0.0;
@@ -416,13 +457,14 @@ bool CVolatilityEngine::ApplyFallbackMetrics(const string symbol,
     datetime nowTime = TimeCurrent();
     if(m_lastFaultLogTime == 0 || (nowTime - m_lastFaultLogTime) >= 30)
     {
-        PrintFormat("[VOLATILITY-FAULT] FALLBACK_RATES | symbol=%s | timeframe=%s | reason=%s | err=%d | atr=%.5f | atr_pct=%.2f",
+        PrintFormat("[VOL-FALLBACK] FALLBACK_RATES | symbol=%s | timeframe=%s | reason=%s | err=%d | atr=%.5f | atr_pct=%.2f | staleness_bars=%d",
                     symbol,
                     EnumToString(timeframe),
                     reasonTag,
                     errorCode,
                     m_metrics.atr,
-                    m_metrics.atrPercent);
+                    m_metrics.atrPercent,
+                    stalenessBars);
         m_lastFaultLogTime = nowTime;
     }
 
@@ -438,7 +480,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
        symbol == m_indicatorSymbol && timeframe == m_indicatorTimeframe &&
        m_metrics.lastUpdate > 0 && m_lastValidMetrics.lastUpdate > 0)
     {
-        // Same bar â€?reuse cached metrics, no recalculation needed
+        // Same bar ï¿½?reuse cached metrics, no recalculation needed
         return true;
     }
 
@@ -536,7 +578,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
 
     m_metrics.atr = atr[0];
 
-    // Batch104-C1: ATR sanity validation â€?corrupted multi-symbol indicator handles
+    // Batch104-C1: ATR sanity validation ï¿½?corrupted multi-symbol indicator handles
     // can return values 1000x-100000x too high (e.g., 115783 for USDJPY instead of ~0.16).
     // If ATR exceeds 10x the asset price, the data is clearly corrupted.
     bool atrCorrupted = false;
@@ -559,7 +601,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     else
     {
         m_metrics.atrPercent = (atr[0] / price) * 100.0;
-        // Clamp atrPercent to 100.0% â€?anything above is clearly corrupted data
+        // Clamp atrPercent to 100.0% ï¿½?anything above is clearly corrupted data
         if(m_metrics.atrPercent > 100.0)
         {
             PrintFormat("[VOLATILITY-SANITY] ATR_PCT_CLAMPED | symbol=%s | timeframe=%s | raw_pct=%.2f | clamped=100.00",
@@ -582,6 +624,7 @@ bool CVolatilityEngine::UpdateVolatility(const string symbol, ENUM_TIMEFRAMES ti
     m_lastValidMetrics = m_metrics;
     m_consecutiveDataFaults = 0;
     m_lastBarTime = currentBarTime;  // Update bar cache on successful calculation
+    m_lastSuccessfulIndicatorCopy = TimeCurrent();
     MaybeLogState(symbol, timeframe);
 
     return true;

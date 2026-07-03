@@ -2,8 +2,8 @@
 //| TickSafetyMonitor.mqh - Tick-level safety checks                  |
 //| Spread check, margin check, tick-level monitoring for OnTick       |
 //+------------------------------------------------------------------+
-#ifndef __TICK_SAFETY_MONITOR_MQH__
-#define __TICK_SAFETY_MONITOR_MQH__
+#ifndef TICK_SAFETY_MONITOR_MQH
+#define TICK_SAFETY_MONITOR_MQH
 
 #include <Trade\AccountInfo.mqh>
 #include <Trade\SymbolInfo.mqh>

@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __UICT_SMT_DIVERGENCE_SCANNER_MQH__
-#define __UICT_SMT_DIVERGENCE_SCANNER_MQH__
+#ifndef UICT_SMT_DIVERGENCE_SCANNER_MQH
+#define UICT_SMT_DIVERGENCE_SCANNER_MQH
 
 struct SSMTDivergence
 {

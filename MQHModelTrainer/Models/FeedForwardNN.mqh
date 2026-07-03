@@ -1,10 +1,10 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| FeedForwardNN.mqh                                                |
 //| Feed-forward neural network wrapper for training                  |
 //| Matches EA's NeuralNetworkStrategy 4-layer architecture           |
 //+------------------------------------------------------------------+
-#ifndef __MQH_FEED_FORWARD_NN_MQH__
-#define __MQH_FEED_FORWARD_NN_MQH__
+#ifndef MQH_FEED_FORWARD_NN_MQH
+#define MQH_FEED_FORWARD_NN_MQH
 
 #include "../AIModules/CNeuralCore.mqh"
 #include "../AIModules/AIConfig.mqh"

@@ -9,8 +9,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __ICT_POSITION_SIZER_MQH__
-#define __ICT_POSITION_SIZER_MQH__
+#ifndef ICT_POSITION_SIZER_MQH
+#define ICT_POSITION_SIZER_MQH
 
 //+------------------------------------------------------------------+
 //| ICT Position Sizer Class                                        |

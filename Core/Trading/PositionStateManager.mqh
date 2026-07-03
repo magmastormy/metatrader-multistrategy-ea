@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __POSITION_STATE_MANAGER_MQH__
-#define __POSITION_STATE_MANAGER_MQH__
+#ifndef POSITION_STATE_MANAGER_MQH
+#define POSITION_STATE_MANAGER_MQH
 
 #include <Object.mqh>
 #include "../Utils/Enums.mqh"

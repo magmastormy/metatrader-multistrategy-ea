@@ -4,8 +4,8 @@
 //| Bollinger Band Squeeze + Volume Surge + ATR Stops                |
 //| Copyright 2026, Multi-Strategy EA                                |
 //+------------------------------------------------------------------+
-#ifndef __VOLATILITY_BREAKOUT_STRATEGY_MQH__
-#define __VOLATILITY_BREAKOUT_STRATEGY_MQH__
+#ifndef VOLATILITY_BREAKOUT_STRATEGY_MQH
+#define VOLATILITY_BREAKOUT_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
@@ -552,7 +552,7 @@ private:
         }
 
         // v2.0: Retest entry after breakout
-        ENUM_TRADE_SIGNAL retestDirection = (price > bbMiddle) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
+        ENUM_TRADE_SIGNAL retestDirection = (m_squeezeBar > 0 && price >= m_squeezeHighPrice) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
         if(BreakoutWithRetest(retestDirection))
         {
             signal.entryType = VB_ENTRY_RETEST;

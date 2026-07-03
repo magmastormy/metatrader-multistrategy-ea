@@ -3,8 +3,8 @@
 //| FVG Scalper: Fair Value Gap re-entry with rejection candle       |
 //| confirmation and structure context alignment                      |
 //+------------------------------------------------------------------+
-#ifndef __FVG_SCALPER_STRATEGY_MQH__
-#define __FVG_SCALPER_STRATEGY_MQH__
+#ifndef FVG_SCALPER_STRATEGY_MQH
+#define FVG_SCALPER_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -12,6 +12,8 @@
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
+// CFVGScalperStrategy trades Fair Value Gap re-entries with rejection candle
+// confirmation and structure context alignment.
 class CFVGScalperStrategy : public CStrategyBase
 {
 private:
@@ -21,6 +23,12 @@ private:
 
     // Risk Management (AGENTS.md invariant #1)
     CUnifiedRiskManager*      m_riskManager;
+
+    // Configurable scoring weights
+    double m_baseScore;       // Base confidence (default: 0.55)
+    double m_structureBonus;  // Structure alignment bonus (default: 0.08)
+    double m_chochBonus;      // Fast CHOCH bonus (default: 0.07)
+    double m_cisdBonus;       // CISD displacement bonus (default: 0.05)
 
     bool RefreshForNewBar()
     {
@@ -40,9 +48,21 @@ public:
         m_imbalanceDetector(NULL),
         m_structureAnalyzer(NULL),
         m_lastBarCount(0),
-        m_riskManager(NULL)
+        m_riskManager(NULL),
+        m_baseScore(0.55),
+        m_structureBonus(0.08),
+        m_chochBonus(0.07),
+        m_cisdBonus(0.05)
     {
         OverrideMinConfidence(0.55);
+    }
+
+    void SetScoringWeights(double base, double structure, double choch, double cisd)
+    {
+        m_baseScore = MathMax(0.0, MathMin(1.0, base));
+        m_structureBonus = MathMax(0.0, MathMin(0.3, structure));
+        m_chochBonus = MathMax(0.0, MathMin(0.3, choch));
+        m_cisdBonus = MathMax(0.0, MathMin(0.3, cisd));
     }
 
     virtual ~CFVGScalperStrategy()
@@ -85,7 +105,10 @@ public:
         CStrategyBase::Deinit();
     }
 
-    virtual void OnTick() override {}
+    virtual void OnTick() override
+    {
+        // Intentionally empty - strategy evaluates on new bar only via GetSignal()
+    }
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(symbol == m_symbol && timeframe == m_timeframe)
@@ -195,23 +218,23 @@ public:
         ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
 
         // --- Step 5: Build confidence score ---
-        double score = 0.55;  // Base confidence from OverrideMinConfidence
+        double score = m_baseScore;
 
         // Structure alignment bonus: FVG direction matches market structure
         bool structureAligned = bullish ? m_structureAnalyzer.IsBullishStructure()
                                         : m_structureAnalyzer.IsBearishStructure();
         if(structureAligned)
-            score += 0.08;
+            score += m_structureBonus;
 
         // Fast CHOCH confirmation bonus
         bool fastCHOCH = m_structureAnalyzer.DetectFastCHOCH();
         if(fastCHOCH)
-            score += 0.07;
+            score += m_chochBonus;
 
         // CISD displacement bonus
         bool cisdDisplacement = m_structureAnalyzer.DetectCISDDisplacement();
         if(cisdDisplacement)
-            score += 0.05;
+            score += m_cisdBonus;
 
         confidence = MathMin(0.95, score);
 

@@ -2,8 +2,8 @@
 //| Enhanced Market Analysis Module                                  |
 //+------------------------------------------------------------------+
 
-#ifndef __MARKET_ANALYSIS_MQH__
-#define __MARKET_ANALYSIS_MQH__
+#ifndef MARKET_ANALYSIS_MQH
+#define MARKET_ANALYSIS_MQH
 
 // Include Enums first to ensure all enums are defined
 #include "../Utils/Enums.mqh"

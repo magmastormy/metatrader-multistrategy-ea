@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __SESSION_GAP_DETECTOR_MQH__
-#define __SESSION_GAP_DETECTOR_MQH__
+#ifndef SESSION_GAP_DETECTOR_MQH
+#define SESSION_GAP_DETECTOR_MQH
 
 //+------------------------------------------------------------------+
 //| Gap Type Enum                                                    |

@@ -4,8 +4,8 @@
 //| + FVG confluence bonus                                           |
 //| Batch 103: New ICT/SMC strategy                                  |
 //+------------------------------------------------------------------+
-#ifndef __TURTLE_SOUP_STRATEGY_MQH__
-#define __TURTLE_SOUP_STRATEGY_MQH__
+#ifndef TURTLE_SOUP_STRATEGY_MQH
+#define TURTLE_SOUP_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -14,6 +14,10 @@
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 
+// Turtle Soup: false breakout of liquidity + structure alignment
+
+// CTurtleSoupStrategy detects false breakouts at liquidity pools and combines
+// with FVG confluence for high-probability reversal entries.
 class CTurtleSoupStrategy : public CStrategyBase
 {
 private:
@@ -93,7 +97,10 @@ public:
         CStrategyBase::Deinit();
     }
 
-    virtual void OnTick() override {}
+    virtual void OnTick() override
+    {
+        // Intentionally empty - strategy evaluates on new bar only via GetSignal()
+    }
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(symbol == m_symbol && timeframe == m_timeframe)

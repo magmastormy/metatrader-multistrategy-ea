@@ -1,9 +1,9 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| TrainingSession.mqh                                              |
 //| Training session orchestration and management                     |
 //+------------------------------------------------------------------+
-#ifndef __MQH_TRAINING_SESSION_MQH__
-#define __MQH_TRAINING_SESSION_MQH__
+#ifndef MQH_TRAINING_SESSION_MQH
+#define MQH_TRAINING_SESSION_MQH
 
 #include "../Core/AI/AIFeatureVectorBuilder.mqh"
 #include "../AIModules/AIConfig.mqh"

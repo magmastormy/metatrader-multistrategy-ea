@@ -7,8 +7,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __UICT_IMBALANCE_DETECTOR_MQH__
-#define __UICT_IMBALANCE_DETECTOR_MQH__
+#ifndef UICT_IMBALANCE_DETECTOR_MQH
+#define UICT_IMBALANCE_DETECTOR_MQH
 
 //+------------------------------------------------------------------+
 //| Imbalance Structure                                              |

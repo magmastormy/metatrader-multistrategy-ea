@@ -5,8 +5,8 @@
 //|                                                                  |
 //| Batch 103: Session-specific strategy for forex/metals/indices     |
 //+------------------------------------------------------------------+
-#ifndef __ASIAN_RANGE_BREAK_STRATEGY_MQH__
-#define __ASIAN_RANGE_BREAK_STRATEGY_MQH__
+#ifndef ASIAN_RANGE_BREAK_STRATEGY_MQH
+#define ASIAN_RANGE_BREAK_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -15,6 +15,8 @@
 #include "SMCFiles/KillZones.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 
+// CAsianRangeBreakStrategy trades London-open breakouts of the Asian session
+// range. Tight Asian range + London expansion = high-probability breakout.
 class CAsianRangeBreakStrategy : public CStrategyBase
 {
 private:
@@ -88,7 +90,10 @@ public:
         CStrategyBase::Deinit();
     }
 
-    virtual void OnTick() override {}
+    virtual void OnTick() override
+    {
+        // Intentionally empty - strategy evaluates on new bar only via GetSignal()
+    }
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(symbol == m_symbol && timeframe == m_timeframe)

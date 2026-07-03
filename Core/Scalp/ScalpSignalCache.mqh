@@ -217,26 +217,85 @@ public:
          m_cache[m_cacheCount].symbol    = sym;
          m_cache[m_cacheCount].timeframe = timeframe;
 
-         // Obtain handles from CIndicatorManager — never call iMA/iATR/iRSI directly
-         m_cache[m_cacheCount].emaFastHandle = indMgr.GetMAHandle(sym, timeframe, m_emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
-         m_cache[m_cacheCount].emaSlowHandle = indMgr.GetMAHandle(sym, timeframe, m_emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
-         m_cache[m_cacheCount].atrHandle     = indMgr.GetATRHandle(sym, timeframe, m_atrPeriod);
-         m_cache[m_cacheCount].rsiHandle     = indMgr.GetRSIHandle(sym, timeframe, m_rsiPeriod, PRICE_CLOSE);
-         m_cache[m_cacheCount].bbHandle      = indMgr.GetBandsHandle(sym, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
-         m_cache[m_cacheCount].adxHandle     = indMgr.GetADXHandle(sym, timeframe, m_adxPeriod);
-         m_cache[m_cacheCount].volumeHandle  = indMgr.GetVolumesHandle(sym, timeframe, VOLUME_TICK);
+         // Ensure symbol is registered in Market Watch and has enough bars
+         if(!SymbolInfoInteger(sym, SYMBOL_VISIBLE))
+            SymbolSelect(sym, true);
+
+         int symBars = iBars(sym, timeframe);
+         if(symBars < 50)
+         {
+            PrintFormat("[SCALP-CACHE] WAITING: %s has %d bars (need 50) — allowing load time", sym, symBars);
+            Sleep(1500);
+            symBars = iBars(sym, timeframe);
+            if(symBars < 50)
+            {
+               PrintFormat("[SCALP-CACHE] SKIP: %s still insufficient bars (%d) after wait", sym, symBars);
+               continue;
+            }
+         }
+
+         // Obtain critical handles from CIndicatorManager with retry
+         // iMA/iATR can transiently fail when symbol data is not yet loaded
+         int maxHandleRetries = 3;
+         for(int attempt = 0; attempt < maxHandleRetries; attempt++)
+         {
+            m_cache[m_cacheCount].emaFastHandle = indMgr.GetMAHandle(sym, timeframe, m_emaFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
+            m_cache[m_cacheCount].emaSlowHandle = indMgr.GetMAHandle(sym, timeframe, m_emaSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
+            m_cache[m_cacheCount].atrHandle     = indMgr.GetATRHandle(sym, timeframe, m_atrPeriod);
+
+            bool criticalOk = (m_cache[m_cacheCount].emaFastHandle != INVALID_HANDLE &&
+                               m_cache[m_cacheCount].emaSlowHandle != INVALID_HANDLE &&
+                               m_cache[m_cacheCount].atrHandle != INVALID_HANDLE);
+            if(criticalOk)
+               break;
+
+            if(attempt < maxHandleRetries - 1)
+            {
+               PrintFormat("[SCALP-CACHE] RETRY %d/%d: Critical handles incomplete for %s (emaFast=%d emaSlow=%d atr=%d) — waiting",
+                           attempt + 1, maxHandleRetries, sym,
+                           m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
+               Sleep(1000);
+            }
+         }
 
          // Validate critical handles — ATR and EMA are required for scalp
          if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE || m_cache[m_cacheCount].emaSlowHandle == INVALID_HANDLE ||
             m_cache[m_cacheCount].atrHandle == INVALID_HANDLE)
          {
-            PrintFormat("[SCALP-CACHE] ERROR: Critical handle missing for %s | emaFast=%d emaSlow=%d atr=%d",
-                        sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
-            // Skip this symbol — cannot scalp without EMA and ATR
-            ZeroMemory(m_cache[m_cacheCount]);
-            m_cache[m_cacheCount].symbol = "";
-            continue;
+            // Fallback: if emaFast failed but emaSlow is valid, use emaSlow as substitute
+            if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE &&
+               m_cache[m_cacheCount].emaSlowHandle != INVALID_HANDLE &&
+               m_cache[m_cacheCount].atrHandle != INVALID_HANDLE)
+            {
+               PrintFormat("[SCALP-FALLBACK] emaFast unavailable for %s, using emaSlow(%d) as substitute",
+                           sym, m_emaSlowPeriod);
+               m_cache[m_cacheCount].emaFastHandle = m_cache[m_cacheCount].emaSlowHandle;
+            }
+            else if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE &&
+                    m_cache[m_cacheCount].emaSlowHandle != INVALID_HANDLE &&
+                    m_cache[m_cacheCount].atrHandle == INVALID_HANDLE)
+            {
+               PrintFormat("[SCALP-CACHE] ERROR: Both emaFast and atr missing for %s after retries | emaFast=%d emaSlow=%d atr=%d",
+                           sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
+               ZeroMemory(m_cache[m_cacheCount]);
+               m_cache[m_cacheCount].symbol = "";
+               continue;
+            }
+            else if(m_cache[m_cacheCount].emaSlowHandle == INVALID_HANDLE)
+            {
+               PrintFormat("[SCALP-CACHE] ERROR: emaSlow missing for %s after retries | emaFast=%d emaSlow=%d atr=%d",
+                           sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
+               ZeroMemory(m_cache[m_cacheCount]);
+               m_cache[m_cacheCount].symbol = "";
+               continue;
+            }
          }
+
+         // Non-critical handles — obtained after critical handles are confirmed
+         m_cache[m_cacheCount].rsiHandle     = indMgr.GetRSIHandle(sym, timeframe, m_rsiPeriod, PRICE_CLOSE);
+         m_cache[m_cacheCount].bbHandle      = indMgr.GetBandsHandle(sym, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
+         m_cache[m_cacheCount].adxHandle     = indMgr.GetADXHandle(sym, timeframe, m_adxPeriod);
+         m_cache[m_cacheCount].volumeHandle  = indMgr.GetVolumesHandle(sym, timeframe, VOLUME_TICK);
 
          // Warn on non-critical handle failures
          if(m_cache[m_cacheCount].rsiHandle == INVALID_HANDLE)

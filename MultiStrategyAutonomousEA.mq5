@@ -87,7 +87,7 @@ input double InpWeightMomentum          = 1.0; // Momentum weight
 input double InpWeightTrend             = 1.2; // Trend weight
 input double InpWeightSupportResistance = 1.8; // Support/Resistance weight (boosted for Fib confluence)
 input double InpWeightUnifiedICT        = 1.2; // Unified ICT weight (reduced from 2.2)
-input double InpWeightCandlestick       = 1.5; // Candlestick weight
+input double InpWeightCandlestick       = 0.8; // Candlestick weight (demoted to confirmation filter — <55% win rate as standalone)
 input double InpWeightUnicornModel      = 1.2; // Unicorn Model weight (reduced from 2.4)
 input double InpWeightPowerOfThree      = 1.2; // Power of Three / ICT 2025 weight (reduced from 2.3)
 input double InpWeightMeanReversion     = 1.8; // Mean Reversion weight (NEW: Batch 93 - High confidence in ranging markets)
@@ -165,6 +165,10 @@ input double InpPipelineMaxSpreadToAtrRatio = 0.50;   // Max spread/ATR ratio (r
 input int InpPipelineSpreadShockCooldownSec = 90;     // Spread shock cooldown window
 input double InpPipelineLateEntryZScoreLimit = 4.00;  // Late-entry z-score limit (relaxed from 2.50)
 input double InpAtrCrisisRatioThreshold = 5.0;         // ATR14/ATR50 crisis gate threshold (5.0 accommodates XAUUSD volatility spikes)
+input double InpAtrCrisisRatioThresholdSynthetic = 15.0; // ATR ratio threshold for synthetic indices (Step, Jump, Crash/Boom)
+input double InpAtrCrisisRatioThresholdVolatility = 10.0; // ATR ratio threshold for volatility indices
+input double InpAtrCrisisRatioThresholdDefault = 8.0;   // ATR ratio threshold for other asset classes
+input double InpHardSpreadCutoffPoints = 200.0;         // Hard spread cutoff: block symbol if spread > this (points)
 input int  InpDeadlockAttributionIntervalSec = 60;    // Deadlock attribution diagnostics interval in seconds
 input int  InpHeartbeatInterval = 60;                  // Heartbeat logging interval in seconds (minimum 30)
 input bool InpEnableMomentumScalping = true;          // Allow momentum continuation scalp signals between crossover events
@@ -284,6 +288,19 @@ input bool   InpEnableVPINFilter        = true;    // Enable VPIN toxicity filte
 input double InpVPINExtremeThreshold    = 0.7;     // VPIN extreme toxicity threshold (blocks new trades)
 input int   InpVPINNumBuckets          = 50;      // VPIN rolling bucket count
 
+//--- Institutional TA Engines (Forex only — do NOT enable for synthetics)
+input group "Institutional TA Engines"
+input bool   InpEnableVWAPEngine        = true;    // Enable VWAP engine (forex only)
+input bool   InpEnableVolumeProfile     = true;    // Enable Volume Profile engine (forex only)
+input bool   InpEnableCVDEngine         = true;    // Enable CVD engine (forex only)
+input int    InpVWAPMinPeriodBars       = 30;      // VWAP minimum bars before valid
+input double InpVWAPBand1               = 1.0;     // VWAP ±1σ band multiplier
+input double InpVWAPBand2               = 1.5;     // VWAP ±1.5σ band multiplier
+input double InpVWAPBand3               = 2.0;     // VWAP ±2σ band multiplier
+input int    InpVPLookback              = 20;      // Volume Profile session lookback
+input int    InpVPResolution            = 20;      // Volume Profile price resolution (pips)
+input int    InpCVDDivergenceLookback   = 30;      // CVD divergence lookback bars
+
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
 input bool InpUseSignalPipeline =      true;        // Use Signal Pipeline
@@ -392,6 +409,9 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Engines\HurstEngine.mqh"
 #include "Core\Engines\OrnsteinUhlenbeckEngine.mqh"
 #include "Core\Engines\OrderFlowImbalanceEngine.mqh"
+#include "Core\Engines\VWAPEngine.mqh"
+#include "Core\Engines\VolumeProfileEngine.mqh"
+#include "Core\Engines\CVDEngine.mqh"
 #include "Core\Risk\VPINFilter.mqh"
 
 // Fast Scalp Engine (Phase 4)
@@ -442,8 +462,8 @@ CInstrumentRegistry instrumentRegistry;
 CTickSafetyMonitor g_tickSafetyMonitor;
 CSyntheticSpikeMonitor g_spikeMonitor;
 bool g_onnxSessionDisabled = false;
-CPythonBridge* g_pythonBridge; // Python bridge instance
-CDashboardBridge* g_dashboardBridge; // Dashboard bridge instance
+CPythonBridge* g_pythonBridge = NULL; // Python bridge instance
+CDashboardBridge* g_dashboardBridge = NULL; // Dashboard bridge instance
 
 CTradeManager tradeManager;
 CEnterpriseStrategyManager* g_enterpriseManagers[];      // Per-symbol managers
@@ -478,6 +498,11 @@ CVPINFilter*           g_vpinFilters[];           // Per-symbol VPIN toxicity fi
 string g_mathEngineSymbols[];                      // Symbol mapping for math engines
 bool   g_gridHurstBridgeLogged[];                   // Per-symbol: true after first [GRID-HURST-BRIDGE] log
 
+// Batch 107: Institutional TA Engines (Forex only)
+CVWAPEngine*           g_vwapEngines[];           // Per-symbol VWAP engines
+CVolumeProfileEngine*  g_vpEngines[];             // Per-symbol Volume Profile engines
+CCVDEngine*            g_cvdEngines[];            // Per-symbol CVD engines
+
 //--- Performance tracking
 // Centralized in CPerformanceAnalytics but kept here for display compatibility
 double peakEquity = 0.0;
@@ -498,21 +523,13 @@ datetime currentTime = 0;
 
 //--- Risk management
 double currentRiskPerTrade = 0.0;
-double dailyRiskUsed = 0.0;
-double maxDailyRisk = 0.0;
-bool recoveryMode = false;
-bool drawdownMode = false;
 double g_currentDrawdown = 0.0;
 ENUM_MARKET_REGIME g_currentRegime = MARKET_REGIME_UNKNOWN;
-double g_correlationMatrix[10][10];
 datetime g_lastTradeTime = 0;
 int g_totalActivePositions = 0;
 string g_activePairs[];
 // g_lastSymbolBarTimes, g_lastIntrabarScanTime, g_pendingNewBarScans, SSymbolScanState, g_symbolScanStates moved to CSymbolScanScheduler
-int g_minTimeBetweenTrades = 120;
-int g_maxPositionsAllowed = 10;
 string g_symbolsToTrade = "";
-bool g_beastModeProtection = true;
 bool systemInitialized = false;
 bool tradingEnabled = false;
 int g_logLevel = 1;  // Set from InpLogLevel in OnInit()
@@ -571,36 +588,19 @@ datetime g_dailyTradingHaltStartTime = 0;
 enum ENUM_AUTO_SWITCH_MODE { AUTO_MODE_CONSERVATIVE = 0, AUTO_MODE_AGGRESSIVE = 1, AUTO_MODE_EMERGENCY = 2 };
 ENUM_AUTO_SWITCH_MODE g_currentTradingMode = AUTO_MODE_CONSERVATIVE;
 
-// Risk configuration defaults (overridable by configuration modules)
-double DefaultStopLossPips = 20.0;
-double DefaultTakeProfitPips = 40.0;
-double MaxRiskPerTrade = 2.0;
-double AccountRiskMax = 10.0;
-double DrawdownReduceThreshold = 5.0;
-double CorrelationThreshold = 0.7;
+// Issue 7: Dormancy cooldown tracking per symbol
+int g_dormantConsecutiveCount[];       // Per-symbol consecutive dormancy warnings
+datetime g_dormantCooldownUntil[];     // Per-symbol cooldown expiry time
+string g_dormantCooldownSymbols[];     // Symbol mapping for cooldown arrays
+const int DORMANT_COOLDOWN_THRESHOLD = 5;   // After N consecutive dormancy warnings, activate cooldown
+const int DORMANT_COOLDOWN_MINUTES = 10;    // Cooldown duration in minutes
 
-
-
-//--- Market state tracking
-ENUM_MARKET_REGIME currentRegime = MARKET_REGIME_UNKNOWN;
-double currentVolatility = 0.0;
-double currentATR = 0.0;
-double regimeStrength = 0.0;
-double momentumScore = 0.0;
-double volumeRatio = 0.0;
-bool newsEventActive = false;
-
-//--- AI telemetry
-int aiSignalCounter = 0;
-datetime lastSignalTime = 0;
-double aiSuccessRate = 0.0;
-
-//--- Time management
-datetime startTime = 0;
-datetime lastTickTime = 0;
-int tickCounter = 0;
-int barCounter = 0;
-bool isNewBar = false;
+// Issue 15: Scalp blacklist tracking per symbol
+int g_scalpBlacklistFailCount[];       // Per-symbol consecutive spread cost failures
+bool g_scalpBlacklisted[];            // Per-symbol blacklist flag
+datetime g_scalpBlacklistDay[];        // Per-symbol day of last blacklist set (for daily reset)
+string g_scalpBlacklistSymbols[];      // Symbol mapping for blacklist arrays
+const int SCALP_BLACKLIST_THRESHOLD = 3; // After N consecutive spread cost failures, blacklist
 
 struct SApprovedTradeCandidate
 {
@@ -890,6 +890,29 @@ bool TryResolveAtrValue(const string symbol, const ENUM_TIMEFRAMES timeframe, co
     }
 
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Resolve per-asset-class ATR crisis ratio threshold              |
+//+------------------------------------------------------------------+
+double ResolveATRCrisisThreshold(const string symbol)
+{
+    if(!InpUseSymbolClassProfiles)
+        return InpAtrCrisisRatioThreshold;
+
+    ENUM_ASSET_CLASS ac = g_multiAssetProfiler.GetAssetClassForSymbol(symbol);
+    switch(ac)
+    {
+        case ASSET_DERIV_STEP:
+        case ASSET_DERIV_JUMP:
+        case ASSET_DERIV_CRASHBOOM:
+        case ASSET_DERIV_DEX:
+            return InpAtrCrisisRatioThresholdSynthetic;
+        case ASSET_DERIV_VOLATILITY:
+            return InpAtrCrisisRatioThresholdVolatility;
+        default:
+            return InpAtrCrisisRatioThreshold;
+    }
 }
 
 // ResetSymbolScanStates, IsSymbolSchedulerStateAligned, RebuildSymbolSchedulerState,
@@ -1201,6 +1224,7 @@ double CalculateDailyPnLPercent(bool force = false)
     for(int i = 0; i < PositionsTotal(); i++)
     {
         ulong ticket = PositionGetTicket(i);
+        if(ticket == 0) continue;
         if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
         unrealizedPnL += PositionGetDouble(POSITION_PROFIT);
         unrealizedPnL += PositionGetDouble(POSITION_SWAP);
@@ -1394,7 +1418,6 @@ void ProcessTickSafetyLoop()
     if(!systemInitialized)
         return;
 
-    lastTickTime = TimeCurrent();
     g_spikeMonitor.ReleasePauseIfExpired();
 
     if(!g_tickSafetyMonitor.IsTradingAllowed())
@@ -1538,7 +1561,12 @@ bool ApproveAndReserveVirtualCandidate(const SApprovedTradeCandidate &candidate,
     if(!ApproveTradeByUnifiedRisk(reserveRequest, "candidate-reserve", reserveResult, cycleId))
         return false;
 
-    return unifiedRiskManager.ReserveVirtualPosition(ownerTag, reserveRequest, reserveResult.riskPercent);
+    // Issue 1 fix: Validate only during staging — do NOT reserve virtual position here.
+    // Virtual reservations during candidate staging cause within-cycle budget accumulation
+    // that blocks valid subsequent signals (99.3% rejection rate). Reserve only at send time.
+    PrintFormat("[RISK-VIRTUAL-STAGE] validated (no reservation) | owner=%s | symbol=%s | risk=%.2f%% | cycle=%I64u",
+                ownerTag, candidate.symbol, reserveResult.riskPercent, cycleId);
+    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -1550,8 +1578,8 @@ string GetStrategyNameByIndex(const int index)
     {
         case 0: return "Momentum";
         case 1: return "Trend";
-        case 2: return "Fibonacci";          // REMOVED - merged into Support/Resistance
-        case 3: return "Elliott Wave";       // REMOVED
+        case 2: return "Fibonacci";
+        case 3: return "Elliott Wave";
         case 4: return "Support/Resistance";
         case 5: return "Unified ICT";
         case 6: return "Candlestick";
@@ -1872,8 +1900,10 @@ ENUM_STRATEGY_ROLE ResolveStrategyRoleForSymbol(const string symbol,
            strategyName == "Unicorn Model" || strategyName == "Power of Three" ||
            strategyName == "Mean Reversion" || strategyName == "Volatility Breakout")
             return PRIMARY_ALPHA;
-        if(strategyName == "Support/Resistance" || strategyName == "Candlestick")
+        if(strategyName == "Support/Resistance")
             return CONTEXT_FEATURE;
+        if(strategyName == "Candlestick")
+            return CONTEXT_FEATURE;  // Demoted: <55% win rate as standalone, confirmation only
     }
     return PRIMARY_ALPHA;
 }
@@ -2994,6 +3024,24 @@ CEnterpriseStrategyManager* GetEnterpriseManagerForSymbol(const string symbol)
     return g_enterpriseManagers[idx];
 }
 
+// Issue 14: Set budget exhaustion flag on all pipelines to skip evaluation
+void SetAllPipelinesBudgetExhausted(const bool exhausted)
+{
+    for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
+    {
+        if(g_enterpriseManagers[i] != NULL)
+        {
+            CUnifiedSignalPipeline* pipeline = g_enterpriseManagers[i].GetPipeline();
+            if(pipeline != NULL)
+                pipeline.SetBudgetExhausted(exhausted);
+        }
+    }
+    if(exhausted)
+        Print("[PIPELINE-BUDGET] All pipelines marked budget-exhausted — evaluations will be skipped until reset");
+    else
+        Print("[PIPELINE-BUDGET] All pipelines budget restored — evaluations resumed");
+}
+
 int GetTotalActiveStrategyCount()
 {
     int total = 0;
@@ -3339,6 +3387,36 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
             g_vpinFilters[mSize] = new CVPINFilter(symbol, 0, InpVPINNumBuckets, InpVPINExtremeThreshold);
             if(g_vpinFilters[mSize] != NULL)
                 PrintFormat("[MATH-ENGINE] VPIN filter initialized for %s | buckets=%d | extreme=%.2f", symbol, InpVPINNumBuckets, InpVPINExtremeThreshold);
+        }
+
+        // Batch 107: VWAP Engine (forex only)
+        ArrayResize(g_vwapEngines, mSize + 1);
+        g_vwapEngines[mSize] = NULL;
+        if(InpEnableVWAPEngine && !IsSyntheticIndexSymbolName(symbol))
+        {
+            g_vwapEngines[mSize] = new CVWAPEngine();
+            g_vwapEngines[mSize].Initialize(symbol, InpVWAPMinPeriodBars, InpVWAPBand1, InpVWAPBand2, InpVWAPBand3);
+            PrintFormat("[INSTITUTIONAL-ENGINE] VWAP engine initialized for %s", symbol);
+        }
+
+        // Batch 107: Volume Profile Engine (forex only)
+        ArrayResize(g_vpEngines, mSize + 1);
+        g_vpEngines[mSize] = NULL;
+        if(InpEnableVolumeProfile && !IsSyntheticIndexSymbolName(symbol))
+        {
+            g_vpEngines[mSize] = new CVolumeProfileEngine();
+            g_vpEngines[mSize].Initialize(symbol, InpVPLookback, InpVPResolution);
+            PrintFormat("[INSTITUTIONAL-ENGINE] Volume Profile engine initialized for %s", symbol);
+        }
+
+        // Batch 107: CVD Engine (forex only)
+        ArrayResize(g_cvdEngines, mSize + 1);
+        g_cvdEngines[mSize] = NULL;
+        if(InpEnableCVDEngine && !IsSyntheticIndexSymbolName(symbol))
+        {
+            g_cvdEngines[mSize] = new CCVDEngine();
+            g_cvdEngines[mSize].Initialize(symbol, InpCVDDivergenceLookback);
+            PrintFormat("[INSTITUTIONAL-ENGINE] CVD engine initialized for %s", symbol);
         }
     }
 
@@ -3750,6 +3828,9 @@ int OnInit()
                                                   MathMax(1, InpRiskMaxConcurrentPerCluster),
                                                   MathMax(0.1, InpRiskMaxClusterExposurePct),
                                                   InpEnableClusterMutex);
+
+    // Reconcile inherited cluster positions from previous sessions
+    unifiedRiskManager.SyncClusterPositionCounts();
     PrintFormat("[INIT] RiskTierManager applied tier=%s | breakeven=%.0f pts | trailing=%.0f pts",
                 g_riskTierManager.GetTierName(),
                 g_riskTierManager.GetBreakevenBufferPts(),
@@ -4648,6 +4729,17 @@ void OnDeinit(const int reason)
     ArrayResize(g_mathEngineSymbols, 0);
     ArrayResize(g_gridHurstBridgeLogged, 0);
 
+    // Batch 107: Cleanup institutional TA engines
+    for(int i = 0; i < ArraySize(g_vwapEngines); i++)
+    {
+        if(g_vwapEngines[i] != NULL) { delete g_vwapEngines[i]; g_vwapEngines[i] = NULL; }
+        if(g_vpEngines[i] != NULL) { delete g_vpEngines[i]; g_vpEngines[i] = NULL; }
+        if(g_cvdEngines[i] != NULL) { delete g_cvdEngines[i]; g_cvdEngines[i] = NULL; }
+    }
+    ArrayResize(g_vwapEngines, 0);
+    ArrayResize(g_vpEngines, 0);
+    ArrayResize(g_cvdEngines, 0);
+
     // Deinitialize diagnostics logger (Blueprint 3.6)
     g_diagLogger.Deinit();
 
@@ -4957,6 +5049,7 @@ void OnTick()
                     g_vpinFilters[i].OnTick(tickPrice, tickVolume);
                 if(g_ofiEngines[i] != NULL)
                     g_ofiEngines[i].OnTick(tickPrice, tickVolume, bid, ask);
+                // Batch 107: CVD engine (forex only, calculated per bar)
             }
             s_lastVpinOfiFeed = nowMs;
         }
@@ -4972,7 +5065,9 @@ void OnTick()
             for(int i = 0; i < ArraySize(g_enterpriseManagerSymbols); i++)
             {
                 string sym = g_enterpriseManagerSymbols[i];
-                ENUM_DERIV_FAMILY family = g_multiAssetProfiler.GetDerivProfiler().DetectFamily(sym);
+                CDerivAssetProfiler* derivProf = g_multiAssetProfiler.GetDerivProfiler();
+                if(derivProf == NULL) continue;
+                ENUM_DERIV_FAMILY family = derivProf.DetectFamily(sym);
                 if(family == DERIV_SKEW_STEP)
                 {
                     // Calculate step size as difference between current and previous close
@@ -4994,6 +5089,137 @@ void OnTick()
     {
         ProcessScalpFastPath();
     }
+}
+
+//+------------------------------------------------------------------+
+//| Issue 7: Dormancy cooldown tracking helpers                      |
+//+------------------------------------------------------------------+
+int FindDormantCooldownIndex(const string symbol)
+{
+    for(int i = 0; i < ArraySize(g_dormantCooldownSymbols); i++)
+    {
+        if(g_dormantCooldownSymbols[i] == symbol)
+            return i;
+    }
+    return -1;
+}
+
+void EnsureDormantCooldownSlot(const string symbol)
+{
+    if(FindDormantCooldownIndex(symbol) >= 0)
+        return;
+    int idx = ArraySize(g_dormantCooldownSymbols);
+    ArrayResize(g_dormantCooldownSymbols, idx + 1);
+    ArrayResize(g_dormantConsecutiveCount, idx + 1);
+    ArrayResize(g_dormantCooldownUntil, idx + 1);
+    g_dormantCooldownSymbols[idx] = symbol;
+    g_dormantConsecutiveCount[idx] = 0;
+    g_dormantCooldownUntil[idx] = 0;
+}
+
+bool IsSymbolInDormantCooldown(const string symbol)
+{
+    int idx = FindDormantCooldownIndex(symbol);
+    if(idx < 0) return false;
+    if(g_dormantCooldownUntil[idx] <= 0) return false;
+    return (TimeCurrent() < g_dormantCooldownUntil[idx]);
+}
+
+void RecordDormantWarning(const string symbol)
+{
+    int idx = FindDormantCooldownIndex(symbol);
+    if(idx < 0) return;
+    g_dormantConsecutiveCount[idx]++;
+    if(g_dormantConsecutiveCount[idx] >= DORMANT_COOLDOWN_THRESHOLD)
+    {
+        g_dormantCooldownUntil[idx] = TimeCurrent() + DORMANT_COOLDOWN_MINUTES * 60;
+        PrintFormat("[DORMANT-COOLDOWN] %s | %d consecutive dormancy warnings | skipping evaluations for %d minutes",
+                    symbol, g_dormantConsecutiveCount[idx], DORMANT_COOLDOWN_MINUTES);
+    }
+}
+
+void ResetDormantCount(const string symbol)
+{
+    int idx = FindDormantCooldownIndex(symbol);
+    if(idx >= 0)
+        g_dormantConsecutiveCount[idx] = 0;
+}
+
+void ClearDormantCooldownOnNewBar(const string symbol)
+{
+    int idx = FindDormantCooldownIndex(symbol);
+    if(idx >= 0)
+    {
+        g_dormantConsecutiveCount[idx] = 0;
+        g_dormantCooldownUntil[idx] = 0;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Issue 15: Scalp blacklist tracking helpers                       |
+//+------------------------------------------------------------------+
+int FindScalpBlacklistIndex(const string symbol)
+{
+    for(int i = 0; i < ArraySize(g_scalpBlacklistSymbols); i++)
+    {
+        if(g_scalpBlacklistSymbols[i] == symbol)
+            return i;
+    }
+    return -1;
+}
+
+void EnsureScalpBlacklistSlot(const string symbol)
+{
+    if(FindScalpBlacklistIndex(symbol) >= 0)
+        return;
+    int idx = ArraySize(g_scalpBlacklistSymbols);
+    ArrayResize(g_scalpBlacklistSymbols, idx + 1);
+    ArrayResize(g_scalpBlacklistFailCount, idx + 1);
+    ArrayResize(g_scalpBlacklisted, idx + 1);
+    ArrayResize(g_scalpBlacklistDay, idx + 1);
+    g_scalpBlacklistSymbols[idx] = symbol;
+    g_scalpBlacklistFailCount[idx] = 0;
+    g_scalpBlacklisted[idx] = false;
+    g_scalpBlacklistDay[idx] = 0;
+}
+
+bool IsSymbolScalpBlacklisted(const string symbol)
+{
+    int idx = FindScalpBlacklistIndex(symbol);
+    if(idx < 0) return false;
+
+    // Clear blacklist on new day
+    datetime today = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+    if(g_scalpBlacklistDay[idx] != today)
+    {
+        g_scalpBlacklistFailCount[idx] = 0;
+        g_scalpBlacklisted[idx] = false;
+        g_scalpBlacklistDay[idx] = today;
+    }
+
+    return g_scalpBlacklisted[idx];
+}
+
+void RecordScalpCostFailure(const string symbol)
+{
+    int idx = FindScalpBlacklistIndex(symbol);
+    if(idx < 0) return;
+    g_scalpBlacklistFailCount[idx]++;
+    if(g_scalpBlacklistFailCount[idx] >= SCALP_BLACKLIST_THRESHOLD)
+    {
+        g_scalpBlacklisted[idx] = true;
+        datetime today = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+        g_scalpBlacklistDay[idx] = today;
+        PrintFormat("[SCALP-BLACKLIST] %s | %d consecutive spread cost failures | blacklisted for rest of session",
+                    symbol, g_scalpBlacklistFailCount[idx]);
+    }
+}
+
+void ResetScalpBlacklistCount(const string symbol)
+{
+    int idx = FindScalpBlacklistIndex(symbol);
+    if(idx >= 0)
+        g_scalpBlacklistFailCount[idx] = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -5046,13 +5272,24 @@ void ProcessScalpFastPath()
         // Only evaluate if pre-qualified for scalping
         if(!cache.scalpSetupActive) continue;
 
+        // Issue 15: Skip scalp evaluation if symbol is blacklisted (3+ consecutive spread cost failures)
+        EnsureScalpBlacklistSlot(symbol);
+        if(IsSymbolScalpBlacklisted(symbol)) continue;
+
         // Quick spread gate (zero computation — uses cached spread)
         double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
         if(pointSize > 0.0 && cache.atrValue > 0.0)
         {
             double maxSpreadPoints = cache.atrValue * 0.3 / pointSize;
-            if(cache.spreadPoints > maxSpreadPoints) continue;
+            if(cache.spreadPoints > maxSpreadPoints)
+            {
+                RecordScalpCostFailure(symbol);
+                continue;
+            }
         }
+
+        // Reset blacklist counter on successful spread gate pass
+        ResetScalpBlacklistCount(symbol);
 
         // Delegate to scalp engine for signal evaluation and execution
         // The scalp engine uses the cached values instead of computing them
@@ -5197,6 +5434,7 @@ void ProcessTradingLogic(bool fromTimer)
         g_trailingProfitFloor = 0.0;
         g_dailyTradingHalt = false;
         g_dailyTradingHaltStartTime = 0;
+        SetAllPipelinesBudgetExhausted(false);
     }
 
     // Check if daily halt cooldown has expired
@@ -5212,6 +5450,7 @@ void ProcessTradingLogic(bool fromTimer)
             g_dailyProfitTargetReached = false;
             g_dailyProfitPeakPct = 0.0;
             g_trailingProfitFloor = 0.0;
+            SetAllPipelinesBudgetExhausted(false);
         }
     }
 
@@ -5244,6 +5483,7 @@ void ProcessTradingLogic(bool fromTimer)
                 {
                     g_dailyTradingHalt = true;
                     g_dailyTradingHaltStartTime = TimeCurrent();
+                    SetAllPipelinesBudgetExhausted(true);
                 }
             }
         }
@@ -5272,6 +5512,7 @@ void ProcessTradingLogic(bool fromTimer)
                                 (int)(TimeCurrent() - closeStart));
                 g_dailyTradingHalt = true;
                 g_dailyTradingHaltStartTime = TimeCurrent();
+                SetAllPipelinesBudgetExhausted(true);
             }
         }
     }
@@ -5425,9 +5666,20 @@ void ProcessTradingLogic(bool fromTimer)
 
         // Check position limit - count only THIS EA's positions by magic number
         int eaPositions = GetEAPositionCount();
-        bool totalPositionLimitBlocked = (eaPositions >= InpMaxPositionsTotal);
+        int effectiveMaxPositions = InpMaxPositionsTotal;
+        // Issue 17: When throttle pressure > 0.8, reduce allowed positions by 1
+        // regardless of conservative flag. This prevents the throttle from being ignored.
+        double throttlePressure = unifiedRiskManager.GetThrottlePressure();
+        if(throttlePressure < 0.90 && InpMaxPositionsTotal > 1)
+        {
+            effectiveMaxPositions = InpMaxPositionsTotal - 1;
+            if(eaPositions >= InpMaxPositionsTotal && callCount % 100 == 0 && g_logLevel >= 2)
+                PrintFormat("[RISK-THROTTLE-REDUCE] Positions %d/%d reduced to %d by throttle pressure=%.2f",
+                            eaPositions, InpMaxPositionsTotal, effectiveMaxPositions, throttlePressure);
+        }
+        bool totalPositionLimitBlocked = (eaPositions >= effectiveMaxPositions);
         if(totalPositionLimitBlocked && callCount % 100 == 0 && g_logLevel >= 2)  // Log occasionally to avoid spam
-            Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", InpMaxPositionsTotal);
+            Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", effectiveMaxPositions);
 
         bool canOpenNewTrades = !(cooldownBlocked || totalPositionLimitBlocked || unprotectedEntryBlocked || tradingPauseBlocked || g_dailyTradingHalt);
 
@@ -5594,6 +5846,17 @@ void ProcessTradingLogic(bool fromTimer)
                     continue;
                 }
 
+                // Issue 7: Skip evaluation if symbol is in dormancy cooldown
+                EnsureDormantCooldownSlot(currentSymbol);
+                if(IsSymbolInDormantCooldown(currentSymbol))
+                {
+                    g_hbQuietNoNewBar++;
+                    continue;
+                }
+
+                if(runNewBarScan)
+                    ClearDormantCooldownOnNewBar(currentSymbol);
+
                 if(runIntrabarScan)
                 {
                     g_scanScheduler.SetLastIntrabarScanTime(symIdx, tickTime);
@@ -5632,6 +5895,8 @@ void ProcessTradingLogic(bool fromTimer)
                 if(enterpriseSignal == TRADE_SIGNAL_NONE)
                 {
                     g_hbNoSignalCount++;
+                    // Issue 7: Record dormancy warning for this symbol
+                    RecordDormantWarning(currentSymbol);
                     SConsensusDecisionContext noTradeContext;
                     symbolManager.GetLastDecisionContext(noTradeContext);
                     g_scanScheduler.UpdateSymbolScanStateAfterDecision(currentSymbol,
@@ -5688,7 +5953,7 @@ void ProcessTradingLogic(bool fromTimer)
                     double qualityScore = confidence;
                     double tradeConfidence = confidence;
                     
-                    // Spread check (exogenous gate - TODO: move to USP)
+                    // Spread check (exogenous gate) — delegated to pipeline
                     bool exogenousPass = true;
                     string exogenousReason = "";
 
@@ -5700,27 +5965,61 @@ void ProcessTradingLogic(bool fromTimer)
                     if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
                         effectiveSpreadATRRatio = MathMin(effectiveSpreadATRRatio, g_safeMode.GetConfig().maxSpreadATRRatio);
 
+                    // Hard spread cutoff: block untradeable symbols (e.g. Volatility 75 with 1000+ pt spread)
+                    {
+                        double hbid = SymbolInfoDouble(currentSymbol, SYMBOL_BID);
+                        double hask = SymbolInfoDouble(currentSymbol, SYMBOL_ASK);
+                        double hspread = (hask > 0.0 && hbid > 0.0 && hask >= hbid) ? (hask - hbid) : 0.0;
+                        double hpoint = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
+                        double hspreadPts = (hpoint > 0.0) ? (hspread / hpoint) : 0.0;
+                        if(hspreadPts > InpHardSpreadCutoffPoints)
+                        {
+                            g_hbValidatorRejects++;
+                            PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=hard_spread_cutoff | signal=%s conf=%.2f | spread_pts=%.1f threshold=%.1f",
+                                        currentSymbol, (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL",
+                                        confidence, hspreadPts, InpHardSpreadCutoffPoints);
+                            PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=hard_spread_cutoff | spread_points=%.1f > %.1f | confluence=%d | conf=%.2f",
+                                        scanCycleId, currentSymbol, hspreadPts, InpHardSpreadCutoffPoints, confluence, confidence);
+                            continue;
+                        }
+                    }
+
                     if(atrValue > 0)
                     {
-                        double point = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
-                        if(point <= 0.0) point = 0.00001;
-                        double bid = SymbolInfoDouble(currentSymbol, SYMBOL_BID);
-                        double ask = SymbolInfoDouble(currentSymbol, SYMBOL_ASK);
-                        double spread = (ask > 0.0 && bid > 0.0 && ask >= bid) ? (ask - bid) : 0.0;
-                        double maxSpread = atrValue * MathMax(0.01, effectiveSpreadATRRatio);
-                        if(spread > maxSpread)
+                        double spreadScore = 0.0;
+                        CUnifiedSignalPipeline* spreadPipeline = symbolManager.GetPipeline();
+                        if(spreadPipeline != NULL)
                         {
-                            exogenousPass = false;
-                            exogenousReason = StringFormat("Spread too wide: %.5f > %.5f (ATR %.5f)", spread, maxSpread, atrValue);
+                            if(!spreadPipeline.ApplySpreadFilter(currentSymbol, atrValue, spreadScore, effectiveSpreadATRRatio))
+                            {
+                                exogenousPass = false;
+                                exogenousReason = StringFormat("Spread too wide: ratio=%.4f >= %.4f (ATR %.5f)",
+                                                              spreadScore, effectiveSpreadATRRatio, atrValue);
+                            }
+                        }
+                        else
+                        {
+                            double point = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
+                            if(point <= 0.0) point = 0.00001;
+                            double bid = SymbolInfoDouble(currentSymbol, SYMBOL_BID);
+                            double ask = SymbolInfoDouble(currentSymbol, SYMBOL_ASK);
+                            double spread = (ask > 0.0 && bid > 0.0 && ask >= bid) ? (ask - bid) : 0.0;
+                            double maxSpread = atrValue * MathMax(0.01, effectiveSpreadATRRatio);
+                            if(spread > maxSpread)
+                            {
+                                exogenousPass = false;
+                                exogenousReason = StringFormat("Spread too wide: %.5f > %.5f (ATR %.5f)", spread, maxSpread, atrValue);
+                            }
                         }
                     }
                     if(exogenousPass && atrReady && atrLongReady && atrLongValue > 1e-9)
                     {
-                        if(atrRatio > InpAtrCrisisRatioThreshold)
+                        double atrCrisisThreshold = ResolveATRCrisisThreshold(currentSymbol);
+                        if(atrRatio > atrCrisisThreshold)
                         {
                             exogenousPass = false;
-                            exogenousReason = StringFormat("ATR ratio crisis gate: %.3f > %.3f (ATR14 %.5f / ATR50 %.5f)",
-                                                           atrRatio, InpAtrCrisisRatioThreshold, atrValue, atrLongValue);
+                            exogenousReason = StringFormat("ATR ratio crisis gate: %.3f > %.3f [asset_class_threshold] (ATR14 %.5f / ATR50 %.5f)",
+                                                           atrRatio, atrCrisisThreshold, atrValue, atrLongValue);
                         }
                         else if(atrRatio > 1.5)
                         {
@@ -5735,6 +6034,10 @@ void ProcessTradingLogic(bool fromTimer)
                     if(!exogenousPass)
                     {
                         g_hbValidatorRejects++;
+                        string filterTag = (StringFind(exogenousReason, "Spread too wide") >= 0) ? "spread" : "atr_ratio";
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=%s | signal=%s conf=%.2f | %s",
+                                    currentSymbol, filterTag, (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL",
+                                    confidence, exogenousReason);
                         PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=%s | confluence=%d | conf=%.2f",
                                     scanCycleId, currentSymbol, exogenousReason, confluence, confidence);
                         continue;
@@ -5747,6 +6050,9 @@ void ProcessTradingLogic(bool fromTimer)
                     if(decisionContext.directionalQuality < qualityThreshold)
                     {
                         g_hbValidatorRejects++;
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=quality_gate | signal=%s conf=%.2f | quality=%.3f threshold=%.3f",
+                                    currentSymbol, (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL",
+                                    confidence, decisionContext.directionalQuality, qualityThreshold);
                         PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=insufficient_quality | quality=%.3f < threshold=%.3f | confluence=%d | conf=%.2f",
                                     scanCycleId, currentSymbol, decisionContext.directionalQuality, qualityThreshold, confluence, confidence);
                         PrintFormat("[CONSENSUS-NEARMISS] %s | veto=insufficient_quality | buyScore=%.3f | sellScore=%.3f | buyQuality=%.3f | sellQuality=%.3f | quality=%.3f | threshold=%.3f",
@@ -5773,6 +6079,9 @@ void ProcessTradingLogic(bool fromTimer)
                             {
                                 double ofiValue = g_ofiEngines[ofiIdx].GetOFI();
                                 g_hbValidatorRejects++;
+                                PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=ofi_contradiction | signal=%s conf=%.2f | ofi=%s ofi_z=%.2f",
+                                            currentSymbol, (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL",
+                                            confidence, EnumToString(ofiSignal), ofiValue);
                                 PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=ofi_contradiction | consensus=%s ofi=%s ofi_z=%.2f | conf=%.2f",
                                             scanCycleId, currentSymbol,
                                             EnumToString(enterpriseSignal), EnumToString(ofiSignal), ofiValue, confidence);
@@ -5785,6 +6094,8 @@ void ProcessTradingLogic(bool fromTimer)
                     qualityScore = confidence;
                     tradeConfidence = confidence;
                     string signalType = (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL";
+                    // Issue 7: Reset dormancy counter when signal passes all gates
+                    ResetDormantCount(currentSymbol);
                     PrintFormat("[SIGNAL-VALIDATED] cycle=%I64u | %s | signal=%s | consensus=%.2f | confluence=%d",
                                 scanCycleId, currentSymbol, signalType, confidence, confluence);
                     g_hbSignalsValidated++;
@@ -5815,6 +6126,8 @@ void ProcessTradingLogic(bool fromTimer)
                     // Check spike hunter cooldown - delay long-term entries during active spikes
                     if(InpSpikeHunterEnabled && g_spikeHunter.IsSymbolInSpikeCooldown(currentSymbol))
                     {
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=spike_cooldown | signal=%s conf=%.2f | reason=spike_cooldown_active",
+                                    currentSymbol, (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL", confidence);
                         Print("[SPIKE-COOLDOWN] ", currentSymbol, " - delaying long-term entry (spike cooldown active)");
                         continue;
                     }
@@ -5885,6 +6198,8 @@ void ProcessTradingLogic(bool fromTimer)
                                 g_scanScheduler.SetLastExternalCapacityLogTime(capLogNow);
                             }
                         }
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=entry_blocked | signal=%s conf=%.2f | reason=%s",
+                                    currentSymbol, signalType, tradeConfidence, blockReason);
                         continue;
                     }
 
@@ -5958,6 +6273,9 @@ void ProcessTradingLogic(bool fromTimer)
                     if(currentSpreadPoints > 0.0 && takeProfitPips > 0.0 && currentSpreadPoints / takeProfitPips > 0.15)
                     {
                         g_hbValidatorRejects++;
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=execution_cost | signal=%s conf=%.2f | spread_pts=%.1f tp_pts=%.1f cost_ratio=%.3f max=0.150",
+                                    currentSymbol, signalType, tradeConfidence,
+                                    currentSpreadPoints, takeProfitPips, currentSpreadPoints / takeProfitPips);
                         PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=execution_cost_reward spread_points=%.1f tp_points=%.1f cost_ratio=%.3f max=0.150",
                                     scanCycleId,
                                     currentSymbol,
@@ -5977,6 +6295,8 @@ void ProcessTradingLogic(bool fromTimer)
                     if(freeMargin < marginRequired)
                     {
                         g_hbSizingRejects++;
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=account_capacity | signal=%s conf=%.2f | free_margin=%.2f req_margin=%.2f",
+                                    currentSymbol, signalType, tradeConfidence, freeMargin, marginRequired);
                         PrintFormat("[ACCOUNT-CAPACITY] %s | min_lot=%.2f | free_margin=%.2f | req_margin=%.2f | reason=insufficient_for_min_lot",
                                     currentSymbol, minLot, freeMargin, marginRequired);
                         continue;
@@ -5992,6 +6312,8 @@ void ProcessTradingLogic(bool fromTimer)
                     {
                         g_hbSizingRejects++;
                         SUnifiedRiskSnapshot riskBudgetSnapshot = unifiedRiskManager.GetSnapshot();
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=risk_cap | signal=%s conf=%.2f | requested=%.2f capped=0.00",
+                                    currentSymbol, signalType, tradeConfidence, requestedRisk);
                         PrintFormat("[RISK-CAP] cycle=%I64u | %s | requested=%.2f | capped=0.00 | daily_remaining=%.2f | portfolio_remaining=%.2f | reason=no_remaining_risk_budget",
                                     scanCycleId,
                                     currentSymbol,
@@ -6069,6 +6391,9 @@ void ProcessTradingLogic(bool fromTimer)
                     if(!EvaluateEAModeCandidateAdmission(contributorsList, tradeConfidence, modeRejectReason, modeConfidenceBonus))
                     {
                         g_hbValidatorRejects++;
+                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=ea_mode_admission | signal=%s conf=%.2f | mode=%s | reason=%s",
+                                    currentSymbol, signalType, tradeConfidence,
+                                    EAModeToString(ResolveEffectiveEAMode()), modeRejectReason);
                         PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=%s | mode=%s | contributors=%s | conf=%.2f",
                                     scanCycleId,
                                     currentSymbol,
@@ -6142,6 +6467,8 @@ void ProcessTradingLogic(bool fromTimer)
                         }
                         if(existingPositionsForSymbol >= InpMaxPositionsPerSymbol)
                         {
+                            PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=per_symbol_position_cap | signal=%s conf=%.2f | existing=%d max=%d",
+                                        currentSymbol, signalType, tradeConfidence, existingPositionsForSymbol, InpMaxPositionsPerSymbol);
                             PrintFormat("[RISK-PER-SYMBOL] %s | Already %d positions (max %d). Trade skipped.",
                                         currentSymbol, existingPositionsForSymbol, InpMaxPositionsPerSymbol);
                             continue;
@@ -6180,9 +6507,20 @@ void ProcessTradingLogic(bool fromTimer)
                             // Stateless sizing — no shared state mutation (Blueprint 10.5)
                             double lotSize = positionSizer.CalculateSize(currentSymbol, orderType, stopLossPips, proposedRisk, tradeConfidence);
 
+                            // Issue 5: Cap lot size so single trade cannot consume >30% of remaining daily budget
+                            double remainingDailyRisk = unifiedRiskManager.GetRemainingDailyRiskPercent();
+                            if(lotSize > 0.0 && remainingDailyRisk > 0.0 && proposedRisk > 0.0)
+                            {
+                                lotSize = positionSizer.CapLotForDailyBudget(currentSymbol, orderType, lotSize,
+                                                                             stopLossPips, proposedRisk,
+                                                                             remainingDailyRisk, 0.30);
+                            }
+
                             // If position sizer returned 0 (trade skipped due to min-lot risk cap), skip immediately
                             if(lotSize <= 0.0)
                             {
+                                PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=position_sizer_skip | signal=%s conf=%.2f | risk=%.2f | lotSize=0.00",
+                                            currentSymbol, signalType, tradeConfidence, proposedRisk);
                                 PrintFormat("[POSITION-SIZER-SKIP] %s | lotSize=0.00 — trade skipped by position sizer (below-minimum lot with risk cap exceeded)",
                                             currentSymbol);
                                 continue;
@@ -6270,7 +6608,9 @@ void ProcessTradingLogic(bool fromTimer)
                             if(InpEnableSkewStepAnalyzer && g_skewStepAnalyzer.IsInitialized())
                             {
                                 // Check if current symbol is a Skew Step index
-                                ENUM_DERIV_FAMILY family = g_multiAssetProfiler.GetDerivProfiler().DetectFamily(currentSymbol);
+                                CDerivAssetProfiler* derivProf2 = g_multiAssetProfiler.GetDerivProfiler();
+                                if(derivProf2 == NULL) continue;
+                                ENUM_DERIV_FAMILY family = derivProf2.DetectFamily(currentSymbol);
                                 if(family == DERIV_SKEW_STEP)
                                 {
                                     double skewMult = g_skewStepAnalyzer.GetSizingMultiplier();
@@ -6304,6 +6644,8 @@ void ProcessTradingLogic(bool fromTimer)
                                     {
                                         // Stacking not allowed — reject this stacked entry
                                         g_hbValidatorRejects++;
+                                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=full_margin_stack | signal=%s conf=%.2f | level=%d | reason=stacking_conditions_not_met",
+                                                    currentSymbol, signalType, tradeConfidence, stackLevel);
                                         PrintFormat("[FULL-MARGIN-STACK-REJECTED] %s | level=%d | reason=stacking_conditions_not_met",
                                                     currentSymbol, stackLevel);
                                         continue;
@@ -6314,6 +6656,8 @@ void ProcessTradingLogic(bool fromTimer)
                                 if(!g_fullMarginMode.CheckSafeguards(currentSymbol, atrValue))
                                 {
                                     g_hbValidatorRejects++;
+                                    PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=full_margin_safeguard | signal=%s conf=%.2f | reason=safeguards_failed",
+                                                currentSymbol, signalType, tradeConfidence);
                                     continue;
                                 }
                             }
@@ -6341,6 +6685,8 @@ void ProcessTradingLogic(bool fromTimer)
                                     if(existingPositions > 0)
                                     {
                                         g_hbValidatorRejects++;
+                                        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=safe_mode_no_stacking | signal=%s conf=%.2f | existing=%d",
+                                                    currentSymbol, signalType, tradeConfidence, existingPositions);
                                         PrintFormat("[SAFE-MODE-REJECTED] %s | reason=no_stacking_allowed | existing=%d",
                                                     currentSymbol, existingPositions);
                                         continue;
@@ -6351,6 +6697,8 @@ void ProcessTradingLogic(bool fromTimer)
                                 if(atrValue > 0.0 && !g_safeMode.IsSpreadAcceptable(currentSymbol, atrValue))
                                 {
                                     g_hbValidatorRejects++;
+                                    PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=safe_mode_spread | signal=%s conf=%.2f | reason=spread_exceeds_safe_limit",
+                                                currentSymbol, signalType, tradeConfidence);
                                     PrintFormat("[SAFE-MODE-REJECTED] %s | reason=spread_exceeds_safe_limit", currentSymbol);
                                     continue;
                                 }
@@ -6358,7 +6706,11 @@ void ProcessTradingLogic(bool fromTimer)
 
 tradeReq.lotSize = lotSize;
                             if(!ApproveTradeByUnifiedRisk(tradeReq, "post-size", riskResult, scanCycleId))
+                            {
+                                PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=unified_risk_post_size | signal=%s conf=%.2f | lot=%.2f | reason=%s",
+                                            currentSymbol, signalType, tradeConfidence, lotSize, riskResult.reason);
                                 continue;
+                            }
                             g_hbSignalsRiskApproved++;
                             
 
@@ -6439,6 +6791,13 @@ tradeReq.lotSize = lotSize;
                                             stopLossPips,
                                             tradeConfidence);
                             }
+                        }
+                        else
+                        {
+                            g_hbRiskRejects++;
+                            PrintFormat("[RISK-GATE-REJECT] %s | phase=pre-size | cycle=%I64u | reason=%s | risk=%.2f%% | lot=%.3f",
+                                        currentSymbol, scanCycleId, riskResult.message,
+                                        proposedRisk, tradeReq.lotSize);
                         }
                 }
             }
@@ -6529,13 +6888,20 @@ tradeReq.lotSize = lotSize;
                         aiPredictionRecorded = (aiPredictionTime > 0);
                     }
 
+                    // Issue 1 fix: Reserve virtual position at send time (not during staging)
+                    // to prevent within-cycle budget accumulation blocking valid signals
+                    string sendOwnerTag = StringFormat("send_%I64u_%d", scanCycleId, sendIdx);
+                    STradeValidationRequest sendReserveReq;
+                    PopulateTradeRequestFromCandidate(bestCandidate, sendReserveReq);
+                    unifiedRiskManager.ReserveVirtualPosition(sendOwnerTag, sendReserveReq, bestCandidate.riskResult.riskPercent);
+
                     attemptedThisCycle++;
                     if(executeAsShadow)
                     {
                         g_hbShadowTrades++;
                         g_hbSignalsSent++;
                         if(InpShadowMode || InpShadowModeEnabled)
-                            g_lastTradeTime = tickTime;
+                            g_lastTradeTime = tickTime; // Intentional: shadow trades participate in cooldown to prevent rapid-fire simulation entries
                         RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
                         PrintFormat("[SHADOW-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
                                     bestCandidate.cycleId,
@@ -6719,6 +7085,11 @@ tradeReq.lotSize = lotSize;
                                 g_attributionManager.UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
                         }
                     }
+
+                    // Issue 1 fix: Release virtual position after send (shadow or live).
+                    // For live trades, actual risk is registered via RegisterExecutedTradeRisk,
+                    // so the virtual reservation is no longer needed.
+                    unifiedRiskManager.ReleaseVirtualPosition(sendOwnerTag);
                 }
 
                 PrintFormat("[SCAN-DECISION-SUMMARY] cycle=%I64u | candidates=%d | attempted=%d | cap=%d",
@@ -6802,6 +7173,15 @@ tradeReq.lotSize = lotSize;
                     g_spikeHunter.GetTotalDetections(),
                     g_spikeHunter.GetTotalTradesOpened(),
                     g_spikeHunter.GetTotalTradesSkipped());
+
+    // Batch 107: Institutional TA engines heartbeat (forex only)
+    if(InpEnableVWAPEngine || InpEnableVolumeProfile || InpEnableCVDEngine)
+    {
+        PrintFormat("[INSTITUTIONAL-TA-HEARTBEAT] VWAP=%s | VP=%s | CVD=%s",
+                    InpEnableVWAPEngine ? "ON" : "OFF",
+                    InpEnableVolumeProfile ? "ON" : "OFF",
+                    InpEnableCVDEngine ? "ON" : "OFF");
+    }
 
     // I2: Compounding tier heartbeat
     if(InpEnableCompoundingTiers && g_compoundingTierManager.IsInitialized())

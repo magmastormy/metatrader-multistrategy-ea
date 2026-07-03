@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __UICT_ADVANCED_ORDER_BLOCKS_MQH__
-#define __UICT_ADVANCED_ORDER_BLOCKS_MQH__
+#ifndef UICT_ADVANCED_ORDER_BLOCKS_MQH
+#define UICT_ADVANCED_ORDER_BLOCKS_MQH
 
 //+------------------------------------------------------------------+
 //| Order Block Type Enum                                            |
@@ -384,17 +384,17 @@ int CAdvancedOrderBlockDetector::FindImpulseStart(bool bullish, int lookback)
 
         double body  = MathAbs(c - o);
         double range = h - l;
-        bool strongBody = (range > 0 && body / range >= 0.50);
+        // Relaxed: body >= 35% of range (was 50%) for better OB detection on synthetics
+        bool strongBody = (range > 0 && body / range >= 0.35);
 
         bool directionMatch = bullish ? (c > o) : (c < o);
 
         if(directionMatch && strongBody)
         {
             consecutiveCount++;
-            if(consecutiveCount >= 3)
+            // Relaxed: 2 consecutive impulse candles (was 3) for better detection
+            if(consecutiveCount >= 2)
             {
-                // Found 3+ consecutive impulse candles
-                // The impulse START is at bar i (oldest of the 3)
                 impulseStartBar = i;
                 break;
             }
@@ -459,8 +459,8 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
         IndicatorRelease(atrHandle);
     }
 
-    // Body must be at least 20% of ATR to qualify as a meaningful OB
-    if(atr > 0 && body < atr * 0.20) return false;
+    // Relaxed: body must be at least 10% of ATR (was 20%) for better OB detection
+    if(atr > 0 && body < atr * 0.10) return false;
 
     ob.type      = OB_SOURCE_BULLISH;
     ob.time      = iTime(m_symbol, m_timeframe, sourceOBBar);
@@ -523,7 +523,8 @@ bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
         IndicatorRelease(atrHandle);
     }
 
-    if(atr > 0 && body < atr * 0.20) return false;
+    // Relaxed: body must be at least 10% of ATR (was 20%) for better OB detection
+    if(atr > 0 && body < atr * 0.10) return false;
 
     ob.type      = OB_SOURCE_BEARISH;
     ob.time      = iTime(m_symbol, m_timeframe, sourceOBBar);

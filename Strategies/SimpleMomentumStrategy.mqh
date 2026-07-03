@@ -3,8 +3,8 @@
 //| Basic momentum strategy using EMA crossover                      |
 //| Simplified version: 4 indicators (fast/slow MA, ATR, RSI)       |
 //+------------------------------------------------------------------+
-#ifndef __SIMPLE_MOMENTUM_STRATEGY_MQH__
-#define __SIMPLE_MOMENTUM_STRATEGY_MQH__
+#ifndef SIMPLE_MOMENTUM_STRATEGY_MQH
+#define SIMPLE_MOMENTUM_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -38,7 +38,11 @@ private:
     string   m_lastRejectReasonTag;
     datetime m_lastRejectLogTime;
     int      m_minConfirmationBars; // Minimum bars for crossover confirmation (hysteresis)
-    
+
+    double   m_rsiOverbought;      // RSI overbought threshold (default: 72)
+    double   m_rsiOversold;        // RSI oversold threshold (default: 28)
+    double   m_adxThreshold;       // ADX trend strength threshold (default: 20)
+
     // Risk Management (AGENTS.md invariant #1)
     CUnifiedRiskManager* m_riskManager;
     int                  m_signalsGenerated;
@@ -204,7 +208,7 @@ private:
         if(!SafeCopyBuffer(m_adxHandle, 0, 1, 1, adxBuffer))
             return true;
 
-        return adxBuffer[0] > 20.0;
+        return adxBuffer[0] > m_adxThreshold;
     }
 
     // Pullback Entry Detection (v2.0)
@@ -450,6 +454,9 @@ public:
         m_volumeHandle(INVALID_HANDLE),
         m_crossoverBar(0),
         m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
+        m_rsiOverbought(72.0),
+        m_rsiOversold(28.0),
+        m_adxThreshold(20.0),
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
         m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
         m_riskManager(NULL),
@@ -480,6 +487,9 @@ public:
         m_volumeHandle(INVALID_HANDLE),
         m_crossoverBar(0),
         m_minConfirmationBars(MathMax(1, minConfirmationBars)),  // Hysteresis: min bars for crossover confirmation
+        m_rsiOverbought(72.0),
+        m_rsiOversold(28.0),
+        m_adxThreshold(20.0),
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
         m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
         m_signalsGenerated(0)
@@ -512,6 +522,17 @@ public:
     }
 
     int GetMinimumConfirmationBars() const { return m_minConfirmationBars; }
+
+    void SetRSIThresholds(double overbought, double oversold)
+    {
+        m_rsiOverbought = MathMax(60.0, MathMin(90.0, overbought));
+        m_rsiOversold = MathMax(10.0, MathMin(40.0, oversold));
+    }
+
+    void SetADXThreshold(double threshold)
+    {
+        m_adxThreshold = MathMax(10.0, MathMin(40.0, threshold));
+    }
 
     //+------------------------------------------------------------------+
     //| SetScalpTimeframeBounds                                           |
@@ -764,10 +785,10 @@ public:
         if(HasRSIDivergence(signal))
             return RejectSignal("MOMENTUM_DIVERGENCE_DETECTED");
             
-        if(signal == TRADE_SIGNAL_BUY && rsi > 72.0)
+        if(signal == TRADE_SIGNAL_BUY && rsi > m_rsiOverbought)
             return RejectSignal("MOMENTUM_RSI_OVERBOUGHT");
-        
-        if(signal == TRADE_SIGNAL_SELL && rsi < 28.0)
+
+        if(signal == TRADE_SIGNAL_SELL && rsi < m_rsiOversold)
             return RejectSignal("MOMENTUM_RSI_OVERSOLD");
 
         // === v2.0 ENHANCEMENTS ===

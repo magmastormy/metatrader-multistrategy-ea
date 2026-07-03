@@ -282,49 +282,49 @@ public:
         CreateLabel("H3_Sep", "========================", m_col3X, m_startY + row * m_rowH, m_dimColor);
         row++;
 
-        CreateLabel("Cfg_NormDecay", "Norm Decay: 0.02", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Cfg_NormDecay", "Norm Decay: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Cfg_Kelly", "Kelly Update: every 3", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Cfg_Kelly", "Kelly Update: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Cfg_MetaCooldown", "Meta Cooldown: 50", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Cfg_MetaCooldown", "Meta Cooldown: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Cfg_EarlyStop", "Early Stop: pat=20", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Cfg_EarlyStop", "Early Stop: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Cfg_FeatImp", "Feature Imp: every 200", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Cfg_FeatImp", "Feature Imp: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Cfg_ConfFloor", "Conf Floor: 0.70", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Cfg_ConfFloor", "Conf Floor: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
 
         row++;
         CreateLabel("H3_Sep2", "------ CONFORMAL --------", m_col3X, m_startY + row * m_rowH, m_accentColor);
         row++;
-        CreateLabel("Conf_Regime", "Regime-Aware: YES", m_col3X, m_startY + row * m_rowH, m_goodColor);
+        CreateLabel("Conf_Regime", "Regime-Aware: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Conf_ACI", "Adaptive ACI: YES", m_col3X, m_startY + row * m_rowH, m_goodColor);
+        CreateLabel("Conf_ACI", "Adaptive ACI: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
 
         row++;
         CreateLabel("H3_Sep3", "------ HOT-SWAP ---------", m_col3X, m_startY + row * m_rowH, m_accentColor);
         row++;
-        CreateLabel("HS_Promo", "Promotion: Expectancy", m_col3X, m_startY + row * m_rowH, m_goodColor);
+        CreateLabel("HS_Promo", "Promotion: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("HS_DD", "DD Guard: 1.5x max", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("HS_DD", "DD Guard: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
 
         row++;
         CreateLabel("H3_Sep4", "------ BARRIER ----------", m_col3X, m_startY + row * m_rowH, m_accentColor);
         row++;
-        CreateLabel("Bar_Width", "Min Width: 5 pts", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Bar_Width", "Min Width: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Bar_PerAsset", "Per-Asset-Class: YES", m_col3X, m_startY + row * m_rowH, m_goodColor);
+        CreateLabel("Bar_PerAsset", "Per-Asset-Class: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
 
         row++;
         CreateLabel("H3_Sep5", "------ TRAINING ---------", m_col3X, m_startY + row * m_rowH, m_accentColor);
         row++;
-        CreateLabel("Train_Gate", "Trade-Linked Gate: 5", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Train_Gate", "Trade-Linked Gate: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
-        CreateLabel("Train_Min", "Min Resolved: 10", m_col3X, m_startY + row * m_rowH, m_textColor);
+        CreateLabel("Train_Min", "Min Resolved: --", m_col3X, m_startY + row * m_rowH, m_textColor);
         row++;
 
         // ========== BOTTOM ROW: Summary ==========

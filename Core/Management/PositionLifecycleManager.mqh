@@ -4,8 +4,8 @@
 //| MultiStrategyAutonomousEA.mq5 ManageOpenPositionsIfNeeded()       |
 //| Blueprint Section 10.1 — Monolith Decomposition (R6a)            |
 //+------------------------------------------------------------------+
-#ifndef __POSITION_LIFECYCLE_MANAGER_MQH__
-#define __POSITION_LIFECYCLE_MANAGER_MQH__
+#ifndef POSITION_LIFECYCLE_MANAGER_MQH
+#define POSITION_LIFECYCLE_MANAGER_MQH
 
 #include "..\Utils\Enums.mqh"
 #include "..\Trading\TradeManager.mqh"
@@ -231,7 +231,26 @@ public:
                     {
                         if(!hasBreathingRoom || lossR > 0.50)
                         {
-                            if(!m_sreProfitGuard || (inLoss && !isMinorNoise))
+                            // Issue 9 fix: SRE profit guard — only trigger signal reversal
+                            // exit when position is in profit or still near entry. If the
+                            // position has drifted deep into loss (>25% of SL distance),
+                            // skip SRE and let structural invalidation or hard SL decide.
+                            bool profitGuardBlocked = false;
+                            if(m_sreProfitGuard && inLoss)
+                            {
+                                if(lossR > 0.25)
+                                {
+                                    profitGuardBlocked = true;
+                                    static datetime s_lastProfitGuardLog = 0;
+                                    if(TimeCurrent() - s_lastProfitGuardLog > 60)
+                                    {
+                                        PrintFormat("[SRE-PROFIT-GUARD] %s | blocking SRE | in loss, lossR=%.2f > 0.25 threshold | letting SL/structural decide",
+                                                    sym, lossR);
+                                        s_lastProfitGuardLog = TimeCurrent();
+                                    }
+                                }
+                            }
+                            if(!profitGuardBlocked)
                                 reversalDetected = true;
                         }
                     }

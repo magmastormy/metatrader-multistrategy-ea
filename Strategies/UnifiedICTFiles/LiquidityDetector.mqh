@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __UICT_LIQUIDITY_DETECTOR_MQH__
-#define __UICT_LIQUIDITY_DETECTOR_MQH__
+#ifndef UICT_LIQUIDITY_DETECTOR_MQH
+#define UICT_LIQUIDITY_DETECTOR_MQH
 
 //+------------------------------------------------------------------+
 //| Liquidity Type Enum                                              |

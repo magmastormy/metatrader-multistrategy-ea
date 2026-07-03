@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __SR_SUPPORT_RESISTANCE_DETECTOR_MQH__
-#define __SR_SUPPORT_RESISTANCE_DETECTOR_MQH__
+#ifndef SR_SUPPORT_RESISTANCE_DETECTOR_MQH
+#define SR_SUPPORT_RESISTANCE_DETECTOR_MQH
 
 #include <Arrays/ArrayObj.mqh>
 #include "../../IndicatorManager.mqh"

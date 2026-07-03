@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __STRATEGY_SUPPORT_RESISTANCE_MQH__
-#define __STRATEGY_SUPPORT_RESISTANCE_MQH__
+#ifndef STRATEGY_SUPPORT_RESISTANCE_MQH
+#define STRATEGY_SUPPORT_RESISTANCE_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Core/Visualization/ChartDrawingManager.mqh"
@@ -458,7 +458,7 @@ void CStrategySupportResistance::DrawTrendlines()
         if(trendline.isBroken)
             lineColor = clrGray;
         
-        ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DOT : STYLE_DOT;
+        ENUM_LINE_STYLE style = trendline.isBroken ? STYLE_DOT : STYLE_SOLID;
         
         m_drawingManager.DrawTrendLine(trendline.point1Time, trendline.point1Price,
                                         trendline.point2Time, trendline.point2Price,

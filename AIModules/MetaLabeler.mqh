@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __META_LABELER_MQH__
-#define __META_LABELER_MQH__
+#ifndef META_LABELER_MQH
+#define META_LABELER_MQH
 
 #include "AIConfig.mqh"
 

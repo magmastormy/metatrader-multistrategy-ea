@@ -1,9 +1,9 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| TrainingMetrics.mqh                                              |
 //| Performance metrics calculation for training evaluation            |
 //+------------------------------------------------------------------+
-#ifndef __MQH_TRAINING_METRICS_MQH__
-#define __MQH_TRAINING_METRICS_MQH__
+#ifndef MQH_TRAINING_METRICS_MQH
+#define MQH_TRAINING_METRICS_MQH
 
 class CTrainingMetrics
 {

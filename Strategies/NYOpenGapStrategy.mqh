@@ -5,8 +5,8 @@
 //|                                                                  |
 //| Batch 103: Session-specific strategy for forex/metals/indices     |
 //+------------------------------------------------------------------+
-#ifndef __NY_OPEN_GAP_STRATEGY_MQH__
-#define __NY_OPEN_GAP_STRATEGY_MQH__
+#ifndef NY_OPEN_GAP_STRATEGY_MQH
+#define NY_OPEN_GAP_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -16,6 +16,8 @@
 #include "UnifiedICTFiles/SessionGapDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
+// CNYOpenGapStrategy trades the NDOG fade with FVG confluence during NY open.
+// Targets gap-fill tendency at 13:30-14:00 UTC (9:30-10 AM EST).
 class CNYOpenGapStrategy : public CStrategyBase
 {
 private:
@@ -89,7 +91,10 @@ public:
         CStrategyBase::Deinit();
     }
 
-    virtual void OnTick() override {}
+    virtual void OnTick() override
+    {
+        // Intentionally empty - strategy evaluates on new bar only via GetSignal()
+    }
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(symbol == m_symbol && timeframe == m_timeframe)

@@ -18,13 +18,7 @@
 
 // Forward declarations
 class CEnhancedErrorHandler;
-class CUtilities;
-class CMarketAnalysis;
-class CNextGenStrategyBrain;
-class CTransformerBrain;
-struct SPredictionWithUncertainty;
 class CPositionSizer;
-class CTradeManager;
 class CPerformanceAnalytics;
 
 //+------------------------------------------------------------------+
@@ -70,7 +64,7 @@ private:
     // Log level for gating diagnostic string building
     int m_logLevel;
 
-    // FIX: Correlation engine pointer â€?delegates to CCorrelationEngine instead of own Pearson
+    // FIX: Correlation engine pointer ï¿½?delegates to CCorrelationEngine instead of own Pearson
     CCorrelationEngine* m_correlationEngine;
 
     // Anti-Martingale momentum scaling (Blueprint Section 4.3)
@@ -109,7 +103,7 @@ public:
     // Destructor
     ~CPositionSizer(void);
     
-    // DEPRECATED: Use CalculateSize() instead â€?avoids shared mutable state
+    // DEPRECATED: Use CalculateSize() instead ï¿½?avoids shared mutable state
     // Initialize with parameters
     bool SetParameters(const SPositionSizingParams &params);
     
@@ -128,14 +122,14 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     // Set performance analytics for anti-Martingale momentum scaling
     void SetPerformanceAnalytics(CPerformanceAnalytics* pa) { m_perfAnalytics = pa; }
     
-    // DEPRECATED: Use CalculateSize() instead â€?avoids shared mutable state
+    // DEPRECATED: Use CalculateSize() instead ï¿½?avoids shared mutable state
     // Calculate optimal position size with enhanced risk management
     double CalculateOptimalPositionSize(const string symbol,
                                        const ENUM_ORDER_TYPE orderType,
                                        const double stopLossPips,
                                        const double confidence = 1.0);
 
-    // Stateless position size calculation â€?all per-call parameters passed directly.
+    // Stateless position size calculation ï¿½?all per-call parameters passed directly.
     // This is the preferred API. SetParameters+CalculateOptimalPositionSize is deprecated.
     // Produces IDENTICAL results to SetParameters(riskPercent=X)+CalculateOptimalPositionSize
     // without mutating shared state, so it is safe to call for multiple symbols per tick.
@@ -150,6 +144,16 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
                          const double riskPercent,
                          const double confidence,
                          double tierRiskPerTradePct);
+
+    // Issue 5: Cap lot size so a single trade cannot consume more than maxBudgetFraction
+    // of the remaining daily risk budget. Returns the (possibly reduced) lot size.
+    double CapLotForDailyBudget(const string symbol,
+                                const ENUM_ORDER_TYPE orderType,
+                                const double lotSize,
+                                const double slDistancePips,
+                                const double riskPercent,
+                                const double remainingDailyRiskPct,
+                                const double maxBudgetFraction = 0.30);
     
     // Calculate base position size according to sizing mode
     double CalculateBasePositionSize(const string symbol, const double stopLossPips);
@@ -157,7 +161,7 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     // Private: base size with explicit risk percent
     double CalculateBasePositionSizeWithRisk(const string symbol, const double stopLossPips, const double riskPercent);
 
-    // Private: stateless core calculation â€?accepts riskPercent as parameter
+    // Private: stateless core calculation ï¿½?accepts riskPercent as parameter
     double CalculateOptimalPositionSizeCore(const string symbol,
                                              const ENUM_ORDER_TYPE orderType,
                                              const double stopLossPips,
@@ -499,7 +503,7 @@ double CPositionSizer::CalculateOptimalPositionSize(const string symbolParam,
 }
 
 //+------------------------------------------------------------------+
-//| Stateless core calculation â€?accepts riskPercent as parameter     |
+//| Stateless core calculation ï¿½?accepts riskPercent as parameter     |
 //+------------------------------------------------------------------+
 double CPositionSizer::CalculateOptimalPositionSizeCore(const string symbolParam,
                                                           const ENUM_ORDER_TYPE orderType,
@@ -603,7 +607,7 @@ double CPositionSizer::CalculateOptimalPositionSizeCore(const string symbolParam
 
 //+------------------------------------------------------------------+
 //| Stateless position size calculation (Blueprint Section 10.5)      |
-//| All per-call parameters passed directly â€?no shared state mutation|
+//| All per-call parameters passed directly ï¿½?no shared state mutation|
 //+------------------------------------------------------------------+
 double CPositionSizer::CalculateSize(const string symbol,
                                       const ENUM_ORDER_TYPE orderType,
@@ -614,28 +618,21 @@ double CPositionSizer::CalculateSize(const string symbol,
     // Validate risk percent before proceeding
     if(riskPercent <= 0.0 || riskPercent > MAX_RISK_PER_TRADE)
     {
-        PrintFormat("[POSITIONSIZER-CALCULATE-SIZE] Invalid risk percent: %.2f â€?falling back to min lot for %s",
+        PrintFormat("[POSITIONSIZER-CALCULATE-SIZE] Invalid risk percent: %.2f ï¿½?falling back to min lot for %s",
                     riskPercent, symbol);
         return NormalizeVolume(symbol, MIN_LOT_SIZE);
     }
 
     if(!m_initialized)
-        m_initialized = true;
-
-    // Direct call â€?no shared state mutation (Blueprint Section 10.5)
-    double lotSize = CalculateOptimalPositionSizeCore(symbol, orderType, slDistancePips, riskPercent, confidence);
-
-    // Apply anti-Martingale momentum scaling (Blueprint Section 4.3)
-    if(m_perfAnalytics != NULL)
     {
-        double momentumScale = m_perfAnalytics.CalculateMomentumScale();
-        if(momentumScale != 1.0 && momentumScale > 0.0)
-        {
-            lotSize *= momentumScale;
-            lotSize = NormalizeVolume(symbol, lotSize);
-        }
+        PrintFormat("[POSITIONSIZER] WARNING: CalculateSize called before SetParameters - using defaults for %s", symbol);
+        m_initialized = true;
     }
 
+    // Direct call ï¿½?no shared state mutation (Blueprint Section 10.5)
+    double lotSize = CalculateOptimalPositionSizeCore(symbol, orderType, slDistancePips, riskPercent, confidence);
+
+    // Momentum scaling already applied in CalculateOptimalPositionSizeCore
     return lotSize;
 }
 
@@ -667,6 +664,46 @@ double CPositionSizer::CalculateSizeWithTierCap(const string symbol,
     }
 
     return lotSize;
+}
+
+//+------------------------------------------------------------------+
+//| Issue 5: Cap lot size for daily budget protection                 |
+//| Prevents a single trade from consuming more than maxBudgetFraction|
+//| of the remaining daily risk budget (default 30%).                 |
+//+------------------------------------------------------------------+
+double CPositionSizer::CapLotForDailyBudget(const string symbol,
+                                            const ENUM_ORDER_TYPE orderType,
+                                            const double lotSize,
+                                            const double slDistancePips,
+                                            const double riskPercent,
+                                            const double remainingDailyRiskPct,
+                                            const double maxBudgetFraction)
+{
+    if(lotSize <= 0.0 || remainingDailyRiskPct <= 0.0 || riskPercent <= 0.0)
+        return lotSize;
+
+    double maxAllowedRisk = remainingDailyRiskPct * maxBudgetFraction;
+
+    if(riskPercent <= maxAllowedRisk)
+        return lotSize;
+
+    double reductionFactor = maxAllowedRisk / riskPercent;
+    double cappedLot = lotSize * reductionFactor;
+
+    double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    if(brokerMinLot <= 0.0) brokerMinLot = MIN_LOT_SIZE;
+    cappedLot = MathMax(brokerMinLot, cappedLot);
+    cappedLot = NormalizeVolume(symbol, cappedLot);
+
+    if(cappedLot < lotSize)
+    {
+        PrintFormat("[DAILY-BUDGET-CAP] %s | lot %.2f -> %.2f | risk %.2f%% -> %.2f%% | remaining_budget=%.2f%% | cap_fraction=%.0f%%",
+                    symbol, lotSize, cappedLot,
+                    riskPercent, riskPercent * reductionFactor,
+                    remainingDailyRiskPct, maxBudgetFraction * 100.0);
+    }
+
+    return cappedLot;
 }
 
 //+------------------------------------------------------------------+
@@ -919,7 +956,7 @@ double CPositionSizer::ValidatePositionSize(const string symbolParam,
         }
         else
         {
-            // Round-up disabled â€?skip trade with clear message
+            // Round-up disabled ï¿½?skip trade with clear message
             Print("[POSITION-SIZER] Lot below minimum: calculated=", DoubleToString(validatedSize, 3),
                   " < min=", DoubleToString(effectiveMinLot, 3),
                   ". Round-up disabled. Trade skipped.");
@@ -928,7 +965,7 @@ double CPositionSizer::ValidatePositionSize(const string symbolParam,
     }
     else if(validatedSize <= 0.0)
     {
-        // Zero or negative lot â€?always skip
+        // Zero or negative lot ï¿½?always skip
         Print("[POSITION-SIZER] Calculated lot is zero or negative: ", DoubleToString(validatedSize, 3),
               ". Trade skipped.");
         return 0.0;
@@ -1269,7 +1306,7 @@ bool CPositionSizer::ValidateSymbol(const string symbolParam)
 }
 
 //+------------------------------------------------------------------+
-//| Calculate correlation between two symbols â€?delegates to engine   |
+//| Calculate correlation between two symbols ï¿½?delegates to engine   |
 //+------------------------------------------------------------------+
 double CPositionSizer::CalculateCorrelation(const string symbol1, const string symbol2, int period)
 {
@@ -1407,7 +1444,7 @@ double CPositionSizer::CalculateCompoundingMultiplier(void)
     
     if(m_startingEquity <= 0.0)
     {
-        // Not initialized yet â€?initialize on first call
+        // Not initialized yet ï¿½?initialize on first call
         InitializeCompounding();
         return 1.0;
     }

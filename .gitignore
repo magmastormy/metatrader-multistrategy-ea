@@ -79,6 +79,8 @@ __pypackages__/
 
 # IDE
 .idea/
+.trae/
+.kiro/
 # Dashboard
 Dashboard/client/node_modules/
 Dashboard/client/dist/
@@ -92,3 +94,6 @@ grok_problems.md
 problems.md
 *.exe
 mimo.exe
+*.csv
+*.onnx
+*.ini

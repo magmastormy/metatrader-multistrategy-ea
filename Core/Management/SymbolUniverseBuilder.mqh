@@ -2,8 +2,8 @@
 //| SymbolUniverseBuilder.mqh                                        |
 //| Validates and builds the active trading symbol universe          |
 //+------------------------------------------------------------------+
-#ifndef __SYMBOL_UNIVERSE_BUILDER_MQH__
-#define __SYMBOL_UNIVERSE_BUILDER_MQH__
+#ifndef SYMBOL_UNIVERSE_BUILDER_MQH
+#define SYMBOL_UNIVERSE_BUILDER_MQH
 
 #include "../Utils/Instruments.mqh"
 

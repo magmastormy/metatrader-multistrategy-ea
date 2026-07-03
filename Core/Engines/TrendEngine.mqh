@@ -138,6 +138,9 @@ private:
     double m_lastGoodPlusDI;
     double m_lastGoodMinusDI;
     int m_adxCacheReuseTtlSeconds;
+    int m_consecutiveAdxCorruptions;
+    int m_adxCorruptionReinitThreshold;
+    datetime m_lastAdxCorruptionReinitTime;
     int m_consecutiveReadinessFaults;
     int m_readinessFailureReinitThreshold;
     datetime m_lastReadinessReinitAttemptTime;
@@ -281,6 +284,9 @@ CTrendEngine::CTrendEngine() :
     m_lastGoodAdxValue(0.0),
     m_lastGoodPlusDI(0.0),
     m_lastGoodMinusDI(0.0),
+    m_consecutiveAdxCorruptions(0),
+    m_adxCorruptionReinitThreshold(5),
+    m_lastAdxCorruptionReinitTime(0),
     m_adxCacheReuseTtlSeconds(60),
     m_consecutiveReadinessFaults(0),
     m_readinessFailureReinitThreshold(3),
@@ -1000,6 +1006,11 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
                !IsValidAdxDomainValue(minusDI[0]))
             {
                 adxValid = false;
+                m_consecutiveAdxCorruptions++;
+                PrintFormat("[ADX-CORRUPT] symbol=%s | timeframe=%s | raw_adx=%.2f | raw_plus=%.2f | raw_minus=%.2f | corruption_count=%d",
+                            symbol, EnumToString(timeframe),
+                            adx[0], plusDI[0], minusDI[0],
+                            m_consecutiveAdxCorruptions);
                 RecordAdxFailure(symbol,
                                  timeframe,
                                  "ADX_VALUE_OUT_OF_RANGE",
@@ -1008,6 +1019,35 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
                                  minusCopyRet,
                                  0,
                                  adx[0]);
+                if(m_lastGoodAdxTime != 0 && m_lastGoodAdxValue > 0.0)
+                {
+                    adx[0] = m_lastGoodAdxValue;
+                    plusDI[0] = m_lastGoodPlusDI;
+                    minusDI[0] = m_lastGoodMinusDI;
+                    adxValid = true;
+                    adxModeLabel = "CORRUPT-REUSE";
+                    PrintFormat("[ADX-CORRUPT] Reusing last good value | adx=%.2f | plus=%.2f | minus=%.2f | age=%ds",
+                                m_lastGoodAdxValue, m_lastGoodPlusDI, m_lastGoodMinusDI,
+                                (int)(TimeCurrent() - m_lastGoodAdxTime));
+                }
+                datetime adxNow = TimeCurrent();
+                if(m_consecutiveAdxCorruptions >= m_adxCorruptionReinitThreshold &&
+                   (m_lastAdxCorruptionReinitTime == 0 || (adxNow - m_lastAdxCorruptionReinitTime) >= 60))
+                {
+                    m_lastAdxCorruptionReinitTime = adxNow;
+                    if(m_handleADX != INVALID_HANDLE)
+                    {
+                        IndicatorRelease(m_handleADX);
+                        m_handleADX = INVALID_HANDLE;
+                    }
+                    m_handleADX = iADX(symbol, timeframe, m_adxPeriod);
+                    if(m_handleADX != INVALID_HANDLE)
+                    {
+                        PrintFormat("[ADX-CORRUPT] Handle recreated for %s %s after %d consecutive corruptions",
+                                    symbol, EnumToString(timeframe), m_consecutiveAdxCorruptions);
+                        m_consecutiveAdxCorruptions = 0;
+                    }
+                }
             }
         }
 
@@ -1018,7 +1058,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
             minusDI[0] = 0.0;
             adxModeLabel = "DEGRADED";
         }
-        else if(adxModeLabel != "CACHED-REUSE")
+        else if(adxModeLabel != "CACHED-REUSE" && adxModeLabel != "CORRUPT-REUSE")
         {
             // Cache good ADX values for future reuse on copy failure
             m_lastGoodAdxTime = TimeCurrent();
@@ -1027,6 +1067,7 @@ bool CTrendEngine::UpdateTrend(const string symbol, ENUM_TIMEFRAMES timeframe)
             m_lastGoodMinusDI = minusDI[0];
             m_lastAdxValid = true;
             m_consecutiveAdxFailures = 0;
+            m_consecutiveAdxCorruptions = 0;
         }
     }
     

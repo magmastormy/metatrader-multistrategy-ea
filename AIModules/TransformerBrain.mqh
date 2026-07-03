@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __TRANSFORMER_BRAIN_MQH__
-#define __TRANSFORMER_BRAIN_MQH__
+#ifndef TRANSFORMER_BRAIN_MQH
+#define TRANSFORMER_BRAIN_MQH
 
 #include <Arrays/ArrayObj.mqh>
 #include "AIConfig.mqh"

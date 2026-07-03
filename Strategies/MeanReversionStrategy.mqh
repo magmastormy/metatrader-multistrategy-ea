@@ -4,8 +4,8 @@
 //| Bollinger Bands + RSI + Volume Confirmation                      |
 //| Copyright 2026, Multi-Strategy EA                                |
 //+------------------------------------------------------------------+
-#ifndef __MEAN_REVERSION_STRATEGY_MQH__
-#define __MEAN_REVERSION_STRATEGY_MQH__
+#ifndef MEAN_REVERSION_STRATEGY_MQH
+#define MEAN_REVERSION_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -121,7 +121,7 @@ public:
         m_rsiPeriod(14),
         m_rsiOverbought(70.0),
         m_rsiOversold(30.0),
-        m_minVolumeRatio(0.8),
+        m_minVolumeRatio(1.2),
         m_isSynthetic(false),
         m_syntheticBbDeviation(1.5),
         m_syntheticBbHandle(INVALID_HANDLE),
@@ -480,7 +480,7 @@ public:
             signal.reason = "Synthetic: BB lower touch + spike detected";
         }
 
-        if(touchUpper && spiked)
+        else if(touchUpper && spiked)
         {
             signal.entryType = MR_ENTRY_BB_TOUCH;
             signal.direction = TRADE_SIGNAL_SELL;

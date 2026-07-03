@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __ENSEMBLE_META_LEARNER_MQH__
-#define __ENSEMBLE_META_LEARNER_MQH__
+#ifndef ENSEMBLE_META_LEARNER_MQH
+#define ENSEMBLE_META_LEARNER_MQH
 
 #include <Arrays/ArrayObj.mqh>
 #include "TransformerBrain.mqh"

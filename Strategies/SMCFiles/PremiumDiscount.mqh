@@ -7,8 +7,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __SMC_PREMIUM_DISCOUNT_MQH__
-#define __SMC_PREMIUM_DISCOUNT_MQH__
+#ifndef SMC_PREMIUM_DISCOUNT_MQH
+#define SMC_PREMIUM_DISCOUNT_MQH
 
 //+------------------------------------------------------------------+
 //| Zone Type                                                        |

@@ -2,8 +2,8 @@
 //| SymbolScanScheduler.mqh - Symbol scan scheduling & intrabar scoring |
 //| Extracted from MultiStrategyAutonomousEA.mq5                     |
 //+------------------------------------------------------------------+
-#ifndef __SYMBOL_SCAN_SCHEDULER_MQH__
-#define __SYMBOL_SCAN_SCHEDULER_MQH__
+#ifndef SYMBOL_SCAN_SCHEDULER_MQH
+#define SYMBOL_SCAN_SCHEDULER_MQH
 
 #include "..\Utils\Enums.mqh"
 
@@ -305,12 +305,15 @@ public:
             state.nearMissCount = 0;
         }
 
+        // Relaxed backoff tiers to prevent hours of inactivity
+        // Old: 3/8/15 cycles → tier 1/2/3; tier 3 skipped for 5+ min
+        // New: 5/10/20 cycles → tier 1/2/3; tier 3 skipped for 2 min
         int nextTier = 0;
-        if(state.consecutiveRawNone >= 15 || state.consecutiveZeroVote >= 15)
+        if(state.consecutiveRawNone >= 20 || state.consecutiveZeroVote >= 20)
             nextTier = 3;
-        else if(state.consecutiveRawNone >= 8 || state.consecutiveZeroVote >= 8)
+        else if(state.consecutiveRawNone >= 10 || state.consecutiveZeroVote >= 10)
             nextTier = 2;
-        else if(state.consecutiveRawNone >= 3 || state.consecutiveZeroVote >= 3)
+        else if(state.consecutiveRawNone >= 5 || state.consecutiveZeroVote >= 5)
             nextTier = 1;
 
         if(nextTier != state.intrabarBackoffTier)
@@ -327,7 +330,7 @@ public:
         }
 
         if(state.intrabarBackoffTier >= 3)
-            state.nextEligibleIntrabarTime = nowTime + MathMax(300, GetIntrabarBackoffSeconds(2));
+            state.nextEligibleIntrabarTime = nowTime + MathMax(120, GetIntrabarBackoffSeconds(2));
         else
             state.nextEligibleIntrabarTime = nowTime + GetIntrabarBackoffSeconds(state.intrabarBackoffTier);
 

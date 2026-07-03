@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __SR_TRADING_STRATEGIES_MQH__
-#define __SR_TRADING_STRATEGIES_MQH__
+#ifndef SR_TRADING_STRATEGIES_MQH
+#define SR_TRADING_STRATEGIES_MQH
 
 #include "SupportResistanceDetector.mqh"
 #include "TrendlineDetector.mqh"

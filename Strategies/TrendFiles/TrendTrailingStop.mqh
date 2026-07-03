@@ -7,8 +7,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __TREND_TRAILING_STOP_MQH__
-#define __TREND_TRAILING_STOP_MQH__
+#ifndef TREND_TRAILING_STOP_MQH
+#define TREND_TRAILING_STOP_MQH
 
 #include "MultiEMASystem.mqh"
 #include "../../IndicatorManager.mqh"

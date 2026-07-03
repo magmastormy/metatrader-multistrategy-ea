@@ -2,8 +2,8 @@
 //| ConsensusCache.mqh - Cache consensus results per symbol/mode     |
 //| Avoids repeated full consensus evaluation in SRE hot path        |
 //+------------------------------------------------------------------+
-#ifndef __CONSENSUS_CACHE_MQH__
-#define __CONSENSUS_CACHE_MQH__
+#ifndef CONSENSUS_CACHE_MQH
+#define CONSENSUS_CACHE_MQH
 
 #include "..\Utils\Enums.mqh"
 

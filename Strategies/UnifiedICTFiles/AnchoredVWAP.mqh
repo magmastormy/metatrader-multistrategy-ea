@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __UICT_ANCHORED_VWAP_MQH__
-#define __UICT_ANCHORED_VWAP_MQH__
+#ifndef UICT_ANCHORED_VWAP_MQH
+#define UICT_ANCHORED_VWAP_MQH
 
 class CAnchoredVWAP
 {

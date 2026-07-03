@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __SR_SIGNAL_SCORER_MQH__
-#define __SR_SIGNAL_SCORER_MQH__
+#ifndef SR_SIGNAL_SCORER_MQH
+#define SR_SIGNAL_SCORER_MQH
 
 //+------------------------------------------------------------------+
 //| S/R Signal Scorer Class                                          |

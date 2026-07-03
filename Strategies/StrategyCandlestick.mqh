@@ -1,7 +1,11 @@
 //+------------------------------------------------------------------+
-//|                                         StrategyCandlestick.mqh  |
-//|                                  Candlestick Pattern Strategy    |
+//| StrategyCandlestick.mqh                                          |
+//| Candlestick Pattern Strategy - Multi-pattern detection and       |
+//| confluence scoring for institutional-grade pattern trading        |
 //+------------------------------------------------------------------+
+#ifndef STRATEGY_CANDLESTICK_MQH
+#define STRATEGY_CANDLESTICK_MQH
+
 #property copyright "Copyright 2024"
 #property strict
 
@@ -45,6 +49,8 @@ enum ENUM_CANDLE_PATTERN
     PATTERN_DARK_CLOUD
 };
 
+// CStrategyCandlestick implements multi-pattern candlestick detection with
+// confluence scoring for institutional-grade pattern trading.
 class CStrategyCandlestick : public CStrategyBase
 {
 private:
@@ -601,36 +607,6 @@ private:
         return 0.0;
     }
 
-    bool ValidatePattern(double patternPrice, bool isBullish, int barIndex)
-    {
-        // Pattern price parameter reserved for future validation
-
-        // --- ATR NORMALIZATION CHECK ---
-        // Ensures only substantial candles (≥80% of ATR) generate signals
-        if(m_atrHandle != INVALID_HANDLE)
-        {
-            double atrBuffer[1];
-            if(CopyBuffer(m_atrHandle, 0, barIndex, 1, atrBuffer) > 0)
-            {
-                double high = iHigh(m_symbol, m_timeframe, barIndex);
-                double low = iLow(m_symbol, m_timeframe, barIndex);
-                double candleSize = high - low;
-
-                // Reject weak patterns that don't show conviction
-                if(candleSize < atrBuffer[0] * 0.8)
-                    return false;
-            }
-        }
-
-        if(m_requireTrendAlignment)
-        {
-            if(!CheckTrendAlignment(isBullish, barIndex))
-                return false;
-        }
-
-        return true;
-    }
-
     bool CheckTrendAlignment(bool isBullish, int barIndex) { if(m_ema50Handle == INVALID_HANDLE || m_ema200Handle == INVALID_HANDLE) return true; double ema50[1], ema200[1]; if(CopyBuffer(m_ema50Handle, 0, barIndex, 1, ema50) <= 0 || CopyBuffer(m_ema200Handle, 0, barIndex, 1, ema200) <= 0) return true; bool uptrend = (ema50[0] > ema200[0]); bool downtrend = (ema50[0] < ema200[0]); return isBullish ? uptrend : downtrend; }
 
     void DrawPatternSignal(datetime time, double price, double strength, bool isBullish, const string patternName)
@@ -714,4 +690,6 @@ private:
         return m_confluence.GetScore();
     }
 };
+
+#endif // STRATEGY_CANDLESTICK_MQH
 

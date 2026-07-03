@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __SR_TRENDLINE_DETECTOR_MQH__
-#define __SR_TRENDLINE_DETECTOR_MQH__
+#ifndef SR_TRENDLINE_DETECTOR_MQH
+#define SR_TRENDLINE_DETECTOR_MQH
 
 #include "../../IndicatorManager.mqh"
 

@@ -2,15 +2,16 @@
 //| Universal Transformer Service for Multi-Symbol AI               |
 //| Centralized transformer with symbol-specific adaptation          |
 //+------------------------------------------------------------------+
-#ifndef __UNIVERSAL_TRANSFORMER_SERVICE_MQH__
-#define __UNIVERSAL_TRANSFORMER_SERVICE_MQH__
+#ifndef UNIVERSAL_TRANSFORMER_SERVICE_MQH
+#define UNIVERSAL_TRANSFORMER_SERVICE_MQH
 
 #include "TransformerBrain.mqh"
 #include <Arrays/ArrayObj.mqh>
 #include <Arrays/ArrayString.mqh>
 
 // Symbol classification from logs
-enum ENUM_SYMBOL_CLASS {
+enum ENUM_SYMBOL_CLASS
+{
     SYMBOL_CLASS_UNKNOWN = 0,
     SYMBOL_CLASS_SYNTHETIC_STEP,
     SYMBOL_CLASS_SYNTHETIC_JUMP, 
@@ -23,7 +24,8 @@ enum ENUM_SYMBOL_CLASS {
 //+------------------------------------------------------------------+
 //| ITransformerEncoder Interface - Allows swapping implementations   |
 //+------------------------------------------------------------------+
-interface ITransformerEncoder {
+interface ITransformerEncoder
+{
     bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[]);
     bool SaveHeadState(const string &path);
     bool LoadHeadState(const string &path);
@@ -32,12 +34,14 @@ interface ITransformerEncoder {
     int GetNumLayers() const;
 };
 
-class CTransformerBrainAsEncoder : public ITransformerEncoder {
+class CTransformerBrainAsEncoder : public ITransformerEncoder
+{
 private:
     CTransformerBrain* m_transformer;
 public:
     CTransformerBrainAsEncoder(CTransformerBrain* transformer) { m_transformer = transformer; }
-    bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[]) {
+    bool GetPredictions(const double &inputSequence[], const int seqLen, double &outputs[])
+    {
         return m_transformer.GetPredictions(inputSequence, seqLen, outputs);
     }
     bool SaveHeadState(const string &path) { return m_transformer.SaveHeadState(path); }
@@ -192,7 +196,8 @@ private:
     int m_performanceCount;
     CSymbolEmbedding* m_embedding;  // Learnable symbol embedding
     
-    uint GetSymbolHash() const {
+    uint GetSymbolHash() const
+    {
         uint hash = 0;
         for(int i = 0; i < StringLen(m_symbol); i++) {
             hash = hash * 31 + (uint)StringGetCharacter(m_symbol, i);
@@ -201,7 +206,8 @@ private:
     }
     
 public:
-    CSymbolAdaptationHead(const string& symbol, ENUM_SYMBOL_CLASS symbolClass) {
+    CSymbolAdaptationHead(const string& symbol, ENUM_SYMBOL_CLASS symbolClass)
+    {
         m_symbol = symbol;
         m_symbolClass = symbolClass;
         m_performanceCount = 0;
@@ -220,7 +226,8 @@ public:
         }
     }
     
-    void InitializeAdaptationWeights() {
+    void InitializeAdaptationWeights()
+    {
         uint symbolHash = GetSymbolHash();
         
         switch(m_symbolClass) {
@@ -277,7 +284,8 @@ public:
         m_adaptationBias = (symbolHash % 200) / 1000.0 - 0.1; // Small bias [-0.1, 0.1]
     }
     
-    bool AdaptFeatures(const double& universalFeatures[], double& adaptedFeatures[]) {
+    bool AdaptFeatures(const double& universalFeatures[], double& adaptedFeatures[])
+    {
         if(ArraySize(universalFeatures) < 32) {
             ArrayCopy(adaptedFeatures, universalFeatures);
             return false;
@@ -298,7 +306,8 @@ public:
         return true;
     }
     
-    void UpdateFromPerformance(double performance) {
+    void UpdateFromPerformance(double performance)
+    {
         // Simple moving average of performance
         if(m_performanceCount < 20) {
             m_performanceHistory[m_performanceCount] = performance;
@@ -341,7 +350,8 @@ public:
     
     string GetSymbol() const { return m_symbol; }
     ENUM_SYMBOL_CLASS GetSymbolClass() const { return m_symbolClass; }
-    double GetAveragePerformance() const {
+    double GetAveragePerformance() const
+    {
         if(m_performanceCount == 0) return 0.5;
         double sum = 0.0;
         for(int i = 0; i < m_performanceCount; i++) {
@@ -354,13 +364,15 @@ public:
 //+------------------------------------------------------------------+
 //| Cache entry for symbol features                                  |
 //+------------------------------------------------------------------+
-struct SSymbolFeatureCache {
+struct SSymbolFeatureCache
+{
     string symbol;
     datetime timestamp;
     double features[32];
     bool isValid;
     
-    SSymbolFeatureCache() {
+    SSymbolFeatureCache()
+    {
         symbol = "";
         timestamp = 0;
         ArrayInitialize(features, 0.0);
@@ -371,7 +383,8 @@ struct SSymbolFeatureCache {
 //+------------------------------------------------------------------+
 //| Universal Transformer Service - Centralized AI brain             |
 //+------------------------------------------------------------------+
-class CUniversalTransformerService {
+class CUniversalTransformerService
+{
 private:
     ITransformerEncoder* m_encoder;             // Interface for encoder implementation
     bool m_ownsEncoder;                         // Track if service owns encoder
@@ -383,7 +396,8 @@ private:
     datetime m_lastCacheCleanup;
     
     // Helper to classify symbols based on name patterns
-    ENUM_SYMBOL_CLASS ClassifySymbol(const string& symbol) {
+    ENUM_SYMBOL_CLASS ClassifySymbol(const string& symbol)
+    {
         string lowerSymbol = symbol;
         StringToLower(lowerSymbol);
         
@@ -405,7 +419,8 @@ private:
             return SYMBOL_CLASS_UNKNOWN;
     }
     
-    int FindSymbolHeadIndex(const string& symbol) {
+    int FindSymbolHeadIndex(const string& symbol)
+    {
         for(int i = 0; i < m_symbolAdaptationHeads.Total(); i++) {
             CSymbolAdaptationHead* head = m_symbolAdaptationHeads.At(i);
             if(head != NULL && head.GetSymbol() == symbol) {
@@ -415,7 +430,8 @@ private:
         return -1;
     }
     
-    int FindCacheEntry(const string& symbol) {
+    int FindCacheEntry(const string& symbol)
+    {
         datetime now = TimeCurrent();
         for(int i = 0; i < m_cacheSize; i++) {
             if(m_featureCache[i].symbol == symbol && 
@@ -427,7 +443,8 @@ private:
         return -1;
     }
     
-    void CleanupCache() {
+    void CleanupCache()
+    {
         datetime now = TimeCurrent();
         if(now - m_lastCacheCleanup < 60) return; // Cleanup every minute
         
@@ -443,7 +460,8 @@ private:
         m_lastCacheCleanup = now;
     }
 
-    bool EnsureServiceInitialized() {
+    bool EnsureServiceInitialized()
+    {
         if(m_universalEncoder != NULL)
             return true;
 
@@ -451,7 +469,8 @@ private:
     }
     
 public:
-    CUniversalTransformerService() {
+    CUniversalTransformerService()
+    {
         m_encoder = NULL;
         m_ownsEncoder = false;
         m_universalEncoder = NULL;
@@ -459,12 +478,13 @@ public:
         m_lastCacheCleanup = 0;
     }
     
-    ~CUniversalTransformerService() {
+    ~CUniversalTransformerService()
+    {
         if(m_ownsEncoder && m_encoder != NULL) {
             delete m_encoder;
             m_encoder = NULL;
         }
-        if(m_universalEncoder != NULL) {
+        if(m_universalEncoder != NULL && m_universalEncoder != m_encoder) {
             delete m_universalEncoder;
             m_universalEncoder = NULL;
         }
@@ -477,7 +497,8 @@ public:
         m_registeredSymbols.Clear();
     }
     
-    void SetEncoder(ITransformerEncoder* encoder, const bool takeOwnership = false) {
+    void SetEncoder(ITransformerEncoder* encoder, const bool takeOwnership = false)
+    {
         if(m_ownsEncoder && m_encoder != NULL)
             delete m_encoder;
         m_encoder = encoder;
@@ -486,7 +507,8 @@ public:
     
     ITransformerEncoder* GetEncoder() const { return m_encoder; }
     
-    bool Initialize() {
+    bool Initialize()
+    {
         if(m_universalEncoder != NULL)
             return true;
 
@@ -514,7 +536,8 @@ public:
         return true;
     }
     
-    bool RegisterSymbol(const string& symbol) {
+    bool RegisterSymbol(const string& symbol)
+    {
         if(symbol == "") {
             return false;
         }
@@ -546,14 +569,16 @@ public:
         return true;
     }
     
-    bool IsSymbolRegistered(const string& symbol) {
+    bool IsSymbolRegistered(const string& symbol)
+    {
         return FindSymbolHeadIndex(symbol) >= 0;
     }
     
     bool GetSymbolFeatures(const string& symbol,
                           const double& marketData[],
                           int seqLen,
-                          double& symbolFeatures[]) {
+                          double& symbolFeatures[])
+    {
         if(symbol == "" || seqLen <= 0) {
             return false;
         }
@@ -637,7 +662,8 @@ public:
         return true;
     }
     
-    bool UpdateSymbolPerformance(const string& symbol, double performance) {
+    bool UpdateSymbolPerformance(const string& symbol, double performance)
+    {
         int headIndex = FindSymbolHeadIndex(symbol);
         if(headIndex < 0) return false;
         
@@ -648,7 +674,8 @@ public:
         return true;
     }
     
-    double GetSymbolPerformance(const string& symbol) {
+    double GetSymbolPerformance(const string& symbol)
+    {
         int headIndex = FindSymbolHeadIndex(symbol);
         if(headIndex < 0) return 0.5;
         
@@ -658,26 +685,31 @@ public:
         return head.GetAveragePerformance();
     }
     
-    int GetRegisteredSymbolCount() const {
+    int GetRegisteredSymbolCount() const
+    {
         return m_symbolAdaptationHeads.Total();
     }
     
-    string GetRegisteredSymbol(int index) const {
+    string GetRegisteredSymbol(int index) const
+    {
         if(index < 0 || index >= m_registeredSymbols.Total()) return "";
         return m_registeredSymbols.At(index);
     }
     
-    bool IsWarmedUp(int minSteps = 100) const {
+    bool IsWarmedUp(int minSteps = 100) const
+    {
         if(m_universalEncoder == NULL) return false;
         return m_universalEncoder.IsWarmedUp(minSteps);
     }
     
-    int GetUniversalEncoderTrainingSteps() const {
+    int GetUniversalEncoderTrainingSteps() const
+    {
         if(m_universalEncoder == NULL) return 0;
         return m_universalEncoder.GetTrainingSteps();
     }
     
-    void GetServiceStatus(string& status) {
+    void GetServiceStatus(string& status)
+    {
         status = "[UNIVERSAL-TRANSFORMER] ";
         status += "Symbols: " + IntegerToString(GetRegisteredSymbolCount()) + " | ";
         status += "Cache: " + IntegerToString(m_cacheSize) + "/20 | ";

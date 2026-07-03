@@ -7,8 +7,8 @@
 //| for price retest of the breaker zone, and confirms with opposing |
 //| FVG confluence, CISD displacement, and market structure context. |
 //+------------------------------------------------------------------+
-#ifndef __BREAKER_BLOCK_STRATEGY_MQH__
-#define __BREAKER_BLOCK_STRATEGY_MQH__
+#ifndef BREAKER_BLOCK_STRATEGY_MQH
+#define BREAKER_BLOCK_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -17,6 +17,8 @@
 #include "UnifiedICTFiles/AdvancedOrderBlocks.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
+// CBreakerBlockStrategy detects breaker order blocks, waits for price retest,
+// and confirms with FVG confluence, CISD displacement, and market structure.
 class CBreakerBlockStrategy : public CStrategyBase
 {
 private:
@@ -96,7 +98,10 @@ public:
         CStrategyBase::Deinit();
     }
 
-    virtual void OnTick() override {}
+    virtual void OnTick() override
+    {
+        // Intentionally empty - strategy evaluates on new bar only via GetSignal()
+    }
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(symbol == m_symbol && timeframe == m_timeframe)

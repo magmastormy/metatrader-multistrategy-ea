@@ -2,8 +2,8 @@
 //| CCheckpointManager.mqh                                            |
 //| Handles atomic checkpoint save/load for neural network           |
 //+------------------------------------------------------------------+
-#ifndef __NEURAL_CHECKPOINT_MANAGER_MQH__
-#define __NEURAL_CHECKPOINT_MANAGER_MQH__
+#ifndef NEURAL_CHECKPOINT_MANAGER_MQH
+#define NEURAL_CHECKPOINT_MANAGER_MQH
 
 #include "CNeuralCore.mqh"
 #include "../Core/AI/NNModelStorage.mqh"
@@ -326,7 +326,11 @@ public:
         totalObs = FileReadInteger(fh);
         tradeLinked = FileReadInteger(fh);
         long resolvedCount = FileReadLong(fh);
-        if(resolvedCount < 0) {}
+        if(resolvedCount < 0)
+        {
+            PrintFormat("[CHECKPOINT] WARNING: Invalid resolved count %d in checkpoint", resolvedCount);
+            return false;
+        }
         featureCount = FileReadLong(fh);
         normalizationReady = (FileReadInteger(fh) != 0);
         adamStep = FileReadLong(fh);

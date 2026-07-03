@@ -3,8 +3,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __INDICATOR_MANAGER_MQH__
-#define __INDICATOR_MANAGER_MQH__
+#ifndef INDICATOR_MANAGER_MQH
+#define INDICATOR_MANAGER_MQH
 
 #include <Object.mqh>
 #include <Indicators\Indicator.mqh>

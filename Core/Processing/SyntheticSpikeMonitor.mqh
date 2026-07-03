@@ -3,8 +3,8 @@
 //| Encapsulates spike detection, trading pause, and emergency        |
 //| drawdown stop logic extracted from MultiStrategyAutonomousEA.mq5  |
 //+------------------------------------------------------------------+
-#ifndef __SYNTHETIC_SPIKE_MONITOR_MQH__
-#define __SYNTHETIC_SPIKE_MONITOR_MQH__
+#ifndef SYNTHETIC_SPIKE_MONITOR_MQH
+#define SYNTHETIC_SPIKE_MONITOR_MQH
 
 #include "..\Utils\Instruments.mqh"
 #include "..\Trading\TradeManager.mqh"

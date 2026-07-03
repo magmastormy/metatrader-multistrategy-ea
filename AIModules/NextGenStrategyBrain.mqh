@@ -8,8 +8,8 @@
 //| IAIStrategy adapters → EnterpriseStrategyManager consensus.      |
 //| Do NOT use GenerateSignal() output as a direct TRADE_SIGNAL.     |
 //+------------------------------------------------------------------+
-#ifndef __NEXTGEN_STRATEGY_BRAIN_MQH__
-#define __NEXTGEN_STRATEGY_BRAIN_MQH__
+#ifndef NEXTGEN_STRATEGY_BRAIN_MQH
+#define NEXTGEN_STRATEGY_BRAIN_MQH
 
 #include <Arrays\ArrayDouble.mqh>
 #include <Math\Stat\Math.mqh>

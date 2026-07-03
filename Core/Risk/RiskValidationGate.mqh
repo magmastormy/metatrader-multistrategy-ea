@@ -80,6 +80,10 @@ private:
     // Per-cluster risk caps (Fix #11)
     string m_clusterRiskCapCodes[];        // Cluster codes for per-cluster caps
     double m_clusterRiskCapValues[];       // Cap values (0-100 scale) per cluster
+
+    // Cluster position reconciliation (Bug fix: inherited positions across restarts)
+    string m_clusterSyncCodes[];           // Cluster codes tracked at init
+    int    m_clusterSyncCounts[];          // Position counts per cluster at init time
     
     // Audit trail
     bool m_auditLogging;
@@ -153,6 +157,9 @@ public:
 
     // Per-cluster risk caps (Fix #11)
     void SetClusterRiskCap(const string clusterCode, const double capPercent);
+
+    // Cluster position reconciliation (Bug fix: inherited positions across restarts)
+    void SyncClusterPositionCounts();
     
 private:
     // Portfolio helper accessors
@@ -509,13 +516,7 @@ bool CRiskValidationGate::ValidateBasicParameters(const STradeValidationRequest 
     
     if(request.lotSize > maxLot)
     {
-        // Cap to max lot rather than hard-rejecting. The PositionSizer should
-        // handle normalization, but strategies that bypass it (e.g., using
-        // CalculateRiskBasedSize directly) can produce oversized lots.
-        // Capping is safer than rejecting because the risk is still bounded.
-        PrintFormat("[RISK-GATE] Lot capped to max: %.3f > %.3f for %s (strategy=%s)",
-                    request.lotSize, maxLot, request.symbol, request.strategy);
-        // Don't reject - the caller's UnifiedRiskManager will re-evaluate
+        PrintFormat("[RISK-GATE] Lot %.4f exceeds broker max %.4f for %s — caller must cap", request.lotSize, maxLot, request.symbol);
     }
     
     // Validate stop loss
@@ -928,6 +929,68 @@ void CRiskValidationGate::SetClusterRiskCap(const string clusterCode, const doub
     m_clusterRiskCapCodes[newSize - 1] = normalizedCode;
     m_clusterRiskCapValues[newSize - 1] = MathMax(0.1, capPercent);
     PrintFormat("[RISK-CLUSTER-CAP-PER] Added cluster=%s cap=%.2f%%", normalizedCode, m_clusterRiskCapValues[newSize - 1]);
+}
+
+//+------------------------------------------------------------------+
+//| Sync cluster position counts from live positions (on EA restart) |
+//| Counts actual open positions per cluster to prevent inherited     |
+//| positions from being double-counted or exceeding caps.           |
+//+------------------------------------------------------------------+
+void CRiskValidationGate::SyncClusterPositionCounts()
+{
+    // Clear previous sync data
+    ArrayResize(m_clusterSyncCodes, 0);
+    ArrayResize(m_clusterSyncCounts, 0);
+
+    int totalPositions = PositionsTotal();
+    for(int i = 0; i < totalPositions; i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket))
+            continue;
+
+        string posComment = PositionGetString(POSITION_COMMENT);
+        string clusterCode = "N";
+        ParseClusterCodeFromComment(posComment, clusterCode);
+        clusterCode = NormalizeClusterCode(clusterCode);
+
+        if(clusterCode == "N")
+            continue;
+
+        // Find or add cluster in sync arrays
+        bool found = false;
+        for(int c = 0; c < ArraySize(m_clusterSyncCodes); c++)
+        {
+            if(m_clusterSyncCodes[c] == clusterCode)
+            {
+                m_clusterSyncCounts[c]++;
+                found = true;
+                break;
+            }
+        }
+        if(!found)
+        {
+            int newSize = ArraySize(m_clusterSyncCodes) + 1;
+            ArrayResize(m_clusterSyncCodes, newSize);
+            ArrayResize(m_clusterSyncCounts, newSize);
+            m_clusterSyncCodes[newSize - 1] = clusterCode;
+            m_clusterSyncCounts[newSize - 1] = 1;
+        }
+    }
+
+    // Log reconciled state
+    PrintFormat("[RISK-CLUSTER-SYNC] Reconciled %d clusters from %d live positions:",
+                ArraySize(m_clusterSyncCodes), totalPositions);
+    for(int c = 0; c < ArraySize(m_clusterSyncCodes); c++)
+    {
+        PrintFormat("[RISK-CLUSTER-SYNC]   cluster=%s | inherited_positions=%d | max=%d",
+                    m_clusterSyncCodes[c], m_clusterSyncCounts[c], m_maxConcurrentPerCluster);
+        if(m_clusterSyncCounts[c] > m_maxConcurrentPerCluster)
+        {
+            PrintFormat("[RISK-CLUSTER-SYNC]   WARNING: cluster=%s has %d inherited positions exceeding cap %d — blocking new entries until positions close",
+                        m_clusterSyncCodes[c], m_clusterSyncCounts[c], m_maxConcurrentPerCluster);
+        }
+    }
 }
 
 //+------------------------------------------------------------------+

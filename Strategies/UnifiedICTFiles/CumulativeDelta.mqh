@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __UICT_CUMULATIVE_DELTA_MQH__
-#define __UICT_CUMULATIVE_DELTA_MQH__
+#ifndef UICT_CUMULATIVE_DELTA_MQH
+#define UICT_CUMULATIVE_DELTA_MQH
 
 class CCumulativeDelta
 {

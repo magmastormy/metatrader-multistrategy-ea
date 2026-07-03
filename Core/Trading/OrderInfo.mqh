@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __ORDER_INFO_MQH__
-#define __ORDER_INFO_MQH__
+#ifndef ORDER_INFO_MQH
+#define ORDER_INFO_MQH
 
 #include <Object.mqh>
 #include <Trade\OrderInfo.mqh>
@@ -88,4 +88,4 @@ public:
 
 // NOTE: InfoInteger, InfoDouble, InfoString, and Format* methods must be called with the correct parameter types and counts. Do not pass extra parameters or references. Use explicit casting for ulong to datetime where needed. No implicit int-to-string conversions allowed.
 
-#endif // __ORDER_INFO_MQH__
+#endif // ORDER_INFO_MQH

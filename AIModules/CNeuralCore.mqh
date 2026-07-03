@@ -2,8 +2,8 @@
 //| CNeuralCore.mqh                                                   |
 //| Core neural network operations (activations, loss, etc.)          |
 //+------------------------------------------------------------------+
-#ifndef __NEURAL_CORE_MQH__
-#define __NEURAL_CORE_MQH__
+#ifndef NEURAL_CORE_MQH
+#define NEURAL_CORE_MQH
 
 #include "CNeuralTrainingDataManager.mqh"
 

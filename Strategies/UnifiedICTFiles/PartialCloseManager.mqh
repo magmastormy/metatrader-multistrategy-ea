@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __UICT_PARTIAL_CLOSE_MANAGER_MQH__
-#define __UICT_PARTIAL_CLOSE_MANAGER_MQH__
+#ifndef UICT_PARTIAL_CLOSE_MANAGER_MQH
+#define UICT_PARTIAL_CLOSE_MANAGER_MQH
 
 #include <Trade\Trade.mqh>
 #include "../../IndicatorManager.mqh"

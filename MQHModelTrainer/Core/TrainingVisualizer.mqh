@@ -1,9 +1,9 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| TrainingVisualizer.mqh                                           |
 //| Chart visualization for training analysis                         |
 //+------------------------------------------------------------------+
-#ifndef __MQH_TRAINING_VISUALIZER_MQH__
-#define __MQH_TRAINING_VISUALIZER_MQH__
+#ifndef MQH_TRAINING_VISUALIZER_MQH
+#define MQH_TRAINING_VISUALIZER_MQH
 
 #include <ChartObjects\ChartObjectsTxtControls.mqh>
 #include <ChartObjects\ChartObjectsLines.mqh>

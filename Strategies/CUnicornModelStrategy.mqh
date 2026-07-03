@@ -6,8 +6,8 @@
 //| STATUS: DISABLED (subjective ICT concepts)                       |
 //| Disabled via InpEnableUnicornModel = false in MultiStrategyAutonomousEA.mq5 |
 //+------------------------------------------------------------------+
-#ifndef __C_UNICORN_MODEL_STRATEGY_MQH__
-#define __C_UNICORN_MODEL_STRATEGY_MQH__
+#ifndef C_UNICORN_MODEL_STRATEGY_MQH
+#define C_UNICORN_MODEL_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -17,6 +17,9 @@
 #include "UnifiedICTFiles/LiquidityDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
+// CUnicornModelStrategy implements the ICT Unicorn Model: breaker/order-block
+// + FVG after liquidity sweep and MSS/CISD confirmation.
+// STATUS: DISABLED (subjective ICT concepts).
 class CUnicornModelStrategy : public CStrategyBase
 {
 private:
@@ -102,7 +105,10 @@ public:
         CStrategyBase::Deinit();
     }
 
-    virtual void OnTick() override {}
+    virtual void OnTick() override
+    {
+        // Intentionally empty - strategy evaluates on new bar only via GetSignal()
+    }
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(symbol == m_symbol && timeframe == m_timeframe)

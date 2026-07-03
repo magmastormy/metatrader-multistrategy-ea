@@ -1,9 +1,9 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| LabelEncoder.mqh                                                 |
 //| Label encoding utilities for classification labels                |
 //+------------------------------------------------------------------+
-#ifndef __MQH_LABEL_ENCODER_MQH__
-#define __MQH_LABEL_ENCODER_MQH__
+#ifndef MQH_LABEL_ENCODER_MQH
+#define MQH_LABEL_ENCODER_MQH
 
 enum ENUM_NORMALIZATION_TYPE
 {

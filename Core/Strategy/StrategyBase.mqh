@@ -5,8 +5,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __STRATEGY_BASE_MQH__
-#define __STRATEGY_BASE_MQH__
+#ifndef STRATEGY_BASE_MQH
+#define STRATEGY_BASE_MQH
 
 #include <Object.mqh>
 #include "../../Interfaces/IStrategy.mqh"
@@ -20,14 +20,8 @@
 
 // Forward declarations
 class CEnhancedErrorHandler;
-class CUtilities;
-class CMarketAnalysis;
-class CNextGenStrategyBrain;
-class CTransformerBrain;
-struct SPredictionWithUncertainty;
 class CPositionSizer;
 class CTradeManager;
-class CPerformanceAnalytics;
 
 class CStrategyBase : public IStrategy
 {

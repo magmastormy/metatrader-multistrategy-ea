@@ -36,11 +36,7 @@
 
 // Forward declarations
 class CEnhancedErrorHandler;
-class CUtilities;
 class CMarketAnalysis;
-class CNextGenStrategyBrain;
-class CTransformerBrain;
-struct SPredictionWithUncertainty;
 class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
@@ -2618,6 +2614,11 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
         // Rate-limited [TRAIL-DIAG]: once per position per 5 seconds
         static datetime s_lastTrailDiagTime[];
         static ulong    s_lastTrailDiagTicket[];
+        if(ArraySize(s_lastTrailDiagTicket) > 500)
+        {
+            ArrayResize(s_lastTrailDiagTicket, 0);
+            ArrayResize(s_lastTrailDiagTime, 0);
+        }
         int diagArrSize = ArraySize(s_lastTrailDiagTicket);
         int diagIdx = -1;
         for(int d = 0; d < diagArrSize; d++)

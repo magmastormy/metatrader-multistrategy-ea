@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __ONNX_BRAIN_MQH__
-#define __ONNX_BRAIN_MQH__
+#ifndef ONNX_BRAIN_MQH
+#define ONNX_BRAIN_MQH
 
 #include "AIConfig.mqh"
 

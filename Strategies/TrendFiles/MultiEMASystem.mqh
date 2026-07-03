@@ -7,8 +7,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __TREND_MULTI_EMA_SYSTEM_MQH__
-#define __TREND_MULTI_EMA_SYSTEM_MQH__
+#ifndef TREND_MULTI_EMA_SYSTEM_MQH
+#define TREND_MULTI_EMA_SYSTEM_MQH
 
 #include "../../IndicatorManager.mqh"
 

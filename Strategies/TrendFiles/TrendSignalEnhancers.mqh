@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __TREND_SIGNAL_ENHANCERS_MQH__
-#define __TREND_SIGNAL_ENHANCERS_MQH__
+#ifndef TREND_SIGNAL_ENHANCERS_MQH
+#define TREND_SIGNAL_ENHANCERS_MQH
 
 #include "MultiEMASystem.mqh"
 #include "../../IndicatorManager.mqh"

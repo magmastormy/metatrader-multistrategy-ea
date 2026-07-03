@@ -2,8 +2,8 @@
 //| StrategyWrapper.mqh                                              |
 //| Wrapper for strategy objects                                     |
 //+------------------------------------------------------------------+
-#ifndef __STRATEGY_WRAPPER_MQH__
-#define __STRATEGY_WRAPPER_MQH__
+#ifndef STRATEGY_WRAPPER_MQH
+#define STRATEGY_WRAPPER_MQH
 
 #include <Object.mqh>
 #include "../../Interfaces/IStrategy.mqh"

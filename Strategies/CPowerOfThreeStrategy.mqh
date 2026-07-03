@@ -6,8 +6,8 @@
 //| STATUS: DISABLED (subjective ICT concepts)                       |
 //| Disabled via InpEnablePowerOfThree = false in MultiStrategyAutonomousEA.mq5 |
 //+------------------------------------------------------------------+
-#ifndef __C_POWER_OF_THREE_STRATEGY_MQH__
-#define __C_POWER_OF_THREE_STRATEGY_MQH__
+#ifndef C_POWER_OF_THREE_STRATEGY_MQH
+#define C_POWER_OF_THREE_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 // Risk Manager for AGENTS.md invariant #1
@@ -20,6 +20,9 @@
 #include "UnifiedICTFiles/SMTDivergenceScanner.mqh"
 #include "SMCFiles/PremiumDiscount.mqh"
 
+// CPowerOfThreeStrategy implements the ICT Power of Three / ICT 2025 model.
+// Combines Turtle Soup + OTE + FVG + SMT + AMD distribution for reversals.
+// STATUS: DISABLED (subjective ICT concepts).
 class CPowerOfThreeStrategy : public CStrategyBase
 {
 private:
@@ -119,7 +122,10 @@ public:
         CStrategyBase::Deinit();
     }
 
-    virtual void OnTick() override {}
+    virtual void OnTick() override
+    {
+        // Intentionally empty - strategy evaluates on new bar only via GetSignal()
+    }
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
         if(symbol == m_symbol && timeframe == m_timeframe)
@@ -242,7 +248,12 @@ public:
                 if(atrH != INVALID_HANDLE && CopyBuffer(atrH, 0, 0, 1, atrBuf) > 0 && atrBuf[0] > 0)
                 { slDistance = atrBuf[0] * 1.5; tpDistance = atrBuf[0] * 3.0; }
                 else
-                { slDistance = currentPrice * 0.01; tpDistance = currentPrice * 0.02; }
+                {
+                    PrintFormat("[POT] ATR fallback failed for %s — rejecting signal", m_symbol);
+                    SetDecisionReasonTag("POT_ATR_FALLBACK_FAILED");
+                    confidence = 0.0;
+                    return TRADE_SIGNAL_NONE;
+                }
             }
             request.stopLossPips = (point > 0) ? (slDistance / point) : 100.0;
             request.takeProfitPips = (point > 0) ? (tpDistance / point) : 200.0;

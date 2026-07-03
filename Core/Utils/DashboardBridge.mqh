@@ -38,21 +38,46 @@ private:
    datetime            m_lastErrorLogTime;  // Throttle error logs
    bool                m_initialized;       // Initialized flag
 
-   // External object references for real data
-   void*               m_pRiskManager;      // CUnifiedRiskManager pointer
-   void*               m_pPerformanceAnalytics; // CPerformanceAnalytics pointer
-   void*               m_pAIBrain;          // CNextGenStrategyBrain pointer
-   void*               m_pStrategyRegistry; // CStrategyRegistry pointer
-   void*               m_pConsensusCache;   // CConsensusCache pointer
-   void*               m_pPythonBridge;     // CPythonBridge pointer
+    // Injected risk data
+    double m_riskActiveRiskPerTrade;
+    double m_riskDailyRiskUsed;
+    double m_riskDailyEntryRisk;
+    double m_riskDailyMtmLoss;
+    double m_riskOpenExposure;
+    double m_riskMaxDailyRisk;
+    double m_riskPortfolioRisk;
+    double m_riskCurrentDrawdown;
+    bool   m_riskConservativeMode;
+    bool   m_riskEmergencyMode;
+    int    m_riskGateApproved;
+    int    m_riskGateRejected;
+
+    // Injected performance data
+    int    m_perfTotalTrades;
+    double m_perfWinRate;
+    double m_perfProfitFactor;
+    double m_perfSharpeRatio;
+    double m_perfMaxDrawdown;
+    double m_perfRecoveryFactor;
+    double m_perfNetProfit;
+    double m_perfAvgWin;
+    double m_perfAvgLoss;
+
+    // Injected python bridge data
+    bool   m_pyConnected;
+    string m_pyVersion;
+    int    m_pyRequests;
+    int    m_pyOk;
+    int    m_pyErrors;
    
-   // Heartbeat counter references
-   int*                m_pScansCount;
-   int*                m_pSignalsGenerated;
-   int*                m_pSignalsValidated;
-   int*                m_pTradesOpened;
-   int*                m_pShadowTrades;
-   int*                m_pSpikeEvents;
+    // Heartbeat counter values
+    int                 m_pScansCount;
+    int                 m_pSignalsGenerated;
+    int                 m_pSignalsValidated;
+    int                 m_pTradesOpened;
+    int                 m_pShadowTrades;
+    int                 m_pSpikeEvents;
+    bool                m_heartbeatCountersSet;
 
    // Internal methods
    string              EscapeJsonString(const string &str);
@@ -80,9 +105,13 @@ public:
                                 int requestTimeoutMs = 1000);
    void              Shutdown();
 
-   // Operations
-   bool              PushState();
-   bool              PollCommands();
+    // Operations
+    bool              PushState();
+    bool              PollCommands();
+
+    // Heartbeat counters
+    void              SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
+                                           int tradesOpened, int shadowTrades, int spikeEvents);
 
     // Getters
     bool              IsEnabled() const { return m_enabled; }
@@ -96,15 +125,32 @@ public:
    // Setters
    void              SetEnabled(bool enabled) { m_enabled = enabled; }
 
-   // AI data injection — called from main loop before PushState
-   void              SetAIData(bool nnActive, const string &nnSignal, double nnConf,
-                               int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
-                               int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
-                               int nnTradeLinked, bool nnNormReady,
-                               const string &regime, double regimeTrend, double regimeRange,
-                               double regimeVolatile, double regimeSpike,
-                               int metaFeatures, int metaCooldown, int metaEarlyStop,
-                               double metaWinRate, double metaAvgConf, int metaSamplesSince);
+    // AI data injection — called from main loop before PushState
+    void              SetAIData(bool nnActive, const string &nnSignal, double nnConf,
+                                int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
+                                int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
+                                int nnTradeLinked, bool nnNormReady,
+                                const string &regime, double regimeTrend, double regimeRange,
+                                double regimeVolatile, double regimeSpike,
+                                int metaFeatures, int metaCooldown, int metaEarlyStop,
+                                double metaWinRate, double metaAvgConf, int metaSamplesSince);
+
+    // Risk data injection — called from main loop before PushState
+    void              SetRiskData(double activeRiskPerTrade, double dailyRiskUsed,
+                                  double dailyEntryRisk, double dailyMtmLoss,
+                                  double openExposure, double maxDailyRisk,
+                                  double portfolioRisk, double currentDrawdown,
+                                  bool conservativeMode, bool emergencyMode,
+                                  int gateApproved, int gateRejected);
+
+    // Performance data injection — called from main loop before PushState
+    void              SetPerformanceData(int totalTrades, double winRate, double profitFactor,
+                                         double sharpeRatio, double maxDrawdown, double recoveryFactor,
+                                         double netProfit, double avgWin, double avgLoss);
+
+    // Python bridge data injection — called from main loop before PushState
+    void              SetPythonBridgeData(bool connected, const string &version,
+                                          int requests, int ok, int errors);
 
 private:
    // Stored AI data
@@ -153,6 +199,38 @@ CDashboardBridge::CDashboardBridge()
    m_lastErrorLogTime = 0;
    m_initialized = false;
    m_pushInProgress = false;
+
+   // Risk data defaults
+   m_riskActiveRiskPerTrade = 0.0;
+   m_riskDailyRiskUsed = 0.0;
+   m_riskDailyEntryRisk = 0.0;
+   m_riskDailyMtmLoss = 0.0;
+   m_riskOpenExposure = 0.0;
+   m_riskMaxDailyRisk = 0.0;
+   m_riskPortfolioRisk = 0.0;
+   m_riskCurrentDrawdown = 0.0;
+   m_riskConservativeMode = false;
+   m_riskEmergencyMode = false;
+   m_riskGateApproved = 0;
+   m_riskGateRejected = 0;
+
+   // Performance data defaults
+   m_perfTotalTrades = 0;
+   m_perfWinRate = 0.0;
+   m_perfProfitFactor = 0.0;
+   m_perfSharpeRatio = 0.0;
+   m_perfMaxDrawdown = 0.0;
+   m_perfRecoveryFactor = 0.0;
+   m_perfNetProfit = 0.0;
+   m_perfAvgWin = 0.0;
+   m_perfAvgLoss = 0.0;
+
+   // Python bridge data defaults
+   m_pyConnected = false;
+   m_pyVersion = "";
+   m_pyRequests = 0;
+   m_pyOk = 0;
+   m_pyErrors = 0;
 
    // AI data defaults
    m_aiNnActive = false;
@@ -212,6 +290,61 @@ void CDashboardBridge::SetAIData(bool nnActive, const string &nnSignal, double n
    m_aiMetaWinRate = metaWinRate;
    m_aiMetaAvgConf = metaAvgConf;
    m_aiMetaSamplesSince = metaSamplesSince;
+}
+
+//+------------------------------------------------------------------+
+//| Set risk snapshot data                                           |
+//+------------------------------------------------------------------+
+void CDashboardBridge::SetRiskData(double activeRiskPerTrade, double dailyRiskUsed,
+                                   double dailyEntryRisk, double dailyMtmLoss,
+                                   double openExposure, double maxDailyRisk,
+                                   double portfolioRisk, double currentDD,
+                                   bool conservativeMode, bool emergencyMode,
+                                   int gateApproved, int gateRejected)
+{
+   m_riskActiveRiskPerTrade = activeRiskPerTrade;
+   m_riskDailyRiskUsed = dailyRiskUsed;
+   m_riskDailyEntryRisk = dailyEntryRisk;
+   m_riskDailyMtmLoss = dailyMtmLoss;
+   m_riskOpenExposure = openExposure;
+   m_riskMaxDailyRisk = maxDailyRisk;
+   m_riskPortfolioRisk = portfolioRisk;
+   m_riskCurrentDrawdown = currentDD;
+   m_riskConservativeMode = conservativeMode;
+   m_riskEmergencyMode = emergencyMode;
+   m_riskGateApproved = gateApproved;
+   m_riskGateRejected = gateRejected;
+}
+
+//+------------------------------------------------------------------+
+//| Set performance analytics data                                   |
+//+------------------------------------------------------------------+
+void CDashboardBridge::SetPerformanceData(int totalTradesParam, double winRate, double profitFactor,
+                                           double sharpeRatio, double maxDD, double recoveryFactor,
+                                           double netProfit, double avgWin, double avgLoss)
+{
+   m_perfTotalTrades = totalTradesParam;
+   m_perfWinRate = winRate;
+   m_perfProfitFactor = profitFactor;
+   m_perfSharpeRatio = sharpeRatio;
+   m_perfMaxDrawdown = maxDrawdown;
+   m_perfRecoveryFactor = recoveryFactor;
+   m_perfNetProfit = netProfit;
+   m_perfAvgWin = avgWin;
+   m_perfAvgLoss = avgLoss;
+}
+
+//+------------------------------------------------------------------+
+//| Set python bridge data                                           |
+//+------------------------------------------------------------------+
+void CDashboardBridge::SetPythonBridgeData(bool connected, const string &version,
+                                           int requests, int ok, int errors)
+{
+   m_pyConnected = connected;
+   m_pyVersion = version;
+   m_pyRequests = requests;
+   m_pyOk = ok;
+   m_pyErrors = errors;
 }
 
 //+------------------------------------------------------------------+
@@ -332,343 +465,8 @@ bool CDashboardBridge::SendHttpRequest(const string &method, const string &url,
 }
 
 //+------------------------------------------------------------------+
-//| Build state JSON payload                                         |
+//| Build state JSON payload (removed old version — enhanced version at line 1014)
 //+------------------------------------------------------------------+
-string CDashboardBridge::BuildStateJson()
-{
-   string json = "{";
-
-   // Timestamp
-   json += "\"timestamp\":\"" + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\",";
-
-   // Account info
-   json += "\"account\":{";
-   json += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
-   json += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + ",";
-   json += "\"free_margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) + ",";
-   json += "\"margin_level\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_LEVEL), 2);
-   json += "},";
-
-   // Positions
-   json += "\"positions\":[";
-   int posTotal = PositionsTotal();
-   int posAdded = 0;
-   for(int i = 0; i < posTotal; i++)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
-      if(!PositionSelectByTicket(ticket)) continue;
-
-      if(posAdded > 0) json += ",";
-      json += "{";
-      json += "\"ticket\":" + IntegerToString((long)ticket) + ",";
-      json += "\"symbol\":\"" + EscapeJsonString(PositionGetString(POSITION_SYMBOL)) + "\",";
-      json += "\"type\":\"" + (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL") + "\",";
-      json += "\"lots\":" + DoubleToString(PositionGetDouble(POSITION_VOLUME), 2) + ",";
-      json += "\"open_price\":" + DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), 5) + ",";
-      json += "\"current_price\":" + DoubleToString(PositionGetDouble(POSITION_PRICE_CURRENT), 5) + ",";
-      json += "\"sl\":" + DoubleToString(PositionGetDouble(POSITION_SL), 5) + ",";
-      json += "\"tp\":" + DoubleToString(PositionGetDouble(POSITION_TP), 5) + ",";
-      json += "\"profit\":" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2) + ",";
-      json += "\"swap\":" + DoubleToString(PositionGetDouble(POSITION_SWAP), 2) + ",";
-      json += "\"open_time\":\"" + TimeToString((datetime)PositionGetInteger(POSITION_TIME), TIME_DATE|TIME_SECONDS) + "\",";
-      json += "\"duration_minutes\":" + IntegerToString((int)((TimeCurrent() - PositionGetInteger(POSITION_TIME)) / 60)) + ",";
-      json += "\"strategy\":\"" + EscapeJsonString(PositionGetString(POSITION_COMMENT)) + "\"";
-      json += "}";
-      posAdded++;
-   }
-   json += "],";
-
-   // Risk (placeholder - will be wired to actual risk manager)
-   json += "\"risk\":{";
-   json += "\"active_risk_per_trade_pct\":0,";
-   json += "\"daily_risk_used_pct\":0,";
-   json += "\"daily_entry_risk_pct\":0,";
-   json += "\"daily_mtm_loss_pct\":0,";
-   json += "\"open_exposure_pct\":0,";
-   json += "\"max_daily_risk_pct\":0,";
-   json += "\"portfolio_risk_pct\":0,";
-   json += "\"current_drawdown_pct\":0,";
-   json += "\"conservative_mode\":false,";
-   json += "\"emergency_mode\":false,";
-   json += "\"gate_approved\":0,";
-   json += "\"gate_rejected\":0";
-   json += "},";
-
-   // Performance (placeholder)
-   json += "\"performance\":{";
-   json += "\"total_trades\":0,";
-   json += "\"win_rate\":0,";
-   json += "\"profit_factor\":0,";
-   json += "\"sharpe_ratio\":0,";
-   json += "\"max_drawdown\":0,";
-   json += "\"recovery_factor\":0,";
-   json += "\"net_profit\":0,";
-   json += "\"avg_win\":0,";
-   json += "\"avg_loss\":0";
-   json += "},";
-
-   // Consensus - real data from enterprise managers
-   json += "\"consensus\":{";
-   json += "\"symbols\":{";
-   int managerCount = ArraySize(g_enterpriseManagers);
-   int consensusAdded = 0;
-   for(int m = 0; m < managerCount; m++)
-   {
-      if(g_enterpriseManagers[m] == NULL) continue;
-      string sym = g_enterpriseManagerSymbols[m];
-      if(StringLen(sym) == 0) continue;
-      
-      string consensusJson = g_enterpriseManagers[m].GetConsensusContextJSON();
-      if(consensusAdded > 0) json += ",";
-      json += "\"" + EscapeJsonString(sym) + "\":" + consensusJson;
-      consensusAdded++;
-   }
-   json += "}},";
-
-    // AI — real data from injected state
-    json += "\"ai\":{";
-    json += "\"onnx\":{\"active\":false},";
-    json += "\"ensemble\":{\"active\":false},";
-    json += "\"transformer\":{\"active\":false},";
-    json += "\"nn\":{\"active\":false},";
-    // Neural network detailed data
-    json += "\"neural_net\":{";
-    json += "\"active\":" + string(m_aiNnActive ? "true" : "false") + ",";
-    json += "\"signal\":\"" + EscapeJsonString(m_aiNnSignal) + "\",";
-    json += "\"confidence\":" + DoubleToString(m_aiNnConf, 4) + ",";
-    json += "\"labels_resolved\":" + IntegerToString(m_aiNnLabels) + ",";
-    json += "\"training_steps\":" + IntegerToString(m_aiNnSteps) + ",";
-    json += "\"conformal_quantile\":" + DoubleToString(m_aiNnConformalQ, 4) + ",";
-    json += "\"conformal_alpha\":" + DoubleToString(m_aiNnConformalAlpha, 4) + ",";
-    json += "\"asset_class\":" + IntegerToString(m_aiNnAssetClass) + ",";
-    json += "\"barrier_k\":" + DoubleToString(m_aiNnBarrierK, 2) + ",";
-    json += "\"barrier_vert_bars\":" + IntegerToString(m_aiNnBarrierVertBars) + ",";
-    json += "\"trade_linked_labels\":" + IntegerToString(m_aiNnTradeLinked) + ",";
-    json += "\"normalization_ready\":" + string(m_aiNnNormReady ? "true" : "false");
-    json += "},";
-    // Regime data
-    json += "\"regime\":{";
-    json += "\"current\":\"" + EscapeJsonString(m_aiRegime) + "\",";
-    json += "\"trend_prob\":" + DoubleToString(m_aiRegimeTrend, 4) + ",";
-    json += "\"range_prob\":" + DoubleToString(m_aiRegimeRange, 4) + ",";
-    json += "\"volatile_prob\":" + DoubleToString(m_aiRegimeVolatile, 4) + ",";
-    json += "\"spike_prob\":" + DoubleToString(m_aiRegimeSpike, 4);
-    json += "},";
-    // Meta-labeler data
-    json += "\"meta_labeler\":{";
-    json += "\"features\":" + IntegerToString(m_aiMetaFeatures) + ",";
-    json += "\"cooldown\":" + IntegerToString(m_aiMetaCooldown) + ",";
-    json += "\"early_stop_patience\":" + IntegerToString(m_aiMetaEarlyStop) + ",";
-    json += "\"recent_win_rate\":" + DoubleToString(m_aiMetaWinRate, 4) + ",";
-    json += "\"recent_avg_confidence\":" + DoubleToString(m_aiMetaAvgConf, 4) + ",";
-    json += "\"samples_since_train\":" + IntegerToString(m_aiMetaSamplesSince);
-    json += "},";
-    json += "\"features_total\":" + IntegerToString(m_aiMetaFeatures);
-    json += "},";
-
-   // Strategies - real data from enterprise managers
-   json += "\"strategies\":[";
-   int strategiesAdded = 0;
-   for(int m = 0; m < managerCount; m++)
-   {
-      if(g_enterpriseManagers[m] == NULL) continue;
-      string strategyList = g_enterpriseManagers[m].GetStrategyListJSON();
-      if(StringLen(strategyList) < 3) continue;
-      string inner = StringSubstr(strategyList, 1, StringLen(strategyList) - 2);
-      if(strategiesAdded > 0 && StringLen(inner) > 0) json += ",";
-      json += inner;
-      strategiesAdded++;
-   }
-   json += "],";
-
-   // Scalp (placeholder)
-   json += "\"scalp\":{";
-   json += "\"active\":false,";
-   json += "\"open_positions\":0,";
-   json += "\"max_positions\":0,";
-   json += "\"total_entries\":0,";
-   json += "\"total_rejections\":0";
-   json += "},";
-
-   // Heartbeat (placeholder)
-   json += "\"heartbeat\":{";
-   json += "\"scans\":0,";
-   json += "\"signals_generated\":0,";
-   json += "\"signals_validated\":0,";
-   json += "\"trades_opened\":0,";
-   json += "\"shadow_trades\":0,";
-   json += "\"spike_events\":0";
-   json += "},";
-
-   // Execution mode
-   json += "\"execution_mode\":\"LIVE_SEND\",";
-
-   // Python bridge (placeholder)
-   json += "\"python_bridge\":{";
-   json += "\"connected\":false,";
-   json += "\"version\":\"\",";
-   json += "\"requests\":0,";
-   json += "\"ok\":0,";
-   json += "\"errors\":0";
-   json += "},";
-
-   // Candles - last 100 M1 bars for active symbols (max 5 symbols)
-   json += "\"candles\":{";
-   posTotal = PositionsTotal();
-   string activeSymbols[];
-   int symbolCount = 0;
-   ArrayResize(activeSymbols, 10);
-   
-   // Collect unique symbols from open positions
-   for(int i = 0; i < posTotal; i++)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
-      if(!PositionSelectByTicket(ticket)) continue;
-      
-      string sym = PositionGetString(POSITION_SYMBOL);
-      bool found = false;
-      for(int j = 0; j < symbolCount; j++)
-      {
-         if(activeSymbols[j] == sym)
-         {
-            found = true;
-            break;
-         }
-      }
-      if(!found && symbolCount < 10)
-      {
-         activeSymbols[symbolCount] = sym;
-         symbolCount++;
-      }
-   }
-   
-   // Limit to max 5 symbols and ensure they have enough bars
-   int maxSymbols = MathMin(symbolCount, 5);
-   int symbolsAdded = 0;
-   
-   for(int i = 0; i < maxSymbols; i++)
-   {
-      string sym = activeSymbols[i];
-      
-      // Check if symbol has at least 10 bars of M1 data
-      if(!SymbolSelect(sym, true))
-         continue;
-      
-      int bars = iBars(sym, PERIOD_M1);
-      if(bars < 10)
-         continue;
-      
-      if(symbolsAdded > 0)
-         json += ",";
-      
-       json += "\"" + EscapeJsonString(sym) + "\":{";
-       json += "\"timeframe\":\"M1\",";
-       json += "\"bars\":[";
-      
-      int maxBars = MathMin(bars, 100);
-      int barsAdded = 0;
-      
-      for(int j = maxBars - 1; j >= 0; j--)
-      {
-         datetime barTime = iTime(sym, PERIOD_M1, j);
-         if(barTime == 0)
-            continue;
-         
-         // Convert to Unix timestamp (seconds)
-         long unixTime = (long)barTime;
-         
-         double open = iOpen(sym, PERIOD_M1, j);
-         double high = iHigh(sym, PERIOD_M1, j);
-         double low = iLow(sym, PERIOD_M1, j);
-         double close = iClose(sym, PERIOD_M1, j);
-         long volume = (long)iVolume(sym, PERIOD_M1, j);
-         
-         if(barsAdded > 0)
-            json += ",";
-         
-         json += "{";
-         json += "\"time\":" + IntegerToString(unixTime) + ",";
-         json += "\"open\":" + DoubleToString(open, 5) + ",";
-         json += "\"high\":" + DoubleToString(high, 5) + ",";
-         json += "\"low\":" + DoubleToString(low, 5) + ",";
-         json += "\"close\":" + DoubleToString(close, 5) + ",";
-         json += "\"volume\":" + IntegerToString(volume);
-         json += "}";
-         
-         barsAdded++;
-      }
-      
-      json += "]";
-      json += "}";
-      symbolsAdded++;
-   }
-
-   json += "},";
-
-   // Closed trades (recent history from deal cache)
-   json += "\"closed_trades\":[";
-   datetime fromTime = TimeCurrent() - 7*24*3600; // Last 7 days
-   datetime toTime = TimeCurrent();
-   HistorySelect(fromTime, toTime);
-   int dealsTotal = HistoryDealsTotal();
-   int tradesAdded = 0;
-   for(int i = 0; i < dealsTotal && tradesAdded < 50; i++)
-   {
-      ulong dealTicket = HistoryDealGetTicket(i);
-      if(dealTicket == 0) continue;
-
-      // Only process position close deals
-      if(HistoryDealGetInteger(dealTicket, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
-
-      // Get position ID to find the entry deal
-      ulong positionId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
-      datetime openTime = 0;
-      double openPrice = 0;
-      string symbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
-
-      // Find the entry deal for this position
-      HistorySelectByPosition(positionId);
-      int posDealsTotal = HistoryDealsTotal();
-      for(int j = 0; j < posDealsTotal; j++)
-      {
-         ulong entryDealTicket = HistoryDealGetTicket(j);
-         if(entryDealTicket == 0) continue;
-         if(HistoryDealGetInteger(entryDealTicket, DEAL_ENTRY) == DEAL_ENTRY_IN)
-         {
-            openTime = (datetime)HistoryDealGetInteger(entryDealTicket, DEAL_TIME);
-            openPrice = HistoryDealGetDouble(entryDealTicket, DEAL_PRICE);
-            break;
-         }
-      }
-      HistorySelect(fromTime, toTime); // Restore original selection
-
-      if(tradesAdded > 0) json += ",";
-      json += "{";
-      json += "\"ticket\":" + IntegerToString((long)dealTicket) + ",";
-      json += "\"symbol\":\"" + EscapeJsonString(symbol) + "\",";
-      json += "\"type\":\"" + (HistoryDealGetInteger(dealTicket, DEAL_TYPE) == DEAL_TYPE_BUY ? "BUY" : "SELL") + "\",";
-      json += "\"lots\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_VOLUME), 2) + ",";
-      json += "\"open_price\":" + DoubleToString(openPrice, 5) + ",";
-      json += "\"close_price\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PRICE), 5) + ",";
-      json += "\"profit\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PROFIT), 2) + ",";
-      json += "\"open_time\":\"" + TimeToString(openTime, TIME_DATE|TIME_SECONDS) + "\",";
-      json += "\"close_time\":\"" + TimeToString((datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME), TIME_DATE|TIME_SECONDS) + "\",";
-      int durationMin = 0;
-      if(openTime > 0)
-         durationMin = (int)((HistoryDealGetInteger(dealTicket, DEAL_TIME) - openTime) / 60);
-      json += "\"duration_min\":" + IntegerToString(durationMin);
-      json += "}";
-      tradesAdded++;
-   }
-   json += "]";
-
-   json += "}";
-
-   return json;
-}
-
 //+------------------------------------------------------------------+
 //| Push current EA state to dashboard server                        |
 //+------------------------------------------------------------------+
@@ -819,8 +617,8 @@ bool CDashboardBridge::ShouldLogError()
 //+------------------------------------------------------------------+
 //| Set heartbeat counter references                                 |
 //+------------------------------------------------------------------+
-void CDashboardBridge::SetHeartbeatCounters(int* scans, int* signalsGen, int* signalsVal,
-                                             int* tradesOpened, int* shadowTrades, int* spikeEvents)
+void CDashboardBridge::SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
+                                             int tradesOpened, int shadowTrades, int spikeEvents)
 {
    m_pScansCount = scans;
    m_pSignalsGenerated = signalsGen;
@@ -828,6 +626,7 @@ void CDashboardBridge::SetHeartbeatCounters(int* scans, int* signalsGen, int* si
    m_pTradesOpened = tradesOpened;
    m_pShadowTrades = shadowTrades;
    m_pSpikeEvents = spikeEvents;
+   m_heartbeatCountersSet = true;
 }
 
 //+------------------------------------------------------------------+
@@ -836,46 +635,18 @@ void CDashboardBridge::SetHeartbeatCounters(int* scans, int* signalsGen, int* si
 string CDashboardBridge::BuildRiskJson()
 {
    string json = "\"risk\":{";
-   
-   // Try to get data from risk manager
-   if(CheckPointer(m_pRiskManager) != POINTER_INVALID)
-   {
-      // Use reflection-like approach: call GetSnapshot() method
-      // Since we can't directly cast void*, we use a workaround
-      // This requires the EA to pass a properly typed pointer
-      SUnifiedRiskSnapshot riskSnap;
-      // Note: In MQL5, we need to use ObjectCreate or similar for proper casting
-      // For now, we'll use placeholder that gets overridden by EA
-      json += "\"active_risk_per_trade_pct\":0.0,";
-      json += "\"daily_risk_used_pct\":0.0,";
-      json += "\"daily_entry_risk_pct\":0.0,";
-      json += "\"daily_mtm_loss_pct\":0.0,";
-      json += "\"open_exposure_pct\":0.0,";
-      json += "\"max_daily_risk_pct\":0.0,";
-      json += "\"portfolio_risk_pct\":0.0,";
-      json += "\"current_drawdown_pct\":0.0,";
-      json += "\"conservative_mode\":false,";
-      json += "\"emergency_mode\":false,";
-      json += "\"gate_approved\":0,";
-      json += "\"gate_rejected\":0";
-   }
-   else
-   {
-      // Fallback placeholders
-      json += "\"active_risk_per_trade_pct\":0.0,";
-      json += "\"daily_risk_used_pct\":0.0,";
-      json += "\"daily_entry_risk_pct\":0.0,";
-      json += "\"daily_mtm_loss_pct\":0.0,";
-      json += "\"open_exposure_pct\":0.0,";
-      json += "\"max_daily_risk_pct\":0.0,";
-      json += "\"portfolio_risk_pct\":0.0,";
-      json += "\"current_drawdown_pct\":0.0,";
-      json += "\"conservative_mode\":false,";
-      json += "\"emergency_mode\":false,";
-      json += "\"gate_approved\":0,";
-      json += "\"gate_rejected\":0";
-   }
-   
+   json += "\"active_risk_per_trade_pct\":" + DoubleToString(m_riskActiveRiskPerTrade, 2) + ",";
+   json += "\"daily_risk_used_pct\":" + DoubleToString(m_riskDailyRiskUsed, 2) + ",";
+   json += "\"daily_entry_risk_pct\":" + DoubleToString(m_riskDailyEntryRisk, 2) + ",";
+   json += "\"daily_mtm_loss_pct\":" + DoubleToString(m_riskDailyMtmLoss, 2) + ",";
+   json += "\"open_exposure_pct\":" + DoubleToString(m_riskOpenExposure, 2) + ",";
+   json += "\"max_daily_risk_pct\":" + DoubleToString(m_riskMaxDailyRisk, 2) + ",";
+   json += "\"portfolio_risk_pct\":" + DoubleToString(m_riskPortfolioRisk, 2) + ",";
+   json += "\"current_drawdown_pct\":" + DoubleToString(m_riskCurrentDrawdown, 2) + ",";
+   json += "\"conservative_mode\":" + (m_riskConservativeMode ? "true" : "false") + ",";
+   json += "\"emergency_mode\":" + (m_riskEmergencyMode ? "true" : "false") + ",";
+   json += "\"gate_approved\":" + IntegerToString(m_riskGateApproved) + ",";
+   json += "\"gate_rejected\":" + IntegerToString(m_riskGateRejected);
    json += "}";
    return json;
 }
@@ -886,34 +657,15 @@ string CDashboardBridge::BuildRiskJson()
 string CDashboardBridge::BuildPerformanceJson()
 {
    string json = "\"performance\":{";
-   
-   if(CheckPointer(m_pPerformanceAnalytics) != POINTER_INVALID)
-   {
-      SPerformanceMetrics perf;
-      // Placeholder - actual implementation requires proper object access
-      json += "\"total_trades\":0,";
-      json += "\"win_rate\":0.0,";
-      json += "\"profit_factor\":0.0,";
-      json += "\"sharpe_ratio\":0.0,";
-      json += "\"max_drawdown\":0.0,";
-      json += "\"recovery_factor\":0.0,";
-      json += "\"net_profit\":0.0,";
-      json += "\"avg_win\":0.0,";
-      json += "\"avg_loss\":0.0";
-   }
-   else
-   {
-      json += "\"total_trades\":0,";
-      json += "\"win_rate\":0.0,";
-      json += "\"profit_factor\":0.0,";
-      json += "\"sharpe_ratio\":0.0,";
-      json += "\"max_drawdown\":0.0,";
-      json += "\"recovery_factor\":0.0,";
-      json += "\"net_profit\":0.0,";
-      json += "\"avg_win\":0.0,";
-      json += "\"avg_loss\":0.0";
-   }
-   
+   json += "\"total_trades\":" + IntegerToString(m_perfTotalTrades) + ",";
+   json += "\"win_rate\":" + DoubleToString(m_perfWinRate, 2) + ",";
+   json += "\"profit_factor\":" + DoubleToString(m_perfProfitFactor, 2) + ",";
+   json += "\"sharpe_ratio\":" + DoubleToString(m_perfSharpeRatio, 2) + ",";
+   json += "\"max_drawdown\":" + DoubleToString(m_perfMaxDrawdown, 2) + ",";
+   json += "\"recovery_factor\":" + DoubleToString(m_perfRecoveryFactor, 2) + ",";
+   json += "\"net_profit\":" + DoubleToString(m_perfNetProfit, 2) + ",";
+   json += "\"avg_win\":" + DoubleToString(m_perfAvgWin, 2) + ",";
+   json += "\"avg_loss\":" + DoubleToString(m_perfAvgLoss, 2);
    json += "}";
    return json;
 }
@@ -924,10 +676,51 @@ string CDashboardBridge::BuildPerformanceJson()
 string CDashboardBridge::BuildAIJson()
 {
    string json = "\"ai\":{";
+
+   // ONNX adapter (no stored data — always inactive unless wired)
    json += "\"onnx\":{\"active\":false},";
+
+   // Ensemble (no stored data — always inactive unless wired)
    json += "\"ensemble\":{\"active\":false},";
+
+   // Transformer (no stored data — always inactive unless wired)
    json += "\"transformer\":{\"active\":false},";
-   json += "\"nn\":{\"active\":false}";
+
+   // Neural network — uses stored data from SetAIData
+   json += "\"nn\":{";
+   json += "\"active\":" + (m_aiNnActive ? "true" : "false") + ",";
+   json += "\"signal\":\"" + EscapeJsonString(m_aiNnSignal) + "\",";
+   json += "\"confidence\":" + DoubleToString(m_aiNnConf, 4) + ",";
+   json += "\"labels\":" + IntegerToString(m_aiNnLabels) + ",";
+   json += "\"steps\":" + IntegerToString(m_aiNnSteps) + ",";
+   json += "\"conformal_q\":" + DoubleToString(m_aiNnConformalQ, 4) + ",";
+   json += "\"conformal_alpha\":" + DoubleToString(m_aiNnConformalAlpha, 4) + ",";
+   json += "\"asset_class\":" + IntegerToString(m_aiNnAssetClass) + ",";
+   json += "\"barrier_k\":" + DoubleToString(m_aiNnBarrierK, 2) + ",";
+   json += "\"barrier_vert_bars\":" + IntegerToString(m_aiNnBarrierVertBars) + ",";
+   json += "\"trade_linked\":" + IntegerToString(m_aiNnTradeLinked) + ",";
+   json += "\"norm_ready\":" + (m_aiNnNormReady ? "true" : "false");
+   json += "},";
+
+   // Regime — uses stored data from SetAIData
+   json += "\"regime\":{";
+   json += "\"current\":\"" + EscapeJsonString(m_aiRegime) + "\",";
+   json += "\"trend\":" + DoubleToString(m_aiRegimeTrend, 4) + ",";
+   json += "\"range\":" + DoubleToString(m_aiRegimeRange, 4) + ",";
+   json += "\"volatile\":" + DoubleToString(m_aiRegimeVolatile, 4) + ",";
+   json += "\"spike\":" + DoubleToString(m_aiRegimeSpike, 4);
+   json += "},";
+
+   // Meta-labeler — uses stored data from SetAIData
+   json += "\"meta\":{";
+   json += "\"features\":" + IntegerToString(m_aiMetaFeatures) + ",";
+   json += "\"cooldown\":" + IntegerToString(m_aiMetaCooldown) + ",";
+   json += "\"early_stop\":" + IntegerToString(m_aiMetaEarlyStop) + ",";
+   json += "\"win_rate\":" + DoubleToString(m_aiMetaWinRate, 4) + ",";
+   json += "\"avg_conf\":" + DoubleToString(m_aiMetaAvgConf, 4) + ",";
+   json += "\"samples_since\":" + IntegerToString(m_aiMetaSamplesSince);
+   json += "}";
+
    json += "}";
    return json;
 }
@@ -955,35 +748,24 @@ string CDashboardBridge::BuildHeartbeatJson()
 {
    string json = "\"heartbeat\":{";
    
-   if(m_pScansCount != NULL)
-      json += "\"scans\":" + IntegerToString(*m_pScansCount) + ",";
+   if(m_heartbeatCountersSet)
+   {
+      json += "\"scans\":" + IntegerToString(m_pScansCount) + ",";
+      json += "\"signals_generated\":" + IntegerToString(m_pSignalsGenerated) + ",";
+      json += "\"signals_validated\":" + IntegerToString(m_pSignalsValidated) + ",";
+      json += "\"trades_opened\":" + IntegerToString(m_pTradesOpened) + ",";
+      json += "\"shadow_trades\":" + IntegerToString(m_pShadowTrades) + ",";
+      json += "\"spike_events\":" + IntegerToString(m_pSpikeEvents);
+   }
    else
+   {
       json += "\"scans\":0,";
-      
-   if(m_pSignalsGenerated != NULL)
-      json += "\"signals_generated\":" + IntegerToString(*m_pSignalsGenerated) + ",";
-   else
       json += "\"signals_generated\":0,";
-      
-   if(m_pSignalsValidated != NULL)
-      json += "\"signals_validated\":" + IntegerToString(*m_pSignalsValidated) + ",";
-   else
       json += "\"signals_validated\":0,";
-      
-   if(m_pTradesOpened != NULL)
-      json += "\"trades_opened\":" + IntegerToString(*m_pTradesOpened) + ",";
-   else
       json += "\"trades_opened\":0,";
-      
-   if(m_pShadowTrades != NULL)
-      json += "\"shadow_trades\":" + IntegerToString(*m_pShadowTrades) + ",";
-   else
       json += "\"shadow_trades\":0,";
-      
-   if(m_pSpikeEvents != NULL)
-      json += "\"spike_events\":" + IntegerToString(*m_pSpikeEvents);
-   else
       json += "\"spike_events\":0";
+   }
    
    json += "}";
    return json;
@@ -995,24 +777,11 @@ string CDashboardBridge::BuildHeartbeatJson()
 string CDashboardBridge::BuildPythonBridgeJson()
 {
    string json = "\"python_bridge\":{";
-   
-   if(CheckPointer(m_pPythonBridge) != POINTER_INVALID)
-   {
-      json += "\"connected\":false,";
-      json += "\"version\":\"unknown\",";
-      json += "\"requests\":0,";
-      json += "\"ok\":0,";
-      json += "\"errors\":0";
-   }
-   else
-   {
-      json += "\"connected\":false,";
-      json += "\"version\":\"\",\"";
-      json += "\"requests\":0,";
-      json += "\"ok\":0,";
-      json += "\"errors\":0";
-   }
-   
+   json += "\"connected\":" + (m_pyConnected ? "true" : "false") + ",";
+   json += "\"version\":\"" + EscapeJsonString(m_pyVersion) + "\",";
+   json += "\"requests\":" + IntegerToString(m_pyRequests) + ",";
+   json += "\"ok\":" + IntegerToString(m_pyOk) + ",";
+   json += "\"errors\":" + IntegerToString(m_pyErrors);
    json += "}";
    return json;
 }

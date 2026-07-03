@@ -2,8 +2,8 @@
 //| AIEngine.mqh - AI Hooks and Integration Module                   |
 //| Provides AI-ready interfaces for external ML model integration   |
 //+------------------------------------------------------------------+
-#ifndef __AI_ENGINE_MQH__
-#define __AI_ENGINE_MQH__
+#ifndef AI_ENGINE_MQH
+#define AI_ENGINE_MQH
 
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"

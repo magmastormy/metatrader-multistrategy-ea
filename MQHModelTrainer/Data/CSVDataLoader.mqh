@@ -1,9 +1,9 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| CSVDataLoader.mqh                                                |
 //| Loads and parses CSV training data exported by TrainingDataExporter.mq5 |
 //+------------------------------------------------------------------+
-#ifndef __MQH_CSV_DATA_LOADER_MQH__
-#define __MQH_CSV_DATA_LOADER_MQH__
+#ifndef MQH_CSV_DATA_LOADER_MQH
+#define MQH_CSV_DATA_LOADER_MQH
 
 #include <Arrays\ArrayString.mqh>
 #include <Arrays\ArrayDouble.mqh>

@@ -8,8 +8,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __TREND_ENTRY_TYPES_MQH__
-#define __TREND_ENTRY_TYPES_MQH__
+#ifndef TREND_ENTRY_TYPES_MQH
+#define TREND_ENTRY_TYPES_MQH
 
 #include "MultiEMASystem.mqh"
 

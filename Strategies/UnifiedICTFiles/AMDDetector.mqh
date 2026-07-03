@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __AMD_DETECTOR_MQH__
-#define __AMD_DETECTOR_MQH__
+#ifndef AMD_DETECTOR_MQH
+#define AMD_DETECTOR_MQH
 
 //+------------------------------------------------------------------+
 //| AMD Phase Enum                                                   |

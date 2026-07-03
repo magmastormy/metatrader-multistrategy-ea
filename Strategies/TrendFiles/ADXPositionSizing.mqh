@@ -7,8 +7,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __TREND_ADX_POSITION_SIZING_MQH__
-#define __TREND_ADX_POSITION_SIZING_MQH__
+#ifndef TREND_ADX_POSITION_SIZING_MQH
+#define TREND_ADX_POSITION_SIZING_MQH
 
 #include "../../IndicatorManager.mqh"
 

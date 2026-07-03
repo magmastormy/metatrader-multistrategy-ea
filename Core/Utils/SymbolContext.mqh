@@ -2,8 +2,8 @@
 //| SymbolContext.mqh                                                |
 //| Symbol execution context for multi-strategy orchestration        |
 //+------------------------------------------------------------------+
-#ifndef __SYMBOL_CONTEXT_MQH__
-#define __SYMBOL_CONTEXT_MQH__
+#ifndef SYMBOL_CONTEXT_MQH
+#define SYMBOL_CONTEXT_MQH
 
 #include <Object.mqh>
 #include <Arrays\ArrayObj.mqh>

@@ -11,8 +11,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __TRADE_ATTRIBUTION_MANAGER_MQH__
-#define __TRADE_ATTRIBUTION_MANAGER_MQH__
+#ifndef TRADE_ATTRIBUTION_MANAGER_MQH
+#define TRADE_ATTRIBUTION_MANAGER_MQH
 
 #include <Object.mqh>
 #include "../Utils/Enums.mqh"

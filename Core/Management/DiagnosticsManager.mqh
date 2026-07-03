@@ -4,8 +4,8 @@
 //| MultiStrategyAutonomousEA.mq5 OnTick heartbeat block              |
 //| Blueprint Section 10.1 — Monolith Decomposition (R6b)            |
 //+------------------------------------------------------------------+
-#ifndef __DIAGNOSTICS_MANAGER_MQH__
-#define __DIAGNOSTICS_MANAGER_MQH__
+#ifndef DIAGNOSTICS_MANAGER_MQH
+#define DIAGNOSTICS_MANAGER_MQH
 
 #include "../Utils/Enums.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"

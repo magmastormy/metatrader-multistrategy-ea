@@ -20,8 +20,6 @@
 // Retained production strategy inventory (7 kept in codebase)
 #include "../../Strategies/SimpleMomentumStrategy.mqh"
 #include "../../Strategies/StrategyTrend.mqh"
-// FIBONACCI REMOVED - Include deleted
-// ELLIOTT WAVE REMOVED - Include deleted
 #include "../../Strategies/StrategySupportResistance.mqh"
 #include "../../Strategies/StrategyUnifiedICT.mqh"
 #include "../../Strategies/StrategyCandlestick.mqh"
@@ -262,6 +260,10 @@ private:
     double m_adaptiveSupportFloor_3plus;           // Support floor for 3+ active voters (standard)
     double m_strategyActivityDecayRate;            // How fast inactive strategy weight decays (0.0-1.0)
     int m_strategyInactiveCounterThreshold;        // After N consecutive filters, apply weight decay
+
+    // Issue 6: Regime-aware consensus relaxation state
+    bool m_regimeRelaxActive;                      // True when threshold relaxation is in effect for next cycle
+    double m_regimeRelaxFactor;                    // Relaxation multiplier (0.90 = 10% relaxation)
 
     // Ported Orchestrator Parameters
     double m_minWinRateThreshold;                       // Minimum win rate (default 40%)
@@ -632,6 +634,8 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_adaptiveSupportFloor_3plus(0.35),           // 3+ voters: standard 35% support
     m_strategyActivityDecayRate(0.05),            // Weight decay rate per inactive cycle (reduced from 0.15)
     m_strategyInactiveCounterThreshold(15),        // After 15 filters, start decay (increased from 3)
+    m_regimeRelaxActive(false),
+    m_regimeRelaxFactor(0.90),
     m_minWinRateThreshold(0.40),
     m_maxConsecutiveLosses_Limit(5),
     m_performanceDecayFactor(0.95),
@@ -1730,6 +1734,20 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         // 3+ voters: use original thresholds (already set above)
     }
 
+    // Issue 6: Regime-aware threshold relaxation
+    // When previous cycle produced zero votes in a TREND regime, relax thresholds by 10%
+    if(m_regimeRelaxActive)
+    {
+        effectiveQualityThreshold *= m_regimeRelaxFactor;
+        supportFloor *= m_regimeRelaxFactor;
+        PrintFormat("[CONSENSUS-RELAX] %s | Regime relaxation active | qualityThreshold=%.3f | supportFloor=%.3f | factor=%.2f",
+                    symbol, effectiveQualityThreshold, supportFloor, m_regimeRelaxFactor);
+        m_regimeRelaxActive = false;
+    }
+
+    // Issue 8: Tighten marginal admit — require minimum quality floor of 0.65 and at least 2 voters
+    double marginalQualityFloor = 0.65;
+
     int effectiveMinVoters = MathMax(1, m_minQuorum);
 
     // Single-voter quorum is only allowed when the configured live-voter floor permits it.
@@ -1892,22 +1910,29 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     else
     {
         if((buyVotes + sellVotes) <= 0)
-        {
-            if(cycleSignalsGenerated > 0 || cycleSignalsAfterPipeline > 0 || cycleFilteredOut > 0)
             {
-                vetoCode = "pipeline_filtered_all";
-                vetoReason = StringFormat("All candidate signals were filtered/suppressed before quorum | generated=%d | after_pipeline=%d | filtered_out=%d | suppressed=%d",
-                                          cycleSignalsGenerated,
-                                          cycleSignalsAfterPipeline,
-                                          cycleFilteredOut,
-                                          cycleVoteSuppressed);
+                if(cycleSignalsGenerated > 0 || cycleSignalsAfterPipeline > 0 || cycleFilteredOut > 0)
+                {
+                    vetoCode = "pipeline_filtered_all";
+                    vetoReason = StringFormat("All candidate signals were filtered/suppressed before quorum | generated=%d | after_pipeline=%d | filtered_out=%d | suppressed=%d",
+                                              cycleSignalsGenerated,
+                                              cycleSignalsAfterPipeline,
+                                              cycleFilteredOut,
+                                              cycleVoteSuppressed);
+                }
+                else
+                {
+                    vetoCode = "no_voters";
+                    vetoReason = "No strategies produced votes in this evaluation cycle";
+                    // Issue 6: Regime-aware fallback — when TREND regime and zero voters, relax thresholds 10%
+                    if(IsTrendingRegime())
+                    {
+                        m_regimeRelaxActive = true;
+                        PrintFormat("[CONSENSUS-RELAX] %s | TREND regime + zero voters | Relaxing thresholds by %.0f%% for next cycle",
+                                    symbol, (1.0 - m_regimeRelaxFactor) * 100.0);
+                    }
+                }
             }
-            else
-            {
-                vetoCode = "no_voters";
-                vetoReason = "No strategies produced votes in this evaluation cycle";
-            }
-        }
         else if(!readyWeightMet)
         {
             vetoCode = "readiness_weight";
@@ -1921,11 +1946,9 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             double bestQuality = MathMax(buyDirectionalQuality, sellDirectionalQuality);
             double bestSupport = MathMax(buySupportRatio, sellSupportRatio);
 
-            double marginalQualityFloor = effectiveQualityThreshold * 0.92;
-
             if(bestQuality >= effectiveQualityThreshold)
             {
-                // Full admission �?quality meets threshold (handled by support/quorum checks below)
+                // Full admission — quality meets threshold (handled by support/quorum checks below)
                 if(bestSupport < supportFloor)
                 {
                     vetoCode = "insufficient_support";
@@ -1941,14 +1964,14 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                               sellDirectionalQuality, sellSupportRatio);
                 }
             }
-            else if(bestQuality >= marginalQualityFloor)
+            else if(bestQuality >= marginalQualityFloor && activeVoterCount >= 2)
             {
-                // Soft-admit band: quality is marginal but within 8% of threshold
-                // Allow the signal through with a confidence penalty
+                // Issue 8: Soft-admit band — quality is marginal but meets tightened floor (0.65)
+                // AND at least 2 voters produced a signal (prevents single-voter marginal admits)
                 finalSignal = (buyDirectionalQuality >= sellDirectionalQuality) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
                 decisionClass = CONSENSUS_DECISION_MARGINAL_ADMIT;
                 // vetoCode remains "" so the signal is not treated as vetoed
-                PrintFormat("[CONSENSUS-NEARMISS-ADMITTED] %s | quality=%.3f | threshold=%.3f | marginalFloor=%.3f | confidencePenalty=0.70 | signal=%s | votes=%d | support=%.3f",
+                PrintFormat("[MARGINAL-TIGHTEN] %s | quality=%.3f | threshold=%.3f | marginalFloor=%.3f | confidencePenalty=0.70 | signal=%s | votes=%d | support=%.3f",
                             symbol,
                             bestQuality, effectiveQualityThreshold, marginalQualityFloor,
                             TradeSignalToString(finalSignal),
@@ -1956,7 +1979,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             }
             else
             {
-                // Hard veto �?quality too far below threshold
+                // Hard veto — quality too far below threshold
                 vetoCode = "insufficient_quality";
                 vetoReason = StringFormat("quality=%.3f (need %.3f, marginalFloor=%.3f) | votes=%d | support=%.3f",
                                           bestQuality, effectiveQualityThreshold, marginalQualityFloor,

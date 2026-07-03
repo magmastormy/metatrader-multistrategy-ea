@@ -4,8 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#ifndef __NEURAL_NETWORK_STRATEGY_MQH__
-#define __NEURAL_NETWORK_STRATEGY_MQH__
+#ifndef NEURAL_NETWORK_STRATEGY_MQH
+#define NEURAL_NETWORK_STRATEGY_MQH
 
 #include "../Core/Utils/Enums.mqh"
 #include "../Core/AI/NNModelStorage.mqh"
@@ -1809,10 +1809,22 @@ public:
 
     bool ReservePredictionForSignal(const ENUM_TRADE_SIGNAL signal, string &predictionId, const int maxAgeSec = 600)
     {
-        if(maxAgeSec < 0) {}
         predictionId = "";
         if(!m_enableOnlineTraining)
             return false;
+
+        if(maxAgeSec > 0)
+        {
+            datetime barTime = FeatureBarTime();
+            if(barTime > 0 && (TimeCurrent() - barTime) > maxAgeSec)
+            {
+                PrintFormat("[NN-PRED-STALE] %s | signal=%s | barAge=%lld > maxAge=%d | skipping",
+                            m_symbol, EnumToString(signal),
+                            (long)(TimeCurrent() - barTime), maxAgeSec);
+                return false;
+            }
+        }
+
         return CollectObservationInternal(true, signal, predictionId);
     }
 

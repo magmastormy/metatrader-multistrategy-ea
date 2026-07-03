@@ -15,17 +15,6 @@
 #include "../../Interfaces/IStrategy.mqh"
 #include "../Engines/SessionWeightManager.mqh"
 
-// Forward declarations
-class CEnhancedErrorHandler;
-class CUtilities;
-class CMarketAnalysis;
-class CNextGenStrategyBrain;
-class CTransformerBrain;
-struct SPredictionWithUncertainty;
-class CPositionSizer;
-class CTradeManager;
-class CPerformanceAnalytics;
-
 //+------------------------------------------------------------------+
 //| Filter Preset Types                                             |
 //+------------------------------------------------------------------+
@@ -206,6 +195,10 @@ private:
     datetime m_lastHealthCheckTime;
     int m_healthCheckIntervalBars;
     
+    // Issue 14: Budget exhaustion skip
+    bool m_budgetExhausted;
+    datetime m_budgetExhaustedTime;
+    
     // Internal methods
     void ResetEvidenceSnapshot(const string symbol, ENUM_TIMEFRAMES timeframe);
     bool RefreshStructuralContext(const string symbol, ENUM_TIMEFRAMES timeframe);
@@ -272,6 +265,10 @@ public:
     double GetLastEffectiveMinConfidence() const { return m_lastEffectiveMinConfidence; }
     string GetLastFilterName() const { return m_lastFilterName; }
     string GetLastFilterReason() const { return m_lastFilterReason; }
+
+    // Spread filter (public for EA access)
+    bool ApplySpreadFilter(const string symbol, double &spreadScore, double overrideThreshold = -1.0);
+    bool ApplySpreadFilter(const string symbol, const double atrValue, double &spreadScore, const double threshold = 0.5);
     void GetLastEvidenceSnapshot(SPipelineEvidenceSnapshot &snapshot) const { snapshot = m_lastEvidence; }
     double GetFilterRate() const 
     { 
@@ -285,6 +282,10 @@ public:
     CLiquidityEngine* GetLiquidityEngine() { return m_liquidityEngine; }
     CVolatilityEngine* GetVolatilityEngine() { return m_volatilityEngine; }
     CRegimeEngine* GetRegimeEngine() { return m_regimeEngine; }
+
+    // Issue 14: Budget exhaustion API
+    void SetBudgetExhausted(const bool exhausted) { m_budgetExhausted = exhausted; m_budgetExhaustedTime = TimeCurrent(); }
+    bool IsBudgetExhausted() const { return m_budgetExhausted; }
 };
 
 //+------------------------------------------------------------------+
@@ -320,7 +321,9 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_volatilityEngineHealthy(false),
     m_regimeEngineHealthy(false),
     m_lastHealthCheckTime(0),
-    m_healthCheckIntervalBars(100)
+    m_healthCheckIntervalBars(100),
+    m_budgetExhausted(false),
+    m_budgetExhaustedTime(0)
 {
 }
 
@@ -919,6 +922,18 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
     {
         confidence = 0;
         m_lastRawSignalNone = true;
+        return TRADE_SIGNAL_NONE;
+    }
+    
+    // Issue 14: Skip pipeline evaluation entirely when daily budget is exhausted
+    // Saves CPU during budget halt periods — results would be discarded anyway
+    if(m_budgetExhausted)
+    {
+        m_signalsProcessed++;
+        m_signalsFiltered++;
+        m_lastRawSignalNone = true;
+        m_lastFilteredByPipeline = true;
+        confidence = 0;
         return TRADE_SIGNAL_NONE;
     }
     
@@ -1685,6 +1700,90 @@ bool CUnifiedSignalPipeline::ApplySessionFilter(const string symbol)
     
     LogFilterResult("SessionFilter", false, StringFormat("Not in active trading session: %d:00 GMT", gmtHour));
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Apply Spread Filter                                              |
+//+------------------------------------------------------------------+
+bool CUnifiedSignalPipeline::ApplySpreadFilter(const string symbol, double &spreadScore, double overrideThreshold)
+{
+    if(symbol == "")
+        return true;
+
+    double atr = m_lastEvidence.atrValue;
+    if(atr <= 0.0 && m_volatilityEngine != NULL)
+        atr = m_volatilityEngine.GetATR();
+    if(atr <= 0.0)
+    {
+        spreadScore = 0.0;
+        return true;
+    }
+
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    long spreadRaw = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+    double spread = (double)spreadRaw * point;
+
+    double threshold = (overrideThreshold > 0.0) ? overrideThreshold : m_filters.maxSpreadToAtrRatio;
+    double maxSpread = atr * MathMax(0.01, threshold);
+
+    spreadScore = (maxSpread > 0.0) ? (spread / maxSpread) : 0.0;
+
+    if(spread > maxSpread)
+    {
+        LogFilterResult("SpreadFilter", false,
+                        StringFormat("Spread %.5f > max %.5f (ATR %.5f, ratio %.4f)",
+                                    spread, maxSpread, atr, spreadScore));
+        return false;
+    }
+
+    LogFilterResult("SpreadFilter", true,
+                    StringFormat("Spread %.5f <= max %.5f (ATR %.5f, ratio %.4f)",
+                                spread, maxSpread, atr, spreadScore));
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Apply Spread Filter (ATR-explicit overload)                      |
+//+------------------------------------------------------------------+
+bool CUnifiedSignalPipeline::ApplySpreadFilter(const string symbol, const double atrValue, double &spreadScore, const double threshold)
+{
+    if(symbol == "")
+    {
+        spreadScore = 0.0;
+        return true;
+    }
+
+    if(atrValue <= 0.0)
+    {
+        spreadScore = 0.0;
+        return true;
+    }
+
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001;
+
+    long spreadRaw = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+    double spread = (double)spreadRaw * point;
+
+    double ratio = (atrValue > 0.0) ? (spread / atrValue) : 0.0;
+    spreadScore = ratio;
+
+    if(ratio >= threshold)
+    {
+        LogFilterResult("SpreadFilter", false,
+                        StringFormat("Spread ratio %.4f >= %.4f (spread %.5f, ATR %.5f)",
+                                    ratio, threshold, spread, atrValue));
+        return false;
+    }
+
+    LogFilterResult("SpreadFilter", true,
+                    StringFormat("Spread ratio %.4f < %.4f (spread %.5f, ATR %.5f)",
+                                ratio, threshold, spread, atrValue));
+    return true;
 }
 
 //+------------------------------------------------------------------+

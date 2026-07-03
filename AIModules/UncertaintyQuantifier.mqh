@@ -2,8 +2,8 @@
 //| Uncertainty Quantification and Confidence Estimation           |
 //| Provides confidence intervals and risk-aware predictions        |
 //+------------------------------------------------------------------+
-#ifndef __UNCERTAINTY_QUANTIFIER_MQH__
-#define __UNCERTAINTY_QUANTIFIER_MQH__
+#ifndef UNCERTAINTY_QUANTIFIER_MQH
+#define UNCERTAINTY_QUANTIFIER_MQH
 
 #include <Math\Stat\Math.mqh>
 
@@ -11,7 +11,8 @@
 //| Prediction with Uncertainty (Extended version)                 |
 //+------------------------------------------------------------------+
 // Extended struct with additional fields beyond CommonTypes.mqh
-struct SPredictionWithUncertainty {
+struct SPredictionWithUncertainty
+{
     double prediction;         // Main prediction
     double lowerBound;        // Lower confidence bound
     double upperBound;        // Upper confidence bound
@@ -21,7 +22,8 @@ struct SPredictionWithUncertainty {
     datetime timestamp;       // From base struct
     bool isValid;             // From base struct
     
-    SPredictionWithUncertainty() {
+    SPredictionWithUncertainty()
+    {
         prediction = 0.0;
         lowerBound = 0.0;
         upperBound = 0.0;
@@ -36,7 +38,8 @@ struct SPredictionWithUncertainty {
 //+------------------------------------------------------------------+
 //| Uncertainty Quantification Methods                             |
 //+------------------------------------------------------------------+
-class CUncertaintyQuantifier {
+class CUncertaintyQuantifier
+{
 private:
     double m_predictionHistory[];
     double m_errorHistory[];
@@ -109,7 +112,8 @@ private:
     }
     
     // Calculate prediction entropy
-    double CalculateEntropy(double buyProb, double sellProb, double holdProb) {
+    double CalculateEntropy(double buyProb, double sellProb, double holdProb)
+    {
         double entropy = 0.0;
         
         if(buyProb > 0) entropy -= buyProb * MathLog(buyProb);
@@ -120,7 +124,8 @@ private:
     }
     
     // Calculate realized volatility from price returns (replaces prediction-history based volatility)
-    double CalculateHistoricalVolatility(int lookback = 20) {
+    double CalculateHistoricalVolatility(int lookback = 20)
+    {
         if(m_priceReturnCount < lookback)
         {
             // Fallback to prediction history if price returns not available
@@ -157,7 +162,8 @@ private:
         return MathSqrt(variance);
     }
 
-    double CalculateModelUncertainty(int lookback = 20) {
+    double CalculateModelUncertainty(int lookback = 20)
+    {
         if(m_predictionCount < lookback) return 1.0;
         
         double mean = 0.0;
@@ -178,7 +184,8 @@ private:
     }
     
     // Calculate prediction error statistics
-    double CalculatePredictionError(int lookback = 50) {
+    double CalculatePredictionError(int lookback = 50)
+    {
         if(m_errorCount < lookback) return 1.0;
         
         double meanError = 0.0;
@@ -191,7 +198,8 @@ private:
     }
     
 public:
-    CUncertaintyQuantifier(int historySize = 500, double confidenceLevel = 0.95) {
+    CUncertaintyQuantifier(int historySize = 500, double confidenceLevel = 0.95)
+    {
         m_historySize = MathMax(8, historySize);
         m_predictionHead = 0;
         m_predictionCount = 0;
@@ -215,7 +223,8 @@ public:
     }
     
     // Update prediction history
-    bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0, bool hasOutcome = false) {
+    bool UpdatePredictionHistory(double prediction, double actualOutcome = 0.0, bool hasOutcome = false)
+    {
         RingPush(m_predictionHistory, m_predictionHead, m_predictionCount, prediction);
 
         if(hasOutcome) {
@@ -229,13 +238,15 @@ public:
 
     // Feed realized price return for proper volatility calculation
     // priceReturn = (close[t] - close[t-1]) / close[t-1]  (percentage return)
-    void UpdateRealizedVolatility(const double priceReturn) {
+    void UpdateRealizedVolatility(const double priceReturn)
+    {
         RingPush(m_priceReturnHistory, m_priceReturnHead, m_priceReturnCount, priceReturn);
     }
     
     // Quantify uncertainty using multiple methods
     bool QuantifyUncertainty(double inBuySignal, double inSellSignal, double inHoldSignal,
-                           SPredictionWithUncertainty &result) {
+                           SPredictionWithUncertainty &result)
+    {
         // Main prediction (strongest signal)
         if(inBuySignal > inSellSignal && inBuySignal > inHoldSignal) {
             result.prediction = inBuySignal;
@@ -297,7 +308,8 @@ public:
     }
     
     // Risk-aware position sizing based on uncertainty
-    double GetRiskAdjustedSize(double baseSize, double uncertainty, double maxUncertaintyReduction = 0.5) {
+    double GetRiskAdjustedSize(double baseSize, double uncertainty, double maxUncertaintyReduction = 0.5)
+    {
         // Reduce position size based on uncertainty
         double reductionFactor = 1.0 - (uncertainty * maxUncertaintyReduction);
         reductionFactor = MathMax(0.1, reductionFactor); // Minimum 10% of base size
@@ -307,12 +319,14 @@ public:
     
     // Determine if prediction is reliable enough for trading
     bool IsPredictionReliable(const SPredictionWithUncertainty &prediction, 
-                             double minConfidence = 0.6, double maxUncertainty = 0.4) {
+                             double minConfidence = 0.6, double maxUncertainty = 0.4)
+    {
         return (prediction.confidence >= minConfidence && prediction.uncertainty <= maxUncertainty);
     }
     
     // Get uncertainty-based trading recommendation
-    string GetTradingRecommendation(const SPredictionWithUncertainty &prediction) {
+    string GetTradingRecommendation(const SPredictionWithUncertainty &prediction)
+    {
         string recommendation = "";
         
         if(!IsPredictionReliable(prediction)) {
@@ -333,7 +347,8 @@ public:
     
     // Calculate Value at Risk (VaR) based on uncertainty
     double CalculateVaR(double position, const SPredictionWithUncertainty &prediction, 
-                       double confidenceLevel = 0.95) {
+                       double confidenceLevel = 0.95)
+    {
         if(MathAbs(position) < 1e-9)
             return 0.0;
         
@@ -346,7 +361,8 @@ public:
     }
     
     // Bayesian confidence update
-    bool UpdateBayesianConfidence(double priorConfidence, double likelihood, double &posteriorConfidence) {
+    bool UpdateBayesianConfidence(double priorConfidence, double likelihood, double &posteriorConfidence)
+    {
         // Simple Bayesian update
         double evidence = priorConfidence * likelihood + (1.0 - priorConfidence) * (1.0 - likelihood);
         
@@ -361,7 +377,8 @@ public:
     
     // Get uncertainty statistics
     void GetUncertaintyStats(double &avgUncertainty, double &maxUncertainty, 
-                           double &avgError, int &sampleCount) {
+                           double &avgError, int &sampleCount)
+    {
         avgUncertainty = 0.0;
         maxUncertainty = 0.0;
         avgError = 0.0;
@@ -383,7 +400,8 @@ public:
     }
     
     // Generate uncertainty report
-    string GenerateUncertaintyReport(const SPredictionWithUncertainty &prediction) {
+    string GenerateUncertaintyReport(const SPredictionWithUncertainty &prediction)
+    {
         string report = "\n=== UNCERTAINTY ANALYSIS ===\n";
         report += StringFormat("Prediction: %.3f [%.3f, %.3f]\n", 
                               prediction.prediction, prediction.lowerBound, prediction.upperBound);

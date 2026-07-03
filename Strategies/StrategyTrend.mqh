@@ -1,5 +1,10 @@
-#ifndef __STRATEGY_TREND_MQH__
-#define __STRATEGY_TREND_MQH__
+//+------------------------------------------------------------------+
+//| StrategyTrend.mqh                                                |
+//| Trend-following strategy using multi-EMA system with ADX sizing  |
+//| Includes trailing stop, signal enhancers, and regime awareness    |
+//+------------------------------------------------------------------+
+#ifndef STRATEGY_TREND_MQH
+#define STRATEGY_TREND_MQH
 #include "../Core/Strategy/StrategyBase.mqh"
 // Enhanced Trend Strategy Component Files
 #include "TrendFiles/MultiEMASystem.mqh"
@@ -9,6 +14,7 @@
 #include "TrendFiles/TrendSignalEnhancers.mqh"
 // Risk Manager for AGENTS.md invariant #1
 #include "../Core/Risk/UnifiedRiskManager.mqh"
+#include "../Utilities/SafeCopyBuffer.mqh"
 // Batch 103: Hurst/VPIN engine access
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Core/Risk/VPINFilter.mqh"
@@ -51,6 +57,7 @@ private:
     ENUM_TIMEFRAMES     m_htf;  // Higher timeframe for trend confirmation
     int                 m_htfHandleADX;  // ADX handle for HTF
     int                 m_tradeParamATRHandle;  // Cached ATR handle for GetTradeParameters
+    int                 m_macdHandle;  // MACD histogram momentum confirmation
 
     // Configurable ADX thresholds (lowered for synthetic CFDs)
     double              m_adxNoTrendThreshold;
@@ -78,6 +85,25 @@ private:
         LogRejectEvent(reasonTag);
         return TRADE_SIGNAL_NONE;
     }
+
+    bool MACDConfirmed(ENUM_TRADE_SIGNAL signal)
+    {
+        if(m_macdHandle == INVALID_HANDLE)
+            return true;
+
+        double macdMain[2], macdSignal[2];
+        if(!SafeCopyBuffer(m_macdHandle, 0, 1, 2, macdMain) ||
+           !SafeCopyBuffer(m_macdHandle, 1, 1, 2, macdSignal))
+            return true;
+
+        double histNow = macdMain[0] - macdSignal[0];
+        double histPrev = macdMain[1] - macdSignal[1];
+
+        if(signal == TRADE_SIGNAL_BUY)
+            return (histNow > histPrev);
+        else
+            return (histNow < histPrev);
+    }
 public:
     //--- Constructor
     CStrategyTrend(const string name = "Trend Strategy v2.1", int magic = 0) :
@@ -97,6 +123,7 @@ public:
         m_signalsGenerated(0),
         m_htf(PERIOD_CURRENT),
         m_htfHandleADX(INVALID_HANDLE),
+        m_macdHandle(INVALID_HANDLE),
         m_adxNoTrendThreshold(0),
         m_adxWeakThreshold(25.0),
         m_adxNormalThreshold(30.0),
@@ -135,6 +162,9 @@ public:
 
         // Release cached ATR handle for GetTradeParameters — managed by CIndicatorManager
         m_tradeParamATRHandle = INVALID_HANDLE;
+
+        // MACD handle managed by CIndicatorManager
+        m_macdHandle = INVALID_HANDLE;
 
         // Risk manager is not owned by this strategy - do NOT delete
         m_riskManager = NULL;
@@ -199,6 +229,9 @@ public:
         {
             m_signalEnhancer.Initialize(symbol, timeframe, m_emaSystem);
         }
+
+        // MACD histogram handle for momentum confirmation
+        m_macdHandle = CIndicatorManager::Instance().GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE);
 
         // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
         m_riskManager = GetUnifiedRiskManager();
@@ -310,6 +343,10 @@ public:
         // Ensure LTF signal aligns with HTF trend direction
         if(!IsHTFTrendConfirmed(bestEntry.direction))
             return RejectSignal("TREND_HTF_CONFLICT");
+        // MACD histogram momentum confirmation
+        if(!MACDConfirmed(bestEntry.direction))
+            return RejectSignal("TREND_MACD_MOMENTUM_MISALIGNED");
+
         // Apply ADX-based confidence adjustment
         double adxMult = m_adxSizing.GetPositionSizeMultiplier();
         confidence = MathMin(1.0, bestEntry.confidence * (0.85 + adxMult * 0.15));

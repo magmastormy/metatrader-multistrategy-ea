@@ -2,8 +2,8 @@
 //| SafeCopyBuffer.mqh                                               |
 //| Shared utility: retry-safe CopyBuffer wrapper                    |
 //+------------------------------------------------------------------+
-#ifndef __UTILS_SAFE_COPY_BUFFER_MQH__
-#define __UTILS_SAFE_COPY_BUFFER_MQH__
+#ifndef UTILS_SAFE_COPY_BUFFER_MQH
+#define UTILS_SAFE_COPY_BUFFER_MQH
 
 #include "../IndicatorManager.mqh"
 

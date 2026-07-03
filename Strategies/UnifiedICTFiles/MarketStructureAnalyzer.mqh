@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __UICT_MARKET_STRUCTURE_ANALYZER_MQH__
-#define __UICT_MARKET_STRUCTURE_ANALYZER_MQH__
+#ifndef UICT_MARKET_STRUCTURE_ANALYZER_MQH
+#define UICT_MARKET_STRUCTURE_ANALYZER_MQH
 
 #include "../../Core/Utils/Instruments.mqh"
 

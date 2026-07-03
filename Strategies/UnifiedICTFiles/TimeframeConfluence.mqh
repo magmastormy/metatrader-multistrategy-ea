@@ -8,8 +8,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __UICT_TIMEFRAME_CONFLUENCE_MQH__
-#define __UICT_TIMEFRAME_CONFLUENCE_MQH__
+#ifndef UICT_TIMEFRAME_CONFLUENCE_MQH
+#define UICT_TIMEFRAME_CONFLUENCE_MQH
 
 #include "MarketStructureAnalyzer.mqh"
 

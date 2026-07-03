@@ -1,8 +1,8 @@
 //+------------------------------------------------------------------+
 //| BarProcessor.mqh - Bar detection and scheduling                   |
 //+------------------------------------------------------------------+
-#ifndef __BAR_PROCESSOR_MQH__
-#define __BAR_PROCESSOR_MQH__
+#ifndef BAR_PROCESSOR_MQH
+#define BAR_PROCESSOR_MQH
 
 struct SSymbolScanState
 {
@@ -132,6 +132,7 @@ public:
     
     void SetLastBarTimeMTF(const string symbol, ENUM_TIMEFRAMES tf, datetime time)
     {
+        // Stub - implementation deferred
     }
     
     void SetMaxBackoffTierPreservationBars(int bars) { m_maxBackoffTierPreservationBars = MathMax(1, bars); }

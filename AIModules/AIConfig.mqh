@@ -3,8 +3,8 @@
 //| Centralized AI hyperparameters and constants                      |
 //| All magic numbers from AI modules live here for per-symbol tuning |
 //+------------------------------------------------------------------+
-#ifndef __AI_CONFIG_MQH__
-#define __AI_CONFIG_MQH__
+#ifndef AI_CONFIG_MQH
+#define AI_CONFIG_MQH
 
 //--- Transformer defaults
 #ifndef AI_DEFAULT_DMODEL

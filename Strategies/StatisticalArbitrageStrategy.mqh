@@ -5,8 +5,8 @@
 //| Requires Python Bridge for Real-Time Correlation Matrix          |
 //| Copyright 2026, Multi-Strategy EA                                |
 //+------------------------------------------------------------------+
-#ifndef __STATISTICAL_ARBITRAGE_STRATEGY_MQH__
-#define __STATISTICAL_ARBITRAGE_STRATEGY_MQH__
+#ifndef STATISTICAL_ARBITRAGE_STRATEGY_MQH
+#define STATISTICAL_ARBITRAGE_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
@@ -281,8 +281,8 @@ public:
             validationReq.symbol = m_symbol;
             validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
             validationReq.lotSize = minLot;
-            validationReq.stopLossPips = 0;  // Stat arb uses spread-based risk
-            validationReq.takeProfitPips = 0;
+            validationReq.stopLossPips = 50.0;  // 50 pips SL for stat arb
+            validationReq.takeProfitPips = 100.0;  // 100 pips TP for stat arb
             validationReq.confidence = signal.confidence;
             validationReq.strategy = m_name;
             validationReq.requestTime = TimeCurrent();

@@ -7,8 +7,8 @@
 #property version   "2.00"
 #property strict
 
-#ifndef __SMC_KILL_ZONES_MQH__
-#define __SMC_KILL_ZONES_MQH__
+#ifndef SMC_KILL_ZONES_MQH
+#define SMC_KILL_ZONES_MQH
 
 //+------------------------------------------------------------------+
 //| Kill Zone Types                                                  |

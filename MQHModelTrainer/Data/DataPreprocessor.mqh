@@ -1,9 +1,9 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| DataPreprocessor.mqh                                             |
 //| Data preprocessing utilities: normalization, splitting, encoding |
 //+------------------------------------------------------------------+
-#ifndef __MQH_DATA_PREPROCESSOR_MQH__
-#define __MQH_DATA_PREPROCESSOR_MQH__
+#ifndef MQH_DATA_PREPROCESSOR_MQH
+#define MQH_DATA_PREPROCESSOR_MQH
 
 #include "../Core/AI/AIFeatureVectorBuilder.mqh"
 #include "LabelEncoder.mqh"

@@ -7,8 +7,8 @@
 #property version   "1.00"
 #property strict
 
-#ifndef __FIB_CONFLUENCE_MQH__
-#define __FIB_CONFLUENCE_MQH__
+#ifndef FIB_CONFLUENCE_MQH
+#define FIB_CONFLUENCE_MQH
 
 //+------------------------------------------------------------------+
 //| Fibonacci Level Structure                                        |

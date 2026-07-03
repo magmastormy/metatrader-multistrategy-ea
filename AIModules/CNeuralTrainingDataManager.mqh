@@ -2,8 +2,8 @@
 //| CTrainingDataManager.mqh                                          |
 //| Manages training examples and barrier buffer for neural network   |
 //+------------------------------------------------------------------+
-#ifndef __NEURAL_TRAINING_DATA_MANAGER_MQH__
-#define __NEURAL_TRAINING_DATA_MANAGER_MQH__
+#ifndef NEURAL_TRAINING_DATA_MANAGER_MQH
+#define NEURAL_TRAINING_DATA_MANAGER_MQH
 
 // ENHANCEMENT: Neural network buffer size constants (Batch 93)
 #ifndef NN_MAX_TRAINING_EXAMPLES

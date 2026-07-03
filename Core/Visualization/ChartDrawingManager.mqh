@@ -52,7 +52,6 @@ struct SDrawingConfig
     bool enableOrderBlocks;       // Order blocks
     bool enableFVG;               // Fair Value Gaps
     bool enableLiquidity;         // Liquidity levels
-    // ELLIOTT WAVE REMOVED - Flag deleted
     bool enableTrendLines;        // Trend lines
     bool enableSignalMarkers;     // Entry/Exit markers
     bool enableDebugMode;         // Developer-level visuals
@@ -69,7 +68,6 @@ struct SDrawingConfig
         enableOrderBlocks = true;
         enableFVG = true;
         enableLiquidity = true;
-        // ELLIOTT WAVE REMOVED - Initialization deleted
         enableTrendLines = true;
         enableSignalMarkers = true;
         enableDebugMode = false;
@@ -113,6 +111,7 @@ private:
     bool ValidateCoordinates(datetime time1, datetime time2, double price1, double price2);
     bool ValidateTime(datetime time);
     bool ValidatePrice(double price);
+    void DebouncedRedraw();
     
 public:
     CChartDrawingManager();
@@ -155,7 +154,6 @@ public:
     bool DrawEqualHighs(datetime time1, datetime time2, datetime time3, double price);
     bool DrawEqualLows(datetime time1, datetime time2, datetime time3, double price);
     
-    // ELLIOTT WAVE REMOVED - Wave drawing methods deleted
     bool DrawWaveCount(datetime time, double price, int waveNumber, bool isImpulse = true);
     bool DrawWaveLabel(datetime time, double price, const string label, bool isImpulse = true);
     bool DrawFibProjection(datetime time1, double price1, datetime time2, double price2,
@@ -272,7 +270,7 @@ bool CChartDrawingManager::DrawHorizontalLevel(double price, color levelColor, c
         m_objectsDrawn++;
     }
 
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -298,6 +296,20 @@ bool CChartDrawingManager::Initialize(const string symbol, ENUM_TIMEFRAMES tf, c
     
     Print("[ChartDrawing] Initialized for ", symbol, " on ", EnumToString(tf));
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Debounced ChartRedraw — at most once per second                  |
+//+------------------------------------------------------------------+
+void CChartDrawingManager::DebouncedRedraw()
+{
+    static datetime lastRedraw = 0;
+    datetime now = TimeCurrent();
+    if(now - lastRedraw >= 1)
+    {
+        lastRedraw = now;
+        ChartRedraw(m_chartID);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -401,7 +413,7 @@ bool CChartDrawingManager::DrawSwingHigh(datetime time, double price, const stri
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_BOTTOM);
     
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -432,7 +444,7 @@ bool CChartDrawingManager::DrawSwingLow(datetime time, double price, const strin
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_TOP);
     
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -467,7 +479,7 @@ bool CChartDrawingManager::DrawBOS(datetime time1, double price1, datetime time2
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
     
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -502,7 +514,7 @@ bool CChartDrawingManager::DrawCHOCH(datetime time1, double price1, datetime tim
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
 
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -541,7 +553,7 @@ bool CChartDrawingManager::DrawICT_CHOCH(datetime time, double price, bool isBul
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, isBullish ? ANCHOR_BOTTOM : ANCHOR_TOP);
 
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -585,7 +597,7 @@ bool CChartDrawingManager::DrawICT_SupplyZone(datetime timeStart, datetime timeE
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
     
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -629,7 +641,7 @@ bool CChartDrawingManager::DrawICT_DemandZone(datetime timeStart, datetime timeE
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_CENTER);
     
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -675,7 +687,7 @@ bool CChartDrawingManager::DrawZone(datetime timeStart, datetime timeEnd, double
     }
     
     m_objectsDrawn++;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -745,7 +757,7 @@ bool CChartDrawingManager::DrawLiquidityLevel(datetime time1, datetime time2, do
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_LEFT);
 
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -767,23 +779,23 @@ bool CChartDrawingManager::DrawEntrySignal(datetime time, double price, bool isB
     ObjectCreate(m_chartID, objName, OBJ_ARROW, 0, time, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_ARROWCODE, arrowCode);
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, isBuy ? clrLime : clrRed);
-    ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 3);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 1);  // Reduced from 3 to 1 for smaller arrows
     ObjectSetInteger(m_chartID, objName, OBJPROP_BACK, false);
     
-    // Draw label with strategy and confidence
+    // Draw label with strategy and confidence (smaller font)
     string labelName = objName + "_LABEL";
-    string labelText = StringFormat("%s\n%.0f%%", strategyName, confidence * 100);
+    string labelText = StringFormat("%s %.0f%%", strategyName, confidence * 100);
     if(reason != "")
-        labelText += "\n" + reason;
+        labelText += " " + reason;
     
     ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time, price);
     ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, labelText);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_COLOR, clrWhite);
-    ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 7);
+    ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 6);
     ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, isBuy ? ANCHOR_BOTTOM : ANCHOR_TOP);
 
     m_objectsDrawn += 2;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -973,7 +985,7 @@ bool CChartDrawingManager::DrawEqualHighs(datetime time1, datetime time2, dateti
         ObjectCreate(m_chartID, objName3, OBJ_ARROW_STOP, 0, time3, price);
     }
 
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -1001,7 +1013,7 @@ bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetim
         ObjectCreate(m_chartID, objName3, OBJ_ARROW_CHECK, 0, time3, price);
     }
 
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -1050,19 +1062,20 @@ bool CChartDrawingManager::DrawExitSignal(datetime time, double price, bool wasP
     ObjectCreate(m_chartID, objName, OBJ_ARROW, 0, time, price);
     ObjectSetInteger(m_chartID, objName, OBJPROP_ARROWCODE, 251); // X sign
     ObjectSetInteger(m_chartID, objName, OBJPROP_COLOR, wasProfit ? clrLime : clrRed);
-    ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 2);
+    ObjectSetInteger(m_chartID, objName, OBJPROP_WIDTH, 1);  // Reduced from 2 to 1
     
     if(reason != "")
     {
         string labelName = objName + "_LABEL";
         ObjectCreate(m_chartID, labelName, OBJ_TEXT, 0, time, price);
         ObjectSetString(m_chartID, labelName, OBJPROP_TEXT, reason);
+        ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 5);  // Smaller font
         ObjectSetInteger(m_chartID, labelName, OBJPROP_ANCHOR, ANCHOR_TOP);
         ObjectSetInteger(m_chartID, labelName, OBJPROP_FONTSIZE, 8);
     }
     
     m_objectsDrawn++;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -1102,7 +1115,7 @@ bool CChartDrawingManager::DrawTrendLine(datetime time1, double price1, datetime
     ObjectSetInteger(m_chartID, objName, OBJPROP_RAY_RIGHT, true);
 
     m_objectsDrawn++;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -1126,7 +1139,7 @@ bool CChartDrawingManager::DrawTextLabel(datetime time, double price, const stri
     ObjectSetInteger(m_chartID, objName, OBJPROP_ANCHOR, anchor);
 
     m_objectsDrawn++;
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return true;
 }
 
@@ -1157,7 +1170,7 @@ bool CChartDrawingManager::DrawPattern(const string patternName, datetime &time[
         m_objectsDrawn++;
     }
 
-    ChartRedraw(m_chartID);
+    DebouncedRedraw();
     return success;
 }
 

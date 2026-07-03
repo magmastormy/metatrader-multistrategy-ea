@@ -1,9 +1,9 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| ModelComparer.mqh                                                |
 //| Compare multiple trained models                                   |
 //+------------------------------------------------------------------+
-#ifndef __MQH_MODEL_COMPARER_MQH__
-#define __MQH_MODEL_COMPARER_MQH__
+#ifndef MQH_MODEL_COMPARER_MQH
+#define MQH_MODEL_COMPARER_MQH
 
 #include "../Core/AI/AIFeatureVectorBuilder.mqh"
 #include "../AIModules/AIConfig.mqh"
