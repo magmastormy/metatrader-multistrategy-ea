@@ -40,6 +40,9 @@ private:
     int m_mtfCount;
     bool m_mtfEnabled;
     
+    // Batch 117: MTF bar time storage for proper CheckNewBarMTF
+    datetime m_mtfLastBarTimes[][];  // [symbol_idx][mtf_idx]
+    
     // Inertia tracking for backoff tier preservation
     int m_preservedBackoffTier;
     datetime m_backoffTierPreservedSince;
@@ -61,6 +64,7 @@ public:
         ArrayResize(m_lastSymbolBarTimes, 0);
         ArrayResize(m_mtfConfigs, 0);
         ArrayResize(m_activeMTFTimeframes, 0);
+        ArrayResize(m_mtfLastBarTimes, 0);  // Batch 117
     }
     
     bool Initialize(const string& symbols[], ENUM_TIMEFRAMES tf)
@@ -74,6 +78,8 @@ public:
         ArrayResize(m_pendingNewBarScans, size);
         ArrayResize(m_symbolScanStates, size);
         m_timeframe = tf;
+        // Batch 117: Initialize MTF bar time storage (will be resized in ConfigureMTF)
+        ArrayResize(m_mtfLastBarTimes, 0);
         return true;
     }
     
@@ -82,6 +88,15 @@ public:
         ArrayResize(m_mtfConfigs, count);
         ArrayResize(m_activeMTFTimeframes, count);
         m_mtfCount = 0;
+        
+        // Batch 117: Resize MTF bar time storage [symbols][timeframes]
+        int symCount = ArraySize(m_symbols);
+        ArrayResize(m_mtfLastBarTimes, symCount);
+        for(int s = 0; s < symCount; s++)
+        {
+            ArrayResize(m_mtfLastBarTimes[s], count);
+            ArrayInitialize(m_mtfLastBarTimes[s], 0);
+        }
         
         for(int i = 0; i < count; i++)
         {
@@ -127,12 +142,45 @@ public:
     
     datetime GetLastBarTimeMTF(const string symbol, ENUM_TIMEFRAMES tf) const
     {
-        return iTime(symbol, tf, 0);
+        // Batch 117: Return stored last bar time, not current bar time
+        int symIdx = -1;
+        for(int s = 0; s < ArraySize(m_symbols); s++)
+        {
+            if(m_symbols[s] == symbol) { symIdx = s; break; }
+        }
+        if(symIdx < 0) return 0;
+        
+        int tfIdx = -1;
+        for(int t = 0; t < m_mtfCount; t++)
+        {
+            if(m_activeMTFTimeframes[t] == tf) { tfIdx = t; break; }
+        }
+        if(tfIdx < 0) return 0;
+        
+        if(symIdx < ArraySize(m_mtfLastBarTimes) && tfIdx < ArraySize(m_mtfLastBarTimes[symIdx]))
+            return m_mtfLastBarTimes[symIdx][tfIdx];
+        return 0;
     }
     
     void SetLastBarTimeMTF(const string symbol, ENUM_TIMEFRAMES tf, datetime time)
     {
-        // Stub - implementation deferred
+        // Batch 117: Store the bar time for future comparison
+        int symIdx = -1;
+        for(int s = 0; s < ArraySize(m_symbols); s++)
+        {
+            if(m_symbols[s] == symbol) { symIdx = s; break; }
+        }
+        if(symIdx < 0) return;
+        
+        int tfIdx = -1;
+        for(int t = 0; t < m_mtfCount; t++)
+        {
+            if(m_activeMTFTimeframes[t] == tf) { tfIdx = t; break; }
+        }
+        if(tfIdx < 0) return;
+        
+        if(symIdx < ArraySize(m_mtfLastBarTimes) && tfIdx < ArraySize(m_mtfLastBarTimes[symIdx]))
+            m_mtfLastBarTimes[symIdx][tfIdx] = time;
     }
     
     void SetMaxBackoffTierPreservationBars(int bars) { m_maxBackoffTierPreservationBars = MathMax(1, bars); }

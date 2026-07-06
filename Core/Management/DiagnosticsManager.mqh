@@ -429,18 +429,20 @@ public:
     //+------------------------------------------------------------------+
     ulong GetWindowScans() const
     {
-        return m_hbScansAttempted - m_prevScansAttempted;
+        // Batch 118: underflow guard for unsigned subtraction
+        return (m_hbScansAttempted >= m_prevScansAttempted) ? (m_hbScansAttempted - m_prevScansAttempted) : 0;
     }
 
     ulong GetWindowNoSignal() const
     {
-        return m_hbNoSignalCount - m_prevNoSignalCount;
+        // Batch 118: underflow guard for unsigned subtraction
+        return (m_hbNoSignalCount >= m_prevNoSignalCount) ? (m_hbNoSignalCount - m_prevNoSignalCount) : 0;
     }
 
     double GetNoSignalRate() const
     {
-        ulong ws = m_hbScansAttempted - m_prevScansAttempted;
-        ulong wn = m_hbNoSignalCount - m_prevNoSignalCount;
+        ulong ws = GetWindowScans();
+        ulong wn = GetWindowNoSignal();
         return (ws > 0) ? (100.0 * (double)wn / (double)ws) : 0.0;
     }
 

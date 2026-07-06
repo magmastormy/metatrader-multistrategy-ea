@@ -246,7 +246,7 @@ private:
          return false;
       }
 
-      PrintFormat("[SCALP-PRICE] Refreshed price for %s: ask=%.5f bid=%.5f", symbol, ask, bid);
+      // Batch 117: removed debug log — fires on every tick, creates excessive output
       return true;
    }
 

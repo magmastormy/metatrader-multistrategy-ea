@@ -429,12 +429,16 @@ double CStructureEngine::CalculateSwingStrength(const MqlRates &rates[], int ind
     if(rates[index].tick_volume > 0)
     {
         double avgVolume = 0;
+        int validBars = 0;  // Batch 117: count actual valid bars
         for(int i = index - 5; i <= index + 5; i++)
         {
             if(i >= 0 && i < ArraySize(rates))
+            {
                 avgVolume += (double)rates[i].tick_volume;
+                validBars++;
+            }
         }
-        avgVolume /= 11;
+        avgVolume = (validBars > 0) ? avgVolume / (double)validBars : 0;
         
         if(rates[index].tick_volume > avgVolume * 1.5)
             strength += 15;

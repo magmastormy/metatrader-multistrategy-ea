@@ -93,11 +93,8 @@ public:
 
             if(StringFind(sym, " ") >= 0 && StringFind(sym, ".") < 0 && !isSynthetic)
             {
-                if(!isSynthetic)
-                {
-                    Print("[WARNING] Symbol '", sym, "' contains spaces without period - likely malformed, skipping");
-                    continue;
-                }
+                Print("[WARNING] Symbol '", sym, "' contains spaces without period - likely malformed, skipping");
+                continue;
             }
 
             if(!SymbolSelect(sym, true))

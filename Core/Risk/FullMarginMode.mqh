@@ -197,13 +197,15 @@ public:
 
    //+------------------------------------------------------------------+
    //| Get stacked lot size: baseLot * scale^level                      |
+   //| Batch 120: Added symbol parameter for multi-symbol support       |
    //+------------------------------------------------------------------+
-   double GetStackedLotSize(double baseLot, int stackLevel) const
+   double GetStackedLotSize(double baseLot, int stackLevel, const string symbol = "") const
    {
       if(stackLevel <= 0)
          return baseLot;
       double lot = baseLot * MathPow(m_config.stackLotScale, (double)stackLevel);
-      double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      string useSymbol = (StringLen(symbol) > 0) ? symbol : _Symbol;
+      double minLot = SymbolInfoDouble(useSymbol, SYMBOL_VOLUME_MIN);
       if(minLot <= 0.0) minLot = 0.01;
       return MathMax(lot, minLot);
    }

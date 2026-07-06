@@ -91,6 +91,7 @@ private:
     int m_validationCount;
     int m_approvedCount;
     int m_rejectedCount;
+    long m_eaMagicNumber;  // Batch 119: EA magic number for position filtering
     
     // Performance tracking
     datetime m_lastValidation;
@@ -145,6 +146,7 @@ public:
     // Configuration
     void SetMaxRiskPerTrade(const double maxRisk) { m_maxRiskPerTrade = maxRisk; }
     void SetMaxPortfolioRisk(const double maxRisk) { m_maxPortfolioRisk = maxRisk; }
+    void SetEAMagicNumber(const long magic) { m_eaMagicNumber = magic; }  // Batch 119
     void SetCorrelationThreshold(const double threshold) { m_correlationThreshold = threshold; }
     void SetUnifiedRiskManager(CUnifiedRiskManager* manager) { m_unifiedRiskManager = manager; }
     void ConfigureClusterGovernance(const bool enabled,
@@ -260,6 +262,7 @@ CRiskValidationGate::CRiskValidationGate() : m_portfolioRiskManager(NULL),
                                            m_validationCount(0),
                                            m_approvedCount(0),
                                            m_rejectedCount(0),
+                                           m_eaMagicNumber(0),  // Batch 119
                                            m_lastValidation(0),
                                            m_avgValidationTime(0.0)
 {
@@ -644,14 +647,29 @@ bool CRiskValidationGate::ValidateCorrelationLimits(const STradeValidationReques
 {
     // Check same base currency limit
     int sameBaseCount = 0;
-    string symbolBase = StringSubstr(request.symbol, 0, 3);
+    // Batch 118: Extract base currency up to first non-alpha character (handles US30, BTCUSD, etc.)
+    string symbolBase = "";
+    for(int c = 0; c < StringLen(request.symbol); c++)
+    {
+        ushort ch = StringGetCharacter(request.symbol, c);
+        if((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))
+            symbolBase += ShortToString(ch);
+        else
+            break;
+    }
+    if(StringLen(symbolBase) < 3)
+        symbolBase = StringSubstr(request.symbol, 0, 3);  // fallback
     
+    // Batch 119: Only count EA-owned positions (filter by magic number)
     for(int i = 0; i < PositionsTotal(); i++)
     {
         if(PositionSelectByTicket(PositionGetTicket(i)))
         {
             string posSymbol = PositionGetString(POSITION_SYMBOL);
-            if(StringFind(posSymbol, symbolBase) >= 0)
+            long posMagic = PositionGetInteger(POSITION_MAGIC);
+            // Only count positions with magic 0 (manual) or matching EA magic
+            if(StringFind(posSymbol, symbolBase) >= 0 &&
+               (posMagic == 0 || posMagic == m_eaMagicNumber))
                 sameBaseCount++;
         }
     }
@@ -938,6 +956,9 @@ void CRiskValidationGate::SetClusterRiskCap(const string clusterCode, const doub
 //+------------------------------------------------------------------+
 void CRiskValidationGate::SyncClusterPositionCounts()
 {
+    // Batch 120: Diagnostic method — populates sync arrays for logging
+    // ValidateClusterGovernance counts positions directly from terminal,
+    // so these arrays are for diagnostic output only, not gating logic
     // Clear previous sync data
     ArrayResize(m_clusterSyncCodes, 0);
     ArrayResize(m_clusterSyncCounts, 0);
@@ -1072,11 +1093,18 @@ double CRiskValidationGate::EstimatePositionRiskPercent(const ulong ticket) cons
         point = 0.00001;
 
     if(stopLoss <= 0.0 || openPrice <= 0.0 || volume <= 0.0)
+    {
+        // Batch 120: Conservative — assume max risk for positions without SL
+        // This prevents cluster risk budget from being underestimated
         return m_maxRiskPerTrade;
+    }
 
     double slPoints = MathAbs(openPrice - stopLoss) / point;
     if(slPoints <= 0.0)
+    {
+        // Batch 120: Same conservative treatment for zero-distance SL
         return m_maxRiskPerTrade;
+    }
 
     double riskAmount = CalculateTradeRisk(symbol, volume, slPoints);
     if(riskAmount <= 0.0)
@@ -1278,13 +1306,23 @@ void CRiskValidationGate::WriteAuditLog(const string message)
     if(!m_auditLogging)
         return;
     
-    int handle = FileOpen(m_auditLogFile, FILE_WRITE | FILE_READ | FILE_TXT);
-    if(handle != INVALID_HANDLE)
+    // Batch 119: Use static file handle to avoid open/close per call
+    static int s_auditHandle = INVALID_HANDLE;
+    static string s_auditFile = "";
+    
+    if(s_auditHandle == INVALID_HANDLE || s_auditFile != m_auditLogFile)
     {
-        FileSeek(handle, 0, SEEK_END);
+        if(s_auditHandle != INVALID_HANDLE)
+            FileClose(s_auditHandle);
+        s_auditHandle = FileOpen(m_auditLogFile, FILE_WRITE | FILE_READ | FILE_TXT | FILE_ANSI);
+        s_auditFile = m_auditLogFile;
+    }
+    
+    if(s_auditHandle != INVALID_HANDLE)
+    {
+        FileSeek(s_auditHandle, 0, SEEK_END);
         string timestamp = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
-        FileWrite(handle, StringFormat("[%s] %s", timestamp, message));
-        FileClose(handle);
+        FileWrite(s_auditHandle, StringFormat("[%s] %s", timestamp, message));
     }
 }
 

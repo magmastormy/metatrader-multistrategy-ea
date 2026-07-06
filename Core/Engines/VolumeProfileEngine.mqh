@@ -46,7 +46,12 @@ private:
 
     int FindOrCreateLevel(double price)
     {
-        double resolution = m_priceResolution * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        double pointVal = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        if(pointVal <= 0.0)
+            pointVal = SymbolInfoDouble(m_symbol, SYMBOL_TRADE_TICK_SIZE);
+        if(pointVal <= 0.0)
+            pointVal = 0.00001;
+        double resolution = m_priceResolution * pointVal;
         double roundedPrice = NormalizeDouble(MathRound(price / resolution) * resolution,
                                               (int)SymbolInfoInteger(m_symbol, SYMBOL_DIGITS));
 

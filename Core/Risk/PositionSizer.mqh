@@ -1213,6 +1213,9 @@ double CPositionSizer::CalculateMarginRequirement(const string symbolParam, cons
 //+------------------------------------------------------------------+
 double CPositionSizer::ApplyRiskLimits(const double proposedSize, const double maxRisk)
 {
+    if(maxRisk <= 0.0)
+        return 0.0;  // Batch 116: prevent division by zero
+
     if(m_currentTotalRisk + maxRisk > m_maxAllowedRisk)
     {
         double availableRisk = m_maxAllowedRisk - m_currentTotalRisk;
@@ -1450,7 +1453,9 @@ double CPositionSizer::CalculateCompoundingMultiplier(void)
     }
     
     double sizerEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-    double equityRatio = sizerEquity / MathMax(m_startingEquity, 0.01);
+    // Batch 116: cap equity ratio to prevent extreme amplification on empty/tiny accounts
+    double equityRatio = sizerEquity / MathMax(m_startingEquity, 1.0);
+    equityRatio = MathMax(0.1, MathMin(10.0, equityRatio));  // Clamp to [0.1, 10.0]
     
     double multiplier;
     if(equityRatio > 1.0)

@@ -1432,6 +1432,8 @@ double CTrendEngine::CalculateMomentum(const string symbol, ENUM_TIMEFRAMES time
         return 0;
     
     // Calculate rate of change
+    if(rates[period].close <= 0.0)
+        return 0.0;
     double roc = ((rates[0].close - rates[period].close) / rates[period].close) * 100;
     
     return roc;

@@ -557,6 +557,10 @@ private:
         // Get spread for the symbol
         double spreadPoints = (double)SymbolInfoInteger(symbolParam, SYMBOL_SPREAD);
         double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
+        if(point <= 0.0)
+            point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
+        if(point <= 0.0)
+            point = 0.00001; // Fallback for invalid symbol data
         
         // Get ATR volatility to assess market conditions
         double volatilityMultiplier = 1.0;
@@ -2363,6 +2367,8 @@ bool CTradeManager::ShouldMoveToBreakeven(const ulong ticket, const double buffe
                               SymbolInfoDouble(m_positionInfo.Symbol(), SYMBOL_ASK);
     
     double point = SymbolInfoDouble(m_positionInfo.Symbol(), SYMBOL_POINT);
+    if(point <= 0.0)
+        point = 0.00001; // Fallback for invalid symbol data
     double profitPoints = 0.0;
     
     if(m_positionInfo.PositionType() == POSITION_TYPE_BUY)

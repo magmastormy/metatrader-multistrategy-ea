@@ -516,7 +516,10 @@ double CStrategyBase::GetRegimeConfidenceMultiplier()
 //+------------------------------------------------------------------+
 ENUM_VOLATILITY_DIRECTION CStrategyBase::GetVolatilityDirection()
 {
-    int atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
+    CIndicatorManager* indMgr = CIndicatorManager::Instance();
+    if(indMgr == NULL)
+        return VOL_STABLE;
+    int atrHandle = indMgr.GetATRHandle(m_symbol, m_timeframe, 14);
     if(atrHandle == INVALID_HANDLE)
         return VOL_STABLE;
 
@@ -561,7 +564,9 @@ bool CStrategyBase::IsAlignedWithHigherTF(int signalDirection)
     ENUM_TIMEFRAMES htf = GetNextHigherTF(m_timeframe);
     if(htf == m_timeframe) return true; // Can't go higher, assume aligned
 
-    int emaHandle = CIndicatorManager::Instance().GetMAHandle(m_symbol, htf, 50, 0, MODE_EMA, PRICE_CLOSE);
+    CIndicatorManager* indMgr = CIndicatorManager::Instance();
+    if(indMgr == NULL) return true; // Batch 117: null guard
+    int emaHandle = indMgr.GetMAHandle(m_symbol, htf, 50, 0, MODE_EMA, PRICE_CLOSE);
     if(emaHandle == INVALID_HANDLE) return true; // Can't determine, assume aligned
 
     double emaValues[];

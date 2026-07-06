@@ -27,6 +27,7 @@ private:
     
     // Session tracking
     datetime m_sessionStartDate;
+    datetime m_lastProcessedBarTime;  // Batch 117: prevent CVD re-accumulation
     double   m_sessionCVD;
     double   m_cvdHistory[];
     double   m_priceHistory[];
@@ -47,7 +48,7 @@ private:
 public:
     CCVDEngine() : m_symbol(""), m_divergenceLookback(30),
         m_extremeThreshold(2.0), m_cvdMALength(20),
-        m_sessionStartDate(0), m_sessionCVD(0),
+        m_sessionStartDate(0), m_lastProcessedBarTime(0), m_sessionCVD(0),
         m_historyIndex(0), m_historySize(200), m_initialized(false)
     {
         ZeroMemory(m_lastResult);
@@ -87,6 +88,14 @@ public:
             m_sessionStartDate = currentDay;
         }
         
+        // Batch 117: Skip if same bar — prevent CVD re-accumulation
+        if(currentBarTime == m_lastProcessedBarTime)
+        {
+            m_lastResult.cvd = m_sessionCVD;
+            return m_lastResult;
+        }
+        m_lastProcessedBarTime = currentBarTime;
+        
         // Calculate delta for recent bars
         for(int i = 1; i <= MathMin(m_divergenceLookback, Bars(m_symbol, PERIOD_CURRENT) - 1); i++)
         {
@@ -114,12 +123,13 @@ public:
         m_lastResult.delta = (iClose(m_symbol, PERIOD_CURRENT, 1) > iOpen(m_symbol, PERIOD_CURRENT, 1)) ? 
                              (double)iVolume(m_symbol, PERIOD_CURRENT, 1) : -(double)iVolume(m_symbol, PERIOD_CURRENT, 1);
         
-        // Calculate CVD MA
+        // Calculate CVD MA — Batch 117: include zero values (valid CVD reading)
         double sum = 0;
         int count = 0;
         for(int i = 0; i < MathMin(m_cvdMALength, m_historySize); i++)
         {
-            if(m_cvdHistory[i] != 0) { sum += m_cvdHistory[i]; count++; }
+            sum += m_cvdHistory[i];
+            count++;
         }
         m_lastResult.cvdMA = (count > 0) ? sum / count : 0;
         

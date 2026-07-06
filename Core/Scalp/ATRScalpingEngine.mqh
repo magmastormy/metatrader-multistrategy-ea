@@ -684,28 +684,14 @@ public:
    //+------------------------------------------------------------------+
    void Deinit()
    {
+      // Batch 117: Handles are owned by CIndicatorManager — do NOT release them
+      // Just invalidate our references to prevent stale handle usage
       for(int i = 0; i < m_symbolCount; i++)
       {
-         if(m_atrHandles[i] != INVALID_HANDLE)
-         {
-            IndicatorRelease(m_atrHandles[i]);
-            m_atrHandles[i] = INVALID_HANDLE;
-         }
-         if(m_emaFastHandles[i] != INVALID_HANDLE)
-         {
-            IndicatorRelease(m_emaFastHandles[i]);
-            m_emaFastHandles[i] = INVALID_HANDLE;
-         }
-         if(m_emaSlowHandles[i] != INVALID_HANDLE)
-         {
-            IndicatorRelease(m_emaSlowHandles[i]);
-            m_emaSlowHandles[i] = INVALID_HANDLE;
-         }
-         if(m_rsiHandles[i] != INVALID_HANDLE)
-         {
-            IndicatorRelease(m_rsiHandles[i]);
-            m_rsiHandles[i] = INVALID_HANDLE;
-         }
+         m_atrHandles[i] = INVALID_HANDLE;
+         m_emaFastHandles[i] = INVALID_HANDLE;
+         m_emaSlowHandles[i] = INVALID_HANDLE;
+         m_rsiHandles[i] = INVALID_HANDLE;
       }
       m_symbolCount = 0;
 

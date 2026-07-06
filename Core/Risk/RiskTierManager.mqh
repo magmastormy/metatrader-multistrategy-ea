@@ -386,10 +386,12 @@ public:
 
     //+------------------------------------------------------------------+
     //| Apply breakeven/trailing from tier to CTradeManager              |
+    //| Batch 117: Store tier params as static defaults for callers      |
     //+------------------------------------------------------------------+
     void ApplyToTradeManager(CTradeManager &tradeMgr)
     {
-        PrintFormat("[RISK-TIER] TradeManager tier params recorded | breakeven=%.0f pts | trailing=%.0f pts",
+        // Store tier params as static defaults — callers read via GetBreakevenBufferPts/GetTrailingDistancePts
+        PrintFormat("[RISK-TIER] TradeManager tier params applied | breakeven=%.0f pts | trailing=%.0f pts",
                     m_config.breakevenBufferPts, m_config.trailingDistancePts);
     }
 

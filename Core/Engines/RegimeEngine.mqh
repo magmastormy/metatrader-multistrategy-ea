@@ -390,6 +390,7 @@ public:
         m_breakoutZScoreThreshold(1.8),
         m_atrHandle(INVALID_HANDLE),
         m_bbHandle(INVALID_HANDLE),
+        m_adxHandle(INVALID_HANDLE),  // Batch 117: initialize to INVALID_HANDLE
         m_symbol(""),
         m_timeframe(PERIOD_CURRENT),
         m_spreadSampleCount(0),

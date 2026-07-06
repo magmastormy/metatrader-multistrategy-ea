@@ -47,6 +47,7 @@ private:
     datetime m_lastTierSwitchTime;
     double   m_peakEquity;
     int      m_switchCount;
+    double   m_highestMilestoneReached;  // Batch 117: one-way watermark for milestones
 
     //+------------------------------------------------------------------+
     //| Build tier configurations                                         |
@@ -154,6 +155,7 @@ private:
 public:
     CCompoundingTierManager() : m_tierCount(0), m_currentTierIndex(-1),
         m_previousEquity(0), m_autoSwitchEnabled(true), m_initialized(false),
+        m_highestMilestoneReached(0),
         m_lastTierSwitchTime(0), m_peakEquity(0), m_switchCount(0) {}
 
     //+------------------------------------------------------------------+
@@ -360,8 +362,10 @@ public:
 
         for(int i = 0; i < ArraySize(milestones); i++)
         {
-            if(prevEquity < milestones[i] && currEquity >= milestones[i])
+            // Batch 117: one-way watermark — only fire for milestones above highest reached
+            if(prevEquity < milestones[i] && currEquity >= milestones[i] && milestones[i] > m_highestMilestoneReached)
             {
+                m_highestMilestoneReached = milestones[i];
                 return StringFormat("ACCOUNT MILESTONE: $%.0f reached", milestones[i]);
             }
         }

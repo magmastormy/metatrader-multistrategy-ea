@@ -228,6 +228,7 @@ public:
 
     // Set broker trading day start hour (0=midnight server time, 17=5pm for forex rollover)
     void SetTradingDayStartHour(int hour) { m_tradingDayStartHour = MathMax(0, MathMin(23, hour)); }
+    void SetEAMagicNumber(long magic) { m_validationGate.SetEAMagicNumber(magic); }  // Batch 119
     
     // ENHANCEMENT: Circuit Breaker & Correlation Methods (Batch 93 - Week 1)
     bool CheckDrawdownCircuitBreaker();
@@ -888,6 +889,23 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
             result.requiresAdjustment = true;
             PrintFormat("[RISK-CORRELATION-REDUCE] %s | corr=%.2f | factor=%.2f | lot %.2f->%.2f",
                         request.symbol, maxCorrelation, reduceFactor, originalLot, result.adjustedLotSize);
+        }
+    }
+
+    // Batch 116: Recompute risk percent after correlation reduction to avoid stale over-rejection
+    if(result.requiresAdjustment && result.adjustedLotSize > 0.0 && result.adjustedLotSize != request.lotSize)
+    {
+        double point = SymbolInfoDouble(request.symbol, SYMBOL_POINT);
+        double tickValue = SymbolInfoDouble(request.symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tickSize = SymbolInfoDouble(request.symbol, SYMBOL_TRADE_TICK_SIZE);
+        if(point > 0.0 && tickValue > 0.0 && tickSize > 0.0 && request.stopLossPips > 0.0)
+        {
+            double slDistancePrice = request.stopLossPips * point * 10.0;
+            double slTicks = slDistancePrice / tickSize;
+            double riskAmount = result.adjustedLotSize * slTicks * tickValue;
+            double equity = MathMin(AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY));
+            if(equity > 0.0)
+                result.riskPercent = (riskAmount / equity) * 100.0;
         }
     }
 
@@ -2138,15 +2156,23 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
         return 0.0;
 
     // Estimate SL distance using ATR(14) on the daily timeframe as a reasonable default
+    // Batch 116: use static cached handle to avoid repeated create/destroy overhead
     double slDistancePoints = 0.0;
-    int atrHandle = iATR(symbol, PERIOD_D1, 14);
-    if(atrHandle != INVALID_HANDLE)
+    static int s_atrHandle = INVALID_HANDLE;
+    static string s_atrSymbol = "";
+    if(s_atrHandle == INVALID_HANDLE || s_atrSymbol != symbol)
+    {
+        if(s_atrHandle != INVALID_HANDLE)
+            IndicatorRelease(s_atrHandle);
+        s_atrHandle = iATR(symbol, PERIOD_D1, 14);
+        s_atrSymbol = symbol;
+    }
+    if(s_atrHandle != INVALID_HANDLE)
     {
         double atrValues[];
         ArraySetAsSeries(atrValues, true);
-        if(CopyBuffer(atrHandle, 0, 0, 1, atrValues) == 1 && atrValues[0] > 0.0)
+        if(CopyBuffer(s_atrHandle, 0, 0, 1, atrValues) == 1 && atrValues[0] > 0.0)
             slDistancePoints = atrValues[0] / point;
-        IndicatorRelease(atrHandle);
     }
 
     // Fallback: use 100 pips if ATR unavailable

@@ -62,6 +62,21 @@ input double InpICTDisplacementMultiplier = 0.8;  // ICT displacement as fractio
 input bool InpUseCuratedStrategySet = true;   // Use curated production defaults as baseline; explicitly enabled strategies remain active
 input bool InpUseSymbolClassProfiles = false;  // Adapt strategy roster/governance by symbol class (synthetics vs FX)
 
+//--- Batch 114: Research-Driven Statistical Algorithm Upgrades
+input group "Batch 114 - Statistical Algorithm Upgrades"
+input bool   InpEnableKalmanMR = true;           // Enable Kalman/FLS dynamic mean-reversion engine
+input double InpKalmanLambda = 500.0;            // FLS smoothing parameter (10-10000, higher=slower adaptation)
+input bool   InpEnableChangepointDetect = true;  // Enable Bayesian Online Changepoint Detection
+input double InpCPDHazardThreshold = 0.3;        // CPD hazard threshold for change detection (0.05-0.9)
+input bool   InpEnableFourStateRegime = true;     // Enable Four-State Regime Detector (MSR+KAMA)
+input bool   InpEnableVolTargeting = true;        // Enable Volatility Targeting position sizing
+input double InpTargetVol = 0.15;                 // Target annualized volatility (0.05-0.50)
+input double InpVolMinScale = 0.2;                // Min position scale factor
+input double InpVolMaxScale = 3.0;                // Max position scale factor
+input bool   InpEnableLiquiditySweep = true;      // Enable Liquidity Sweep / Stop Hunt strategy
+input bool   InpEnableRangeCompression = true;    // Enable Range Compression Breakout strategy
+input bool   InpEnableExitOptimizer = true;       // Enable advanced exit optimization module
+
 //--- EA operating mode
 input group "EA Operating Mode"
 input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID; // Controls whether indicator and/or AI strategy families are active
@@ -98,6 +113,8 @@ input double InpWeightTurtleSoup         = 1.6;  // Turtle Soup weight (Batch 10
 input double InpWeightBreakerBlock       = 1.7;  // Breaker Block weight (Batch 103)
 input double InpWeightNYOpenGap          = 1.3;  // NY Open Gap weight (Batch 103)
 input double InpWeightAsianRangeBreak    = 1.3;  // Asian Range Break weight (Batch 103)
+input double InpWeightLiquiditySweep     = 1.9;  // Liquidity Sweep weight (Batch 114 - high confidence)
+input double InpWeightRangeCompression   = 1.7;  // Range Compression Breakout weight (Batch 114)
 
 //--- AI Mode Settings (NEW)
 input group "AI Engine Settings"
@@ -425,6 +442,13 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Risk\EquityCurveManager.mqh"
 #include "Core\Processing\DerivAssetProfiler.mqh"
 #include "Core\Processing\MultiAssetProfiler.mqh"
+#include "Core\Engines\KalmanMeanReversion.mqh"       // Batch 114: Dynamic mean-reversion (FLS/Kalman)
+#include "Core\Engines\ChangepointDetector.mqh"       // Batch 114: Bayesian Online Changepoint Detection
+#include "Core\Engines\FourStateRegimeDetector.mqh"   // Batch 114: Four-state MSR+KAMA regime
+#include "Core\Engines\VolatilityTargeting.mqh"       // Batch 114: Moreira & Muir vol targeting
+#include "Core\Processing\ExitOptimizer.mqh"          // Batch 114: Chandelier + R-multiple + OU exits
+#include "Strategies\LiquiditySweepStrategy.mqh"      // Batch 114: Liquidity sweep / stop hunt
+#include "Strategies\RangeCompressionBreakout.mqh"    // Batch 114: Enhanced TTM squeeze + Hurst
 
 //+------------------------------------------------------------------+
 //| Forward declarations
@@ -497,6 +521,15 @@ COrderFlowImbalanceEngine* g_ofiEngines[];         // Per-symbol OFI proxy engin
 CVPINFilter*           g_vpinFilters[];           // Per-symbol VPIN toxicity filters
 string g_mathEngineSymbols[];                      // Symbol mapping for math engines
 bool   g_gridHurstBridgeLogged[];                   // Per-symbol: true after first [GRID-HURST-BRIDGE] log
+
+// Batch 114: Research-Driven Statistical Algorithm Upgrades
+CKalmanMeanReversion*  g_kalmanEngines[];         // Per-symbol Kalman/FLS dynamic mean-reversion
+CChangepointDetector*  g_cpdEngines[];            // Per-symbol Bayesian Online Changepoint Detection
+CFourStateRegimeDetector* g_fourStateEngines[];   // Per-symbol Four-State Regime Detector
+CVolatilityTargeting*  g_volTargetEngines[];      // Per-symbol Volatility Targeting
+CExitOptimizer*        g_exitOptimizers[];        // Per-symbol Exit Optimizer
+CLiquiditySweepStrategy* g_liquiditySweepStrategies[];  // Per-symbol Liquidity Sweep strategies
+CRangeCompressionBreakout* g_rangeCompStrategies[];     // Per-symbol Range Compression strategies
 
 // Batch 107: Institutional TA Engines (Forex only)
 CVWAPEngine*           g_vwapEngines[];           // Per-symbol VWAP engines
@@ -1460,18 +1493,28 @@ void ProcessTickSafetyLoop()
         g_scalpEngine.CheckPendingAsyncOrders();
     }
 
-    // Process spike hunter
+    // Process spike hunter for all active symbols (Batch 120: was _Symbol only)
     if(InpSpikeHunterEnabled)
-        g_spikeHunter.ProcessTick(_Symbol, SymbolInfoDouble(_Symbol, SYMBOL_BID), SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+    {
+        for(int si = 0; si < ArraySize(g_activePairs); si++)
+        {
+            string sym = g_activePairs[si];
+            g_spikeHunter.ProcessTick(sym, SymbolInfoDouble(sym, SYMBOL_BID), SymbolInfoDouble(sym, SYMBOL_ASK));
+        }
+    }
 
-    // Batch 103: Process grid recovery and ATR scalping engines
+    // Batch 103: Process grid recovery and ATR scalping engines for all active symbols
     if(InpMultiAssetProfilerEnabled)
     {
-        if(InpGridRecoveryEnabled && IsSyntheticIndexSymbolName(_Symbol))
-            g_gridRecovery.ProcessTick(_Symbol, SymbolInfoDouble(_Symbol, SYMBOL_BID), SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+        for(int si = 0; si < ArraySize(g_activePairs); si++)
+        {
+            string sym = g_activePairs[si];
+            if(InpGridRecoveryEnabled && IsSyntheticIndexSymbolName(sym))
+                g_gridRecovery.ProcessTick(sym, SymbolInfoDouble(sym, SYMBOL_BID), SymbolInfoDouble(sym, SYMBOL_ASK));
 
-        if(InpATRScalpingEnabled && IsSyntheticIndexSymbolName(_Symbol))
-            g_atrScalping.ProcessTick(_Symbol, SymbolInfoDouble(_Symbol, SYMBOL_BID), SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+            if(InpATRScalpingEnabled && IsSyntheticIndexSymbolName(sym))
+                g_atrScalping.ProcessTick(sym, SymbolInfoDouble(sym, SYMBOL_BID), SymbolInfoDouble(sym, SYMBOL_ASK));
+        }
     }
 }
 
@@ -3418,6 +3461,81 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
             g_cvdEngines[mSize].Initialize(symbol, InpCVDDivergenceLookback);
             PrintFormat("[INSTITUTIONAL-ENGINE] CVD engine initialized for %s", symbol);
         }
+
+        // Batch 114: Research-Driven Statistical Algorithm Engines
+        // Kalman/FLS Dynamic Mean-Reversion
+        ArrayResize(g_kalmanEngines, mSize + 1);
+        g_kalmanEngines[mSize] = NULL;
+        if(InpEnableKalmanMR)
+        {
+            g_kalmanEngines[mSize] = new CKalmanMeanReversion(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpKalmanLambda);
+            if(g_kalmanEngines[mSize] != NULL)
+                PrintFormat("[BATCH114] Kalman MR engine initialized for %s | lambda=%.0f", symbol, InpKalmanLambda);
+        }
+
+        // Bayesian Online Changepoint Detection
+        ArrayResize(g_cpdEngines, mSize + 1);
+        g_cpdEngines[mSize] = NULL;
+        if(InpEnableChangepointDetect)
+        {
+            g_cpdEngines[mSize] = new CChangepointDetector(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpCPDHazardThreshold);
+            if(g_cpdEngines[mSize] != NULL)
+                PrintFormat("[BATCH114] CPD engine initialized for %s | hazard=%.2f", symbol, InpCPDHazardThreshold);
+        }
+
+        // Four-State Regime Detector
+        ArrayResize(g_fourStateEngines, mSize + 1);
+        g_fourStateEngines[mSize] = NULL;
+        if(InpEnableFourStateRegime)
+        {
+            g_fourStateEngines[mSize] = new CFourStateRegimeDetector(symbol, (ENUM_TIMEFRAMES)Period());
+            if(g_fourStateEngines[mSize] != NULL)
+                PrintFormat("[BATCH114] Four-State Regime engine initialized for %s", symbol);
+        }
+
+        // Volatility Targeting
+        ArrayResize(g_volTargetEngines, mSize + 1);
+        g_volTargetEngines[mSize] = NULL;
+        if(InpEnableVolTargeting)
+        {
+            g_volTargetEngines[mSize] = new CVolatilityTargeting(symbol, (ENUM_TIMEFRAMES)Period());
+            if(g_volTargetEngines[mSize] != NULL)
+            {
+                g_volTargetEngines[mSize].Configure(InpTargetVol, 100, 0.94, InpVolMinScale, InpVolMaxScale);
+                g_volTargetEngines[mSize].Initialize();
+                PrintFormat("[BATCH114] Volatility Targeting initialized for %s | target=%.2f%%", symbol, InpTargetVol * 100);
+            }
+        }
+
+        // Exit Optimizer
+        ArrayResize(g_exitOptimizers, mSize + 1);
+        g_exitOptimizers[mSize] = NULL;
+        if(InpEnableExitOptimizer)
+        {
+            g_exitOptimizers[mSize] = new CExitOptimizer();
+            g_exitOptimizers[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period());
+            PrintFormat("[BATCH114] Exit Optimizer initialized for %s", symbol);
+        }
+
+        // Liquidity Sweep Strategy
+        ArrayResize(g_liquiditySweepStrategies, mSize + 1);
+        g_liquiditySweepStrategies[mSize] = NULL;
+        if(InpEnableLiquiditySweep)
+        {
+            g_liquiditySweepStrategies[mSize] = new CLiquiditySweepStrategy();
+            g_liquiditySweepStrategies[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), NULL);
+            PrintFormat("[BATCH114] Liquidity Sweep strategy initialized for %s", symbol);
+        }
+
+        // Range Compression Breakout Strategy
+        ArrayResize(g_rangeCompStrategies, mSize + 1);
+        g_rangeCompStrategies[mSize] = NULL;
+        if(InpEnableRangeCompression)
+        {
+            g_rangeCompStrategies[mSize] = new CRangeCompressionBreakout();
+            g_rangeCompStrategies[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), g_hurstEngines[mSize], NULL);
+            PrintFormat("[BATCH114] Range Compression Breakout strategy initialized for %s", symbol);
+        }
     }
 
     // Initialize Drawing Manager for this symbol if enabled
@@ -3504,6 +3622,26 @@ void ApplyHurstWeightModifiersToRegime()
                 hurstSnap.trendWeightMult,
                 hurstSnap.breakoutWeightMult
             );
+        }
+
+        // Batch 114: Apply Four-State Regime Detector weight multipliers
+        if(InpEnableFourStateRegime && i < ArraySize(g_fourStateEngines) && g_fourStateEngines[i] != NULL)
+        {
+            CFourStateRegimeDetector* fourState = g_fourStateEngines[i];
+            if(fourState.GetSnapshot().timestamp > 0)
+            {
+                // Multiply existing weights with Four-State multipliers
+                SFourStateSnapshot fsSnap = fourState.GetSnapshot();
+                if(regimeEngine != NULL)
+                {
+                    regimeEngine.ApplyHurstWeightModifiers(
+                        fsSnap.meanRevWeightMult,
+                        fsSnap.momentumWeightMult,
+                        fsSnap.trendWeightMult,
+                        fsSnap.breakoutWeightMult
+                    );
+                }
+            }
         }
     }
 }
@@ -3664,6 +3802,8 @@ int OnInit()
         Print("[CRITICAL] UnifiedRiskManager failed to initialize!");
         return INIT_FAILED;
     }
+    // Batch 119: Set EA magic number for position filtering in risk validation
+    unifiedRiskManager.SetEAMagicNumber(InpMagicNumber);
     // Cluster governance configured after RiskTierManager applies tier overrides (see below)
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
 
@@ -4039,7 +4179,10 @@ int OnInit()
             {
                 // Wire cache to scalp engine for zero-CopyBuffer fast path
                 g_scalpEngine.SetSignalCache(GetPointer(g_scalpCache));
-                Print("[SCALP-CACHE] Fast-path dual-path architecture enabled");
+                // Batch 118: Activate scalp setup for all qualifying symbols
+                for(int si = 0; si < ArraySize(g_activePairs); si++)
+                    g_scalpCache.SetScalpSetup(g_activePairs[si], true, 1);  // type 1 = momentum
+                Print("[SCALP-CACHE] Fast-path dual-path architecture enabled | symbols=", ArraySize(g_activePairs));
             }
             else
                 Print("[SCALP-CACHE] WARNING: Cache initialization failed — falling back to per-call indicators");
@@ -4729,6 +4872,25 @@ void OnDeinit(const int reason)
     ArrayResize(g_mathEngineSymbols, 0);
     ArrayResize(g_gridHurstBridgeLogged, 0);
 
+    // Batch 114: Cleanup research-driven statistical algorithm engines
+    for(int i = 0; i < ArraySize(g_kalmanEngines); i++)
+    {
+        if(g_kalmanEngines[i] != NULL) { delete g_kalmanEngines[i]; g_kalmanEngines[i] = NULL; }
+        if(g_cpdEngines[i] != NULL) { delete g_cpdEngines[i]; g_cpdEngines[i] = NULL; }
+        if(g_fourStateEngines[i] != NULL) { delete g_fourStateEngines[i]; g_fourStateEngines[i] = NULL; }
+        if(g_volTargetEngines[i] != NULL) { delete g_volTargetEngines[i]; g_volTargetEngines[i] = NULL; }
+        if(g_exitOptimizers[i] != NULL) { delete g_exitOptimizers[i]; g_exitOptimizers[i] = NULL; }
+        if(g_liquiditySweepStrategies[i] != NULL) { delete g_liquiditySweepStrategies[i]; g_liquiditySweepStrategies[i] = NULL; }
+        if(g_rangeCompStrategies[i] != NULL) { delete g_rangeCompStrategies[i]; g_rangeCompStrategies[i] = NULL; }
+    }
+    ArrayResize(g_kalmanEngines, 0);
+    ArrayResize(g_cpdEngines, 0);
+    ArrayResize(g_fourStateEngines, 0);
+    ArrayResize(g_volTargetEngines, 0);
+    ArrayResize(g_exitOptimizers, 0);
+    ArrayResize(g_liquiditySweepStrategies, 0);
+    ArrayResize(g_rangeCompStrategies, 0);
+
     // Batch 107: Cleanup institutional TA engines
     for(int i = 0; i < ArraySize(g_vwapEngines); i++)
     {
@@ -5006,6 +5168,25 @@ void OnTimer()
         }
     }
 
+    // Batch 114: Update Research-Driven Statistical Algorithm Engines
+    for(int i = 0; i < ArraySize(g_mathEngineSymbols); i++)
+    {
+        if(g_kalmanEngines[i] != NULL)
+            g_kalmanEngines[i].Update();
+        if(g_cpdEngines[i] != NULL && g_cpdEngines[i].IsInitialized())
+        {
+            // Feed CPD with close price
+            double cpdClose[];
+            ArraySetAsSeries(cpdClose, true);
+            if(CopyClose(g_mathEngineSymbols[i], (ENUM_TIMEFRAMES)Period(), 0, 1, cpdClose) == 1)
+                g_cpdEngines[i].Update(cpdClose[0]);
+        }
+        if(g_fourStateEngines[i] != NULL)
+            g_fourStateEngines[i].Update();
+        if(g_volTargetEngines[i] != NULL)
+            g_volTargetEngines[i].Update();
+    }
+
     // Batch 100: Apply Hurst weight modifiers to regime engine
     ApplyHurstWeightModifiersToRegime();
 
@@ -5245,6 +5426,9 @@ void ProcessScalpFastPath()
             return;
         // Wire cache to scalp engine on first successful init
         g_scalpEngine.SetSignalCache(GetPointer(g_scalpCache));
+        // Batch 118: Activate scalp setup for all qualifying symbols (lazy-init path)
+        for(int si = 0; si < ArraySize(g_activePairs); si++)
+            g_scalpCache.SetScalpSetup(g_activePairs[si], true, 1);
         Print("[SCALP-CACHE] Lazy-init completed in OnTick path");
     }
 
@@ -6604,6 +6788,32 @@ void ProcessTradingLogic(bool fromTimer)
                                 }
                             }
 
+                            // Batch 114: Volatility Targeting position size scaling (Moreira & Muir 2017)
+                            if(InpEnableVolTargeting)
+                            {
+                                int vtIdx = -1;
+                                for(int vi = 0; vi < ArraySize(g_mathEngineSymbols); vi++)
+                                {
+                                    if(g_mathEngineSymbols[vi] == currentSymbol)
+                                    { vtIdx = vi; break; }
+                                }
+                                if(vtIdx >= 0 && vtIdx < ArraySize(g_volTargetEngines) && g_volTargetEngines[vtIdx] != NULL)
+                                {
+                                    double volScalar = g_volTargetEngines[vtIdx].GetVolScalar();
+                                    if(MathAbs(volScalar - 1.0) > 0.01)
+                                    {
+                                        double preVolLot = lotSize;
+                                        lotSize *= volScalar;
+                                        lotSize = MathMax(SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN), lotSize);
+                                        PrintFormat("[VOL-TARGET-SIZE] %s | scalar=%.3f | ewmaVol=%.4f | target=%.4f | lot %.2f->%.2f",
+                                                    currentSymbol, volScalar,
+                                                    g_volTargetEngines[vtIdx].GetEwmaVol(),
+                                                    g_volTargetEngines[vtIdx].GetTargetVol(),
+                                                    preVolLot, lotSize);
+                                    }
+                                }
+                            }
+
                             // I4: Skew Step distribution-based sizing adjustment
                             if(InpEnableSkewStepAnalyzer && g_skewStepAnalyzer.IsInitialized())
                             {
@@ -6634,7 +6844,7 @@ void ProcessTradingLogic(bool fromTimer)
                                     if(g_fullMarginMode.CanStackPosition(currentSymbol, enterpriseSignal))
                                     {
                                         double preStackLot = lotSize;
-                                        lotSize = g_fullMarginMode.GetStackedLotSize(lotSize, stackLevel);
+                                        lotSize = g_fullMarginMode.GetStackedLotSize(lotSize, stackLevel, currentSymbol);
                                         lotSize = MathMax(SymbolInfoDouble(currentSymbol, SYMBOL_VOLUME_MIN), lotSize);
                                         PrintFormat("[FULL-MARGIN-STACK] %s | level=%d | lot %.2f->%.2f | scale=%.2f",
                                                     currentSymbol, stackLevel, preStackLot, lotSize,

@@ -361,8 +361,11 @@ void CPerformanceAnalytics::UpdateEquityCurve(void)
     
     m_currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     
-    // Update current index in circular buffer
-    m_equityCurve[m_bufferIndex] = m_currentEquity;
+    // Batch 120: Only update if buffer index hasn't been advanced yet
+    // (RecordClosedTrade writes first, then advances index — avoid double-write)
+    // This prevents polluting the next slot with a duplicate value
+    if(m_bufferIndex < MAX_TRADES)
+        m_equityCurve[m_bufferIndex] = m_currentEquity;
     
     // Update peak equity
     if(m_currentEquity > m_peakEquity)
@@ -613,7 +616,11 @@ void CPerformanceAnalytics::CalculateRecoveryFactor(void)
 {
     double netProfit = m_totalProfit - m_totalLoss;
     if(m_maxDrawdown > 0)
-        m_recoveryFactor = netProfit / m_maxDrawdown;
+    {
+        // Batch 119: Convert drawdown from percent to dollars for unit consistency
+        double maxDrawdownDollars = (m_peakEquity > 0) ? (m_maxDrawdown / 100.0) * m_peakEquity : m_maxDrawdown;
+        m_recoveryFactor = (maxDrawdownDollars > 0) ? netProfit / maxDrawdownDollars : 0.0;
+    }
     else if(netProfit > 0)
         m_recoveryFactor = netProfit; // No drawdown yet
     else

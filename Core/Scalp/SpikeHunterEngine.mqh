@@ -339,7 +339,8 @@ private:
       datetime now = TimeCurrent();
 
       // Check if window expired (consecutiveTickWindowMs)
-      int windowElapsedMs = (int)((now - m_symbolStates[idx].directionWindowStart) * 1000);
+      // Batch 118: use long to prevent integer overflow on stale windows
+      long windowElapsedMs = (long)((now - m_symbolStates[idx].directionWindowStart) * 1000);
       if(windowElapsedMs > m_config.consecutiveTickWindowMs)
       {
          // Window expired — reset counters

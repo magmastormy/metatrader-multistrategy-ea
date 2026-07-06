@@ -1052,6 +1052,7 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
             double multiplierThreshold = MathMax(baseMinConfidence, baseMinConfidence * 1.03);
             if(m_intrabarContext)
             {
+                // Batch 116: cap is always applied in intrabar mode — take the lower of cap and regime threshold
                 appliedCap = MathMax(0.0, m_filters.intrabarConfidenceCap);
                 double cappedThreshold = baseMinConfidence + appliedCap;
                 effectiveMinConfidence = MathMin(1.0, MathMin(cappedThreshold, multiplierThreshold));

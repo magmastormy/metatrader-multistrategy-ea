@@ -141,6 +141,7 @@ private:
     double m_preRetrainAccuracy;
     double m_preRetrainProfitability;
     double m_preRetrainSharpe;
+    datetime m_preRetrainTimestamp;  // Batch 120: when pre-retrain snapshot was taken
 
     // Performance tracking
     datetime m_lastMetricsUpdate;
@@ -239,6 +240,7 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_preRetrainAccuracy(0.0),
     m_preRetrainProfitability(0.0),
     m_preRetrainSharpe(0.0),
+    m_preRetrainTimestamp(0),
     m_lastMetricsUpdate(0),
     m_metricsUpdateInterval(300), // 5 minutes
     m_initialized(false)
@@ -590,31 +592,38 @@ void CAIPerformanceFeedback::TriggerRetraining(const string reason)
     }
 
     // Save pre-retrain metrics for effectiveness comparison (Issue 12.2)
+    // Batch 120: Don't call UpdateMetrics() here — it's throttled and will no-op
+    // Instead, save current metrics and compare after the next metrics update cycle
     m_preRetrainAccuracy = m_currentMetrics.accuracy;
     m_preRetrainProfitability = m_currentMetrics.profitability;
     m_preRetrainSharpe = m_currentMetrics.sharpeRatio;
-
-    UpdateMetrics();
+    m_preRetrainTimestamp = TimeCurrent();  // Batch 120: track when pre-retrain snapshot was taken
 
     // Check if metrics improved since last retrain (Issue 12.2)
+    // Batch 120: Compare against metrics from BEFORE the previous retrain, not current
     if(m_retrainingCount > 0 && m_currentMetrics.totalPredictions > m_minPredictionsForRetraining)
     {
-        bool metricsUnchanged = (MathAbs(m_currentMetrics.accuracy - m_preRetrainAccuracy) < 0.001 &&
-                                 MathAbs(m_currentMetrics.profitability - m_preRetrainProfitability) < 0.0001 &&
-                                 MathAbs(m_currentMetrics.sharpeRatio - m_preRetrainSharpe) < 0.001);
-        if(metricsUnchanged)
+        // Only check if enough time has passed since last retrain for metrics to update
+        double timeSinceLastRetrain = (double)(TimeCurrent() - m_lastRetrainingTime);
+        if(timeSinceLastRetrain > m_metricsUpdateInterval * 2)  // Wait for at least 2 metric update cycles
         {
-            m_consecutiveFailedRetrains++;
-            if(m_consecutiveFailedRetrains >= 3)
+            bool metricsImproved = (m_currentMetrics.accuracy > m_preRetrainAccuracy + 0.001 ||
+                                    m_currentMetrics.profitability > m_preRetrainProfitability + 0.0001 ||
+                                    m_currentMetrics.sharpeRatio > m_preRetrainSharpe + 0.001);
+            if(!metricsImproved)
             {
-                m_retrainPauseUntil = TimeCurrent() + 3600;  // 1 hour pause
-                PrintFormat("[AI-RETRAIN-PAUSED] 3 consecutive ineffective retrain attempts. Pausing for 1 hour.");
-                return;
+                m_consecutiveFailedRetrains++;
+                if(m_consecutiveFailedRetrains >= 3)
+                {
+                    m_retrainPauseUntil = TimeCurrent() + 3600;  // 1 hour pause
+                    PrintFormat("[AI-RETRAIN-PAUSED] 3 consecutive ineffective retrain attempts. Pausing for 1 hour.");
+                    return;
+                }
             }
-        }
-        else
-        {
-            m_consecutiveFailedRetrains = 0;
+            else
+            {
+                m_consecutiveFailedRetrains = 0;
+            }
         }
     }
 

@@ -753,7 +753,7 @@ void CPortfolioRiskManager::RecordTradeReturn(double pnlPercent)
         m_tradeReturns[m_maxReturnHistory - 1] = pnlPercent;
     }
 
-    PrintFormat("[CVAR-RECORD] Trade return recorded: %.2f%% (total samples: %d)", pnlPercent, m_returnCount);
+    PrintFormat("[CVAR-RECORD] Trade return recorded: %.4f (total samples: %d)", pnlPercent, m_returnCount);
 }
 
 //+------------------------------------------------------------------+

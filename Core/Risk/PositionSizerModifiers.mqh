@@ -90,6 +90,13 @@ public:
     bool Initialize(const string symbol, const ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT,
                     const int adxPeriod = 14)
     {
+        // Batch 119: Release previous handle if re-initializing
+        if(m_adxHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_adxHandle);
+            m_adxHandle = INVALID_HANDLE;
+        }
+
         m_symbol = symbol;
         m_adxPeriod = adxPeriod;
 

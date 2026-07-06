@@ -234,6 +234,7 @@ private:
     
     bool m_initialized;
     bool m_usePipeline;
+    int  m_adxHandleCached;    // Cached ADX handle for IsTrendingRegime() (Batch 116)
     int  m_minQuorum;       // Minimum number of agreeing live voters (floor safety)
     int  m_intrabarMinQuorum; // Intrabar quorum floor when multiple strategies are active
     bool m_intrabarDynamicQuorumEnabled;
@@ -397,7 +398,7 @@ private:
     bool IsStrategyIntrabarLiveEligible(const int strategyIndex) const;
     bool IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
     double CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const;
-    bool IsTrendingRegime() const;
+    bool IsTrendingRegime();
     double GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const;
 
 public:
@@ -610,6 +611,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_managedMagicRangeMax(0),
     m_initialized(false),
     m_usePipeline(true),
+    m_adxHandleCached(INVALID_HANDLE),  // Batch 116: cached ADX handle
     m_minQuorum(2),         // Minimum agreeing live voters floor (overridden by EA input)
     m_intrabarMinQuorum(1),
     m_intrabarDynamicQuorumEnabled(true),
@@ -757,6 +759,13 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
     {
         delete m_pipeline;
         m_pipeline = NULL;
+    }
+
+    // Batch 116: Release cached ADX handle
+    if(m_adxHandleCached != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_adxHandleCached);
+        m_adxHandleCached = INVALID_HANDLE;
     }
 
     if(m_tfConsistency != NULL)
@@ -3117,7 +3126,7 @@ double CEnterpriseStrategyManager::CalculateAverageStrategyMetric(const int &str
 //+------------------------------------------------------------------+
 //| Determine if current regime is trending for cross-cluster conflict |
 //+------------------------------------------------------------------+
-bool CEnterpriseStrategyManager::IsTrendingRegime() const
+bool CEnterpriseStrategyManager::IsTrendingRegime()
 {
     // Primary: use RegimeEngine via pipeline if available
     if(m_pipeline != NULL)
@@ -3132,17 +3141,18 @@ bool CEnterpriseStrategyManager::IsTrendingRegime() const
 
     // Fallback: simple ADX-based check
     // ADX > 25 = trending, otherwise ranging
-    int adxHandle = iADX(m_symbol, m_baseTimeframe, 14);
-    if(adxHandle != INVALID_HANDLE)
+    // Batch 116: use cached handle instead of creating/destroying per call
+    if(m_adxHandleCached == INVALID_HANDLE)
+        m_adxHandleCached = iADX(m_symbol, m_baseTimeframe, 14);
+
+    if(m_adxHandleCached != INVALID_HANDLE)
     {
         double adxBuffer[];
         ArraySetAsSeries(adxBuffer, true);
-        if(CopyBuffer(adxHandle, 0, 0, 1, adxBuffer) > 0)
+        if(CopyBuffer(m_adxHandleCached, 0, 0, 1, adxBuffer) > 0)
         {
-            IndicatorRelease(adxHandle);
             return (adxBuffer[0] > 25.0);
         }
-        IndicatorRelease(adxHandle);
     }
 
     // Default: assume ranging (conservative)

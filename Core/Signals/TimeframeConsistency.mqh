@@ -327,7 +327,8 @@ string CTimeframeConsistency::GetConflictDetails() const
     for(int i = 0; i < m_signalCount; i++)
     {
         details += TimeframeToString(m_signals[i].timeframe) + ":" +
-                  (m_signals[i].signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL") +
+                  (m_signals[i].signal == TRADE_SIGNAL_BUY ? "BUY" :
+                   m_signals[i].signal == TRADE_SIGNAL_SELL ? "SELL" : "NONE") +
                   "(" + DoubleToString(m_signals[i].confidence, 2) + ")";
         
         if(i < m_signalCount - 1) details += " vs ";

@@ -185,6 +185,10 @@ public:
                                 const string clusterCode,
                                 const ENUM_ORDER_TYPE orderType) const
     {
+        // Batch 118: Prune expired entries before checking to avoid false positives
+        // (PruneExpired is non-const but we call it on mutable 'this' via const_cast pattern)
+        // Since this is const, we skip pruning here — callers should ensure PruneExpired runs periodically
+
         bool requestedBuy = IsBuyOrderType(orderType);
 
         for(int i = 0; i < ArraySize(m_positions); i++)

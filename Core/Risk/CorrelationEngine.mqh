@@ -41,6 +41,7 @@ private:
     // Internal helpers
     int      FindSymbolIndex(const string symbol) const;
     int      RegisterSymbol(const string symbol);
+    void     PruneStaleSymbols();  // Batch 119: remove symbols without open positions
     void     ComputeMatrix();
     double   ComputePearson(const string symbol1, const string symbol2) const;
     double   GetCachedCorrelation(int idx1, int idx2) const;
@@ -264,8 +265,58 @@ void CCorrelationEngine::Refresh()
     if(m_lastRefreshTime > 0 && (now - m_lastRefreshTime) < m_refreshIntervalSec)
         return;
 
+    // Batch 119: Prune stale symbols before computing matrix
+    PruneStaleSymbols();
+
     ComputeMatrix();
     m_lastRefreshTime = now;
+}
+
+//+------------------------------------------------------------------+
+//| Prune symbols that no longer have open positions                 |
+//+------------------------------------------------------------------+
+void CCorrelationEngine::PruneStaleSymbols()
+{
+    if(m_symbolCount <= 0)
+        return;
+
+    // Build set of symbols with open positions
+    bool hasPosition[];
+    ArrayResize(hasPosition, m_symbolCount);
+    ArrayInitialize(hasPosition, false);
+
+    for(int p = 0; p < PositionsTotal(); p++)
+    {
+        if(PositionSelectByTicket(PositionGetTicket(p)))
+        {
+            string posSymbol = PositionGetString(POSITION_SYMBOL);
+            int idx = FindSymbolIndex(posSymbol);
+            if(idx != CORR_ENGINE_INVALID_IDX)
+                hasPosition[idx] = true;
+        }
+    }
+
+    // Remove symbols without positions (shift array left)
+    int writeIdx = 0;
+    for(int i = 0; i < m_symbolCount; i++)
+    {
+        if(hasPosition[i])
+        {
+            if(writeIdx != i)
+            {
+                m_symbols[writeIdx] = m_symbols[i];
+                // Copy matrix row/col would be complex — just mark for rebuild
+            }
+            writeIdx++;
+        }
+    }
+
+    if(writeIdx < m_symbolCount)
+    {
+        m_symbolCount = writeIdx;
+        // Force matrix rebuild on next compute since symbols shifted
+        m_lastRefreshTime = 0;
+    }
 }
 
 //+------------------------------------------------------------------+

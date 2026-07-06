@@ -267,7 +267,7 @@ public:
                m_cache[m_cacheCount].emaSlowHandle != INVALID_HANDLE &&
                m_cache[m_cacheCount].atrHandle != INVALID_HANDLE)
             {
-               PrintFormat("[SCALP-FALLBACK] emaFast unavailable for %s, using emaSlow(%d) as substitute",
+               PrintFormat("[SCALP-FALLBACK] emaFast unavailable for %s, using emaSlow(%d) as substitute — crossover detection DISABLED for this symbol",
                            sym, m_emaSlowPeriod);
                m_cache[m_cacheCount].emaFastHandle = m_cache[m_cacheCount].emaSlowHandle;
             }
@@ -277,16 +277,26 @@ public:
             {
                PrintFormat("[SCALP-CACHE] ERROR: Both emaFast and atr missing for %s after retries | emaFast=%d emaSlow=%d atr=%d",
                            sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
-               ZeroMemory(m_cache[m_cacheCount]);
+               // Batch 117: Reset fields individually (ZeroMemory corrupts string reference counting)
                m_cache[m_cacheCount].symbol = "";
+               m_cache[m_cacheCount].emaFastHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].emaSlowHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].atrHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].rsiHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].isValid = false;
                continue;
             }
             else if(m_cache[m_cacheCount].emaSlowHandle == INVALID_HANDLE)
             {
                PrintFormat("[SCALP-CACHE] ERROR: emaSlow missing for %s after retries | emaFast=%d emaSlow=%d atr=%d",
                            sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
-               ZeroMemory(m_cache[m_cacheCount]);
+               // Batch 117: Reset fields individually (ZeroMemory corrupts string reference counting)
                m_cache[m_cacheCount].symbol = "";
+               m_cache[m_cacheCount].emaFastHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].emaSlowHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].atrHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].rsiHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].isValid = false;
                continue;
             }
          }
@@ -432,10 +442,10 @@ public:
             if(CopyBufferN(m_cache[i].volumeHandle, 0, m_volumePeriod + 1, volBuf))
             {
                m_cache[i].volumeCurrent = volBuf[0];
-               double sum = 0.0;
-               for(int v = 1; v <= m_volumePeriod; v++)
-                  sum += volBuf[v];
-               m_cache[i].volumeAvg = sum / m_volumePeriod;
+                double sum = 0.0;
+                for(int v = 1; v <= m_volumePeriod; v++)
+                   sum += volBuf[v];
+                m_cache[i].volumeAvg = (m_volumePeriod > 0) ? sum / m_volumePeriod : 0.0;
             }
             else
             {

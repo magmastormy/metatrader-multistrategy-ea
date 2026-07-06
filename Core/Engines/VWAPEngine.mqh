@@ -30,6 +30,7 @@ private:
     
     // Session tracking
     datetime m_sessionStartDate;
+    datetime m_lastProcessedBarTime;  // Batch 117: prevent VWAP re-accumulation
     double   m_cumulativeTPV;  // cumulative (typical price * volume)
     double   m_cumulativePV;   // cumulative (price - vwap)^2 * volume
     double   m_cumulativeVol;
@@ -67,7 +68,7 @@ public:
     CVWAPEngine() : m_symbol(""), m_minPeriodBars(30),
         m_bandMultiplier1(1.0), m_bandMultiplier2(1.5),
         m_bandMultiplier3(2.0),
-        m_sessionStartDate(0), m_cumulativeTPV(0),
+        m_sessionStartDate(0), m_lastProcessedBarTime(0), m_cumulativeTPV(0),
         m_cumulativePV(0), m_cumulativeVol(0),
         m_barCount(0), m_lastProcessedBarIndex(0), m_initialized(false)
     {
@@ -105,6 +106,15 @@ public:
             ResetSession();
             m_sessionStartDate = currentDay;
         }
+        
+        // Batch 117: Skip if same bar — prevent VWAP re-accumulation
+        if(currentBarTime == m_lastProcessedBarTime)
+        {
+            m_lastResult.isValid = true;
+            m_lastResult.vwap = (m_cumulativeVol > 0) ? m_cumulativeTPV / m_cumulativeVol : 0;
+            return m_lastResult;
+        }
+        m_lastProcessedBarTime = currentBarTime;
         
         // Accumulate only new bars since last call
         int totalBars = Bars(m_symbol, PERIOD_CURRENT);

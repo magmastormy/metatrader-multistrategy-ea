@@ -328,7 +328,8 @@ public:
                 // Only move to breakeven — no trailing in ranging market
                 if(isBuy && currentPrice >= openPrice + buffer && (currentSL < openPrice || currentSL == 0))
                 {
-                    double newSL = NormalizeDouble(openPrice + buffer * 0.1, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
+                    // Batch 116: SL at openPrice + buffer (full offset), not buffer * 0.1
+                    double newSL = NormalizeDouble(openPrice + buffer, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
                     if(newSL > currentSL)
                     {
                         m_tradeManager.ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));
@@ -338,7 +339,8 @@ public:
                 }
                 else if(!isBuy && currentPrice <= openPrice - buffer && (currentSL > openPrice || currentSL == 0))
                 {
-                    double newSL = NormalizeDouble(openPrice - buffer * 0.1, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
+                    // Batch 116: SL at openPrice - buffer (full offset), not buffer * 0.1
+                    double newSL = NormalizeDouble(openPrice - buffer, (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS));
                     if(newSL < currentSL || currentSL == 0)
                     {
                         m_tradeManager.ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));

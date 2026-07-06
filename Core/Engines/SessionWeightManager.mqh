@@ -40,9 +40,19 @@ private:
 
       if(dayOfWeek == 0 || dayOfWeek == 6)
       {
-         sw.sizingMultiplier = 1.2;
-         sw.convictionThresholdAdj = -0.03;
-         sw.readinessBoost = 0.05;
+         // Batch 118: Only apply weekend boost for synthetics (forex markets are closed)
+         if(m_syntheticMode)
+         {
+            sw.sizingMultiplier = 1.2;
+            sw.convictionThresholdAdj = -0.03;
+            sw.readinessBoost = 0.05;
+         }
+         else
+         {
+            sw.sizingMultiplier = 0.5;  // Penalize forex weekend trading
+            sw.convictionThresholdAdj = 0.10;
+            sw.readinessBoost = 0.0;
+         }
          sw.sessionName = "WEEKEND";
          return sw;
       }

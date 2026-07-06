@@ -346,7 +346,9 @@ public:
         if(!m_tickSafetyMonitor.ValidateTick(_Symbol, tick))
             return false;
 
-        m_riskManager.RefreshRuntimeState();
+        // Batch 118: NULL guard for m_riskManager
+        if(m_riskManager != NULL)
+            m_riskManager.RefreshRuntimeState();
         EvaluateSpike(velocityMultiplier, confirmWindows, pauseSeconds, flattenAllAccountPositions);
 
         if(HandleEmergencyDrawdown("tick", spikeCurrentDD, spikeMaxDD, flattenAllAccountPositions))

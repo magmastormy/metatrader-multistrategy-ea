@@ -419,15 +419,27 @@ public:
       {
          if(ShouldActivateGrid(idx))
          {
-            // Determine direction from price position relative to ATR SMA
-            // If price is below ATR SMA, expect mean-reversion UP => BUY grid
-            // If price is above ATR SMA, expect mean-reversion DOWN => SELL grid
+            // Batch 117: Use price SMA (not ATR SMA) for direction determination
+            // Compute 50-bar price SMA to determine mean-reversion direction
             double midPrice = (bid + ask) / 2.0;
-            int direction = 0;
-            if(midPrice < m_symbolStates[idx].atrSMA)
-               direction = 1;   // BUY grid — expect price to revert up
+            double priceSMA = 0;
+            double closes[];
+            ArraySetAsSeries(closes, true);
+            int copied = CopyClose(symbol, PERIOD_CURRENT, 0, 50, closes);
+            if(copied >= 50)
+            {
+               for(int j = 0; j < 50; j++)
+                  priceSMA += closes[j];
+               priceSMA /= 50.0;
+            }
             else
-               direction = -1;  // SELL grid — expect price to revert down
+               priceSMA = midPrice; // fallback: no direction bias
+
+            int direction = 0;
+            if(midPrice < priceSMA)
+               direction = 1;   // BUY grid — price below SMA, expect reversion up
+            else
+               direction = -1;  // SELL grid — price above SMA, expect reversion down
 
             // Open the first grid level
             if(OpenGridLevel(idx, direction, 0))
