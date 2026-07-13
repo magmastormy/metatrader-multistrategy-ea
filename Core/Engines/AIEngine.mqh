@@ -7,6 +7,7 @@
 
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
+#include "../Management/EnterpriseStrategyManager.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -18,7 +19,7 @@ struct SPredictionWithUncertainty;
 class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CEnterpriseStrategyManager;
+// class CEnterpriseStrategyManager;  // Now included via header
 
 //+------------------------------------------------------------------+
 //| AI Query Request Structure                                       |

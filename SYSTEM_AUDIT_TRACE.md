@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-07-01
+- Last Updated: 2026-07-12
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 110
+- Current Batch: 122
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -26,14 +26,14 @@
   - `AIModules/CNeuralCheckpointManager.mqh` (NEW - Checkpoint I/O)
 - Risk authority: `Core/Risk/UnifiedRiskManager.mqh`
 - Execution authority: `Core/Trading/TradeManager.mqh`
-- Position authority: EA lifecycle loop via `CTradeManager::ManageAllPositions(...)`
+- Position authority: EA lifecycle loop via `CTradeManager::ManageAllPositions(...)` + `Core/Position/PositionManager.mqh`
 - Python bridge: `Core/Utils/PythonBridge.mqh`, `Python/zmq_server.py`
 - Position lifecycle: `Core/Management/PositionLifecycleManager.mqh`
 - Diagnostics manager: `Core/Management/DiagnosticsManager.mqh`
 - Unprotected position tracker: `Core/Risk/UnprotectedPositionTracker.mqh`
 - Synthetic spike monitor: `Core/Processing/SyntheticSpikeMonitor.mqh`
 - Trade attribution: `Core/Trading/TradeAttributionManager.mqh`
-- Symbol scan scheduler: `Core/Processing/SymbolScanScheduler.mqh`
+- Symbol scan scheduling: `Core/Processing/SymbolScanScheduler.mqh` / `Core/Registry/ScanSchedulerRegistry.mqh`
 - Equity curve manager: `Core/Risk/EquityCurveManager.mqh`
 - Spike hunter engine: `Core/Scalp/SpikeHunterEngine.mqh`
 - Hurst engine: `Core/Engines/HurstEngine.mqh`
@@ -51,8 +51,42 @@
 - XGBoost trainer: `Python/train_xgboost.py`
 - Implementation plan: `IMPLEMENTATION_PLAN.md`
 - Research report: `EA_PERFORMANCE_RESEARCH_REPORT.md`
+- **Batch 122 Orchestration Modules**:
+  - `Core/Orchestration/EAOrchestrator.mqh`
+  - `Core/Orchestration/TickProcessor.mqh`
+  - `Core/Orchestration/TimerProcessor.mqh`
+  - `Core/Orchestration/SignalGenerator.mqh`
+  - `Core/Orchestration/SignalValidator.mqh`
+  - `Core/Orchestration/CandidateBuilder.mqh`
+  - `Core/Orchestration/TradeExecutor.mqh`
+  - `Core/Orchestration/LiveAuthorityResolver.mqh`
+  - `Core/Position/PositionManager.mqh`
+  - `Core/Factory/StrategyFactory.mqh`
+  - `Core/Registry/MathematicalEngineRegistry.mqh`
+  - `Core/Registry/InstitutionalEngineRegistry.mqh`
+  - `Core/Registry/NeuralNetRegistry.mqh`
+  - `Core/Registry/DrawingManagerRegistry.mqh`
+  - `Core/Registry/ScanSchedulerRegistry.mqh`
+  - `Core/Registry/SymbolStateTracker.mqh`
 
 ## Current Runtime Evidence
+- **Batch 122 (Modular Architecture Migration & Dead Code Removal, 2026-07-12):** Complete extraction of monolithic `MultiStrategyAutonomousEA.mq5` into focused orchestration modules with 6 registries and 5 processor classes:
+  - **EAOrchestrator** (`Core/Orchestration/EAOrchestrator.mqh`): Central coordinator owning `CTickProcessor`, `CTimerProcessor`, and 6 registries. Handles initialization, per-symbol evaluation dispatch, candidate ranking, risk reservation, and execution coordination.
+  - **CTickProcessor** (`Core/Orchestration/TickProcessor.mqh`): Fast-path tick processing — safety validation, scalp engine evaluation, unprotected position remediation, synthetic spike monitoring. Replaces inline `ProcessScalpFastPath()` from main EA.
+  - **CTimerProcessor** (`Core/Orchestration/TimerProcessor.mqh`): Heavy timer processing — heartbeat, diagnostics, position lifecycle, risk budget, symbol scan scheduling, consensus evaluation, candidate building, trade execution. Replaces monolithic `ProcessTradingLogic()`.
+  - **SignalGenerator** (`Core/Orchestration/SignalGenerator.mqh`): Extracts consensus evaluation logic from timer processor. Handles strategy voting, pipeline filtering, quorum resolution, and decision context construction.
+  - **SignalValidator** (`Core/Orchestration/SignalValidator.mqh`): Post-consensus validation — confluence checks, quality floors, confidence thresholds, regime/cost gates.
+  - **CandidateBuilder** (`Core/Orchestration/CandidateBuilder.mqh`): Builds trade candidates from validated signals — SL/TP resolution, position sizing, magic number generation, risk pre-validation.
+  - **TradeExecutor** (`Core/Orchestration/TradeExecutor.mqh`): Executes approved candidates through `CTradeManager` — order sending, result handling, attribution mapping, ONNX request tracking.
+  - **LiveAuthorityResolver** (`Core/Orchestration/LiveAuthorityResolver.mqh`): Resolves live authority for candidates — AI warm-start, hybrid gate, authority evidence tracking, promotion/demotion logic.
+  - **PositionManager** (`Core/Position/PositionManager.mqh`): Consolidates position queries — EA position counts, per-symbol counts, correlation analysis, cluster exposure tracking.
+  - **StrategyFactory** (`Core/Factory/StrategyFactory.mqh`): Centralized strategy instantiation — eliminates duplicate registration code across 17 strategy types and 3 AI adapters with proper cleanup on failure.
+  - **6 Registries** (Batch 121): `CMathematicalEngineRegistry`, `CInstitutionalEngineRegistry`, `CNeuralNetRegistry`, `CDrawingManagerRegistry`, `CScanSchedulerRegistry`, `CSymbolStateTracker` — each consolidating previously scattered per-symbol engine instances into single ownership points with lifecycle management.
+  - **Backward Compatibility**: `CSymbolScanScheduler` retained with index-based API. Added dormancy tracking fields (`dormancyWarningCount`, `dormantCooldownUntil`) to `SSymbolScanState`. Added symbol-based `RecordDormancyWarning()`, `IsInDormantCooldown()`, `ClearDormantCooldownOnNewBar()` and index-based overloads.
+  - **Dead Code Removed**: ~400 lines of OnTimer backward-compat code, ~2012 lines of `ProcessTradingLogic()`, 17 helper functions migrated to orchestrator/registries.
+  - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified — risk authority, execution ownership, lifecycle ownership, strategy consensus, indicator cleanup.
+  - **Compilation**: 0 errors, 11 warnings (all style: variable shadowing, implicit conversions).
+
 - **EA Enterprise Vision Implementation (Batch 103, 2026-06-17):** Upgrades the multi-strategy EA to an enterprise consensus engine with 11 strategies:
   - **A1 — Candlestick v2.0:** 7 new pattern detectors (CDojiDetector, CHammerDetector, CStarDetector, CHaramiDetector, CThreeSoldiersDetector, CPiercingDetector) + CCandleConfluenceScorer (0-100 scoring, threshold ≥70). Confidence = score/100.0. Files: `Strategies/CandlestickFiles/DojiDetector.mqh`, `HammerDetector.mqh`, `StarDetector.mqh`, `HaramiDetector.mqh`, `ThreeSoldiersDetector.mqh`, `PiercingDetector.mqh`, `CandleConfluenceScorer.mqh`. Modified: `Strategies/StrategyCandlestick.mqh`.
   - **A2 — Momentum v2.0:** MACD histogram confirmation, ADX strong trend filter (ADX > 25), pullback entry mode (EMA pullback within 0.5×ATR), freshness confidence modifier (+10%), volume confidence modifier (+8%). File: `Strategies/SimpleMomentumStrategy.mqh`.

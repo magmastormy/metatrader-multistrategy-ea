@@ -156,7 +156,7 @@ CPortfolioRiskManager::~CPortfolioRiskManager()
 //+------------------------------------------------------------------+
 bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelation)
 {
-    if(maxRiskPercent <= 0 || maxRiskPercent > 100)
+    if(maxRiskPercent <= 0 || maxRiskPercent > 500)
     {
         Print("[PortfolioRisk] Invalid max risk percent: ", maxRiskPercent);
         return false;

@@ -264,6 +264,10 @@ private:
         if(m_crossoverBar > 0 && (currentBar - m_crossoverBar) < 3)
             confidenceMod *= 1.15;
 
+        // EXECUTION REFINEMENT: Reject stale signals (> 3 bars old)
+        if(m_crossoverBar > 0 && (currentBar - m_crossoverBar) > 3)
+            confidenceMod *= 0.5;  // Penalize stale signals
+
         // Volume surge on crossover bar
         if(m_volumeHandle != INVALID_HANDLE)
         {

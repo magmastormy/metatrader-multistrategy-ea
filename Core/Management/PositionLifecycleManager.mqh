@@ -14,6 +14,54 @@
 #include "..\Risk\RiskTierManager.mqh"
 #include "..\Risk\SafeModeConfig.mqh"
 #include "..\Trading\IntelligentSLGuard.mqh"
+#include "..\..\IndicatorManager.mqh"
+
+// AGGRESSIVE: Pyramid state tracking
+// NOTE: Using 'class' (not 'struct') because MQL5 does not allow pointers
+// to 'struct' types (error 299: "class type expected"). Only class-typed
+// objects may be referenced by pointer.
+class CPyramidState
+{
+public:
+    int    layer;              // Current pyramid layer (0 = base position)
+    double entryPrice;         // Entry price of base position
+    double nextStepPips;       // Profit threshold for next pyramid layer
+    double baseLotSize;        // Base lot size for calculating pyramid layers
+    ulong  baseTicket;         // Base position ticket
+    bool   active;             // Whether pyramiding is active for this position
+
+    CPyramidState(void)
+    {
+        layer = 0;
+        entryPrice = 0.0;
+        nextStepPips = 0.0;
+        baseLotSize = 0.0;
+        baseTicket = 0;
+        active = false;
+    }
+};
+
+// AGGRESSIVE: Volatility regime tracking
+class CVolatilityRegime
+{
+public:
+    string   symbol;       // Symbol this regime belongs to
+    double   atr14;
+    double   atr50;
+    double   atrRatio;
+    int      regime;       // 0=low, 1=normal, 2=high
+    datetime lastUpdate;
+
+    CVolatilityRegime(void)
+    {
+        symbol = "";
+        atr14 = 0.0;
+        atr50 = 0.0;
+        atrRatio = 1.0;
+        regime = 1;
+        lastUpdate = 0;
+    }
+};
 
 class CPositionLifecycleManager
 {
@@ -52,6 +100,45 @@ private:
     CIntelligentSLGuard m_slGuard;
     CRegimeEngine*      m_regimeEngine;
 
+    // AGGRESSIVE: Pyramiding config
+    bool   m_pyramidingEnabled;
+    double m_pyramidingStepPips;
+    double m_pyramidingSizeMultiplier;
+    int    m_pyramidingMaxLayers;
+
+    // AGGRESSIVE: Dynamic SL/TP config
+    bool   m_dynamicSLEnabled;
+    double m_dynamicSLATRMultiplier;
+    double m_dynamicTPATRMultiplier;
+    bool   m_volatilitySLAdjustEnabled;
+
+    // EXECUTION REFINEMENT: Partial profit taking config
+    bool   m_partialProfitTakingEnabled;
+    double m_partialProfitATRMultiplier;
+    double m_partialProfitPercent;
+
+    CPyramidState*      m_pyramidStates[];  // Array indexed by position ticket
+    int                  m_pyramidStateCount;
+
+    CVolatilityRegime*  m_volatilityRegimes[];  // Per-symbol volatility regime
+    int                  m_volatilityRegimeCount;
+
+    // EXECUTION REFINEMENT: Loss minimization config
+    bool   m_adverseMomentumExitEnabled;
+    double m_adverseMomentumATRMultiplier;
+    int    m_consecutiveLossLimit;
+    int    m_consecutiveLossCooldownSec;
+    double m_dailyLossCircuitBreakerPercent;
+    double m_positionLossLimitPercent;
+
+    // EXECUTION REFINEMENT: Loss tracking
+    int     m_consecutiveLossCount;
+    datetime m_lastLossTime;
+    datetime m_consecutiveLossCooldownUntil;
+    double  m_dailyLossAmount;
+    double  m_dailyRiskBudget;
+    datetime m_dailyResetTime;
+
 public:
     CPositionLifecycleManager() :
         m_tradeManager(NULL),
@@ -75,10 +162,54 @@ public:
         m_useATRTrailing(false),
         m_atrMultiplier(1.5),
         m_magicNumber(0),
-        m_regimeEngine(NULL)
+        m_regimeEngine(NULL),
+        m_pyramidingEnabled(false),
+        m_pyramidingStepPips(50.0),
+        m_pyramidingSizeMultiplier(1.5),
+        m_pyramidingMaxLayers(3),
+        m_dynamicSLEnabled(false),
+        m_dynamicSLATRMultiplier(1.5),
+        m_dynamicTPATRMultiplier(3.0),
+        m_volatilitySLAdjustEnabled(false),
+        m_partialProfitTakingEnabled(false),
+        m_partialProfitATRMultiplier(1.0),
+        m_partialProfitPercent(50.0),
+        m_pyramidStateCount(0),
+        m_volatilityRegimeCount(0),
+        m_adverseMomentumExitEnabled(false),
+        m_adverseMomentumATRMultiplier(0.5),
+        m_consecutiveLossLimit(3),
+        m_consecutiveLossCooldownSec(1800),
+        m_dailyLossCircuitBreakerPercent(50.0),
+        m_positionLossLimitPercent(75.0),
+        m_consecutiveLossCount(0),
+        m_lastLossTime(0),
+        m_consecutiveLossCooldownUntil(0),
+        m_dailyLossAmount(0.0),
+        m_dailyRiskBudget(0.0),
+        m_dailyResetTime(0)
     {}
 
-    ~CPositionLifecycleManager() {}
+    ~CPositionLifecycleManager()
+    {
+        // Clean up pyramid states
+        for(int i = 0; i < m_pyramidStateCount; i++)
+        {
+            if(CheckPointer(m_pyramidStates[i]) == POINTER_DYNAMIC)
+                delete m_pyramidStates[i];
+        }
+        m_pyramidStateCount = 0;
+        ArrayFree(m_pyramidStates);
+
+        // Clean up volatility regimes
+        for(int i = 0; i < m_volatilityRegimeCount; i++)
+        {
+            if(CheckPointer(m_volatilityRegimes[i]) == POINTER_DYNAMIC)
+                delete m_volatilityRegimes[i];
+        }
+        m_volatilityRegimeCount = 0;
+        ArrayFree(m_volatilityRegimes);
+    }
 
     bool Initialize(CTradeManager* tm, CConsensusCache* cache,
                     CRiskTierManager* rtm, CSafeMode* sm, int magicNumber)
@@ -130,6 +261,45 @@ public:
         m_atrMultiplier = atrMult;
     }
 
+    // AGGRESSIVE: Configure pyramiding
+    void ConfigurePyramiding(bool enabled, double stepPips, double sizeMultiplier, int maxLayers)
+    {
+        m_pyramidingEnabled = enabled;
+        m_pyramidingStepPips = stepPips;
+        m_pyramidingSizeMultiplier = sizeMultiplier;
+        m_pyramidingMaxLayers = maxLayers;
+    }
+
+    // AGGRESSIVE: Configure dynamic SL/TP
+    void ConfigureDynamicSL(bool enabled, double slATRMultiplier, double tpATRMultiplier, bool volAdjust)
+    {
+        m_dynamicSLEnabled = enabled;
+        m_dynamicSLATRMultiplier = slATRMultiplier;
+        m_dynamicTPATRMultiplier = tpATRMultiplier;
+        m_volatilitySLAdjustEnabled = volAdjust;
+    }
+
+    // EXECUTION REFINEMENT: Configure loss minimization
+    void ConfigureLossMinimization(bool adverseMomentumExit, double adverseMomentumATR,
+                                   int consecutiveLossLimit, int consecutiveLossCooldown,
+                                   double dailyLossCircuitBreaker, double positionLossLimit)
+    {
+        m_adverseMomentumExitEnabled = adverseMomentumExit;
+        m_adverseMomentumATRMultiplier = adverseMomentumATR;
+        m_consecutiveLossLimit = consecutiveLossLimit;
+        m_consecutiveLossCooldownSec = consecutiveLossCooldown;
+        m_dailyLossCircuitBreakerPercent = dailyLossCircuitBreaker;
+        m_positionLossLimitPercent = positionLossLimit;
+    }
+
+    // EXECUTION REFINEMENT: Configure partial profit taking
+    void ConfigurePartialProfitTaking(bool enabled, double atrMultiplier, double profitPercent)
+    {
+        m_partialProfitTakingEnabled = enabled;
+        m_partialProfitATRMultiplier = atrMultiplier;
+        m_partialProfitPercent = profitPercent;
+    }
+
     bool IsInitialized() const { return m_initialized; }
 
     void SetRegimeEngine(CRegimeEngine* engine) { m_regimeEngine = engine; }
@@ -161,6 +331,22 @@ public:
 
         CheckSignalReversalExit();
         ManageBreakevenAndTrailing();
+
+        // AGGRESSIVE: Manage pyramiding
+        if(m_pyramidingEnabled)
+            ManagePyramiding();
+
+        // AGGRESSIVE: Manage dynamic SL/TP
+        if(m_dynamicSLEnabled)
+            ManageDynamicSLTP();
+
+        // EXECUTION REFINEMENT: Manage loss minimization
+        if(m_adverseMomentumExitEnabled || m_consecutiveLossLimit > 0)
+            ManageLossMinimization();
+
+        // EXECUTION REFINEMENT: Manage partial profit taking
+        if(m_partialProfitTakingEnabled)
+            ManagePartialProfitTaking();
     }
 
     //--- Signal Reversal Exit (SRE) — high-speed scalp logic
@@ -367,6 +553,514 @@ public:
         }
 
         m_lastManageTimeMs = nowMs;
+    }
+
+    // AGGRESSIVE: Pyramiding management
+    void ManagePyramiding()
+    {
+        if(!m_pyramidingEnabled)
+            return;
+
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+            double lotSize = PositionGetDouble(POSITION_VOLUME);
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            if(point <= 0) point = 0.00001;
+
+            // Calculate profit in pips
+            double profitPips = 0.0;
+            if(type == POSITION_TYPE_BUY)
+                profitPips = (currentPrice - openPrice) / point;
+            else
+                profitPips = (openPrice - currentPrice) / point;
+
+            // Find or create pyramid state for this position
+            CPyramidState* state = GetPyramidState(ticket);
+            if(state == NULL)
+            {
+                // Initialize pyramid state for new position
+                state = CreatePyramidState(ticket, openPrice, lotSize);
+                if(state == NULL) continue;
+            }
+
+            // Check if we should add a pyramid layer
+            if(state.active && state.layer < m_pyramidingMaxLayers && profitPips >= state.nextStepPips)
+            {
+                // Calculate pyramid lot size
+                double pyramidLotSize = state.baseLotSize * MathPow(m_pyramidingSizeMultiplier, state.layer + 1);
+                pyramidLotSize = NormalizeDouble(pyramidLotSize, 2);
+
+                // Send pyramid order
+                ENUM_ORDER_TYPE orderType = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+                string comment = "Pyramid Layer " + IntegerToString(state.layer + 1);
+                double entryPriceZero = 0.0;
+                double slPipsZero = 0.0;
+                double tpPipsZero = 0.0;
+                uint magicZero = 0;
+                if(m_tradeManager.OpenPosition(symbol, orderType, pyramidLotSize, entryPriceZero, slPipsZero, tpPipsZero, comment, magicZero))
+                {
+                    PrintFormat("[PYRAMID] Added layer %d to %s | ticket=%d | lot=%.2f | profit=%.0f pips",
+                                state.layer + 1, symbol, ticket, pyramidLotSize, profitPips);
+
+                    // Update pyramid state
+                    state.layer++;
+                    state.nextStepPips = profitPips + m_pyramidingStepPips;
+                }
+            }
+        }
+
+        // Clean up pyramid states for closed positions
+        CleanupPyramidStates();
+    }
+
+    // AGGRESSIVE: Get pyramid state for a position
+    CPyramidState* GetPyramidState(ulong ticket)
+    {
+        for(int i = 0; i < m_pyramidStateCount; i++)
+        {
+            if(CheckPointer(m_pyramidStates[i]) == POINTER_DYNAMIC &&
+               m_pyramidStates[i].baseTicket == ticket &&
+               m_pyramidStates[i].active)
+                return m_pyramidStates[i];
+        }
+        return NULL;
+    }
+
+    // AGGRESSIVE: Create pyramid state for new position
+    CPyramidState* CreatePyramidState(ulong ticket, double entryPrice, double lotSize)
+    {
+        // Resize array if needed
+        if(m_pyramidStateCount >= ArraySize(m_pyramidStates))
+            ArrayResize(m_pyramidStates, m_pyramidStateCount + 10);
+
+        CPyramidState* state = new CPyramidState();
+        state.layer = 0;
+        state.entryPrice = entryPrice;
+        state.nextStepPips = m_pyramidingStepPips;
+        state.baseLotSize = lotSize;
+        state.baseTicket = ticket;
+        state.active = true;
+
+        m_pyramidStates[m_pyramidStateCount] = state;
+        m_pyramidStateCount++;
+        return state;
+    }
+
+    // AGGRESSIVE: Clean up pyramid states for closed positions
+    void CleanupPyramidStates()
+    {
+        int write = 0;
+        for(int i = 0; i < m_pyramidStateCount; i++)
+        {
+            if(CheckPointer(m_pyramidStates[i]) != POINTER_DYNAMIC)
+            {
+                // Skip invalid entries, free slot
+                continue;
+            }
+
+            if(!m_pyramidStates[i].active)
+            {
+                // Already marked inactive, remove
+                delete m_pyramidStates[i];
+                m_pyramidStates[i] = NULL;
+                continue;
+            }
+
+            // Check if base position still exists
+            bool positionExists = false;
+            for(int j = 0; j < PositionsTotal(); j++)
+            {
+                ulong ticket = PositionGetTicket(j);
+                if(ticket == m_pyramidStates[i].baseTicket)
+                {
+                    positionExists = true;
+                    break;
+                }
+            }
+
+            if(!positionExists)
+            {
+                // Base position closed, free and drop
+                PrintFormat("[PYRAMID] Base position %d closed, releasing pyramid state",
+                            m_pyramidStates[i].baseTicket);
+                delete m_pyramidStates[i];
+                m_pyramidStates[i] = NULL;
+                continue;
+            }
+
+            // Keep, compact
+            if(write != i)
+                m_pyramidStates[write] = m_pyramidStates[i];
+            write++;
+        }
+        // Null out any remaining slots beyond `write`
+        for(int i = write; i < m_pyramidStateCount; i++)
+            m_pyramidStates[i] = NULL;
+        m_pyramidStateCount = write;
+    }
+
+    // AGGRESSIVE: Dynamic SL/TP management
+    void ManageDynamicSLTP()
+    {
+        if(!m_dynamicSLEnabled)
+            return;
+
+        // Update volatility regimes for all symbols
+        UpdateVolatilityRegimes();
+
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double currentSL = PositionGetDouble(POSITION_SL);
+            double currentTP = PositionGetDouble(POSITION_TP);
+
+            // Get volatility regime for this symbol
+            CVolatilityRegime* regime = GetVolatilityRegime(symbol);
+            if(regime == NULL) continue;
+
+            // Calculate dynamic SL/TP based on ATR
+            double atr = regime.atr14;
+            if(atr <= 0) continue;
+
+            double slMultiplier = m_dynamicSLATRMultiplier;
+            double tpMultiplier = m_dynamicTPATRMultiplier;
+
+            // Adjust SL based on volatility regime
+            if(m_volatilitySLAdjustEnabled)
+            {
+                if(regime.regime == 0) // Low volatility
+                    slMultiplier *= 0.8;
+                else if(regime.regime == 2) // High volatility
+                    slMultiplier *= 1.2;
+            }
+
+            double slDistance = atr * slMultiplier;
+            double tpDistance = atr * tpMultiplier;
+
+            double newSL = 0.0;
+            double newTP = 0.0;
+
+            if(type == POSITION_TYPE_BUY)
+            {
+                newSL = openPrice - slDistance;
+                newTP = openPrice + tpDistance;
+            }
+            else
+            {
+                newSL = openPrice + slDistance;
+                newTP = openPrice - tpDistance;
+            }
+
+            // Normalize to symbol digits
+            int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+            newSL = NormalizeDouble(newSL, digits);
+            newTP = NormalizeDouble(newTP, digits);
+
+            // Only modify if significantly different (avoid excessive modifications)
+            double slDiff = MathAbs(newSL - currentSL);
+            double tpDiff = MathAbs(newTP - currentTP);
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            if(point <= 0) point = 0.00001;
+
+            if(slDiff > 10 * point || tpDiff > 10 * point || currentSL == 0 || currentTP == 0)
+            {
+                if(m_tradeManager.ModifyPosition(ticket, newSL, newTP))
+                {
+                    PrintFormat("[DYNAMIC-SLTP] %s | ticket=%d | SL=%.5f -> %.5f | TP=%.5f -> %.5f | ATR=%.5f | regime=%d",
+                                symbol, ticket, currentSL, newSL, currentTP, newTP, atr, regime.regime);
+                }
+            }
+        }
+    }
+
+    // AGGRESSIVE: Update volatility regimes for all symbols
+    void UpdateVolatilityRegimes()
+    {
+        datetime now = TimeCurrent();
+
+        for(int i = 0; i < m_symbolCount; i++)
+        {
+            string symbol = m_symbols[i];
+
+            // Find or create regime for this symbol
+            CVolatilityRegime* regime = GetVolatilityRegime(symbol);
+            if(regime == NULL)
+            {
+                regime = CreateVolatilityRegime(symbol);
+                if(regime == NULL) continue;
+            }
+
+            // Update every 5 minutes to avoid excessive calculations
+            if(now - regime.lastUpdate < 300) continue;
+
+            // Get ATR values
+            double atr14 = GetATR(symbol, 14);
+            double atr50 = GetATR(symbol, 50);
+
+            if(atr14 > 0 && atr50 > 0)
+            {
+                regime.atr14 = atr14;
+                regime.atr50 = atr50;
+                regime.atrRatio = atr14 / atr50;
+
+                // Determine regime
+                if(regime.atrRatio < 0.5)
+                    regime.regime = 0; // Low volatility
+                else if(regime.atrRatio > 1.5)
+                    regime.regime = 2; // High volatility
+                else
+                    regime.regime = 1; // Normal volatility
+
+                regime.lastUpdate = now;
+            }
+        }
+    }
+
+    // AGGRESSIVE: Get volatility regime for a symbol
+    CVolatilityRegime* GetVolatilityRegime(const string symbol)
+    {
+        for(int i = 0; i < m_volatilityRegimeCount; i++)
+        {
+            if(CheckPointer(m_volatilityRegimes[i]) == POINTER_DYNAMIC &&
+               m_volatilityRegimes[i].symbol == symbol)
+                return m_volatilityRegimes[i];
+        }
+        return NULL;
+    }
+
+    // AGGRESSIVE: Create volatility regime for a symbol
+    CVolatilityRegime* CreateVolatilityRegime(const string symbol)
+    {
+        // Resize array if needed
+        if(m_volatilityRegimeCount >= ArraySize(m_volatilityRegimes))
+            ArrayResize(m_volatilityRegimes, m_volatilityRegimeCount + 10);
+
+        CVolatilityRegime* regime = new CVolatilityRegime();
+        regime.symbol = symbol;
+        // atr14/atr50/regime/ratio left as defaults; caller populates from data
+
+        m_volatilityRegimes[m_volatilityRegimeCount] = regime;
+        m_volatilityRegimeCount++;
+        return regime;
+    }
+
+    // AGGRESSIVE: Get ATR value for a symbol using IndicatorManager
+    double GetATR(const string symbol, int period)
+    {
+        CIndicatorManager* indManager = CIndicatorManager::Instance();
+        if(indManager == NULL)
+        {
+            PrintFormat("[LIFECYCLE-ATR] ERROR: IndicatorManager not available for %s period=%d", symbol, period);
+            return 0;
+        }
+        
+        // Resolve PERIOD_CURRENT to actual chart timeframe
+        ENUM_TIMEFRAMES actualTimeframe = Period();
+        if(actualTimeframe == PERIOD_CURRENT || actualTimeframe == 0)
+            actualTimeframe = PERIOD_M15;
+        
+        int atrHandle = indManager.GetATRHandle(symbol, actualTimeframe, period);
+        if(atrHandle == INVALID_HANDLE)
+        {
+            PrintFormat("[LIFECYCLE-ATR] ERROR: Failed to get ATR handle for %s period=%d timeframe=%s",
+                        symbol, period, EnumToString(actualTimeframe));
+            return 0;
+        }
+
+        double atrBuffer[];
+        ArraySetAsSeries(atrBuffer, true);
+        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) <= 0)
+        {
+            int err = GetLastError();
+            PrintFormat("[LIFECYCLE-ATR] ERROR: CopyBuffer failed for %s period=%d timeframe=%s err=%d",
+                        symbol, period, EnumToString(actualTimeframe), err);
+            // Don't release handle - IndicatorManager manages lifecycle
+            return 0;
+        }
+
+        double atr = atrBuffer[0];
+        if(atr <= 0.0 || !MathIsValidNumber(atr))
+        {
+            PrintFormat("[LIFECYCLE-ATR] WARNING: Invalid ATR value %.5f for %s period=%d", atr, symbol, period);
+            return 0;
+        }
+        return atr;
+    }
+
+    // EXECUTION REFINEMENT: Loss minimization management
+    void ManageLossMinimization()
+    {
+        // Reset daily loss tracking at midnight
+        datetime now = TimeCurrent();
+        MqlDateTime dt;
+        TimeToStruct(now, dt);
+        datetime midnight = StringToTime(IntegerToString(dt.year) + "." + IntegerToString(dt.mon) + "." + IntegerToString(dt.day) + " 00:00:00");
+        if(now >= midnight + 86400)  // Next day
+        {
+            m_dailyLossAmount = 0.0;
+            m_dailyResetTime = midnight;
+        }
+
+        // Check consecutive loss cooldown
+        if(m_consecutiveLossCooldownUntil > 0 && now < m_consecutiveLossCooldownUntil)
+        {
+            static datetime lastCooldownLog = 0;
+            if(now - lastCooldownLog > 60)
+            {
+                PrintFormat("[LOSS-MIN] In consecutive loss cooldown | cooldown until %s", TimeToString(m_consecutiveLossCooldownUntil));
+                lastCooldownLog = now;
+            }
+            return;  // Skip trading during cooldown
+        }
+
+        // Check daily loss circuit breaker
+        if(m_dailyLossCircuitBreakerPercent > 0 && m_dailyRiskBudget > 0)
+        {
+            double dailyLossLimit = m_dailyRiskBudget * (m_dailyLossCircuitBreakerPercent / 100.0);
+            if(m_dailyLossAmount >= dailyLossLimit)
+            {
+                static datetime lastCircuitLog = 0;
+                if(now - lastCircuitLog > 60)
+                {
+                    PrintFormat("[LOSS-MIN] Daily loss circuit breaker triggered | loss=%.2f limit=%.2f | stopping trading",
+                                m_dailyLossAmount, dailyLossLimit);
+                    lastCircuitLog = now;
+                }
+                return;  // Stop trading for the day
+            }
+        }
+
+        // Manage individual positions
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+            double slPrice = PositionGetDouble(POSITION_SL);
+            double currentProfit = PositionGetDouble(POSITION_PROFIT);
+
+            // Adverse momentum exit
+            if(m_adverseMomentumExitEnabled)
+            {
+                double atr = GetATR(symbol, 14);
+                if(atr > 0)
+                {
+                    double adverseThreshold = atr * m_adverseMomentumATRMultiplier;
+                    double priceMove = 0.0;
+
+                    if(type == POSITION_TYPE_BUY)
+                        priceMove = openPrice - currentPrice;
+                    else
+                        priceMove = currentPrice - openPrice;
+
+                    if(priceMove > adverseThreshold && currentProfit < 0)
+                    {
+                        PrintFormat("[LOSS-MIN] Adverse momentum exit | ticket=%d | move=%.5f threshold=%.5f",
+                                    ticket, priceMove, adverseThreshold);
+                        m_tradeManager.ClosePosition(ticket, "Adverse Momentum");
+                        m_consecutiveLossCount++;
+                        m_lastLossTime = now;
+                        m_dailyLossAmount += MathAbs(currentProfit);
+                        continue;
+                    }
+                }
+            }
+
+            // Position loss limit
+            if(m_positionLossLimitPercent > 0 && slPrice > 0)
+            {
+                double slDistance = MathAbs(openPrice - slPrice);
+                double currentDrawdownLocal = MathAbs(openPrice - currentPrice);
+                double lossRatio = (slDistance > 0) ? (currentDrawdownLocal / slDistance) : 0.0;
+
+                if(lossRatio > (m_positionLossLimitPercent / 100.0) && currentProfit < 0)
+                {
+                    PrintFormat("[LOSS-MIN] Position loss limit exit | ticket=%d | lossRatio=%.2f limit=%.2f",
+                                ticket, lossRatio, m_positionLossLimitPercent / 100.0);
+                    m_tradeManager.ClosePosition(ticket, "Position Loss Limit");
+                    m_consecutiveLossCount++;
+                    m_lastLossTime = now;
+                    m_dailyLossAmount += MathAbs(currentProfit);
+                    continue;
+                }
+            }
+        }
+
+        // Check consecutive loss limit
+        if(m_consecutiveLossLimit > 0 && m_consecutiveLossCount >= m_consecutiveLossLimit)
+        {
+            m_consecutiveLossCooldownUntil = now + m_consecutiveLossCooldownSec;
+            PrintFormat("[LOSS-MIN] Consecutive loss limit reached | count=%d | cooldown for %d seconds",
+                        m_consecutiveLossCount, m_consecutiveLossCooldownSec);
+            m_consecutiveLossCount = 0;  // Reset after triggering cooldown
+        }
+    }
+
+    // EXECUTION REFINEMENT: Partial profit taking management
+    void ManagePartialProfitTaking()
+    {
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+            double currentVolume = PositionGetDouble(POSITION_VOLUME);
+            double currentTP = PositionGetDouble(POSITION_TP);
+
+            // Skip if no TP set or already took partial profit
+            if(currentTP == 0) continue;
+
+            // Calculate profit distance
+            double profitDistance = 0.0;
+            if(type == POSITION_TYPE_BUY)
+                profitDistance = currentPrice - openPrice;
+            else
+                profitDistance = openPrice - currentPrice;
+
+            // Get ATR
+            double atr = GetATR(symbol, 14);
+            if(atr <= 0) continue;
+
+            // Check if reached partial profit target
+            double partialTarget = atr * m_partialProfitATRMultiplier;
+            if(profitDistance >= partialTarget && currentVolume > 0.01)
+            {
+                // Calculate partial close amount
+                double closeAmount = currentVolume * (m_partialProfitPercent / 100.0);
+                closeAmount = NormalizeDouble(closeAmount, 2);
+
+                if(closeAmount >= 0.01)
+                {
+                    PrintFormat("[PARTIAL-PROFIT] Taking partial profit | ticket=%d | amount=%.2f | profit=%.5f",
+                                ticket, closeAmount, profitDistance);
+                    m_tradeManager.ClosePositionPartial(ticket, closeAmount, "Partial Profit");
+                }
+            }
+        }
     }
 };
 

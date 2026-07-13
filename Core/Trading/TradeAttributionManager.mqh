@@ -116,6 +116,12 @@ public:
     //--- Position open check
     bool   IsPositionIdStillOpen(const ulong positionId);
 
+    //--- Record position attribution for NN training
+    void   RecordPositionAttribution(const ulong dealTicket, const string symbol, const ENUM_ORDER_TYPE orderType,
+                                     const double volume, const double price, const double stopLossPips,
+                                     const double takeProfitPips, const string clusterCode,
+                                     const string strategyRole, const string &contributors[]);
+
     //--- NN diagnostics
     void   NNDiagLog(const string message);
     void   NNDiagPrintSummary(const string context = "");
@@ -548,6 +554,42 @@ bool CTradeAttributionManager::RunNNAttributionSelfTest()
 
     NNDiagLog(ok ? "Self-test passed" : "Self-test failed");
     return ok;
+}
+
+//+------------------------------------------------------------------+
+//| Record position attribution for NN training                      |
+//+------------------------------------------------------------------+
+void CTradeAttributionManager::RecordPositionAttribution(
+    const ulong dealTicket,
+    const string symbol,
+    const ENUM_ORDER_TYPE orderType,
+    const double volume,
+    const double price,
+    const double stopLossPips,
+    const double takeProfitPips,
+    const string clusterCode,
+    const string strategyRole,
+    const string &contributors[])
+{
+    // This method records position attribution for later NN training
+    // In a full implementation, this would store the data for the NN training pipeline
+    if(m_enableNNDiagnostics)
+    {
+        PrintFormat("[TRADE-ATTRIBUTION] deal=%I64u | %s | %s | vol=%.2f | price=%.5f | SL=%.1f | TP=%.1f | cluster=%s | role=%s",
+                    dealTicket, symbol, EnumToString(orderType), volume, price, stopLossPips, takeProfitPips,
+                    clusterCode, strategyRole);
+        if(ArraySize(contributors) > 0)
+        {
+            string contribStr = "";
+            for(int i = 0; i < ArraySize(contributors); i++)
+            {
+                if(contributors[i] != "") contribStr += contributors[i] + ",";
+            }
+            PrintFormat("[TRADE-ATTRIBUTION] Contributors: %s", contribStr);
+        }
+    }
+    
+    IncrementNNDiagEntryMapCount();
 }
 
 //+------------------------------------------------------------------+

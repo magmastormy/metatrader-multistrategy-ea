@@ -159,8 +159,7 @@ enum ENUM_VALIDATION_PROFILE
 enum ENUM_STRATEGY_ROLE
 {
     PRIMARY_ALPHA = 0,
-    CONTEXT_FEATURE = 1,
-    SHADOW_RESEARCH = 2
+    CONTEXT_FEATURE = 1
 };
 
 //+------------------------------------------------------------------+

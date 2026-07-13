@@ -187,6 +187,7 @@ public:
     // Statistics
     int GetObjectsDrawn() const { return m_objectsDrawn; }
     int GetObjectsDeleted() const { return m_objectsDeleted; }
+    int GetObjectCount() const { return m_objectsDrawn - m_objectsDeleted; }
     
     // Utility
     void EnableDebugMode(bool enable) { m_config.enableDebugMode = enable; }

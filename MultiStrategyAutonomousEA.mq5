@@ -143,7 +143,7 @@ input bool   InpDashboardControlEnabled = false;       // Enable control channel
 
 //--- Live authority gate
 input group "Live Authority Gate"
-input bool   InpEnableLiveAuthorityGate = false;      // Route candidates through AI/strategy live-authority logic (OFF: all approved trades go live when shadow_mode=false)
+input bool   InpEnableLiveAuthorityGate = false;      // Route candidates through AI/strategy live-authority logic (OFF: all approved trades go live)
 input bool   InpAllowAIWarmStartLive = true;          // Allow high-quality AI/ONNX signals live while evidence is building
 input bool   InpAllowHybridAIStandalone = true;       // Allow high-confidence AI-only packets in HYBRID mode
 input double InpAIStandaloneMinConfidence = 0.65;     // Min confidence for AI-only HYBRID admission
@@ -209,8 +209,6 @@ input int  InpMaxIntrabarSymbolsPerCycle = 6;         // Max symbols eligible fo
 input int  InpMaxSignalEvaluationsPerCycle = 8;       // Max total heavy signal evaluations per cycle across new-bar + intrabar work
 input int  InpIntrabarBackoffMaxSeconds = 60;         // Max per-symbol intrabar backoff interval
 input int  InpReadinessReuseTtlSeconds = 60;          // Max readiness snapshot reuse age in seconds
-input bool InpShadowMode = false;                     // Global dry-run override; live authority gate still controls candidates
-input bool InpShadowModeEnabled = false;              // Shadow mode: log signals without executing trades
 input bool InpEnableNNOnlineTraining = true;          // Enable online NN observation/labeling loop
 input bool InpEnableNNWeightMutation = false;         // Enable live NN weight mutation
 input bool InpEnableNNPseudoLabeling = true;          // Enable pseudo-labeling when no trade-linked label exists (DEFAULT: ON for cold-start bootstrap)
@@ -574,7 +572,6 @@ ulong g_hbNoSignalCount = 0;
 ulong g_hbValidatorRejects = 0;
 ulong g_hbRiskRejects = 0;
 ulong g_hbTradesOpened = 0;
-ulong g_hbShadowTrades = 0;
 ulong g_hbQuietNoNewBar = 0;
 ulong g_hbQuietCadenceHold = 0;
 ulong g_hbQuietMissingManager = 0;
@@ -3736,10 +3733,9 @@ int OnInit()
                     EnumToString(marginMode));
         return INIT_FAILED;
     }
-    PrintFormat("[EXECUTION-MODE] mode=%s | shadow_mode=%s | note=%s",
-                (InpShadowMode || InpShadowModeEnabled) ? "SHADOW_ONLY" : "LIVE_SEND",
-                (InpShadowMode || InpShadowModeEnabled) ? "true" : "false",
-                (InpShadowMode || InpShadowModeEnabled) ? "orders will be simulated only" : "orders will be sent to broker");
+    PrintFormat("[EXECUTION-MODE] mode=%s | note=%s",
+                "LIVE_SEND",
+                "orders will be sent to broker");
 
     // AUDIT FIX: Gate AI subsystem initialization behind InpEnableAIMode
     if(InpEnableAIMode)
@@ -4075,7 +4071,6 @@ int OnInit()
         g_diagnosticsManager.SetSafeMode(&g_safeMode);
         g_diagnosticsManager.SetAIConfig(InpEnableAIMode, InpEnableNeuralNetwork, InpEnableNNOnlineTraining);
         g_diagnosticsManager.SetRiskTier(InpRiskTier);
-        g_diagnosticsManager.SetShadowMode(InpShadowMode || InpShadowModeEnabled);
         Print("[INIT] DiagnosticsManager initialized (Blueprint R6b)");
     }
     else
@@ -4172,7 +4167,6 @@ int OnInit()
             g_scalpEngine.SetMagicNumber((uint)InpMagicNumber);
             g_scalpEngine.SetAsyncMode(InpScalpAsyncMode);
             g_scalpEngine.SetMaxLatencyMs(InpScalpMaxLatencyMs);
-            g_scalpEngine.SetShadowMode(InpShadowMode || InpShadowModeEnabled);
 
             // Initialize scalp signal cache for fast-path evaluation
             if(g_scalpCache.Initialize(g_activePairs, ArraySize(g_activePairs), PERIOD_M1))
@@ -4604,7 +4598,6 @@ int OnInit()
     g_hbValidatorRejects = 0;
     g_hbRiskRejects = 0;
     g_hbTradesOpened = 0;
-    g_hbShadowTrades = 0;
     g_hbQuietNoNewBar = 0;
     g_hbQuietCadenceHold = 0;
     g_hbQuietMissingManager = 0;
@@ -5484,16 +5477,6 @@ void ProcessScalpFastPath()
 
         if(g_scalpEngine.ShouldEnterScalp(symbol, scalpSignal, scalpConfidence, scalpLotSize))
         {
-            if(InpShadowMode || InpShadowModeEnabled)
-            {
-                PrintFormat("[SHADOW-SCALP-FAST] %s | %s | lot=%.2f | confidence=%.2f | SHADOW MODE — no order sent",
-                            symbol,
-                            scalpSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                            scalpLotSize,
-                            scalpConfidence);
-            }
-            else
-            {
                 // Use pending orders if configured, otherwise market order
                 if(g_scalpEngine.GetConfig().usePendingOrders)
                     g_scalpEngine.PlaceScalpPendingOrder(symbol, scalpSignal, scalpLotSize);
@@ -6624,11 +6607,10 @@ void ProcessTradingLogic(bool fromTimer)
                                                        ? MathMax(0.10, liveAuthorityRiskMultiplier)
                                                        : MathMax(0.10, InpAIBootstrapRiskMultiplier * 0.50);
                     proposedRisk *= authoritySizingMultiplier;
-                    PrintFormat("[LIVE-AUTHORITY] cycle=%I64u | %s | live_allowed=%s | global_shadow=%s | risk=%.2f->%.2f | mult=%.2f | reason=%s",
+                    PrintFormat("[LIVE-AUTHORITY] cycle=%I64u | %s | live_allowed=%s | risk=%.2f->%.2f | mult=%.2f | reason=%s",
                                 scanCycleId,
                                 currentSymbol,
                                 liveAuthorityAllowed ? "true" : "false",
-                                (InpShadowMode || InpShadowModeEnabled) ? "true" : "false",
                                 authorityBaseRisk,
                                 proposedRisk,
                                 authoritySizingMultiplier,
@@ -7083,7 +7065,7 @@ tradeReq.lotSize = lotSize;
                                 bestCandidate.liveAuthorityReason,
                                 bestCandidate.contributorSummary);
 
-                    bool executeAsShadow = (InpShadowMode || InpShadowModeEnabled || (InpEnableLiveAuthorityGate && !bestCandidate.liveAuthorityAllowed));
+                    bool executeAsShadow = (InpEnableLiveAuthorityGate && !bestCandidate.liveAuthorityAllowed);
                     datetime aiPredictionTime = 0;
                     bool aiPredictionRecorded = false;
                     if(!executeAsShadow && g_aiFeedbackReady && bestCandidate.hasAIContributor)
@@ -7106,30 +7088,8 @@ tradeReq.lotSize = lotSize;
                     unifiedRiskManager.ReserveVirtualPosition(sendOwnerTag, sendReserveReq, bestCandidate.riskResult.riskPercent);
 
                     attemptedThisCycle++;
-                    if(executeAsShadow)
-                    {
-                        g_hbShadowTrades++;
-                        g_hbSignalsSent++;
-                        if(InpShadowMode || InpShadowModeEnabled)
-                            g_lastTradeTime = tickTime; // Intentional: shadow trades participate in cooldown to prevent rapid-fire simulation entries
-                        RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
-                        PrintFormat("[SHADOW-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
-                                    bestCandidate.cycleId,
-                                    bestCandidate.symbol,
-                                    bestCandidate.signalType,
-                                    bestCandidate.lotSize,
-                                    bestCandidate.tradeConfidence,
-                                    bestCandidate.qualityScore,
-                                    bestCandidate.convictionScore,
-                                    bestCandidate.contextScore,
-                                    bestCandidate.readinessScore,
-                                    bestCandidate.costScore,
-                                    bestCandidate.confluence,
-                                    bestCandidate.liveAuthorityAllowed ? "true" : "false",
-                                    bestCandidate.liveAuthorityReason,
-                                    bestCandidate.strategyRoleTag,
-                                    bestCandidate.strategyClusterTag,
-                                    bestCandidate.contributorSummary,
+                    RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
+                    PrintFormat("[LIVE-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
                                     bestCandidate.slPrice,
                                     bestCandidate.tpPrice);
                     }
@@ -7296,7 +7256,7 @@ tradeReq.lotSize = lotSize;
                         }
                     }
 
-                    // Issue 1 fix: Release virtual position after send (shadow or live).
+                    // Issue 1 fix: Release virtual position after send (live trade).
                     // For live trades, actual risk is registered via RegisterExecutedTradeRisk,
                     // so the virtual reservation is no longer needed.
                     unifiedRiskManager.ReleaseVirtualPosition(sendOwnerTag);
@@ -7335,22 +7295,11 @@ tradeReq.lotSize = lotSize;
 
                     if(g_scalpEngine.ShouldEnterScalp(scalpSymbol, scalpSignal, scalpConfidence, scalpLotSize))
                     {
-                        if(InpShadowMode || InpShadowModeEnabled)
-                        {
-                            PrintFormat("[SHADOW-SCALP] %s | %s | lot=%.2f | confidence=%.2f | SHADOW MODE — no order sent",
-                                        scalpSymbol,
-                                        scalpSignal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                                        scalpLotSize,
-                                        scalpConfidence);
-                        }
+                        // Use pending orders if configured, otherwise market order
+                        if(g_scalpEngine.GetConfig().usePendingOrders)
+                            g_scalpEngine.PlaceScalpPendingOrder(scalpSymbol, scalpSignal, scalpLotSize);
                         else
-                        {
-                            // Use pending orders if configured, otherwise market order
-                            if(g_scalpEngine.GetConfig().usePendingOrders)
-                                g_scalpEngine.PlaceScalpPendingOrder(scalpSymbol, scalpSignal, scalpLotSize);
-                            else
-                                g_scalpEngine.ExecuteScalpTrade(scalpSymbol, scalpSignal, scalpLotSize, scalpConfidence);
-                        }
+                            g_scalpEngine.ExecuteScalpTrade(scalpSymbol, scalpSignal, scalpLotSize, scalpConfidence);
                     }
                 }
             }
@@ -7368,7 +7317,7 @@ tradeReq.lotSize = lotSize;
         g_diagnosticsManager.UpdateTradingPaused(g_spikeMonitor.IsPaused());
         g_diagnosticsManager.UpdateCounters(
             g_hbScansAttempted, g_hbIntrabarScansExecuted, g_hbNoSignalCount,
-            g_hbValidatorRejects, g_hbRiskRejects, g_hbTradesOpened, g_hbShadowTrades,
+            g_hbValidatorRejects, g_hbRiskRejects, g_hbTradesOpened,
             g_hbSyntheticSpikeEvents,
             g_hbSignalsGenerated, g_hbSignalsAfterPipeline, g_hbSignalsAfterQuorum,
             g_hbSignalsValidated, g_hbSignalsRiskApproved, g_hbSignalsSent,

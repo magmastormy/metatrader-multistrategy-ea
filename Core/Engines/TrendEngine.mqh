@@ -187,7 +187,6 @@ private:
     bool TryReuseLastGoodTrend(const string symbol,
                                ENUM_TIMEFRAMES timeframe,
                                const string reasonTag);
-    double CalculateAtrFallback(const string symbol, ENUM_TIMEFRAMES timeframe, const int period) const;
     bool CalculateEmaFallbackSeries(const string symbol,
                                     ENUM_TIMEFRAMES timeframe,
                                     const int period,
@@ -211,6 +210,9 @@ public:
     // Constructor/Destructor
     CTrendEngine();
     ~CTrendEngine();
+    
+    // Public utility methods
+    double CalculateAtrFallback(const string symbol, ENUM_TIMEFRAMES timeframe, const int period) const;
     
     // Initialization
     bool Initialize(int maFast = 20, int maMedium = 50, int maSlow = 200,

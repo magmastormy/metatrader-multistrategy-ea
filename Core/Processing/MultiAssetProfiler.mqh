@@ -426,6 +426,38 @@ public:
    }
 
    //+------------------------------------------------------------------+
+   //| Resolve per-asset-class ATR crisis ratio threshold              |
+   //| Used by post-consensus filter to detect ATR spike regimes       |
+   //+------------------------------------------------------------------+
+   double ResolveATRCrisisThreshold(const string symbol)
+   {
+      ENUM_ASSET_CLASS ac = DetectAssetClass(symbol);
+      SAssetProfile profile = m_profiles[ac];
+      
+      // Per-asset-class ATR crisis thresholds (higher = more tolerant of ATR spikes)
+      switch(ac)
+      {
+         case ASSET_DERIV_STEP:
+         case ASSET_DERIV_JUMP:
+         case ASSET_DERIV_CRASHBOOM:
+         case ASSET_DERIV_DEX:
+            return 3.5;  // Synthetic indices: more tolerant of ATR regime changes
+         case ASSET_DERIV_VOLATILITY:
+            return 4.0;  // Volatility indices: very high ATR variability expected
+         case ASSET_METALS:
+            return 2.0;  // Metals: moderate ATR crisis threshold
+         case ASSET_INDICES:
+            return 2.5;  // Indices: moderate-high
+         case ASSET_ENERGIES:
+            return 3.0;  // Energies: higher
+         case ASSET_FOREX:
+            return 2.0;  // Forex: standard threshold
+         default:
+            return 2.5;  // Universal fallback
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Check if symbol is a Deriv synthetic (delegates to Instruments) |
    //+------------------------------------------------------------------+
    bool IsDerivSymbol(const string symbol)

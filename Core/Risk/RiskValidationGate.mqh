@@ -308,14 +308,16 @@ bool CRiskValidationGate::Initialize(CPortfolioRiskManager* pPortfolioRiskManage
     
     m_portfolioRiskManager = pPortfolioRiskManager;
     
-    // Validate parameters
-    if(maxRiskPerTrade <= 0 || maxRiskPerTrade > 100.0)
+    // Validate parameters — upper bound raised to 500% to support aggressive accounts
+    // (mirrors CPortfolioRiskManager::Initialize upper bound). Users explicitly opt in
+    // via InpMaxRiskPerTrade / InpMaxPortfolioRisk in MultiStrategyAutonomousEA.mq5.
+    if(maxRiskPerTrade <= 0 || maxRiskPerTrade > 500.0)
     {
         CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate", "Invalid max risk per trade", 0);
         return false;
     }
     
-    if(maxPortfolioRisk <= 0 || maxPortfolioRisk > 100.0)
+    if(maxPortfolioRisk <= 0 || maxPortfolioRisk > 500.0)
     {
         CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "RiskValidationGate", "Invalid max portfolio risk", 0);
         return false;

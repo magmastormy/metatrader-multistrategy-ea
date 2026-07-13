@@ -133,7 +133,6 @@ private:
    double                    m_usedScalpRiskPct;     // Tracked scalp risk budget used
    uint                      m_magicNumber;          // EA magic number for pending orders
    bool                      m_initialized;
-   bool                      m_shadowMode;           // Shadow mode: log signals without executing
 
    // Pending order tracking
    SPendingScalpOrder        m_pendingOrders[10];
@@ -506,7 +505,6 @@ public:
       m_usedScalpRiskPct(0.0),
       m_magicNumber(123456),
       m_initialized(false),
-      m_shadowMode(false),
       m_pendingOrderCount(0),
       m_scalpPositionCount(0),
       m_pendingAsyncCount(0),
@@ -631,11 +629,6 @@ public:
       m_maxLatencyMs = (maxMs > 0) ? maxMs : 500;
       PrintFormat("[SCALP-ASYNC] Max latency set to %u ms", m_maxLatencyMs);
    }
-
-   //+------------------------------------------------------------------+
-   //| Set shadow mode (log signals without executing trades)            |
-   //+------------------------------------------------------------------+
-   void SetShadowMode(bool enabled) { m_shadowMode = enabled; }
 
    //+------------------------------------------------------------------+
    //| Get pending async order count                                     |
@@ -866,32 +859,6 @@ public:
       if(m_tradeManager == NULL)
          return false;
 
-      // Shadow mode: log signal without executing trade
-      if(m_shadowMode)
-      {
-         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-         double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-         double price = (signal == TRADE_SIGNAL_BUY) ? ask : bid;
-         double sl = 0.0, tp = 0.0;
-         if(point > 0.0)
-         {
-            if(signal == TRADE_SIGNAL_BUY)
-            {
-               sl = price - m_config.scalpSLPips * point;
-               tp = price + m_config.scalpTPPips * point;
-            }
-            else
-            {
-               sl = price + m_config.scalpSLPips * point;
-               tp = price - m_config.scalpTPPips * point;
-            }
-         }
-         PrintFormat("[SHADOW-TRADE] %s %s %.2f @ %.2f | SL=%.2f TP=%.2f | Would execute but shadow mode active",
-                     symbol, signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL", lotSize, price, sl, tp);
-         return false;
-      }
-
       ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
       // Build comment with SCALP tag for position identification
@@ -1065,15 +1032,6 @@ public:
          return false;
       if(m_pendingOrderCount >= ArraySize(m_pendingOrders))
          return false;
-
-      // Shadow mode: log signal without placing pending order
-      if(m_shadowMode)
-      {
-         PrintFormat("[SHADOW-TRADE] %s %s %.2f | PENDING %s | Would execute but shadow mode active",
-                     symbol, signal == TRADE_SIGNAL_BUY ? "BUY_LIMIT" : "SELL_LIMIT", lotSize,
-                     signal == TRADE_SIGNAL_BUY ? "BUY_LIMIT" : "SELL_LIMIT");
-         return false;
-      }
 
       double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
       if(point <= 0.0)

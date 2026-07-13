@@ -29,6 +29,7 @@
 #include "../Cache/ATRCache.mqh"
 #include "../Utils/Instruments.mqh"
 #include "../Utils/TradeJournal.mqh"
+#include "TradeTypes.mqh"
 
 
 
@@ -52,73 +53,12 @@ struct SPendingConfirmation
     bool     isActive;
 };
 
-// Async trade request tracking for OrderSendAsync + OnTradeTransaction pattern
-struct SAsyncTradeRequest
-{
-    ulong           ticket;       // Order ticket assigned by broker
-    string          symbol;       // Trading symbol
-    ENUM_ORDER_TYPE orderType;    // Order type (BUY/SELL)
-    double          lot;          // Lot size
-    double          price;        // Expected execution price
-    double          sl;           // Stop loss
-    double          tp;           // Take profit
-    ulong           magic;        // Magic number
-    datetime        submitTime;   // When the request was submitted
-    int             timeoutMs;    // Confirmation timeout in milliseconds
-    bool            confirmed;    // Whether the trade was confirmed
-    bool            expired;      // Whether the request timed out
-};
-
 // Trade execution settings
 #define MAX_TRADE_RETRIES 4
 #define TRADE_RETRY_DELAY 150 // ms
 #define MAX_ORDERS_PER_SYMBOL 5
 #define ORDER_TIMEOUT_SECONDS 30
 #define MAX_PENDING_CONFIRMATIONS 20
-
-struct STradeExecutionReceipt
-{
-    bool accepted;
-    bool partialFill;
-    uint retcode;
-    uint requestId;
-    int retryCount;
-    ulong orderTicket;
-    ulong dealTicket;
-    double requestedVolume;
-    double filledVolume;
-    double requestedPrice;
-    double averagePrice;
-    double slippagePoints;
-    ulong roundTripMs;
-    datetime submitTime;
-    double stopLoss;
-    double takeProfit;
-    string symbol;
-    string note;
-
-    STradeExecutionReceipt()
-    {
-        accepted = false;
-        partialFill = false;
-        retcode = 0;
-        requestId = 0;
-        retryCount = 0;
-        orderTicket = 0;
-        dealTicket = 0;
-        requestedVolume = 0.0;
-        filledVolume = 0.0;
-        requestedPrice = 0.0;
-        averagePrice = 0.0;
-        slippagePoints = 0.0;
-        roundTripMs = 0;
-        submitTime = 0;
-        stopLoss = 0.0;
-        takeProfit = 0.0;
-        symbol = "";
-        note = "";
-    }
-};
 
 // Per-symbol magic offset for family-specific magic number differentiation
 struct SSymbolMagicOffset

@@ -13,6 +13,7 @@
 #include "../Risk/VPINFilter.mqh"
 #include "../Engines/OrderFlowImbalanceEngine.mqh"
 #include "../Engines/FamilyStrategyWeightMatrix.mqh"
+#include "../Engines/FourStateRegimeDetector.mqh"
 #include "../Utils/Enums.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
@@ -47,6 +48,7 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 class CPythonBridge;
+class CFourStateRegimeDetector;  // Forward declaration for market regime detection
 
 // External reference to global Python bridge instance
 extern CPythonBridge* g_pythonBridge;
@@ -62,7 +64,6 @@ struct StrategyEntry
     bool intrabarEligible;
     int intrabarPolicy;
     bool liveVotingEnabled;
-    bool shadowOnly;
     int role;
     int cluster;
     ENUM_STRATEGY_TIER tier;             // Strategy Tier (Ranking Matrix)
@@ -119,7 +120,6 @@ string StrategyRoleToString(const ENUM_STRATEGY_ROLE role)
     {
         case PRIMARY_ALPHA: return "PRIMARY_ALPHA";
         case CONTEXT_FEATURE: return "CONTEXT_FEATURE";
-        case SHADOW_RESEARCH: return "SHADOW_RESEARCH";
         default: return "PRIMARY_ALPHA";
     }
 }
@@ -222,6 +222,9 @@ private:
     CVPINFilter* m_vpinFilter;        // VPIN toxicity filter for consensus (Batch 104)
     COrderFlowImbalanceEngine* m_ofiEngine;  // OFI for regime integration (Batch 104)
     CFamilyStrategyWeightMatrix* m_familyWeightMatrix;  // I1: Per-family cluster weight multipliers
+    CFourStateRegimeDetector* m_fourStateRegimeDetector; // Four-state regime detector
+    ENUM_MARKET_REGIME m_currentMarketRegime;
+    bool m_regimeDetectorInitialized;
     
     StrategyEntry m_strategies[];
     int m_strategyCount;
@@ -420,8 +423,7 @@ public:
                          bool intrabarEligible = false,
                          ENUM_STRATEGY_ROLE role = PRIMARY_ALPHA,
                          ENUM_STRATEGY_CLUSTER cluster = STRATEGY_CLUSTER_NONE,
-                         bool liveVotingEnabled = true,
-                         bool shadowOnly = false);
+                         bool liveVotingEnabled = true);
     bool EnableStrategy(const string name);
     bool DisableStrategy(const string name);
     
@@ -484,12 +486,10 @@ public:
     bool SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role);
     bool SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster);
     bool SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled);
-    bool SetStrategyShadowModeByName(const string name, const bool enabled);
     bool SetStrategyGovernanceByName(const string name,
                                      ENUM_STRATEGY_ROLE role,
                                      ENUM_STRATEGY_CLUSTER cluster,
-                                     const bool liveVotingEnabled,
-                                     const bool shadowOnly);
+                                     const bool liveVotingEnabled);
     bool SetStrategyConfidenceThresholdByName(const string name, const double threshold);
     int GetRegisteredStrategyCount() const { return m_strategyCount; }
     IStrategy* GetStrategyByName(const string name);  // Batch 103: Lookup strategy by name
@@ -498,7 +498,6 @@ public:
     string GetRegisteredStrategyRole(const int index) const;
     string GetRegisteredStrategyCluster(const int index) const;
     bool IsRegisteredStrategyLiveVotingEnabled(const int index) const;
-    bool IsRegisteredStrategyShadowOnly(const int index) const;
     void GetLastSignalContributors(string &contributors[]) const;
     bool GetLastSignalExecutionContext(string &roleTag,
                                        string &clusterTag,
@@ -508,7 +507,6 @@ public:
     bool GetLastDecisionContext(SConsensusDecisionContext &context) const;
     void GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                          ulong &featureSignals,
-                                         ulong &shadowSignals,
                                          ulong &voteSuppressed,
                                          ulong &trendClusterSignals,
                                          ulong &meanReversionClusterSignals,
@@ -551,6 +549,23 @@ public:
     }
     ENUM_MARKET_REGIME GetCurrentMarketRegime() const
     {
+        if(m_fourStateRegimeDetector != NULL && m_regimeDetectorInitialized)
+        {
+            ENUM_FOUR_STATE_REGIME fourStateRegime = m_fourStateRegimeDetector.GetRegime();
+            
+            // Map FourState regime to standard MARKET_REGIME
+            switch(fourStateRegime)
+            {
+                case FSTATE_LOW_VOL_BULL:
+                case FSTATE_HIGH_VOL_BULL:
+                    return MARKET_REGIME_TRENDING;
+                case FSTATE_LOW_VOL_BEAR:
+                case FSTATE_HIGH_VOL_BEAR:
+                    return MARKET_REGIME_TRENDING;  // Both bull and bear trends are trending
+                default:
+                    return MARKET_REGIME_UNKNOWN;
+            }
+        }
         return MARKET_REGIME_UNKNOWN;
     }
     string GetStrategyWeightsJSON() const;
@@ -600,11 +615,14 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_tfConsistency(NULL),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
+    m_unifiedRiskManager(NULL),
     m_derivProfiler(NULL),
     m_multiAssetProfiler(NULL),
     m_vpinFilter(NULL),
     m_ofiEngine(NULL),
     m_familyWeightMatrix(NULL),
+    m_fourStateRegimeDetector(NULL),
+    m_regimeDetectorInitialized(false),
     m_strategyCount(0),
     m_maxStrategies(25),
     m_managedMagic(0),
@@ -768,6 +786,13 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
         m_adxHandleCached = INVALID_HANDLE;
     }
 
+    // Clean up FourStateRegimeDetector
+    if(m_fourStateRegimeDetector != NULL)
+    {
+        delete m_fourStateRegimeDetector;
+        m_fourStateRegimeDetector = NULL;
+    }
+
     if(m_tfConsistency != NULL)
     {
         delete m_tfConsistency;
@@ -838,6 +863,28 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_initialized = true;
     m_drawingManager = NULL;
     
+    // Initialize FourStateRegimeDetector
+    m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);
+    if(m_fourStateRegimeDetector != NULL)
+    {
+        if(m_fourStateRegimeDetector.Initialize())
+        {
+            Print("[EnterpriseStrategyManager] FourStateRegimeDetector initialized for ", m_symbol);
+            m_regimeDetectorInitialized = true;
+        }
+        else
+        {
+            Print("[EnterpriseStrategyManager] WARNING: FourStateRegimeDetector initialization failed for ", m_symbol);
+            delete m_fourStateRegimeDetector;
+            m_fourStateRegimeDetector = NULL;
+            m_regimeDetectorInitialized = false;
+        }
+    }
+    else
+    {
+        m_regimeDetectorInitialized = false;
+    }
+    
     Print("[EnterpriseStrategyManager] Initialized for ", symbol, " on ", EnumToString(timeframe));
     Print("[EnterpriseStrategyManager] Pipeline: ", m_usePipeline ? "ENABLED" : "DISABLED");
     
@@ -854,8 +901,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
                                                  bool intrabarEligible,
                                                  ENUM_STRATEGY_ROLE role,
                                                  ENUM_STRATEGY_CLUSTER cluster,
-                                                 bool liveVotingEnabled,
-                                                 bool shadowOnly)
+                                                 bool liveVotingEnabled)
 {
     if(strategy == NULL || !m_initialized)
         return false;
@@ -894,7 +940,6 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     m_strategies[m_strategyCount].intrabarEligible = intrabarEligible;
     m_strategies[m_strategyCount].intrabarPolicy = intrabarEligible ? (int)INTRABAR_POLICY_LIVE : (int)INTRABAR_POLICY_OFF;
     m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
-    m_strategies[m_strategyCount].shadowOnly = shadowOnly;
     m_strategies[m_strategyCount].role = (int)role;
     m_strategies[m_strategyCount].cluster = (int)cluster;
     m_strategies[m_strategyCount].tier = tier; // Store tier
@@ -941,8 +986,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
           " | Intrabar: ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_strategies[m_strategyCount - 1].intrabarPolicy),
           " | Role: ", StrategyRoleToString(role),
           " | Cluster: ", StrategyClusterToString(cluster),
-          " | LiveVote: ", liveVotingEnabled ? "YES" : "NO",
-          " | Shadow: ", shadowOnly ? "YES" : "NO");
+          " | LiveVote: ", liveVotingEnabled ? "YES" : "NO");
     
     return true;
 }
@@ -2428,11 +2472,11 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     
     // 0: Momentum (live primary voter) - Tier 3
     if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, STRATEGY_TIER_3, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, TREND_CLUSTER, true);
     
     // 1: Trend (live primary voter) - Tier 2
     if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, TREND_CLUSTER, true);
     
     // 2: Fibonacci REMOVED - Class deleted
     // if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
@@ -2445,38 +2489,38 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     
     // 4: Support/Resistance (live primary voter) - Tier 2
     if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
     
     // 5: Unified ICT (live primary voter) - Tier 1
     if(size > 5 && flags[5]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT", true, 2.2, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
     
     // 6: Candlestick (live primary voter) - Tier 2
     if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     // 7: Unicorn Model (live primary voter) - Tier 1
     if(size > 7 && flags[7]) RegisterStrategy(new CUnicornModelStrategy(), "Unicorn Model", true, 2.4, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     // 8: Power of Three / ICT 2025 (live primary voter) - Tier 1
     if(size > 8 && flags[8]) RegisterStrategy(new CPowerOfThreeStrategy(), "Power of Three", true, 2.3, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     // 9: Mean Reversion (live primary voter) - Tier 2 - MEAN_REVERSION_CLUSTER
     if(size > 9 && flags[9]) RegisterStrategy(new CMeanReversionStrategy(), "Mean Reversion", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, true,
-                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
+                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
 
     // 10: Volatility Breakout (live primary voter) - Tier 1 - TREND_CLUSTER
     if(size > 10 && flags[10]) RegisterStrategy(new CVolatilityBreakoutStrategy(), "Volatility Breakout", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, true,
-                                               PRIMARY_ALPHA, TREND_CLUSTER, true, false);
+                                               PRIMARY_ALPHA, TREND_CLUSTER, true);
 
     // 11: Statistical Arbitrage - Requires Python Bridge for real-time correlation matrix
     // Conditionally registered only when Python bridge is available
     if(g_pythonBridge != NULL && g_pythonBridge.IsConnected())
     {
         if(size > 11 && flags[11]) RegisterStrategy(new CStatisticalArbitrageStrategy(), "Statistical Arbitrage", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                    PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, true);
+                                                    PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
         Print("[EnterpriseStrategyManager] Python Bridge available - Statistical Arbitrage strategy registered in shadow mode");
     }
     else
@@ -2487,23 +2531,23 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
     // Batch 103: New ICT/SMC strategies
     // 12: FVG Scalper - Tier 2 - STRUCTURE_CLUSTER
     if(size > 12 && flags[12]) RegisterStrategy(new CFVGScalperStrategy(), "FVG Scalper", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     // 13: Turtle Soup - Tier 2 - STRUCTURE_CLUSTER
     if(size > 13 && flags[13]) RegisterStrategy(new CTurtleSoupStrategy(), "Turtle Soup", true, 1.6, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     // 14: Breaker Block - Tier 2 - STRUCTURE_CLUSTER
     if(size > 14 && flags[14]) RegisterStrategy(new CBreakerBlockStrategy(), "Breaker Block", true, 1.7, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     // 15: NY Open Gap - Tier 3 - STRUCTURE_CLUSTER (session-limited)
     if(size > 15 && flags[15]) RegisterStrategy(new CNYOpenGapStrategy(), "NY Open Gap", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     // 16: Asian Range Break - Tier 3 - STRUCTURE_CLUSTER (session-limited)
     if(size > 16 && flags[16]) RegisterStrategy(new CAsianRangeBreakStrategy(), "Asian Range Break", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
+                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
           GetActiveStrategyCount());
@@ -2644,7 +2688,7 @@ string CEnterpriseStrategyManager::GetStrategyListJSON() const
         json += "\"name\":\"" + EscapeJsonString(m_strategies[i].name) + "\",";
         json += "\"symbol\":\"" + EscapeJsonString(m_symbol) + "\",";
         json += "\"role\":\"" + StrategyRoleToString((ENUM_STRATEGY_ROLE)m_strategies[i].role) + "\",";
-        json += "\"mode\":\"" + (m_strategies[i].shadowOnly ? "SHADOW" : (m_strategies[i].enabled && m_strategies[i].liveVotingEnabled ? "ACTIVE" : "DISABLED")) + "\",";
+        json += "\"mode\":\"" + (m_strategies[i].enabled && m_strategies[i].liveVotingEnabled ? "ACTIVE" : "DISABLED") + "\",";
         json += "\"weight\":" + DoubleToString(m_strategies[i].weight, 2) + ",";
         json += "\"health_score\":" + DoubleToString(m_strategies[i].healthScore, 2) + ",";
         json += "\"win_rate\":" + DoubleToString(m_strategies[i].recentWinRate, 2) + ",";
@@ -2804,21 +2848,6 @@ bool CEnterpriseStrategyManager::SetStrategyLiveVotingEligibilityByName(const st
     return true;
 }
 
-bool CEnterpriseStrategyManager::SetStrategyShadowModeByName(const string name, const bool enabled)
-{
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_strategies[index].shadowOnly = enabled;
-    if(enabled)
-        m_strategies[index].liveVotingEnabled = false;
-
-    PrintFormat("[EnterpriseStrategyManager] Shadow mode updated: %s => %s",
-                name, enabled ? "ENABLED" : "DISABLED");
-    return true;
-}
-
 bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
 {
     int index = FindStrategyIndexByName(name);
@@ -2836,8 +2865,7 @@ bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const stri
 bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
                                                              ENUM_STRATEGY_ROLE role,
                                                              ENUM_STRATEGY_CLUSTER cluster,
-                                                             const bool liveVotingEnabled,
-                                                             const bool shadowOnly)
+                                                             const bool liveVotingEnabled)
 {
     int index = FindStrategyIndexByName(name);
     if(index < 0)
@@ -2845,17 +2873,16 @@ bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
 
     m_strategies[index].role = (int)role;
     m_strategies[index].cluster = (int)cluster;
-    m_strategies[index].shadowOnly = shadowOnly;
-    m_strategies[index].liveVotingEnabled = (shadowOnly ? false : liveVotingEnabled);
+    m_strategies[index].liveVotingEnabled = liveVotingEnabled;
 
-    PrintFormat("[EnterpriseStrategyManager] Governance updated: %s | role=%s | cluster=%s | live_vote=%s | shadow=%s",
+    PrintFormat("[EnterpriseStrategyManager] Governance updated: %s | role=%s | cluster=%s | live_vote=%s",
                 name,
                 StrategyRoleToString(role),
                 StrategyClusterToString(cluster),
-                m_strategies[index].liveVotingEnabled ? "ENABLED" : "DISABLED",
-                shadowOnly ? "ENABLED" : "DISABLED");
+                liveVotingEnabled ? "ENABLED" : "DISABLED");
     return true;
 }
+
 
 string CEnterpriseStrategyManager::GetRegisteredStrategyName(const int index) const
 {
@@ -2892,13 +2919,6 @@ bool CEnterpriseStrategyManager::IsRegisteredStrategyLiveVotingEnabled(const int
     return m_strategies[index].liveVotingEnabled;
 }
 
-bool CEnterpriseStrategyManager::IsRegisteredStrategyShadowOnly(const int index) const
-{
-    if(index < 0 || index >= m_strategyCount)
-        return false;
-    return m_strategies[index].shadowOnly;
-}
-
 void CEnterpriseStrategyManager::GetLastSignalContributors(string &contributors[]) const
 {
     ArrayCopy(contributors, m_lastSignalContributors);
@@ -2924,7 +2944,6 @@ bool CEnterpriseStrategyManager::GetLastDecisionContext(SConsensusDecisionContex
 
 void CEnterpriseStrategyManager::GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                                                  ulong &featureSignals,
-                                                                 ulong &shadowSignals,
                                                                  ulong &voteSuppressed,
                                                                  ulong &trendClusterSignals,
                                                                  ulong &meanReversionClusterSignals,
@@ -2933,7 +2952,6 @@ void CEnterpriseStrategyManager::GetRoleClusterDiagnosticsTotals(ulong &primaryS
 {
     primarySignals = m_diagRolePrimarySignals;
     featureSignals = m_diagRoleFeatureSignals;
-    shadowSignals = m_diagRoleShadowSignals;
     voteSuppressed = m_diagVoteSuppressed;
     trendClusterSignals = m_diagClusterTrendSignals;
     meanReversionClusterSignals = m_diagClusterMeanReversionSignals;
@@ -3249,8 +3267,6 @@ bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) co
         return false;
     if(!m_strategies[strategyIndex].enabled || m_strategies[strategyIndex].strategy == NULL)
         return false;
-    if(m_strategies[strategyIndex].shadowOnly)
-        return false;
     if(!m_strategies[strategyIndex].liveVotingEnabled)
         return false;
     return true;
@@ -3288,8 +3304,6 @@ double CEnterpriseStrategyManager::GetStrategyRoleVoteMultiplier(const int strat
     ENUM_STRATEGY_ROLE role = (ENUM_STRATEGY_ROLE)m_strategies[strategyIndex].role;
     if(role == CONTEXT_FEATURE)
         return 0.85;
-    if(role == SHADOW_RESEARCH)
-        return 0.60;
     return 1.0;
 }
 
@@ -3298,11 +3312,10 @@ double CEnterpriseStrategyManager::CalculateDirectionDiversityScore(const int &s
     if(ArraySize(strategyIndices) <= 0)
         return 0.0;
 
-    bool roleSeen[3];
+    bool roleSeen[2];
     bool clusterSeen[4];
     roleSeen[0] = false;
     roleSeen[1] = false;
-    roleSeen[2] = false;
     clusterSeen[0] = false;
     clusterSeen[1] = false;
     clusterSeen[2] = false;
@@ -3317,7 +3330,7 @@ double CEnterpriseStrategyManager::CalculateDirectionDiversityScore(const int &s
             continue;
 
         int role = m_strategies[idx].role;
-        if(role < 0 || role > 2)
+        if(role < 0 || role > 1)
             role = 0;
         if(!roleSeen[role])
         {
@@ -3899,6 +3912,12 @@ void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES t
     CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
     if(drawingCoordinator != NULL)
         drawingCoordinator.BeginBarCycle(symbol, timeframe, barTime);
+
+    // Update FourStateRegimeDetector on each new bar
+    if(m_fourStateRegimeDetector != NULL && m_regimeDetectorInitialized)
+    {
+        m_fourStateRegimeDetector.Update();
+    }
 
     // Call OnNewBar and persist per-bar analysis snapshots
     for(int i = 0; i < m_strategyCount; i++)

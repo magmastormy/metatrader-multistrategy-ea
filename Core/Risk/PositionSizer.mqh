@@ -867,37 +867,8 @@ double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
 double CPositionSizer::CalculateVolatilityBasedSize(const string symbolParam,
                                                     const double baseSize)
 {
-    double atr = GetATR(symbolParam, m_params.atrPeriod);
-    if(atr <= 0)
-    {
-        SErrorContext context;
-        context.component = "PositionSizer";
-        context.operation = "GetVolatilityAdjustedSize";
-        context.symbol = symbolParam;
-        context.errorCode = 0;
-        context.additionalInfo = "Invalid ATR for " + symbolParam;
-        context.timestamp = TimeCurrent();
-        context.severity = ERROR_WARNING;
-        CEnhancedErrorHandler::LogError(ERROR_WARNING, context);
-        return baseSize;
-    }
-    
-    // Get current price for normalization
-    double currentPriceVal = SymbolInfoDouble(symbolParam, SYMBOL_BID);
-    if(currentPriceVal <= 0)
-    {
-        return baseSize;
-    }
-    
-    // Calculate volatility ratio with minimum price threshold to avoid exaggeration for low-priced symbols
-    double minPriceThreshold = 0.01; // Minimum price to use for normalization
-    double normalizedPrice = MathMax(currentPriceVal, minPriceThreshold);
-    double volatilityRatio = atr / normalizedPrice;
-    
-    // Adjust size inversely to volatility
-    double volatilityAdjustment = 1.0 / (1.0 + volatilityRatio * m_params.atrMultiplier);
-    
-    return baseSize * volatilityAdjustment;
+    // AGGRESSIVE: Disable volatility adjustment - return base size unchanged
+    return baseSize;
 }
 
 //+------------------------------------------------------------------+
@@ -906,13 +877,8 @@ double CPositionSizer::CalculateVolatilityBasedSize(const string symbolParam,
 double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbolParam,
                                                         const double baseSize)
 {
-    double correlation = CalculatePortfolioCorrelation(symbolParam);
-    
-    // Reduce size based on correlation
-    double correlationAdjustment = 1.0 - (MathAbs(correlation) * m_params.correlationAdjustment);
-    correlationAdjustment = MathMax(0.1, correlationAdjustment); // Minimum 10% of base size
-    
-    return baseSize * correlationAdjustment;
+    // AGGRESSIVE: Disable correlation adjustment - return base size unchanged
+    return baseSize;
 }
 
 //+------------------------------------------------------------------+
@@ -1417,7 +1383,8 @@ double CPositionSizer::CalculateKellyFraction(void)
     
     double payoffRatio = m_kellyAvgWin / MathMax(m_kellyAvgLoss, 0.0001);
     double kelly = m_kellyWinRate - ((1.0 - m_kellyWinRate) / payoffRatio);
-    double adjustedKelly = kelly * m_kellyFraction;  // Half-Kelly
+    // AGGRESSIVE: Use full Kelly instead of half-Kelly
+    double adjustedKelly = kelly;  // Full Kelly (removed m_kellyFraction multiplier)
     double result = MathMax(0.01, MathMin(adjustedKelly, m_kellyMaxCap));  // Floor at 1%, cap at 25%
     
     Print("[KELLY] PayoffRatio=", DoubleToString(payoffRatio, 4),

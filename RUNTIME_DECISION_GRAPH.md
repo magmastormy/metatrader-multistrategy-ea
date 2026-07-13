@@ -1,18 +1,24 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-07-01
+- Last Updated: 2026-07-12
 - Scope: Runtime signal-to-execution flow
 - Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 110
+- Current Batch: 122
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
 
 ## Ownership Map
-- Orchestration: `MultiStrategyAutonomousEA.mq5`
+- Orchestration: `MultiStrategyAutonomousEA.mq5` → `Core/Orchestration/EAOrchestrator.mqh`
+- Fast-Path Tick Processing: `Core/Orchestration/TickProcessor.mqh`
+- Heavy Timer Processing: `Core/Orchestration/TimerProcessor.mqh`
+- Signal Generation: `Core/Orchestration/SignalGenerator.mqh`
+- Multi-Tier Validation: `Core/Orchestration/SignalValidator.mqh`
+- Candidate Building: `Core/Orchestration/CandidateBuilder.mqh`
+- Trade Execution: `Core/Orchestration/TradeExecutor.mqh`
+- Live Authority Resolution: `Core/Orchestration/LiveAuthorityResolver.mqh`
 - Consensus: `CEnterpriseStrategyManager`
-- Multi-Tier Validation: `CTieredSignalValidator` (Batch 60)
 - Filtering: `CUnifiedSignalPipeline`
 - AI adaptation/weights: `CAIEngine` + symbol-scoped AI adapters (implementing `IAIStrategy`)
 - AI modules:
@@ -23,7 +29,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Live authority: `MultiStrategyAutonomousEA.mq5` candidate authority gate
 - Risk veto: `CUnifiedRiskManager`
 - Execution: `CTradeManager`
-- Position lifecycle: `MultiStrategyAutonomousEA.mq5` + `CTradeManager::ManageAllPositions(...)`
+- Position lifecycle: `MultiStrategyAutonomousEA.mq5` + `CTradeManager::ManageAllPositions(...)` + `Core/Position/PositionManager.mqh`
 - Indicator cache lifecycle: `CIndicatorManager`
 - Python bridge integration: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
 - Shared engine & scalability: `CSharedEngineManager` (Batch 91)
@@ -36,7 +42,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Unprotected position tracking: `CUnprotectedPositionTracker` (Batch 98)
 - Synthetic spike monitoring: `CSyntheticSpikeMonitor` (Batch 98)
 - Trade attribution: `CTradeAttributionManager` (Batch 98)
-- Symbol scan scheduling: `CSymbolScanScheduler` (Batch 98)
+- Symbol scan scheduling: `CSymbolScanScheduler` (Batch 98) / `CScanSchedulerRegistry` (Batch 121)
 - Position sizing (stateless): `CPositionSizer::CalculateSize()` → `CalculateOptimalPositionSizeCore()` (Batch 98)
 - AI calibration: `IAIStrategy::GetCalibratedWeight()` (Batch 99)
 - Equity curve: `CEquityCurveManager` (Batch 99)
@@ -76,6 +82,8 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Skew step analyzer: `CSkewStepAnalyzer` (Batch 106)
 - Per-family position limits: `CUnifiedRiskManager` family position check (Batch 106)
 - ADX lot modifier: `CADXLotModifier` in position sizer chain (Batch 106)
+- **Batch 121 Registries**: `CMathematicalEngineRegistry`, `CInstitutionalEngineRegistry`, `CNeuralNetRegistry`, `CDrawingManagerRegistry`, `CScanSchedulerRegistry`, `CSymbolStateTracker`
+- **Batch 122 Orchestration**: `EAOrchestrator`, `CTickProcessor`, `CTimerProcessor`, `SignalGenerator`, `SignalValidator`, `CandidateBuilder`, `TradeExecutor`, `LiveAuthorityResolver`, `PositionManager`, `StrategyFactory`
 
 ## End-to-End Flow
 

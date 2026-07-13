@@ -56,7 +56,6 @@ private:
     ulong m_hbValidatorRejects;
     ulong m_hbRiskRejects;
     ulong m_hbTradesOpened;
-    ulong m_hbShadowTrades;
     ulong m_hbSyntheticSpikeEvents;
     ulong m_hbSignalsGenerated;
     ulong m_hbSignalsAfterPipeline;
@@ -87,9 +86,6 @@ private:
 
     // Risk tier for conditional diagnostics
     ENUM_RISK_TIER m_riskTier;
-
-    // Shadow mode flag
-    bool  m_shadowMode;
 
     // Trading paused state (updated each tick by main EA)
     bool  m_tradingPaused;
@@ -200,26 +196,24 @@ private:
         }
     }
 
-    //+------------------------------------------------------------------+
-    //| Collect aggregated role/cluster diagnostics from all managers     |
-    //+------------------------------------------------------------------+
-    void GetAggregatedRoleClusterDiagnostics(ulong &primarySignals,
-                                             ulong &featureSignals,
-                                             ulong &shadowSignals,
-                                             ulong &voteSuppressed,
-                                             ulong &trendClusterSignals,
-                                             ulong &meanReversionClusterSignals,
-                                             ulong &structureClusterSignals,
-                                             ulong &noneClusterSignals)
-    {
-        primarySignals = 0;
-        featureSignals = 0;
-        shadowSignals = 0;
-        voteSuppressed = 0;
-        trendClusterSignals = 0;
-        meanReversionClusterSignals = 0;
-        structureClusterSignals = 0;
-        noneClusterSignals = 0;
+//+------------------------------------------------------------------+
+//| Collect aggregated role/cluster diagnostics from all managers     |
+//+------------------------------------------------------------------+
+void GetAggregatedRoleClusterDiagnostics(ulong &primarySignals,
+                                         ulong &featureSignals,
+                                         ulong &voteSuppressed,
+                                         ulong &trendClusterSignals,
+                                         ulong &meanReversionClusterSignals,
+                                         ulong &structureClusterSignals,
+                                         ulong &noneClusterSignals)
+{
+    primarySignals = 0;
+    featureSignals = 0;
+    voteSuppressed = 0;
+    trendClusterSignals = 0;
+    meanReversionClusterSignals = 0;
+    structureClusterSignals = 0;
+    noneClusterSignals = 0;
 
         for(int i = 0; i < m_managerCount; i++)
         {
@@ -229,7 +223,6 @@ private:
 
             ulong managerPrimary = 0;
             ulong managerFeature = 0;
-            ulong managerShadow = 0;
             ulong managerSuppressed = 0;
             ulong managerTrend = 0;
             ulong managerMeanRev = 0;
@@ -238,7 +231,6 @@ private:
 
             manager.GetRoleClusterDiagnosticsTotals(managerPrimary,
                                                     managerFeature,
-                                                    managerShadow,
                                                     managerSuppressed,
                                                     managerTrend,
                                                     managerMeanRev,
@@ -247,7 +239,6 @@ private:
 
             primarySignals += managerPrimary;
             featureSignals += managerFeature;
-            shadowSignals += managerShadow;
             voteSuppressed += managerSuppressed;
             trendClusterSignals += managerTrend;
             meanReversionClusterSignals += managerMeanRev;
@@ -311,7 +302,6 @@ public:
         m_hbValidatorRejects(0),
         m_hbRiskRejects(0),
         m_hbTradesOpened(0),
-        m_hbShadowTrades(0),
         m_hbSyntheticSpikeEvents(0),
         m_hbSignalsGenerated(0),
         m_hbSignalsAfterPipeline(0),
@@ -336,7 +326,6 @@ public:
         m_nnEnabled(false),
         m_nnOnlineTraining(false),
         m_riskTier(RISK_TIER_MODERATE),
-        m_shadowMode(true),
         m_tradingPaused(false),
         m_managerCount(0),
         m_symbolCount(0)
@@ -362,9 +351,9 @@ public:
     //| Push current counter values from main EA globals                  |
     //| Call this before EmitHeartbeat() each heartbeat cycle             |
     //+------------------------------------------------------------------+
-    void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
+void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                         ulong validatorReject, ulong riskReject,
-                        ulong tradesOpened, ulong shadowTrades, ulong spikeEvents,
+                        ulong tradesOpened, ulong spikeEvents,
                         ulong sigGenerated, ulong sigAfterPipeline, ulong sigAfterQuorum,
                         ulong sigValidated, ulong sigRiskApproved, ulong sigSent,
                         ulong entryBlocked, ulong sizingRejects,
@@ -376,7 +365,6 @@ public:
         m_hbValidatorRejects     = validatorReject;
         m_hbRiskRejects          = riskReject;
         m_hbTradesOpened         = tradesOpened;
-        m_hbShadowTrades         = shadowTrades;
         m_hbSyntheticSpikeEvents = spikeEvents;
         m_hbSignalsGenerated     = sigGenerated;
         m_hbSignalsAfterPipeline = sigAfterPipeline;
@@ -404,7 +392,6 @@ public:
         m_nnOnlineTraining = nnTraining;
     }
     void SetRiskTier(ENUM_RISK_TIER tier)  { m_riskTier = tier; }
-    void SetShadowMode(bool shadow)        { m_shadowMode = shadow; }
     void SetTradingPaused(bool paused)     { m_tradingPaused = paused; }
     void SetManagers(CEnterpriseStrategyManager* &managers[], int count)
     {
@@ -461,13 +448,12 @@ public:
             return;
 
         //--- Core heartbeat line
-        PrintFormat("[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | shadow_trades=%I64u | spike_events=%I64u | pause_active=%s",
+        PrintFormat("[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | spike_events=%I64u | pause_active=%s",
                     m_hbScansAttempted, m_hbIntrabarScansExecuted, m_hbNoSignalCount,
-                    m_hbValidatorRejects, m_hbRiskRejects, m_hbTradesOpened, m_hbShadowTrades,
-                    m_hbSyntheticSpikeEvents,
+                    m_hbValidatorRejects, m_hbRiskRejects, m_hbTradesOpened, m_hbSyntheticSpikeEvents,
                     m_tradingPaused ? "true" : "false");
 
-        PrintFormat("[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | shadow_or_live_sent=%I64u",
+        PrintFormat("[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | signals_sent=%I64u",
                     m_hbSignalsGenerated, m_hbSignalsAfterPipeline, m_hbSignalsAfterQuorum,
                     m_hbSignalsValidated, m_hbSignalsRiskApproved, m_hbSignalsSent);
 
@@ -691,7 +677,6 @@ public:
                                           diagReasonTotal);
         GetAggregatedRoleClusterDiagnostics(rolePrimarySignals,
                                             roleFeatureSignals,
-                                            roleShadowSignals,
                                             roleVoteSuppressed,
                                             clusterTrendSignals,
                                             clusterMeanReversionSignals,

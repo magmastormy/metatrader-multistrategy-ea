@@ -97,3 +97,7 @@ mimo.exe
 *.csv
 *.onnx
 *.ini
+AGGRESSIVE_MODE_TODO.md
+check*.ps1
+find_lines.py
+remove_shadow.py

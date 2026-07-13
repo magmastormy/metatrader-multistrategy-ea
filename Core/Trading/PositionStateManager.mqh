@@ -20,6 +20,14 @@
 struct SPositionState
 {
     ulong positionId;           // Position ticket ID
+    string symbol;              // Symbol
+    ENUM_ORDER_TYPE orderType;  // Order type
+    double volume;              // Volume
+    double price;               // Entry price
+    double slPips;              // Stop loss in pips
+    double tpPips;              // Take profit in pips
+    int clusterCode;            // Cluster code
+    string strategyRole;        // Strategy role
     string predictionId;      // Prediction ID associated with position
     datetime aiPredictionTime; // AI prediction time
     ENUM_TRADE_SIGNAL aiPredictionSignal; // AI prediction signal
@@ -27,6 +35,14 @@ struct SPositionState
     SPositionState()
     {
         positionId = 0;
+        symbol = "";
+        orderType = ORDER_TYPE_BUY;
+        volume = 0;
+        price = 0;
+        slPips = 0;
+        tpPips = 0;
+        clusterCode = 0;
+        strategyRole = "";
         predictionId = "";
         aiPredictionTime = 0;
         aiPredictionSignal = TRADE_SIGNAL_NONE;
@@ -73,6 +89,11 @@ public:
     
     // Remove AI prediction mapping
     void RemoveAIPrediction(const ulong positionId);
+    
+    // Register a new position
+    void RegisterPosition(const ulong positionId, const string symbol, ENUM_ORDER_TYPE orderType,
+                          double volume, double price, double slPips, double tpPips,
+                          int clusterCode, const string strategyRole);
     
     // Clear all states
     void ClearAll();
@@ -297,6 +318,50 @@ bool CPositionStateManager::GetStateByIndex(const int index, SPositionState &sta
         return false;
     state = m_states[index];
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Register a new position
+//+------------------------------------------------------------------+
+void CPositionStateManager::RegisterPosition(const ulong positionId, const string symbol, ENUM_ORDER_TYPE orderType,
+                                             double volume, double price, double slPips, double tpPips,
+                                             int clusterCode, const string strategyRole)
+{
+    if(positionId == 0) return;
+    
+    // Check if already exists
+    int idx = FindStateIndex(positionId);
+    if(idx >= 0) return;
+    
+    // Check bounds before adding new state
+    if(m_count >= MAX_STATES)
+    {
+        // Remove oldest entry to make room
+        for(int i = 0; i < m_count - 1; i++)
+        {
+            m_states[i] = m_states[i + 1];
+        }
+        m_count--;
+        ArrayResize(m_states, m_count);
+    }
+    
+    // Create new state
+    ArrayResize(m_states, m_count + 1);
+    SPositionState newState;
+    newState.positionId = positionId;
+    newState.symbol = symbol;
+    newState.orderType = orderType;
+    newState.volume = volume;
+    newState.price = price;
+    newState.slPips = slPips;
+    newState.tpPips = tpPips;
+    newState.clusterCode = clusterCode;
+    newState.strategyRole = strategyRole;
+    newState.predictionId = "";
+    newState.aiPredictionTime = 0;
+    newState.aiPredictionSignal = TRADE_SIGNAL_NONE;
+    m_states[m_count] = newState;
+    m_count++;
 }
 
 //+------------------------------------------------------------------+
