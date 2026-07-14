@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| MQHHyperparameterTuner.mq5                                       |
 //| Hyperparameter tuning script for MQH models                       |
 //+------------------------------------------------------------------+
@@ -16,8 +16,8 @@ input int testRatio = 10;
 
 input bool useDefaultCandidates = true;
 
-#include "MQHModelTrainer/Core/AI/AIFeatureVectorBuilder.mqh"
-#include "MQHModelTrainer/AIModules/AIConfig.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Core/HyperparameterOptimizer.mqh"
 
 //+------------------------------------------------------------------+

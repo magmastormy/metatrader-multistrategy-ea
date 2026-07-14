@@ -5,7 +5,7 @@
 #ifndef MQH_DATA_PREPROCESSOR_MQH
 #define MQH_DATA_PREPROCESSOR_MQH
 
-#include "../Core/AI/AIFeatureVectorBuilder.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
 #include "LabelEncoder.mqh"
 
 class CDataPreprocessor

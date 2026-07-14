@@ -331,8 +331,7 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
             false,                      // intrabarEligible
             PRIMARY_ALPHA,              // role
             clusters[i],                // cluster
-            true,                       // liveVotingEnabled
-            false                       // shadowOnly
+            true                        // liveVotingEnabled
         );
     }
 

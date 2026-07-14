@@ -6,8 +6,8 @@
 #ifndef MQH_FEED_FORWARD_NN_MQH
 #define MQH_FEED_FORWARD_NN_MQH
 
-#include "../AIModules/CNeuralCore.mqh"
-#include "../AIModules/AIConfig.mqh"
+#include "AIModules/CNeuralCore.mqh"
+#include "AIModules/AIConfig.mqh"
 
 class CFeedForwardNN
 {

@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| MQHModelEvaluator.mq5                                            |
 //| Evaluation script for trained MQH models                          |
 //+------------------------------------------------------------------+
@@ -13,8 +13,8 @@ input string dataFile = "TrainingData_EURUSD_H1.csv";
 
 input int testRatio = 30;
 
-#include "MQHModelTrainer/Core/AI/AIFeatureVectorBuilder.mqh"
-#include "MQHModelTrainer/AIModules/AIConfig.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Data/CSVDataLoader.mqh"
 #include "MQHModelTrainer/Data/DataPreprocessor.mqh"
 #include "MQHModelTrainer/Data/LabelEncoder.mqh"

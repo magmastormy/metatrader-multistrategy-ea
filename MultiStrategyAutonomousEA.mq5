@@ -2962,8 +2962,7 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
         manager.SetStrategyGovernanceByName(strategyName,
                                             role,
                                             ResolveStrategyClusterForName(strategyName),
-                                            true,
-                                            false);
+                                            true);
         manager.SetStrategyIntrabarPolicyByName(strategyName,
                                                 ResolveStrategyIntrabarPolicyForSymbol(symbol, i, strategyFlags));
     }
@@ -2971,25 +2970,25 @@ void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager,
     if(g_strategyRegistry.IsStrategyActive("Neural Network AI"))
     {
         manager.SetStrategyGovernanceByName("Neural Network AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE,
-                                            g_strategyRegistry.GetWeightByName("Neural Network AI") > 0.0, false);
+                                            g_strategyRegistry.GetWeightByName("Neural Network AI") > 0.0);
         manager.SetStrategyConfidenceThresholdByName("Neural Network AI", aiConfidenceFloor);
     }
     if(g_strategyRegistry.IsStrategyActive("Transformer AI"))
     {
         manager.SetStrategyGovernanceByName("Transformer AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE,
-                                            g_strategyRegistry.GetWeightByName("Transformer AI") > 0.0, false);
+                                            g_strategyRegistry.GetWeightByName("Transformer AI") > 0.0);
         manager.SetStrategyConfidenceThresholdByName("Transformer AI", aiConfidenceFloor);
     }
     if(g_strategyRegistry.IsStrategyActive("Ensemble AI"))
     {
         manager.SetStrategyGovernanceByName("Ensemble AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE,
-                                            g_strategyRegistry.GetWeightByName("Ensemble AI") > 0.0, false);
+                                            g_strategyRegistry.GetWeightByName("Ensemble AI") > 0.0);
         manager.SetStrategyConfidenceThresholdByName("Ensemble AI", aiConfidenceFloor);
     }
     if(g_strategyRegistry.IsStrategyActive("ONNX AI"))
     {
         manager.SetStrategyGovernanceByName("ONNX AI", aiPrimary ? PRIMARY_ALPHA : CONTEXT_FEATURE, STRATEGY_CLUSTER_NONE,
-                                            g_strategyRegistry.GetWeightByName("ONNX AI") > 0.0, false);
+                                            g_strategyRegistry.GetWeightByName("ONNX AI") > 0.0);
         manager.SetStrategyConfidenceThresholdByName("ONNX AI", aiConfidenceFloor);
     }
 
@@ -5482,7 +5481,6 @@ void ProcessScalpFastPath()
                     g_scalpEngine.PlaceScalpPendingOrder(symbol, scalpSignal, scalpLotSize);
                 else
                     g_scalpEngine.ExecuteScalpTrade(symbol, scalpSignal, scalpLotSize, scalpConfidence);
-            }
         }
     }
 }
@@ -5524,7 +5522,19 @@ void ProcessTradingLogic(bool fromTimer)
     }
 
     // --- Update Dashboard (after init check) ---
-    g_dashboard.Update(neuralNetStrategy, g_aiBrainReady ? &aiNextGenBrain : NULL, activeStrats, eaPositions, accountBalance, accountEquity, totalTrades, winningTrades, totalProfit);
+    g_dashboard.Update(neuralNetStrategy, 
+                       g_aiBrainReady ? &aiNextGenBrain : NULL,
+                       NULL,  // ensemble - not available here
+                       NULL,  // metaLabeler - not available here
+                       NULL,  // onnx - not available here
+                       g_pythonBridge,
+                       activeStrats, eaPositions,
+                       accountBalance, accountEquity,
+                       totalTrades, winningTrades,
+                       totalProfit,
+                       _Symbol,
+                       TRADE_SIGNAL_NONE,
+                       0.0);
 
     // Enhanced logging every 50 calls to show pipeline activity
     if(callCount % 50 == 0 && g_logLevel >= 3)
@@ -7090,12 +7100,27 @@ tradeReq.lotSize = lotSize;
                     attemptedThisCycle++;
                     RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
                     PrintFormat("[LIVE-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                                    bestCandidate.cycleId,
+                                    bestCandidate.symbol,
+                                    bestCandidate.signalType,
+                                    bestCandidate.lotSize,
+                                    bestCandidate.tradeConfidence,
+                                    bestCandidate.qualityScore,
+                                    bestCandidate.convictionScore,
+                                    bestCandidate.contextScore,
+                                    bestCandidate.readinessScore,
+                                    bestCandidate.costScore,
+                                    bestCandidate.confluence,
+                                    bestCandidate.liveAuthorityAllowed ? "true" : "false",
+                                    bestCandidate.liveAuthorityReason,
+                                    bestCandidate.strategyRoleTag,
+                                    bestCandidate.strategyClusterTag,
+                                    bestCandidate.contributorSummary,
                                     bestCandidate.slPrice,
                                     bestCandidate.tpPrice);
-                    }
-                    else
-                    {
-                        string predictionId = "";
+
+                    // Execute the trade
+                    string predictionId = "";
                         CNeuralNetworkStrategy* symbolNet = GetNeuralNetForSymbol(bestCandidate.symbol);
                         if(symbolNet == NULL)
                             symbolNet = neuralNetStrategy;
@@ -7254,31 +7279,27 @@ tradeReq.lotSize = lotSize;
                             if(aiPredictionRecorded && executionReceipt.requestId > 0)
                                 g_attributionManager.UpsertAIPendingRequestMap(executionReceipt.requestId, bestCandidate.symbol, aiPredictionTime, bestCandidate.signal);
                         }
+
+                        // Issue 1 fix: Release virtual position after send (live trade).
+                        // For live trades, actual risk is registered via RegisterExecutedTradeRisk,
+                        // so the virtual reservation is no longer needed.
+                        unifiedRiskManager.ReleaseVirtualPosition(sendOwnerTag);
                     }
 
-                    // Issue 1 fix: Release virtual position after send (live trade).
-                    // For live trades, actual risk is registered via RegisterExecutedTradeRisk,
-                    // so the virtual reservation is no longer needed.
-                    unifiedRiskManager.ReleaseVirtualPosition(sendOwnerTag);
+                    PrintFormat("[SCAN-DECISION-SUMMARY] cycle=%I64u | candidates=%d | attempted=%d | cap=%d",
+                                scanCycleId,
+                                approvedCandidateCount,
+                                attemptedThisCycle,
+                                maxSendsThisCycle);
                 }
 
-                PrintFormat("[SCAN-DECISION-SUMMARY] cycle=%I64u | candidates=%d | attempted=%d | cap=%d",
-                            scanCycleId,
-                            approvedCandidateCount,
-                            attemptedThisCycle,
-                            maxSendsThisCycle);
-            }
-
             unifiedRiskManager.ClearVirtualPositions();
-    }
+        }
 
-    }
-
-    // Fast Scalp Engine: evaluate and execute scalp signals (Phase 4)
+        // Fast Scalp Engine: evaluate and execute scalp signals (Phase 4)
     // Runs every signal evaluation cycle, bypasses full consensus pipeline
     // Guard: skip if ProcessScalpFastPath already evaluated this second (prevents duplicate scalp trades)
-    {
-        static datetime s_lastScalpEval = 0;
+    static datetime s_lastScalpEval = 0;
         datetime nowSec = TimeCurrent();
         bool fastPathAlreadyRan = (nowSec == g_scanScheduler.GetLastScalpFastPathSecond());
         if(!fastPathAlreadyRan && nowSec != s_lastScalpEval)
@@ -7300,13 +7321,13 @@ tradeReq.lotSize = lotSize;
                             g_scalpEngine.PlaceScalpPendingOrder(scalpSymbol, scalpSignal, scalpLotSize);
                         else
                             g_scalpEngine.ExecuteScalpTrade(scalpSymbol, scalpSignal, scalpLotSize, scalpConfidence);
-                    }
+}
                 }
             }
         }
     }
 
-    datetime heartbeatNow = TimeCurrent();
+        datetime heartbeatNow = TimeCurrent();
     int heartbeatIntervalSec = MathMax(30, InpHeartbeatInterval);
 
     // Blueprint R6b: Core heartbeat delegated to DiagnosticsManager
@@ -7731,7 +7752,6 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                     updates++;
                 }
             }
-
         }
     }
 }

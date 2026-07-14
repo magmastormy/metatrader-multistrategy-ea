@@ -443,8 +443,8 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         if(!m_initialized)
             return;
 
-        datetime heartbeatNow = TimeCurrent();
-        if(m_lastHeartbeatTime != 0 && (heartbeatNow - m_lastHeartbeatTime) < m_heartbeatIntervalSec)
+        datetime hbNow = TimeCurrent();
+        if(m_lastHeartbeatTime != 0 && (hbNow - m_lastHeartbeatTime) < m_heartbeatIntervalSec)
             return;
 
         //--- Core heartbeat line
@@ -539,12 +539,12 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
 
         //--- No-signal alert
         if(windowScans >= 20 && noSignalRate >= 80.0 &&
-           (m_lastNoSignalAlertTime == 0 || (heartbeatNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
+           (m_lastNoSignalAlertTime == 0 || (hbNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
         {
             PrintFormat("[NO-SIGNAL-ALERT] window_scans=%I64u | no_signal=%I64u (%.1f%%) | no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u",
                         windowScans, windowNoSignal, noSignalRate,
                         m_hbQuietNoNewBar, m_hbQuietCadenceHold, m_hbQuietMissingManager);
-            m_lastNoSignalAlertTime = heartbeatNow;
+            m_lastNoSignalAlertTime = hbNow;
         }
 
         //--- Risk budget snapshot
@@ -576,7 +576,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         m_prevSignalsRiskApproved  = m_hbSignalsRiskApproved;
         m_prevSignalsSent          = m_hbSignalsSent;
 
-        m_lastHeartbeatTime = heartbeatNow;
+        m_lastHeartbeatTime = hbNow;
     }
 
     //+------------------------------------------------------------------+
@@ -587,8 +587,8 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         if(!m_aiEnabled || !m_nnEnabled || !m_nnOnlineTraining)
             return;
 
-        datetime heartbeatNow = TimeCurrent();
-        if(m_lastNNHealthLogTime != 0 && (heartbeatNow - m_lastNNHealthLogTime) < m_heartbeatIntervalSec)
+        datetime hbNow = TimeCurrent();
+        if(m_lastNNHealthLogTime != 0 && (hbNow - m_lastNNHealthLogTime) < m_heartbeatIntervalSec)
             return;
 
         for(int nnIdx = 0; nnIdx < ArraySize(strategies); nnIdx++)
@@ -603,7 +603,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             PrintFormat("[NN-HEALTH] idx=%d | active", nnIdx);
         }
 
-        m_lastNNHealthLogTime = heartbeatNow;
+        m_lastNNHealthLogTime = hbNow;
     }
 
     //+------------------------------------------------------------------+
@@ -627,7 +627,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                   ulong windowScans,
                                   ulong windowNoSignal,
                                   double noSignalRate,
-                                  datetime heartbeatNow)
+                                  datetime hbNow)
     {
         if(m_managerCount == 0)
             return;
@@ -728,7 +728,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                                                   diagIntrabarNotEligible);
         if(windowScans >= 20 &&
            noSignalRate >= 80.0 &&
-           (m_lastNoSignalAlertTime == 0 || (heartbeatNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
+           (m_lastNoSignalAlertTime == 0 || (hbNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
         {
             PrintFormat("[NO-SIGNAL-ALERT-CONSENSUS] window_scans=%I64u | no_signal=%I64u (%.1f%%) | dominant=%s | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u | momentum_none=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u",
                         windowScans,
@@ -743,7 +743,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                         diagMomentumNone,
                         diagUICTNone,
                         diagUICTNeutralBias);
-            m_lastNoSignalAlertTime = heartbeatNow;
+            m_lastNoSignalAlertTime = hbNow;
         }
     }
 };

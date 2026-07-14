@@ -50,7 +50,6 @@ private:
         ENUM_STRATEGY_TIER tier;
         bool            intrabarEligible;
         bool            liveVotingEnabled;
-        bool            shadowOnly;
         ENUM_STRATEGY_ROLE role;
         ENUM_STRATEGY_CLUSTER cluster;
         
@@ -68,7 +67,7 @@ private:
         
         SStrategyConfig() : 
             symbol(""), timeframe(PERIOD_CURRENT), weight(1.0), tier(STRATEGY_TIER_2),
-            intrabarEligible(false), liveVotingEnabled(false), shadowOnly(false),
+            intrabarEligible(false), liveVotingEnabled(false),
             role(PRIMARY_ALPHA), cluster(STRATEGY_CLUSTER_NONE),
             momentumScalpingEnabled(false), momentumScalpCooldown(0),
             trendADXNoTrendThreshold(12.0), ictRequireKillZone(false),
@@ -340,7 +339,6 @@ public:
         cfg.tier = STRATEGY_TIER_2;
         cfg.intrabarEligible = false;
         cfg.liveVotingEnabled = false;
-        cfg.shadowOnly = false;
         cfg.role = PRIMARY_ALPHA;
         cfg.cluster = STRATEGY_CLUSTER_NONE;
         

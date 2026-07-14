@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| MQHModelTrainer.mq5                                              |
 //| Main training script for MQH neural network models                |
 //+------------------------------------------------------------------+
@@ -26,8 +26,8 @@ input int testRatio = 10;
 input bool enableVisualization = true;
 input bool saveModel = true;
 
-#include "MQHModelTrainer/Core/AI/AIFeatureVectorBuilder.mqh"
-#include "MQHModelTrainer/AIModules/AIConfig.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Data/CSVDataLoader.mqh"
 #include "MQHModelTrainer/Data/DataPreprocessor.mqh"
 #include "MQHModelTrainer/Data/LabelEncoder.mqh"

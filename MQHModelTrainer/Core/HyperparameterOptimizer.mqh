@@ -5,8 +5,8 @@
 #ifndef MQH_HYPERPARAMETER_OPTIMIZER_MQH
 #define MQH_HYPERPARAMETER_OPTIMIZER_MQH
 
-#include "../Core/AI/AIFeatureVectorBuilder.mqh"
-#include "../AIModules/AIConfig.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "AIModules/AIConfig.mqh"
 #include "../Data/CSVDataLoader.mqh"
 #include "../Data/DataPreprocessor.mqh"
 #include "../Data/LabelEncoder.mqh"

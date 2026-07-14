@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //| MQHModelVisualizer.mq5                                           |
 //| Visualization script for training results                         |
 //+------------------------------------------------------------------+
@@ -25,8 +25,8 @@ input int testRatio = 10;
 
 input bool saveChartImage = true;
 
-#include "MQHModelTrainer/Core/AI/AIFeatureVectorBuilder.mqh"
-#include "MQHModelTrainer/AIModules/AIConfig.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Data/CSVDataLoader.mqh"
 #include "MQHModelTrainer/Data/DataPreprocessor.mqh"
 #include "MQHModelTrainer/Data/LabelEncoder.mqh"

@@ -5,8 +5,8 @@
 #ifndef MQH_MODEL_EVALUATOR_MQH
 #define MQH_MODEL_EVALUATOR_MQH
 
-#include "../Core/AI/AIFeatureVectorBuilder.mqh"
-#include "../AIModules/AIConfig.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "AIModules/AIConfig.mqh"
 #include "../Data/LabelEncoder.mqh"
 #include "../Core/TrainingMetrics.mqh"
 #include "FeedForwardNN.mqh"

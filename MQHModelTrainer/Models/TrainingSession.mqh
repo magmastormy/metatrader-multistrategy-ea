@@ -5,8 +5,8 @@
 #ifndef MQH_TRAINING_SESSION_MQH
 #define MQH_TRAINING_SESSION_MQH
 
-#include "../Core/AI/AIFeatureVectorBuilder.mqh"
-#include "../AIModules/AIConfig.mqh"
+#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "AIModules/AIConfig.mqh"
 #include "../Data/LabelEncoder.mqh"
 #include "FeedForwardNN.mqh"
 #include "TrainingMetrics.mqh"
