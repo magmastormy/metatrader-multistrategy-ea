@@ -16,57 +16,54 @@ public:
     CSessionManager() {}
     ~CSessionManager() {}
     
-    //+------------------------------------------------------------------+
-    //| Check if market is currently open for trading                   |
-    //+------------------------------------------------------------------+
-    bool IsMarketOpen(const string symbol)
+//+------------------------------------------------------------------+
+//| Check if market is currently open for trading                   |
+//+------------------------------------------------------------------+
+bool IsMarketOpen(const string symbol)
+{
+    if(symbol == "") return false;
+    m_symbol.Name(symbol);
+    
+    // CRITICAL FIX: Force refresh to ensure we have latest quote data
+    if(!m_symbol.RefreshRates()) 
     {
-        if(symbol == "") return false;
-        m_symbol.Name(symbol);
+        // If refresh fails, return false - don't sleep and retry (Issue #32)
+        return false;
+    }
+    
+    // Check trade mode
+    ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE);
+    if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
+        return false;
         
-        // CRITICAL FIX: Force refresh to ensure we have latest quote data
-        if(!m_symbol.RefreshRates()) 
+    // Check session times (more robust than just day_of_week)
+    datetime now = TimeCurrent();
+    datetime from, to;
+    
+    MqlDateTime dt;
+    TimeToStruct(now, dt);
+    
+    // Synthetic indices check - CRITICAL FIX: Improved detection and relaxed validation
+    if(IsSynthetic(symbol))
+    {
+        // Synthetics are 24/7 - use relaxed quote validation
+        // Allow brief quote delays (up to 5 seconds stale) to prevent false blocks
+        double bid = m_symbol.Bid();
+        double ask = m_symbol.Ask();
+        
+        // Check if we have any valid quotes
+        if(bid <= 0 && ask <= 0)
         {
-            // If refresh fails, try once more
-            Sleep(10);
-            if(!m_symbol.RefreshRates())
-                return false;
+            // Try one more refresh before blocking (without sleep)
+            m_symbol.RefreshRates();
+            bid = m_symbol.Bid();
+            ask = m_symbol.Ask();
         }
         
-        // Check trade mode
-        ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE);
-        if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
-            return false;
-            
-        // Check session times (more robust than just day_of_week)
-        datetime now = TimeCurrent();
-        datetime from, to;
-        
-        MqlDateTime dt;
-        TimeToStruct(now, dt);
-        
-        // Synthetic indices check - CRITICAL FIX: Improved detection and relaxed validation
-        if(IsSynthetic(symbol))
-        {
-            // Synthetics are 24/7 - use relaxed quote validation
-            // Allow brief quote delays (up to 5 seconds stale) to prevent false blocks
-            double bid = m_symbol.Bid();
-            double ask = m_symbol.Ask();
-            
-            // Check if we have any valid quotes (allow zero for synthetics during brief delays)
-            if(bid <= 0 && ask <= 0)
-            {
-                // Try one more refresh before blocking
-                Sleep(5);
-                m_symbol.RefreshRates();
-                bid = m_symbol.Bid();
-                ask = m_symbol.Ask();
-            }
-            
-            // For synthetics, only block if both bid and ask are invalid
-            // This prevents false market_unavailable blocks during active trading
-            return (bid > 0 || ask > 0);
-        }
+        // For synthetics, only block if both bid and ask are invalid
+        // This prevents false market_unavailable blocks during active trading
+        return (bid > 0 || ask > 0);
+    }
         
         // Regular instruments check session
         if(!SymbolInfoSessionTrade(symbol, (ENUM_DAY_OF_WEEK)dt.day_of_week, 0, from, to))

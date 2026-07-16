@@ -59,12 +59,17 @@ private:
     double m_hurstMRThreshold;     // H < this = mean-reverting (default: 0.45)
     double m_volumeConfirmRatio;   // Volume must be > ratio * avg (default: 1.5)
     int    m_volumeLookback;       // Bars for average volume (default: 20)
+    
+    // Trend direction filter (Issue #28)
+    int    m_trendMaPeriod;        // MA period for trend filter (default: 50)
+    bool   m_useTrendFilter;       // Enable trend direction filter (default: true)
 
     // Indicator handles
     int m_bbHandle;
     int m_kcHandle;
     int m_atrHandle;
     int m_volumeHandle;
+    int m_maHandle;      // MA for trend filter (Issue #28)
 
     // Hurst engine (injected)
     CHurstEngine* m_hurstEngine;
@@ -136,10 +141,13 @@ public:
         m_hurstMRThreshold(0.45),
         m_volumeConfirmRatio(1.5),
         m_volumeLookback(20),
+        m_trendMaPeriod(50),
+        m_useTrendFilter(true),
         m_bbHandle(INVALID_HANDLE),
         m_kcHandle(INVALID_HANDLE),
         m_atrHandle(INVALID_HANDLE),
         m_volumeHandle(INVALID_HANDLE),
+        m_maHandle(INVALID_HANDLE),
         m_hurstEngine(NULL),
         m_riskManager(NULL),
         m_squeezeActive(false),
@@ -161,6 +169,7 @@ public:
         if(m_kcHandle != INVALID_HANDLE) IndicatorRelease(m_kcHandle);
         if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
         if(m_volumeHandle != INVALID_HANDLE) IndicatorRelease(m_volumeHandle);
+        if(m_maHandle != INVALID_HANDLE) IndicatorRelease(m_maHandle);
     }
 
     //--- Initialize
@@ -176,6 +185,12 @@ public:
         m_bbHandle = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
         m_atrHandle = iATR(symbol, timeframe, m_atrPeriod);
         m_volumeHandle = iVolumes(symbol, timeframe, VOLUME_TICK);
+        
+        // MA for trend filter (Issue #28)
+        if(m_useTrendFilter)
+        {
+            m_maHandle = iMA(symbol, timeframe, m_trendMaPeriod, 0, MODE_EMA, PRICE_CLOSE);
+        }
 
         // Keltner Channel: built manually via ATR (MT5 doesn't have native KC)
         // We'll compute it from ATR in the signal method
@@ -186,7 +201,7 @@ public:
     //--- Configure
     void Configure(int bbPeriod = 20, double bbDev = 2.0, int kcPeriod = 20,
                    double kcATR = 1.5, int minSqueezeBars = 6,
-                   double volRatio = 1.5)
+                   double volRatio = 1.5, int trendMaPeriod = 50, bool useTrendFilter = true)
     {
         m_bbPeriod = MathMax(10, bbPeriod);
         m_bbDeviation = MathMax(1.0, bbDev);
@@ -194,6 +209,8 @@ public:
         m_kcATRMultiple = MathMax(0.5, kcATR);
         m_minSqueezeBars = MathMax(3, minSqueezeBars);
         m_volumeConfirmRatio = MathMax(1.0, volRatio);
+        m_trendMaPeriod = MathMax(20, trendMaPeriod);
+        m_useTrendFilter = useTrendFilter;
     }
 
     //--- Generate signal (called each bar)
@@ -310,6 +327,31 @@ public:
 
                 if(direction == TRADE_SIGNAL_NONE)
                     return signal;
+
+                // Trend direction filter (Issue #28): Only trade in direction of MA trend
+                if(m_useTrendFilter && m_maHandle != INVALID_HANDLE)
+                {
+                    double maVal[1];
+                    if(CopyBuffer(m_maHandle, 0, 0, 1, maVal) == 1 && maVal[0] > 0)
+                    {
+                        // For BUY: price should be above MA (uptrend)
+                        // For SELL: price should be below MA (downtrend)
+                        if(direction == TRADE_SIGNAL_BUY && close[0] < maVal[0])
+                        {
+                            PrintFormat("[COMPRESSION] Trend filter rejected BUY | price=%.5f < MA=%.5f",
+                                        close[0], maVal[0]);
+                            LogRejectEvent("TREND_FILTER_REJECT");
+                            return signal;
+                        }
+                        else if(direction == TRADE_SIGNAL_SELL && close[0] > maVal[0])
+                        {
+                            PrintFormat("[COMPRESSION] Trend filter rejected SELL | price=%.5f > MA=%.5f",
+                                        close[0], maVal[0]);
+                            LogRejectEvent("TREND_FILTER_REJECT");
+                            return signal;
+                        }
+                    }
+                }
 
                 // Volume confirmation
                 if(!CheckVolumeConfirmation())

@@ -222,9 +222,9 @@ public:
 
     bool Init(const uchar &modelBuffer[])
     {
-        bool prevFallback = m_fallbackToCpu;
+        // FIX: Always reset fallback state on fresh init to prevent CUDA failure state leak across re-inits
         Deinit();
-        m_fallbackToCpu = prevFallback;
+        m_fallbackToCpu = false;
         if(!InitHandleFromBuffer(modelBuffer, m_handle))
         {
             PrintFormat("[ONNX] Model unavailable or invalid | err=%d | expected_shape=[1,%d,%d] | note=re-export ONNX after the 65-feature contract upgrade",

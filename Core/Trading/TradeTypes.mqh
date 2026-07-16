@@ -74,10 +74,18 @@ struct SAsyncTradeRequest
     bool expired;           // Whether the request timed out
     string comment;         // Trade comment
     STradeExecutionReceipt executionReceipt;  // Execution details
+    
+    // FIX: Idempotency key for deduplication (UUID)
+    string idempotencyKey;  // Unique key to detect duplicate submissions
+    
+    // FIX: Persistence fields
+    int retryCount;         // Number of retry attempts
+    bool persisted;         // Whether this request has been persisted to CSV
+    datetime persistedTime; // When this was persisted
 
     SAsyncTradeRequest() : ticket(0), orderType(ORDER_TYPE_BUY), lot(0), price(0), 
                            sl(0), tp(0), magic(0), submitTime(0), timeoutMs(DEFAULT_ASYNC_TIMEOUT_MS),
-                           confirmed(false), expired(false) {}
+                           confirmed(false), expired(false), retryCount(0), persisted(false), persistedTime(0) {}
 };
 
 // Smart order routing parameters

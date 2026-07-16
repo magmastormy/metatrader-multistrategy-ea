@@ -333,7 +333,11 @@ bool COrnsteinUhlenbeckEngine::EstimateParameters(const double &series[], int co
     if(correctionDenom > 1e-15)
         sigmaOU = residualStdDev * MathSqrt(2.0 * theta / correctionDenom);
     else
-        sigmaOU = residualStdDev * MathSqrt(2.0 * theta / 1e-10); // near-continuous limit
+        sigmaOU = residualStdDev; // Fallback: use raw residual std dev when theta ≈ 0
+
+    // Clamp sigmaOU to minimum floor to prevent extreme z-scores
+    if(sigmaOU < residualStdDev * 0.1)
+        sigmaOU = residualStdDev * 0.1;
 
     // Half-life = ln(2) / theta
     double halfLife = MathLog(2.0) / theta;

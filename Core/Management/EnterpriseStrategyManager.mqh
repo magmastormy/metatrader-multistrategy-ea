@@ -15,6 +15,7 @@
 #include "../Engines/FamilyStrategyWeightMatrix.mqh"
 #include "../Engines/FourStateRegimeDetector.mqh"
 #include "../Utils/Enums.mqh"
+#include "../Utils/RankingMatrix.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
 
@@ -50,8 +51,17 @@ class CPerformanceAnalytics;
 class CPythonBridge;
 class CFourStateRegimeDetector;  // Forward declaration for market regime detection
 
+// Include StrategyRegistry for full class definition (needed for extern instance declaration)
+#include "../Strategy/StrategyRegistry.mqh"
+
+// Forward declaration (fallback if include guard prevents inclusion)
+class CStrategyRegistry;
+
 // External reference to global Python bridge instance
 extern CPythonBridge* g_pythonBridge;
+
+// External reference to global strategy registry instance
+extern CStrategyRegistry g_strategyRegistry;
 
 //+------------------------------------------------------------------+
 //| Strategy Registration Entry                                     |
@@ -171,6 +181,7 @@ string ConsensusDecisionClassToString(const ENUM_CONSENSUS_DECISION_CLASS decisi
         case CONSENSUS_DECISION_SPARSE_INTRABAR: return "SPARSE_INTRABAR";
         case CONSENSUS_DECISION_VETOED: return "VETOED";
         case CONSENSUS_DECISION_MARGINAL_ADMIT: return "MARGINAL_ADMIT";
+        case CONSENSUS_DECISION_SOLO_FALLBACK: return "SOLO_FALLBACK";
         case CONSENSUS_DECISION_NONE:
         default:
             return "NONE";
@@ -403,6 +414,9 @@ private:
     double CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const;
     bool IsTrendingRegime();
     double GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const;
+    
+    // Fallback solo signal when all strategies abstain
+    ENUM_TRADE_SIGNAL TryFallbackSoloSignal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode, double &outConfidence, int &outConfluence, string &outReason);
 
 public:
     CEnterpriseStrategyManager();
@@ -1926,6 +1940,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     int selectedContributorIndices[];
     string vetoCode = "";
     string vetoReason = "";
+    string soloVetoReason = "";
     bool selectedSparseFromProbe = false;
     ArrayResize(selectedContributors, 0);
     ArrayResize(selectedContributorIndices, 0);
@@ -1960,9 +1975,9 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     {
         finalSignal = TRADE_SIGNAL_SELL;
     }
-    else
-    {
-        if((buyVotes + sellVotes) <= 0)
+else
+        {
+            if((buyVotes + sellVotes) <= 0)
             {
                 if(cycleSignalsGenerated > 0 || cycleSignalsAfterPipeline > 0 || cycleFilteredOut > 0)
                 {
@@ -1975,14 +1990,29 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                 }
                 else
                 {
-                    vetoCode = "no_voters";
-                    vetoReason = "No strategies produced votes in this evaluation cycle";
-                    // Issue 6: Regime-aware fallback — when TREND regime and zero voters, relax thresholds 10%
-                    if(IsTrendingRegime())
+                    // FALLBACK SOLO-SIGNAL: When all strategies abstain, pick the best single strategy
+                    // This prevents complete trading paralysis while maintaining quality control
+                    ENUM_TRADE_SIGNAL soloSignal = TryFallbackSoloSignal(symbol, evalMode, confidence, confluence, soloVetoReason);
+                    if(soloSignal != TRADE_SIGNAL_NONE)
                     {
-                        m_regimeRelaxActive = true;
-                        PrintFormat("[CONSENSUS-RELAX] %s | TREND regime + zero voters | Relaxing thresholds by %.0f%% for next cycle",
-                                    symbol, (1.0 - m_regimeRelaxFactor) * 100.0);
+                        finalSignal = soloSignal;
+                        decisionClass = CONSENSUS_DECISION_SOLO_FALLBACK;
+                        vetoCode = ""; // Clear veto since we have a signal
+                        vetoReason = "solo_fallback_" + soloVetoReason;
+                        PrintFormat("[CONSENSUS-SOLO] %s | Solo fallback activated | signal=%s conf=%.2f | reason=%s",
+                                    symbol, EnumToString(soloSignal), confidence, soloVetoReason);
+                    }
+                    else
+                    {
+                        vetoCode = "no_voters";
+                        vetoReason = "No strategies produced votes in this evaluation cycle";
+                        // Issue 6: Regime-aware fallback — when TREND regime and zero voters, relax thresholds 10%
+                        if(IsTrendingRegime())
+                        {
+                            m_regimeRelaxActive = true;
+                            PrintFormat("[CONSENSUS-RELAX] %s | TREND regime + zero voters | Relaxing thresholds by %.0f%% for next cycle",
+                                        symbol, (1.0 - m_regimeRelaxFactor) * 100.0);
+                        }
                     }
                 }
             }
@@ -3157,7 +3187,33 @@ bool CEnterpriseStrategyManager::IsTrendingRegime()
         }
     }
 
-    // Fallback: simple ADX-based check
+    // FIX: For synthetic indices (Deriv), ADX is unreliable; use volatility-based regime
+    if(IsSyntheticIndexSymbolName(m_symbol))
+    {
+        // Use RegimeEngine if available, otherwise fallback to volatility check
+        // For synthetics without ADX, check if price movement exceeds threshold
+        double atrBuffer[];
+        int atrHandle = iATR(m_symbol, m_baseTimeframe, 14);
+        if(atrHandle != INVALID_HANDLE)
+        {
+            ArraySetAsSeries(atrBuffer, true);
+            if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0 && atrBuffer[0] > 0.0)
+            {
+                double close[];
+                ArraySetAsSeries(close, true);
+                if(CopyClose(m_symbol, m_baseTimeframe, 0, 2, close) == 2 && close[1] > 0.0)
+                {
+                    double change = MathAbs(close[0] - close[1]) / close[1];
+                    IndicatorRelease(atrHandle);
+                    return (change > 0.005); // 0.5% move = trending
+                }
+            }
+            IndicatorRelease(atrHandle);
+        }
+        return false;
+    }
+
+    // Fallback: simple ADX-based check (for forex/metals)
     // ADX > 25 = trending, otherwise ranging
     // Batch 116: use cached handle instead of creating/destroying per call
     if(m_adxHandleCached == INVALID_HANDLE)
@@ -3175,6 +3231,87 @@ bool CEnterpriseStrategyManager::IsTrendingRegime()
 
     // Default: assume ranging (conservative)
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| FALLBACK SOLO SIGNAL: When all strategies abstain, pick best     |
+//| single strategy based on confidence and context quality          |
+//| Prevents trading paralysis during low-signal periods             |
+//+------------------------------------------------------------------+
+ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::TryFallbackSoloSignal(const string symbol,
+                                                                    ENUM_SIGNAL_EVAL_MODE evalMode,
+                                                                    double &outConfidence,
+                                                                    int &outConfluence,
+                                                                    string &outReason)
+{
+    ENUM_TRADE_SIGNAL bestSignal = TRADE_SIGNAL_NONE;
+    double bestScore = -1.0;
+    string bestStrategy = "";
+    
+    // Iterate all strategies and get their raw signals (without pipeline filtering)
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(!m_strategies[i].enabled || m_strategies[i].strategy == NULL)
+            continue;
+        
+        // Skip AI strategies in indicator-only mode
+        ENUM_STRATEGY_TYPE stratType = m_strategies[i].strategy.GetType();
+        bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
+        
+        if(isAI && g_strategyRegistry.GetMode() == EA_MODE_INDICATOR_ONLY)
+            continue;
+        
+        // Get raw signal from strategy
+        double stratConf = 0.0;
+        ENUM_TRADE_SIGNAL signal = m_strategies[i].strategy.GetSignal(stratConf);
+        
+        if(signal == TRADE_SIGNAL_NONE)
+            continue;
+        
+        // Apply basic quality filters (similar to pipeline but lighter)
+        // We want a signal with reasonable confidence and some contextual quality
+        
+        // Build a composite score: confidence * weight * readiness
+        double readinessScore = 0.5; // Default neutral
+        double contextScore = 0.5;   // Default neutral
+        double costScore = 0.5;      // Default neutral
+        
+        double weight = m_strategies[i].weight;
+        double participation = GetStrategyParticipationMultiplier(i);
+        
+        // Score = confidence * weight * participation * (readiness * 0.4 + context * 0.4 + cost * 0.2)
+        double qualityMultiplier = (readinessScore * 0.4 + contextScore * 0.4 + costScore * 0.2);
+        double score = stratConf * weight * participation * qualityMultiplier;
+        
+        // Apply minimum threshold
+        double minSoloConfidence = (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;
+        if(stratConf < minSoloConfidence)
+        {
+            PrintFormat("[CONSENSUS-SOLO-SKIP] %s | %s conf=%.2f < min=%.2f",
+                        symbol, m_strategies[i].name, stratConf, minSoloConfidence);
+            continue;
+        }
+        
+        if(score > bestScore)
+        {
+            bestScore = score;
+            bestSignal = signal;
+            bestStrategy = m_strategies[i].name;
+            outConfidence = MathMin(0.85, stratConf * 0.9); // Slight penalty for solo
+            outConfluence = 1;
+            outReason = "solo_" + m_strategies[i].name;
+        }
+    }
+    
+    if(bestSignal != TRADE_SIGNAL_NONE)
+    {
+        PrintFormat("[CONSENSUS-SOLO-SELECT] %s | Selected %s signal=%s score=%.3f conf=%.2f",
+                    symbol, bestStrategy, EnumToString(bestSignal), bestScore, outConfidence);
+        return bestSignal;
+    }
+    
+    outReason = "no_solo_candidates";
+    return TRADE_SIGNAL_NONE;
 }
 
 double CEnterpriseStrategyManager::GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const

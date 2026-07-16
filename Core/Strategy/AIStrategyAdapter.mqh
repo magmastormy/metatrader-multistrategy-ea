@@ -26,16 +26,36 @@ private:
     CSubsystemLogger* m_logger;  // AI subsystem logger
     int m_logCounter;  // Counter for periodic logging
     
-    // Direction calibration rolling window (last 20 predictions)
-    int  m_directionWindow[20];  // 1=BUY, -1=SELL, 0=NONE
+    // Direction calibration rolling window (last 50 predictions)
+    int  m_directionWindow[50];  // 1=BUY, -1=SELL, 0=NONE
     int  m_directionWindowIdx;   // Circular buffer index
-    int  m_directionWindowCount; // Number of filled slots (0..20)
+    int  m_directionWindowCount; // Number of filled slots (0..50)
     uint m_lastCalibrationWarningTick;  // Throttle calibration warning logs (GetTickCount-based, Issue 12.3)
     int  m_consecutiveBiasedVotes;  // Consecutive degenerate-vote counter
+    datetime m_lastInvalidLog;  // FIX: Instance-level log throttle (not static)
+    
+    // Vote tracking for [AI-VOTE] heartbeat logs
+    ulong m_voteCount;
+    ulong m_buyVotes;
+    ulong m_sellVotes;
+    ulong m_noneVotes;
+    datetime m_lastVoteLogTime;
+    double m_cachedConfidence;
     
     bool IsValidConfidence(const double conf) const
     {
         return (conf == conf) && (MathAbs(conf) < 1e308) && conf >= 0.0 && conf <= 1.0;
+    }
+    
+    void LogVoteHeartbeat()
+    {
+        datetime now = TimeCurrent();
+        if(m_lastVoteLogTime == 0 || (now - m_lastVoteLogTime) >= 10)
+        {
+            PrintFormat("[AI-VOTE][NeuralNet] %s | votes=%I64u | buy=%I64u | sell=%I64u | none=%I64u | conf=%.3f | reason=%s",
+                        m_symbol, m_voteCount, m_buyVotes, m_sellVotes, m_noneVotes, m_cachedConfidence, m_lastDecisionReasonTag);
+            m_lastVoteLogTime = now;
+        }
     }
     
     void RecordDirectionPrediction(ENUM_TRADE_SIGNAL signal)
@@ -45,8 +65,8 @@ private:
         else if(signal == TRADE_SIGNAL_SELL) dirValue = -1;
         
         m_directionWindow[m_directionWindowIdx] = dirValue;
-        m_directionWindowIdx = (m_directionWindowIdx + 1) % 20;
-        if(m_directionWindowCount < 20)
+        m_directionWindowIdx = (m_directionWindowIdx + 1) % 50;
+        if(m_directionWindowCount < 50)
             m_directionWindowCount++;
         
         // Check and log degenerate detection
@@ -94,6 +114,13 @@ public:
         m_directionWindowCount = 0;
         m_lastCalibrationWarningTick = 0;
         m_consecutiveBiasedVotes = 0;
+        m_lastInvalidLog = 0;
+        m_voteCount = 0;
+        m_buyVotes = 0;
+        m_sellVotes = 0;
+        m_noneVotes = 0;
+        m_lastVoteLogTime = 0;
+        m_cachedConfidence = 0.0;
         ArrayInitialize(m_directionWindow, 0);
     }
     
@@ -138,12 +165,15 @@ public:
         m_lastDecisionReasonTag = "NNAI_DEINIT";
     }
     
-    virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
+virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         if(!m_enabled || m_neuralNet == NULL)
         {
             confidence = 0.0;
+            m_voteCount++;
+            m_noneVotes++;
             m_lastDecisionReasonTag = "NNAI_DISABLED_OR_UNINIT";
+            LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
         
@@ -160,9 +190,15 @@ public:
                 s_lastInvalidLog = TimeCurrent();
             }
             confidence = 0.0;
+            m_voteCount++;
+            m_noneVotes++;
             m_lastDecisionReasonTag = "NNAI_INVALID_CONFIDENCE";
+            LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
+        
+        m_voteCount++;
+        m_cachedConfidence = confidence;
         
         // Log AI decision every 5 calls
         m_logCounter++;
@@ -173,35 +209,39 @@ public:
             else if(signal == TRADE_SIGNAL_SELL) signalStr = "SELL";
             
             m_logger.Log(LOG_AI, StringFormat("[PREDICTION] Signal=%s | Confidence=%.3f | Regime=%d | Temp=%.2f",
-                                              signalStr, confidence,
-                                              m_neuralNet.GetCurrentRegime(),
-                                              m_neuralNet.GetTemperature()));
+                                                  signalStr, confidence,
+                                                  m_neuralNet.GetCurrentRegime(),
+                                                  m_neuralNet.GetTemperature()));
             
             // Log model health stats
             m_logger.Log(LOG_AI, StringFormat("[MODEL-HEALTH] Training=%s | Steps=%d | Uncertainty=%.3f",
-                                              m_neuralNet.IsTraining() ? "YES" : "NO",
-                                              m_neuralNet.GetTrainingSteps(),
-                                              m_neuralNet.GetLastUncertainty()));
+                                                  m_neuralNet.IsTraining() ? "YES" : "NO",
+                                                  m_neuralNet.GetTrainingSteps(),
+                                                  m_neuralNet.GetLastUncertainty()));
         }
         
         if(signal == TRADE_SIGNAL_BUY)
         {
+            m_buyVotes++;
             m_lastSignalTime = TimeCurrent();
             m_lastDecisionReasonTag = "NNAI_SIGNAL_BUY";
         }
         else if(signal == TRADE_SIGNAL_SELL)
         {
+            m_sellVotes++;
             m_lastSignalTime = TimeCurrent();
             m_lastDecisionReasonTag = "NNAI_SIGNAL_SELL";
         }
         else
         {
+            m_noneVotes++;
             m_lastDecisionReasonTag = "NNAI_NO_SIGNAL";
         }
         
         // Record prediction for direction calibration
         RecordDirectionPrediction(signal);
         
+        LogVoteHeartbeat();
         return signal;
     }
     
@@ -222,32 +262,38 @@ public:
     
     virtual bool IsDirectionDegenerate(void) const override
     {
-        if(m_directionWindowCount < 20)
+        if(m_directionWindowCount < 50)
             return false;
         int buyCount = 0, sellCount = 0;
-        for(int i = 0; i < 20; i++)
+        for(int i = 0; i < 50; i++)
         {
             if(m_directionWindow[i] == 1) buyCount++;
             else if(m_directionWindow[i] == -1) sellCount++;
         }
         int directionalCount = buyCount + sellCount;
-        if(directionalCount < 5) return false;  // Not enough directional data
+        if(directionalCount < 10) return false;  // Not enough directional data
         double buyRatio = (double)buyCount / (double)directionalCount;
         double sellRatio = (double)sellCount / (double)directionalCount;
         return (buyRatio > 0.70 || sellRatio > 0.70);
     }
     
+    // FIX: Disable model entirely when degenerate (not just reduce weight)
+    virtual bool ShouldDisableModel(void) const override
+    {
+        return IsDirectionDegenerate();
+    }
+    
     double GetDirectionalBias(void) const
     {
-        if(m_directionWindowCount < 20) return 0.0;
+        if(m_directionWindowCount < 50) return 0.0;
         int buyCount = 0, sellCount = 0;
-        for(int i = 0; i < 20; i++)
+        for(int i = 0; i < 50; i++)
         {
             if(m_directionWindow[i] == 1) buyCount++;
             else if(m_directionWindow[i] == -1) sellCount++;
         }
         int directionalCount = buyCount + sellCount;
-        if(directionalCount < 5) return 0.0;
+        if(directionalCount < 10) return 0.0;
         return (double)buyCount / (double)directionalCount;
     }
     
@@ -255,14 +301,8 @@ public:
     {
         if(!IsDirectionDegenerate())
             return baseWeight;
-        double bias = GetDirectionalBias();
-        if(bias > 0.95 || bias < 0.05)
-            return baseWeight * 0.10;  // Extreme bias: 90% penalty
-        if(bias > 0.90 || bias < 0.10)
-            return baseWeight * 0.25;  // Severe bias: 75% penalty
-        if(bias > 0.80 || bias < 0.20)
-            return baseWeight * 0.50;  // Moderate bias: 50% penalty
-        return baseWeight * 0.70;      // Mild bias: 30% penalty
+        // FIX: Return 0 to completely disable the model when degenerate
+        return 0.0;
     }
     
     virtual bool ValidateParameters(void) override { return (m_neuralNet != NULL); }

@@ -17,21 +17,23 @@ input double InpLotSize = 0.1;              // Base lot size
 input int InpMagicNumber = 123456;         // Magic number
 input bool InpUseEnhancedRisk = true;      // Enable adaptive sizing inside unified risk manager
 input double InpMaxRiskPerTrade = 5.0;    // Max risk per trade; authority gate can scale this down
-input double InpMaxDailyRisk = 40.0;      // Max daily risk (raised for small accounts: 0.10 min lot on $179 = ~18% per trade)
-input double InpMaxPortfolioRisk = 60.0;  // Max total portfolio risk (raised for small accounts: 3 symbols x ~18% = 54%)
-input double InpMaxDrawdown = 25.0;       // Max drawdown (raised for small accounts)
-input double InpDailyLossLimitPercent = 40.0; // Max daily loss as % of peak equity (raised for small accounts)
+input double InpMaxDailyRisk = 40.0;       // Max daily risk (default: 40%)
+input double InpMaxPortfolioRisk = 60.0;   // Max total portfolio risk (default: 60%)
+input double InpMaxDrawdown = 15.0;       // Max drawdown (conservative default: 15%)
+input double InpDailyLossLimitPercent = 10.0; // Max daily loss as % of peak equity (conservative: 10%)
 input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE; // Risk Tier
 input bool InpEnableCompoundingTiers = true;   // Enable auto compounding tier switching based on account balance
 input int  InpCompoundingTierCheckIntervalSec = 60; // How often to check for tier transitions (seconds)
 input bool InpEnableSessionWeights = true;    // Enable session-aware weight adjustments (Asian/London/NY/Weekend)
 input bool InpEnableSkewStepAnalyzer = true;  // Enable Skew Step distribution analyzer for Step indices
-input bool   InpAllowMinLotRoundUp = true;  // Allow rounding up to broker min lot when calculated lot is below minimum
-input double InpMinLotRiskMultiplier = 15.0; // Max risk multiplier for min-lot round-up (e.g., 15.0 = risk at min lot <= 15x intended)
+input bool   InpAllowMinLotRoundUp = false;  // Allow rounding up to broker min lot when calculated lot is below minimum
+input double InpMinLotRiskMultiplier = 5.0; // Max risk multiplier for min-lot round-up (e.g., 5.0 = risk at min lot <= 5x intended)
 input string InpSymbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";               // Comprehensive test symbols
 input int    InpMinSecondsBetweenTrades = 10;     // Cooldown in seconds between trade cycles
-input int    InpMaxPositionsTotal = 8;            // Global position limit under authority gate
-input int    InpMaxPositionsPerSymbol = 1;       // Max concurrent positions per symbol (prevents risk saturation)
+input int    InpMaxPositionsTotal = 15;           // Global position limit (confidence-scaled: 3-15)
+input int    InpMaxPositionsTotalMin = 3;         // Minimum global positions at low confidence
+input int    InpMaxPositionsPerSymbol = 5;        // Max concurrent positions per symbol (confidence-scaled: 1-5)
+input int    InpMaxPositionsPerSymbolMin = 1;     // Minimum per-symbol positions at low confidence
 input int    InpMaxTradeSendsPerCycle = 3;        // Max ranked candidates the EA may send per scan cycle
 input group "Strategy Selection"
 input bool InpEnableMomentum = true;        // Enable Momentum Strategy
@@ -245,6 +247,13 @@ input double InpLifecycleTrailingDistancePoints = 150.0;                // Trail
 input double InpLifecycleTrailingStepPoints = 30.0;                     // Minimum favorable move between trailing updates
 input bool   InpLifecycleUseATRTrailing = false;                        // Use dynamic ATR-based trailing for scalping
 input double InpLifecycleATRMultiplier = 1.5;                           // ATR multiplier for trailing distance
+
+// Issue #44: Maximum position hold time
+input bool   InpEnableMaxHoldTime = true;                              // Enable maximum position hold time exit
+input int    InpMaxHoldHoursIntraday = 24;                             // Max hold time for intraday (H1 and lower) in hours
+input int    InpMaxHoldHoursSwing = 120;                               // Max hold time for swing (H4 and higher) in hours
+input bool   InpMaxHoldOnlyIfLoss = true;                              // Only close if position is in loss
+
 input bool InpEmergencyFlattenAllAccountPositions = true;               // Flatten account-wide positions on emergency stop
 input int InpUnprotectedRemediationIntervalSec = 15;                    // Seconds between unprotected-position remediation sweeps
 input int InpUnprotectedMaxRestoreAttempts = 3;                         // Max stop-restore attempts before forced close
@@ -390,6 +399,7 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Engines\AIEngine.mqh"
 #include "Core\Utils\PythonBridge.mqh"
 #include "Core\Utils\DiagnosticsLogger.mqh"
+#include "Core\Utils\JsonLogger.mqh"
 
 // Enterprise Components
 #include "Core\Management\SymbolUniverseBuilder.mqh"
@@ -625,12 +635,14 @@ string g_dormantCooldownSymbols[];     // Symbol mapping for cooldown arrays
 const int DORMANT_COOLDOWN_THRESHOLD = 5;   // After N consecutive dormancy warnings, activate cooldown
 const int DORMANT_COOLDOWN_MINUTES = 10;    // Cooldown duration in minutes
 
-// Issue 15: Scalp blacklist tracking per symbol
-int g_scalpBlacklistFailCount[];       // Per-symbol consecutive spread cost failures
-bool g_scalpBlacklisted[];            // Per-symbol blacklist flag
-datetime g_scalpBlacklistDay[];        // Per-symbol day of last blacklist set (for daily reset)
-string g_scalpBlacklistSymbols[];      // Symbol mapping for blacklist arrays
-const int SCALP_BLACKLIST_THRESHOLD = 3; // After N consecutive spread cost failures, blacklist
+// Issue 15: Scalp blacklist tracking per symbol (time-based cooldown)
+  int g_scalpBlacklistFailCount[];       // Per-symbol consecutive spread cost failures
+  bool g_scalpBlacklisted[];            // Per-symbol blacklist flag
+  datetime g_scalpBlacklistUntil[];      // Per-symbol blacklist expiry time (time-based cooldown)
+  string g_scalpBlacklistSymbols[];      // Symbol mapping for blacklist arrays
+  const int SCALP_BLACKLIST_THRESHOLD = 3;       // After N consecutive spread cost failures, blacklist
+  const int SCALP_BLACKLIST_COOLDOWN_MINUTES = 15; // Cooldown duration in minutes (synthetics)
+  const int SCALP_BLACKLIST_COOLDOWN_MINUTES_STD = 30; // Cooldown duration in minutes (standard)
 
 struct SApprovedTradeCandidate
 {
@@ -664,6 +676,9 @@ struct SApprovedTradeCandidate
     string contributorSummary;
     bool hasAIContributor;
     bool hasONNXContributor;
+    bool hasTransformerContributor;
+    bool hasEnsembleContributor;
+    bool hasNeuralNetworkContributor;
     bool hasIndicatorContributor;
     bool liveAuthorityAllowed;
     double liveAuthorityRiskMultiplier;
@@ -703,6 +718,9 @@ struct SApprovedTradeCandidate
         contributorSummary = "";
         hasAIContributor = false;
         hasONNXContributor = false;
+        hasTransformerContributor = false;
+        hasEnsembleContributor = false;
+        hasNeuralNetworkContributor = false;
         hasIndicatorContributor = false;
         liveAuthorityAllowed = false;
         liveAuthorityRiskMultiplier = 0.0;
@@ -2751,23 +2769,37 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
         registered = manager.RegisterStrategy(trendStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
     }
     else if(strategyName == "Support/Resistance")
-        registered = manager.RegisterStrategy(new CStrategySupportResistance(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    {
+        CStrategySupportResistance* sr = new CStrategySupportResistance();
+        registered = manager.RegisterStrategy(sr, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+        if(!registered && sr != NULL) { delete sr; sr = NULL; }
+    }
     else if(strategyName == "Unified ICT")
     {
         CStrategyUnifiedICT* ict = new CStrategyUnifiedICT();
         ict.SetRequireKillZone(InpICTRequireKillZone);
         registered = manager.RegisterStrategy(ict, strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+        if(!registered && ict != NULL) { delete ict; ict = NULL; }
     }
     else if(strategyName == "Candlestick")
     {
         CStrategyCandlestick* cs = new CStrategyCandlestick();
         cs.SetRequireTrendAlignment(InpCandlestickRequireTrend);
         registered = manager.RegisterStrategy(cs, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+        if(!registered && cs != NULL) { delete cs; cs = NULL; }
     }
     else if(strategyName == "Unicorn Model")
-        registered = manager.RegisterStrategy(new CUnicornModelStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    {
+        CUnicornModelStrategy* um = new CUnicornModelStrategy();
+        registered = manager.RegisterStrategy(um, strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+        if(!registered && um != NULL) { delete um; um = NULL; }
+    }
     else if(strategyName == "Power of Three")
-        registered = manager.RegisterStrategy(new CPowerOfThreeStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    {
+        CPowerOfThreeStrategy* pot = new CPowerOfThreeStrategy();
+        registered = manager.RegisterStrategy(pot, strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+        if(!registered && pot != NULL) { delete pot; pot = NULL; }
+    }
     // NEW: Mean Reversion Strategy (Batch 93 - Week 3)
     else if(strategyName == "Mean Reversion")
     {
@@ -2778,10 +2810,15 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
             mrStrategy.SetSyntheticMode(IsSyntheticIndexSymbolName(symbol));
         }
         registered = manager.RegisterStrategy(mrStrategy, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+        if(!registered && mrStrategy != NULL) { delete mrStrategy; mrStrategy = NULL; }
     }
     // NEW: Volatility Breakout Strategy (Batch 93 - Week 3)
     else if(strategyName == "Volatility Breakout")
-        registered = manager.RegisterStrategy(new CVolatilityBreakoutStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+    {
+        CVolatilityBreakoutStrategy* vb = new CVolatilityBreakoutStrategy();
+        registered = manager.RegisterStrategy(vb, strategyName, true, strategyWeight, STRATEGY_TIER_1, strategyTf, false);
+        if(!registered && vb != NULL) { delete vb; vb = NULL; }
+    }
     // NEW: Statistical Arbitrage Strategy (Batch 103 - Week 4)
     else if(strategyName == "Statistical Arbitrage")
     {
@@ -2792,18 +2829,39 @@ bool RegisterIndicatorStrategyByName(CEnterpriseStrategyManager* manager,
             // OU engine is per-symbol, wired later in symbol initialization
         }
         registered = manager.RegisterStrategy(statArb, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+        if(!registered && statArb != NULL) { delete statArb; statArb = NULL; }
     }
     // Batch 103: ICT/SMC strategies
     else if(strategyName == "FVG Scalper")
-        registered = manager.RegisterStrategy(new CFVGScalperStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    {
+        CFVGScalperStrategy* fvg = new CFVGScalperStrategy();
+        registered = manager.RegisterStrategy(fvg, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+        if(!registered && fvg != NULL) { delete fvg; fvg = NULL; }
+    }
     else if(strategyName == "Turtle Soup")
-        registered = manager.RegisterStrategy(new CTurtleSoupStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    {
+        CTurtleSoupStrategy* ts = new CTurtleSoupStrategy();
+        registered = manager.RegisterStrategy(ts, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+        if(!registered && ts != NULL) { delete ts; ts = NULL; }
+    }
     else if(strategyName == "Breaker Block")
-        registered = manager.RegisterStrategy(new CBreakerBlockStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+    {
+        CBreakerBlockStrategy* bb = new CBreakerBlockStrategy();
+        registered = manager.RegisterStrategy(bb, strategyName, true, strategyWeight, STRATEGY_TIER_2, strategyTf, false);
+        if(!registered && bb != NULL) { delete bb; bb = NULL; }
+    }
     else if(strategyName == "NY Open Gap")
-        registered = manager.RegisterStrategy(new CNYOpenGapStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
+    {
+        CNYOpenGapStrategy* ny = new CNYOpenGapStrategy();
+        registered = manager.RegisterStrategy(ny, strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
+        if(!registered && ny != NULL) { delete ny; ny = NULL; }
+    }
     else if(strategyName == "Asian Range Break")
-        registered = manager.RegisterStrategy(new CAsianRangeBreakStrategy(), strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
+    {
+        CAsianRangeBreakStrategy* ar = new CAsianRangeBreakStrategy();
+        registered = manager.RegisterStrategy(ar, strategyName, true, strategyWeight, STRATEGY_TIER_3, strategyTf, false);
+        if(!registered && ar != NULL) { delete ar; ar = NULL; }
+    }
 
     g_strategyRegistry.MarkRegistered(strategyName, registered, registered ? "" : "manager_register_failed");
     return registered;
@@ -3466,7 +3524,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         {
             g_kalmanEngines[mSize] = new CKalmanMeanReversion(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpKalmanLambda);
             if(g_kalmanEngines[mSize] != NULL)
-                PrintFormat("[BATCH114] Kalman MR engine initialized for %s | lambda=%.0f", symbol, InpKalmanLambda);
+                PrintFormat("[ENGINE] Kalman MR engine initialized for %s | lambda=%.0f", symbol, InpKalmanLambda);
         }
 
         // Bayesian Online Changepoint Detection
@@ -3476,7 +3534,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         {
             g_cpdEngines[mSize] = new CChangepointDetector(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpCPDHazardThreshold);
             if(g_cpdEngines[mSize] != NULL)
-                PrintFormat("[BATCH114] CPD engine initialized for %s | hazard=%.2f", symbol, InpCPDHazardThreshold);
+                PrintFormat("[ENGINE] CPD engine initialized for %s | hazard=%.2f", symbol, InpCPDHazardThreshold);
         }
 
         // Four-State Regime Detector
@@ -3486,7 +3544,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         {
             g_fourStateEngines[mSize] = new CFourStateRegimeDetector(symbol, (ENUM_TIMEFRAMES)Period());
             if(g_fourStateEngines[mSize] != NULL)
-                PrintFormat("[BATCH114] Four-State Regime engine initialized for %s", symbol);
+                PrintFormat("[ENGINE] Four-State Regime engine initialized for %s", symbol);
         }
 
         // Volatility Targeting
@@ -3499,7 +3557,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
             {
                 g_volTargetEngines[mSize].Configure(InpTargetVol, 100, 0.94, InpVolMinScale, InpVolMaxScale);
                 g_volTargetEngines[mSize].Initialize();
-                PrintFormat("[BATCH114] Volatility Targeting initialized for %s | target=%.2f%%", symbol, InpTargetVol * 100);
+                PrintFormat("[ENGINE] Volatility Targeting initialized for %s | target=%.2f%%", symbol, InpTargetVol * 100);
             }
         }
 
@@ -3510,7 +3568,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         {
             g_exitOptimizers[mSize] = new CExitOptimizer();
             g_exitOptimizers[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period());
-            PrintFormat("[BATCH114] Exit Optimizer initialized for %s", symbol);
+            PrintFormat("[ENGINE] Exit Optimizer initialized for %s", symbol);
         }
 
         // Liquidity Sweep Strategy
@@ -3520,7 +3578,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         {
             g_liquiditySweepStrategies[mSize] = new CLiquiditySweepStrategy();
             g_liquiditySweepStrategies[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), NULL);
-            PrintFormat("[BATCH114] Liquidity Sweep strategy initialized for %s", symbol);
+            PrintFormat("[ENGINE] Liquidity Sweep strategy initialized for %s", symbol);
         }
 
         // Range Compression Breakout Strategy
@@ -3530,7 +3588,7 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
         {
             g_rangeCompStrategies[mSize] = new CRangeCompressionBreakout();
             g_rangeCompStrategies[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), g_hurstEngines[mSize], NULL);
-            PrintFormat("[BATCH114] Range Compression Breakout strategy initialized for %s", symbol);
+            PrintFormat("[ENGINE] Range Compression Breakout strategy initialized for %s", symbol);
         }
     }
 
@@ -3659,6 +3717,9 @@ int OnInit()
     // Initialize diagnostics logger (Blueprint 3.6: off-journal logging)
     g_diagLogger.Initialize("MultiStrategyEA", InpLogLevel, MathMax(30, InpHeartbeatInterval));
 
+    // Initialize JSON logger for structured logging
+    CJsonLogger::Initialize("MultiStrategyEA", (ENUM_LOG_VERBOSITY)InpLogLevel);
+
     // Validate MetaTrader 5 environment
     if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
     {
@@ -3773,10 +3834,28 @@ int OnInit()
     }
 
     // Populate unified risk configuration from inputs
+    // FIX: Equity-aware risk defaults - reduce risk on small accounts
+    double initEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double initBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double effectiveEquity = MathMax(initEquity, initBalance);
+    
+    // Scale risk based on account size (25% risk at $100 = $25, too aggressive)
+    // Target: 2-5% risk for accounts under $1000, scaling up to input value at $5,000+
+    double equityAdjustedRisk = InpMaxRiskPerTrade;
+    if(effectiveEquity < 1000.0)
+        equityAdjustedRisk = MathMin(InpMaxRiskPerTrade, 5.0);  // Cap at 5% for tiny accounts
+    else if(effectiveEquity < 5000.0)
+        equityAdjustedRisk = MathMin(InpMaxRiskPerTrade, 10.0);  // Cap at 10% for small accounts
+    else if(effectiveEquity < 10000.0)
+        equityAdjustedRisk = MathMin(InpMaxRiskPerTrade, 15.0);  // Cap at 15% for medium accounts
+    
+    PrintFormat("[INIT] Equity-aware risk adjustment: equity=%.2f | input_risk=%.2f%% | adjusted_risk=%.2f%%",
+                effectiveEquity, InpMaxRiskPerTrade, equityAdjustedRisk);
+    
     SUnifiedRiskConfig unifiedRiskConfig;
-    unifiedRiskConfig.baseRiskPerTradePercent = InpMaxRiskPerTrade;
+    unifiedRiskConfig.baseRiskPerTradePercent = equityAdjustedRisk;
     unifiedRiskConfig.minRiskPerTradePercent  = 0.1;
-    unifiedRiskConfig.maxRiskPerTradePercent  = MathMax(InpMaxRiskPerTrade, 100.0); // Allow high risk up to 100%
+    unifiedRiskConfig.maxRiskPerTradePercent  = MathMin(MathMax(equityAdjustedRisk * 2.0, 5.0), 25.0); // Cap at 2x base or 25% max
     unifiedRiskConfig.maxDailyRiskPercent     = InpMaxDailyRisk;
     unifiedRiskConfig.maxPortfolioRiskPercent = InpMaxPortfolioRisk;
     unifiedRiskConfig.correlationThreshold    = 0.7;
@@ -3859,7 +3938,8 @@ int OnInit()
     SPositionSizingParams sizingParams;
     sizingParams.sizingMode       = POSITION_SIZE_RISK_PERCENT;
     sizingParams.fixedLotSize     = InpLotSize;
-    sizingParams.riskPercent      = InpMaxRiskPerTrade;         // Now using consistent 0-100 scale (e.g., 2.0)
+    // Use equity-adjusted risk for PositionSizer too
+    sizingParams.riskPercent      = equityAdjustedRisk;         // Equity-aware risk
     sizingParams.atrPeriod        = 14;
     sizingParams.atrMultiplier    = 1.5;
     sizingParams.maxLotSize       = MAX_LOT_SIZE;
@@ -3904,35 +3984,35 @@ int OnInit()
     positionSizer.SetAllowMinLotRoundUp(InpAllowMinLotRoundUp);
     positionSizer.SetMinLotRiskMultiplier(InpMinLotRiskMultiplier);
 
-    // Batch 99: Initialize EquityCurveManager
+    // RISK: Initialize EquityCurveManager
     g_equityCurveManager = new CEquityCurveManager(InpEquityCurveEmaPeriod, InpEquityCurveReductionFactor, 1.0);
     if(g_equityCurveManager != NULL)
-        PrintFormat("[BATCH99] EquityCurveManager initialized with emaPeriod=%d", InpEquityCurveEmaPeriod);
+        PrintFormat("[RISK] EquityCurveManager initialized with emaPeriod=%d", InpEquityCurveEmaPeriod);
     else
-        Print("[BATCH99] WARNING: Failed to create EquityCurveManager — equity curve sizing disabled");
+        Print("[RISK] WARNING: Failed to create EquityCurveManager — equity curve sizing disabled");
 
-    // Batch 99: Initialize BayesianKellyModifier and add to PositionSizer modifier chain
+    // RISK: Initialize BayesianKellyModifier and add to PositionSizer modifier chain
     g_bayesianKellyModifier = new CBayesianKellyModifier(InpKellyFraction);
     if(g_bayesianKellyModifier != NULL)
     {
         positionSizer.AddModifier(g_bayesianKellyModifier);
-        PrintFormat("[BATCH99] BayesianKelly modifier initialized with kellyFraction=%.2f", InpKellyFraction);
+        PrintFormat("[RISK] BayesianKelly modifier initialized with kellyFraction=%.2f", InpKellyFraction);
     }
     else
     {
-        Print("[BATCH99] WARNING: Failed to create BayesianKelly modifier — position sizing will not use Bayesian Kelly");
+        Print("[RISK] WARNING: Failed to create BayesianKelly modifier — position sizing will not use Bayesian Kelly");
     }
 
-    // Batch 99: Initialize EquityCurveLotModifier and add to PositionSizer modifier chain
+    // RISK: Initialize EquityCurveLotModifier and add to PositionSizer modifier chain
     g_equityCurveLotModifier = new CEquityCurveLotModifier(g_equityCurveManager);
     if(g_equityCurveLotModifier != NULL)
     {
         positionSizer.AddModifier(g_equityCurveLotModifier);
-        PrintFormat("[BATCH99] EquityCurveLotModifier added to position sizer modifier chain");
+        PrintFormat("[RISK] EquityCurveLotModifier added to position sizer modifier chain");
     }
     else
     {
-        Print("[BATCH99] WARNING: Failed to create EquityCurveLotModifier — equity curve sizing disabled");
+        Print("[RISK] WARNING: Failed to create EquityCurveLotModifier — equity curve sizing disabled");
     }
 
     // P11.2: Initialize CADXLotModifier and add to PositionSizer modifier chain
@@ -3955,9 +4035,9 @@ int OnInit()
         }
     }
 
-    // Batch 99: CVaR is already tracked inside CPortfolioRiskManager (accessed via unifiedRiskManager)
+    // RISK: CVaR is already tracked inside CPortfolioRiskManager (accessed via unifiedRiskManager)
     // Mark it active for diagnostics
-    Print("[BATCH99] CVaR calculation active");
+    Print("[RISK] CVaR calculation active");
 
     unifiedRiskManager.ConfigureClusterGovernance(InpEnableClusterRiskGovernance,
                                                   MathMax(1, InpRiskMaxConcurrentPerCluster),
@@ -4051,6 +4131,11 @@ int OnInit()
                                                InpLifecycleTrailingDistancePoints,
                                                (int)InpLifecycleTrailingStepPoints,
                                                InpLifecycleUseATRTrailing, InpLifecycleATRMultiplier);
+        // Issue #44: Configure maximum position hold time
+        g_lifecycleManager.ConfigureMaxHoldTime(InpEnableMaxHoldTime,
+                                                 InpMaxHoldHoursIntraday,
+                                                 InpMaxHoldHoursSwing,
+                                                 InpMaxHoldOnlyIfLoss);
         // I2: Wire regime engine for intelligent SL guard
         if(ArraySize(g_enterpriseManagerSymbols) > 0)
         {
@@ -4440,7 +4525,7 @@ int OnInit()
                     // Wire EnterpriseStrategyManager-level engines (consensus gating)
                     g_enterpriseManagers[mi].SetVPINFilter(g_vpinFilters[mathIdx]);
                     g_enterpriseManagers[mi].SetOFIEngine(g_ofiEngines[mathIdx]);
-                    PrintFormat("[BATCH103] VPIN/OFI wired to EnterpriseManager | Symbol=%s", sym);
+                    PrintFormat("[WIRE] VPIN/OFI wired to EnterpriseManager | Symbol=%s", sym);
 
                     // Find and wire Trend strategy
                     IStrategy* trendStrat = g_enterpriseManagers[mi].GetStrategyByName("Trend");
@@ -4451,7 +4536,7 @@ int OnInit()
                         {
                             trendPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
                             trendPtr.SetVPINFilter(g_vpinFilters[mathIdx]);
-                            PrintFormat("[BATCH103] Hurst/VPIN wired to Trend | Symbol=%s", sym);
+                            PrintFormat("[WIRE] Hurst/VPIN wired to Trend | Symbol=%s", sym);
                         }
                     }
                     // Find and wire S/R strategy
@@ -4463,7 +4548,7 @@ int OnInit()
                         {
                             srPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
                             srPtr.SetVPINFilter(g_vpinFilters[mathIdx]);
-                            PrintFormat("[BATCH103] Hurst/VPIN wired to S/R | Symbol=%s", sym);
+                            PrintFormat("[WIRE] Hurst/VPIN wired to S/R | Symbol=%s", sym);
                         }
                     }
                     // Wire Mean Reversion Hurst engine (v2.0 regime lockout)
@@ -4474,7 +4559,7 @@ int OnInit()
                         if(mrPtr != NULL)
                         {
                             mrPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
-                            PrintFormat("[BATCH103] Hurst wired to Mean Reversion | Symbol=%s", sym);
+                            PrintFormat("[WIRE] Hurst wired to Mean Reversion | Symbol=%s", sym);
                         }
                     }
                     // Wire Statistical Arbitrage OU engine (half-life filter)
@@ -4485,7 +4570,7 @@ int OnInit()
                         if(saPtr != NULL)
                         {
                             saPtr.SetOUEngine(g_ouEngines[mathIdx]);
-                            PrintFormat("[BATCH103] OU wired to Statistical Arbitrage | Symbol=%s", sym);
+                            PrintFormat("[WIRE] OU wired to Statistical Arbitrage | Symbol=%s", sym);
                         }
                     }
                 }
@@ -4547,12 +4632,24 @@ int OnInit()
         aiConfig.minConfidenceThreshold = ResolveAIRuntimeVoteThreshold(ResolveEffectiveEAMode());
         aiConfig.useExternalLLM = InpEnableExternalLLM;
 
-        if(g_AIEngine != NULL && g_AIEngine.Initialize(g_enterpriseManagers[0], aiConfig))
+        // Build manager arrays for multi-symbol initialization
+        CEnterpriseStrategyManager* managers[];
+        string symbols[];
+        int managerCount = ArraySize(g_enterpriseManagers);
+        ArrayResize(managers, managerCount);
+        ArrayResize(symbols, managerCount);
+        for(int i = 0; i < managerCount; i++)
+        {
+            managers[i] = g_enterpriseManagers[i];
+            symbols[i] = g_enterpriseManagerSymbols[i];
+        }
+
+        if(g_AIEngine != NULL && g_AIEngine.Initialize(managers, symbols, managerCount, aiConfig))
         {
             g_aiEngineReady = true;
             if(InpEnableExternalLLM)
                 g_AIEngine.SetExternalAIEndpoint(InpExternalLLMEndpoint);
-            Print("[INIT] AI Engine initialized in ADAPTIVE mode (manager-owned)");
+            Print("[INIT] AI Engine initialized in ADAPTIVE mode (multi-manager)");
         }
         else
         {
@@ -4850,12 +4947,14 @@ void OnDeinit(const int reason)
     }
 
     // Batch 100: Cleanup mathematical engines
-    for(int i = 0; i < ArraySize(g_hurstEngines); i++)
+    // Use g_mathEngineSymbols as authoritative size since it's the master mapping array
+    int mathEngineCount = ArraySize(g_mathEngineSymbols);
+    for(int i = 0; i < mathEngineCount; i++)
     {
-        if(g_hurstEngines[i] != NULL) { delete g_hurstEngines[i]; g_hurstEngines[i] = NULL; }
-        if(g_ouEngines[i] != NULL) { delete g_ouEngines[i]; g_ouEngines[i] = NULL; }
-        if(g_ofiEngines[i] != NULL) { delete g_ofiEngines[i]; g_ofiEngines[i] = NULL; }
-        if(g_vpinFilters[i] != NULL) { delete g_vpinFilters[i]; g_vpinFilters[i] = NULL; }
+        if(i < ArraySize(g_hurstEngines) && g_hurstEngines[i] != NULL) { delete g_hurstEngines[i]; g_hurstEngines[i] = NULL; }
+        if(i < ArraySize(g_ouEngines) && g_ouEngines[i] != NULL) { delete g_ouEngines[i]; g_ouEngines[i] = NULL; }
+        if(i < ArraySize(g_ofiEngines) && g_ofiEngines[i] != NULL) { delete g_ofiEngines[i]; g_ofiEngines[i] = NULL; }
+        if(i < ArraySize(g_vpinFilters) && g_vpinFilters[i] != NULL) { delete g_vpinFilters[i]; g_vpinFilters[i] = NULL; }
     }
     ArrayResize(g_hurstEngines, 0);
     ArrayResize(g_ouEngines, 0);
@@ -4865,15 +4964,17 @@ void OnDeinit(const int reason)
     ArrayResize(g_gridHurstBridgeLogged, 0);
 
     // Batch 114: Cleanup research-driven statistical algorithm engines
-    for(int i = 0; i < ArraySize(g_kalmanEngines); i++)
+    // Use g_kalmanEngines as authoritative size (assuming all Batch 114 arrays initialized together)
+    int batch114Count = ArraySize(g_kalmanEngines);
+    for(int i = 0; i < batch114Count; i++)
     {
-        if(g_kalmanEngines[i] != NULL) { delete g_kalmanEngines[i]; g_kalmanEngines[i] = NULL; }
-        if(g_cpdEngines[i] != NULL) { delete g_cpdEngines[i]; g_cpdEngines[i] = NULL; }
-        if(g_fourStateEngines[i] != NULL) { delete g_fourStateEngines[i]; g_fourStateEngines[i] = NULL; }
-        if(g_volTargetEngines[i] != NULL) { delete g_volTargetEngines[i]; g_volTargetEngines[i] = NULL; }
-        if(g_exitOptimizers[i] != NULL) { delete g_exitOptimizers[i]; g_exitOptimizers[i] = NULL; }
-        if(g_liquiditySweepStrategies[i] != NULL) { delete g_liquiditySweepStrategies[i]; g_liquiditySweepStrategies[i] = NULL; }
-        if(g_rangeCompStrategies[i] != NULL) { delete g_rangeCompStrategies[i]; g_rangeCompStrategies[i] = NULL; }
+        if(i < ArraySize(g_kalmanEngines) && g_kalmanEngines[i] != NULL) { delete g_kalmanEngines[i]; g_kalmanEngines[i] = NULL; }
+        if(i < ArraySize(g_cpdEngines) && g_cpdEngines[i] != NULL) { delete g_cpdEngines[i]; g_cpdEngines[i] = NULL; }
+        if(i < ArraySize(g_fourStateEngines) && g_fourStateEngines[i] != NULL) { delete g_fourStateEngines[i]; g_fourStateEngines[i] = NULL; }
+        if(i < ArraySize(g_volTargetEngines) && g_volTargetEngines[i] != NULL) { delete g_volTargetEngines[i]; g_volTargetEngines[i] = NULL; }
+        if(i < ArraySize(g_exitOptimizers) && g_exitOptimizers[i] != NULL) { delete g_exitOptimizers[i]; g_exitOptimizers[i] = NULL; }
+        if(i < ArraySize(g_liquiditySweepStrategies) && g_liquiditySweepStrategies[i] != NULL) { delete g_liquiditySweepStrategies[i]; g_liquiditySweepStrategies[i] = NULL; }
+        if(i < ArraySize(g_rangeCompStrategies) && g_rangeCompStrategies[i] != NULL) { delete g_rangeCompStrategies[i]; g_rangeCompStrategies[i] = NULL; }
     }
     ArrayResize(g_kalmanEngines, 0);
     ArrayResize(g_cpdEngines, 0);
@@ -4884,11 +4985,12 @@ void OnDeinit(const int reason)
     ArrayResize(g_rangeCompStrategies, 0);
 
     // Batch 107: Cleanup institutional TA engines
-    for(int i = 0; i < ArraySize(g_vwapEngines); i++)
+    int batch107Count = ArraySize(g_vwapEngines);
+    for(int i = 0; i < batch107Count; i++)
     {
-        if(g_vwapEngines[i] != NULL) { delete g_vwapEngines[i]; g_vwapEngines[i] = NULL; }
-        if(g_vpEngines[i] != NULL) { delete g_vpEngines[i]; g_vpEngines[i] = NULL; }
-        if(g_cvdEngines[i] != NULL) { delete g_cvdEngines[i]; g_cvdEngines[i] = NULL; }
+        if(i < ArraySize(g_vwapEngines) && g_vwapEngines[i] != NULL) { delete g_vwapEngines[i]; g_vwapEngines[i] = NULL; }
+        if(i < ArraySize(g_vpEngines) && g_vpEngines[i] != NULL) { delete g_vpEngines[i]; g_vpEngines[i] = NULL; }
+        if(i < ArraySize(g_cvdEngines) && g_cvdEngines[i] != NULL) { delete g_cvdEngines[i]; g_cvdEngines[i] = NULL; }
     }
     ArrayResize(g_vwapEngines, 0);
     ArrayResize(g_vpEngines, 0);
@@ -4949,12 +5051,12 @@ string GetDeInitReasonText(int reasonCode)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-    // Periodic AI Health Check (every InpHeartbeatInterval seconds, min 30)
-    static datetime lastAIHealthCheck = 0;
-    static datetime lastPythonBridgeCheck = 0;
+    // Error handling wrapper (Issue #36)
+    bool timerError = false;
+    string timerErrorMsg = "";
+    
     datetime now = TimeCurrent();
-    int healthCheckInterval = MathMax(30, InpHeartbeatInterval);
-
+    
     // I2: Compounding tier transition check
     if(InpEnableCompoundingTiers && g_compoundingTierManager.IsInitialized())
     {
@@ -4965,6 +5067,12 @@ void OnTimer()
             lastTierCheck = now;
         }
     }
+    
+    // Periodic AI Health Check (every InpHeartbeatInterval seconds, min 30)
+    static datetime lastAIHealthCheck = 0;
+    static datetime lastPythonBridgeCheck = 0;
+    int healthCheckInterval = MathMax(30, InpHeartbeatInterval);
+    
     if(lastAIHealthCheck == 0 || (now - lastAIHealthCheck) >= healthCheckInterval)
     {
         if(InpEnableAIMode)
@@ -5060,7 +5168,15 @@ void OnTimer()
     if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL &&
        (lastPythonBridgeCheck == 0 || (now - lastPythonBridgeCheck) >= InpPythonBridgeHeartbeatTimeoutSec))
     {
-        g_pythonBridge.SendHeartbeat();
+        if(!CheckPointer(g_pythonBridge))
+        {
+            timerError = true;
+            timerErrorMsg = "PythonBridge pointer invalid";
+        }
+        else
+        {
+            g_pythonBridge.SendHeartbeat();
+        }
         lastPythonBridgeCheck = now;
     }
 
@@ -5194,6 +5310,14 @@ void OnTimer()
         g_lastCvarLogTime = nowCvar;
     }
 
+    // FIX: Periodic indicator handle auto-eviction (every 60 seconds)
+    static datetime s_lastIndicatorEviction = 0;
+    if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
+    {
+        CIndicatorManager::Instance().ReleaseUnused(300); // Release handles older than 5 minutes
+        s_lastIndicatorEviction = now;
+    }
+
     ProcessTradingLogic(true);  // true = called from timer
 }
 
@@ -5235,21 +5359,24 @@ void OnTick()
         uint nowMs = GetTickCount();
         if(nowMs - s_lastSkewStepFeed >= 500)
         {
-            for(int i = 0; i < ArraySize(g_enterpriseManagerSymbols); i++)
+            // Hoisted GetDerivProfiler() call out of loop (Issue #15)
+            CDerivAssetProfiler* derivProf = g_multiAssetProfiler.GetDerivProfiler();
+            if(derivProf != NULL)
             {
-                string sym = g_enterpriseManagerSymbols[i];
-                CDerivAssetProfiler* derivProf = g_multiAssetProfiler.GetDerivProfiler();
-                if(derivProf == NULL) continue;
-                ENUM_DERIV_FAMILY family = derivProf.DetectFamily(sym);
-                if(family == DERIV_SKEW_STEP)
+                for(int i = 0; i < ArraySize(g_enterpriseManagerSymbols); i++)
                 {
-                    // Calculate step size as difference between current and previous close
-                    double close0 = iClose(sym, PERIOD_M1, 0);
-                    double close1 = iClose(sym, PERIOD_M1, 1);
-                    if(close0 > 0 && close1 > 0)
+                    string sym = g_enterpriseManagerSymbols[i];
+                    ENUM_DERIV_FAMILY family = derivProf.DetectFamily(sym);
+                    if(family == DERIV_SKEW_STEP)
                     {
-                        double stepSize = close0 - close1;
-                        g_skewStepAnalyzer.RecordStep(stepSize);
+                        // Calculate step size as difference between current and previous close
+                        double close0 = iClose(sym, PERIOD_M1, 0);
+                        double close1 = iClose(sym, PERIOD_M1, 1);
+                        if(close0 > 0 && close1 > 0)
+                        {
+                            double stepSize = close0 - close1;
+                            g_skewStepAnalyzer.RecordStep(stepSize);
+                        }
                     }
                 }
             }
@@ -5329,6 +5456,34 @@ void ClearDormantCooldownOnNewBar(const string symbol)
 }
 
 //+------------------------------------------------------------------+
+//| Check if Symbol is Synthetic Index                               |
+//+------------------------------------------------------------------+
+bool IsSyntheticSymbolEA(const string symbol)
+{
+   if(symbol == "") return false;
+   
+   // Check for broker-specific synthetic products that trade 24/7
+   if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
+      StringFind(symbol, "Step") >= 0 ||      // Step Index variants
+      StringFind(symbol, "Boom") >= 0 ||      // Boom 1000, Boom 500
+      StringFind(symbol, "Crash") >= 0 ||     // Crash 1000, Crash 500
+      StringFind(symbol, "Jump") >= 0 ||      // Jump 10, Jump 25, etc.
+      StringFind(symbol, "PainX") >= 0 ||     // Weltrade synthetic family
+      StringFind(symbol, "Pain ") >= 0 ||     // Additional naming variant
+      StringFind(symbol, "SFX Vol") >= 0 ||
+      StringFind(symbol, "FX Vol") >= 0 ||
+      StringFind(symbol, "GainX") >= 0 ||
+      StringFind(symbol, "FlipX") >= 0 ||
+      StringFind(symbol, "SwitchX") >= 0 ||   // SwitchX 1200 and variants
+      StringFind(symbol, "Synth") >= 0 ||
+      StringFind(symbol, "Index") >= 0)
+   {
+      return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| Issue 15: Scalp blacklist tracking helpers                       |
 //+------------------------------------------------------------------+
 int FindScalpBlacklistIndex(const string symbol)
@@ -5349,11 +5504,11 @@ void EnsureScalpBlacklistSlot(const string symbol)
     ArrayResize(g_scalpBlacklistSymbols, idx + 1);
     ArrayResize(g_scalpBlacklistFailCount, idx + 1);
     ArrayResize(g_scalpBlacklisted, idx + 1);
-    ArrayResize(g_scalpBlacklistDay, idx + 1);
+    ArrayResize(g_scalpBlacklistUntil, idx + 1);
     g_scalpBlacklistSymbols[idx] = symbol;
     g_scalpBlacklistFailCount[idx] = 0;
     g_scalpBlacklisted[idx] = false;
-    g_scalpBlacklistDay[idx] = 0;
+    g_scalpBlacklistUntil[idx] = 0;
 }
 
 bool IsSymbolScalpBlacklisted(const string symbol)
@@ -5361,13 +5516,18 @@ bool IsSymbolScalpBlacklisted(const string symbol)
     int idx = FindScalpBlacklistIndex(symbol);
     if(idx < 0) return false;
 
-    // Clear blacklist on new day
-    datetime today = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
-    if(g_scalpBlacklistDay[idx] != today)
+    // Time-based cooldown expiry check (replaces daily reset)
+    if(g_scalpBlacklistUntil[idx] > 0)
     {
-        g_scalpBlacklistFailCount[idx] = 0;
-        g_scalpBlacklisted[idx] = false;
-        g_scalpBlacklistDay[idx] = today;
+        if(TimeCurrent() >= g_scalpBlacklistUntil[idx])
+        {
+            // Cooldown expired - clear blacklist
+            g_scalpBlacklisted[idx] = false;
+            g_scalpBlacklistFailCount[idx] = 0;
+            g_scalpBlacklistUntil[idx] = 0;
+            return false;
+        }
+        return g_scalpBlacklisted[idx];
     }
 
     return g_scalpBlacklisted[idx];
@@ -5377,14 +5537,22 @@ void RecordScalpCostFailure(const string symbol)
 {
     int idx = FindScalpBlacklistIndex(symbol);
     if(idx < 0) return;
+    
+    // Synthetic symbols get more tolerance - double the threshold
+    bool isSynthetic = IsSyntheticSymbolEA(symbol);
+    int threshold = isSynthetic ? SCALP_BLACKLIST_THRESHOLD * 2 : SCALP_BLACKLIST_THRESHOLD;
+    
     g_scalpBlacklistFailCount[idx]++;
-    if(g_scalpBlacklistFailCount[idx] >= SCALP_BLACKLIST_THRESHOLD)
+    if(g_scalpBlacklistFailCount[idx] >= threshold)
     {
         g_scalpBlacklisted[idx] = true;
-        datetime today = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
-        g_scalpBlacklistDay[idx] = today;
-        PrintFormat("[SCALP-BLACKLIST] %s | %d consecutive spread cost failures | blacklisted for rest of session",
-                    symbol, g_scalpBlacklistFailCount[idx]);
+        
+        // Time-based cooldown: 15 min for synthetics, 60 min for standard symbols
+        int cooldownMinutes = isSynthetic ? SCALP_BLACKLIST_COOLDOWN_MINUTES : SCALP_BLACKLIST_COOLDOWN_MINUTES_STD;
+        g_scalpBlacklistUntil[idx] = TimeCurrent() + cooldownMinutes * 60;
+        
+        PrintFormat("[SCALP-BLACKLIST] %s | %d consecutive spread cost failures | threshold=%d | blacklisted for %d minutes (%s)",
+                    symbol, g_scalpBlacklistFailCount[idx], threshold, cooldownMinutes, isSynthetic ? "SYNTHETIC" : "STANDARD");
     }
 }
 
@@ -5392,7 +5560,15 @@ void ResetScalpBlacklistCount(const string symbol)
 {
     int idx = FindScalpBlacklistIndex(symbol);
     if(idx >= 0)
+    {
         g_scalpBlacklistFailCount[idx] = 0;
+        // Also clear blacklist if it was active (symbol recovered)
+        if(g_scalpBlacklisted[idx])
+        {
+            g_scalpBlacklisted[idx] = false;
+            g_scalpBlacklistUntil[idx] = 0;
+        }
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -5456,7 +5632,10 @@ void ProcessScalpFastPath()
         double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
         if(pointSize > 0.0 && cache.atrValue > 0.0)
         {
-            double maxSpreadPoints = cache.atrValue * 0.3 / pointSize;
+            // Use more permissive spread gate for synthetic symbols (0.6 * ATR vs 0.3 * ATR)
+            bool isSynthetic = IsSyntheticSymbolEA(symbol);
+            double spreadGateMultiplier = isSynthetic ? 0.6 : 0.3;
+            double maxSpreadPoints = cache.atrValue * spreadGateMultiplier / pointSize;
             if(cache.spreadPoints > maxSpreadPoints)
             {
                 RecordScalpCostFailure(symbol);
@@ -5560,8 +5739,8 @@ void ProcessTradingLogic(bool fromTimer)
                   " (Core: ", uniqueActiveCoreStrategies, ", AI: ", uniqueActiveAIStrategies, ")",
                   " | Managers: ", managerCount,
                   " | Cooldown: ", cooldownSecs, "s / ", InpMinSecondsBetweenTrades, "s");
-            Print("[ENTERPRISE-STATUS] EA Positions: ", eaPositions, " / ", InpMaxPositionsTotal,
-                  " | Account Total: ", PositionsTotal(),
+            Print("[ENTERPRISE-STATUS] EA Positions: ", eaPositions, " / ", InpMaxPositionsTotalMin, "-", InpMaxPositionsTotal,
+                  " (scaled) | Account Total: ", PositionsTotal(),
                   " | Last trade: ", g_lastTradeTime > 0 ? TimeToString(g_lastTradeTime) : "Never");
         }
     }
@@ -5854,6 +6033,39 @@ void ProcessTradingLogic(bool fromTimer)
                 PrintFormat("[RISK-THROTTLE-REDUCE] Positions %d/%d reduced to %d by throttle pressure=%.2f",
                             eaPositions, InpMaxPositionsTotal, effectiveMaxPositions, throttlePressure);
         }
+        // Confidence-based position scaling: scale max positions based on signal quality
+        // Higher average confidence = more positions allowed (up to InpMaxPositionsTotal)
+        // Lower confidence = fewer positions (down to InpMaxPositionsTotalMin)
+        {
+            double avgConfidence = 0.0;
+            int confCount = 0;
+            for(int ci = 0; ci < ArraySize(g_enterpriseManagers); ci++)
+            {
+                if(g_enterpriseManagers[ci] != NULL)
+                {
+                    double conf = 0.0;
+                    int confl = 0;
+                    ENUM_TRADE_SIGNAL sig = g_enterpriseManagers[ci].GetConsensusSignalForSymbolWithConfluenceMode(
+                        g_activePairs[ci], conf, confl, EVAL_MODE_NEW_BAR);
+                    if(conf > 0.0)
+                    {
+                        avgConfidence += conf;
+                        confCount++;
+                    }
+                }
+            }
+            if(confCount > 0)
+            {
+                avgConfidence /= confCount;
+                // Scale positions: min at 0.0 confidence, max at 1.0 confidence
+                // Linear interpolation between min and max
+                int confidenceScaledMax = (int)MathRound(InpMaxPositionsTotalMin + (InpMaxPositionsTotal - InpMaxPositionsTotalMin) * avgConfidence);
+                effectiveMaxPositions = MathMin(effectiveMaxPositions, confidenceScaledMax);
+                if(g_logLevel >= 3 && callCount % 100 == 0)
+                    PrintFormat("[CONF-SCALE] Avg confidence=%.2f -> max positions scaled to %d (range: %d-%d)",
+                                avgConfidence, confidenceScaledMax, InpMaxPositionsTotalMin, InpMaxPositionsTotal);
+            }
+        }
         bool totalPositionLimitBlocked = (eaPositions >= effectiveMaxPositions);
         if(totalPositionLimitBlocked && callCount % 100 == 0 && g_logLevel >= 2)  // Log occasionally to avoid spam
             Print("[ENTERPRISE-BLOCKED] Position limit reached: ", eaPositions, " / ", effectiveMaxPositions);
@@ -6142,21 +6354,26 @@ void ProcessTradingLogic(bool fromTimer)
                     if(InpRiskTier == RISK_TIER_CONSERVATIVE && g_safeMode.IsInitialized())
                         effectiveSpreadATRRatio = MathMin(effectiveSpreadATRRatio, g_safeMode.GetConfig().maxSpreadATRRatio);
 
-                    // Hard spread cutoff: block untradeable symbols (e.g. Volatility 75 with 1000+ pt spread)
+                    // Hard spread cutoff: block untradeable symbols — use synthetic-aware threshold
                     {
                         double hbid = SymbolInfoDouble(currentSymbol, SYMBOL_BID);
                         double hask = SymbolInfoDouble(currentSymbol, SYMBOL_ASK);
                         double hspread = (hask > 0.0 && hbid > 0.0 && hask >= hbid) ? (hask - hbid) : 0.0;
                         double hpoint = SymbolInfoDouble(currentSymbol, SYMBOL_POINT);
                         double hspreadPts = (hpoint > 0.0) ? (hspread / hpoint) : 0.0;
-                        if(hspreadPts > InpHardSpreadCutoffPoints)
+
+                        // FIX: Synthetic indices (Deriv) have much wider spreads — use higher cutoff
+                        bool isSynthetic = IsSyntheticIndexSymbolName(currentSymbol);
+                        double effectiveHardSpreadCutoff = isSynthetic ? 20000.0 : InpHardSpreadCutoffPoints;
+
+                        if(hspreadPts > effectiveHardSpreadCutoff)
                         {
                             g_hbValidatorRejects++;
-                            PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=hard_spread_cutoff | signal=%s conf=%.2f | spread_pts=%.1f threshold=%.1f",
+                            PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=hard_spread_cutoff | signal=%s conf=%.2f | spread_pts=%.1f threshold=%.1f (synthetic=%s)",
                                         currentSymbol, (enterpriseSignal == TRADE_SIGNAL_BUY) ? "BUY" : "SELL",
-                                        confidence, hspreadPts, InpHardSpreadCutoffPoints);
+                                        confidence, hspreadPts, effectiveHardSpreadCutoff, isSynthetic ? "true" : "false");
                             PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=hard_spread_cutoff | spread_points=%.1f > %.1f | confluence=%d | conf=%.2f",
-                                        scanCycleId, currentSymbol, hspreadPts, InpHardSpreadCutoffPoints, confluence, confidence);
+                                        scanCycleId, currentSymbol, hspreadPts, effectiveHardSpreadCutoff, confluence, confidence);
                             continue;
                         }
                     }
@@ -6286,15 +6503,20 @@ void ProcessTradingLogic(bool fromTimer)
                     int symbolPositionCount = 0;
                     int eaSymbolPositionCount = 0;
                     int externalSymbolPositions = 0;
+                    int effectiveMaxPerSymbol = InpMaxPositionsPerSymbol;  // Default to max
 
-                    if(InpPortfolioMaxPositionsPerSymbol > 0)
+                    if(InpMaxPositionsPerSymbol > 0)
                     {
+                        // Confidence-based scaling for per-symbol position limit
+                        // confidence 0.5 -> min, confidence 0.9+ -> max
+                        effectiveMaxPerSymbol = InpMaxPositionsPerSymbolMin + (int)((InpMaxPositionsPerSymbol - InpMaxPositionsPerSymbolMin) * MathMax(0.0, MathMin(1.0, (tradeConfidence - 0.5) / 0.4)));
+                        
                         symbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, false);
                         eaSymbolPositionCount = GetOpenPositionCountForSymbol(currentSymbol, true);
                         externalSymbolPositions = symbolPositionCount - eaSymbolPositionCount;
                         if(externalSymbolPositions < 0)
                             externalSymbolPositions = 0;
-                        if(eaSymbolPositionCount >= InpPortfolioMaxPositionsPerSymbol)
+                        if(eaSymbolPositionCount >= effectiveMaxPerSymbol)
                         {
                             symbolPositionCapBlocked = true;
                         }
@@ -6319,7 +6541,7 @@ void ProcessTradingLogic(bool fromTimer)
                         {
                             if(blockReason != "")
                                 blockReason += " | ";
-                            blockReason += StringFormat("position limit %d/%d", eaPositions, InpMaxPositionsTotal);
+                            blockReason += StringFormat("position limit %d/%d", eaPositions, effectiveMaxPositions);
                         }
                         if(unprotectedEntryBlocked)
                         {
@@ -6340,7 +6562,7 @@ void ProcessTradingLogic(bool fromTimer)
                                 blockReason += " | ";
                             blockReason += StringFormat("symbol cap ea=%d/%d | total=%d | external=%d",
                                                         eaSymbolPositionCount,
-                                                        InpPortfolioMaxPositionsPerSymbol,
+                                                        effectiveMaxPerSymbol,
                                                         symbolPositionCount,
                                                         externalSymbolPositions);
                         }
@@ -6370,7 +6592,7 @@ void ProcessTradingLogic(bool fromTimer)
                                             externalSymbolPositions,
                                             eaSymbolPositionCount,
                                             symbolPositionCount,
-                                            InpPortfolioMaxPositionsPerSymbol,
+                                            effectiveMaxPerSymbol,
                                             InpMagicNumber);
                                 g_scanScheduler.SetLastExternalCapacityLogTime(capLogNow);
                             }
@@ -6533,6 +6755,9 @@ void ProcessTradingLogic(bool fromTimer)
                     bool hasAIContributor = g_attributionManager.ContributorsIncludeAI(contributorsList);
                     bool hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
                     bool hasONNXContributor = g_attributionManager.ContributorsIncludeONNX(contributorsList);
+                    bool hasTransformerContributor = g_attributionManager.ContributorsIncludeTransformer(contributorsList);
+                    bool hasEnsembleContributor = g_attributionManager.ContributorsIncludeEnsemble(contributorsList);
+                    bool hasNeuralNetworkContributor = g_attributionManager.ContributorsIncludeNeuralNetwork(contributorsList);
                     int indicatorContributorCount = g_attributionManager.CountIndicatorContributors(contributorsList);
 
                     // Reset indicator drought counter when an indicator strategy produces a signal
@@ -6810,6 +7035,7 @@ void ProcessTradingLogic(bool fromTimer)
                             if(InpEnableSkewStepAnalyzer && g_skewStepAnalyzer.IsInitialized())
                             {
                                 // Check if current symbol is a Skew Step index
+                                // Hoisted GetDerivProfiler() call out of loop (Issue #15)
                                 CDerivAssetProfiler* derivProf2 = g_multiAssetProfiler.GetDerivProfiler();
                                 if(derivProf2 == NULL) continue;
                                 ENUM_DERIV_FAMILY family = derivProf2.DetectFamily(currentSymbol);
@@ -6952,6 +7178,9 @@ tradeReq.lotSize = lotSize;
                                 candidate.contributorSummary = contributorSummary;
                                 candidate.hasAIContributor = hasAIContributor;
                                 candidate.hasONNXContributor = hasONNXContributor;
+                                candidate.hasTransformerContributor = hasTransformerContributor;
+                                candidate.hasEnsembleContributor = hasEnsembleContributor;
+                                candidate.hasNeuralNetworkContributor = hasNeuralNetworkContributor;
                                 candidate.hasIndicatorContributor = hasIndicatorContributor;
                                 candidate.liveAuthorityAllowed = liveAuthorityAllowed;
                                 candidate.liveAuthorityRiskMultiplier = liveAuthorityRiskMultiplier;
@@ -7099,25 +7328,25 @@ tradeReq.lotSize = lotSize;
 
                     attemptedThisCycle++;
                     RegisterLiveAuthorityTrial(bestCandidate, false, bestCandidate.liveAuthorityReason);
-                    PrintFormat("[LIVE-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
-                                    bestCandidate.cycleId,
-                                    bestCandidate.symbol,
-                                    bestCandidate.signalType,
-                                    bestCandidate.lotSize,
-                                    bestCandidate.tradeConfidence,
-                                    bestCandidate.qualityScore,
-                                    bestCandidate.convictionScore,
-                                    bestCandidate.contextScore,
-                                    bestCandidate.readinessScore,
-                                    bestCandidate.costScore,
-                                    bestCandidate.confluence,
-                                    bestCandidate.liveAuthorityAllowed ? "true" : "false",
-                                    bestCandidate.liveAuthorityReason,
-                                    bestCandidate.strategyRoleTag,
-                                    bestCandidate.strategyClusterTag,
-                                    bestCandidate.contributorSummary,
-                                    bestCandidate.slPrice,
-                                    bestCandidate.tpPrice);
+PrintFormat("[LIVE-TRADE] cycle=%I64u | %s | %s | lot=%.2f | conf=%.2f | quality=%.2f | conviction=%.2f | context=%.2f | readiness=%.2f | cost=%.2f | confluence=%d | live_authority=%s | authority_reason=%s | role=%s | cluster=%s | contributors=%s | SL=%.5f | TP=%.5f",
+                                bestCandidate.cycleId,
+                                bestCandidate.symbol,
+                                bestCandidate.signalType,
+                                bestCandidate.lotSize,
+                                bestCandidate.tradeConfidence,
+                                bestCandidate.qualityScore,
+                                bestCandidate.convictionScore,
+                                bestCandidate.contextScore,
+                                bestCandidate.readinessScore,
+                                bestCandidate.costScore,
+                                bestCandidate.confluence,
+                                bestCandidate.liveAuthorityAllowed ? "true" : "false",
+                                bestCandidate.liveAuthorityReason,
+                                bestCandidate.strategyRoleTag,
+                                bestCandidate.strategyClusterTag,
+                                bestCandidate.contributorSummary,
+                                bestCandidate.slPrice,
+                                bestCandidate.tpPrice);
 
                     // Execute the trade
                     string predictionId = "";
@@ -7128,7 +7357,22 @@ tradeReq.lotSize = lotSize;
                         if(symbolNet != NULL && InpEnableAIMode && InpEnableNeuralNetwork && InpEnableNNOnlineTraining)
                             symbolNet.ReservePredictionForSignal(bestCandidate.signal, predictionId, 600);
 
-                        string tradeComment = g_attributionManager.BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
+                    // [AI-ATTRIBUTION] Log AI contributor info when trade is sent
+                    if(bestCandidate.hasAIContributor)
+                    {
+                        PrintFormat("[AI-ATTRIBUTION] Trade OPEN | symbol=%s | signal=%s | contributors=%s | conf=%.3f | hasONNX=%s | hasTransformer=%s | hasEnsemble=%s | hasNeuralNet=%s | predictionId=%s",
+                                    bestCandidate.symbol,
+                                    bestCandidate.signalType,
+                                    bestCandidate.contributorSummary,
+                                    bestCandidate.tradeConfidence,
+                                    bestCandidate.hasONNXContributor ? "true" : "false",
+                                    bestCandidate.hasTransformerContributor ? "true" : "false",
+                                    bestCandidate.hasEnsembleContributor ? "true" : "false",
+                                    bestCandidate.hasNeuralNetworkContributor ? "true" : "false",
+                                    predictionId);
+                    }
+
+                    string tradeComment = g_attributionManager.BuildClusterTaggedTradeComment(bestCandidate.strategyClusterCode, predictionId);
 
                         // Per-symbol magic number: BASE + symbolIndex*100 + clusterCode
                         int symbolIdx = FindEnterpriseManagerIndex(bestCandidate.symbol);
@@ -7690,6 +7934,22 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                                 g_attributionManager.NNDiagLog(StringFormat("Close skipped: no prediction context | Symbol=%s | PositionID=%I64u",
                                                        trans.symbol, positionId));
                             }
+                        }
+                    }
+                    
+                    // [AI-ATTRIBUTION] Log AI attribution on position close
+                    if(InpEnableAIMode && positionId > 0 && !positionStillOpen && totalNetProfit != 0.0)
+                    {
+                        // Check if this position had AI contribution
+                        string aiPredictionTimeStr = "";
+                        datetime aiPredTime = (positionId > 0) ? g_attributionManager.GetAIPredictionTimeForPosition(positionId) : 0;
+                        ENUM_TRADE_SIGNAL aiPredSignal = (positionId > 0) ? g_attributionManager.GetAIPredictionSignalForPosition(positionId) : TRADE_SIGNAL_NONE;
+                        if(aiPredTime > 0 && aiPredSignal != TRADE_SIGNAL_NONE)
+                        {
+                            PrintFormat("[AI-ATTRIBUTION] Trade CLOSE | symbol=%s | position=%I64u | net_profit=%.2f | ai_pred_time=%s | ai_pred_signal=%s",
+                                        trans.symbol, positionId, totalNetProfit,
+                                        TimeToString(aiPredTime, TIME_DATE | TIME_SECONDS),
+                                        TradeSignalToString(aiPredSignal));
                         }
                     }
 

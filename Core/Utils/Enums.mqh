@@ -203,7 +203,8 @@ enum ENUM_CONSENSUS_DECISION_CLASS
     CONSENSUS_DECISION_FULL_QUORUM = 1,
     CONSENSUS_DECISION_SPARSE_INTRABAR = 2,
     CONSENSUS_DECISION_VETOED = 3,
-    CONSENSUS_DECISION_MARGINAL_ADMIT = 4
+    CONSENSUS_DECISION_MARGINAL_ADMIT = 4,
+    CONSENSUS_DECISION_SOLO_FALLBACK = 5  // Fallback when all strategies abstain
 };
 
 //+------------------------------------------------------------------+
@@ -290,7 +291,7 @@ double ClampRiskPercentGlobal(double riskPercent)
 #define MIN_ACCOUNT_BALANCE 1.0         // Minimum account balance (lowered for micro-account testing)
 #define DRAWDOWN_CRITICAL 10.0           // Critical drawdown level (Blueprint 10.4: 0-100 scale)
 #define DRAWDOWN_WARNING 5.0            // Warning drawdown level (Blueprint 10.4: 0-100 scale)
-#define MAX_RISK_PER_TRADE 10.0       // Maximum risk per trade as percentage (Blueprint 10.4: 0-100 scale)
+#define MAX_RISK_PER_TRADE 50.0       // Maximum risk per trade as percentage (Blueprint 10.4: 0-100 scale)
 #define MAX_TOTAL_RISK 10.0             // Maximum total portfolio risk (Blueprint 10.4: 0-100 scale)
 #define BENCHMARK_RETURN 0.15           // Annual benchmark return (15%)
 

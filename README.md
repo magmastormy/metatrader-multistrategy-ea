@@ -16,6 +16,8 @@ Designed for production: every trade entry passes through a multi-layer pre-trad
 
 **Academic Rigor (Batch 122):** Complete modular architecture migration with 6 registries and 8 orchestration modules. All critical bugs fixed — magic number overflow protection, PERIOD_CURRENT misuse in ATR calculations (4 locations), memory leaks in strategy registration (20+ allocation paths), MQL5 API error handling, and resource cleanup verification. ~2,000 lines of dead code removed from main EA. System compiles with 0 errors, 11 warnings (style only).
 
+**Phase 4 Observability (Batch 123):** Structured JSON logging with correlation IDs, PERIOD_CURRENT audit complete (all indicator calls validated), CIndicatorManager FindHandle paramCount fix, unit test scaffolding for core math modules.
+
 ## Key Features
 
 - **Multi-Strategy Consensus** — 15 strategy modules vote through weighted quorum; no single strategy can unilaterally enter a trade

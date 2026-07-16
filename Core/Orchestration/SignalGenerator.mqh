@@ -252,6 +252,38 @@ public:
         return -1;
     }
     
+    // Remove a dormant symbol entry completely
+    void RemoveDormantEntry(const string symbol)
+    {
+        int idx = FindDormantIndex(symbol);
+        if(idx < 0) return;
+        
+        // Shift remaining elements
+        for(int i = idx; i < m_dormantCount - 1; i++)
+        {
+            m_dormantSymbols[i] = m_dormantSymbols[i + 1];
+            m_dormantWarningCount[i] = m_dormantWarningCount[i + 1];
+            m_dormantCooldownUntil[i] = m_dormantCooldownUntil[i + 1];
+        }
+        
+        // Resize arrays
+        m_dormantCount--;
+        if(m_dormantCount > 0)
+        {
+            ArrayResize(m_dormantSymbols, m_dormantCount);
+            ArrayResize(m_dormantWarningCount, m_dormantCount);
+            ArrayResize(m_dormantCooldownUntil, m_dormantCount);
+        }
+        else
+        {
+            ArrayFree(m_dormantSymbols);
+            ArrayFree(m_dormantWarningCount);
+            ArrayFree(m_dormantCooldownUntil);
+        }
+        
+        PrintFormat("[DORMANT-REMOVED] %s | entry removed from tracking", symbol);
+    }
+    
     // Get funnel metrics from all managers
     void GetAggregateFunnel(ulong &signalsGenerated, ulong &afterPipeline, ulong &afterQuorum)
     {

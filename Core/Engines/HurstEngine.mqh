@@ -474,7 +474,7 @@ public:
             for(int k = 0; k < lagCount; k++)
             {
                 double var = ComputeLaggedVariance(logPrices, usableBars, lags[k]);
-                if(var <= 0.0 || !MathIsValidNumber(var))
+                if(var <= 1e-15 || !MathIsValidNumber(var))  // Guard against 0 and near-zero
                     continue;
 
                 logLags[validCount] = MathLog((double)lags[k]);

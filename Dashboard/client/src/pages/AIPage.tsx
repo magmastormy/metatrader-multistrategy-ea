@@ -1,9 +1,10 @@
 import { useRef, useState, useEffect } from 'react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from 'recharts';
 import { useEAState } from '../hooks/useEAState';
 import PageContainer from '../components/layout/PageContainer';
 import StatusBadge from '../components/shared/StatusBadge';
-import MetricCard from '../components/shared/MetricCard';
 import NeuralNetViz from '../components/shared/NeuralNetViz';
 import RegimeGlow from '../components/shared/RegimeGlow';
 
@@ -42,10 +43,10 @@ export default function AIPage() {
 
   if (!isConnected || !state) {
     return (
-      <PageContainer title="AI Monitoring">
+      <PageContainer title="AI Monitoring" subtitle="Neural Network & Regime Analysis">
         <div className="flex items-center justify-center h-[70vh]">
           <div className="text-center">
-            <div className="w-4 h-4 rounded-full bg-accent-red mx-auto mb-4 animate-pulse" />
+            <div className={`w-4 h-4 rounded-full mx-auto mb-4 animate-pulse ${!isConnected ? 'bg-danger' : 'bg-warning'}`} />
             <p className="text-text-secondary text-lg">{!isConnected ? 'Connecting...' : 'Waiting for data...'}</p>
           </div>
         </div>
@@ -61,42 +62,42 @@ export default function AIPage() {
   const nnActive = nn?.active ?? false;
   const confData = confHistoryRef.current;
 
-  const signalColor = nn?.signal === 'BUY' ? 'text-accent-green' : nn?.signal === 'SELL' ? 'text-accent-red' : 'text-text-muted';
+  const signalColor = nn?.signal === 'BUY' ? 'text-success' : nn?.signal === 'SELL' ? 'text-danger' : 'text-text-muted';
 
   return (
-    <PageContainer title="AI Monitoring">
+    <PageContainer title="AI Monitoring" subtitle="Neural Network, Regime Detection & Adapter Status">
       {/* Top metrics */}
-      <div className="grid grid-cols-6 gap-4 mb-6">
-        <MetricCard
-          label="Neural Signal"
-          value={nn?.signal ?? '—'}
-        />
-        <MetricCard
-          label="Confidence"
-          value={nn?.confidence !== undefined ? `${(nn.confidence * 100).toFixed(1)}%` : '—'}
-        />
-        <MetricCard
-          label="Conformal Q"
-          value={nn?.conformal_quantile !== undefined ? nn.conformal_quantile.toFixed(3) : '—'}
-        />
-        <MetricCard
-          label="Regime"
-          value={regime?.current ?? '—'}
-        />
-        <MetricCard
-          label="Labels"
-          value={nn?.labels_resolved?.toString() ?? '—'}
-        />
-        <MetricCard
-          label="Training Steps"
-          value={nn?.training_steps?.toString() ?? '—'}
-        />
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6 stagger-enter" style={{ animationDelay: '0ms' }}>
+        <div className="glass-card p-4 hover-lift">
+          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">Neural Signal</p>
+          <p className="text-2xl font-bold text-text-primary">{nn?.signal ?? '—'}</p>
+        </div>
+        <div className="glass-card p-4 hover-lift">
+          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">Confidence</p>
+          <p className="text-2xl font-bold text-text-primary">{nn?.confidence !== undefined ? `${(nn.confidence * 100).toFixed(1)}%` : '—'}</p>
+        </div>
+        <div className="glass-card p-4 hover-lift">
+          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">Conformal Q</p>
+          <p className="text-2xl font-bold text-text-primary">{nn?.conformal_quantile !== undefined ? nn.conformal_quantile.toFixed(3) : '—'}</p>
+        </div>
+        <div className="glass-card p-4 hover-lift">
+          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">Regime</p>
+          <p className="text-2xl font-bold text-text-primary">{regime?.current ?? '—'}</p>
+        </div>
+        <div className="glass-card p-4 hover-lift">
+          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">Labels Resolved</p>
+          <p className="text-2xl font-bold text-text-primary">{nn?.labels_resolved?.toString() ?? '—'}</p>
+        </div>
+        <div className="glass-card p-4 hover-lift">
+          <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-1">Training Steps</p>
+          <p className="text-2xl font-bold text-text-primary">{nn?.training_steps?.toString() ?? '—'}</p>
+        </div>
       </div>
 
       {/* Charts row */}
-      <div className="grid grid-cols-12 gap-4 mb-6">
+      <div className="grid grid-cols-12 gap-4 mb-6 stagger-enter" style={{ animationDelay: '50ms' }}>
         {/* Neural Network Visualization */}
-        <div className="col-span-5 glass-card p-4 flex flex-col items-center justify-center">
+        <div className="col-span-12 lg:col-span-5 glass-card p-4 flex flex-col items-center justify-center">
           <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-2">Neural Network</p>
           <NeuralNetViz
             confidence={nn?.confidence ?? 0.5}
@@ -108,19 +109,19 @@ export default function AIPage() {
           />
           <div className="flex items-center gap-4 mt-2 text-[10px] text-text-muted">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-accent-cyan" /> Active
+              <span className="w-2 h-2 rounded-full bg-accent-primary" /> Active
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-surface-500" /> Inactive
+              <span className="w-2 h-2 rounded-full bg-surface-4" /> Inactive
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-accent-amber animate-pulse" /> Training
+              <span className="w-2 h-2 rounded-full bg-warning animate-pulse" /> Training
             </span>
           </div>
         </div>
 
         {/* Regime Glow */}
-        <div className="col-span-3 glass-card p-4 flex flex-col items-center justify-center">
+        <div className="col-span-12 lg:col-span-3 glass-card p-4 flex flex-col items-center justify-center">
           <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-2">Market Regime</p>
           <RegimeGlow
             regime={regime?.current ?? 'RANGE'}
@@ -136,19 +137,19 @@ export default function AIPage() {
         </div>
 
         {/* Confidence + Conformal chart */}
-        <div className="col-span-4 glass-card p-4">
+        <div className="col-span-12 lg:col-span-4 glass-card p-4">
           <div className="flex items-center justify-between mb-3">
             <p className="text-text-secondary text-xs uppercase tracking-wider font-medium">Confidence Timeline</p>
-            <StatusBadge status={nnActive ? 'online' : 'offline'} label={nnActive ? 'Live' : 'Off'} />
+            <StatusBadge status={nnActive ? 'online' : 'offline'} label={nnActive ? 'Live' : 'Off'} size="sm" />
           </div>
           <div className="h-52">
             {confData.length > 1 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={confData}>
+                <AreaChart data={confData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="confGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgba(34,211,238,0.3)" />
-                      <stop offset="100%" stopColor="rgba(34,211,238,0)" />
+                      <stop offset="0%" stopColor="rgba(0,212,170,0.3)" />
+                      <stop offset="100%" stopColor="rgba(0,212,170,0)" />
                     </linearGradient>
                     <linearGradient id="conformalGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="rgba(249,115,22,0.3)" />
@@ -161,7 +162,7 @@ export default function AIPage() {
                     contentStyle={{ background: '#1a1f2e', border: '1px solid rgba(148,163,184,0.1)', borderRadius: 8, fontSize: 11 }}
                     labelStyle={{ color: '#94a3b8' }}
                   />
-                  <Area type="monotone" dataKey="confidence" name="Conf" stroke="#22d3ee" fill="url(#confGrad)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="confidence" name="Conf" stroke="#00d4aa" fill="url(#confGrad)" strokeWidth={2} />
                   <Area type="monotone" dataKey="conformal" name="CQ" stroke="#f97316" fill="url(#conformalGrad)" strokeWidth={1.5} strokeDasharray="4 2" />
                 </AreaChart>
               </ResponsiveContainer>
@@ -173,9 +174,9 @@ export default function AIPage() {
       </div>
 
       {/* Bottom row: NN details + Meta-labeler + Adapters */}
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid grid-cols-12 gap-4 stagger-enter" style={{ animationDelay: '100ms' }}>
         {/* Neural Network details */}
-        <div className="col-span-4 glass-card p-4">
+        <div className="col-span-12 lg:col-span-4 glass-card p-4">
           <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">Neural Network</p>
           <div className="space-y-2">
             <DetailRow label="Signal" value={nn?.signal ?? '—'} color={signalColor} />
@@ -193,7 +194,7 @@ export default function AIPage() {
         </div>
 
         {/* Meta-labeler */}
-        <div className="col-span-4 glass-card p-4">
+        <div className="col-span-12 lg:col-span-4 glass-card p-4">
           <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">Meta-Labeler (24 Features)</p>
           <div className="space-y-2">
             <DetailRow label="Features" value={meta?.features?.toString() ?? '—'} />
@@ -203,7 +204,7 @@ export default function AIPage() {
             <DetailRow label="Avg Confidence" value={meta?.recent_avg_confidence !== undefined ? `${(meta.recent_avg_confidence * 100).toFixed(1)}%` : '—'} />
             <DetailRow label="Samples Since Train" value={meta?.samples_since_train?.toString() ?? '—'} />
           </div>
-          <div className="mt-4 pt-3 border-t border-surface-600">
+          <div className="mt-4 pt-3 border-t border-border-subtle">
             <p className="text-text-muted text-[10px] uppercase tracking-wider mb-2">Input Features</p>
             <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
               <span>[0] Confidence</span>
@@ -215,13 +216,13 @@ export default function AIPage() {
               <span>[12] Avg Conf</span>
               <span>[13-22] Features</span>
               <span>[23] Momentum</span>
-              <span className="text-accent-cyan">Total: 24</span>
+              <span className="text-accent-primary">Total: 24</span>
             </div>
           </div>
         </div>
 
         {/* AI Adapters */}
-        <div className="col-span-4 glass-card p-4">
+        <div className="col-span-12 lg:col-span-4 glass-card p-4">
           <p className="text-text-secondary text-xs uppercase tracking-wider font-medium mb-3">AI Adapters</p>
           <div className="space-y-3">
             {[
@@ -230,9 +231,9 @@ export default function AIPage() {
               { key: 'Transformer', data: ai.transformer },
               { key: 'NN', data: ai.nn },
             ].map(({ key, data }) => (
-              <div key={key} className="flex items-center justify-between py-2 border-b border-surface-600 last:border-0">
+              <div key={key} className="flex items-center justify-between py-2 border-b border-border-subtle last:border-0">
                 <div className="flex items-center gap-2">
-                  <StatusBadge status={data.active ? 'online' : 'offline'} label={key} />
+                  <StatusBadge status={data.active ? 'online' : 'offline'} label={key} size="sm" />
                 </div>
                 <div className="flex items-center gap-3 text-xs text-text-muted">
                   {data.votes !== undefined && <span>Votes: {data.votes}</span>}
@@ -242,12 +243,12 @@ export default function AIPage() {
               </div>
             ))}
           </div>
-          <div className="mt-4 pt-3 border-t border-surface-600">
+          <div className="mt-4 pt-3 border-t border-border-subtle">
             <p className="text-text-muted text-[10px] uppercase tracking-wider mb-2">Features: {ai.features_total ?? 65}</p>
             <div className="text-[10px] text-text-muted space-y-0.5">
               <p>57 base + 8 candlestick patterns</p>
-              <p className="text-accent-cyan">PinBar Engulf Doji Hammer</p>
-              <p className="text-accent-cyan">Shooting Star Morning/Evening</p>
+              <p className="text-accent-primary">PinBar Engulf Doji Hammer</p>
+              <p className="text-accent-primary">Shooting Star Morning/Evening</p>
             </div>
           </div>
         </div>
@@ -258,7 +259,7 @@ export default function AIPage() {
 
 function DetailRow({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="flex justify-between items-center py-1 border-b border-surface-700/50 last:border-0">
+    <div className="flex justify-between items-center py-1 border-b border-surface-600/50 last:border-0">
       <span className="text-text-muted text-xs">{label}</span>
       <span className={`text-xs font-mono ${color ?? 'text-text-primary'}`}>{value}</span>
     </div>

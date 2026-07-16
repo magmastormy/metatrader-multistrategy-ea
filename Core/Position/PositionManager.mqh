@@ -582,7 +582,7 @@ public:
         m_consecutiveLossLimit(3), m_consecutiveLossCooldownSec(1800),
         m_dailyLossCircuitBreakerPercent(50.0), m_positionLossLimitPercent(75.0),
         m_partialProfitTakingEnabled(false), m_partialProfitATRMultiplier(1.0),
-        m_partialProfitPercent(50.0),
+        m_partialProfitPercent(25.0),
         m_pyramidStateCount(0), m_volatilityRegimeCount(0),
         m_consecutiveLossCount(0), m_lastLossTime(0), m_consecutiveLossCooldownUntil(0),
         m_dailyLossAmount(0.0), m_dailyRiskBudget(0.0), m_dailyResetTime(0)

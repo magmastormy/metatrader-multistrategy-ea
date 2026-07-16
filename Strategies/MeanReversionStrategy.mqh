@@ -78,6 +78,7 @@ private:
 
     // v2.0 additions
     int     m_stochHandle;        // Stochastic extreme confirmation (v2.0)
+    int     m_adxHandle;        // ADX for trend filter (Issue #27)
     CHurstEngine* m_hurstEngine;  // Hurst engine for regime lockout (v2.0)
     double  m_bbWidthLookback;    // Lookback for BB width average (v2.0)
 
@@ -127,6 +128,7 @@ public:
         m_syntheticBbHandle(INVALID_HANDLE),
         m_riskManager(NULL),
         m_stochHandle(INVALID_HANDLE),
+        m_adxHandle(INVALID_HANDLE),
         m_hurstEngine(NULL),
         m_bbWidthLookback(50),
         m_lastSignalBar(0),
@@ -172,7 +174,10 @@ public:
         // v2.0: Stochastic for extreme confirmation (via CIndicatorManager)
         m_stochHandle = CIndicatorManager::Instance().GetStochasticHandle(m_symbol, m_timeframe, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
 
-        if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE)
+        // NEW: ADX for trend filter (Issue #27)
+        m_adxHandle = CIndicatorManager::Instance().GetADXHandle(m_symbol, m_timeframe, 14);
+
+        if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE || m_adxHandle == INVALID_HANDLE)
         {
             Print("[MEANREV] Failed to create indicator handles");
             return false;
@@ -279,6 +284,15 @@ public:
         if(!MeanRevertingRegime())
         {
             return RejectSignal("MEANREV_HURST_NOT_MEANREVERTING");
+        }
+        
+        // NEW: Block mean reversion in trending markets (ADX > 25)
+        double adx = GetADX(14);
+        if(adx > 25.0)
+        {
+            SetDecisionReasonTag("MEANREV_TRENDING_MARKET");
+            PrintFormat("[MEANREV] Market trending (ADX=%.1f), blocking mean reversion", adx);
+            return RejectSignal("MEANREV_TRENDING_MARKET");
         }
         
         // v2.0: Band width filter - avoid trading in choppy/narrow bands
@@ -643,7 +657,7 @@ private:
         return currentWidth > avgWidth;  // Current width > average = sufficient
     }
     
-    // Dynamic TP at BB middle (v2.0)
+// Dynamic TP at BB middle (v2.0)
     double GetDynamicTP(ENUM_TRADE_SIGNAL direction)
     {
         if(m_bbHandle == INVALID_HANDLE)
@@ -655,7 +669,20 @@ private:
         
         return bbMiddle[0];  // TP at BB middle (20 EMA = mean)
     }
-
+    
+    // Get ADX value for trend filter (Issue #27)
+    double GetADX(int period)
+    {
+        if(m_adxHandle == INVALID_HANDLE)
+            return 0.0;
+        
+        double adxBuffer[1];
+        if(CopyBuffer(m_adxHandle, 0, 0, 1, adxBuffer) > 0 && adxBuffer[0] > 0.0)
+            return adxBuffer[0];
+        
+        return 0.0;
+    }
+    
     // Detect mean reversion signal
     SMeanReversionSignal DetectMeanReversionSignal(
         double price, double prevPrice,

@@ -8,20 +8,20 @@
 #property script_show_inputs
 
 input string symbolName = "EURUSD";
-input ENUM_TIMEFRAMES timeframe = PERIOD_H1;
+input ENUM_TIMEFRAMES g_timeframe = PERIOD_H1;
 input string dataFile = "TrainingData_EURUSD_H1.csv";
 
-input int epochs = 50;
-input int batchSize = 32;
-input double learningRate = 0.001;
+input int g_epochs = 50;
+input int g_batchSize = 32;
+input double g_learningRate = 0.001;
 input double l2Regularization = 0.001;
 
 input int hiddenLayer1 = 32;
 input int hiddenLayer2 = 16;
 input int hiddenLayer3 = 8;
 
-input int valRatio = 20;
-input int testRatio = 10;
+input int g_valRatio = 20;
+input int g_testRatio = 10;
 
 input bool saveChartImage = true;
 
@@ -41,7 +41,7 @@ input bool saveChartImage = true;
 void OnStart()
 {
     Print("=== MQH Model Visualizer ===");
-    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(timeframe));
+    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(g_timeframe));
     
     CCSVDataLoader dataLoader;
     CDataPreprocessor preprocessor;
@@ -75,7 +75,7 @@ void OnStart()
         return;
     }
     
-    double allFeatures[][];
+    double allFeatures[][FEATURE_VECTOR_SIZE];
     int labels[];
     int count = 0;
     
@@ -86,7 +86,7 @@ void OnStart()
         return;
     }
     
-    preprocessor.SetSplitRatio(valRatio, testRatio);
+    preprocessor.SetSplitRatio(g_valRatio, g_testRatio);
     preprocessor.SplitData(allFeatures, labels, count);
     preprocessor.NormalizeData();
     
@@ -97,12 +97,12 @@ void OnStart()
         return;
     }
     
-    model.SetLearningRate(learningRate);
+    model.SetLearningRate(g_learningRate);
     model.SetL2Regularization(l2Regularization);
     
-    CTrainingSession::STrainingConfig config;
-    config.epochs = epochs;
-    config.batchSize = batchSize;
+    STrainingConfig config;
+    config.epochs = g_epochs;
+    config.batchSize = g_batchSize;
     config.earlyStoppingPatience = 10;
     config.earlyStoppingMinDelta = 0.0001;
     config.logInterval = 5;
@@ -111,11 +111,11 @@ void OnStart()
     trainer.SetConfig(config);
     trainer.SetVisualizer(visualizer);
     
-    double trainFeatures[][];
+    double trainFeatures[][FEATURE_VECTOR_SIZE];
     int trainLabels[];
     preprocessor.GetTrainData(trainFeatures, trainLabels);
-    
-    double valFeatures[][];
+
+    double valFeatures[][FEATURE_VECTOR_SIZE];
     int valLabels[];
     preprocessor.GetValData(valFeatures, valLabels);
     
@@ -143,7 +143,7 @@ void OnStart()
     {
         string imageFile = StringFormat("TrainingChart_%s_%s_%s.png",
                                         symbolName,
-                                        EnumToString(timeframe),
+                                        EnumToString(g_timeframe),
                                         TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
         
         visualizer.SaveChartImage(imageFile);

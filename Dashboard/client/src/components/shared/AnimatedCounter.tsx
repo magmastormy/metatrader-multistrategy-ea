@@ -5,6 +5,7 @@ interface AnimatedCounterProps {
   decimals?: number;
   prefix?: string;
   suffix?: string;
+  className?: string;
 }
 
 export default function AnimatedCounter({
@@ -12,6 +13,7 @@ export default function AnimatedCounter({
   decimals = 2,
   prefix = '',
   suffix = '',
+  className = '',
 }: AnimatedCounterProps) {
   const displayRef = useRef<HTMLSpanElement>(null);
   const startRef = useRef(0);
@@ -45,7 +47,7 @@ export default function AnimatedCounter({
   }, [value, decimals, prefix, suffix]);
 
   return (
-    <span ref={displayRef} className="tabular-nums">
+    <span ref={displayRef} className={`tabular-nums ${className}`}>
       {prefix}{startRef.current.toFixed(decimals)}{suffix}
     </span>
   );

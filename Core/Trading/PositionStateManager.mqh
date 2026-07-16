@@ -181,6 +181,8 @@ void CPositionStateManager::UpsertPredictionId(const ulong positionId, const str
     
     // Create new state via temporary struct (MQL5 ArrayResize may not call struct constructors)
     ArrayResize(m_states, m_count + 1);
+    // Zero-initialize new slot to clear garbage strings
+    ZeroMemory(m_states[m_count]);
     SPositionState newState;
     newState.positionId = positionId;
     newState.predictionId = predictionId;

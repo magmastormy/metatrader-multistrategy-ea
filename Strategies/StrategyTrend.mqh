@@ -304,8 +304,8 @@ public:
         {
             double hurst = m_hurstEngine.GetSnapshot().hurstValue;
             bool isSynthetic = (m_assetClassId >= 4 && m_assetClassId <= 8);
-            double rejectThreshold = isSynthetic ? 0.35 : 0.45;
-            double attenuateThreshold = isSynthetic ? 0.40 : 0.50;
+            double rejectThreshold = isSynthetic ? 0.35 : 0.42;
+            double attenuateThreshold = isSynthetic ? 0.40 : 0.47;
             if(hurst < rejectThreshold)
             {
                 PrintFormat("[TREND-HURST-REJECTED] Hurst=%.4f < %.2f (%s) | Symbol=%s",

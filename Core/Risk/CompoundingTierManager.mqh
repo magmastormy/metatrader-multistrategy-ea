@@ -54,7 +54,7 @@ private:
     //+------------------------------------------------------------------+
     void BuildTierConfigs()
     {
-        m_tierCount = 5;
+        m_tierCount = 9;
         ArrayResize(m_tiers, m_tierCount);
 
         // Tier 0: Micro Aggressive ($10-$25)
@@ -109,10 +109,10 @@ private:
         m_tiers[3].maxConcurrentOverride   = 4;
         m_tiers[3].dailyLossLimitOverride  = 25.0;
 
-        // Tier 4: Professional ($500+)
-        // Full institutional approach
+        // Tier 4: Professional ($500-$1,000)
+        // Full institutional approach — strict capital preservation
         m_tiers[4].minBalance              = 500.0;
-        m_tiers[4].maxBalance              = 1e10;
+        m_tiers[4].maxBalance              = 1000.0;
         m_tiers[4].riskTier                = RISK_TIER_PROFESSIONAL;
         m_tiers[4].riskPerTradeOverride    = 1.5;
         m_tiers[4].maxDailyRiskOverride    = 5.0;
@@ -120,7 +120,59 @@ private:
         m_tiers[4].drawdownWarnOverride    = 8.0;
         m_tiers[4].drawdownCriticalOverride= 12.0;
         m_tiers[4].maxConcurrentOverride   = 5;
-        m_tiers[4].dailyLossLimitOverride  = 30.0;
+        m_tiers[4].dailyLossLimitOverride  = 15.0;
+
+        // Tier 5: High Growth ($1,000-$5,000) — USER REQUESTED: 5% risk
+        // Aggressive growth with controlled risk
+        m_tiers[5].minBalance              = 1000.0;
+        m_tiers[5].maxBalance              = 5000.0;
+        m_tiers[5].riskTier                = RISK_TIER_GROWTH;  // Reuse GROWTH tier
+        m_tiers[5].riskPerTradeOverride    = 5.0;   // 5% risk per trade for <$1K equity
+        m_tiers[5].maxDailyRiskOverride    = 15.0;
+        m_tiers[5].maxPortfolioRiskOverride= 30.0;
+        m_tiers[5].drawdownWarnOverride    = 10.0;
+        m_tiers[5].drawdownCriticalOverride= 18.0;
+        m_tiers[5].maxConcurrentOverride   = 6;
+        m_tiers[5].dailyLossLimitOverride  = 20.0;
+
+        // Tier 6: Aggressive Growth ($5,000-$10,000) — USER REQUESTED: 10% risk
+        // Higher risk for aggressive growth
+        m_tiers[6].minBalance              = 5000.0;
+        m_tiers[6].maxBalance              = 10000.0;
+        m_tiers[6].riskTier                = RISK_TIER_ACCELERATION;  // Reuse ACCELERATION tier
+        m_tiers[6].riskPerTradeOverride    = 10.0;  // 10% risk per trade for <$5K equity
+        m_tiers[6].maxDailyRiskOverride    = 25.0;
+        m_tiers[6].maxPortfolioRiskOverride= 40.0;
+        m_tiers[6].drawdownWarnOverride    = 12.0;
+        m_tiers[6].drawdownCriticalOverride= 22.0;
+        m_tiers[6].maxConcurrentOverride   = 8;
+        m_tiers[6].dailyLossLimitOverride  = 25.0;
+
+        // Tier 7: Maximum Growth ($10,000-$50,000) — USER REQUESTED: 15% risk
+        // Maximum risk for accounts that can absorb drawdown
+        m_tiers[7].minBalance              = 10000.0;
+        m_tiers[7].maxBalance              = 50000.0;
+        m_tiers[7].riskTier                = RISK_TIER_MICRO_AGGRESSIVE;  // Reuse MICRO_AGGRESSIVE tier
+        m_tiers[7].riskPerTradeOverride    = 15.0;  // 15% risk per trade for <$10K equity
+        m_tiers[7].maxDailyRiskOverride    = 35.0;
+        m_tiers[7].maxPortfolioRiskOverride= 50.0;
+        m_tiers[7].drawdownWarnOverride    = 15.0;
+        m_tiers[7].drawdownCriticalOverride= 25.0;
+        m_tiers[7].maxConcurrentOverride   = 10;
+        m_tiers[7].dailyLossLimitOverride  = 30.0;
+
+        // Tier 8: Capital Preservation ($50,000+) — Institutional mode
+        // Full institutional approach — strict capital preservation
+        m_tiers[8].minBalance              = 50000.0;
+        m_tiers[8].maxBalance              = 1e10;
+        m_tiers[8].riskTier                = RISK_TIER_INSTITUTIONAL;
+        m_tiers[8].riskPerTradeOverride    = 1.5;
+        m_tiers[8].maxDailyRiskOverride    = 5.0;
+        m_tiers[8].maxPortfolioRiskOverride= 18.0;
+        m_tiers[8].drawdownWarnOverride    = 8.0;
+        m_tiers[8].drawdownCriticalOverride= 12.0;
+        m_tiers[8].maxConcurrentOverride   = 5;
+        m_tiers[8].dailyLossLimitOverride  = 15.0;
     }
 
     //+------------------------------------------------------------------+
@@ -128,11 +180,19 @@ private:
     //+------------------------------------------------------------------+
     int FindTierIndex(double balance)
     {
+        PrintFormat("[COMPOUNDING-TIER-DEBUG] FindTierIndex called | balance=%.2f | tierCount=%d", balance, m_tierCount);
         for(int i = 0; i < m_tierCount; i++)
         {
+            PrintFormat("[COMPOUNDING-TIER-DEBUG]   Tier %d: min=%.2f max=%.2f riskTier=%s risk=%.1f%%", 
+                        i, m_tiers[i].minBalance, m_tiers[i].maxBalance, 
+                        GetTierName(i), m_tiers[i].riskPerTradeOverride);
             if(balance >= m_tiers[i].minBalance && balance < m_tiers[i].maxBalance)
+            {
+                PrintFormat("[COMPOUNDING-TIER-DEBUG]   -> MATCHED Tier %d (%s)", i, GetTierName(i));
                 return i;
+            }
         }
+        PrintFormat("[COMPOUNDING-TIER-DEBUG]   -> NO MATCH, returning highest tier %d", m_tierCount - 1);
         return m_tierCount - 1; // highest tier
     }
 

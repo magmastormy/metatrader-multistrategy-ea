@@ -5,8 +5,8 @@
 #ifndef MQH_HYPERPARAMETER_OPTIMIZER_MQH
 #define MQH_HYPERPARAMETER_OPTIMIZER_MQH
 
-#include "Core/AI/AIFeatureVectorBuilder.mqh"
-#include "AIModules/AIConfig.mqh"
+#include "../../Core/AI/AIFeatureVectorBuilder.mqh"
+#include "../../AIModules/AIConfig.mqh"
 #include "../Data/CSVDataLoader.mqh"
 #include "../Data/DataPreprocessor.mqh"
 #include "../Data/LabelEncoder.mqh"
@@ -87,13 +87,13 @@ public:
         PrintFormat("[MQH-TUNER] Added %d default candidates", ArraySize(candidates));
     }
     
-    bool RunTuning(const string symbol, const ENUM_TIMEFRAMES timeframe,
-                   const string dataFile, const int valRatio = 20, const int testRatio = 10)
+    bool RunTuning(const string symbol, const ENUM_TIMEFRAMES tf,
+                   const string dataFilePath, const int valRatioPct = 20, const int testRatioPct = 10)
     {
         m_symbol = symbol;
-        m_timeframe = timeframe;
-        
-        if(!m_dataLoader.Load(dataFile))
+        m_timeframe = tf;
+
+        if(!m_dataLoader.Load(dataFilePath))
         {
             Print("[MQH-TUNER] Failed to load training data");
             return false;
@@ -106,14 +106,14 @@ public:
             return false;
         }
         
-        double allFeatures[][];
+        double allFeatures[][FEATURE_VECTOR_SIZE];
         int labels[];
         int count = 0;
         
         if(!m_dataLoader.LoadAllRows(allFeatures, labels, count))
             return false;
         
-        m_preprocessor.SetSplitRatio(valRatio, testRatio);
+        m_preprocessor.SetSplitRatio(valRatioPct, testRatioPct);
         m_preprocessor.SplitData(allFeatures, labels, count);
         
         m_preprocessor.NormalizeData();
@@ -162,7 +162,7 @@ public:
         model.SetLearningRate(params.learningRate);
         model.SetL2Regularization(params.l2Regularization);
         
-        CTrainingSession::STrainingConfig config;
+        STrainingConfig config;
         config.epochs = params.epochs;
         config.batchSize = params.batchSize;
         config.earlyStoppingPatience = 10;
@@ -171,11 +171,11 @@ public:
         
         m_trainer.SetConfig(config);
         
-        double trainFeatures[][];
+        double trainFeatures[][FEATURE_VECTOR_SIZE];
         int trainLabels[];
         m_preprocessor.GetTrainData(trainFeatures, trainLabels);
-        
-        double valFeatures[][];
+
+        double valFeatures[][FEATURE_VECTOR_SIZE];
         int valLabels[];
         m_preprocessor.GetValData(valFeatures, valLabels);
         
@@ -226,7 +226,7 @@ public:
         
         for(int i = 0; i < m_resultCount; i++)
         {
-            const SHyperparameterTuningResult &r = m_results[i];
+            const SHyperparameterTuningResult r = m_results[i];
             Print(StringFormat("%4d | %-20s | %.4f | %4d | %.4f | %.4f | %.4f | %.6f | %.4f",
                               r.rank,
                               r.params.name,
@@ -258,7 +258,7 @@ public:
         
         for(int i = 0; i < m_resultCount; i++)
         {
-            const SHyperparameterTuningResult &r = m_results[i];
+            const SHyperparameterTuningResult r = m_results[i];
             FileWriteString(fh, StringFormat("%d,%s,%.6f,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\r\n",
                                              r.rank,
                                              r.params.name,

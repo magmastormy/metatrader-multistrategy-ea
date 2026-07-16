@@ -282,6 +282,15 @@ void SetErrorHandler(CEnhancedErrorHandler* handler) { m_errorHandler = handler;
     // Calculate correlation with existing positions
     double CalculatePortfolioCorrelation(const string symbol);
     
+    // Calculate average ATR over specified period (for volatility adjustment)
+    double CalculateAverageATR(const string symbol, int period);
+    
+    // Count positions with high correlation to given symbol (for correlation adjustment)
+    int CountHighlyCorrelatedPositions(const string symbol, double correlationThreshold);
+    
+    // Calculate ATR with shift support (for volatility adjustment)
+    double CalculateATR(const string symbol, ENUM_TIMEFRAMES tf, int period, int shift = 0);
+    
     // Validate symbol for trading
     bool ValidateSymbol(const string symbol);
     
@@ -349,7 +358,7 @@ CPositionSizer::CPositionSizer(void)
     m_kellyAvgWin = 0.0;
     m_kellyAvgLoss = 0.0;
     m_kellyTradeCount = 0;
-    m_kellyFraction = 0.5;      // Half-Kelly
+    m_kellyFraction = 0.25;      // Quarter-Kelly (was 0.5 Half-Kelly)
     m_kellyMaxCap = 0.25;       // Cap at 25%
     m_kellyHistoryIndex = 0;
     m_kellyHistorySize = 0;
@@ -363,8 +372,8 @@ CPositionSizer::CPositionSizer(void)
     m_drawdownScalingFactor = 1.0;
     m_enableCompounding = true;
     // Min-lot round-up defaults
-    m_allowMinLotRoundUp = true;
-    m_minLotRiskMultiplier = 15.0;
+    m_allowMinLotRoundUp = false;  // FIX: Disable round-up by default to prevent 15x risk
+    m_minLotRiskMultiplier = 1.0;  // FIX: Hard cap at 1x risk (no multiplier)
     // Pluggable modifier chain defaults
     m_modifierCount = 0;
     for(int i = 0; i < 5; i++)
@@ -858,7 +867,14 @@ double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
 
     double lotSize = riskAmount / riskPerLot;
     
-    return MathMax(MIN_LOT_SIZE, lotSize);
+    // FIX: Reject trades where calculated lot is below minimum instead of rounding up
+    // Rounding up can multiply risk by 15x (the minLotRiskMultiplier)
+    if(lotSize > 0.0 && lotSize < MIN_LOT_SIZE)
+    {
+        return 0.0;  // Signal invalid - trade should be skipped
+    }
+    
+    return lotSize;
 }
 
 //+------------------------------------------------------------------+
@@ -867,7 +883,20 @@ double CPositionSizer::CalculateRiskBasedSize(const string symbolParam,
 double CPositionSizer::CalculateVolatilityBasedSize(const string symbolParam,
                                                     const double baseSize)
 {
-    // AGGRESSIVE: Disable volatility adjustment - return base size unchanged
+    if(!m_params.useVolatilityAdjustment)
+        return baseSize;
+    
+    double atr = CalculateATR(symbolParam, PERIOD_CURRENT, m_params.atrPeriod);
+    double avgATR = CalculateAverageATR(symbolParam, 20); // 20-period average ATR
+    if(avgATR <= 0.0 || atr <= 0.0)
+        return baseSize;
+    
+    double volRatio = atr / avgATR;
+    if(volRatio > 1.3)  // Volatility > 130% of normal → reduce
+    {
+        double adjustment = MathMax(0.5, 1.0 / volRatio); // Max 50% reduction
+        return baseSize * adjustment;
+    }
     return baseSize;
 }
 
@@ -877,7 +906,15 @@ double CPositionSizer::CalculateVolatilityBasedSize(const string symbolParam,
 double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbolParam,
                                                         const double baseSize)
 {
-    // AGGRESSIVE: Disable correlation adjustment - return base size unchanged
+    if(!m_params.useCorrelationAdjustment)
+        return baseSize;
+    
+    int correlatedCount = CountHighlyCorrelatedPositions(symbolParam, 0.8);
+    if(correlatedCount > 0)
+    {
+        double reduction = 1.0 / (1.0 + correlatedCount * 0.5); // Each correlated position reduces by 33%
+        return baseSize * MathMax(0.25, reduction); // Floor at 25% of original
+    }
     return baseSize;
 }
 
@@ -1232,6 +1269,45 @@ double CPositionSizer::GetATR(const string symbolParam, const int period)
 }
 
 //+------------------------------------------------------------------+
+//| Calculate ATR with optional shift (for historical ATR values)  |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateATR(const string symbolParam, ENUM_TIMEFRAMES tf, int period, int shift)
+{
+    if(tf == PERIOD_CURRENT || tf == 0)
+        tf = PERIOD_CURRENT;
+    
+    CIndicatorManager* indicatorManager = CIndicatorManager::Instance();
+    if(indicatorManager != NULL)
+    {
+        int sharedHandle = indicatorManager.GetATRHandle(symbolParam, tf, period);
+        if(sharedHandle != INVALID_HANDLE)
+        {
+            double atrArrayShared[];
+            ArraySetAsSeries(atrArrayShared, true);
+            if(CopyBuffer(sharedHandle, 0, shift, 1, atrArrayShared) > 0 && atrArrayShared[0] > 0.0)
+                return atrArrayShared[0];
+        }
+    }
+
+    // Fallback to direct indicator
+    int handle = iATR(symbolParam, tf, period);
+    if(handle == INVALID_HANDLE)
+        return 0.0;
+
+    double atrArray[];
+    ArraySetAsSeries(atrArray, true);
+    if(CopyBuffer(handle, 0, shift, 1, atrArray) <= 0)
+    {
+        IndicatorRelease(handle);
+        return 0.0;
+    }
+
+    double result = atrArray[0];
+    IndicatorRelease(handle);
+    return result;
+}
+
+//+------------------------------------------------------------------+
 //| Calculate correlation with existing positions                  |
 //+------------------------------------------------------------------+
 double CPositionSizer::CalculatePortfolioCorrelation(const string symbolParam)
@@ -1255,6 +1331,52 @@ double CPositionSizer::CalculatePortfolioCorrelation(const string symbolParam)
     }
     
     return maxCorrelation;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate average ATR over specified period                    |
+//+------------------------------------------------------------------+
+double CPositionSizer::CalculateAverageATR(const string symbolParam, int period)
+{
+    double sumATR = 0.0;
+    int validCount = 0;
+    
+    for(int i = 0; i < period; i++)
+    {
+        double atr = CalculateATR(symbolParam, PERIOD_CURRENT, m_params.atrPeriod, i);
+        if(atr > 0.0 && MathIsValidNumber(atr))
+        {
+            sumATR += atr;
+            validCount++;
+        }
+    }
+    
+    return (validCount > 0) ? (sumATR / validCount) : 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Count positions with high correlation to given symbol          |
+//+------------------------------------------------------------------+
+int CPositionSizer::CountHighlyCorrelatedPositions(const string symbolParam, double correlationThreshold)
+{
+    int count = 0;
+    
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(PositionSelectByTicket(ticket))
+        {
+            string existingSymbol = PositionGetString(POSITION_SYMBOL);
+            if(existingSymbol != symbolParam)
+            {
+                double correlation = CalculateCorrelation(symbolParam, existingSymbol, 50);
+                if(MathAbs(correlation) >= correlationThreshold)
+                    count++;
+            }
+        }
+    }
+    
+    return count;
 }
 
 //+------------------------------------------------------------------+
@@ -1383,8 +1505,8 @@ double CPositionSizer::CalculateKellyFraction(void)
     
     double payoffRatio = m_kellyAvgWin / MathMax(m_kellyAvgLoss, 0.0001);
     double kelly = m_kellyWinRate - ((1.0 - m_kellyWinRate) / payoffRatio);
-    // AGGRESSIVE: Use full Kelly instead of half-Kelly
-    double adjustedKelly = kelly;  // Full Kelly (removed m_kellyFraction multiplier)
+    // FIX: Use quarter Kelly (0.25x) instead of full Kelly for safety
+    double adjustedKelly = kelly * m_kellyFraction;  // Quarter Kelly (0.25x)
     double result = MathMax(0.01, MathMin(adjustedKelly, m_kellyMaxCap));  // Floor at 1%, cap at 25%
     
     Print("[KELLY] PayoffRatio=", DoubleToString(payoffRatio, 4),

@@ -37,6 +37,9 @@ private:
     bool m_enableOFIProxy;
     bool m_enableVPINFilter;
     
+    // VPIN filter state
+    double m_lastVPINMultiplier;  // Last VPIN multiplier for position sizing
+    
     // Spread filter config
     double m_baseSpreadATRRatio;
     double m_syntheticSpreadATRRatio;
@@ -62,7 +65,7 @@ public:
     
     CSignalValidator() : m_mathRegistry(NULL), m_instRegistry(NULL), m_pipeline(NULL),
                          m_safeMode(NULL), m_spikeMonitor(NULL), m_fullMarginMode(NULL),
-                         m_validatorIntrabarMinQuality(0.65), m_validatorNewBarMinQuality(0.70),
+                         m_validatorIntrabarMinQuality(0.72), m_validatorNewBarMinQuality(0.75),
                          m_hardSpreadCutoffPoints(1000.0), m_spikeHunterEnabled(false),
                          m_enableOFIProxy(false), m_enableVPINFilter(false),
                          m_baseSpreadATRRatio(0.30), m_syntheticSpreadATRRatio(0.50) {}
@@ -337,14 +340,26 @@ public:
         double vpinValue = vpin.GetVPIN();
         double mult = vpin.GetPositionSizeMultiplier();
         
-        // EXTREME toxicity blocks all trades
+        // FIX: Instead of hard block on EXTREME VPIN, use multiplier to reduce size
+        // VPIN > 0.95 = EXTREME toxicity - reduce to minimum size but don't block entirely
         if(vpinValue > 0.95) // EXTREME threshold
         {
-            PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_extreme | signal=%s conf=%.2f | VPIN=%.3f",
-                        symbol, EnumToString(signal), confidence, vpinValue);
-            return false;
+            PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_extreme | signal=%s conf=%.2f | VPIN=%.3f | mult=%.3f (reduced size)",
+                        symbol, EnumToString(signal), confidence, vpinValue, mult);
+            // Allow trade through with reduced size multiplier
+            // Store the multiplier for position sizing to pick up
+            m_lastVPINMultiplier = MathMax(mult, 0.1); // Floor at 10% minimum
+            return true;
         }
         
+        // HIGH toxicity: apply multiplier but don't block
+        if(vpinValue > 0.85)
+        {
+            m_lastVPINMultiplier = mult;
+            return true;
+        }
+        
+        m_lastVPINMultiplier = 1.0;
         return true;
     }
     
@@ -365,8 +380,12 @@ public:
         ArraySetAsSeries(buffer, true);
         if(CopyBuffer(handle, 0, 0, 1, buffer) > 0)
         {
-            ready = true;
-            return buffer[0];
+            double atrValue = buffer[0];
+            if(atrValue > 0.0 && MathIsValidNumber(atrValue))
+            {
+                ready = true;
+                return atrValue;
+            }
         }
         return 0;
     }

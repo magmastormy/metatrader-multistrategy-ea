@@ -832,7 +832,7 @@ def export_onnx(model, seq_len, n_feat, path, opset=17):
     output.parent.mkdir(parents=True, exist_ok=True)
     model.eval()
     dummy = torch.zeros(1, seq_len, n_feat, dtype=torch.float32)
-    torch.onnx.export(model, dummy, str(output), opset_version=opset, input_names=['input'], output_names=['output'], dynamic_axes={'input': {0: 'batch'}, 'output': {0: 'batch'}}, do_constant_folding=True, dynamo=False, verbose=False)
+    torch.onnx.export(model, dummy, str(output), opset_version=opset, input_names=['input'], output_names=['output'], dynamic_axes={'input': {0: 'batch'}, 'output': {0: 'batch'}}, do_constant_folding=True, verbose=False)
     # Add versioning metadata
     import hashlib
     import json

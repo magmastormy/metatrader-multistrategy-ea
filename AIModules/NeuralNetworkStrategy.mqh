@@ -257,17 +257,20 @@ public:
 };
 
 // STrainingExample and SBarrierEntry are defined in CNeuralTrainingDataManager.mqh (included via CNeuralCore.mqh)
+// CBarrierLabelResolver is also defined in CNeuralTrainingDataManager.mqh with a guard
 
+#ifndef CBarrierLabelResolver_MQH
+#define CBarrierLabelResolver_MQH
 class CBarrierLabelResolver
 {
 public:
-    static int ResolveLabel(const double upperBarrier, const double lowerBarrier, 
+    static int ResolveLabel(const double upperBarrier, const double lowerBarrier,
                            const double exitPrice, const double entryPrice,
                            const datetime expiryTime, const datetime currentTimestamp)
     {
         if(exitPrice <= 0.0 || entryPrice <= 0.0)
             return 0;
-        
+
         if(exitPrice >= upperBarrier)
             return 2;
         else if(exitPrice <= lowerBarrier)
@@ -275,22 +278,23 @@ public:
         else
             return 0;
     }
-    
+
     static double CalculateBarrierRatio(const double upperBarrier, const double lowerBarrier, const double entryPrice)
     {
         if(entryPrice <= 0.0)
             return 1.0;
-        
+
         double upperDist = MathAbs(upperBarrier - entryPrice);
         double lowerDist = MathAbs(entryPrice - lowerBarrier);
         double totalDist = upperDist + lowerDist;
-        
+
         if(totalDist <= 0.0)
             return 1.0;
-        
+
         return upperDist / totalDist;
     }
 };
+#endif // CBarrierLabelResolver_MQH
 
 class CNeuralNetworkStrategy
 {

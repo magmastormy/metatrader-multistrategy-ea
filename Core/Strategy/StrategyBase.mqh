@@ -155,6 +155,11 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_symbol = (StringLen(Symbol()) > 0) ? Symbol() : "";
     m_timeframe = (ENUM_TIMEFRAMES)Period();
     m_errorHandler = new CEnhancedErrorHandler();
+    if(m_errorHandler == NULL)
+    {
+        PrintFormat("[STRATEGY-BASE] CRITICAL: Failed to allocate CEnhancedErrorHandler for %s", m_name);
+        // Strategy will still function without error handler; methods must guard against NULL
+    }
 }
 
 //+------------------------------------------------------------------+

@@ -5,12 +5,21 @@
 #ifndef MQH_MODEL_COMPARER_MQH
 #define MQH_MODEL_COMPARER_MQH
 
-#include "Core/AI/AIFeatureVectorBuilder.mqh"
-#include "AIModules/AIConfig.mqh"
+#include "../../Core/AI/AIFeatureVectorBuilder.mqh"
+#include "../../AIModules/AIConfig.mqh"
 #include "../Data/LabelEncoder.mqh"
 #include "../Core/TrainingMetrics.mqh"
 #include "FeedForwardNN.mqh"
 #include "ModelEvaluator.mqh"
+
+enum ENUM_COMPARISON_CRITERION
+{
+    CRITERION_F1 = 0,
+    CRITERION_ACCURACY = 1,
+    CRITERION_LOSS = 2,
+    CRITERION_PRECISION = 3,
+    CRITERION_RECALL = 4
+};
 
 struct SModelComparisonResult
 {
@@ -187,15 +196,6 @@ public:
         empty.rank = 0;
         return empty;
     }
-};
-
-enum ENUM_COMPARISON_CRITERION
-{
-    CRITERION_F1 = 0,
-    CRITERION_ACCURACY = 1,
-    CRITERION_LOSS = 2,
-    CRITERION_PRECISION = 3,
-    CRITERION_RECALL = 4
 };
 
 #endif // __MQH_MODEL_COMPARER_MQH__

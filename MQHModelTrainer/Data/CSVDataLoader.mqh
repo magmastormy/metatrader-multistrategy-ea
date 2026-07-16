@@ -7,7 +7,7 @@
 
 #include <Arrays\ArrayString.mqh>
 #include <Arrays\ArrayDouble.mqh>
-#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "../../Core/AI/AIFeatureVectorBuilder.mqh"
 
 class CCSVDataLoader
 {
@@ -72,11 +72,14 @@ private:
 public:
     CCSVDataLoader() : m_totalRows(0), m_featureCount(FEATURE_VECTOR_SIZE), m_labelCount(3), m_hasHeader(true) {}
     
+    bool Load(const string filename) { return LoadFile(filename); }
+    int GetTotalRowCount() const { return m_totalRows; }
+    
     bool LoadFile(const string filename)
     {
         m_filename = filename;
         
-        int fh = FileOpen(filename, FILE_READ | FILE_CSV | FILE_COMMON);
+        int fh = FileOpen(filename, FILE_READ | FILE_TXT | FILE_COMMON);
         if(fh == INVALID_HANDLE)
         {
             PrintFormat("[MQH-TRAIN] Failed to open CSV file: %s | err=%d", filename, GetLastError());
@@ -88,15 +91,17 @@ public:
         
         if(m_hasHeader)
         {
-            if(!FileReadString(fh, line))
+            line = FileReadString(fh);
+            if(line == "")
             {
                 FileClose(fh);
                 return false;
             }
         }
         
-        while(FileReadString(fh, line))
+        while(!FileIsEnding(fh))
         {
+            line = FileReadString(fh);
             m_totalRows++;
         }
         
@@ -107,7 +112,7 @@ public:
     
     bool GetRowAt(const int index, double &features[], int &label, double &metaInput[], datetime &timestamp)
     {
-        int fh = FileOpen(m_filename, FILE_READ | FILE_CSV | FILE_COMMON);
+        int fh = FileOpen(m_filename, FILE_READ | FILE_TXT | FILE_COMMON);
         if(fh == INVALID_HANDLE)
             return false;
         
@@ -115,10 +120,11 @@ public:
         int currentRow = 0;
         
         if(m_hasHeader)
-            FileReadString(fh, line);
+            line = FileReadString(fh);
         
-        while(FileReadString(fh, line))
+        while(!FileIsEnding(fh))
         {
+            line = FileReadString(fh);
             if(currentRow == index)
             {
                 bool result = ParseCSVLine(line, features, label, metaInput, timestamp);
@@ -146,17 +152,18 @@ public:
         ArrayResize(allFeatures, m_totalRows, FEATURE_VECTOR_SIZE);
         ArrayResize(labels, m_totalRows);
         
-        int fh = FileOpen(m_filename, FILE_READ | FILE_CSV | FILE_COMMON);
+        int fh = FileOpen(m_filename, FILE_READ | FILE_TXT | FILE_COMMON);
         if(fh == INVALID_HANDLE)
             return false;
         
         string line;
         if(m_hasHeader)
-            FileReadString(fh, line);
+            line = FileReadString(fh);
         
         rowCount = 0;
-        while(FileReadString(fh, line) && rowCount < m_totalRows)
+        while(!FileIsEnding(fh) && rowCount < m_totalRows)
         {
+            line = FileReadString(fh);
             double features[];
             ArrayResize(features, FEATURE_VECTOR_SIZE);
             int label = 0;

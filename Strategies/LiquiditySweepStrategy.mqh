@@ -288,7 +288,7 @@ public:
     }
 
     //--- Configure
-    void Configure(double sweepThresholdATR = 0.3, int lookbackBars = 100,
+    void Configure(double sweepThresholdATR = 0.6, int lookbackBars = 100,
                    double minConfidence = 0.6, int roundNumberPips = 50)
     {
         m_sweepThresholdATR = MathMax(0.1, MathMin(1.0, sweepThresholdATR));

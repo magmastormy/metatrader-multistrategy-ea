@@ -75,7 +75,7 @@ public:
                         m_cyclesSinceIndicatorSignal(0), m_hybridGateRelaxed(false), m_callCount(0),
                         m_minSecondsBetweenTrades(2), m_maxPositionsTotal(10), m_dailyProfitTargetPercent(0),
                         m_profitTrailFactor(0.8), m_profitTargetHardFloorRatio(0.5), m_dailyHaltCooldownMinutes(60),
-                        m_enableAutoModeSwitch(false), m_riskTier(ENUM_RISK_TIER(0)), m_logLevel(2), m_heartbeatInterval(30) {}
+                        m_enableAutoModeSwitch(false), m_riskTier(ENUM_RISK_TIER(0)), m_logLevel(2), m_heartbeatInterval(1) {}
     
     ~CTimerProcessor() {}
     
@@ -192,17 +192,29 @@ public:
     
     void UpdateDashboard()
     {
-        // Would update dashboard with current state
+        if(m_orchestrator != NULL && m_dashboardBridge != NULL)
+        {
+            // Push current state to dashboard via bridge
+            m_dashboardBridge.PushState();
+        }
     }
     
     void RefreshAccountMetrics()
     {
-        // Would refresh equity, balance, margin, etc.
+        // Refresh equity, balance, margin, and other account metrics
+        if(m_orchestrator != NULL)
+        {
+            m_orchestrator.RefreshAccountMetrics();
+        }
     }
     
     void UpdateLiveAuthorityTrials()
     {
-        // Would update authority trials
+        // Update authority trial positions and evaluate their performance
+        if(m_orchestrator != NULL)
+        {
+            m_orchestrator.UpdateAuthorityTrials();
+        }
     }
     
     void ProcessDailyProfitTarget()

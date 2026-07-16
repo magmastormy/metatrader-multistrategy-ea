@@ -14,6 +14,7 @@
 #include "../Utils/ErrorHandling.mqh"
 #include "PortfolioRiskManager.mqh"
 #include "CorrelationEngine.mqh"
+#include "UnifiedRiskManager.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -25,27 +26,6 @@ struct SPredictionWithUncertainty;
 class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
-class CUnifiedRiskManager;
-
-//+------------------------------------------------------------------+
-//| Trade Request Validation Structure                             |
-//+------------------------------------------------------------------+
-struct STradeValidationRequest
-{
-    string symbol;                    // Trading symbol
-    ENUM_ORDER_TYPE orderType;        // Order type (BUY/SELL)
-    double lotSize;                   // Requested lot size
-    double stopLossPips;              // Stop loss in pips
-    double takeProfitPips;            // Take profit in pips
-    double confidence;                // Signal confidence (0-1)
-    string strategy;                  // Source strategy name
-    string reasoning;                 // Trade reasoning
-    string strategyRole;              // Strategy governance role tag
-    string strategyCluster;           // Strategy cluster tag
-    string clusterCode;               // Compact cluster code (T/R/S/N)
-    string contributorContext;        // Contributor summary
-    datetime requestTime;             // Request timestamp
-};
 
 
 //+------------------------------------------------------------------+
@@ -586,6 +566,13 @@ bool CRiskValidationGate::ValidateRiskLimits(const STradeValidationRequest &requ
     if(riskDenominator <= 0.0)
     {
         message = "Invalid account risk denominator";
+        return false;
+    }
+    
+    // Floor: prevent division by tiny values producing overflow
+    if(riskDenominator < 1.0)
+    {
+        message = "Account equity too low for risk calculation";
         return false;
     }
     

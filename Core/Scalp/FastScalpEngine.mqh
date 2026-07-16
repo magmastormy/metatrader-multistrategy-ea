@@ -331,9 +331,38 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Check if Symbol is Synthetic Index                              |
+   //+------------------------------------------------------------------+
+   bool IsSyntheticSymbol(const string symbol)
+   {
+      if(symbol == "") return false;
+      
+      // Check for broker-specific synthetic products that trade 24/7
+      if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
+         StringFind(symbol, "Step") >= 0 ||      // Step Index variants
+         StringFind(symbol, "Boom") >= 0 ||      // Boom 1000, Boom 500
+         StringFind(symbol, "Crash") >= 0 ||     // Crash 1000, Crash 500
+         StringFind(symbol, "Jump") >= 0 ||      // Jump 10, Jump 25, etc.
+         StringFind(symbol, "PainX") >= 0 ||     // Weltrade synthetic family
+         StringFind(symbol, "Pain ") >= 0 ||     // Additional naming variant
+         StringFind(symbol, "SFX Vol") >= 0 ||
+         StringFind(symbol, "FX Vol") >= 0 ||
+         StringFind(symbol, "GainX") >= 0 ||
+         StringFind(symbol, "FlipX") >= 0 ||
+         StringFind(symbol, "SwitchX") >= 0 ||   // SwitchX 1200 and variants
+         StringFind(symbol, "Synth") >= 0 ||
+         StringFind(symbol, "Index") >= 0)
+      {
+         return true;
+      }
+      return false;
+   }
+
+   //+------------------------------------------------------------------+
    //| Check if scalp is cost-viable given spread + commission           |
    //| Rejects if breakeven WR > 70% or total cost > 25% of TP          |
-   //| Returns true if commission data is unavailable (pass-through)     |
+   //| Returns true if commission data is unavailable (pass-through)    |
+   //| SYNTHETIC SYMBOLS: More permissive thresholds (wider spreads)    |
    //+------------------------------------------------------------------+
    bool IsScalpCostViable(const string symbol, double slPoints, double tpPoints)
    {
@@ -376,26 +405,35 @@ private:
       // Breakeven win rate
       double breakevenWR = totalCostPoints / (totalCostPoints + tpPoints);
 
+      // Check if symbol is synthetic - use more permissive thresholds
+      bool isSynthetic = IsSyntheticSymbol(symbol);
+      
+      // Thresholds: standard vs synthetic
+      double maxBreakevenWR = isSynthetic ? 0.85 : 0.70;   // Allow up to 85% breakeven WR for synthetics
+      double maxCostRatioTP = isSynthetic ? 0.60 : 0.25;   // Allow up to 60% of TP for synthetics
+
       // Reject if cost is too high relative to target
-      if(breakevenWR > 0.70)
+      if(breakevenWR > maxBreakevenWR)
       {
          Print("[SCALP-COST-REJECTED] ", symbol, " cost too high: spread=", spreadPoints,
                " comm=", commissionPoints, " total=", totalCostPoints,
                " tp=", tpPoints, " breakevenWR=", DoubleToString(breakevenWR, 3),
-               " > 0.70");
+               " > ", DoubleToString(maxBreakevenWR, 2), " (", isSynthetic ? "SYNTHETIC" : "STANDARD", ")");
          return false;
       }
 
-      // Also reject if total cost > 25% of TP
-      if(totalCostPoints > tpPoints * 0.25)
+      // Also reject if total cost > maxCostRatio of TP
+      if(totalCostPoints > tpPoints * maxCostRatioTP)
       {
          Print("[SCALP-COST-REJECTED] ", symbol, " cost ratio too high: ",
-               DoubleToString(totalCostPoints / tpPoints * 100.0, 1), "% of TP");
+               DoubleToString(totalCostPoints / tpPoints * 100.0, 1), "% of TP > ",
+               DoubleToString(maxCostRatioTP * 100.0, 0), "% (", isSynthetic ? "SYNTHETIC" : "STANDARD", ")");
          return false;
       }
 
       Print("[SCALP-COST-OK] ", symbol, " cost viable: totalCost=", totalCostPoints,
-            " tp=", tpPoints, " breakevenWR=", DoubleToString(breakevenWR, 3));
+            " tp=", tpPoints, " breakevenWR=", DoubleToString(breakevenWR, 3),
+            " (", isSynthetic ? "SYNTHETIC" : "STANDARD", ")");
       return true;
    }
 

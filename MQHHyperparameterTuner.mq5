@@ -8,11 +8,11 @@
 #property script_show_inputs
 
 input string symbolName = "EURUSD";
-input ENUM_TIMEFRAMES timeframe = PERIOD_H1;
+input ENUM_TIMEFRAMES g_timeframe = PERIOD_H1;
 input string dataFile = "TrainingData_EURUSD_H1.csv";
 
-input int valRatio = 20;
-input int testRatio = 10;
+input int g_valRatio = 20;
+input int g_testRatio = 10;
 
 input bool useDefaultCandidates = true;
 
@@ -26,7 +26,7 @@ input bool useDefaultCandidates = true;
 void OnStart()
 {
     Print("=== MQH Hyperparameter Tuner ===");
-    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(timeframe));
+    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(g_timeframe));
     
     CHyperparameterOptimizer tuner;
     
@@ -51,7 +51,7 @@ void OnStart()
     
     PrintFormat("[MQH-TUNER] Starting hyperparameter tuning with %d candidates", tuner.GetResultCount());
     
-    if(tuner.RunTuning(symbolName, timeframe, dataFile, valRatio, testRatio))
+    if(tuner.RunTuning(symbolName, g_timeframe, dataFile, g_valRatio, g_testRatio))
     {
         SHyperparameterSet bestParams = tuner.GetBestParameters();
         
@@ -68,7 +68,7 @@ void OnStart()
         
         string resultsFile = StringFormat("HyperparameterResults_%s_%s_%s.csv",
                                           symbolName,
-                                          EnumToString(timeframe),
+                                          EnumToString(g_timeframe),
                                           TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
         
         tuner.SaveResults(resultsFile);
@@ -77,7 +77,7 @@ void OnStart()
         
         string bestParamsFile = StringFormat("BestParameters_%s_%s_%s.txt",
                                              symbolName,
-                                             EnumToString(timeframe),
+                                             EnumToString(g_timeframe),
                                              TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
         
         int fh = FileOpen(bestParamsFile, FILE_WRITE | FILE_COMMON);
@@ -86,7 +86,7 @@ void OnStart()
             FileWriteString(fh, "=== Best Hyperparameters ===\r\n");
             FileWriteString(fh, StringFormat("Generated: %s\r\n", TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS)));
             FileWriteString(fh, StringFormat("Symbol: %s\r\n", symbolName));
-            FileWriteString(fh, StringFormat("Timeframe: %s\r\n\r\n", EnumToString(timeframe)));
+            FileWriteString(fh, StringFormat("Timeframe: %s\r\n\r\n", EnumToString(g_timeframe)));
             FileWriteString(fh, StringFormat("learningRate=%.6f\r\n", bestParams.learningRate));
             FileWriteString(fh, StringFormat("batchSize=%d\r\n", bestParams.batchSize));
             FileWriteString(fh, StringFormat("l2Regularization=%.6f\r\n", bestParams.l2Regularization));

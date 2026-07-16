@@ -6,8 +6,8 @@
 #ifndef MQH_FEED_FORWARD_NN_MQH
 #define MQH_FEED_FORWARD_NN_MQH
 
-#include "AIModules/CNeuralCore.mqh"
-#include "AIModules/AIConfig.mqh"
+#include "../../AIModules/CNeuralCore.mqh"
+#include "../../AIModules/AIConfig.mqh"
 
 class CFeedForwardNN
 {
@@ -173,7 +173,12 @@ private:
     
 public:
     CFeedForwardNN() : m_learningRate(0.001), m_l2Regularization(0.0001), m_temperature(1.0), m_initialized(false), m_adamStep(0) {}
-    
+
+    bool Initialize(const int h1, const int h2, const int h3)
+    {
+        return Initialize(0.001, 0.0001, 1.0);
+    }
+
     bool Initialize(const double learningRate = 0.001, const double l2Reg = 0.0001, const double temp = 1.0)
     {
         m_learningRate = learningRate;

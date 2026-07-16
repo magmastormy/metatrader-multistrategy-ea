@@ -154,18 +154,24 @@ private:
         return (TimeCurrent() - m_initTime) < WARMUP_SECONDS;
     }
 
-    // Ensure indicator handles exist for current symbol/period
-	    bool EnsureIndicatorsReady() {
-	        if(m_symbol == "" || m_period == PERIOD_CURRENT)
-	            return false;
+// Ensure indicator handles exist for current symbol/period
+    bool EnsureIndicatorsReady() {
+        if(m_symbol == "")
+            return false;
+        
+        // Resolve PERIOD_CURRENT to actual chart timeframe
+        ENUM_TIMEFRAMES actualPeriod = m_period;
+        if(actualPeriod == PERIOD_CURRENT || actualPeriod == 0)
+            actualPeriod = Period();
+        
         // If any core handle is invalid, attempt re-init
         if(m_atrHandle == INVALID_HANDLE || m_ma20Handle == INVALID_HANDLE || m_ma50Handle == INVALID_HANDLE || m_ma200Handle == INVALID_HANDLE)
         {
-            if(!InitializeIndicators(m_symbol, m_period))
+            if(!InitializeIndicators(m_symbol, actualPeriod))
                 return false;
-	        }
-	        return true;
-	    }
+        }
+        return true;
+    }
 
 	    int GetMetricReuseWindowSeconds() const
     {

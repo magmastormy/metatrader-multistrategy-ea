@@ -1,14 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
-import OverviewPage from './pages/OverviewPage';
-import ChartsPage from './pages/ChartsPage';
-import PositionsPage from './pages/PositionsPage';
-import StrategiesPage from './pages/StrategiesPage';
-import RiskPage from './pages/RiskPage';
-import AIPage from './pages/AIPage';
-import LogsPage from './pages/LogsPage';
-import ControlPage from './pages/ControlPage';
 import { useEAState } from './hooks/useEAState';
 
 function AppContent() {
@@ -16,11 +8,11 @@ function AppContent() {
   const executionMode = state?.execution_mode ?? 'UNKNOWN';
 
   return (
-    <div className="flex h-screen overflow-hidden bg-surface-900">
+    <div className="flex h-screen overflow-hidden bg-bg-primary">
       <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex flex-col flex-1 min-w-0 ml-16">
         <Header isConnected={isConnected} executionMode={executionMode} />
-        <main className="flex-1 overflow-auto bg-surface-900">
+        <main className="flex-1 overflow-auto bg-bg-primary">
           <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/charts" element={<ChartsPage />} />
@@ -36,6 +28,15 @@ function AppContent() {
     </div>
   );
 }
+
+function OverviewPage() { return <div className="p-6">Overview Page - Coming Soon</div>; }
+function ChartsPage() { return <div className="p-6">Charts Page - Coming Soon</div>; }
+function PositionsPage() { return <div className="p-6">Positions Page - Coming Soon</div>; }
+function StrategiesPage() { return <div className="p-6">Strategies Page - Coming Soon</div>; }
+function RiskPage() { return <div className="p-6">Risk Page - Coming Soon</div>; }
+function AIPage() { return <div className="p-6">AI Page - Coming Soon</div>; }
+function LogsPage() { return <div className="p-6">Logs Page - Coming Soon</div>; }
+function ControlPage() { return <div className="p-6">Control Page - Coming Soon</div>; }
 
 export default function App() {
   return (

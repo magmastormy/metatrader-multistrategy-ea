@@ -132,18 +132,48 @@ public:
             }
 
             long spread = SymbolInfoInteger(sym, SYMBOL_SPREAD);
-            if(spread > config.maxSpreadPoints)
+            
+            // Allow higher spread threshold for synthetic symbols (Deriv indices trade 24/7 with wider spreads)
+            long effectiveMaxSpread = config.maxSpreadPoints;
+            if(isSynthetic)
             {
-                PrintFormat("[SYMBOLS] Symbol %s rejected - spread %d points exceeds maximum threshold (%d points)", 
-                            sym, spread, config.maxSpreadPoints);
+                effectiveMaxSpread = config.maxSpreadPoints * 10;  // 10x multiplier for synthetics (e.g., 1500 -> 15000)
+            }
+            
+            if(spread > effectiveMaxSpread)
+            {
+                PrintFormat("[SYMBOLS] Symbol %s rejected - spread %d points exceeds maximum threshold (%d points) %s", 
+                            sym, spread, effectiveMaxSpread, isSynthetic ? "(synthetic)" : "");
                 continue;
             }
 
             if(config.enableVolumeCheck)
             {
-                // Volume check skipped - SYMBOL_VOLUME not available in MQL5
-                // Use tick volume or other liquidity proxies instead
-                PrintFormat("[SYMBOLS] Symbol %s - volume check skipped (not available)", sym);
+                // Tick-volume liquidity filter (Issue #31): Use CopyTickVolume to verify minimum liquidity
+                long tickVol[];
+                ArraySetAsSeries(tickVol, true);
+                int copied = CopyTickVolume(sym, PERIOD_D1, 0, 20, tickVol);
+                if(copied >= 10)
+                {
+                    long avgTickVol = 0;
+                    int count = MathMin(copied, 20);
+                    for(int v = 0; v < count; v++)
+                        avgTickVol += tickVol[v];
+                    avgTickVol /= count;
+                    
+                    if(avgTickVol < config.minDailyVolumeLots)
+                    {
+                        PrintFormat("[SYMBOLS] Symbol %s rejected - avg tick volume %lld below minimum %lld", 
+                                    sym, avgTickVol, config.minDailyVolumeLots);
+                        continue;
+                    }
+                    PrintFormat("[SYMBOLS] Symbol %s - avg tick volume %lld OK (min %lld)", 
+                                sym, avgTickVol, config.minDailyVolumeLots);
+                }
+                else
+                {
+                    PrintFormat("[SYMBOLS] Symbol %s - tick volume data unavailable, skipping volume check", sym);
+                }
             }
 
             int size = ArraySize(activePairs);

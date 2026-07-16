@@ -23,7 +23,7 @@ public:
         ArrayInitialize(m_confusionMatrix, 0);
     }
     
-    void UpdateMetrics(const int confusionMatrix[3][3], const int numClasses,
+    void UpdateMetrics(const int &confusionMatrix[][3], const int numClasses,
                        const double loss, const int totalSamples)
     {
         for(int i = 0; i < numClasses && i < 3; i++)
@@ -134,11 +134,11 @@ public:
     double GetLoss() const { return m_loss; }
     int GetTotalSamples() const { return m_totalSamples; }
     
-    void GetConfusionMatrix(int matrix[3][3])
+    void GetConfusionMatrix(int &outMatrix[][3])
     {
         for(int i = 0; i < 3; i++)
             for(int j = 0; j < 3; j++)
-                matrix[i][j] = m_confusionMatrix[i][j];
+                outMatrix[i][j] = m_confusionMatrix[i][j];
     }
 };
 

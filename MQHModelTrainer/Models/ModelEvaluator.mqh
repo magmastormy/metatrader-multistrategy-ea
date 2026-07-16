@@ -5,8 +5,8 @@
 #ifndef MQH_MODEL_EVALUATOR_MQH
 #define MQH_MODEL_EVALUATOR_MQH
 
-#include "Core/AI/AIFeatureVectorBuilder.mqh"
-#include "AIModules/AIConfig.mqh"
+#include "../../Core/AI/AIFeatureVectorBuilder.mqh"
+#include "../../AIModules/AIConfig.mqh"
 #include "../Data/LabelEncoder.mqh"
 #include "../Core/TrainingMetrics.mqh"
 #include "FeedForwardNN.mqh"
@@ -55,24 +55,24 @@ public:
         
         for(int i = 0; i < count; i++)
         {
-            double input[];
-            ArrayResize(input, FEATURE_VECTOR_SIZE);
+            double inputVec[];
+            ArrayResize(inputVec, FEATURE_VECTOR_SIZE);
             for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
-                input[f] = features[i][f];
-            
+                inputVec[f] = features[i][f];
+
             int predictedClass;
-            double prob = m_model.Predict(input, predictedClass);
-            
+            double prob = m_model.Predict(inputVec, predictedClass);
+
             int actualClass = m_labelEncoder.EncodeLabel(labels[i]);
-            
+
             double outputs[];
-            m_model.GetOutputs(input, outputs);
+            m_model.GetOutputs(inputVec, outputs);
             double loss = CNeuralCore::CrossEntropyLoss(outputs, 3, actualClass);
             totalLoss += loss;
-            
+
             if(predictedClass == actualClass)
                 correct++;
-            
+
             if(predictedClass >= 0 && predictedClass < 3 && actualClass >= 0 && actualClass < 3)
                 confusionMatrix[actualClass][predictedClass]++;
         }
@@ -101,19 +101,19 @@ public:
         
         for(int i = 0; i < count; i++)
         {
-            double input[];
-            ArrayResize(input, FEATURE_VECTOR_SIZE);
+            double inputVec[];
+            ArrayResize(inputVec, FEATURE_VECTOR_SIZE);
             for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
-                input[f] = features[i][f];
-            
+                inputVec[f] = features[i][f];
+
             int predictedClass;
-            double prob = m_model.Predict(input, predictedClass);
-            
+            double prob = m_model.Predict(inputVec, predictedClass);
+
             int actualClass = m_labelEncoder.EncodeLabel(labels[i]);
-            
+
             if(predictedClass == actualClass)
                 totalWeightedCorrect += prob;
-            
+
             totalConfidence += prob;
         }
         
@@ -143,21 +143,21 @@ public:
         FileWriteString(fh, StringFormat("F1 Score: %.4f\r\n", m_metrics.GetF1Score()));
         FileWriteString(fh, StringFormat("Total Samples: %d\r\n\r\n", m_metrics.GetTotalSamples()));
         
-        int matrix[3][3];
-        m_metrics.GetConfusionMatrix(matrix);
+        int confusionMatrix[3][3];
+        m_metrics.GetConfusionMatrix(confusionMatrix);
         FileWriteString(fh, "=== Confusion Matrix ===\r\n");
         FileWriteString(fh, "          Predicted\r\n");
         FileWriteString(fh, "          -1   0   +1\r\n");
-        FileWriteString(fh, StringFormat("Actual -1: %3d %3d %3d\r\n", matrix[0][0], matrix[0][1], matrix[0][2]));
-        FileWriteString(fh, StringFormat("Actual  0: %3d %3d %3d\r\n", matrix[1][0], matrix[1][1], matrix[1][2]));
-        FileWriteString(fh, StringFormat("Actual +1: %3d %3d %3d\r\n", matrix[2][0], matrix[2][1], matrix[2][2]));
+        FileWriteString(fh, StringFormat("Actual -1: %3d %3d %3d\r\n", confusionMatrix[0][0], confusionMatrix[0][1], confusionMatrix[0][2]));
+        FileWriteString(fh, StringFormat("Actual  0: %3d %3d %3d\r\n", confusionMatrix[1][0], confusionMatrix[1][1], confusionMatrix[1][2]));
+        FileWriteString(fh, StringFormat("Actual +1: %3d %3d %3d\r\n", confusionMatrix[2][0], confusionMatrix[2][1], confusionMatrix[2][2]));
         
         FileClose(fh);
         PrintFormat("[MQH-EVAL] Report saved to: %s", filename);
     }
     
-    CTrainingMetrics& GetMetrics() { return m_metrics; }
-    CFeedForwardNN& GetModel() { return m_model; }
+    CTrainingMetrics GetMetrics() { return m_metrics; }
+    CFeedForwardNN    GetModel() { return m_model; }
 };
 
 #endif // __MQH_MODEL_EVALUATOR_MQH__

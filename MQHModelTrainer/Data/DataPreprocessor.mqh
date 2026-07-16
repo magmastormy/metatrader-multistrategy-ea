@@ -5,7 +5,7 @@
 #ifndef MQH_DATA_PREPROCESSOR_MQH
 #define MQH_DATA_PREPROCESSOR_MQH
 
-#include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "../../Core/AI/AIFeatureVectorBuilder.mqh"
 #include "LabelEncoder.mqh"
 
 class CDataPreprocessor
@@ -17,9 +17,22 @@ private:
     double m_featureMax[];
     bool m_normalizationFit;
     ENUM_NORMALIZATION_TYPE m_normType;
-    
+    double m_trainFeatures[][FEATURE_VECTOR_SIZE];
+    int m_trainLabels[];
+    int m_trainCount;
+    double m_valFeatures[][FEATURE_VECTOR_SIZE];
+    int m_valLabels[];
+    int m_valCount;
+    double m_testFeatures[][FEATURE_VECTOR_SIZE];
+    int m_testLabels[];
+    int m_testCount;
+    int m_valRatioPct;
+    int m_testRatioPct;
+
 public:
-    CDataPreprocessor() : m_normalizationFit(false), m_normType(NORM_ZSCORE)
+    CDataPreprocessor() : m_normalizationFit(false), m_normType(NORM_ZSCORE),
+                          m_trainCount(0), m_valCount(0), m_testCount(0),
+                          m_valRatioPct(0), m_testRatioPct(0)
     {
         ArrayResize(m_featureMean, FEATURE_VECTOR_SIZE);
         ArrayResize(m_featureStd, FEATURE_VECTOR_SIZE);
@@ -68,7 +81,7 @@ public:
         return true;
     }
     
-    void TransformNormalization(double &features[], const int rowCount)
+    void TransformNormalization(double &features[][], const int rowCount)
     {
         if(!m_normalizationFit) return;
         
@@ -110,15 +123,15 @@ public:
     }
     
     bool SplitData(const double &allFeatures[][], const int &allLabels[], const int totalRows,
-                   const double trainRatio, const double valRatio,
+                   const double trainRatio, const double validationRatio,
                    double &trainFeatures[][], int &trainLabels[], int &trainCount,
                    double &valFeatures[][], int &valLabels[], int &valCount,
                    double &testFeatures[][], int &testLabels[], int &testCount)
     {
         if(totalRows < 3) return false;
-        
+
         int trainEnd = (int)((double)totalRows * trainRatio);
-        int valEnd = trainEnd + (int)((double)totalRows * valRatio);
+        int valEnd = trainEnd + (int)((double)totalRows * validationRatio);
         
         trainEnd = MathMin(trainEnd, totalRows - 2);
         valEnd = MathMin(valEnd, totalRows - 1);
@@ -160,7 +173,108 @@ public:
         PrintFormat("[MQH-TRAIN] Data split: train=%d | val=%d | test=%d", trainCount, valCount, testCount);
         return true;
     }
-    
+
+    void SetSplitRatio(const int valRatioPct, const int testRatioPct)
+    {
+        m_valRatioPct = valRatioPct;
+        m_testRatioPct = testRatioPct;
+    }
+
+    bool SplitData(const double &allFeatures[][], const int &allLabels[], const int totalRows)
+    {
+        if(totalRows < 3) return false;
+
+        double trainRatio = 1.0 - (double)(m_valRatioPct + m_testRatioPct) / 100.0;
+        double valRatio = (double)m_valRatioPct / 100.0;
+        double testRatio = (double)m_testRatioPct / 100.0;
+
+        int trainEnd = (int)((double)totalRows * trainRatio);
+        int valEnd = trainEnd + (int)((double)totalRows * valRatio);
+
+        trainEnd = MathMax(1, MathMin(trainEnd, totalRows - 2));
+        valEnd = MathMax(trainEnd + 1, MathMin(valEnd, totalRows - 1));
+
+        m_trainCount = trainEnd;
+        m_valCount = valEnd - trainEnd;
+        m_testCount = totalRows - valEnd;
+
+        ArrayResize(m_trainFeatures, m_trainCount, FEATURE_VECTOR_SIZE);
+        ArrayResize(m_trainLabels, m_trainCount);
+        ArrayResize(m_valFeatures, m_valCount, FEATURE_VECTOR_SIZE);
+        ArrayResize(m_valLabels, m_valCount);
+        ArrayResize(m_testFeatures, m_testCount, FEATURE_VECTOR_SIZE);
+        ArrayResize(m_testLabels, m_testCount);
+
+        for(int i = 0; i < m_trainCount; i++)
+        {
+            for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
+                m_trainFeatures[i][f] = allFeatures[i][f];
+            m_trainLabels[i] = allLabels[i];
+        }
+        for(int i = 0; i < m_valCount; i++)
+        {
+            int srcIdx = trainEnd + i;
+            for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
+                m_valFeatures[i][f] = allFeatures[srcIdx][f];
+            m_valLabels[i] = allLabels[srcIdx];
+        }
+        for(int i = 0; i < m_testCount; i++)
+        {
+            int srcIdx = valEnd + i;
+            for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
+                m_testFeatures[i][f] = allFeatures[srcIdx][f];
+            m_testLabels[i] = allLabels[srcIdx];
+        }
+
+        PrintFormat("[MQH-TRAIN] Data split: train=%d | val=%d | test=%d", m_trainCount, m_valCount, m_testCount);
+        return true;
+    }
+
+    void NormalizeData()
+    {
+        FitNormalization(m_trainFeatures, m_trainCount);
+        TransformNormalization(m_trainFeatures, m_trainCount);
+        TransformNormalization(m_valFeatures, m_valCount);
+        TransformNormalization(m_testFeatures, m_testCount);
+    }
+
+    void GetTrainData(double &features[][], int &labels[])
+    {
+        ArrayResize(features, m_trainCount, FEATURE_VECTOR_SIZE);
+        ArrayResize(labels, m_trainCount);
+        for(int i = 0; i < m_trainCount; i++)
+        {
+            for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
+                features[i][f] = m_trainFeatures[i][f];
+            labels[i] = m_trainLabels[i];
+        }
+    }
+    void GetValData(double &features[][], int &labels[])
+    {
+        ArrayResize(features, m_valCount, FEATURE_VECTOR_SIZE);
+        ArrayResize(labels, m_valCount);
+        for(int i = 0; i < m_valCount; i++)
+        {
+            for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
+                features[i][f] = m_valFeatures[i][f];
+            labels[i] = m_valLabels[i];
+        }
+    }
+    void GetTestData(double &features[][], int &labels[])
+    {
+        ArrayResize(features, m_testCount, FEATURE_VECTOR_SIZE);
+        ArrayResize(labels, m_testCount);
+        for(int i = 0; i < m_testCount; i++)
+        {
+            for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
+                features[i][f] = m_testFeatures[i][f];
+            labels[i] = m_testLabels[i];
+        }
+    }
+    int GetTrainCount() const { return m_trainCount; }
+    int GetValCount() const { return m_valCount; }
+    int GetTestCount() const { return m_testCount; }
+
     void SaveNormalizationStats(const string filename)
     {
         int fh = FileOpen(filename, FILE_WRITE | FILE_BIN | FILE_COMMON);

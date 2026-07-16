@@ -64,7 +64,6 @@ def export_onnx(model: nn.Module, seq_len: int, n_feat: int, path: str, opset: i
         output_names=["output"],
         dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
         do_constant_folding=True,
-        dynamo=False,
         verbose=False,
     )
 

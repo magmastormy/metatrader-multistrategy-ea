@@ -223,40 +223,82 @@ private:
 
       lotSize = MathFloor((lotSize + 1e-12) / stepVol) * stepVol;
 
+      // FIX: Reject lots below minimum instead of rounding up (prevents 15x risk multiplier)
       if(lotSize < minVol)
-         lotSize = minVol;
+         return 0.0;  // Signal invalid - caller should skip this grid level
       if(lotSize > maxVol)
          lotSize = maxVol;
 
       return NormalizeDouble(lotSize, 2);
    }
 
-   //+------------------------------------------------------------------+
-   //| Cap lot size to available margin                                  |
-   //+------------------------------------------------------------------+
-   double CapLotToMargin(double lotSize, const string symbol, ENUM_ORDER_TYPE orderType) const
+//+------------------------------------------------------------------+
+//| Cap lot size to available margin                                  |
+//+------------------------------------------------------------------+
+double CapLotToMargin(double lotSize, const string symbol, ENUM_ORDER_TYPE orderType) const
+{
+   double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   double marginPerLot = 0.0;
+   double priceForMargin = (orderType == ORDER_TYPE_BUY)
+                           ? SymbolInfoDouble(symbol, SYMBOL_ASK)
+                           : SymbolInfoDouble(symbol, SYMBOL_BID);
+
+   bool marginCalcOk = OrderCalcMargin(orderType, symbol, 1.0, priceForMargin, marginPerLot);
+   
+   // Fallback: estimate margin from contract size and leverage if OrderCalcMargin fails
+   if(!marginCalcOk || marginPerLot <= 0.0)
    {
-      double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-      double marginPerLot = 0.0;
-      double priceForMargin = (orderType == ORDER_TYPE_BUY)
-                              ? SymbolInfoDouble(symbol, SYMBOL_ASK)
-                              : SymbolInfoDouble(symbol, SYMBOL_BID);
-
-      if(!OrderCalcMargin(orderType, symbol, 1.0, priceForMargin, marginPerLot) || marginPerLot <= 0.0)
-         return lotSize;
-
-      double maxLotByMargin = freeMargin / (marginPerLot * 1.5);
-      double symbolMaxVolume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-      double cappedLot = MathMin(lotSize, MathMin(maxLotByMargin, symbolMaxVolume));
-
-      if(cappedLot < lotSize)
+      double contractSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      
+      // For Deriv synthetics: use ACCOUNT_LEVERAGE (1:1000 = 1000)
+      long leverageLong = AccountInfoInteger(ACCOUNT_LEVERAGE);
+      double leverage = (double)leverageLong;
+      if(leverage <= 0) leverage = 1000.0; // Default for Deriv
+      
+      if(contractSize > 0 && leverage > 0 && priceForMargin > 0)
       {
-         PrintFormat("[GRID-RECOVERY] %s lot capped from %.2f to %.2f (margin_max=%.2f vol_max=%.2f)",
-                     symbol, lotSize, cappedLot, maxLotByMargin, symbolMaxVolume);
+         // Rough margin estimate: 1 lot * contractSize * price / leverage
+         marginPerLot = priceForMargin * contractSize / leverage;
+         
+         PrintFormat("[GRID-RECOVERY-MARGIN] %s OrderCalcMargin failed/zero, fallback: leverage=%d contract=%.2f price=%.5f -> marginPerLot=%.2f", 
+                     symbol, (int)leverage, contractSize, priceForMargin, marginPerLot);
       }
-
-      return cappedLot;
+      else
+      {
+         PrintFormat("[GRID-RECOVERY-MARGIN] %s margin calc FAILED - missing data, using symbol max volume cap only", symbol);
+         // Just cap to symbol max volume
+         double symbolMaxVolume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+         double cappedLot = MathMin(lotSize, symbolMaxVolume);
+         if(cappedLot < lotSize)
+         {
+            PrintFormat("[GRID-RECOVERY-MARGIN] %s lot capped from %.2f to %.2f (symbol max volume)",
+                        symbol, lotSize, cappedLot);
+         }
+         return cappedLot;
+      }
    }
+
+   double maxLotByMargin = freeMargin / (marginPerLot * 1.5); // 1.5x safety buffer
+   double symbolMaxVolume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double cappedLot = MathMin(lotSize, MathMin(maxLotByMargin, symbolMaxVolume));
+
+   // Additional safety: ensure lot is valid for symbol
+   double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+   double minVol  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   if(stepVol > 0.0)
+   {
+      cappedLot = MathFloor((cappedLot + 1e-12) / stepVol) * stepVol;
+   }
+   if(cappedLot < minVol) cappedLot = 0.0; // Signal invalid
+
+   if(cappedLot < lotSize)
+   {
+      PrintFormat("[GRID-RECOVERY-MARGIN] %s lot capped from %.2f to %.2f (margin_max=%.2f vol_max=%.2f marginPerLot=%.2f freeMargin=%.2f leverage=%d)",
+                  symbol, lotSize, cappedLot, maxLotByMargin, symbolMaxVolume, marginPerLot, freeMargin, (int)AccountInfoInteger(ACCOUNT_LEVERAGE));
+   }
+
+   return cappedLot;
+}
 
    //+------------------------------------------------------------------+
    //| Calculate grid drawdown as percentage of equity                   |
@@ -599,10 +641,23 @@ public:
 
       double lotSize = CalculateGridLot(level, baseLot);
 
+      // Debug: log lot calculation details
+      PrintFormat("[GRID-RECOVERY-DEBUG] %s L%d | baseLot=%.2f progressionType=%s factor=%.2f rawLot=%.2f",
+                  symbol, level, baseLot,
+                  m_config.progressionType == GRID_PROGRESSION_MARTINGALE ? "MARTINGALE" : "FIBONACCI",
+                  m_config.progressionFactor, lotSize);
+
       // Normalize and cap lot
       ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
       lotSize = NormalizeLot(symbol, lotSize);
+      PrintFormat("[GRID-RECOVERY-DEBUG] %s L%d | after NormalizeLot: %.2f (minVol=%.2f maxVol=%.2f step=%.4f)",
+                  symbol, level, lotSize,
+                  SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN),
+                  SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX),
+                  SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP));
       lotSize = CapLotToMargin(lotSize, symbol, orderType);
+      PrintFormat("[GRID-RECOVERY-DEBUG] %s L%d | after CapLotToMargin: %.2f",
+                  symbol, level, lotSize);
 
       if(lotSize <= 0.0)
       {
@@ -627,8 +682,9 @@ public:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
-      // Calculate magic number: baseMagic + magicOffset + symbolIndex
-      int magic = m_baseMagic + m_config.magicOffset + idx;
+      // Calculate magic number: baseMagic + magicOffset + symbolIndex * 100 + level
+      // FIX: Include level in magic to prevent collision across 8 grid levels
+      int magic = m_baseMagic + m_config.magicOffset + idx * 100 + level;
 
       // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
       if(m_riskManager != NULL)
@@ -689,8 +745,37 @@ public:
       else
       {
          uint retcode = m_trade.ResultRetcode();
-         PrintFormat("[GRID-RECOVERY-FAILED] %s L%d %s lot=%.2f retcode=%u",
-                     symbol, level, direction == 1 ? "BUY" : "SELL", lotSize, retcode);
+         PrintFormat("[GRID-RECOVERY-FAILED] %s L%d %s lot=%.2f retcode=%u | price=%.5f SL=%.5f TP=%.5f magic=%d",
+                     symbol, level, direction == 1 ? "BUY" : "SELL", lotSize, retcode, entryPrice, sl, tp, magic);
+         
+         // Additional debug info for common errors
+         if(retcode == 10016) // ERR_INVALID_VOLUME
+         {
+            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_INVALID_VOLUME: lot=%.2f minVol=%.2f maxVol=%.2f step=%.4f | freeMargin=%.2f leverage=%d",
+                        symbol, lotSize,
+                        SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN),
+                        SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX),
+                        SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP),
+                        AccountInfoDouble(ACCOUNT_MARGIN_FREE),
+                        AccountInfoInteger(ACCOUNT_LEVERAGE));
+         }
+         else if(retcode == 10014) // ERR_INVALID_PRICE
+         {
+            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_INVALID_PRICE: entryPrice=%.5f SL=%.5f TP=%.5f digits=%d",
+                        symbol, entryPrice, sl, tp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS));
+         }
+         else if(retcode == 10008) // ERR_NOT_ENOUGH_MONEY
+         {
+            double usedMargin = 0.0;
+            // ACCOUNT_MARGIN_USED may not be available in all MT5 builds
+            // Fallback: used margin = margin - free margin
+            double totalMargin = AccountInfoDouble(ACCOUNT_MARGIN);
+            double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+            usedMargin = totalMargin - freeMargin;
+            if(usedMargin < 0) usedMargin = 0;
+            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_NOT_ENOUGH_MONEY: lot=%.2f freeMargin=%.2f usedMargin=%.2f totalMargin=%.2f",
+                        symbol, lotSize, freeMargin, usedMargin, totalMargin);
+         }
       }
 
       return result;

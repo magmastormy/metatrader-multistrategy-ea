@@ -87,6 +87,9 @@ public:
     bool   ContributorsIncludeAI(const string &contributors[]);
     bool   ContributorsIncludeName(const string &contributors[], const string contributorName);
     bool   ContributorsIncludeONNX(const string &contributors[]);
+    bool   ContributorsIncludeTransformer(const string &contributors[]);
+    bool   ContributorsIncludeEnsemble(const string &contributors[]);
+    bool   ContributorsIncludeNeuralNetwork(const string &contributors[]);
     int    CountIndicatorContributors(const string &contributors[]);
 
     //--- Prediction position mapping (delegates to CPositionStateManager)
@@ -241,6 +244,21 @@ bool CTradeAttributionManager::ContributorsIncludeName(const string &contributor
 bool CTradeAttributionManager::ContributorsIncludeONNX(const string &contributors[])
 {
     return ContributorsIncludeName(contributors, "ONNX AI");
+}
+
+bool CTradeAttributionManager::ContributorsIncludeTransformer(const string &contributors[])
+{
+    return ContributorsIncludeName(contributors, "Transformer AI");
+}
+
+bool CTradeAttributionManager::ContributorsIncludeEnsemble(const string &contributors[])
+{
+    return ContributorsIncludeName(contributors, "Ensemble AI");
+}
+
+bool CTradeAttributionManager::ContributorsIncludeNeuralNetwork(const string &contributors[])
+{
+    return ContributorsIncludeName(contributors, "Neural Network AI");
 }
 
 int CTradeAttributionManager::CountIndicatorContributors(const string &contributors[])

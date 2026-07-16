@@ -27,6 +27,7 @@ private:
    bool                m_controlEnabled;    // Whether control channel is enabled
    int                 m_pushInterval;      // Push interval in seconds
    int                 m_requestTimeout;    // Request timeout (ms)
+   int                 m_pushTimeout;       // Push-specific timeout (ms) — Issue #34
    datetime            m_lastPushTime;      // Last successful state push
    datetime            m_lastPollTime;      // Last command poll time
    bool                m_pushInProgress;    // Guard against stacked pushes
@@ -82,7 +83,8 @@ private:
    // Internal methods
    string              EscapeJsonString(const string &str);
    bool                SendHttpRequest(const string &method, const string &url,
-                                       const string &post_data, string &response);
+                                       const string &post_data, string &response,
+                                       int timeoutMs = -1);
    string              BuildStateJson();
    string              BuildRiskJson();
    string              BuildPerformanceJson();
@@ -102,7 +104,7 @@ public:
    // Initialization
    bool              Initialize(const string &endpoint, bool enabled = true,
                                 bool controlEnabled = false, int pushIntervalSec = 5,
-                                int requestTimeoutMs = 1000);
+                                int requestTimeoutMs = 1000, int pushTimeoutMs = 5000);
    void              Shutdown();
 
     // Operations
@@ -189,6 +191,7 @@ CDashboardBridge::CDashboardBridge()
    m_controlEnabled = false;
    m_pushInterval = 5;
    m_requestTimeout = 1000;
+   m_pushTimeout = 5000;  // Default 5s push timeout (Issue #34)
    m_lastPushTime = 0;
    m_lastPollTime = 0;
    m_pushCount = 0;
@@ -360,13 +363,14 @@ CDashboardBridge::~CDashboardBridge()
 //+------------------------------------------------------------------+
 bool CDashboardBridge::Initialize(const string &endpoint, bool enabled,
                                    bool controlEnabled, int pushIntervalSec,
-                                   int requestTimeoutMs)
+                                   int requestTimeoutMs, int pushTimeoutMs)
 {
    m_endpoint = endpoint;
    m_enabled = enabled;
    m_controlEnabled = controlEnabled;
    m_pushInterval = pushIntervalSec;
    m_requestTimeout = requestTimeoutMs;
+   m_pushTimeout = pushTimeoutMs;
    m_initialized = true;
 
    if(!m_enabled)
@@ -427,7 +431,8 @@ string CDashboardBridge::EscapeJsonString(const string &str)
 //| Send HTTP request                                                |
 //+------------------------------------------------------------------+
 bool CDashboardBridge::SendHttpRequest(const string &method, const string &url,
-                                        const string &post_data, string &response)
+                                        const string &post_data, string &response,
+                                        int timeoutMs = -1)
 {
    if(!m_initialized || !m_enabled)
       return false;
@@ -444,7 +449,11 @@ bool CDashboardBridge::SendHttpRequest(const string &method, const string &url,
       ArrayResize(request_array, ArraySize(request_array) - 1);
    }
 
-   int res = WebRequest(method, url, headers, m_requestTimeout,
+   // Use push timeout for POST (state push), request timeout for GET (health, commands)
+   int effectiveTimeout = (timeoutMs > 0) ? timeoutMs : 
+                          ((method == "POST") ? m_pushTimeout : m_requestTimeout);
+
+   int res = WebRequest(method, url, headers, effectiveTimeout,
                        request_array, response_array, response_headers);
 
    if(res == -1)
@@ -578,7 +587,7 @@ bool CDashboardBridge::PollCommands()
                // Acknowledge the command
                string ackUrl = m_endpoint + "/api/control/ack/" + cmdId;
                string ackResponse;
-               SendHttpRequest("POST", ackUrl, "", ackResponse);
+               SendHttpRequest("POST", ackUrl, "", ackResponse, m_pushTimeout);
             }
 
             searchPos = cmdEnd + 1;

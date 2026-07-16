@@ -157,6 +157,9 @@ void ParseLabelHorizons()
     if(g_labelHorizonCount > MAX_LABEL_HORIZONS)
         g_labelHorizonCount = MAX_LABEL_HORIZONS;
 
+    // Resize the array to hold the parsed horizons
+    ArrayResize(g_labelHorizons, g_labelHorizonCount);
+
     for(int i = 0; i < g_labelHorizonCount; i++)
     {
         string trimmed = TrimString(parts[i]);

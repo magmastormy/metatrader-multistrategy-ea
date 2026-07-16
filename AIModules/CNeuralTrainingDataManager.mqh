@@ -5,6 +5,41 @@
 #ifndef NEURAL_TRAINING_DATA_MANAGER_MQH
 #define NEURAL_TRAINING_DATA_MANAGER_MQH
 
+#include "MetaLabeler.mqh"
+
+#ifndef CBarrierLabelResolver_MQH
+#define CBarrierLabelResolver_MQH
+class CBarrierLabelResolver
+{
+public:
+    static int ResolveLabel(const double upperBarrier, const double lowerBarrier,
+                           const double exitPrice, const double entryPrice,
+                           const datetime expiryTime, const datetime currentTimestamp)
+    {
+        if(exitPrice <= 0.0 || entryPrice <= 0.0)
+            return 0;
+        if(exitPrice >= upperBarrier)
+            return 2;
+        else if(exitPrice <= lowerBarrier)
+            return 1;
+        else
+            return 0;
+    }
+
+    static double CalculateBarrierRatio(const double upperBarrier, const double lowerBarrier, const double entryPrice)
+    {
+        if(entryPrice <= 0.0)
+            return 1.0;
+        double upperDist = MathAbs(upperBarrier - entryPrice);
+        double lowerDist = MathAbs(entryPrice - lowerBarrier);
+        double totalDist = upperDist + lowerDist;
+        if(totalDist <= 0.0)
+            return 1.0;
+        return upperDist / totalDist;
+    }
+};
+#endif // CBarrierLabelResolver_MQH
+
 // ENHANCEMENT: Neural network buffer size constants (Batch 93)
 #ifndef NN_MAX_TRAINING_EXAMPLES
 #define NN_MAX_TRAINING_EXAMPLES 2000

@@ -114,7 +114,7 @@ private:
       m_profiles[DERIV_CRASH_BOOM].magicOffset          = 9000;
       m_profiles[DERIV_CRASH_BOOM].maxDrawdownPercent   = 15;
       m_profiles[DERIV_CRASH_BOOM].enableSpikeHunter    = true;
-      m_profiles[DERIV_CRASH_BOOM].enableGridRecovery   = true;
+      m_profiles[DERIV_CRASH_BOOM].enableGridRecovery   = false;  // FIX: Disable grid recovery on all synthetics (no true mean reversion)
       m_profiles[DERIV_CRASH_BOOM].enableHurstRegime    = true;
       m_profiles[DERIV_CRASH_BOOM].enableOUFilter       = false;
       m_profiles[DERIV_CRASH_BOOM].gridFactorATR        = 0.20;
@@ -135,7 +135,7 @@ private:
       m_profiles[DERIV_VOLATILITY].magicOffset          = 9100;
       m_profiles[DERIV_VOLATILITY].maxDrawdownPercent   = 10;
       m_profiles[DERIV_VOLATILITY].enableSpikeHunter    = false;
-      m_profiles[DERIV_VOLATILITY].enableGridRecovery   = true;
+      m_profiles[DERIV_VOLATILITY].enableGridRecovery   = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_VOLATILITY].enableHurstRegime    = true;
       m_profiles[DERIV_VOLATILITY].enableOUFilter       = true;
       m_profiles[DERIV_VOLATILITY].gridFactorATR        = 0.25;
@@ -156,7 +156,7 @@ private:
       m_profiles[DERIV_STEP].magicOffset                = 9200;
       m_profiles[DERIV_STEP].maxDrawdownPercent         = 8;
       m_profiles[DERIV_STEP].enableSpikeHunter          = false;
-      m_profiles[DERIV_STEP].enableGridRecovery         = true;
+      m_profiles[DERIV_STEP].enableGridRecovery         = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_STEP].enableHurstRegime          = true;
       m_profiles[DERIV_STEP].enableOUFilter             = true;
       m_profiles[DERIV_STEP].gridFactorATR              = 0.20;
@@ -219,7 +219,7 @@ private:
       m_profiles[DERIV_MULTISTEP].magicOffset           = 9500;
       m_profiles[DERIV_MULTISTEP].maxDrawdownPercent    = 9;
       m_profiles[DERIV_MULTISTEP].enableSpikeHunter     = false;
-      m_profiles[DERIV_MULTISTEP].enableGridRecovery    = true;
+      m_profiles[DERIV_MULTISTEP].enableGridRecovery    = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_MULTISTEP].enableHurstRegime     = true;
       m_profiles[DERIV_MULTISTEP].enableOUFilter        = true;
       m_profiles[DERIV_MULTISTEP].gridFactorATR         = 0.22;
@@ -261,7 +261,7 @@ private:
       m_profiles[DERIV_HYBRID].magicOffset              = 9600;
       m_profiles[DERIV_HYBRID].maxDrawdownPercent       = 12;
       m_profiles[DERIV_HYBRID].enableSpikeHunter        = true;
-      m_profiles[DERIV_HYBRID].enableGridRecovery       = true;
+      m_profiles[DERIV_HYBRID].enableGridRecovery       = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_HYBRID].enableHurstRegime        = true;
       m_profiles[DERIV_HYBRID].enableOUFilter           = false;
       m_profiles[DERIV_HYBRID].gridFactorATR            = 0.25;
@@ -282,7 +282,7 @@ private:
       m_profiles[DERIV_RANGE_BREAK].magicOffset         = 9650;
       m_profiles[DERIV_RANGE_BREAK].maxDrawdownPercent  = 10;
       m_profiles[DERIV_RANGE_BREAK].enableSpikeHunter   = false;
-      m_profiles[DERIV_RANGE_BREAK].enableGridRecovery  = false;
+      m_profiles[DERIV_RANGE_BREAK].enableGridRecovery  = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_RANGE_BREAK].enableHurstRegime   = true;
       m_profiles[DERIV_RANGE_BREAK].enableOUFilter      = true;
       m_profiles[DERIV_RANGE_BREAK].gridFactorATR       = 0.0;
@@ -303,7 +303,7 @@ private:
       m_profiles[DERIV_SKEW_STEP].magicOffset           = 9700;
       m_profiles[DERIV_SKEW_STEP].maxDrawdownPercent    = 9;
       m_profiles[DERIV_SKEW_STEP].enableSpikeHunter     = false;
-      m_profiles[DERIV_SKEW_STEP].enableGridRecovery    = true;
+      m_profiles[DERIV_SKEW_STEP].enableGridRecovery    = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_SKEW_STEP].enableHurstRegime     = true;
       m_profiles[DERIV_SKEW_STEP].enableOUFilter        = true;
       m_profiles[DERIV_SKEW_STEP].gridFactorATR         = 0.20;
@@ -429,7 +429,7 @@ private:
       m_profiles[DERIV_STABLE_SPREAD].magicOffset       = 9900;
       m_profiles[DERIV_STABLE_SPREAD].maxDrawdownPercent = 6;
       m_profiles[DERIV_STABLE_SPREAD].enableSpikeHunter = false;
-      m_profiles[DERIV_STABLE_SPREAD].enableGridRecovery = true;
+      m_profiles[DERIV_STABLE_SPREAD].enableGridRecovery = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_STABLE_SPREAD].enableHurstRegime = true;
       m_profiles[DERIV_STABLE_SPREAD].enableOUFilter    = true;
       m_profiles[DERIV_STABLE_SPREAD].gridFactorATR     = 0.15;
@@ -450,7 +450,7 @@ private:
       m_profiles[DERIV_PAIRS_ARBITRAGE].magicOffset     = 9900;
       m_profiles[DERIV_PAIRS_ARBITRAGE].maxDrawdownPercent = 5;
       m_profiles[DERIV_PAIRS_ARBITRAGE].enableSpikeHunter = false;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].enableGridRecovery = true;
+      m_profiles[DERIV_PAIRS_ARBITRAGE].enableGridRecovery = false;  // FIX: Disable grid recovery on all synthetics
       m_profiles[DERIV_PAIRS_ARBITRAGE].enableHurstRegime = true;
       m_profiles[DERIV_PAIRS_ARBITRAGE].enableOUFilter  = true;
       m_profiles[DERIV_PAIRS_ARBITRAGE].gridFactorATR   = 0.15;

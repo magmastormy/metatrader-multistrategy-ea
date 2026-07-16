@@ -29,49 +29,59 @@ $ExcludedDirs = @("Dashboard", "node_modules", ".venv-ea-dashboard", ".trae")
 
 # --- Sync functions ---
 function Sync-Directory($Src, $Dst) {
-    if (-not (Test-Path $Dst)) { New-Item -ItemType Directory -Path $Dst -Force | Out-Null }
+    if (-not (Test-Path $Dst)) { $null = New-Item -ItemType Directory -Path $Dst -Force }
     $count = 0
-    Get-ChildItem $Src -File | Where-Object { $_.Extension -match '\.(mq[45h]|mqh)$' } | ForEach-Object {
-        $dstFile = Join-Path $Dst $_.Name
-        $srcHash = (Get-FileHash $_.FullName -Algorithm MD5).Hash
-        $dstHash = if (Test-Path $dstFile) { (Get-FileHash $dstFile -Algorithm MD5).Hash } else { "" }
+    $files = @(Get-ChildItem $Src -File | Where-Object { $_.Extension -match '\.(mq[45h]|mqh)$' })
+    foreach ($f in $files) {
+        $dstFile = Join-Path $Dst $f.Name
+        $srcHash = (Get-FileHash $f.FullName -Algorithm MD5).Hash
+        $dstHash = ""
+        if (Test-Path $dstFile) { $dstHash = (Get-FileHash $dstFile -Algorithm MD5).Hash }
         if ($srcHash -ne $dstHash) {
-            Copy-Item $_.FullName $dstFile -Force
-            $count++
+            try { $null = Copy-Item $f.FullName $dstFile -Force -ErrorAction Stop; $count++ }
+            catch { Write-Host "[SYNC] Skipped $($f.Name) (permission denied)" -ForegroundColor Yellow }
         }
     }
     return $count
 }
 
 function Sync-AllFiles($Src, $Dst) {
-    if (-not (Test-Path $Dst)) { New-Item -ItemType Directory -Path $Dst -Force | Out-Null }
+    if (-not (Test-Path $Dst)) { $null = New-Item -ItemType Directory -Path $Dst -Force }
     $count = 0
-    Get-ChildItem $Src -File | ForEach-Object {
-        $dstFile = Join-Path $Dst $_.Name
-        $srcHash = (Get-FileHash $_.FullName -Algorithm MD5).Hash
-        $dstHash = if (Test-Path $dstFile) { (Get-FileHash $dstFile -Algorithm MD5).Hash } else { "" }
+    $files = @(Get-ChildItem $Src -File)
+    foreach ($f in $files) {
+        $dstFile = Join-Path $Dst $f.Name
+        $srcHash = (Get-FileHash $f.FullName -Algorithm MD5).Hash
+        $dstHash = ""
+        if (Test-Path $dstFile) { $dstHash = (Get-FileHash $dstFile -Algorithm MD5).Hash }
         if ($srcHash -ne $dstHash) {
-            Copy-Item $_.FullName $dstFile -Force
-            $count++
+            try { $null = Copy-Item $f.FullName $dstFile -Force -ErrorAction Stop; $count++ }
+            catch { Write-Host "[SYNC] Skipped $($f.Name) (permission denied)" -ForegroundColor Yellow }
         }
     }
     return $count
 }
 
 function Sync-Recursive($Src, $Dst) {
-    $total = Sync-Directory $Src $Dst
-    Get-ChildItem $Src -Directory | Where-Object { $ExcludedDirs -notcontains $_.Name } | ForEach-Object {
-        $childDst = Join-Path $Dst $_.Name
-        $total += Sync-Recursive $_.FullName $childDst
+    $total = (Sync-Directory $Src $Dst)
+    if ($null -eq $total) { $total = 0 }
+    $dirs = @(Get-ChildItem $Src -Directory | Where-Object { $ExcludedDirs -notcontains $_.Name })
+    foreach ($d in $dirs) {
+        $childDst = Join-Path $Dst $d.Name
+        $sub = (Sync-Recursive $d.FullName $childDst)
+        if ($null -ne $sub) { $total = [int]$total + [int]$sub }
     }
     return $total
 }
 
 function Sync-RecursiveAll($Src, $Dst) {
-    $total = Sync-AllFiles $Src $Dst
-    Get-ChildItem $Src -Directory | Where-Object { $ExcludedDirs -notcontains $_.Name } | ForEach-Object {
-        $childDst = Join-Path $Dst $_.Name
-        $total += Sync-RecursiveAll $_.FullName $childDst
+    $total = (Sync-AllFiles $Src $Dst)
+    if ($null -eq $total) { $total = 0 }
+    $dirs = @(Get-ChildItem $Src -Directory | Where-Object { $ExcludedDirs -notcontains $_.Name })
+    foreach ($d in $dirs) {
+        $childDst = Join-Path $Dst $d.Name
+        $sub = (Sync-RecursiveAll $d.FullName $childDst)
+        if ($null -ne $sub) { $total = [int]$total + [int]$sub }
     }
     return $total
 }
@@ -135,6 +145,16 @@ if (Test-Path $utilSrc) {
 }
 Write-Host "[SYNC] Utilities/: $utilCount files updated"
 
+# --- Sync MQHModelTrainer/ ---
+Write-Host "[SYNC] Syncing MQHModelTrainer/..." -ForegroundColor Cyan
+$mqtSrc = Join-Path $ProjectRoot "MQHModelTrainer"
+$mqtDst = Join-Path $EADst "MQHModelTrainer"
+$mqtCount = 0
+if (Test-Path $mqtSrc) {
+    $mqtCount = Sync-Recursive $mqtSrc $mqtDst
+}
+Write-Host "[SYNC] MQHModelTrainer/: $mqtCount files updated"
+
 # --- Sync Resources/ (all file types, including .bin, .onnx) ---
 Write-Host "[SYNC] Syncing Resources/..." -ForegroundColor Cyan
 $resSrc = Join-Path $ProjectRoot "Resources"
@@ -175,16 +195,17 @@ $pySrc = Join-Path $ProjectRoot "Python"
 $pyDst = Join-Path $MQL5Dir "Files\Python"
 $pyCount = 0
 if (Test-Path $pySrc) {
-    if (-not (Test-Path $pyDst)) { New-Item -ItemType Directory -Path $pyDst -Force | Out-Null }
-    Get-ChildItem $pySrc -File | ForEach-Object {
-        $dstFile = Join-Path $pyDst $_.Name
-        Copy-Item $_.FullName $dstFile -Force
-        $pyCount++
+    if (-not (Test-Path $pyDst)) { $null = New-Item -ItemType Directory -Path $pyDst -Force }
+    $pyFiles = @(Get-ChildItem $pySrc -File)
+    foreach ($pf in $pyFiles) {
+        $dstFile = Join-Path $pyDst $pf.Name
+        try { $null = Copy-Item $pf.FullName $dstFile -Force -ErrorAction Stop; $pyCount++ }
+        catch { Write-Host "[SYNC] Skipped $($pf.Name) (permission denied)" -ForegroundColor Yellow }
     }
 }
 Write-Host "[SYNC] Python/: $pyCount files updated"
 
-$totalSynced = $rootCount + $coreCount + $stratCount + $aiCount + $ifCount + $incCount + $utilCount + $resCount + $imCount + $pyCount
+$totalSynced = $rootCount + $coreCount + $stratCount + $aiCount + $ifCount + $incCount + $utilCount + $mqtCount + $resCount + $imCount + $pyCount
 Write-Host "[SYNC] Total: $totalSynced files updated" -ForegroundColor $(if ($totalSynced -gt 0) { "Yellow" } else { "Green" })
 
 if ($SkipCompile) {
@@ -235,4 +256,15 @@ if (Test-Path $logFile) {
     }
 } else {
     Write-Host "[COMPILE] No log file generated. Exit code: $($proc.ExitCode)" -ForegroundColor Yellow
+}
+
+
+
+# --- Final summary ---
+Write-Host ""
+Write-Host "=== COMPILE SUMMARY ===" -ForegroundColor White
+if ($totalErrors -gt 0) {
+    Write-Host "[COMPILE] OVERALL FAILED — $totalErrors total errors, $totalWarnings total warnings" -ForegroundColor Red
+} else {
+    Write-Host "[COMPILE] OVERALL SUCCESS — 0 errors, $totalWarnings total warnings" -ForegroundColor Green
 }

@@ -8,10 +8,10 @@
 #property script_show_inputs
 
 input string symbolName = "EURUSD";
-input ENUM_TIMEFRAMES timeframe = PERIOD_H1;
+input ENUM_TIMEFRAMES g_timeframe = PERIOD_H1;
 input string dataFile = "TrainingData_EURUSD_H1.csv";
 
-input int testRatio = 30;
+input int g_testRatio = 30;
 
 #include "Core/AI/AIFeatureVectorBuilder.mqh"
 #include "AIModules/AIConfig.mqh"
@@ -28,7 +28,7 @@ input int testRatio = 30;
 void OnStart()
 {
     Print("=== MQH Model Evaluator ===");
-    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(timeframe));
+    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(g_timeframe));
     
     CCSVDataLoader dataLoader;
     CDataPreprocessor preprocessor;
@@ -51,7 +51,7 @@ void OnStart()
         return;
     }
     
-    double allFeatures[][];
+    double allFeatures[][FEATURE_VECTOR_SIZE];
     int labels[];
     int count = 0;
     
@@ -61,19 +61,19 @@ void OnStart()
         return;
     }
     
-    preprocessor.SetSplitRatio(0, testRatio);
+    preprocessor.SetSplitRatio(0, g_testRatio);
     preprocessor.SplitData(allFeatures, labels, count);
     
     preprocessor.NormalizeData();
     Print("[MQH-EVAL] Data normalized");
     
-    if(!evaluator.LoadModel(symbolName, timeframe))
+    if(!evaluator.LoadModel(symbolName, g_timeframe))
     {
         Print("[MQH-EVAL] Failed to load model");
         return;
     }
     
-    double testFeatures[][];
+    double testFeatures[][FEATURE_VECTOR_SIZE];
     int testLabels[];
     preprocessor.GetTestData(testFeatures, testLabels);
     
@@ -82,7 +82,7 @@ void OnStart()
     
     string metricsFile = StringFormat("EvaluationMetrics_%s_%s_%s.txt",
                                       symbolName,
-                                      EnumToString(timeframe),
+                                      EnumToString(g_timeframe),
                                       TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
     
     if(evaluator.Evaluate(testFeatures, testLabels, testCount, metricsFile))
@@ -93,7 +93,7 @@ void OnStart()
         
         string reportFile = StringFormat("EvaluationReport_%s_%s_%s.txt",
                                          symbolName,
-                                         EnumToString(timeframe),
+                                         EnumToString(g_timeframe),
                                          TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
         
         evaluator.GenerateReport(reportFile);

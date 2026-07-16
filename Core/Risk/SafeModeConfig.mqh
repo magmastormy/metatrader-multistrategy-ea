@@ -354,24 +354,24 @@ public:
             }
          }
 
-         // 2. Close 50% at 1R profit
+         // 2. Close 25% at 1R profit (reduced from 50% per Issue #25)
          if(!m_trackedPositions[i].partialClosed && profitR >= 1.0)
          {
             double minVol  = SymbolInfoDouble(posSymbol, SYMBOL_VOLUME_MIN);
             double stepVol = SymbolInfoDouble(posSymbol, SYMBOL_VOLUME_STEP);
             if(stepVol <= 0.0) stepVol = 0.01;
 
-            double halfVol = NormalizeDouble(volume * 0.5, 2);
-            halfVol = MathFloor((halfVol + 1e-12) / stepVol) * stepVol;
-            halfVol = NormalizeDouble(halfVol, 2);
+            double quarterVol = NormalizeDouble(volume * 0.25, 2);
+            quarterVol = MathFloor((quarterVol + 1e-12) / stepVol) * stepVol;
+            quarterVol = NormalizeDouble(quarterVol, 2);
 
-            if(halfVol >= minVol && halfVol < volume)
+            if(quarterVol >= minVol && quarterVol < volume)
             {
-               if(safeModeTradeMgr.ClosePositionPartial(ticket, halfVol, "SAFE|1R-PARTIAL"))
+               if(safeModeTradeMgr.ClosePositionPartial(ticket, quarterVol, "SAFE|1R-PARTIAL"))
                {
                   m_trackedPositions[i].partialClosed = true;
                   PrintFormat("[SAFE-MODE-PARTIAL] %s | ticket=%I64u | closed=%.2f | profitR=%.2fR",
-                              posSymbol, ticket, halfVol, profitR);
+                              posSymbol, ticket, quarterVol, profitR);
                }
             }
          }

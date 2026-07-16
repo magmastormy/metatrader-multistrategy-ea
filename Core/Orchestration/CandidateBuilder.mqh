@@ -131,7 +131,7 @@ public:
         m_aiDrawdownSizingLimit(0.2), m_antiMartingaleEnabled(true),
         m_maxPositionsPerSymbol(0), m_portfolioMaxPositionsPerSymbol(0),
         m_hybridGateRelaxAfterCycles(5), m_aiStandaloneMinConfidence(0.65),
-        m_aiStandaloneRelaxedConfidence(0.55), m_cyclesSinceIndicatorSignal(0),
+        m_aiStandaloneRelaxedConfidence(0.65), m_cyclesSinceIndicatorSignal(0),
         m_hybridGateRelaxed(false)
     {
         ArrayResize(m_minRRByCluster, 10);

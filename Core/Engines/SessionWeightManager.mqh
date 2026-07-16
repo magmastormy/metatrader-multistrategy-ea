@@ -25,69 +25,80 @@ private:
    double m_typicalATR[24];
    double m_currentSessionATR;
 
-   SSessionWeights GetSessionWeightsForTime(datetime time)
-   {
-      MqlDateTime dt;
-      TimeToStruct(time, dt);
-      int hour = dt.hour;
-      int dayOfWeek = dt.day_of_week;
+SSessionWeights GetSessionWeightsForTime(datetime time)
+      {
+         MqlDateTime dt;
+         TimeToStruct(time, dt);
+         int hour = dt.hour;
+         int dayOfWeek = dt.day_of_week;
 
-      SSessionWeights sw;
-      sw.sizingMultiplier = 1.0;
-      sw.convictionThresholdAdj = 0.0;
-      sw.readinessBoost = 0.0;
-      sw.sessionName = "UNKNOWN";
-
-      if(dayOfWeek == 0 || dayOfWeek == 6)
-      {
-         // Batch 118: Only apply weekend boost for synthetics (forex markets are closed)
-         if(m_syntheticMode)
-         {
-            sw.sizingMultiplier = 1.2;
-            sw.convictionThresholdAdj = -0.03;
-            sw.readinessBoost = 0.05;
-         }
-         else
-         {
-            sw.sizingMultiplier = 0.5;  // Penalize forex weekend trading
-            sw.convictionThresholdAdj = 0.10;
-            sw.readinessBoost = 0.0;
-         }
-         sw.sessionName = "WEEKEND";
-         return sw;
-      }
-
-      if(hour >= 0 && hour < 8)
-      {
-         sw.sizingMultiplier = 1.1;
-         sw.convictionThresholdAdj = 0.0;
-         sw.readinessBoost = 0.02;
-         sw.sessionName = "ASIAN";
-      }
-      else if(hour >= 8 && hour < 13)
-      {
-         sw.sizingMultiplier = 0.95;
-         sw.convictionThresholdAdj = 0.01;
-         sw.readinessBoost = 0.0;
-         sw.sessionName = "LONDON_PRE";
-      }
-      else if(hour >= 13 && hour < 21)
-      {
-         sw.sizingMultiplier = 0.85;
-         sw.convictionThresholdAdj = 0.02;
-         sw.readinessBoost = -0.02;
-         sw.sessionName = "LONDON_NY_OVERLAP";
-      }
-      else
-      {
+         SSessionWeights sw;
          sw.sizingMultiplier = 1.0;
          sw.convictionThresholdAdj = 0.0;
          sw.readinessBoost = 0.0;
-         sw.sessionName = "NY_LATE";
-      }
+         sw.sessionName = "UNKNOWN";
 
-      return sw;
-   }
+         if(dayOfWeek == 0 || dayOfWeek == 6)
+         {
+            // Batch 118: Only apply weekend boost for synthetics (forex markets are closed)
+            if(m_syntheticMode)
+            {
+               sw.sizingMultiplier = 1.2;
+               sw.convictionThresholdAdj = -0.03;
+               sw.readinessBoost = 0.05;
+            }
+            else
+            {
+               sw.sizingMultiplier = 0.5;  // Penalize forex weekend trading
+               sw.convictionThresholdAdj = 0.10;
+               sw.readinessBoost = 0.0;
+            }
+            sw.sessionName = "WEEKEND";
+            return sw;
+         }
+
+         // For synthetic symbols in synthetic mode: bypass ALL session adjustments (trade 24/7)
+         if(m_syntheticMode)
+         {
+            sw.sizingMultiplier = 1.0;
+            sw.convictionThresholdAdj = 0.0;
+            sw.readinessBoost = 0.0;
+            sw.sessionName = "SYNTHETIC_24_7";
+            return sw;
+         }
+
+         if(hour >= 0 && hour < 8)
+         {
+            sw.sizingMultiplier = 1.1;
+            sw.convictionThresholdAdj = 0.0;
+            sw.readinessBoost = 0.02;
+            sw.sessionName = "ASIAN";
+         }
+else if(hour >= 8 && hour < 13)
+        {
+           sw.sizingMultiplier = 0.95;
+           sw.convictionThresholdAdj = 0.01;
+           sw.readinessBoost = 0.0;
+           sw.sessionName = "LONDON_PRE";
+        }
+        else if(hour >= 13 && hour < 21)
+        {
+           // FIX: London/NY overlap is the BEST session - should have HIGHEST multiplier, not penalty
+           sw.sizingMultiplier = 1.2;
+           sw.convictionThresholdAdj = -0.02;
+           sw.readinessBoost = 0.05;
+           sw.sessionName = "LONDON_NY_OVERLAP";
+        }
+         else
+         {
+            sw.sizingMultiplier = 1.0;
+            sw.convictionThresholdAdj = 0.0;
+            sw.readinessBoost = 0.0;
+            sw.sessionName = "NY_LATE";
+         }
+
+         return sw;
+      }
 
 public:
    CSessionWeightManager() : m_initialized(false), m_syntheticMode(true), m_atrHistoryCount(0), m_currentSessionATR(0.0)

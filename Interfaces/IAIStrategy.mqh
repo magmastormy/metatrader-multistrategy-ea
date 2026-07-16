@@ -45,6 +45,9 @@ public:
     // Check if model direction is degenerate (stuck on one direction in recent predictions)
     virtual bool IsDirectionDegenerate(void) const { return false; }
 
+    // Check if model should be disabled entirely (e.g., degenerate + persistent)
+    virtual bool ShouldDisableModel(void) const { return false; }
+
     // Get calibrated weight — reduces weight by 50% if model direction is degenerate
     virtual double GetCalibratedWeight(double baseWeight) const { return baseWeight; }
 };

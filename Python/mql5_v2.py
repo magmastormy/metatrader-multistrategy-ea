@@ -950,7 +950,7 @@ def export_onnx(model, seq_len, n_feat, path, opset=12):
         model, dummy, str(output), opset_version=opset,
         input_names=['input'], output_names=['output'],
         dynamic_axes={'input': {0: 'batch'}, 'output': {0: 'batch'}},
-        do_constant_folding=True, dynamo=False, verbose=False,
+        do_constant_folding=True, verbose=False,
     )
 
 def instantiate_models(model_name, seq_len, n_feat, dropout=0.20):

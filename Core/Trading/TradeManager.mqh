@@ -859,6 +859,18 @@ public:
     // Get pending async trade count
     int  GetPendingAsyncCount() const;
 
+    // Persist async trade request to CSV for replay on restart
+    void PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade);
+
+    // Replay async trade requests from CSV on EA restart
+    void ReplayAsyncTradeRequests();
+
+    // Check for duplicate idempotency key
+    bool IsDuplicateIdempotencyKey(const string key) const;
+
+    // Clean up confirmed/expired persisted async trades
+    void CleanupPersistedAsyncTrades();
+
     // Calculate dynamic slippage based on ATR volatility
     uint GetDynamicSlippage(const string symbol)
     {
@@ -1405,6 +1417,28 @@ private:
         PrintFormat("[SPREAD-COST] %s | Spread: %.1f pips | Volume: %.2f | Cost: %.2f %s",
                     symbol, spreadPips, volume, spreadCost, AccountInfoString(ACCOUNT_CURRENCY));
     }
+    
+    // Convert order type string to ENUM_ORDER_TYPE
+    ENUM_ORDER_TYPE OrderTypeFromString(const string orderTypeStr) const
+    {
+        if(StringCompare(orderTypeStr, "ORDER_TYPE_BUY", true) == 0)
+            return ORDER_TYPE_BUY;
+        else if(StringCompare(orderTypeStr, "ORDER_TYPE_SELL", true) == 0)
+            return ORDER_TYPE_SELL;
+        else if(StringCompare(orderTypeStr, "ORDER_TYPE_BUY_LIMIT", true) == 0)
+            return ORDER_TYPE_BUY_LIMIT;
+        else if(StringCompare(orderTypeStr, "ORDER_TYPE_SELL_LIMIT", true) == 0)
+            return ORDER_TYPE_SELL_LIMIT;
+        else if(StringCompare(orderTypeStr, "ORDER_TYPE_BUY_STOP", true) == 0)
+            return ORDER_TYPE_BUY_STOP;
+        else if(StringCompare(orderTypeStr, "ORDER_TYPE_SELL_STOP", true) == 0)
+            return ORDER_TYPE_SELL_STOP;
+        else if(StringCompare(orderTypeStr, "ORDER_TYPE_BUY_STOP_LIMIT", true) == 0)
+            return ORDER_TYPE_BUY_STOP_LIMIT;
+        else if(StringCompare(orderTypeStr, "ORDER_TYPE_SELL_STOP_LIMIT", true) == 0)
+            return ORDER_TYPE_SELL_STOP_LIMIT;
+        return ORDER_TYPE_BUY; // Default fallback
+    }
 };
 
 //+------------------------------------------------------------------+
@@ -1795,6 +1829,9 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     if(m_trade.PositionModify(ticket, adjustedSL, adjustedTP))
     {
         UpdatePositionState(ticket, adjustedSL, adjustedTP);
+        // Log successful modification
+        LogTradeOperation("MODIFY", symbol, (ENUM_ORDER_TYPE)posType, PositionGetDouble(POSITION_VOLUME), true,
+                         StringFormat("SL=%.5f TP=%.5f", adjustedSL, adjustedTP));
         return true;
     }
 
@@ -1803,6 +1840,9 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     if(tradeResult.retcode == TRADE_RETCODE_NO_CHANGES)
     {
         UpdatePositionState(ticket, adjustedSL, adjustedTP);
+        // Log no-changes as noop (not a real modification)
+        LogTradeOperation("MODIFY_NOOP", symbol, (ENUM_ORDER_TYPE)posType, PositionGetDouble(POSITION_VOLUME), true,
+                         StringFormat("Already at SL=%.5f TP=%.5f", adjustedSL, adjustedTP));
         return true;
     }
 
@@ -1845,17 +1885,26 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
             if(m_trade.PositionModify(ticket, retrySL, retryTP))
             {
                 UpdatePositionState(ticket, retrySL, retryTP);
+                // Log successful auto-adjusted modification
+                LogTradeOperation("MODIFY_ADJUSTED", symbol, (ENUM_ORDER_TYPE)posType, PositionGetDouble(POSITION_VOLUME), true,
+                                 StringFormat("SL=%.5f TP=%.5f (widened to meet broker min distance)", retrySL, retryTP));
                 return true;
             }
             m_trade.Result(tradeResult);
             if(tradeResult.retcode == TRADE_RETCODE_NO_CHANGES)
             {
                 UpdatePositionState(ticket, retrySL, retryTP);
+                // Log no-changes after widening as noop
+                LogTradeOperation("MODIFY_NOOP", symbol, (ENUM_ORDER_TYPE)posType, PositionGetDouble(POSITION_VOLUME), true,
+                                 StringFormat("Already at widened SL=%.5f TP=%.5f", retrySL, retryTP));
                 return true;
             }
         }
     }
 
+    // Log failed modification
+    LogTradeOperation("MODIFY_FAILED", symbol, (ENUM_ORDER_TYPE)posType, PositionGetDouble(POSITION_VOLUME), false,
+                     StringFormat("SL=%.5f TP=%.5f | retcode=%u", adjustedSL, adjustedTP, tradeResult.retcode));
     LogTradeError(tradeResult, "ModifyPosition");
 
     return false;
@@ -1980,13 +2029,18 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastExecutionReceipt.orderTicket = tradeResult.order;
         m_lastExecutionReceipt.dealTicket = tradeResult.deal;
         m_lastExecutionReceipt.retryCount = retryCount;
-        m_lastExecutionReceipt.averagePrice = (tradeResult.price > 0.0) ? tradeResult.price : executionPrice;
+        // FIX: Fallback to requestedPrice if both tradeResult.price and executionPrice are 0
+        m_lastExecutionReceipt.averagePrice = (tradeResult.price > 0.0) ? tradeResult.price 
+                                     : (executionPrice > 0.0) ? executionPrice 
+                                     : m_lastExecutionReceipt.requestedPrice;
         m_lastExecutionReceipt.filledVolume = (tradeResult.volume > 0.0) ? tradeResult.volume : 0.0;
         m_lastExecutionReceipt.partialFill = false;
         m_lastExecutionReceipt.note = tradeResult.comment;
         if(sendEndUs >= sendStartUs)
             m_lastExecutionReceipt.roundTripMs = (sendEndUs - sendStartUs) / 1000;
         double pointSize = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+        // Guard against denormalized/zero point size to prevent NaN slippage
+        if(pointSize <= 1e-15) pointSize = 1e-15;
         if(pointSize > 0.0 && m_lastExecutionReceipt.requestedPrice > 0.0 && m_lastExecutionReceipt.averagePrice > 0.0)
             m_lastExecutionReceipt.slippagePoints = MathAbs(m_lastExecutionReceipt.averagePrice - m_lastExecutionReceipt.requestedPrice) / pointSize;
 
@@ -1995,6 +2049,14 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
             m_lastExecutionReceipt.accepted = false;
             m_lastExecutionReceipt.averagePrice = executionPrice;
             LogTradeError(tradeResult, "ExecuteMarketOrder");
+
+            // Log failed trade operation for audit trail
+            string orderTypeStr = EnumToString(orderType);
+            string failDetails = StringFormat("retcode=%u reason=%s price=%.5f", 
+                                             tradeResult.retcode, 
+                                             GetTradeErrorDescription(tradeResult.retcode),
+                                             executionPrice);
+            LogTradeOperation("OPEN", symbolName, orderType, volume, false, failDetails);
             
             uint retcode = tradeResult.retcode;
             lastRetcode = retcode;
@@ -2067,6 +2129,16 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
                         m_lastExecutionReceipt.roundTripMs,
                         TimeToString(m_lastExecutionReceipt.submitTime, TIME_DATE | TIME_SECONDS));
 
+            // Log successful trade operation for audit trail (fixes missing trade logs in EA logs)
+            string orderTypeStr = EnumToString(orderType);
+            string tradeDetails = StringFormat("price=%.5f sl=%.5f tp=%.5f slippage=%.1fpts latency=%I64ums retcode=%u",
+                                              m_lastExecutionReceipt.averagePrice,
+                                              stopLoss, takeProfit,
+                                              m_lastExecutionReceipt.slippagePoints,
+                                              m_lastExecutionReceipt.roundTripMs,
+                                              m_lastExecutionReceipt.retcode);
+            LogTradeOperation("OPEN", symbolName, orderType, m_lastExecutionReceipt.filledVolume, true, tradeDetails);
+
             // TP/SL calibration diagnostic: log distance to TP and SL at entry
             if(stopLoss > 0.0 || takeProfit > 0.0)
             {
@@ -2131,15 +2203,15 @@ double CTradeManager::NormalizeVolume(const string symbolName, const double volu
     double minVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MIN);
     double maxVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MAX);
     double stepVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_STEP);
-    if(stepVolume <= 0.0)
+    if(stepVolume <= 0.0 || !MathIsValidNumber(stepVolume))
         stepVolume = 0.01;
     
-    if(volume < minVolume)
+    if(volume < minVolume || !MathIsValidNumber(volume))
         return 0.0;
     
     int volumeDigits = 0;
     double stepProbe = stepVolume;
-    while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8)
+    while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8 && MathIsValidNumber(stepProbe))
     {
         stepProbe *= 10.0;
         volumeDigits++;
@@ -2316,7 +2388,7 @@ bool CTradeManager::ShouldMoveToBreakeven(const ulong ticket, const double buffe
     else
         profitPoints = (openPrice - currentPriceValue) / point;
     
-    return (profitPoints >= buffer * 2);
+    return (profitPoints >= buffer * 1.5);
 }
 
 //+------------------------------------------------------------------+
@@ -2501,12 +2573,13 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
         return true;
 
     double newStopLoss = 0;
-    // Batch104-BUG4: Lower trailing activation threshold.
+// Batch104-BUG4: Lower trailing activation threshold.
     // Old: activationPoints = MathMax(step, distance) = max(120, 300) = 300 points
-    // This required 300 points profit before trailing started �?too aggressive for forex.
+    // This required 300 points profit before trailing started — too aggressive for forex.
     // New: activationPoints = distance (the trailing distance itself is the minimum
     // profit needed for the trailing stop to sit above entry for BUY positions).
-    double activationPoints = distance;
+    // Further fix (Issue #26): Cap activation at 100 points (10 pips) to allow earlier trailing
+    double activationPoints = MathMin(distance, 100.0);
     
     if(useATR)
     {
@@ -2815,6 +2888,11 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     request.deviation = m_slippage;
     request.type_filling = m_orderFillMode;
 
+    // FIX: Generate idempotency key for deduplication
+    // Use symbol + orderType + lot + price + sl + tp + magic + time (seconds precision) to create unique key
+    string idempotencyKey = StringFormat("ASYNC_%s_%s_%.2f_%.5f_%.5f_%.5f_%I64u_%d",
+                                         symbol, EnumToString(orderType), normalizedLot, executionPrice, sl, tp, magic, (int)TimeCurrent());
+
     // Submit via OrderSendAsync
     MqlTradeResult result = {};
     bool sent = OrderSendAsync(request, result);
@@ -2843,9 +2921,17 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     m_pendingAsyncTrades[idx].timeoutMs   = timeoutMs;
     m_pendingAsyncTrades[idx].confirmed   = false;
     m_pendingAsyncTrades[idx].expired     = false;
+    // FIX: Set idempotency key for deduplication
+    m_pendingAsyncTrades[idx].idempotencyKey = idempotencyKey;
+    m_pendingAsyncTrades[idx].retryCount = 0;
+    m_pendingAsyncTrades[idx].persisted = false;
+    m_pendingAsyncTrades[idx].persistedTime = 0;
 
-    PrintFormat("[ASYNC-TRADE-SENT] Symbol=%s Type=%s Lot=%.2f Price=%.5f Ticket=%I64u",
-                symbol, EnumToString(orderType), normalizedLot, executionPrice, result.order);
+    PrintFormat("[ASYNC-TRADE-SENT] Symbol=%s Type=%s Lot=%.2f Price=%.5f Ticket=%I64u Key=%s",
+                symbol, EnumToString(orderType), normalizedLot, executionPrice, result.order, idempotencyKey);
+
+    // FIX: Persist async trade request to CSV for replay on restart
+    PersistAsyncTradeRequest(m_pendingAsyncTrades[idx]);
 
     return true;
 }
@@ -2877,6 +2963,8 @@ void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
 
             // Calculate slippage
             double pointSize = SymbolInfoDouble(m_pendingAsyncTrades[i].symbol, SYMBOL_POINT);
+            // Guard against denormalized/zero point size to prevent NaN slippage
+            if(pointSize <= 1e-15) pointSize = 1e-15;
             double slippage = 0.0;
             if(pointSize > 0.0 && trans.price > 0.0 && m_pendingAsyncTrades[i].price > 0.0)
                 slippage = MathAbs(trans.price - m_pendingAsyncTrades[i].price) / pointSize;
@@ -2975,6 +3063,220 @@ void CTradeManager::CheckAsyncTimeouts()
 int CTradeManager::GetPendingAsyncCount() const
 {
     return ArraySize(m_pendingAsyncTrades);
+}
+
+//+------------------------------------------------------------------+
+//| Persist async trade request to CSV for replay on restart         |
+//+------------------------------------------------------------------+
+void CTradeManager::PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
+{
+    string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
+    int handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+    if(handle == INVALID_HANDLE)
+    {
+        PrintFormat("[ASYNC-PERSIST] ERROR: Cannot open %s for writing", fileName);
+        return;
+    }
+
+    // Check if file is empty (needs header)
+    bool writeHeader = (FileSize(handle) == 0);
+
+    if(writeHeader)
+    {
+        FileWrite(handle, "ticket,symbol,orderType,lot,price,sl,tp,magic,submitTime,timeoutMs,confirmed,expired,idempotencyKey,retryCount,persisted,persistedTime,comment");
+    }
+
+    string line = StringFormat("%I64u,%s,%s,%.2f,%.5f,%.5f,%.5f,%I64u,%d,%d,%d,%d,%s,%d,%d,%d,%s",
+                               asyncTrade.ticket,
+                               asyncTrade.symbol,
+                               EnumToString(asyncTrade.orderType),
+                               asyncTrade.lot,
+                               asyncTrade.price,
+                               asyncTrade.sl,
+                               asyncTrade.tp,
+                               asyncTrade.magic,
+                               (int)asyncTrade.submitTime,
+                               asyncTrade.timeoutMs,
+                               asyncTrade.confirmed ? 1 : 0,
+                               asyncTrade.expired ? 1 : 0,
+                               asyncTrade.idempotencyKey,
+                               asyncTrade.retryCount,
+                               asyncTrade.persisted ? 1 : 0,
+                               (int)asyncTrade.persistedTime,
+                               asyncTrade.comment);
+
+    FileWrite(handle, line);
+    FileClose(handle);
+}
+
+//+------------------------------------------------------------------+
+//| Replay async trade requests from CSV on EA restart               |
+//+------------------------------------------------------------------+
+void CTradeManager::ReplayAsyncTradeRequests()
+{
+    string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
+    int handle = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+    if(handle == INVALID_HANDLE)
+    {
+        PrintFormat("[ASYNC-REPLAY] No async trade persistence file found: %s", fileName);
+        return;
+    }
+
+    int replayed = 0;
+    string line;
+    bool skipHeader = true;
+
+    while(!FileIsEnding(handle))
+    {
+        line = FileReadString(handle);
+        if(StringLen(line) == 0) continue;
+
+        if(skipHeader)
+        {
+            skipHeader = false;
+            continue;
+        }
+
+        string fields[];
+        int count = StringSplit(line, ',', fields);
+        if(count < 17) continue;  // Need all fields
+
+// Parse fields
+        ulong ticket = (ulong)StringToInteger(fields[0]);
+        string symbol = fields[1];
+        ENUM_ORDER_TYPE orderType = OrderTypeFromString(fields[2]);
+        double lot = StringToDouble(fields[3]);
+        double price = StringToDouble(fields[4]);
+        double sl = StringToDouble(fields[5]);
+        double tp = StringToDouble(fields[6]);
+        ulong magic = (ulong)StringToInteger(fields[7]);
+        datetime submitTime = (datetime)StringToInteger(fields[8]);
+        int timeoutMs = (int)StringToInteger(fields[9]);
+        bool confirmed = StringToInteger(fields[10]) == 1;
+        bool expired = StringToInteger(fields[11]) == 1;
+        string idempotencyKey = fields[12];
+        int retryCount = (int)StringToInteger(fields[13]);
+        bool persisted = StringToInteger(fields[14]) == 1;
+        datetime persistedTime = (datetime)StringToInteger(fields[15]);
+        string comment = fields[16];
+
+        // Skip already confirmed/expired trades
+        if(confirmed || expired)
+            continue;
+
+        // Check if we already have this idempotency key in pending array (deduplication)
+        bool duplicate = false;
+        for(int i = 0; i < ArraySize(m_pendingAsyncTrades); i++)
+        {
+            if(m_pendingAsyncTrades[i].idempotencyKey == idempotencyKey)
+            {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if(duplicate)
+        {
+            PrintFormat("[ASYNC-REPLAY] Skipping duplicate idempotency key: %s", idempotencyKey);
+            continue;
+        }
+
+        // Add to pending array for confirmation on next OnTradeTransaction
+        int newSize = ArraySize(m_pendingAsyncTrades) + 1;
+        ArrayResize(m_pendingAsyncTrades, newSize);
+        int idx = newSize - 1;
+
+        m_pendingAsyncTrades[idx].ticket = ticket;
+        m_pendingAsyncTrades[idx].symbol = symbol;
+        m_pendingAsyncTrades[idx].orderType = orderType;
+        m_pendingAsyncTrades[idx].lot = lot;
+        m_pendingAsyncTrades[idx].price = price;
+        m_pendingAsyncTrades[idx].sl = sl;
+        m_pendingAsyncTrades[idx].tp = tp;
+        m_pendingAsyncTrades[idx].magic = magic;
+        m_pendingAsyncTrades[idx].submitTime = submitTime;
+        m_pendingAsyncTrades[idx].timeoutMs = timeoutMs;
+        m_pendingAsyncTrades[idx].confirmed = false;
+        m_pendingAsyncTrades[idx].expired = false;
+        m_pendingAsyncTrades[idx].idempotencyKey = idempotencyKey;
+        m_pendingAsyncTrades[idx].retryCount = retryCount;
+        m_pendingAsyncTrades[idx].persisted = true;
+        m_pendingAsyncTrades[idx].persistedTime = persistedTime;
+        m_pendingAsyncTrades[idx].comment = comment;
+
+        replayed++;
+        PrintFormat("[ASYNC-REPLAY] Replayed async trade: %s %s %.2f @ %.5f (key=%s)",
+                    symbol, EnumToString(orderType), lot, price, idempotencyKey);
+    }
+
+    FileClose(handle);
+
+    if(replayed > 0)
+    {
+        PrintFormat("[ASYNC-REPLAY] Replayed %d unconfirmed async trade(s) from persistence", replayed);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check for duplicate idempotency key                               |
+//+------------------------------------------------------------------+
+bool CTradeManager::IsDuplicateIdempotencyKey(const string key) const
+{
+    for(int i = 0; i < ArraySize(m_pendingAsyncTrades); i++)
+    {
+        if(m_pendingAsyncTrades[i].idempotencyKey == key)
+            return true;
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Clean up confirmed/expired persisted async trades                 |
+//+------------------------------------------------------------------+
+void CTradeManager::CleanupPersistedAsyncTrades()
+{
+    string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
+    int handle = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+    if(handle == INVALID_HANDLE)
+        return;
+
+    // Read all lines
+    string lines[];
+    string line;
+    bool skipHeader = true;
+    while(!FileIsEnding(handle))
+    {
+        line = FileReadString(handle);
+        if(StringLen(line) == 0) continue;
+        if(skipHeader) { skipHeader = false; continue; }
+
+        string fields[];
+        int count = StringSplit(line, ',', fields);
+        if(count < 11) continue;
+
+        bool confirmed = StringToInteger(fields[10]) == 1;
+        bool expired = StringToInteger(fields[11]) == 1;
+
+        // Keep only unconfirmed, unexpired trades
+        if(!confirmed && !expired)
+        {
+            int newSize = ArraySize(lines) + 1;
+            ArrayResize(lines, newSize);
+            lines[newSize - 1] = line;
+        }
+    }
+    FileClose(handle);
+
+    // Rewrite file with only active trades
+    handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+    if(handle == INVALID_HANDLE) return;
+
+    FileWrite(handle, "ticket,symbol,orderType,lot,price,sl,tp,magic,submitTime,timeoutMs,confirmed,expired,idempotencyKey,retryCount,persisted,persistedTime,comment");
+    for(int i = ArraySize(lines) - 1; i >= 0; i--)
+    {
+        FileWrite(handle, lines[i]);
+    }
+    FileClose(handle);
 }
 
 #endif // CORE_TRADE_MANAGER_MQH

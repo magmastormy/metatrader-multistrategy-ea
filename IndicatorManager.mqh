@@ -10,8 +10,8 @@
 #include <Indicators\Indicator.mqh>
 
 // Maximum number of indicator handles to prevent resource exhaustion
-// Increased to 500 to support multi-symbol setups with multiple indicators per symbol
-#define MAX_INDICATOR_HANDLES 500
+// Increased to 5000 to support multi-symbol setups with multiple indicators per symbol
+#define MAX_INDICATOR_HANDLES 50000
 
 // Define indicator types for easier reference
 enum ENUM_INDICATOR_TYPE
@@ -174,13 +174,11 @@ int CIndicatorManager::FindHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_
          m_handles[i].symbol == symbol &&
          m_handles[i].timeframe == tf)
       {
-         // AUDIT FIX: Actually compare indicator parameters to prevent returning wrong handle
-         bool paramsMatch = true;
-         // Use stored paramCount for comparison, not array size
-         int paramCount = m_handles[i].paramCount;
-         if(paramCount > ArraySize(params))
-            paramsMatch = false;
-         for(int p = 0; p < paramCount && paramsMatch; p++)
+// AUDIT FIX: Actually compare indicator parameters to prevent returning wrong handle
+        bool paramsMatch = true;
+        // Use stored paramCount for comparison - caller fills params[0..paramCount-1]
+        int paramCount = m_handles[i].paramCount;
+        for(int p = 0; p < paramCount && paramsMatch; p++)
          {
             if(m_handles[i].parameters[p] != params[p])
             {

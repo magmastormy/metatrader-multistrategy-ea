@@ -1,27 +1,55 @@
+
 interface StatusBadgeProps {
-  status: 'online' | 'offline' | 'warning';
-  label: string;
+  status: 'online' | 'offline' | 'warning' | 'danger' | 'pending' | 'active' | 'inactive';
+  label?: string;
+  size?: 'sm' | 'md' | 'lg';
+  showDot?: boolean;
+  className?: string;
 }
 
-const statusColors: Record<StatusBadgeProps['status'], string> = {
-  online: 'bg-accent-green',
-  offline: 'bg-accent-red',
-  warning: 'bg-accent-amber',
+const statusConfig = {
+  online: { dot: 'status-online', text: 'text-success', bg: 'bg-success/10', border: 'border-success/20', label: 'Online' },
+  offline: { dot: 'status-offline', text: 'text-text-muted', bg: 'bg-surface-2', border: 'border-border-default', label: 'Offline' },
+  warning: { dot: 'status-warning', text: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/20', label: 'Warning' },
+  danger: { dot: 'status-danger', text: 'text-danger', bg: 'bg-danger/10', border: 'border-danger/20', label: 'Danger' },
+  pending: { dot: 'status-warning', text: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/20', label: 'Pending' },
+  active: { dot: 'status-online', text: 'text-success', bg: 'bg-success/10', border: 'border-success/20', label: 'Active' },
+  inactive: { dot: 'status-offline', text: 'text-text-muted', bg: 'bg-surface-2', border: 'border-border-default', label: 'Inactive' },
 };
 
-const statusGlow: Record<StatusBadgeProps['status'], string> = {
-  online: 'shadow-[0_0_6px_rgba(34,197,94,0.5)]',
-  offline: '',
-  warning: 'shadow-[0_0_6px_rgba(245,158,11,0.5)]',
+const sizeClasses = {
+  sm: 'px-2 py-0.5 text-[10px] gap-1',
+  md: 'px-2.5 py-1 text-xs gap-1.5',
+  lg: 'px-3 py-1.5 text-sm gap-2',
 };
 
-export default function StatusBadge({ status, label }: StatusBadgeProps) {
+const dotSizes = {
+  sm: 'status-dot-sm',
+  md: 'status-dot',
+  lg: 'status-dot-lg',
+};
+
+export default function StatusBadge({
+  status,
+  label,
+  size = 'md',
+  showDot = true,
+  className = '',
+}: StatusBadgeProps) {
+  const config = statusConfig[status];
+  const displayLabel = label || config.label;
+
   return (
-    <div className="flex items-center gap-2">
-      <span
-        className={`w-2 h-2 rounded-full ${statusColors[status]} ${statusGlow[status]} transition-all duration-200`}
-      />
-      <span className="text-xs text-text-secondary font-medium">{label}</span>
-    </div>
+    <span
+      className={`
+        inline-flex items-center font-medium
+        ${config.bg} ${config.border} ${config.text}
+        rounded-full border
+        ${sizeClasses[size]} ${className}
+      `}
+    >
+      {showDot && <span className={`${config.dot} ${dotSizes[size]}`} />}
+      {displayLabel}
+    </span>
   );
 }

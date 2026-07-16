@@ -139,6 +139,12 @@ private:
     double  m_dailyRiskBudget;
     datetime m_dailyResetTime;
 
+    // Issue #44: Maximum position hold time config
+    bool   m_maxHoldTimeEnabled;
+    int    m_maxHoldHoursIntraday;   // Max hold time for intraday (H1 and lower) — default 24h
+    int    m_maxHoldHoursSwing;      // Max hold time for swing (H4 and higher) — default 120h (5 days)
+    bool   m_maxHoldOnlyIfLoss;      // Only close if position is in loss (default true)
+
 public:
     CPositionLifecycleManager() :
         m_tradeManager(NULL),
@@ -173,7 +179,7 @@ public:
         m_volatilitySLAdjustEnabled(false),
         m_partialProfitTakingEnabled(false),
         m_partialProfitATRMultiplier(1.0),
-        m_partialProfitPercent(50.0),
+        m_partialProfitPercent(25.0),
         m_pyramidStateCount(0),
         m_volatilityRegimeCount(0),
         m_adverseMomentumExitEnabled(false),
@@ -187,7 +193,11 @@ public:
         m_consecutiveLossCooldownUntil(0),
         m_dailyLossAmount(0.0),
         m_dailyRiskBudget(0.0),
-        m_dailyResetTime(0)
+        m_dailyResetTime(0),
+        m_maxHoldTimeEnabled(true),
+        m_maxHoldHoursIntraday(24),
+        m_maxHoldHoursSwing(120),
+        m_maxHoldOnlyIfLoss(true)
     {}
 
     ~CPositionLifecycleManager()
@@ -300,6 +310,15 @@ public:
         m_partialProfitPercent = profitPercent;
     }
 
+    // Issue #44: Configure maximum position hold time
+    void ConfigureMaxHoldTime(bool enabled, int maxHoldHoursIntraday, int maxHoldHoursSwing, bool onlyIfLoss)
+    {
+        m_maxHoldTimeEnabled = enabled;
+        m_maxHoldHoursIntraday = maxHoldHoursIntraday;
+        m_maxHoldHoursSwing = maxHoldHoursSwing;
+        m_maxHoldOnlyIfLoss = onlyIfLoss;
+    }
+
     bool IsInitialized() const { return m_initialized; }
 
     void SetRegimeEngine(CRegimeEngine* engine) { m_regimeEngine = engine; }
@@ -347,6 +366,10 @@ public:
         // EXECUTION REFINEMENT: Manage partial profit taking
         if(m_partialProfitTakingEnabled)
             ManagePartialProfitTaking();
+
+        // Issue #44: Manage maximum position hold time
+        if(m_maxHoldTimeEnabled)
+            ManageMaxHoldTime();
     }
 
     //--- Signal Reversal Exit (SRE) — high-speed scalp logic
@@ -1059,6 +1082,46 @@ public:
                                 ticket, closeAmount, profitDistance);
                     m_tradeManager.ClosePositionPartial(ticket, closeAmount, "Partial Profit");
                 }
+            }
+        }
+    }
+
+    // Issue #44: Maximum position hold time management
+    void ManageMaxHoldTime()
+    {
+        if(!m_maxHoldTimeEnabled)
+            return;
+
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+            double currentProfit = PositionGetDouble(POSITION_PROFIT);
+
+            // Calculate hours open
+            int hoursOpen = (int)((TimeCurrent() - openTime) / 3600);
+
+            // Determine max hold time based on timeframe
+            ENUM_TIMEFRAMES currentTF = (ENUM_TIMEFRAMES)Period();
+            int maxHoldHours = (currentTF <= PERIOD_H1) ? m_maxHoldHoursIntraday : m_maxHoldHoursSwing;
+
+            // Check if position exceeds max hold time
+            if(hoursOpen > maxHoldHours)
+            {
+                // If only close on loss, check profit
+                if(m_maxHoldOnlyIfLoss && currentProfit >= 0.0)
+                {
+                    continue; // Position is profitable, don't force close
+                }
+
+                PrintFormat("[TIME-EXIT] Position %d held for %d hours (max %d) on %s with profit %.2f - closing",
+                            ticket, hoursOpen, maxHoldHours, symbol, currentProfit);
+                m_tradeManager.ClosePosition(ticket, "Max Hold Time");
             }
         }
     }

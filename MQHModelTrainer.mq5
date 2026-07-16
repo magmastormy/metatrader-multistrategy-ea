@@ -8,20 +8,20 @@
 #property script_show_inputs
 
 input string symbolName = "EURUSD";
-input ENUM_TIMEFRAMES timeframe = PERIOD_H1;
+input ENUM_TIMEFRAMES g_timeframe = PERIOD_H1;
 input string dataFile = "TrainingData_EURUSD_H1.csv";
 
-input int epochs = 100;
-input int batchSize = 32;
-input double learningRate = 0.001;
+input int g_epochs = 100;
+input int g_batchSize = 32;
+input double g_learningRate = 0.001;
 input double l2Regularization = 0.001;
 
 input int hiddenLayer1 = 32;
 input int hiddenLayer2 = 16;
 input int hiddenLayer3 = 8;
 
-input int valRatio = 20;
-input int testRatio = 10;
+input int g_valRatio = 20;
+input int g_testRatio = 10;
 
 input bool enableVisualization = true;
 input bool saveModel = true;
@@ -42,7 +42,7 @@ input bool saveModel = true;
 void OnStart()
 {
     Print("=== MQH Model Trainer ===");
-    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(timeframe));
+    PrintFormat("Symbol: %s | Timeframe: %s", symbolName, EnumToString(g_timeframe));
     
     CCSVDataLoader dataLoader;
     CDataPreprocessor preprocessor;
@@ -68,7 +68,7 @@ void OnStart()
         return;
     }
     
-    double allFeatures[][];
+    double allFeatures[][FEATURE_VECTOR_SIZE];
     int labels[];
     int count = 0;
     
@@ -80,7 +80,7 @@ void OnStart()
     
     PrintFormat("[MQH-TRAINER] Features loaded: %d samples x %d features", count, FEATURE_VECTOR_SIZE);
     
-    preprocessor.SetSplitRatio(valRatio, testRatio);
+    preprocessor.SetSplitRatio(g_valRatio, g_testRatio);
     preprocessor.SplitData(allFeatures, labels, count);
     
     PrintFormat("[MQH-TRAINER] Split: Train=%d, Val=%d, Test=%d",
@@ -97,7 +97,7 @@ void OnStart()
         return;
     }
     
-    model.SetLearningRate(learningRate);
+    model.SetLearningRate(g_learningRate);
     model.SetL2Regularization(l2Regularization);
     
     PrintFormat("[MQH-TRAINER] Model architecture: %d -> %d -> %d -> %d -> %d",
@@ -107,9 +107,9 @@ void OnStart()
                 hiddenLayer3,
                 3);
     
-    CTrainingSession::STrainingConfig config;
-    config.epochs = epochs;
-    config.batchSize = batchSize;
+    STrainingConfig config;
+    config.epochs = g_epochs;
+    config.batchSize = g_batchSize;
     config.earlyStoppingPatience = 10;
     config.earlyStoppingMinDelta = 0.0001;
     config.logInterval = 10;
@@ -117,11 +117,11 @@ void OnStart()
     
     trainer.SetConfig(config);
     
-    double trainFeatures[][];
+    double trainFeatures[][FEATURE_VECTOR_SIZE];
     int trainLabels[];
     preprocessor.GetTrainData(trainFeatures, trainLabels);
-    
-    double valFeatures[][];
+
+    double valFeatures[][FEATURE_VECTOR_SIZE];
     int valLabels[];
     preprocessor.GetValData(valFeatures, valLabels);
     
@@ -144,13 +144,13 @@ void OnStart()
     
     if(saveModel)
     {
-        if(model.SaveCheckpoint(symbolName, timeframe))
-            PrintFormat("[MQH-TRAINER] Model saved successfully for %s %s", symbolName, EnumToString(timeframe));
+        if(model.SaveCheckpoint(symbolName, g_timeframe))
+            PrintFormat("[MQH-TRAINER] Model saved successfully for %s %s", symbolName, EnumToString(g_timeframe));
         else
             Print("[MQH-TRAINER] Failed to save model");
     }
     
-    double testFeatures[][];
+    double testFeatures[][FEATURE_VECTOR_SIZE];
     int testLabels[];
     preprocessor.GetTestData(testFeatures, testLabels);
     
@@ -165,18 +165,18 @@ void OnStart()
         
         for(int i = 0; i < preprocessor.GetTestCount(); i++)
         {
-            double input[];
-            ArrayResize(input, FEATURE_VECTOR_SIZE);
+            double inputVec[];
+            ArrayResize(inputVec, FEATURE_VECTOR_SIZE);
             for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
-                input[f] = testFeatures[i][f];
-            
+                inputVec[f] = testFeatures[i][f];
+
             int predictedClass;
-            model.Predict(input, predictedClass);
-            
+            model.Predict(inputVec, predictedClass);
+
             int actualClass = labelEncoder.EncodeLabel(testLabels[i]);
-            
+
             double outputs[];
-            model.GetOutputs(input, outputs);
+            model.GetOutputs(inputVec, outputs);
             totalLoss += CNeuralCore::CrossEntropyLoss(outputs, 3, actualClass);
             
             if(predictedClass == actualClass)
@@ -198,7 +198,7 @@ void OnStart()
         
         string reportFile = StringFormat("ModelReport_%s_%s_%s.txt",
                                          symbolName,
-                                         EnumToString(timeframe),
+                                         EnumToString(g_timeframe),
                                          TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
         testMetrics.SaveMetrics(reportFile);
         

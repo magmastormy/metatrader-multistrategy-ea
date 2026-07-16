@@ -102,6 +102,32 @@ private:
         return TRADE_SIGNAL_NONE;
     }
     
+    // Helper: Validate and retrieve SYMBOL_VOLUME_MIN with fallback
+    double GetValidatedMinLot(const string symbol)
+    {
+        double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        if(minLot <= 0.0 || !MathIsValidNumber(minLot))
+        {
+            PrintFormat("[STATARB] WARNING: Invalid SYMBOL_VOLUME_MIN for %s (returned %.6f), using fallback 0.01", 
+                       symbol, minLot);
+            minLot = 0.01;  // Safe fallback
+        }
+        return minLot;
+    }
+    
+    // Helper: Validate and retrieve SYMBOL_VOLUME_STEP with fallback
+    double GetValidatedLotStep(const string symbol)
+    {
+        double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+        if(lotStep <= 0.0 || !MathIsValidNumber(lotStep))
+        {
+            PrintFormat("[STATARB] WARNING: Invalid SYMBOL_VOLUME_STEP for %s (returned %.6f), using fallback 0.01", 
+                       symbol, lotStep);
+            lotStep = 0.01;  // Safe fallback
+        }
+        return lotStep;
+    }
+    
 public:
     // Constructor
     CStatisticalArbitrageStrategy(const string name = "Statistical Arbitrage v1.0", int magic = 0) :
@@ -275,7 +301,7 @@ public:
         if(m_riskManager != NULL)
         {
             // Validate primary leg through risk manager
-            double minLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+            double minLot = GetValidatedMinLot(m_symbol);
             STradeValidationRequest validationReq;
             ZeroMemory(validationReq);
             validationReq.symbol = m_symbol;
@@ -298,9 +324,11 @@ public:
             }
 
             // Update lot sizes with minimum lot sizing
+            double minLot2 = GetValidatedMinLot(signal.leg2Symbol);
+            double lotStep2 = GetValidatedLotStep(signal.leg2Symbol);
             signal.leg1LotSize = minLot;
-            signal.leg2LotSize = MathMax(SymbolInfoDouble(signal.leg2Symbol, SYMBOL_VOLUME_MIN),
-                                          MathFloor(m_hedgeRatio * minLot / SymbolInfoDouble(signal.leg2Symbol, SYMBOL_VOLUME_STEP)) * SymbolInfoDouble(signal.leg2Symbol, SYMBOL_VOLUME_STEP));
+            signal.leg2LotSize = MathMax(minLot2,
+                                          MathFloor(m_hedgeRatio * minLot / lotStep2) * lotStep2);
         }
         
         // Update state
@@ -491,8 +519,8 @@ private:
             signal.direction = TRADE_SIGNAL_BUY;  // Buy spread (long leg1, short leg2)
             signal.leg1Symbol = leg1;
             signal.leg2Symbol = leg2;
-            signal.leg1LotSize = SymbolInfoDouble(leg1, SYMBOL_VOLUME_MIN);
-            signal.leg2LotSize = SymbolInfoDouble(leg2, SYMBOL_VOLUME_MIN) * m_hedgeRatio;
+            signal.leg1LotSize = GetValidatedMinLot(leg1);
+            signal.leg2LotSize = GetValidatedMinLot(leg2) * m_hedgeRatio;
             signal.zScore = zScore;
             signal.entryZScore = zScore;
             signal.exitZScore = -m_exitZThreshold;  // Exit when z-score returns to -0.5
@@ -512,8 +540,8 @@ private:
             signal.direction = TRADE_SIGNAL_SELL;  // Sell spread (short leg1, long leg2)
             signal.leg1Symbol = leg1;
             signal.leg2Symbol = leg2;
-            signal.leg1LotSize = SymbolInfoDouble(leg1, SYMBOL_VOLUME_MIN);
-            signal.leg2LotSize = SymbolInfoDouble(leg2, SYMBOL_VOLUME_MIN) * m_hedgeRatio;
+            signal.leg1LotSize = GetValidatedMinLot(leg1);
+            signal.leg2LotSize = GetValidatedMinLot(leg2) * m_hedgeRatio;
             signal.zScore = zScore;
             signal.entryZScore = zScore;
             signal.exitZScore = m_exitZThreshold;  // Exit when z-score returns to +0.5
@@ -537,13 +565,10 @@ private:
         if(m_riskManager == NULL)
             return false;
         
-        double lot1 = SymbolInfoDouble(symbol1, SYMBOL_VOLUME_MIN);
-        double lot2 = SymbolInfoDouble(symbol2, SYMBOL_VOLUME_MIN);
-        
-        // Scale leg2 by hedge ratio
-        double minLot2 = SymbolInfoDouble(symbol2, SYMBOL_VOLUME_MIN);
-        double lotStep2 = SymbolInfoDouble(symbol2, SYMBOL_VOLUME_STEP);
-        lot2 = MathMax(minLot2, MathFloor(hedgeRatio * lot1 / lotStep2) * lotStep2);
+        double lot1 = GetValidatedMinLot(symbol1);
+        double minLot2 = GetValidatedMinLot(symbol2);
+        double lotStep2 = GetValidatedLotStep(symbol2);
+        double lot2 = MathMax(minLot2, MathFloor(hedgeRatio * lot1 / lotStep2) * lotStep2);
         
         PrintFormat("[STATARB-PAIR] Executing pair | %s %.2f %s + %s %.2f %s | Hedge=%.2f",
                    symbol1, lot1, direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",

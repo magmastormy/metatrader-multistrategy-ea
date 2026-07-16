@@ -272,7 +272,7 @@ CStrategyUnifiedICT::CStrategyUnifiedICT(const string name, int magic) :
     m_anchoredVWAP(NULL),
     m_cumulativeDelta(NULL),
     m_riskManager(NULL),
-    m_minConfluenceScore(35.0),
+    m_minConfluenceScore(55.0),  // Raised from 35.0 to 55.0 (50% of max 110) to filter weak setups
     m_minConfluences(2),
     m_requireKillZone(false),
     m_requireOTE(false),

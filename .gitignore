@@ -101,3 +101,7 @@ AGGRESSIVE_MODE_TODO.md
 check*.ps1
 find_lines.py
 remove_shadow.py
+*.ex5
+inspect*
+check*
+fix*
