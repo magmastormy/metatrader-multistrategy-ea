@@ -172,6 +172,10 @@ public:
     //--- Initialize from historical data (cold start)
     bool InitializeFromHistory()
     {
+        // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
+        if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
+            m_timeframe = Period();
+        
         double closes[];
         ArraySetAsSeries(closes, true);
         int copied = CopyClose(m_symbol, m_timeframe, 0, m_lookbackPeriod, closes);

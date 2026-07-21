@@ -327,6 +327,10 @@ input int    InpCVDDivergenceLookback   = 30;      // CVD divergence lookback ba
 
 //--- Enterprise Mode Settings
 input group "Enterprise Mode"
+// L2-029: Pipeline requires specific indicator engines (TrendEngine, StructureEngine, LiquidityEngine, 
+// VolatilityEngine, RegimeEngine). If any fail to initialize (e.g., missing indicators, insufficient bars), 
+// OnInit returns INIT_FAILED. Disable InpUseSignalPipeline if these dependencies are unavailable in the 
+// environment (e.g., synthetic indices lacking volume data for LiquidityEngine).
 input bool InpUseSignalPipeline =      true;        // Use Signal Pipeline
 input bool InpAllowSyntheticOffHours = true;        // Allow trading on synthetic symbols during off-chart hours
 input double InpMinTrendStrength = 50.0;       // Minimum Trend Strength
@@ -400,9 +404,12 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Utils\PythonBridge.mqh"
 #include "Core\Utils\DiagnosticsLogger.mqh"
 #include "Core\Utils\JsonLogger.mqh"
+#include "Core\Orchestration\EAOrchestrator.mqh"
 
 // Enterprise Components
 #include "Core\Management\SymbolUniverseBuilder.mqh"
+#include "Core\Strategy\StrategyRegistry.mqh"
+CStrategyRegistry* g_strategyRegistry = NULL;
 #include "Core\Management\EnterpriseStrategyManager.mqh"
 #include "Core\Pipeline\UnifiedSignalPipeline.mqh"
 #include "Core\Engines\StructureEngine.mqh"
@@ -427,8 +434,6 @@ input double InpKellyFraction = 0.25;                // Kelly fraction for Bayes
 #include "Core\Strategy\EnsembleAIStrategyAdapter.mqh"
 #include "Core\Strategy\OnnxAIStrategyAdapter.mqh"
 #include "Core\Strategy\StrategyRegistry.mqh"
-#include "Core\Visualization\VisualDashboard.mqh"
-#include "Core\Visualization\DrawingCoordinator.mqh"
 
 // Advanced Mathematical Engines (Batch 100)
 #include "Core\Engines\HurstEngine.mqh"
@@ -482,12 +487,14 @@ CNextGenStrategyBrain aiNextGenBrain;
 CNeuralNetworkStrategy* neuralNetStrategy = NULL;
 CNeuralNetworkStrategy* g_neuralNetStrategies[];
 string g_neuralNetStrategySymbols[];
-CStrategyRegistry g_strategyRegistry;
 bool g_aiBrainReady = false;
 bool g_aiEngineReady = false;
 bool g_aiFeedbackReady = false;
 bool g_aiTopologyLogged = false;
-CPositionStateManager g_positionStateManager;  // Unified position state manager
+bool g_shuttingDown = false;  // L2-001: Shutdown guard for OnTimer
+bool g_pythonBridgeReady = false; // L2-007: Python bridge readiness
+bool g_bridgesReady = false;      // L2-007: Bridge readiness gate (both python + dashboard)
+bool g_recoveryStateValid = false; // L2-003: Recovery state validation flag
 CTradeAttributionManager g_attributionManager;  // Trade attribution & NN prediction mapping
 CPositionSizer positionSizer;
 CInstrumentRegistry instrumentRegistry;
@@ -502,7 +509,6 @@ CEnterpriseStrategyManager* g_enterpriseManagers[];      // Per-symbol managers
 string g_enterpriseManagerSymbols[];                     // Manager symbol mapping
 CConsensusCache g_consensusCache;                        // Consensus result cache for SRE hot path
 // g_AIEngine declared in AIEngine.mqh
-CVisualDashboard g_dashboard;
 CFastScalpEngine g_scalpEngine;                            // Fast Scalp Engine (Phase 4)
 CSpikeHunterEngine g_spikeHunter;                           // Spike Hunter Engine
 CGridRecoveryEngine g_gridRecovery;                         // Grid Recovery Engine (Batch 102)
@@ -529,6 +535,7 @@ COrderFlowImbalanceEngine* g_ofiEngines[];         // Per-symbol OFI proxy engin
 CVPINFilter*           g_vpinFilters[];           // Per-symbol VPIN toxicity filters
 string g_mathEngineSymbols[];                      // Symbol mapping for math engines
 bool   g_gridHurstBridgeLogged[];                   // Per-symbol: true after first [GRID-HURST-BRIDGE] log
+int    g_mathEngineCount = 0;                      // L2-027: Current count of initialized math engines (for batch allocation)
 
 // Batch 114: Research-Driven Statistical Algorithm Upgrades
 CKalmanMeanReversion*  g_kalmanEngines[];         // Per-symbol Kalman/FLS dynamic mean-reversion
@@ -2510,7 +2517,7 @@ bool ResolveLiveAuthority(const string symbol,
 
         if(mature)
         {
-            reason = StringFormat("%s_DEMOTED_TO_SHADOW | %s", family, familyStats);
+            reason = StringFormat("%s_DEMOTED_TO_RESEARCH | %s", family, familyStats);
             riskMultiplier = 0.0;
             return false;
         }
@@ -2542,13 +2549,13 @@ bool ResolveLiveAuthority(const string symbol,
             return true;
         }
 
-        reason = StringFormat("%s_RESEARCH_SHADOW | conf=%.2f quality=%.2f samples=%d/%d contributors=%s",
-                              family,
-                              tradeConfidence,
-                              qualityScore,
-                              familySamples,
-                              MathMax(1, InpAuthorityMinSamples),
-                              contributors);
+        reason = StringFormat("%s_RESEARCH_ONLY | conf=%.2f quality=%.2f samples=%d/%d contributors=%s",
+                                      family,
+                                      tradeConfidence,
+                                      qualityScore,
+                                      familySamples,
+                                      MathMax(1, InpAuthorityMinSamples),
+                                      contributors);
         riskMultiplier = 0.0;
         return false;
     }
@@ -2582,10 +2589,10 @@ bool ResolveLiveAuthority(const string symbol,
         return true;
     }
 
-    reason = StringFormat("UNPROVEN_RESEARCH_SHADOW | confluence=%d indicator_count=%d contributors=%s",
-                          confluence,
-                          indicatorContributorCount,
-                          contributors);
+    reason = StringFormat("UNPROVEN_RESEARCH | confluence=%d indicator_count=%d contributors=%s",
+                              confluence,
+                              indicatorContributorCount,
+                              contributors);
     riskMultiplier = 0.0;
     return false;
 }
@@ -3425,184 +3432,168 @@ bool InitializeEnterpriseManagerForSymbol(const string symbol, bool &strategyFla
                     intrabarSingleVoterMinConfidence);
     RegisterManagerStrategiesFromRegistry(manager, symbol, strategyFlags);
     ApplyInstitutionalStrategyGovernance(manager, symbol, strategyFlags);
-    ApplyStrategyWeights(manager, symbol, strategyFlags);
+        ApplyStrategyWeights(manager, symbol, strategyFlags);
 
-    int size = ArraySize(g_enterpriseManagers);
-    ArrayResize(g_enterpriseManagers, size + 1);
-    ArrayResize(g_enterpriseManagerSymbols, size + 1);
-    g_enterpriseManagers[size] = manager;
-    g_enterpriseManagerSymbols[size] = symbol;
+        int size = ArraySize(g_enterpriseManagers);
+        ArrayResize(g_enterpriseManagers, size + 1);
+        ArrayResize(g_enterpriseManagerSymbols, size + 1);
+        g_enterpriseManagers[size] = manager;
+        g_enterpriseManagerSymbols[size] = symbol;
 
-    // Batch 100: Initialize per-symbol mathematical engines
-    {
-        int mSize = ArraySize(g_mathEngineSymbols);
-        ArrayResize(g_mathEngineSymbols, mSize + 1);
-        g_mathEngineSymbols[mSize] = symbol;
-
-        // Batch 29a: Track first bridge log per symbol
-        ArrayResize(g_gridHurstBridgeLogged, mSize + 1);
-        g_gridHurstBridgeLogged[mSize] = false;
-
-        // Hurst Engine
-        ArrayResize(g_hurstEngines, mSize + 1);
-        g_hurstEngines[mSize] = NULL;
-        if(InpEnableHurstEngine)
+        // Batch 100: Initialize per-symbol mathematical engines using pre-allocated arrays (L2-027)
         {
-            g_hurstEngines[mSize] = new CHurstEngine(symbol, (ENUM_TIMEFRAMES)Period(), InpHurstLookback);
-            if(g_hurstEngines[mSize] != NULL)
-                PrintFormat("[MATH-ENGINE] Hurst engine initialized for %s | lookback=%d", symbol, InpHurstLookback);
-        }
+            int idx = g_mathEngineCount;
+            g_mathEngineSymbols[idx] = symbol;
+            g_gridHurstBridgeLogged[idx] = false;
 
-        // OU Process Engine
-        ArrayResize(g_ouEngines, mSize + 1);
-        g_ouEngines[mSize] = NULL;
-        if(InpEnableOUProcess)
-        {
-            g_ouEngines[mSize] = new COrnsteinUhlenbeckEngine(symbol, (ENUM_TIMEFRAMES)Period(), InpOULookback);
-            if(g_ouEngines[mSize] != NULL)
-                PrintFormat("[MATH-ENGINE] OU process engine initialized for %s | lookback=%d", symbol, InpOULookback);
-        }
-
-        // OFI Proxy Engine
-        ArrayResize(g_ofiEngines, mSize + 1);
-        g_ofiEngines[mSize] = NULL;
-        if(InpEnableOFIProxy)
-        {
-            g_ofiEngines[mSize] = new COrderFlowImbalanceEngine();
-            if(g_ofiEngines[mSize] != NULL)
+            // Hurst Engine
+            g_hurstEngines[idx] = NULL;
+            if(InpEnableHurstEngine)
             {
-                g_ofiEngines[mSize].Init(symbol, 5, 20, InpOFISlowWindow);
-                PrintFormat("[MATH-ENGINE] OFI proxy engine initialized for %s | slowWindow=%d", symbol, InpOFISlowWindow);
+                g_hurstEngines[idx] = new CHurstEngine(symbol, (ENUM_TIMEFRAMES)Period(), InpHurstLookback);
+                if(g_hurstEngines[idx] != NULL && g_logLevel >= 3)
+                    PrintFormat("[MATH-ENGINE] Hurst engine initialized for %s | lookback=%d", symbol, InpHurstLookback);
             }
-        }
 
-        // VPIN Filter
-        ArrayResize(g_vpinFilters, mSize + 1);
-        g_vpinFilters[mSize] = NULL;
-        if(InpEnableVPINFilter)
-        {
-            g_vpinFilters[mSize] = new CVPINFilter(symbol, 0, InpVPINNumBuckets, InpVPINExtremeThreshold);
-            if(g_vpinFilters[mSize] != NULL)
-                PrintFormat("[MATH-ENGINE] VPIN filter initialized for %s | buckets=%d | extreme=%.2f", symbol, InpVPINNumBuckets, InpVPINExtremeThreshold);
-        }
-
-        // Batch 107: VWAP Engine (forex only)
-        ArrayResize(g_vwapEngines, mSize + 1);
-        g_vwapEngines[mSize] = NULL;
-        if(InpEnableVWAPEngine && !IsSyntheticIndexSymbolName(symbol))
-        {
-            g_vwapEngines[mSize] = new CVWAPEngine();
-            g_vwapEngines[mSize].Initialize(symbol, InpVWAPMinPeriodBars, InpVWAPBand1, InpVWAPBand2, InpVWAPBand3);
-            PrintFormat("[INSTITUTIONAL-ENGINE] VWAP engine initialized for %s", symbol);
-        }
-
-        // Batch 107: Volume Profile Engine (forex only)
-        ArrayResize(g_vpEngines, mSize + 1);
-        g_vpEngines[mSize] = NULL;
-        if(InpEnableVolumeProfile && !IsSyntheticIndexSymbolName(symbol))
-        {
-            g_vpEngines[mSize] = new CVolumeProfileEngine();
-            g_vpEngines[mSize].Initialize(symbol, InpVPLookback, InpVPResolution);
-            PrintFormat("[INSTITUTIONAL-ENGINE] Volume Profile engine initialized for %s", symbol);
-        }
-
-        // Batch 107: CVD Engine (forex only)
-        ArrayResize(g_cvdEngines, mSize + 1);
-        g_cvdEngines[mSize] = NULL;
-        if(InpEnableCVDEngine && !IsSyntheticIndexSymbolName(symbol))
-        {
-            g_cvdEngines[mSize] = new CCVDEngine();
-            g_cvdEngines[mSize].Initialize(symbol, InpCVDDivergenceLookback);
-            PrintFormat("[INSTITUTIONAL-ENGINE] CVD engine initialized for %s", symbol);
-        }
-
-        // Batch 114: Research-Driven Statistical Algorithm Engines
-        // Kalman/FLS Dynamic Mean-Reversion
-        ArrayResize(g_kalmanEngines, mSize + 1);
-        g_kalmanEngines[mSize] = NULL;
-        if(InpEnableKalmanMR)
-        {
-            g_kalmanEngines[mSize] = new CKalmanMeanReversion(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpKalmanLambda);
-            if(g_kalmanEngines[mSize] != NULL)
-                PrintFormat("[ENGINE] Kalman MR engine initialized for %s | lambda=%.0f", symbol, InpKalmanLambda);
-        }
-
-        // Bayesian Online Changepoint Detection
-        ArrayResize(g_cpdEngines, mSize + 1);
-        g_cpdEngines[mSize] = NULL;
-        if(InpEnableChangepointDetect)
-        {
-            g_cpdEngines[mSize] = new CChangepointDetector(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpCPDHazardThreshold);
-            if(g_cpdEngines[mSize] != NULL)
-                PrintFormat("[ENGINE] CPD engine initialized for %s | hazard=%.2f", symbol, InpCPDHazardThreshold);
-        }
-
-        // Four-State Regime Detector
-        ArrayResize(g_fourStateEngines, mSize + 1);
-        g_fourStateEngines[mSize] = NULL;
-        if(InpEnableFourStateRegime)
-        {
-            g_fourStateEngines[mSize] = new CFourStateRegimeDetector(symbol, (ENUM_TIMEFRAMES)Period());
-            if(g_fourStateEngines[mSize] != NULL)
-                PrintFormat("[ENGINE] Four-State Regime engine initialized for %s", symbol);
-        }
-
-        // Volatility Targeting
-        ArrayResize(g_volTargetEngines, mSize + 1);
-        g_volTargetEngines[mSize] = NULL;
-        if(InpEnableVolTargeting)
-        {
-            g_volTargetEngines[mSize] = new CVolatilityTargeting(symbol, (ENUM_TIMEFRAMES)Period());
-            if(g_volTargetEngines[mSize] != NULL)
+            // OU Process Engine
+            g_ouEngines[idx] = NULL;
+            if(InpEnableOUProcess)
             {
-                g_volTargetEngines[mSize].Configure(InpTargetVol, 100, 0.94, InpVolMinScale, InpVolMaxScale);
-                g_volTargetEngines[mSize].Initialize();
-                PrintFormat("[ENGINE] Volatility Targeting initialized for %s | target=%.2f%%", symbol, InpTargetVol * 100);
+                g_ouEngines[idx] = new COrnsteinUhlenbeckEngine(symbol, (ENUM_TIMEFRAMES)Period(), InpOULookback);
+                if(g_ouEngines[idx] != NULL && g_logLevel >= 3)
+                    PrintFormat("[MATH-ENGINE] OU process engine initialized for %s | lookback=%d", symbol, InpOULookback);
             }
+
+            // OFI Proxy Engine
+            g_ofiEngines[idx] = NULL;
+            if(InpEnableOFIProxy)
+            {
+                g_ofiEngines[idx] = new COrderFlowImbalanceEngine();
+                if(g_ofiEngines[idx] != NULL)
+                {
+                    g_ofiEngines[idx].Init(symbol, 5, 20, InpOFISlowWindow);
+                    if(g_logLevel >= 3)
+                        PrintFormat("[MATH-ENGINE] OFI proxy engine initialized for %s | slowWindow=%d", symbol, InpOFISlowWindow);
+                }
+            }
+
+            // VPIN Filter
+            g_vpinFilters[idx] = NULL;
+            if(InpEnableVPINFilter)
+            {
+                g_vpinFilters[idx] = new CVPINFilter(symbol, 0, InpVPINNumBuckets, InpVPINExtremeThreshold);
+                if(g_vpinFilters[idx] != NULL && g_logLevel >= 3)
+                    PrintFormat("[MATH-ENGINE] VPIN filter initialized for %s | buckets=%d | extreme=%.2f", symbol, InpVPINNumBuckets, InpVPINExtremeThreshold);
+            }
+
+            // Batch 107: VWAP Engine (forex only)
+            g_vwapEngines[idx] = NULL;
+            if(InpEnableVWAPEngine && !IsSyntheticIndexSymbolName(symbol))
+            {
+                g_vwapEngines[idx] = new CVWAPEngine();
+                g_vwapEngines[idx].Initialize(symbol, InpVWAPMinPeriodBars, InpVWAPBand1, InpVWAPBand2, InpVWAPBand3);
+                if(g_logLevel >= 3)
+                    PrintFormat("[INSTITUTIONAL-ENGINE] VWAP engine initialized for %s", symbol);
+            }
+
+            // Batch 107: Volume Profile Engine (forex only)
+            g_vpEngines[idx] = NULL;
+            if(InpEnableVolumeProfile && !IsSyntheticIndexSymbolName(symbol))
+            {
+                g_vpEngines[idx] = new CVolumeProfileEngine();
+                g_vpEngines[idx].Initialize(symbol, InpVPLookback, InpVPResolution);
+                if(g_logLevel >= 3)
+                    PrintFormat("[INSTITUTIONAL-ENGINE] Volume Profile engine initialized for %s", symbol);
+            }
+
+            // Batch 107: CVD Engine (forex only)
+            g_cvdEngines[idx] = NULL;
+            if(InpEnableCVDEngine && !IsSyntheticIndexSymbolName(symbol))
+            {
+                g_cvdEngines[idx] = new CCVDEngine();
+                g_cvdEngines[idx].Initialize(symbol, InpCVDDivergenceLookback);
+                if(g_logLevel >= 3)
+                    PrintFormat("[INSTITUTIONAL-ENGINE] CVD engine initialized for %s", symbol);
+            }
+
+            // Batch 114: Research-Driven Statistical Algorithm Engines
+            // Kalman/FLS Dynamic Mean-Reversion
+            g_kalmanEngines[idx] = NULL;
+            if(InpEnableKalmanMR)
+            {
+                g_kalmanEngines[idx] = new CKalmanMeanReversion(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpKalmanLambda);
+                if(g_kalmanEngines[idx] != NULL && g_logLevel >= 3)
+                    PrintFormat("[ENGINE] Kalman MR engine initialized for %s | lambda=%.0f", symbol, InpKalmanLambda);
+            }
+
+            // Bayesian Online Changepoint Detection
+            g_cpdEngines[idx] = NULL;
+            if(InpEnableChangepointDetect)
+            {
+                g_cpdEngines[idx] = new CChangepointDetector(symbol, (ENUM_TIMEFRAMES)Period(), 200, InpCPDHazardThreshold);
+                if(g_cpdEngines[idx] != NULL && g_logLevel >= 3)
+                    PrintFormat("[ENGINE] CPD engine initialized for %s | hazard=%.2f", symbol, InpCPDHazardThreshold);
+            }
+
+            // Four-State Regime Detector
+            g_fourStateEngines[idx] = NULL;
+            if(InpEnableFourStateRegime)
+            {
+                g_fourStateEngines[idx] = new CFourStateRegimeDetector(symbol, (ENUM_TIMEFRAMES)Period());
+                if(g_fourStateEngines[idx] != NULL && g_logLevel >= 3)
+                    PrintFormat("[ENGINE] Four-State Regime engine initialized for %s", symbol);
+            }
+
+            // Volatility Targeting
+            g_volTargetEngines[idx] = NULL;
+            if(InpEnableVolTargeting)
+            {
+                g_volTargetEngines[idx] = new CVolatilityTargeting(symbol, (ENUM_TIMEFRAMES)Period());
+                if(g_volTargetEngines[idx] != NULL)
+                {
+                    g_volTargetEngines[idx].Configure(InpTargetVol, 100, 0.94, InpVolMinScale, InpVolMaxScale);
+                    g_volTargetEngines[idx].Initialize();
+                    if(g_logLevel >= 3)
+                        PrintFormat("[ENGINE] Volatility Targeting initialized for %s | target=%.2f%%", symbol, InpTargetVol * 100);
+                }
+            }
+
+            // Exit Optimizer
+            g_exitOptimizers[idx] = NULL;
+            if(InpEnableExitOptimizer)
+            {
+                g_exitOptimizers[idx] = new CExitOptimizer();
+                g_exitOptimizers[idx].Initialize(symbol, (ENUM_TIMEFRAMES)Period());
+                if(g_logLevel >= 3)
+                    PrintFormat("[ENGINE] Exit Optimizer initialized for %s", symbol);
+            }
+
+            // Liquidity Sweep Strategy
+            g_liquiditySweepStrategies[idx] = NULL;
+            if(InpEnableLiquiditySweep)
+            {
+                g_liquiditySweepStrategies[idx] = new CLiquiditySweepStrategy();
+                g_liquiditySweepStrategies[idx].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), NULL);
+                if(g_logLevel >= 3)
+                    PrintFormat("[ENGINE] Liquidity Sweep strategy initialized for %s", symbol);
+            }
+
+            // Range Compression Breakout Strategy
+            g_rangeCompStrategies[idx] = NULL;
+            if(InpEnableRangeCompression)
+            {
+                g_rangeCompStrategies[idx] = new CRangeCompressionBreakout();
+                g_rangeCompStrategies[idx].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), g_hurstEngines[idx], NULL);
+                if(g_logLevel >= 3)
+                    PrintFormat("[ENGINE] Range Compression Breakout strategy initialized for %s", symbol);
+            }
+
+            g_mathEngineCount++;
         }
 
-        // Exit Optimizer
-        ArrayResize(g_exitOptimizers, mSize + 1);
-        g_exitOptimizers[mSize] = NULL;
-        if(InpEnableExitOptimizer)
-        {
-            g_exitOptimizers[mSize] = new CExitOptimizer();
-            g_exitOptimizers[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period());
-            PrintFormat("[ENGINE] Exit Optimizer initialized for %s", symbol);
-        }
-
-        // Liquidity Sweep Strategy
-        ArrayResize(g_liquiditySweepStrategies, mSize + 1);
-        g_liquiditySweepStrategies[mSize] = NULL;
-        if(InpEnableLiquiditySweep)
-        {
-            g_liquiditySweepStrategies[mSize] = new CLiquiditySweepStrategy();
-            g_liquiditySweepStrategies[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), NULL);
-            PrintFormat("[ENGINE] Liquidity Sweep strategy initialized for %s", symbol);
-        }
-
-        // Range Compression Breakout Strategy
-        ArrayResize(g_rangeCompStrategies, mSize + 1);
-        g_rangeCompStrategies[mSize] = NULL;
-        if(InpEnableRangeCompression)
-        {
-            g_rangeCompStrategies[mSize] = new CRangeCompressionBreakout();
-            g_rangeCompStrategies[mSize].Initialize(symbol, (ENUM_TIMEFRAMES)Period(), g_hurstEngines[mSize], NULL);
-            PrintFormat("[ENGINE] Range Compression Breakout strategy initialized for %s", symbol);
-        }
-    }
-
-    // Initialize Drawing Manager for this symbol if enabled
+        // Initialize Drawing Manager for this symbol if enabled
     if(InpEnableVisualAnalysis)
     {
-        // Set global max objects on drawing coordinator
-        CDrawingCoordinator* coordinator = GetDrawingCoordinator();
-        if(coordinator != NULL)
-        {
-            int maxObjs = MathMin(450, InpMaxVisualObjects);
-            coordinator.SetGlobalMaxObjects(maxObjs);
-        }
-
         CChartDrawingManager* draw = new CChartDrawingManager();
         if(draw != NULL)
         {
@@ -3701,9 +3692,178 @@ void ApplyHurstWeightModifiersToRegime()
 }
 
 //+------------------------------------------------------------------+
-//| Expert Advisor Initialization                                    |
+//| Cleanup AI Subsystems Helper                                     |
+//| L2-002: Centralized cleanup for AI subsystem on init failure     |
+//| and deinit to ensure consistent teardown                         |
 //+------------------------------------------------------------------+
-int OnInit()
+void CleanupAISubsystems()
+{
+    // Clean up AI Engine
+    if(g_AIEngine != NULL)
+    {
+        delete g_AIEngine;
+        g_AIEngine = NULL;
+    }
+    g_aiEngineReady = false;
+    
+    // Clean up NextGen Brain state (it's a global object, not pointer)
+    g_aiBrainReady = false;
+    
+    // Clean up AI Feedback
+    g_aiFeedbackReady = false;
+    
+    Print("[CLEANUP-AI] AI subsystems cleaned up");
+    }
+
+    //+------------------------------------------------------------------+
+    //| Crash Recovery State File Helpers (L2-003)                       |
+    //| JSON with version, checksum, and atomic write                    |
+    //+------------------------------------------------------------------+
+    // Simple xorshift checksum (64-bit)
+    ulong ComputeStateChecksum(const string &jsonData)
+    {
+        ulong hash = 0x123456789ABCDEF0;
+        for(int i = 0; i < StringLen(jsonData); i++)
+        {
+            hash ^= (ulong)StringGetCharacter(jsonData, i);
+            hash = hash * 6364136223846793005ULL + 1442695040888963407ULL;
+        }
+        return hash;
+    }
+
+    // Write crash recovery state as JSON with atomic write and checksum
+    bool WriteCrashRecoveryState(const string &fileName, 
+                                  double equityBaseline, double peakEquity,
+                                  int ddBreachCount, double ddMax)
+    {
+        string tempFile = fileName + ".tmp";
+        int fh = FileOpen(tempFile, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+        if(fh == INVALID_HANDLE)
+            return false;
+
+        // Build JSON (without checksum first)
+        string json = "{";
+        json += "\"version\":1,";
+        json += "\"equity_baseline\":" + DoubleToString(equityBaseline, 2) + ",";
+        json += "\"peak_equity\":" + DoubleToString(peakEquity, 2) + ",";
+        json += "\"dd_breach_count\":" + IntegerToString(ddBreachCount) + ",";
+        json += "\"dd_max\":" + DoubleToString(ddMax, 2) + ",";
+        json += "\"timestamp\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\"";
+        json += "}";
+
+        // Compute checksum
+        ulong checksum = ComputeStateChecksum(json);
+        json = "{\"checksum\":" + LongToString((long)checksum) + "," + StringSubstr(json, 1);
+
+        // Write and close
+        FileWriteString(fh, json);
+        FileClose(fh);
+
+        // Atomic move
+        if(!FileMove(tempFile, fileName, FILE_COMMON))
+        {
+            FileDelete(tempFile, FILE_COMMON);
+            return false;
+        }
+        return true;
+    }
+
+    // Read and validate crash recovery state JSON
+    bool ReadCrashRecoveryState(const string &fileName,
+                                 double &equityBaseline, double &peakEquity,
+                                 int &ddBreachCount, double &ddMax, string &timestamp)
+    {
+        int fh = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+        if(fh == INVALID_HANDLE)
+            return false;
+
+        // Read entire file
+        string json = "";
+        while(!FileIsEnding(fh))
+        {
+            json += FileReadString(fh);
+        }
+        FileClose(fh);
+
+        if(json == "")
+            return false;
+
+        // Extract checksum
+        int checksumPos = StringFind(json, "\"checksum\":");
+        if(checksumPos < 0)
+        {
+            Print("[RECOVERY-STATE] No checksum in state file - rejecting");
+            return false;
+        }
+        int valStart = StringFind(json, ":", checksumPos);
+        int valEnd = StringFind(json, ",", valStart);
+        if(valStart < 0 || valEnd < 0)
+            return false;
+        string checksumStr = StringSubstr(json, valStart + 1, valEnd - valStart - 1);
+        ulong storedChecksum = (ulong)StringToInteger(checksumStr);
+
+        // Remove checksum from JSON for validation
+        string jsonWithoutChecksum = "{" + StringSubstr(json, valEnd + 1);
+        ulong computedChecksum = ComputeStateChecksum(jsonWithoutChecksum);
+        if(storedChecksum != computedChecksum)
+        {
+            PrintFormat("[RECOVERY-STATE] Checksum mismatch: stored=0x%016llX, computed=0x%016llX - rejecting", storedChecksum, computedChecksum);
+            return false;
+        }
+
+        // Parse JSON fields
+        int eqPos = StringFind(json, "\"equity_baseline\":");
+        if(eqPos >= 0)
+        {
+            int vStart = StringFind(json, ":", eqPos);
+            int vEnd = StringFind(json, ",", vStart);
+            if(vStart >= 0 && vEnd >= 0)
+                equityBaseline = StringToDouble(StringSubstr(json, vStart + 1, vEnd - vStart - 1));
+        }
+
+        int pePos = StringFind(json, "\"peak_equity\":");
+        if(pePos >= 0)
+        {
+            int vStart = StringFind(json, ":", pePos);
+            int vEnd = StringFind(json, ",", vStart);
+            if(vStart >= 0 && vEnd >= 0)
+                peakEquity = StringToDouble(StringSubstr(json, vStart + 1, vEnd - vStart - 1));
+        }
+
+        int dcPos = StringFind(json, "\"dd_breach_count\":");
+        if(dcPos >= 0)
+        {
+            int vStart = StringFind(json, ":", dcPos);
+            int vEnd = StringFind(json, ",", vStart);
+            if(vStart >= 0 && vEnd >= 0)
+                ddBreachCount = (int)StringToInteger(StringSubstr(json, vStart + 1, vEnd - vStart - 1));
+        }
+
+        int dmPos = StringFind(json, "\"dd_max\":");
+        if(dmPos >= 0)
+        {
+            int vStart = StringFind(json, ":", dmPos);
+            int vEnd = StringFind(json, ",", vStart);
+            if(vStart >= 0 && vEnd >= 0)
+                ddMax = StringToDouble(StringSubstr(json, vStart + 1, vEnd - vStart - 1));
+        }
+
+        int tsPos = StringFind(json, "\"timestamp\":\"");
+        if(tsPos >= 0)
+        {
+            int vStart = StringFind(json, "\"", tsPos + 12);
+            int vEnd = StringFind(json, "\"", vStart + 1);
+            if(vStart >= 0 && vEnd >= 0)
+                timestamp = StringSubstr(json, vStart + 1, vEnd - vStart - 1);
+        }
+
+        return true;
+    }
+
+    //+------------------------------------------------------------------+
+    //| Expert Advisor Initialization                                    |
+    //+------------------------------------------------------------------+
+    int OnInit()
 {
     Print("[MULTI-STRATEGY-EA] ========================================");
     Print("[MULTI-STRATEGY-EA] Advanced AI Trading System v2.0 Starting");
@@ -3753,7 +3913,7 @@ int OnInit()
     }
     tradeManager.SetLogLevel(InpLogLevel);
     // Set magic range for per-symbol ownership check (will be updated after symbol universe is built)
-    tradeManager.SetMagicRangeMax((uint)InpMagicNumber);
+    tradeManager.SetMagicRangeMax(InpMagicNumber);
     g_tickSafetyMonitor.SetMinFreeMarginPercent(20.0);
     g_tickSafetyMonitor.SetMinMarginLevel(150.0);
     g_tickSafetyMonitor.SetEmergencyStop(false);
@@ -3808,6 +3968,7 @@ int OnInit()
         if(!aiNextGenBrain.Initialize(Symbol(), Period()))
         {
             Print("[INIT] WARNING: NextGen AI Brain failed to initialize - dashboard AI brain disabled");
+            g_aiBrainReady = false;
         }
         else
         {
@@ -3818,6 +3979,13 @@ int OnInit()
         // Initialize AI health dashboard
         Print("[AI-DASHBOARD] AI Health Monitoring initialized");
         Print("[AI-DASHBOARD] Configuration: Transformer(dModel=32, heads=2, layers=1), Ensemble diversity enabled");
+    }
+    else
+    {
+        // L2-002: If AI mode is disabled, ensure flags reflect actual state
+        g_aiBrainReady = false;
+        g_aiEngineReady = false;
+        g_aiFeedbackReady = false;
     }
     
     Print("[INIT] PerformanceAnalytics initialized");
@@ -3881,36 +4049,18 @@ int OnInit()
     // Cluster governance configured after RiskTierManager applies tier overrides (see below)
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
 
-    // Crash recovery: restore circuit breaker state from previous session if state file exists
-    {
-        string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
-        int fh = FileOpen(stateFileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
-        if(fh != INVALID_HANDLE)
+    // Crash recovery: restore circuit breaker state from previous session if state file exists (L2-003: JSON + checksum)
         {
+            string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
             double recoveredEquityBaseline = 0.0;
             double recoveredPeakEquity = 0.0;
             int    recoveredDdBreachCount = 0;
             double recoveredDdMax = 0.0;
             string recoveredTimestamp = "";
 
-            while(!FileIsEnding(fh))
-            {
-                string line = FileReadString(fh);
-                int eqPos = StringFind(line, "=");
-                if(eqPos < 0)
-                    continue;
-                string key = StringSubstr(line, 0, eqPos);
-                string val = StringSubstr(line, eqPos + 1);
-
-                if(key == "equity_baseline")     recoveredEquityBaseline = StringToDouble(val);
-                else if(key == "peak_equity")    recoveredPeakEquity = StringToDouble(val);
-                else if(key == "dd_breach_count") recoveredDdBreachCount = (int)StringToInteger(val);
-                else if(key == "dd_max")         recoveredDdMax = StringToDouble(val);
-                else if(key == "timestamp")      recoveredTimestamp = val;
-            }
-            FileClose(fh);
-
-            if(recoveredEquityBaseline > 0.0 || recoveredPeakEquity > 0.0)
+            if(ReadCrashRecoveryState(stateFileName,
+                                       recoveredEquityBaseline, recoveredPeakEquity,
+                                       recoveredDdBreachCount, recoveredDdMax, recoveredTimestamp))
             {
                 unifiedRiskManager.RestoreCircuitBreakerState(recoveredPeakEquity, recoveredEquityBaseline,
                                                               recoveredDdBreachCount, recoveredDdMax);
@@ -3919,14 +4069,9 @@ int OnInit()
             }
             else
             {
-                Print("[RECOVERY-STATE] State file found but contained no valid data — using fresh initialization");
+                Print("[RECOVERY-STATE] No valid previous state file found — clean start (first run, clean shutdown, or corrupt file)");
             }
         }
-        else
-        {
-            Print("[RECOVERY-STATE] No previous state file found — clean start (first run or clean shutdown)");
-        }
-    }
 
     // Reconcile trade journal — detect orphaned trades from previous sessions
     ReconcileTradeJournal(InpMagicNumber);
@@ -3969,20 +4114,22 @@ int OnInit()
               DoubleToString(sizingParams.riskPercent, 2), "%");
     }
 
-    // Apply risk tier configuration to risk manager, position sizer, and trade manager
-    g_riskTierManager.SetTier(InpRiskTier);
-    g_riskTierManager.ApplyToRiskManager(unifiedRiskManager, &performanceAnalytics,
-                                         InpMaxDailyRisk, InpMaxPortfolioRisk,
-                                         InpMaxDrawdown * 0.7, InpMaxDrawdown,
-                                         InpDailyLossLimitPercent);
-    g_riskTierManager.ApplyToPositionSizer(positionSizer, InpMaxRiskPerTrade);
-    g_riskTierManager.ApplyToTradeManager(tradeManager);
+    // Apply risk tier configuration to risk manager FIRST (before wiring correlation engine)
+        g_riskTierManager.SetTier(InpRiskTier);
+        g_riskTierManager.ApplyToRiskManager(unifiedRiskManager, &performanceAnalytics,
+                                             InpMaxDailyRisk, InpMaxPortfolioRisk,
+                                             InpMaxDrawdown * 0.7, InpMaxDrawdown,
+                                             InpDailyLossLimitPercent);
+        g_riskTierManager.ApplyToTradeManager(tradeManager);
 
-    // Wire PositionSizer to unified correlation engine via portfolio risk manager
-    positionSizer.SetCorrelationEngine(unifiedRiskManager.GetPortfolioRiskManager().GetCorrelationEngine());
-    positionSizer.SetLogLevel(InpLogLevel);
-    positionSizer.SetAllowMinLotRoundUp(InpAllowMinLotRoundUp);
-    positionSizer.SetMinLotRiskMultiplier(InpMinLotRiskMultiplier);
+        // Wire PositionSizer to unified correlation engine via portfolio risk manager (L2-008: after tier overrides to risk manager)
+        positionSizer.SetCorrelationEngine(unifiedRiskManager.GetPortfolioRiskManager().GetCorrelationEngine());
+        positionSizer.SetLogLevel(InpLogLevel);
+        positionSizer.SetAllowMinLotRoundUp(InpAllowMinLotRoundUp);
+        positionSizer.SetMinLotRiskMultiplier(InpMinLotRiskMultiplier);
+
+        // Apply risk tier configuration to position sizer AFTER correlation engine is wired
+        g_riskTierManager.ApplyToPositionSizer(positionSizer, InpMaxRiskPerTrade);
 
     // RISK: Initialize EquityCurveManager
     g_equityCurveManager = new CEquityCurveManager(InpEquityCurveEmaPeriod, InpEquityCurveReductionFactor, 1.0);
@@ -4165,6 +4312,7 @@ int OnInit()
     // Build strategy flags with curated defaults as a baseline; explicit enables remain authoritative.
     bool strategyFlags[];
     BuildStrategyFlags(strategyFlags);
+    g_strategyRegistry = new CStrategyRegistry();
     BuildStrategyRegistry(strategyFlags);
     LogAIRuntimeTopology();
     LogPositionLifecycleConfig();
@@ -4227,10 +4375,17 @@ int OnInit()
     validationConfig.enableVolumeCheck = true;
     
     if(!CSymbolUniverseBuilder::Build(InpSymbolsToTrade, g_activePairs, validationConfig))
-    {
-        Print("[CRITICAL] No valid trading symbols after validation.");
-        return INIT_FAILED;
-    }
+        {
+            Print("[CRITICAL] No valid trading symbols after validation.");
+            return INIT_FAILED;
+        }
+
+        // L2-022: Validate that g_activePairs is not empty after successful Build
+        if(ArraySize(g_activePairs) == 0)
+        {
+            Print("[CRITICAL] Symbol universe build succeeded but returned empty symbol list.");
+            return INIT_FAILED;
+        }
 
     if(!CSymbolUniverseBuilder::ContainsSymbol(g_activePairs, _Symbol))
     {
@@ -4248,7 +4403,7 @@ int OnInit()
             Print("[SCALP-ENGINE] WARNING: Failed to initialize — scalp engine disabled");
         else
         {
-            g_scalpEngine.SetMagicNumber((uint)InpMagicNumber);
+            g_scalpEngine.SetMagicNumber(InpMagicNumber);
             g_scalpEngine.SetAsyncMode(InpScalpAsyncMode);
             g_scalpEngine.SetMaxLatencyMs(InpScalpMaxLatencyMs);
 
@@ -4327,7 +4482,8 @@ int OnInit()
         // Deriv-specific sub-profiler: family overrides, grid recovery, ATR scalping
         if(InpDerivProfilerEnabled)
         {
-            Print("[DERIV-PROFILER] Initializing Deriv asset family auto-detection (subset)...");
+            if(g_logLevel >= 2)
+                Print("[DERIV-PROFILER] Initializing Deriv asset family auto-detection (subset)...");
             CDerivAssetProfiler* derivProfiler = g_multiAssetProfiler.GetDerivProfiler();
 
             // Apply family-specific parameters to SpikeHunter
@@ -4351,7 +4507,8 @@ int OnInit()
                             profile.magicOffset,
                             profile.spikeCooldownSec * 1000,
                             2);   // minConfluence
-                        PrintFormat("[DERIV-PROFILER] %s family=%s → SpikeHunter overrides applied", sym, profile.familyName);
+                        if(g_logLevel >= 3)
+                            PrintFormat("[DERIV-PROFILER] %s family=%s → SpikeHunter overrides applied", sym, profile.familyName);
                     }
                 }
             }
@@ -4391,14 +4548,17 @@ int OnInit()
                                 profile.atrMultiplierSL,
                                 profile.atrMultiplierTP,
                                 profile.magicOffset);
-                            PrintFormat("[DERIV-PROFILER] %s family=%s → GridRecovery enabled (gridATR=%.2f levels=%d prog=%.1f)",
-                                        sym, profile.familyName, profile.gridFactorATR, profile.maxGridLevels, profile.gridProgressionFactor);
+                            if(g_logLevel >= 3)
+                                PrintFormat("[DERIV-PROFILER] %s family=%s → GridRecovery enabled (gridATR=%.2f levels=%d prog=%.1f)",
+                                            sym, profile.familyName, profile.gridFactorATR, profile.maxGridLevels, profile.gridProgressionFactor);
                         }
                     }
-                    Print("[GRID-RECOVERY] Initialized for mean-reversion families");
+                    if(g_logLevel >= 2)
+                        Print("[GRID-RECOVERY] Initialized for mean-reversion families");
                 }
                 else
-                    Print("[GRID-RECOVERY] Initialization FAILED");
+                    if(g_logLevel >= 1)
+                        Print("[GRID-RECOVERY] Initialization FAILED");
             }
 
             // Initialize ATR Scalping Engine for between-spike families
@@ -4440,14 +4600,17 @@ int OnInit()
                                 else spikeIntervalSec = 900; // default
                             }
                             g_atrScalping.AddSymbol(sym, spikeIntervalSec);
-                            PrintFormat("[DERIV-PROFILER] %s family=%s → ATRScalping enabled (spikeInterval=%ds)",
-                                        sym, profile.familyName, spikeIntervalSec);
+                            if(g_logLevel >= 3)
+                                PrintFormat("[DERIV-PROFILER] %s family=%s → ATRScalping enabled (spikeInterval=%ds)",
+                                            sym, profile.familyName, spikeIntervalSec);
                         }
                     }
-                    Print("[ATR-SCALP] Initialized for between-spike families");
+                    if(g_logLevel >= 2)
+                        Print("[ATR-SCALP] Initialized for between-spike families");
                 }
                 else
-                    Print("[ATR-SCALP] Initialization FAILED");
+                    if(g_logLevel >= 1)
+                        Print("[ATR-SCALP] Initialization FAILED");
             }
         }
 
@@ -4460,18 +4623,66 @@ int OnInit()
             profilerSymbols[i] = g_activePairs[i];
         g_diagnosticsManager.SetSymbols(profilerSymbols, ArraySize(g_activePairs));
 
-        Print("[MULTI-ASSET-PROFILER] Batch 103 initialization complete");
+        if(g_logLevel >= 2)
+            Print("[MULTI-ASSET-PROFILER] Batch 103 initialization complete");
     }
     else
     {
-        Print("[MULTI-ASSET-PROFILER] Disabled by user input");
+        if(g_logLevel >= 2)
+            Print("[MULTI-ASSET-PROFILER] Disabled by user input");
     }
 
     // Initialize enterprise manager per symbol
-    Print("[ENTERPRISE] Initializing per-symbol strategy managers...");
-    ReleaseEnterpriseManagers();
-    int managerInitCount = 0;
-    for(int i = 0; i < ArraySize(g_activePairs); i++)
+        if(g_logLevel >= 2)
+            Print("[ENTERPRISE] Initializing per-symbol strategy managers...");
+        ReleaseEnterpriseManagers();
+    
+        // L2-027: Batch allocate all per-symbol engine arrays to avoid repeated resizing
+        // Pre-allocate to maximum possible size (number of active pairs)
+        int maxEngineCount = ArraySize(g_activePairs);
+        ArrayResize(g_mathEngineSymbols, maxEngineCount);
+        ArrayResize(g_hurstEngines, maxEngineCount);
+        ArrayResize(g_ouEngines, maxEngineCount);
+        ArrayResize(g_ofiEngines, maxEngineCount);
+        ArrayResize(g_vpinFilters, maxEngineCount);
+        ArrayResize(g_gridHurstBridgeLogged, maxEngineCount);
+        // Batch 114 engines
+        ArrayResize(g_kalmanEngines, maxEngineCount);
+        ArrayResize(g_cpdEngines, maxEngineCount);
+        ArrayResize(g_fourStateEngines, maxEngineCount);
+        ArrayResize(g_volTargetEngines, maxEngineCount);
+        ArrayResize(g_exitOptimizers, maxEngineCount);
+        ArrayResize(g_liquiditySweepStrategies, maxEngineCount);
+        ArrayResize(g_rangeCompStrategies, maxEngineCount);
+        // Batch 107 engines
+        ArrayResize(g_vwapEngines, maxEngineCount);
+        ArrayResize(g_vpEngines, maxEngineCount);
+        ArrayResize(g_cvdEngines, maxEngineCount);
+    
+        // Initialize all arrays to NULL/empty
+        for(int i = 0; i < maxEngineCount; i++)
+        {
+            g_mathEngineSymbols[i] = "";
+            g_hurstEngines[i] = NULL;
+            g_ouEngines[i] = NULL;
+            g_ofiEngines[i] = NULL;
+            g_vpinFilters[i] = NULL;
+            g_gridHurstBridgeLogged[i] = false;
+            g_kalmanEngines[i] = NULL;
+            g_cpdEngines[i] = NULL;
+            g_fourStateEngines[i] = NULL;
+            g_volTargetEngines[i] = NULL;
+            g_exitOptimizers[i] = NULL;
+            g_liquiditySweepStrategies[i] = NULL;
+            g_rangeCompStrategies[i] = NULL;
+            g_vwapEngines[i] = NULL;
+            g_vpEngines[i] = NULL;
+            g_cvdEngines[i] = NULL;
+        }
+        g_mathEngineCount = 0;
+    
+        int managerInitCount = 0;
+        for(int i = 0; i < ArraySize(g_activePairs); i++)
     {
         bool symbolStrategyFlags[];
         BuildStrategyFlagsForSymbol(g_activePairs[i], strategyFlags, symbolStrategyFlags);
@@ -4484,6 +4695,13 @@ int OnInit()
 
         if(InitializeEnterpriseManagerForSymbol(g_activePairs[i], symbolStrategyFlags))
             managerInitCount++;
+        else
+        {
+            // L2-005: Rollback on partial failure - clean up already created managers
+            PrintFormat("[ENTERPRISE] ERROR: Failed to initialize manager for %s, rolling back %d managers", g_activePairs[i], managerInitCount);
+            ReleaseEnterpriseManagers();
+            return INIT_FAILED;
+        }
     }
 
     if(managerInitCount <= 0 || ArraySize(g_enterpriseManagers) <= 0)
@@ -4494,7 +4712,7 @@ int OnInit()
 
     // Update magic range max now that symbol universe is known
     int symbolCount = ArraySize(g_enterpriseManagerSymbols);
-    uint magicRangeMax = (uint)(InpMagicNumber + symbolCount * MAGIC_SYMBOL_MULTIPLIER + MAGIC_MAX_CLUSTER_CODE);
+    long magicRangeMax = InpMagicNumber + symbolCount * MAGIC_SYMBOL_MULTIPLIER + MAGIC_MAX_CLUSTER_CODE;
     tradeManager.SetMagicRangeMax(magicRangeMax);
     // Propagate magic range to all enterprise managers
     for(int mi = 0; mi < ArraySize(g_enterpriseManagers); mi++)
@@ -4525,7 +4743,8 @@ int OnInit()
                     // Wire EnterpriseStrategyManager-level engines (consensus gating)
                     g_enterpriseManagers[mi].SetVPINFilter(g_vpinFilters[mathIdx]);
                     g_enterpriseManagers[mi].SetOFIEngine(g_ofiEngines[mathIdx]);
-                    PrintFormat("[WIRE] VPIN/OFI wired to EnterpriseManager | Symbol=%s", sym);
+                    if(g_logLevel >= 3)
+                        PrintFormat("[WIRE] VPIN/OFI wired to EnterpriseManager | Symbol=%s", sym);
 
                     // Find and wire Trend strategy
                     IStrategy* trendStrat = g_enterpriseManagers[mi].GetStrategyByName("Trend");
@@ -4536,7 +4755,8 @@ int OnInit()
                         {
                             trendPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
                             trendPtr.SetVPINFilter(g_vpinFilters[mathIdx]);
-                            PrintFormat("[WIRE] Hurst/VPIN wired to Trend | Symbol=%s", sym);
+                            if(g_logLevel >= 3)
+                                PrintFormat("[WIRE] Hurst/VPIN wired to Trend | Symbol=%s", sym);
                         }
                     }
                     // Find and wire S/R strategy
@@ -4548,7 +4768,8 @@ int OnInit()
                         {
                             srPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
                             srPtr.SetVPINFilter(g_vpinFilters[mathIdx]);
-                            PrintFormat("[WIRE] Hurst/VPIN wired to S/R | Symbol=%s", sym);
+                            if(g_logLevel >= 3)
+                                PrintFormat("[WIRE] Hurst/VPIN wired to S/R | Symbol=%s", sym);
                         }
                     }
                     // Wire Mean Reversion Hurst engine (v2.0 regime lockout)
@@ -4559,7 +4780,8 @@ int OnInit()
                         if(mrPtr != NULL)
                         {
                             mrPtr.SetHurstEngine(g_hurstEngines[mathIdx]);
-                            PrintFormat("[WIRE] Hurst wired to Mean Reversion | Symbol=%s", sym);
+                            if(g_logLevel >= 3)
+                                PrintFormat("[WIRE] Hurst wired to Mean Reversion | Symbol=%s", sym);
                         }
                     }
                     // Wire Statistical Arbitrage OU engine (half-life filter)
@@ -4570,20 +4792,26 @@ int OnInit()
                         if(saPtr != NULL)
                         {
                             saPtr.SetOUEngine(g_ouEngines[mathIdx]);
-                            PrintFormat("[WIRE] OU wired to Statistical Arbitrage | Symbol=%s", sym);
+                            if(g_logLevel >= 3)
+                                PrintFormat("[WIRE] OU wired to Statistical Arbitrage | Symbol=%s", sym);
                         }
                     }
                 }
             }
         }
     }
-    PrintFormat("[MAGIC-RANGE] base=%d | symbols=%d | range_max=%u | encoding=BASE+symbolIndex*%d+clusterCode",
+    if(g_logLevel >= 2)
+        PrintFormat("[MAGIC-RANGE] base=%d | symbols=%d | range_max=%u | encoding=BASE+symbolIndex*%d+clusterCode",
                 InpMagicNumber, symbolCount, magicRangeMax, MAGIC_SYMBOL_MULTIPLIER);
 
 
+    if(g_logLevel >= 2)
+        Print("[SCAN-SCHEDULER] Initializing symbol scheduler with managers...");
     g_scanScheduler.SetManagers(g_enterpriseManagers, g_enterpriseManagerSymbols, ArraySize(g_enterpriseManagers));
     g_scanScheduler.SetInputParams(InpIntrabarScanSeconds, InpIntrabarBackoffMaxSeconds);
     g_scanScheduler.RebuildSymbolSchedulerState("post_manager_init");
+    if(g_logLevel >= 3)
+        Print("[SCAN-SCHEDULER] Symbol scheduler initialized");
 
 
     RecoverTradeTimingStateOnInit();
@@ -4653,6 +4881,13 @@ int OnInit()
         }
         else
         {
+            // L2-002: Clean up AI Engine on init failure to prevent leak
+            if(g_AIEngine != NULL)
+            {
+                delete g_AIEngine;
+                g_AIEngine = NULL;
+            }
+            g_aiEngineReady = false;
             Print("[INIT] WARNING: Failed to initialize AI Engine - adaptation disabled");
         }
     }
@@ -4664,6 +4899,8 @@ int OnInit()
     if(GetTotalActiveStrategyCount() <= 0)
     {
         Print("[CRITICAL] No active strategies registered. Enable at least one strategy or neural AI mode.");
+        // L2-002: Clean up AI subsystems on init failure
+        CleanupAISubsystems();
         return INIT_FAILED;
     }
 
@@ -4681,44 +4918,57 @@ int OnInit()
     if(!g_attributionManager.RunNNAttributionSelfTest())
     {
         Print("[NN-DIAG] Self-test failed; initialization aborted by diagnostic gate");
+        // L2-002: Clean up AI subsystems on init failure
+        CleanupAISubsystems();
         return INIT_FAILED;
     }
 
     // Final system initialization
-    systemInitialized = true;
-    tradingEnabled = true;
+        systemInitialized = true;
+        tradingEnabled = true;
 
-    g_hbScansAttempted = 0;
-    g_hbIntrabarScansExecuted = 0;
-    g_hbNoSignalCount = 0;
-    g_hbValidatorRejects = 0;
-    g_hbRiskRejects = 0;
-    g_hbTradesOpened = 0;
-    g_hbQuietNoNewBar = 0;
-    g_hbQuietCadenceHold = 0;
-    g_hbQuietMissingManager = 0;
-    g_hbEntryBlocked = 0;
-    g_hbSizingRejects = 0;
-    g_hbSignalsGenerated = 0;
-    g_hbSignalsAfterPipeline = 0;
-    g_hbSignalsAfterQuorum = 0;
-    g_hbSignalsValidated = 0;
-    g_hbSignalsRiskApproved = 0;
-    g_hbSignalsSent = 0;
-    g_hbSyntheticSpikeEvents = 0;
-    g_lastHeartbeatLogTime = TimeCurrent();
-    g_lastNNHealthLogTime = TimeCurrent();
-    g_scanScheduler.ResetOnInit();
-    g_unprotectedTracker.Reset();
-    // Spike monitor state now encapsulated in CSyntheticSpikeMonitor
-    g_onnxSessionDisabled = false;
-    g_scanCycleSequence = 0;
-    g_cyclesSinceIndicatorSignal = 0;
-    g_hybridGateRelaxed = false;
-    g_consecutiveZeroSignalCycles = 0;
+        g_hbScansAttempted = 0;
+        g_hbIntrabarScansExecuted = 0;
+        g_hbNoSignalCount = 0;
+        g_hbValidatorRejects = 0;
+        g_hbRiskRejects = 0;
+        g_hbTradesOpened = 0;
+        g_hbQuietNoNewBar = 0;
+        g_hbQuietCadenceHold = 0;
+        g_hbQuietMissingManager = 0;
+        g_hbEntryBlocked = 0;
+        g_hbSizingRejects = 0;
+        g_hbSignalsGenerated = 0;
+        g_hbSignalsAfterPipeline = 0;
+        g_hbSignalsAfterQuorum = 0;
+        g_hbSignalsValidated = 0;
+        g_hbSignalsRiskApproved = 0;
+        g_hbSignalsSent = 0;
+        g_hbSyntheticSpikeEvents = 0;
+        g_lastHeartbeatLogTime = TimeCurrent();
+        g_lastNNHealthLogTime = TimeCurrent();
+        g_scanScheduler.ResetOnInit();
+        g_unprotectedTracker.Reset();
+        // Spike monitor state now encapsulated in CSyntheticSpikeMonitor
+        g_onnxSessionDisabled = false;
+        g_scanCycleSequence = 0;
+        g_cyclesSinceIndicatorSignal = 0;
+        g_hybridGateRelaxed = false;
+        g_consecutiveZeroSignalCycles = 0;
 
-    // Initialize Python Bridge — skip health check during init to avoid blocking WebRequest
-    g_pythonBridge = new CPythonBridge();
+        // L2-013: Delete crash recovery state file IMMEDIATELY after successful read
+        // (was at end of OnInit - now moved here after systemInitialized=true)
+        {
+            string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
+            if(FileIsExist(stateFileName, FILE_COMMON))
+            {
+                FileDelete(stateFileName, FILE_COMMON);
+                PrintFormat("[RECOVERY-STATE] State file %s deleted immediately after successful init", stateFileName);
+            }
+        }
+
+        // Initialize Python Bridge — skip health check during init to avoid blocking WebRequest
+        g_pythonBridge = new CPythonBridge();
     g_pythonBridge.Initialize(
         InpPythonBridgeEndpoint,
         InpPythonBridgeMode,
@@ -4746,9 +4996,6 @@ int OnInit()
     // Re-enable after init so timer handler can push state
     g_dashboardBridge.SetEnabled(InpDashboardEnabled);
 
-    // Initialize Dashboard
-    g_dashboard.Initialize();
-    
     // Startup Health Check
     Print("[HEALTH-CHECK] Performing startup validation...");
     bool healthCheckPassed = true;
@@ -4810,15 +5057,18 @@ int OnInit()
     // Wire diagnostics manager with enterprise managers for consensus diagnostics
     g_diagnosticsManager.SetManagers(g_enterpriseManagers, ArraySize(g_enterpriseManagers));
 
+    // L2-001: Start timer AFTER all manager wiring is complete to prevent OnTimer accessing unwired managers
     EventSetTimer(1);
 
-    // Delete crash recovery state file — only needed for crash recovery, not after clean init
+    // L2-013: Delete crash recovery state file IMMEDIATELY after successful init (moved earlier, keeping for safety)
     {
         string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
         if(FileIsExist(stateFileName, FILE_COMMON))
         {
             FileDelete(stateFileName, FILE_COMMON);
             PrintFormat("[RECOVERY-STATE] State file %s deleted after successful init", stateFileName);
+        }
+    }
         }
     }
 
@@ -4835,33 +5085,38 @@ void OnDeinit(const int reason)
 {
     Print("[DEINIT-START] Deinitialization begun | reason=%d (%s)", reason, GetDeInitReasonText(reason));
 
+    // L2-001: Set shutdown flag FIRST to prevent OnTimer from accessing resources during cleanup
+    g_shuttingDown = true;
     systemInitialized = false;
     tradingEnabled = false;
 
-    // Save circuit breaker state for crash recovery before any cleanup
-    {
-        string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
-        int fh = FileOpen(stateFileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
-        if(fh != INVALID_HANDLE)
+    // L2-001, L2-016: Destroy indicator manager BEFORE killing timer to prevent timer callbacks from accessing invalid handles
+    CIndicatorManager::DestroyInstance();
+
+    // Kill the timer
+    EventKillTimer();
+
+    // Save circuit breaker state for crash recovery (moved after timer kill but before heavy cleanup) - L2-003 JSON + checksum
         {
-            FileWrite(fh, "equity_baseline=" + DoubleToString(unifiedRiskManager.GetDailyStartEquity(), 2));
-            FileWrite(fh, "peak_equity=" + DoubleToString(unifiedRiskManager.GetPeakEquity(), 2));
-            FileWrite(fh, "dd_breach_count=" + IntegerToString(unifiedRiskManager.GetDrawdownBreachCount()));
-            FileWrite(fh, "dd_max=" + DoubleToString(unifiedRiskManager.GetMaxDrawdownFromPeak(), 2));
-            FileWrite(fh, "timestamp=" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
-            FileClose(fh);
-            PrintFormat("[DEINIT-STATE] Circuit breaker state saved to %s | equity_baseline=%.2f | peak_equity=%.2f | dd_breach_count=%d | dd_max=%.2f",
-                        stateFileName,
-                        unifiedRiskManager.GetDailyStartEquity(),
-                        unifiedRiskManager.GetPeakEquity(),
-                        unifiedRiskManager.GetDrawdownBreachCount(),
-                        unifiedRiskManager.GetMaxDrawdownFromPeak());
+            string stateFileName = "ea_state_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".txt";
+            if(WriteCrashRecoveryState(stateFileName,
+                                        unifiedRiskManager.GetDailyStartEquity(),
+                                        unifiedRiskManager.GetPeakEquity(),
+                                        unifiedRiskManager.GetDrawdownBreachCount(),
+                                        unifiedRiskManager.GetMaxDrawdownFromPeak()))
+            {
+                PrintFormat("[DEINIT-STATE] Circuit breaker state saved to %s | equity_baseline=%.2f | peak_equity=%.2f | dd_breach_count=%d | dd_max=%.2f",
+                            stateFileName,
+                            unifiedRiskManager.GetDailyStartEquity(),
+                            unifiedRiskManager.GetPeakEquity(),
+                            unifiedRiskManager.GetDrawdownBreachCount(),
+                            unifiedRiskManager.GetMaxDrawdownFromPeak());
+            }
+            else
+            {
+                PrintFormat("[DEINIT-STATE] WARNING: Failed to save circuit breaker state to %s (error=%d)", stateFileName, GetLastError());
+            }
         }
-        else
-        {
-            PrintFormat("[DEINIT-STATE] WARNING: Failed to save circuit breaker state to %s (error=%d)", stateFileName, GetLastError());
-        }
-    }
 
     PrintFormat("[TERMINATION-SNAPSHOT] reason=%d (%s) | scans=%I64u | intrabar=%I64u | no_signal=%I64u | validated=%I64u | risk_approved=%I64u | sent=%I64u",
                 reason,
@@ -4873,8 +5128,14 @@ void OnDeinit(const int reason)
                 g_hbSignalsRiskApproved,
                 g_hbSignalsSent);
 
-    // Kill the timer
-    EventKillTimer();
+    // Shutdown Strategy Registry
+    if(g_strategyRegistry != NULL)
+    {
+        // L2-025: Explicit shutdown before delete (StrategyRegistry has no Deinit, use Reset)
+        g_strategyRegistry.Reset();
+        delete g_strategyRegistry;
+        g_strategyRegistry = NULL;
+    }
 
     // Shutdown Python bridge
     if(g_pythonBridge != NULL)
@@ -4892,7 +5153,7 @@ void OnDeinit(const int reason)
         g_dashboardBridge = NULL;
     }
 
-    // Emergency cleanup (Issue 12.4): log deinit for each strategy before managers are released
+    // L2-009: Rename EMERGENCY-CLEANUP to DEINIT-DIAGNOSTIC (it's diagnostic only, doesn't actually deinit strategies)
     int strategiesCleaned = 0;
     for(int i = 0; i < ArraySize(g_enterpriseManagers); i++)
     {
@@ -4904,18 +5165,18 @@ void OnDeinit(const int reason)
                 string stratName = g_enterpriseManagers[i].GetRegisteredStrategyName(j);
                 if(stratName != "")
                 {
-                    PrintFormat("[EMERGENCY-CLEANUP] Deinit strategy: %s", stratName);
+                    PrintFormat("[DEINIT-DIAGNOSTIC] Strategy registered: %s", stratName);
                     strategiesCleaned++;
                 }
             }
         }
     }
-    PrintFormat("[EMERGENCY-CLEANUP] Deinit reason=%d, strategies cleaned=%d", reason, strategiesCleaned);
+    PrintFormat("[DEINIT-DIAGNOSTIC] Deinit reason=%d, strategies logged=%d", reason, strategiesCleaned);
 
     // Properly delete all dynamic objects to prevent memory leaks
     ReleaseEnterpriseManagers();
-    
 
+    // L2-015: Print attribution summary BEFORE neural net strategies release (which clears attribution data)
     g_attributionManager.NNDiagPrintSummary("deinit");
     
     ReleaseNeuralNetStrategies();
@@ -4926,29 +5187,26 @@ void OnDeinit(const int reason)
         delete g_AIEngine;
         g_AIEngine = NULL;
     }
-    g_aiBrainReady = false;
-    g_aiEngineReady = false;
+    // L2-002: Use centralized cleanup for AI subsystems
+    CleanupAISubsystems();
 
-    // Batch 99: Cleanup dynamically allocated modifiers
-    if(g_bayesianKellyModifier != NULL)
-    {
-        delete g_bayesianKellyModifier;
-        g_bayesianKellyModifier = NULL;
-    }
-    if(g_equityCurveLotModifier != NULL)
-    {
-        delete g_equityCurveLotModifier;
-        g_equityCurveLotModifier = NULL;
-    }
-    if(g_equityCurveManager != NULL)
-    {
-        delete g_equityCurveManager;
-        g_equityCurveManager = NULL;
-    }
+    // L2-004: PositionSizer now owns modifiers - just NULL the global pointers (don't delete)
+        // L2-004: PositionSizer now owns modifiers (deleted in its destructor)
+            // Just NULL the global pointers to avoid double-delete attempts
+            g_bayesianKellyModifier = NULL;
+            g_equityCurveLotModifier = NULL;
+            // Note: g_equityCurveManager is still owned by EA and must be deleted
+            if(g_equityCurveManager != NULL)
+            {
+                delete g_equityCurveManager;
+                g_equityCurveManager = NULL;
+            }
 
     // Batch 100: Cleanup mathematical engines
     // Use g_mathEngineSymbols as authoritative size since it's the master mapping array
     int mathEngineCount = ArraySize(g_mathEngineSymbols);
+    // L2-006: Save authoritative count for ALL per-symbol engine cleanups
+    int authoritativeEngineCount = mathEngineCount;
     for(int i = 0; i < mathEngineCount; i++)
     {
         if(i < ArraySize(g_hurstEngines) && g_hurstEngines[i] != NULL) { delete g_hurstEngines[i]; g_hurstEngines[i] = NULL; }
@@ -4963,10 +5221,11 @@ void OnDeinit(const int reason)
     ArrayResize(g_mathEngineSymbols, 0);
     ArrayResize(g_gridHurstBridgeLogged, 0);
 
+    // L2-006: Use single authoritative count (from g_mathEngineSymbols before it was cleared) for ALL per-symbol engine cleanups
+
     // Batch 114: Cleanup research-driven statistical algorithm engines
-    // Use g_kalmanEngines as authoritative size (assuming all Batch 114 arrays initialized together)
-    int batch114Count = ArraySize(g_kalmanEngines);
-    for(int i = 0; i < batch114Count; i++)
+    // Use saved authoritative count for all engine arrays
+    for(int i = 0; i < authoritativeEngineCount; i++)
     {
         if(i < ArraySize(g_kalmanEngines) && g_kalmanEngines[i] != NULL) { delete g_kalmanEngines[i]; g_kalmanEngines[i] = NULL; }
         if(i < ArraySize(g_cpdEngines) && g_cpdEngines[i] != NULL) { delete g_cpdEngines[i]; g_cpdEngines[i] = NULL; }
@@ -4985,8 +5244,7 @@ void OnDeinit(const int reason)
     ArrayResize(g_rangeCompStrategies, 0);
 
     // Batch 107: Cleanup institutional TA engines
-    int batch107Count = ArraySize(g_vwapEngines);
-    for(int i = 0; i < batch107Count; i++)
+    for(int i = 0; i < authoritativeEngineCount; i++)
     {
         if(i < ArraySize(g_vwapEngines) && g_vwapEngines[i] != NULL) { delete g_vwapEngines[i]; g_vwapEngines[i] = NULL; }
         if(i < ArraySize(g_vpEngines) && g_vpEngines[i] != NULL) { delete g_vpEngines[i]; g_vpEngines[i] = NULL; }
@@ -4995,6 +5253,9 @@ void OnDeinit(const int reason)
     ArrayResize(g_vwapEngines, 0);
     ArrayResize(g_vpEngines, 0);
     ArrayResize(g_cvdEngines, 0);
+
+    // L2-011: Add JSON Logger explicit shutdown before diagnostics logger
+    CJsonLogger::Shutdown();
 
     // Deinitialize diagnostics logger (Blueprint 3.6)
     g_diagLogger.Deinit();
@@ -5012,8 +5273,7 @@ void OnDeinit(const int reason)
         g_atrScalping.Deinit();
 
     UncertaintyDeinit();
-    CIndicatorManager::DestroyInstance();
-    PrintFormat("[EMERGENCY-CLEANUP] Complete. Indicators released.");
+    PrintFormat("[DEINIT-DIAGNOSTIC] Complete. Indicators released.");
 
     // Clear chart
     Comment("");
@@ -5047,10 +5307,34 @@ string GetDeInitReasonText(int reasonCode)
 }
 
 //+------------------------------------------------------------------+
+//| Cleanup AI Subsystems Helper (L2-002)                           |
+//+------------------------------------------------------------------+
+void CleanupAISubsystems()
+{
+    // Clean up AI Engine
+    if(g_AIEngine != NULL)
+    {
+        delete g_AIEngine;
+        g_AIEngine = NULL;
+    }
+    g_aiEngineReady = false;
+    
+    // Reset AI flags to reflect actual object state
+    g_aiBrainReady = false;
+    g_aiFeedbackReady = false;
+    
+    Print("[AI-CLEANUP] AI subsystems cleaned up");
+}
+
+//+------------------------------------------------------------------+
 //| Timer Handler - Processes trades when chart symbol is closed     |
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+    // L2-001: Early exit during shutdown to prevent accessing invalid resources
+    if(g_shuttingDown)
+        return;
+
     // Error handling wrapper (Issue #36)
     bool timerError = false;
     string timerErrorMsg = "";
@@ -5158,33 +5442,57 @@ void OnTimer()
                 bridgeStatusStr += "ERR:" + IntegerToString(bridgeStatus.error_count);
 
                 Print(bridgeStatusStr);
-            }
-        }
+                            }
+                        }
         
-        lastAIHealthCheck = now;
-    }
+                        // L2-007: Set bridge readiness gate after first successful health check
+                        static bool s_firstHealthCheckDone = false;
+                        if(!s_firstHealthCheckDone)
+                        {
+                            bool pythonOk = true;
+                            if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL)
+                            {
+                                SPythonBridgeHealthStatus bridgeStatus = g_pythonBridge.GetHealthStatus();
+                                pythonOk = (bridgeStatus.state == PYTHON_BRIDGE_CONNECTED) || 
+                                           (InpPythonBridgeMode == PYTHON_BRIDGE_OBSERVE && bridgeStatus.state == PYTHON_BRIDGE_DISCONNECTED);
+                            }
+                            bool dashboardOk = (g_dashboardBridge != NULL && g_dashboardBridge.IsEnabled());
+            
+                            if(pythonOk && dashboardOk)
+                            {
+                                g_bridgesReady = true;
+                                s_firstHealthCheckDone = true;
+                                Print("[BRIDGE-READINESS] Both bridges healthy - readiness gate OPEN");
+                            }
+                            else
+                            {
+                                PrintFormat("[BRIDGE-READINESS] Waiting for bridges... Python OK=%s Dashboard OK=%s",
+                                            pythonOk ? "true" : "false", dashboardOk ? "true" : "false");
+                            }
+                        }
+        
+                        lastAIHealthCheck = now;
+                    }
 
     // Periodic Python Bridge Check (every heartbeat timeout seconds)
-    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL &&
-       (lastPythonBridgeCheck == 0 || (now - lastPythonBridgeCheck) >= InpPythonBridgeHeartbeatTimeoutSec))
-    {
-        if(!CheckPointer(g_pythonBridge))
+    if(InpPythonBridgeMode != PYTHON_BRIDGE_OFF && g_pythonBridge != NULL && g_bridgesReady
+           && (lastPythonBridgeCheck == 0 || (now - lastPythonBridgeCheck) >= InpPythonBridgeHeartbeatTimeoutSec))
         {
-            timerError = true;
-            timerErrorMsg = "PythonBridge pointer invalid";
+            if(!CheckPointer(g_pythonBridge))
+            {
+                timerError = true;
+                timerErrorMsg = "PythonBridge pointer invalid";
+            }
+            else
+            {
+                g_pythonBridge.SendHeartbeat();
+            }
+            lastPythonBridgeCheck = now;
         }
-        else
-        {
-            g_pythonBridge.SendHeartbeat();
-        }
-        lastPythonBridgeCheck = now;
-    }
 
     // Dashboard bridge state push
-    if(g_dashboardBridge != NULL && g_dashboardBridge.IsEnabled())
-    {
-        datetime lastPush = g_dashboardBridge.GetLastPushTime();
-        if(lastPush == 0 || (now - lastPush) >= InpDashboardPushIntervalSec)
+        if(g_dashboardBridge != NULL && g_dashboardBridge.IsEnabled() && g_bridgesReady
+           && (lastPush == 0 || (now - lastPush) >= InpDashboardPushIntervalSec))
         {
             // Inject AI data before push
             if(neuralNetStrategy != NULL)
@@ -5221,30 +5529,24 @@ void OnTimer()
             }
 
             if(g_dashboardBridge.PushState() && g_dashboardBridge.IsControlEnabled())
-                g_dashboardBridge.PollCommands();
-        }
-    }
+                            g_dashboardBridge.PollCommands();
+                    }
 
-    g_spikeMonitor.ReleasePauseIfExpired();
+                g_spikeMonitor.ReleasePauseIfExpired();
 
     // Periodic chart object cleanup (every 5 minutes)
     {
         static datetime s_lastChartObjCleanup = 0;
         if(s_lastChartObjCleanup == 0 || (now - s_lastChartObjCleanup) >= 300)
         {
-            CDrawingCoordinator* coord = GetDrawingCoordinator();
-            if(coord != NULL)
+            int totalBefore = ObjectsTotal(0);
+            if(totalBefore > 400)
             {
-                int totalBefore = ObjectsTotal(0);
-                if(totalBefore > 400)
+                PrintFormat("[CHART-OBJECTS] WARNING: %d/500 objects — cleanup triggered", totalBefore);
+                for(int d = 0; d < ArraySize(g_drawingManagers); d++)
                 {
-                    PrintFormat("[CHART-OBJECTS] WARNING: %d/500 objects — cleanup triggered", totalBefore);
-                    coord.CleanupStaleObjects(0, 60);
-                    for(int d = 0; d < ArraySize(g_drawingManagers); d++)
-                    {
-                        if(g_drawingManagers[d] != NULL)
-                            g_drawingManagers[d].CleanupOldObjects();
-                    }
+                    if(g_drawingManagers[d] != NULL)
+                        g_drawingManagers[d].CleanupOldObjects();
                 }
             }
             s_lastChartObjCleanup = now;
@@ -5699,21 +6001,6 @@ void ProcessTradingLogic(bool fromTimer)
                    tradingEnabled ? "YES" : "NO");
         return;
     }
-
-    // --- Update Dashboard (after init check) ---
-    g_dashboard.Update(neuralNetStrategy, 
-                       g_aiBrainReady ? &aiNextGenBrain : NULL,
-                       NULL,  // ensemble - not available here
-                       NULL,  // metaLabeler - not available here
-                       NULL,  // onnx - not available here
-                       g_pythonBridge,
-                       activeStrats, eaPositions,
-                       accountBalance, accountEquity,
-                       totalTrades, winningTrades,
-                       totalProfit,
-                       _Symbol,
-                       TRADE_SIGNAL_NONE,
-                       0.0);
 
     // Enhanced logging every 50 calls to show pipeline activity
     if(callCount % 50 == 0 && g_logLevel >= 3)
@@ -7304,10 +7591,15 @@ tradeReq.lotSize = lotSize;
                                 bestCandidate.liveAuthorityReason,
                                 bestCandidate.contributorSummary);
 
-                    bool executeAsShadow = (InpEnableLiveAuthorityGate && !bestCandidate.liveAuthorityAllowed);
+                    if(InpEnableLiveAuthorityGate && !bestCandidate.liveAuthorityAllowed)
+                    {
+                        PrintFormat("[AUTHORITY-SKIP] %s | reason=%s | rankingScore=%.3f | skipped — trade demoted by live authority",
+                            bestCandidate.symbol, bestCandidate.liveAuthorityReason, bestCandidate.rankingScore);
+                        continue;
+                    }
                     datetime aiPredictionTime = 0;
                     bool aiPredictionRecorded = false;
-                    if(!executeAsShadow && g_aiFeedbackReady && bestCandidate.hasAIContributor)
+                    if(g_aiFeedbackReady && bestCandidate.hasAIContributor)
                     {
                         aiPredictionTime = TimeCurrent();
                         aiFeedback.RecordPrediction(bestCandidate.symbol,

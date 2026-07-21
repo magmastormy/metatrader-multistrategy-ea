@@ -252,6 +252,15 @@ public:
 
     ~CFourStateRegimeDetector() {}
 
+    // Resolve PERIOD_CURRENT to actual chart timeframe
+    void ResolveTimeframe()
+    {
+        if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
+        {
+            m_timeframe = Period();
+        }
+    }
+
     //--- Configure
     void Configure(int kamaPeriod = 10, int volCalcPeriod = 50,
                    int volHistoryWindow = 252,
@@ -266,13 +275,16 @@ public:
     }
 
     //--- Initialize from history
-    bool Initialize()
-    {
-        double closes[];
-        ArraySetAsSeries(closes, true);
-        int copied = CopyClose(m_symbol, m_timeframe, 0, m_volHistoryWindow + m_volCalcPeriod + 10, closes);
-        if(copied < m_volCalcPeriod + 10)
-            return false;
+        bool Initialize()
+        {
+            // Resolve PERIOD_CURRENT to actual timeframe
+            ResolveTimeframe();
+        
+            double closes[];
+            ArraySetAsSeries(closes, true);
+            int copied = CopyClose(m_symbol, m_timeframe, 0, m_volHistoryWindow + m_volCalcPeriod + 10, closes);
+            if(copied < m_volCalcPeriod + 10)
+                return false;
 
         // Initialize KAMA with SMA of oldest available bars
         // ArraySetAsSeries: index 0 = most recent, index copied-1 = oldest
@@ -310,9 +322,12 @@ public:
     }
 
     //--- Update: called each bar
-    bool Update()
-    {
-        datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
+        bool Update()
+        {
+            // Resolve PERIOD_CURRENT to actual timeframe if not already resolved
+            ResolveTimeframe();
+        
+            datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
         if(currentBarTime <= 0)
             return false;
         if(currentBarTime == m_lastBarTime && m_lastSnapshot.timestamp > 0)

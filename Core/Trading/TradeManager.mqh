@@ -64,7 +64,7 @@ struct SPendingConfirmation
 struct SSymbolMagicOffset
 {
     string   symbol;
-    int      magicOffset;
+    long     magicOffset;
     bool     hasOffset;
 
     SSymbolMagicOffset()
@@ -87,25 +87,25 @@ private:
     CSymbolInfo m_symbolInfo;                // Symbol info object
     CHistoryOrderInfo m_historyOrderInfo;    // History order info
     CSessionManager m_sessionManager;        // Session manager object
-    
+
     // Dependencies (owned externally)
     CPerformanceAnalytics* m_perfAnalytics;  // Performance analytics
     CPortfolioRiskManager* m_riskManager;    // Risk manager
     CPositionSizer* m_positionSizer;         // Position sizer
     CMarketAnalysis* m_marketAnalysis;       // Market analysis
     CEnhancedErrorHandler* m_errorHandler;   // Error handler
-    
+
     // Trade settings
     uint m_slippage;                         // Maximum slippage (in points)
-    uint m_magicNumber;                      // Magic number for trades (base)
-    uint m_magicRangeMax;                    // Max magic number for EA ownership range check
+    long m_magicNumber;                      // Magic number for trades (base) — Batch 125: changed from uint to long for 64-bit support
+    long m_magicRangeMax;                    // Max magic number for EA ownership range check — Batch 125: changed from uint to long
     string m_expertName;                     // Expert advisor name
     bool m_useAsyncMode;                     // Use asynchronous order execution
     ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
     int m_minModifyIntervalSec;              // Minimum interval between routine stop updates
     double m_maxEntrySpreadPoints;           // Hard quote-spread gate before market send
     double m_maxEntryDriftPoints;            // Hard drift gate between signal price and send price
-    
+
     // Dynamic slippage settings
     bool m_enableDynamicSlippage;            // Enable ATR-based dynamic slippage
     double m_dynamicSlippageAtrPercent;      // Slippage as percentage of ATR
@@ -113,7 +113,7 @@ private:
     uint m_dynamicSlippageMaxMultiplier;     // Maximum slippage as multiplier of base
     int m_dynamicSlippageAtrPeriod;          // ATR period for volatility calculation
     uint m_baseSlippage;                     // Base slippage before dynamic adjustment
-    
+
     // Execution quality metrics
     struct ExecutionQualityMetrics {
         int totalOrders;                     // Total orders submitted
@@ -127,7 +127,7 @@ private:
         double maxLatencyMs;                 // Maximum latency observed
         datetime lastUpdateTime;             // Last metrics update time
     } m_execMetrics;
-    
+
     // Trade tracking and statistics
     struct TradeStats {
         int totalTrades;                     // Total trades executed
@@ -144,7 +144,7 @@ private:
     int m_successfulTrades;
     uint m_failedTrades;
     datetime m_lastTradeTime;
-    
+
     // Safety mechanisms
     bool m_emergencyStop;                    // Emergency stop flag
     int m_logLevel;                          // Log verbosity: 0=Silent, 1=Critical, 2=Normal, 3=Verbose, 4=Debug
@@ -160,7 +160,7 @@ private:
     SAsyncTradeRequest m_pendingAsyncTrades[];  // Dynamic array of pending async confirmations
     int                m_maxPendingAsync;        // Maximum pending async trades (default 10)
     bool               m_asyncModeEnabled;       // Whether async mode is active
-    
+
     // Trade execution state
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
     MqlTick m_lastTick;                      // Last tick data for symbol validation
@@ -169,7 +169,7 @@ private:
     double m_lastRequestedStopLoss;          // Last SL sent to broker
     double m_lastRequestedTakeProfit;        // Last TP sent to broker
     STradeExecutionReceipt m_lastExecutionReceipt;
-    
+
     // Order tracking
     struct PendingOrder {
         ulong ticket;
@@ -183,7 +183,7 @@ private:
     };
     PendingOrder m_pendingOrders[100];       // Track pending orders
     int m_pendingOrderCount;
-    
+
     // BEAST MODE: State tracking to prevent redundant modifications
     struct SPositionState {
         ulong ticket;
@@ -201,16 +201,16 @@ private:
     //+------------------------------------------------------------------+
     //| Find position state by ticket with enhanced validation           |
     //+------------------------------------------------------------------+
-    int FindPositionState(ulong ticket) 
+    int FindPositionState(ulong ticket)
     {
         if(ticket <= 0) return -1;
-        
-        for(int i = 0; i < m_stateCount; i++) 
+
+        for(int i = 0; i < m_stateCount; i++)
         {
-            if(m_positionStates[i].ticket == ticket) 
+            if(m_positionStates[i].ticket == ticket)
             {
                 // Validate that the position still exists
-                if(!PositionSelectByTicket(ticket)) 
+                if(!PositionSelectByTicket(ticket))
                 {
                     // Position no longer exists, remove from tracking
                     RemovePositionState(i);
@@ -221,24 +221,24 @@ private:
         }
         return -1;
     }
-    
+
     //+------------------------------------------------------------------+
     //| Update position state with validation                            |
     //+------------------------------------------------------------------+
-    void UpdatePositionState(ulong ticket, double sl, double tp) 
+    void UpdatePositionState(ulong ticket, double sl, double tp)
     {
         if(ticket <= 0) return;
-        
+
         // Validate position exists before updating state
-        if(!PositionSelectByTicket(ticket)) 
+        if(!PositionSelectByTicket(ticket))
         {
             return;
         }
-        
+
         int index = FindPositionState(ticket);
-        if(index == -1) 
+        if(index == -1)
         {
-            if(m_stateCount < ArraySize(m_positionStates)) 
+            if(m_stateCount < ArraySize(m_positionStates))
             {
                 index = m_stateCount++;
                 m_positionStates[index].ticket = ticket;
@@ -249,9 +249,9 @@ private:
                 return;
             }
         }
-        
+
         // Only update if values have changed
-        if(!DoubleEquals(m_positionStates[index].lastSL, sl) || 
+        if(!DoubleEquals(m_positionStates[index].lastSL, sl) ||
            !DoubleEquals(m_positionStates[index].lastTP, tp))
         {
             m_positionStates[index].lastSL = sl;
@@ -259,29 +259,29 @@ private:
             m_positionStates[index].lastModified = TimeCurrent();
         }
     }
-    
+
     //+------------------------------------------------------------------+
     //| Remove position state by index                                   |
     //+------------------------------------------------------------------+
     void RemovePositionState(int index)
     {
         if(index < 0 || index >= m_stateCount) return;
-        
+
         // Shift remaining elements
         for(int i = index; i < m_stateCount - 1; i++)
         {
             m_positionStates[i] = m_positionStates[i + 1];
         }
-        
+
         // Clear last element
         m_positionStates[m_stateCount - 1].ticket = 0;
         m_positionStates[m_stateCount - 1].lastSL = 0;
         m_positionStates[m_stateCount - 1].lastTP = 0;
         m_positionStates[m_stateCount - 1].lastModified = 0;
-        
+
         m_stateCount--;
     }
-    
+
     //+------------------------------------------------------------------+
     //| Check if two double values are approximately equal               |
     //+------------------------------------------------------------------+
@@ -289,7 +289,7 @@ private:
     {
         return MathAbs(a - b) < epsilon;
     }
-    
+
     //+------------------------------------------------------------------+
     //| Log error with context                                           |
     //+------------------------------------------------------------------+
@@ -302,7 +302,7 @@ private:
             context.symbol = (symbolParam != "") ? symbolParam : m_symbolInfo.Name();
             context.errorCode = errorCode;
             context.additionalInfo = message;
-            
+
             CEnhancedErrorHandler* localErrorHandler = CEnhancedErrorHandler::GetInstance();
             if(CheckPointer(localErrorHandler) != POINTER_INVALID) {
                 localErrorHandler.LogError(ERROR_RECOVERABLE, context);
@@ -313,7 +313,7 @@ private:
             Print("[ERROR] ", message, " (Symbol: ", symbolParam, ")");
         }
     }
-    
+
     // Overloads for direct context/severity logging
     void LogError(const ENUM_ERROR_SEVERITY severity, const SErrorContext &context)
     {
@@ -322,7 +322,7 @@ private:
             localErrorHandler.LogError(severity, context);
         }
     }
-    
+
     void LogError(const SErrorContext &context)
     {
         CEnhancedErrorHandler* localErrorHandler = CEnhancedErrorHandler::GetInstance();
@@ -330,18 +330,18 @@ private:
             localErrorHandler.LogError(context);
         }
     }
-    
+
     //+------------------------------------------------------------------+
     //| BEAST MODE: Clean up closed position states                      |
     //+------------------------------------------------------------------+
     void CleanupPositionStates() {
         static datetime lastCleanup = 0;
         datetime localCurrentTime = TimeCurrent();
-        
+
         // Clean up every 5 minutes
         if(localCurrentTime - lastCleanup < 300) return;
         lastCleanup = localCurrentTime;
-        
+
         int removedCount = 0;
         for(int i = m_stateCount - 1; i >= 0; i--) {
             // Check if position still exists
@@ -360,7 +360,7 @@ private:
             }
         }
     }
-    
+
     //+------------------------------------------------------------------+
     //| BEAST MODE: Check if modification is needed                      |
     //+------------------------------------------------------------------+
@@ -392,10 +392,10 @@ private:
         // Get symbol for proper tolerance calculation
         double point = SymbolInfoDouble(positionSymbol, SYMBOL_POINT);
         double tolerance = point * 5; // 5 points tolerance to avoid micro-adjustments
-        
+
         bool slChanged = MathAbs(m_positionStates[index].lastSL - newSL) > tolerance;
         bool tpChanged = MathAbs(m_positionStates[index].lastTP - newTP) > tolerance;
-        
+
         return (slChanged || tpChanged);
     }
 
@@ -408,11 +408,11 @@ private:
         CIndicatorManager* manager = CIndicatorManager::Instance();
         if(manager == NULL)
             return 0.0;
-            
+
         int atrHandle = manager.GetATRHandle(symbolParam, timeframe, period);
         if(atrHandle == INVALID_HANDLE)
             return 0.0;
-            
+
         if(CopyBuffer(atrHandle, 0, 0, 1, atrValues) > 0)
         {
             return atrValues[0];
@@ -424,7 +424,7 @@ private:
     //| Log trade error with context                                     |
     //+------------------------------------------------------------------+
     void LogTradeError(const MqlTradeResult &result, const string operation = "TradeOperation");
-    
+
     //+------------------------------------------------------------------+
     //| Get trade error description                                      |
     //+------------------------------------------------------------------+
@@ -455,7 +455,7 @@ private:
             default:                             return "Unknown error (" + IntegerToString(errorCode) + ")";
         }
     }
-    
+
     //+------------------------------------------------------------------+
     //| Check if market is open for trading                             |
     //+------------------------------------------------------------------+
@@ -493,7 +493,7 @@ private:
 
         // Analyze market conditions to choose appropriate fill mode
         bool useIOC = true;
-        
+
         // Get spread for the symbol
         double spreadPoints = (double)SymbolInfoInteger(symbolParam, SYMBOL_SPREAD);
         double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
@@ -501,7 +501,7 @@ private:
             point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
         if(point <= 0.0)
             point = 0.00001; // Fallback for invalid symbol data
-        
+
         // Get ATR volatility to assess market conditions
         double volatilityMultiplier = 1.0;
         if(m_marketAnalysis != NULL)
@@ -517,7 +517,7 @@ private:
                 }
             }
         }
-        
+
         // Choose fill mode based on analysis
         if(useIOC)
         {
@@ -527,7 +527,7 @@ private:
         {
             m_trade.SetTypeFilling(ORDER_FILLING_FOK);
         }
-        
+
         // Fallback to symbol default or base mode if needed
         if(!m_trade.SetTypeFillingBySymbol(symbolParam))
             m_trade.SetTypeFilling(m_orderFillMode);
@@ -713,10 +713,10 @@ private:
         m_lastExecutionReceipt.note = "broker_accept_deferred";
         return true;
     }
-    
+
 public:
     // Constructor with dependency injection
-    CTradeManager(CPerformanceAnalytics* pPerfAnalytics = NULL, 
+    CTradeManager(CPerformanceAnalytics* pPerfAnalytics = NULL,
                  CPortfolioRiskManager* pRiskManager = NULL,
                  CPositionSizer* pPositionSizer = NULL,
                  CMarketAnalysis* pMarketAnalysis = NULL,
@@ -763,23 +763,23 @@ public:
         ZeroMemory(m_positionStates);
         ZeroMemory(m_execMetrics);
     }
-    
+
     // Destructor
     ~CTradeManager() {}
 
     // Initialization
-    bool Initialize(const uint magicNumber = 12345, const string expertName = "MultiStrategyEA");
-    
+    bool Initialize(const long magicNumber = 12345, const string expertName = "MultiStrategyEA");
+
     // Getters for dependencies
     CPortfolioRiskManager* GetRiskManager() const { return m_riskManager; }
     CPositionSizer* GetPositionSizer() const { return m_positionSizer; }
     CMarketAnalysis* GetMarketAnalysis() const { return m_marketAnalysis; }
-    
+
     // Set trading parameters
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); }
-    void SetMagicNumber(const uint magicNumber) { m_magicNumber = magicNumber; }
-    void SetMagicRangeMax(const uint magicRangeMax) { m_magicRangeMax = magicRangeMax; }
-    bool IsEAOwnedMagic(const uint magic) const { return (m_magicRangeMax > m_magicNumber) ? (magic >= m_magicNumber && magic <= m_magicRangeMax) : (magic == m_magicNumber); }
+    void SetMagicNumber(const long magicNumber) { m_magicNumber = magicNumber; }
+    void SetMagicRangeMax(const long magicRangeMax) { m_magicRangeMax = magicRangeMax; }
+    bool IsEAOwnedMagic(const long magic) const { return (m_magicRangeMax > m_magicNumber) ? (magic >= m_magicNumber && magic <= m_magicRangeMax) : (magic == m_magicNumber); }
 
     //--- Per-symbol magic offset for family-specific magic number differentiation
     void SetMagicOffsetForSymbol(const string symbol, int offset)
@@ -823,7 +823,7 @@ public:
     void SetLogLevel(const int level) { m_logLevel = MathMax(0, MathMin(4, level)); }
 
     // Set dynamic slippage configuration
-    void SetDynamicSlippageConfig(const bool enable, const double atrPercent, const uint minPoints, 
+    void SetDynamicSlippageConfig(const bool enable, const double atrPercent, const uint minPoints,
                                    const uint maxMultiplier, const int atrPeriod)
     {
         m_enableDynamicSlippage = enable;
@@ -832,7 +832,7 @@ public:
         m_dynamicSlippageMaxMultiplier = MathMax(1, maxMultiplier);
         m_dynamicSlippageAtrPeriod = MathMax(1, atrPeriod);
     }
-    
+
     void SetExecutionCostLimits(const double maxEntrySpreadPoints, const double maxEntryDriftPoints)
     {
         m_maxEntrySpreadPoints = MathMax(0.0, maxEntrySpreadPoints);
@@ -911,7 +911,7 @@ public:
         {
             return m_baseSlippage;
         }
-        
+
         double atrPoints = atrValue / pointValue;
 
         // Calculate dynamic slippage as percentage of ATR
@@ -920,7 +920,7 @@ public:
         // Clamp to configurable bounds
         uint minSlippage = MathMax(m_dynamicSlippageMinPoints, m_baseSlippage);
         uint maxSlippage = m_baseSlippage * m_dynamicSlippageMaxMultiplier;
-        
+
         // Clamp using conditional since MathMin/MathMax don't work directly with uint cast
         double clamped = dynamicSlippage;
         if(clamped < (double)minSlippage) clamped = (double)minSlippage;
@@ -935,7 +935,7 @@ public:
         {
             return;
         }
-        
+
         uint dynamicSlippage = GetDynamicSlippage(symbol);
         if(dynamicSlippage != m_slippage)
         {
@@ -943,7 +943,7 @@ public:
             m_trade.SetDeviationInPoints(m_slippage);
         }
     }
-    
+
     // Main trading functions
     bool OpenPosition(const string symbol,
                      const ENUM_ORDER_TYPE orderType,
@@ -953,25 +953,25 @@ public:
                      const double takeProfitPips,
                      const string comment = "",
                      const uint magicNumber = 0);
-    
+
     bool ClosePosition(const ulong ticket, const string reason = "Manual close");
     bool ClosePositionPartial(const ulong ticket, double volume, const string reason = "Partial close");
     bool CloseAllPositions(const string symbol = "", const string reason = "Close all");
-    
+
     bool ModifyPosition(const ulong ticket,
                        const double newStopLoss,
                        const double newTakeProfit);
-    
+
     // Position management
     void ManageAllPositions(const double breakevenBuffer = 20.0,
                            const double trailingDistance = 50.0,
                            const double trailingStep = 10.0,
                            const bool useATRTrailing = false,
                            const double atrMultiplier = 2.0);
-    
+
     bool SetTrailingStop(const ulong ticket, const double distance, const double step, const bool useATR = false, const double atrMult = 2.0);
     bool MoveToBreakeven(const ulong ticket, const double buffer);
-    
+
     // Helper functions
     double NormalizePrice(const string symbol, const double price);
     double NormalizeVolume(const string symbol, const double volume);
@@ -1058,11 +1058,11 @@ public:
             }
         }
     }
-    
+
     // Statistics
     void GetTradeStatistics(int &total, int &successful, int &failed, double &successRate);
     void ResetStatistics(void);
-    
+
     // Execution quality metrics
     void GetExecutionQualityMetrics(int &totalOrders, int &filledOrders, int &partialFills, int &rejectedOrders,
                                      double &avgSlippagePoints, double &avgLatencyMs, double &fillRate)
@@ -1071,7 +1071,7 @@ public:
         filledOrders = m_execMetrics.filledOrders;
         partialFills = m_execMetrics.partialFills;
         rejectedOrders = m_execMetrics.rejectedOrders;
-        
+
         if(m_execMetrics.filledOrders > 0)
         {
             avgSlippagePoints = m_execMetrics.totalSlippagePoints / m_execMetrics.filledOrders;
@@ -1082,7 +1082,7 @@ public:
             avgSlippagePoints = 0.0;
             avgLatencyMs = 0.0;
         }
-        
+
         if(m_execMetrics.totalOrders > 0)
         {
             fillRate = (double)m_execMetrics.filledOrders / m_execMetrics.totalOrders * 100.0;
@@ -1092,7 +1092,7 @@ public:
             fillRate = 0.0;
         }
     }
-    
+
     void GetExecutionQualitySummary(string &summary)
     {
         if(m_logLevel < 3)
@@ -1110,12 +1110,12 @@ public:
                               total, filled, partial, rejected, fillRate, avgSlippage, avgLatency,
                               m_execMetrics.maxSlippagePoints, m_execMetrics.maxLatencyMs);
     }
-    
+
     void ResetExecutionMetrics()
     {
         ZeroMemory(m_execMetrics);
     }
-    
+
     // Generate detailed execution quality report
     void GenerateExecutionQualityReport()
     {
@@ -1124,26 +1124,26 @@ public:
 
         Print("========== EXECUTION QUALITY REPORT ==========");
         PrintFormat("Report Generated: %s", TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
-        
+
         if(m_execMetrics.totalOrders == 0)
         {
             Print("[EXECUTION-REPORT] No orders executed yet.");
             Print("==============================================");
             return;
         }
-        
+
         // Order statistics
         double fillRate = (double)m_execMetrics.filledOrders / m_execMetrics.totalOrders * 100.0;
-        double partialRate = m_execMetrics.filledOrders > 0 ? 
+        double partialRate = m_execMetrics.filledOrders > 0 ?
                             (double)m_execMetrics.partialFills / m_execMetrics.filledOrders * 100.0 : 0.0;
         double rejectRate = (double)m_execMetrics.rejectedOrders / m_execMetrics.totalOrders * 100.0;
-        
+
         Print("--- Order Statistics ---");
         PrintFormat("Total Orders:      %d", m_execMetrics.totalOrders);
         PrintFormat("Filled Orders:     %d (%.1f%%)", m_execMetrics.filledOrders, fillRate);
         PrintFormat("Partial Fills:     %d (%.1f%% of filled)", m_execMetrics.partialFills, partialRate);
         PrintFormat("Rejected Orders:   %d (%.1f%%)", m_execMetrics.rejectedOrders, rejectRate);
-        
+
         // Slippage statistics
         Print("--- Slippage Analysis ---");
         if(m_execMetrics.filledOrders > 0)
@@ -1157,7 +1157,7 @@ public:
         {
             Print("No slippage data available.");
         }
-        
+
         // Latency statistics
         Print("--- Latency Analysis ---");
         if(m_execMetrics.filledOrders > 0 && m_execMetrics.totalLatencyMs > 0)
@@ -1171,10 +1171,10 @@ public:
         {
             Print("No latency data available.");
         }
-        
+
         // Spread cost analysis
         Print("--- Spread Cost Analysis ---");
-        PrintFormat("Total Spread Cost: %.2f %s", m_execMetrics.totalSpreadCost, 
+        PrintFormat("Total Spread Cost: %.2f %s", m_execMetrics.totalSpreadCost,
                     AccountInfoString(ACCOUNT_CURRENCY));
         if(m_execMetrics.filledOrders > 0)
         {
@@ -1182,7 +1182,7 @@ public:
             PrintFormat("Average Spread Cost: %.2f %s per trade", avgSpreadCost,
                         AccountInfoString(ACCOUNT_CURRENCY));
         }
-        
+
         // Dynamic slippage status
         Print("--- Dynamic Slippage Status ---");
         PrintFormat("Enabled:           %s", m_enableDynamicSlippage ? "Yes" : "No");
@@ -1190,10 +1190,10 @@ public:
         PrintFormat("Min Slippage:      %d points", m_dynamicSlippageMinPoints);
         PrintFormat("Max Multiplier:    %dx", m_dynamicSlippageMaxMultiplier);
         PrintFormat("Current Slippage:  %d points", m_slippage);
-        
+
         Print("==============================================");
     }
-    
+
     // Smart order routing - analyze execution history and recommend optimal parameters
     struct SSmartOrderParams {
         uint recommendedSlippage;
@@ -1201,7 +1201,7 @@ public:
         bool shouldTrade;
         string reason;
     };
-    
+
     SSmartOrderParams AnalyzeAndRecommendOrderParams(const string symbol)
     {
         SSmartOrderParams params;
@@ -1209,42 +1209,42 @@ public:
         params.recommendedFillMode = m_orderFillMode;
         params.shouldTrade = true;
         params.reason = "";
-        
+
         // Check if we have enough execution history
         if(m_execMetrics.totalOrders < 5)
         {
             params.reason = "Insufficient execution history for analysis";
             return params;
         }
-        
+
         // Calculate fill rate
         double fillRate = (double)m_execMetrics.filledOrders / m_execMetrics.totalOrders;
-        
+
         // Calculate average slippage
         double avgSlippage = 0.0;
         if(m_execMetrics.filledOrders > 0)
         {
             avgSlippage = m_execMetrics.totalSlippagePoints / m_execMetrics.filledOrders;
         }
-        
+
         // Calculate average latency
         double avgLatency = 0.0;
         if(m_execMetrics.filledOrders > 0 && m_execMetrics.totalLatencyMs > 0)
         {
             avgLatency = m_execMetrics.totalLatencyMs / m_execMetrics.filledOrders;
         }
-        
+
         // Get current spread
         long currentSpread = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
-        
+
         // Decision logic based on execution history
-        
+
         // If fill rate is low, recommend more conservative parameters
         if(fillRate < 0.8)
         {
             params.recommendedSlippage = (uint)MathMax(m_baseSlippage * 2, avgSlippage * 1.5);
             params.recommendedFillMode = ORDER_FILLING_FOK;
-            params.reason = StringFormat("Low fill rate (%.1f%%), increasing slippage to %d", 
+            params.reason = StringFormat("Low fill rate (%.1f%%), increasing slippage to %d",
                                         fillRate * 100, params.recommendedSlippage);
         }
         // If slippage is high, increase tolerance
@@ -1264,11 +1264,11 @@ public:
         else if(currentSpread > m_maxEntrySpreadPoints)
         {
             params.shouldTrade = false;
-            params.reason = StringFormat("Spread too high (%d pts > %.0f limit)", 
+            params.reason = StringFormat("Spread too high (%d pts > %.0f limit)",
                                         currentSpread, m_maxEntrySpreadPoints);
         }
         // If partial fills are common, use FOK
-        else if(m_execMetrics.filledOrders > 0 && 
+        else if(m_execMetrics.filledOrders > 0 &&
                 (double)m_execMetrics.partialFills / m_execMetrics.filledOrders > 0.2)
         {
             params.recommendedFillMode = ORDER_FILLING_FOK;
@@ -1278,30 +1278,30 @@ public:
         {
             params.reason = "Execution quality acceptable, using standard parameters";
         }
-        
+
         return params;
     }
-    
+
     // Apply smart order routing recommendations
     bool ApplySmartOrderRouting(const string symbol)
     {
         SSmartOrderParams params = AnalyzeAndRecommendOrderParams(symbol);
-        
+
         if(!params.shouldTrade)
         {
             PrintFormat("[SMART-ROUTING] NOT TRADING: %s", params.reason);
             return false;
         }
-        
+
         // Apply recommended slippage
         if(params.recommendedSlippage != m_slippage)
         {
             m_slippage = params.recommendedSlippage;
             m_trade.SetDeviationInPoints(m_slippage);
-            PrintFormat("[SMART-ROUTING] Adjusted slippage to %d pts: %s", 
+            PrintFormat("[SMART-ROUTING] Adjusted slippage to %d pts: %s",
                        m_slippage, params.reason);
         }
-        
+
         // Apply recommended fill mode
         if(params.recommendedFillMode != m_orderFillMode)
         {
@@ -1309,7 +1309,7 @@ public:
             PrintFormat("[SMART-ROUTING] Changed fill mode to %d: %s",
                        params.recommendedFillMode, params.reason);
         }
-        
+
         return true;
     }
 
@@ -1327,28 +1327,28 @@ private:
                            const string comment);
 
     void UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin);
-    
+
     // Logging
     void LogTradeOperation(const string operation, const string symbolName, const ENUM_ORDER_TYPE orderType, const double volume, const bool success, const string details = "");
-    
+
     // Logic helpers
     bool ShouldMoveToBreakeven(const ulong ticket, const double buffer);
     bool ShouldUpdateTrailingStop(const ulong ticket, const double distance, const double step);
-    
+
     // Execution metrics update
     void UpdateExecutionMetrics(const STradeExecutionReceipt &receipt)
     {
         m_execMetrics.totalOrders++;
-        
+
         if(receipt.accepted)
         {
             m_execMetrics.filledOrders++;
-            
+
             if(receipt.partialFill)
             {
                 m_execMetrics.partialFills++;
             }
-            
+
             // Track slippage
             if(receipt.slippagePoints > 0.0)
             {
@@ -1358,7 +1358,7 @@ private:
                     m_execMetrics.maxSlippagePoints = receipt.slippagePoints;
                 }
             }
-            
+
             // Track latency
             if(receipt.roundTripMs > 0)
             {
@@ -1368,7 +1368,7 @@ private:
                     m_execMetrics.maxLatencyMs = (double)receipt.roundTripMs;
                 }
             }
-            
+
             // Track spread cost
             double spreadCost = CalculateSpreadCost(receipt.symbol, receipt.filledVolume);
             if(spreadCost > 0.0)
@@ -1380,32 +1380,32 @@ private:
         {
             m_execMetrics.rejectedOrders++;
         }
-        
+
         m_execMetrics.lastUpdateTime = TimeCurrent();
     }
-    
+
     // Calculate spread cost for a trade
     double CalculateSpreadCost(const string symbol, const double volume)
     {
         if(symbol == "" || volume <= 0.0)
             return 0.0;
-            
+
         double spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-        
+
         if(point <= 0.0 || tickSize <= 0.0)
             return 0.0;
-            
+
         // Spread cost = spread_points * point * volume * (tick_value / tick_size)
         double spreadCostPoints = spread * point;
         double valuePerPoint = tickValue / tickSize;
         double spreadCost = spreadCostPoints * volume * valuePerPoint;
-        
+
         return spreadCost;
     }
-    
+
     // Log spread cost analytics
     void LogSpreadCostAnalytics(const string symbol, const double volume)
     {
@@ -1413,11 +1413,11 @@ private:
         double spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         double spreadPips = spread * point / 0.0001; // Convert to pips
-        
+
         PrintFormat("[SPREAD-COST] %s | Spread: %.1f pips | Volume: %.2f | Cost: %.2f %s",
                     symbol, spreadPips, volume, spreadCost, AccountInfoString(ACCOUNT_CURRENCY));
     }
-    
+
     // Convert order type string to ENUM_ORDER_TYPE
     ENUM_ORDER_TYPE OrderTypeFromString(const string orderTypeStr) const
     {
@@ -1444,12 +1444,12 @@ private:
 //+------------------------------------------------------------------+
 //| Initialize trade manager                                        |
 //+------------------------------------------------------------------+
-bool CTradeManager::Initialize(const uint magicNumber, 
+bool CTradeManager::Initialize(const long magicNumber,
                               const string expertName)
 {
     m_magicNumber = magicNumber;
     m_expertName = expertName;
-    
+
     m_trade.SetExpertMagicNumber(m_magicNumber);
     m_trade.SetDeviationInPoints(m_slippage);
     m_trade.SetTypeFilling(m_orderFillMode);
@@ -1459,7 +1459,7 @@ bool CTradeManager::Initialize(const uint magicNumber,
     m_lastRequestedStopLoss = 0.0;
     m_lastRequestedTakeProfit = 0.0;
     m_lastExecutionReceipt = STradeExecutionReceipt();
-    
+
     return true;
 }
 
@@ -1469,22 +1469,22 @@ bool CTradeManager::Initialize(const uint magicNumber,
 bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
 {
     if(!PositionSelectByTicket(ticket)) return false;
-    
+
     string positionSymbol = m_positionInfo.Symbol();
     double openPrice = m_positionInfo.PriceOpen();
     double currentSL = m_positionInfo.StopLoss();
     double currentTP = m_positionInfo.TakeProfit();
     double point = SymbolInfoDouble(positionSymbol, SYMBOL_POINT);
     double digits = (double)SymbolInfoInteger(positionSymbol, SYMBOL_DIGITS);
-    
+
     double newSL = 0.0;
     bool shouldUpdate = false;
-    
+
     if(m_positionInfo.PositionType() == POSITION_TYPE_BUY)
     {
         newSL = openPrice + (buffer * point);
         double bid = SymbolInfoDouble(positionSymbol, SYMBOL_BID);
-        
+
         if(bid > openPrice + (buffer * point))
         {
             if(newSL > currentSL) shouldUpdate = true;
@@ -1494,17 +1494,17 @@ bool CTradeManager::MoveToBreakeven(const ulong ticket, const double buffer)
     {
         newSL = openPrice - (buffer * point);
         double ask = SymbolInfoDouble(positionSymbol, SYMBOL_ASK);
-        
+
         if(ask < openPrice - (buffer * point))
         {
             if(currentSL == 0 || newSL < currentSL) shouldUpdate = true;
         }
     }
-    
+
     if(!shouldUpdate) return false;
-    
+
     newSL = NormalizeDouble(newSL, (int)digits);
-    
+
     if(!IsModificationNeeded(ticket, newSL, currentTP)) return false;
 
     PrintFormat("[BE-APPLIED] %s | ticket=%d | SL %.5f -> %.5f | buffer=%.0f pts",
@@ -1530,7 +1530,7 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
     {
         return false;
     }
-    
+
     string localSymbol = m_positionInfo.Symbol();
 
     // Capture TP/SL before close for calibration warning
@@ -1595,7 +1595,7 @@ bool CTradeManager::ClosePosition(const ulong ticket, const string reason)
         LogTradeOperation("CLOSE", localSymbol, orderType, volume, false,
                          "Close failed - " + IntegerToString(GetLastError()));
     }
-    
+
     return result;
 }
 
@@ -1606,34 +1606,34 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
 {
     if(volume <= 0)
         return false;
-    
+
     if(!PositionSelectByTicket(ticket))
         return false;
-    
+
     string symbol = m_positionInfo.Symbol();
-    
+
     // Add market open check
     if(!IsMarketOpen(symbol))
     {
-        LogTradeOperation("PARTIAL_CLOSE", symbol, (ENUM_ORDER_TYPE)m_positionInfo.Type(), volume, false, 
+        LogTradeOperation("PARTIAL_CLOSE", symbol, (ENUM_ORDER_TYPE)m_positionInfo.Type(), volume, false,
                          StringFormat("[SESSION-REJECT] Market closed for %s", symbol));
         return false;
     }
 
     double positionVolume = m_positionInfo.Volume();
-    
+
     double normalizedVolume = NormalizeVolume(symbol, volume);
     if(normalizedVolume <= 0 || normalizedVolume >= positionVolume)
     {
-        LogTradeOperation("PARTIAL_CLOSE", symbol, (ENUM_ORDER_TYPE)m_positionInfo.Type(), volume, false, 
+        LogTradeOperation("PARTIAL_CLOSE", symbol, (ENUM_ORDER_TYPE)m_positionInfo.Type(), volume, false,
                          StringFormat("Invalid volume: %.2f (Position: %.2f)", normalizedVolume, positionVolume));
         return false;
     }
-    
+
     bool result = m_trade.PositionClosePartial(ticket, normalizedVolume);
-    
+
     ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)m_positionInfo.Type();
-    
+
     if(result)
     {
         LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, true,
@@ -1645,7 +1645,7 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
         LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, false,
                           StringFormat("Partial close failed - %d (%s)", errCode, GetTradeErrorDescription(m_trade.ResultRetcode())));
     }
-    
+
     return result;
 }
 //| Close All Positions                                             |
@@ -1657,7 +1657,7 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
     bool allSuccess = true;
     datetime closeStartTime = TimeCurrent();
     const int TIMEOUT_SECONDS = 10;
-    
+
     for(int i = totalPositions - 1; i >= 0; i--)
     {
         if(TimeCurrent() - closeStartTime > TIMEOUT_SECONDS)
@@ -1666,7 +1666,7 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
                         TIMEOUT_SECONDS, closedCount, totalPositions);
             return false;
         }
-        
+
         ulong ticket = PositionGetTicket(i);
         if(ticket > 0)
         {
@@ -1679,10 +1679,10 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
             }
         }
     }
-    
+
     if(closedCount > 0)
         PrintFormat("[TRADE-MANAGER] CloseAllPositions completed: %d positions closed", closedCount);
-    
+
     return allSuccess;
 }
 
@@ -1698,14 +1698,14 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
 
     // Get position details for stop level validation
     string symbol = PositionGetString(POSITION_SYMBOL);
-    
+
     // Check if market is open for trading
     // SYMBOL_TRADE_MODE_CLOSEONLY allows modifying existing positions, so we allow it
     // SYMBOL_TRADE_MODE_DISABLED means no trading at all
     ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE);
     if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
     {
-        PrintFormat("[POSITION-MANAGEMENT] Skipping position modification for %s ticket=%d - trading disabled (trade mode: %s)", 
+        PrintFormat("[POSITION-MANAGEMENT] Skipping position modification for %s ticket=%d - trading disabled (trade mode: %s)",
                     symbol, ticket, EnumToString(tradeMode));
         return false;
     }
@@ -1714,7 +1714,7 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     double currentTP = PositionGetDouble(POSITION_TP);
     ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
     int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-    
+
     // Validate stop levels against broker minimum distance
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double minDistance = GetMinimumStopDistance(symbol);
@@ -1736,7 +1736,7 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
     double adjustedTP = takeProfit;
     bool slAdjusted = false;
     bool tpAdjusted = false;
-    
+
     // Auto-normalize SL distance to broker constraints instead of repeatedly skipping.
     if(adjustedSL > 0)
     {
@@ -1747,7 +1747,7 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
                 adjustedSL = referencePrice - requiredDistance;
             else
                 adjustedSL = referencePrice + requiredDistance;
-            
+
             adjustedSL = NormalizeDouble(adjustedSL, digits);
             slAdjusted = true;
         }
@@ -1763,7 +1763,7 @@ bool CTradeManager::ModifyPosition(const ulong ticket, const double stopLoss, co
                 adjustedTP = referencePrice + requiredDistance;
             else
                 adjustedTP = referencePrice - requiredDistance;
-            
+
             adjustedTP = NormalizeDouble(adjustedTP, digits);
             tpAdjusted = true;
         }
@@ -1942,7 +1942,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
     int retryCount = 0;
     uint lastRetcode = 0;
     datetime executionStartTime = TimeCurrent();
-    
+
     while(retryCount < MAX_TRADE_RETRIES && !executionConfirmed)
     {
         if(TimeCurrent() - executionStartTime > 15)
@@ -2030,8 +2030,8 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         m_lastExecutionReceipt.dealTicket = tradeResult.deal;
         m_lastExecutionReceipt.retryCount = retryCount;
         // FIX: Fallback to requestedPrice if both tradeResult.price and executionPrice are 0
-        m_lastExecutionReceipt.averagePrice = (tradeResult.price > 0.0) ? tradeResult.price 
-                                     : (executionPrice > 0.0) ? executionPrice 
+        m_lastExecutionReceipt.averagePrice = (tradeResult.price > 0.0) ? tradeResult.price
+                                     : (executionPrice > 0.0) ? executionPrice
                                      : m_lastExecutionReceipt.requestedPrice;
         m_lastExecutionReceipt.filledVolume = (tradeResult.volume > 0.0) ? tradeResult.volume : 0.0;
         m_lastExecutionReceipt.partialFill = false;
@@ -2052,12 +2052,12 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
             // Log failed trade operation for audit trail
             string orderTypeStr = EnumToString(orderType);
-            string failDetails = StringFormat("retcode=%u reason=%s price=%.5f", 
-                                             tradeResult.retcode, 
+            string failDetails = StringFormat("retcode=%u reason=%s price=%.5f",
+                                             tradeResult.retcode,
                                              GetTradeErrorDescription(tradeResult.retcode),
                                              executionPrice);
             LogTradeOperation("OPEN", symbolName, orderType, volume, false, failDetails);
-            
+
             uint retcode = tradeResult.retcode;
             lastRetcode = retcode;
 
@@ -2168,7 +2168,7 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
             }
         }
     }
-    
+
     if(!executionConfirmed && retryCount >= MAX_TRADE_RETRIES)
         Print("[TRADE-FAILED] max retries exceeded");
     else if(!executionConfirmed && lastRetcode != 0)
@@ -2176,10 +2176,10 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
     if(!executionConfirmed)
         m_lastExecutionReceipt.retryCount = retryCount;
-    
+
     // Update execution quality metrics
     UpdateExecutionMetrics(m_lastExecutionReceipt);
-    
+
     return executionConfirmed;
 }
 
@@ -2190,7 +2190,7 @@ double CTradeManager::NormalizePrice(const string symbolName, const double price
 {
     if(price <= 0)
         return 0.0;
-    
+
     int digits = (int)SymbolInfoInteger(symbolName, SYMBOL_DIGITS);
     return NormalizeDouble(price, digits);
 }
@@ -2205,10 +2205,10 @@ double CTradeManager::NormalizeVolume(const string symbolName, const double volu
     double stepVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_STEP);
     if(stepVolume <= 0.0 || !MathIsValidNumber(stepVolume))
         stepVolume = 0.01;
-    
+
     if(volume < minVolume || !MathIsValidNumber(volume))
         return 0.0;
-    
+
     int volumeDigits = 0;
     double stepProbe = stepVolume;
     while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8 && MathIsValidNumber(stepProbe))
@@ -2216,7 +2216,7 @@ double CTradeManager::NormalizeVolume(const string symbolName, const double volu
         stepProbe *= 10.0;
         volumeDigits++;
     }
-    
+
     double normalized = MathFloor((volume + 1e-12) / stepVolume) * stepVolume;
     normalized = NormalizeDouble(normalized, volumeDigits);
     normalized = MathMin(normalized, maxVolume);
@@ -2235,10 +2235,10 @@ double CTradeManager::CalculateStopLoss(const string symbolParam, const ENUM_ORD
 {
     if(stopLossPips <= 0)
         return 0.0;
-    
+
     double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
     double stopLoss = 0.0;
-    
+
     if(orderType == ORDER_TYPE_BUY)
     {
         stopLoss = price - (stopLossPips * point);
@@ -2247,7 +2247,7 @@ double CTradeManager::CalculateStopLoss(const string symbolParam, const ENUM_ORD
     {
         stopLoss = price + (stopLossPips * point);
     }
-    
+
     return NormalizePrice(symbolParam, stopLoss);
 }
 
@@ -2259,10 +2259,10 @@ double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_O
 {
     if(takeProfitPips <= 0)
         return 0.0;
-    
+
     double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
     double takeProfit = 0.0;
-    
+
     if(orderType == ORDER_TYPE_BUY)
     {
         takeProfit = price + (takeProfitPips * point);
@@ -2271,7 +2271,7 @@ double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_O
     {
         takeProfit = price - (takeProfitPips * point);
     }
-    
+
     return NormalizePrice(symbolParam, takeProfit);
 }
 
@@ -2361,7 +2361,7 @@ void CTradeManager::LogTradeOperation(const string operation, const string symbo
                                  success ? "SUCCESS" : "FAILED");
     if(details != "")
         message += " | " + details;
-    
+
     Print("[TRADE-OP] ", message);
 }
 
@@ -2372,22 +2372,22 @@ bool CTradeManager::ShouldMoveToBreakeven(const ulong ticket, const double buffe
 {
     if(!PositionSelectByTicket(ticket))
         return false;
-    
+
     double openPrice = m_positionInfo.PriceOpen();
     double currentPriceValue = (m_positionInfo.PositionType() == POSITION_TYPE_BUY) ?
                               SymbolInfoDouble(m_positionInfo.Symbol(), SYMBOL_BID) :
                               SymbolInfoDouble(m_positionInfo.Symbol(), SYMBOL_ASK);
-    
+
     double point = SymbolInfoDouble(m_positionInfo.Symbol(), SYMBOL_POINT);
     if(point <= 0.0)
         point = 0.00001; // Fallback for invalid symbol data
     double profitPoints = 0.0;
-    
+
     if(m_positionInfo.PositionType() == POSITION_TYPE_BUY)
         profitPoints = (currentPriceValue - openPrice) / point;
     else
         profitPoints = (openPrice - currentPriceValue) / point;
-    
+
     return (profitPoints >= buffer * 1.5);
 }
 
@@ -2398,19 +2398,19 @@ bool CTradeManager::ShouldUpdateTrailingStop(const ulong ticket, const double di
 {
     if(!PositionSelectByTicket(ticket))
         return false;
-    
+
     double currentSL = m_positionInfo.StopLoss();
     if(currentSL <= 0)
         return false;
-    
+
     string localSymbol = m_positionInfo.Symbol();
     double localCurrentPrice = (m_positionInfo.PositionType() == POSITION_TYPE_BUY) ?
                          SymbolInfoDouble(localSymbol, SYMBOL_BID) :
                          SymbolInfoDouble(localSymbol, SYMBOL_ASK);
-    
+
     double point = SymbolInfoDouble(localSymbol, SYMBOL_POINT);
     double newSL = 0.0;
-    
+
     if(m_positionInfo.PositionType() == POSITION_TYPE_BUY)
     {
         newSL = localCurrentPrice - (distance * point);
@@ -2432,10 +2432,10 @@ double CTradeManager::CalculatePositionRisk(const string symbolParam, const doub
     double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
     double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-    
+
     if(tickValue <= 0 || tickSize <= 0 || point <= 0)
         return 0.0;
-    
+
     double stopDistancePrice = stopLossPips * point;
     double riskPerLot = (stopDistancePrice / tickSize) * tickValue;
     return volume * riskPerLot;
@@ -2450,7 +2450,7 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
 {
     if(!PositionSelectByTicket(ticket))
         return;
-        
+
     if(isWin)
     {
         m_stats.successfulTrades++;
@@ -2466,10 +2466,10 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
             m_stats.totalLoss += MathAbs(profit);
         }
     }
-    
+
     m_stats.totalTrades++;
     m_stats.lastTradeTime = TimeCurrent();
-    
+
     m_totalTrades = m_stats.totalTrades;
     m_successfulTrades = m_stats.successfulTrades;
     m_failedTrades = m_stats.failedTrades;
@@ -2482,10 +2482,10 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
 //+------------------------------------------------------------------+
 void CTradeManager::LogTradeError(const MqlTradeResult &result, const string operation)
 {
-    string errorMsg = StringFormat("Trade Error: Code=%d, Comment=%s, Request ID=%d", 
+    string errorMsg = StringFormat("Trade Error: Code=%d, Comment=%s, Request ID=%d",
                                   (int)result.retcode, result.comment, (int)result.request_id);
     Print("[TRADE-ERROR] ", errorMsg);
-    
+
     if(m_errorHandler != NULL)
     {
         SErrorContext context;
@@ -2523,10 +2523,10 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
             double stopLoss = PositionGetDouble(POSITION_SL);
             double takeProfit = PositionGetDouble(POSITION_TP);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            uint positionMagic = (uint)PositionGetInteger(POSITION_MAGIC);
+            long positionMagic = (long)PositionGetInteger(POSITION_MAGIC);
             if(m_magicNumber > 0 && !IsEAOwnedMagic(positionMagic))
                 continue;
-            
+
             if(breakevenBuffer > 0)
             {
                 // Batch104-BUG2+BUG3: Use MoveToBreakeven() instead of broken inline logic.
@@ -2535,7 +2535,7 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                 // MoveToBreakeven() correctly checks only if price exceeds entry + buffer*point.
                 MoveToBreakeven(ticket, breakevenBuffer);
             }
-            
+
             if(useATRTrailing || (trailingDistance > 0 && trailingStep > 0))
             {
                 SetTrailingStop(ticket, trailingDistance, trailingStep, useATRTrailing, atrMultiplier);
@@ -2551,17 +2551,17 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
 {
     if(ticket <= 0) return false;
     if(!PositionSelectByTicket(ticket)) return false;
-    
+
     string symbolName = PositionGetString(POSITION_SYMBOL);
     double currentPriceValue = PositionGetDouble(POSITION_PRICE_CURRENT);
     double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
     double currentStopLoss = PositionGetDouble(POSITION_SL);
     double currentTakeProfit = PositionGetDouble(POSITION_TP);
     ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-    uint positionMagic = (uint)PositionGetInteger(POSITION_MAGIC);
+    long positionMagic = (long)PositionGetInteger(POSITION_MAGIC);
     if(m_magicNumber > 0 && !IsEAOwnedMagic(positionMagic))
         return true;
-    
+
     double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
     if(point <= 0.0)
         point = 0.00001;
@@ -2580,7 +2580,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
     // profit needed for the trailing stop to sit above entry for BUY positions).
     // Further fix (Issue #26): Cap activation at 100 points (10 pips) to allow earlier trailing
     double activationPoints = MathMin(distance, 100.0);
-    
+
     if(useATR)
     {
         double atr = CalculateATR(symbolName, PERIOD_CURRENT, 14);
@@ -2588,7 +2588,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
         activationPoints = MathMax(activationPoints, (atr / point) * MathMax(0.3, atrMult * 0.20));
         if(profitPoints < activationPoints)
             return true;
-        
+
         if(type == POSITION_TYPE_BUY)
         {
             double atrStop = currentPriceValue - (atr * atrMult);
@@ -2624,7 +2624,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
             }
         }
     }
-    
+
     if(newStopLoss > 0 && MathAbs(newStopLoss - currentStopLoss) > point * 0.5)
     {
         newStopLoss = NormalizePrice(symbolName, newStopLoss);
@@ -2668,7 +2668,7 @@ bool CTradeManager::SetTrailingStop(const ulong ticket, const double distance, c
 
         return trailResult;
     }
-    
+
     return true;
 }
 
@@ -2704,7 +2704,7 @@ bool CTradeManager::OpenPosition(const string symbol,
     double validationPrice = price;
     if(validationPrice <= 0.0)
         validationPrice = GetCurrentExecutionPrice(symbol, orderType);
-    
+
     // Execute the order using the freshest price available at send time.
     bool executed = ExecuteMarketOrder(symbol, orderType, normalizedVolume, price, stopLossPips, takeProfitPips, comment);
 
@@ -2736,7 +2736,7 @@ void CTradeManager::GetTradeStatistics(int &total, int &successful, int &failed,
     total = m_stats.totalTrades;
     successful = m_stats.successfulTrades;
     failed = (int)m_stats.failedTrades;
-    
+
     if(total > 0)
         successRate = (double)successful / total * 100.0;
     else
@@ -2758,22 +2758,22 @@ void CTradeManager::ResetStatistics(void)
 //+------------------------------------------------------------------+
 //| Normalize and Validate Stops                                    |
 //+------------------------------------------------------------------+
-bool CTradeManager::NormalizeAndValidateStops(const string symbol, 
-                                             const ENUM_ORDER_TYPE orderType, 
-                                             const double price, 
-                                             const double tp, 
-                                             double &slOut, 
-                                             double &tpOut, 
+bool CTradeManager::NormalizeAndValidateStops(const string symbol,
+                                             const ENUM_ORDER_TYPE orderType,
+                                             const double price,
+                                             const double tp,
+                                             double &slOut,
+                                             double &tpOut,
                                              string &errorMsg)
 {
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
     double minDistance = GetMinimumStopDistance(symbol);
-    
+
     // Normalize input values
     slOut = NormalizeDouble(slOut, digits);
     tpOut = NormalizeDouble(tpOut, digits);
-    
+
     // Validate Stop Loss
     if(slOut > 0)
     {
@@ -2785,11 +2785,11 @@ bool CTradeManager::NormalizeAndValidateStops(const string symbol,
                 slOut = price - minDistance - point;
             else
                 slOut = price + minDistance + point;
-                
+
             slOut = NormalizeDouble(slOut, digits);
         }
     }
-    
+
     // Validate Take Profit
     if(tpOut > 0)
     {
@@ -2801,11 +2801,11 @@ bool CTradeManager::NormalizeAndValidateStops(const string symbol,
                 tpOut = price + minDistance + point;
             else
                 tpOut = price - minDistance - point;
-                
+
             tpOut = NormalizeDouble(tpOut, digits);
         }
     }
-    
+
     return true;
 }
 

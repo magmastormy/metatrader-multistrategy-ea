@@ -188,6 +188,10 @@ int CVolatilityEngine::GetReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) co
 
 bool CVolatilityEngine::EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
+    // Resolve PERIOD_CURRENT to actual chart timeframe
+    if(timeframe == PERIOD_CURRENT || timeframe == 0)
+        timeframe = Period();
+    
     bool handlesReady = (m_handleATR != INVALID_HANDLE &&
                          m_handleBB != INVALID_HANDLE &&
                          m_handleStdDev != INVALID_HANDLE);

@@ -105,3 +105,9 @@ remove_shadow.py
 inspect*
 check*
 fix*
+
+AUDIT*.MD
+layer*.md
+*AUDIT*.md
+run*.bat
+/docs

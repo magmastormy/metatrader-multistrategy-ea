@@ -157,6 +157,12 @@ void CIndicatorManager::DestroyInstance()
 {
    if(m_instance != NULL)
    {
+      // L2-014: Explicitly release all handles before delete to prevent use-after-free
+      if(ArraySize(m_instance.m_handles) > 0)
+      {
+         PrintFormat("[INDICATOR-MANAGER] WARNING: DestroyInstance called with %d active handles - releasing them", ArraySize(m_instance.m_handles));
+         m_instance.ReleaseAll();
+      }
       CIndicatorManager *instance = m_instance;
       m_instance = NULL;
       delete instance;

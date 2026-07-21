@@ -64,6 +64,7 @@ private:
     SHurstSnapshot  m_snapshot;
     datetime        m_lastLogTime;
     datetime        m_lastBarTime;
+    bool            m_timeframeResolved;  // Track if PERIOD_CURRENT has been resolved
 
     // DFA-specific settings (Batch 114)
     int             m_dfaMinBoxSize;
@@ -71,6 +72,16 @@ private:
     int             m_dfaPolyOrder;       // polynomial detrending order (3 = cubic)
     double          m_dfaEnsembleWeight;  // weight for DFA in ensemble (0-1)
     double          m_dfaConfidence;      // R² from DFA regression
+
+    // --- Resolve PERIOD_CURRENT to actual chart timeframe ---
+    void ResolveTimeframe()
+    {
+        if(!m_timeframeResolved && (m_timeframe == PERIOD_CURRENT || m_timeframe == 0))
+        {
+            m_timeframe = Period();
+            m_timeframeResolved = true;
+        }
+    }
 
     // --- Throttled logging helper ---
     void ThrottledLog(const string message)
@@ -410,6 +421,7 @@ public:
         m_maxLag(MathMax(m_minLag * 2, maxLag)),
         m_lastLogTime(0),
         m_lastBarTime(0),
+        m_timeframeResolved(false),
         m_dfaMinBoxSize(4),
         m_dfaMaxBoxSize(MathMin(maxLag, lookbackPeriod / 4)),
         m_dfaPolyOrder(3),
@@ -559,10 +571,13 @@ public:
     }
 
     // --- Update: called each bar, computes Hurst from close prices ---
-    bool Update()
-    {
-        // Bar-change detection: skip recalc if bar hasn't changed
-        datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
+        bool Update()
+        {
+            // Resolve PERIOD_CURRENT on first call
+            ResolveTimeframe();
+
+            // Bar-change detection: skip recalc if bar hasn't changed
+            datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
         if(currentBarTime > 0 && currentBarTime == m_lastBarTime && m_snapshot.timestamp > 0)
             return true;
 

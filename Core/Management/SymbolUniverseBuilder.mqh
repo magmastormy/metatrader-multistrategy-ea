@@ -69,6 +69,11 @@ public:
         PrintFormat("[SYMBOLS] Validation config: maxSpread=%d points, minVolume=%d lots, volumeCheck=%s",
                     config.maxSpreadPoints, config.minDailyVolumeLots, config.enableVolumeCheck ? "ENABLED" : "DISABLED");
 
+        // ISS-701: Track rejected symbols for detailed reporting
+        string rejectedSymbols[];
+        ArrayResize(rejectedSymbols, 0);
+        int rejectedCount = 0;
+
         for(int i = 0; i < ArraySize(symbols); i++)
         {
             string sym = symbols[i];
@@ -78,6 +83,9 @@ public:
             if(StringLen(sym) == 0)
             {
                 Print("[SYMBOLS] Empty symbol token skipped at input index ", i, " - Please check InpSymbolsToTrade parameter for empty entries");
+                rejectedCount++;
+                ArrayResize(rejectedSymbols, rejectedCount);
+                rejectedSymbols[rejectedCount - 1] = sym;
                 continue;
             }
 
@@ -100,6 +108,9 @@ public:
             if(!SymbolSelect(sym, true))
             {
                 Print("[WARNING] Symbol ", sym, " not available - skipping");
+                rejectedCount++;
+                ArrayResize(rejectedSymbols, rejectedCount);
+                rejectedSymbols[rejectedCount - 1] = sym;
                 continue;
             }
 
@@ -107,22 +118,34 @@ public:
             if(symbolTradeMode == SYMBOL_TRADE_MODE_DISABLED)
             {
                 Print("[WARNING] Symbol ", sym, " trading is disabled - skipping");
+                rejectedCount++;
+                ArrayResize(rejectedSymbols, rejectedCount);
+                rejectedSymbols[rejectedCount - 1] = sym;
                 continue;
             }
             if(symbolTradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
             {
                 Print("[WARNING] Symbol ", sym, " is close-only - cannot open new positions, only close existing - skipping");
+                rejectedCount++;
+                ArrayResize(rejectedSymbols, rejectedCount);
+                rejectedSymbols[rejectedCount - 1] = sym;
                 continue;
             }
             if(SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP) <= 0.0)
             {
                 Print("[WARNING] Symbol ", sym, " has invalid volume step - skipping");
+                rejectedCount++;
+                ArrayResize(rejectedSymbols, rejectedCount);
+                rejectedSymbols[rejectedCount - 1] = sym;
                 continue;
             }
 
             if(ContainsSymbol(activePairs, sym))
             {
                 Print("[SYMBOLS] Duplicate symbol skipped: ", sym);
+                rejectedCount++;
+                ArrayResize(rejectedSymbols, rejectedCount);
+                rejectedSymbols[rejectedCount - 1] = sym;
                 continue;
             }
 
@@ -144,6 +167,9 @@ public:
             {
                 PrintFormat("[SYMBOLS] Symbol %s rejected - spread %d points exceeds maximum threshold (%d points) %s", 
                             sym, spread, effectiveMaxSpread, isSynthetic ? "(synthetic)" : "");
+                rejectedCount++;
+                ArrayResize(rejectedSymbols, rejectedCount);
+                rejectedSymbols[rejectedCount - 1] = sym;
                 continue;
             }
 
@@ -165,6 +191,9 @@ public:
                     {
                         PrintFormat("[SYMBOLS] Symbol %s rejected - avg tick volume %lld below minimum %lld", 
                                     sym, avgTickVol, config.minDailyVolumeLots);
+                        rejectedCount++;
+                        ArrayResize(rejectedSymbols, rejectedCount);
+                        rejectedSymbols[rejectedCount - 1] = sym;
                         continue;
                     }
                     PrintFormat("[SYMBOLS] Symbol %s - avg tick volume %lld OK (min %lld)", 
@@ -188,6 +217,19 @@ public:
             Print("  - Contract Size: ", SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE));
             if(config.enableVolumeCheck)
                 Print("  - Volume Check: Skipped (not available in MQL5)");
+        }
+
+        // ISS-701: Final summary of accepted/rejected symbols
+        PrintFormat("[SYMBOL-VALIDATION] Accepted: %d | Rejected: %d", ArraySize(activePairs), splitCount - ArraySize(activePairs));
+        if(ArraySize(activePairs) > 0)
+        {
+            string accepted = "";
+            for(int a = 0; a < ArraySize(activePairs); a++)
+            {
+                if(a > 0) accepted += ", ";
+                accepted += activePairs[a];
+            }
+            PrintFormat("[SYMBOL-VALIDATION] Accepted symbols: %s", accepted);
         }
 
         return (ArraySize(activePairs) > 0);

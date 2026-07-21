@@ -22,11 +22,12 @@ struct SVWAPResult
 class CVWAPEngine
 {
 private:
-    string m_symbol;
-    int    m_minPeriodBars;
-    double m_bandMultiplier1;
-    double m_bandMultiplier2;
-    double m_bandMultiplier3;
+    string            m_symbol;
+    ENUM_TIMEFRAMES   m_timeframe;
+    int               m_minPeriodBars;
+    double            m_bandMultiplier1;
+    double            m_bandMultiplier2;
+    double            m_bandMultiplier3;
     
     // Session tracking
     datetime m_sessionStartDate;
@@ -43,15 +44,15 @@ private:
     
     double GetTypicalPrice(int shift)
     {
-        double h = iHigh(m_symbol, PERIOD_CURRENT, shift);
-        double l = iLow(m_symbol, PERIOD_CURRENT, shift);
-        double c = iClose(m_symbol, PERIOD_CURRENT, shift);
+        double h = iHigh(m_symbol, m_timeframe, shift);
+        double l = iLow(m_symbol, m_timeframe, shift);
+        double c = iClose(m_symbol, m_timeframe, shift);
         return (h + l + c) / 3.0;
     }
     
     double GetVolume(int shift)
     {
-        return (double)iVolume(m_symbol, PERIOD_CURRENT, shift);
+        return (double)iVolume(m_symbol, m_timeframe, shift);
     }
     
     void ResetSession()
@@ -65,7 +66,8 @@ private:
     }
     
 public:
-    CVWAPEngine() : m_symbol(""), m_minPeriodBars(30),
+    CVWAPEngine() : m_symbol(""), m_timeframe(PERIOD_CURRENT),
+        m_minPeriodBars(30),
         m_bandMultiplier1(1.0), m_bandMultiplier2(1.5),
         m_bandMultiplier3(2.0),
         m_sessionStartDate(0), m_lastProcessedBarTime(0), m_cumulativeTPV(0),
@@ -77,16 +79,18 @@ public:
     
     bool Initialize(string symbol, int minPeriod = 30,
                     double band1 = 1.0, double band2 = 1.5,
-                    double band3 = 2.0)
+                    double band3 = 2.0,
+                    ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT)
     {
         m_symbol = symbol;
+        m_timeframe = (timeframe == PERIOD_CURRENT || timeframe == 0) ? Period() : timeframe;
         m_minPeriodBars = minPeriod;
         m_bandMultiplier1 = band1;
         m_bandMultiplier2 = band2;
         m_bandMultiplier3 = band3;
         ResetSession();
         m_initialized = true;
-        Print("[VWAP-ENGINE] Initialized | symbol=", symbol, " | minPeriod=", minPeriod);
+        Print("[VWAP-ENGINE] Initialized | symbol=", symbol, " | minPeriod=", minPeriod, " | timeframe=", EnumToString(m_timeframe));
         return true;
     }
     
@@ -96,7 +100,7 @@ public:
         if(!m_initialized) return m_lastResult;
         
         // Check for session reset (new day)
-        datetime currentBarTime = iTime(m_symbol, PERIOD_CURRENT, 0);
+        datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
         MqlDateTime dt;
         TimeToStruct(currentBarTime, dt);
         datetime currentDay = StringToTime(IntegerToString(dt.year) + "." + IntegerToString(dt.mon) + "." + IntegerToString(dt.day));
@@ -117,11 +121,11 @@ public:
         m_lastProcessedBarTime = currentBarTime;
         
         // Accumulate only new bars since last call
-        int totalBars = Bars(m_symbol, PERIOD_CURRENT);
+        int totalBars = Bars(m_symbol, m_timeframe);
         int startBar = MathMin(totalBars - 1, m_lastProcessedBarIndex > 0 ? m_lastProcessedBarIndex : totalBars - 1);
         for(int i = startBar; i >= 1; i--)
         {
-            datetime barTime = iTime(m_symbol, PERIOD_CURRENT, i);
+            datetime barTime = iTime(m_symbol, m_timeframe, i);
             if(barTime < m_sessionStartDate) break;
             
             double tp = GetTypicalPrice(i);
@@ -144,9 +148,9 @@ public:
         
         // Calculate standard deviation
         double variance = 0;
-        for(int i = Bars(m_symbol, PERIOD_CURRENT) - 1; i >= 1; i--)
+        for(int i = Bars(m_symbol, m_timeframe) - 1; i >= 1; i--)
         {
-            datetime barTime = iTime(m_symbol, PERIOD_CURRENT, i);
+            datetime barTime = iTime(m_symbol, m_timeframe, i);
             if(barTime < m_sessionStartDate) break;
             
             double tp = GetTypicalPrice(i);

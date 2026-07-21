@@ -6,7 +6,6 @@
 #define ENTERPRISE_STRATEGY_MANAGER_MQH
 
 #include "../Pipeline/UnifiedSignalPipeline.mqh"
-#include "../Visualization/DrawingCoordinator.mqh"
 #include "../Signals/TimeframeConsistency.mqh"
 #include "../Processing/DerivAssetProfiler.mqh"
 #include "../Processing/MultiAssetProfiler.mqh"
@@ -61,7 +60,7 @@ class CStrategyRegistry;
 extern CPythonBridge* g_pythonBridge;
 
 // External reference to global strategy registry instance
-extern CStrategyRegistry g_strategyRegistry;
+extern CStrategyRegistry* g_strategyRegistry;
 
 //+------------------------------------------------------------------+
 //| Strategy Registration Entry                                     |
@@ -816,6 +815,16 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
 
 //+------------------------------------------------------------------+
 //| Initialize Manager                                              |
+//| Two-Phase Initialization Pattern (L2-023):                      |
+//|   Phase 1 (Required): Core infrastructure - Pipeline,            |
+//|       TimeframeConsistency (must succeed or full init fails)    |
+//|   Phase 2 (Optional): Enhancements - FourStateRegimeDetector,   |
+//|       FamilyWeightMatrix, VPINFilter, OFIEngine (non-blocking)  |
+//| This pattern ensures core consensus machinery is ready before   |
+//| registering strategies, while allowing optional engines to      |
+//| degrade gracefully without blocking the manager.                |
+//| Ownership: Phase 1 objects owned by manager (deleted in dtor).  |
+//| Phase 2 objects also owned but failure does not roll back Phase 1.|
 //+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe,
                                            bool usePipeline,
@@ -864,6 +873,12 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     if(m_tfConsistency == NULL)
     {
         Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency allocation failed for ", symbol);
+        // L2-010: Clean up pipeline on allocation failure
+        if(m_pipeline != NULL)
+        {
+            delete m_pipeline;
+            m_pipeline = NULL;
+        }
         return false;
     }
     if(!m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false))
@@ -871,6 +886,12 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
         Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency initialization failed for ", symbol);
         delete m_tfConsistency;
         m_tfConsistency = NULL;
+        // L2-010: Clean up pipeline on initialization failure
+        if(m_pipeline != NULL)
+        {
+            delete m_pipeline;
+            m_pipeline = NULL;
+        }
         return false;
     }
     
@@ -1193,7 +1214,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                // I10: Log when family weight deviates from 1.0 for Volatility indices
                if(family == DERIV_VOLATILITY && MathAbs(familyClusterMult - 1.0) > 0.01)
                {
-                  PrintFormat("[FAMILY-WEIGHT-VOL] %s | strategy=%s | cluster=%d | mult=%.2f",
+                  LOG_IF4(LOG_LEVEL_DEBUG, "[FAMILY-WEIGHT-VOL] %s | strategy=%s | cluster=%d | mult=%.2f",
                               m_symbol, m_strategies[i].name, (int)stratCluster, familyClusterMult);
                }
             }
@@ -1522,7 +1543,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                     static datetime s_lastUncLog = 0;
                     if(s_lastUncLog == 0 || (TimeCurrent() - s_lastUncLog) >= 60)
                     {
-                        PrintFormat("[AI-UNCERTAINTY-DISCOUNT] %s | strategy=%s | uncertainty=%.3f | discount=%.3f | conviction=%.4f",
+                        LOG_IF5(LOG_LEVEL_DEBUG, "[AI-UNCERTAINTY-DISCOUNT] %s | strategy=%s | uncertainty=%.3f | discount=%.3f | conviction=%.4f",
                                     symbol, m_strategies[i].name, uncertainty, uncertaintyDiscount, conviction);
                         s_lastUncLog = TimeCurrent();
                     }
@@ -1656,9 +1677,10 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
             sellConviction = MathMax(0.0, sellConviction - trendClusterSellConviction);
         }
 
-        PrintFormat("[CONSENSUS-CONFLICT] %s: Cross-cluster conflict detected. Trend: Buy=%.2f/Sell=%.2f, MeanRev: Buy=%.2f/Sell=%.2f. Resolved using %s regime.",
+        LOG_IF6(LOG_LEVEL_INFO, "[CONSENSUS-CONFLICT] %s: Cross-cluster conflict detected. Trend: Buy=%.2f/Sell=%.2f, MeanRev: Buy=%.2f/Sell=%.2f. Resolved using %s regime.",
                     symbol, trendClusterBuyConviction, trendClusterSellConviction,
                     meanRevClusterBuyConviction, meanRevClusterSellConviction,
+                    EnumToString(regimeEng.GetSnapshot().confirmedState));
                     isTrendingRegime ? "TRENDING" : "RANGING");
     }
 
@@ -1669,7 +1691,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         if(regimeEng != NULL)
         {
             SRegimeSnapshot snap = regimeEng.GetSnapshot();
-            PrintFormat("[CONSENSUS-REGIME] %s | Regime=%s | Weights: Mom=%.2f Trend=%.2f MR=%.2f Break=%.2f ICT=%.2f",
+            LOG_IF6(LOG_LEVEL_DEBUG, "[CONSENSUS-REGIME] %s | Regime=%s | Weights: Mom=%.2f Trend=%.2f MR=%.2f Break=%.2f ICT=%.2f",
                        symbol, EnumToString(snap.confirmedState),
                        snap.momentumWeightMult, snap.trendWeightMult,
                        snap.meanRevWeightMult, snap.breakoutWeightMult,
@@ -1687,22 +1709,22 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
         if(toxicity == VPIN_TOXICITY_EXTREME)  // VPIN > 0.7
         {
             // Skip all new entries at consensus level
-            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f EXTREME | All entries blocked", symbol, vpin);
+            LOG_IF2(LOG_LEVEL_WARN, "[CONSENSUS-VPIN] %s | VPIN=%.3f EXTREME | All entries blocked", symbol, vpin);
             return TRADE_SIGNAL_NONE;
         }
         else if(toxicity == VPIN_TOXICITY_HIGH)  // VPIN 0.5-0.7
         {
             vpinWeightMultiplier = 0.50;  // Reduce all weights by 50%
-            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f HIGH | Weights reduced 50%%", symbol, vpin);
+            LOG_IF2(LOG_LEVEL_WARN, "[CONSENSUS-VPIN] %s | VPIN=%.3f HIGH | Weights reduced 50%%", symbol, vpin);
         }
         else if(toxicity == VPIN_TOXICITY_MEDIUM)  // VPIN 0.3-0.5
         {
             vpinWeightMultiplier = 0.75;  // Reduce trend/breakout weights by 25%
-            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f MEDIUM | Weights reduced 25%%", symbol, vpin);
+            LOG_IF2(LOG_LEVEL_INFO, "[CONSENSUS-VPIN] %s | VPIN=%.3f MEDIUM | Weights reduced 25%%", symbol, vpin);
         }
         else
         {
-            PrintFormat("[CONSENSUS-VPIN] %s | VPIN=%.3f LOW | No adjustment", symbol, vpin);
+            LOG_IF2(LOG_LEVEL_DEBUG, "[CONSENSUS-VPIN] %s | VPIN=%.3f LOW | No adjustment", symbol, vpin);
         }
     }
 
@@ -1753,7 +1775,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     // Log consensus score
     if(consensusScore > 0)
     {
-        PrintFormat("[CONSENSUS-SCORE] %s | Score=%d/100 | Direction=%s | Quality=%.2f | Support=%.2f | Threshold=60",
+        LOG_IF6(LOG_LEVEL_DEBUG, "[CONSENSUS-SCORE] %s | Score=%d/100 | Direction=%s | Quality=%.2f | Support=%.2f | Threshold=60",
                    symbol, consensusScore,
                    consensusDirection == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
                    winningDirectionalQuality, winningSupportRatio);
@@ -1807,7 +1829,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
     {
         effectiveQualityThreshold *= m_regimeRelaxFactor;
         supportFloor *= m_regimeRelaxFactor;
-        PrintFormat("[CONSENSUS-RELAX] %s | Regime relaxation active | qualityThreshold=%.3f | supportFloor=%.3f | factor=%.2f",
+        LOG_IF4(LOG_LEVEL_DEBUG, "[CONSENSUS-RELAX] %s | Regime relaxation active | qualityThreshold=%.3f | supportFloor=%.3f | factor=%.2f",
                     symbol, effectiveQualityThreshold, supportFloor, m_regimeRelaxFactor);
         m_regimeRelaxActive = false;
     }
@@ -1866,7 +1888,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                         buyQuorum = trendBiasThreshold;
                     else if(trendState == TREND_BULLISH_STRONG && sellScore > buyScore)
                         sellQuorum = trendBiasThreshold;
-                    PrintFormat("[CONSENSUS-TREND-BIAS] %s | Strong opposing trend detected (state=%s), quorum raised from %.2f to %.2f",
+                    LOG_IF4(LOG_LEVEL_DEBUG, "[CONSENSUS-TREND-BIAS] %s | Strong opposing trend detected (state=%s), quorum raised from %.2f to %.2f",
                                 symbol, EnumToString(trendState), trendBiasOriginalThreshold, trendBiasThreshold);
                 }
             }
@@ -1881,7 +1903,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                 sellQuorum = MathMax(0.30, sellQuorum - 0.10);
                 if(sellQuorum != originalSellQuorum)
                 {
-                    PrintFormat("[CONSENSUS-TREND-FLIP] %s | BEARISH_STRONG + BUY-only AI | SELL quorum %.2f -> %.2f",
+                    LOG_IF3(LOG_LEVEL_DEBUG, "[CONSENSUS-TREND-FLIP] %s | BEARISH_STRONG + BUY-only AI | SELL quorum %.2f -> %.2f",
                                 symbol, originalSellQuorum, sellQuorum);
                 }
             }
@@ -1892,7 +1914,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                 buyQuorum = MathMax(0.30, buyQuorum - 0.10);
                 if(buyQuorum != originalBuyQuorum)
                 {
-                    PrintFormat("[CONSENSUS-TREND-FLIP] %s | BULLISH_STRONG + SELL-only AI | BUY quorum %.2f -> %.2f",
+                    LOG_IF3(LOG_LEVEL_DEBUG, "[CONSENSUS-TREND-FLIP] %s | BULLISH_STRONG + SELL-only AI | BUY quorum %.2f -> %.2f",
                                 symbol, originalBuyQuorum, buyQuorum);
                 }
             }
@@ -3258,7 +3280,7 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::TryFallbackSoloSignal(const string
         ENUM_STRATEGY_TYPE stratType = m_strategies[i].strategy.GetType();
         bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
         
-        if(isAI && g_strategyRegistry.GetMode() == EA_MODE_INDICATOR_ONLY)
+        if(isAI && CheckPointer(g_strategyRegistry) && g_strategyRegistry.GetMode() == EA_MODE_INDICATOR_ONLY)
             continue;
         
         // Get raw signal from strategy
@@ -3685,7 +3707,7 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
             dominantCause = "raw_none";
         }
 
-        PrintFormat("[CONSENSUS-DIAG] %s | generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | vote_suppressed=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u",
+        LOG_IF8(LOG_LEVEL_DEBUG, "[CONSENSUS-DIAG] %s | generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | vote_suppressed=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u",
                     symbol,
                     intervalSignalsGenerated,
                     intervalSignalsAfterPipeline,
@@ -3695,7 +3717,7 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
                     intervalFilteredOut,
                     intervalQuorumFailed,
                     intervalIntrabarNotEligible);
-        PrintFormat("[CONSENSUS-ROOT] %s | dominant=%s | intrabar_not_eligible=%.1f%% (%I64u) | quorum_failed=%.1f%% (%I64u) | filtered_out=%.1f%% (%I64u) | raw_none=%.1f%% (%I64u) | total=%I64u",
+        LOG_IF9(LOG_LEVEL_DEBUG, "[CONSENSUS-ROOT] %s | dominant=%s | intrabar_not_eligible=%.1f%% (%I64u) | quorum_failed=%.1f%% (%I64u) | filtered_out=%.1f%% (%I64u) | raw_none=%.1f%% (%I64u) | total=%I64u",
                     symbol,
                     dominantCause,
                     pctIntrabar, intervalIntrabarNotEligible,
@@ -3703,7 +3725,7 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
                     pctFiltered, intervalFilteredOut,
                     pctRawNone, intervalRawNone,
                     reasonTotal);
-        PrintFormat("[CONSENSUS-STRATEGY] %s | momentum_none=%I64u | momentum_cooldown=%I64u | momentum_low_vol=%I64u | momentum_no_crossover=%I64u | momentum_trend_misaligned=%I64u | momentum_not_ready=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u | uict_other_filters=%I64u",
+        LOG_IF9(LOG_LEVEL_DEBUG, "[CONSENSUS-STRATEGY] %s | momentum_none=%I64u | momentum_cooldown=%I64u | momentum_low_vol=%I64u | momentum_no_crossover=%I64u | momentum_trend_misaligned=%I64u | momentum_not_ready=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u | uict_other_filters=%I64u",
                     symbol,
                     intervalMomentumNone,
                     intervalMomentumCooldown,
@@ -3714,7 +3736,7 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
                     intervalUICTNone,
                     intervalUICTNeutralBias,
                     intervalUICTOtherFilters);
-        PrintFormat("[CONSENSUS-ROLE] %s | primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | live_voters=%d | avg_participation=%.2f | dormant_live=%d | dormant_strategies=%s",
+        LOG_IF8(LOG_LEVEL_DEBUG, "[CONSENSUS-ROLE] %s | primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | live_voters=%d | avg_participation=%.2f | dormant_live=%d | dormant_strategies=%s",
                     symbol,
                     intervalRolePrimarySignals,
                     intervalRoleFeatureSignals,
@@ -3732,13 +3754,13 @@ void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbo
             datetime warnNow = TimeCurrent();
             if(s_lastDormantWarning == 0 || (warnNow - s_lastDormantWarning) >= 300)
             {
-                PrintFormat("[STRATEGY-DORMANT-WARNING] %s | dormant_live=%d | avg_participation=%.2f | More than half of strategies are dormant",
+                LOG_IF3(LOG_LEVEL_WARN, "[STRATEGY-DORMANT-WARNING] %s | dormant_live=%d | avg_participation=%.2f | More than half of strategies are dormant",
                             symbol, dormantLiveCount, avgParticipation);
                 s_lastDormantWarning = warnNow;
             }
         }
 
-        PrintFormat("[CONSENSUS-CLUSTER] %s | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
+        LOG_IF4(LOG_LEVEL_DEBUG, "[CONSENSUS-CLUSTER] %s | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
                     symbol,
                     intervalClusterTrendSignals,
                     intervalClusterMeanReversionSignals,
@@ -4046,10 +4068,6 @@ void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES t
     if(barTime <= 0)
         barTime = TimeCurrent();
 
-    CDrawingCoordinator* drawingCoordinator = GetDrawingCoordinator();
-    if(drawingCoordinator != NULL)
-        drawingCoordinator.BeginBarCycle(symbol, timeframe, barTime);
-
     // Update FourStateRegimeDetector on each new bar
     if(m_fourStateRegimeDetector != NULL && m_regimeDetectorInitialized)
     {
@@ -4071,31 +4089,7 @@ void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES t
             m_strategies[i].lastSignal = TRADE_SIGNAL_NONE;
             m_strategies[i].lastSignalConfidence = 0.0;
         }
-
-        if(drawingCoordinator != NULL)
-        {
-            int totalSignals = 0;
-            int successfulSignals = 0;
-            double accuracy = 0.0;
-            m_strategies[i].strategy.GetStatistics(totalSignals, successfulSignals, accuracy);
-
-            drawingCoordinator.RecordStrategySnapshot(
-                m_strategies[i].name,
-                m_strategies[i].enabled,
-                m_strategies[i].lastSignal,
-                m_strategies[i].lastSignalConfidence,
-                totalSignals,
-                successfulSignals,
-                accuracy,
-                m_strategies[i].lastEvaluationTime > 0
-                    ? m_strategies[i].lastEvaluationTime
-                    : m_strategies[i].strategy.GetLastSignalTime()
-            );
-        }
     }
-
-    if(drawingCoordinator != NULL)
-        drawingCoordinator.EndBarCycle();
 }
 
 //+------------------------------------------------------------------+

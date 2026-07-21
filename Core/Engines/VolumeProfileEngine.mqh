@@ -23,10 +23,11 @@ struct SVolumeProfileResult
 class CVolumeProfileEngine
 {
 private:
-    string m_symbol;
-    int    m_lookbackSessions;
-    int    m_priceResolution;
-    double m_valueAreaPercent;
+    string            m_symbol;
+    ENUM_TIMEFRAMES   m_timeframe;
+    int               m_lookbackSessions;
+    int               m_priceResolution;
+    double            m_valueAreaPercent;
 
     double m_levelPrices[];
     double m_levelVolumes[];
@@ -75,22 +76,25 @@ private:
     }
 
 public:
-    CVolumeProfileEngine() : m_symbol(""), m_lookbackSessions(20),
+    CVolumeProfileEngine() : m_symbol(""), m_timeframe(PERIOD_CURRENT),
+        m_lookbackSessions(20),
         m_priceResolution(20), m_valueAreaPercent(70.0),
         m_levelCount(0), m_initialized(false)
     {
         ZeroMemory(m_lastResult);
     }
 
-    bool Initialize(string symbol, int lookback = 20, int resolution = 20, double valueAreaPct = 70.0)
+    bool Initialize(string symbol, int lookback = 20, int resolution = 20, double valueAreaPct = 70.0,
+                    ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT)
     {
         m_symbol = symbol;
+        m_timeframe = (timeframe == PERIOD_CURRENT || timeframe == 0) ? Period() : timeframe;
         m_lookbackSessions = lookback;
         m_priceResolution = resolution;
         m_valueAreaPercent = valueAreaPct;
         ResetLevels();
         m_initialized = true;
-        Print("[VP-ENGINE] Initialized | symbol=", symbol, " | lookback=", lookback, " | resolution=", resolution, " pips");
+        Print("[VP-ENGINE] Initialized | symbol=", symbol, " | lookback=", lookback, " | resolution=", resolution, " pips | timeframe=", EnumToString(m_timeframe));
         return true;
     }
 
@@ -101,7 +105,7 @@ public:
 
         ResetLevels();
 
-        int totalBars = Bars(m_symbol, PERIOD_CURRENT);
+        int totalBars = Bars(m_symbol, m_timeframe);
         int maxBars = MathMin(totalBars, 2000);
 
         for(int i = 1; i < maxBars; i++)
@@ -190,9 +194,9 @@ public:
 
     double GetTypicalPrice(int shift)
     {
-        return (iHigh(m_symbol, PERIOD_CURRENT, shift) +
-                iLow(m_symbol, PERIOD_CURRENT, shift) +
-                iClose(m_symbol, PERIOD_CURRENT, shift)) / 3.0;
+        return (iHigh(m_symbol, m_timeframe, shift) +
+                iLow(m_symbol, m_timeframe, shift) +
+                iClose(m_symbol, m_timeframe, shift)) / 3.0;
     }
 
     bool IsInsideValueArea(double price)

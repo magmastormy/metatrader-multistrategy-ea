@@ -398,6 +398,17 @@ CPositionSizer::~CPositionSizer(void)
         CEnhancedErrorHandler::LogError(ERROR_INFO, context);
     }
     
+    // L2-004: Delete owned modifiers to prevent memory leaks and handle leaks (e.g., CADXLotModifier ADX handle)
+    for(int i = 0; i < m_modifierCount; i++)
+    {
+        if(m_modifiers[i] != NULL)
+        {
+            delete m_modifiers[i];
+            m_modifiers[i] = NULL;
+        }
+    }
+    m_modifierCount = 0;
+    
     if(m_atrHandle != INVALID_HANDLE)
     {
         IndicatorRelease(m_atrHandle);

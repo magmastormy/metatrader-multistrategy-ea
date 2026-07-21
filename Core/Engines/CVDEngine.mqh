@@ -20,10 +20,11 @@ struct SCVDResult
 class CCVDEngine
 {
 private:
-    string m_symbol;
-    int    m_divergenceLookback;
-    double m_extremeThreshold;
-    int    m_cvdMALength;
+    string            m_symbol;
+    ENUM_TIMEFRAMES   m_timeframe;
+    int               m_divergenceLookback;
+    double            m_extremeThreshold;
+    int               m_cvdMALength;
     
     // Session tracking
     datetime m_sessionStartDate;
@@ -46,7 +47,8 @@ private:
     }
     
 public:
-    CCVDEngine() : m_symbol(""), m_divergenceLookback(30),
+    CCVDEngine() : m_symbol(""), m_timeframe(PERIOD_CURRENT),
+        m_divergenceLookback(30),
         m_extremeThreshold(2.0), m_cvdMALength(20),
         m_sessionStartDate(0), m_lastProcessedBarTime(0), m_sessionCVD(0),
         m_historyIndex(0), m_historySize(200), m_initialized(false)
@@ -54,9 +56,11 @@ public:
         ZeroMemory(m_lastResult);
     }
     
-    bool Initialize(string symbol, int divLookback = 30, double extremeThresh = 2.0, int cvdMALen = 20)
+    bool Initialize(string symbol, int divLookback = 30, double extremeThresh = 2.0, int cvdMALen = 20,
+                    ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT)
     {
         m_symbol = symbol;
+        m_timeframe = (timeframe == PERIOD_CURRENT || timeframe == 0) ? Period() : timeframe;
         m_divergenceLookback = divLookback;
         m_extremeThreshold = extremeThresh;
         m_cvdMALength = cvdMALen;
@@ -67,7 +71,7 @@ public:
         ArrayInitialize(m_priceHistory, 0);
         ResetSession();
         m_initialized = true;
-        Print("[CVD-ENGINE] Initialized | symbol=", symbol, " | divLookback=", divLookback);
+        Print("[CVD-ENGINE] Initialized | symbol=", symbol, " | divLookback=", divLookback, " | timeframe=", EnumToString(m_timeframe));
         return true;
     }
     
@@ -77,7 +81,7 @@ public:
         if(!m_initialized) return m_lastResult;
         
         // Check for session reset
-        datetime currentBarTime = iTime(m_symbol, PERIOD_CURRENT, 0);
+        datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
         MqlDateTime dt;
         TimeToStruct(currentBarTime, dt);
         datetime currentDay = StringToTime(IntegerToString(dt.year) + "." + IntegerToString(dt.mon) + "." + IntegerToString(dt.day));
@@ -97,11 +101,11 @@ public:
         m_lastProcessedBarTime = currentBarTime;
         
         // Calculate delta for recent bars
-        for(int i = 1; i <= MathMin(m_divergenceLookback, Bars(m_symbol, PERIOD_CURRENT) - 1); i++)
+        for(int i = 1; i <= MathMin(m_divergenceLookback, Bars(m_symbol, m_timeframe) - 1); i++)
         {
-            double open = iOpen(m_symbol, PERIOD_CURRENT, i);
-            double close = iClose(m_symbol, PERIOD_CURRENT, i);
-            double volume = (double)iVolume(m_symbol, PERIOD_CURRENT, i);
+            double open = iOpen(m_symbol, m_timeframe, i);
+            double close = iClose(m_symbol, m_timeframe, i);
+            double volume = (double)iVolume(m_symbol, m_timeframe, i);
             
             // Classify bar: close > open = buy volume, close < open = sell volume
             double delta = 0;
@@ -120,8 +124,8 @@ public:
         }
         
         m_lastResult.cvd = m_sessionCVD;
-        m_lastResult.delta = (iClose(m_symbol, PERIOD_CURRENT, 1) > iOpen(m_symbol, PERIOD_CURRENT, 1)) ? 
-                             (double)iVolume(m_symbol, PERIOD_CURRENT, 1) : -(double)iVolume(m_symbol, PERIOD_CURRENT, 1);
+        m_lastResult.delta = (iClose(m_symbol, m_timeframe, 1) > iOpen(m_symbol, m_timeframe, 1)) ? 
+                             (double)iVolume(m_symbol, m_timeframe, 1) : -(double)iVolume(m_symbol, m_timeframe, 1);
         
         // Calculate CVD MA — Batch 117: include zero values (valid CVD reading)
         double sum = 0;
@@ -151,8 +155,8 @@ public:
         if(m_historyIndex >= m_divergenceLookback)
         {
             // Price making lower low but CVD making higher low = bullish divergence
-            double priceNow = iClose(m_symbol, PERIOD_CURRENT, 1);
-            double priceThen = iClose(m_symbol, PERIOD_CURRENT, m_divergenceLookback);
+            double priceNow = iClose(m_symbol, m_timeframe, 1);
+            double priceThen = iClose(m_symbol, m_timeframe, m_divergenceLookback);
             double cvdNow = m_sessionCVD;
             double cvdThen = m_cvdHistory[(m_historyIndex + m_historySize - m_divergenceLookback) % m_historySize];
             

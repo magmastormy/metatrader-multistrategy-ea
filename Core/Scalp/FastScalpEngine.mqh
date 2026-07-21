@@ -131,7 +131,7 @@ private:
 
    datetime                  m_lastScalpTime;        // Last scalp entry time
    double                    m_usedScalpRiskPct;     // Tracked scalp risk budget used
-   uint                      m_magicNumber;          // EA magic number for pending orders
+   long                      m_magicNumber;          // EA magic number for pending orders — Batch 125: changed from uint to long
    bool                      m_initialized;
 
    // Pending order tracking
@@ -641,7 +641,7 @@ public:
    //+------------------------------------------------------------------+
    //| Set magic number for pending orders                               |
    //+------------------------------------------------------------------+
-   void SetMagicNumber(uint magic) { m_magicNumber = magic; }
+   void SetMagicNumber(long magic) { m_magicNumber = magic; }
 
    //+------------------------------------------------------------------+
    //| Set external signal cache for fast-path evaluation                |

@@ -13,7 +13,6 @@
 #include <ChartObjects\ChartObjectsShapes.mqh>
 #include <ChartObjects\ChartObjectsArrows.mqh>
 #include <ChartObjects\ChartObjectsTxtControls.mqh>
-#include "DrawingCoordinator.mqh"
 
 //+------------------------------------------------------------------+
 //| Color Palette - Professional & Consistent                        |
@@ -353,13 +352,9 @@ string CChartDrawingManager::GenerateObjectName(const string objectType, const s
 //| 1. Called at start of every drawing operation                     |
 //| 2. Checks per-strategy object limits (maxObjectsPerStrategy)     |
 //| 3. Enforces global MT5 1000-object limit via CheckObjectLimit    |
-//| 4. Coordinates with DrawingCoordinator for prefix management      |
 //|                                                                   |
 //| IMPORTANT: This method MUST be called before ANY drawing.         |
 //| Failure to call will bypass object limit enforcement.             |
-//|                                                                   |
-//| COORDINATOR BEHAVIOR:                                            |
-//| - PreparePrefixForCurrentBar() deletes ALL objects with prefix  |
 //| - This is INTENTIONALLY destructive - it's a per-bar snapshot    |
 //| - Ensures no stale objects from previous bars remain              |
 //| - Safe to call multiple times (deduplicates by bar time)          |
@@ -377,13 +372,6 @@ bool CChartDrawingManager::PrepareSnapshotDraw()
     }
 
     CheckObjectLimitAndCleanup();
-    CDrawingCoordinator* coordPtr = GetDrawingCoordinator();
-    if(coordPtr != NULL)
-    {
-        bool result = coordPtr.PreparePrefixForCurrentBar(m_chartID, m_symbol, m_timeframe, m_prefix);
-        if(!result)
-            return false;
-    }
     return true;
 }
 

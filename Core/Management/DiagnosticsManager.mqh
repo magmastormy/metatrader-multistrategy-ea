@@ -448,12 +448,12 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             return;
 
         //--- Core heartbeat line
-        PrintFormat("[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | spike_events=%I64u | pause_active=%s",
+        LOG_IF9(LOG_LEVEL_INFO, "[HEARTBEAT] scans=%I64u | intrabar=%I64u | no_signal=%I64u | validator_reject=%I64u | risk_reject=%I64u | trades_opened=%I64u | spike_events=%I64u | pause_active=%s",
                     m_hbScansAttempted, m_hbIntrabarScansExecuted, m_hbNoSignalCount,
                     m_hbValidatorRejects, m_hbRiskRejects, m_hbTradesOpened, m_hbSyntheticSpikeEvents,
                     m_tradingPaused ? "true" : "false");
 
-        PrintFormat("[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | signals_sent=%I64u",
+        LOG_IF6(LOG_LEVEL_INFO, "[HEARTBEAT-FUNNEL] signals_generated=%I64u | signals_after_pipeline=%I64u | signals_after_quorum=%I64u | signals_validated=%I64u | signals_risk_approved=%I64u | signals_sent=%I64u",
                     m_hbSignalsGenerated, m_hbSignalsAfterPipeline, m_hbSignalsAfterQuorum,
                     m_hbSignalsValidated, m_hbSignalsRiskApproved, m_hbSignalsSent);
 
@@ -477,7 +477,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                     // Non-Deriv symbol: log asset class info
                     string assetClassName = m_multiAssetProfiler.GetAssetClassName(m_symbols[i]);
                     SAssetProfile profile = m_multiAssetProfiler.GetProfile(m_symbols[i]);
-                    PrintFormat("[HEARTBEAT-ASSET-CLASS] symbol=%s | class=%s | atrSL=%.2f | atrTP=%.2f | risk=%.2f%% | scalp=%s | grid=%s | breakout=%s",
+                    LOG_IF8(LOG_LEVEL_DEBUG, "[HEARTBEAT-ASSET-CLASS] symbol=%s | class=%s | atrSL=%.2f | atrTP=%.2f | risk=%.2f%% | scalp=%s | grid=%s | breakout=%s",
                                 m_symbols[i], assetClassName,
                                 profile.atrMultiplierSL, profile.atrMultiplierTP,
                                 profile.riskPerTrade,
@@ -489,7 +489,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                 {
                     // Deriv synthetic: log family info
                     string familyName = m_derivProfiler.GetFamilyName(m_symbols[i]);
-                    PrintFormat("[HEARTBEAT-FAMILY] symbol=%s | family=%s", m_symbols[i], familyName);
+                    LOG_IF2(LOG_LEVEL_DEBUG, "[HEARTBEAT-FAMILY] symbol=%s | family=%s", m_symbols[i], familyName);
                 }
             }
         }
@@ -509,7 +509,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             if(StringFind(comment, "ATR-SCALP") >= 0)
                 atrScalpCount++;
         }
-        PrintFormat("[HEARTBEAT-POSITIONS] total=%d | grid_recovery=%d | atr_scalp=%d",
+        LOG_IF3(LOG_LEVEL_INFO, "[HEARTBEAT-POSITIONS] total=%d | grid_recovery=%d | atr_scalp=%d",
                     totalPositions, gridRecoveryCount, atrScalpCount);
 
         // NOTE: Consensus diagnostics are now handled by EmitConsensusDiagnostics()
@@ -532,7 +532,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         double rateSent          = (windowRiskApproved > 0) ? (100.0 * (double)windowSent / (double)windowRiskApproved) : 0.0;
         double noSignalRate      = (windowScans > 0)        ? (100.0 * (double)windowNoSignal / (double)windowScans) : 0.0;
 
-        PrintFormat("[CONVERSION-RATES] window_scans=%I64u | generated=%I64u | after_pipeline=%.1f%% | after_quorum=%.1f%% | validated=%.1f%% | risk_approved=%.1f%% | sent=%.1f%% | no_signal=%.1f%%",
+        LOG_IF8(LOG_LEVEL_INFO, "[CONVERSION-RATES] window_scans=%I64u | generated=%I64u | after_pipeline=%.1f%% | after_quorum=%.1f%% | validated=%.1f%% | risk_approved=%.1f%% | sent=%.1f%% | no_signal=%.1f%%",
                     windowScans, windowGenerated,
                     rateAfterPipeline, rateAfterQuorum, rateValidated,
                     rateRiskApproved, rateSent, noSignalRate);
@@ -541,7 +541,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         if(windowScans >= 20 && noSignalRate >= 80.0 &&
            (m_lastNoSignalAlertTime == 0 || (hbNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
         {
-            PrintFormat("[NO-SIGNAL-ALERT] window_scans=%I64u | no_signal=%I64u (%.1f%%) | no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u",
+            LOG_IF6(LOG_LEVEL_WARN, "[NO-SIGNAL-ALERT] window_scans=%I64u | no_signal=%I64u (%.1f%%) | no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u",
                         windowScans, windowNoSignal, noSignalRate,
                         m_hbQuietNoNewBar, m_hbQuietCadenceHold, m_hbQuietMissingManager);
             m_lastNoSignalAlertTime = hbNow;
@@ -551,7 +551,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         if(m_riskManager != NULL)
         {
             SUnifiedRiskSnapshot heartbeatRisk = m_riskManager.GetSnapshot();
-            PrintFormat("[RISK-BUDGET] effective=%.2f/%.2f | entry=%.2f | mtm=%.2f | open_exposure=%.2f | conservative=%s | emergency=%s",
+            LOG_IF8(LOG_LEVEL_INFO, "[RISK-BUDGET] effective=%.2f/%.2f | entry=%.2f | mtm=%.2f | open_exposure=%.2f | conservative=%s | emergency=%s",
                         heartbeatRisk.dailyRiskUsedPercent,
                         heartbeatRisk.maxDailyRiskPercent,
                         heartbeatRisk.dailyEntryRiskUsedPercent,
@@ -600,7 +600,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             // The actual NN health logging is kept minimal here.
             // Detailed NN health is handled by the main EA's existing NN health path
             // which has access to the full strategy objects.
-            PrintFormat("[NN-HEALTH] idx=%d | active", nnIdx);
+            LOG_IF1(LOG_LEVEL_DEBUG, "[NN-HEALTH] idx=%d | active", nnIdx);
         }
 
         m_lastNNHealthLogTime = hbNow;
@@ -683,7 +683,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                             clusterStructureSignals,
                                             clusterNoneSignals);
 
-        PrintFormat("[CONSENSUS-SNAPSHOT] generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u",
+        LOG_IF8(LOG_LEVEL_DEBUG, "[CONSENSUS-SNAPSHOT] generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u",
                     diagSignalsGenerated,
                     diagSignalsAfterPipeline,
                     diagSignalsAfterQuorum,
@@ -692,7 +692,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                     diagQuorumFailed,
                     diagIntrabarNotEligible,
                     diagReasonTotal);
-        PrintFormat("[STRATEGY-REJECTS] momentum_none=%I64u | momentum_cooldown=%I64u | momentum_low_vol=%I64u | momentum_no_crossover=%I64u | momentum_trend_misaligned=%I64u | momentum_not_ready=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u | uict_other_filters=%I64u",
+        LOG_IF9(LOG_LEVEL_DEBUG, "[STRATEGY-REJECTS] momentum_none=%I64u | momentum_cooldown=%I64u | momentum_low_vol=%I64u | momentum_no_crossover=%I64u | momentum_trend_misaligned=%I64u | momentum_not_ready=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u | uict_other_filters=%I64u",
                     diagMomentumNone,
                     diagMomentumCooldown,
                     diagMomentumLowVolatility,
@@ -702,7 +702,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                     diagUICTNone,
                     diagUICTNeutralBias,
                     diagUICTOtherFilters);
-        PrintFormat("[ROLE-CLUSTER] primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
+        LOG_IF8(LOG_LEVEL_DEBUG, "[ROLE-CLUSTER] primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
                     rolePrimarySignals,
                     roleFeatureSignals,
                     roleShadowSignals,
@@ -711,7 +711,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                     clusterMeanReversionSignals,
                     clusterStructureSignals,
                     clusterNoneSignals);
-        PrintFormat("[QUIET-REASONS] no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u | entry_blocked=%I64u | sizing=%I64u",
+        LOG_IF8(LOG_LEVEL_DEBUG, "[QUIET-REASONS] no_new_bar=%I64u | cadence_hold=%I64u | missing_manager=%I64u | no_signal=%I64u | validator=%I64u | risk=%I64u | entry_blocked=%I64u | sizing=%I64u",
                     quietNoNewBar,
                     quietCadenceHold,
                     quietMissingManager,
@@ -730,7 +730,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
            noSignalRate >= 80.0 &&
            (m_lastNoSignalAlertTime == 0 || (hbNow - m_lastNoSignalAlertTime) >= m_heartbeatIntervalSec))
         {
-            PrintFormat("[NO-SIGNAL-ALERT-CONSENSUS] window_scans=%I64u | no_signal=%I64u (%.1f%%) | dominant=%s | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u | momentum_none=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u",
+            LOG_IF12(LOG_LEVEL_WARN, "[NO-SIGNAL-ALERT-CONSENSUS] window_scans=%I64u | no_signal=%I64u (%.1f%%) | dominant=%s | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u | reason_total=%I64u | momentum_none=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u",
                         windowScans,
                         windowNoSignal,
                         noSignalRate,

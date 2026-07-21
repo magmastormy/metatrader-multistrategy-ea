@@ -337,67 +337,70 @@ bool CTrendEngine::Initialize(int maFast, int maMedium, int maSlow,
 //+------------------------------------------------------------------+
 bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
+    // Resolve PERIOD_CURRENT to actual chart timeframe
+    ENUM_TIMEFRAMES resolvedTimeframe = (timeframe == PERIOD_CURRENT || timeframe == 0) ? Period() : timeframe;
+    
     bool useAdxModel = UsesAdxTrendModel(symbol);
     bool handlesReady = (m_handleMAFast != INVALID_HANDLE &&
                          m_handleMAMedium != INVALID_HANDLE &&
                          m_handleMASlow != INVALID_HANDLE &&
                          (!useAdxModel || m_handleADX != INVALID_HANDLE) &&
                          m_handleATR != INVALID_HANDLE);
-    bool contextMatches = (m_indicatorSymbol == symbol && m_indicatorTimeframe == timeframe);
+    bool contextMatches = (m_indicatorSymbol == symbol && m_indicatorTimeframe == resolvedTimeframe);
     if(handlesReady && contextMatches)
         return true;
 
     // Context changed or handles missing - rebuild once.
-    ReleaseIndicators();
-    m_indicatorSymbol = symbol;
-    m_indicatorTimeframe = timeframe;
-    
-    // Create new indicators
-    m_handleMAFast = iMA(symbol, timeframe, m_maPeriodFast, 0, MODE_EMA, PRICE_CLOSE);
-    if(m_handleMAFast == INVALID_HANDLE)
-    {
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogStrategyError("TrendEngine", "MA_FAST_INIT_FAILED", 
-                                          "Failed to create fast MA indicator");
-        return false;
-    }
-    
-    m_handleMAMedium = iMA(symbol, timeframe, m_maPeriodMedium, 0, MODE_EMA, PRICE_CLOSE);
-    if(m_handleMAMedium == INVALID_HANDLE)
-    {
         ReleaseIndicators();
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogStrategyError("TrendEngine", "MA_MEDIUM_INIT_FAILED",
-                                          "Failed to create medium MA indicator");
-        return false;
-    }
+        m_indicatorSymbol = symbol;
+        m_indicatorTimeframe = resolvedTimeframe;
     
-    m_handleMASlow = iMA(symbol, timeframe, m_maPeriodSlow, 0, MODE_EMA, PRICE_CLOSE);
-    if(m_handleMASlow == INVALID_HANDLE)
-    {
-        ReleaseIndicators();
-        if(m_diagnostics != NULL)
-            m_diagnostics.LogStrategyError("TrendEngine", "MA_SLOW_INIT_FAILED",
-                                          "Failed to create slow MA indicator");
-        return false;
-    }
+        // Create new indicators
+        m_handleMAFast = iMA(symbol, resolvedTimeframe, m_maPeriodFast, 0, MODE_EMA, PRICE_CLOSE);
+        if(m_handleMAFast == INVALID_HANDLE)
+        {
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("TrendEngine", "MA_FAST_INIT_FAILED", 
+                                              "Failed to create fast MA indicator");
+            return false;
+        }
     
-    if(useAdxModel)
-    {
-        m_handleADX = iADX(symbol, timeframe, m_adxPeriod);
-        if(m_handleADX == INVALID_HANDLE)
+        m_handleMAMedium = iMA(symbol, resolvedTimeframe, m_maPeriodMedium, 0, MODE_EMA, PRICE_CLOSE);
+        if(m_handleMAMedium == INVALID_HANDLE)
         {
             ReleaseIndicators();
             if(m_diagnostics != NULL)
-                m_diagnostics.LogStrategyError("TrendEngine", "ADX_INIT_FAILED",
-                                              "Failed to create ADX indicator");
+                m_diagnostics.LogStrategyError("TrendEngine", "MA_MEDIUM_INIT_FAILED",
+                                              "Failed to create medium MA indicator");
             return false;
         }
-    }
-    else
-        m_handleADX = INVALID_HANDLE;
     
-    m_handleATR = iATR(symbol, timeframe, 14);
+        m_handleMASlow = iMA(symbol, resolvedTimeframe, m_maPeriodSlow, 0, MODE_EMA, PRICE_CLOSE);
+        if(m_handleMASlow == INVALID_HANDLE)
+        {
+            ReleaseIndicators();
+            if(m_diagnostics != NULL)
+                m_diagnostics.LogStrategyError("TrendEngine", "MA_SLOW_INIT_FAILED",
+                                              "Failed to create slow MA indicator");
+            return false;
+        }
+    
+        if(useAdxModel)
+        {
+            m_handleADX = iADX(symbol, resolvedTimeframe, m_adxPeriod);
+            if(m_handleADX == INVALID_HANDLE)
+            {
+                ReleaseIndicators();
+                if(m_diagnostics != NULL)
+                    m_diagnostics.LogStrategyError("TrendEngine", "ADX_INIT_FAILED",
+                                                  "Failed to create ADX indicator");
+                return false;
+            }
+        }
+        else
+            m_handleADX = INVALID_HANDLE;
+    
+        m_handleATR = iATR(symbol, resolvedTimeframe, 14);
     if(m_handleATR == INVALID_HANDLE)
     {
         ReleaseIndicators();

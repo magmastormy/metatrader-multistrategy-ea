@@ -1,7 +1,7 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-122-green)
+![Batch](https://img.shields.io/badge/batch-126-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
 ![Strategies](https://img.shields.io/badge/strategies-15-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
@@ -17,6 +17,8 @@ Designed for production: every trade entry passes through a multi-layer pre-trad
 **Academic Rigor (Batch 122):** Complete modular architecture migration with 6 registries and 8 orchestration modules. All critical bugs fixed — magic number overflow protection, PERIOD_CURRENT misuse in ATR calculations (4 locations), memory leaks in strategy registration (20+ allocation paths), MQL5 API error handling, and resource cleanup verification. ~2,000 lines of dead code removed from main EA. System compiles with 0 errors, 11 warnings (style only).
 
 **Phase 4 Observability (Batch 123):** Structured JSON logging with correlation IDs, PERIOD_CURRENT audit complete (all indicator calls validated), CIndicatorManager FindHandle paramCount fix, unit test scaffolding for core math modules.
+
+**Layer 2 Initialization & Lifecycle Audit (Batch 126):** Two-phase enterprise manager initialization documented, verbose diagnostics gated behind log levels via LOG_IF macro, pipeline dependencies documented for InpUseSignalPipeline.
 
 ## Key Features
 

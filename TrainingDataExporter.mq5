@@ -30,6 +30,8 @@
 #include "Strategies\VolatilityBreakoutStrategy.mqh"
 
 //--- Management includes
+#include "Core\Strategy\StrategyRegistry.mqh"
+CStrategyRegistry* g_strategyRegistry = NULL;
 #include "Core\Management\EnterpriseStrategyManager.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"

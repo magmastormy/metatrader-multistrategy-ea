@@ -124,6 +124,18 @@ enum ENUM_ERROR_LEVEL
     ERROR_LEVEL_CRITICAL = 3      // Critical error
 };
 
+//+------------------------------------------------------------------+
+//| Log Level Enumeration (L2-028: Gate verbose PrintFormat)        |
+//+------------------------------------------------------------------+
+enum ENUM_LOG_LEVEL
+{
+    LOG_LEVEL_NONE = 0,      // No logging
+    LOG_LEVEL_ERROR = 1,     // Errors only
+    LOG_LEVEL_WARNING = 2,   // Errors + warnings
+    LOG_LEVEL_INFO = 3,      // Errors + warnings + info
+    LOG_LEVEL_DEBUG = 4,     // All including debug/verbose
+    LOG_LEVEL_TRACE = 5      // Everything including trace/heartbeat diagnostics
+};
 
 //+------------------------------------------------------------------+
 //| Risk Management Enumeration                                     |
@@ -755,5 +767,38 @@ string EscapeJsonString(const string &str)
     StringReplace(result, "\t", "\\t");
     return result;
 }
+
+//+------------------------------------------------------------------+
+//| Log Level Constants (mapped to g_logLevel 0-4 scale)            |
+//+------------------------------------------------------------------+
+// g_logLevel: 0=Silent, 1=Errors, 2=Normal/Info, 3=Verbose/Debug, 4=Trace
+#define LOG_LEVEL_SILENT    0
+#define LOG_LEVEL_ERROR     1
+#define LOG_LEVEL_WARN      1
+#define LOG_LEVEL_INFO      2
+#define LOG_LEVEL_DEBUG     3
+#define LOG_LEVEL_TRACE     4
+
+//+------------------------------------------------------------------+
+//| Conditional Logging Macro (L2-028: Gate verbose PrintFormat)    |
+//+------------------------------------------------------------------+
+// Uses existing g_logLevel (int 0-4) mapped to ENUM_LOG_VERBOSITY
+// MQL5 doesn't support variadic macros, so we define multiple overloads
+#define LOG_IF0(verbosity, format) do { if(g_logLevel >= (int)verbosity) PrintFormat(format); } while(0)
+#define LOG_IF1(verbosity, format, arg1) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1); } while(0)
+#define LOG_IF2(verbosity, format, arg1, arg2) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2); } while(0)
+#define LOG_IF3(verbosity, format, arg1, arg2, arg3) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3); } while(0)
+#define LOG_IF4(verbosity, format, arg1, arg2, arg3, arg4) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4); } while(0)
+#define LOG_IF5(verbosity, format, arg1, arg2, arg3, arg4, arg5) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5); } while(0)
+#define LOG_IF6(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6); } while(0)
+#define LOG_IF7(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7); } while(0)
+#define LOG_IF8(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8); } while(0)
+#define LOG_IF9(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9); } while(0)
+#define LOG_IF10(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10); } while(0)
+#define LOG_IF11(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11); } while(0)
+#define LOG_IF12(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12); } while(0)
+
+// Auto-select macro based on argument count (using MSVC-style __VA_ARGS__ count trick doesn't work in MQL5)
+// Users must use LOG_IF0, LOG_IF1, etc. explicitly based on number of format args
 
 #endif // CORE_ENUMS_MQH

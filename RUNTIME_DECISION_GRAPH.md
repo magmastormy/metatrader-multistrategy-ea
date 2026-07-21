@@ -811,7 +811,12 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
   - 2: Normal (consensus + risk)
   - 3: Detailed (execution quality, sizing decisions)
   - 4: Verbose (all diagnostics)
-- Applied in `CTradeManager`, `CPositionSizer`, and EA heartbeat paths
+- Applied in `CTradeManager`, `CPositionSizer`, EA heartbeat paths, and via `LOG_IF` macro in `Core/Utils/Enums.mqh`
+- `LOG_IF` macro (Batch 126) provides compile-time gating for verbose PrintFormat in hot paths:
+  - `Core/Management/DiagnosticsManager.mqh` — heartbeat, consensus, conversion rates, risk budget, asset class/family diagnostics
+  - `Core/Management/EnterpriseStrategyManager.mqh` — consensus diagnostics (CONSENSUS-DIAG, ROOT, STRATEGY, ROLE, CLUSTER, SCORE, RELAX, TREND-BIAS, TREND-FLIP, SOLO, MARGINAL-TIGHTEN, QUORUM, SPARSE, NEARMISS, VETO, ACTIVE), VPIN, family weights, AI uncertainty discount
+  - `Core/Pipeline/UnifiedSignalPipeline.mqh` — cache, threshold, cost gate, entry veto, health check
+- Log levels map: ERROR(0) → WARN(1) → INFO(2) → DEBUG(3) → VERBOSE(4) matching InpLogLevel
 
 ## AI Runtime Path
 - `CNextGenStrategyBrain` now runs in a single local transformer mode; there is no runtime Python/cloud branch.

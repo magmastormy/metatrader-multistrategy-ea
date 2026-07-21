@@ -66,17 +66,28 @@ private:
     double m_signalQuality;
 
     // Internal state
-    datetime m_lastBarTime;
-    datetime m_lastLogTime;
-    bool     m_warmedUp;
-    int      m_barCount;
+        datetime m_lastBarTime;
+        datetime m_lastLogTime;
+        bool     m_warmedUp;
+        int      m_barCount;
+        bool     m_timeframeResolved;  // Track if PERIOD_CURRENT has been resolved
 
-    SOUSnapshot m_lastSnapshot;
+        SOUSnapshot m_lastSnapshot;
 
-    //--- Private estimation methods
-    bool EstimateParameters(const double &series[], int count);
-    double ComputeSignalQuality(double thetaTStat, double halfLife, const double &residuals[], int resCount);
-    double JarqueBeraStatistic(const double &residuals[], int count);
+        //--- Private estimation methods
+        bool EstimateParameters(const double &series[], int count);
+        double ComputeSignalQuality(double thetaTStat, double halfLife, const double &residuals[], int resCount);
+        double JarqueBeraStatistic(const double &residuals[], int count);
+
+        // Resolve PERIOD_CURRENT to actual chart timeframe
+        void ResolveTimeframe()
+        {
+            if(!m_timeframeResolved && (m_timeframe == PERIOD_CURRENT || m_timeframe == 0))
+            {
+                m_timeframe = Period();
+                m_timeframeResolved = true;
+            }
+        }
 
 public:
     COrnsteinUhlenbeckEngine(const string symbol,
@@ -130,7 +141,8 @@ COrnsteinUhlenbeckEngine::COrnsteinUhlenbeckEngine(
     m_lastBarTime(0),
     m_lastLogTime(0),
     m_warmedUp(false),
-    m_barCount(0)
+    m_barCount(0),
+    m_timeframeResolved(false)
 {
 }
 
@@ -146,6 +158,9 @@ COrnsteinUhlenbeckEngine::~COrnsteinUhlenbeckEngine()
 //+------------------------------------------------------------------+
 bool COrnsteinUhlenbeckEngine::Update()
 {
+    // Resolve PERIOD_CURRENT on first call
+    ResolveTimeframe();
+
     // Bar-change guard — skip if same bar
     datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
     if(currentBarTime <= 0)

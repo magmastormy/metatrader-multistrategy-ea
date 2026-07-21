@@ -888,6 +888,7 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     result.portfolioRisk = CalculatePortfolioRiskAfterTrade(tradeRisk);
     result.severity = ERROR_LEVEL_INFO;
     m_approvedCount++;
+    m_validationCount++;
     
     LogValidationResult(request, result);
     UpdatePerformanceMetrics(GetMicrosecondCount());
@@ -3117,7 +3118,11 @@ void CUnifiedRiskManager::UpdatePerformanceMetrics(const ulong startTimeParam)
     if(endTime >= startTimeParam)
         validationTime = (double)(endTime - startTimeParam) / 1000.0; // microseconds -> milliseconds
     
-    if(m_validationCount == 1)
+    if(m_validationCount <= 0)
+    {
+        m_avgValidationTime = validationTime;
+    }
+    else if(m_validationCount == 1)
     {
         m_avgValidationTime = validationTime;
     }

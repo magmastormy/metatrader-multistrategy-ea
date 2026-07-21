@@ -1,6 +1,112 @@
 # Changelogs
 
-## 2026-07-13 — Batch 124: Shadow Mode & Dormancy/Blacklist Complete Removal + Four-State Regime Detection Integration
+## 2026-07-21 — Batch 126: Layer 2 Initialization & Lifecycle Audit — Fixes & Improvements
+
+### Scope
+Implemented fixes for Layer 2 Initialization & Lifecycle Audit (AUDIT_Layer2_Initialization.md) medium/low severity issues and code quality improvements.
+
+### Fixes Applied
+
+**L2-023: Document Two-Phase Initialization for Enterprise Manager**
+- Added comprehensive comment block to `CEnterpriseStrategyManager::Initialize()` documenting the two-phase pattern:
+  - Phase 1 (Required): Core infrastructure — Pipeline, TimeframeConsistency (must succeed)
+  - Phase 2 (Optional): Enhancements — FourStateRegimeDetector, FamilyWeightMatrix, VPINFilter, OFIEngine (degrade gracefully)
+- File: `Core/Management/EnterpriseStrategyManager.mqh`
+
+**L2-028: Gate Verbose PrintFormat Behind Log Level Checks**
+- Added `ENUM_LOG_VERBOSITY` reference and `LOG_IF` macro in `Core/Utils/Enums.mqh`
+- Applied `LOG_IF` to verbose diagnostic logs in hot paths across:
+  - `Core/Management/DiagnosticsManager.mqh` — Heartbeat, consensus, conversion rates, risk budget, asset class, family diagnostics
+  - `Core/Management/EnterpriseStrategyManager.mqh` — Consensus diagnostics (CONSENSUS-DIAG, ROOT, STRATEGY, ROLE, CLUSTER, SCORE, RELAX, TREND-BIAS, TREND-FLIP, SOLO, MARGINAL-TIGHTEN, QUORUM, SPARSE, NEARMISS, VETO, ACTIVE), VPIN, family weights, AI uncertainty discount, regime weights
+  - `Core/Pipeline/UnifiedSignalPipeline.mqh` — Cache, threshold, cost gate, entry veto, health check
+- Log levels: ERROR=0, WARN=1, INFO=2, DEBUG=3 (maps to existing `g_logLevel` / `InpLogLevel` 0-4)
+
+**L2-029: Document Pipeline Dependency Requirements**
+- Added input parameter comment for `InpUseSignalPipeline` in `MultiStrategyAutonomousEA.mq5`
+- Documents that pipeline requires Trend, Structure, Liquidity, Volatility, Regime engines
+- OnInit returns INIT_FAILED if pipeline initialization fails
+
+### Files Changed
+- `Core/Utils/Enums.mqh` — Added LOG_IF macro
+- `Core/Management/DiagnosticsManager.mqh` — Gated heartbeat/consensus logs
+- `Core/Management/EnterpriseStrategyManager.mqh` — Documented two-phase init; gated consensus diagnostics
+- `Core/Pipeline/UnifiedSignalPipeline.mqh` — Gated cache/threshold/cost-gate/veto/health logs
+- `MultiStrategyAutonomousEA.mq5` — Documented pipeline dependencies
+
+### Runtime Invariants Preserved (AGENTS.md §3)
+1. ✅ All trade entries pass `CUnifiedRiskManager` pre-trade gating
+2. ✅ Runtime execution remains `CTradeManager`-owned
+3. ✅ Position lifecycle remains EA-loop-owned
+4. ✅ Strategy decisioning remains symbol-scoped manager consensus
+
+### Validation Checklist (AGENTS.md §6)
+- ✅ Compile passes
+- ✅ Log evidence: [HEARTBEAT], [CONSENSUS-DIAG], [AI-VOTE] (when AI enabled), [PIPELINE-HEALTH] gated by log level
+- ✅ No compile artifacts left
+
+---
+
+## 2026-07-20 — Batch 125: PERIOD_CURRENT Fix — 13-Layer Audit Critical Resolution
+
+### Scope
+Resolved `PERIOD_CURRENT` misuse across 3 institutional TA engines (ISS-501) — the sole genuinely critical finding from the comprehensive 13-layer codebase audit. Corrected inaccurate audit findings (3 of 5 claimed "CRITICAL" were already addressed). Added explicit `ENUM_TIMEFRAMES m_timeframe` resolution pattern to VWAPEngine, CVDEngine, and VolumeProfileEngine.
+
+### Root Cause
+`PERIOD_CURRENT` (integer value 0) is a MetaTrader 5 keyword that resolves to the current chart timeframe at **compile time** when used in indicator code. However, when passed directly to MQL5 bar-access functions (`iHigh`, `iLow`, `iClose`, `iVolume`, `iTime`, `iOpen`, `Bars`) from standalone (non-indicator) classes, the value 0 produces undefined behavior. In backtester and non-chart EA execution, this causes silent timeframe mismatches and stale data reads.
+
+### Fix Pattern
+All affected engines now follow the same resolution pattern:
+```cpp
+// Private member
+ENUM_TIMEFRAMES m_timeframe;
+
+// Constructor: store PERIOD_CURRENT as sentinel
+Engine() : m_timeframe(PERIOD_CURRENT) { }
+
+// Initialize: resolve sentinel to actual chart period
+bool Initialize(..., ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT)
+{
+    m_timeframe = (timeframe == PERIOD_CURRENT || timeframe == 0)
+                  ? Period() : timeframe;
+    ...
+}
+
+// All bar-access calls use m_timeframe (never PERIOD_CURRENT)
+```
+
+### Files Changed
+- `Core/Engines/VWAPEngine.mqh` — `GetTypicalPrice()`, `GetVolume()`, `Calculate()`: 8 call sites
+- `Core/Engines/CVDEngine.mqh` — `Calculate()`: 10 call sites (iOpen, iClose, iVolume, iTime, Bars)
+- `Core/Engines/VolumeProfileEngine.mqh` — `GetTypicalPrice()`, `Calculate()`: 4 call sites (iHigh, iLow, iClose, Bars)
+
+### Audit Cross-Validation — Findings Reassessed
+| Finding | Original Claim | Reassessment |
+|---------|---------------|-------------|
+| ISS-501 PERIOD_CURRENT | CRITICAL | **Confirmed & Fixed** — 3 engines affected |
+| ISS-1201 Shadow remnants | CRITICAL | **Already fixed** — tags renamed, executeAsShadow → AUTHORITY-SKIP |
+| ISS-1301/1001 Scalp risk bypass | CRITICAL | **Already addressed** — ShouldEnterScalp() calls ValidateTradeRequest() at line 844 |
+| ISS-1302 Dead dormancy/blacklist | Claimed CRITICAL | **False** — Code is actively used runtime functionality, not dead |
+| ISS-802 Drawing manager leak | Claimed CRITICAL | **Already fixed** — Cleaned in ReleaseEnterpriseManagers() called from OnDeinit |
+| ISS-504/507/508/509/510 other engines | MEDIUM | **Not applicable** — These use PERIOD_CURRENT as constructor default parameter, not in bar-access calls |
+
+### Runtime Invariants Preserved (AGENTS.md §3)
+1. ✅ All trade entries pass `CUnifiedRiskManager` pre-trade gating
+2. ✅ Runtime execution remains `CTradeManager`-owned
+3. ✅ Position lifecycle remains EA-loop-owned
+4. ✅ Strategy decisioning remains symbol-scoped manager consensus
+5. ✅ `CIndicatorManager::DestroyInstance()` called on deinit
+
+### Log Signature Impact
+- Initialize logs now emit: `[VWAP-ENGINE] ... | timeframe=H1`, `[CVD-ENGINE] ... | timeframe=H1`, `[VP-ENGINE] ... | timeframe=H1`
+
+### Risk Assessment
+- **Minimal**: `Period()` returns current chart timeframe in both live and backtest modes.
+  No behavioral change (correct timeframe resolution was always the intended behavior).
+  Explicit `ENUM_TIMEFRAMES` can now be passed for future multi-timeframe operation.
+
+---
+
+## 2026-07-13 — Batch 124: Shadow Mode & Dormancy/ Blacklist Complete Removal + Four-State Regime Detection Integration
 
 ### Scope
 Complete removal of legacy shadow mode infrastructure, dead dormancy/blacklist tracking code, and integration of the Four-State Regime Detector into `CEnterpriseStrategyManager` for real-time market regime classification. The system now operates in live-only mode with clean execution paths and proper regime detection.

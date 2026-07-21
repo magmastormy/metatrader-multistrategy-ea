@@ -1,9 +1,9 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-07-12
+- Last Updated: 2026-07-21
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 122
+- Current Batch: 126
 
 ## Scope
 - Entry point: `MultiStrategyAutonomousEA.mq5`
@@ -70,6 +70,16 @@
   - `Core/Registry/SymbolStateTracker.mqh`
 
 ## Current Runtime Evidence
+- **Batch 126 (Layer 2 Initialization & Lifecycle Audit — Fixes & Improvements, 2026-07-21):** Implemented fixes for medium/low severity issues from AUDIT_Layer2_Initialization.md:
+  - **L2-023: Documented Two-Phase Initialization for Enterprise Manager** — Added comprehensive comment block to `CEnterpriseStrategyManager::Initialize()` documenting Phase 1 (required: Pipeline, TimeframeConsistency) and Phase 2 (optional: FourStateRegimeDetector, FamilyWeightMatrix, VPINFilter, OFIEngine) with graceful degradation
+  - **L2-028: Gated Verbose PrintFormat Behind Log Level** — Added `LOG_IF` macro in `Core/Utils/Enums.mqh` using existing `g_logLevel`/`InpLogLevel` (0-4). Applied to verbose diagnostics in hot paths:
+    - `DiagnosticsManager` — heartbeat, consensus, conversion rates, risk budget, asset class/family diagnostics
+    - `EnterpriseStrategyManager` — consensus diagnostics (CONSENSUS-DIAG, ROOT, STRATEGY, ROLE, CLUSTER, SCORE, RELAX, TREND-BIAS, TREND-FLIP, SOLO, QUORUM, SPARSE, NEARMISS, VETO, ACTIVE), VPIN, family weights, AI uncertainty discount, regime weights
+    - `UnifiedSignalPipeline` — cache, threshold, cost gate, entry veto, health check
+  - **L2-029: Documented Pipeline Dependencies** — Added input parameter comment for `InpUseSignalPipeline` documenting required engines (Trend, Structure, Liquidity, Volatility, Regime) and INIT_FAILED behavior
+  - **Files Changed**: `Core/Utils/Enums.mqh`, `Core/Management/DiagnosticsManager.mqh`, `Core/Management/EnterpriseStrategyManager.mqh`, `Core/Pipeline/UnifiedSignalPipeline.mqh`, `MultiStrategyAutonomousEA.mq5`
+  - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified
+
 - **Batch 122 (Modular Architecture Migration & Dead Code Removal, 2026-07-12):** Complete extraction of monolithic `MultiStrategyAutonomousEA.mq5` into focused orchestration modules with 6 registries and 5 processor classes:
   - **EAOrchestrator** (`Core/Orchestration/EAOrchestrator.mqh`): Central coordinator owning `CTickProcessor`, `CTimerProcessor`, and 6 registries. Handles initialization, per-symbol evaluation dispatch, candidate ranking, risk reservation, and execution coordination.
   - **CTickProcessor** (`Core/Orchestration/TickProcessor.mqh`): Fast-path tick processing — safety validation, scalp engine evaluation, unprotected position remediation, synthetic spike monitoring. Replaces inline `ProcessScalpFastPath()` from main EA.

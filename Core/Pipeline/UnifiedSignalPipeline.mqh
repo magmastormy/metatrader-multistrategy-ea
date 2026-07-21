@@ -512,11 +512,11 @@ bool CUnifiedSignalPipeline::RefreshStructuralContext(const string symbol, ENUM_
                      m_cachedContextBarTime == barTime);
     
     if(cacheStale && m_cachedContextPrepared)
-    {
-        PrintFormat("[PIPELINE-CACHE] Symbol=%s | Cache stale (%d bars old), invalidating", symbol, 
-                    (int)((iTime(symbol, timeframe, 0) - m_cachedContextBarTime) / PeriodSeconds(timeframe)));
-        m_cachedContextPrepared = false;
-    }
+        {
+            LOG_IF2(LOG_LEVEL_DEBUG, "[PIPELINE-CACHE] Symbol=%s | Cache stale (%d bars old), invalidating", symbol, 
+                        (int)((iTime(symbol, timeframe, 0) - m_cachedContextBarTime) / PeriodSeconds(timeframe)));
+            m_cachedContextPrepared = false;
+        }
 
     if(!cacheHit)
     {
@@ -1110,12 +1110,12 @@ ENUM_TRADE_SIGNAL CUnifiedSignalPipeline::ProcessSignal(IStrategy* strategy,
        thresholdReasonTag += "|" + sessionWeights.sessionName;
     }
 
-    PrintFormat("[PIPELINE-THRESHOLD] base=%.2f | effective=%.2f | regime=%s | cap=%.2f | intrabar=%s",
-                baseMinConfidence,
-                effectiveMinConfidence,
-                thresholdReasonTag,
-                appliedCap,
-                m_intrabarContext ? "true" : "false");
+    LOG_IF5(LOG_LEVEL_DEBUG, "[PIPELINE-THRESHOLD] base=%.2f | effective=%.2f | regime=%s | cap=%.2f | intrabar=%s",
+                    baseMinConfidence,
+                    effectiveMinConfidence,
+                    thresholdReasonTag,
+                    appliedCap,
+                    m_intrabarContext ? "true" : "false");
     m_lastEffectiveMinConfidence = MathMax(0.0, MathMin(1.0, effectiveMinConfidence));
     m_lastEvidence.effectiveMinConfidence = m_lastEffectiveMinConfidence;
     
@@ -1304,16 +1304,16 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
                                               MathMin(0.30, (double)snapshot.stalenessSeconds / (double)MathMax(10, 2 * 60) * 0.30));
 
     string regimeTag = m_regimeEngine.GetStateTag();
-    PrintFormat("[COST-GATE] %s | regime=%s | spread_atr=%.6f/%.6f | spread=%.5f | atr=%.5f | cooldown=%s | z=%.3f/%.3f",
-                symbol,
-                regimeTag,
-                snapshot.spreadToAtrRatio,
-                m_filters.maxSpreadToAtrRatio,
-                snapshot.spreadPrice,
-                snapshot.atrValue,
-                snapshot.spreadShockCooldownActive ? "true" : "false",
-                snapshot.rangeZScore,
-                m_filters.maxEntryRangeZScore);
+        LOG_IF7(LOG_LEVEL_DEBUG, "[COST-GATE] %s | regime=%s | spread_atr=%.6f/%.6f | spread=%.5f | atr=%.5f | cooldown=%s | z=%.3f/%.3f",
+                    symbol,
+                    regimeTag,
+                    snapshot.spreadToAtrRatio,
+                    m_filters.maxSpreadToAtrRatio,
+                    snapshot.spreadPrice,
+                    snapshot.atrValue,
+                    snapshot.spreadShockCooldownActive ? "true" : "false",
+                    snapshot.rangeZScore,
+                    m_filters.maxEntryRangeZScore);
 
     // Regime-aware confidence attenuation while preserving deterministic output.
     // REDUCED PENALTIES: was 0.97 RANGE, 0.92 CHAOS - now much lighter to avoid blocking marginal signals
@@ -1340,36 +1340,36 @@ bool CUnifiedSignalPipeline::ApplyRegimeAndCostGate(const string symbol,
     m_lastEvidence.costScore = MathMax(0.10, MathMin(1.0, regimeBaseScore - spreadPenalty - zPenalty));
 
     if(snapshot.spreadShockCooldownActive)
-    {
-        vetoReasonTag = StringFormat("REGIME_%s | spread shock cooldown active", regimeTag);
-        m_lastEvidence.vetoReasonTag = vetoReasonTag;
-        PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
-        signal = TRADE_SIGNAL_NONE;
-        confidence = 0.0;
-        return false;
-    }
+        {
+            vetoReasonTag = StringFormat("REGIME_%s | spread shock cooldown active", regimeTag);
+            m_lastEvidence.vetoReasonTag = vetoReasonTag;
+            LOG_IF2(LOG_LEVEL_WARN, "[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
+            signal = TRADE_SIGNAL_NONE;
+            confidence = 0.0;
+            return false;
+        }
 
     if(snapshot.spreadToAtrRatio > m_filters.maxSpreadToAtrRatio)
-    {
-        vetoReasonTag = StringFormat("REGIME_%s | spread/ATR ratio %.4f exceeds %.4f",
-                                     regimeTag, snapshot.spreadToAtrRatio, m_filters.maxSpreadToAtrRatio);
-        m_lastEvidence.vetoReasonTag = vetoReasonTag;
-        PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
-        signal = TRADE_SIGNAL_NONE;
-        confidence = 0.0;
-        return false;
-    }
+        {
+            vetoReasonTag = StringFormat("REGIME_%s | spread/ATR ratio %.4f exceeds %.4f",
+                                         regimeTag, snapshot.spreadToAtrRatio, m_filters.maxSpreadToAtrRatio);
+            m_lastEvidence.vetoReasonTag = vetoReasonTag;
+            LOG_IF2(LOG_LEVEL_WARN, "[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
+            signal = TRADE_SIGNAL_NONE;
+            confidence = 0.0;
+            return false;
+        }
 
     if(MathAbs(snapshot.rangeZScore) > m_filters.maxEntryRangeZScore)
-    {
-        vetoReasonTag = StringFormat("REGIME_%s | late-entry z-score %.3f exceeds %.3f",
-                                     regimeTag, snapshot.rangeZScore, m_filters.maxEntryRangeZScore);
-        m_lastEvidence.vetoReasonTag = vetoReasonTag;
-        PrintFormat("[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
-        signal = TRADE_SIGNAL_NONE;
-        confidence = 0.0;
-        return false;
-    }
+        {
+            vetoReasonTag = StringFormat("REGIME_%s | late-entry z-score %.3f exceeds %.3f",
+                                         regimeTag, snapshot.rangeZScore, m_filters.maxEntryRangeZScore);
+            m_lastEvidence.vetoReasonTag = vetoReasonTag;
+            LOG_IF2(LOG_LEVEL_WARN, "[ENTRY-VETO] %s | reason=%s", symbol, vetoReasonTag);
+            signal = TRADE_SIGNAL_NONE;
+            confidence = 0.0;
+            return false;
+        }
 
     return true;
 }
@@ -1894,7 +1894,7 @@ void CUnifiedSignalPipeline::PerformHealthCheck(const string symbol)
     CheckEngineHealth(symbol);
     
     string status = GetEngineHealthStatus();
-    PrintFormat("[PIPELINE-HEALTH] Symbol=%s | Status=%s | Trend=%s | Structure=%s | Liquidity=%s | Volatility=%s | Regime=%s",
+    LOG_IF7(LOG_LEVEL_DEBUG, "[PIPELINE-HEALTH] Symbol=%s | Status=%s | Trend=%s | Structure=%s | Liquidity=%s | Volatility=%s | Regime=%s",
                 symbol,
                 IsPipelineHealthy() ? "HEALTHY" : "DEGRADED",
                 m_trendEngineHealthy ? "OK" : "FAIL",

@@ -67,6 +67,16 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - **Documentation Updates**: Updated `README.md`, `changelogs.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, `SYSTEM_AUDIT_TRACE.md`
   - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified
 
+- **Batch 126 (Layer 2 Initialization & Lifecycle Audit — Fixes & Improvements)** — Implemented fixes for medium/low severity issues from AUDIT_Layer2_Initialization.md:
+  - **L2-023: Documented Two-Phase Initialization for Enterprise Manager** — Added comprehensive comment block to `CEnterpriseStrategyManager::Initialize()` documenting Phase 1 (required: Pipeline, TimeframeConsistency) and Phase 2 (optional: FourStateRegimeDetector, FamilyWeightMatrix, VPINFilter, OFIEngine) with graceful degradation
+  - **L2-028: Gated Verbose PrintFormat Behind Log Level** — Added `LOG_IF` macro in `Core/Utils/Enums.mqh` using existing `g_logLevel`/`InpLogLevel` (0-4). Applied to verbose diagnostics in hot paths:
+    - `DiagnosticsManager` — heartbeat, consensus, conversion rates, risk budget, asset class/family
+    - `EnterpriseStrategyManager` — consensus diagnostics (CONSENSUS-DIAG, ROOT, STRATEGY, ROLE, CLUSTER, SCORE, RELAX, TREND-BIAS, TREND-FLIP, SOLO, QUORUM, SPARSE, NEARMISS, VETO, ACTIVE), VPIN, family weights, AI uncertainty, regime weights
+    - `UnifiedSignalPipeline` — cache, threshold, cost gate, entry veto, health check
+  - **L2-029: Documented Pipeline Dependencies** — Added input parameter comment for `InpUseSignalPipeline` documenting required engines (Trend, Structure, Liquidity, Volatility, Regime) and INIT_FAILED behavior
+  - **Files Changed**: `Core/Utils/Enums.mqh`, `Core/Management/DiagnosticsManager.mqh`, `Core/Management/EnterpriseStrategyManager.mqh`, `Core/Pipeline/UnifiedSignalPipeline.mqh`, `MultiStrategyAutonomousEA.mq5`
+  - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified
+
 ---
 
 ## 2. Top-Level Runtime Topology

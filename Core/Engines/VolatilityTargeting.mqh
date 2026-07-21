@@ -195,6 +195,10 @@ public:
     //--- Initialize ATR handle
     bool Initialize()
     {
+        // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
+        if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
+            m_timeframe = Period();
+        
         m_atrHandle = iATR(m_symbol, m_timeframe, m_atrPeriod);
         if(m_atrHandle == INVALID_HANDLE)
             return false;
