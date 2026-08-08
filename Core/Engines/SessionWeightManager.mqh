@@ -19,18 +19,22 @@ class CSessionWeightManager
 private:
    bool m_initialized;
    bool m_syntheticMode;
+   int  m_dstOffsetHours;  // L7-022: DST offset in hours
 
    double m_sessionATRHistory[5][24];
    int    m_atrHistoryCount;
    double m_typicalATR[24];
    double m_currentSessionATR;
 
-SSessionWeights GetSessionWeightsForTime(datetime time)
+SSessionWeights GetSessionWeightsForTime(datetime time) const
       {
          MqlDateTime dt;
          TimeToStruct(time, dt);
          int hour = dt.hour;
          int dayOfWeek = dt.day_of_week;
+
+         // Apply DST offset (L7-022)
+         hour = (hour + m_dstOffsetHours + 24) % 24;
 
          SSessionWeights sw;
          sw.sizingMultiplier = 1.0;
@@ -109,15 +113,17 @@ public:
             m_sessionATRHistory[d][h] = 0.0;
    }
 
-   bool Initialize(bool syntheticMode = true)
-   {
-      m_syntheticMode = syntheticMode;
-      m_initialized = true;
-      Print("[SESSION-WEIGHT-MGR] Initialized | mode=", syntheticMode ? "SYNTHETIC" : "FOREX");
-      return true;
-   }
+   bool Initialize(bool syntheticMode = true, int dstOffsetHours = 0)
+      {
+         m_syntheticMode = syntheticMode;
+         m_dstOffsetHours = dstOffsetHours;  // L7-022: DST offset
+         m_initialized = true;
+         PrintFormat("[SESSION-WEIGHT-MGR] Initialized | mode=%s | DST offset=%d hours",
+                     syntheticMode ? "SYNTHETIC" : "FOREX", dstOffsetHours);
+         return true;
+      }
 
-   SSessionWeights GetCurrentSessionWeights()
+   SSessionWeights GetCurrentSessionWeights() const
    {
       if(!m_initialized)
       {
@@ -261,17 +267,25 @@ public:
    }
 
    bool IsLowVolatilitySession()
-   {
-      MqlDateTime dt;
-      TimeToStruct(TimeCurrent(), dt);
-      int hour = dt.hour;
+      {
+         MqlDateTime dt;
+         TimeToStruct(TimeCurrent(), dt);
+         int hour = dt.hour;
 
-      double typical = m_typicalATR[hour];
-      if(typical <= 0.0 || m_currentSessionATR <= 0.0)
-         return false;
+         double typical = m_typicalATR[hour];
+         if(typical <= 0.0 || m_currentSessionATR <= 0.0)
+            return false;
 
-      return (m_currentSessionATR / typical) < 0.7;
-   }
-};
+         return (m_currentSessionATR / typical) < 0.7;
+      }
+
+      string GetHeartbeatString() const
+      {
+         SSessionWeights sw = GetCurrentSessionWeights();
+         return StringFormat("session=%s | multiplier=%.2f | thresh_adj=%.4f | boost=%.4f | synthetic=%s",
+                             sw.sessionName, sw.sizingMultiplier, sw.convictionThresholdAdj, sw.readinessBoost,
+                             m_syntheticMode ? "true" : "false");
+      }
+   };
 
 #endif // CORE_ENGINES_SESSION_WEIGHT_MANAGER_MQH

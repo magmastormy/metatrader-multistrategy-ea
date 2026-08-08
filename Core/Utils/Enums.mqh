@@ -86,9 +86,40 @@ enum ENUM_STRATEGY_TYPE
     STRATEGY_ASIAN_RANGE_BREAK = 15, // Asian Range Break strategy (NEW: Batch 103)
     STRATEGY_UNICORN_MODEL = 16,    // Unicorn Model strategy (ICT variant)
     STRATEGY_POWER_OF_THREE = 17,   // Power of Three strategy (ICT variant)
+    STRATEGY_LIQUIDITY_SWEEP = 18,    // Liquidity Sweep strategy
+    STRATEGY_RANGE_COMPRESSION = 19,  // Range Compression Breakout strategy
+    STRATEGY_EXIT_OPTIMIZER = 20,     // Exit Optimizer strategy
     STRATEGY_CUSTOM = 99,          // Custom strategy
     STRATEGY_BRAIN = 100,          // Strategy brain type
-    STRATEGY_AI_ENHANCED = 101     // AI enhanced strategy type
+    STRATEGY_AI_ENHANCED = 101,    // AI enhanced strategy type
+    STRATEGY_ONNX = 102            // ONNX AI strategy type
+};
+
+//+------------------------------------------------------------------+
+//| Strategy Array Index Enumeration (L7-004)                       |
+//| Maps array indices 0-20 to strategies - single source of truth  |
+//+------------------------------------------------------------------+
+enum ENUM_STRATEGY_INDEX
+{
+    SI_MOMENTUM = 0,
+    SI_TREND = 1,
+    SI_SUPPORT_RESISTANCE = 4,
+    SI_UNIFIED_ICT = 5,
+    SI_CANDLESTICK = 6,
+    SI_MEAN_REVERSION = 7,
+    SI_VOLATILITY_BREAKOUT = 8,
+    SI_STATISTICAL_ARBITRAGE = 9,
+    SI_FVG_SCALPER = 10,
+    SI_TURTLE_SOUP = 11,
+    SI_BREAKER_BLOCK = 12,
+    SI_NY_OPEN_GAP = 13,
+    SI_ASIAN_RANGE_BREAK = 14,
+    SI_UNICORN_MODEL = 15,
+    SI_POWER_OF_THREE = 16,
+    SI_LIQUIDITY_SWEEP = 17,
+    SI_RANGE_COMPRESSION = 18,
+    SI_EXIT_OPTIMIZER = 19,
+    SI_MAX = 20
 };
 
 //+------------------------------------------------------------------+
@@ -321,13 +352,14 @@ struct SDrawdownState
 };
 
 // Position Sizing Enumeration
+// L5-006: Unified enum matching CPositionSizer usage
 enum ENUM_POSITION_SIZING_MODE
 {
-    POSITION_SIZE_FIXED = 1,           // Fixed position sizing
-    POSITION_SIZE_RISK_PERCENT = 2,    // Risk percentage sizing
-    POSITION_SIZE_VOLATILITY = 3,      // Volatility-based sizing
-    POSITION_SIZE_CORRELATION = 4,     // Correlation-based sizing
-    POSITION_SIZE_KELLY = 5            // Kelly Criterion sizing
+    POSITION_SIZING_FIXED_LOT = 0,         // Fixed lot size
+    POSITION_SIZING_FIXED_RISK = 1,        // Fixed risk percentage
+    POSITION_SIZING_KELLY = 2,             // Kelly Criterion
+    POSITION_SIZING_VOLATILITY_TARGET = 3, // Volatility targeting
+    POSITION_SIZING_EQUITY_CURVE = 4       // Equity curve scaling
 };
 
 // Performance Monitoring Constants
@@ -779,26 +811,30 @@ string EscapeJsonString(const string &str)
 #define LOG_LEVEL_DEBUG     3
 #define LOG_LEVEL_TRACE     4
 
+// Global log level variable (set from InpLogLevel input during EA initialization)
+int g_logLevel = LOG_LEVEL_ERROR;
+
 //+------------------------------------------------------------------+
 //| Conditional Logging Macro (L2-028: Gate verbose PrintFormat)    |
 //+------------------------------------------------------------------+
 // Uses existing g_logLevel (int 0-4) mapped to ENUM_LOG_VERBOSITY
-// MQL5 doesn't support variadic macros, so we define multiple overloads
-#define LOG_IF0(verbosity, format) do { if(g_logLevel >= (int)verbosity) PrintFormat(format); } while(0)
-#define LOG_IF1(verbosity, format, arg1) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1); } while(0)
-#define LOG_IF2(verbosity, format, arg1, arg2) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2); } while(0)
-#define LOG_IF3(verbosity, format, arg1, arg2, arg3) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3); } while(0)
-#define LOG_IF4(verbosity, format, arg1, arg2, arg3, arg4) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4); } while(0)
-#define LOG_IF5(verbosity, format, arg1, arg2, arg3, arg4, arg5) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5); } while(0)
-#define LOG_IF6(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6); } while(0)
-#define LOG_IF7(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7); } while(0)
-#define LOG_IF8(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8); } while(0)
-#define LOG_IF9(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9); } while(0)
-#define LOG_IF10(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10); } while(0)
-#define LOG_IF11(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11); } while(0)
-#define LOG_IF12(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12) do { if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12); } while(0)
+// MQL5 doesn't support { } blocks in macro definitions, so we use simple statements
+// Users must wrap LOG_IF calls in { } if used in if-else contexts
+#define LOG_IF0(verbosity, format) if(g_logLevel >= (int)verbosity) PrintFormat(format)
+#define LOG_IF1(verbosity, format, arg1) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1)
+#define LOG_IF2(verbosity, format, arg1, arg2) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2)
+#define LOG_IF3(verbosity, format, arg1, arg2, arg3) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3)
+#define LOG_IF4(verbosity, format, arg1, arg2, arg3, arg4) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4)
+#define LOG_IF5(verbosity, format, arg1, arg2, arg3, arg4, arg5) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5)
+#define LOG_IF6(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6)
+#define LOG_IF7(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+#define LOG_IF8(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+#define LOG_IF9(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+#define LOG_IF10(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+#define LOG_IF11(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11)
+#define LOG_IF12(verbosity, format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12) if(g_logLevel >= (int)verbosity) PrintFormat(format, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12)
 
-// Auto-select macro based on argument count (using MSVC-style __VA_ARGS__ count trick doesn't work in MQL5)
 // Users must use LOG_IF0, LOG_IF1, etc. explicitly based on number of format args
+// Wrap in { } if used in if-else context: if(cond) { LOG_IF1(...); } else { ... }
 
 #endif // CORE_ENUMS_MQH

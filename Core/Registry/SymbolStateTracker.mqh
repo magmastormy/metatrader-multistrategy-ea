@@ -44,6 +44,10 @@ private:
         DORMANT_COOLDOWN_MINUTES = 30
     };
     
+    public:
+    CSymbolStateTracker() : m_stateCount(0) { ArrayResize(m_states, 0); }
+    ~CSymbolStateTracker() { Clear(); }
+    
     int GetIndex(const string symbol, bool createIfMissing = true)
     {
         for(int i = 0; i < m_stateCount; i++)
@@ -57,16 +61,23 @@ private:
         m_stateCount++;
         return idx;
     }
-
-public:
-    CSymbolStateTracker() : m_stateCount(0) { ArrayResize(m_states, 0); }
-    ~CSymbolStateTracker() { Clear(); }
+    
+    void Initialize(const string &symbols[], int count)
+    {
+        for(int i = 0; i < count; i++)
+        {
+            if(symbols[i] != "")
+                GetIndex(symbols[i], true);
+        }
+    }
     
     void Clear()
     {
         ArrayResize(m_states, 0);
         m_stateCount = 0;
     }
+    
+    int Count() const { return m_stateCount; }
     
     // --- Scalp Blacklist ---
     bool IsScalpBlacklisted(const string symbol)

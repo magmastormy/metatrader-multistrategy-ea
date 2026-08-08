@@ -91,13 +91,15 @@ private:
     int GetReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) const;
     void MaybeLogState(const string symbol, const ENUM_TIMEFRAMES timeframe);
     bool BuildFallbackMetrics(const string symbol,
-                              const ENUM_TIMEFRAMES timeframe,
-                              double &atrCurrent,
-                              double &atrPrevious,
-                              double &bbUpper,
-                              double &bbLower,
-                              double &stdDevValue) const;
-    bool ApplyFallbackMetrics(const string symbol,
+                                  const ENUM_TIMEFRAMES timeframe,
+                                  double &atrCurrent,
+                                  double &atrPrevious,
+                                  double &bbUpper,
+                                  double &bbLower,
+                                  double &stdDevValue) const;
+        // L4-014 Fix: Shared ATR calculation helper to avoid duplication
+        static double CalculateAtrFromRates(const MqlRates &rates[], int period, int startIndex, int copied);
+        bool ApplyFallbackMetrics(const string symbol,
                               const ENUM_TIMEFRAMES timeframe,
                               const string reasonTag,
                               const int errorCode);
@@ -308,37 +310,17 @@ bool CVolatilityEngine::BuildFallbackMetrics(const string symbol,
     stdDevValue = 0.0;
 
     int requiredBars = MathMax(MathMax(m_atrPeriod + 3, m_bbPeriod + 3), m_hvPeriod + 3);
-    MqlRates rates[];
-    ArraySetAsSeries(rates, true);
-    int copied = CopyRates(symbol, timeframe, 0, requiredBars, rates);
-    if(copied < requiredBars)
-        return false;
+        MqlRates rates[];
+        ArraySetAsSeries(rates, true);
+        int copied = CopyRates(symbol, timeframe, 0, requiredBars, rates);
+        if(copied < requiredBars)
+            return false;
 
-    int atrWindow = MathMin(m_atrPeriod, copied - 2);
-    if(atrWindow <= 0)
-        return false;
+        // L4-014 Fix: Use shared ATR calculation helper
+        atrCurrent = CalculateAtrFromRates(rates, m_atrPeriod, 0, copied);
+        atrPrevious = CalculateAtrFromRates(rates, m_atrPeriod, 1, copied);
 
-    double atrSumCurrent = 0.0;
-    double atrSumPrevious = 0.0;
-    for(int i = 0; i < atrWindow; i++)
-    {
-        double rangeHighLow = rates[i].high - rates[i].low;
-        double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
-        double rangeLowClose = MathAbs(rates[i].low - rates[i + 1].close);
-        atrSumCurrent += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
-    }
-    for(int j = 1; j <= atrWindow; j++)
-    {
-        double rangeHighLow = rates[j].high - rates[j].low;
-        double rangeHighClose = MathAbs(rates[j].high - rates[j + 1].close);
-        double rangeLowClose = MathAbs(rates[j].low - rates[j + 1].close);
-        atrSumPrevious += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
-    }
-
-    atrCurrent = atrSumCurrent / (double)atrWindow;
-    atrPrevious = atrSumPrevious / (double)atrWindow;
-
-    int bbWindow = MathMin(m_bbPeriod, copied);
+        int bbWindow = MathMin(m_bbPeriod, copied);
     if(bbWindow <= 1)
         return false;
 
@@ -377,13 +359,41 @@ bool CVolatilityEngine::BuildFallbackMetrics(const string symbol,
     stdDevValue = MathSqrt(MathMax(0.0, hvVariance));
 
     return (MathIsValidNumber(atrCurrent) && atrCurrent > 0.0 &&
-            MathIsValidNumber(atrPrevious) &&
-            MathIsValidNumber(bbUpper) &&
-            MathIsValidNumber(bbLower) &&
-            MathIsValidNumber(stdDevValue));
-}
+                MathIsValidNumber(atrPrevious) &&
+                MathIsValidNumber(bbUpper) &&
+                MathIsValidNumber(bbLower) &&
+                MathIsValidNumber(stdDevValue));
+    }
 
-bool CVolatilityEngine::ApplyFallbackMetrics(const string symbol,
+    //+------------------------------------------------------------------+
+        //| Shared ATR calculation helper (L4-014 Fix)                      |
+        //+------------------------------------------------------------------+
+        double CVolatilityEngine::CalculateAtrFromRates(const MqlRates &rates[], int period, int startIndex, int copied)
+        {
+            int atrWindow = MathMin(period, copied - startIndex - 1);
+            if(atrWindow <= 0)
+                return 0.0;
+    
+            double atrSum = 0.0;
+            for(int i = 0; i < atrWindow; i++)
+            {
+                int idx = startIndex + i;
+                if(idx + 1 >= copied)
+                    break;
+            
+                double rangeHighLow = rates[idx].high - rates[idx].low;
+                double rangeHighClose = MathAbs(rates[idx].high - rates[idx + 1].close);
+                double rangeLowClose = MathAbs(rates[idx].low - rates[idx + 1].close);
+                atrSum += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
+            }
+    
+            if(atrWindow > 0)
+                return atrSum / (double)atrWindow;
+            else
+                return 0.0;
+        }
+
+    bool CVolatilityEngine::ApplyFallbackMetrics(const string symbol,
                                              const ENUM_TIMEFRAMES timeframe,
                                              const string reasonTag,
                                              const int errorCode)
@@ -685,31 +695,8 @@ bool CVolatilityEngine::ValidateAtrCalculation(const string symbol, const ENUM_T
         return false;
     }
     
-    double atrSumCurrent = 0.0;
-    int atrWindow = MathMin(m_atrPeriod, copied - 2);
-    if(atrWindow <= 0)
-    {
-        PrintFormat("[ATR-VALIDATE] %s %s | invalid window: %d",
-                    symbol, EnumToString(timeframe), atrWindow);
-        return false;
-    }
-    
-    for(int i = 0; i < atrWindow; i++)
-    {
-        if(i + 1 >= copied)
-        {
-            PrintFormat("[ATR-VALIDATE] %s %s | BOUNDARY ERROR at i=%d: i+1=%d >= copied=%d",
-                        symbol, EnumToString(timeframe), i, i + 1, copied);
-            return false;
-        }
-        
-        double rangeHighLow = rates[i].high - rates[i].low;
-        double rangeHighClose = MathAbs(rates[i].high - rates[i + 1].close);
-        double rangeLowClose = MathAbs(rates[i].low - rates[i + 1].close);
-        atrSumCurrent += MathMax(rangeHighLow, MathMax(rangeHighClose, rangeLowClose));
-    }
-    
-    double atrValue = atrSumCurrent / (double)atrWindow;
+    // L4-014 Fix: Use shared ATR calculation helper
+    double atrValue = CalculateAtrFromRates(rates, m_atrPeriod, 0, copied);
     if(atrValue <= 0.0 || !MathIsValidNumber(atrValue))
     {
         PrintFormat("[ATR-VALIDATE] %s %s | invalid ATR value: %.5f",
@@ -718,7 +705,7 @@ bool CVolatilityEngine::ValidateAtrCalculation(const string symbol, const ENUM_T
     }
     
     PrintFormat("[ATR-VALIDATE] %s %s | PASSED | window=%d | atr=%.5f",
-                symbol, EnumToString(timeframe), atrWindow, atrValue);
+                symbol, EnumToString(timeframe), m_atrPeriod, atrValue);
     return true;
 }
 

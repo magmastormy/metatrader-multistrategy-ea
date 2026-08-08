@@ -15,18 +15,22 @@
  //+------------------------------------------------------------------+
  class CAIStrategyAdapter : public IAIStrategy
  {
-private:
-    CNeuralNetworkStrategy* m_neuralNet;
-    string m_symbol;
-    ENUM_TIMEFRAMES m_timeframe;
-    bool m_enabled;
-    double m_weight;
-    datetime m_lastSignalTime;
-    string m_lastDecisionReasonTag;
-    CSubsystemLogger* m_logger;  // AI subsystem logger
-    int m_logCounter;  // Counter for periodic logging
+ private:
+     CNeuralNetworkStrategy* m_neuralNet;
+     string m_symbol;
+     ENUM_TIMEFRAMES m_timeframe;
+     bool m_enabled;
+     double m_weight;
+     datetime m_lastSignalTime;
+     string m_lastDecisionReasonTag;
+     CSubsystemLogger* m_logger;  // AI subsystem logger
+     int m_logCounter;  // Counter for periodic logging
+     bool m_adapterOwnsNN;  // L1-008: Ownership flag - adapter owns NN if true
     
-    // Direction calibration rolling window (last 50 predictions)
+     // Unified risk manager for validation
+     CUnifiedRiskManager* m_unifiedRiskManager;
+    
+     // Direction calibration rolling window (last 50 predictions)
     int  m_directionWindow[50];  // 1=BUY, -1=SELL, 0=NONE
     int  m_directionWindowIdx;   // Circular buffer index
     int  m_directionWindowCount; // Number of filled slots (0..50)
@@ -99,9 +103,10 @@ private:
     }
     
 public:
-    CAIStrategyAdapter(CNeuralNetworkStrategy* neuralNet)
+    CAIStrategyAdapter(CNeuralNetworkStrategy* neuralNet, bool adapterOwnsNN = false)
     {
         m_neuralNet = neuralNet;
+        m_adapterOwnsNN = adapterOwnsNN;  // L1-008: Ownership flag
         m_enabled = true;
         m_weight = 1.0;
         m_symbol = "";
@@ -125,47 +130,75 @@ public:
     }
     
     ~CAIStrategyAdapter()
-    {
-        if(m_logger != NULL)
         {
-            delete m_logger;
-            m_logger = NULL;
+            if(m_logger != NULL)
+            {
+                delete m_logger;
+                m_logger = NULL;
+            }
+            // L1-008: Delete neural network only if adapter owns it
+            if(m_adapterOwnsNN && m_neuralNet != NULL)
+            {
+                delete m_neuralNet;
+                m_neuralNet = NULL;
+            }
+            else
+            {
+                m_neuralNet = NULL;  // Just clear pointer, external owner manages lifetime
+            }
         }
-        // Do NOT delete m_neuralNet as it's managed externally
-        m_neuralNet = NULL;
-    }
     
     //+------------------------------------------------------------------+
     //| IStrategy Interface Implementation                               |
     //+------------------------------------------------------------------+
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, 
-                     void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL) override
-    {
-        m_symbol = symbol;
-        m_timeframe = timeframe;
-        m_lastDecisionReasonTag = (m_neuralNet != NULL) ? "NNAI_INITIALIZED" : "NNAI_INIT_FAILED";
-        
-        // Initialize AI logger
-        if(m_logger == NULL)
+                         void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL) override
         {
-            m_logger = new CSubsystemLogger();
-            if(m_logger != NULL)
-            {
-                m_logger.Initialize(symbol, "");
-                m_logger.Log(LOG_AI, StringFormat("[INIT] Neural Network AI initialized | Symbol=%s TF=%s",
-                                                  symbol, EnumToString(timeframe)));
-            }
-        }
+            m_symbol = symbol;
+            m_timeframe = timeframe;
+            m_unifiedRiskManager = (CUnifiedRiskManager*)unifiedRiskManagerPtr;
+            m_lastDecisionReasonTag = (m_neuralNet != NULL) ? "NNAI_INITIALIZED" : "NNAI_INIT_FAILED";
         
-        return (m_neuralNet != NULL);
-    }
+            // Initialize AI logger
+            if(m_logger == NULL)
+            {
+                m_logger = new CSubsystemLogger();
+                if(m_logger != NULL)
+                {
+                    m_logger.Initialize(symbol, "");
+                    m_logger.Log(LOG_AI, StringFormat("[INIT] Neural Network AI initialized | Symbol=%s TF=%s",
+                                                      symbol, EnumToString(timeframe)));
+                }
+            }
+        
+            return (m_neuralNet != NULL);
+        }
     
     virtual void Deinit(void) override
     {
         m_lastDecisionReasonTag = "NNAI_DEINIT";
     }
-    
-virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
+
+    // Initialize AI model with symbol/timeframe/risk manager after factory creation
+        virtual bool InitializeAI(const string symbol, const ENUM_TIMEFRAMES timeframe, void* unifiedRiskManager) override
+        {
+            // For Neural Network AI, the CNeuralNetworkStrategy needs to be initialized
+            // with symbol and timeframe. The risk manager is available via GetUnifiedRiskManager().
+            if(m_neuralNet != NULL)
+            {
+                m_symbol = symbol;
+                m_timeframe = timeframe;
+                m_unifiedRiskManager = (CUnifiedRiskManager*)unifiedRiskManager;
+                // The neural network strategy is initialized separately via InitializeNeuralNetForSymbol
+                // but we set the symbol/timeframe here for the adapter
+                m_lastDecisionReasonTag = "NNAI_AI_INITIALIZED";
+                return true;
+            }
+            m_lastDecisionReasonTag = "NNAI_AI_INIT_FAILED";
+            return false;
+        }
+
+    virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         if(!m_enabled || m_neuralNet == NULL)
         {
@@ -183,11 +216,11 @@ virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
         // Validate confidence value
         if(!IsValidConfidence(confidence))
         {
-            static datetime s_lastInvalidLog = 0;
-            if(s_lastInvalidLog == 0 || (TimeCurrent() - s_lastInvalidLog) >= 300)
+            // L1-014: Use instance member instead of static (was shared across all adapters)
+            if(m_lastInvalidLog == 0 || (TimeCurrent() - m_lastInvalidLog) >= 300)
             {
                 PrintFormat("[AI-ADAPTER] Invalid confidence value: %.10f", confidence);
-                s_lastInvalidLog = TimeCurrent();
+                m_lastInvalidLog = TimeCurrent();
             }
             confidence = 0.0;
             m_voteCount++;
@@ -244,9 +277,6 @@ virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
         LogVoteHeartbeat();
         return signal;
     }
-    
-    virtual void OnNewBar(void) override {}
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override {}
     
     virtual string GetName(void) const override { return "Neural Network AI"; }
     
@@ -307,7 +337,20 @@ virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     
     virtual bool ValidateParameters(void) override { return (m_neuralNet != NULL); }
     
-    virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
+        virtual bool ValidateRiskManagerInjection(void) const override
+        {
+            return (m_unifiedRiskManager != NULL);
+        }
+    
+        virtual bool ShouldBypassTierConfidenceFloor(void) const override
+        {
+            return false; // Default: no bypass
+        }
+    
+        // L1-008: Getter for neural network (needed for initialization after factory creation)
+        CNeuralNetworkStrategy* GetNeuralNetwork() const { return m_neuralNet; }
+    
+        virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
@@ -316,7 +359,19 @@ virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
         successful = 0;
         accuracy = 0.0;
     }
-    
+
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
+    {
+    }
+
+    virtual void OnTick(void) override
+    {
+    }
+
+    virtual void OnTimer(void) override
+    {
+    }
+
     //+------------------------------------------------------------------+
     //| IAIStrategy Interface Implementation                             |
     //+------------------------------------------------------------------+
@@ -359,7 +414,7 @@ virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
             m_neuralNet.SetTemperature(temperature);
     }
     
-    virtual int GetRegimeState(void) const override
+    virtual int GetCurrentRegime(void) const override
     {
         if(m_neuralNet == NULL)
             return -1;
@@ -378,5 +433,52 @@ virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
         if(m_neuralNet == NULL)
             return "MODEL_NULL";
         return m_neuralNet.GetLastLoadStatus();
+    }
+
+    //+------------------------------------------------------------------+
+    //| Capability Interface Methods                                     |
+    //+------------------------------------------------------------------+
+    // IUncertaintyEstimation
+    virtual void GetConfidenceInterval(double &lower, double &upper) const override
+    {
+        lower = 0.0;
+        upper = 1.0;
+        if(m_neuralNet != NULL)
+        {
+            double uncertainty = m_neuralNet.GetLastUncertainty();
+            double confidence = 1.0 - uncertainty;
+            lower = MathMax(0.0, confidence - uncertainty);
+            upper = MathMin(1.0, confidence + uncertainty);
+        }
+    }
+
+    // IModelHealth
+    virtual double GetHealthScore(void) const override
+    {
+        if(m_neuralNet == NULL)
+            return 0.0;
+        return IsModelHealthy() ? 1.0 : 0.0;
+    }
+
+    // IOnlineTraining
+    virtual void EnableOnlineTraining(const bool enable) override
+    {
+    }
+
+    virtual bool TrainStep(void) override
+    {
+        return false;
+    }
+
+    virtual string GetTrainingState(void) const override
+    {
+        if(m_neuralNet == NULL)
+            return "NOT_INITIALIZED";
+        return m_neuralNet.IsTraining() ? "TRAINING" : "IDLE";
+    }
+
+    // IRegimeAware
+    virtual void OnRegimeChange(const int newRegime) override
+    {
     }
 };

@@ -22,23 +22,20 @@
 #include "Strategies\SimpleMomentumStrategy.mqh"
 #include "Strategies\StrategyTrend.mqh"
 #include "Strategies\StrategySupportResistance.mqh"
-#include "Strategies\StrategyUnifiedICT.mqh"
 #include "Strategies\StrategyCandlestick.mqh"
-#include "Strategies\CUnicornModelStrategy.mqh"
-#include "Strategies\CPowerOfThreeStrategy.mqh"
 #include "Strategies\MeanReversionStrategy.mqh"
 #include "Strategies\VolatilityBreakoutStrategy.mqh"
 
 //--- Management includes
 #include "Core\Strategy\StrategyRegistry.mqh"
-CStrategyRegistry* g_strategyRegistry = NULL;
+// CStrategyRegistry* g_strategyRegistry = NULL;  // REMOVED: Unused global (L1-004)
 #include "Core\Management\EnterpriseStrategyManager.mqh"
 #include "Core\Trading\TradeManager.mqh"
 #include "Core\Risk\PositionSizer.mqh"
 #include "Core\Risk\UnifiedRiskManager.mqh"
 
-//--- Resolve extern from EnterpriseStrategyManager.mqh
-CPythonBridge* g_pythonBridge = NULL;
+//--- Resolve extern variables via shared definitions header
+#include "Core\Orchestration\GlobalDefs.mqh"
 
 //+------------------------------------------------------------------+
 //| Input Parameters                                                  |
@@ -71,7 +68,7 @@ input int             InpOFISlowWindow        = 100;
 //+------------------------------------------------------------------+
 //| Constants                                                         |
 //+------------------------------------------------------------------+
-#define STRATEGY_COUNT 9
+#define STRATEGY_COUNT 6
 #define MAX_LABEL_HORIZONS 5
 
 //+------------------------------------------------------------------+
@@ -82,10 +79,7 @@ const string STRATEGY_NAMES[STRATEGY_COUNT] =
     "Momentum",
     "Trend",
     "S/R",
-    "ICT",
     "Candlestick",
-    "Unicorn",
-    "PO3",
     "MeanRev",
     "VolBreak"
 };
@@ -249,12 +243,9 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
     g_contexts[ctxIdx].strategies[0] = new CSimpleMomentumStrategy();
     g_contexts[ctxIdx].strategies[1] = new CStrategyTrend();
     g_contexts[ctxIdx].strategies[2] = new CStrategySupportResistance();
-    g_contexts[ctxIdx].strategies[3] = new CStrategyUnifiedICT();
-    g_contexts[ctxIdx].strategies[4] = new CStrategyCandlestick();
-    g_contexts[ctxIdx].strategies[5] = new CUnicornModelStrategy();
-    g_contexts[ctxIdx].strategies[6] = new CPowerOfThreeStrategy();
-    g_contexts[ctxIdx].strategies[7] = new CMeanReversionStrategy();
-    g_contexts[ctxIdx].strategies[8] = new CVolatilityBreakoutStrategy();
+    g_contexts[ctxIdx].strategies[3] = new CStrategyCandlestick();
+    g_contexts[ctxIdx].strategies[4] = new CMeanReversionStrategy();
+    g_contexts[ctxIdx].strategies[5] = new CVolatilityBreakoutStrategy();
 
     // Initialize each strategy
     for(int i = 0; i < STRATEGY_COUNT; i++)
@@ -277,12 +268,9 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
                 case 0: basePtr.SetStrategyCluster(TREND_CLUSTER); break;          // Momentum
                 case 1: basePtr.SetStrategyCluster(TREND_CLUSTER); break;          // Trend
                 case 2: basePtr.SetStrategyCluster(STRUCTURE_CLUSTER); break;      // S/R
-                case 3: basePtr.SetStrategyCluster(STRUCTURE_CLUSTER); break;      // ICT
-                case 4: basePtr.SetStrategyCluster(STRUCTURE_CLUSTER); break;      // Candlestick
-                case 5: basePtr.SetStrategyCluster(TREND_CLUSTER); break;          // Unicorn
-                case 6: basePtr.SetStrategyCluster(STRUCTURE_CLUSTER); break;      // PO3
-                case 7: basePtr.SetStrategyCluster(MEAN_REVERSION_CLUSTER); break; // MeanRev
-                case 8: basePtr.SetStrategyCluster(TREND_CLUSTER); break;          // VolBreak
+                case 3: basePtr.SetStrategyCluster(STRUCTURE_CLUSTER); break;      // Candlestick
+                case 4: basePtr.SetStrategyCluster(MEAN_REVERSION_CLUSTER); break; // MeanRev
+                case 5: basePtr.SetStrategyCluster(TREND_CLUSTER); break;          // VolBreak
             }
         }
     }
@@ -298,16 +286,13 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
                                                    g_contexts[ctxIdx].riskManager, 999999);
 
     // Register each strategy with appropriate weight and tier
-    double weights[STRATEGY_COUNT] = {1.0, 1.2, 1.8, 1.2, 1.5, 1.2, 1.2, 1.8, 2.0};
+    double weights[STRATEGY_COUNT] = {1.0, 1.2, 1.8, 1.5, 1.8, 2.0};
     ENUM_STRATEGY_TIER tiers[STRATEGY_COUNT] =
     {
         STRATEGY_TIER_3,  // Momentum
         STRATEGY_TIER_2,  // Trend
         STRATEGY_TIER_1,  // S/R
-        STRATEGY_TIER_2,  // ICT
         STRATEGY_TIER_2,  // Candlestick
-        STRATEGY_TIER_2,  // Unicorn
-        STRATEGY_TIER_2,  // PO3
         STRATEGY_TIER_1,  // MeanRev
         STRATEGY_TIER_1   // VolBreak
     };
@@ -316,10 +301,7 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
         TREND_CLUSTER,           // Momentum
         TREND_CLUSTER,           // Trend
         STRUCTURE_CLUSTER,       // S/R
-        STRUCTURE_CLUSTER,       // ICT
         STRUCTURE_CLUSTER,       // Candlestick
-        TREND_CLUSTER,           // Unicorn
-        STRUCTURE_CLUSTER,       // PO3
         MEAN_REVERSION_CLUSTER,  // MeanRev
         TREND_CLUSTER            // VolBreak
     };

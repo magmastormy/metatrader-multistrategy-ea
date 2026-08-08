@@ -567,6 +567,7 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveMajority(double &confidence, str
 ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveWeighted(double &confidence, string &reasoning)
 {
     double buyWeight = 0.0, sellWeight = 0.0;
+    double totalActiveWeight = 0.0;
     
     for(int i = 0; i < m_signalCount; i++)
     {
@@ -574,24 +575,39 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::ResolveWeighted(double &confidence, str
         double signalWeight = m_signals[i].confidence * tfWeight;
         
         if(m_signals[i].signal == TRADE_SIGNAL_BUY)
+        {
             buyWeight += signalWeight;
+            totalActiveWeight += tfWeight;
+        }
         else if(m_signals[i].signal == TRADE_SIGNAL_SELL)
+        {
             sellWeight += signalWeight;
+            totalActiveWeight += tfWeight;
+        }
+        // NONE signals are ignored (no weight added to totalActiveWeight)
     }
     
-    if(buyWeight > sellWeight && buyWeight > m_confidenceThreshold)
+    // L4-010 Fix: Normalize by total active weight (non-NONE signals only)
+    if(totalActiveWeight > 0)
     {
-        confidence = buyWeight / (buyWeight + sellWeight);
-        reasoning = StringFormat("Weighted BUY: %.2f vs %.2f", buyWeight, sellWeight);
-        return TRADE_SIGNAL_BUY;
-    }
-    else if(sellWeight > buyWeight && sellWeight > m_confidenceThreshold)
-    {
-        confidence = sellWeight / (buyWeight + sellWeight);
-        reasoning = StringFormat("Weighted SELL: %.2f vs %.2f", sellWeight, buyWeight);
-        return TRADE_SIGNAL_SELL;
+        double normalizedBuyWeight = buyWeight / totalActiveWeight;
+        double normalizedSellWeight = sellWeight / totalActiveWeight;
+        
+        if(normalizedBuyWeight > normalizedSellWeight && normalizedBuyWeight > m_confidenceThreshold)
+        {
+            confidence = normalizedBuyWeight;
+            reasoning = StringFormat("Weighted BUY: %.2f vs %.2f (norm)", normalizedBuyWeight, normalizedSellWeight);
+            return TRADE_SIGNAL_BUY;
+        }
+        else if(normalizedSellWeight > normalizedBuyWeight && normalizedSellWeight > m_confidenceThreshold)
+        {
+            confidence = normalizedSellWeight;
+            reasoning = StringFormat("Weighted SELL: %.2f vs %.2f (norm)", normalizedSellWeight, normalizedBuyWeight);
+            return TRADE_SIGNAL_SELL;
+        }
     }
     
+    // If all signals are NONE or no clear winner
     confidence = 0.0;
     reasoning = "Insufficient weighted consensus";
     return TRADE_SIGNAL_NONE;

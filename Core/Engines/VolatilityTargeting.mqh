@@ -9,6 +9,11 @@
 #define VOLATILITY_TARGETING_MQH
 
 #include "../Utils/Enums.mqh"
+#include "../Processing/MultiAssetProfiler.mqh"
+
+// Forward declaration for global profiler access (initialized in EAOrchestrator)
+class CMultiAssetProfiler;
+extern CMultiAssetProfiler* g_multiAssetProfiler;
 
 //+------------------------------------------------------------------+
 //| Volatility Targeting Snapshot                                     |
@@ -84,26 +89,36 @@ private:
     }
 
     //--- Compute annualization factor based on timeframe and market type
-    double GetAnnualizationFactor() const
-    {
-        int barSeconds = PeriodSeconds(m_timeframe);
-        if(barSeconds <= 0) barSeconds = 300; // default to M5
+        double GetAnnualizationFactor() const
+        {
+            int barSeconds = PeriodSeconds(m_timeframe);
+            if(barSeconds <= 0) barSeconds = 300; // default to M5
 
-        // Deriv synthetics trade 24/7 — use 365 days
-        // Forex trades ~24h Mon-Fri — use 252 days with 6.5h trading day
-        // Heuristic: if symbol contains "Index" or "Volatility" or "Boom" or "Crash" → synthetic
-        bool isSynthetic = (StringFind(m_symbol, "Index") >= 0 ||
-                           StringFind(m_symbol, "Volatility") >= 0 ||
-                           StringFind(m_symbol, "Boom") >= 0 ||
-                           StringFind(m_symbol, "Crash") >= 0 ||
-                           StringFind(m_symbol, "Jump") >= 0 ||
-                           StringFind(m_symbol, "Step") >= 0);
+            // Deriv synthetics trade 24/7 — use 365 days
+            // Forex trades ~24h Mon-Fri — use 252 days with 6.5h trading day
+            // Use global multi-asset profiler for proper asset classification
+            bool isSynthetic = false;
+            if(g_multiAssetProfiler != NULL)
+            {
+                SAssetProfile profile = g_multiAssetProfiler.GetProfile(m_symbol);
+                isSynthetic = IsSyntheticAssetClass(profile.assetClass);
+            }
+            else
+            {
+                // Fallback to string matching if profiler not available
+                isSynthetic = (StringFind(m_symbol, "Index") >= 0 ||
+                               StringFind(m_symbol, "Volatility") >= 0 ||
+                               StringFind(m_symbol, "Boom") >= 0 ||
+                               StringFind(m_symbol, "Crash") >= 0 ||
+                               StringFind(m_symbol, "Jump") >= 0 ||
+                               StringFind(m_symbol, "Step") >= 0);
+            }
 
-        double tradingDaysPerYear = isSynthetic ? 365.0 : 252.0;
-        double tradingHoursPerDay = isSynthetic ? 24.0 : 6.5;
-        double barsPerYear = (tradingDaysPerYear * tradingHoursPerDay * 3600.0) / (double)barSeconds;
-        return MathSqrt(barsPerYear);
-    }
+            double tradingDaysPerYear = isSynthetic ? 365.0 : 252.0;
+            double tradingHoursPerDay = isSynthetic ? 24.0 : 6.5;
+            double barsPerYear = (tradingDaysPerYear * tradingHoursPerDay * 3600.0) / (double)barSeconds;
+            return MathSqrt(barsPerYear);
+        }
 
     //--- Compute realized volatility from log returns
     double ComputeRealizedVol(const double &closes[], int count) const
@@ -313,6 +328,24 @@ public:
     bool   IsHighVolRegime() const  { return m_lastSnapshot.volRegime; }
 
     SVolTargetSnapshot GetSnapshot() const { return m_lastSnapshot; }
-};
+
+        // --- Cleanup ---
+        void Deinit()
+        {
+            // CVolatilityTargeting owns ATR handle — release it
+            if(m_atrHandle != INVALID_HANDLE)
+            {
+                IndicatorRelease(m_atrHandle);
+                m_atrHandle = INVALID_HANDLE;
+            }
+            // Reset state
+            m_ewmaVol = 0.0;
+            m_volCursor = 0;
+            m_volCount = 0;
+            m_lastBarTime = 0;
+            m_lastLogTime = 0;
+            m_lastSnapshot = SVolTargetSnapshot();
+        }
+    };
 
 #endif // VOLATILITY_TARGETING_MQH

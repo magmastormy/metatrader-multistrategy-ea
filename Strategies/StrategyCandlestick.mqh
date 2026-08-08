@@ -84,10 +84,9 @@ public:
         m_ema50Handle(INVALID_HANDLE),
         m_ema200Handle(INVALID_HANDLE),
         m_ema8Handle(INVALID_HANDLE),
-        m_ema21Handle(INVALID_HANDLE),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0)
+        m_ema21Handle(INVALID_HANDLE)
     {
+        m_strategyPrefix = "CANDLESTICK";
         m_weight = 1.5;
         OverrideMinConfidence(0.60);
         m_lastDecisionReasonTag = "CANDLE_UNSET";
@@ -293,54 +292,6 @@ public:
         return STRATEGY_CANDLESTICK;
     }
 
-    //+------------------------------------------------------------------+
-    //| Quick-probe signal: fast pin bar / engulfing check (O(1) cached) |
-    //| Tier 1 fast-path for two-tier consensus evaluation.              |
-    //| Uses already-initialized analyzer — no new handle creation,       |
-    //| no full validation pipeline, no risk gate, no drawing.           |
-    //+------------------------------------------------------------------+
-    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
-    {
-        if(!m_is_enabled || !m_is_initialized)
-            return TRADE_SIGNAL_NONE;
-
-        int barIndex = 1;
-
-        // Priority 1: Pin Bar — single-candle, O(1)
-        SPinBar pinBar;
-        if(m_pinBar.DetectPinBar(barIndex, pinBar) && pinBar.strength >= 0.60)
-        {
-            if(pinBar.type == PIN_BAR_BULLISH) return TRADE_SIGNAL_BUY;
-            if(pinBar.type == PIN_BAR_BEARISH) return TRADE_SIGNAL_SELL;
-        }
-
-        // Priority 2: Engulfing — two-candle, O(1)
-        SEngulfingPattern engulfing;
-        if(m_engulfing.DetectEngulfing(barIndex, engulfing) && engulfing.strength >= 0.60)
-        {
-            if(engulfing.isBullish) return TRADE_SIGNAL_BUY;
-            else return TRADE_SIGNAL_SELL;
-        }
-
-        // Priority 3: Hammer / Shooting Star
-        SHammerPattern hammer;
-        if(m_hammer.DetectHammer(barIndex, hammer) && hammer.strength >= 0.60)
-        {
-            if(hammer.isBullish) return TRADE_SIGNAL_BUY;
-            else return TRADE_SIGNAL_SELL;
-        }
-
-        // Priority 4: Doji (Dragonfly/Gravestone only for probe)
-        SDojiPattern doji;
-        if(m_doji.DetectDoji(barIndex, doji) && doji.strength >= 0.65 && doji.type != DOJI_STANDARD)
-        {
-            if(doji.isBullish) return TRADE_SIGNAL_BUY;
-            else return TRADE_SIGNAL_SELL;
-        }
-
-        return TRADE_SIGNAL_NONE;
-    }
-
     void SetMinConfidence(double conf) { m_minConfidence = conf; }
     void SetRequireTrendAlignment(bool req) { m_requireTrendAlignment = req; }
 
@@ -519,30 +470,6 @@ protected:
     }
 
 private:
-    string            m_lastRejectReasonTag;
-    datetime          m_lastRejectLogTime;
-
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-
-        PrintFormat("[CANDLESTICK] Filtered: %s | Symbol=%s | TF=%s",
-                    reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
-    }
-
-    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
-    {
-        SetDecisionReasonTag(reasonTag);
-        LogRejectEvent(reasonTag);
-        return TRADE_SIGNAL_NONE;
-    }
-
     // Common validation + signal return for all pattern types
     ENUM_TRADE_SIGNAL ValidateAndReturnSignal(bool isBullish, double patternPrice, double &confidence, int barIndex, const string reasonTag)
     {
@@ -552,33 +479,20 @@ private:
         if(sl <= 0.0 || sl == patternPrice)
             return RejectSignal("CANDLE_SL_INVALID");
 
-        // Validate through UnifiedRiskManager
-        CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
-        if(riskMgr != NULL)
-        {
-            double tp = CalculateTakeProfit(isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, patternPrice, sl);
+        double tp = CalculateTakeProfit(isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, patternPrice, sl);
 
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = isBullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = (sl > 0) ? MathAbs(patternPrice - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.takeProfitPips = (tp > 0) ? MathAbs(tp - patternPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = isBullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+        request.stopLossPips = (sl > 0) ? MathAbs(patternPrice - sl) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.takeProfitPips = (tp > 0) ? MathAbs(tp - patternPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.confidence = confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
 
-            SValidationResult result;
-            ZeroMemory(result);
-            result = riskMgr.ValidateTradeRequest(request, "CANDLE");
-            if(!result.approved)
-            {
-                m_lastDecisionReasonTag = "CANDLE_RISK_REJECTED";
-                PrintFormat("[CANDLESTICK] Risk rejected %s at %.5f", reasonTag, patternPrice);
-                return TRADE_SIGNAL_NONE;
-            }
-            confidence *= result.confidenceMultiplier;
-        }
+        if(!ValidateWithRiskManager(request, "CANDLE", confidence))
+            return TRADE_SIGNAL_NONE;
 
         // Log to consensus protocol
         PrintFormat("[CONSENSUS-DIAG] %s | %s | Pattern: %s | Conf: %.1f%% | Weight: %.2f | Confluence: %d | Reason: %s",

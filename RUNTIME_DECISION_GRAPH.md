@@ -1,16 +1,20 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-07-12
+- Last Updated: 2026-08-06
+- Last Architecture Sync: 2026-08-06
 - Scope: Runtime signal-to-execution flow
-- Source: `MultiStrategyAutonomousEA.mq5`
-- Current Batch: 122
+- Source: `Core/Orchestration/EAOrchestrator.mqh`
+- Current Batch: 142
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
 
 ## Ownership Map
-- Orchestration: `MultiStrategyAutonomousEA.mq5` → `Core/Orchestration/EAOrchestrator.mqh`
+- Orchestration: `Core/Orchestration/EAOrchestrator.mqh` (primary) → thin EA entry point `MultiStrategyAutonomousEA.mq5`
+- **Testing EA**: `MultiStrategyTestingEA.mq5` — Standalone testing entry point with Complete Test Profile System (45 profiles)
+- Registry Access: `CRegistryAggregator` (unified access to mathematical, institutional, neural net, drawing, scan, symbol state, strategy registries)
+- Magic Number Allocation: `CMagicNumberAllocator` (centralized allocation service)
 - Fast-Path Tick Processing: `Core/Orchestration/TickProcessor.mqh`
 - Heavy Timer Processing: `Core/Orchestration/TimerProcessor.mqh`
 - Signal Generation: `Core/Orchestration/SignalGenerator.mqh`
@@ -18,7 +22,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Candidate Building: `Core/Orchestration/CandidateBuilder.mqh`
 - Trade Execution: `Core/Orchestration/TradeExecutor.mqh`
 - Live Authority Resolution: `Core/Orchestration/LiveAuthorityResolver.mqh`
-- Consensus: `CEnterpriseStrategyManager`
+- Consensus: `CEnterpriseStrategyManager` (per-symbol)
 - Filtering: `CUnifiedSignalPipeline`
 - AI adaptation/weights: `CAIEngine` + symbol-scoped AI adapters (implementing `IAIStrategy`)
 - AI modules:
@@ -26,10 +30,9 @@ Defines the authoritative runtime decision path and ownership boundaries between
   - `CNeuralTrainingDataManager` - Training examples and barrier buffer
   - `CNeuralCheckpointManager` - Atomic checkpoint operations
   - `CSymbolEmbedding` - Learnable symbol embeddings in transformer
-- Live authority: `MultiStrategyAutonomousEA.mq5` candidate authority gate
 - Risk veto: `CUnifiedRiskManager`
 - Execution: `CTradeManager`
-- Position lifecycle: `MultiStrategyAutonomousEA.mq5` + `CTradeManager::ManageAllPositions(...)` + `Core/Position/PositionManager.mqh`
+- Position lifecycle: `CPositionLifecycleManager` (via EAOrchestrator loop) + `CTradeManager::ManageAllPositions(...)` + `Core/Position/PositionManager.mqh`
 - Indicator cache lifecycle: `CIndicatorManager`
 - Python bridge integration: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
 - Shared engine & scalability: `CSharedEngineManager` (Batch 91)
@@ -42,7 +45,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Unprotected position tracking: `CUnprotectedPositionTracker` (Batch 98)
 - Synthetic spike monitoring: `CSyntheticSpikeMonitor` (Batch 98)
 - Trade attribution: `CTradeAttributionManager` (Batch 98)
-- Symbol scan scheduling: `CSymbolScanScheduler` (Batch 98) / `CScanSchedulerRegistry` (Batch 121)
+- Symbol scan scheduling: `CScanSchedulerRegistry` (Batch 121)
 - Position sizing (stateless): `CPositionSizer::CalculateSize()` → `CalculateOptimalPositionSizeCore()` (Batch 98)
 - AI calibration: `IAIStrategy::GetCalibratedWeight()` (Batch 99)
 - Equity curve: `CEquityCurveManager` (Batch 99)
@@ -152,6 +155,20 @@ flowchart TD
   G --> J
   J --> J0[Strategy role/cluster governance applied]
   J0 --> J1[Pipeline regime + cost viability gate + filter attribution]
+  
+  %% Pipeline Filter Chain (Layer 4 - Batch 129)
+  %% Filter execution order is configurable via SignalFilterSettings.order.filterOrder[]
+  %% Default order: RegimeCostGate -> Trend -> Volatility -> Liquidity -> Structure -> Time -> Session
+  %% Each filter can be enabled/disabled via grouped settings:
+  %% - regimeCostGate.enabled (RegimeCostGateSettings)
+  %% - trend.enabled (TrendFilterSettings)
+  %% - volatility.enabled (VolatilityFilterSettings)
+  %% - liquidity.enabled (LiquidityFilterSettings)
+  %% - structure.enabled (StructureFilterSettings)
+  %% - session.enableTimeFilter (SessionFilterSettings)
+  %% - session.enableSessionFilter (SessionFilterSettings)
+  %% Early-exit on first filter failure, disabled filters are skipped entirely
+  
   J1 --> J1A{AI direction ratio > 0.80?}
   J1A -->|Yes| J1B[Reduce AI weight 50% - log AI-CALIBRATION-WARNING]
   J1A -->|No| J2
@@ -210,7 +227,7 @@ flowchart TD
   X2B --> X2C[Walk ranked list up to InpMaxTradeSendsPerCycle]
   X2C --> X3{Global shadow or candidate lacks live authority?}
 
-  X3 -->|Yes| Y[Log SHADOW-TRADE + AUTHORITY-TRIAL]
+  X3 -->|Yes| Y[Log AUTHORITY-REJECT + AUTHORITY-TRIAL]
   X3 -->|No| Z0[TradeManager hard spread/drift preflight]
   Z0 -->|Fail| AB
   Z0 -->|Pass| Z[TradeManager OpenPosition]
@@ -332,6 +349,7 @@ The main EA delegates to the following extracted managers instead of inline logi
   - directional quality = `direction score / direction weight`
   - support ratio = `direction weight / total ready live weight`
   - direction passes full quorum if directional quality clears the **adaptive** quorum threshold, support clears the scan-mode floor, agreeing voters clear the effective minimum, and ready-live participation stays above `InpConsensusMinReadyWeightRatio`
+- **Layer 6 Fix (Batch 130)**: Intrabar policy `PROBE` mode now fully wired through EA inputs → `SOrchestratorConfig` → `AutoRegisterStrategies()`. Strategies 15-16 (NY Open Gap, Asian Range Break) now use configured intrabar policies instead of hardcoded `INTRABAR_POLICY_OFF`.
   - **Adaptive quorum thresholds** (Batch 41): consensus now adjusts required directional quality and support floors based on actual active voter count to prevent denominator dilution:
     - **1 active voter**: directional quality ≥ 0.40, support ≥ 0.15 (was impossible 0.55 / 0.35)
     - **2 active voters**: directional quality ≥ 0.48, support ≥ 0.30 (was 0.55 / 0.35)
@@ -366,6 +384,7 @@ The main EA delegates to the following extracted managers instead of inline logi
   - `PROBE`: evaluated intrabar but only eligible for sparse admission
   - `OFF`: skipped before pipeline work
 - Current runtime mapping promotes intrabar-enabled manual strategies into `LIVE`, so `intrabar=true` means real intrabar voting rather than a hidden probe-only path.
+- **Layer 6 Fix (Batch 130)**: `PROBE` mode now fully wired through config chain; `ENUM_INTRABAR_POLICY` replaces hardcoded boolean `intrabarEligible` at registration.
 - Elliott Wave can contribute to consensus, but Elliott-only packets are candidate-level shadow unless authority evidence and independent confluence justify live send.
 - Synthetic lean profiles are the deliberate exception: `Fibonacci`, `Elliott Wave`, `Support/Resistance`, and `Unified ICT` remain intrabar `LIVE`, `Candlestick` is retained as intrabar `PROBE`, and `Momentum` / `Trend` are removed from the local synthetic manager roster when structure-capable strategies are already enabled.
 - Governance startup logs now mark disabled strategies as `INACTIVE` in the intrabar summary instead of implying they are live because a separate profile leaves the raw input toggles enabled.
@@ -818,6 +837,15 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
   - `Core/Pipeline/UnifiedSignalPipeline.mqh` — cache, threshold, cost gate, entry veto, health check
 - Log levels map: ERROR(0) → WARN(1) → INFO(2) → DEBUG(3) → VERBOSE(4) matching InpLogLevel
 
+### Strategy Shared Helpers (Batch 140 — Phase 4 Debloat)
+Strategy-side reject logging, risk validation, and consensus diagnostics are now routed through `CStrategyBase` protected virtual helpers instead of per-strategy duplicates:
+- **Reject logging** — `CStrategyBase::LogRejectEvent()` / `RejectSignal()` emit `[SIGNAL-REJECTED]` with throttling via `m_lastRejectReasonTag` / `m_lastRejectLogTime`. Strategies call the base helper; per-strategy `m_strategyPrefix` disambiguates the source. 8 strategy files no longer carry their own copy.
+- **Risk validation** — `CStrategyBase::ValidateWithRiskManager()` wraps the pre-trade `CUnifiedRiskManager` check that strategies perform before emitting a tradable signal. Consolidated into 11 of 12 strategies (StatisticalArbitrage retains its own pattern). Decision outcome (pass/reduce/block) is unchanged — only the call site is shared.
+- **Consensus diagnostics** — `CStrategyBase::LogConsensusDiag()` emits the `[CONSENSUS-DIAG]` line strategies append to the manager's consensus trail. Consolidated into 9 of 12 strategies; 3 structural outliers retain local implementations.
+- **New-bar refresh** — `CStrategyBase::RefreshForNewBar()` (guarded by `m_lastBarCount`) invokes the `OnRefreshComponents()` virtual hook; 5 strategies override `HandleNewBar()`/`OnRefreshComponents()` rather than re-implementing the new-bar guard.
+
+No decision path or ownership boundary changed: strategies still vote through `CEnterpriseStrategyManager`, risk veto still belongs to `CUnifiedRiskManager`, and execution still belongs to `CTradeManager`. The helpers only remove duplicated boilerplate between the strategy class and its base.
+
 ## AI Runtime Path
 - `CNextGenStrategyBrain` now runs in a single local transformer mode; there is no runtime Python/cloud branch.
 - The shared universal transformer service is now initialized at startup and remains lazy-safe for late callers, preventing registered-symbol / missing-encoder drift in the AI feature path.
@@ -939,8 +967,8 @@ CEnterpriseStrategyManager::ComputeConsensusScore()
 - Resets at configurable `m_tradingDayStartHour` (default 0) for broker-consistent daily boundaries
 
 ### Kelly Criterion Position Sizing
-- `POSITION_SIZE_KELLY` mode (enum value 5) in `CPositionSizer`
-- `CalculateKellyFraction()`: half-Kelly fraction with 25% cap, computed from recent trade history win rate and avg win/loss ratio
+- `POSITION_SIZE_KELLY` mode (enum value 2) in `CPositionSizer`
+- **Consolidated to `CBayesianKellyModifier`** (L5-012): Beta-Binomial conjugate priors with quarter Kelly fraction (25%), uses confidence parameter as prior weight
 - `CalculateCompoundingMultiplier()`: sqrt upside / linear downside scaling for asymmetric compounding
 
 ### Mandatory SL Gate
@@ -1229,7 +1257,7 @@ For each family_id (0-17):
 9. `[RISK-UNPROTECTED]` / `[CAPACITY-EXTERNAL]` / `[RISK-VIRTUAL]`
 10. `[AI-VOTE]`
 11. `[NO-SIGNAL-ALERT]`
-12. `[SHADOW-TRADE]` or `[TRADE-SUCCESS]/[TRADE-ERROR]` plus `[TRADE-EXECUTION]` / `[EXECUTION-TELEMETRY]` for live-send broker details
+12. `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or `[TRADE-SUCCESS]/[TRADE-ERROR]` plus `[TRADE-EXECUTION]` / `[EXECUTION-TELEMETRY]` for live-send broker details
 
 ## 2026-04-01 Strategy Registry + AI Runtime Flow
 - Startup now includes a registry-resolution stage before manager bootstrap:
@@ -1262,3 +1290,13 @@ For each family_id (0-17):
   - Account floor in `RiskValidationGate` lowered to `$1.00` to support $10 micro-account testing.
   - Runtime `maxRiskPerTradePercent` set to `100.0` to permit aggressive overrides when necessary.
   - Environment alignment for Weltrade MT5 installation in build/sync pipeline.
+
+### Phase 6-7 Debloat — Execution Flow + Hygiene (2026-08-06)
+- **JSON parsing consolidation:** `CPythonBridge` now uses `ParseJsonDouble()` / `ParseJsonString()` / `ParseJsonInteger()` helpers for all JSON field extraction. No runtime behavior change — same find/extract/parse logic, just deduplicated. Affects `ParsePredictionResponse`, `GetPairCorrelation`, `FindBestCorrelatedPair`, `ParseVersionResponse`.
+- **SignalValidator verification:** Confirmed already merged into `EnterpriseStrategyManager` — post-consensus spread/ATR/OFI/VPIN checks run within `GetConsensusSignalForSymbolWithConfluenceMode()`. No separate `SignalValidator.mqh` file exists.
+- **TODO cleanup:** `EnsembleAIStrategyAdapter::TrainStep()` and `OnRegimeChange()` documented as intentional no-ops — `CEnsembleMetaLearner` method signatures require parameters not available in the adapter interface.
+- **Dashboard fix:** `App.tsx` now imports real page components instead of rendering "Coming Soon" stubs. All 8 routes render actual page implementations.
+
+### Phase 6.2 + 7.4 — Position Sizing Consolidation + Error Logging (2026-08-06)
+- **Position sizing (6.2):** `UnifiedRiskManager` no longer re-implements min-lot round-up. The redundant `<minLot` branch was removed; the gate is now a single `if(request.lotSize > maxLot)` check against `SYMBOL_VOLUME_MAX`. `CPositionSizer` is the sole owner of min-lot round-up, using the restored 15x `minLotRiskMultiplier` tolerance (URM config default, `CPositionSizer` hard cap, and `SetMinLotRiskMultiplier` setter all relaxed from 1x → 15x). EA inputs `InpAllowMinLotRoundUp` / `InpMinLotRiskMultiplier` expose the policy.
+- **Error logging (7.4):** 38 `PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, __LINE__, __FUNCTION__)` debug lines were added to ambiguous `return 0.0` exit points across `CPythonBridge` (3), `CPositionSizer` (5), `CTradeManager` (14), and `CUnifiedRiskManager` (16). Pure observability — no decision path or trade behavior changed. Documented valid zero-result returns (hedging-mode, already-braced inline early-exits) were intentionally left unlogged.

@@ -233,16 +233,16 @@ private:
     }
     
     // Apply weight modification to all managers for a given symbol
-    bool ApplyWeightModification(const string symbol, const string strategyName, const double newWeight) {
-        // Find manager for this symbol
-        for(int i = 0; i < m_managerCount; i++) {
-            if(m_managerSymbols[i] == symbol && m_managers[i] != NULL) {
-                string qualifiedName = BuildQualifiedName(symbol, strategyName);
-                return m_managers[i].UpdateStrategyWeight(qualifiedName, newWeight);
+        bool ApplyWeightModification(const string symbol, const string strategyName, const double newWeight) {
+            // Find manager for this symbol
+            for(int i = 0; i < m_managerCount; i++) {
+                if(m_managerSymbols[i] == symbol && m_managers[i] != NULL) {
+                    // Pass simple strategy name since each manager is per-symbol
+                    return m_managers[i].UpdateStrategyWeight(strategyName, newWeight);
+                }
             }
+            return false;
         }
-        return false;
-    }
 
 public:
     // Constructor
@@ -414,18 +414,17 @@ public:
                 continue;
             }
             
-            // Apply weight modification to all managers (using qualified name symbol::strategy)
-            bool anySuccess = false;
-            for(int m = 0; m < m_managerCount; m++) {
-                if(m_managers[m] == NULL) continue;
+            // Apply weight modification to all managers (using simple strategy name since each manager is per-symbol)
+                        bool anySuccess = false;
+                        for(int m = 0; m < m_managerCount; m++) {
+                            if(m_managers[m] == NULL) continue;
                 
-                string qualifiedName = m_managerSymbols[m] + "::" + mod.strategyName;
-                if(m_managers[m].UpdateStrategyWeightByName(qualifiedName, mod.newWeight)) {
-                    anySuccess = true;
-                    LogAI(ERROR_LEVEL_INFO, StringFormat("AI modified weight: %s -> %.2f (confidence: %.2f, reason: %s)",
-                          qualifiedName, mod.newWeight, mod.confidence, mod.reason));
-                }
-            }
+                            if(m_managers[m].UpdateStrategyWeightByName(mod.strategyName, mod.newWeight)) {
+                                anySuccess = true;
+                                LogAI(ERROR_LEVEL_INFO, StringFormat("AI modified weight: %s -> %.2f (confidence: %.2f, reason: %s)",
+                                      mod.strategyName, mod.newWeight, mod.confidence, mod.reason));
+                            }
+                        }
             
             if(anySuccess) {
                 // Track pending modification if temporary
@@ -551,10 +550,14 @@ public:
         
         m_lastAdaptation = nowTime;
         
-        // Market regime adaptation (use first manager as representative)
-        if(m_adaptiveConfig.useMarketRegimeAdaptation && m_managerCount > 0 && m_managers[0] != NULL) {
-            ENUM_MARKET_REGIME regime = m_managers[0].GetCurrentMarketRegime();
-            AdaptToRegime(regime);
+        // Market regime adaptation (use ALL managers, each per-symbol)
+        if(m_adaptiveConfig.useMarketRegimeAdaptation && m_managerCount > 0) {
+            for(int m = 0; m < m_managerCount; m++) {
+                if(m_managers[m] != NULL) {
+                    ENUM_MARKET_REGIME regime = m_managers[m].GetCurrentMarketRegime();
+                    AdaptToRegime(regime);
+                }
+            }
         }
         
         // Performance-based adaptation
@@ -998,26 +1001,134 @@ private:
 
         m_lastExternalReasoningTime = now;
 
-        // Use first available manager for external LLM reasoning
-        if(m_managerCount <= 0 || m_managers[0] == NULL) {
+        // Use ALL managers for external LLM reasoning (not just first)
+        if(m_managerCount <= 0) {
             LogExternalLLM("REASONING-SKIP", "no managers available", true);
             return;
         }
 
-        string regime = EnumToString(m_managers[0].GetCurrentMarketRegime());
-        string currentWeights = m_managers[0].GetStrategyWeightsJSON();
-        if(currentWeights == "") {
-            LogExternalLLM("REASONING-SKIP", "strategy weights unavailable", true);
-            return;
-        }
+        for(int m = 0; m < m_managerCount; m++) {
+            if(m_managers[m] == NULL) continue;
+            
+            string regime = EnumToString(m_managers[m].GetCurrentMarketRegime());
+            string currentWeights = m_managers[m].GetStrategyWeightsJSON();
+            if(currentWeights == "") {
+                LogExternalLLM("REASONING-SKIP", "strategy weights unavailable for " + m_managerSymbols[m], true);
+                continue;
+            }
 
-        string reasoning = "";
-        if(ReasonStrategyWeights(regime, currentWeights, reasoning)) {
-            m_lastExternalReasoning = reasoning;
-            LogExternalLLM("REASONING", "strategy-weight commentary captured", true);
-        } else {
-            LogExternalLLM("REASONING-FAIL", "strategy-weight commentary unavailable", true);
+            string reasoning = "";
+            if(ReasonStrategyWeights(regime, currentWeights, reasoning)) {
+                m_lastExternalReasoning = reasoning;
+                LogExternalLLM("REASONING", "strategy-weight commentary captured for " + m_managerSymbols[m], true);
+                
+                // ACT ON LLM REASONING: Parse and apply weight adjustments
+                ApplyLLMReasoningToWeights(m_managers[m], reasoning);
+            } else {
+                LogExternalLLM("REASONING-FAIL", "strategy-weight commentary unavailable for " + m_managerSymbols[m], true);
+            }
         }
+    }
+
+    // Apply LLM reasoning to strategy weights
+    void ApplyLLMReasoningToWeights(CEnterpriseStrategyManager* manager, const string &reasoning) {
+        if(manager == NULL || reasoning == "")
+            return;
+
+        // Parse LLM reasoning for weight adjustments
+        // Expected format: "Increase MOMENTUM weight to 1.5, decrease MEAN_REVERSION to 0.8"
+        // or JSON-like format: {"MOMENTUM": 1.5, "MEAN_REVERSION": 0.8}
+        
+        string adjustedReasoning = reasoning;
+        StringToLower(adjustedReasoning);
+        
+        // Simple keyword-based parsing
+        // Look for strategy names and weight suggestions
+        string strategies[] = {"momentum", "trend", "supportresistance", "ict", "candlestick", "unicorn", "powerofthree", 
+                              "meanreversion", "volatilitybreakout", "fvgscalper", "turtlesoup", "breakerblock",
+                              "nyopengap", "asianrangebreak", "statisticalarbitrage", "liquiditysweep",
+                              "rangecompression", "exitingoptimizer", "kalmanmr", "changepointdetect",
+                              "fourstateregime", "voltargeting", "neuronetwork", "transformer", "ensemble", "onnx"};
+        
+        for(int s = 0; s < ArraySize(strategies); s++) {
+            string strat = strategies[s];
+            int pos = StringFind(adjustedReasoning, strat);
+            if(pos >= 0) {
+                // Look for numbers near the strategy name
+                // Extract a number after the strategy name
+                string afterStrat = StringSubstr(adjustedReasoning, pos + StringLen(strat));
+                StringTrimLeft(afterStrat);
+                
+                // Try to find a number pattern (e.g., "1.5", "0.8", "to 1.2")
+                int numStart = -1;
+                for(int i = 0; i < StringLen(afterStrat); i++) {
+                    ushort c = StringGetCharacter(afterStrat, i);
+                    if((c >= '0' && c <= '9') || c == '.') {
+                        numStart = i;
+                        break;
+                    }
+                }
+                
+                if(numStart >= 0) {
+                    string numStr = StringSubstr(afterStrat, numStart);
+                    // Extract just the number
+                    int numEnd = 0;
+                    for(int i = 0; i < StringLen(numStr); i++) {
+                        ushort c = StringGetCharacter(numStr, i);
+                        if(!((c >= '0' && c <= '9') || c == '.')) {
+                            numEnd = i;
+                            break;
+                        }
+                    }
+                    if(numEnd == 0) numEnd = StringLen(numStr);
+                    numStr = StringSubstr(numStr, 0, numEnd);
+                    
+                    double newWeight = StringToDouble(numStr);
+                    if(newWeight > 0.0 && newWeight <= 5.0) {
+                        // Apply weight change with confidence check
+                        string properName = GetProperStrategyName(strat);
+                        if(properName != "") {
+                            bool success = manager.UpdateStrategyWeight(properName, newWeight);
+                            if(success) {
+                                LogExternalLLM("WEIGHT-APPLIED", StringFormat("Applied LLM weight: %s -> %.2f", properName, newWeight), true);
+                                LogAI(ERROR_LEVEL_INFO, StringFormat("LLM weight adjustment: %s -> %.2f", properName, newWeight));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper to convert lowercase strategy name to proper name
+    string GetProperStrategyName(const string &lowerName) {
+        if(lowerName == "momentum") return "Momentum";
+        if(lowerName == "trend") return "Trend";
+        if(lowerName == "supportresistance") return "Support/Resistance";
+        if(lowerName == "ict") return "Unified ICT";
+        if(lowerName == "candlestick") return "Candlestick";
+        if(lowerName == "unicorn") return "Unicorn Model";
+        if(lowerName == "powerofthree") return "Power of Three";
+        if(lowerName == "meanreversion") return "Mean Reversion";
+        if(lowerName == "volatilitybreakout") return "Volatility Breakout";
+        if(lowerName == "fvgscalper") return "FVG Scalper";
+        if(lowerName == "turtlesoup") return "Turtle Soup";
+        if(lowerName == "breakerblock") return "Breaker Block";
+        if(lowerName == "nyopengap") return "NY Open Gap";
+        if(lowerName == "asianrangebreak") return "Asian Range Break";
+        if(lowerName == "statisticalarbitrage") return "Statistical Arbitrage";
+        if(lowerName == "liquiditysweep") return "Liquidity Sweep";
+        if(lowerName == "rangecompression") return "Range Compression";
+        if(lowerName == "exitingoptimizer") return "Exit Optimizer";
+        if(lowerName == "kalmanmr") return "Kalman MR";
+        if(lowerName == "changepointdetect") return "Changepoint Detect";
+        if(lowerName == "fourstateregime") return "Four State Regime";
+        if(lowerName == "voltargeting") return "Vol Targeting";
+        if(lowerName == "neuronetwork") return "Neural Network AI";
+        if(lowerName == "transformer") return "Transformer AI";
+        if(lowerName == "ensemble") return "Ensemble AI";
+        if(lowerName == "onnx") return "ONNX AI";
+        return "";
     }
     
     // Adaptation helpers

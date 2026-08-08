@@ -32,6 +32,9 @@ enum ENUM_ASSET_CLASS
    ASSET_UNIVERSAL         // 9 - Fallback
 };
 
+// Helper to check if asset class is synthetic/Deriv (classes 4-8)
+#define IsSyntheticAssetClass(class) ((class) >= ASSET_DERIV_CRASHBOOM && (class) <= ASSET_DERIV_DEX)
+
 //+------------------------------------------------------------------+
 //| Per-asset-class trading profile                                  |
 //+------------------------------------------------------------------+

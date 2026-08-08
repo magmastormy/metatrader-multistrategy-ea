@@ -6,6 +6,7 @@
 #define REGIME_ENGINE_MQH
 
 #include "../Utils/Enums.mqh"
+#include "../Signals/SignalDiagnostics.mqh"
 
 enum ENUM_REGIME_STATE
 {
@@ -135,11 +136,12 @@ private:
     ENUM_REGIME_STATE m_lastLoggedState;
 
     SRegimeSnapshot m_lastSnapshot;
-    int m_consecutiveDataFaults;
-    datetime m_lastReuseLogTime;
-    int m_snapshotReuseTtlSeconds;
+        int m_consecutiveDataFaults;
+        datetime m_lastReuseLogTime;
+        int m_snapshotReuseTtlSeconds;
+        CSignalDiagnostics* m_signalDiagnostics;
 
-    void ResetHandles()
+        void ResetHandles()
     {
         if(m_atrHandle != INVALID_HANDLE)
         {
@@ -160,48 +162,98 @@ private:
     }
 
     int GetSnapshotReuseWindowSeconds(const ENUM_TIMEFRAMES timeframe) const
-    {
-        int barSeconds = PeriodSeconds(timeframe);
-        if(barSeconds <= 0)
-            barSeconds = 60;
-
-        // Allow reuse for up to 3 bars, with minimum 60 seconds and maximum 1 hour
-        int boundedBarWindow = MathMax(60, MathMin(3600, barSeconds * 3));
-        return MathMin(boundedBarWindow, MathMax(10, m_snapshotReuseTtlSeconds));
-    }
-
-    bool TryReuseRecentSnapshot(const string symbol,
-                                const ENUM_TIMEFRAMES timeframe,
-                                const string reasonTag,
-                                const int errorCode)
-    {
-        if(!m_lastSnapshot.valid || m_symbol != symbol || m_timeframe != timeframe || m_lastSnapshot.timestamp <= 0)
-            return false;
-
-        int snapshotAgeSeconds = (int)MathMax(0, TimeCurrent() - m_lastSnapshot.timestamp);
-        if(snapshotAgeSeconds > GetSnapshotReuseWindowSeconds(timeframe))
-            return false;
-
-        datetime nowTime = TimeCurrent();
-        if(m_lastReuseLogTime == 0 || (nowTime - m_lastReuseLogTime) >= 30)
         {
-            PrintFormat("[REGIME-STATE] REUSE_LAST_VALID | symbol=%s | timeframe=%s | reason=%s | age=%ds | err=%d",
-                        symbol,
-                        EnumToString(timeframe),
-                        reasonTag,
-                        snapshotAgeSeconds,
-                        errorCode);
-            m_lastReuseLogTime = nowTime;
+            int barSeconds = PeriodSeconds(timeframe);
+            if(barSeconds <= 0)
+                barSeconds = 60;
+
+            // Allow reuse for up to 3 bars, with minimum 60 seconds and maximum 1 hour
+            int boundedBarWindow = MathMax(60, MathMin(3600, barSeconds * 3));
+            return MathMin(boundedBarWindow, MathMax(10, m_snapshotReuseTtlSeconds));
         }
 
-        m_lastSnapshot.reuseActive = true;
-        m_lastSnapshot.stalenessSeconds = snapshotAgeSeconds;
-        m_lastSnapshot.readinessClass = "REUSED_SNAPSHOT";
+        // L4-011 Fix: Estimate regime state from fallback indicators
+        ENUM_REGIME_STATE EstimateRegimeStateFromFallback(const string symbol,
+                                                           const ENUM_TIMEFRAMES timeframe,
+                                                           double atrValue,
+                                                           double bbUpperValue,
+                                                           double bbLowerValue) const
+        {
+            // Get current spread
+            double spreadPrice = SymbolInfoInteger(symbol, SYMBOL_SPREAD) * SymbolInfoDouble(symbol, SYMBOL_POINT);
+        
+            double spreadToAtr = (atrValue > 0.0) ? (spreadPrice / atrValue) : 0.0;
+            double bbWidth = bbUpperValue - bbLowerValue;
+            double bbWidthAtrRatio = (atrValue > 0.0) ? (bbWidth / atrValue) : 0.0;
+        
+            // Simple regime estimation based on fallback data
+            // Check for CHAOS (high spread)
+            if(spreadToAtr > (m_maxSpreadToAtrRatio * 1.5))
+                return REGIME_CHAOS;
+        
+            // Check for RANGE (compression)
+            if(bbWidthAtrRatio < m_compressionRatioThreshold)
+                return REGIME_RANGE;
+        
+            // Default to TREND
+            return REGIME_TREND;
+        }
 
-        return true;
-    }
+        bool TryReuseRecentSnapshot(const string symbol,
+                                    const ENUM_TIMEFRAMES timeframe,
+                                    const string reasonTag,
+                                    const int errorCode)
+        {
+            if(!m_lastSnapshot.valid || m_symbol != symbol || m_timeframe != timeframe || m_lastSnapshot.timestamp <= 0)
+                return false;
 
-    void NoteDataFault(const string symbol,
+            int snapshotAgeSeconds = (int)MathMax(0, TimeCurrent() - m_lastSnapshot.timestamp);
+            if(snapshotAgeSeconds > GetSnapshotReuseWindowSeconds(timeframe))
+                return false;
+
+            // L4-011 Fix: Validate regime state consistency before reusing snapshot
+            // Estimate current regime state from fallback indicators
+            double atrValue = 0.0, bbUpperValue = 0.0, bbLowerValue = 0.0;
+            ENUM_REGIME_STATE currentRegimeState = REGIME_TREND;
+            if(BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
+            {
+                // Estimate regime state using fallback data
+                currentRegimeState = EstimateRegimeStateFromFallback(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue);
+            
+                // Invalidate snapshot if regime state differs
+                if(currentRegimeState != m_lastSnapshot.state)
+                {
+                    PrintFormat("[REGIME-STATE] REUSE_INVALIDATED | symbol=%s | timeframe=%s | snapshot_state=%s | current_state=%s | reason=%s",
+                                symbol,
+                                EnumToString(timeframe),
+                                RegimeToString(m_lastSnapshot.state),
+                                RegimeToString(currentRegimeState),
+                                reasonTag);
+                    return false;
+                }
+            }
+            // If fallback fails, allow time-based reuse (conservative approach)
+
+            datetime nowTime = TimeCurrent();
+            if(m_lastReuseLogTime == 0 || (nowTime - m_lastReuseLogTime) >= 30)
+            {
+                PrintFormat("[REGIME-STATE] REUSE_LAST_VALID | symbol=%s | timeframe=%s | reason=%s | age=%ds | err=%d",
+                            symbol,
+                            EnumToString(timeframe),
+                            reasonTag,
+                            snapshotAgeSeconds,
+                            errorCode);
+                m_lastReuseLogTime = nowTime;
+            }
+
+            m_lastSnapshot.reuseActive = true;
+            m_lastSnapshot.stalenessSeconds = snapshotAgeSeconds;
+            m_lastSnapshot.readinessClass = "REUSED_SNAPSHOT";
+
+            return true;
+                    }
+
+                void NoteDataFault(const string symbol,
                        const ENUM_TIMEFRAMES timeframe,
                        const string tag,
                        const int errorCode)
@@ -278,36 +330,42 @@ private:
     }
 
     bool EnsureHandles(const string symbol, ENUM_TIMEFRAMES timeframe)
-    {
-        bool handlesReady = (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE && m_adxHandle != INVALID_HANDLE);
-        bool contextMatches = (m_symbol == symbol && m_timeframe == timeframe);
-        if(handlesReady && contextMatches)
-            return true;
-
-        if(!contextMatches)
         {
-            m_lastSnapshot.valid = false;
-            m_consecutiveDataFaults = 0;
-            m_lastReuseLogTime = 0;
-            m_lastSpreadShockTime = 0;
-            m_lastStateLogTime = 0;
-            m_lastLoggedState = REGIME_RANGE;
+            bool handlesReady = (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE && m_adxHandle != INVALID_HANDLE);
+        
+            // Resolve PERIOD_CURRENT to actual chart timeframe
+            ENUM_TIMEFRAMES resolvedTimeframe = timeframe;
+            if(resolvedTimeframe == PERIOD_CURRENT || resolvedTimeframe == 0)
+                resolvedTimeframe = Period();
+        
+            bool contextMatches = (m_symbol == symbol && m_timeframe == resolvedTimeframe);
+            if(handlesReady && contextMatches)
+                return true;
+
+            if(!contextMatches)
+            {
+                m_lastSnapshot.valid = false;
+                m_consecutiveDataFaults = 0;
+                m_lastReuseLogTime = 0;
+                m_lastSpreadShockTime = 0;
+                m_lastStateLogTime = 0;
+                m_lastLoggedState = REGIME_RANGE;
+            }
+
+            ResetHandles();
+
+            m_symbol = symbol;
+            m_timeframe = resolvedTimeframe;
+            m_atrHandle = iATR(symbol, resolvedTimeframe, m_atrPeriod);
+            m_bbHandle = iBands(symbol, resolvedTimeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
+            // ENHANCEMENT: Create ADX handle for trend strength (Batch 93 - Week 5)
+            m_adxHandle = iADX(symbol, resolvedTimeframe, 14);
+            m_spreadSampleCount = 0;
+            m_spreadSampleCursor = 0;
+            ArrayResize(m_spreadSamples, m_spreadWindow);
+
+            return (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE && m_adxHandle != INVALID_HANDLE);
         }
-
-        ResetHandles();
-
-        m_symbol = symbol;
-        m_timeframe = timeframe;
-        m_atrHandle = iATR(symbol, timeframe, m_atrPeriod);
-        m_bbHandle = iBands(symbol, timeframe, m_bbPeriod, 0, m_bbDeviation, PRICE_CLOSE);
-        // ENHANCEMENT: Create ADX handle for trend strength (Batch 93 - Week 5)
-        m_adxHandle = iADX(symbol, timeframe, 14);
-        m_spreadSampleCount = 0;
-        m_spreadSampleCursor = 0;
-        ArrayResize(m_spreadSamples, m_spreadWindow);
-
-        return (m_atrHandle != INVALID_HANDLE && m_bbHandle != INVALID_HANDLE && m_adxHandle != INVALID_HANDLE);
-    }
 
     double ComputeSpreadBaseline() const
     {
@@ -412,21 +470,23 @@ public:
     }
 
     bool Initialize(const int atrPeriod = 14,
-                    const int bbPeriod = 20,
-                    const double bbDeviation = 2.0,
-                    const int zScoreWindow = 30,
-                    const int spreadWindow = 120)
-    {
-        m_atrPeriod = MathMax(5, atrPeriod);
-        m_bbPeriod = MathMax(10, bbPeriod);
-        m_bbDeviation = MathMax(1.0, bbDeviation);
-        m_zScoreWindow = MathMax(10, zScoreWindow);
-        m_spreadWindow = MathMax(20, spreadWindow);
-        ArrayResize(m_spreadSamples, m_spreadWindow);
-        m_spreadSampleCount = 0;
-        m_spreadSampleCursor = 0;
-        return true;
-    }
+                            const int bbPeriod = 20,
+                            const double bbDeviation = 2.0,
+                            const int zScoreWindow = 30,
+                            const int spreadWindow = 120,
+                            CSignalDiagnostics* diagnostics = NULL)
+        {
+            m_atrPeriod = MathMax(5, atrPeriod);
+            m_bbPeriod = MathMax(10, bbPeriod);
+            m_bbDeviation = MathMax(1.0, bbDeviation);
+            m_zScoreWindow = MathMax(10, zScoreWindow);
+            m_spreadWindow = MathMax(20, spreadWindow);
+            ArrayResize(m_spreadSamples, m_spreadWindow);
+            m_spreadSampleCount = 0;
+            m_spreadSampleCursor = 0;
+            m_signalDiagnostics = diagnostics;
+            return true;
+        }
 
     void ConfigureCostLimits(const double maxSpreadToAtrRatio,
                              const int spreadShockCooldownSeconds,
@@ -443,27 +503,32 @@ public:
     }
 
     bool Update(const string symbol, ENUM_TIMEFRAMES timeframe)
-    {
-        double atrValue = 0.0;
-        double bbUpperValue = 0.0;
-        double bbLowerValue = 0.0;
-        bool usedFallback = false;
-
-        if(!EnsureHandles(symbol, timeframe))
         {
-            int handleErr = GetLastError();
-            if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
-            {
-                NoteDataFault(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
-                return TryReuseRecentSnapshot(symbol, timeframe, "HANDLE_INIT_FAILED", handleErr);
-            }
-            usedFallback = true;
-        }
+            // Resolve PERIOD_CURRENT to actual chart timeframe
+            ENUM_TIMEFRAMES resolvedTimeframe = timeframe;
+            if(resolvedTimeframe == PERIOD_CURRENT || resolvedTimeframe == 0)
+                resolvedTimeframe = Period();
+        
+            double atrValue = 0.0;
+            double bbUpperValue = 0.0;
+            double bbLowerValue = 0.0;
+            bool usedFallback = false;
 
-        int minBars = MathMax(m_bbPeriod + 5, m_atrPeriod + 5);
-        int availableBars = Bars(symbol, timeframe);
-        int calculatedBarsBB = BarsCalculated(m_bbHandle);
-        int calculatedBarsATR = BarsCalculated(m_atrHandle);
+            if(!EnsureHandles(symbol, resolvedTimeframe))
+            {
+                int handleErr = GetLastError();
+                if(!BuildFallbackIndicators(symbol, resolvedTimeframe, atrValue, bbUpperValue, bbLowerValue))
+                {
+                    NoteDataFault(symbol, resolvedTimeframe, "HANDLE_INIT_FAILED", handleErr);
+                    return TryReuseRecentSnapshot(symbol, resolvedTimeframe, "HANDLE_INIT_FAILED", handleErr);
+                }
+                usedFallback = true;
+            }
+
+            int minBars = MathMax(m_bbPeriod + 5, m_atrPeriod + 5);
+            int availableBars = Bars(symbol, resolvedTimeframe);
+            int calculatedBarsBB = BarsCalculated(m_bbHandle);
+            int calculatedBarsATR = BarsCalculated(m_atrHandle);
         
         if(!usedFallback &&
            (availableBars < minBars ||
@@ -471,11 +536,11 @@ public:
             calculatedBarsATR < minBars))
         {
             m_lastSnapshot.readinessClass = "WARMUP";
-            m_lastSnapshot.reuseActive = false;
-            m_lastSnapshot.stalenessSeconds = 0;
-            if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
-                return TryReuseRecentSnapshot(symbol, timeframe, "WARMUP", 0);
-            usedFallback = true;
+                        m_lastSnapshot.reuseActive = false;
+                        m_lastSnapshot.stalenessSeconds = 0;
+                        if(!BuildFallbackIndicators(symbol, resolvedTimeframe, atrValue, bbUpperValue, bbLowerValue))
+                            return TryReuseRecentSnapshot(symbol, resolvedTimeframe, "WARMUP", 0);
+                        usedFallback = true;
         }
 
         if(!usedFallback)
@@ -484,14 +549,14 @@ public:
 
             // HIGH FIX: Validate handles are valid before attempting copy
             if(m_atrHandle == INVALID_HANDLE || m_bbHandle == INVALID_HANDLE)
-            {
-                if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
-                {
-                    NoteDataFault(symbol, timeframe, "INVALID_HANDLE", 0);
-                    return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_HANDLE", 0);
-                }
-                usedFallback = true;
-            }
+                        {
+                            if(!BuildFallbackIndicators(symbol, resolvedTimeframe, atrValue, bbUpperValue, bbLowerValue))
+                            {
+                                NoteDataFault(symbol, resolvedTimeframe, "INVALID_HANDLE", 0);
+                                return TryReuseRecentSnapshot(symbol, resolvedTimeframe, "INVALID_HANDLE", 0);
+                            }
+                            usedFallback = true;
+                        }
 
             if(!usedFallback)
             {
@@ -504,32 +569,32 @@ public:
                 int copyErr = GetLastError();
 
                 if(atrRet <= 0)
-                {
-                    if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
-                    {
-                        NoteDataFault(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
-                        return TryReuseRecentSnapshot(symbol, timeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
-                    }
-                    usedFallback = true;
-                }
+                                {
+                                    if(!BuildFallbackIndicators(symbol, resolvedTimeframe, atrValue, bbUpperValue, bbLowerValue))
+                                    {
+                                        NoteDataFault(symbol, resolvedTimeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+                                        return TryReuseRecentSnapshot(symbol, resolvedTimeframe, "ATR_BUFFER_COPY_FAILED", copyErr);
+                                    }
+                                    usedFallback = true;
+                                }
                 else if(upperRet <= 0 || lowerRet <= 0)
-                {
-                    if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
-                    {
-                        NoteDataFault(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
-                        return TryReuseRecentSnapshot(symbol, timeframe, "BB_BUFFER_COPY_FAILED", copyErr);
-                    }
-                    usedFallback = true;
-                }
+                                {
+                                    if(!BuildFallbackIndicators(symbol, resolvedTimeframe, atrValue, bbUpperValue, bbLowerValue))
+                                    {
+                                        NoteDataFault(symbol, resolvedTimeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+                                        return TryReuseRecentSnapshot(symbol, resolvedTimeframe, "BB_BUFFER_COPY_FAILED", copyErr);
+                                    }
+                                    usedFallback = true;
+                                }
                 else if(atr[0] <= 0.0)
-                {
-                    if(!BuildFallbackIndicators(symbol, timeframe, atrValue, bbUpperValue, bbLowerValue))
-                    {
-                        NoteDataFault(symbol, timeframe, "INVALID_ATR_VALUE", 0);
-                        return TryReuseRecentSnapshot(symbol, timeframe, "INVALID_ATR_VALUE", 0);
-                    }
-                    usedFallback = true;
-                }
+                                {
+                                    if(!BuildFallbackIndicators(symbol, resolvedTimeframe, atrValue, bbUpperValue, bbLowerValue))
+                                    {
+                                        NoteDataFault(symbol, resolvedTimeframe, "INVALID_ATR_VALUE", 0);
+                                        return TryReuseRecentSnapshot(symbol, resolvedTimeframe, "INVALID_ATR_VALUE", 0);
+                                    }
+                                    usedFallback = true;
+                                }
                 else
                 {
                     atrValue = atr[0];
@@ -682,31 +747,31 @@ public:
         if(state != m_lastLoggedState || m_lastStateLogTime == 0 || (now - m_lastStateLogTime) >= 60)
         {
             PrintFormat("[REGIME-STATE] %s | tf=%s | state=%s | confirmed=%s | conf=%.2f | stable_bars=%d | compression=%s | spread_shock=%s | cooldown=%s | spread_atr=%.4f | z=%.3f | bb_atr=%.2f",
-                        symbol,
-                        EnumToString(timeframe),
-                        RegimeToString(state),
-                        RegimeToString(m_lastSnapshot.confirmedState),
-                        regimeConfidence,
-                        stabilityBars,
-                        compression ? "true" : "false",
-                        spreadShock ? "true" : "false",
-                        cooldownActive ? "true" : "false",
-                        spreadToAtr,
-                        zScore,
-                        bbWidthAtrRatio);
+                                    symbol,
+                                    EnumToString(resolvedTimeframe),
+                                    RegimeToString(state),
+                                    RegimeToString(m_lastSnapshot.confirmedState),
+                                    regimeConfidence,
+                                    stabilityBars,
+                                    compression ? "true" : "false",
+                                    spreadShock ? "true" : "false",
+                                    cooldownActive ? "true" : "false",
+                                    spreadToAtr,
+                                    zScore,
+                                    bbWidthAtrRatio);
             m_lastLoggedState = state;
             m_lastStateLogTime = now;
         }
 
         if(usedFallback && (m_lastFaultLogTime == 0 || (now - m_lastFaultLogTime) >= 30))
-        {
-            PrintFormat("[REGIME-STATE] FALLBACK_RATES | symbol=%s | timeframe=%s | atr=%.5f | bb_width=%.5f",
-                        symbol,
-                        EnumToString(timeframe),
-                        m_lastSnapshot.atrValue,
-                        m_lastSnapshot.bbWidth);
-            m_lastFaultLogTime = now;
-        }
+                {
+                    PrintFormat("[REGIME-STATE] FALLBACK_RATES | symbol=%s | timeframe=%s | atr=%.5f | bb_width=%.5f",
+                                symbol,
+                                EnumToString(resolvedTimeframe),
+                                m_lastSnapshot.atrValue,
+                                m_lastSnapshot.bbWidth);
+                    m_lastFaultLogTime = now;
+                }
 
         return true;
     }

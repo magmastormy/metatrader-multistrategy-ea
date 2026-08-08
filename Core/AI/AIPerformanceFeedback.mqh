@@ -197,10 +197,14 @@ public:
     void SetRetrainingThresholds(double minAccuracy, double minProfitability);
     
     // Reporting
-    void PrintPerformanceReport(void);
-    string GetPerformanceSummary(void);
+        void PrintPerformanceReport(void);
+        string GetPerformanceSummary(void);
     
-private:
+        // Persistence (L11-012)
+        void PersistMetrics(void);
+        void PersistMetricsToCSV(const string filename);
+    
+    private:
     // Internal calculation methods
     void CalculateAccuracyMetrics(void);
     void CalculateProfitabilityMetrics(void);
@@ -217,7 +221,10 @@ private:
     void ExportLabeledDataset(const string fileName, const int maxRows);
     
     // Logging
-    void LogFeedback(const string message);
+    void LogFeedback(const string message)
+    {
+        PrintFormat("[AI-FEEDBACK] %s", message);
+    }
 };
 
 //+------------------------------------------------------------------+
@@ -258,6 +265,8 @@ CAIPerformanceFeedback::~CAIPerformanceFeedback(void)
     {
         if(m_currentMetrics.totalPredictions > 0)
             PrintPerformanceReport();
+        // Persist final metrics on shutdown (L11-012)
+        PersistMetrics();
         LogFeedback("AI Performance Feedback system destroyed");
     }
 }
@@ -378,6 +387,9 @@ void CAIPerformanceFeedback::UpdateMetrics(void)
     CalculateProfitabilityMetrics();
     CalculateCalibrationMetrics();
     CalculateRecentMetrics();
+    
+    // Persist metrics periodically (L11-012)
+    PersistMetrics();
 }
 
 //+------------------------------------------------------------------+
@@ -988,17 +1000,63 @@ void CAIPerformanceFeedback::ExportLabeledDataset(const string fileName, const i
 }
 
 //+------------------------------------------------------------------+
-//| Log Feedback                                                  |
+//| Persist AI Health Dashboard Metrics to CSV (L11-012)          |
 //+------------------------------------------------------------------+
-void CAIPerformanceFeedback::LogFeedback(const string message)
+void CAIPerformanceFeedback::PersistMetrics(void)
 {
-    SErrorContext context;
-    context.component = "AIPerformanceFeedback";
-    context.operation = "LogFeedback";
-    context.errorCode = 0;
-    context.additionalInfo = message;
-    context.severity = ERROR_INFO;
-    CEnhancedErrorHandler::LogError(ERROR_INFO, context);
+    PersistMetricsToCSV("AI_Health_Dashboard.csv");
+}
+
+void CAIPerformanceFeedback::PersistMetricsToCSV(const string filename)
+{
+    if(!m_initialized) return;
+    
+    int handle = FileOpen(filename, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if(handle == INVALID_HANDLE)
+    {
+        LogFeedback("Failed to open metrics file: " + filename);
+        return;
+    }
+
+    bool writeHeader = (FileSize(handle) == 0);
+    FileSeek(handle, 0, SEEK_END);
+
+    if(writeHeader)
+    {
+        if(FileWriteString(handle, "timestamp,total_predictions,correct_predictions,accuracy,recent_accuracy,precision,recall,f1_score,average_confidence,calibration_error,profitability,recent_profitability,sharpe_ratio,trending_accuracy,ranging_accuracy,volatile_accuracy,retraining_count,last_retraining_time,should_retrain") <= 0)
+        {
+            FileClose(handle);
+            return;
+        }
+    }
+
+    string line = StringFormat("%s,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%s,%s",
+                               TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
+                               m_currentMetrics.totalPredictions,
+                               m_currentMetrics.correctPredictions,
+                               m_currentMetrics.accuracy,
+                               m_currentMetrics.recentAccuracy,
+                               m_currentMetrics.precision,
+                               m_currentMetrics.recall,
+                               m_currentMetrics.f1Score,
+                               m_currentMetrics.averageConfidence,
+                               m_currentMetrics.calibrationError,
+                               m_currentMetrics.profitability,
+                               m_currentMetrics.recentProfitability,
+                               m_currentMetrics.sharpeRatio,
+                               m_currentMetrics.trendingAccuracy,
+                               m_currentMetrics.rangingAccuracy,
+                               m_currentMetrics.volatileAccuracy,
+                               m_retrainingCount,
+                               TimeToString(m_lastRetrainingTime),
+                               ShouldRetrain() ? "YES" : "NO");
+    
+    if(FileWriteString(handle, line) <= 0)
+    {
+        FileClose(handle);
+        return;
+    }
+    FileClose(handle);
 }
 
 #endif // CORE_AI_PERFORMANCE_FEEDBACK_MQH

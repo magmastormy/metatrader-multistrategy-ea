@@ -413,22 +413,24 @@ public:
                  const ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT,
                  const int lookbackPeriod = 300,
                  const int minLag = 2,
-                 const int maxLag = 128) :
-        m_symbol(symbol),
-        m_timeframe(timeframe),
-        m_lookbackPeriod(MathMax(50, lookbackPeriod)),
-        m_minLag(MathMax(2, minLag)),
-        m_maxLag(MathMax(m_minLag * 2, maxLag)),
-        m_lastLogTime(0),
-        m_lastBarTime(0),
-        m_timeframeResolved(false),
-        m_dfaMinBoxSize(4),
-        m_dfaMaxBoxSize(MathMin(maxLag, lookbackPeriod / 4)),
-        m_dfaPolyOrder(3),
-        m_dfaEnsembleWeight(0.6),
-        m_dfaConfidence(0.0)
-    {
-    }
+                                  const int maxLag = 128) :
+                         m_symbol(symbol),
+                         m_timeframe(timeframe),
+                         m_lookbackPeriod(MathMax(50, lookbackPeriod)),
+                         m_minLag(MathMax(2, minLag)),
+                         m_maxLag(MathMax(m_minLag * 2, maxLag)),
+                         m_lastLogTime(0),
+                         m_lastBarTime(0),
+                         m_timeframeResolved(false),
+                         m_dfaMinBoxSize(4),
+                         m_dfaMaxBoxSize(MathMin(maxLag, lookbackPeriod / 4)),
+                         m_dfaPolyOrder(3),
+                         m_dfaEnsembleWeight(0.6),
+                         m_dfaConfidence(0.0)
+                     {
+                         // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
+                         ResolveTimeframe();
+                     }
 
     // --- Calculate Hurst exponent using DFA + variance-time ensemble ---
     // DFA (Kantelhardt 2002) is more robust to nonstationarity.
@@ -489,7 +491,11 @@ public:
                 if(var <= 1e-15 || !MathIsValidNumber(var))  // Guard against 0 and near-zero
                     continue;
 
-                logLags[validCount] = MathLog((double)lags[k]);
+                // Guard: MathLog(0) = -inf, MathLog(negative) = nan
+                double lagValue = (double)lags[k];
+                if(lagValue <= 0.0 || !MathIsValidNumber(lagValue))
+                    continue;
+                logLags[validCount] = MathLog(lagValue);
                 logVars[validCount] = MathLog(var);
                 validCount++;
             }
@@ -661,11 +667,19 @@ public:
     double GetBreakoutWeightMult() const  { return m_snapshot.breakoutWeightMult; }
 
     // --- Warmup check ---
-    bool IsWarmedUp() const
-    {
-        int minRequired = m_maxLag * 2;
-        return m_snapshot.barCount >= minRequired && m_snapshot.timestamp > 0;
-    }
-};
+        bool IsWarmedUp() const
+        {
+            int minRequired = m_maxLag * 2;
+            return m_snapshot.barCount >= minRequired && m_snapshot.timestamp > 0;
+        }
+
+        // --- Cleanup ---
+        void Deinit()
+        {
+            m_snapshot = SHurstSnapshot();
+            m_lastBarTime = 0;
+            m_lastLogTime = 0;
+        }
+    };
 
 #endif // HURST_ENGINE_MQH

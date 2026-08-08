@@ -77,8 +77,6 @@ private:
 
     // State
     datetime m_lastSignalBar;
-    string m_lastRejectReasonTag;
-    datetime m_lastRejectLogTime;
 
     //--- Find session levels (prev session high/low)
     void FindSessionLevels(double &prevSessionHigh, double &prevSessionLow,
@@ -238,20 +236,6 @@ private:
         return (hasEqualHigh || hasEqualLow);
     }
 
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-
-        PrintFormat("[LIQ-SWEEP] Filtered: %s | Symbol=%s | TF=%s",
-                   reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
-    }
-
 public:
     CLiquiditySweepStrategy() :
         CStrategyBase("LiquiditySweep", 0),
@@ -263,10 +247,9 @@ public:
         m_roundNumberPips(50),
         m_atrHandle(INVALID_HANDLE),
         m_riskManager(NULL),
-        m_lastSignalBar(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0)
+        m_lastSignalBar(0)
     {
+        m_strategyPrefix = "LIQ-SWEEP";
     }
 
     ~CLiquiditySweepStrategy()
@@ -509,6 +492,18 @@ public:
     //--- Standard interface
     ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_UNIFIED_ICT; }
     string GetStrategyName() const { return "LiquiditySweep"; }
+
+    // --- Cleanup ---
+    void Deinit()
+    {
+        // CLiquiditySweepStrategy owns ATR handle - release it
+        if(m_atrHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_atrHandle);
+            m_atrHandle = INVALID_HANDLE;
+        }
+        m_riskManager = NULL;
+    }
 };
 
 #endif // LIQUIDITY_SWEEP_STRATEGY_MQH

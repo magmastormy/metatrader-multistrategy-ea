@@ -73,12 +73,11 @@ private:
    
     // Heartbeat counter values
     int                 m_pScansCount;
-    int                 m_pSignalsGenerated;
-    int                 m_pSignalsValidated;
-    int                 m_pTradesOpened;
-    int                 m_pShadowTrades;
-    int                 m_pSpikeEvents;
-    bool                m_heartbeatCountersSet;
+        int                 m_pSignalsGenerated;
+        int                 m_pSignalsValidated;
+        int                 m_pTradesOpened;
+        int                 m_pSpikeEvents;
+        bool                m_heartbeatCountersSet;
 
    // Internal methods
    string              EscapeJsonString(const string &str);
@@ -112,8 +111,8 @@ public:
     bool              PollCommands();
 
     // Heartbeat counters
-    void              SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
-                                           int tradesOpened, int shadowTrades, int spikeEvents);
+        void              SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
+                                               int tradesOpened, int spikeEvents);
 
     // Getters
     bool              IsEnabled() const { return m_enabled; }
@@ -330,7 +329,7 @@ void CDashboardBridge::SetPerformanceData(int totalTradesParam, double winRate, 
    m_perfWinRate = winRate;
    m_perfProfitFactor = profitFactor;
    m_perfSharpeRatio = sharpeRatio;
-   m_perfMaxDrawdown = maxDrawdown;
+   m_perfMaxDrawdown = maxDD;
    m_perfRecoveryFactor = recoveryFactor;
    m_perfNetProfit = netProfit;
    m_perfAvgWin = avgWin;
@@ -408,8 +407,80 @@ void CDashboardBridge::Shutdown()
                IntegerToString(m_pushCount) + " ok=" +
                IntegerToString(m_pushSuccessCount) + " err=" +
                IntegerToString(m_pushErrorCount) + ")");
+      
+      // Reset all state
       m_initialized = false;
       m_connected = false;
+      m_enabled = false;
+      m_controlEnabled = false;
+      m_pushInterval = 0;
+      m_requestTimeout = 0;
+      m_pushTimeout = 0;
+      m_lastPushTime = 0;
+      m_lastPollTime = 0;
+      m_pushCount = 0;
+      m_pushSuccessCount = 0;
+      m_pushErrorCount = 0;
+      m_lastError = "";
+      m_lastErrorLogTime = 0;
+      m_pushInProgress = false;
+      
+      // Reset risk data
+      m_riskActiveRiskPerTrade = 0.0;
+      m_riskDailyRiskUsed = 0.0;
+      m_riskDailyEntryRisk = 0.0;
+      m_riskDailyMtmLoss = 0.0;
+      m_riskOpenExposure = 0.0;
+      m_riskMaxDailyRisk = 0.0;
+      m_riskPortfolioRisk = 0.0;
+      m_riskCurrentDrawdown = 0.0;
+      m_riskConservativeMode = false;
+      m_riskEmergencyMode = false;
+      m_riskGateApproved = 0;
+      m_riskGateRejected = 0;
+      
+      // Reset performance data
+      m_perfTotalTrades = 0;
+      m_perfWinRate = 0.0;
+      m_perfProfitFactor = 0.0;
+      m_perfSharpeRatio = 0.0;
+      m_perfMaxDrawdown = 0.0;
+      m_perfRecoveryFactor = 0.0;
+      m_perfNetProfit = 0.0;
+      m_perfAvgWin = 0.0;
+      m_perfAvgLoss = 0.0;
+      
+      // Reset Python bridge data
+      m_pyConnected = false;
+      m_pyVersion = "";
+      m_pyRequests = 0;
+      m_pyOk = 0;
+      m_pyErrors = 0;
+      
+      // Reset AI data
+      m_aiNnActive = false;
+      m_aiNnSignal = "NONE";
+      m_aiNnConf = 0.0;
+      m_aiNnLabels = 0;
+      m_aiNnSteps = 0;
+      m_aiNnConformalQ = 1.0;
+      m_aiNnConformalAlpha = 0.05;
+      m_aiNnAssetClass = 9;
+      m_aiNnBarrierK = 1.5;
+      m_aiNnBarrierVertBars = 20;
+      m_aiNnTradeLinked = 0;
+      m_aiNnNormReady = false;
+      m_aiRegime = "RANGE";
+      m_aiRegimeTrend = 0.25;
+      m_aiRegimeRange = 0.25;
+      m_aiRegimeVolatile = 0.25;
+      m_aiRegimeSpike = 0.25;
+      m_aiMetaFeatures = 65;
+      m_aiMetaCooldown = 50;
+      m_aiMetaEarlyStop = 20;
+      m_aiMetaWinRate = 0.5;
+      m_aiMetaAvgConf = 0.5;
+      m_aiMetaSamplesSince = 0;
    }
 }
 
@@ -627,13 +698,12 @@ bool CDashboardBridge::ShouldLogError()
 //| Set heartbeat counter references                                 |
 //+------------------------------------------------------------------+
 void CDashboardBridge::SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
-                                             int tradesOpened, int shadowTrades, int spikeEvents)
+                                             int tradesOpened, int spikeEvents)
 {
    m_pScansCount = scans;
    m_pSignalsGenerated = signalsGen;
    m_pSignalsValidated = signalsVal;
    m_pTradesOpened = tradesOpened;
-   m_pShadowTrades = shadowTrades;
    m_pSpikeEvents = spikeEvents;
    m_heartbeatCountersSet = true;
 }
@@ -763,7 +833,6 @@ string CDashboardBridge::BuildHeartbeatJson()
       json += "\"signals_generated\":" + IntegerToString(m_pSignalsGenerated) + ",";
       json += "\"signals_validated\":" + IntegerToString(m_pSignalsValidated) + ",";
       json += "\"trades_opened\":" + IntegerToString(m_pTradesOpened) + ",";
-      json += "\"shadow_trades\":" + IntegerToString(m_pShadowTrades) + ",";
       json += "\"spike_events\":" + IntegerToString(m_pSpikeEvents);
    }
    else
@@ -772,7 +841,6 @@ string CDashboardBridge::BuildHeartbeatJson()
       json += "\"signals_generated\":0,";
       json += "\"signals_validated\":0,";
       json += "\"trades_opened\":0,";
-      json += "\"shadow_trades\":0,";
       json += "\"spike_events\":0";
    }
    

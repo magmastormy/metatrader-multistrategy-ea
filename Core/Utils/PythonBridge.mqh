@@ -160,6 +160,11 @@ private:
    bool                ValidateJsonResponse(const string &json_str);
    bool                ParseVersionResponse(const string &json_str, SPythonBridgeVersion &version);
    bool                CheckVersionCompatibility(const SPythonBridgeVersion &version);
+
+   // JSON parsing helpers (Phase 6.3 — consolidated from 18+ duplicated patterns)
+   double              ParseJsonDouble(const string &json_str, const string &key);
+   string              ParseJsonString(const string &json_str, const string &key);
+   long                ParseJsonInteger(const string &json_str, const string &key);
    
 public:
    // Constructor/Destructor
@@ -294,9 +299,28 @@ void CPythonBridge::Shutdown()
 {
    if(m_initialized)
    {
-      LogBridgeState("Python bridge shutting down");
+      LogBridgeState("Python bridge shutting down | requests=" + IntegerToString(m_request_count) + 
+                       " success=" + IntegerToString(m_success_count) + " errors=" + IntegerToString(m_error_count));
+      
+      // Reset all state
       m_initialized = false;
       m_state = PYTHON_BRIDGE_DISCONNECTED;
+      m_endpoint = "";
+      m_mode = PYTHON_BRIDGE_OFF;
+      m_request_timeout = 0;
+      m_heartbeat_timeout = 0;
+      m_last_heartbeat = 0;
+      m_last_reconnect = 0;
+      m_reconnect_attempts = 0;
+      m_max_reconnect_attempts = 0;
+      m_reconnect_backoff = 0;
+      m_request_count = 0;
+      m_success_count = 0;
+      m_error_count = 0;
+      m_last_error = "";
+      m_lastNotConfiguredLogTime = 0;
+      m_server_version.version = "";
+      m_server_version.compatible = false;
    }
 }
 
@@ -362,6 +386,48 @@ bool CPythonBridge::SendHttpRequest(const string &method, const string &url,
 }
 
 //+------------------------------------------------------------------+
+//| JSON parsing helpers (Phase 6.3 — consolidated from 18+ patterns)|
+//+------------------------------------------------------------------+
+double CPythonBridge::ParseJsonDouble(const string &json_str, const string &key)
+{
+   string searchKey = "\"" + key + "\":";
+   int pos = StringFind(json_str, searchKey);
+   if(pos == -1) { PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 395, __FUNCTION__); return 0.0; }
+
+   string val_str = StringSubstr(json_str, pos + StringLen(searchKey));
+   int end_pos = StringFind(val_str, ",");
+   if(end_pos == -1) end_pos = StringFind(val_str, "}");
+   if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+   return StringToDouble(val_str);
+}
+
+string CPythonBridge::ParseJsonString(const string &json_str, const string &key)
+{
+   string searchKey = "\"" + key + "\":";
+   int pos = StringFind(json_str, searchKey);
+   if(pos == -1) return "";
+
+   int val_start = StringFind(json_str, "\"", pos + StringLen(searchKey));
+   int val_end   = StringFind(json_str, "\"", val_start + 1);
+   if(val_start != -1 && val_end != -1)
+      return StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
+   return "";
+}
+
+long CPythonBridge::ParseJsonInteger(const string &json_str, const string &key)
+{
+   string searchKey = "\"" + key + "\":";
+   int pos = StringFind(json_str, searchKey);
+   if(pos == -1) return 0;
+
+   string val_str = StringSubstr(json_str, pos + StringLen(searchKey));
+   int end_pos = StringFind(val_str, ",");
+   if(end_pos == -1) end_pos = StringFind(val_str, "}");
+   if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
+   return StringToInteger(val_str);
+}
+
+//+------------------------------------------------------------------+
 //| Parse prediction response JSON                                   |
 //+------------------------------------------------------------------+
 SPythonBridgeResponse CPythonBridge::ParsePredictionResponse(const string &json_str)
@@ -379,218 +445,38 @@ SPythonBridgeResponse CPythonBridge::ParsePredictionResponse(const string &json_
    if(StringFind(json_str, "\"error\"") != -1)
    {
       result.success = false;
-      int err_start = StringFind(json_str, "\"error\":");
-      if(err_start != -1)
-      {
-         int val_start = StringFind(json_str, "\"", err_start + 8);
-         int val_end = StringFind(json_str, "\"", val_start + 1);
-         if(val_start != -1 && val_end != -1)
-            result.error_message = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
-      }
+      result.error_message = ParseJsonString(json_str, "error");
       if(result.error_message == "")
          result.error_message = "Unknown error in server response";
       return result;
    }
    
    result.success = true;
-   
-   // Extract basic fields
-   int pos;
-   
-   // buy_prob
-   pos = StringFind(json_str, "\"buy_prob\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 11);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.buy_prob = StringToDouble(val_str);
-   }
-   
-   // sell_prob
-   pos = StringFind(json_str, "\"sell_prob\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 12);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.sell_prob = StringToDouble(val_str);
-   }
-   
-   // hold_prob
-   pos = StringFind(json_str, "\"hold_prob\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 12);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.hold_prob = StringToDouble(val_str);
-   }
-   
-   // lgbm_buy
-   pos = StringFind(json_str, "\"lgbm_buy\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 11);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.lgbm_buy = StringToDouble(val_str);
-   }
-   
-   // lgbm_sell
-   pos = StringFind(json_str, "\"lgbm_sell\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 12);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.lgbm_sell = StringToDouble(val_str);
-   }
-   
-   // stacker_signal
-   pos = StringFind(json_str, "\"stacker_signal\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 17);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.stacker_signal = StringToDouble(val_str);
-   }
 
-   // family_id
-   pos = StringFind(json_str, "\"family_id\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 12);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.family_id = (int)StringToInteger(val_str);
-   }
+   // Extract numeric fields via consolidated helper (Phase 6.3)
+   result.buy_prob       = ParseJsonDouble(json_str, "buy_prob");
+   result.sell_prob      = ParseJsonDouble(json_str, "sell_prob");
+   result.hold_prob      = ParseJsonDouble(json_str, "hold_prob");
+   result.lgbm_buy       = ParseJsonDouble(json_str, "lgbm_buy");
+   result.lgbm_sell      = ParseJsonDouble(json_str, "lgbm_sell");
+   result.stacker_signal = ParseJsonDouble(json_str, "stacker_signal");
+   result.catboost_buy   = ParseJsonDouble(json_str, "catboost_buy");
+   result.catboost_sell  = ParseJsonDouble(json_str, "catboost_sell");
+   result.xgboost_buy    = ParseJsonDouble(json_str, "xgboost_buy");
+   result.xgboost_sell   = ParseJsonDouble(json_str, "xgboost_sell");
+   result.onnx_buy       = ParseJsonDouble(json_str, "onnx_buy");
+   result.onnx_sell      = ParseJsonDouble(json_str, "onnx_sell");
 
-   // family_name
-   pos = StringFind(json_str, "\"family_name\":");
-   if(pos != -1)
-   {
-      int val_start = StringFind(json_str, "\"", pos + 14);
-      int val_end = StringFind(json_str, "\"", val_start + 1);
-      if(val_start != -1 && val_end != -1)
-         result.family_name = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
-   }
+   // Extract integer fields
+   result.family_id     = (int)ParseJsonInteger(json_str, "family_id");
+   result.asset_class   = (int)ParseJsonInteger(json_str, "asset_class");
 
-   // asset_class
-   pos = StringFind(json_str, "\"asset_class\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 14);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.asset_class = (int)StringToInteger(val_str);
-   }
+   // Extract string fields
+   result.family_name     = ParseJsonString(json_str, "family_name");
+   result.asset_class_name = ParseJsonString(json_str, "asset_class_name");
+   result.ts            = ParseJsonString(json_str, "ts");
+   result.mode          = ParseJsonString(json_str, "mode");
 
-   // asset_class_name
-   pos = StringFind(json_str, "\"asset_class_name\":");
-   if(pos != -1)
-   {
-      int val_start = StringFind(json_str, "\"", pos + 20);
-      int val_end = StringFind(json_str, "\"", val_start + 1);
-      if(val_start != -1 && val_end != -1)
-         result.asset_class_name = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
-   }
-
-   // catboost_buy
-   pos = StringFind(json_str, "\"catboost_buy\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 15);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.catboost_buy = StringToDouble(val_str);
-   }
-
-   // catboost_sell
-   pos = StringFind(json_str, "\"catboost_sell\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 16);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.catboost_sell = StringToDouble(val_str);
-   }
-
-   // xgboost_buy
-   pos = StringFind(json_str, "\"xgboost_buy\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 14);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.xgboost_buy = StringToDouble(val_str);
-   }
-
-   // xgboost_sell
-   pos = StringFind(json_str, "\"xgboost_sell\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 15);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.xgboost_sell = StringToDouble(val_str);
-   }
-
-   // onnx_buy
-   pos = StringFind(json_str, "\"onnx_buy\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 11);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.onnx_buy = StringToDouble(val_str);
-   }
-
-   // onnx_sell
-   pos = StringFind(json_str, "\"onnx_sell\":");
-   if(pos != -1)
-   {
-      string val_str = StringSubstr(json_str, pos + 12);
-      int end_pos = StringFind(val_str, ",");
-      if(end_pos == -1) end_pos = StringFind(val_str, "}");
-      if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-      result.onnx_sell = StringToDouble(val_str);
-   }
-
-   // ts
-   pos = StringFind(json_str, "\"ts\":");
-   if(pos != -1)
-   {
-      int val_start = StringFind(json_str, "\"", pos + 5);
-      int val_end = StringFind(json_str, "\"", val_start + 1);
-      if(val_start != -1 && val_end != -1)
-         result.ts = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
-   }
-   
-   // mode
-   pos = StringFind(json_str, "\"mode\":");
-   if(pos != -1)
-   {
-      int val_start = StringFind(json_str, "\"", pos + 7);
-      int val_end = StringFind(json_str, "\"", val_start + 1);
-      if(val_start != -1 && val_end != -1)
-         result.mode = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
-   }
-   
    return result;
 }
 
@@ -889,18 +775,9 @@ bool CPythonBridge::ParseVersionResponse(const string &json_str, SPythonBridgeVe
 {
    if(!ValidateJsonResponse(json_str))
       return false;
-   
-   int pos;
-   
+
    // Extract version string
-   pos = StringFind(json_str, "\"version\":");
-   if(pos != -1)
-   {
-      int val_start = StringFind(json_str, "\"", pos + 11);
-      int val_end = StringFind(json_str, "\"", val_start + 1);
-      if(val_start != -1 && val_end != -1)
-         version.version = StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
-   }
+   version.version = ParseJsonString(json_str, "version");
    
    // Parse version components
    if(version.version != "")
@@ -1052,8 +929,10 @@ bool CPythonBridge::GetCorrelationMatrix(double &corrMatrix[], int &size, string
 //+------------------------------------------------------------------+
 double CPythonBridge::GetPairCorrelation(const string symbol1, const string symbol2)
 {
-   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected())
+   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected()) {
+       PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 933, __FUNCTION__);
       return 0.0;
+   }
    
    // Request specific pair correlation
    string response;
@@ -1062,14 +941,9 @@ double CPythonBridge::GetPairCorrelation(const string symbol1, const string symb
    if(SendHttpRequest("GET", corrUrl, "", response))
    {
       // Parse JSON response {"correlation": 0.85}
-      int pos = StringFind(response, "\"correlation\":");
-      if(pos != -1)
+      if(StringFind(response, "\"correlation\":") != -1)
       {
-         string valStr = StringSubstr(response, pos + 14);
-         int endPos = StringFind(valStr, "}");
-         if(endPos == -1) endPos = StringFind(valStr, ",");
-         if(endPos != -1) valStr = StringSubstr(valStr, 0, endPos);
-         double corr = StringToDouble(valStr);
+         double corr = ParseJsonDouble(response, "correlation");
          if(corr >= -1.0 && corr <= 1.0)
          {
             PrintFormat("[PYTHON-BRIDGE] Pair correlation: %s/%s = %.4f", symbol1, symbol2, corr);
@@ -1081,6 +955,7 @@ double CPythonBridge::GetPairCorrelation(const string symbol1, const string symb
          PrintFormat("[PYTHON-BRIDGE] Pair correlation error for %s/%s", symbol1, symbol2);
    }
    
+   PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 956, __FUNCTION__);
    return 0.0;
 }
 
@@ -1109,28 +984,15 @@ bool CPythonBridge::FindBestCorrelatedPair(const string symbol, string &bestPair
       bool parsed = false;
 
       // Extract best_pair
-      int pairPos = StringFind(response, "\"best_pair\":");
-      if(pairPos != -1)
+      if(StringFind(response, "\"best_pair\":") != -1)
       {
-         int valStart = StringFind(response, "\"", pairPos + 12);
-         int valEnd = StringFind(response, "\"", valStart + 1);
-         if(valStart != -1 && valEnd != -1)
-         {
-            foundPair = StringSubstr(response, valStart + 1, valEnd - valStart - 1);
-            parsed = true;
-         }
+         foundPair = ParseJsonString(response, "best_pair");
+         if(StringLen(foundPair) > 0) parsed = true;
       }
 
       // Extract correlation
-      int corrPos = StringFind(response, "\"correlation\":");
-      if(corrPos != -1)
-      {
-         string valStr = StringSubstr(response, corrPos + 14);
-         int endPos = StringFind(valStr, "}");
-         if(endPos == -1) endPos = StringFind(valStr, ",");
-         if(endPos != -1) valStr = StringSubstr(valStr, 0, endPos);
-         foundCorr = StringToDouble(valStr);
-      }
+      if(StringFind(response, "\"correlation\":") != -1)
+         foundCorr = ParseJsonDouble(response, "correlation");
 
       if(parsed && StringLen(foundPair) > 0 && foundCorr >= -1.0 && foundCorr <= 1.0)
       {

@@ -227,6 +227,17 @@ public:
 
     bool IsInitialized() const { return m_initialized; }
     SVolumeProfileResult GetLastResult() const { return m_lastResult; }
+
+    // --- Cleanup ---
+    void Deinit()
+    {
+        // CVolumeProfileEngine owns dynamic arrays m_levelPrices[] and m_levelVolumes[]
+        ArrayFree(m_levelPrices);
+        ArrayFree(m_levelVolumes);
+        m_levelCount = 0;
+        m_initialized = false;
+        ZeroMemory(m_lastResult);
+    }
 };
 
 #endif // CORE_ENGINES_VOLUME_PROFILE_ENGINE_MQH

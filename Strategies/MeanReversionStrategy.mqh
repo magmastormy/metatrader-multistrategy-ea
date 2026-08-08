@@ -73,10 +73,7 @@ private:
     double m_syntheticBbDeviation; // BB deviation for synthetics (1.5σ)
     int m_syntheticBbHandle;  // Cached BB handle for synthetic mode (created once, released in Cleanup)
     
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager* m_riskManager;
-
-    // v2.0 additions
+        // v2.0 additions
     int     m_stochHandle;        // Stochastic extreme confirmation (v2.0)
     int     m_adxHandle;        // ADX for trend filter (Issue #27)
     CHurstEngine* m_hurstEngine;  // Hurst engine for regime lockout (v2.0)
@@ -85,31 +82,7 @@ private:
     // State Tracking
     datetime m_lastSignalBar;
     int m_signalsGenerated;
-    string m_lastRejectReasonTag;
-    datetime m_lastRejectLogTime;
 
-    // Logging helper
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-        
-        PrintFormat("[MEANREV] Filtered: %s | Symbol=%s | TF=%s",
-                   reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
-    }
-    
-    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
-    {
-        SetDecisionReasonTag(reasonTag);
-        LogRejectEvent(reasonTag);
-        return TRADE_SIGNAL_NONE;
-    }
-    
 public:
     // Constructor
     CMeanReversionStrategy(const string name = "Mean Reversion v2.0", int magic = 0) :
@@ -126,16 +99,14 @@ public:
         m_isSynthetic(false),
         m_syntheticBbDeviation(1.5),
         m_syntheticBbHandle(INVALID_HANDLE),
-        m_riskManager(NULL),
-        m_stochHandle(INVALID_HANDLE),
-        m_adxHandle(INVALID_HANDLE),
-        m_hurstEngine(NULL),
-        m_bbWidthLookback(50),
-        m_lastSignalBar(0),
-        m_signalsGenerated(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0)
+                m_stochHandle(INVALID_HANDLE),
+                m_adxHandle(INVALID_HANDLE),
+                m_hurstEngine(NULL),
+                m_bbWidthLookback(50),
+                m_lastSignalBar(0),
+                m_signalsGenerated(0)
     {
+        m_strategyPrefix = "MEANREV";
         m_minConfidence = 0.60; // Higher threshold for mean reversion
     }
     
@@ -155,9 +126,7 @@ public:
         // v2.0: Stochastic handle is self-managed
         if(m_stochHandle != INVALID_HANDLE) { IndicatorRelease(m_stochHandle); m_stochHandle = INVALID_HANDLE; }
         // Synthetic BB handle is self-managed (not via CIndicatorManager due to custom deviation)
-        if(m_syntheticBbHandle != INVALID_HANDLE) { IndicatorRelease(m_syntheticBbHandle); m_syntheticBbHandle = INVALID_HANDLE; }
-        // Risk manager is not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
+                if(m_syntheticBbHandle != INVALID_HANDLE) { IndicatorRelease(m_syntheticBbHandle); m_syntheticBbHandle = INVALID_HANDLE; }
     }
     
     // Initialization
@@ -178,20 +147,15 @@ public:
         m_adxHandle = CIndicatorManager::Instance().GetADXHandle(m_symbol, m_timeframe, 14);
 
         if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE || m_volumeHandle == INVALID_HANDLE || m_adxHandle == INVALID_HANDLE)
-        {
-            Print("[MEANREV] Failed to create indicator handles");
-            return false;
-        }
+                {
+                    Print("[MEANREV] Failed to create indicator handles");
+                    return false;
+                }
         
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager == NULL)
-            Print("[MEANREV] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
+                PrintFormat("[MEANREV] Initialized | BB(%d,%.1f) | RSI(%d) | OB=%.1f | OS=%.1f",
+                           m_bbPeriod, m_bbDeviation, m_rsiPeriod, m_rsiOverbought, m_rsiOversold);
         
-        PrintFormat("[MEANREV] Initialized | BB(%d,%.1f) | RSI(%d) | OB=%.1f | OS=%.1f",
-                   m_bbPeriod, m_bbDeviation, m_rsiPeriod, m_rsiOverbought, m_rsiOversold);
-        
-        return true;
+                return true;
     }
     
     // Deinitialization
@@ -307,46 +271,30 @@ public:
             return RejectSignal("MEANREV_DIVERGENCE_DETECTED");
         }
         
-        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            // Calculate volatility-based SL from signal structure
-            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-            double slDistance = MathAbs(signal.entryPrice - signal.stopLoss);
-            double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0; // No fallback - skip if SL invalid
-            double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
-            double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 2.0;
-            
-            // v2.0: Dynamic TP at BB middle (mean reversion target)
-            // If dynamic TP is available, prefer it over fixed ATR-based TP
-            double dynamicTP = GetDynamicTP(signal.direction);
-            // Note: dynamicTP is logged for reference; actual TP is still set by risk manager
-            
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Use broker minimum instead of hardcoded 0.01
-            request.stopLossPips = slPips;
-            request.takeProfitPips = tpPips;
-            request.confidence = signal.confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
-            
-            CUnifiedRiskManager* riskMgr = m_riskManager;
-            SValidationResult result;
-            ZeroMemory(result);
-            if(riskMgr != NULL)
-                result = (*riskMgr).ValidateTradeRequest(request, "MEANREV");
-            if(!result.approved)
-            {
-                SetDecisionReasonTag("MEANREV_RISK_REJECTED");
-                PrintFormat("[MEANREV] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
-                           signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           signal.entryPrice, signal.stopLoss, signal.takeProfit, signal.confidence * 100,
-                           result.message);
-                return TRADE_SIGNAL_NONE;
-            }
-        }
+        // Calculate volatility-based SL from signal structure
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        double slDistance = MathAbs(signal.entryPrice - signal.stopLoss);
+        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0; // No fallback - skip if SL invalid
+        double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
+        double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 2.0;
+
+        // v2.0: Dynamic TP at BB middle (mean reversion target)
+        // If dynamic TP is available, prefer it over fixed ATR-based TP
+        double dynamicTP = GetDynamicTP(signal.direction);
+        // Note: dynamicTP is logged for reference; actual TP is still set by risk manager
+
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Use broker minimum instead of hardcoded 0.01
+        request.stopLossPips = slPips;
+        request.takeProfitPips = tpPips;
+        request.confidence = signal.confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
+
+        if(!ValidateWithRiskManager(request, "MEANREV", confidence))
+            return TRADE_SIGNAL_NONE;
         
         // Update state
         m_lastSignalBar = iBars(m_symbol, m_timeframe);
@@ -356,17 +304,7 @@ public:
         confidence = signal.confidence;
         
         // CONSENSUS LOGGING (AGENTS.md requirement)
-        PrintFormat("[CONSENSUS-DIAG] %s | %s | Type: %s | Z: %.2f | Stoch: %s | BW: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                   m_symbol,
-                   signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   signal.entryType == MR_ENTRY_DOUBLE_SIGNAL ? "DOUBLE" : 
-                   signal.entryType == MR_ENTRY_BB_TOUCH ? "BB" : "RSI",
-                   signal.confidence,
-                   StochasticExtreme(signal.direction) ? "EXT" : "NORM",
-                   SufficientBandWidth() ? "OK" : "NARROW",
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag);
+        LogConsensusDiag(signal.direction, StringFormat("Type: %s | Z: %.2f | Stoch: %s | BW: %s", signal.entryType == MR_ENTRY_DOUBLE_SIGNAL ? "DOUBLE" : signal.entryType == MR_ENTRY_BB_TOUCH ? "BB" : "RSI", signal.confidence, StochasticExtreme(signal.direction) ? "EXT" : "NORM", SufficientBandWidth() ? "OK" : "NARROW"), confidence);
         
         PrintFormat("[MEANREV] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
                    m_symbol,
@@ -389,41 +327,6 @@ public:
     // Set synthetic mode for synthetic indices (Batch 105)
     void SetSyntheticMode(bool enabled) { m_isSynthetic = enabled; }
 
-    //+------------------------------------------------------------------+
-    //| Quick-probe signal: fast BB + RSI extreme check (O(1) cached)   |
-    //| Tier 1 fast-path for two-tier consensus evaluation.              |
-    //| Uses already-cached indicator handles — no new handle creation,   |
-    //| no volume confirmation, no full confidence pipeline, no risk gate.|
-    //+------------------------------------------------------------------+
-    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
-    {
-        if(!m_is_enabled || !m_is_initialized)
-            return TRADE_SIGNAL_NONE;
-
-        if(m_bbHandle == INVALID_HANDLE || m_rsiHandle == INVALID_HANDLE)
-            return TRADE_SIGNAL_NONE;
-
-        // Fetch 1 bar of BB bands and RSI (closed-bar, shift 1)
-        double bbUpper[1], bbLower[1];
-        double rsiBuffer[1];
-
-        if(!SafeCopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) ||
-           !SafeCopyBuffer(m_bbHandle, 2, 1, 1, bbLower) ||
-           !SafeCopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer))
-            return TRADE_SIGNAL_NONE;
-
-        double currentPrice = iClose(m_symbol, m_timeframe, 1);
-        double rsi = rsiBuffer[0];
-
-        // Quick double-signal check: price at BB extreme + RSI extreme
-        if(currentPrice <= bbLower[0] && rsi <= m_rsiOversold)
-            return TRADE_SIGNAL_BUY;
-        if(currentPrice >= bbUpper[0] && rsi >= m_rsiOverbought)
-            return TRADE_SIGNAL_SELL;
-
-        return TRADE_SIGNAL_NONE;
-    }
-    
     //+------------------------------------------------------------------+
     //| Synthetic mode signal generation (Batch 105)                     |
     //| Simplified for synthetic indices: BB touch + spike detection     |
@@ -509,51 +412,52 @@ public:
             return RejectSignal("MEANREV_SYN_NO_SIGNAL");
         
         // Validation through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-            double slDistance = MathAbs(signal.entryPrice - signal.stopLoss);
-            double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
-            double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
-            double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 1.5;
+                CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
+                if(riskMgr != NULL)
+                {
+                    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+                    double slDistance = MathAbs(signal.entryPrice - signal.stopLoss);
+                    double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
+                    double tpDistance = MathAbs(signal.takeProfit - signal.entryPrice);
+                    double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : slPips * 1.5;
             
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = slPips;
-            request.takeProfitPips = tpPips;
-            request.confidence = signal.confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
+                    STradeValidationRequest request;
+                    request.symbol = m_symbol;
+                    request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+                    request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+                    request.stopLossPips = slPips;
+                    request.takeProfitPips = tpPips;
+                    request.confidence = signal.confidence;
+                    request.strategy = GetName();
+                    request.clusterCode = "";
             
-            SValidationResult result;
-            ZeroMemory(result);
-            if(m_riskManager != NULL && m_riskManager.ValidateTradeRequest(request, "MEANREV_SYN").approved)
-            {
-                m_lastSignalBar = iBars(m_symbol, m_timeframe);
-                m_signalsGenerated++;
-                RecordSignal();
-                SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "MEANREV_SYN_BUY" : "MEANREV_SYN_SELL");
-                confidence = signal.confidence;
+                    SValidationResult result;
+                    ZeroMemory(result);
+                    if(riskMgr.ValidateTradeRequest(request, "MEANREV_SYN").approved)
+                    {
+                        m_lastSignalBar = iBars(m_symbol, m_timeframe);
+                        m_signalsGenerated++;
+                        RecordSignal();
+                        SetDecisionReasonTag(signal.direction == TRADE_SIGNAL_BUY ? "MEANREV_SYN_BUY" : "MEANREV_SYN_SELL");
+                        confidence = signal.confidence;
                 
-                PrintFormat("[MEANREV-SYN] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
-                           m_symbol,
-                           signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           signal.entryPrice,
-                           signal.stopLoss,
-                           signal.takeProfit,
-                           confidence * 100,
-                           signal.reason);
+                        PrintFormat("[MEANREV-SYN] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
+                                   m_symbol,
+                                   signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                                   signal.entryPrice,
+                                   signal.stopLoss,
+                                   signal.takeProfit,
+                                   confidence * 100,
+                                   signal.reason);
                 
-                return signal.direction;
-            }
-            else
-            {
-                SetDecisionReasonTag("MEANREV_SYN_RISK_REJECTED");
-                return TRADE_SIGNAL_NONE;
-            }
-        }
+                        return signal.direction;
+                    }
+                    else
+                    {
+                        SetDecisionReasonTag("MEANREV_SYN_RISK_REJECTED");
+                        return TRADE_SIGNAL_NONE;
+                    }
+                }
         
         return TRADE_SIGNAL_NONE;
     }

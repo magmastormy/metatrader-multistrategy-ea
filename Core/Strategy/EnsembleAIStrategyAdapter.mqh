@@ -225,6 +225,31 @@ public:
         m_lastDecisionReasonTag = "ENSEMBLE_DEINIT";
     }
 
+    // Initialize AI model with symbol/timeframe/risk manager after factory creation
+    virtual bool InitializeAI(const string symbol, const ENUM_TIMEFRAMES timeframe, void* unifiedRiskManager) override
+    {
+        // For Ensemble AI, models are created in EnsureModels() called from Init
+        // This method ensures models are initialized with the correct symbol/timeframe
+        if(!m_modelsInitialized)
+        {
+            bool modelsReady = EnsureModels();
+            if(modelsReady)
+            {
+                m_symbol = symbol;
+                m_timeframe = timeframe;
+                m_lastDecisionReasonTag = "ENSEMBLE_AI_INITIALIZED";
+                return true;
+            }
+            m_lastDecisionReasonTag = "ENSEMBLE_AI_INIT_FAILED";
+            return false;
+        }
+        // Already initialized, just update symbol/timeframe
+        m_symbol = symbol;
+        m_timeframe = timeframe;
+        m_lastDecisionReasonTag = "ENSEMBLE_AI_REINITIALIZED";
+        return true;
+    }
+
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
@@ -354,10 +379,7 @@ public:
         LogVoteHeartbeat();
         return signal;
     }
-
-    virtual void OnNewBar(void) override {}
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override {}
-
+    
     virtual string GetName(void) const override { return "Ensemble AI"; }
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
@@ -408,7 +430,18 @@ public:
         return baseWeight * 0.70;
     }
     virtual bool ValidateParameters(void) override { return m_ensemble.GetActiveModelCount() > 0 && m_modelsInitialized; }
-    virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
+    
+        virtual bool ValidateRiskManagerInjection(void) const override
+        {
+            return false; // Default: risk manager not injected
+        }
+    
+        virtual bool ShouldBypassTierConfidenceFloor(void) const override
+        {
+            return false; // Default: no bypass
+        }
+    
+        virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
 
@@ -418,7 +451,19 @@ public:
         successful = 0;
         accuracy = 0.0;
     }
-    
+
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
+    {
+    }
+
+    virtual void OnTick(void) override
+    {
+    }
+
+    virtual void OnTimer(void) override
+    {
+    }
+
     virtual double GetUncertainty(void) override
     {
         return m_ensemble.GetUncertainty();
@@ -449,7 +494,7 @@ public:
         if(temperature < 0) {}
     }
     
-    virtual int GetRegimeState(void) const override
+    virtual int GetCurrentRegime(void) const override
     {
         return m_ensemble.GetCurrentRegime();
     }
@@ -462,6 +507,47 @@ public:
     virtual string GetLastLoadStatus(void) const override
     {
         return m_modelsInitialized ? "LOADED" : "NOT_INITIALIZED";
+    }
+
+    // IUncertaintyEstimation
+    virtual void GetConfidenceInterval(double &lower, double &upper) const override
+    {
+        double unc = m_ensemble.GetUncertainty();
+        double conf = 1.0 - unc;
+        lower = MathMax(0.0, conf - unc);
+        upper = MathMin(1.0, conf + unc);
+    }
+
+    // IOnlineTraining
+    virtual void EnableOnlineTraining(const bool enable) override
+    {
+        // CEnsembleMetaLearner has no SetLearningEnabled method; learning is always enabled by default.
+        // m_ensemble.SetLearningEnabled(enable);
+    }
+
+    virtual bool TrainStep(void) override
+    {
+        // Not implemented: CEnsembleMetaLearner::Update() requires (atrRatio, trendStrength)
+        // parameters not available in the IAITraining interface context.
+        return false;
+    }
+
+    virtual string GetTrainingState(void) const override
+    {
+        return m_ensemble.IsLearningEnabled() ? "TRAINING" : "IDLE";
+    }
+
+    // IRegimeAware
+    virtual void OnRegimeChange(const int newRegime) override
+    {
+        // Not implemented: CEnsembleMetaLearner::OnRegimeChange() requires (oldR, newR, models)
+        // parameters not available in the IRegimeAware interface context.
+    }
+
+    // IModelHealth
+    virtual double GetHealthScore(void) const override
+    {
+        return IsModelHealthy() ? 1.0 : 0.0;
     }
 };
 

@@ -193,6 +193,21 @@ public:
     
     bool IsInitialized() const { return m_initialized; }
     SCVDResult GetLastResult() const { return m_lastResult; }
+
+    // --- Cleanup ---
+    void Deinit()
+    {
+        // CCVDEngine owns dynamic arrays m_cvdHistory[] and m_priceHistory[]
+        ArrayFree(m_cvdHistory);
+        ArrayFree(m_priceHistory);
+        m_historyIndex = 0;
+        m_historySize = 0;
+        m_initialized = false;
+        m_sessionStartDate = 0;
+        m_lastProcessedBarTime = 0;
+        m_sessionCVD = 0;
+        ZeroMemory(m_lastResult);
+    }
 };
 
 #endif // CORE_ENGINES_CVD_ENGINE_MQH

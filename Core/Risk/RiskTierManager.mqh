@@ -30,6 +30,7 @@ struct SClusterAllocation
 struct STierConfig
 {
    double riskPerTradePct;      // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
+   double maxRiskPerTradeOverride;  // L5-006: explicit max risk per trade override
    double dailyRiskPct;         // Blueprint 10.4: 0-100 scale
    double portfolioRiskPct;     // Blueprint 10.4: 0-100 scale
    int    maxPositions;         // Max concurrent positions
@@ -55,92 +56,96 @@ private:
 
     // Pre-defined tier presets (Blueprint 10.4: all Pct fields use 0-100 scale)
     static STierConfig GetConservativeConfig()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 0.5;   // Blueprint 10.4: 0-100 scale
-        c.dailyRiskPct        = 2.0;
-        c.portfolioRiskPct    = 6.0;
-        c.maxPositions        = 3;
-        c.breakevenBufferPts  = 80;
-        c.trailingDistancePts = 200;
-        c.ddWarningPct        = 3.0;
-        c.ddCriticalPct       = 6.0;
-        c.minConfidence       = 0.70;
-        c.minVoters           = 3;
-        c.maxSpreadATRRatio   = 0.15;
-        c.scalpBudgetPct      = 0.0;
-        c.clusterAllocation.trendPct         = 40.0;
-        c.clusterAllocation.meanReversionPct = 25.0;
-        c.clusterAllocation.structurePct     = 25.0;
-        c.clusterAllocation.scalpPct         = 10.0;
-        return c;
-    }
+        {
+            STierConfig c;
+            c.riskPerTradePct        = 0.5;   // Blueprint 10.4: 0-100 scale
+            c.maxRiskPerTradeOverride = 1.0;  // L5-006: 2x riskPerTradePct
+            c.dailyRiskPct        = 2.0;
+            c.portfolioRiskPct    = 6.0;
+            c.maxPositions        = 3;
+            c.breakevenBufferPts  = 80;
+            c.trailingDistancePts = 200;
+            c.ddWarningPct        = 3.0;
+            c.ddCriticalPct       = 6.0;
+            c.minConfidence       = 0.70;
+            c.minVoters           = 3;
+            c.maxSpreadATRRatio   = 0.15;
+            c.scalpBudgetPct      = 0.0;
+            c.clusterAllocation.trendPct         = 40.0;
+            c.clusterAllocation.meanReversionPct = 25.0;
+            c.clusterAllocation.structurePct     = 25.0;
+            c.clusterAllocation.scalpPct         = 10.0;
+            return c;
+        }
 
     static STierConfig GetModerateConfig()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 1.0;
-        c.dailyRiskPct        = 5.0;
-        c.portfolioRiskPct    = 15.0;
-        c.maxPositions        = 5;
-        c.breakevenBufferPts  = 120;
-        c.trailingDistancePts = 300;
-        c.ddWarningPct        = 5.0;
-        c.ddCriticalPct       = 10.0;
-        c.minConfidence       = 0.55;
-        c.minVoters           = 2;
-        c.maxSpreadATRRatio   = 0.20;
-        c.scalpBudgetPct      = 3.0;
-        c.clusterAllocation.trendPct         = 40.0;
-        c.clusterAllocation.meanReversionPct = 25.0;
-        c.clusterAllocation.structurePct     = 25.0;
-        c.clusterAllocation.scalpPct         = 10.0;
-        return c;
-    }
+        {
+            STierConfig c;
+            c.riskPerTradePct        = 1.0;
+            c.maxRiskPerTradeOverride = 2.0;  // L5-006: 2x riskPerTradePct
+            c.dailyRiskPct        = 5.0;
+            c.portfolioRiskPct    = 15.0;
+            c.maxPositions        = 5;
+            c.breakevenBufferPts  = 120;
+            c.trailingDistancePts = 300;
+            c.ddWarningPct        = 5.0;
+            c.ddCriticalPct       = 10.0;
+            c.minConfidence       = 0.55;
+            c.minVoters           = 2;
+            c.maxSpreadATRRatio   = 0.20;
+            c.scalpBudgetPct      = 3.0;
+            c.clusterAllocation.trendPct         = 40.0;
+            c.clusterAllocation.meanReversionPct = 25.0;
+            c.clusterAllocation.structurePct     = 25.0;
+            c.clusterAllocation.scalpPct         = 10.0;
+            return c;
+        }
 
     static STierConfig GetAggressiveConfig()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 2.0;
-        c.dailyRiskPct        = 10.0;
-        c.portfolioRiskPct    = 30.0;
-        c.maxPositions        = 8;
-        c.breakevenBufferPts  = 100;
-        c.trailingDistancePts = 250;
-        c.ddWarningPct        = 8.0;
-        c.ddCriticalPct       = 15.0;
-        c.minConfidence       = 0.40;
-        c.minVoters           = 2;
-        c.maxSpreadATRRatio   = 0.25;
-        c.scalpBudgetPct      = 8.0;
-        c.clusterAllocation.trendPct         = 40.0;
-        c.clusterAllocation.meanReversionPct = 20.0;
-        c.clusterAllocation.structurePct     = 20.0;
-        c.clusterAllocation.scalpPct         = 20.0;
-        return c;
-    }
+        {
+            STierConfig c;
+            c.riskPerTradePct        = 2.0;
+            c.maxRiskPerTradeOverride = 4.0;  // L5-006: 2x riskPerTradePct
+            c.dailyRiskPct        = 10.0;
+            c.portfolioRiskPct    = 30.0;
+            c.maxPositions        = 8;
+            c.breakevenBufferPts  = 100;
+            c.trailingDistancePts = 250;
+            c.ddWarningPct        = 8.0;
+            c.ddCriticalPct       = 15.0;
+            c.minConfidence       = 0.40;
+            c.minVoters           = 2;
+            c.maxSpreadATRRatio   = 0.25;
+            c.scalpBudgetPct      = 8.0;
+            c.clusterAllocation.trendPct         = 40.0;
+            c.clusterAllocation.meanReversionPct = 20.0;
+            c.clusterAllocation.structurePct     = 20.0;
+            c.clusterAllocation.scalpPct         = 20.0;
+            return c;
+        }
 
     static STierConfig GetFullMarginTierPreset()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 5.0;
-        c.dailyRiskPct        = 25.0;
-        c.portfolioRiskPct    = 80.0;
-        c.maxPositions        = 12;
-        c.breakevenBufferPts  = 60;
-        c.trailingDistancePts = 150;
-        c.ddWarningPct        = 5.0;
-        c.ddCriticalPct       = 10.0;
-        c.minConfidence       = 0.35;
-        c.minVoters           = 1;
-        c.maxSpreadATRRatio   = 0.20;
-        c.scalpBudgetPct      = 15.0;
-        c.clusterAllocation.trendPct         = 35.0;
-        c.clusterAllocation.meanReversionPct = 15.0;
-        c.clusterAllocation.structurePct     = 15.0;
-        c.clusterAllocation.scalpPct         = 35.0;
-        return c;
-    }
+        {
+            STierConfig c;
+            c.riskPerTradePct        = 5.0;
+            c.maxRiskPerTradeOverride = 10.0;  // L5-006: 2x riskPerTradePct
+            c.dailyRiskPct        = 25.0;
+            c.portfolioRiskPct    = 80.0;
+            c.maxPositions        = 12;
+            c.breakevenBufferPts  = 60;
+            c.trailingDistancePts = 150;
+            c.ddWarningPct        = 5.0;
+            c.ddCriticalPct       = 10.0;
+            c.minConfidence       = 0.35;
+            c.minVoters           = 1;
+            c.maxSpreadATRRatio   = 0.20;
+            c.scalpBudgetPct      = 15.0;
+            c.clusterAllocation.trendPct         = 35.0;
+            c.clusterAllocation.meanReversionPct = 15.0;
+            c.clusterAllocation.structurePct     = 15.0;
+            c.clusterAllocation.scalpPct         = 35.0;
+            return c;
+        }
 
     // I2: Compounding tier presets — used by CCompoundingTierManager
     static STierConfig GetMicroAggressiveConfig()
@@ -163,124 +168,130 @@ private:
         c.clusterAllocation.structurePct     = 25.0;
         c.clusterAllocation.scalpPct         = 20.0;
         return c;
-    }
+            }
 
-    static STierConfig GetGrowthConfig()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 5.0;
-        c.dailyRiskPct        = 14.0;
-        c.portfolioRiskPct    = 25.0;
-        c.maxPositions        = 3;
-        c.breakevenBufferPts  = 100;
-        c.trailingDistancePts = 250;
-        c.ddWarningPct        = 16.0;
-        c.ddCriticalPct       = 22.0;
-        c.minConfidence       = 0.42;
-        c.minVoters           = 2;
-        c.maxSpreadATRRatio   = 0.22;
-        c.scalpBudgetPct      = 12.0;
-        c.clusterAllocation.trendPct         = 35.0;
-        c.clusterAllocation.meanReversionPct = 20.0;
-        c.clusterAllocation.structurePct     = 25.0;
-        c.clusterAllocation.scalpPct         = 20.0;
-        return c;
-    }
+            static STierConfig GetGrowthConfig()
+            {
+                STierConfig c;
+                c.riskPerTradePct        = 5.0;
+                c.maxRiskPerTradeOverride = 10.0;  // L5-006: 2x riskPerTradePct
+                c.dailyRiskPct        = 14.0;
+                c.portfolioRiskPct    = 25.0;
+                c.maxPositions        = 3;
+                c.breakevenBufferPts  = 100;
+                c.trailingDistancePts = 250;
+                c.ddWarningPct        = 16.0;
+                c.ddCriticalPct       = 22.0;
+                c.minConfidence       = 0.42;
+                c.minVoters           = 2;
+                c.maxSpreadATRRatio   = 0.22;
+                c.scalpBudgetPct      = 12.0;
+                c.clusterAllocation.trendPct         = 35.0;
+                c.clusterAllocation.meanReversionPct = 20.0;
+                c.clusterAllocation.structurePct     = 25.0;
+                c.clusterAllocation.scalpPct         = 20.0;
+                return c;
+            }
 
-    static STierConfig GetAccelerationConfig()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 4.0;
-        c.dailyRiskPct        = 12.0;
-        c.portfolioRiskPct    = 22.0;
-        c.maxPositions        = 3;
-        c.breakevenBufferPts  = 110;
-        c.trailingDistancePts = 280;
-        c.ddWarningPct        = 14.0;
-        c.ddCriticalPct       = 20.0;
-        c.minConfidence       = 0.48;
-        c.minVoters           = 2;
-        c.maxSpreadATRRatio   = 0.20;
-        c.scalpBudgetPct      = 10.0;
-        c.clusterAllocation.trendPct         = 35.0;
-        c.clusterAllocation.meanReversionPct = 25.0;
-        c.clusterAllocation.structurePct     = 25.0;
-        c.clusterAllocation.scalpPct         = 15.0;
-        return c;
-    }
+            static STierConfig GetAccelerationConfig()
+            {
+                STierConfig c;
+                c.riskPerTradePct        = 1.0;
+                c.maxRiskPerTradeOverride = 2.0;   // L5-006: 2x riskPerTradePct
+                c.dailyRiskPct        = 5.0;
+                c.portfolioRiskPct    = 15.0;
+                c.maxPositions        = 5;
+                c.breakevenBufferPts  = 150;
+                c.trailingDistancePts = 400;
+                c.ddWarningPct        = 4.0;
+                c.ddCriticalPct       = 8.0;
+                c.minConfidence       = 0.60;
+                c.minVoters           = 2;
+                c.maxSpreadATRRatio   = 0.15;
+                c.scalpBudgetPct      = 2.0;
+                c.clusterAllocation.trendPct         = 35.0;
+                c.clusterAllocation.meanReversionPct = 25.0;
+                c.clusterAllocation.structurePct     = 25.0;
+                c.clusterAllocation.scalpPct         = 15.0;
+                return c;
+            }
 
-    static STierConfig GetInstitutionalConfig()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 2.5;
-        c.dailyRiskPct        = 8.0;
-        c.portfolioRiskPct    = 18.0;
-        c.maxPositions        = 4;
-        c.breakevenBufferPts  = 120;
-        c.trailingDistancePts = 300;
-        c.ddWarningPct        = 10.0;
-        c.ddCriticalPct       = 15.0;
-        c.minConfidence       = 0.55;
-        c.minVoters           = 2;
-        c.maxSpreadATRRatio   = 0.18;
-        c.scalpBudgetPct      = 6.0;
-        c.clusterAllocation.trendPct         = 40.0;
-        c.clusterAllocation.meanReversionPct = 25.0;
-        c.clusterAllocation.structurePct     = 25.0;
-        c.clusterAllocation.scalpPct         = 10.0;
-        return c;
-    }
+            static STierConfig GetInstitutionalConfig()
+                {
+                    STierConfig c;
+                    c.riskPerTradePct        = 2.5;
+                    c.maxRiskPerTradeOverride = 5.0;   // L5-006: 2x riskPerTradePct
+                    c.dailyRiskPct        = 8.0;
+                    c.portfolioRiskPct    = 18.0;
+                    c.maxPositions        = 4;
+                    c.breakevenBufferPts  = 120;
+                    c.trailingDistancePts = 300;
+                    c.ddWarningPct        = 10.0;
+                    c.ddCriticalPct       = 15.0;
+                    c.minConfidence       = 0.55;
+                    c.minVoters           = 2;
+                    c.maxSpreadATRRatio   = 0.18;
+                    c.scalpBudgetPct      = 6.0;
+                    c.clusterAllocation.trendPct         = 40.0;
+                    c.clusterAllocation.meanReversionPct = 25.0;
+                    c.clusterAllocation.structurePct     = 25.0;
+                    c.clusterAllocation.scalpPct         = 10.0;
+                    return c;
+                }
 
-    static STierConfig GetProfessionalConfig()
-    {
-        STierConfig c;
-        c.riskPerTradePct     = 1.5;
-        c.dailyRiskPct        = 5.0;
-        c.portfolioRiskPct    = 15.0;
-        c.maxPositions        = 5;
-        c.breakevenBufferPts  = 150;
-        c.trailingDistancePts = 350;
-        c.ddWarningPct        = 8.0;
-        c.ddCriticalPct       = 12.0;
-        c.minConfidence       = 0.60;
-        c.minVoters           = 3;
-        c.maxSpreadATRRatio   = 0.15;
-        c.scalpBudgetPct      = 3.0;
-        c.clusterAllocation.trendPct         = 40.0;
-        c.clusterAllocation.meanReversionPct = 25.0;
-        c.clusterAllocation.structurePct     = 25.0;
-        c.clusterAllocation.scalpPct         = 10.0;
-        return c;
-    }
+            static STierConfig GetProfessionalConfig()
+                {
+                    STierConfig c;
+                    c.riskPerTradePct        = 0.75;
+                    c.maxRiskPerTradeOverride = 1.5;   // L5-006: 2x riskPerTradePct
+                    c.dailyRiskPct        = 3.0;
+                    c.portfolioRiskPct    = 10.0;
+                    c.maxPositions        = 4;
+                    c.breakevenBufferPts  = 180;
+                    c.trailingDistancePts = 450;
+                    c.ddWarningPct        = 3.0;
+                    c.ddCriticalPct       = 6.0;
+                    c.minConfidence       = 0.65;
+                    c.minVoters           = 2;
+                    c.maxSpreadATRRatio   = 0.12;
+                    c.scalpBudgetPct      = 1.0;
+                    c.clusterAllocation.trendPct         = 40.0;
+                    c.clusterAllocation.meanReversionPct = 25.0;
+                    c.clusterAllocation.structurePct     = 25.0;
+                    c.clusterAllocation.scalpPct         = 10.0;
+                    return c;
+                }
 
-public:
-    CRiskTierManager() : m_tier(RISK_TIER_MODERATE)
-    {
-        m_config = GetModerateConfig();
-    }
+        public:
+            CRiskTierManager() : m_tier(RISK_TIER_MODERATE)
+            {
+                m_config = GetModerateConfig();
+                ValidateClusterAllocation();
+            }
 
-    ENUM_RISK_TIER GetCurrentTier() const { return m_tier; }
+            ENUM_RISK_TIER GetCurrentTier() const { return m_tier; }
 
-    void SetTier(ENUM_RISK_TIER tier)
-    {
-        m_tier = tier;
-        switch(tier)
-        {
-            case RISK_TIER_CONSERVATIVE:      m_config = GetConservativeConfig(); break;
-            case RISK_TIER_MODERATE:          m_config = GetModerateConfig();     break;
-            case RISK_TIER_AGGRESSIVE:        m_config = GetAggressiveConfig();   break;
-            case RISK_TIER_FULL_MARGIN:       m_config = GetFullMarginTierPreset(); break;
-            case RISK_TIER_MICRO_AGGRESSIVE:  m_config = GetMicroAggressiveConfig(); break;
-            case RISK_TIER_GROWTH:            m_config = GetGrowthConfig(); break;
-            case RISK_TIER_ACCELERATION:      m_config = GetAccelerationConfig(); break;
-            case RISK_TIER_INSTITUTIONAL:     m_config = GetInstitutionalConfig(); break;
-            case RISK_TIER_PROFESSIONAL:      m_config = GetProfessionalConfig(); break;
-            default:                          m_config = GetModerateConfig();     break;
-        }
-        PrintFormat("[RISK-TIER] Tier set to %d | riskPerTrade=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | maxPos=%d",
-                    (int)m_tier, m_config.riskPerTradePct, m_config.dailyRiskPct,
-                    m_config.portfolioRiskPct, m_config.maxPositions);
-    }
+            void SetTier(ENUM_RISK_TIER tier)
+            {
+                m_tier = tier;
+                switch(tier)
+                {
+                    case RISK_TIER_CONSERVATIVE:      m_config = GetConservativeConfig(); break;
+                    case RISK_TIER_MODERATE:          m_config = GetModerateConfig();     break;
+                    case RISK_TIER_AGGRESSIVE:        m_config = GetAggressiveConfig();   break;
+                    case RISK_TIER_FULL_MARGIN:       m_config = GetFullMarginTierPreset(); break;
+                    case RISK_TIER_MICRO_AGGRESSIVE:  m_config = GetMicroAggressiveConfig(); break;
+                    case RISK_TIER_GROWTH:            m_config = GetGrowthConfig(); break;
+                    case RISK_TIER_ACCELERATION:      m_config = GetAccelerationConfig(); break;
+                    case RISK_TIER_INSTITUTIONAL:     m_config = GetInstitutionalConfig(); break;
+                    case RISK_TIER_PROFESSIONAL:      m_config = GetProfessionalConfig(); break;
+                    default:                          m_config = GetModerateConfig();     break;
+                }
+                ValidateClusterAllocation();
+                PrintFormat("[RISK-TIER] Tier set to %d | riskPerTrade=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | maxPos=%d",
+                            (int)m_tier, m_config.riskPerTradePct, m_config.dailyRiskPct,
+                            m_config.portfolioRiskPct, m_config.maxPositions);
+            }
 
     STierConfig GetConfig() const { return m_config; }
 
@@ -337,13 +348,14 @@ public:
         double effectiveDailyLossLimit = (inputDailyLossLimit > 0.0) ? inputDailyLossLimit : 15.0;
 
         // Apply tier overrides without reinitializing the entire risk manager.
-        // This avoids dual initialization of circuit breaker, correlation engine,
-        // portfolio risk manager, and other runtime state.
-        riskManager.ApplyTierOverrides(m_config.riskPerTradePct,
-                                       m_config.maxPositions,
-                                       effectiveDaily, effectivePortfolio,
-                                       effectiveDdWarning, effectiveDdCritical,
-                                       effectiveDailyLossLimit);
+                // This avoids dual initialization of circuit breaker, correlation engine,
+                // portfolio risk manager, and other runtime state.
+                riskManager.ApplyTierOverrides(m_config.riskPerTradePct,
+                                                               m_config.maxPositions,
+                                                               effectiveDaily, effectivePortfolio,
+                                                               effectiveDdWarning, effectiveDdCritical,
+                                                               effectiveDailyLossLimit,
+                                                               m_config.maxRiskPerTradeOverride);
 
         PrintFormat("[RISK-TIER] Applied to RiskManager | risk=%.1f%% | daily=%.1f%% (tier=%.1f floor=%.1f) | portfolio=%.1f%% (tier=%.1f floor=%.1f) | ddWarn=%.1f%% | ddCrit=%.1f%%",
                     m_config.riskPerTradePct,
@@ -431,16 +443,37 @@ public:
     double GetScalpBudgetPct() const { return m_config.scalpBudgetPct; }
 
     //+------------------------------------------------------------------+
-    //| Get cluster allocation config for current tier                   |
-    //+------------------------------------------------------------------+
-    SClusterAllocation GetClusterAllocation() const { return m_config.clusterAllocation; }
+        //| Get cluster allocation config for current tier                   |
+        //+------------------------------------------------------------------+
+        SClusterAllocation GetClusterAllocation() const { return m_config.clusterAllocation; }
 
-    //+------------------------------------------------------------------+
-    //| Get full-margin mode config for RISK_TIER_FULL_MARGIN            |
-    //+------------------------------------------------------------------+
-    SFullMarginConfig GetFullMarginConfig() const
-    {
-        SFullMarginConfig fm;
+        //+------------------------------------------------------------------+
+        //| Validate cluster allocation sums to 100%                         |
+        //| L5-014: Ensure cluster allocation percentages sum to 100%        |
+        //+------------------------------------------------------------------+
+        void ValidateClusterAllocation() const
+        {
+            double sum = m_config.clusterAllocation.trendPct 
+                         + m_config.clusterAllocation.meanReversionPct
+                         + m_config.clusterAllocation.structurePct
+                         + m_config.clusterAllocation.scalpPct;
+            if(MathAbs(sum - 100.0) > 0.01)
+            {
+                PrintFormat("[RISK-TIER-VALIDATION] WARNING: Cluster allocation sums to %.2f%%, expected 100%% | trend=%.1f%% meanRev=%.1f%% structure=%.1f%% scalp=%.1f%%",
+                            sum,
+                            m_config.clusterAllocation.trendPct,
+                            m_config.clusterAllocation.meanReversionPct,
+                            m_config.clusterAllocation.structurePct,
+                            m_config.clusterAllocation.scalpPct);
+            }
+        }
+
+        //+------------------------------------------------------------------+
+        //| Get full-margin mode config for RISK_TIER_FULL_MARGIN            |
+        //+------------------------------------------------------------------+
+        SFullMarginConfig GetFullMarginConfig() const
+        {
+            SFullMarginConfig fm;
         fm.maxStackedPositions  = 3;
         fm.stackLotScale        = 0.5;
         fm.minProfitForStack    = 0.0;

@@ -14,7 +14,9 @@
 #include <Arrays/ArrayDouble.mqh>
 #include <Object.mqh>
 #include <Arrays/ArrayObj.mqh>
+#include "../Processing/MultiAssetProfiler.mqh"
 
+// Global profiler access declared in OrchestratorFwd.mqh (extern)
 // Forward declarations
 
 class CMarketAnalysis {
@@ -732,63 +734,115 @@ public:
     }
 
     // Check if symbol is compatible with ADX indicator
-    bool IsADXCompatible(const string symbolName) {
-        // Boom/Crash indices are incompatible
-        if(StringFind(symbolName, "Boom") >= 0 || StringFind(symbolName, "Crash") >= 0)
-            return false;
+            bool IsADXCompatible(const string symbolName) {
+                // Use global multi-asset profiler for proper asset classification
+                if(g_multiAssetProfiler != NULL)
+                {
+                    SAssetProfile profile = g_multiAssetProfiler.GetProfile(symbolName);
+                    if(IsSyntheticAssetClass(profile.assetClass))
+                    {
+                        // Check Deriv family for specific incompatible families
+                        CDerivAssetProfiler* derivProfiler = g_multiAssetProfiler.GetDerivProfiler();
+                        if(derivProfiler != NULL)
+                        {
+                            ENUM_DERIV_FAMILY family = derivProfiler.DetectFamily(symbolName);
+                            if(family == DERIV_CRASH_BOOM || family == DERIV_JUMP)
+                                return false;
+                        }
+                    }
+                    return true;
+                }
+        
+            // Fallback to string matching if profiler not available
+            // Boom/Crash indices are incompatible
+            if(StringFind(symbolName, "Boom") >= 0 || StringFind(symbolName, "Crash") >= 0)
+                return false;
 
-        // Jump indices have issues with ADX (error 4805)
-        if(StringFind(symbolName, "Jump") >= 0)
-            return false;
+            // Jump indices have issues with ADX (error 4805)
+            if(StringFind(symbolName, "Jump") >= 0)
+                return false;
 
-        return true;
-    }
-
-    // Check if symbol needs special indicator handling
-    bool RequiresSpecialHandling(const string symbolName) {
-        // Volatility indices
-        if(StringFind(symbolName, "Vol") >= 0)
             return true;
+        }
 
-        // Jump indices
-        if(StringFind(symbolName, "Jump") >= 0)
-            return true;
+        // Check if symbol needs special indicator handling
+                bool RequiresSpecialHandling(const string symbolName) {
+                    // Use global multi-asset profiler for proper asset classification
+                    if(g_multiAssetProfiler != NULL)
+                    {
+                        SAssetProfile profile = g_multiAssetProfiler.GetProfile(symbolName);
+                        if(IsSyntheticAssetClass(profile.assetClass))
+                            return true;
+                        return false;
+                    }
+        
+            // Fallback to string matching if profiler not available
+            // Volatility indices
+            if(StringFind(symbolName, "Vol") >= 0)
+                return true;
 
-        // Step indices
-        if(StringFind(symbolName, "Step") >= 0)
-            return true;
+            // Jump indices
+            if(StringFind(symbolName, "Jump") >= 0)
+                return true;
 
-        // Weltrade / Other Synthetic indices
-        if(StringFind(symbolName, "Boom") >= 0 ||
-           StringFind(symbolName, "Crash") >= 0 ||
-           StringFind(symbolName, "PainX") >= 0 ||
-           StringFind(symbolName, "SFX Vol") >= 0 ||
-           StringFind(symbolName, "GainX") >= 0 ||
-           StringFind(symbolName, "FX Vol") >= 0 ||
-           StringFind(symbolName, "FlipX") >= 0 ||
-           StringFind(symbolName, "Volatility") >= 0 ||  // Deriv synthetic family
-           StringFind(symbolName, "Jump") >= 0)           // Deriv Jump indices
-            return true;
+            // Step indices
+            if(StringFind(symbolName, "Step") >= 0)
+                return true;
 
-        return false;
-    }
+            // Weltrade / Other Synthetic indices
+            if(StringFind(symbolName, "Boom") >= 0 ||
+               StringFind(symbolName, "Crash") >= 0 ||
+               StringFind(symbolName, "PainX") >= 0 ||
+               StringFind(symbolName, "SFX Vol") >= 0 ||
+               StringFind(symbolName, "GainX") >= 0 ||
+               StringFind(symbolName, "FX Vol") >= 0 ||
+               StringFind(symbolName, "FlipX") >= 0 ||
+               StringFind(symbolName, "Volatility") >= 0 ||  // Deriv synthetic family
+               StringFind(symbolName, "Jump") >= 0)           // Deriv Jump indices
+                return true;
 
-    // Initialize all required indicators for the given symbol and period
-	    bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period) {
-	        // Track initialization attempt
-	        m_initAttempts++;
-	        m_lastInitAttempt = TimeCurrent();
-	        if(m_symbol != symbolName || m_period != period)
-	            ResetMetricCaches();
-	        
-	        // Skip Boom/Crash indices - completely incompatible
-	        if(StringFind(symbolName, "Boom") >= 0 || StringFind(symbolName, "Crash") >= 0) {
-            PrintFormat("[INFO] Skipping indicator initialization for incompatible symbol: %s", symbolName);
-            m_indicatorsReady = false;
             return false;
         }
-        
-        // Check if symbol is available
+
+    // Initialize all required indicators for the given symbol and period
+    	bool InitializeIndicators(const string symbolName, const ENUM_TIMEFRAMES period) {
+    		// Track initialization attempt
+    		m_initAttempts++;
+    		m_lastInitAttempt = TimeCurrent();
+    		if(m_symbol != symbolName || m_period != period)
+    			ResetMetricCaches();
+    		
+    		// Skip Boom/Crash indices - completely incompatible
+    		// Use global multi-asset profiler for proper asset classification
+    		if(g_multiAssetProfiler != NULL)
+    		{
+    			SAssetProfile profile = g_multiAssetProfiler.GetProfile(symbolName);
+			if(IsSyntheticAssetClass(profile.assetClass))
+    			{
+    				CDerivAssetProfiler* derivProfiler = g_multiAssetProfiler.GetDerivProfiler();
+    				if(derivProfiler != NULL)
+    				{
+    					ENUM_DERIV_FAMILY family = derivProfiler.DetectFamily(symbolName);
+    					if(family == DERIV_CRASH_BOOM)
+    					{
+    						PrintFormat("[INFO] Skipping indicator initialization for incompatible symbol: %s", symbolName);
+    						m_indicatorsReady = false;
+    						return false;
+    					}
+    				}
+    			}
+    		}
+    		else
+    		{
+    			// Fallback to string matching if profiler not available
+    			if(StringFind(symbolName, "Boom") >= 0 || StringFind(symbolName, "Crash") >= 0) {
+    				PrintFormat("[INFO] Skipping indicator initialization for incompatible symbol: %s", symbolName);
+    				m_indicatorsReady = false;
+    				return false;
+    			}
+    		}
+    		
+    		// Check if symbol is available
         if(!IsSymbolAvailable(symbolName)) {
             if(m_initAttempts == 1) {
                 PrintFormat("[INFO] Symbol %s not available in Market Watch or has no price data", symbolName);
@@ -799,7 +853,11 @@ public:
         
         // Store symbol and period for later use
         m_symbol = symbolName;
-        m_period = period;
+        // Resolve PERIOD_CURRENT to actual chart timeframe
+        ENUM_TIMEFRAMES resolvedPeriod = period;
+        if(resolvedPeriod == PERIOD_CURRENT || resolvedPeriod == 0)
+            resolvedPeriod = Period();
+        m_period = resolvedPeriod;
         
         bool useADX = IsADXCompatible(symbolName);
         

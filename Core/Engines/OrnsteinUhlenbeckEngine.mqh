@@ -114,9 +114,12 @@ public:
 
     SOUSnapshot GetSnapshot() const { return m_lastSnapshot; }
 
-    //--- Warmup check — need at least lookbackPeriod+1 bars
-    bool IsWarmedUp() const { return m_lastSnapshot.barCount >= m_lookbackPeriod + 1 && m_lastSnapshot.timestamp > 0; }
-};
+    //--- Warmup check -- need at least lookbackPeriod+1 bars
+        bool IsWarmedUp() const { return m_lastSnapshot.barCount >= m_lookbackPeriod + 1 && m_lastSnapshot.timestamp > 0; }
+
+        //--- Cleanup
+        void Deinit();
+    };
 
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
@@ -139,18 +142,42 @@ COrnsteinUhlenbeckEngine::COrnsteinUhlenbeckEngine(
     m_isMeanReverting(false),
     m_signalQuality(0.0),
     m_lastBarTime(0),
-    m_lastLogTime(0),
-    m_warmedUp(false),
-    m_barCount(0),
-    m_timeframeResolved(false)
-{
-}
+        m_lastLogTime(0),
+        m_warmedUp(false),
+        m_barCount(0),
+        m_timeframeResolved(false)
+    {
+        // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
+        ResolveTimeframe();
+    }
 
 //+------------------------------------------------------------------+
 //| Destructor                                                       |
 //+------------------------------------------------------------------+
 COrnsteinUhlenbeckEngine::~COrnsteinUhlenbeckEngine()
 {
+}
+
+//+------------------------------------------------------------------+
+//| Deinit — explicit cleanup for shutdown                           |
+//+------------------------------------------------------------------+
+void COrnsteinUhlenbeckEngine::Deinit()
+{
+    // COrnsteinUhlenbeckEngine holds no indicator handles or external resources.
+    // Dynamic arrays are auto-managed. Reset state for potential reuse.
+    m_lastSnapshot = SOUSnapshot();
+    m_theta = 0.0;
+    m_mu = 0.0;
+    m_sigma = 0.0;
+    m_halfLife = 0.0;
+    m_ouZScore = 0.0;
+    m_thetaTStat = 0.0;
+    m_isMeanReverting = false;
+    m_signalQuality = 0.0;
+    m_lastBarTime = 0;
+    m_lastLogTime = 0;
+    m_warmedUp = false;
+    m_barCount = 0;
 }
 
 //+------------------------------------------------------------------+

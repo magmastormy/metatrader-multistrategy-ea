@@ -1,6 +1,7 @@
 //+------------------------------------------------------------------+
 //| SubsystemLogger.mqh - Separated Log Files for Different Modules  |
 //| Provides isolated logging for Drawing, AI, Trading, Risk, etc.   |
+//| L9-007: Routes through CJsonLogger for unified correlation IDs   |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Advanced Trading Systems"
 #property version   "1.00"
@@ -8,6 +9,8 @@
 
 #ifndef SUBSYSTEM_LOGGER_MQH
 #define SUBSYSTEM_LOGGER_MQH
+
+#include "JsonLogger.mqh"
 
 //+------------------------------------------------------------------+
 //| Log File Types                                                   |
@@ -19,13 +22,14 @@ enum ENUM_LOG_SUBSYSTEM
     LOG_TRADING,      // Trade execution and signals
     LOG_RISK,         // Risk management decisions
     LOG_CONSENSUS,    // Strategy consensus and voting
-    LOG_PERFORMANCE,  // Performance analytics
+    LOG_PERF,  // Performance analytics
     LOG_DEBUG         // General debugging
 };
 
 //+------------------------------------------------------------------+
 //| Subsystem Logger Class                                           |
 //| Creates separate .log files for each subsystem                   |
+//| Routes through CJsonLogger for unified correlation IDs           |
 //+------------------------------------------------------------------+
 class CSubsystemLogger
 {
@@ -34,15 +38,27 @@ private:
     string m_symbol;
     datetime m_lastFlushTime;
     int m_flushIntervalSec;
+    bool m_initialized;
     
     // File handles for each subsystem (use array indexed by ENUM)
     int m_fileHandles[];
     int m_lineCounts[];
+    long m_fileSizes[];
+    datetime m_fileCreationTimes[];
     
-    int MAX_LINES_PER_FILE; // Rotate after 5000 lines
+    int MAX_LINES_PER_FILE;     // Rotate after 5000 lines
+    long MAX_FILE_SIZE_BYTES;   // Rotate after 10MB
+    int MAX_FILE_AGE_DAYS;      // Rotate after 1 day
+    int MAX_RETAINED_FILES;     // Keep max 7 rotated files
     
     string GetLogFileName(ENUM_LOG_SUBSYSTEM subsystem);
     void OpenFileIfNeeded(ENUM_LOG_SUBSYSTEM subsystem);
+    void RotateIfNeeded(ENUM_LOG_SUBSYSTEM subsystem);
+    string GetRotatedFileName(ENUM_LOG_SUBSYSTEM subsystem, int rotationIndex);
+    void CleanupOldFiles(ENUM_LOG_SUBSYSTEM subsystem);
+    
+    // Map subsystem enum to component string for CJsonLogger
+    string SubsystemToComponent(ENUM_LOG_SUBSYSTEM subsystem);
     
 public:
     CSubsystemLogger();
@@ -65,13 +81,21 @@ CSubsystemLogger::CSubsystemLogger() :
     m_symbol(""),
     m_lastFlushTime(0),
     m_flushIntervalSec(60),
-    MAX_LINES_PER_FILE(5000)
+    m_initialized(false),
+    MAX_LINES_PER_FILE(5000),
+    MAX_FILE_SIZE_BYTES(10485760),  // 10MB
+    MAX_FILE_AGE_DAYS(1),
+    MAX_RETAINED_FILES(7)
 {
     // Initialize arrays for 7 subsystem types
     ArrayResize(m_fileHandles, 7);
     ArrayResize(m_lineCounts, 7);
+    ArrayResize(m_fileSizes, 7);
+    ArrayResize(m_fileCreationTimes, 7);
     ArrayInitialize(m_fileHandles, INVALID_HANDLE);
     ArrayInitialize(m_lineCounts, 0);
+    ArrayInitialize(m_fileSizes, 0);
+    ArrayInitialize(m_fileCreationTimes, 0);
 }
 
 //+------------------------------------------------------------------+
@@ -79,7 +103,28 @@ CSubsystemLogger::CSubsystemLogger() :
 //+------------------------------------------------------------------+
 CSubsystemLogger::~CSubsystemLogger()
 {
-    CloseAll();
+    if(m_initialized)
+    {
+        CloseAll();
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Map subsystem enum to component string for CJsonLogger           |
+//+------------------------------------------------------------------+
+string CSubsystemLogger::SubsystemToComponent(ENUM_LOG_SUBSYSTEM subsystem)
+{
+    switch(subsystem)
+    {
+        case LOG_DRAWING:     return "DRAWING";
+        case LOG_AI:          return "AI";
+        case LOG_TRADING:     return "TRADING";
+        case LOG_RISK:        return "RISK";
+        case LOG_CONSENSUS:   return "CONSENSUS";
+        case LOG_PERF: return "PERFORMANCE";
+        case LOG_DEBUG:       return "DEBUG";
+        default:              return "UNKNOWN";
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -95,7 +140,7 @@ string CSubsystemLogger::GetLogFileName(ENUM_LOG_SUBSYSTEM subsystem)
         case LOG_TRADING:     prefix = "trading_"; break;
         case LOG_RISK:        prefix = "risk_"; break;
         case LOG_CONSENSUS:   prefix = "consensus_"; break;
-        case LOG_PERFORMANCE: prefix = "performance_"; break;
+        case LOG_PERF: prefix = "performance_"; break;
         case LOG_DEBUG:       prefix = "debug_"; break;
         default:              prefix = "unknown_"; break;
     }
@@ -104,6 +149,30 @@ string CSubsystemLogger::GetLogFileName(ENUM_LOG_SUBSYSTEM subsystem)
     StringReplace(dateStr, ".", "_");
     
     return m_basePath + prefix + m_symbol + "_" + dateStr + ".log";
+}
+
+//+------------------------------------------------------------------+
+//| Get Rotated File Name                                            |
+//+------------------------------------------------------------------+
+string CSubsystemLogger::GetRotatedFileName(ENUM_LOG_SUBSYSTEM subsystem, int rotationIndex)
+{
+    string prefix = "";
+    switch(subsystem)
+    {
+        case LOG_DRAWING:     prefix = "drawing_"; break;
+        case LOG_AI:          prefix = "ai_"; break;
+        case LOG_TRADING:     prefix = "trading_"; break;
+        case LOG_RISK:        prefix = "risk_"; break;
+        case LOG_CONSENSUS:   prefix = "consensus_"; break;
+        case LOG_PERF: prefix = "performance_"; break;
+        case LOG_DEBUG:       prefix = "debug_"; break;
+        default:              prefix = "unknown_"; break;
+    }
+    
+    string dateStr = TimeToString(TimeCurrent(), TIME_DATE);
+    StringReplace(dateStr, ".", "_");
+    
+    return m_basePath + prefix + m_symbol + "_" + dateStr + "_" + IntegerToString(rotationIndex) + ".log";
 }
 
 //+------------------------------------------------------------------+
@@ -122,7 +191,84 @@ void CSubsystemLogger::OpenFileIfNeeded(ENUM_LOG_SUBSYSTEM subsystem)
         if(m_fileHandles[idx] != INVALID_HANDLE)
         {
             FileSeek(m_fileHandles[idx], 0, SEEK_END);
+            m_fileCreationTimes[idx] = TimeCurrent();
+            m_fileSizes[idx] = 0;
         }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Rotate If Needed                                                 |
+//+------------------------------------------------------------------+
+void CSubsystemLogger::RotateIfNeeded(ENUM_LOG_SUBSYSTEM subsystem)
+{
+    int idx = (int)subsystem;
+    if(idx < 0 || idx >= ArraySize(m_fileHandles))
+        return;
+    
+    bool needRotate = false;
+    
+    // Check line count
+    if(m_lineCounts[idx] >= MAX_LINES_PER_FILE)
+        needRotate = true;
+    
+    // Check file size
+    if(m_fileSizes[idx] >= MAX_FILE_SIZE_BYTES)
+        needRotate = true;
+    
+    // Check file age
+    datetime now = TimeCurrent();
+    if(m_fileCreationTimes[idx] > 0 && (now - m_fileCreationTimes[idx]) >= (MAX_FILE_AGE_DAYS * 86400))
+        needRotate = true;
+    
+    if(needRotate && m_fileHandles[idx] != INVALID_HANDLE)
+    {
+        // Find next rotation index
+        int rotationIdx = 1;
+        while(rotationIdx <= MAX_RETAINED_FILES)
+        {
+            string rotatedName = GetRotatedFileName(subsystem, rotationIdx);
+            int handle = FileOpen(rotatedName, FILE_READ | FILE_COMMON);
+            if(handle == INVALID_HANDLE)
+                break;
+            FileClose(handle);
+            rotationIdx++;
+        }
+        
+        // Close current file
+        FileClose(m_fileHandles[idx]);
+        
+        // Rename current to rotated
+        string currentName = GetLogFileName(subsystem);
+        string rotatedName = GetRotatedFileName(subsystem, rotationIdx);
+        FileMove(currentName, FILE_COMMON, rotatedName, FILE_COMMON);
+        
+        // Reopen with fresh file
+        m_fileHandles[idx] = INVALID_HANDLE;
+        m_lineCounts[idx] = 0;
+        m_fileSizes[idx] = 0;
+        m_fileCreationTimes[idx] = 0;
+        
+        OpenFileIfNeeded(subsystem);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Cleanup Old Rotated Files                                        |
+//+------------------------------------------------------------------+
+void CSubsystemLogger::CleanupOldFiles(ENUM_LOG_SUBSYSTEM subsystem)
+{
+    // Find and delete files beyond MAX_RETAINED_FILES
+    int idx = MAX_RETAINED_FILES + 1;
+    while(idx <= MAX_RETAINED_FILES + 10)  // safety limit
+    {
+        string rotatedName = GetRotatedFileName(subsystem, idx);
+        int handle = FileOpen(rotatedName, FILE_READ | FILE_COMMON);
+        if(handle == INVALID_HANDLE)
+            break;
+        FileClose(handle);
+        FileDelete(rotatedName);
+        idx++;
     }
 }
 
@@ -138,6 +284,8 @@ bool CSubsystemLogger::Initialize(const string symbol, const string basePath = "
     if(StringLen(m_basePath) > 0 && StringSubstr(m_basePath, StringLen(m_basePath) - 1, 1) != "\\")
         m_basePath += "\\";
     
+    m_initialized = true;
+    
     Print("[SUBSYSTEM-LOGGER] Initialized for ", symbol, " | BasePath=", m_basePath);
     return true;
 }
@@ -147,7 +295,11 @@ bool CSubsystemLogger::Initialize(const string symbol, const string basePath = "
 //+------------------------------------------------------------------+
 void CSubsystemLogger::Deinitialize()
 {
-    CloseAll();
+    if(m_initialized)
+    {
+        CloseAll();
+        m_initialized = false;
+    }
     Print("[SUBSYSTEM-LOGGER] Deinitialized");
 }
 
@@ -167,15 +319,10 @@ void CSubsystemLogger::Log(ENUM_LOG_SUBSYSTEM subsystem, const string message)
         return;
     
     // Check rotation
-    if(m_lineCounts[idx] >= MAX_LINES_PER_FILE)
-    {
-        FileClose(m_fileHandles[idx]);
-        m_fileHandles[idx] = INVALID_HANDLE;
-        m_lineCounts[idx] = 0;
-        OpenFileIfNeeded(subsystem);
-        if(m_fileHandles[idx] == INVALID_HANDLE)
-            return;
-    }
+    RotateIfNeeded(subsystem);
+    
+    if(m_fileHandles[idx] == INVALID_HANDLE)
+        return;
     
     // Format message with timestamp
     string timestamp = TimeToString(TimeCurrent(), TIME_SECONDS);
@@ -186,6 +333,42 @@ void CSubsystemLogger::Log(ENUM_LOG_SUBSYSTEM subsystem, const string message)
     FileWriteString(m_fileHandles[idx], fullMessage + "\r\n");
     FileFlush(m_fileHandles[idx]);
     m_lineCounts[idx]++;
+    
+    // Update file size tracking
+    m_fileSizes[idx] = (long)FileSize(m_fileHandles[idx]);
+    
+    // Route through CJsonLogger for structured JSON with correlation ID
+    if(CJsonLogger::IsEnabled())
+    {
+        string component = SubsystemToComponent(subsystem);
+        string correlationId = CJsonLogger::GetCorrelationId();
+        
+        // Map subsystem to log level
+        // TRADING, RISK, CONSENSUS -> INFO level
+        // AI, PERFORMANCE -> DEBUG level (verbose)
+        // DRAWING, DEBUG -> DEBUG level
+        string eventType = "";
+        switch(subsystem)
+        {
+            case LOG_TRADING:    eventType = "TRADE"; break;
+            case LOG_RISK:       eventType = "RISK_EVENT"; break;
+            case LOG_CONSENSUS:  eventType = "CONSENSUS"; break;
+            case LOG_AI:         eventType = "AI_EVENT"; break;
+            case LOG_PERF: eventType = "PERFORMANCE"; break;
+            case LOG_DRAWING:    eventType = "DRAWING"; break;
+            case LOG_DEBUG:      eventType = "DEBUG"; break;
+        }
+        
+        // Determine level based on subsystem
+        if(subsystem == LOG_TRADING || subsystem == LOG_RISK || subsystem == LOG_CONSENSUS)
+        {
+            CJsonLogger::LogInfo(component, message, eventType, m_symbol, correlationId, "");
+        }
+        else
+        {
+            CJsonLogger::LogDebug(component, message, eventType, m_symbol, correlationId, "");
+        }
+    }
     
     // Also print to terminal for critical messages
     if(subsystem == LOG_TRADING || subsystem == LOG_RISK)

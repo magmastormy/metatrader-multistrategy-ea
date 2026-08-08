@@ -29,21 +29,7 @@ private:
     SDrawingEntry m_entries[];
     int m_entryCount;
     
-    int GetIndex(const string symbol, bool createIfMissing = true)
-    {
-        for(int i = 0; i < m_entryCount; i++)
-            if(m_entries[i].symbol == symbol) return i;
-        
-        if(!createIfMissing) return -1;
-        
-        int idx = m_entryCount;
-        ArrayResize(m_entries, idx + 1);
-        m_entries[idx].symbol = symbol;
-        m_entryCount++;
-        return idx;
-    }
-
-public:
+    public:
     CDrawingManagerRegistry() : m_entryCount(0) { ArrayResize(m_entries, 0); }
     ~CDrawingManagerRegistry() { Clear(); }
     
@@ -52,6 +38,8 @@ public:
         ArrayResize(m_entries, 0);
         m_entryCount = 0;
     }
+    
+    int Count() const { return m_entryCount; }
     
     CChartDrawingManager* GetOrCreateManager(const string symbol, ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT, const string prefix = "")
     {
@@ -121,6 +109,34 @@ public:
             report += "  " + m_entries[i].symbol + ": " + IntegerToString(m_entries[i].objectCount) + " objects\n";
         }
         return report;
+    }
+    
+    int GetIndex(const string symbol, bool createIfMissing = true)
+    {
+        for(int i = 0; i < m_entryCount; i++)
+            if(m_entries[i].symbol == symbol) return i;
+        
+        if(!createIfMissing) return -1;
+        
+        int idx = m_entryCount;
+        ArrayResize(m_entries, idx + 1);
+        m_entries[idx].symbol = symbol;
+        m_entryCount++;
+        return idx;
+    }
+    
+    void RegisterAll(CChartDrawingManager* &managers[], const string &symbols[], int count)
+    {
+        for(int i = 0; i < count; i++)
+        {
+            if(symbols[i] == "") continue;
+            
+            int idx = GetIndex(symbols[i], true);
+            if(idx >= 0 && managers[i] != NULL)
+            {
+                m_entries[idx].drawingManager = managers[i];
+            }
+        }
     }
 };
 

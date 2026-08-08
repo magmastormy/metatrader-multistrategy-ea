@@ -451,9 +451,32 @@ public:
     }
 
     //--- Accessors
-    int    GetBarsHeld() const    { return m_barsHeld; }
-    int    GetPartialsTaken() const { return m_partialsTaken; }
-    double GetInitialRisk() const { return m_initialRisk; }
-};
+        int    GetBarsHeld() const    { return m_barsHeld; }
+        int    GetPartialsTaken() const { return m_partialsTaken; }
+        double GetInitialRisk() const { return m_initialRisk; }
+
+        // --- Cleanup ---
+        void Deinit()
+        {
+            if(m_atrHandle != INVALID_HANDLE)
+            {
+                IndicatorRelease(m_atrHandle);
+                m_atrHandle = INVALID_HANDLE;
+            }
+            m_entryPrice = 0.0;
+            m_initialSL = 0.0;
+            m_initialRisk = 0.0;
+            m_barsHeld = 0;
+            m_partialsTaken = 0;
+            m_highestSinceEntry = 0.0;
+            m_lowestSinceEntry = 0.0;
+            m_isHighVol = false;
+            m_isTrending = false;
+            m_ouHalfLife = 0.0;
+            m_ouMu = 0.0;
+            m_lastBarTime = 0;
+            m_lastLogTime = 0;
+        }
+    };
 
 #endif // EXIT_OPTIMIZER_MQH

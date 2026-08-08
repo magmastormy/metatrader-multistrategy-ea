@@ -25,22 +25,14 @@ private:
     CMarketStructureAnalyzer*    m_structureAnalyzer;
     CAdvancedOrderBlockDetector* m_obDetector;
     CImbalanceDetector*          m_imbalanceDetector;
-    int                          m_lastBarCount;
 
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager*         m_riskManager;
-
-    bool RefreshForNewBar()
+protected:
+    virtual void HandleNewBar() override { RefreshForNewBar(); }
+    virtual void OnRefreshComponents() override
     {
-        int barCount = iBars(m_symbol, m_timeframe);
-        if(barCount <= 0 || barCount == m_lastBarCount)
-            return false;
-
-        m_lastBarCount = barCount;
         if(m_structureAnalyzer != NULL) m_structureAnalyzer.Update();
         if(m_obDetector != NULL) m_obDetector.Update();
         if(m_imbalanceDetector != NULL) m_imbalanceDetector.Update();
-        return true;
     }
 
 public:
@@ -48,9 +40,7 @@ public:
         CStrategyBase(name, 0),
         m_structureAnalyzer(NULL),
         m_obDetector(NULL),
-        m_imbalanceDetector(NULL),
-        m_lastBarCount(0),
-        m_riskManager(NULL)
+        m_imbalanceDetector(NULL)
     {
         OverrideMinConfidence(0.55);
     }
@@ -78,13 +68,6 @@ public:
             return false;
         }
 
-        m_lastBarCount = 0;
-
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager == NULL)
-            Print("[BREAKER-BLOCK] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
-
         return true;
     }
 
@@ -93,19 +76,12 @@ public:
         if(m_structureAnalyzer != NULL) { delete m_structureAnalyzer; m_structureAnalyzer = NULL; }
         if(m_obDetector != NULL) { delete m_obDetector; m_obDetector = NULL; }
         if(m_imbalanceDetector != NULL) { delete m_imbalanceDetector; m_imbalanceDetector = NULL; }
-        // Risk manager is not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
         CStrategyBase::Deinit();
     }
 
     virtual void OnTick() override
     {
         // Intentionally empty - strategy evaluates on new bar only via GetSignal()
-    }
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
-    {
-        if(symbol == m_symbol && timeframe == m_timeframe)
-            RefreshForNewBar();
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -248,33 +224,18 @@ public:
             double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
             double tpPips = slPips * 2.0;  // 2R
 
-            // Risk validation (AGENTS.md invariant #1)
-            if(m_riskManager != NULL)
-            {
-                STradeValidationRequest request;
-                request.symbol = m_symbol;
-                request.orderType = ORDER_TYPE_BUY;
-                request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-                request.stopLossPips = slPips;
-                request.takeProfitPips = tpPips;
-                request.confidence = confidence;
-                request.strategy = GetName();
-                request.clusterCode = "";
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = ORDER_TYPE_BUY;
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+            request.stopLossPips = slPips;
+            request.takeProfitPips = tpPips;
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
 
-                CUnifiedRiskManager* riskMgr = m_riskManager;
-                SValidationResult result;
-                ZeroMemory(result);
-                if(riskMgr != NULL)
-                    result = (*riskMgr).ValidateTradeRequest(request, "BREAKER-BLOCK");
-                if(!result.approved)
-                {
-                    SetDecisionReasonTag("BREAKER_RISK_REJECTED");
-                    PrintFormat("[BREAKER-BLOCK] Risk rejected BUY at %.5f Conf=%.1f%%",
-                               currentPrice, confidence * 100);
-                    return TRADE_SIGNAL_NONE;
-                }
-                confidence *= result.confidenceMultiplier;
-            }
+            if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
+                return TRADE_SIGNAL_NONE;
         }
         else
         {
@@ -284,50 +245,25 @@ public:
             double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
             double tpPips = slPips * 2.0;  // 2R
 
-            // Risk validation (AGENTS.md invariant #1)
-            if(m_riskManager != NULL)
-            {
-                STradeValidationRequest request;
-                request.symbol = m_symbol;
-                request.orderType = ORDER_TYPE_SELL;
-                request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-                request.stopLossPips = slPips;
-                request.takeProfitPips = tpPips;
-                request.confidence = confidence;
-                request.strategy = GetName();
-                request.clusterCode = "";
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = ORDER_TYPE_SELL;
+            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+            request.stopLossPips = slPips;
+            request.takeProfitPips = tpPips;
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
 
-                CUnifiedRiskManager* riskMgr = m_riskManager;
-                SValidationResult result;
-                ZeroMemory(result);
-                if(riskMgr != NULL)
-                    result = (*riskMgr).ValidateTradeRequest(request, "BREAKER-BLOCK");
-                if(!result.approved)
-                {
-                    SetDecisionReasonTag("BREAKER_RISK_REJECTED");
-                    PrintFormat("[BREAKER-BLOCK] Risk rejected SELL at %.5f Conf=%.1f%%",
-                               currentPrice, confidence * 100);
-                    return TRADE_SIGNAL_NONE;
-                }
-                confidence *= result.confidenceMultiplier;
-            }
+            if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
+                return TRADE_SIGNAL_NONE;
         }
 
         SetDecisionReasonTag(bullish ? "BREAKER_SIGNAL_BUY" : "BREAKER_SIGNAL_SELL");
         RecordSignal();
 
         // CONSENSUS LOGGING (AGENTS.md requirement)
-        PrintFormat("[CONSENSUS-DIAG] %s | %s | Breaker: %s | FVG: %s | Fresh: %.2f | CISD: %s | Struct: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                   m_symbol,
-                   bullish ? "BUY" : "SELL",
-                   EnumToString(bestBreakerType),
-                   hasFVGConfluence ? "Yes" : "No",
-                   freshness,
-                   hasCISD ? "Yes" : "No",
-                   structureAligned ? "Yes" : "No",
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag);
+        LogConsensusDiag(signal, StringFormat("Breaker: %s | FVG: %s | Fresh: %.2f | CISD: %s | Struct: %s", EnumToString(bestBreakerType), hasFVGConfluence ? "Yes" : "No", freshness, hasCISD ? "Yes" : "No", structureAligned ? "Yes" : "No"), confidence);
 
         PrintFormat("[BREAKER-BLOCK] %s: %s | Zone: %.5f-%.5f | Freshness: %.2f | FVG: %s | CISD: %s | Conf: %.1f%%",
                    m_symbol,

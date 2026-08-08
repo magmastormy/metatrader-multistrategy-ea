@@ -54,9 +54,8 @@ private:
     CTrendlineBounceStrategy*   m_trendlineStrategy;
     CChartDrawingManager*       m_drawingManager;
     
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager*        m_riskManager;
-    CSubsystemLogger*           m_logger;  // Subsystem logger for drawing diagnostics
+    // Risk Management (AGENTS.md invariant #1) - Uses base class CStrategyBase::GetUnifiedRiskManager()
+        CSubsystemLogger*           m_logger;  // Subsystem logger for drawing diagnostics
 
     // Batch 103: Per-symbol engine references (not owned)
     CHurstEngine*               m_hurstEngine;
@@ -112,23 +111,23 @@ private:
 //+------------------------------------------------------------------+
 CStrategySupportResistance::CStrategySupportResistance(const string name, int magic) :
     CStrategyBase(name, magic),
-    m_srDetector(NULL),
-    m_trendDetector(NULL),
-    m_fibModule(NULL),
-    m_bounceStrategy(NULL),
-    m_breakoutStrategy(NULL),
-    m_trendlineStrategy(NULL),
-    m_drawingManager(NULL),
-    m_riskManager(NULL),
-    m_hurstEngine(NULL),
-    m_vpinFilter(NULL),
-    m_mode(SR_MODE_ALL),
-    m_lastBarProcessed(0),
-    m_drawBarCounter(0),
-    m_drawOnChartSymbolOnly(true),
-    m_signalsGenerated(0),
-    m_levelsDetected(0),
-    m_trendlinesDetected(0)
+        m_srDetector(NULL),
+        m_trendDetector(NULL),
+        m_fibModule(NULL),
+        m_bounceStrategy(NULL),
+        m_breakoutStrategy(NULL),
+        m_trendlineStrategy(NULL),
+        m_drawingManager(NULL),
+        m_logger(NULL),
+        m_hurstEngine(NULL),
+        m_vpinFilter(NULL),
+        m_mode(SR_MODE_ALL),
+        m_lastBarProcessed(0),
+        m_drawBarCounter(0),
+        m_drawOnChartSymbolOnly(true),
+        m_signalsGenerated(0),
+        m_levelsDetected(0),
+        m_trendlinesDetected(0)
 {
     m_minConfidence = 0.45; // Reduced from 0.50 to allow more M1/M5 level participation
 }
@@ -154,11 +153,9 @@ void CStrategySupportResistance::Cleanup()
     if(m_trendlineStrategy != NULL) { delete m_trendlineStrategy; m_trendlineStrategy = NULL; }
     if(m_drawingManager != NULL) { delete m_drawingManager; m_drawingManager = NULL; }
     if(m_logger != NULL) { delete m_logger; m_logger = NULL; }  // Clean up logger
-    // Risk manager is not owned by this strategy - do NOT delete
-    m_riskManager = NULL;
-    // Hurst/VPIN engines are not owned - do NOT delete
-    m_hurstEngine = NULL;
-    m_vpinFilter = NULL;
+        // Hurst/VPIN engines are not owned - do NOT delete
+        m_hurstEngine = NULL;
+        m_vpinFilter = NULL;
 }
 
 //+------------------------------------------------------------------+
@@ -252,12 +249,11 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
                                                 symbol, EnumToString(timeframe), m_levelsDetected, m_trendlinesDetected));
     }
     
-    // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-    m_riskManager = GetUnifiedRiskManager();
-    if(m_riskManager != NULL)
-        Print("[S/R v1.0] UnifiedRiskManager successfully injected - trades will pass through validation gate");
-    else
-        Print("[S/R v1.0] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
+    // ARCHITECTURAL FIX: Risk manager is properly injected via base class Init()
+        if(GetUnifiedRiskManager() != NULL)
+            Print("[S/R v1.0] UnifiedRiskManager successfully injected - trades will pass through validation gate");
+        else
+            Print("[S/R v1.0] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
     
     PrintFormat("[S/R v1.0] Strategy initialized for %s on %s | Levels: %d | Trendlines: %d",
                 symbol, EnumToString(timeframe), m_levelsDetected, m_trendlinesDetected);
@@ -557,47 +553,26 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
             confidence = ApplyFibConfluence(bestResult.signal, bestResult.entryPrice, confidence);
         }
         
-        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = (bestResult.signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            // LOT VALIDATION DEFERRED: Lot size is an execution parameter, not a signal-quality
-            // parameter. Setting to broker minimum so the validation gate does not reject on lot
-            // size before CPositionSizer has a chance to round up. Actual sizing happens in the
-            // risk manager's post-size validation phase (AGENTS.md invariant #1).
-            double brokerMinLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            if(brokerMinLot <= 0.0) brokerMinLot = 0.01;
-            request.lotSize = brokerMinLot;
-            PrintFormat("[S/R-LOT-DEFERRED] Lot validation deferred to risk manager | placeholder=%.3f (broker min)",
-                        brokerMinLot);
-            request.stopLossPips = (bestResult.stopLoss > 0) ? MathAbs(bestResult.entryPrice - bestResult.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.takeProfitPips = (bestResult.takeProfit1 > 0) ? MathAbs(bestResult.takeProfit1 - bestResult.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
-                        
-            CUnifiedRiskManager* riskMgr = m_riskManager;
-            SValidationResult result;
-            ZeroMemory(result);
-            if(riskMgr != NULL)
-                result = (*riskMgr).ValidateTradeRequest(request, "SR");
-            if(!result.approved)
-            {
-                SetDecisionReasonTag("SR_RISK_REJECTED");
-                PrintFormat("[S/R v1.0] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
-                           bestResult.signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           bestResult.entryPrice, bestResult.stopLoss, bestResult.takeProfit1, confidence * 100,
-                           result.message);
-                return TRADE_SIGNAL_NONE;
-            }
-            confidence *= result.confidenceMultiplier;
-        }
-        
-        m_signalsGenerated++;
-        RecordSignal();
-        SetDecisionReasonTag(bestResult.signal == TRADE_SIGNAL_BUY ? "SR_SIGNAL_BUY" : "SR_SIGNAL_SELL");
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = (bestResult.signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        // LOT VALIDATION DEFERRED: Lot size is an execution parameter, not a signal-quality
+        // parameter. Setting to broker minimum so the validation gate does not reject on lot
+        // size before CPositionSizer has a chance to round up. Actual sizing happens in the
+        // risk manager's post-size validation phase (AGENTS.md invariant #1).
+        double brokerMinLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+        if(brokerMinLot <= 0.0) brokerMinLot = 0.01;
+        request.lotSize = brokerMinLot;
+        PrintFormat("[S/R-LOT-DEFERRED] Lot validation deferred to risk manager | placeholder=%.3f (broker min)",
+                    brokerMinLot);
+        request.stopLossPips = (bestResult.stopLoss > 0) ? MathAbs(bestResult.entryPrice - bestResult.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.takeProfitPips = (bestResult.takeProfit1 > 0) ? MathAbs(bestResult.takeProfit1 - bestResult.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.confidence = confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
+
+        if(!ValidateWithRiskManager(request, "SR", confidence))
+            return TRADE_SIGNAL_NONE;
         
         // CONSENSUS LOGGING (AGENTS.md requirement)
         string signalType = "";
@@ -606,14 +581,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         else if(m_mode == SR_MODE_TRENDLINE) signalType = "Trendline";
         else signalType = "Mixed";
         
-        PrintFormat("[CONSENSUS-DIAG] %s | %s | Mode: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s%s",
-                   m_symbol,
-                   bestResult.signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   signalType,
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag,
-                   bestResult.hasTrendlineConfluence ? " [+TL Confluence]" : "");
+        LogConsensusDiag(bestResult.signal, StringFormat("Mode: %s", signalType), confidence, bestResult.hasTrendlineConfluence ? " [+TL Confluence]" : "");
         
         PrintFormat("[S/R v1.0] %s: %s | Conf: %.1f%% | %s%s",
                    m_symbol,

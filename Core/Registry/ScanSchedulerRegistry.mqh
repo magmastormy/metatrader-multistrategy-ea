@@ -57,6 +57,8 @@ public:
     
     void Clear() { ArrayResize(m_states, 0); m_stateCount = 0; }
     
+    int Count() const { return m_stateCount; }
+    
     // New bar detection
     bool CheckNewBar(const string symbol, datetime currentBarTime)
     {
@@ -212,7 +214,7 @@ public:
     void SetExternalCapacityLogTime(const string symbol)
     {
         int idx = GetIndex(symbol, false);
-        if(idx >= 0) m_states[idx].externalCapacityLogThrottle = TimeCurrent();
+        if(idx >= 0) m_states[idx].externalCapacityLogThrottle = (int)TimeCurrent();
     }
     
     // Release symbol

@@ -14,6 +14,7 @@ input string dataFile = "TrainingData_EURUSD_H1.csv";
 input int g_testRatio = 30;
 
 #include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "Core/Orchestration/GlobalDefs.mqh"
 #include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Data/CSVDataLoader.mqh"
 #include "MQHModelTrainer/Data/DataPreprocessor.mqh"

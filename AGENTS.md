@@ -70,7 +70,7 @@ After any strategy/risk/execution change, verify:
 - `[CONSENSUS-DIAG]`
 - `[SIGNAL-REJECTED]`
 - `[AI-VOTE]` (if AI enabled)
-- `[SHADOW-TRADE]` or live trade result logs
+- `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` or live trade result logs
 - `[PYTHON-BRIDGE-DASHBOARD]` (if Python bridge enabled)
 - `[COMPOUNDING-TIER-HEARTBEAT]` (if compounding tiers enabled)
 - `[COMPOUNDING-TIER-MILESTONE]` (on account milestone crosses)

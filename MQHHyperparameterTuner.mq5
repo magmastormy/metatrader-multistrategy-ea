@@ -17,6 +17,7 @@ input int g_testRatio = 10;
 input bool useDefaultCandidates = true;
 
 #include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "Core/Orchestration/GlobalDefs.mqh"
 #include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Core/HyperparameterOptimizer.mqh"
 

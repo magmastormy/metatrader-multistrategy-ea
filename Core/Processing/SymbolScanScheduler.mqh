@@ -417,6 +417,10 @@ public:
         ArrayResize(m_lastIntrabarScanTime, 0);
         ArrayResize(m_pendingNewBarScans, 0);
         ArrayResize(m_symbolScanStates, 0);
+        // L8-018: Clear manager pointers (non-owning references) and symbols
+        ArrayResize(m_managers, 0);
+        ArrayResize(m_symbols, 0);
+        m_managerCount = 0;
     }
 };
 

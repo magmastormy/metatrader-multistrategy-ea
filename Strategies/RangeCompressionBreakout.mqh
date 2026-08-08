@@ -87,9 +87,6 @@ private:
     datetime m_lastSignalBar;
     datetime m_lastBarTime;
 
-    string m_lastRejectReasonTag;
-    datetime m_lastRejectLogTime;
-
     //--- Check if squeeze is active (BB inside Keltner)
     bool CheckSqueeze(double bbUpper, double bbLower, double kcUpper, double kcLower)
     {
@@ -112,20 +109,6 @@ private:
         avgVol /= (double)m_volumeLookback;
 
         return (avgVol > 0 && vol[0] > avgVol * m_volumeConfirmRatio);
-    }
-
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-
-        PrintFormat("[COMPRESSION] Filtered: %s | Symbol=%s | TF=%s",
-                   reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
     }
 
 public:
@@ -157,10 +140,9 @@ public:
         m_lastKCUpper(0),
         m_lastKCLower(0),
         m_lastSignalBar(0),
-        m_lastBarTime(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0)
+        m_lastBarTime(0)
     {
+        m_strategyPrefix = "COMPRESSION";
     }
 
     ~CRangeCompressionBreakout()
@@ -443,6 +425,39 @@ public:
     //--- Standard interface
     ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_MOMENTUM; }
     string GetStrategyName() const { return "RangeCompressionBreakout"; }
+
+    // --- Cleanup ---
+    void Deinit()
+    {
+        // CRangeCompressionBreakout owns indicator handles - release them
+        if(m_bbHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_bbHandle);
+            m_bbHandle = INVALID_HANDLE;
+        }
+        if(m_kcHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_kcHandle);
+            m_kcHandle = INVALID_HANDLE;
+        }
+        if(m_atrHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_atrHandle);
+            m_atrHandle = INVALID_HANDLE;
+        }
+        if(m_volumeHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_volumeHandle);
+            m_volumeHandle = INVALID_HANDLE;
+        }
+        if(m_maHandle != INVALID_HANDLE)
+        {
+            IndicatorRelease(m_maHandle);
+            m_maHandle = INVALID_HANDLE;
+        }
+        m_hurstEngine = NULL;
+        m_riskManager = NULL;
+    }
 };
 
 #endif // RANGE_COMPRESSION_BREAKOUT_MQH

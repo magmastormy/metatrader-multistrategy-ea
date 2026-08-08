@@ -9,10 +9,11 @@
 
 #include "../../Core/Trading/TradeManager.mqh"
 #include "../../Core/Trading/TradeAttributionManager.mqh"
-#include "../../Core/Trading/PositionStateManager.mqh"
+#include "../Position/PositionManager.mqh"
 #include "../../Core/Registry/NeuralNetRegistry.mqh"
 #include "../../Core/Orchestration/CandidateBuilder.mqh"
 #include "../../Core/Utils/Enums.mqh"
+#include "../../Core/Utils/JsonLogger.mqh"
 #include <Trade\Trade.mqh>
 
 class CTradeExecutor
@@ -20,7 +21,7 @@ class CTradeExecutor
 private:
     CTradeManager* m_tradeManager;
     CTradeAttributionManager* m_attributionManager;
-    CPositionStateManager* m_positionStateManager;
+    CPositionManager* m_positionManager;
     CNeuralNetRegistry* m_neuralNetRegistry;
     
 // Pending confirmations
@@ -66,7 +67,7 @@ public:
                             filledPrice(0), filledVolume(0), retcode(0) {}
     };
     
-    CTradeExecutor() : m_tradeManager(NULL), m_attributionManager(NULL), m_positionStateManager(NULL),
+    CTradeExecutor() : m_tradeManager(NULL), m_attributionManager(NULL), m_positionManager(NULL),
                        m_neuralNetRegistry(NULL), m_pendingCount(0), m_maxPending(50), m_totalSubmitted(0), m_totalConfirmed(0),
                        m_totalRejected(0), m_totalTimeout(0)
     {
@@ -76,30 +77,46 @@ public:
     ~CTradeExecutor() {}
     
     void SetDependencies(CTradeManager* tm, CTradeAttributionManager* att, 
-                         CPositionStateManager* psm, CNeuralNetRegistry* nnReg)
+                         CPositionManager* psm, CNeuralNetRegistry* nnReg)
     {
         m_tradeManager = tm;
         m_attributionManager = att;
-        m_positionStateManager = psm;
+        m_positionManager = psm;
         m_neuralNetRegistry = nnReg;
     }
     
     // Main execution entry point
-    SExecutionResult Execute(const STradeCandidate &candidate)
+    SExecutionResult Execute(const STradeCandidate &candidate, const string corrId = "")
     {
+        // Set correlation ID for structured logging
+        if(corrId != "")
+            CJsonLogger::SetCorrelationId(corrId);
+        
         SExecutionResult result;
         
         if(candidate.lotSize <= 0)
         {
             result.reason = "Invalid lot size";
+            CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "INVALID_LOT", "Lot size <= 0", 0.0, candidate.lotSize, corrId);
+            CJsonLogger::ClearCorrelationId();
             return result;
         }
-        
+
+        // Defensive guard: if dependencies were never wired, fail gracefully instead of
+        // dereferencing a NULL m_tradeManager (which caused an invalid-pointer crash at OpenPosition).
+        if(m_tradeManager == NULL)
+        {
+            result.reason = "TradeExecutor: m_tradeManager dependency not wired";
+            CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "NO_DEPENDENCY", "m_tradeManager == NULL", 0.0, candidate.lotSize, corrId);
+            CJsonLogger::ClearCorrelationId();
+            return result;
+        }
+
         // Build comment with metadata
         string comment = BuildExecutionComment(candidate);
         
         // Execute market order
-        bool executed = m_tradeManager.ExecuteMarketOrder(
+        bool executed = m_tradeManager.OpenPosition(
             candidate.symbol,
             candidate.orderType,
             candidate.lotSize,
@@ -114,8 +131,10 @@ public:
             m_totalRejected++;
             result.retcode = m_tradeManager.GetLastRetcode();
             result.reason = GetTradeErrorDescription(m_tradeManager.GetLastRetcode());
-            PrintFormat("[EXECUTION-FAILED] %s | %s | retcode=%u | reason=%s",
-                        candidate.symbol, EnumToString(candidate.orderType), result.retcode, result.reason);
+            CJsonLogger::LogRiskEvent("TradeExecute", candidate.symbol, "EXECUTION_FAILED", 
+                StringFormat("retcode=%u reason=%s", result.retcode, result.reason), 
+                0.0, candidate.lotSize, corrId);
+            CJsonLogger::ClearCorrelationId();
             return result;
         }
         
@@ -130,9 +149,16 @@ public:
         result.filledVolume = receipt.filledVolume;
         result.retcode = receipt.retcode;
         
+        // Log trade open via structured JSON logger
+        CJsonLogger::LogTradeOpen(candidate.symbol, 
+            (candidate.orderType == ORDER_TYPE_BUY) ? "BUY" : "SELL",
+            candidate.lotSize, candidate.stopLossPips, candidate.takeProfitPips,
+            candidate.strategyRole, candidate.clusterCode, corrId);
+        
         // Queue for confirmation
         QueueConfirmation(candidate, result);
         
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
     
@@ -164,29 +190,49 @@ public:
         
         datetime historyFrom = TimeCurrent() - 300;
         datetime historyTo = TimeCurrent() + 60;
-                        {
-                            double dealPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
-                            double dealVolume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
-                            ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(dealTicket, DEAL_TYPE);
-                            
-                            PrintFormat("[EXECUTION-CONFIRMED] %s | order=%I64u | deal=%I64u | price=%.5f | volume=%.2f | type=%s | attempts=%d",
-                                        dealSymbol, m_pendingConfirmations[i].orderTicket, dealTicket,
-                                        dealPrice, dealVolume, EnumToString(dealType), m_pendingConfirmations[i].checkAttempts);
-                            
-                            // Record attribution
-                            RecordAttribution(m_pendingConfirmations[i].candidate, dealTicket, dealPrice, dealVolume);
-                            
-                            // Record position state
-                            RecordPositionState(dealTicket, m_pendingConfirmations[i].candidate, dealPrice, dealVolume);
-                            
-                            // Map to NN prediction
-                            MapToNeuralNetPrediction(m_pendingConfirmations[i].candidate, dealTicket);
-                            
-                            resolved = true;
-                            m_totalConfirmed++;
-                            break;
-                        }
-                    }
+        
+        for(int i = m_pendingCount - 1; i >= 0; i--)
+        {
+            if(!m_pendingConfirmations[i].isActive) continue;
+            
+            m_pendingConfirmations[i].checkAttempts++;
+            
+            bool resolved = false;
+            
+            if(HistorySelect(historyFrom, historyTo))
+            {
+                int totalDeals = HistoryDealsTotal();
+                for(int d = 0; d < totalDeals; d++)
+                {
+                    ulong dealTicket = HistoryDealGetTicket(d);
+                    if(dealTicket == 0) continue;
+                    
+                    string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+                    if(dealSymbol != m_pendingConfirmations[i].symbol) continue;
+                    
+                    ulong dealOrderTicket = HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+                    if(dealOrderTicket != m_pendingConfirmations[i].orderTicket) continue;
+                    
+                    double dealPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+                    double dealVolume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+                    ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+                    
+                    PrintFormat("[EXECUTION-CONFIRMED] %s | order=%I64u | deal=%I64u | price=%.5f | volume=%.2f | type=%s | attempts=%d",
+                                dealSymbol, m_pendingConfirmations[i].orderTicket, dealTicket,
+                                dealPrice, dealVolume, EnumToString(dealType), m_pendingConfirmations[i].checkAttempts);
+                    
+                    // Record attribution
+                    RecordAttribution(m_pendingConfirmations[i].candidate, dealTicket, dealPrice, dealVolume);
+                    
+                    // Record position state
+                    RecordPositionState(dealTicket, m_pendingConfirmations[i].candidate, dealPrice, dealVolume);
+                    
+                    // Map to NN prediction
+                    MapToNeuralNetPrediction(m_pendingConfirmations[i].candidate, dealTicket);
+                    
+                    resolved = true;
+                    m_totalConfirmed++;
+                    break;
                 }
             }
             
@@ -271,7 +317,7 @@ public:
     
     void RecordPositionState(ulong dealTicket, const STradeCandidate &candidate, double price, double volume)
     {
-        if(m_positionStateManager == NULL) return;
+        if(m_positionManager == NULL) return;
         
         // Find the position ticket
         ulong positionTicket = 0;
@@ -292,7 +338,7 @@ public:
         
         if(positionTicket > 0)
         {
-            m_positionStateManager.RegisterPosition(
+            m_positionManager.RegisterPositionState(
                 positionTicket,
                 candidate.symbol,
                 candidate.orderType,
@@ -300,7 +346,7 @@ public:
                 price,
                 candidate.stopLossPips,
                 candidate.takeProfitPips,
-                candidate.clusterCode,
+                (int)StringToInteger(candidate.clusterCode),
                 candidate.strategyRole
             );
         }
@@ -320,12 +366,20 @@ public:
     
     string BuildExecutionComment(const STradeCandidate &candidate)
     {
-        return StringFormat("EA|%s|%.0f|%.1f|%.1f|%s", 
-                            candidate.clusterCode,
-                            candidate.riskPercent,
-                            candidate.stopLossPips,
-                            candidate.takeProfitPips,
-                            candidate.strategyRole);
+        string baseComment = StringFormat("EA|%s|%.0f|%.1f|%.1f|%s", 
+                                    candidate.clusterCode,
+                                    candidate.riskPercent,
+                                    candidate.stopLossPips,
+                                    candidate.takeProfitPips,
+                                    candidate.strategyRole);
+        
+        // Include prediction ID in comment for NN training linkage (L11-014)
+        if(candidate.predictionId != "" && m_attributionManager != NULL)
+        {
+            return m_attributionManager.BuildTradeCommentWithPrediction(baseComment, candidate.predictionId);
+        }
+        
+        return baseComment;
     }
     
     string GetTradeErrorDescription(int errorCode)

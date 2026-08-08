@@ -24,22 +24,14 @@ private:
     CLiquidityDetector*       m_liquidityDetector;
     CImbalanceDetector*       m_imbalanceDetector;
     CMarketStructureAnalyzer* m_structureAnalyzer;
-    int                       m_lastBarCount;
 
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager*      m_riskManager;
-
-    bool RefreshForNewBar()
+protected:
+    virtual void HandleNewBar() override { RefreshForNewBar(); }
+    virtual void OnRefreshComponents() override
     {
-        int barCount = iBars(m_symbol, m_timeframe);
-        if(barCount <= 0 || barCount == m_lastBarCount)
-            return false;
-
-        m_lastBarCount = barCount;
         if(m_liquidityDetector != NULL) m_liquidityDetector.Update();
         if(m_imbalanceDetector != NULL) m_imbalanceDetector.Update();
         if(m_structureAnalyzer != NULL) m_structureAnalyzer.Update();
-        return true;
     }
 
 public:
@@ -47,9 +39,7 @@ public:
         CStrategyBase(name, 0),
         m_liquidityDetector(NULL),
         m_imbalanceDetector(NULL),
-        m_structureAnalyzer(NULL),
-        m_lastBarCount(0),
-        m_riskManager(NULL)
+        m_structureAnalyzer(NULL)
     {
         OverrideMinConfidence(0.50);
     }
@@ -77,13 +67,6 @@ public:
             return false;
         }
 
-        m_lastBarCount = 0;
-
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager == NULL)
-            Print("[TURTLE-SOUP] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
-
         return true;
     }
 
@@ -92,19 +75,12 @@ public:
         if(m_liquidityDetector != NULL) { delete m_liquidityDetector; m_liquidityDetector = NULL; }
         if(m_imbalanceDetector != NULL) { delete m_imbalanceDetector; m_imbalanceDetector = NULL; }
         if(m_structureAnalyzer != NULL) { delete m_structureAnalyzer; m_structureAnalyzer = NULL; }
-        // Risk manager is not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
         CStrategyBase::Deinit();
     }
 
     virtual void OnTick() override
     {
         // Intentionally empty - strategy evaluates on new bar only via GetSignal()
-    }
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
-    {
-        if(symbol == m_symbol && timeframe == m_timeframe)
-            RefreshForNewBar();
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -190,49 +166,24 @@ public:
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
 
-        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = slPips;
-            request.takeProfitPips = slPips * 2.0; // 2R take profit
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+        request.stopLossPips = slPips;
+        request.takeProfitPips = slPips * 2.0; // 2R take profit
+        request.confidence = confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
 
-            CUnifiedRiskManager* riskMgr = m_riskManager;
-            SValidationResult result;
-            ZeroMemory(result);
-            if(riskMgr != NULL)
-                result = (*riskMgr).ValidateTradeRequest(request, "TURTLE-SOUP");
-            if(!result.approved)
-            {
-                SetDecisionReasonTag("TURTLE_RISK_REJECTED");
-                PrintFormat("[TURTLE-SOUP] Risk rejected %s at %.5f Conf=%.1f%%",
-                           signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           currentPrice, confidence * 100);
-                return TRADE_SIGNAL_NONE;
-            }
-            confidence *= result.confidenceMultiplier;
-        }
+        if(!ValidateWithRiskManager(request, "TURTLE-SOUP", confidence))
+            return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullish ? "TURTLE_SIGNAL_BUY" : "TURTLE_SIGNAL_SELL");
         RecordSignal();
 
         // CONSENSUS LOGGING (AGENTS.md requirement)
-        PrintFormat("[CONSENSUS-DIAG] %s | %s | TS-Conf: %.2f | Struct: %s | FVG: %s | CHOCH: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                   m_symbol,
-                   signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   turtleSoup.confidence,
-                   structureAligned ? "Yes" : "No",
-                   hasFVGConfluence ? "Yes" : "No",
-                   fastCHOCH ? "Yes" : "No",
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag);
+        LogConsensusDiag(signal, StringFormat("TS-Conf: %.2f | Struct: %s | FVG: %s | CHOCH: %s", turtleSoup.confidence, structureAligned ? "Yes" : "No", hasFVGConfluence ? "Yes" : "No", fastCHOCH ? "Yes" : "No"), confidence);
 
         PrintFormat("[TURTLE-SOUP] %s: %s | Ref: %.5f | Sweep: %.5f | Conf: %.1f%% | Struct: %s | FVG: %s",
                    m_symbol,

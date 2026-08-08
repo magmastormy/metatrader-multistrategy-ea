@@ -30,40 +30,21 @@ private:
     int     m_crossoverBar;       // Bar index of last crossover (for freshness)
     double  m_lastDiff;
     datetime m_lastSignalBar;      // Track last bar where signal was generated
+    int      m_signalsGenerated;   // Counter for signals generated
     bool     m_enableScalping;     // Allow rapid signals
     int      m_scalpCooldownSeconds;
     double   m_minVolatility;      // Minimum volatility threshold
     double   m_atrThresholdMult;   // Dynamic threshold multiplier
     datetime m_lastSignalTimestamp;     // Track absolute time of last signal
-    string   m_lastRejectReasonTag;
-    datetime m_lastRejectLogTime;
     int      m_minConfirmationBars; // Minimum bars for crossover confirmation (hysteresis)
 
     double   m_rsiOverbought;      // RSI overbought threshold (default: 72)
     double   m_rsiOversold;        // RSI oversold threshold (default: 28)
     double   m_adxThreshold;       // ADX trend strength threshold (default: 20)
 
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager* m_riskManager;
-    int                  m_signalsGenerated;
-    
-    // Timeframe validation bounds for scalping mode
+        // Timeframe validation bounds for scalping mode
     ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
     ENUM_TIMEFRAMES m_maxScalpTimeframe;  // Maximum allowed timeframe for scalping (default: M15)
-
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-
-        PrintFormat("[MOMENTUM] Filtered: %s | Symbol=%s | TF=%s",
-                    reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
-    }
 
     //+------------------------------------------------------------------+
     //| ValidateCrossoverWithHysteresis                                   |
@@ -124,13 +105,6 @@ private:
         return true;
     }
 
-    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
-    {
-        SetDecisionReasonTag(reasonTag);
-        LogRejectEvent(reasonTag);
-        return TRADE_SIGNAL_NONE;
-    }
-    
     // ENHANCEMENT: RSI Divergence Detection (Batch 93 - Week 1)
     // Detects bearish/bullish divergence to filter false breakouts
     bool HasRSIDivergence(ENUM_TRADE_SIGNAL signal)
@@ -446,26 +420,24 @@ public:
         m_lastDiff(0.0),
         m_lastSignalBar(0),
         m_lastSignalTimestamp(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0),
         m_enableScalping(false),
         m_scalpCooldownSeconds(20),
         m_minVolatility(0.0005),
         m_atrThresholdMult(0.20),
         m_rsiHandle(INVALID_HANDLE),
-        m_macdHandle(INVALID_HANDLE),
-        m_adxHandle(INVALID_HANDLE),
-        m_volumeHandle(INVALID_HANDLE),
-        m_crossoverBar(0),
-        m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
-        m_rsiOverbought(72.0),
-        m_rsiOversold(28.0),
-        m_adxThreshold(20.0),
-        m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
-        m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
-        m_riskManager(NULL),
-        m_signalsGenerated(0)
+                m_macdHandle(INVALID_HANDLE),
+                m_adxHandle(INVALID_HANDLE),
+                m_volumeHandle(INVALID_HANDLE),
+                m_crossoverBar(0),
+                m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
+                m_rsiOverbought(72.0),
+                m_rsiOversold(28.0),
+                m_adxThreshold(20.0),
+                m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
+                m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
+                m_signalsGenerated(0)
     {
+        m_strategyPrefix = "MOMENTUM";
     }
 
     CSimpleMomentumStrategy(const string name, const int fastPeriod = 8, const int slowPeriod = 21, const double thresholdPoints = 12.0, const int minConfirmationBars = 1) :
@@ -479,8 +451,6 @@ public:
         m_lastDiff(0.0),
         m_lastSignalBar(0),
         m_lastSignalTimestamp(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0),
         m_enableScalping(false),      // SCALPING MODE: Disabled by default
         m_scalpCooldownSeconds(20),
         m_minVolatility(0.0005),     // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
@@ -496,8 +466,9 @@ public:
         m_adxThreshold(20.0),
         m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
         m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
-        m_signalsGenerated(0)
+                m_signalsGenerated(0)
     {
+        m_strategyPrefix = "MOMENTUM";
     }
 
     virtual ~CSimpleMomentumStrategy()
@@ -606,45 +577,36 @@ public:
         }
 
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
-            return false;
+                    return false;
 
-        //+------------------------------------------------------------------+
-        //| TIMEFRAME VALIDATION - Issue 2.1.2 Fix                           |
-        //| Validate timeframe suitability for configured mode (scalping/    |
-        //| trend-following) and log warnings for inappropriate settings    |
-        //+------------------------------------------------------------------+
-        ValidateTimeframeSuitability();
+                //+------------------------------------------------------------------+
+                //| TIMEFRAME VALIDATION - Issue 2.1.2 Fix                           |
+                //| Validate timeframe suitability for configured mode (scalping/    |
+                //| trend-following) and log warnings for inappropriate settings    |
+                //+------------------------------------------------------------------+
+                ValidateTimeframeSuitability();
 
-        // Adjust min volatility based on symbol digits
-        if(SymbolInfoInteger(symbol, SYMBOL_DIGITS) <= 3) // JPY pairs or Indices
-            m_minVolatility = 0.05; 
-        else
-            m_minVolatility = 0.0005;
+                // Adjust min volatility based on symbol digits
+                if(SymbolInfoInteger(symbol, SYMBOL_DIGITS) <= 3) // JPY pairs or Indices
+                    m_minVolatility = 0.05; 
+                else
+                    m_minVolatility = 0.0005;
 
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager != NULL)
-            Print("[MOMENTUM] UnifiedRiskManager successfully injected - trades will pass through validation gate");
-        else
-            Print("[MOMENTUM] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
-
-        return CreateHandles();
+                return CreateHandles();
     }
 
     virtual void Deinit() override
-    {
-        // Handles are managed by CIndicatorManager — no IndicatorRelease needed
-        m_fastHandle = INVALID_HANDLE;
-        m_slowHandle = INVALID_HANDLE;
-        m_atrHandle = INVALID_HANDLE;
-        m_rsiHandle = INVALID_HANDLE;
-        m_macdHandle = INVALID_HANDLE;
-        m_adxHandle = INVALID_HANDLE;
-        m_volumeHandle = INVALID_HANDLE;
-        // Risk manager is not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
-        CStrategyBase::Deinit();
-    }
+        {
+            // Handles are managed by CIndicatorManager — no IndicatorRelease needed
+            m_fastHandle = INVALID_HANDLE;
+            m_slowHandle = INVALID_HANDLE;
+            m_atrHandle = INVALID_HANDLE;
+            m_rsiHandle = INVALID_HANDLE;
+            m_macdHandle = INVALID_HANDLE;
+            m_adxHandle = INVALID_HANDLE;
+            m_volumeHandle = INVALID_HANDLE;
+            CStrategyBase::Deinit();
+        }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
@@ -865,47 +827,29 @@ public:
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
             double slPips = (point > 0) ? (slDistance / point) : 0;
             
-            // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-            if(m_riskManager != NULL)
-            {
-                // Calculate lot size using position sizer with full normalization pipeline
-                // (CalculateSize clamps to SYMBOL_VOLUME_MAX, applies margin checks, etc.)
-                double calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-                if(m_positionSizer != NULL)
-                {
-                    SPositionSizingParams sizerParams = m_positionSizer.GetParameters();
-                    ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                    calculatedLot = m_positionSizer.CalculateSize(m_symbol, orderType, slPips, sizerParams.riskPercent, confidence);
-                    if(calculatedLot <= 0.0)
-                        calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Fallback to broker min
-                }
+            // Calculate lot size using position sizer with full normalization pipeline
+            // (CalculateSize clamps to SYMBOL_VOLUME_MAX, applies margin checks, etc.)
+            double calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+                            if(m_positionSizer != NULL)
+                            {
+                                SPositionSizingParams sizerParams = m_positionSizer.GetParameters();
+                                calculatedLot = m_positionSizer.CalculatePositionSizeWithRisk(m_symbol, slPips, sizerParams.riskPercent, confidence);
+                                if(calculatedLot <= 0.0)
+                                    calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Fallback to broker min
+                            }
 
-                STradeValidationRequest request;
-                request.symbol = m_symbol;
-                request.orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-                request.lotSize = calculatedLot;
-                request.stopLossPips = slPips;
-                request.takeProfitPips = slPips * 2.0; // 1:2 R:R ratio
-                request.confidence = confidence;
-                request.strategy = GetName();
-                request.clusterCode = "";
-                
-                CUnifiedRiskManager* riskMgr = m_riskManager;
-                SValidationResult result;
-                ZeroMemory(result);
-                if(riskMgr != NULL)
-                    result = (*riskMgr).ValidateTradeRequest(request, "MOMENTUM");
-                if(!result.approved)
-                {
-                    SetDecisionReasonTag("MOMENTUM_RISK_REJECTED");
-                    PrintFormat("[MOMENTUM] Risk rejected %s Conf=%.1f%% Reason=%s",
-                               signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                               confidence * 100,
-                               result.message);
-                    return TRADE_SIGNAL_NONE;
-                }
-                confidence *= result.confidenceMultiplier;
-            }
+            STradeValidationRequest request;
+            request.symbol = m_symbol;
+            request.orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            request.lotSize = calculatedLot;
+            request.stopLossPips = slPips;
+            request.takeProfitPips = slPips * 2.0; // 1:2 R:R ratio
+            request.confidence = confidence;
+            request.strategy = GetName();
+            request.clusterCode = "";
+
+            if(!ValidateWithRiskManager(request, "MOMENTUM", confidence))
+                return TRADE_SIGNAL_NONE;
             
             m_lastSignalBar = iTime(m_symbol, m_timeframe, 1);
             m_lastSignalTimestamp = TimeCurrent();
@@ -914,16 +858,7 @@ public:
             SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
             
             // CONSENSUS LOGGING (AGENTS.md requirement)
-            PrintFormat("[CONSENSUS-DIAG] %s | %s | Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                       m_symbol,
-                       signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                       diffNow / point,
-                       rsi,
-                       MACDConfirmed(signal) ? "YES" : "NO",
-                       StrongTrend() ? "STRONG" : "WEAK",
-                       confidence * 100,
-                       m_weight,
-                       m_lastDecisionReasonTag);
+            LogConsensusDiag(signal, StringFormat("Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s", diffNow / point, rsi, MACDConfirmed(signal) ? "YES" : "NO", StrongTrend() ? "STRONG" : "WEAK"), confidence);
             
             PrintFormat("[MOMENTUM] %s: %s | Diff: %.1f pts | RSI: %.1f | Conf: %.1f%%",
                        m_symbol,
@@ -939,42 +874,6 @@ public:
     virtual ENUM_STRATEGY_TYPE GetType(void) const override
     {
         return STRATEGY_MOMENTUM;
-    }
-
-    //+------------------------------------------------------------------+
-    //| Quick-probe signal: fast EMA crossover check (O(1) cached)       |
-    //| Tier 1 fast-path for two-tier consensus evaluation.              |
-    //| Uses already-cached indicator handles — no new handle creation,   |
-    //| no full confidence pipeline, no risk validation.                  |
-    //+------------------------------------------------------------------+
-    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
-    {
-        if(!m_is_enabled || !m_is_initialized)
-            return TRADE_SIGNAL_NONE;
-
-        // Handles must be valid (created during Init)
-        if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE)
-            return TRADE_SIGNAL_NONE;
-
-        // Fetch 2 bars of fast/slow EMA (closed-bar, shift 1 and 2)
-        double fastNow, fastPrev, slowNow, slowPrev;
-        if(!FetchAverages(fastNow, fastPrev, slowNow, slowPrev))
-            return TRADE_SIGNAL_NONE;
-
-        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-        if(point <= 0.0) point = 0.0001;
-
-        double diffNow = fastNow - slowNow;
-        double diffPrev = fastPrev - slowPrev;
-        double threshold = m_thresholdPoints * point;
-
-        // Quick crossover detection — no ATR, no RSI, no hysteresis, no risk gate
-        if(diffNow > threshold && diffPrev <= threshold)
-            return TRADE_SIGNAL_BUY;
-        if(diffNow < -threshold && diffPrev >= -threshold)
-            return TRADE_SIGNAL_SELL;
-
-        return TRADE_SIGNAL_NONE;
     }
 };
 

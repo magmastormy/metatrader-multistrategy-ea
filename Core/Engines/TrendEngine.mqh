@@ -132,8 +132,9 @@ private:
     double m_lastAdxRawValue;
     int m_adxFailureReinitThreshold;
     datetime m_lastAdxHealthLogTime;
-    datetime m_lastAdxReinitAttemptTime;
-    datetime m_lastGoodAdxTime;
+        datetime m_lastAdxReinitAttemptTime;
+        bool m_adxReinitPending;
+        datetime m_lastGoodAdxTime;
     double m_lastGoodAdxValue;
     double m_lastGoodPlusDI;
     double m_lastGoodMinusDI;
@@ -281,8 +282,9 @@ CTrendEngine::CTrendEngine() :
     m_lastAdxRawValue(0.0),
     m_adxFailureReinitThreshold(7),
     m_lastAdxHealthLogTime(0),
-    m_lastAdxReinitAttemptTime(0),
-    m_lastGoodAdxTime(0),
+        m_lastAdxReinitAttemptTime(0),
+        m_adxReinitPending(false),
+        m_lastGoodAdxTime(0),
     m_lastGoodAdxValue(0.0),
     m_lastGoodPlusDI(0.0),
     m_lastGoodMinusDI(0.0),
@@ -418,6 +420,26 @@ bool CTrendEngine::InitializeIndicators(const string symbol, ENUM_TIMEFRAMES tim
 bool CTrendEngine::IndicatorsReadyForRead(int minBars)
 {
     bool useAdxModel = UsesAdxTrendModel(m_indicatorSymbol);
+    
+    // L4-008: Handle ADX reinit pending state
+    if(useAdxModel && m_adxReinitPending)
+    {
+        // Check if new ADX handle has enough data
+        int adxBars = BarsCalculated(m_handleADX);
+        if(adxBars < minBars * 2)
+        {
+            // Still waiting for new handle to populate
+            SetReadinessState(TREND_READINESS_WARMUP, "ADX_REINIT_WARMUP", false, 0);
+            return false;
+        }
+        
+        // New handle is ready, clear pending flag and reset failure counter
+        m_adxReinitPending = false;
+        m_consecutiveAdxFailures = 0;
+        PrintFormat("[TrendEngine][ADX-HEALTH] ADX reinit complete for %s %s, %d bars calculated",
+                    m_indicatorSymbol, EnumToString(m_indicatorTimeframe), adxBars);
+    }
+    
     if(m_handleMAFast == INVALID_HANDLE ||
        m_handleMAMedium == INVALID_HANDLE ||
        m_handleMASlow == INVALID_HANDLE ||
@@ -579,16 +601,22 @@ void CTrendEngine::MaybeReinitializeAdxHandle(const string symbol, ENUM_TIMEFRAM
         return;
     m_lastAdxReinitAttemptTime = nowTime;
 
+    // L4-008: Set reinit pending flag instead of immediate reinit to avoid race condition
+    m_adxReinitPending = true;
+    
+    // Release old handle immediately
     if(m_handleADX != INVALID_HANDLE)
     {
         IndicatorRelease(m_handleADX);
         m_handleADX = INVALID_HANDLE;
     }
 
+    // Create new handle
     m_handleADX = iADX(symbol, timeframe, m_adxPeriod);
     if(m_handleADX == INVALID_HANDLE)
     {
         int err = GetLastError();
+        m_adxReinitPending = false; // Clear flag on failure
         if(m_diagnostics != NULL)
         {
             m_diagnostics.LogStrategyError("TrendEngine", "ADX_REINIT_FAILED",
@@ -600,7 +628,7 @@ void CTrendEngine::MaybeReinitializeAdxHandle(const string symbol, ENUM_TIMEFRAM
 
     PrintFormat("[TrendEngine][ADX-HEALTH] ADX handle reinitialized for %s %s after %d consecutive failures",
                 symbol, EnumToString(timeframe), m_consecutiveAdxFailures);
-    m_consecutiveAdxFailures = 0;
+    // Note: m_consecutiveAdxFailures reset after new handle is validated in IndicatorsReadyForRead
 }
 
 void CTrendEngine::RecordReadinessFault(const string symbol,

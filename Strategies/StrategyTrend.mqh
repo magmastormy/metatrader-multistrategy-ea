@@ -37,8 +37,7 @@ private:
     CADXPositionSizing*     m_adxSizing;
     CTrendSignalEnhancer*   m_signalEnhancer;  // Batch 103: EMA slope + freshness
 
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager*    m_riskManager;
+    // Risk Management (AGENTS.md invariant #1) - Uses base class CStrategyBase::GetUnifiedRiskManager()
 
     // Batch 103: Per-symbol engine references (not owned)
     CHurstEngine*           m_hurstEngine;
@@ -49,8 +48,6 @@ private:
 
     // Configuration
     int    m_lastBarProcessed;
-    string m_lastRejectReasonTag;
-    datetime m_lastRejectLogTime;
     int    m_signalsGenerated;
 
     // ENHANCEMENT: Higher-Timeframe Confirmation (Batch 93 - Week 1)
@@ -64,27 +61,6 @@ private:
     double              m_adxWeakThreshold;
     double              m_adxNormalThreshold;
     double              m_adxStrongThreshold;
-
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-
-        PrintFormat("[TREND v2.1] Filtered: %s | Symbol=%s | TF=%s",
-                    reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
-    }
-
-    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
-    {
-        SetDecisionReasonTag(reasonTag);
-        LogRejectEvent(reasonTag);
-        return TRADE_SIGNAL_NONE;
-    }
 
     bool MACDConfirmed(ENUM_TRADE_SIGNAL signal)
     {
@@ -108,27 +84,25 @@ public:
     //--- Constructor
     CStrategyTrend(const string name = "Trend Strategy v2.1", int magic = 0) :
         CStrategyBase(name, magic),
-        m_emaSystem(NULL),
-        m_entryTypes(NULL),
-        m_trailingStop(NULL),
-        m_adxSizing(NULL),
-        m_signalEnhancer(NULL),
-        m_riskManager(NULL),
-        m_hurstEngine(NULL),
-        m_vpinFilter(NULL),
-        m_assetClassId(9),  // ASSET_UNIVERSAL until Init detects actual class
-        m_lastBarProcessed(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0),
-        m_signalsGenerated(0),
-        m_htf(PERIOD_CURRENT),
-        m_htfHandleADX(INVALID_HANDLE),
-        m_macdHandle(INVALID_HANDLE),
-        m_adxNoTrendThreshold(0),
-        m_adxWeakThreshold(25.0),
-        m_adxNormalThreshold(30.0),
-        m_adxStrongThreshold(40.0)
+                m_emaSystem(NULL),
+                m_entryTypes(NULL),
+                m_trailingStop(NULL),
+                m_adxSizing(NULL),
+                m_signalEnhancer(NULL),
+                m_hurstEngine(NULL),
+                m_vpinFilter(NULL),
+                m_assetClassId(9),  // ASSET_UNIVERSAL until Init detects actual class
+                m_lastBarProcessed(0),
+                m_signalsGenerated(0),
+                m_htf(PERIOD_CURRENT),
+                m_htfHandleADX(INVALID_HANDLE),
+                m_macdHandle(INVALID_HANDLE),
+                m_adxNoTrendThreshold(0),
+                m_adxWeakThreshold(25.0),
+                m_adxNormalThreshold(30.0),
+                m_adxStrongThreshold(40.0)
     {
+        m_strategyPrefix = "TREND v2.1";
         m_minConfidence = 0.55; // use base class field
     }
     //--- Set ADX thresholds (called from EA input parameters)
@@ -166,11 +140,9 @@ public:
         // MACD handle managed by CIndicatorManager
         m_macdHandle = INVALID_HANDLE;
 
-        // Risk manager is not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
         // Hurst/VPIN engines are not owned - do NOT delete
-        m_hurstEngine = NULL;
-        m_vpinFilter = NULL;
+                m_hurstEngine = NULL;
+                m_vpinFilter = NULL;
     }
     //--- Initialization
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeMgr, void* posSizer, void* unifiedRiskMgr = NULL) override
@@ -233,12 +205,11 @@ public:
         // MACD histogram handle for momentum confirmation
         m_macdHandle = CIndicatorManager::Instance().GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE);
 
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager != NULL)
-            Print("[TREND v2.1] UnifiedRiskManager successfully injected - trades will pass through validation gate");
-        else
-            Print("[TREND v2.1] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
+        // ARCHITECTURAL FIX: Risk manager is properly injected via base class Init()
+            if(GetUnifiedRiskManager() != NULL)
+                Print("[TREND v2.1] UnifiedRiskManager successfully injected - trades will pass through validation gate");
+            else
+                Print("[TREND v2.1] WARNING: UnifiedRiskManager not provided - risk validation bypassed!");
 
         // ENHANCEMENT: Setup Higher-Timeframe Confirmation (Batch 93 - Week 1)
         // Use next higher timeframe for trend confirmation
@@ -371,35 +342,18 @@ public:
         string trendState = EnumToString(m_emaSystem.GetAlignment());
         SetDecisionReasonTag(bestEntry.direction == TRADE_SIGNAL_BUY ? "TREND_SIGNAL_BUY" : "TREND_SIGNAL_SELL");
 
-        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = (bestEntry.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Use broker minimum
-            request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(bestEntry.entryPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.takeProfitPips = (bestEntry.takeProfit > 0) ? MathAbs(bestEntry.takeProfit - bestEntry.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = (bestEntry.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Use broker minimum
+        request.stopLossPips = (bestEntry.stopLoss > 0) ? MathAbs(bestEntry.entryPrice - bestEntry.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.takeProfitPips = (bestEntry.takeProfit > 0) ? MathAbs(bestEntry.takeProfit - bestEntry.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.confidence = confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
 
-            CUnifiedRiskManager* riskMgr = m_riskManager;
-            SValidationResult result;
-            ZeroMemory(result);
-            if(riskMgr != NULL)
-                result = (*riskMgr).ValidateTradeRequest(request, "TREND");
-            if(!result.approved)
-            {
-                SetDecisionReasonTag("TREND_RISK_REJECTED");
-                PrintFormat("[TREND v2.1] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
-                           bestEntry.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           bestEntry.entryPrice, bestEntry.stopLoss, bestEntry.takeProfit, confidence * 100,
-                           result.message);
-                return TRADE_SIGNAL_NONE;
-            }
-            confidence *= result.confidenceMultiplier;
-        }
+        if(!ValidateWithRiskManager(request, "TREND", confidence))
+            return TRADE_SIGNAL_NONE;
 
         m_signalsGenerated++;
         RecordSignal();

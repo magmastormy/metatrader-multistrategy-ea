@@ -396,28 +396,28 @@ private:
     datetime m_lastCacheCleanup;
     
     // Helper to classify symbols based on name patterns
-    ENUM_SYMBOL_CLASS ClassifySymbol(const string& symbol)
-    {
-        string lowerSymbol = symbol;
-        StringToLower(lowerSymbol);
+        ENUM_SYMBOL_CLASS ClassifySymbol(const string& symbol)
+        {
+            string lowerSymbol = symbol;
+            StringToLower(lowerSymbol);
         
-        if(StringFind(lowerSymbol, "step") >= 0)
-            return SYMBOL_CLASS_SYNTHETIC_STEP;
-        else if(StringFind(lowerSymbol, "jump") >= 0)
-            return SYMBOL_CLASS_SYNTHETIC_JUMP;
-        else if(StringFind(lowerSymbol, "volatility") >= 0 || StringFind(lowerSymbol, "1s") >= 0)
-            return SYMBOL_CLASS_SYNTHETIC_VOLATILITY;
-        else if(StringFind(lowerSymbol, "eur") >= 0 || StringFind(lowerSymbol, "usd") >= 0 || 
-                StringFind(lowerSymbol, "gbp") >= 0 || StringFind(lowerSymbol, "jpy") >= 0)
-            return SYMBOL_CLASS_FOREX;
-        else if(StringFind(lowerSymbol, "btc") >= 0 || StringFind(lowerSymbol, "eth") >= 0)
-            return SYMBOL_CLASS_CRYPTO;
-        else if(StringFind(lowerSymbol, "gold") >= 0 || StringFind(lowerSymbol, "silver") >= 0 || 
-                StringFind(lowerSymbol, "oil") >= 0)
-            return SYMBOL_CLASS_COMMODITY;
-        else
-            return SYMBOL_CLASS_UNKNOWN;
-    }
+            if(StringFind(lowerSymbol, "step") >= 0)
+                return SYMBOL_CLASS_SYNTHETIC_STEP;
+            else if(StringFind(lowerSymbol, "jump") >= 0)
+                return SYMBOL_CLASS_SYNTHETIC_JUMP;
+            else if(StringFind(lowerSymbol, "volatility") >= 0 || StringFind(lowerSymbol, "1s") >= 0)
+                return SYMBOL_CLASS_SYNTHETIC_VOLATILITY;
+            else if(StringFind(lowerSymbol, "eur") >= 0 || StringFind(lowerSymbol, "usd") >= 0 || 
+                    StringFind(lowerSymbol, "gbp") >= 0 || StringFind(lowerSymbol, "jpy") >= 0)
+                return SYMBOL_CLASS_FOREX;
+            else if(StringFind(lowerSymbol, "btc") >= 0 || StringFind(lowerSymbol, "eth") >= 0)
+                return SYMBOL_CLASS_CRYPTO;
+            else if(StringFind(lowerSymbol, "gold") >= 0 || StringFind(lowerSymbol, "silver") >= 0 || 
+                    StringFind(lowerSymbol, "oil") >= 0)
+                return SYMBOL_CLASS_COMMODITY;
+            else
+                return SYMBOL_CLASS_UNKNOWN;
+        }
     
     int FindSymbolHeadIndex(const string& symbol)
     {

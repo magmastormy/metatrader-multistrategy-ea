@@ -25,7 +25,7 @@ Validate relevant log tags:
 - `[CONSENSUS-DIAG]`
 - `[SIGNAL-REJECTED]`
 - `[AI-VOTE]`
-- `[SHADOW-TRADE]` (if shadow mode)
+- `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]` (authority gate replaces shadow mode)
 
 ### 1.4 Risk/execution invariants
 - Unified risk remains pre-execution veto authority.

@@ -313,22 +313,22 @@ private:
 
       // Calculate lot size using CPositionSizer
       double lotSize = 0.0;
-      ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
-      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-      if(point <= 0.0)
-      {
-         PrintFormat("[ATR-SCALP] Invalid point for %s", symbol);
-         return false;
-      }
+                  double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+                  if(point <= 0.0)
+                  {
+                     PrintFormat("[ATR-SCALP] Invalid point for %s", symbol);
+                     return false;
+                  }
 
-      double slPips = slDistance / point;
+                  double slPips = slDistance / point;
 
-      if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
-      {
-         lotSize = m_positionSizer.CalculateOptimalPositionSize(
-                     symbol, orderType, slPips, 0.65);
-      }
+                        if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
+                        {
+                           lotSize = m_positionSizer.CalculatePositionSize(
+                                       symbol, slPips, 0.65);
+                        }
       else
       {
          double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);

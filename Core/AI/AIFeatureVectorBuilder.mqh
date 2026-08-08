@@ -8,6 +8,8 @@
 #define CORE_AI_FEATURE_VECTOR_BUILDER_MQH
 
 #include "../../IndicatorManager.mqh"
+#include "../Processing/MultiAssetProfiler.mqh"
+#include "../Orchestration/OrchestratorFwd.mqh"
 
 #define TRANSFORMER_D_MODEL_DEFAULT         64
 #define TRANSFORMER_NUM_HEADS_DEFAULT        4
@@ -395,7 +397,16 @@ private:
     }
 
     static bool IsSyntheticSpikeProfileSymbol(const string symbol)
-    {
+        {
+            // Use global multi-asset profiler for proper asset classification
+            if(g_multiAssetProfiler != NULL)
+            {
+                SAssetProfile profile = g_multiAssetProfiler.GetProfile(symbol);
+                // Check if it's a synthetic asset class that has spike profiles
+                return IsSyntheticAssetClass(profile.assetClass);
+            }
+    
+        // Fallback to string matching if profiler not available
         return (StringFind(symbol, "Volatility") >= 0 ||
                 StringFind(symbol, "Boom") >= 0 ||
                 StringFind(symbol, "Crash") >= 0 ||
@@ -767,6 +778,33 @@ public:
         }
 
         return true;
+    }
+
+    static string GetFeatureNamesStatic()
+    {
+        string names = "";
+        string featureNames[65] = 
+        {
+            "logRet", "normRet", "closePosInRange", "logVolume", "atrRatio",
+            "closeVsEma8", "closeVsEma21", "closeVsEma50", "ema8VsEma21", "ema21VsEma50",
+            "rsi14", "rsi7", "bbPctB", "bbWidth", "macdHistNorm",
+            "atrRatio14_50", "parkinsonVol14", "volVsSma20", "sinDow", "cosDow",
+            "sinHod", "cosHod", "logRetLag1", "logRetLag5", "logRetLag20",
+            "zScoreClose20", "zScoreClose50", "rangePct", "zScoreRange20", "cci14",
+            "logRetLag2Atr", "logRetLag3Atr", "logRetLag5Atr", "logRetLag8Atr", "logRetLag13Atr",
+            "zScoreVol20", "rsi14Lag1", "rsi14Lag3", "bbPctBLag1", "bbPctBLag3",
+            "zScoreRsi14_20", "zScoreRsi7_20", "macdHistNorm2", "macdLag1Atr", "atrRatio14_5",
+            "zScoreAtr14_20", "logRetLag10", "logRetLag15", "closeVsEma100Atr", "closeVsSma200Atr",
+            "autocorr1_20", "autocorr5_20", "closeVsEma100Atr50", "zScoreVol50", "atrRatio50_14",
+            "ofi128", "timeSinceSpike256",
+            "pinBarBull", "pinBarBear", "engulfing", "doji", "hammer", "shootingStar", "morningStar", "eveningStar"
+        };
+        for(int i = 0; i < 65; i++)
+        {
+            if(i > 0) names += ",";
+            names += featureNames[i];
+        }
+        return names;
     }
 };
 

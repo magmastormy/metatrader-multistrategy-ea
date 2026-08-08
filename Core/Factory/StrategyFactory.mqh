@@ -7,9 +7,10 @@
 #ifndef CORE_FACTORY_STRATEGY_FACTORY_MQH
 #define CORE_FACTORY_STRATEGY_FACTORY_MQH
 
-// g_onnxModel is declared in main EA via #resource directive
-// It's globally visible when this header is included in the main EA
-// No declaration needed here
+// g_onnxModel: ONNX model byte buffer consumed by COnnxAIStrategyAdapter.
+// Declared here as a static empty array so the file compiles standalone.
+// The main EA may populate this via #resource directive before factory use.
+uchar g_onnxModel[];
 
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Core/Utils/Enums.mqh"
@@ -17,10 +18,7 @@
 #include "../../Strategies/SimpleMomentumStrategy.mqh"
 #include "../../Strategies/StrategyTrend.mqh"
 #include "../../Strategies/StrategySupportResistance.mqh"
-#include "../../Strategies/StrategyUnifiedICT.mqh"
 #include "../../Strategies/StrategyCandlestick.mqh"
-#include "../../Strategies/CUnicornModelStrategy.mqh"
-#include "../../Strategies/CPowerOfThreeStrategy.mqh"
 #include "../../Strategies/MeanReversionStrategy.mqh"
 #include "../../Strategies/VolatilityBreakoutStrategy.mqh"
 #include "../../Strategies/StatisticalArbitrageStrategy.mqh"
@@ -33,6 +31,7 @@
 #include "../../Core/Strategy/TransformerAIStrategyAdapter.mqh"
 #include "../../Core/Strategy/EnsembleAIStrategyAdapter.mqh"
 #include "../../Core/Strategy/OnnxAIStrategyAdapter.mqh"
+#include "../../Core/Strategy/PythonBridgeAIStrategyAdapter.mqh"
 #include "../../AIModules/NeuralNetworkStrategy.mqh"
 #include "../../Core/Utils/PythonBridge.mqh"
 #include "../../Core/Engines/OrnsteinUhlenbeckEngine.mqh"
@@ -40,7 +39,7 @@
 
 class CStrategyFactory
 {
-private:
+public:
     // Strategy configuration bundle
     struct SStrategyConfig
     {
@@ -57,7 +56,6 @@ private:
         bool            momentumScalpingEnabled;
         int             momentumScalpCooldown;
         double          trendADXNoTrendThreshold;
-        bool            ictRequireKillZone;
         bool            candlestickRequireTrend;
         bool            meanReversionSyntheticMode;
         bool            statArbUsePythonBridge;
@@ -70,12 +68,13 @@ private:
             intrabarEligible(false), liveVotingEnabled(false),
             role(PRIMARY_ALPHA), cluster(STRATEGY_CLUSTER_NONE),
             momentumScalpingEnabled(false), momentumScalpCooldown(0),
-            trendADXNoTrendThreshold(12.0), ictRequireKillZone(false),
+            trendADXNoTrendThreshold(12.0),
             candlestickRequireTrend(false), meanReversionSyntheticMode(false),
             statArbUsePythonBridge(false), pythonBridge(NULL), ouEngine(NULL), hurstEngine(NULL)
         {}
     };
-    
+
+private:
     // Creator function type
     typedef IStrategy* (*CreatorFunc)(const SStrategyConfig&);
     
@@ -133,34 +132,16 @@ private:
     }
     
     static IStrategy* CreateSupportResistance(const SStrategyConfig& cfg)
-    {
-        return new CStrategySupportResistance();
-    }
+        {
+            return new CStrategySupportResistance();
+        }
     
-    static IStrategy* CreateUnifiedICT(const SStrategyConfig& cfg)
-    {
-        CStrategyUnifiedICT* s = new CStrategyUnifiedICT();
-        if(s != NULL)
-            s.SetRequireKillZone(cfg.ictRequireKillZone);
-        return s;
-    }
-    
-    static IStrategy* CreateCandlestick(const SStrategyConfig& cfg)
+        static IStrategy* CreateCandlestick(const SStrategyConfig& cfg)
     {
         CStrategyCandlestick* s = new CStrategyCandlestick();
         if(s != NULL)
             s.SetRequireTrendAlignment(cfg.candlestickRequireTrend);
         return s;
-    }
-    
-    static IStrategy* CreateUnicornModel(const SStrategyConfig& cfg)
-    {
-        return new CUnicornModelStrategy();
-    }
-    
-    static IStrategy* CreatePowerOfThree(const SStrategyConfig& cfg)
-    {
-        return new CPowerOfThreeStrategy();
     }
     
     static IStrategy* CreateMeanReversion(const SStrategyConfig& cfg)
@@ -214,15 +195,15 @@ private:
     }
     
     static IStrategy* CreateNeuralNetworkAI(const SStrategyConfig& cfg)
-    {
-        CNeuralNetworkStrategy* nn = new CNeuralNetworkStrategy();
-        if(nn != NULL)
         {
-            // NN will be initialized separately via InitializeNeuralNetForSymbol
-            // This adapter wraps the NN
+            CNeuralNetworkStrategy* nn = new CNeuralNetworkStrategy();
+            if(nn != NULL)
+            {
+                // NN will be initialized separately via InitializeNeuralNetForSymbol
+                // This adapter wraps the NN and OWNS it (adapterOwnsNN = true)
+            }
+            return new CAIStrategyAdapter(nn, true); // L1-008: Adapter owns NN when factory-created
         }
-        return new CAIStrategyAdapter(nn); // nn may be NULL here, adapter handles it
-    }
     
     static IStrategy* CreateTransformerAI(const SStrategyConfig& cfg)
     {
@@ -239,6 +220,12 @@ private:
         // Note: ONNX model is global (g_onnxModel resource) - declared in main EA
         return new COnnxAIStrategyAdapter(g_onnxModel);
     }
+    
+    static IStrategy* CreatePythonBridgeAI(const SStrategyConfig& cfg)
+        {
+            // Note: Python Bridge is global (g_pythonBridge) - declared in OrchestratorFwd.mqh
+            return new CPythonBridgeAIStrategyAdapter(g_pythonBridge);
+        }
 
 public:
     // Initialize factory - call once at startup
@@ -253,12 +240,9 @@ public:
         // --- Core Indicator Strategies ---
         RegisterInternal("Momentum", CreateMomentum);
         RegisterInternal("Trend", CreateTrend);
-        RegisterInternal("Support/Resistance", CreateSupportResistance);
-        RegisterInternal("Unified ICT", CreateUnifiedICT);
-        RegisterInternal("Candlestick", CreateCandlestick);
-        RegisterInternal("Unicorn Model", CreateUnicornModel);
-        RegisterInternal("Power of Three", CreatePowerOfThree);
-        
+                RegisterInternal("Support/Resistance", CreateSupportResistance);
+                RegisterInternal("Candlestick", CreateCandlestick);
+
         // --- Batch 93/103 Strategies ---
         RegisterInternal("Mean Reversion", CreateMeanReversion);
         RegisterInternal("Volatility Breakout", CreateVolatilityBreakout);
@@ -276,6 +260,7 @@ public:
         RegisterInternal("Transformer AI", CreateTransformerAI);
         RegisterInternal("Ensemble AI", CreateEnsembleAI);
         RegisterInternal("ONNX AI", CreateONNXAI);
+        RegisterInternal("Python Bridge AI", CreatePythonBridgeAI);
         
         s_initialized = true;
         Print("[StrategyFactory] Initialized with ", s_registryCount, " strategy creators");

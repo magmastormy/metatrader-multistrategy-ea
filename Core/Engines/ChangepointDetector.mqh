@@ -119,15 +119,24 @@ public:
         m_currentRunLength(0),
         m_barsSinceChange(0),
         m_lastChangeTime(0),
-        m_lastBarTime(0),
-        m_lastLogTime(0),
-        m_initialized(false)
-    {
-    }
+                m_lastBarTime(0),
+                m_lastLogTime(0),
+                m_initialized(false)
+            {
+                // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
+                ResolveTimeframe();
+            }
 
-    ~CChangepointDetector() {}
+            ~CChangepointDetector() {}
 
-    //--- Initialize from historical data
+            // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
+            void ResolveTimeframe()
+            {
+                if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
+                    m_timeframe = Period();
+            }
+
+            //--- Initialize from historical data
     bool Initialize()
     {
         // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
@@ -390,6 +399,26 @@ public:
     SChangepointSnapshot GetSnapshot() const { return m_lastSnapshot; }
 
     bool IsInitialized() const { return m_initialized; }
-};
+
+        // --- Cleanup ---
+        void Deinit()
+        {
+            // CChangepointDetector holds no indicator handles or external resources.
+            // Dynamic arrays (m_runLengthProbs, m_runMean, m_runM2, m_runCount) are auto-managed.
+            // Reset state for potential reuse.
+            ArrayFree(m_runLengthProbs);
+            ArrayFree(m_runMean);
+            ArrayFree(m_runM2);
+            ArrayFree(m_runCount);
+            m_maxRL = 0;
+            m_currentRunLength = 0;
+            m_barsSinceChange = 0;
+            m_lastChangeTime = 0;
+            m_lastBarTime = 0;
+            m_lastLogTime = 0;
+            m_initialized = false;
+            m_lastSnapshot = SChangepointSnapshot();
+        }
+    };
 
 #endif // CHANGEPOINT_DETECTOR_MQH

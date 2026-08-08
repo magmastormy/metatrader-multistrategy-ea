@@ -9,7 +9,7 @@
 
 #include "../../AIModules/NeuralNetworkStrategy.mqh"
 #include "../../Core/Strategy/AIStrategyAdapter.mqh"
-#include "../../Core/Trading/PositionStateManager.mqh"
+#include "../Position/PositionManager.mqh"
 #include "../../Core/Trading/TradeAttributionManager.mqh"
 
 class CNeuralNetRegistry
@@ -58,6 +58,8 @@ public:
         ArrayResize(m_entries, 0);
         m_entryCount = 0;
     }
+    
+    int Count() const { return m_entryCount; }
     
     // Initialize or get existing neural net for symbol
     CNeuralNetworkStrategy* GetOrCreateNeuralNet(const string symbol, ENUM_TIMEFRAMES timeframe, double confidenceThreshold)

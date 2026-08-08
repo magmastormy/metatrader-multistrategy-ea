@@ -13,10 +13,19 @@
 
 #include "../Utils/Enums.mqh"
 #include "../Trading/TradeManager.mqh"
+#include "../Trading/TradeTypes.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/RiskTierManager.mqh"
 #include "../../IndicatorManager.mqh"
+
+// Forward declaration for global profiler access (initialized in EAOrchestrator)
+class CMultiAssetProfiler;
+extern CMultiAssetProfiler* g_multiAssetProfiler;
+
+// Forward declaration for AI adapter (L10-018)
+class CAIAdapter;
+
 #include "ScalpSignalCache.mqh"
 
 //+------------------------------------------------------------------+
@@ -127,6 +136,7 @@ private:
    CPositionSizer*           m_positionSizer;
    CRiskTierManager*         m_riskTierManager;
    CScalpSignalCache*        m_signalCache;          // External cache reference (optional)
+   CAIAdapter*               m_aiAdapter;            // L10-018: AI adapter for AI-VOTE logging
    CTrade                    m_tradeObj;             // For pending order operations (OrderDelete)
 
    datetime                  m_lastScalpTime;        // Last scalp entry time
@@ -336,9 +346,17 @@ private:
    bool IsSyntheticSymbol(const string symbol)
    {
       if(symbol == "") return false;
-      
-      // Check for broker-specific synthetic products that trade 24/7
-      if(StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
+   
+      // Use global multi-asset profiler for proper asset classification
+      if(g_multiAssetProfiler != NULL)
+      {
+          SAssetProfile profile = g_multiAssetProfiler.GetProfile(symbol);
+          return IsSyntheticAssetClass(profile.assetClass);
+      }
+   
+      // Fallback to string matching if profiler not available
+      if(StringFind(symbol, "Vol") >= 0  ||
+         StringFind(symbol, "Vol") >= 0  ||      // Vol 10, Vol 25, Vol 50, etc.
          StringFind(symbol, "Step") >= 0 ||      // Step Index variants
          StringFind(symbol, "Boom") >= 0 ||      // Boom 1000, Boom 500
          StringFind(symbol, "Crash") >= 0 ||     // Crash 1000, Crash 500
@@ -539,6 +557,7 @@ public:
       m_positionSizer(NULL),
       m_riskTierManager(NULL),
       m_signalCache(NULL),
+      m_aiAdapter(NULL),            // L10-018: AI adapter
       m_lastScalpTime(0),
       m_usedScalpRiskPct(0.0),
       m_magicNumber(123456),
@@ -579,42 +598,44 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Initialize with external dependencies                             |
-   //+------------------------------------------------------------------+
-   bool Initialize(CTradeManager* scalpTradeMgr,
-                   CUnifiedRiskManager* riskManager,
-                   CPositionSizer* scalpPosSizer,
-                   CRiskTierManager* riskTierManager)
-   {
-      if(scalpTradeMgr == NULL || riskManager == NULL ||
-         scalpPosSizer == NULL || riskTierManager == NULL)
+      //| Initialize with external dependencies                             |
+      //+------------------------------------------------------------------+
+      bool Initialize(CTradeManager* scalpTradeMgr,
+                      CUnifiedRiskManager* riskManager,
+                      CPositionSizer* scalpPosSizer,
+                      CRiskTierManager* riskTierManager,
+                      CAIAdapter* aiAdapter = NULL)  // L10-018: AI adapter
       {
-         Print("[SCALP-ENGINE] ERROR: NULL dependency passed to Initialize");
-         return false;
-      }
+         if(scalpTradeMgr == NULL || riskManager == NULL ||
+            scalpPosSizer == NULL || riskTierManager == NULL)
+         {
+            Print("[SCALP-ENGINE] ERROR: NULL dependency passed to Initialize");
+            return false;
+         }
 
-      m_tradeManager    = scalpTradeMgr;
-      m_riskManager     = riskManager;
-      m_positionSizer   = scalpPosSizer;
-      m_riskTierManager = riskTierManager;
+         m_tradeManager    = scalpTradeMgr;
+         m_riskManager     = riskManager;
+         m_positionSizer   = scalpPosSizer;
+         m_riskTierManager = riskTierManager;
+         m_aiAdapter       = aiAdapter;  // L10-018: Store AI adapter
 
-      // Capture magic number from trade manager for pending orders
-      // Note: CTradeManager doesn't expose GetMagicNumber, so we use the default
-      // The market order path goes through CTradeManager which sets magic internally
+         // Capture magic number from trade manager for pending orders
+         // Note: CTradeManager doesn't expose GetMagicNumber, so we use the default
+         // The market order path goes through CTradeManager which sets magic internally
 
-      // Load scalp budget from tier config
-      m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
-      if(m_config.scalpRiskPct <= 0.0)
-      {
-         Print("[SCALP-ENGINE] Scalp budget is 0% — scalp engine will not trade");
-         m_config.maxScalpPositions = 0;
-      }
+         // Load scalp budget from tier config
+         m_config.scalpRiskPct = m_riskTierManager.GetScalpBudgetPct();
+         if(m_config.scalpRiskPct <= 0.0)
+         {
+            Print("[SCALP-ENGINE] Scalp budget is 0% — scalp engine will not trade");
+            m_config.maxScalpPositions = 0;
+         }
 
-      m_initialized = true;
-      PrintFormat("[SCALP-ENGINE] Initialized | maxPos=%d | risk=%.1f%% | SL=%d | TP=%d | cooldown=%dms | pending=%s | partial=%s",
-                  m_config.maxScalpPositions,
-                  m_config.scalpRiskPct,
-                  m_config.scalpSLPips,
+         m_initialized = true;
+         PrintFormat("[SCALP-ENGINE] Initialized | maxPos=%d | risk=%.1f%% | SL=%d | TP=%d | cooldown=%dms | pending=%s | partial=%s",
+                     m_config.maxScalpPositions,
+                     m_config.scalpRiskPct,
+                     m_config.scalpSLPips,
                   m_config.scalpTPPips,
                   m_config.scalpCooldownMs,
                   m_config.usePendingOrders ? "ON" : "OFF",
@@ -625,7 +646,7 @@ public:
    //+------------------------------------------------------------------+
    //| Set custom configuration                                         |
    //+------------------------------------------------------------------+
-   void SetConfig(const SScalpConfig &config)
+   void SetConfig(SScalpConfig &config)
    {
       m_config = config;
       PrintFormat("[SCALP-ENGINE] Config updated | maxPos=%d | risk=%.1f%% | SL=%d | TP=%d",
@@ -819,12 +840,11 @@ public:
       confidence = MathMin(confidence, 0.90);
 
       // Calculate lot size using CPositionSizer
-      if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
-      {
-         ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-         lotSize = m_positionSizer.CalculateOptimalPositionSize(
-                     symbol, orderType, (double)m_config.scalpSLPips, confidence);
-      }
+            if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
+            {
+               lotSize = m_positionSizer.CalculatePositionSize(
+                           symbol, (double)m_config.scalpSLPips, confidence);
+            }
       else
       {
          // Fallback to minimum lot
@@ -891,36 +911,31 @@ public:
    //| Execute a scalp trade (market order)                              |
    //| Supports both synchronous and async execution modes               |
    //+------------------------------------------------------------------+
-   bool ExecuteScalpTrade(string symbol, ENUM_TRADE_SIGNAL signal,
-                           double lotSize, double confidence)
-   {
-      if(m_tradeManager == NULL)
-         return false;
-
-      ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-
-      // Build comment with SCALP tag for position identification
-      string comment = "SCALP|EMA" + IntegerToString(m_config.fastEMA) + "/" +
-                       IntegerToString(m_config.slowEMA) + "|C:" +
-                       DoubleToString(confidence, 2);
-
-      //--- Async mode: use OrderSendAsync for non-blocking execution
-      if(m_asyncMode)
+      bool ExecuteScalpTrade(string symbol, ENUM_TRADE_SIGNAL signal,
+                              double lotSize, double confidence)
       {
-         int direction = (signal == TRADE_SIGNAL_BUY) ? 1 : -1;
-         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-         if(point <= 0.0)
+         if(m_tradeManager == NULL)
             return false;
 
-         // Refresh prices immediately before order submission to prevent retcode=10015
+         ENUM_ORDER_TYPE orderType = (signal == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+
+         // Build comment with SCALP tag for position identification
+         string comment = "SCALP|EMA" + IntegerToString(m_config.fastEMA) + "/" +
+                          IntegerToString(m_config.slowEMA) + "|C:" +
+                          DoubleToString(confidence, 2);
+
+         // Refresh prices immediately before order submission
          double bid = 0.0, ask = 0.0;
          if(!RefreshScalpPrice(symbol, ask, bid))
             return false;
 
          double entryPrice = (orderType == ORDER_TYPE_BUY) ? ask : bid;
          int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-         double sl = 0.0, tp = 0.0;
+         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+         if(point <= 0.0)
+            return false;
 
+         double sl = 0.0, tp = 0.0;
          if(orderType == ORDER_TYPE_BUY)
          {
             sl = NormalizeDouble(entryPrice - m_config.scalpSLPips * point, digits);
@@ -932,134 +947,170 @@ public:
             tp = NormalizeDouble(entryPrice - m_config.scalpTPPips * point, digits);
          }
 
-         MqlTradeRequest request = {};
-         MqlTradeResult  result  = {};
+         // Calculate SL/TP in pips for risk validation
+         double slPips = (point > 0.0) ? m_config.scalpSLPips : 0.0;
+         double tpPips = (point > 0.0) ? m_config.scalpTPPips : 0.0;
 
-         request.action       = TRADE_ACTION_DEAL;
-         request.symbol       = symbol;
-         request.volume       = lotSize;
-         request.type         = orderType;
-         request.price        = entryPrice;
-         request.sl           = sl;
-         request.tp           = tp;
-         request.deviation    = 50;
-         request.magic        = m_magicNumber;
-         request.comment      = comment;
-         request.type_filling = ORDER_FILLING_IOC;
-
-         if(!OrderSendAsync(request, result))
+         // MANDATORY RISK MANAGER VALIDATION (AGENTS.md Invariant #1)
+         // All trade entries must pass CUnifiedRiskManager pre-trade gating
+         if(m_riskManager != NULL)
          {
-            PrintFormat("[SCALP-ASYNC-FAILED] %s | %s | lot=%.2f | retcode=%u | comment=%s",
-                        symbol,
-                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                        lotSize,
-                        result.retcode,
-                        result.comment);
-            return false;
-         }
+            STradeValidationRequest riskReq;
+            ZeroMemory(riskReq);
+            riskReq.symbol       = symbol;
+            riskReq.orderType    = orderType;
+            riskReq.lotSize      = lotSize;
+            riskReq.stopLossPips = slPips;
+            riskReq.takeProfitPips = tpPips;
+            riskReq.confidence   = confidence;
+            riskReq.strategy     = "FastScalp";
+            riskReq.requestTime  = TimeCurrent();
 
-         if(result.retcode != TRADE_RETCODE_PLACED && result.retcode != 0)
-         {
-            PrintFormat("[SCALP-ASYNC-REJECTED] %s | %s | lot=%.2f | retcode=%u",
-                        symbol,
-                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                        lotSize,
-                        result.retcode);
-            return false;
-         }
-
-         // Track the pending async order
-         OnAsyncOrderSent(result.order, symbol, direction, lotSize, entryPrice, sl, tp);
-
-         m_lastScalpTime = TimeCurrent();
-
-         // Track risk usage optimistically (will adjust on confirmation)
-         double riskPerTrade = m_riskManager != NULL ?
-                               m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
-         m_usedScalpRiskPct += riskPerTrade;
-
-         PrintFormat("[SCALP-ASYNC-SENT] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f | order=%I64u",
-                     symbol,
-                     signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                     lotSize,
-                     m_config.scalpSLPips,
-                     m_config.scalpTPPips,
-                     confidence,
-                     result.order);
-
-         return true;
-      }
-
-      //--- Synchronous mode: use CTradeManager (original path)
-      bool result = m_tradeManager.OpenPosition(
-                       symbol,
-                       orderType,
-                       lotSize,
-                       0.0,  // price = 0 => market order
-                       (double)m_config.scalpSLPips,
-                       (double)m_config.scalpTPPips,
-                       comment);
-
-      if(result)
-      {
-         m_lastScalpTime = TimeCurrent();
-
-         // Track risk usage
-         double riskPerTrade = m_riskManager != NULL ?
-                               m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
-         m_usedScalpRiskPct += riskPerTrade;
-
-         // Register the position for tick-level management
-         ulong ticket = m_tradeManager.GetLastTicket();
-         double entryPrice = m_tradeManager.GetLastRequestedPrice();
-         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-         double sl = 0.0, tp = 0.0;
-         if(point > 0.0)
-         {
-            if(orderType == ORDER_TYPE_BUY)
+            SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "scalp-pretrade");
+            if(!riskResult.approved)
             {
-               sl = entryPrice - m_config.scalpSLPips * point;
-               tp = entryPrice + m_config.scalpTPPips * point;
+               PrintFormat("[SCALP-REJECTED] %s | %s | lot=%.2f | reason=%s",
+                           symbol,
+                           signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                           lotSize,
+                           riskResult.reason);
+               return false;
             }
-            else
+            // Apply adjusted lot size from risk manager if provided
+            if(riskResult.adjustedLotSize > 0.0 && riskResult.adjustedLotSize < lotSize)
             {
-               sl = entryPrice + m_config.scalpSLPips * point;
-               tp = entryPrice - m_config.scalpTPPips * point;
+               lotSize = riskResult.adjustedLotSize;
+               PrintFormat("[SCALP-RISK-ADJUSTED] %s | lot reduced to %.2f", symbol, lotSize);
             }
          }
 
-         // Calculate 1R profit price for partial close
-         double oneRPrice = 0.0;
-         if(point > 0.0)
+         // L10-018: AI-VOTE logging
+         if(m_aiAdapter != NULL)
          {
-            if(orderType == ORDER_TYPE_BUY)
-               oneRPrice = entryPrice + m_config.scalpSLPips * point;  // 1R = SL distance
-            else
-               oneRPrice = entryPrice - m_config.scalpSLPips * point;
+            PrintFormat("[AI-VOTE] symbol=%s strategy=FastScalp vote=%s",
+                        symbol, signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL");
          }
 
-         RegisterScalpPosition(ticket, symbol, entryPrice, sl, tp, oneRPrice);
+         //--- Async mode: use TradeManager's SendTradeAsync (which includes preflight)
+         if(m_asyncMode)
+         {
+            int direction = (signal == TRADE_SIGNAL_BUY) ? 1 : -1;
 
-         PrintFormat("[SCALP-ENTRY] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f | ticket=%I64u",
-                     symbol,
-                     signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                     lotSize,
-                     m_config.scalpSLPips,
-                     m_config.scalpTPPips,
-                     confidence,
-                     ticket);
-      }
-      else
-      {
-         PrintFormat("[SCALP-ENTRY-FAILED] %s | %s | lot=%.2f | retcode=%u",
-                     symbol,
-                     signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                     lotSize,
-                     m_tradeManager.GetLastRetcode());
-      }
+            // Use TradeManager's async method which includes preflight validation
+            ulong magic = m_magicNumber;
+            bool sent = m_tradeManager.SendTradeAsync(orderType, symbol, lotSize,
+                                                       entryPrice, sl, tp,
+                                                       magic, 5000);
+            if(!sent)
+            {
+               PrintFormat("[SCALP-ASYNC-FAILED] %s | %s | lot=%.2f",
+                           symbol,
+                           signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                           lotSize);
+               return false;
+            }
 
-      return result;
-   }
+            // Track the pending async order locally for management
+            OnAsyncOrderSent(m_tradeManager.GetPendingAsyncCount() > 0 ? 
+                             m_tradeManager.GetPendingAsyncTicket(0) : 0, 
+                             symbol, direction, lotSize, entryPrice, sl, tp);
+
+            m_lastScalpTime = TimeCurrent();
+
+            // Track risk usage optimistically (will adjust on confirmation)
+            double riskPerTrade = m_riskManager != NULL ?
+                                  m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
+            m_usedScalpRiskPct += riskPerTrade;
+
+            PrintFormat("[SCALP-ASYNC-SENT] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f",
+                        symbol,
+                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                        lotSize,
+                        m_config.scalpSLPips,
+                        m_config.scalpTPPips,
+                        confidence);
+
+            return true;
+         }
+
+         //--- Synchronous mode: use CTradeManager.OpenPosition (which calls risk manager internally)
+         bool result = m_tradeManager.OpenPosition(
+                          symbol,
+                          orderType,
+                          lotSize,
+                          0.0,  // price = 0 => market order
+                          (double)m_config.scalpSLPips,
+                          (double)m_config.scalpTPPips,
+                          comment);
+
+         if(result)
+         {
+            m_lastScalpTime = TimeCurrent();
+
+            // Track risk usage
+            double riskPerTrade = m_riskManager != NULL ?
+                                  m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
+           
+            // L10-015: Check for partial fill and scale risk budget
+            STradeExecutionReceipt receipt;
+            m_tradeManager.GetLastExecutionReceipt(receipt);
+            double fillRatio = 1.0;
+            if(receipt.partialFill && receipt.requestedVolume > 0.0)
+            {
+                fillRatio = receipt.filledVolume / receipt.requestedVolume;
+                if(fillRatio < 1.0)
+                {
+                    riskPerTrade *= fillRatio;
+                    PrintFormat("[SCALP-PARTIAL-FILL] %s | requested=%.2f | filled=%.2f | fillRatio=%.2f | risk scaled to %.4f%%",
+                                symbol, receipt.requestedVolume, receipt.filledVolume, fillRatio, riskPerTrade);
+                }
+            }
+           
+            m_usedScalpRiskPct += riskPerTrade;
+
+            // Register the position for tick-level management
+            ulong ticket = m_tradeManager.GetLastTicket();
+            double entryPrice = m_tradeManager.GetLastRequestedPrice();
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            double sl = 0.0, tp = 0.0;
+            if(point > 0.0)
+            {
+               if(orderType == ORDER_TYPE_BUY)
+               {
+                  sl = entryPrice - m_config.scalpSLPips * point;
+                  tp = entryPrice + m_config.scalpTPPips * point;
+               }
+               else
+               {
+                  sl = entryPrice + m_config.scalpSLPips * point;
+                  tp = entryPrice - m_config.scalpTPPips * point;
+               }
+            }
+
+            // Calculate 1R profit price for partial close
+            double oneRPrice = 0.0;
+            if(point > 0.0)
+            {
+               if(orderType == ORDER_TYPE_BUY)
+                  oneRPrice = entryPrice + m_config.scalpSLPips * point;  // 1R = SL distance
+               else
+                  oneRPrice = entryPrice - m_config.scalpSLPips * point;
+            }
+
+            RegisterScalpPosition(ticket, symbol, entryPrice, sl, tp, oneRPrice);
+
+            PrintFormat("[SCALP-ENTRY] %s | %s | lot=%.2f | SL=%d | TP=%d | confidence=%.2f | ticket=%I64u",
+                        symbol,
+                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                        lotSize,
+                        m_config.scalpSLPips,
+                        m_config.scalpTPPips,
+                        confidence,
+                        ticket);
+         }
+
+         return result;
+      }
 
    //+------------------------------------------------------------------+
    //| Place a scalp pending order (BUY_LIMIT/SELL_LIMIT)               |
@@ -1451,18 +1502,71 @@ public:
       }
    }
 
-   //+------------------------------------------------------------------+
-   //| Free scalp risk budget when a position closes                     |
-   //+------------------------------------------------------------------+
-   void FreeScalpRiskBudget(ulong ticket)
+void FreeScalpRiskBudget(ulong ticket)
+{
+   // Find the scalp position to get actual SL distance and lot size
+   for(int i = 0; i < m_scalpPositionCount; i++)
    {
-      // Approximate: release 1 trade's worth of risk
-      double riskPerTrade = m_riskManager != NULL ?
-                            m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
-      m_usedScalpRiskPct -= riskPerTrade;
-      if(m_usedScalpRiskPct < 0.0)
-         m_usedScalpRiskPct = 0.0;
+      if(m_scalpPositions[i].ticket == ticket)
+      {
+         string symbol = m_scalpPositions[i].symbol;
+         double lotSize = 0.0;
+         double slDistance = 0.0;
+         double entryPrice = m_scalpPositions[i].entryPrice;
+         double originalSL = m_scalpPositions[i].originalSL;
+
+         if(PositionSelectByTicket(ticket))
+         {
+            lotSize = PositionGetDouble(POSITION_VOLUME);
+            double currentSL = PositionGetDouble(POSITION_SL);
+            if(currentSL > 0.0 && entryPrice > 0.0)
+            {
+               slDistance = MathAbs(entryPrice - currentSL);
+            }
+         }
+         else
+         {
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            if(point > 0.0 && originalSL > 0.0 && entryPrice > 0.0)
+            {
+               slDistance = MathAbs(entryPrice - originalSL);
+            }
+         }
+
+         if(lotSize > 0.0 && slDistance > 0.0 && m_riskManager != NULL)
+         {
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+            double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+            double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+            if(point > 0.0 && tickValue > 0.0 && tickSize > 0.0 && equity > 0.0)
+            {
+               double slPoints = slDistance / point;
+               double riskPerLot = (slPoints * point / tickSize) * tickValue;
+               double actualRiskPct = (lotSize * riskPerLot) / equity * 100.0;
+               m_usedScalpRiskPct -= actualRiskPct;
+               if(m_usedScalpRiskPct < 0.0)
+                  m_usedScalpRiskPct = 0.0;
+               return;
+            }
+         }
+
+         double riskPerTrade = m_riskManager != NULL ?
+                               m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
+         m_usedScalpRiskPct -= riskPerTrade;
+         if(m_usedScalpRiskPct < 0.0)
+            m_usedScalpRiskPct = 0.0;
+         return;
+      }
    }
+
+   double riskPerTradeFallback = m_riskManager != NULL ?
+                                 m_riskManager.GetActiveRiskPerTradePercent() : 1.0;
+   m_usedScalpRiskPct -= riskPerTradeFallback;
+   if(m_usedScalpRiskPct < 0.0)
+      m_usedScalpRiskPct = 0.0;
+}
 
    //+------------------------------------------------------------------+
    //| Track a pending async order after OrderSendAsync                  |

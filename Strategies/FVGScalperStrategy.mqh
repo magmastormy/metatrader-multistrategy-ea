@@ -7,8 +7,6 @@
 #define FVG_SCALPER_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
-// Risk Manager for AGENTS.md invariant #1
-#include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
@@ -19,10 +17,6 @@ class CFVGScalperStrategy : public CStrategyBase
 private:
     CImbalanceDetector*       m_imbalanceDetector;
     CMarketStructureAnalyzer* m_structureAnalyzer;
-    int                       m_lastBarCount;
-
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager*      m_riskManager;
 
     // Configurable scoring weights
     double m_baseScore;       // Base confidence (default: 0.55)
@@ -30,29 +24,23 @@ private:
     double m_chochBonus;      // Fast CHOCH bonus (default: 0.07)
     double m_cisdBonus;       // CISD displacement bonus (default: 0.05)
 
-    bool RefreshForNewBar()
+protected:
+    virtual void HandleNewBar() override { RefreshForNewBar(); }
+    virtual void OnRefreshComponents() override
     {
-        int barCount = iBars(m_symbol, m_timeframe);
-        if(barCount <= 0 || barCount == m_lastBarCount)
-            return false;
-
-        m_lastBarCount = barCount;
         if(m_imbalanceDetector != NULL) m_imbalanceDetector.Update();
         if(m_structureAnalyzer != NULL) m_structureAnalyzer.Update();
-        return true;
     }
 
 public:
     CFVGScalperStrategy(const string name = "FVG Scalper") :
-        CStrategyBase(name, 0),
-        m_imbalanceDetector(NULL),
-        m_structureAnalyzer(NULL),
-        m_lastBarCount(0),
-        m_riskManager(NULL),
-        m_baseScore(0.55),
-        m_structureBonus(0.08),
-        m_chochBonus(0.07),
-        m_cisdBonus(0.05)
+            CStrategyBase(name, 0),
+            m_imbalanceDetector(NULL),
+            m_structureAnalyzer(NULL),
+            m_baseScore(0.55),
+            m_structureBonus(0.08),
+            m_chochBonus(0.07),
+            m_cisdBonus(0.05)
     {
         OverrideMinConfidence(0.55);
     }
@@ -86,33 +74,23 @@ public:
             return false;
         }
 
-        m_lastBarCount = 0;
+                // Risk manager is accessed via base class GetUnifiedRiskManager()
+                if(GetUnifiedRiskManager() == NULL)
+                    Print("[FVG-SCALPER] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
 
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager == NULL)
-            Print("[FVG-SCALPER] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
-
-        return true;
+                return true;
     }
 
     virtual void Deinit() override
-    {
-        if(m_imbalanceDetector != NULL) { delete m_imbalanceDetector; m_imbalanceDetector = NULL; }
-        if(m_structureAnalyzer != NULL) { delete m_structureAnalyzer; m_structureAnalyzer = NULL; }
-        // Risk manager is not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
-        CStrategyBase::Deinit();
-    }
+        {
+            if(m_imbalanceDetector != NULL) { delete m_imbalanceDetector; m_imbalanceDetector = NULL; }
+            if(m_structureAnalyzer != NULL) { delete m_structureAnalyzer; m_structureAnalyzer = NULL; }
+            CStrategyBase::Deinit();
+        }
 
     virtual void OnTick() override
     {
         // Intentionally empty - strategy evaluates on new bar only via GetSignal()
-    }
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
-    {
-        if(symbol == m_symbol && timeframe == m_timeframe)
-            RefreshForNewBar();
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -267,47 +245,24 @@ public:
         double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
         double tpPips = (point > 0 && slDistance > 0) ? (1.5 * slDistance / point) : 0.0;
 
-        // --- Step 7: Risk validation through CUnifiedRiskManager (AGENTS.md invariant #1) ---
-        if(m_riskManager != NULL)
-        {
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = slPips;
-            request.takeProfitPips = tpPips;
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+        request.stopLossPips = slPips;
+        request.takeProfitPips = tpPips;
+        request.confidence = confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
 
-            CUnifiedRiskManager* riskMgr = m_riskManager;
-            SValidationResult result;
-            ZeroMemory(result);
-            if(riskMgr != NULL)
-                result = (*riskMgr).ValidateTradeRequest(request, "FVG_SCALPER");
-            if(!result.approved)
-            {
-                SetDecisionReasonTag("FVG_SCALPER_RISK_REJECTED");
-                PrintFormat("[FVG-SCALPER] Risk rejected %s at %.5f Conf=%.1f%%",
-                           signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           currentPrice, confidence * 100);
-                return TRADE_SIGNAL_NONE;
-            }
-            confidence *= result.confidenceMultiplier;
-        }
+        if(!ValidateWithRiskManager(request, "FVG_SCALPER", confidence))
+            return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullish ? "FVG_SCALPER_SIGNAL_BUY" : "FVG_SCALPER_SIGNAL_SELL");
         RecordSignal();
 
         // CONSENSUS LOGGING (AGENTS.md requirement)
-        PrintFormat("[CONSENSUS-DIAG] %s | %s | FVG: %s | Zone: %.5f-%.5f | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                   m_symbol,
-                   signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   fvg.isBullish ? "Bull" : "Bear",
-                   fvg.bottom, fvg.top,
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag);
+        LogConsensusDiag(signal, StringFormat("FVG: %s | Zone: %.5f-%.5f", fvg.isBullish ? "Bull" : "Bear", fvg.bottom, fvg.top), confidence);
 
         PrintFormat("[FVG-SCALPER] %s: %s | FVG Zone: %.5f-%.5f | Entry: %.5f | SL: %.5f | Conf: %.1f%% | Struct: %s | CHOCH: %s | CISD: %s",
                    m_symbol,

@@ -121,14 +121,24 @@ public:
       if(idx < 0 || idx >= 19)
          return 1.0;
 
+      double mult = 1.0;
       switch(cluster)
       {
-         case TREND_CLUSTER:          return m_weights[idx].trend;
-         case MEAN_REVERSION_CLUSTER: return m_weights[idx].meanReversion;
-         case STRUCTURE_CLUSTER:      return m_weights[idx].structure;
-         case SCALP_CLUSTER:          return m_weights[idx].scalp;
-         default:                     return 1.0;
+         case TREND_CLUSTER:          mult = m_weights[idx].trend; break;
+         case MEAN_REVERSION_CLUSTER: mult = m_weights[idx].meanReversion; break;
+         case STRUCTURE_CLUSTER:      mult = m_weights[idx].structure; break;
+         case SCALP_CLUSTER:          mult = m_weights[idx].scalp; break;
+         default:                     mult = 1.0; break;
       }
+      
+      // L3-018: Log weight deviations for all families (not just Volatility)
+      if(MathAbs(mult - 1.0) > 0.01)
+      {
+         PrintFormat("[FAMILY-WEIGHT] %s | family=%s | cluster=%s | mult=%.3f", 
+                     "", EnumToString(family), EnumToString(cluster), mult);
+      }
+      
+      return mult;
    }
 
    //+------------------------------------------------------------------+
@@ -146,6 +156,30 @@ public:
    }
 
    bool IsInitialized() const { return m_initialized; }
-};
 
-#endif // CORE_ENGINES_FAMILY_STRATEGY_WEIGHT_MATRIX_MQH
+      //+------------------------------------------------------------------+
+      //| Get heartbeat string for periodic logging (L9-004)               |
+      //+------------------------------------------------------------------+
+      string GetHeartbeatString() const
+      {
+         if(!m_initialized)
+            return "NOT_INITIALIZED";
+      
+         string result = "";
+         bool first = true;
+         for(int i = 0; i < 19; i++)
+         {
+            SFamilyClusterWeights w = m_weights[i];
+            if(w.trend != 1.0 || w.meanReversion != 1.0 || w.structure != 1.0 || w.scalp != 1.0)
+            {
+               if(!first) result += " | ";
+               result += StringFormat("family=%d: trend=%.2f mean_rev=%.2f struct=%.2f scalp=%.2f",
+                             i, w.trend, w.meanReversion, w.structure, w.scalp);
+               first = false;
+            }
+         }
+         return (result == "") ? "ALL_WEIGHTS_1.0" : result;
+      }
+      };
+
+   #endif // CORE_ENGINES_FAMILY_STRATEGY_WEIGHT_MATRIX_MQH

@@ -16,7 +16,7 @@
 
 #include <Object.mqh>
 #include "../Utils/Enums.mqh"
-#include "PositionStateManager.mqh"
+#include "../Position/PositionManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Trade Attribution Manager Class                                   |
@@ -46,13 +46,28 @@ private:
     bool    m_enableNNDiagnostics;
     bool    m_runSelfTest;
 
-    // Reference to position state manager (not owned)
-    CPositionStateManager *m_positionStateManager;
+    // Reference to position manager (not owned)
+    CPositionManager *m_positionManager;
+
+    //--- Position-level contributor attribution (merged from CAttributionTracker)
+    ulong   m_attributionPositionIds[];
+    string  m_attributionContributorCsv[];
+    string  m_closedTradeContributors[];
+    double  m_closedTradeNetProfit;
+    bool    m_hasClosedTradeAttribution;
+
+    //--- Helper methods (private)
+    bool    IsPositionIdStillOpen(const ulong positionId);
 
     //--- Check if a contributor name is an AI strategy
     bool IsAIContributorName(const string strategyName) const;
 
 public:
+    //--- Helper methods (public, accessed by EnterpriseStrategyManager)
+    int     FindAttributionIndexByPositionId(const ulong positionId) const;
+    string  JoinContributors(const string &contributors[]) const;
+    void    SplitContributors(const string csv, string &contributors[]) const;
+
     CTradeAttributionManager() :
         m_nnDiagEntryMapCount(0),
         m_nnDiagCloseByIdCount(0),
@@ -62,8 +77,13 @@ public:
         m_nnDiagLastSummaryTime(0),
         m_enableNNDiagnostics(true),
         m_runSelfTest(true),
-        m_positionStateManager(NULL)
+        m_positionManager(NULL),
+        m_closedTradeNetProfit(0.0),
+        m_hasClosedTradeAttribution(false)
     {
+        ArrayResize(m_attributionPositionIds, 0);
+        ArrayResize(m_attributionContributorCsv, 0);
+        ArrayResize(m_closedTradeContributors, 0);
     }
 
     ~CTradeAttributionManager()
@@ -72,7 +92,7 @@ public:
     }
 
     //--- Configuration
-    void SetPositionStateManager(CPositionStateManager &mgr) { m_positionStateManager = &mgr; }
+    void SetPositionManager(CPositionManager &mgr) { m_positionManager = &mgr; }
     void SetNNDiagnosticsEnabled(bool enabled) { m_enableNNDiagnostics = enabled; }
     void SetRunSelfTest(bool enabled) { m_runSelfTest = enabled; }
 
@@ -91,6 +111,15 @@ public:
     bool   ContributorsIncludeEnsemble(const string &contributors[]);
     bool   ContributorsIncludeNeuralNetwork(const string &contributors[]);
     int    CountIndicatorContributors(const string &contributors[]);
+
+    //--- Position-level contributor attribution (merged from CAttributionTracker)
+    void   UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
+    bool   PopPositionAttribution(const ulong positionId, string &contributors[]);
+    bool   PopClosedTradeAttribution(string &contributors[], double &netProfit);
+    int    GetActiveAttributionCount() const;
+    void   ClearClosedTradeAttribution();
+    double GetClosedTradeNetProfit() const { return m_closedTradeNetProfit; }
+    bool   HasClosedTradeAttribution() const { return m_hasClosedTradeAttribution; }
 
     //--- Prediction position mapping (delegates to CPositionStateManager)
     int    FindPredictionPositionIndex(const ulong positionId);
@@ -115,9 +144,9 @@ public:
     void   AccumulatePendingCloseProfit(const ulong positionId, const double netProfit);
     double ConsumePendingCloseProfit(const ulong positionId);
     void   ClearPendingCloseProfit(const ulong positionId);
-
-    //--- Position open check
-    bool   IsPositionIdStillOpen(const ulong positionId);
+    
+    // Get all pending close profits with their prediction IDs (for NN training linkage)
+    int GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[]);
 
     //--- Record position attribution for NN training
     void   RecordPositionAttribution(const ulong dealTicket, const string symbol, const ENUM_ORDER_TYPE orderType,
@@ -125,9 +154,15 @@ public:
                                      const double takeProfitPips, const string clusterCode,
                                      const string strategyRole, const string &contributors[]);
 
+    //--- NN diagnostics summary (public for EA deinit call)
+    void   NNDiagPrintSummary(const string context = "");
+
+    //--- Clear all internal state (public for EA cleanup)
+    void   ClearAll();
+
+private:
     //--- NN diagnostics
     void   NNDiagLog(const string message);
-    void   NNDiagPrintSummary(const string context = "");
     bool   RunNNAttributionSelfTest();
 
     //--- Diagnostics counter accessors (for external increment)
@@ -145,9 +180,6 @@ public:
 
     //--- Reset diagnostics counters
     void   ResetNNDiagnostics();
-
-    //--- Clear all internal state
-    void   ClearAll();
 };
 
 //+------------------------------------------------------------------+
@@ -274,63 +306,63 @@ int CTradeAttributionManager::CountIndicatorContributors(const string &contribut
 }
 
 //+------------------------------------------------------------------+
-//| Prediction position mapping (delegates to CPositionStateManager)  |
+//| Prediction position mapping (delegates to CPositionManager)  |
 //+------------------------------------------------------------------+
 int CTradeAttributionManager::FindPredictionPositionIndex(const ulong positionId)
 {
-    if(m_positionStateManager == NULL) return -1;
-    return m_positionStateManager.FindStateIndex(positionId);
+    if(m_positionManager == NULL) return -1;
+    return m_positionManager.FindPredictionPositionIndex(positionId);
 }
 
 void CTradeAttributionManager::UpsertPredictionPositionMap(const ulong positionId, const string predictionId)
 {
-    if(m_positionStateManager == NULL) return;
-    m_positionStateManager.UpsertPredictionId(positionId, predictionId);
+    if(m_positionManager == NULL) return;
+    m_positionManager.UpsertPredictionPositionMap(positionId, predictionId);
 }
 
 string CTradeAttributionManager::GetPredictionIdForPosition(const ulong positionId)
 {
-    if(m_positionStateManager == NULL) return "";
-    return m_positionStateManager.GetPredictionId(positionId);
+    if(m_positionManager == NULL) return "";
+    return m_positionManager.GetPredictionIdForPosition(positionId);
 }
 
 void CTradeAttributionManager::RemovePredictionPositionMap(const ulong positionId)
 {
-    if(m_positionStateManager == NULL) return;
-    m_positionStateManager.RemovePrediction(positionId);
+    if(m_positionManager == NULL) return;
+    m_positionManager.RemovePredictionPositionMap(positionId);
 }
 
 //+------------------------------------------------------------------+
-//| AI prediction position mapping (delegates to CPositionStateManager)|
+//| AI prediction position mapping (delegates to CPositionManager)|
 //+------------------------------------------------------------------+
 int CTradeAttributionManager::FindAIPredictionPositionIndex(const ulong positionId)
 {
-    if(m_positionStateManager == NULL) return -1;
-    return m_positionStateManager.FindStateIndex(positionId);
+    if(m_positionManager == NULL) return -1;
+    return m_positionManager.FindAIPredictionPositionIndex(positionId);
 }
 
 void CTradeAttributionManager::UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
 {
-    if(m_positionStateManager == NULL) return;
-    m_positionStateManager.UpsertAIPrediction(positionId, predictionTime, predictionSignal);
+    if(m_positionManager == NULL) return;
+    m_positionManager.UpsertAIPredictionPositionMap(positionId, predictionTime, predictionSignal);
 }
 
 datetime CTradeAttributionManager::GetAIPredictionTimeForPosition(const ulong positionId)
 {
-    if(m_positionStateManager == NULL) return 0;
-    return m_positionStateManager.GetAIPredictionTime(positionId);
+    if(m_positionManager == NULL) return 0;
+    return m_positionManager.GetAIPredictionTimeForPosition(positionId);
 }
 
 ENUM_TRADE_SIGNAL CTradeAttributionManager::GetAIPredictionSignalForPosition(const ulong positionId)
 {
-    if(m_positionStateManager == NULL) return TRADE_SIGNAL_NONE;
-    return m_positionStateManager.GetAIPredictionSignal(positionId);
+    if(m_positionManager == NULL) return TRADE_SIGNAL_NONE;
+    return m_positionManager.GetAIPredictionSignalForPosition(positionId);
 }
 
 void CTradeAttributionManager::RemoveAIPredictionPositionMap(const ulong positionId)
 {
-    if(m_positionStateManager == NULL) return;
-    m_positionStateManager.RemoveAIPrediction(positionId);
+    if(m_positionManager == NULL) return;
+    m_positionManager.RemoveAIPredictionPositionMap(positionId);
 }
 
 //+------------------------------------------------------------------+
@@ -491,6 +523,39 @@ void CTradeAttributionManager::ClearPendingCloseProfit(const ulong positionId)
 }
 
 //+------------------------------------------------------------------+
+//| Get all pending close profits with their prediction IDs         |
+//+------------------------------------------------------------------+
+int CTradeAttributionManager::GetPendingCloseProfits(ulong &positionIds[], double &profits[], string &predictionIds[])
+{
+int count = ArraySize(m_pendingClosePositionIds);
+if(count == 0)
+    return 0;
+    
+ArrayResize(positionIds, count);
+ArrayResize(profits, count);
+ArrayResize(predictionIds, count);
+    
+for(int i = 0; i < count; i++)
+{
+    positionIds[i] = m_pendingClosePositionIds[i];
+    profits[i] = m_pendingCloseNetProfit[i];
+        
+    // Get prediction ID from position comment
+    if(PositionSelectByTicket(m_pendingClosePositionIds[i]))
+    {
+        string comment = PositionGetString(POSITION_COMMENT);
+        predictionIds[i] = ExtractPredictionIdFromComment(comment);
+    }
+    else
+    {
+        predictionIds[i] = "";
+    }
+}
+    
+return count;
+}
+
+//+------------------------------------------------------------------+
 //| Position open check                                               |
 //+------------------------------------------------------------------+
 bool CTradeAttributionManager::IsPositionIdStillOpen(const ulong positionId)
@@ -513,6 +578,122 @@ bool CTradeAttributionManager::IsPositionIdStillOpen(const ulong positionId)
 }
 
 //+------------------------------------------------------------------+
+//| Position-level Contributor Attribution (merged from CAttributionTracker)
+//+------------------------------------------------------------------+
+int CTradeAttributionManager::FindAttributionIndexByPositionId(const ulong positionId) const
+{
+    int count = ArraySize(m_attributionPositionIds);
+    for(int i = 0; i < count; i++)
+    {
+        if(m_attributionPositionIds[i] == positionId)
+            return i;
+    }
+    return -1;
+}
+
+string CTradeAttributionManager::JoinContributors(const string &contributors[]) const
+{
+    string csv = "";
+    int count = ArraySize(contributors);
+    for(int i = 0; i < count; i++)
+    {
+        if(i > 0) csv += ",";
+        csv += contributors[i];
+    }
+    return csv;
+}
+
+void CTradeAttributionManager::SplitContributors(const string csv, string &contributors[]) const
+{
+    ArrayResize(contributors, 0);
+    if(csv == "") return;
+    
+    int start = 0;
+    int pos = StringFind(csv, ",", start);
+    while(pos >= 0)
+    {
+        string part = StringSubstr(csv, start, pos - start);
+        int newSize = ArraySize(contributors) + 1;
+        ArrayResize(contributors, newSize);
+        contributors[newSize - 1] = part;
+        start = pos + 1;
+        pos = StringFind(csv, ",", start);
+    }
+    // Last part
+    string lastPart = StringSubstr(csv, start);
+    int newSize = ArraySize(contributors) + 1;
+    ArrayResize(contributors, newSize);
+    contributors[newSize - 1] = lastPart;
+}
+
+void CTradeAttributionManager::UpsertPositionAttribution(const ulong positionId, const string &contributors[])
+{
+    int index = FindAttributionIndexByPositionId(positionId);
+    string csv = JoinContributors(contributors);
+    
+    if(index >= 0)
+    {
+        m_attributionContributorCsv[index] = csv;
+    }
+    else
+    {
+        int newSize = ArraySize(m_attributionPositionIds) + 1;
+        ArrayResize(m_attributionPositionIds, newSize);
+        ArrayResize(m_attributionContributorCsv, newSize);
+        m_attributionPositionIds[newSize - 1] = positionId;
+        m_attributionContributorCsv[newSize - 1] = csv;
+    }
+}
+
+bool CTradeAttributionManager::PopPositionAttribution(const ulong positionId, string &contributors[])
+{
+    int index = FindAttributionIndexByPositionId(positionId);
+    if(index < 0)
+        return false;
+    
+    SplitContributors(m_attributionContributorCsv[index], contributors);
+    
+    // Remove from arrays
+    int count = ArraySize(m_attributionPositionIds);
+    for(int i = index; i < count - 1; i++)
+    {
+        m_attributionPositionIds[i] = m_attributionPositionIds[i + 1];
+        m_attributionContributorCsv[i] = m_attributionContributorCsv[i + 1];
+    }
+    ArrayResize(m_attributionPositionIds, count - 1);
+    ArrayResize(m_attributionContributorCsv, count - 1);
+    
+    return true;
+}
+
+bool CTradeAttributionManager::PopClosedTradeAttribution(string &contributors[], double &netProfit)
+{
+    if(!m_hasClosedTradeAttribution)
+        return false;
+    
+    ArrayCopy(contributors, m_closedTradeContributors);
+    netProfit = m_closedTradeNetProfit;
+    
+    m_hasClosedTradeAttribution = false;
+    ArrayResize(m_closedTradeContributors, 0);
+    m_closedTradeNetProfit = 0.0;
+    
+    return true;
+}
+
+int CTradeAttributionManager::GetActiveAttributionCount() const
+{
+    return ArraySize(m_attributionPositionIds);
+}
+
+void CTradeAttributionManager::ClearClosedTradeAttribution()
+{
+    m_hasClosedTradeAttribution = false;
+    ArrayResize(m_closedTradeContributors, 0);
+    m_closedTradeNetProfit = 0.0;
+}
+
+//+------------------------------------------------------------------+
 //| NN diagnostics implementation                                     |
 //+------------------------------------------------------------------+
 void CTradeAttributionManager::NNDiagLog(const string message)
@@ -527,7 +708,7 @@ void CTradeAttributionManager::NNDiagPrintSummary(const string context = "")
         return;
 
     string tag = (context == "") ? "runtime" : context;
-    int activeMapSize = (m_positionStateManager != NULL) ? m_positionStateManager.GetCount() : 0;
+    int activeMapSize = (m_positionManager != NULL) ? m_positionManager.GetPositionStateCount() : 0;
     PrintFormat("[NN-DIAG] Summary (%s) | EntryMap=%d | CloseById=%d | CloseFallback=%d | CloseMiss=%d | PartialClose=%d | ActiveMap=%d",
                 tag,
                 m_nnDiagEntryMapCount,
@@ -634,6 +815,11 @@ void CTradeAttributionManager::ClearAll()
     ArrayResize(m_aiPendingPredictionSignals, 0);
     ArrayResize(m_pendingClosePositionIds, 0);
     ArrayResize(m_pendingCloseNetProfit, 0);
+    ArrayResize(m_attributionPositionIds, 0);
+    ArrayResize(m_attributionContributorCsv, 0);
+    ArrayResize(m_closedTradeContributors, 0);
+    m_closedTradeNetProfit = 0.0;
+    m_hasClosedTradeAttribution = false;
 }
 
 #endif // __TRADE_ATTRIBUTION_MANAGER_MQH__

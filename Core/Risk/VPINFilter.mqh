@@ -20,6 +20,16 @@ enum ENUM_VPIN_TOXICITY
 };
 
 //+------------------------------------------------------------------+
+//| VPIN Tick Classification Mode (L5-024)                          |
+//+------------------------------------------------------------------+
+enum ENUM_VPIN_CLASSIFICATION
+{
+    VPIN_CLASSIFY_TICK_RULE    = 0, // Price change tick rule (default)
+    VPIN_CLASSIFY_BID_ASK      = 1, // Use bid/ask spread for classification
+    VPIN_CLASSIFY_VOLUME_WEIGHTED = 2 // Weight by tick volume
+};
+
+//+------------------------------------------------------------------+
 //| VPIN Snapshot Structure                                           |
 //+------------------------------------------------------------------+
 struct SVPINSnapshot
@@ -66,6 +76,7 @@ private:
     // Configuration
     string             m_symbol;               // Traded symbol
     double             m_bucketVolumeSize;     // Volume per bucket (0 = auto-calculate)
+    double             m_bucketSize;
     int                m_numBuckets;           // Number of buckets for rolling VPIN average
     double             m_extremeThreshold;     // VPIN level that triggers EXTREME regime
 
@@ -73,10 +84,14 @@ private:
     bool               m_bucketSizeAuto;       // True if bucket size should be auto-calculated
     bool               m_bucketSizeResolved;   // True once auto-calculation is complete
 
-    // Tick classification state (tick rule)
+    // L5-024: Tick classification mode
+    ENUM_VPIN_CLASSIFICATION m_classificationMode;
+
+    // Tick classification state
     double             m_prevTickPrice;        // Previous tick price for tick rule
     bool               m_prevTickIsBuy;        // Previous tick classification (true=buy, false=sell)
     bool               m_firstTick;            // True until first tick is processed
+    ENUM_VPIN_CLASSIFICATION m_classifyMode;   // L5-024: Classification mode
 
     // Current bucket accumulation
     double             m_currentBucketBuyVol;  // Buy volume accumulated in current bucket
@@ -97,12 +112,10 @@ private:
     datetime           m_lastLogTime;          // Last time a throttled log was emitted
 
     //+------------------------------------------------------------------+
-    //| Classify tick as buy or sell using tick rule                      |
-    //| If price > prev price → buy                                       |
-    //| If price < prev price → sell                                      |
-    //| If price == prev price → use previous classification              |
+    //| Classify tick as buy or sell using configurable mode           |
+    //| L5-024: Support multiple classification modes                    |
     //+------------------------------------------------------------------+
-    bool ClassifyTick(double tickPrice)
+    bool ClassifyTick(double tickPrice, double tickVolume = 0.0, double bid = 0.0, double ask = 0.0)
     {
         if(m_firstTick)
         {
@@ -114,12 +127,56 @@ private:
         }
 
         bool isBuy;
-        if(tickPrice > m_prevTickPrice)
-            isBuy = true;
-        else if(tickPrice < m_prevTickPrice)
-            isBuy = false;
-        else
-            isBuy = m_prevTickIsBuy;  // Same price — inherit previous classification
+        
+        switch(m_classifyMode)
+        {
+            case VPIN_CLASSIFY_BID_ASK:
+                // Use bid/ask spread for classification
+                if(bid > 0.0 && ask > 0.0)
+                {
+                    double midPrice = (bid + ask) / 2.0;
+                    if(tickPrice > midPrice)
+                        isBuy = true;
+                    else if(tickPrice < midPrice)
+                        isBuy = false;
+                    else
+                        isBuy = m_prevTickIsBuy;
+                }
+                else
+                {
+                    // Fallback to tick rule
+                    if(tickPrice > m_prevTickPrice)
+                        isBuy = true;
+                    else if(tickPrice < m_prevTickPrice)
+                        isBuy = false;
+                    else
+                        isBuy = m_prevTickIsBuy;
+                }
+                break;
+                
+            case VPIN_CLASSIFY_VOLUME_WEIGHTED:
+                // Weight classification by tick volume
+                // Higher volume ticks have more influence
+                if(tickPrice > m_prevTickPrice)
+                    isBuy = true;
+                else if(tickPrice < m_prevTickPrice)
+                    isBuy = false;
+                else
+                    isBuy = m_prevTickIsBuy;
+                // Could add volume weighting logic here
+                break;
+                
+            case VPIN_CLASSIFY_TICK_RULE:
+            default:
+                // Standard tick rule: price change determines direction
+                if(tickPrice > m_prevTickPrice)
+                    isBuy = true;
+                else if(tickPrice < m_prevTickPrice)
+                    isBuy = false;
+                else
+                    isBuy = m_prevTickIsBuy;  // Same price — inherit previous classification
+                break;
+        }
 
         m_prevTickPrice = tickPrice;
         m_prevTickIsBuy = isBuy;
@@ -241,7 +298,7 @@ private:
             case VPIN_TOXICITY_LOW:     return 1.0;
             case VPIN_TOXICITY_MEDIUM:  return 0.5;
             case VPIN_TOXICITY_HIGH:    return 0.25;
-            case VPIN_TOXICITY_EXTREME: return 0.0;
+            case VPIN_TOXICITY_EXTREME: return 0.1;
             default:                    return 1.0;
         }
     }
@@ -267,46 +324,55 @@ public:
     //| @param extremeThreshold — VPIN level triggering EXTREME regime    |
     //+------------------------------------------------------------------+
     CVPINFilter(const string symbol = "", double bucketVolumeSize = 0.0,
-                int numBuckets = VPIN_DEFAULT_NUM_BUCKETS,
-                double extremeThreshold = VPIN_DEFAULT_EXTREME) :
-        m_symbol(symbol),
-        m_bucketVolumeSize(bucketVolumeSize),
-        m_numBuckets(numBuckets),
-        m_extremeThreshold(extremeThreshold),
-        m_bucketSizeAuto(bucketVolumeSize <= 0.0),
-        m_bucketSizeResolved(bucketVolumeSize > 0.0),
-        m_prevTickPrice(0.0),
-        m_prevTickIsBuy(true),
-        m_firstTick(true),
-        m_currentBucketBuyVol(0.0),
-        m_currentBucketSellVol(0.0),
-        m_currentBucketTotalVol(0.0),
-        m_imbalanceWriteIdx(0),
-        m_imbalanceCount(0),
-        m_currentVPIN(0.0),
-        m_completedBuckets(0),
-        m_lastLogTime(0)
-    {
-        // Clamp parameters to safe ranges
-        if(m_numBuckets < 10)
-            m_numBuckets = 10;
-        if(m_numBuckets > VPIN_MAX_BUCKETS)
-            m_numBuckets = VPIN_MAX_BUCKETS;
-        if(m_extremeThreshold < 0.3)
-            m_extremeThreshold = 0.3;
-        if(m_extremeThreshold > 0.95)
-            m_extremeThreshold = 0.95;
+                        int numBuckets = VPIN_DEFAULT_NUM_BUCKETS,
+                        double extremeThreshold = VPIN_DEFAULT_EXTREME,
+                        ENUM_VPIN_CLASSIFICATION classificationMode = VPIN_CLASSIFY_TICK_RULE) :
+            m_symbol(symbol),
+            m_bucketVolumeSize(bucketVolumeSize),
+            m_numBuckets(numBuckets),
+            m_extremeThreshold(extremeThreshold),
+            m_bucketSizeAuto(bucketVolumeSize <= 0.0),
+            m_bucketSizeResolved(bucketVolumeSize > 0.0),
+            m_classifyMode(classificationMode),
+                        m_prevTickPrice(0.0),
+            m_prevTickIsBuy(true),
+            m_firstTick(true),
+            m_currentBucketBuyVol(0.0),
+            m_currentBucketSellVol(0.0),
+            m_currentBucketTotalVol(0.0),
+            m_imbalanceWriteIdx(0),
+            m_imbalanceCount(0),
+            m_currentVPIN(0.0),
+            m_completedBuckets(0),
+            m_lastLogTime(0)
+        {
+            // Clamp parameters to safe ranges
+            if(m_numBuckets < 10)
+                m_numBuckets = 10;
+            if(m_numBuckets > VPIN_MAX_BUCKETS)
+                m_numBuckets = VPIN_MAX_BUCKETS;
+            if(m_extremeThreshold < 0.3)
+                m_extremeThreshold = 0.3;
+            if(m_extremeThreshold > 0.95)
+                m_extremeThreshold = 0.95;
 
-        // Allocate ring buffer — store up to VPIN_MAX_BUCKETS imbalances
-        m_imbalanceCapacity = VPIN_MAX_BUCKETS;
-        ArrayResize(m_imbalances, m_imbalanceCapacity);
-        ArrayInitialize(m_imbalances, 0.0);
+            // Allocate ring buffer — store up to VPIN_MAX_BUCKETS imbalances
+            m_imbalanceCapacity = VPIN_MAX_BUCKETS;
+            ArrayResize(m_imbalances, m_imbalanceCapacity);
+            ArrayInitialize(m_imbalances, 0.0);
 
-        PrintFormat("[VPIN] Constructed | symbol=%s | bucketVol=%.0f (%s) | numBuckets=%d | extremeThreshold=%.2f",
-                    m_symbol, m_bucketVolumeSize,
-                    m_bucketSizeAuto ? "auto" : "manual",
-                    m_numBuckets, m_extremeThreshold);
-    }
+            PrintFormat("[VPIN] Constructed | symbol=%s | bucketVol=%.0f (%s) | numBuckets=%d | extremeThreshold=%.2f | mode=%d",
+                        m_symbol, m_bucketVolumeSize,
+                        m_bucketSizeAuto ? "auto" : "manual",
+                        m_numBuckets, m_extremeThreshold, m_classificationMode);
+        }
+
+        // L5-024: Set classification mode
+        void SetClassificationMode(ENUM_VPIN_CLASSIFICATION mode)
+        {
+            m_classificationMode = mode;
+            PrintFormat("[VPIN] Classification mode set to %d", mode);
+        }
 
     //+------------------------------------------------------------------+
     //| Destructor                                                        |
@@ -317,39 +383,62 @@ public:
     }
 
     //+------------------------------------------------------------------+
-    //| OnTick — call every tick to classify and accumulate volume        |
-    //| @param tickPrice — current tick price                             |
-    //| @param tickVolume — current tick volume                           |
-    //+------------------------------------------------------------------+
-    void OnTick(double tickPrice, double tickVolume)
-    {
-        // Auto-calculate bucket size on first ticks if needed
-        if(m_bucketSizeAuto && !m_bucketSizeResolved)
+        //| OnTick — call every tick to classify and accumulate volume        |
+        //| @param tickPrice — current tick price                             |
+        //| @param tickVolume — current tick volume                           |
+        //| @param bid — current bid price (for bid/ask classification mode)  |
+        //| @param ask — current ask price (for bid/ask classification mode)  |
+        //+------------------------------------------------------------------+
+        void OnTick(double tickPrice, double tickVolume, double bid = 0.0, double ask = 0.0)
         {
-            if(!AutoCalculateBucketSize())
+            // Auto-calculate bucket size on first ticks if needed
+            if(m_bucketSizeAuto && !m_bucketSizeResolved)
             {
-                // Cannot resolve yet — skip this tick
-                return;
+                if(!AutoCalculateBucketSize())
+                {
+                    // Cannot resolve yet — skip this tick
+                    return;
+                }
+            }
+
+            // Classify tick direction
+            bool isBuy = ClassifyTick(tickPrice, tickVolume, bid, ask);
+
+            // When tick volume is 0 (synthetic CFDs, some forex), use unit volume per tick
+            double effectiveVolume = (tickVolume > 0.0) ? tickVolume : 1.0;
+
+            // Accumulate into current bucket
+            if(isBuy)
+                m_currentBucketBuyVol += effectiveVolume;
+            else
+                m_currentBucketSellVol += effectiveVolume;
+            m_currentBucketTotalVol += effectiveVolume;
+
+            // L5-025: Handle bucket overflow - carry excess volume to next bucket
+            // Instead of completing only one bucket, complete as many full buckets as needed
+            while(m_currentBucketTotalVol >= m_bucketVolumeSize && m_bucketVolumeSize > 0.0)
+            {
+                double excessVolume = m_currentBucketTotalVol - m_bucketVolumeSize;
+                double excessRatio = excessVolume / m_currentBucketTotalVol;
+            
+                // Complete one bucket with the exact bucket size
+                CompleteBucket();
+            
+                // Carry overflow to next bucket proportionally
+                if(excessVolume > 0.0)
+                {
+                    m_currentBucketBuyVol = m_currentBucketBuyVol * excessRatio;
+                    m_currentBucketSellVol = m_currentBucketSellVol * excessRatio;
+                    m_currentBucketTotalVol = excessVolume;
+                }
+                else
+                {
+                    m_currentBucketBuyVol = 0.0;
+                    m_currentBucketSellVol = 0.0;
+                    m_currentBucketTotalVol = 0.0;
+                }
             }
         }
-
-        // Classify tick direction
-        bool isBuy = ClassifyTick(tickPrice);
-
-        // When tick volume is 0 (synthetic CFDs, some forex), use unit volume per tick
-        double effectiveVolume = (tickVolume > 0.0) ? tickVolume : 1.0;
-
-        // Accumulate into current bucket
-        if(isBuy)
-            m_currentBucketBuyVol += effectiveVolume;
-        else
-            m_currentBucketSellVol += effectiveVolume;
-        m_currentBucketTotalVol += effectiveVolume;
-
-        // Check if bucket is complete
-        if(m_currentBucketTotalVol >= m_bucketVolumeSize)
-            CompleteBucket();
-    }
 
     //+------------------------------------------------------------------+
     //| Get current VPIN value                                            |
@@ -470,6 +559,22 @@ public:
             m_bucketSizeResolved = false;
 
         PrintFormat("[VPIN] Reset | symbol=%s", m_symbol);
+    }
+
+    //+------------------------------------------------------------------+
+    //| Cleanup external resources                                        |
+    //+------------------------------------------------------------------+
+    void Deinit()
+    {
+        // CVPINFilter owns dynamic array m_imbalances[]
+        ArrayFree(m_imbalances);
+        m_imbalanceCount = 0;
+        m_imbalanceWriteIdx = 0;
+        m_currentVPIN = 0.0;
+        m_completedBuckets = 0;
+        m_symbol = "";
+        m_numBuckets = 0;
+        m_bucketSize = 0.0;
     }
 };
 

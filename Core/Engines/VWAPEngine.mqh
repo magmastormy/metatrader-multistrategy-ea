@@ -207,6 +207,22 @@ public:
     
     bool IsInitialized() const { return m_initialized; }
     SVWAPResult GetLastResult() const { return m_lastResult; }
+
+    // --- Cleanup ---
+    void Deinit()
+    {
+        // CVWAPEngine holds no external resources (no indicator handles, no dynamic arrays)
+        // Reset state for potential re-use
+        m_initialized = false;
+        m_cumulativeTPV = 0;
+        m_cumulativePV = 0;
+        m_cumulativeVol = 0;
+        m_barCount = 0;
+        m_sessionStartDate = 0;
+        m_lastProcessedBarTime = 0;
+        m_lastProcessedBarIndex = 0;
+        ZeroMemory(m_lastResult);
+    }
 };
 
 #endif // CORE_ENGINES_VWAP_ENGINE_MQH

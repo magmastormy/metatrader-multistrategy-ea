@@ -104,6 +104,12 @@ public:
         m_lastRefreshTime = 0;
     }
 
+    bool Initialize()
+    {
+        Reset();
+        return true;
+    }
+
     void SetMode(const ENUM_EA_MODE mode)
     {
         m_mode = mode;
@@ -197,7 +203,9 @@ public:
 
     int GetDescriptorCount() const { return ArraySize(m_descriptors); }
 
-    int GetActiveCount() const
+        int Count() const { return GetDescriptorCount(); }
+
+        int GetActiveCount() const
     {
         int total = 0;
         for(int i = 0; i < ArraySize(m_descriptors); i++)

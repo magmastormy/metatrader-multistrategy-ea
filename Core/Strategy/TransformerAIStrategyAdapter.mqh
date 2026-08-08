@@ -226,6 +226,26 @@ public:
         m_lastDecisionReasonTag = "TRANSFORMER_DEINIT";
     }
 
+    // Initialize AI model with symbol/timeframe/risk manager after factory creation
+    virtual bool InitializeAI(const string symbol, const ENUM_TIMEFRAMES timeframe, void* unifiedRiskManager) override
+    {
+        // For Transformer AI, the model is created in Init() if not already created
+        // This method ensures the model is initialized with the correct symbol/timeframe
+        if(m_transformer == NULL)
+        {
+            m_transformer = new CTransformerBrain(TRANSFORMER_D_MODEL_DEFAULT, TRANSFORMER_NUM_HEADS_DEFAULT, TRANSFORMER_NUM_LAYERS_A_DEFAULT, TRANSFORMER_D_FF_DEFAULT, TRANSFORMER_MAX_SEQ_LEN_DEFAULT, TRANSFORMER_LR_A_DEFAULT);
+        }
+        if(m_transformer != NULL)
+        {
+            m_symbol = symbol;
+            m_timeframe = timeframe;
+            m_lastDecisionReasonTag = "TRANSFORMER_AI_INITIALIZED";
+            return true;
+        }
+        m_lastDecisionReasonTag = "TRANSFORMER_AI_INIT_FAILED";
+        return false;
+    }
+
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
     {
         confidence = 0.0;
@@ -333,10 +353,7 @@ public:
         LogVoteHeartbeat();
         return signal;
     }
-
-    virtual void OnNewBar(void) override {}
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override {}
-
+    
     virtual string GetName(void) const override { return "Transformer AI"; }
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
@@ -367,7 +384,17 @@ public:
         return baseWeight;
     }
     virtual bool ValidateParameters(void) override { return (m_transformer != NULL); }
-    virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
+        virtual bool ValidateRiskManagerInjection(void) const override
+        {
+            return false; // Default: risk manager not injected
+        }
+    
+        virtual bool ShouldBypassTierConfidenceFloor(void) const override
+        {
+            return false; // Default: no bypass
+        }
+    
+        virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
 
@@ -377,7 +404,19 @@ public:
         successful = 0;
         accuracy = 0.0;
     }
-    
+
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
+    {
+    }
+
+    virtual void OnTick(void) override
+    {
+    }
+
+    virtual void OnTimer(void) override
+    {
+    }
+
     virtual double GetUncertainty(void) override
     {
         if(m_transformer == NULL) return 0.5;
@@ -410,7 +449,7 @@ public:
             m_transformer.SetTemperature(temperature);
     }
     
-    virtual int GetRegimeState(void) const override
+    virtual int GetCurrentRegime(void) const override
     {
         return -1;
     }
@@ -425,6 +464,53 @@ public:
     virtual string GetLastLoadStatus(void) const override
     {
         return (m_transformer != NULL) ? "LOADED" : "NOT_INITIALIZED";
+    }
+
+    //+------------------------------------------------------------------+
+    //| Capability Interface Methods                                     |
+    //+------------------------------------------------------------------+
+    // IUncertaintyEstimation
+    virtual void GetConfidenceInterval(double &lower, double &upper) const override
+    {
+        lower = 0.0;
+        upper = 1.0;
+        if(m_transformer != NULL)
+        {
+            double uncertainty = 1.0 - m_cachedConfidence;
+            double confidence = m_cachedConfidence;
+            lower = MathMax(0.0, confidence - uncertainty);
+            upper = MathMin(1.0, confidence + uncertainty);
+        }
+    }
+
+    // IModelHealth
+    virtual double GetHealthScore(void) const override
+    {
+        if(m_transformer == NULL)
+            return 0.0;
+        return IsModelHealthy() ? 1.0 : 0.0;
+    }
+
+    // IOnlineTraining
+    virtual void EnableOnlineTraining(const bool enable) override
+    {
+        // Transformer doesn't support online training
+    }
+
+    virtual bool TrainStep(void) override
+    {
+        return false; // Not supported
+    }
+
+    virtual string GetTrainingState(void) const override
+    {
+        return "NOT_SUPPORTED";
+    }
+
+    // IRegimeAware
+    virtual void OnRegimeChange(const int newRegime) override
+    {
+        // Transformer doesn't have regime awareness
     }
 };
 

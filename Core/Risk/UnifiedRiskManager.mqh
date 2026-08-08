@@ -8,9 +8,21 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/ErrorHandling.mqh"
 #include "../Monitoring/PerformanceAnalytics.mqh"
+#include "../Utils/JsonLogger.mqh"
 #include "PortfolioRiskManager.mqh"
 #include "VirtualPosition.mqh"
 #include "../Utils/TradeJournal.mqh"
+#include "../Processing/DerivAssetProfiler.mqh"
+#include "../Utils/RiskMath.mqh"
+// Phase E1 extracted sub-modules (behaviour-preserving decomposition)
+#include "RiskClusterCodec.mqh"
+#include "RiskSymbolStats.mqh"
+#include "RiskValidationStats.mqh"
+// Phase E2 extracted sub-modules (behaviour-preserving decomposition)
+#include "RiskClusterBudget.mqh"
+#include "RiskOpposingConflictGuard.mqh"
+#include "RiskCircuitBreaker.mqh"
+#include "RiskMarginHealth.mqh"
 #include <Trade/Trade.mqh>
 
 //+------------------------------------------------------------------+
@@ -119,6 +131,23 @@ struct STradeValidationRequest
     string clusterCode;               // Compact cluster code (T/R/S/N)
     string contributorContext;        // Contributor summary
     datetime requestTime;             // Request timestamp
+
+    // Default constructor - ensures all fields are initialized
+    STradeValidationRequest() :
+        symbol(""),
+        orderType(ORDER_TYPE_BUY),
+        lotSize(0.0),
+        stopLossPips(0.0),
+        takeProfitPips(0.0),
+        confidence(0.0),
+        strategy(""),
+        reasoning(""),
+        strategyRole(""),
+        strategyCluster(""),
+        clusterCode(""),
+        contributorContext(""),
+        requestTime(0)
+    {}
 };
 
 //+------------------------------------------------------------------+
@@ -128,8 +157,12 @@ class CUnifiedRiskManager
 {
 private:
     SUnifiedRiskConfig m_config;
+    // OWNED: Value member - automatically constructed/destroyed with UnifiedRiskManager
     CPortfolioRiskManager m_portfolioRiskManager;
+    // OWNED: Value member - automatically constructed/destroyed
     CVirtualPositionBook m_virtualPositionBook;
+    // NON-OWNING: Raw pointer to PerformanceAnalytics owned by EAOrchestrator
+    // Lifetime: EAOrchestrator creates/owns; UnifiedRiskManager only references
     CPerformanceAnalytics* m_performanceAnalytics;
 
     double m_activeRiskPerTradePercent;
@@ -140,27 +173,15 @@ private:
     bool m_conservativeMode;
     datetime m_lastPressureLogTime;
     
-    // ENHANCEMENT: Drawdown Circuit Breaker (Batch 93 - Week 1)
-    bool m_tradingEnabled;           // Master switch for trading
-    double m_peakEquity;             // Highest equity reached
-    double m_maxDrawdownFromPeak;    // Current max drawdown from peak
-    int m_drawdownBreachCount;       // Number of times drawdown limit hit
-
-    // Daily P&L Loss Limit circuit breaker
-    bool m_dailyLossHaltActive;      // Daily loss halt is active
-    datetime m_dailyLossHaltDate;    // Date when halt was triggered (for reset on new day)
+    // Phase E2: drawdown / daily-loss circuit breakers, graduated auto-recovery
+    // and the emergency-close escalation flag now live in CRiskCircuitBreaker.
+    // OWNED: Value member - constructor performs the zero-init that used to
+    // live in this class's initialiser list.
+    CRiskCircuitBreaker m_circuitBreaker;
 
     // Broker trading day boundary tracking
     int m_lastTradingDayKey;         // Cached trading day key (YYYYMMDD)
     int m_tradingDayStartHour;       // Hour when broker trading day starts (default 0 = midnight server time)
-
-    // ENHANCEMENT: Circuit Breaker Auto-Recovery (Phase 2.4)
-    datetime m_cbTriggeredAt;        // When circuit breaker was triggered
-    int m_cbRecoveryAttempts;        // Number of auto-recovery attempts made
-    int m_cbMaxRecoveryAttempts;     // Max auto-recovery attempts (default 3)
-    int m_cbRecoveryCooldownMin;     // Cooldown in minutes before recovery attempt (default 30)
-    datetime m_cbLastRecoverySuccessTime; // When last successful recovery occurred (for reset after stable period)
-    int m_cbRecoveryLevel;           // Graduated recovery level: 0=halted, 1=partial(75%), 2=full(50%)
 
     // Per-Symbol Risk Budgeting (Phase 5)
     SSymbolRiskBudget m_symbolBudgets[];
@@ -179,30 +200,33 @@ private:
 
     long m_eaMagicNumber;  // Batch 119: EA magic number for position filtering
 
-    // Emergency close flag for circuit breaker 2nd+ breach
-    bool m_emergencyCloseRequested;
+        // Deriv asset profiler for family detection
+        CDerivAssetProfiler m_derivAssetProfiler;
 
-    // Validation gate state (moved from CRiskValidationGate to consolidate risk authority)
+        // Validation gate state (moved from CRiskValidationGate to consolidate risk authority)
     bool m_clusterGovernanceEnabled;
     bool m_clusterMutexEnabled;
     int m_maxConcurrentPerCluster;
     double m_maxClusterRiskPercent;
-    double m_maxFreeMarginUsage;
-    double m_minMarginLevel;
-    int m_opposingConflictCooldownSec;
-    datetime m_lastOpposingConflictTime;
-    string m_lastOpposingConflictSymbol;
-    string m_clusterRiskCapCodes[];
-    double m_clusterRiskCapValues[];
+    // Phase E2: free-margin / margin-level thresholds and the runtime margin
+    // health monitor now live in CRiskMarginHealth.
+    // OWNED: Value member - constructor performs the zero-init that used to
+    // live in this class's initialiser list.
+    CRiskMarginHealth m_marginHealth;
+    // Phase E2: opposing same-symbol conflict cooldown cache (Fix #9).
+    // OWNED: Value member - constructor performs the zero-init that used to
+    // live in this class's initialiser list.
+    CRiskOpposingConflictGuard m_opposingGuard;
+    // Phase E2: per-cluster risk cap registry (Fix #11).
+    // OWNED: Value member - constructor seeds the T/R default overrides that
+    // used to be written in this class's constructor body.
+    CRiskClusterBudget m_clusterBudget;
     string m_clusterSyncCodes[];
     int m_clusterSyncCounts[];
-    bool m_auditLogging;
-    string m_auditLogFile;
-    int m_validationCount;
-    int m_approvedCount;
-    int m_rejectedCount;
-    datetime m_lastValidation;
-    double m_avgValidationTime;
+    // Phase E1: validation counters, timing metrics and audit log sink.
+    // OWNED: Value member - constructor performs the zero-init that used to
+    // live in this class's initialiser list.
+    CRiskValidationStats m_validationStats;
 
     // Additional validation parameters (formerly in CRiskValidationGate)
     double m_emergencyRiskOverride;   // Blueprint 10.4: 0-100 scale (5.0 = 5%)
@@ -224,14 +248,15 @@ public:
     void SetBaseRiskPerTrade(double riskPercent);
 
     // Apply tier overrides without reinitializing the entire risk manager.
-    // Updates only the parameters that the tier system controls (daily risk,
-    // portfolio risk, drawdown thresholds, daily loss limit) while preserving
-    // runtime state (circuit breaker, daily risk used, virtual positions, etc.)
-    void ApplyTierOverrides(double tierRiskPerTradePct,
-                            int tierMaxPositions,
-                            double effectiveDaily, double effectivePortfolio,
-                            double effectiveDdWarning, double effectiveDdCritical,
-                            double effectiveDailyLossLimit);
+        // Updates only the parameters that the tier system controls (daily risk,
+        // portfolio risk, drawdown thresholds, daily loss limit) while preserving
+        // runtime state (circuit breaker, daily risk used, virtual positions, etc.)
+        void ApplyTierOverrides(double tierRiskPerTradePct,
+                                int tierMaxPositions,
+                                double effectiveDaily, double effectivePortfolio,
+                                double effectiveDdWarning, double effectiveDdCritical,
+                                double effectiveDailyLossLimit,
+                                double maxRiskPerTradeOverride);
 
     // Per-symbol risk overrides (family-specific risk parameters)
     void SetRiskPerTrade(const string symbol, double riskPct);
@@ -240,8 +265,8 @@ public:
     double GetEffectiveMaxDrawdown(const string symbol) const;
 
     // Single trade validation authority.
-    SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime");
-    void ConfigureClusterGovernance(const bool enabled,
+        SValidationResult ValidateTradeRequest(const STradeValidationRequest &request, const string phaseTag = "runtime", const string corrId = "");
+        void ConfigureClusterGovernance(const bool enabled,
                                     const int maxConcurrentPerCluster,
                                     const double maxClusterRiskPercent,
                                     const bool enableMutex);
@@ -284,6 +309,8 @@ public:
     bool CheckDrawdownCircuitBreaker();
     double GetCurrentDrawdownPercent() const;
     bool IsTradingEnabled() const;
+    bool IsEmergencyCloseRequested() const;
+    void ResetEmergencyCloseRequested();
     void ResetCircuitBreaker();
     bool CheckCircuitBreakerRecovery();
     // Crash recovery: get/set circuit breaker state for persistence across restarts
@@ -388,30 +415,32 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                                              int tierMaxPositions,
                                              double effectiveDaily, double effectivePortfolio,
                                              double effectiveDdWarning, double effectiveDdCritical,
-                                             double effectiveDailyLossLimit)
+                                             double effectiveDailyLossLimit,
+                                             double maxRiskPerTradeOverride)
 {
     // Update config parameters controlled by tier system
-    m_config.baseRiskPerTradePercent = tierRiskPerTradePct;
-    m_config.maxRiskPerTradePercent  = MathMin(tierRiskPerTradePct * 2.0, 50.0);
-    m_config.maxDailyRiskPercent     = effectiveDaily;
-    m_config.maxPortfolioRiskPercent = effectivePortfolio;
-    m_config.drawdownWarningPercent  = effectiveDdWarning;
-    m_config.drawdownCriticalPercent = effectiveDdCritical;
-    m_config.dailyLossLimitPercent   = effectiveDailyLossLimit;
-    m_config.maxPositionsSameBase    = tierMaxPositions;
+        m_config.baseRiskPerTradePercent = tierRiskPerTradePct;
+        m_config.maxRiskPerTradePercent  = maxRiskPerTradeOverride;  // L5-006: use explicit override instead of 2x formula
+        m_config.maxDailyRiskPercent     = effectiveDaily;
+        m_config.maxPortfolioRiskPercent = effectivePortfolio;
+        m_config.drawdownWarningPercent  = effectiveDdWarning;
+        m_config.drawdownCriticalPercent = effectiveDdCritical;
+        m_config.dailyLossLimitPercent   = effectiveDailyLossLimit;
+        m_config.maxPositionsSameBase    = tierMaxPositions;
 
-    // Update active risk per trade
-    m_activeRiskPerTradePercent = ClampRiskPercent(m_config.baseRiskPerTradePercent);
+        // Update active risk per trade
+        m_activeRiskPerTradePercent = ClampRiskPercent(m_config.baseRiskPerTradePercent);
 
-    // Update portfolio risk manager limits (no reinitialization)
-    m_portfolioRiskManager.SetMaxPortfolioRisk(effectivePortfolio);
+        // Update portfolio risk manager limits (no reinitialization)
+        m_portfolioRiskManager.SetMaxPortfolioRisk(effectivePortfolio);
 
-    PrintFormat("[RISK-INIT-SINGLE] Tier overrides applied (no reinit) | risk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%%",
-                m_config.baseRiskPerTradePercent,
-                m_config.maxDailyRiskPercent,
-                m_config.maxPortfolioRiskPercent,
-                m_config.drawdownWarningPercent,
-                m_config.drawdownCriticalPercent);
+        PrintFormat("[RISK-INIT-SINGLE] Tier overrides applied (no reinit) | risk=%.1f%% | maxRisk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%%",
+                    m_config.baseRiskPerTradePercent,
+                    m_config.maxRiskPerTradePercent,
+                    m_config.maxDailyRiskPercent,
+                    m_config.maxPortfolioRiskPercent,
+                    m_config.drawdownWarningPercent,
+                    m_config.drawdownCriticalPercent);
 }
 
 //+------------------------------------------------------------------+
@@ -485,7 +514,8 @@ double CUnifiedRiskManager::GetEffectiveRiskPerTrade(const string symbol) const
         if(m_riskOverrides[i].symbol == symbol && m_riskOverrides[i].hasOverrides && m_riskOverrides[i].riskPerTradePercent > 0.0)
             return MathMin(m_riskOverrides[i].riskPerTradePercent, m_config.maxRiskPerTradePercent);
     }
-    return m_config.baseRiskPerTradePercent;
+    // L5-020 FIX: Return active risk per trade (reduced in conservative mode) instead of base risk
+    return m_activeRiskPerTradePercent;
 }
 
 //+------------------------------------------------------------------+
@@ -514,44 +544,27 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_initialized(false),
     m_conservativeMode(false),
     m_lastPressureLogTime(0),
-    m_tradingEnabled(true),
-    m_peakEquity(0.0),
-    m_maxDrawdownFromPeak(0.0),
-    m_drawdownBreachCount(0),
-    m_dailyLossHaltActive(false),
-    m_dailyLossHaltDate(0),
+    // Phase E2: circuit-breaker defaults now live in
+    // CRiskCircuitBreaker::CRiskCircuitBreaker() (identical values).
     m_lastTradingDayKey(0),
     m_tradingDayStartHour(0),
-    m_cbTriggeredAt(0),
-    m_cbRecoveryAttempts(0),
-    m_cbMaxRecoveryAttempts(3),
-    m_cbRecoveryCooldownMin(5),
-    m_cbLastRecoverySuccessTime(0),
-    m_cbRecoveryLevel(0),
     m_symbolBudgetCount(0),
     m_lastBudgetRefresh(0),
     m_riskReductionFactor(0.5),
     m_riskOverrideCount(0),
     m_lastThrottlePressure(1.0),
     m_eaMagicNumber(0),
-    m_emergencyCloseRequested(false),
     // Validation gate state (moved from CRiskValidationGate)
     m_clusterGovernanceEnabled(true),
     m_clusterMutexEnabled(true),
     m_maxConcurrentPerCluster(5),
     m_maxClusterRiskPercent(5.0),
-    m_maxFreeMarginUsage(0.8),
-    m_minMarginLevel(200.0),
-    m_opposingConflictCooldownSec(120),
-    m_lastOpposingConflictTime(0),
-    m_lastOpposingConflictSymbol(""),
-    m_auditLogging(true),
-    m_auditLogFile("UnifiedRiskValidation.log"),
-    m_validationCount(0),
-    m_approvedCount(0),
-    m_rejectedCount(0),
-    m_lastValidation(0),
-    m_avgValidationTime(0.0),
+    // Phase E2: margin-health thresholds now live in
+    // CRiskMarginHealth::CRiskMarginHealth() (identical values).
+    // Phase E2: opposing-conflict cooldown defaults now live in
+    // CRiskOpposingConflictGuard::CRiskOpposingConflictGuard() (identical values).
+    // Phase E1: audit-log + validation counter defaults now live in
+    // CRiskValidationStats::CRiskValidationStats() (identical values).
     m_emergencyRiskOverride(5.0)
 {
     m_config.baseRiskPerTradePercent = 1.0;   // Blueprint 10.4: 0-100 scale (1.0 = 1%)
@@ -566,19 +579,14 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_config.drawdownWarningPercent = 17.5;   // Blueprint 10.4: 0-100 scale (70% of 25% max)
     m_config.drawdownCriticalPercent = 25.0;  // Blueprint 10.4: 0-100 scale (matches InpMaxDrawdown)
     m_config.dailyLossLimitPercent = 15.0;    // Blueprint 10.4: 0-100 scale (raised for small accounts: single trade ~10%)
-    m_config.minLotRiskMultiplier = 15.0;      // Allow up to 15x risk when rounding up to broker min lot (small accounts: 0.10 min on $179)
+    m_config.minLotRiskMultiplier = 15.0;     // Restored 15x tolerance for min-lot round-up (reverted L5-002 1x clamp)
     m_config.adaptationMinTrades = 20;
     m_config.enableAdaptiveSizing = true;
     m_config.enableAuditLogging = true;
     m_config.auditLogFile = "UnifiedRiskValidation.log";
 
-    // Per-cluster risk caps (Fix #11): default overrides
-    ArrayResize(m_clusterRiskCapCodes, 2);
-    ArrayResize(m_clusterRiskCapValues, 2);
-    m_clusterRiskCapCodes[0] = "T";
-    m_clusterRiskCapValues[0] = 10.0;  // Trend cluster gets 10% cap
-    m_clusterRiskCapCodes[1] = "R";
-    m_clusterRiskCapValues[1] = 5.0;   // Reversion cluster stays at default 5%
+    // Phase E2: per-cluster risk caps (Fix #11) default overrides are now
+    // seeded by CRiskClusterBudget::CRiskClusterBudget() (identical values).
 }
 
 //+------------------------------------------------------------------+
@@ -586,7 +594,11 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
 //+------------------------------------------------------------------+
 CUnifiedRiskManager::~CUnifiedRiskManager()
 {
-    // Intentionally empty - no dynamic resources to release
+    // No manual cleanup required - all owned resources use RAII via value members:
+    // - m_portfolioRiskManager (value member, auto-destroyed)
+    // - m_virtualPositionBook (value member, auto-destroyed)
+    // - m_performanceAnalytics is NON-OWNING (owned by EAOrchestrator)
+    // This class owns NO raw pointers to dynamically allocated memory.
 }
 
 //+------------------------------------------------------------------+
@@ -596,6 +608,8 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
                                      CPerformanceAnalytics* perfAnalytics)
 {
     m_config = config;
+    // NON-OWNING: perfAnalytics is owned by EAOrchestrator (created in OnInit, destroyed in Shutdown)
+    // UnifiedRiskManager only stores a reference for metrics queries
     m_performanceAnalytics = perfAnalytics;
 
     if(m_config.maxRiskPerTradePercent <= 0.0)
@@ -626,7 +640,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     if(m_config.drawdownCriticalPercent <= m_config.drawdownWarningPercent)
         m_config.drawdownCriticalPercent = m_config.drawdownWarningPercent + 4.0;
     if(m_config.minLotRiskMultiplier <= 0.0)
-        m_config.minLotRiskMultiplier = 15.0;
+        m_config.minLotRiskMultiplier = 1.0;
 
     if(!m_portfolioRiskManager.Initialize(m_config.maxPortfolioRiskPercent, m_config.correlationThreshold))
     {
@@ -643,17 +657,9 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
         m_dailyStartEquity = AccountInfoDouble(ACCOUNT_BALANCE);
     
     // ENHANCEMENT: Initialize drawdown circuit breaker (Batch 93 - Week 1)
-    m_peakEquity = m_dailyStartEquity;
-    m_maxDrawdownFromPeak = 0.0;
-    m_drawdownBreachCount = 0;
-    m_tradingEnabled = true;
-    m_cbTriggeredAt = 0;
-    m_cbRecoveryAttempts = 0;
-    m_cbRecoveryLevel = 0;
-
-    // Daily P&L Loss Limit circuit breaker
-    m_dailyLossHaltActive = false;
-    m_dailyLossHaltDate = 0;
+    // Phase E2 forwarder -> CRiskCircuitBreaker::InitializeState
+    // (also re-arms the daily P&L loss limit circuit breaker)
+    m_circuitBreaker.InitializeState(m_dailyStartEquity);
 
     // Broker trading day boundary
     m_lastTradingDayKey = 0;
@@ -674,7 +680,7 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
                 m_config.maxPortfolioRiskPercent);
     
     PrintFormat("[RISK-CIRCUIT-BREAKER] Enabled | Initial Equity=%.2f | Drawdown Limits: Warning=%.1f%% Critical=%.1f%%",
-                m_peakEquity, m_config.drawdownWarningPercent, m_config.drawdownCriticalPercent);
+                m_circuitBreaker.GetPeakEquity(), m_config.drawdownWarningPercent, m_config.drawdownCriticalPercent);
 
     return true;
 }
@@ -687,18 +693,11 @@ void CUnifiedRiskManager::RefreshRuntimeState()
     if(!m_initialized)
         return;
 
-    // Update peak equity and drawdown from peak - ensures m_maxDrawdownFromPeak is always current
-    double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
-    if(equityNow > m_peakEquity)
-    {
-        m_peakEquity = equityNow;
-        m_maxDrawdownFromPeak = 0.0;
-    }
-    else if(m_peakEquity > 0 && equityNow > 0)
-    {
-        m_maxDrawdownFromPeak = ((m_peakEquity - equityNow) / m_peakEquity) * 100.0;
-    }
-    
+    // Update peak equity and drawdown from peak - keeps the circuit breaker's
+    // drawdown reading current.
+    // Phase E2 forwarder -> CRiskCircuitBreaker::RefreshPeakAndDrawdown
+    m_circuitBreaker.RefreshPeakAndDrawdown();
+
     CheckAndResetDailyLimits();
     UpdateAdaptiveRiskLevel();
     CheckCircuitBreakerRecovery();
@@ -722,12 +721,8 @@ void CUnifiedRiskManager::CheckAndResetDailyLimits()
         m_lastDailyReset = nowTime;
 
         // Reset circuit breaker recovery counter on new trading day
-        if(m_cbRecoveryAttempts > 0)
-        {
-            PrintFormat("[RISK-UNIFIED] Daily reset: circuit breaker recovery counter %d->0", m_cbRecoveryAttempts);
-            m_cbRecoveryAttempts = 0;
-            m_cbLastRecoverySuccessTime = 0;
-        }
+        // Phase E2 forwarder -> CRiskCircuitBreaker::ResetRecoveryCounterForNewDay
+        m_circuitBreaker.ResetRecoveryCounterForNewDay();
 
         Print("[RISK-UNIFIED] Daily risk usage reset");
     }
@@ -737,17 +732,32 @@ void CUnifiedRiskManager::CheckAndResetDailyLimits()
 //| Validate trade request                                           |
 //+------------------------------------------------------------------+
 SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidationRequest &request,
-                                                            const string phaseTag)
+                                                            const string phaseTag,
+                                                            const string corrId)
 {
+    // Set correlation ID for structured logging
+    if(corrId != "")
+        CJsonLogger::SetCorrelationId(corrId);
+    
     SValidationResult result;
     ZeroMemory(result);
     result.approved = false;
     result.adjustedLotSize = request.lotSize;
     result.severity = ERROR_LEVEL_ERROR;
+    // BUGFIX (consensus-conf): ZeroMemory() clobbers the struct's documented
+    // default confidenceMultiplier (1.0 = "no change") to 0.0. The risk gate
+    // does not compute a confidence adjustment, so on the APPROVED path the
+    // multiplier must remain a no-op. Restoring it here prevents callers that
+    // do `confidence *= result.confidenceMultiplier` (e.g. ValidateWithRiskManager)
+    // from silently zeroing a legitimate high-confidence signal.
+    result.confidenceMultiplier = 1.0;
 
     if(!m_initialized)
     {
         result.message = "Unified risk manager is not initialized";
+        CJsonLogger::LogRiskEvent("RiskGate", request.symbol, "NOT_INITIALIZED", 
+            "Unified risk manager is not initialized", 0.0, 0.0, corrId);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
 
@@ -756,8 +766,10 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     {
         result.message = StringFormat("Trading halted: Daily loss limit of %.1f%% exceeded", m_config.dailyLossLimitPercent);
         result.severity = ERROR_LEVEL_CRITICAL;
-        PrintFormat("[RISK-GATE-REJECT] %s | reason=daily_loss_limit | limit=%.1f%% | phase=%s",
-                    request.symbol, m_config.dailyLossLimitPercent, phaseTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "DAILY_LOSS_LIMIT",
+            StringFormat("Daily loss limit %.1f%% exceeded", m_config.dailyLossLimitPercent),
+            m_config.dailyLossLimitPercent, 0.0, corrId);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
 
@@ -766,23 +778,25 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     {
         result.message = "Trading paused: Drawdown circuit breaker activated";
         result.severity = ERROR_LEVEL_CRITICAL;
-        PrintFormat("[RISK-GATE-REJECT] %s | reason=drawdown_circuit_breaker | dd=%.2f%% | phase=%s",
-                    request.symbol, m_maxDrawdownFromPeak, phaseTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "DRAWDOWN_CIRCUIT_BREAKER",
+            StringFormat("Drawdown %.2f%% triggered circuit breaker", m_circuitBreaker.GetMaxDrawdownFromPeak()),
+            m_circuitBreaker.GetMaxDrawdownFromPeak(), 0.0, corrId);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
 
     // Family-specific drawdown check: if this symbol has a tighter drawdown limit,
     // reject trades on it even when the global circuit breaker hasn't tripped
     double familyMaxDD = GetEffectiveMaxDrawdown(request.symbol);
-    if(familyMaxDD < m_config.drawdownCriticalPercent && m_maxDrawdownFromPeak >= familyMaxDD)
+    if(familyMaxDD < m_config.drawdownCriticalPercent && m_circuitBreaker.GetMaxDrawdownFromPeak() >= familyMaxDD)
     {
         result.message = StringFormat("Family drawdown limit reached for %s: %.2f%% >= %.1f%%",
-                                      request.symbol, m_maxDrawdownFromPeak, familyMaxDD);
+                                      request.symbol, m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD);
         result.severity = ERROR_LEVEL_WARNING;
-        PrintFormat("[RISK-FAMILY] Drawdown block | %s | DD=%.2f%% >= family limit=%.1f%%",
-                    request.symbol, m_maxDrawdownFromPeak, familyMaxDD);
-        PrintFormat("[RISK-GATE-REJECT] %s | reason=family_drawdown_limit | dd=%.2f%% | family_limit=%.1f%% | phase=%s",
-                    request.symbol, m_maxDrawdownFromPeak, familyMaxDD, phaseTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "FAMILY_DRAWDOWN_LIMIT",
+            StringFormat("Family DD=%.2f%% >= family limit=%.1f%%", m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD),
+            m_circuitBreaker.GetMaxDrawdownFromPeak(), familyMaxDD, corrId);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
 
@@ -796,8 +810,10 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         result.message = StringFormat("Daily risk budget exhausted: %.2f%% / %.2f%%",
                                       effectiveDailyRisk, m_config.maxDailyRiskPercent);
         result.severity = ERROR_LEVEL_WARNING;
-        PrintFormat("[RISK-GATE-REJECT] %s | reason=daily_budget_exhausted | effective=%.2f%% | limit=%.2f%% | phase=%s",
-                    request.symbol, effectiveDailyRisk, m_config.maxDailyRiskPercent, phaseTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "DAILY_BUDGET_EXHAUSTED",
+            StringFormat("Effective daily risk %.2f%% >= limit %.2f%%", effectiveDailyRisk, m_config.maxDailyRiskPercent),
+            effectiveDailyRisk, m_config.maxDailyRiskPercent, corrId);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
 
@@ -806,10 +822,16 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         result.message = StringFormat("Virtual reservation conflict on %s (opposing candidate already reserved)",
                                       request.symbol);
         result.severity = ERROR_LEVEL_WARNING;
-        PrintFormat("[RISK-GATE-REJECT] %s | reason=virtual_reservation_conflict | phase=%s",
-                    request.symbol, phaseTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "VIRTUAL_RESERVATION_CONFLICT",
+            "Opposing candidate already reserved", 0.0, 0.0, corrId);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
+
+    // Reserve virtual position early to account for this trade in portfolio risk
+    // Will be released on any rejection, kept on approval
+    string virtualOwnerTag = StringFormat("%s_%s_%lld", request.symbol, EnumToString(request.orderType), GetMicrosecondCount());
+    bool virtualReserved = ReserveVirtualPosition(virtualOwnerTag, request, 0.0); // riskPercent will be updated after validation
 
     // Inline validation from CRiskValidationGate::ValidateTradeRequest
     // 1. Validate basic parameters
@@ -818,7 +840,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     {
         result.message = "Basic validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_ERROR;
+        if(virtualReserved) ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "BASIC_VALIDATION_FAILED",
+            validationMessage, 0.0, 0.0, corrId);
         LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
     
@@ -829,7 +855,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         result.message = "Risk limit validation failed: " + validationMessage;
         result.riskPercent = tradeRisk;
         result.severity = ERROR_LEVEL_ERROR;
+        if(virtualReserved) ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "RISK_LIMITS_FAILED",
+            validationMessage, tradeRisk, 0.0, corrId);
         LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
     result.riskPercent = tradeRisk;
@@ -839,7 +869,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     {
         result.message = "Portfolio risk validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_ERROR;
+        if(virtualReserved) ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "PORTFOLIO_RISK_FAILED",
+            validationMessage, tradeRisk, 0.0, corrId);
         LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
 
@@ -848,7 +882,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     {
         result.message = "Cluster governance validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_WARNING;
+        if(virtualReserved) ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "CLUSTER_GOVERNANCE_FAILED",
+            validationMessage, tradeRisk, 0.0, corrId);
         LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
     
@@ -859,7 +897,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         result.message = "Correlation validation failed: " + validationMessage;
         result.correlationRisk = correlationRisk;
         result.severity = ERROR_LEVEL_WARNING;
+        if(virtualReserved) ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "CORRELATION_LIMITS_FAILED",
+            validationMessage, correlationRisk, 0.0, corrId);
         LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
     result.correlationRisk = correlationRisk;
@@ -869,7 +911,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     {
         result.message = "Margin validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_ERROR;
+        if(virtualReserved) ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "MARGIN_REQUIREMENTS_FAILED",
+            validationMessage, 0.0, 0.0, corrId);
         LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
     
@@ -878,7 +924,11 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     {
         result.message = "Account health validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_CRITICAL;
+        if(virtualReserved) ReleaseVirtualPosition(virtualOwnerTag);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "ACCOUNT_HEALTH_FAILED",
+            validationMessage, 0.0, 0.0, corrId);
         LogValidationResult(request, result);
+        CJsonLogger::ClearCorrelationId();
         return result;
     }
     
@@ -887,8 +937,7 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     result.message = "Trade request approved";
     result.portfolioRisk = CalculatePortfolioRiskAfterTrade(tradeRisk);
     result.severity = ERROR_LEVEL_INFO;
-    m_approvedCount++;
-    m_validationCount++;
+    m_validationStats.RecordApproval();
     
     LogValidationResult(request, result);
     UpdatePerformanceMetrics(GetMicrosecondCount());
@@ -919,6 +968,10 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
                         request.symbol, result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier);
             PrintFormat("[RISK-GATE-REJECT] %s | reason=lot_floor_risk_cap | lot=%.3f | min_lot=%.3f | risk_ratio=%.1f | cap=%.1f | phase=%s",
                         request.symbol, result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier, phaseTag);
+            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "LOT_FLOOR_RISK_CAP",
+                StringFormat("Lot %.3f < min %.3f, risk ratio %.1fx > cap %.1fx", result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier),
+                riskRatio, m_config.minLotRiskMultiplier, corrId);
+            CJsonLogger::ClearCorrelationId();
             return result;
         }
     }
@@ -951,6 +1004,10 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
                         request.symbol, used, result.riskPercent, allocation);
             PrintFormat("[RISK-GATE-REJECT] %s | reason=symbol_budget_exhausted | used=%.2f%% + new=%.2f%% > alloc=%.2f%% | phase=%s",
                         request.symbol, used, result.riskPercent, allocation, phaseTag);
+            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "SYMBOL_BUDGET_EXHAUSTED",
+                StringFormat("Used %.2f%% + new %.2f%% > alloc %.2f%%", used, result.riskPercent, allocation),
+                used + result.riskPercent, allocation, corrId);
+            CJsonLogger::ClearCorrelationId();
             return result;
         }
     }
@@ -967,73 +1024,81 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
 
         if(isColdStart && result.riskPercent > 0.0 && result.riskPercent <= GetEffectiveRiskPerTrade(request.symbol))
-        {
-            // Bootstrap: allow this trade as the first entry on cold start
-            // The portfolio cap is effectively distributed: each requesting symbol
-            // can take up to (portfolioCap / activeSymbolCount) risk.
-            // Since there are no positions yet, this first trade is always allowed
-            // as long as its risk is within per-trade limits.
-            PrintFormat("[RISK-PORTFOLIO] Bootstrap mode: distributing %.2f%% cap across requesting symbols (no open positions)",
-                        m_config.maxPortfolioRiskPercent);
-        }
-        else
-        {
-            result.approved = false;
-            result.severity = ERROR_LEVEL_WARNING;
-            result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
-                                          phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
-            PrintFormat("[RISK-GATE-REJECT] %s | reason=portfolio_risk_exceeded | open=%.2f%% + reserved=%.2f%% + new=%.2f%% > limit=%.2f%% | phase=%s",
-                        request.symbol, openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent, phaseTag);
-            return result;
-        }
+                {
+                    // Bootstrap: allow this trade as the first entry on cold start
+                    // The portfolio cap is effectively distributed: each requesting symbol
+                    // can take up to (portfolioCap / activeSymbolCount) risk.
+                    // Since there are no positions yet, this first trade is always allowed
+                    // as long as its risk is within per-trade limits.
+                    PrintFormat("[RISK-PORTFOLIO] Bootstrap mode: distributing %.2f%% cap across requesting symbols (no open positions)",
+                                m_config.maxPortfolioRiskPercent);
+                }
+                else
+                {
+                    result.approved = false;
+                    result.severity = ERROR_LEVEL_WARNING;
+                    result.message = StringFormat("Portfolio risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
+                                                  phaseTag, openExposureRisk + reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent);
+                    PrintFormat("[RISK-GATE-REJECT] %s | reason=portfolio_risk_exceeded | open=%.2f%% + reserved=%.2f%% + new=%.2f%% > limit=%.2f%% | phase=%s",
+                                request.symbol, openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent, phaseTag);
+                    CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "PORTFOLIO_RISK_EXCEEDED",
+                        StringFormat("Open %.2f%% + reserved %.2f%% + new %.2f%% > limit %.2f%%", openExposureRisk, reservedRisk, result.riskPercent, m_config.maxPortfolioRiskPercent),
+                        openExposureRisk + reservedRisk + result.riskPercent, m_config.maxPortfolioRiskPercent, corrId);
+                    CJsonLogger::ClearCorrelationId();
+                    ReleaseVirtualPosition(virtualOwnerTag);
+                    return result;
+                }
     }
 
     // I6: Per-Family Position Limit — prevent over-concentration in one synthetic family
-    // Count positions by family using DerivAssetProfiler
-    {
-        int familyPositionCount = 0;
-        int totalPositions = PositionsTotal();
-        // Get the family of the requested symbol from Deriv profiler
-        string reqSymbol = request.symbol;
+        // Count positions by family using DerivAssetProfiler
+        {
+            int familyPositionCount = 0;
+            int totalPositions = PositionsTotal();
+            // Get the family of the requested symbol from Deriv profiler
+            string reqSymbol = request.symbol;
+            ENUM_DERIV_FAMILY reqFamily = m_derivAssetProfiler.DetectFamily(reqSymbol);
         
-        for(int i = 0; i < totalPositions; i++)
-        {
-            ulong ticket = PositionGetTicket(i);
-            if(ticket <= 0) continue;
-            string posSymbol = PositionGetString(POSITION_SYMBOL);
-            // Same symbol family = count it
-            if(posSymbol == reqSymbol)
-                familyPositionCount++;
-        }
+            for(int i = 0; i < totalPositions; i++)
+            {
+                ulong ticket = PositionGetTicket(i);
+                if(ticket <= 0) continue;
+                string posSymbol = PositionGetString(POSITION_SYMBOL);
+                // Same symbol family = count it
+                ENUM_DERIV_FAMILY posFamily = m_derivAssetProfiler.DetectFamily(posSymbol);
+                if(posFamily == reqFamily && reqFamily != ENUM_DERIV_FAMILY(-1))
+                    familyPositionCount++;
+            }
 
-        // Family position limits by symbol name pattern
-        int maxFamilyPositions = 3; // default
-        // Crash/Boom symbols contain "Boom" or "Crash"
-        if(StringFind(reqSymbol, "Boom") >= 0 || StringFind(reqSymbol, "Crash") >= 0)
-            maxFamilyPositions = 2;
-        // HFV 1-second symbols contain "1s"
-        else if(StringFind(reqSymbol, "1s") >= 0)
-            maxFamilyPositions = 2;
-        // Jump symbols contain "Jump"
-        else if(StringFind(reqSymbol, "Jump") >= 0)
-            maxFamilyPositions = 2;
-        // Hybrid symbols contain "Hybrid"
-        else if(StringFind(reqSymbol, "Hybrid") >= 0)
-            maxFamilyPositions = 2;
+            // Family position limits by Deriv family type
+            int maxFamilyPositions = 3; // default
+            switch(reqFamily)
+            {
+                case DERIV_CRASH_BOOM:
+                case DERIV_STEP:
+                case DERIV_JUMP:
+                case DERIV_HYBRID:
+                    maxFamilyPositions = 2;
+                    break;
+                default:
+                    maxFamilyPositions = 3;
+                    break;
+            }
 
-        if(familyPositionCount >= maxFamilyPositions)
-        {
-            result.approved = false;
-            result.severity = ERROR_LEVEL_WARNING;
-            result.message = StringFormat("Family position limit reached: %d/%d positions in same family",
-                                          familyPositionCount, maxFamilyPositions);
-            PrintFormat("[RISK-FAMILY-POS] REJECTED | %s | family positions=%d/%d",
-                        reqSymbol, familyPositionCount, maxFamilyPositions);
-            PrintFormat("[RISK-GATE-REJECT] %s | reason=family_position_limit | family_positions=%d/%d | phase=%s",
-                        reqSymbol, familyPositionCount, maxFamilyPositions, phaseTag);
-            return result;
+            if(familyPositionCount >= maxFamilyPositions)
+                        {
+                            result.approved = false;
+                            result.severity = ERROR_LEVEL_WARNING;
+                            result.message = StringFormat("Family position limit reached: %d/%d positions in same family",
+                                                          familyPositionCount, maxFamilyPositions);
+                            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "FAMILY_POSITION_LIMIT",
+                                StringFormat("Family %s positions %d/%d", EnumToString(reqFamily), familyPositionCount, maxFamilyPositions),
+                                (double)familyPositionCount, (double)maxFamilyPositions, corrId);
+                            CJsonLogger::ClearCorrelationId();
+                            ReleaseVirtualPosition(virtualOwnerTag);
+                            return result;
+                        }
         }
-    }
 
     // Tiered Correlation Response: check correlation with existing positions
     if(m_config.correlationBlockThreshold > 0.0 || m_config.correlationReduceThreshold > 0.0)
@@ -1052,18 +1117,19 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
         }
 
         // BLOCK tier: correlation exceeds block threshold
-        if(maxCorrelation >= m_config.correlationBlockThreshold)
-        {
-            result.approved = false;
-            result.severity = ERROR_LEVEL_WARNING;
-            result.message = StringFormat("Correlation BLOCK: %.2f >= %.2f for %s",
-                                          maxCorrelation, m_config.correlationBlockThreshold, request.symbol);
-            PrintFormat("[RISK-CORRELATION-BLOCK] %s | corr=%.2f | threshold=%.2f",
-                        request.symbol, maxCorrelation, m_config.correlationBlockThreshold);
-            PrintFormat("[RISK-GATE-REJECT] %s | reason=correlation_block | corr=%.2f >= threshold=%.2f | phase=%s",
-                        request.symbol, maxCorrelation, m_config.correlationBlockThreshold, phaseTag);
-            return result;
-        }
+                if(maxCorrelation >= m_config.correlationBlockThreshold)
+                {
+                    result.approved = false;
+                    result.severity = ERROR_LEVEL_WARNING;
+                    result.message = StringFormat("Correlation BLOCK: %.2f >= %.2f for %s",
+                                                  maxCorrelation, m_config.correlationBlockThreshold, request.symbol);
+                    CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "CORRELATION_BLOCK",
+                        StringFormat("Correlation %.2f >= threshold %.2f", maxCorrelation, m_config.correlationBlockThreshold),
+                        maxCorrelation, m_config.correlationBlockThreshold, corrId);
+                    CJsonLogger::ClearCorrelationId();
+                    ReleaseVirtualPosition(virtualOwnerTag);
+                    return result;
+                }
 
         // REDUCE tier: correlation exceeds reduce threshold — scale lot size proportionally
         if(maxCorrelation >= m_config.correlationReduceThreshold)
@@ -1075,8 +1141,9 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
             double originalLot = result.adjustedLotSize;
             result.adjustedLotSize = NormalizeDouble(result.adjustedLotSize * reduceFactor, 2);
             result.requiresAdjustment = true;
-            PrintFormat("[RISK-CORRELATION-REDUCE] %s | corr=%.2f | factor=%.2f | lot %.2f->%.2f",
-                        request.symbol, maxCorrelation, reduceFactor, originalLot, result.adjustedLotSize);
+            CJsonLogger::LogInfo("RiskGateReduce", 
+                StringFormat("Correlation reduce | corr=%.2f | factor=%.2f | lot %.2f->%.2f",
+                    maxCorrelation, reduceFactor, originalLot, result.adjustedLotSize), corrId);
         }
     }
 
@@ -1098,16 +1165,35 @@ SValidationResult CUnifiedRiskManager::ValidateTradeRequest(const STradeValidati
     }
 
     double projectedDailyRisk = GetEffectiveDailyRiskUsedPercent(reservedRisk + MathMax(0.0, result.riskPercent));
-    if(projectedDailyRisk > m_config.maxDailyRiskPercent)
-    {
-        result.approved = false;
-        result.severity = ERROR_LEVEL_WARNING;
-        result.message = StringFormat("Daily risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
-                                      phaseTag, effectiveDailyRisk, result.riskPercent, m_config.maxDailyRiskPercent);
-        PrintFormat("[RISK-GATE-REJECT] %s | reason=daily_risk_would_exceed | effective=%.2f%% + new=%.2f%% > limit=%.2f%% | phase=%s",
-                    request.symbol, effectiveDailyRisk, result.riskPercent, m_config.maxDailyRiskPercent, phaseTag);
-    }
+        if(projectedDailyRisk > m_config.maxDailyRiskPercent)
+        {
+            result.approved = false;
+            result.severity = ERROR_LEVEL_WARNING;
+            result.message = StringFormat("Daily risk limit would be exceeded (%s): %.2f%% + %.2f%% > %.2f%%",
+                                          phaseTag, effectiveDailyRisk, result.riskPercent, m_config.maxDailyRiskPercent);
+            CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "DAILY_RISK_WOULD_EXCEED",
+                StringFormat("Effective %.2f%% + new %.2f%% > limit %.2f%%", effectiveDailyRisk, result.riskPercent, m_config.maxDailyRiskPercent),
+                projectedDailyRisk, m_config.maxDailyRiskPercent, corrId);
+            CJsonLogger::ClearCorrelationId();
+            ReleaseVirtualPosition(virtualOwnerTag);
+            return result;
+        }
 
+    // All validations passed - APPROVED
+    result.approved = true;
+    result.message = "Trade request approved";
+    result.portfolioRisk = CalculatePortfolioRiskAfterTrade(tradeRisk);
+    result.severity = ERROR_LEVEL_INFO;
+    m_validationStats.RecordApproval();
+    
+    CJsonLogger::LogRiskEvent("RiskGateApprove", request.symbol, "APPROVED",
+        StringFormat("riskPercent=%.2f portfolioRisk=%.2f lot=%.2f", result.riskPercent, result.portfolioRisk, result.adjustedLotSize),
+        result.riskPercent, result.adjustedLotSize, corrId);
+    
+    LogValidationResult(request, result);
+    UpdatePerformanceMetrics(GetMicrosecondCount());
+    
+    CJsonLogger::ClearCorrelationId();
     return result;
 }
 
@@ -1263,20 +1349,26 @@ void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &val
 double CUnifiedRiskManager::GetRemainingDailyRiskPercent()
 {
     double remaining = m_config.maxDailyRiskPercent - GetEffectiveDailyRiskUsedPercent(GetReservedVirtualRiskPercent());
-    if(remaining < 0.0)
+    if(remaining < 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1392, __FUNCTION__);
         return 0.0;
+    }
     return remaining;
 }
 
 double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double requestedRiskPercent)
 {
-    if(!m_initialized)
+    if(!m_initialized) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1399, __FUNCTION__);
         return 0.0;
+    }
 
     CheckAndResetDailyLimits();
 
-    if(m_portfolioRiskManager.IsEmergencyMode() || HasUnprotectedPositions())
+    if(m_portfolioRiskManager.IsEmergencyMode() || HasUnprotectedPositions()) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1404, __FUNCTION__);
         return 0.0;
+    }
 
     double reservedRisk = GetReservedVirtualRiskPercent();
     double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent(reservedRisk);
@@ -1288,8 +1380,10 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     recommended = MathMin(recommended, remainingDailyRisk);
     recommended = MathMin(recommended, remainingPortfolioRisk);
 
-    if(recommended <= 0.0)
+    if(recommended <= 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1417, __FUNCTION__);
         return 0.0;
+    }
 
     double pressureMultiplier = 1.0;
     double dailyUtilization = (m_config.maxDailyRiskPercent > 0.0) ? (effectiveDailyRisk / m_config.maxDailyRiskPercent) : 0.0;
@@ -1319,8 +1413,10 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     recommended = MathMin(recommended, remainingDailyRisk);
     recommended = MathMin(recommended, remainingPortfolioRisk);
 
-    if(recommended <= 0.0)
+    if(recommended <= 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1448, __FUNCTION__);
         return 0.0;
+    }
 
     if(pressureMultiplier < 0.999)
     {
@@ -1350,8 +1446,10 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
 double CUnifiedRiskManager::GetRemainingPortfolioRiskPercent()
 {
     double remaining = m_config.maxPortfolioRiskPercent - (GetCurrentOpenExposureRiskPercent() + GetReservedVirtualRiskPercent());
-    if(remaining < 0.0)
+    if(remaining < 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1479, __FUNCTION__);
         return 0.0;
+    }
     return remaining;
 }
 
@@ -1394,9 +1492,9 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     snapshot.conservativeMode = m_conservativeMode;
 
     // Inline stats (formerly from m_validationGate)
-    int total = m_validationCount;
-    int approved = m_approvedCount;
-    int rejected = m_rejectedCount;
+    int total = m_validationStats.GetValidationCount();
+    int approved = m_validationStats.GetApprovedCount();
+    int rejected = m_validationStats.GetRejectedCount();
     double approvalRate = 0.0;
     if(total > 0)
         approvalRate = (double)approved / total * 100.0;
@@ -1448,8 +1546,10 @@ double CUnifiedRiskManager::CalculateDailyMarkToMarketLossPercent()
     if(baselineEquity <= 0.0)
         baselineEquity = AccountInfoDouble(ACCOUNT_BALANCE);
 
-    if(baselineEquity <= 0.0)
+    if(baselineEquity <= 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1577, __FUNCTION__);
         return 0.0;
+    }
 
     double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
     return MathMax(0.0, ((baselineEquity - equityNow) / baselineEquity) * 100.0);  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
@@ -1582,146 +1682,71 @@ double CUnifiedRiskManager::ClampRiskPercent(const double value) const
 //| Checks if drawdown from peak equity exceeds limits                |
 //| Returns: true if trading is allowed, false if circuit breaker hit |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::CheckDrawdownCircuitBreaker
 bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
 {
     if(!m_initialized)
         return false;
-    
-    double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
-    
-    // Update peak equity tracking
-    if(equityNow > m_peakEquity)
-    {
-        m_peakEquity = equityNow;
-        m_maxDrawdownFromPeak = 0.0;
-    }
-    
-    // Calculate current drawdown from peak
-    if(m_peakEquity > 0)
-    {
-        m_maxDrawdownFromPeak = ((m_peakEquity - equityNow) / m_peakEquity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
-    }
-    
-    // Check critical drawdown limit - HARD STOP
-    if(m_maxDrawdownFromPeak >= m_config.drawdownCriticalPercent)
-    {
-        if(m_tradingEnabled)
-        {
-            m_tradingEnabled = false;
-            m_drawdownBreachCount++;
-            m_cbTriggeredAt = TimeCurrent();
-            m_cbRecoveryLevel = 0; // Reset graduated recovery level on new halt
 
-            PrintFormat("[RISK-CIRCUIT-BREAKER] CRITICAL BREACH | Drawdown=%.2f%% >= Limit=%.2f%% | Trading HALTED",
-                       m_maxDrawdownFromPeak, m_config.drawdownCriticalPercent);
-            PrintFormat("[RISK-CIRCUIT-BREAKER] Peak Equity=%.2f | Current Equity=%.2f | Loss=%.2f",
-                       m_peakEquity, equityNow, m_peakEquity - equityNow);
-            PrintFormat("[RISK-CIRCUIT-BREAKER] Breach count: %d | Auto-recovery will be attempted after %d min cooldown (max %d attempts)",
-                       m_drawdownBreachCount, m_cbRecoveryCooldownMin, m_cbMaxRecoveryAttempts);
-            
-            // P1: On 2nd or subsequent breach, close all positions to stop bleeding
-            if(m_drawdownBreachCount >= 2)
-            {
-                PrintFormat("[RISK-CIRCUIT-BREAKER] SECOND+ BREACH - EMERGENCY CLOSING ALL POSITIONS!");
-                m_emergencyCloseRequested = true;
-            }
-            
-            // P1: Emergency exit trigger - if drawdown exceeds 2x critical threshold, close everything
-            double emergencyThreshold = m_config.drawdownCriticalPercent * 2.0;
-            if(m_maxDrawdownFromPeak >= emergencyThreshold)
-            {
-                PrintFormat("[RISK-EMERGENCY-EXIT] Drawdown %.2f%% exceeds 2x critical %.2f%% - EMERGENCY CLOSING ALL POSITIONS!",
-                           m_maxDrawdownFromPeak, m_config.drawdownCriticalPercent);
-                m_emergencyCloseRequested = true;
-                m_tradingEnabled = false;
-            }
-        }
-        return false;
-    }
-    
-    // Check warning drawdown limit - Reduce position sizes by 50%
-    if(m_maxDrawdownFromPeak >= m_config.drawdownWarningPercent && m_maxDrawdownFromPeak < m_config.drawdownCriticalPercent)
-    {
-        if(m_conservativeMode == false)
-        {
-            m_conservativeMode = true;
-            
-            PrintFormat("[RISK-CIRCUIT-BREAKER] WARNING | Drawdown=%.2f%% >= Warning=%.2f%% | Position sizes reduced 50%%",
-                       m_maxDrawdownFromPeak, m_config.drawdownWarningPercent);
-            PrintFormat("[RISK-CIRCUIT-BREAKER] Peak Equity=%.2f | Current Equity=%.2f",
-                       m_peakEquity, equityNow);
-        }
-        // Still allow trading but in conservative mode
-        return true;
-    }
-    
-    // Reset conservative mode if drawdown recovers below 60% of critical (closes gap with 50% trading-resume threshold)
-    if(m_maxDrawdownFromPeak < m_config.drawdownCriticalPercent * 0.6 && m_conservativeMode)
-    {
-        m_conservativeMode = false;
-        PrintFormat("[RISK-CIRCUIT-BREAKER] Recovery | Drawdown=%.2f%% < threshold=%.2f%% | Normal mode restored",
-                   m_maxDrawdownFromPeak, m_config.drawdownCriticalPercent * 0.6);
-    }
-    
-    // Reset recovery counter after stable period — equity must stay below warning for 60 minutes
-    if(m_cbRecoveryAttempts > 0 && m_cbLastRecoverySuccessTime > 0 &&
-       m_maxDrawdownFromPeak < m_config.drawdownWarningPercent * 0.5)
-    {
-        int stableMinutes = (int)((TimeCurrent() - m_cbLastRecoverySuccessTime) / 60);
-        if(stableMinutes >= 60)
-        {
-            PrintFormat("[RISK-CIRCUIT-BREAKER] Recovery counter reset | Stable for %d min (>=60) | Attempts %d->0",
-                       stableMinutes, m_cbRecoveryAttempts);
-            m_cbRecoveryAttempts = 0;
-            m_cbLastRecoverySuccessTime = 0;
-        }
-    }
-    
-    return true;
+    return m_circuitBreaker.CheckDrawdownCircuitBreaker(m_config.drawdownWarningPercent,
+                                                        m_config.drawdownCriticalPercent,
+                                                        m_conservativeMode);
 }
 
 //+------------------------------------------------------------------+
 //| Get current drawdown status                                      |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::GetMaxDrawdownFromPeak
 double CUnifiedRiskManager::GetCurrentDrawdownPercent() const
 {
-    return m_maxDrawdownFromPeak;
+    return m_circuitBreaker.GetMaxDrawdownFromPeak();
 }
 
 //+------------------------------------------------------------------+
 //| Check if trading is enabled                                      |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::IsTradingEnabled
 bool CUnifiedRiskManager::IsTradingEnabled() const
 {
-    return m_tradingEnabled;
+    return m_circuitBreaker.IsTradingEnabled();
+}
+
+//+------------------------------------------------------------------+
+//| Check if emergency close has been requested                      |
+//| L5-019: Emergency close flag set by circuit breaker             |
+//+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::IsEmergencyCloseRequested
+bool CUnifiedRiskManager::IsEmergencyCloseRequested() const
+{
+    return m_circuitBreaker.IsEmergencyCloseRequested();
+}
+
+//+------------------------------------------------------------------+
+//| Reset emergency close requested flag                             |
+//| L5-019: Called after emergency close is executed                |
+//+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::ResetEmergencyCloseRequested
+void CUnifiedRiskManager::ResetEmergencyCloseRequested()
+{
+    m_circuitBreaker.ResetEmergencyCloseRequested();
 }
 
 //+------------------------------------------------------------------+
 //| Manually reset circuit breaker (after review)                    |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::ResetCircuitBreaker
 void CUnifiedRiskManager::ResetCircuitBreaker()
 {
-    m_tradingEnabled = true;
-    m_conservativeMode = false;
-    m_drawdownBreachCount = 0;
-    m_cbTriggeredAt = 0;
-    m_cbRecoveryAttempts = 0;
-    m_cbRecoveryLevel = 0;
-    m_cbLastRecoverySuccessTime = 0;
-
-    // Reset peak to current equity
-    m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-    m_maxDrawdownFromPeak = 0.0;
-
-    Print("[RISK-CIRCUIT-BREAKER] Manually reset by operator | Trading resumed");
+    m_circuitBreaker.ResetCircuitBreaker(m_conservativeMode);
 }
 
 //+------------------------------------------------------------------+
 //| Crash recovery getters for circuit breaker state                  |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::GetPeakEquity
 double CUnifiedRiskManager::GetPeakEquity() const
 {
-    return m_peakEquity;
+    return m_circuitBreaker.GetPeakEquity();
 }
 
 double CUnifiedRiskManager::GetDailyStartEquity() const
@@ -1729,32 +1754,28 @@ double CUnifiedRiskManager::GetDailyStartEquity() const
     return m_dailyStartEquity;
 }
 
+// Phase E2 forwarder -> CRiskCircuitBreaker::GetDrawdownBreachCount
 int CUnifiedRiskManager::GetDrawdownBreachCount() const
 {
-    return m_drawdownBreachCount;
+    return m_circuitBreaker.GetDrawdownBreachCount();
 }
 
+// Phase E2 forwarder -> CRiskCircuitBreaker::GetMaxDrawdownFromPeak
 double CUnifiedRiskManager::GetMaxDrawdownFromPeak() const
 {
-    return m_maxDrawdownFromPeak;
+    return m_circuitBreaker.GetMaxDrawdownFromPeak();
 }
 
 //+------------------------------------------------------------------+
 //| Restore circuit breaker state from crash recovery file            |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::RestoreCircuitBreakerState
 void CUnifiedRiskManager::RestoreCircuitBreakerState(double savedPeakEquity, double savedDailyStartEquity,
                                                      int savedBreachCount, double savedMaxDrawdown)
 {
-    if(savedPeakEquity > 0.0)
-        m_peakEquity = savedPeakEquity;
-    if(savedDailyStartEquity > 0.0)
-        m_dailyStartEquity = savedDailyStartEquity;
-    m_drawdownBreachCount = savedBreachCount;
-    if(savedMaxDrawdown >= 0.0)
-        m_maxDrawdownFromPeak = savedMaxDrawdown;
-
-    PrintFormat("[RISK-CIRCUIT-BREAKER] Restored from crash recovery | peakEquity=%.2f | dailyStartEquity=%.2f | breachCount=%d | maxDD=%.2f%%",
-                m_peakEquity, m_dailyStartEquity, m_drawdownBreachCount, m_maxDrawdownFromPeak);
+    m_circuitBreaker.RestoreCircuitBreakerState(savedPeakEquity, savedDailyStartEquity,
+                                                savedBreachCount, savedMaxDrawdown,
+                                                m_dailyStartEquity);
 }
 
 //+------------------------------------------------------------------+
@@ -1782,11 +1803,13 @@ SDrawdownState CUnifiedRiskManager::GetDrawdownState()
     SDrawdownState state;
     ZeroMemory(state);
 
-    state.currentDrawdownPct  = m_maxDrawdownFromPeak;
-    state.isWarningActive     = (m_maxDrawdownFromPeak >= m_config.drawdownWarningPercent &&
-                                 m_maxDrawdownFromPeak < m_config.drawdownCriticalPercent);
-    state.isCriticalActive    = (m_maxDrawdownFromPeak >= m_config.drawdownCriticalPercent);
-    state.isTradingEnabled    = m_tradingEnabled;
+    double currentDrawdownPct = m_circuitBreaker.GetMaxDrawdownFromPeak();
+
+    state.currentDrawdownPct  = currentDrawdownPct;
+    state.isWarningActive     = (currentDrawdownPct >= m_config.drawdownWarningPercent &&
+                                 currentDrawdownPct < m_config.drawdownCriticalPercent);
+    state.isCriticalActive    = (currentDrawdownPct >= m_config.drawdownCriticalPercent);
+    state.isTradingEnabled    = m_circuitBreaker.IsTradingEnabled();
 
     if(state.isCriticalActive)
         state.conservativeMultiplier = 0.0;
@@ -1803,8 +1826,10 @@ SDrawdownState CUnifiedRiskManager::GetDrawdownState()
 //+------------------------------------------------------------------+
 double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
 {
-    if(!PositionSelectByTicket(ticket))
+    if(!PositionSelectByTicket(ticket)) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1950, __FUNCTION__);
         return 0.0;
+    }
     
     double volume = PositionGetDouble(POSITION_VOLUME);
     double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -1814,15 +1839,19 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     // Issue 4 fix: Validate position exists with non-zero volume and SL
     // Closed or closing positions may still pass PositionSelectByTicket but return
     // zero volume or zero SL — skip them to prevent phantom risk
-    if(volume <= 0.0 || sl == 0.0 || openPrice == 0.0)
+    if(volume <= 0.0 || sl == 0.0 || openPrice == 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1961, __FUNCTION__);
         return 0.0;
+    }
     
     string symbol = PositionGetString(POSITION_SYMBOL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
     
-    if(point <= 0.0 || tickValue <= 0.0)
+    if(point <= 0.0 || tickValue <= 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1968, __FUNCTION__);
         return 0.0;
+    }
     
     // Issue 16 fix: Use mark-to-market SL distance (current price to SL) instead of
     // entry price to SL. This ensures the risk budget reflects actual current exposure,
@@ -1832,8 +1861,10 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     double riskAmount = volume * slDistance * tickValue;
     
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-    if(equity <= 0.0)
+    if(equity <= 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1979, __FUNCTION__);
         return 0.0;
+    }
     
     return (riskAmount / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
 }
@@ -1841,213 +1872,37 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
 //+------------------------------------------------------------------+
 //| Circuit Breaker Auto-Recovery (Phase 2.4)                        |
 //| Attempts to re-enable trading after cooldown if drawdown recovers |
+//| L5-010 FIX: Uses bar-based cooldown instead of wall-clock minutes |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::CheckCircuitBreakerRecovery
 bool CUnifiedRiskManager::CheckCircuitBreakerRecovery()
 {
     if(!m_initialized)
         return false;
 
-    // Only attempt recovery if circuit breaker is active
-    if(m_tradingEnabled)
-        return false;
-
-    // No trigger time recorded — nothing to recover from
-    if(m_cbTriggeredAt <= 0)
-        return false;
-
-    // Check if cooldown period has elapsed
-    datetime now = TimeCurrent();
-    int elapsedMinutes = (int)((now - m_cbTriggeredAt) / 60);
-    if(elapsedMinutes < m_cbRecoveryCooldownMin)
-        return false;
-
-    // Check if max recovery attempts exhausted
-    if(m_cbRecoveryAttempts >= m_cbMaxRecoveryAttempts)
-    {
-        static datetime s_lastMaxAttemptLog = 0;
-        if(s_lastMaxAttemptLog == 0 || (now - s_lastMaxAttemptLog) >= 300)
-        {
-            PrintFormat("[RISK-CIRCUIT-BREAKER] Max recovery attempts reached (%d/%d) | Manual reset required",
-                       m_cbRecoveryAttempts, m_cbMaxRecoveryAttempts);
-            s_lastMaxAttemptLog = now;
-        }
-        return false;
-    }
-
-    // Graduated recovery: two levels to avoid impossible recovery targets
-    // Level 1: DD < haltThreshold * 0.75  → re-enable at ultra-conservative
-    // Level 2: DD < haltThreshold * 0.50  → full normal mode
-    double currentDD = GetCurrentDrawdownPercent();
-    double level1Threshold = m_config.drawdownCriticalPercent * 0.75;
-    double level2Threshold = m_config.drawdownCriticalPercent * 0.50;
-
-    // Level 2 check: full recovery — DD below 50% of halt threshold
-    if(m_cbRecoveryLevel >= 1 && currentDD < level2Threshold)
-    {
-        m_cbRecoveryLevel = 2;
-        m_cbRecoveryAttempts++;
-        m_tradingEnabled = true;
-        m_conservativeMode = false;
-        m_cbTriggeredAt = 0;
-        m_cbLastRecoverySuccessTime = now;
-
-        m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-        m_maxDrawdownFromPeak = 0.0;
-
-        PrintFormat("[RISK-CIRCUIT-BREAKER] AUTO-RECOVERY L2 | Normal mode restored | DD=%.2f%% < threshold=%.2f%% | Attempt %d/%d",
-                   currentDD, level2Threshold, m_cbRecoveryAttempts, m_cbMaxRecoveryAttempts);
-        return true;
-    }
-
-    // Level 1 check: partial recovery — DD below 75% of halt threshold
-    if(currentDD < level1Threshold)
-    {
-        m_cbRecoveryLevel = 1;
-        m_cbRecoveryAttempts++;
-        m_tradingEnabled = true;
-        m_conservativeMode = true;
-        m_cbTriggeredAt = 0;
-        m_cbLastRecoverySuccessTime = now;
-
-        m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-        m_maxDrawdownFromPeak = 0.0;
-
-        PrintFormat("[RISK-CIRCUIT-BREAKER] AUTO-RECOVERY L1 | Trading re-enabled ultra-conservative | DD=%.2f%% < threshold=%.2f%% | Attempt %d/%d",
-                   currentDD, level1Threshold, m_cbRecoveryAttempts, m_cbMaxRecoveryAttempts);
-        return true;
-    }
-
-    // Drawdown has NOT recovered sufficiently — stay disabled
-    PrintFormat("[RISK-CIRCUIT-BREAKER] Recovery check | DD=%.2f%% still above L1=%.2f%% L2=%.2f%% | Staying disabled | Attempt %d/%d",
-               currentDD, level1Threshold, level2Threshold, m_cbRecoveryAttempts + 1, m_cbMaxRecoveryAttempts);
-    m_cbTriggeredAt = now;
-    return false;
+    return m_circuitBreaker.CheckCircuitBreakerRecovery(m_config.drawdownCriticalPercent,
+                                                        m_conservativeMode);
 }
 
 //+------------------------------------------------------------------+
 //| Margin Health Monitoring (Phase 2.4)                              |
 //| Checks margin level and takes protective action                  |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskMarginHealth::MonitorMarginHealth
 ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
 {
     if(!m_initialized)
         return MARGIN_HEALTH_OK;
 
-    double margin = AccountInfoDouble(ACCOUNT_MARGIN);
-    if(margin <= 0.0)
-        return MARGIN_HEALTH_OK; // No margin used = no risk
-
-    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-    if(equity <= 0.0)
-        return MARGIN_HEALTH_EMERGENCY;
-
-    double marginLevel = (equity / margin) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale (margin level %)
-
-    // Emergency: margin level < 150% — close all positions immediately
-    if(marginLevel < 150.0)
-    {
-        PrintFormat("[RISK-MARGIN] EMERGENCY | Margin Level=%.1f%% < 150%% | Closing ALL positions immediately",
-                   marginLevel);
-
-        // Close all positions
-        int totalPositions = PositionsTotal();
-        for(int i = totalPositions - 1; i >= 0; i--)
-        {
-            ulong ticket = PositionGetTicket(i);
-            if(ticket > 0 && PositionSelectByTicket(ticket))
-            {
-                // Journal before close for crash recovery
-                ENUM_ORDER_TYPE closeType = (ENUM_ORDER_TYPE)PositionGetInteger(POSITION_TYPE);
-                double closeVol = PositionGetDouble(POSITION_VOLUME);
-                double closePrice = PositionGetDouble(POSITION_PRICE_OPEN);
-                double closeSL = PositionGetDouble(POSITION_SL);
-                double closeTP = PositionGetDouble(POSITION_TP);
-                long closeMagic = PositionGetInteger(POSITION_MAGIC);
-                double closeProfit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-                string closeSymbol = PositionGetString(POSITION_SYMBOL);
-                // Use MT5 trade object for emergency close
-                CTrade emergencyTrade;
-                if(emergencyTrade.PositionClose(ticket))
-                {
-                    string journalReason = "emergency_margin_breach | P&L=" + DoubleToString(closeProfit, 2);
-                    WriteTradeJournalEntry("CLOSE", ticket, closeSymbol, closeType, closeVol,
-                                           0.0, closeSL, closeTP, closeMagic, journalReason);
-                }
-            }
-        }
-
-        m_tradingEnabled = false;
-        m_cbTriggeredAt = TimeCurrent();
-        return MARGIN_HEALTH_EMERGENCY;
-    }
-
-    // Critical: margin level < 200% — close worst position, block new entries
-    if(marginLevel < 200.0)
-    {
-        PrintFormat("[RISK-MARGIN] CRITICAL | Margin Level=%.1f%% < 200%% | Closing worst position, blocking new entries",
-                   marginLevel);
-
-        // Find worst-performing position
-        double worstProfit = 0.0;
-        ulong worstTicket = 0;
-        int totalPositions = PositionsTotal();
-        for(int i = 0; i < totalPositions; i++)
-        {
-            ulong ticket = PositionGetTicket(i);
-            if(ticket > 0 && PositionSelectByTicket(ticket))
-            {
-                double profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-                if(profit < worstProfit || worstTicket == 0)
-                {
-                    worstProfit = profit;
-                    worstTicket = ticket;
-                }
-            }
-        }
-
-        if(worstTicket > 0 && PositionSelectByTicket(worstTicket))
-        {
-            ENUM_ORDER_TYPE critType = (ENUM_ORDER_TYPE)PositionGetInteger(POSITION_TYPE);
-            double critVol = PositionGetDouble(POSITION_VOLUME);
-            double critSL = PositionGetDouble(POSITION_SL);
-            double critTP = PositionGetDouble(POSITION_TP);
-            long critMagic = PositionGetInteger(POSITION_MAGIC);
-            string critSymbol = PositionGetString(POSITION_SYMBOL);
-            CTrade criticalTrade;
-            criticalTrade.PositionClose(worstTicket);
-            string critJournalReason = "emergency_margin_critical | P&L=" + DoubleToString(worstProfit, 2);
-            WriteTradeJournalEntry("CLOSE", worstTicket, critSymbol, critType, critVol,
-                                   0.0, critSL, critTP, critMagic, critJournalReason);
-            PrintFormat("[RISK-MARGIN] Closed worst position | ticket=%I64u | profit=%.2f", worstTicket, worstProfit);
-        }
-
-        m_conservativeMode = true;
-        return MARGIN_HEALTH_CRITICAL;
-    }
-
-    // Warning: margin level < 300% — reduce position sizes on next entries
-    if(marginLevel < 300.0)
-    {
-        static datetime s_lastMarginWarning = 0;
-        datetime now = TimeCurrent();
-        if(s_lastMarginWarning == 0 || (now - s_lastMarginWarning) >= 60)
-        {
-            PrintFormat("[RISK-MARGIN] WARNING | Margin Level=%.1f%% < 300%% | Reducing position sizes on next entries",
-                       marginLevel);
-            s_lastMarginWarning = now;
-        }
-        m_conservativeMode = true;
-        return MARGIN_HEALTH_WARNING;
-    }
-
-    return MARGIN_HEALTH_OK;
+    return m_marginHealth.MonitorMarginHealth(m_circuitBreaker, m_conservativeMode);
 }
 
 //+------------------------------------------------------------------+
 //| Daily P&L Loss Limit circuit breaker                              |
 //| Halts all trading when daily realized + unrealized loss exceeds   |
-//| the configured percentage of peak equity. Resets on new day.      |
+//| the configured percentage of daily starting equity. Resets on new day.      |
 //+------------------------------------------------------------------+
+// Phase E2 forwarder -> CRiskCircuitBreaker::ResetDailyLossHalt / EvaluateDailyLossLimit
 bool CUnifiedRiskManager::CheckDailyLossLimit()
 {
     if(!m_initialized)
@@ -2055,64 +1910,17 @@ bool CUnifiedRiskManager::CheckDailyLossLimit()
 
     datetime nowTime = TimeCurrent();
 
-    // Reset halt on new trading day
-    if(m_dailyLossHaltActive && IsNewTradingDay(nowTime))
-    {
-        m_dailyLossHaltActive = false;
-        m_dailyLossHaltDate = 0;
-        Print("[RISK-DAILY-LOSS] Daily loss halt RESET — new trading day");
-    }
+    // Reset halt on new trading day.
+    // NOTE: IsNewTradingDay() mutates m_lastTradingDayKey, so it MUST stay
+    // short-circuited behind the halt flag exactly as in the original code -
+    // eagerly evaluating it here would advance the trading-day key and break
+    // CheckAndResetDailyLimits().
+    if(m_circuitBreaker.IsDailyLossHaltActive() && IsNewTradingDay(nowTime))
+        m_circuitBreaker.ResetDailyLossHalt();
 
-    // If halt already active, keep blocking
-    if(m_dailyLossHaltActive)
-        return false;
-
-    // Calculate daily P&L: realized deals today + current unrealized P&L
-    double dailyRealizedPL = 0.0;
-    datetime dayStart = StringToTime(TimeToString(nowTime, TIME_DATE));
-    HistorySelect(dayStart, nowTime);
-
-    int totalDeals = HistoryDealsTotal();
-    for(int i = 0; i < totalDeals; i++)
-    {
-        ulong dealTicket = HistoryDealGetTicket(i);
-        if(dealTicket <= 0) continue;
-        ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-        if(dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_INOUT)
-        {
-            double dealProfit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
-            double dealSwap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
-            double dealCommission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
-            dailyRealizedPL += dealProfit + dealSwap + dealCommission;
-        }
-    }
-
-    // Current unrealized P&L across all open positions
-    double unrealizedPL = AccountInfoDouble(ACCOUNT_EQUITY) - AccountInfoDouble(ACCOUNT_BALANCE);
-    double dailyPL = dailyRealizedPL + unrealizedPL;
-
-    // Calculate as percentage of peak equity
-    double riskPeakEquity = m_peakEquity;
-    if(riskPeakEquity <= 0.0)
-        riskPeakEquity = m_dailyStartEquity;
-    if(riskPeakEquity <= 0.0)
-        riskPeakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-
-    double dailyPLPercent = 0.0;
-    if(riskPeakEquity > 0.0)
-        dailyPLPercent = (dailyPL / riskPeakEquity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
-
-    // Check if daily loss exceeds limit
-    if(dailyPLPercent <= -m_config.dailyLossLimitPercent)
-    {
-        m_dailyLossHaltActive = true;
-        m_dailyLossHaltDate = nowTime;
-        PrintFormat("[RISK-DAILY-LOSS] CRITICAL: Daily loss halt ACTIVATED | P&L=%.2f%% | Limit=-%.1f%% | Realized=%.2f | Unrealized=%.2f",
-                    dailyPLPercent, m_config.dailyLossLimitPercent, dailyRealizedPL, unrealizedPL);
-        return false;
-    }
-
-    return true;
+    return m_circuitBreaker.EvaluateDailyLossLimit(nowTime,
+                                                   m_config.dailyLossLimitPercent,
+                                                   m_dailyStartEquity);
 }
 
 //+------------------------------------------------------------------+
@@ -2321,87 +2129,19 @@ double CUnifiedRiskManager::GetSymbolUsedRisk(const string symbol)
 //+------------------------------------------------------------------+
 //| Get per-symbol win rate from deal history                         |
 //+------------------------------------------------------------------+
+// Phase E1 forwarder -> CRiskSymbolStats::GetWinRate
 double CUnifiedRiskManager::GetSymbolWinRate(const string symbol)
 {
-    if(symbol == "")
-        return 50.0;
-
-    HistorySelect(0, TimeCurrent());
-    int totalDeals = HistoryDealsTotal();
-    int wins = 0;
-    int total = 0;
-
-    for(int i = totalDeals - 1; i >= 0 && total < 50; i--)
-    {
-        ulong dealTicket = HistoryDealGetTicket(i);
-        if(dealTicket <= 0) continue;
-        if(HistoryDealGetString(dealTicket, DEAL_SYMBOL) != symbol) continue;
-
-        long entryType = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-        if(entryType != DEAL_ENTRY_OUT && entryType != DEAL_ENTRY_INOUT) continue;
-
-        long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
-        if(reason != DEAL_REASON_EXPERT) continue;
-
-        double netPnl = HistoryDealGetDouble(dealTicket, DEAL_PROFIT) +
-                        HistoryDealGetDouble(dealTicket, DEAL_SWAP) +
-                        HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
-
-        total++;
-        if(netPnl > 0.0) wins++;
-    }
-
-    if(total < 5)
-        return 50.0; // Default for insufficient data
-
-    return ((double)wins / (double)total) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
+    return CRiskSymbolStats::GetWinRate(symbol);
 }
 
 //+------------------------------------------------------------------+
 //| Get per-symbol profit factor from deal history                    |
 //+------------------------------------------------------------------+
+// Phase E1 forwarder -> CRiskSymbolStats::GetProfitFactor
 double CUnifiedRiskManager::GetSymbolProfitFactor(const string symbol)
 {
-    if(symbol == "")
-        return 1.0;
-
-    HistorySelect(0, TimeCurrent());
-    int totalDeals = HistoryDealsTotal();
-    double grossWin = 0.0;
-    double grossLoss = 0.0;
-    int total = 0;
-
-    for(int i = totalDeals - 1; i >= 0 && total < 50; i--)
-    {
-        ulong dealTicket = HistoryDealGetTicket(i);
-        if(dealTicket <= 0) continue;
-        if(HistoryDealGetString(dealTicket, DEAL_SYMBOL) != symbol) continue;
-
-        long entryType = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-        if(entryType != DEAL_ENTRY_OUT && entryType != DEAL_ENTRY_INOUT) continue;
-
-        long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
-        if(reason != DEAL_REASON_EXPERT) continue;
-
-        double netPnl = HistoryDealGetDouble(dealTicket, DEAL_PROFIT) +
-                        HistoryDealGetDouble(dealTicket, DEAL_SWAP) +
-                        HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
-
-        total++;
-        if(netPnl > 0.0)
-            grossWin += netPnl;
-        else
-            grossLoss += MathAbs(netPnl);
-    }
-
-    if(total < 5)
-        return 1.0; // Default for insufficient data
-
-    if(grossLoss > 0.0)
-        return grossWin / grossLoss;
-    if(grossWin > 0.0)
-        return grossWin; // No losses yet
-    return 1.0;
+    return CRiskSymbolStats::GetProfitFactor(symbol);
 }
 
 //+------------------------------------------------------------------+
@@ -2417,14 +2157,18 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     if(equity <= 0.0)
         equity = AccountInfoDouble(ACCOUNT_BALANCE);
-    if(equity <= 0.0)
+    if(equity <= 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2583, __FUNCTION__);
         return 0.0;
+    }
 
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-    if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
+    if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2589, __FUNCTION__);
         return 0.0;
+    }
 
     // Estimate SL distance using ATR(14) on the daily timeframe as a reasonable default
     // Batch 116: use static cached handle to avoid repeated create/destroy overhead
@@ -2526,29 +2270,8 @@ bool CUnifiedRiskManager::ValidateBasicParameters(const STradeValidationRequest 
         return false;
     }
     
-    double minLot = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_MIN);
     double maxLot = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_MAX);
-    
-    if(request.lotSize < minLot)
-    {
-        // On small accounts, the calculated lot may be below broker minimum.
-        // If the lot is within the minLotRiskMultiplier tolerance, allow a round-up
-        // rather than rejecting outright. The PositionSizer will handle the risk assessment.
-        // This prevents the validation gate from being a hard blocker for small accounts
-        // or symbols with high minimum lots (e.g., Deriv Volatility 25 Index min=0.50).
-        double riskRatio = (request.lotSize > 0.0) ? (minLot / request.lotSize) : 999.0;
-        if(riskRatio <= 15.0)  // Allow round-up if within 15x risk tolerance
-        {
-            // Don't reject — the caller (UnifiedRiskManager) will re-calculate
-            // with the min lot and assess whether the risk is acceptable
-        }
-        else
-        {
-            message = "Lot size below minimum: " + DoubleToString(request.lotSize, 3) + " < " + DoubleToString(minLot, 3);
-            return false;
-        }
-    }
-    
+
     if(request.lotSize > maxLot)
     {
         PrintFormat("[RISK-GATE] Lot %.4f exceeds broker max %.4f for %s — caller must cap", request.lotSize, maxLot, request.symbol);
@@ -2591,24 +2314,8 @@ bool CUnifiedRiskManager::ValidateRiskLimits(const STradeValidationRequest &requ
         return false;
     }
     
-    // Convert to percentage using equity-aware denominator for stress-consistent risk sizing.
-    double accountBalanceLocal = AccountInfoDouble(ACCOUNT_BALANCE);
-    double accountEquityLocal = AccountInfoDouble(ACCOUNT_EQUITY);
-    double riskDenominator = 0.0;
-    
-    // Handle negative balance/equity scenarios (margin call, etc.)
-    if(accountBalanceLocal <= 0.0 && accountEquityLocal <= 0.0)
-    {
-        message = "Account in critical state - negative balance and equity";
-        return false;
-    }
-    
-    if(accountBalanceLocal > 0.0 && accountEquityLocal > 0.0)
-        riskDenominator = MathMin(accountBalanceLocal, accountEquityLocal);
-    else if(accountBalanceLocal > 0.0)
-        riskDenominator = accountBalanceLocal;
-    else
-        riskDenominator = accountEquityLocal;
+    // Convert to percentage using centralized equity-aware denominator for stress-consistent risk sizing.
+    double riskDenominator = CRiskMath::GetRiskDenominator();
     
     if(riskDenominator <= 0.0)
     {
@@ -2651,7 +2358,10 @@ bool CUnifiedRiskManager::ValidatePortfolioRisk(const STradeValidationRequest &r
         return false;
     }
     
-    double currentRisk = GetPortfolioRiskValue();
+    // L5-009 FIX: Use same calculation as GetRemainingPortfolioRiskPercent() to include virtual reservations
+    double openExposureRisk = GetCurrentOpenExposureRiskPercent();
+    double reservedRisk = GetReservedVirtualRiskPercent();
+    double currentRisk = openExposureRisk + reservedRisk;
     double totalRisk = currentRisk + tradeRiskPercent;
     
     if(totalRisk > m_config.maxPortfolioRiskPercent)
@@ -2732,6 +2442,10 @@ bool CUnifiedRiskManager::ValidateCorrelationLimits(const STradeValidationReques
 
 bool CUnifiedRiskManager::ValidateMarginRequirements(const STradeValidationRequest &request, string &message)
 {
+    // L5-017: Detect hedging/netting mode
+    ENUM_ACCOUNT_MARGIN_MODE marginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+    bool isHedging = (marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
+    
     // Calculate margin requirement
     double marginRequired = 0.0;
     double currentPriceLocal = (request.orderType == ORDER_TYPE_BUY) ?
@@ -2744,26 +2458,51 @@ bool CUnifiedRiskManager::ValidateMarginRequirements(const STradeValidationReque
         return false;
     }
     
-    // Check available margin
-    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-    
-    if(marginRequired > freeMargin * m_maxFreeMarginUsage) // Use configurable max free margin usage
+    // L5-017: In netting mode, check if we have an opposite position that would net out
+    if(!isHedging)
     {
-        message = StringFormat("Insufficient margin: required %.2f, available %.2f (threshold: %.0f%%)", 
-                             marginRequired, freeMargin, m_maxFreeMarginUsage * 100.0);
-        return false;
+        // Check for existing opposite position on same symbol
+        int totalPositions = PositionsTotal();
+        for(int i = 0; i < totalPositions; i++)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0) continue;
+            
+            string posSymbol = PositionGetString(POSITION_SYMBOL);
+            if(posSymbol != request.symbol) continue;
+            
+            ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            ENUM_POSITION_TYPE reqType = (request.orderType == ORDER_TYPE_BUY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+            
+            // If opposite position exists, the new position will net out
+            if(posType != reqType)
+            {
+                double existingVolume = PositionGetDouble(POSITION_VOLUME);
+                double netVolume = request.lotSize - existingVolume;
+                if(netVolume <= 0.0)
+                {
+                    // New position fully or partially closes existing - no additional margin needed
+                    marginRequired = 0.0;
+                }
+                else
+                {
+                    // Partially closes - recalculate margin for net volume
+                    double currentPrice = SymbolInfoDouble(request.symbol, SYMBOL_BID);
+                    if(currentPrice <= 0.0) currentPrice = SymbolInfoDouble(request.symbol, SYMBOL_ASK);
+                    if(!OrderCalcMargin(request.orderType, request.symbol, netVolume, currentPrice, marginRequired))
+                    {
+                        PrintFormat("[RISK-VALIDATION] OrderCalcMargin failed for %s: %d", request.symbol, GetLastError());
+                        marginRequired = 0.0; // Conservative fallback
+                    }
+                }
+                break;
+            }
+        }
     }
     
-    // Check margin level after trade
-    double currentMarginLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-    if(currentMarginLevel > 0 && currentMarginLevel < m_minMarginLevel)
-    {
-        message = StringFormat("Margin level too low: %.2f%% (threshold: %.0f%%)", 
-                             currentMarginLevel, m_minMarginLevel);
-        return false;
-    }
-    
-    return true;
+    // Phase E2 forwarder -> CRiskMarginHealth::CheckFreeMarginAndLevel
+    // (free-margin headroom + post-trade margin-level thresholds)
+    return m_marginHealth.CheckFreeMarginAndLevel(marginRequired, isHedging, message);
 }
 
 bool CUnifiedRiskManager::ValidateAccountHealth(const STradeValidationRequest &request, string &message)
@@ -2808,20 +2547,9 @@ bool CUnifiedRiskManager::ValidateClusterGovernance(const STradeValidationReques
         return true;
     
     // Fix #9: Opposing conflict cooldown cache — skip full scan if recently rejected for same symbol
-    if(m_clusterMutexEnabled &&
-       m_lastOpposingConflictSymbol == request.symbol &&
-       m_lastOpposingConflictTime > 0 &&
-       (TimeCurrent() - m_lastOpposingConflictTime) < m_opposingConflictCooldownSec)
-    {
-        message = StringFormat("Opposing conflict cooldown active for %s (%ds remaining)",
-                               request.symbol,
-                               m_opposingConflictCooldownSec - (int)(TimeCurrent() - m_lastOpposingConflictTime));
-        PrintFormat("[RISK-MUTEX-COOLDOWN] symbol=%s | cooldown_remaining=%ds | last_conflict=%s",
-                    request.symbol,
-                    m_opposingConflictCooldownSec - (int)(TimeCurrent() - m_lastOpposingConflictTime),
-                    TimeToString(m_lastOpposingConflictTime, TIME_DATE | TIME_SECONDS));
+    // Phase E2 forwarder -> CRiskOpposingConflictGuard::IsCooldownActive
+    if(m_clusterMutexEnabled && m_opposingGuard.IsCooldownActive(request.symbol, message))
         return false;
-    }
     
     int clusterOpenPositions = 0;
     double clusterOpenRiskPercent = 0.0;
@@ -2850,8 +2578,8 @@ bool CUnifiedRiskManager::ValidateClusterGovernance(const STradeValidationReques
                (existingClusterCode == "N" || existingClusterCode != requestClusterCode))
             {
                 // Fix #9: Update cooldown cache when a new opposing conflict is detected
-                m_lastOpposingConflictTime = TimeCurrent();
-                m_lastOpposingConflictSymbol = request.symbol;
+                // Phase E2 forwarder -> CRiskOpposingConflictGuard::RegisterConflict
+                m_opposingGuard.RegisterConflict(request.symbol);
                 
                 message = StringFormat("Opposing same-symbol cluster conflict (request=%s existing=%s ticket=%I64u)",
                                        requestClusterCode, existingClusterCode, ticket);
@@ -2877,17 +2605,9 @@ bool CUnifiedRiskManager::ValidateClusterGovernance(const STradeValidationReques
     double projectedRisk = clusterOpenRiskPercent + MathMax(0.0, tradeRiskPercent);
     
     // Fix #11: Look up per-cluster risk cap first; fall back to global default
-    double effectiveClusterRiskCap = m_maxClusterRiskPercent;
-    for(int c = 0; c < ArraySize(m_clusterRiskCapCodes); c++)
-    {
-        if(m_clusterRiskCapCodes[c] == requestClusterCode)
-        {
-            effectiveClusterRiskCap = m_clusterRiskCapValues[c];
-            PrintFormat("[RISK-CLUSTER-CAP-PER] cluster=%s | per_cluster_cap=%.2f%% applied",
-                        requestClusterCode, effectiveClusterRiskCap);
-            break;
-        }
-    }
+    // Phase E2 forwarder -> CRiskClusterBudget::GetClusterRiskCap
+    double effectiveClusterRiskCap = m_clusterBudget.GetClusterRiskCap(requestClusterCode,
+                                                                       m_maxClusterRiskPercent);
     
     PrintFormat("[RISK-CLUSTER] cluster=%s | open_positions=%d | projected_positions=%d | open_risk=%.2f%% | projected_risk=%.2f%% | caps=%d/%.2f%%",
                 requestClusterCode,
@@ -2918,6 +2638,7 @@ bool CUnifiedRiskManager::ValidateClusterGovernance(const STradeValidationReques
 double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double lotSize, double stopLossPips) const
 {
     if(symbolParam == "" || stopLossPips <= 0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 3096, __FUNCTION__);
         return 0.0;
     }
     
@@ -2927,6 +2648,7 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     double contractSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_CONTRACT_SIZE);
     
     if(tickValue <= 0 || point <= 0 || tickSize <= 0) {
+        PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 3105, __FUNCTION__);
         return 0.0;
     }
     
@@ -2978,16 +2700,20 @@ double CUnifiedRiskManager::CalculatePortfolioRiskAfterTrade(const double additi
     return GetPortfolioRiskValue() + additionalRisk;
 }
 
+// Phase E1 forwarder -> CRiskValidationStats::LogValidationResult
 void CUnifiedRiskManager::LogValidationResult(const STradeValidationRequest &request, const SValidationResult &result)
 {
-    if(!m_auditLogging)
-        return;
-    
-    string logMessage = FormatValidationMessage(request, result);
-    WriteAuditLog(logMessage);
-    
-    // Also log to error handler
-    CEnhancedErrorHandler::LogError(ERROR_INFO, "UnifiedRiskManager", result.message, 0);
+    m_validationStats.LogValidationResult(request.symbol,
+                                          request.orderType,
+                                          request.lotSize,
+                                          result.approved,
+                                          request.strategyRole,
+                                          request.strategyCluster,
+                                          request.clusterCode,
+                                          result.riskPercent,
+                                          result.portfolioRisk,
+                                          result.correlationRisk,
+                                          result.message);
 }
 
 double CUnifiedRiskManager::GetPortfolioRiskValue()
@@ -3070,109 +2796,51 @@ double CUnifiedRiskManager::GetMaxCorrelationWithPortfolio(const string symbolPa
     return CalculateCorrelationRisk(symbolParam);
 }
 
+// Phase E1 forwarder -> CRiskValidationStats::WriteAuditLog
 void CUnifiedRiskManager::WriteAuditLog(const string message)
 {
-    if(!m_auditLogging)
-        return;
-    
-    // Batch 119: Use static file handle to avoid open/close per call
-    static int s_auditHandle = INVALID_HANDLE;
-    static string s_auditFile = "";
-    
-    if(s_auditHandle == INVALID_HANDLE || s_auditFile != m_auditLogFile)
-    {
-        if(s_auditHandle != INVALID_HANDLE)
-            FileClose(s_auditHandle);
-        s_auditHandle = FileOpen(m_auditLogFile, FILE_WRITE | FILE_READ | FILE_TXT | FILE_ANSI);
-        s_auditFile = m_auditLogFile;
-    }
-    
-    if(s_auditHandle != INVALID_HANDLE)
-    {
-        FileSeek(s_auditHandle, 0, SEEK_END);
-        string timestamp = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
-        FileWrite(s_auditHandle, StringFormat("[%s] %s", timestamp, message));
-    }
+    m_validationStats.WriteAuditLog(message);
 }
 
+// Phase E1 forwarder -> CRiskValidationStats::FormatValidationMessage
 string CUnifiedRiskManager::FormatValidationMessage(const STradeValidationRequest &request, const SValidationResult &result)
 {
-    string clusterCode = NormalizeClusterCode(request.clusterCode);
-    return StringFormat("VALIDATION: %s %s %.3f lots | %s | Role=%s | Cluster=%s(%s) | Risk: %.2f%% | Portfolio: %.2f%% | Correlation: %.2f",
-                       request.symbol,
-                       EnumToString(request.orderType),
-                       request.lotSize,
-                       result.approved ? "APPROVED" : "REJECTED",
-                       request.strategyRole,
-                       request.strategyCluster,
-                       clusterCode,
-                       result.riskPercent,
-                       result.portfolioRisk,
-                       result.correlationRisk);
+    return CRiskValidationStats::FormatValidationMessage(request.symbol,
+                                                         request.orderType,
+                                                         request.lotSize,
+                                                         result.approved,
+                                                         request.strategyRole,
+                                                         request.strategyCluster,
+                                                         request.clusterCode,
+                                                         result.riskPercent,
+                                                         result.portfolioRisk,
+                                                         result.correlationRisk);
 }
 
+// Phase E1 forwarder -> CRiskValidationStats::UpdatePerformanceMetrics
 void CUnifiedRiskManager::UpdatePerformanceMetrics(const ulong startTimeParam)
 {
-    ulong endTime = GetMicrosecondCount();
-    double validationTime = 0.0;
-    if(endTime >= startTimeParam)
-        validationTime = (double)(endTime - startTimeParam) / 1000.0; // microseconds -> milliseconds
-    
-    if(m_validationCount <= 0)
-    {
-        m_avgValidationTime = validationTime;
-    }
-    else if(m_validationCount == 1)
-    {
-        m_avgValidationTime = validationTime;
-    }
-    else
-    {
-        m_avgValidationTime = (m_avgValidationTime * (m_validationCount - 1) + validationTime) / m_validationCount;
-    }
-    
-    m_lastValidation = TimeCurrent();
+    m_validationStats.UpdatePerformanceMetrics(startTimeParam);
 }
 
+// Phase E1 forwarder -> CRiskClusterCodec::NormalizeClusterCode
 string CUnifiedRiskManager::NormalizeClusterCode(const string clusterCode) const
 {
-    string code = clusterCode;
-    StringTrimLeft(code);
-    StringTrimRight(code);
-    StringToUpper(code);
-    
-    if(StringLen(code) <= 0)
-        return "N";
-    
-    string first = StringSubstr(code, 0, 1);
-    if(first == "T" || first == "R" || first == "S" || first == "N")
-        return first;
-    
-    if(StringFind(code, "TREND") >= 0)
-        return "T";
-    if(StringFind(code, "MEAN") >= 0 || StringFind(code, "REVERSION") >= 0)
-        return "R";
-    if(StringFind(code, "STRUCTURE") >= 0)
-        return "S";
-    
-    return "N";
+    return CRiskClusterCodec::NormalizeClusterCode(clusterCode);
 }
 
+// Phase E1 forwarder -> CRiskClusterCodec::ParseClusterCodeFromComment
 bool CUnifiedRiskManager::ParseClusterCodeFromComment(const string comment, string &clusterCode) const
 {
-    clusterCode = "N";
-    int marker = StringFind(comment, "K:");
-    if(marker < 0 || (marker + 2) >= StringLen(comment))
-        return false;
-    
-    clusterCode = NormalizeClusterCode(StringSubstr(comment, marker + 2, 1));
-    return true;
+    return CRiskClusterCodec::ParseClusterCodeFromComment(comment, clusterCode);
 }
 
 double CUnifiedRiskManager::EstimatePositionRiskPercent(const ulong ticket) const
 {
-    if(ticket == 0 || !PositionSelectByTicket(ticket))
+    if(ticket == 0 || !PositionSelectByTicket(ticket)) {
+        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 3350, __FUNCTION__);
         return 0.0;
+    }
     
     string symbol = PositionGetString(POSITION_SYMBOL);
     double volume = PositionGetDouble(POSITION_VOLUME);
@@ -3219,57 +2887,28 @@ double CUnifiedRiskManager::GetCurrentPortfolioRisk()
     return m_portfolioRiskManager.GetPortfolioRisk();
 }
 
+// Phase E2 forwarder -> CRiskClusterBudget::SetClusterRiskCap
 void CUnifiedRiskManager::SetClusterRiskCap(const string clusterCode, const double capPercent)
 {
-    string normalizedCode = NormalizeClusterCode(clusterCode);
-    // Update existing entry if found
-    for(int i = 0; i < ArraySize(m_clusterRiskCapCodes); i++)
-    {
-        if(m_clusterRiskCapCodes[i] == normalizedCode)
-        {
-            m_clusterRiskCapValues[i] = MathMax(0.1, capPercent);
-            PrintFormat("[RISK-CLUSTER-CAP-PER] Updated cluster=%s cap=%.2f%%", normalizedCode, m_clusterRiskCapValues[i]);
-            return;
-        }
-    }
-    // Add new entry
-    int newSize = ArraySize(m_clusterRiskCapCodes) + 1;
-    ArrayResize(m_clusterRiskCapCodes, newSize);
-    ArrayResize(m_clusterRiskCapValues, newSize);
-    m_clusterRiskCapCodes[newSize - 1] = normalizedCode;
-    m_clusterRiskCapValues[newSize - 1] = MathMax(0.1, capPercent);
-    PrintFormat("[RISK-CLUSTER-CAP-PER] Added cluster=%s cap=%.2f%%", normalizedCode, m_clusterRiskCapValues[newSize - 1]);
+    m_clusterBudget.SetClusterRiskCap(clusterCode, capPercent);
 }
 
+// Phase E2 forwarder -> CRiskOpposingConflictGuard::ClearOpposingConflictCache
 void CUnifiedRiskManager::ClearOpposingConflictCache(const string symbol)
 {
-    if(m_lastOpposingConflictSymbol == symbol)
-    {
-        m_lastOpposingConflictTime = 0;
-        m_lastOpposingConflictSymbol = "";
-        PrintFormat("[RISK-MUTEX-COOLDOWN] cache cleared for symbol=%s", symbol);
-    }
+    m_opposingGuard.ClearOpposingConflictCache(symbol);
 }
 
+// Phase E1 forwarder -> CRiskValidationStats::GetStats
 void CUnifiedRiskManager::GetValidationStats(int &total, int &approved, int &rejected, double &approvalRate)
 {
-    total = m_validationCount;
-    approved = m_approvedCount;
-    rejected = m_rejectedCount;
-    
-    if(total > 0)
-        approvalRate = (double)approved / total * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
-    else
-        approvalRate = 0.0;
+    m_validationStats.GetStats(total, approved, rejected, approvalRate);
 }
 
+// Phase E1 forwarder -> CRiskValidationStats::Reset
 void CUnifiedRiskManager::ResetStats(void)
 {
-    m_validationCount = 0;
-    m_approvedCount = 0;
-    m_rejectedCount = 0;
-    
-    WriteAuditLog("Validation statistics reset");
+    m_validationStats.Reset();
 }
 
 #endif // CORE_RISK_UNIFIED_RISK_MANAGER_MQH

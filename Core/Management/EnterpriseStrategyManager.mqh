@@ -17,15 +17,17 @@
 #include "../Utils/RankingMatrix.mqh"
 #include "../../Interfaces/IStrategy.mqh"
 #include "../../Interfaces/IAIStrategy.mqh"
+#include "DiagnosticsManager.mqh"
+#include "StrategyHealthMonitor.mqh"
+#include "../../Core/Trading/TradeAttributionManager.mqh"
+#include "../../Core/AI/AIPerformanceFeedback.mqh"
+#include "../../Core/Utils/JsonLogger.mqh"
 
 // Retained production strategy inventory (7 kept in codebase)
 #include "../../Strategies/SimpleMomentumStrategy.mqh"
 #include "../../Strategies/StrategyTrend.mqh"
 #include "../../Strategies/StrategySupportResistance.mqh"
-#include "../../Strategies/StrategyUnifiedICT.mqh"
 #include "../../Strategies/StrategyCandlestick.mqh"
-#include "../../Strategies/CUnicornModelStrategy.mqh"
-#include "../../Strategies/CPowerOfThreeStrategy.mqh"
 #include "../../Strategies/MeanReversionStrategy.mqh"
 #include "../../Strategies/VolatilityBreakoutStrategy.mqh"
 #include "../../Strategies/StatisticalArbitrageStrategy.mqh"
@@ -55,12 +57,6 @@ class CFourStateRegimeDetector;  // Forward declaration for market regime detect
 
 // Forward declaration (fallback if include guard prevents inclusion)
 class CStrategyRegistry;
-
-// External reference to global Python bridge instance
-extern CPythonBridge* g_pythonBridge;
-
-// External reference to global strategy registry instance
-extern CStrategyRegistry* g_strategyRegistry;
 
 //+------------------------------------------------------------------+
 //| Strategy Registration Entry                                     |
@@ -110,13 +106,20 @@ struct StrategyEntry
     int consecutiveWins;
     
     // Adaptation flags
-    bool temporarilyDisabled;       
-    datetime disabledUntil;         
-    datetime lastUpdate;            
-    
+    bool temporarilyDisabled;
+    datetime disabledUntil;
+    datetime lastUpdate;
+
+    // Consensus component scores (populated by pipeline/consensus engine)
+    double participation;        // Participation multiplier [0-1]
+    double readinessScore;       // Readiness score [0-1]
+    double contextScore;         // Context score [0-1]
+    double costScore;            // Cost score [0-1]
+    bool isProbeEligible;        // Eligible for intrabar probe voting
+
     // Market regime performance
-    double regimePerformance[5];    
-    int regimeTrades[5];            
+    double regimePerformance[5];
+    int regimeTrades[5];
 };
 
 
@@ -172,20 +175,6 @@ string IntrabarPolicyToString(const ENUM_INTRABAR_POLICY policy)
     }
 }
 
-string ConsensusDecisionClassToString(const ENUM_CONSENSUS_DECISION_CLASS decisionClass)
-{
-    switch(decisionClass)
-    {
-        case CONSENSUS_DECISION_FULL_QUORUM: return "FULL_QUORUM";
-        case CONSENSUS_DECISION_SPARSE_INTRABAR: return "SPARSE_INTRABAR";
-        case CONSENSUS_DECISION_VETOED: return "VETOED";
-        case CONSENSUS_DECISION_MARGINAL_ADMIT: return "MARGINAL_ADMIT";
-        case CONSENSUS_DECISION_SOLO_FALLBACK: return "SOLO_FALLBACK";
-        case CONSENSUS_DECISION_NONE:
-        default:
-            return "NONE";
-    }
-}
 
 string TradeSignalToString(const ENUM_TRADE_SIGNAL signal)
 {
@@ -215,6 +204,33 @@ bool IsInfrastructureNoSignalReasonTag(const string reasonTag)
             StringFind(reasonTag, "_MODEL_UNAVAILABLE") >= 0);
 }
 
+// Clamp value to [0.0, 1.0] range
+inline double ClampUnitValue(const double value)
+{
+    return MathMax(0.0, MathMin(1.0, value));
+}
+
+// Phase C / Slice 1 extracted collaborators. Included here (after the shared
+// free helpers above, before the manager class) so that:
+//   - CStrategyStateReporter / CAttributionDelegator are complete types and can
+//     be held BY VALUE as members of CEnterpriseStrategyManager;
+//   - the reporter's out-of-line bodies may reference the still-incomplete
+//     CEnterpriseStrategyManager (resolved later in this same translation unit).
+#include "StrategyStateReporter.mqh"
+#include "AttributionDelegator.mqh"
+// Phase C / Slice 2 extracted collaborators (same rationale as Slice 1).
+#include "PostConsensusValidator.mqh"
+#include "ConsensusWeightingConfig.mqh"
+// Phase C / Slice 3 extracted collaborators (same rationale as Slice 1).
+#include "StrategyPerformanceHealth.mqh"
+#include "StrategyLifecycle.mqh"
+// Phase C / Slice 4 extracted collaborators (same rationale as Slice 1).
+#include "IntrabarPolicy.mqh"
+#include "StrategyRegistryState.mqh"
+// Phase C / Slice 5 extracted collaborator (same rationale as Slice 1):
+// C9, the consensus decision core, moved wholesale into CConsensusEngine.
+#include "ConsensusEngine.mqh"
+
 //+------------------------------------------------------------------+
 //| Enterprise Strategy Manager Class                               |
 //+------------------------------------------------------------------+
@@ -233,8 +249,33 @@ private:
     COrderFlowImbalanceEngine* m_ofiEngine;  // OFI for regime integration (Batch 104)
     CFamilyStrategyWeightMatrix* m_familyWeightMatrix;  // I1: Per-family cluster weight multipliers
     CFourStateRegimeDetector* m_fourStateRegimeDetector; // Four-state regime detector
+    CStrategyRegistry* m_strategyRegistry;                // L1-004: Injected registry (no global singleton)
     ENUM_MARKET_REGIME m_currentMarketRegime;
     bool m_regimeDetectorInitialized;
+    
+    // L1-007: Component delegation
+    CDiagnosticsManager* m_diagnostics;
+    CTradeAttributionManager* m_attribution;
+    CStrategyHealthMonitor* m_healthMonitor;
+
+    // Phase C / Slice 1: extracted collaborators (owned by value, no lifetime management)
+    CStrategyStateReporter m_stateReporter;      // C1: read-only telemetry / JSON reporting
+    CAttributionDelegator  m_attributionDelegator; // C2: attribution forwarders
+
+    // Phase C / Slice 2: extracted collaborators (owned by value, no lifetime management)
+    CPostConsensusValidator  m_postConsensusValidator; // C3: post-consensus validation + its config
+    CConsensusWeightingConfig m_weightingConfig;       // C4: weighting / quorum profiles
+
+    // Phase C / Slice 3: extracted collaborators (owned by value, no lifetime management)
+    CStrategyPerformanceHealth m_performanceHealth;    // C5: performance accounting / health scoring
+    CStrategyLifecycle         m_lifecycle;            // C7: enable/disable lifecycle, per-bar transitions
+
+    // Phase C / Slice 4: extracted collaborators (owned by value, no lifetime management)
+    CIntrabarPolicy        m_intrabarPolicy; // C6: intrabar policy table + eligibility gating
+    CStrategyRegistryState m_registryState;  // C8: registry bookkeeping + enable-state queries
+
+    // Phase C / Slice 5: extracted collaborator (owned by value, no lifetime management)
+    CConsensusEngine       m_consensusEngine; // C9: consensus decision core (owns m_lastDecisionContext)
     
     StrategyEntry m_strategies[];
     int m_strategyCount;
@@ -248,14 +289,26 @@ private:
     bool m_initialized;
     bool m_usePipeline;
     int  m_adxHandleCached;    // Cached ADX handle for IsTrendingRegime() (Batch 116)
-    int  m_minQuorum;       // Minimum number of agreeing live voters (floor safety)
-    int  m_intrabarMinQuorum; // Intrabar quorum floor when multiple strategies are active
+    
+    // Statistics
+    int m_totalSignals;
+    int m_successfulSignals;
+    double m_avgConfidence;
+
+    // L1-007: Health monitor configuration (mirrored for fallback when m_healthMonitor == NULL)
+    double m_minWinRateThreshold;
+    int m_maxConsecutiveLosses_Limit;
+    int m_rollingWindowSize;
+
+    // Consensus configuration (mirrored for internal consensus logic)
+    int m_minQuorum;
+    int m_intrabarMinQuorum;
     bool m_intrabarDynamicQuorumEnabled;
     double m_intrabarSingleVoterMinConfidence;
-    double m_quorumThreshold;       // Normalized weighted quorum threshold (0..1)
-    double m_pipelineMinConfidence; // Pipeline base confidence floor used for quorum eligibility
-    double m_conflictDeadband;      // Deadband between buy/sell conviction before forcing direction
-    double m_minReadyWeightRatio;   // Minimum ready-live-weight share required to trade
+    double m_quorumThreshold;
+    double m_pipelineMinConfidence;
+    double m_conflictDeadband;
+    double m_minReadyWeightRatio;
     double m_supportFloorNewBar;
     double m_supportFloorIntrabar;
     double m_sparseIntrabarMinQuality;
@@ -263,164 +316,336 @@ private:
     double m_sparseIntrabarMinReadyCoverage;
     double m_sparseIntrabarConfidencePenalty;
     bool m_allowSparseIntrabarSingleVoter;
-
-    // Adaptive quorum settings (adjust thresholds based on active voter count)
     bool m_adaptiveQuorumEnabled;
-    double m_adaptiveQualityThreshold_1voter;     // Quality threshold for 1 active voter
-    double m_adaptiveSupportFloor_1voter;          // Support floor for 1 active voter
-    double m_adaptiveQualityThreshold_2voters;     // Quality threshold for 2 active voters
-    double m_adaptiveSupportFloor_2voters;         // Support floor for 2 active voters
-    double m_adaptiveQualityThreshold_3plus;       // Quality threshold for 3+ active voters (standard)
-    double m_adaptiveSupportFloor_3plus;           // Support floor for 3+ active voters (standard)
-    double m_strategyActivityDecayRate;            // How fast inactive strategy weight decays (0.0-1.0)
-    int m_strategyInactiveCounterThreshold;        // After N consecutive filters, apply weight decay
+    double m_adaptiveQualityThreshold_1voter;
+    double m_adaptiveSupportFloor_1voter;
+    double m_adaptiveQualityThreshold_2voters;
+    double m_adaptiveSupportFloor_2voters;
+    double m_adaptiveQualityThreshold_3plus;
+    double m_adaptiveSupportFloor_3plus;
+    double m_strategyActivityDecayRate;
+    int m_strategyInactiveCounterThreshold;
+    bool m_regimeRelaxActive;
+    double m_regimeRelaxFactor;
+    double m_performanceDecayFactor;
+    double m_maxDrawdownLimit;
 
-    // Issue 6: Regime-aware consensus relaxation state
-    bool m_regimeRelaxActive;                      // True when threshold relaxation is in effect for next cycle
-    double m_regimeRelaxFactor;                    // Relaxation multiplier (0.90 = 10% relaxation)
+    // Post-consensus validation configuration: Phase C / Slice 2 (C3) moved this
+    // block into CPostConsensusValidator, which now owns it. No reader remained
+    // outside the validator methods.
 
-    // Ported Orchestrator Parameters
-    double m_minWinRateThreshold;                       // Minimum win rate (default 40%)
-    int m_maxConsecutiveLosses_Limit;                   // Max consecutive losses (default 5)
-    double m_performanceDecayFactor;                    // Performance decay factor
-    int m_rollingWindowSize;                            // Rolling window size (default 20)
-    double m_maxDrawdownLimit;                          // Drawdown fraction for lot-size tapering (internal param)
+    // Participation score multiplier formula parameters (L6-008)
+    double m_participationFormulaBase;
+    double m_participationFormulaCoeff;
+    double m_participationFormulaMin;
+    double m_participationFormulaMax;
 
-    // Statistics
-    int m_totalSignals;
-    int m_successfulSignals;
-    double m_avgConfidence;
+    // Intrabar policy configuration per strategy index (L6-007)
+    ENUM_INTRABAR_POLICY m_intrabarPolicyConfig[32];
 
     // Last orchestrated decision context for basic trade attribution
-    string m_lastSignalContributors[];
-    int m_lastContributorCount;
-    string m_lastSignalSymbol;
-    datetime m_lastSignalTime;
-    string m_lastSignalRole;
-    string m_lastSignalCluster;
-    string m_lastSignalClusterCode;
-    SConsensusDecisionContext m_lastDecisionContext;
-
-    // Consensus diagnostics counters
-    ulong m_diagRawNone;
-    ulong m_diagFilteredOut;
-    ulong m_diagQuorumFailed;
-    ulong m_diagIntrabarNotEligible;
-    ulong m_diagSignalsGenerated;
-    ulong m_diagSignalsAfterPipeline;
-    ulong m_diagSignalsAfterQuorum;
-    ulong m_diagVoteSuppressed;
-    ulong m_diagRolePrimarySignals;
-    ulong m_diagRoleFeatureSignals;
-    ulong m_diagRoleShadowSignals;
-    ulong m_diagClusterTrendSignals;
-    ulong m_diagClusterMeanReversionSignals;
-    ulong m_diagClusterStructureSignals;
-    ulong m_diagClusterNoneSignals;
-    ulong m_diagMomentumNone;
-    ulong m_diagMomentumCooldown;
-    ulong m_diagMomentumLowVolatility;
-    ulong m_diagMomentumNoCrossover;
-    ulong m_diagMomentumTrendMisaligned;
-    ulong m_diagMomentumNotReady;
-    ulong m_diagUICTNone;
-    ulong m_diagUICTNeutralBias;
-    ulong m_diagUICTOtherFilters;
-    ulong m_diagRootBaselineRawNone;
-    ulong m_diagRootBaselineFilteredOut;
-    ulong m_diagRootBaselineQuorumFailed;
-    ulong m_diagRootBaselineIntrabarNotEligible;
-    ulong m_diagRootBaselineSignalsGenerated;
-    ulong m_diagRootBaselineSignalsAfterPipeline;
-    ulong m_diagRootBaselineSignalsAfterQuorum;
-    ulong m_diagRootBaselineVoteSuppressed;
-    ulong m_diagRootBaselineRolePrimarySignals;
-    ulong m_diagRootBaselineRoleFeatureSignals;
-    ulong m_diagRootBaselineRoleShadowSignals;
-    ulong m_diagRootBaselineClusterTrendSignals;
-    ulong m_diagRootBaselineClusterMeanReversionSignals;
-    ulong m_diagRootBaselineClusterStructureSignals;
-    ulong m_diagRootBaselineClusterNoneSignals;
-    ulong m_diagRootBaselineMomentumNone;
-    ulong m_diagRootBaselineMomentumCooldown;
-    ulong m_diagRootBaselineMomentumLowVolatility;
-    ulong m_diagRootBaselineMomentumNoCrossover;
-    ulong m_diagRootBaselineMomentumTrendMisaligned;
-    ulong m_diagRootBaselineMomentumNotReady;
-    ulong m_diagRootBaselineUICTNone;
-    ulong m_diagRootBaselineUICTNeutralBias;
-    ulong m_diagRootBaselineUICTOtherFilters;
-    ulong m_diagSnapshotBaselineRawNone;
-    ulong m_diagSnapshotBaselineFilteredOut;
-    ulong m_diagSnapshotBaselineQuorumFailed;
-    ulong m_diagSnapshotBaselineIntrabarNotEligible;
-    ulong m_diagSnapshotBaselineSignalsGenerated;
-    ulong m_diagSnapshotBaselineSignalsAfterPipeline;
-    ulong m_diagSnapshotBaselineSignalsAfterQuorum;
-    ulong m_diagSnapshotBaselineVoteSuppressed;
-    ulong m_diagSnapshotBaselineRolePrimarySignals;
-    ulong m_diagSnapshotBaselineRoleFeatureSignals;
-    ulong m_diagSnapshotBaselineRoleShadowSignals;
-    ulong m_diagSnapshotBaselineClusterTrendSignals;
-    ulong m_diagSnapshotBaselineClusterMeanReversionSignals;
-    ulong m_diagSnapshotBaselineClusterStructureSignals;
-    ulong m_diagSnapshotBaselineClusterNoneSignals;
-    ulong m_diagSnapshotBaselineMomentumNone;
-    ulong m_diagSnapshotBaselineMomentumCooldown;
-    ulong m_diagSnapshotBaselineMomentumLowVolatility;
-    ulong m_diagSnapshotBaselineMomentumNoCrossover;
-    ulong m_diagSnapshotBaselineMomentumTrendMisaligned;
-    ulong m_diagSnapshotBaselineMomentumNotReady;
-    ulong m_diagSnapshotBaselineUICTNone;
-    ulong m_diagSnapshotBaselineUICTNeutralBias;
-    ulong m_diagSnapshotBaselineUICTOtherFilters;
-    datetime m_lastDiagLogTime;
-    int m_diagLogIntervalSec;
+        string m_lastSignalContributors[];
+        int m_lastSignalContributorIndices[];
+        int m_lastContributorCount;
+        string m_lastSignalSymbol;
+        datetime m_lastSignalTime;
+        string m_lastSignalRole;
+        string m_lastSignalCluster;
+        string m_lastSignalClusterCode;
+        // Phase C / Slice 5 (C9): m_lastDecisionContext moved into CConsensusEngine,
+        // which is its single writer. GetLastDecisionContextValue() now forwards there.
 
     // Last-cycle funnel snapshot (for EA-level heartbeat conversion metrics)
     int m_lastCycleSignalsGenerated;
     int m_lastCycleSignalsAfterPipeline;
     bool m_lastCycleSignalAfterQuorum;
 
-    // Position-level contributor attribution
-    ulong m_attributionPositionIds[];
-    string m_attributionContributorCsv[];
-    string m_closedTradeContributors[];
-    double m_closedTradeNetProfit;
-    bool m_hasClosedTradeAttribution;
-
     bool IsPositionIdStillOpen(const ulong positionId) const;
     int FindStrategyIndexByName(const string name) const;
-    void MaybeLogConsensusDiagnostics(const string symbol);
     int FindAttributionIndexByPositionId(const ulong positionId) const;
     string JoinContributors(const string &contributors[]) const;
-    string JoinContributorsWithContext(const int &strategyIndices[]) const;
     void SplitContributors(const string csv, string &contributors[]) const;
     void UpsertPositionAttribution(const ulong positionId, const string &contributors[]);
     bool PopPositionAttribution(const ulong positionId, string &contributors[]);
-    ENUM_STRATEGY_ROLE ResolveDominantRole(const int &strategyIndices[]) const;
-    ENUM_STRATEGY_CLUSTER ResolveDominantCluster(const int &strategyIndices[]) const;
+    //--- Phase C / Slice 5 (C9): retained as a one-line forwarder because the
+    //--- public read-only accessor GetStrategyIsLiveVoter() (consumed by
+    //--- CStrategyStateReporter) is defined in terms of it. The implementation
+    //--- lives in CConsensusEngine.
     bool IsStrategyLiveVoter(const int strategyIndex) const;
-    void AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated);
-    double GetStrategyReliabilityMultiplier(const int strategyIndex) const;
-    double GetStrategyParticipationMultiplier(const int strategyIndex) const;
-    double GetStrategyRoleVoteMultiplier(const int strategyIndex) const;
-    double CalculateDirectionDiversityScore(const int &strategyIndices[]) const;
-    double ClampUnitValue(const double value) const;
-    ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicy(const int strategyIndex) const;
-    bool IsStrategyIntrabarLiveEligible(const int strategyIndex) const;
-    bool IsStrategyIntrabarProbeEligible(const int strategyIndex) const;
-    double CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const;
-    bool IsTrendingRegime();
-    double GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const;
-    
-    // Fallback solo signal when all strategies abstain
+
+    // Fallback solo signal when all strategies abstain.
+    // Phase C / Slice 5 (C9): forwarder; implementation in CConsensusEngine.
     ENUM_TRADE_SIGNAL TryFallbackSoloSignal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode, double &outConfidence, int &outConfluence, string &outReason);
+
+    // Consensus decision class to string conversion. Already a shim over
+    // CStrategyStateReporter (Phase C / Slice 1); left in place.
+    static string ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass);
+
+    //--- Phase C / Slice 5 (C9): the consensus evaluation core
+    //--- (EvaluateConsensusInternal, EvaluateConsensusTwoTierInternal,
+    //--- EvaluateConsensusProbeOnlyInternal, TryFallbackSoloSignalInternal,
+    //--- CalculateEffectiveQuorumParamsInternal) and its vote/weighting helpers
+    //--- (GetStrategyReliabilityMultiplier, GetStrategyParticipationMultiplier,
+    //--- GetStrategyRoleVoteMultiplier, GetRegimeCategoryMultiplier,
+    //--- CalculateDirectionDiversityScore, CalculateAverageStrategyMetric,
+    //--- ClampUnitValue, GetStrategyIntrabarPolicy,
+    //--- IsStrategyIntrabarLiveEligible, IsStrategyIntrabarProbeEligible,
+    //--- IsTrendingRegime, ResolveDominantRole, ResolveDominantCluster,
+    //--- JoinContributorsWithContext, AccumulateRoleClusterSignalDiagnostics,
+    //--- MaybeLogConsensusDiagnostics) moved wholesale into CConsensusEngine.
+    //--- None of them had a caller outside the consensus core, so no forwarder
+    //--- is retained for them.
+
+    //--- Post-consensus validation: Phase C / Slice 2 (C3).
+    //--- Implementation lives in CPostConsensusValidator; the manager keeps only
+    //--- forwarders for the externally-consumed entry points. The result type is
+    //--- now the top-level struct SPostConsensusValidation (was the nested
+    //--- SValidationResult, which shadowed the unrelated global SValidationResult
+    //--- declared in Core/Utils/Enums.mqh).
+    //--- The internal leaf checks (CheckHardSpreadCutoff, CheckExogenousFilters,
+    //--- CheckOFIConfirmation, CheckVPINFilter, GetATRDirect,
+    //--- GetATRCrisisThreshold, IsSyntheticSymbolForValidation,
+    //--- GetAdaptiveQualityThreshold) had zero callers outside ValidateSignal and
+    //--- moved wholesale - no forwarder is retained for them.
+public:
+    SPostConsensusValidation ValidateSignal(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
+                                            int confluence, ENUM_SIGNAL_EVAL_MODE evalMode,
+                                            const SConsensusDecisionContext& ctx,
+                                            ulong scanCycleId, const string corrId = "");
+    string GetValidationStatusReport() const;
+
+    // Validator configuration setters
+    void SetValidatorConfig(double intrabarMinQuality, double newBarMinQuality, double hardSpreadCutoff,
+                           bool spikeHunterEnabled, bool enableOFI, bool enableVPIN,
+                           double baseSpreadATRRatio, double syntheticSpreadATRRatio);
 
 public:
     CEnterpriseStrategyManager();
     ~CEnterpriseStrategyManager();
     
+    // L1-007: Component accessors
+    CDiagnosticsManager* GetDiagnostics() { return m_diagnostics; }
+    void SetDiagnosticsManager(CDiagnosticsManager* diagnostics) { m_diagnostics = diagnostics; }
+    CTradeAttributionManager* GetAttribution() { return m_attribution; }
+    void SetAttributionManager(CTradeAttributionManager* attribution)
+         { m_attribution = attribution; m_attributionDelegator.SetAttribution(m_attribution); }
+    CStrategyHealthMonitor* GetHealthMonitor() { return m_healthMonitor; }
+
+    //--- Phase C / Slice 1: minimal read-only accessor surface consumed by
+    //--- CStrategyStateReporter. These expose existing state verbatim; they add
+    //--- no logic and are the only way the reporter observes this manager.
+    int    GetStrategyCount() const { return m_strategyCount; }
+    bool   IsStrategyEnabled(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].enabled : false; }
+    IStrategy* GetStrategyPtr(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].strategy : NULL; }
+    string GetStrategyName(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].name : ""; }
+    double GetStrategyWeight(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].weight : 0.0; }
+    int    GetStrategyRole(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].role : 0; }
+    int    GetStrategyCluster(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].cluster : 0; }
+    bool   IsStrategyLiveVotingEnabled(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].liveVotingEnabled : false; }
+    int    GetStrategySuccessCount(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].successCount : 0; }
+    int    GetStrategyFailCount(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].failCount : 0; }
+    double GetStrategyAvgConfidence(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgConfidence : 0.0; }
+    double GetStrategyParticipationScore(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].participationScore : 0.0; }
+    double GetStrategyHealthScore(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].healthScore : 0.0; }
+    double GetStrategyRecentWinRate(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentWinRate : 0.0; }
+    bool   GetStrategyIsLiveVoter(const int index) const { return IsStrategyLiveVoter(index); }
+    CUnifiedSignalPipeline* GetPipelineConst() const { return m_pipeline; }
+    CDiagnosticsManager*    GetDiagnosticsConst() const { return m_diagnostics; }
+    string GetManagedSymbol() const { return m_symbol; }
+    int    GetTotalSignals() const { return m_totalSignals; }
+    int    GetSuccessfulSignals() const { return m_successfulSignals; }
+    void   GetLastDecisionContextValue(SConsensusDecisionContext &out) const
+           { m_consensusEngine.GetLastDecisionContextValue(out); }
+    int    GetLastCycleSignalsGeneratedValue() const { return m_lastCycleSignalsGenerated; }
+    int    GetLastCycleSignalsAfterPipelineValue() const { return m_lastCycleSignalsAfterPipeline; }
+    bool   GetLastCycleSignalAfterQuorumValue() const { return m_lastCycleSignalAfterQuorum; }
+
+    //--- Phase C / Slice 2: additional read-only accessors consumed by
+    //--- CPostConsensusValidator (C3) and CConsensusWeightingConfig (C4).
+    //--- Same contract as the Slice 1 block: expose existing state verbatim,
+    //--- add no logic.
+    COrderFlowImbalanceEngine*   GetOFIEngineConst() const          { return m_ofiEngine; }
+    CVPINFilter*                 GetVPINFilterConst() const         { return m_vpinFilter; }
+    CMultiAssetProfiler*         GetMultiAssetProfilerConst() const { return m_multiAssetProfiler; }
+    CDerivAssetProfiler*         GetDerivProfilerConst() const      { return m_derivProfiler; }
+    CFamilyStrategyWeightMatrix* GetFamilyWeightMatrixConst() const { return m_familyWeightMatrix; }
+    double GetStrategyAvgProfit(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgProfit : 0.0; }
+    double GetStrategyOriginalWeight(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].originalWeight : 0.0; }
+    int    GetStrategyIndexByName(const string name) const { return FindStrategyIndexByName(name); }
+
+    //--- Narrow raw weight mutator for C4. Mirrors exactly what
+    //--- UpdateStrategyWeights() used to do inline: write the entry weight and
+    //--- push it to the strategy object, WITHOUT touching the health monitor
+    //--- (that is UpdateStrategyWeightByName's behaviour, deliberately distinct).
+    void   ApplyRawStrategyWeight(const int index, const double weight)
+    {
+        if(index < 0 || index >= m_strategyCount)
+            return;
+        m_strategies[index].weight = weight;
+        if(m_strategies[index].strategy != NULL)
+            m_strategies[index].strategy.SetWeight(weight);
+    }
+
+    //--- Phase C / Slice 3: accessor surface consumed by
+    //--- CStrategyPerformanceHealth (C5) and CStrategyLifecycle (C7).
+    //--- Same contract as Slice 1/2: each accessor exposes exactly one
+    //--- existing field verbatim and adds no logic. The mutators are the
+    //--- narrow write half required because both collaborators (like C4)
+    //--- change manager state; they are deliberately dumb field writers so
+    //--- the resulting state transitions stay byte-for-byte identical to the
+    //--- original inline bodies.
+
+    //--- read half
+    int      GetStrategyTotalTrades(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].totalTrades : 0; }
+    int      GetStrategyWinningTrades(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].winningTrades : 0; }
+    double   GetStrategyWinRate(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].winRate : 0.0; }
+    double   GetStrategyAvgLoss(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgLoss : 0.0; }
+    int      GetStrategyConsecutiveWins(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveWins : 0; }
+    int      GetStrategyConsecutiveLosses(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveLosses : 0; }
+    int      GetStrategyMaxConsecutiveLosses(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].maxConsecutiveLosses : 0; }
+    int      GetStrategyRecentTradeIndex(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentTradeIndex : 0; }
+    int      GetStrategyRecentTradeCount(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentTradeCount : 0; }
+    double   GetStrategyRecentTrade(const int index, const int slot) const
+             { return (index >= 0 && index < m_strategyCount && slot >= 0 && slot < 20)
+                      ? m_strategies[index].recentTrades[slot] : 0.0; }
+    bool     IsStrategyTemporarilyDisabled(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].temporarilyDisabled : false; }
+    datetime GetStrategyDisabledUntil(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].disabledUntil : 0; }
+    ENUM_TIMEFRAMES GetStrategyTimeframe(const int index) const
+             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].timeframe : m_baseTimeframe; }
+    double   GetMinWinRateThreshold() const      { return m_minWinRateThreshold; }
+    int      GetMaxConsecutiveLossesLimit() const { return m_maxConsecutiveLosses_Limit; }
+    int      GetRollingWindowSize() const        { return m_rollingWindowSize; }
+    bool     IsManagerInitialized() const        { return m_initialized; }
+    CFourStateRegimeDetector* GetFourStateRegimeDetectorConst() const { return m_fourStateRegimeDetector; }
+    bool     IsRegimeDetectorInitialized() const { return m_regimeDetectorInitialized; }
+
+    //--- write half (dumb field writers, all bounds-checked)
+    void SetStrategyTotalTrades(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].totalTrades = value; }
+    void SetStrategySuccessCount(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].successCount = value; }
+    void SetStrategyFailCount(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].failCount = value; }
+    void SetStrategyWinningTrades(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].winningTrades = value; }
+    void SetStrategyConsecutiveWins(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].consecutiveWins = value; }
+    void SetStrategyConsecutiveLosses(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].consecutiveLosses = value; }
+    void SetStrategyMaxConsecutiveLosses(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].maxConsecutiveLosses = value; }
+    void SetStrategyAvgProfit(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].avgProfit = value; }
+    void SetStrategyAvgLoss(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].avgLoss = value; }
+    void SetStrategyWinRate(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].winRate = value; }
+    void SetStrategyProfitFactor(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].profitFactor = value; }
+    void SetStrategySharpeRatio(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].sharpeRatio = value; }
+    void SetStrategyRecentWinRate(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentWinRate = value; }
+    void SetStrategyHealthScore(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].healthScore = value; }
+    void SetStrategyLastUpdate(const int index, const datetime value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastUpdate = value; }
+    void SetStrategyTemporarilyDisabled(const int index, const bool value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].temporarilyDisabled = value; }
+    void SetStrategyDisabledUntil(const int index, const datetime value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].disabledUntil = value; }
+    //--- Writes ONLY the entry flag. It deliberately does NOT push the value to
+    //--- the IStrategy object: CheckStrategyDisabling/ReEnabling never did, and
+    //--- EnableStrategy/DisableStrategy push it themselves via GetStrategyPtr().
+    void SetStrategyEnabledFlag(const int index, const bool value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].enabled = value; }
+    //--- slot bound is the fixed recentTrades[20] capacity; unreachable in
+    //--- practice because m_rollingWindowSize is fixed at 20 (no setter).
+    void SetStrategyRecentTrade(const int index, const int slot, const double value)
+         { if(index >= 0 && index < m_strategyCount && slot >= 0 && slot < 20)
+               m_strategies[index].recentTrades[slot] = value; }
+    void SetStrategyRecentTradeIndex(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentTradeIndex = value; }
+    void SetStrategyRecentTradeCount(const int index, const int value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentTradeCount = value; }
+    void SetStrategyLastSignal(const int index, const ENUM_TRADE_SIGNAL value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastSignal = value; }
+    void SetStrategyLastSignalConfidence(const int index, const double value)
+         { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastSignalConfidence = value; }
+
+    //--- Phase C / Slice 5: accessor surface consumed by CConsensusEngine (C9).
+    //--- Same contract as Slice 1/2/3: every accessor exposes exactly one
+    //--- existing field verbatim and adds no logic. The consensus core READS
+    //--- the enable / live-voting / intrabar-policy flags through here; it does
+    //--- NOT own them (they are written by registration, lifecycle and the
+    //--- governance setters, all of which stay in this manager). The single
+    //--- mutator, SetAdxHandleCached, exists only because IsTrendingRegime()
+    //--- lazily caches the ADX handle exactly as the original inline body did.
+    CTimeframeConsistency* GetTFConsistencyConst() const   { return m_tfConsistency; }
+    CStrategyRegistry*     GetStrategyRegistryConst() const { return m_strategyRegistry; }
+    ENUM_TIMEFRAMES        GetBaseTimeframe() const         { return m_baseTimeframe; }
+
+    int    GetStrategyIntrabarPolicyRaw(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarPolicy : (int)INTRABAR_POLICY_OFF; }
+    bool   GetStrategyIntrabarEligible(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarEligible : false; }
+    bool   IsStrategyProbeEligible(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].isProbeEligible : false; }
+    double GetStrategyReadinessScore(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].readinessScore : 0.0; }
+    double GetStrategyContextScore(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].contextScore : 0.0; }
+    double GetStrategyCostScore(const int index) const
+           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].costScore : 0.0; }
+
+    //--- consensus configuration (GetMinQuorum() already exists above)
+    int    GetIntrabarMinQuorum() const              { return m_intrabarMinQuorum; }
+    bool   IsIntrabarDynamicQuorumEnabled() const    { return m_intrabarDynamicQuorumEnabled; }
+    double GetQuorumThreshold() const                { return m_quorumThreshold; }
+    double GetPipelineMinConfidence() const          { return m_pipelineMinConfidence; }
+    double GetConflictDeadband() const               { return m_conflictDeadband; }
+    double GetMinReadyWeightRatio() const            { return m_minReadyWeightRatio; }
+    double GetSupportFloorNewBar() const             { return m_supportFloorNewBar; }
+    double GetSupportFloorIntrabar() const           { return m_supportFloorIntrabar; }
+    double GetSparseIntrabarMinQuality() const       { return m_sparseIntrabarMinQuality; }
+    double GetSparseIntrabarMinSupportRatio() const  { return m_sparseIntrabarMinSupportRatio; }
+
+    //--- participation score formula parameters (L6-008)
+    double GetParticipationFormulaBase() const       { return m_participationFormulaBase; }
+    double GetParticipationFormulaCoeff() const      { return m_participationFormulaCoeff; }
+    double GetParticipationFormulaMin() const        { return m_participationFormulaMin; }
+    double GetParticipationFormulaMax() const        { return m_participationFormulaMax; }
+
+    //--- cached ADX handle (Batch 116) read/write half for IsTrendingRegime()
+    int    GetAdxHandleCached() const                { return m_adxHandleCached; }
+    void   SetAdxHandleCached(const int handle)      { m_adxHandleCached = handle; }
+
     // Initialization
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
                    bool usePipeline = true,
@@ -428,62 +653,91 @@ public:
                    CUnifiedRiskManager* unifiedRiskManagerPtr = NULL,
                    const long managedMagic = 0);
     
+    // L1-004: Set strategy registry (replaces global singleton)
+    void SetStrategyRegistry(CStrategyRegistry* registry) { m_strategyRegistry = registry; }
+    
     // Strategy management
     bool RegisterStrategy(IStrategy* strategy, const string name, 
-                         bool enabled = true, double weight = 1.0,
-                         ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3,
-                         ENUM_TIMEFRAMES tf = PERIOD_CURRENT,
-                         bool intrabarEligible = false,
-                         ENUM_STRATEGY_ROLE role = PRIMARY_ALPHA,
-                         ENUM_STRATEGY_CLUSTER cluster = STRATEGY_CLUSTER_NONE,
-                         bool liveVotingEnabled = true);
+                             bool enabled = true, double weight = 1.0,
+                             ENUM_STRATEGY_TIER tier = STRATEGY_TIER_3,
+                             ENUM_TIMEFRAMES tf = PERIOD_CURRENT,
+                             ENUM_INTRABAR_POLICY intrabarPolicy = INTRABAR_POLICY_OFF,
+                             ENUM_STRATEGY_ROLE role = PRIMARY_ALPHA,
+                             ENUM_STRATEGY_CLUSTER cluster = STRATEGY_CLUSTER_NONE,
+                             bool liveVotingEnabled = false);
     bool EnableStrategy(const string name);
     bool DisableStrategy(const string name);
     
-    // Signal generation
+    // Signal generation - internal consensus logic
     ENUM_TRADE_SIGNAL GetConsensusSignal(double &confidence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbol(const string symbol, double &confidence);
     ENUM_TRADE_SIGNAL GetConsensusSignalWithConfluence(double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence);
     ENUM_TRADE_SIGNAL GetConsensusSignalForSymbolWithConfluenceMode(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
 
-    // Two-tier consensus: Tier 1 quick-probe fast path, Tier 2 full evaluation fallback
+    // Two-tier consensus: Tier 1 quick-probe fast path, Tier 2 full evaluation fallback - internal consensus logic
     ENUM_TRADE_SIGNAL EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode);
     
-    // Configuration
+    // Configuration - internal consensus logic
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
-    void SetMinQuorum(int quorum) { m_minQuorum = MathMax(1, quorum); }  // Solo Mode support
+    void SetMinQuorum(int quorum);
     void SetManagedMagicRangeMax(long rangeMax) { m_managedMagicRangeMax = rangeMax; }
-    bool IsEAOwnedMagic(long magic) const { return (m_managedMagicRangeMax > m_managedMagic) ? (magic >= m_managedMagic && magic <= m_managedMagicRangeMax) : (magic == m_managedMagic); }
-    void SetQuorumThreshold(const double threshold)
-    {
-        m_quorumThreshold = MathMax(0.0, MathMin(1.0, threshold));
-    }
-    void SetIntrabarMinQuorum(int quorum) { m_intrabarMinQuorum = MathMax(1, quorum); }
-    void SetIntrabarDynamicQuorumEnabled(const bool enabled) { m_intrabarDynamicQuorumEnabled = enabled; }
-    void SetIntrabarSingleVoterMinConfidence(const double minConfidence)
-    {
-        m_intrabarSingleVoterMinConfidence = MathMax(0.0, MathMin(1.0, minConfidence));
-    }
-    void SetConflictDeadband(const double deadband) { m_conflictDeadband = MathMax(0.0, MathMin(0.50, deadband)); }
-    void SetMinReadyWeightRatio(const double ratio) { m_minReadyWeightRatio = MathMax(0.10, MathMin(1.0, ratio)); }
-    void SetSupportFloors(const double newBarFloor, const double intrabarFloor)
-    {
-        m_supportFloorNewBar = MathMax(0.05, MathMin(1.0, newBarFloor));
-        m_supportFloorIntrabar = MathMax(0.05, MathMin(1.0, intrabarFloor));
-    }
+    bool IsEAOwnedMagic(long magic) const;
+    void SetQuorumThreshold(const double threshold);
+    void SetIntrabarMinQuorum(int quorum);
+    void SetIntrabarDynamicQuorumEnabled(const bool enabled);
+    void SetIntrabarSingleVoterMinConfidence(const double minConfidence);
+    void SetConflictDeadband(const double deadband);
+    void SetMinReadyWeightRatio(const double ratio);
+    void SetSupportFloors(const double newBarFloor, const double intrabarFloor);
     void SetSparseIntrabarThresholds(const double minQuality,
                                      const double minSupportRatio,
-                                     const double minReadyCoverage)
-    {
-        m_sparseIntrabarMinQuality = MathMax(0.0, MathMin(1.0, minQuality));
-        m_sparseIntrabarMinSupportRatio = MathMax(0.0, MathMin(1.0, minSupportRatio));
-        m_sparseIntrabarMinReadyCoverage = MathMax(0.0, MathMin(1.0, minReadyCoverage));
-    }
-    void SetAllowSparseIntrabarSingleVoter(const bool enabled) { m_allowSparseIntrabarSingleVoter = enabled; }
+                                     const double minReadyCoverage);
+    void SetAllowSparseIntrabarSingleVoter(const bool enabled);
     
-    // Quorum preset profiles
+    // Intrabar policy configuration per strategy (L6-007)
+    void SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy);
+    ENUM_INTRABAR_POLICY GetStrategyIntrabarPolicyConfig(int strategyIndex) const;
+
+    //--- Phase C / Slice 4 (C8): narrow per-field accessors consumed by
+    //--- CStrategyRegistryState / CIntrabarPolicy back-pointers (m_src).
+    //--- Each is a logic-free forwarder over existing members.
+    int    GetMaxStrategies() const { return m_maxStrategies; }
+    CTradeManager*        GetTradeManagerConst() const { return m_tradeManager; }
+    CPositionSizer*       GetPositionSizerConst() const { return m_positionSizer; }
+    CUnifiedRiskManager*  GetUnifiedRiskManagerConst() const { return m_unifiedRiskManager; }
+    bool   IsPythonBridgeConnected() const { return (g_pythonBridge != NULL && g_pythonBridge.IsConnected()); }
+
+    void SetStrategyRole(int index, int role);
+    void SetStrategyCluster(int index, int cluster);
+    void SetStrategyLiveVotingEnabled(int index, bool enabled);
+    void SetStrategyIntrabarPolicyRaw(int index, int policy);
+    void SetStrategyIntrabarEligible(int index, bool eligible);
+
+    // 35-field StrategyEntry append — single writer behind the registry
+    // state module's RegisterStrategy(). Mirrors the original RegisterStrategy
+    // append block byte-for-byte (no registry/logic changes).
+    void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
+                                       double weight, ENUM_STRATEGY_TIER tier,
+                                       ENUM_TIMEFRAMES resolvedTf,
+                                       ENUM_INTRABAR_POLICY intrabarPolicy,
+                                       ENUM_STRATEGY_ROLE role,
+                                       ENUM_STRATEGY_CLUSTER cluster,
+                                       bool liveVotingEnabled);
+
+    //--- Phase C / Slice 4 (C8): registration-time helper consumed by
+    //--- CStrategyRegistryState::AutoRegisterStrategies(). Was private;
+    //--- promoted to public because the slice module calls it via m_src.
+    ENUM_INTRABAR_POLICY GetIntrabarPolicyHelper(int idx);
+    
+    // Participation formula configuration (L6-008)
+    void SetParticipationFormulaBase(const double base);
+    void SetParticipationFormulaCoeff(const double coeff);
+    void SetParticipationFormulaMin(const double minVal);
+    void SetParticipationFormulaMax(const double maxVal);
+    
+    // Quorum preset profiles - internal consensus logic
     enum ENUM_QUORUM_PROFILE
     {
         QUORUM_CONSERVATIVE,
@@ -491,8 +745,8 @@ public:
         QUORUM_AGGRESSIVE
     };
     void ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile);
-    void SetConsensusDiagnosticsIntervalSeconds(const int seconds) { m_diagLogIntervalSec = MathMax(10, seconds); }
-    int  GetMinQuorum() const { return m_minQuorum; }
+    void SetConsensusDiagnosticsIntervalSeconds(const int seconds);
+    int  GetMinQuorum() const;
     bool UpdateStrategyWeightByName(const string name, const double weight);
     bool SetStrategyIntrabarEligibilityByName(const string name, bool enabled);
     bool SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy);
@@ -504,19 +758,20 @@ public:
                                      ENUM_STRATEGY_CLUSTER cluster,
                                      const bool liveVotingEnabled);
     bool SetStrategyConfidenceThresholdByName(const string name, const double threshold);
-    int GetRegisteredStrategyCount() const { return m_strategyCount; }
-    IStrategy* GetStrategyByName(const string name);  // Batch 103: Lookup strategy by name
+    int GetRegisteredStrategyCount() const;
+    IStrategy* GetStrategyByName(const string name);
     string GetRegisteredStrategyName(const int index) const;
     double GetRegisteredStrategyWeight(const int index) const;
     string GetRegisteredStrategyRole(const int index) const;
     string GetRegisteredStrategyCluster(const int index) const;
     bool IsRegisteredStrategyLiveVotingEnabled(const int index) const;
     void GetLastSignalContributors(string &contributors[]) const;
+    void GetLastSignalContributorIndices(int &indices[]) const;
     bool GetLastSignalExecutionContext(string &roleTag,
                                        string &clusterTag,
                                        string &clusterCode,
                                        string &contributorsCsv) const;
-    CUnifiedSignalPipeline* GetPipeline() { return m_pipeline; }
+    CUnifiedSignalPipeline* GetPipeline();
     bool GetLastDecisionContext(SConsensusDecisionContext &context) const;
     void GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
                                          ulong &featureSignals,
@@ -526,6 +781,8 @@ public:
                                          ulong &structureClusterSignals,
                                          ulong &noneClusterSignals) const;
     void GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const;
+    
+    // L1-007: Delegated to CDiagnosticsCollector
     void GetConsensusDiagnosticsSnapshot(ulong &rawNone,
                                          ulong &filteredOut,
                                          ulong &quorumFailed,
@@ -550,37 +807,17 @@ public:
     int GetActiveBrainStrategyCount() const;
     string GetStrategyReport() const;
     void UpdatePerformance(const string strategyName, double netProfit);
+    
+    // Explicit deinitialization
+    void Deinit();
 
-    // Manager-owned orchestration/adaptation API (AISO consolidation)
+    // Manager-owned orchestration/adaptation API (AISO consolidation) - delegated to CStrategyHealthMonitor
     bool UpdateStrategyWeight(const string strategyName, const double newWeight)
     {
         return UpdateStrategyWeightByName(strategyName, newWeight);
     }
-    double GetEnsembleConfidence() const
-    {
-        return MathMax(0.0, MathMin(1.0, m_lastDecisionContext.confidence));
-    }
-    ENUM_MARKET_REGIME GetCurrentMarketRegime() const
-    {
-        if(m_fourStateRegimeDetector != NULL && m_regimeDetectorInitialized)
-        {
-            ENUM_FOUR_STATE_REGIME fourStateRegime = m_fourStateRegimeDetector.GetRegime();
-            
-            // Map FourState regime to standard MARKET_REGIME
-            switch(fourStateRegime)
-            {
-                case FSTATE_LOW_VOL_BULL:
-                case FSTATE_HIGH_VOL_BULL:
-                    return MARKET_REGIME_TRENDING;
-                case FSTATE_LOW_VOL_BEAR:
-                case FSTATE_HIGH_VOL_BEAR:
-                    return MARKET_REGIME_TRENDING;  // Both bull and bear trends are trending
-                default:
-                    return MARKET_REGIME_UNKNOWN;
-            }
-        }
-        return MARKET_REGIME_UNKNOWN;
-    }
+    double GetEnsembleConfidence() const;
+    ENUM_MARKET_REGIME GetCurrentMarketRegime() const;
     string GetStrategyWeightsJSON() const;
     string GetStrategyListJSON() const;
     string GetConsensusContextJSON() const;
@@ -588,7 +825,7 @@ public:
     void CheckStrategyDisabling();
     void CheckStrategyReEnabling();
     
-    // Ported adaptation helpers
+    // Ported adaptation helpers - delegated to CStrategyHealthMonitor
     double CalculateRecentWinRate(const int index);
     double CalculateSharpeRatio(const int index);
     void UpdateRegimePerformance(const int index, int regime, const double result);
@@ -596,10 +833,10 @@ public:
     bool ShouldDisableStrategy(const int index);
     bool ShouldReEnableStrategy(const int index);
     void UpdateRecentPerformance(const int index, const double result);
-    
+
     // Visualization
-    void SetDrawingManager(CChartDrawingManager* drawingManager) { m_drawingManager = drawingManager; }
-    CChartDrawingManager* GetDrawingManager() { return m_drawingManager; }
+    void SetDrawingManager(CChartDrawingManager* drawingManager);
+    CChartDrawingManager* GetDrawingManager();
     
     // New bar processing - CRITICAL for zone scanning and drawing
     void OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe);
@@ -608,14 +845,19 @@ public:
     void OnTradeTransaction(const MqlTradeTransaction& trans, const MqlTradeRequest& request, const MqlTradeResult& result);
     
     // Auto-registration
-    void AutoRegisterStrategies(bool &enabledFlags[]);
+        void AutoRegisterStrategies(bool &enabledFlags[]);
+        // Reconcile enabled flags against the finalized registry (see SyncEnabledWithRegistry definition)
+        void SyncEnabledWithRegistry();
 
-    // Deriv family-based engine weighting
-    void SetDerivProfiler(CDerivAssetProfiler* profiler) { m_derivProfiler = profiler; }
-    void SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix) { m_familyWeightMatrix = famMatrix; }
-    void SetMultiAssetProfiler(CMultiAssetProfiler* profiler) { m_multiAssetProfiler = profiler; }
-    void SetVPINFilter(CVPINFilter* vpin) { m_vpinFilter = vpin; }
-    void SetOFIEngine(COrderFlowImbalanceEngine* ofi) { m_ofiEngine = ofi; }
+        // AI Performance Feedback integration (L6-016)
+        void UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics);
+
+        // Deriv family-based engine weighting
+    void SetDerivProfiler(CDerivAssetProfiler* profiler);
+    void SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix);
+    void SetMultiAssetProfiler(CMultiAssetProfiler* profiler);
+    void SetVPINFilter(CVPINFilter* vpin);
+    void SetOFIEngine(COrderFlowImbalanceEngine* ofi);
     void ApplyFamilyEngineWeights(const string symbol);
     void ApplyAssetClassEngineWeights(const string symbol);
 };
@@ -635,6 +877,7 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_ofiEngine(NULL),
     m_familyWeightMatrix(NULL),
     m_fourStateRegimeDetector(NULL),
+    m_strategyRegistry(NULL),                // L1-004: Injected registry
     m_regimeDetectorInitialized(false),
     m_strategyCount(0),
     m_maxStrategies(25),
@@ -643,131 +886,90 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_initialized(false),
     m_usePipeline(true),
     m_adxHandleCached(INVALID_HANDLE),  // Batch 116: cached ADX handle
-    m_minQuorum(2),         // Minimum agreeing live voters floor (overridden by EA input)
-    m_intrabarMinQuorum(1),
-    m_intrabarDynamicQuorumEnabled(true),
-    m_intrabarSingleVoterMinConfidence(0.65),
-    m_quorumThreshold(0.55),
-    m_pipelineMinConfidence(0.40),
-    m_conflictDeadband(0.05),
-    m_minReadyWeightRatio(0.45),
-    m_supportFloorNewBar(0.35),
-    m_supportFloorIntrabar(0.20),
-    m_sparseIntrabarMinQuality(0.62),
-    m_sparseIntrabarMinSupportRatio(0.20),
-    m_sparseIntrabarMinReadyCoverage(0.60),
-    m_sparseIntrabarConfidencePenalty(0.92),
-    m_allowSparseIntrabarSingleVoter(false),
-    m_adaptiveQuorumEnabled(true),
-    m_adaptiveQualityThreshold_1voter(0.40),      // 1 voter: 40% quality OK
-    m_adaptiveSupportFloor_1voter(0.12),          // 1 voter: 12% support OK (relaxed from 0.15)
-    m_adaptiveQualityThreshold_2voters(0.48),     // 2 voters: 48% quality OK
-    m_adaptiveSupportFloor_2voters(0.25),         // 2 voters: 25% support OK (relaxed from 0.30)
-    m_adaptiveQualityThreshold_3plus(0.55),       // 3+ voters: standard 55% quality
-    m_adaptiveSupportFloor_3plus(0.35),           // 3+ voters: standard 35% support
-    m_strategyActivityDecayRate(0.05),            // Weight decay rate per inactive cycle (reduced from 0.15)
-    m_strategyInactiveCounterThreshold(15),        // After 15 filters, start decay (increased from 3)
-    m_regimeRelaxActive(false),
-    m_regimeRelaxFactor(0.90),
-    m_minWinRateThreshold(0.40),
-    m_maxConsecutiveLosses_Limit(5),
-    m_performanceDecayFactor(0.95),
-    m_rollingWindowSize(20),
-    m_maxDrawdownLimit(0.20),
+    m_diagnostics(NULL),
+    m_attribution(NULL),
+    m_healthMonitor(NULL),
+    m_drawingManager(NULL),
     m_totalSignals(0),
     m_successfulSignals(0),
-    m_avgConfidence(0),
-    m_lastContributorCount(0),
-    m_lastSignalSymbol(""),
-    m_lastSignalTime(0),
-    m_lastSignalRole("PRIMARY_ALPHA"),
-    m_lastSignalCluster("NONE"),
-    m_lastSignalClusterCode("N"),
-    m_diagRawNone(0),
-    m_diagFilteredOut(0),
-    m_diagQuorumFailed(0),
-    m_diagIntrabarNotEligible(0),
-    m_diagSignalsGenerated(0),
-    m_diagSignalsAfterPipeline(0),
-    m_diagSignalsAfterQuorum(0),
-    m_diagVoteSuppressed(0),
-    m_diagRolePrimarySignals(0),
-    m_diagRoleFeatureSignals(0),
-    m_diagRoleShadowSignals(0),
-    m_diagClusterTrendSignals(0),
-    m_diagClusterMeanReversionSignals(0),
-    m_diagClusterStructureSignals(0),
-    m_diagClusterNoneSignals(0),
-    m_diagMomentumNone(0),
-    m_diagMomentumCooldown(0),
-    m_diagMomentumLowVolatility(0),
-    m_diagMomentumNoCrossover(0),
-    m_diagMomentumTrendMisaligned(0),
-    m_diagMomentumNotReady(0),
-    m_diagUICTNone(0),
-    m_diagUICTNeutralBias(0),
-    m_diagUICTOtherFilters(0),
-    m_diagRootBaselineRawNone(0),
-    m_diagRootBaselineFilteredOut(0),
-    m_diagRootBaselineQuorumFailed(0),
-    m_diagRootBaselineIntrabarNotEligible(0),
-    m_diagRootBaselineSignalsGenerated(0),
-    m_diagRootBaselineSignalsAfterPipeline(0),
-    m_diagRootBaselineSignalsAfterQuorum(0),
-    m_diagRootBaselineVoteSuppressed(0),
-    m_diagRootBaselineRolePrimarySignals(0),
-    m_diagRootBaselineRoleFeatureSignals(0),
-    m_diagRootBaselineRoleShadowSignals(0),
-    m_diagRootBaselineClusterTrendSignals(0),
-    m_diagRootBaselineClusterMeanReversionSignals(0),
-    m_diagRootBaselineClusterStructureSignals(0),
-    m_diagRootBaselineClusterNoneSignals(0),
-    m_diagRootBaselineMomentumNone(0),
-    m_diagRootBaselineMomentumCooldown(0),
-    m_diagRootBaselineMomentumLowVolatility(0),
-    m_diagRootBaselineMomentumNoCrossover(0),
-    m_diagRootBaselineMomentumTrendMisaligned(0),
-    m_diagRootBaselineMomentumNotReady(0),
-    m_diagRootBaselineUICTNone(0),
-    m_diagRootBaselineUICTNeutralBias(0),
-    m_diagRootBaselineUICTOtherFilters(0),
-    m_diagSnapshotBaselineRawNone(0),
-    m_diagSnapshotBaselineFilteredOut(0),
-    m_diagSnapshotBaselineQuorumFailed(0),
-    m_diagSnapshotBaselineIntrabarNotEligible(0),
-    m_diagSnapshotBaselineSignalsGenerated(0),
-    m_diagSnapshotBaselineSignalsAfterPipeline(0),
-    m_diagSnapshotBaselineSignalsAfterQuorum(0),
-    m_diagSnapshotBaselineVoteSuppressed(0),
-    m_diagSnapshotBaselineRolePrimarySignals(0),
-    m_diagSnapshotBaselineRoleFeatureSignals(0),
-    m_diagSnapshotBaselineRoleShadowSignals(0),
-    m_diagSnapshotBaselineClusterTrendSignals(0),
-    m_diagSnapshotBaselineClusterMeanReversionSignals(0),
-    m_diagSnapshotBaselineClusterStructureSignals(0),
-    m_diagSnapshotBaselineClusterNoneSignals(0),
-    m_diagSnapshotBaselineMomentumNone(0),
-    m_diagSnapshotBaselineMomentumCooldown(0),
-    m_diagSnapshotBaselineMomentumLowVolatility(0),
-    m_diagSnapshotBaselineMomentumNoCrossover(0),
-    m_diagSnapshotBaselineMomentumTrendMisaligned(0),
-    m_diagSnapshotBaselineMomentumNotReady(0),
-    m_diagSnapshotBaselineUICTNone(0),
-    m_diagSnapshotBaselineUICTNeutralBias(0),
-    m_diagSnapshotBaselineUICTOtherFilters(0),
-    m_lastDiagLogTime(0),
-    m_diagLogIntervalSec(60),
-    m_lastCycleSignalsGenerated(0),
-    m_lastCycleSignalsAfterPipeline(0),
-    m_lastCycleSignalAfterQuorum(false),
-    m_closedTradeNetProfit(0.0),
-    m_hasClosedTradeAttribution(false)
+    m_avgConfidence(0.0),
+    m_minWinRateThreshold(0.40),
+    m_maxConsecutiveLosses_Limit(5),
+    m_rollingWindowSize(20),
+    m_minQuorum(1),
+    m_intrabarMinQuorum(1),
+    m_intrabarDynamicQuorumEnabled(true),
+    m_intrabarSingleVoterMinConfidence(0.75),
+    m_quorumThreshold(0.60),
+    m_pipelineMinConfidence(0.40),
+    m_conflictDeadband(0.35),         // [PROFIT-02] default deadband raised (audit: 0.30-0.35)
+    m_minReadyWeightRatio(0.30),
+    m_supportFloorNewBar(0.30),        // [PROFIT-11] ratio field, not a count
+    m_supportFloorIntrabar(0.25),      // [PROFIT-11] ratio field, not a count
+    m_sparseIntrabarMinQuality(0.65),
+    m_sparseIntrabarMinSupportRatio(0.30),
+    m_sparseIntrabarMinReadyCoverage(0.50),
+    m_sparseIntrabarConfidencePenalty(0.10),
+    m_allowSparseIntrabarSingleVoter(false),
+    m_adaptiveQuorumEnabled(false),
+    m_adaptiveQualityThreshold_1voter(0.80),
+    m_adaptiveSupportFloor_1voter(1),
+    m_adaptiveQualityThreshold_2voters(0.70),
+    m_adaptiveSupportFloor_2voters(2),
+    m_adaptiveQualityThreshold_3plus(0.60),
+    m_adaptiveSupportFloor_3plus(3),
+    m_strategyActivityDecayRate(0.95),
+    m_strategyInactiveCounterThreshold(10),
+    m_regimeRelaxActive(false),
+    m_regimeRelaxFactor(0.80),
+    m_performanceDecayFactor(0.95),
+    m_maxDrawdownLimit(0.20),
+    // Phase C / Slice 2: the post-consensus validator config block (including the
+    // 15000-pt hard spread cutoff bugfix default) now lives in, and is initialised
+    // by, CPostConsensusValidator's own constructor.
+    m_participationFormulaBase(0.40),
+    m_participationFormulaCoeff(0.65),
+    m_participationFormulaMin(0.55),
+    m_participationFormulaMax(1.05)
 {
     ArrayResize(m_strategies, 0);
     ArrayResize(m_lastSignalContributors, 0);
-    ArrayResize(m_attributionPositionIds, 0);
-    ArrayResize(m_attributionContributorCsv, 0);
-    ArrayResize(m_closedTradeContributors, 0);
+    ArrayResize(m_lastSignalContributorIndices, 0);
+    
+    // L6-007: Initialize intrabar policy config with defaults
+    for(int i = 0; i < 32; i++)
+    {
+        m_intrabarPolicyConfig[i] = INTRABAR_POLICY_OFF;
+    }
+    
+    // L1-007: Create component instances
+    m_diagnostics = NULL; // Injected from EAOrchestrator
+    m_attribution = NULL; // Injected from EAOrchestrator
+    // m_consensus removed - consensus logic moved into EnterpriseStrategyManager
+    m_healthMonitor = new CStrategyHealthMonitor();
+
+    // Phase C / Slice 1: bind extracted collaborators at the earliest safe point.
+    // The reporter observes this manager read-only; the delegator mirrors the
+    // (still NULL) attribution pointer and is re-bound by SetAttributionManager().
+    m_stateReporter.SetSource(GetPointer(this));
+    m_attributionDelegator.SetAttribution(m_attribution);
+
+    // Phase C / Slice 2: same binding site. Both collaborators point at this
+    // manager for its whole lifetime (unlike the attribution delegator, they
+    // mirror no injected pointer, so they need no re-sync on Deinit).
+    m_postConsensusValidator.SetSource(GetPointer(this));
+    m_weightingConfig.SetSource(GetPointer(this));
+
+    // Phase C / Slice 3: same binding site. Both collaborators mutate this
+    // manager through its narrow per-field accessors and mirror no injected
+    // pointer, so (like Slice 2) they need no re-sync on Deinit.
+    m_performanceHealth.SetSource(GetPointer(this));
+    m_lifecycle.SetSource(GetPointer(this));
+
+    // Phase C / Slice 5: same binding site. The consensus engine re-reads the
+    // pipeline / registry / diagnostics from this manager on every call and
+    // mirrors no injected pointer, so it needs no re-sync on Deinit either.
+    m_consensusEngine.SetSource(GetPointer(this));
 }
 
 //+------------------------------------------------------------------+
@@ -810,6 +1012,16 @@ CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
     {
         delete m_tfConsistency;
         m_tfConsistency = NULL;
+    }
+    
+    // L1-007: Clean up components
+    // m_diagnostics is injected from EAOrchestrator - do not delete
+    // m_attribution is injected from EAOrchestrator - do not delete
+    // m_consensus removed - consensus logic moved into EnterpriseStrategyManager
+    if(m_healthMonitor != NULL)
+    {
+        delete m_healthMonitor;
+        m_healthMonitor = NULL;
     }
 }
 
@@ -898,6 +1110,41 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
     m_initialized = true;
     m_drawingManager = NULL;
     
+    // L1-007: m_diagnostics is injected from EAOrchestrator - do not create here
+    // m_diagnostics = new CDiagnosticsCollector();
+    // if(m_diagnostics != NULL)
+    //     {
+    //         m_diagnostics.SetLogIntervalSeconds(60);
+    //     }
+    
+    // L1-007: m_attribution is injected from EAOrchestrator - do not create here
+    // m_attribution = new CAttributionTracker();
+    
+    // L1-007: Consensus logic moved into EnterpriseStrategyManager - no separate CConsensusEngine
+    // m_consensus = new CConsensusEngine();
+    // ... consensus configuration removed ...
+    
+    // LEAK-FIX: the constructor (line 724) already allocated m_healthMonitor.
+    // Delete any pre-existing instance before re-allocating so the first one is not orphaned.
+    if(m_healthMonitor != NULL)
+    {
+        delete m_healthMonitor;
+        m_healthMonitor = NULL;
+    }
+    m_healthMonitor = new CStrategyHealthMonitor();
+    if(m_healthMonitor != NULL)
+    {
+        m_healthMonitor.SetOrchestratorMode(m_minWinRateThreshold, m_maxConsecutiveLosses_Limit);
+        m_healthMonitor.SetPerformanceDecayFactor(m_performanceDecayFactor);
+        m_healthMonitor.SetRollingWindowSize(m_rollingWindowSize);
+        m_healthMonitor.SetMaxDrawdownLimit(m_maxDrawdownLimit);
+        m_healthMonitor.SetStrategyActivityDecayRate(m_strategyActivityDecayRate);
+        m_healthMonitor.SetStrategyInactiveCounterThreshold(m_strategyInactiveCounterThreshold);
+    }
+    
+    // L6-008: Health monitor is used directly by internal consensus logic
+    // No separate consensus engine to wire
+    
     // Initialize FourStateRegimeDetector
     m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);
     if(m_fourStateRegimeDetector != NULL)
@@ -933,7 +1180,7 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
                                                  bool enabled, double weight,
                                                  ENUM_STRATEGY_TIER tier,
                                                  ENUM_TIMEFRAMES tf,
-                                                 bool intrabarEligible,
+                                                 ENUM_INTRABAR_POLICY intrabarPolicy,
                                                  ENUM_STRATEGY_ROLE role,
                                                  ENUM_STRATEGY_CLUSTER cluster,
                                                  bool liveVotingEnabled)
@@ -941,6 +1188,18 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     if(strategy == NULL || !m_initialized)
         return false;
         
+    // L1-010: Check with StrategyRegistry if this strategy should be active in current mode
+        // The 'enabled' parameter is advisory; registry is the single source of truth
+        if(m_strategyRegistry != NULL)
+        {
+            // Check if strategy is registered and mode-permissive
+            if(!m_strategyRegistry.IsStrategyActive(name))
+            {
+                PrintFormat("[ENTERPRISE] Strategy %s disabled by registry (mode filter or not registered)", name);
+                enabled = false;  // Override: registry says this strategy is not active
+            }
+        }
+    
     // Prevent unbounded strategy growth
     if(m_strategyCount >= m_maxStrategies)
     {
@@ -955,13 +1214,29 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
                                      m_tradeManager, m_positionSizer, m_unifiedRiskManager);
     
     if(!initSuccess)
+        {
+            Print("[EnterpriseStrategyManager] ERROR: Strategy ", name, " initialization failed. Skipping registration.");
+            delete strategy;
+            return false;
+        }
+    
+    // L6-010: Initialize AI model after factory creation
+    // This ensures AI adapters have proper symbol/timeframe/risk context
+    if(!strategy.InitializeAI(m_symbol, resolvedTf, m_unifiedRiskManager))
     {
-        Print("[EnterpriseStrategyManager] ERROR: Strategy ", name, " initialization failed. Skipping registration.");
-        delete strategy;
-        return false;
+        Print("[EnterpriseStrategyManager] WARNING: Strategy ", name, " AI initialization failed. Continuing with base initialization.");
+        // Don't fail registration - AI initialization failure is non-fatal for some adapters
     }
     
-    // CRITICAL FIX: Synchronize enabled state with strategy object
+    // L6-001 CRITICAL FIX: Validate risk manager injection after initialization
+        if(!strategy.ValidateRiskManagerInjection())
+        {
+            Print("[EnterpriseStrategyManager] CRITICAL: Strategy ", name, " failed risk manager injection validation. Strategy will bypass risk validation - rejecting registration.");
+            delete strategy;
+            return false;
+        }
+    
+        // CRITICAL FIX: Synchronize enabled state with strategy object
     strategy.SetEnabled(enabled);
     strategy.SetWeight(weight);
     
@@ -970,20 +1245,20 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     ArrayResize(m_strategies, newSize);
     
     m_strategies[m_strategyCount].strategy = strategy;
-    m_strategies[m_strategyCount].name = name;
-    m_strategies[m_strategyCount].enabled = enabled;
-    m_strategies[m_strategyCount].intrabarEligible = intrabarEligible;
-    m_strategies[m_strategyCount].intrabarPolicy = intrabarEligible ? (int)INTRABAR_POLICY_LIVE : (int)INTRABAR_POLICY_OFF;
-    m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
-    m_strategies[m_strategyCount].role = (int)role;
-    m_strategies[m_strategyCount].cluster = (int)cluster;
-    m_strategies[m_strategyCount].tier = tier; // Store tier
-    m_strategies[m_strategyCount].weight = weight;
-    m_strategies[m_strategyCount].originalWeight = weight;  // Track for decay recovery
-    m_strategies[m_strategyCount].timeframe = resolvedTf;
-    m_strategies[m_strategyCount].successCount = 0;
-    m_strategies[m_strategyCount].failCount = 0;
-    m_strategies[m_strategyCount].healthScore = 0.75;
+        m_strategies[m_strategyCount].name = name;
+        m_strategies[m_strategyCount].enabled = enabled;
+        m_strategies[m_strategyCount].intrabarEligible = (intrabarPolicy == INTRABAR_POLICY_LIVE);
+        m_strategies[m_strategyCount].intrabarPolicy = (int)intrabarPolicy;
+        m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
+        m_strategies[m_strategyCount].role = (int)role;
+        m_strategies[m_strategyCount].cluster = (int)cluster;
+        m_strategies[m_strategyCount].tier = tier; // Store tier
+        m_strategies[m_strategyCount].weight = weight;
+        m_strategies[m_strategyCount].originalWeight = weight;  // Track for decay recovery
+        m_strategies[m_strategyCount].timeframe = resolvedTf;
+        m_strategies[m_strategyCount].successCount = 0;
+        m_strategies[m_strategyCount].failCount = 0;
+        m_strategies[m_strategyCount].healthScore = 0.75;
     m_strategies[m_strategyCount].participationScore = 0.90;
     m_strategies[m_strategyCount].avgConfidence = 0;
     m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
@@ -1013,6 +1288,12 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
     ArrayInitialize(m_strategies[m_strategyCount].regimePerformance, 0.0);
     ArrayInitialize(m_strategies[m_strategyCount].regimeTrades, 0);
     
+    // L1-007: Register with health monitor
+    if(m_healthMonitor != NULL)
+    {
+        m_healthMonitor.RegisterStrategy(weight);
+    }
+    
     m_strategyCount++;
     
     Print("[EnterpriseStrategyManager] Registered strategy: ", name, 
@@ -1027,28 +1308,131 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
 }
 
 //+------------------------------------------------------------------+
-//| Get Consensus Signal (Enhanced with Confluence Tracking)        |
+//| Configuration Setters - Store in mirrored config variables       |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetMinQuorum(int quorum)
+{
+    m_minQuorum = MathMax(1, quorum);
+}
+
+void CEnterpriseStrategyManager::SetIntrabarMinQuorum(int quorum)
+{
+    m_intrabarMinQuorum = MathMax(1, quorum);
+}
+
+void CEnterpriseStrategyManager::SetIntrabarDynamicQuorumEnabled(const bool enabled)
+{
+    m_intrabarDynamicQuorumEnabled = enabled;
+}
+
+void CEnterpriseStrategyManager::SetIntrabarSingleVoterMinConfidence(const double minConfidence)
+{
+    m_intrabarSingleVoterMinConfidence = MathMax(0.0, MathMin(1.0, minConfidence));
+}
+
+void CEnterpriseStrategyManager::SetQuorumThreshold(const double threshold)
+{
+    m_quorumThreshold = MathMax(0.0, MathMin(1.0, threshold));
+}
+
+void CEnterpriseStrategyManager::SetConflictDeadband(const double deadband)
+{
+    m_conflictDeadband = MathMax(0.0, MathMin(0.5, deadband));
+}
+
+void CEnterpriseStrategyManager::SetMinReadyWeightRatio(const double ratio)
+{
+    m_minReadyWeightRatio = MathMax(0.0, MathMin(1.0, ratio));
+}
+
+void CEnterpriseStrategyManager::SetSupportFloors(const double newBarFloor, const double intrabarFloor)
+{
+    m_supportFloorNewBar = MathMax(0.0, MathMin(1.0, newBarFloor));
+    m_supportFloorIntrabar = MathMax(0.0, MathMin(1.0, intrabarFloor));
+}
+
+void CEnterpriseStrategyManager::SetSparseIntrabarThresholds(const double minQuality,
+                                     const double minSupportRatio,
+                                     const double minReadyCoverage)
+{
+    m_sparseIntrabarMinQuality = MathMax(0.0, MathMin(1.0, minQuality));
+    m_sparseIntrabarMinSupportRatio = MathMax(0.0, MathMin(1.0, minSupportRatio));
+    m_sparseIntrabarMinReadyCoverage = MathMax(0.0, MathMin(1.0, minReadyCoverage));
+}
+
+void CEnterpriseStrategyManager::SetAllowSparseIntrabarSingleVoter(const bool enabled)
+{
+    m_allowSparseIntrabarSingleVoter = enabled;
+}
+
+// Intrabar policy configuration per strategy index (L6-007)
+void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy)
+{
+    if(strategyIndex >= 0 && strategyIndex < 32)
+    {
+        m_intrabarPolicyConfig[strategyIndex] = policy;
+    }
+}
+
+ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetStrategyIntrabarPolicyConfig(int strategyIndex) const
+{
+    if(strategyIndex >= 0 && strategyIndex < 32)
+    {
+        return m_intrabarPolicyConfig[strategyIndex];
+    }
+    return INTRABAR_POLICY_OFF;
+}
+
+// Participation formula configuration (L6-008)
+void CEnterpriseStrategyManager::SetParticipationFormulaBase(const double base)
+{
+    m_participationFormulaBase = MathMax(0.0, MathMin(1.0, base));
+}
+void CEnterpriseStrategyManager::SetParticipationFormulaCoeff(const double coeff)
+{
+    m_participationFormulaCoeff = MathMax(0.0, MathMin(2.0, coeff));
+}
+void CEnterpriseStrategyManager::SetParticipationFormulaMin(const double minVal)
+{
+    m_participationFormulaMin = MathMax(0.0, MathMin(1.0, minVal));
+}
+void CEnterpriseStrategyManager::SetParticipationFormulaMax(const double maxVal)
+{
+    m_participationFormulaMax = MathMax(0.0, MathMin(2.0, maxVal));
+}
+
+void CEnterpriseStrategyManager::SetConsensusDiagnosticsIntervalSeconds(const int seconds)
+{
+    if(m_diagnostics != NULL)
+        m_diagnostics.SetLogIntervalSeconds(seconds);
+}
+
+int CEnterpriseStrategyManager::GetMinQuorum() const
+{
+    return m_minQuorum;
+}
+
+//+------------------------------------------------------------------+
+//| Consensus entry funnel                                           |
+//|                                                                  |
+//| Phase C / Slice 5 (C9): the whole consensus core moved into      |
+//| CConsensusEngine. These public overloads are retained verbatim   |
+//| as one-line forwarders because EAOrchestrator, SignalGenerator,  |
+//| PositionLifecycleManager and TrainingDataExporter call them.     |
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignal(double &confidence)
 {
-    int confluence = 0;
-    return GetConsensusSignalWithConfluence(confidence, confluence);
+    return m_consensusEngine.GetConsensusSignal(confidence);
 }
 
-//+------------------------------------------------------------------+
-//| Get Consensus Signal With Confluence                            |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalWithConfluence(double &confidence, int &confluence)
 {
-    return GetConsensusSignalForSymbolWithConfluence(m_symbol, confidence, confluence);
+    return m_consensusEngine.GetConsensusSignalWithConfluence(confidence, confluence);
 }
 
-//+------------------------------------------------------------------+
-//| Get Consensus Signal For Specific Symbol With Confluence        |
-//+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluence(const string symbol, double &confidence, int &confluence)
 {
-    return GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, EVAL_MODE_NEW_BAR);
+    return m_consensusEngine.GetConsensusSignalForSymbolWithConfluence(symbol, confidence, confluence);
 }
 
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithConfluenceMode(const string symbol,
@@ -1056,1454 +1440,15 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbolWithCon
                                                                                               int &confluence,
                                                                                               ENUM_SIGNAL_EVAL_MODE evalMode)
 {
-    confluence = 0;
-    confidence = 0;
-    m_lastDecisionContext = SConsensusDecisionContext();
-    m_lastDecisionContext.symbol = symbol;
-
-    if(!m_initialized || m_strategyCount == 0)
-    {
-        return TRADE_SIGNAL_NONE;
-    }
-
-    // Strategies are bound to the manager symbol; reject mismatched symbol requests.
-    if(symbol != m_symbol)
-    {
-        PrintFormat("[CRITICAL] Cross-symbol request rejected in EnterpriseManager. Requested: %s, Bound: %s", symbol, m_symbol);
-        return TRADE_SIGNAL_NONE;
-    }
-    
-    int cycleRawNone = 0;
-    int cycleFilteredOut = 0;
-    int cycleQuorumFailed = 0;
-    int cycleIntrabarNotEligible = 0;
-    int cycleSignalsGenerated = 0;
-    int cycleSignalsAfterPipeline = 0;
-    int cycleSignalsAfterQuorum = 0;
-    int cycleVoteSuppressed = 0;
-    int eligibleLiveVoterCount = 0;
-    m_lastCycleSignalsGenerated = 0;
-    m_lastCycleSignalsAfterPipeline = 0;
-    m_lastCycleSignalAfterQuorum = false;
-
-    // Store original symbol for restoration
-    string originalSymbol = m_symbol;
-
-    // Temporarily switch context to target symbol
-    m_symbol = symbol;
-
-    int buyVotes = 0, sellVotes = 0;
-    int probeBuyVotes = 0, probeSellVotes = 0;
-    double buyConviction = 0.0, sellConviction = 0.0;
-    double probeBuyConviction = 0.0, probeSellConviction = 0.0;
-    double buyWeightSum = 0.0, sellWeightSum = 0.0;
-    double probeBuyWeightSum = 0.0, probeSellWeightSum = 0.0;
-    double buyContextSum = 0.0, sellContextSum = 0.0;
-    double probeBuyContextSum = 0.0, probeSellContextSum = 0.0;
-    double buyReadinessSum = 0.0, sellReadinessSum = 0.0;
-    double probeBuyReadinessSum = 0.0, probeSellReadinessSum = 0.0;
-    double buyCostSum = 0.0, sellCostSum = 0.0;
-    double probeBuyCostSum = 0.0, probeSellCostSum = 0.0;
-    double totalLiveWeight = 0.0;
-
-    // Cross-cluster conflict resolution: per-cluster conviction tracking
-    double trendClusterBuyConviction = 0.0;
-    double trendClusterSellConviction = 0.0;
-    double meanRevClusterBuyConviction = 0.0;
-    double meanRevClusterSellConviction = 0.0;
-    double readyLiveWeight = 0.0;
-    double readyContextWeightedSum = 0.0;
-    double readyCostWeightedSum = 0.0;
-    double quorumMinConfidence = MathMax(0.0, MathMin(1.0, m_pipelineMinConfidence));
-    int activeLiveStrategies = 0;
-    string activeStrategySummary = "";
-    string votedStrategySummary = "";
-    string rawNoneStrategySummary = "";
-    string filteredStrategySummary = "";
-    string suppressedStrategySummary = "";
-    string buyContributors[];
-    string sellContributors[];
-    string probeBuyContributors[];
-    string probeSellContributors[];
-    int buyContributorIndices[];
-    int sellContributorIndices[];
-    int probeBuyContributorIndices[];
-    int probeSellContributorIndices[];
-    ArrayResize(buyContributors, 0);
-    ArrayResize(sellContributors, 0);
-    ArrayResize(probeBuyContributors, 0);
-    ArrayResize(probeSellContributors, 0);
-    ArrayResize(buyContributorIndices, 0);
-    ArrayResize(sellContributorIndices, 0);
-    ArrayResize(probeBuyContributorIndices, 0);
-    ArrayResize(probeSellContributorIndices, 0);
-
-    if(m_usePipeline && m_pipeline != NULL)
-        m_pipeline.SetIntrabarContext(evalMode == EVAL_MODE_INTRABAR);
-
-    if(m_tfConsistency != NULL)
-        m_tfConsistency.Reset();
-
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(!m_strategies[i].enabled)
-            continue;
-
-        if(StringLen(activeStrategySummary) > 0)
-            activeStrategySummary += ", ";
-        activeStrategySummary += m_strategies[i].name;
-
-        bool liveVoter = IsStrategyLiveVoter(i);
-        ENUM_INTRABAR_POLICY intrabarPolicy = GetStrategyIntrabarPolicy(i);
-        bool liveEligibleForThisEval = liveVoter;
-        bool probeEligibleForThisEval = false;
-        bool countInMainFunnel = true;
-        if(evalMode == EVAL_MODE_INTRABAR)
-        {
-            if(intrabarPolicy == INTRABAR_POLICY_OFF)
-            {
-                cycleIntrabarNotEligible++;
-                continue;
-            }
-
-            if(intrabarPolicy == INTRABAR_POLICY_PROBE)
-            {
-                liveEligibleForThisEval = false;
-                probeEligibleForThisEval = true;
-                countInMainFunnel = false;
-            }
-
-            if(liveVoter && liveEligibleForThisEval)
-                eligibleLiveVoterCount++;
-        }
-        else if(liveVoter)
-        {
-            eligibleLiveVoterCount++;
-        }
-
-        double strategyWeight = 0.0;
-        double adjustedStrategyWeight = 0.0;
-        if(liveVoter)
-        {
-            strategyWeight = MathMax(0.0, m_strategies[i].weight);
-            
-            // Apply AI direction calibration: downweight degenerate models
-            IAIStrategy* aiStrat = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
-            if(aiStrat != NULL)
-                strategyWeight = aiStrat.GetCalibratedWeight(strategyWeight);
-            if(strategyWeight <= 0.0)
-            {
-                liveEligibleForThisEval = false;
-                probeEligibleForThisEval = false;
-                countInMainFunnel = false;
-            }
-                
-            // Apply Tier Multiplier from Ranking Matrix
-            double tierMultiplier = CRankingMatrix::GetTierMultiplier(m_strategies[i].tier);
-            
-            // Apply regime-aware dynamic weight multiplier
-            double regimeCategoryMult = GetRegimeCategoryMultiplier(m_strategies[i].strategy.GetType());
-
-            // I1: Apply per-family cluster weight multiplier
-            double familyClusterMult = 1.0;
-            if(m_familyWeightMatrix != NULL && m_familyWeightMatrix.IsInitialized() && m_derivProfiler != NULL)
-            {
-               ENUM_DERIV_FAMILY family = m_derivProfiler.DetectFamily(m_symbol);
-               ENUM_STRATEGY_CLUSTER stratCluster = (ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster;
-               familyClusterMult = m_familyWeightMatrix.GetClusterWeight(family, stratCluster);
-               // I10: Log when family weight deviates from 1.0 for Volatility indices
-               if(family == DERIV_VOLATILITY && MathAbs(familyClusterMult - 1.0) > 0.01)
-               {
-                  LOG_IF4(LOG_LEVEL_DEBUG, "[FAMILY-WEIGHT-VOL] %s | strategy=%s | cluster=%d | mult=%.2f",
-                              m_symbol, m_strategies[i].name, (int)stratCluster, familyClusterMult);
-               }
-            }
-
-            adjustedStrategyWeight = strategyWeight * tierMultiplier *
-                                     GetStrategyRoleVoteMultiplier(i) *
-                                     GetStrategyReliabilityMultiplier(i) *
-                                     GetStrategyParticipationMultiplier(i) *
-                                     regimeCategoryMult *
-                                     familyClusterMult;
-
-            // Final safety: clamp adjusted weight to sane bounds
-            if(!MathIsValidNumber(adjustedStrategyWeight) || adjustedStrategyWeight < 0.001 || adjustedStrategyWeight > 100.0)
-                adjustedStrategyWeight = strategyWeight;
-                                     
-            if(liveEligibleForThisEval)
-            {
-                activeLiveStrategies++;
-            }
-        }
-
-        double stratConf = 0.0;
-        ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
-        SPipelineEvidenceSnapshot pipelineEvidence;
-        bool rawNone = false;
-        bool filteredByPipeline = false;
-        string pipelineFilterName = "";
-        string pipelineFilterReason = "";
-
-        // Get signal (filtered if pipeline enabled)
-        if(m_usePipeline && m_pipeline != NULL)
-        {
-            signal = m_pipeline.ProcessSignal(m_strategies[i].strategy,
-                                              symbol,
-                                              m_strategies[i].timeframe,
-                                              stratConf);
-            m_pipeline.GetLastEvidenceSnapshot(pipelineEvidence);
-            rawNone = m_pipeline.WasLastSignalRawNone();
-            filteredByPipeline = m_pipeline.WasLastSignalFilteredByPipeline();
-            pipelineFilterName = m_pipeline.GetLastFilterName();
-            pipelineFilterReason = m_pipeline.GetLastFilterReason();
-            if(countInMainFunnel)
-            {
-                if(rawNone)
-                    cycleRawNone++;
-                else
-                    cycleSignalsGenerated++;
-                if(filteredByPipeline)
-                    cycleFilteredOut++;
-                if(signal != TRADE_SIGNAL_NONE)
-                    cycleSignalsAfterPipeline++;
-            }
-        }
-        else
-        {
-            signal = m_strategies[i].strategy.GetSignal(stratConf);
-            pipelineEvidence = SPipelineEvidenceSnapshot();
-            pipelineEvidence.symbol = symbol;
-            pipelineEvidence.timeframe = m_strategies[i].timeframe;
-            pipelineEvidence.contextPrepared = true;
-            pipelineEvidence.readinessScore = 1.0;
-            pipelineEvidence.contextScore = 0.75;
-            pipelineEvidence.costScore = 0.75;
-            pipelineEvidence.effectiveMinConfidence = quorumMinConfidence;
-            if(countInMainFunnel)
-            {
-                if(signal == TRADE_SIGNAL_NONE)
-                    cycleRawNone++;
-                else
-                {
-                    cycleSignalsGenerated++;
-                    cycleSignalsAfterPipeline++;
-                }
-            }
-        }
-        
-        // NEW: Tier-based confidence filtering with Special Confluence Bypass
-        double minTierConf = CRankingMatrix::GetRequiredConfidence(m_strategies[i].tier);
-        
-        // SPECIAL BYPASS: Trend + Support/Resistance Reversal Override
-        // If they have "good" confidence (>0.65), they bypass the tier floor 
-        // to ensure reversals are heard even during strong Tier 1 (ICT) moves.
-        // Fibonacci REMOVED �?S/R now carries the confluence module
-        bool bypassTierFloor = false;
-        if(m_strategies[i].name == "Trend" || m_strategies[i].name == "Support/Resistance")
-        {
-            if(stratConf > 0.65)
-                bypassTierFloor = true;
-        }
-
-        if(signal != TRADE_SIGNAL_NONE && !bypassTierFloor && stratConf < minTierConf)
-        {
-            // Signal suppressed due to low tier-confidence
-            string suppressedEntry = StringFormat("%s:%s@%.2f[TIER-LOW]", 
-                                                 m_strategies[i].name, 
-                                                 TradeSignalToString(signal), 
-                                                 stratConf);
-            if(StringLen(suppressedStrategySummary) > 0)
-                suppressedStrategySummary += ", ";
-            suppressedStrategySummary += suppressedEntry;
-            
-            signal = TRADE_SIGNAL_NONE;
-            cycleVoteSuppressed++;
-        }
-
-        double participationTarget = 0.45;
-        if(signal != TRADE_SIGNAL_NONE)
-            participationTarget = 1.0;
-        else if(filteredByPipeline)
-            participationTarget = 0.65;
-        else if(rawNone)
-            participationTarget = 0.35;
-
-        double previousParticipation = m_strategies[i].participationScore;
-        if(previousParticipation <= 0.0)
-            previousParticipation = 0.90;
-        m_strategies[i].participationScore = MathMax(0.35,
-                                                     MathMin(1.0,
-                                                             (previousParticipation * 0.85) +
-                                                             (participationTarget * 0.15)));
-
-        string decisionReasonTag = m_strategies[i].strategy.GetLastDecisionReasonTag();
-        bool placeholderNoSignalReason = false;
-        if(signal == TRADE_SIGNAL_NONE &&
-           (decisionReasonTag == "" ||
-            decisionReasonTag == "BASE_INITIALIZED" ||
-            decisionReasonTag == "BASE_UNSET"))
-        {
-            placeholderNoSignalReason = true;
-            decisionReasonTag = filteredByPipeline ? "UNTAGGED_FILTERED" : "UNTAGGED_NO_SIGNAL";
-        }
-        bool infrastructureNoSignalReason = (signal == TRADE_SIGNAL_NONE &&
-                                             IsInfrastructureNoSignalReasonTag(decisionReasonTag));
-        if(signal == TRADE_SIGNAL_NONE)
-        {
-            string noneEntry = m_strategies[i].name;
-            if(filteredByPipeline)
-            {
-                string pipelineFilterTag = "PIPELINE";
-                if(pipelineFilterName != "")
-                    pipelineFilterTag = "PIPELINE:" + pipelineFilterName;
-                if(pipelineFilterReason != "")
-                {
-                    string pipelineReasonSnippet = pipelineFilterReason;
-                    if(StringLen(pipelineReasonSnippet) > 72)
-                        pipelineReasonSnippet = StringSubstr(pipelineReasonSnippet, 0, 72) + "...";
-                    pipelineFilterTag += ":" + pipelineReasonSnippet;
-                }
-                if(decisionReasonTag != "")
-                    noneEntry += "[" + decisionReasonTag + "|" + pipelineFilterTag + "]";
-                else
-                    noneEntry += "[" + pipelineFilterTag + "]";
-                if(StringLen(filteredStrategySummary) > 0)
-                    filteredStrategySummary += ", ";
-                filteredStrategySummary += noneEntry;
-            }
-            else
-            {
-                if(decisionReasonTag != "")
-                    noneEntry += "[" + decisionReasonTag + "]";
-                if(StringLen(rawNoneStrategySummary) > 0)
-                    rawNoneStrategySummary += ", ";
-                rawNoneStrategySummary += noneEntry;
-            }
-        }
-        if(signal == TRADE_SIGNAL_NONE)
-        {
-            if(m_strategies[i].name == "Momentum")
-            {
-                m_diagMomentumNone++;
-                if(decisionReasonTag == "MOMENTUM_COOLDOWN" || decisionReasonTag == "MOMENTUM_SAME_BAR_GUARD")
-                    m_diagMomentumCooldown++;
-                else if(decisionReasonTag == "MOMENTUM_LOW_VOLATILITY")
-                    m_diagMomentumLowVolatility++;
-                else if(decisionReasonTag == "MOMENTUM_NO_CROSSOVER")
-                    m_diagMomentumNoCrossover++;
-                else if(decisionReasonTag == "MOMENTUM_TREND_MISALIGNED")
-                    m_diagMomentumTrendMisaligned++;
-                else
-                    m_diagMomentumNotReady++;
-            }
-            else if(m_strategies[i].name == "Unified ICT")
-            {
-                m_diagUICTNone++;
-                if(decisionReasonTag == "UICT_NEUTRAL_BIAS")
-                    m_diagUICTNeutralBias++;
-                else
-                    m_diagUICTOtherFilters++;
-            }
-        }
-        else
-        {
-            AccumulateRoleClusterSignalDiagnostics(i, true);
-        }
-
-        m_strategies[i].lastSignal = signal;
-        m_strategies[i].lastSignalConfidence = stratConf;
-        m_strategies[i].lastEvaluationTime = TimeCurrent();
-        m_strategies[i].avgConfidence = (m_strategies[i].avgConfidence <= 0.0)
-                                        ? stratConf
-                                        : ((m_strategies[i].avgConfidence * 0.85) + (stratConf * 0.15));
-
-        double signalConfidenceFloor = quorumMinConfidence;
-        if(m_usePipeline && m_pipeline != NULL)
-            signalConfidenceFloor = MathMax(0.0, MathMin(1.0, m_pipeline.GetLastEffectiveMinConfidence()));
-        signalConfidenceFloor = MathMax(0.20, signalConfidenceFloor * 0.80);
-
-        // Dynamic weight decay: track and reduce weight for persistently inactive strategies
-        if(signal == TRADE_SIGNAL_NONE)
-        {
-            m_strategies[i].consecutiveFilterCount++;
-            // Apply weight decay after threshold
-            if(m_strategies[i].consecutiveFilterCount >= m_strategyInactiveCounterThreshold)
-            {
-                double decayedWeight = m_strategies[i].originalWeight *
-                                     (1.0 - (m_strategyActivityDecayRate *
-                                     (double)(m_strategies[i].consecutiveFilterCount - m_strategyInactiveCounterThreshold + 1)));
-                m_strategies[i].weight = MathMax(0.1, MathMin(m_strategies[i].originalWeight, decayedWeight));
-            }
-        }
-        else
-        {
-            // Reset filter counter when strategy produces a vote
-            m_strategies[i].consecutiveFilterCount = 0;
-            // Allow weight recovery toward original
-            m_strategies[i].weight = MathMin(m_strategies[i].weight + (m_strategyActivityDecayRate * 0.05),
-                                            m_strategies[i].originalWeight);
-        }
-
-        if(!liveVoter && !probeEligibleForThisEval)
-        {
-            if(signal != TRADE_SIGNAL_NONE)
-            {
-                cycleVoteSuppressed++;
-                string suppressedEntry = StringFormat("%s:%s@%.2f",
-                                                     m_strategies[i].name,
-                                                     TradeSignalToString(signal),
-                                                     stratConf);
-                if(StringLen(suppressedStrategySummary) > 0)
-                    suppressedStrategySummary += ", ";
-                suppressedStrategySummary += suppressedEntry;
-            }
-            continue;
-        }
-
-        if(evalMode == EVAL_MODE_INTRABAR && !liveEligibleForThisEval && !probeEligibleForThisEval)
-        {
-            if(signal != TRADE_SIGNAL_NONE)
-            {
-                cycleVoteSuppressed++;
-                string suppressedEntry = StringFormat("%s:%s@%.2f",
-                                                     m_strategies[i].name,
-                                                     TradeSignalToString(signal),
-                                                     stratConf);
-                if(StringLen(suppressedStrategySummary) > 0)
-                    suppressedStrategySummary += ", ";
-                suppressedStrategySummary += suppressedEntry;
-            }
-            continue;
-        }
-
-        double readinessScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.readinessScore));
-        double contextScore = MathMax(0.35, MathMin(1.0, pipelineEvidence.contextScore));
-        double costScore = MathMax(0.25, MathMin(1.0, pipelineEvidence.costScore));
-        double denominatorWeight = adjustedStrategyWeight;
-        if(signal == TRADE_SIGNAL_NONE)
-        {
-            if(placeholderNoSignalReason || infrastructureNoSignalReason)
-                denominatorWeight *= 0.15;
-            else if(filteredByPipeline)
-                denominatorWeight *= 0.55;
-            else if(rawNone)
-                denominatorWeight *= 0.35;
-            else
-                denominatorWeight *= 0.50;
-        }
-
-        if(placeholderNoSignalReason || infrastructureNoSignalReason)
-        {
-            // Unclassified or infrastructure no-signal states should not dilute live quorum
-            // as if they had completed a real decision cycle with meaningful evidence.
-            readinessScore = MathMin(readinessScore, 0.15);
-            contextScore = MathMin(contextScore, 0.35);
-            costScore = MathMin(costScore, 0.35);
-        }
-        double readyWeightContribution = denominatorWeight * readinessScore;
-        if(liveVoter && liveEligibleForThisEval)
-        {
-            totalLiveWeight += denominatorWeight;
-            readyLiveWeight += readyWeightContribution;
-            readyContextWeightedSum += contextScore * readyWeightContribution;
-            readyCostWeightedSum += costScore * readyWeightContribution;
-        }
-
-        if(signal != TRADE_SIGNAL_NONE)
-        {
-            string votedEntry = StringFormat("%s:%s@%.2f",
-                                             m_strategies[i].name,
-                                             TradeSignalToString(signal),
-                                             stratConf);
-            if(StringLen(votedStrategySummary) > 0)
-                votedStrategySummary += ", ";
-            votedStrategySummary += votedEntry;
-        }
-
-        if(m_tfConsistency != NULL && signal != TRADE_SIGNAL_NONE && stratConf >= signalConfidenceFloor && (liveEligibleForThisEval || probeEligibleForThisEval))
-        {
-            m_tfConsistency.AddTimeframeSignal(m_strategies[i].timeframe,
-                                               signal,
-                                               stratConf,
-                                               m_strategies[i].name);
-        }
-
-        if(signal == TRADE_SIGNAL_BUY && stratConf >= signalConfidenceFloor)
-        {
-            double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
-            // AI uncertainty discount: reduce conviction when model is uncertain
-            IAIStrategy* aiStratConv = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
-            if(aiStratConv != NULL)
-            {
-                double uncertainty = aiStratConv.GetUncertainty();
-                double uncertaintyDiscount = 1.0 - (0.30 * MathMax(0.0, MathMin(1.0, uncertainty)));
-                conviction *= uncertaintyDiscount;
-                if(uncertainty > 0.5)
-                {
-                    static datetime s_lastUncLog = 0;
-                    if(s_lastUncLog == 0 || (TimeCurrent() - s_lastUncLog) >= 60)
-                    {
-                        LOG_IF5(LOG_LEVEL_DEBUG, "[AI-UNCERTAINTY-DISCOUNT] %s | strategy=%s | uncertainty=%.3f | discount=%.3f | conviction=%.4f",
-                                    symbol, m_strategies[i].name, uncertainty, uncertaintyDiscount, conviction);
-                        s_lastUncLog = TimeCurrent();
-                    }
-                }
-            }
-            if(liveVoter && liveEligibleForThisEval)
-            {
-                buyVotes++;
-                buyConviction += conviction * readyWeightContribution;
-                buyWeightSum += readyWeightContribution;
-                buyContextSum += contextScore * readyWeightContribution;
-                buyReadinessSum += readinessScore * readyWeightContribution;
-                buyCostSum += costScore * readyWeightContribution;
-
-                // Per-cluster conviction tracking for cross-cluster conflict resolution
-                ENUM_STRATEGY_CLUSTER voteCluster = (ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster;
-                if(voteCluster == TREND_CLUSTER)
-                    trendClusterBuyConviction += conviction * readyWeightContribution;
-                else if(voteCluster == MEAN_REVERSION_CLUSTER)
-                    meanRevClusterBuyConviction += conviction * readyWeightContribution;
-
-                int buySize = ArraySize(buyContributors);
-                ArrayResize(buyContributors, buySize + 1);
-                ArrayResize(buyContributorIndices, buySize + 1);
-                buyContributors[buySize] = m_strategies[i].name;
-                buyContributorIndices[buySize] = i;
-            }
-            else if(probeEligibleForThisEval)
-            {
-                probeBuyVotes++;
-                probeBuyConviction += conviction * readyWeightContribution;
-                probeBuyWeightSum += readyWeightContribution;
-                probeBuyContextSum += contextScore * readyWeightContribution;
-                probeBuyReadinessSum += readinessScore * readyWeightContribution;
-                probeBuyCostSum += costScore * readyWeightContribution;
-
-                int probeBuySize = ArraySize(probeBuyContributors);
-                ArrayResize(probeBuyContributors, probeBuySize + 1);
-                ArrayResize(probeBuyContributorIndices, probeBuySize + 1);
-                probeBuyContributors[probeBuySize] = m_strategies[i].name;
-                probeBuyContributorIndices[probeBuySize] = i;
-            }
-        }
-        else if(signal == TRADE_SIGNAL_SELL && stratConf >= signalConfidenceFloor)
-        {
-            double conviction = MathMax(0.0, MathMin(1.0, stratConf * (0.50 + (0.20 * contextScore) + (0.20 * readinessScore) + (0.10 * costScore))));
-            // AI uncertainty discount: reduce conviction when model is uncertain
-            IAIStrategy* aiStratConvSell = dynamic_cast<IAIStrategy*>(m_strategies[i].strategy);
-            if(aiStratConvSell != NULL)
-            {
-                double uncertainty = aiStratConvSell.GetUncertainty();
-                double uncertaintyDiscount = 1.0 - (0.30 * MathMax(0.0, MathMin(1.0, uncertainty)));
-                conviction *= uncertaintyDiscount;
-            }
-            if(liveVoter && liveEligibleForThisEval)
-            {
-                sellVotes++;
-                sellConviction += conviction * readyWeightContribution;
-                sellWeightSum += readyWeightContribution;
-                sellContextSum += contextScore * readyWeightContribution;
-                sellReadinessSum += readinessScore * readyWeightContribution;
-                sellCostSum += costScore * readyWeightContribution;
-
-                // Per-cluster conviction tracking for cross-cluster conflict resolution
-                ENUM_STRATEGY_CLUSTER voteCluster = (ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster;
-                if(voteCluster == TREND_CLUSTER)
-                    trendClusterSellConviction += conviction * readyWeightContribution;
-                else if(voteCluster == MEAN_REVERSION_CLUSTER)
-                    meanRevClusterSellConviction += conviction * readyWeightContribution;
-
-                int sellSize = ArraySize(sellContributors);
-                ArrayResize(sellContributors, sellSize + 1);
-                ArrayResize(sellContributorIndices, sellSize + 1);
-                sellContributors[sellSize] = m_strategies[i].name;
-                sellContributorIndices[sellSize] = i;
-            }
-            else if(probeEligibleForThisEval)
-            {
-                probeSellVotes++;
-                probeSellConviction += conviction * readyWeightContribution;
-                probeSellWeightSum += readyWeightContribution;
-                probeSellContextSum += contextScore * readyWeightContribution;
-                probeSellReadinessSum += readinessScore * readyWeightContribution;
-                probeSellCostSum += costScore * readyWeightContribution;
-
-                int probeSellSize = ArraySize(probeSellContributors);
-                ArrayResize(probeSellContributors, probeSellSize + 1);
-                ArrayResize(probeSellContributorIndices, probeSellSize + 1);
-                probeSellContributors[probeSellSize] = m_strategies[i].name;
-                probeSellContributorIndices[probeSellSize] = i;
-            }
-        }
-
-    }
-
-    // Restore original symbol
-    m_symbol = originalSymbol;
-
-    m_diagRawNone += (ulong)MathMax(0, cycleRawNone);
-    m_diagFilteredOut += (ulong)MathMax(0, cycleFilteredOut);
-    m_diagIntrabarNotEligible += (ulong)MathMax(0, cycleIntrabarNotEligible);
-    m_diagSignalsGenerated += (ulong)MathMax(0, cycleSignalsGenerated);
-    m_diagSignalsAfterPipeline += (ulong)MathMax(0, cycleSignalsAfterPipeline);
-    m_diagVoteSuppressed += (ulong)MathMax(0, cycleVoteSuppressed);
-
-    //--- Cross-cluster conflict resolution ---
-    // When trend and mean-reversion clusters disagree on direction,
-    // the regime determines which cluster to trust.
-    bool trendBuyActive = (trendClusterBuyConviction > 0.0);
-    bool meanRevSellActive = (meanRevClusterSellConviction > 0.0);
-    bool trendSellActive = (trendClusterSellConviction > 0.0);
-    bool meanRevBuyActive = (meanRevClusterBuyConviction > 0.0);
-
-    bool crossClusterConflict = (trendBuyActive && meanRevSellActive) ||
-                                (trendSellActive && meanRevBuyActive);
-
-    if(crossClusterConflict)
-    {
-        bool isTrendingRegime = IsTrendingRegime();
-
-        if(isTrendingRegime)
-        {
-            // Trending regime: zero out mean-reversion votes
-            buyConviction = MathMax(0.0, buyConviction - meanRevClusterBuyConviction);
-            sellConviction = MathMax(0.0, sellConviction - meanRevClusterSellConviction);
-        }
-        else
-        {
-            // Ranging regime: zero out trend votes
-            buyConviction = MathMax(0.0, buyConviction - trendClusterBuyConviction);
-            sellConviction = MathMax(0.0, sellConviction - trendClusterSellConviction);
-        }
-
-        LOG_IF6(LOG_LEVEL_INFO, "[CONSENSUS-CONFLICT] %s: Cross-cluster conflict detected. Trend: Buy=%.2f/Sell=%.2f, MeanRev: Buy=%.2f/Sell=%.2f. Resolved using %s regime.",
-                    symbol, trendClusterBuyConviction, trendClusterSellConviction,
-                    meanRevClusterBuyConviction, meanRevClusterSellConviction,
-                    EnumToString(regimeEng.GetSnapshot().confirmedState));
-                    isTrendingRegime ? "TRENDING" : "RANGING");
-    }
-
-    // Log regime weight multiplier application (Batch 104)
-    if(m_pipeline != NULL)
-    {
-        CRegimeEngine* regimeEng = m_pipeline.GetRegimeEngine();
-        if(regimeEng != NULL)
-        {
-            SRegimeSnapshot snap = regimeEng.GetSnapshot();
-            LOG_IF6(LOG_LEVEL_DEBUG, "[CONSENSUS-REGIME] %s | Regime=%s | Weights: Mom=%.2f Trend=%.2f MR=%.2f Break=%.2f ICT=%.2f",
-                       symbol, EnumToString(snap.confirmedState),
-                       snap.momentumWeightMult, snap.trendWeightMult,
-                       snap.meanRevWeightMult, snap.breakoutWeightMult,
-                       snap.ictWeightMult);
-        }
-    }
-
-    // VPIN toxicity integration (Batch 104)
-    double vpinWeightMultiplier = 1.0;
-    if(m_vpinFilter != NULL)
-    {
-        double vpin = m_vpinFilter.GetVPIN();
-        ENUM_VPIN_TOXICITY toxicity = m_vpinFilter.GetToxicityRegime();
-
-        if(toxicity == VPIN_TOXICITY_EXTREME)  // VPIN > 0.7
-        {
-            // Skip all new entries at consensus level
-            LOG_IF2(LOG_LEVEL_WARN, "[CONSENSUS-VPIN] %s | VPIN=%.3f EXTREME | All entries blocked", symbol, vpin);
-            return TRADE_SIGNAL_NONE;
-        }
-        else if(toxicity == VPIN_TOXICITY_HIGH)  // VPIN 0.5-0.7
-        {
-            vpinWeightMultiplier = 0.50;  // Reduce all weights by 50%
-            LOG_IF2(LOG_LEVEL_WARN, "[CONSENSUS-VPIN] %s | VPIN=%.3f HIGH | Weights reduced 50%%", symbol, vpin);
-        }
-        else if(toxicity == VPIN_TOXICITY_MEDIUM)  // VPIN 0.3-0.5
-        {
-            vpinWeightMultiplier = 0.75;  // Reduce trend/breakout weights by 25%
-            LOG_IF2(LOG_LEVEL_INFO, "[CONSENSUS-VPIN] %s | VPIN=%.3f MEDIUM | Weights reduced 25%%", symbol, vpin);
-        }
-        else
-        {
-            LOG_IF2(LOG_LEVEL_DEBUG, "[CONSENSUS-VPIN] %s | VPIN=%.3f LOW | No adjustment", symbol, vpin);
-        }
-    }
-
-    // Apply VPIN weight multiplier to conviction values
-    if(vpinWeightMultiplier < 1.0)
-    {
-        buyConviction *= vpinWeightMultiplier;
-        sellConviction *= vpinWeightMultiplier;
-    }
-
-    double minReadyWeight = totalLiveWeight * m_minReadyWeightRatio;
-    bool readyWeightMet = (readyLiveWeight >= minReadyWeight);
-    double readyCoverage = (totalLiveWeight > 0.0) ? ClampUnitValue(readyLiveWeight / totalLiveWeight) : 0.0;
-    double quorumDenominator = (readyLiveWeight > 0.0) ? readyLiveWeight : totalLiveWeight;
-    if(quorumDenominator <= 0.0)
-        quorumDenominator = 1.0;
-
-    double buyScore = ClampUnitValue(buyConviction / quorumDenominator);
-    double sellScore = ClampUnitValue(sellConviction / quorumDenominator);
-    double buyDirectionalQuality = (buyWeightSum > 0.0) ? ClampUnitValue(buyConviction / buyWeightSum) : 0.0;
-    double sellDirectionalQuality = (sellWeightSum > 0.0) ? ClampUnitValue(sellConviction / sellWeightSum) : 0.0;
-    double buySupportRatio = (readyLiveWeight > 0.0) ? ClampUnitValue(buyWeightSum / readyLiveWeight) : 0.0;
-    double sellSupportRatio = (readyLiveWeight > 0.0) ? ClampUnitValue(sellWeightSum / readyLiveWeight) : 0.0;
-
-    // Consensus score 0-100 (Batch 104)
-    double rawConsensusScore = 0.0;
-    ENUM_TRADE_SIGNAL consensusDirection = TRADE_SIGNAL_NONE;
-    double winningDirectionalQuality = 0.0;
-    double winningSupportRatio = 0.0;
-
-    if(buyConviction > sellConviction && buyConviction > 0.0)
-    {
-        consensusDirection = TRADE_SIGNAL_BUY;
-        winningDirectionalQuality = buyDirectionalQuality;
-        winningSupportRatio = buySupportRatio;
-        rawConsensusScore = buyDirectionalQuality * buySupportRatio * 100.0;
-    }
-    else if(sellConviction > buyConviction && sellConviction > 0.0)
-    {
-        consensusDirection = TRADE_SIGNAL_SELL;
-        winningDirectionalQuality = sellDirectionalQuality;
-        winningSupportRatio = sellSupportRatio;
-        rawConsensusScore = sellDirectionalQuality * sellSupportRatio * 100.0;
-    }
-
-    int consensusScore = (int)MathMin(100, MathMax(0, MathRound(rawConsensusScore)));
-
-    // Log consensus score
-    if(consensusScore > 0)
-    {
-        LOG_IF6(LOG_LEVEL_DEBUG, "[CONSENSUS-SCORE] %s | Score=%d/100 | Direction=%s | Quality=%.2f | Support=%.2f | Threshold=60",
-                   symbol, consensusScore,
-                   consensusDirection == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   winningDirectionalQuality, winningSupportRatio);
-    }
-
-    double buyAverageReadiness = (buyWeightSum > 0.0) ? ClampUnitValue(buyReadinessSum / buyWeightSum) : 0.0;
-    double sellAverageReadiness = (sellWeightSum > 0.0) ? ClampUnitValue(sellReadinessSum / sellWeightSum) : 0.0;
-    double buyAverageContext = (buyWeightSum > 0.0) ? ClampUnitValue(buyContextSum / buyWeightSum) : 0.0;
-    double sellAverageContext = (sellWeightSum > 0.0) ? ClampUnitValue(sellContextSum / sellWeightSum) : 0.0;
-    double buyAverageCost = (buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0;
-    double sellAverageCost = (sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0;
-    double overallReadyContext = (readyLiveWeight > 0.0) ? ClampUnitValue(readyContextWeightedSum / readyLiveWeight) : 0.0;
-    double overallReadyCost = (readyLiveWeight > 0.0) ? ClampUnitValue(readyCostWeightedSum / readyLiveWeight) : 0.0;
-    double supportFloor = (evalMode == EVAL_MODE_INTRABAR) ? m_supportFloorIntrabar : m_supportFloorNewBar;
-    double effectiveQualityThreshold = m_quorumThreshold;
-    double adaptiveQualityThreshold1 = MathMin(m_adaptiveQualityThreshold_1voter,
-                                               MathMax(0.30, m_quorumThreshold - 0.05));
-    double adaptiveQualityThreshold2 = MathMin(m_adaptiveQualityThreshold_2voters,
-                                               MathMax(0.34, m_quorumThreshold - 0.02));
-
-    // RECOVERY FIX: Pre-adapt quorum for low-voter ecosystems (AI-only mode).
-    // When only 3 or fewer live strategies are registered, the standard 0.35
-    // support floor is mathematically impossible for a single voter to meet.
-    // Scale thresholds based on total registered live voters, not just active voters.
-    if(m_adaptiveQuorumEnabled && activeLiveStrategies > 0 && activeLiveStrategies <= 3 && evalMode != EVAL_MODE_INTRABAR)
-    {
-        supportFloor = m_adaptiveSupportFloor_1voter;    // 0.15 �?achievable with 1/3 voters
-        effectiveQualityThreshold = adaptiveQualityThreshold1; // 0.40 �?relaxed for sparse consensus
-    }
-
-    // Adaptive quorum: adjust thresholds based on actual active voter count
-    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) > 0)
-    {
-        int activeVoterCount = buyVotes + sellVotes;
-        if(activeVoterCount == 1)
-        {
-            effectiveQualityThreshold = adaptiveQualityThreshold1;
-            supportFloor = m_adaptiveSupportFloor_1voter;
-        }
-        else if(activeVoterCount == 2)
-        {
-            effectiveQualityThreshold = adaptiveQualityThreshold2;
-            supportFloor = m_adaptiveSupportFloor_2voters;
-        }
-        // 3+ voters: use original thresholds (already set above)
-    }
-
-    // Issue 6: Regime-aware threshold relaxation
-    // When previous cycle produced zero votes in a TREND regime, relax thresholds by 10%
-    if(m_regimeRelaxActive)
-    {
-        effectiveQualityThreshold *= m_regimeRelaxFactor;
-        supportFloor *= m_regimeRelaxFactor;
-        LOG_IF4(LOG_LEVEL_DEBUG, "[CONSENSUS-RELAX] %s | Regime relaxation active | qualityThreshold=%.3f | supportFloor=%.3f | factor=%.2f",
-                    symbol, effectiveQualityThreshold, supportFloor, m_regimeRelaxFactor);
-        m_regimeRelaxActive = false;
-    }
-
-    // Issue 8: Tighten marginal admit — require minimum quality floor of 0.65 and at least 2 voters
-    double marginalQualityFloor = 0.65;
-
-    int effectiveMinVoters = MathMax(1, m_minQuorum);
-
-    // Single-voter quorum is only allowed when the configured live-voter floor permits it.
-    if(activeLiveStrategies <= 3 && m_minQuorum <= 1)
-    {
-        effectiveMinVoters = 1;
-    }
-
-    if(evalMode == EVAL_MODE_INTRABAR)
-    {
-        int intrabarFloor = MathMax(1, m_intrabarMinQuorum);
-        effectiveMinVoters = intrabarFloor;
-        if(m_intrabarDynamicQuorumEnabled && eligibleLiveVoterCount >= 4 && effectiveMinVoters < 2)
-            effectiveMinVoters = 2;
-    }
-
-    // INDICATOR_ONLY adaptive: when only 1 voter produced a signal and it has
-    // high directional quality (>=0.70), allow single-voter quorum. This prevents
-    // deadlock in indicator-only mode where AI voters are disabled and getting
-    // 2+ agreeing voters is rare.
-    // IMPORTANT: This must come AFTER the intrabar override so it takes precedence.
-    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) == 1)
-    {
-        double singleVoterQuality = (buyVotes == 1) ? buyDirectionalQuality : sellDirectionalQuality;
-        if(singleVoterQuality >= 0.70)
-            effectiveMinVoters = 1;
-    }
-
-    // Trend-direction bias: raise quorum threshold when consensus opposes a strong trend
-    // Prevents counter-trend entries that pass default quorum but fight the dominant direction
-    double trendBiasOriginalThreshold = effectiveQualityThreshold;
-    double buyQuorum = effectiveQualityThreshold;
-    double sellQuorum = effectiveQualityThreshold;
-    if(m_pipeline != NULL)
-    {
-        CTrendEngine* trendEng = m_pipeline.GetTrendEngine();
-        if(trendEng != NULL)
-        {
-            ENUM_TREND_TYPE trendState = trendEng.GetCurrentTrend();
-            if((trendState == TREND_BEARISH_STRONG && buyScore > sellScore) ||
-               (trendState == TREND_BULLISH_STRONG && sellScore > buyScore))
-            {
-                double trendBiasThreshold = 0.70;
-                if(effectiveQualityThreshold < trendBiasThreshold)
-                {
-                    effectiveQualityThreshold = trendBiasThreshold;
-                    // Apply the raised threshold to the counter-trend direction
-                    if(trendState == TREND_BEARISH_STRONG && buyScore > sellScore)
-                        buyQuorum = trendBiasThreshold;
-                    else if(trendState == TREND_BULLISH_STRONG && sellScore > buyScore)
-                        sellQuorum = trendBiasThreshold;
-                    LOG_IF4(LOG_LEVEL_DEBUG, "[CONSENSUS-TREND-BIAS] %s | Strong opposing trend detected (state=%s), quorum raised from %.2f to %.2f",
-                                symbol, EnumToString(trendState), trendBiasOriginalThreshold, trendBiasThreshold);
-                }
-            }
-
-            // CONSENSUS-TREND-FLIP: When AI is degenerate (directional-only) and opposes
-            // the strong trend, lower the quorum for the trend-aligned direction so that
-            // S/R or other non-AI signals can still pass consensus.
-            if(trendState == TREND_BEARISH_STRONG && buyVotes >= 2 && sellVotes == 0)
-            {
-                // AI is BUY-only in a bearish market - lower SELL quorum
-                double originalSellQuorum = sellQuorum;
-                sellQuorum = MathMax(0.30, sellQuorum - 0.10);
-                if(sellQuorum != originalSellQuorum)
-                {
-                    LOG_IF3(LOG_LEVEL_DEBUG, "[CONSENSUS-TREND-FLIP] %s | BEARISH_STRONG + BUY-only AI | SELL quorum %.2f -> %.2f",
-                                symbol, originalSellQuorum, sellQuorum);
-                }
-            }
-            else if(trendState == TREND_BULLISH_STRONG && sellVotes >= 2 && buyVotes == 0)
-            {
-                // AI is SELL-only in a bullish market - lower BUY quorum
-                double originalBuyQuorum = buyQuorum;
-                buyQuorum = MathMax(0.30, buyQuorum - 0.10);
-                if(buyQuorum != originalBuyQuorum)
-                {
-                    LOG_IF3(LOG_LEVEL_DEBUG, "[CONSENSUS-TREND-FLIP] %s | BULLISH_STRONG + SELL-only AI | BUY quorum %.2f -> %.2f",
-                                symbol, originalBuyQuorum, buyQuorum);
-                }
-            }
-        }
-    }
-
-    // Single-voter quorum relaxation: when only 1 voter with quality >= 0.70,
-    // don't let trend bias raise the quorum above the voter's quality.
-    // This prevents a valid single-voter signal from being vetoed because
-    // trend bias raised buyQuorum to 0.70 while quality is 0.701 (razor-thin).
-    if(m_adaptiveQuorumEnabled && (buyVotes + sellVotes) == 1 && effectiveMinVoters == 1)
-    {
-        double singleVoterQuality = (buyVotes == 1) ? buyDirectionalQuality : sellDirectionalQuality;
-        if(singleVoterQuality >= 0.70)
-        {
-            if(buyQuorum > singleVoterQuality && buyVotes == 1)
-                buyQuorum = singleVoterQuality;
-            if(sellQuorum > singleVoterQuality && sellVotes == 1)
-                sellQuorum = singleVoterQuality;
-        }
-    }
-
-    bool buyQuorumMet = (readyWeightMet &&
-                         buyVotes >= effectiveMinVoters &&
-                         buyDirectionalQuality >= buyQuorum &&
-                         buySupportRatio >= supportFloor);
-    bool sellQuorumMet = (readyWeightMet &&
-                          sellVotes >= effectiveMinVoters &&
-                          sellDirectionalQuality >= sellQuorum &&
-                          sellSupportRatio >= supportFloor);
-
-    ENUM_TRADE_SIGNAL finalSignal = TRADE_SIGNAL_NONE;
-    ENUM_CONSENSUS_DECISION_CLASS decisionClass = CONSENSUS_DECISION_NONE;
-    double finalConfidence = 0.0;
-    double finalConvictionScore = 0.0;
-    double finalDirectionalQuality = 0.0;
-    double finalSupportRatio = 0.0;
-    double finalDirectionalWeight = 0.0;
-    double finalReadinessScore = 0.0;
-    double finalContextScore = 0.0;
-    double finalCostScore = 0.0;
-    double finalStalenessPenalty = 0.0;
-    int finalConfluence = 0;
-    string selectedContributors[];
-    int selectedContributorIndices[];
-    string vetoCode = "";
-    string vetoReason = "";
-    string soloVetoReason = "";
-    bool selectedSparseFromProbe = false;
-    ArrayResize(selectedContributors, 0);
-    ArrayResize(selectedContributorIndices, 0);
-
-    if(activeLiveStrategies <= 0 || totalLiveWeight <= 0.0)
-    {
-        vetoCode = "no_active_live_voters";
-        vetoReason = "no_active_live_voters";
-    }
-    else if(buyQuorumMet && sellQuorumMet)
-    {
-        double scoreDelta = MathAbs(buyScore - sellScore);
-        if(scoreDelta < m_conflictDeadband)
-        {
-            cycleQuorumFailed++;
-            vetoCode = "deadband_conflict";
-            vetoReason = StringFormat("buyScore=%.3f | sellScore=%.3f | deadband=%.3f",
-                                      buyScore,
-                                      sellScore,
-                                      m_conflictDeadband);
-        }
-        else
-        {
-            finalSignal = (buyScore > sellScore) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-        }
-    }
-    else if(buyQuorumMet)
-    {
-        finalSignal = TRADE_SIGNAL_BUY;
-    }
-    else if(sellQuorumMet)
-    {
-        finalSignal = TRADE_SIGNAL_SELL;
-    }
-else
-        {
-            if((buyVotes + sellVotes) <= 0)
-            {
-                if(cycleSignalsGenerated > 0 || cycleSignalsAfterPipeline > 0 || cycleFilteredOut > 0)
-                {
-                    vetoCode = "pipeline_filtered_all";
-                    vetoReason = StringFormat("All candidate signals were filtered/suppressed before quorum | generated=%d | after_pipeline=%d | filtered_out=%d | suppressed=%d",
-                                              cycleSignalsGenerated,
-                                              cycleSignalsAfterPipeline,
-                                              cycleFilteredOut,
-                                              cycleVoteSuppressed);
-                }
-                else
-                {
-                    // FALLBACK SOLO-SIGNAL: When all strategies abstain, pick the best single strategy
-                    // This prevents complete trading paralysis while maintaining quality control
-                    ENUM_TRADE_SIGNAL soloSignal = TryFallbackSoloSignal(symbol, evalMode, confidence, confluence, soloVetoReason);
-                    if(soloSignal != TRADE_SIGNAL_NONE)
-                    {
-                        finalSignal = soloSignal;
-                        decisionClass = CONSENSUS_DECISION_SOLO_FALLBACK;
-                        vetoCode = ""; // Clear veto since we have a signal
-                        vetoReason = "solo_fallback_" + soloVetoReason;
-                        PrintFormat("[CONSENSUS-SOLO] %s | Solo fallback activated | signal=%s conf=%.2f | reason=%s",
-                                    symbol, EnumToString(soloSignal), confidence, soloVetoReason);
-                    }
-                    else
-                    {
-                        vetoCode = "no_voters";
-                        vetoReason = "No strategies produced votes in this evaluation cycle";
-                        // Issue 6: Regime-aware fallback — when TREND regime and zero voters, relax thresholds 10%
-                        if(IsTrendingRegime())
-                        {
-                            m_regimeRelaxActive = true;
-                            PrintFormat("[CONSENSUS-RELAX] %s | TREND regime + zero voters | Relaxing thresholds by %.0f%% for next cycle",
-                                        symbol, (1.0 - m_regimeRelaxFactor) * 100.0);
-                        }
-                    }
-                }
-            }
-        else if(!readyWeightMet)
-        {
-            vetoCode = "readiness_weight";
-            vetoReason = StringFormat("readyWeight=%.2f < minRequired=%.2f",
-                                      readyLiveWeight, minReadyWeight);
-        }
-        else
-        {
-            // Provide detailed diagnostic for partial failures
-            int activeVoterCount = buyVotes + sellVotes;
-            double bestQuality = MathMax(buyDirectionalQuality, sellDirectionalQuality);
-            double bestSupport = MathMax(buySupportRatio, sellSupportRatio);
-
-            if(bestQuality >= effectiveQualityThreshold)
-            {
-                // Full admission — quality meets threshold (handled by support/quorum checks below)
-                if(bestSupport < supportFloor)
-                {
-                    vetoCode = "insufficient_support";
-                    vetoReason = StringFormat("support=%.3f (need %.3f) | votes=%d | quality=%.3f",
-                                              bestSupport, supportFloor,
-                                              activeVoterCount, bestQuality);
-                }
-                else
-                {
-                    vetoCode = "direction_quorum_not_met";
-                    vetoReason = StringFormat("buy=%.3f|%.3f vs sell=%.3f|%.3f",
-                                              buyDirectionalQuality, buySupportRatio,
-                                              sellDirectionalQuality, sellSupportRatio);
-                }
-            }
-            else if(bestQuality >= marginalQualityFloor && activeVoterCount >= 2)
-            {
-                // Issue 8: Soft-admit band — quality is marginal but meets tightened floor (0.65)
-                // AND at least 2 voters produced a signal (prevents single-voter marginal admits)
-                finalSignal = (buyDirectionalQuality >= sellDirectionalQuality) ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
-                decisionClass = CONSENSUS_DECISION_MARGINAL_ADMIT;
-                // vetoCode remains "" so the signal is not treated as vetoed
-                PrintFormat("[MARGINAL-TIGHTEN] %s | quality=%.3f | threshold=%.3f | marginalFloor=%.3f | confidencePenalty=0.70 | signal=%s | votes=%d | support=%.3f",
-                            symbol,
-                            bestQuality, effectiveQualityThreshold, marginalQualityFloor,
-                            TradeSignalToString(finalSignal),
-                            activeVoterCount, bestSupport);
-            }
-            else
-            {
-                // Hard veto — quality too far below threshold
-                vetoCode = "insufficient_quality";
-                vetoReason = StringFormat("quality=%.3f (need %.3f, marginalFloor=%.3f) | votes=%d | support=%.3f",
-                                          bestQuality, effectiveQualityThreshold, marginalQualityFloor,
-                                          activeVoterCount, bestSupport);
-            }
-        }
-
-        if((buyVotes + sellVotes) > 0 && decisionClass != CONSENSUS_DECISION_MARGINAL_ADMIT)
-            cycleQuorumFailed++;
-    }
-
-    if(finalSignal != TRADE_SIGNAL_NONE)
-    {
-        if(decisionClass != CONSENSUS_DECISION_MARGINAL_ADMIT)
-            decisionClass = CONSENSUS_DECISION_FULL_QUORUM;
-        if(finalSignal == TRADE_SIGNAL_BUY)
-        {
-            finalConfluence = buyVotes;
-            finalDirectionalQuality = buyDirectionalQuality;
-            finalSupportRatio = buySupportRatio;
-            finalDirectionalWeight = buyWeightSum;
-            finalReadinessScore = (buyWeightSum > 0.0) ? ClampUnitValue(buyReadinessSum / buyWeightSum) : 0.0;
-            finalContextScore = (buyWeightSum > 0.0) ? ClampUnitValue(buyContextSum / buyWeightSum) : 0.0;
-            finalCostScore = (buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0;
-            finalConvictionScore = buyScore;
-            finalConfidence = ClampUnitValue((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25));
-            ArrayCopy(selectedContributors, buyContributors);
-            ArrayCopy(selectedContributorIndices, buyContributorIndices);
-        }
-        else
-        {
-            finalConfluence = sellVotes;
-            finalDirectionalQuality = sellDirectionalQuality;
-            finalSupportRatio = sellSupportRatio;
-            finalDirectionalWeight = sellWeightSum;
-            finalReadinessScore = (sellWeightSum > 0.0) ? ClampUnitValue(sellReadinessSum / sellWeightSum) : 0.0;
-            finalContextScore = (sellWeightSum > 0.0) ? ClampUnitValue(sellContextSum / sellWeightSum) : 0.0;
-            finalCostScore = (sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0;
-            finalConvictionScore = sellScore;
-            finalConfidence = ClampUnitValue((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25));
-            ArrayCopy(selectedContributors, sellContributors);
-            ArrayCopy(selectedContributorIndices, sellContributorIndices);
-        }
-        // Apply confidence penalty for marginal-admit signals
-        if(decisionClass == CONSENSUS_DECISION_MARGINAL_ADMIT)
-            finalConfidence = ClampUnitValue(finalConfidence * 0.70);
-    }
-    else if(evalMode == EVAL_MODE_INTRABAR && m_allowSparseIntrabarSingleVoter)
-    {
-        int totalBuyVotesAll = buyVotes + probeBuyVotes;
-        int totalSellVotesAll = sellVotes + probeSellVotes;
-
-        if(totalBuyVotesAll == 1 && totalSellVotesAll == 0)
-        {
-            bool useProbe = (buyVotes == 0 && probeBuyVotes == 1);
-            double sparseDirectionalWeight = useProbe ? probeBuyWeightSum : buyWeightSum;
-            double sparseDirectionalConviction = useProbe ? probeBuyConviction : buyConviction;
-            double sparseDirectionalQuality = (sparseDirectionalWeight > 0.0)
-                                              ? ClampUnitValue(sparseDirectionalConviction / sparseDirectionalWeight)
-                                              : 0.0;
-            double sparseSupportRatio = (readyLiveWeight > 0.0)
-                                        ? ClampUnitValue(sparseDirectionalWeight / readyLiveWeight)
-                                        : 0.0;
-            double sparseReadiness = useProbe
-                                     ? ((probeBuyWeightSum > 0.0) ? ClampUnitValue(probeBuyReadinessSum / probeBuyWeightSum) : 0.0)
-                                     : ((buyWeightSum > 0.0) ? ClampUnitValue(buyReadinessSum / buyWeightSum) : 0.0);
-            double sparseContext = useProbe
-                                   ? ((probeBuyWeightSum > 0.0) ? ClampUnitValue(probeBuyContextSum / probeBuyWeightSum) : 0.0)
-                                   : ((buyWeightSum > 0.0) ? ClampUnitValue(buyContextSum / buyWeightSum) : 0.0);
-            double sparseCost = useProbe
-                                ? ((probeBuyWeightSum > 0.0) ? ClampUnitValue(probeBuyCostSum / probeBuyWeightSum) : 0.0)
-                                : ((buyWeightSum > 0.0) ? ClampUnitValue(buyCostSum / buyWeightSum) : 0.0);
-
-            if(!readyWeightMet || readyCoverage < m_sparseIntrabarMinReadyCoverage)
-                vetoCode = "readiness_coverage";
-            else if(sparseReadiness < 0.80)
-                vetoCode = "readiness_gate";
-            else if(sparseContext < 0.70)
-                vetoCode = "context_gate";
-            else if(sparseCost < 0.70)
-                vetoCode = "cost_gate";
-            else if(sparseDirectionalQuality < MathMax(m_sparseIntrabarMinQuality, m_intrabarSingleVoterMinConfidence))
-                vetoCode = "single_voter_confidence";
-            else if(sparseSupportRatio < m_sparseIntrabarMinSupportRatio)
-                vetoCode = "sparse_support";
-            else
-            {
-                finalSignal = TRADE_SIGNAL_BUY;
-                decisionClass = CONSENSUS_DECISION_SPARSE_INTRABAR;
-                finalConfluence = 1;
-                finalDirectionalQuality = sparseDirectionalQuality;
-                finalSupportRatio = sparseSupportRatio;
-                finalDirectionalWeight = sparseDirectionalWeight;
-                finalReadinessScore = sparseReadiness;
-                finalContextScore = sparseContext;
-                finalCostScore = sparseCost;
-                finalConvictionScore = ClampUnitValue(sparseDirectionalConviction / quorumDenominator);
-                finalConfidence = ClampUnitValue(((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25)) * m_sparseIntrabarConfidencePenalty);
-                selectedSparseFromProbe = useProbe;
-                if(useProbe)
-                {
-                    ArrayCopy(selectedContributors, probeBuyContributors);
-                    ArrayCopy(selectedContributorIndices, probeBuyContributorIndices);
-                }
-                else
-                {
-                    ArrayCopy(selectedContributors, buyContributors);
-                    ArrayCopy(selectedContributorIndices, buyContributorIndices);
-                }
-            }
-        }
-        else if(totalSellVotesAll == 1 && totalBuyVotesAll == 0)
-        {
-            bool useProbe = (sellVotes == 0 && probeSellVotes == 1);
-            double sparseDirectionalWeight = useProbe ? probeSellWeightSum : sellWeightSum;
-            double sparseDirectionalConviction = useProbe ? probeSellConviction : sellConviction;
-            double sparseDirectionalQuality = (sparseDirectionalWeight > 0.0)
-                                              ? ClampUnitValue(sparseDirectionalConviction / sparseDirectionalWeight)
-                                              : 0.0;
-            double sparseSupportRatio = (readyLiveWeight > 0.0)
-                                        ? ClampUnitValue(sparseDirectionalWeight / readyLiveWeight)
-                                        : 0.0;
-            double sparseReadiness = useProbe
-                                     ? ((probeSellWeightSum > 0.0) ? ClampUnitValue(probeSellReadinessSum / probeSellWeightSum) : 0.0)
-                                     : ((sellWeightSum > 0.0) ? ClampUnitValue(sellReadinessSum / sellWeightSum) : 0.0);
-            double sparseContext = useProbe
-                                   ? ((probeSellWeightSum > 0.0) ? ClampUnitValue(probeSellContextSum / probeSellWeightSum) : 0.0)
-                                   : ((sellWeightSum > 0.0) ? ClampUnitValue(sellContextSum / sellWeightSum) : 0.0);
-            double sparseCost = useProbe
-                                ? ((probeSellWeightSum > 0.0) ? ClampUnitValue(probeSellCostSum / probeSellWeightSum) : 0.0)
-                                : ((sellWeightSum > 0.0) ? ClampUnitValue(sellCostSum / sellWeightSum) : 0.0);
-
-            if(!readyWeightMet || readyCoverage < m_sparseIntrabarMinReadyCoverage)
-                vetoCode = "readiness_coverage";
-            else if(sparseReadiness < 0.80)
-                vetoCode = "readiness_gate";
-            else if(sparseContext < 0.70)
-                vetoCode = "context_gate";
-            else if(sparseCost < 0.70)
-                vetoCode = "cost_gate";
-            else if(sparseDirectionalQuality < MathMax(m_sparseIntrabarMinQuality, m_intrabarSingleVoterMinConfidence))
-                vetoCode = "single_voter_confidence";
-            else if(sparseSupportRatio < m_sparseIntrabarMinSupportRatio)
-                vetoCode = "sparse_support";
-            else
-            {
-                finalSignal = TRADE_SIGNAL_SELL;
-                decisionClass = CONSENSUS_DECISION_SPARSE_INTRABAR;
-                finalConfluence = 1;
-                finalDirectionalQuality = sparseDirectionalQuality;
-                finalSupportRatio = sparseSupportRatio;
-                finalDirectionalWeight = sparseDirectionalWeight;
-                finalReadinessScore = sparseReadiness;
-                finalContextScore = sparseContext;
-                finalCostScore = sparseCost;
-                finalConvictionScore = ClampUnitValue(sparseDirectionalConviction / quorumDenominator);
-                finalConfidence = ClampUnitValue(((finalDirectionalQuality * 0.75) + (finalSupportRatio * 0.25)) * m_sparseIntrabarConfidencePenalty);
-                selectedSparseFromProbe = useProbe;
-                if(useProbe)
-                {
-                    ArrayCopy(selectedContributors, probeSellContributors);
-                    ArrayCopy(selectedContributorIndices, probeSellContributorIndices);
-                }
-                else
-                {
-                    ArrayCopy(selectedContributors, sellContributors);
-                    ArrayCopy(selectedContributorIndices, sellContributorIndices);
-                }
-            }
-        }
-    }
-
-    if(m_tfConsistency != NULL && m_tfConsistency.HasConflicts())
-    {
-        double resolvedConfidence = 0.0;
-        string reasoning = "";
-        ENUM_TRADE_SIGNAL resolvedSignal = m_tfConsistency.ResolveSignals(resolvedConfidence, reasoning);
-
-        if(finalSignal == TRADE_SIGNAL_NONE)
-        {
-            vetoCode = "timeframe_conflict";
-            vetoReason = (reasoning != "") ? reasoning : "timeframe_conflict";
-        }
-        else if(resolvedSignal == TRADE_SIGNAL_NONE)
-        {
-            cycleQuorumFailed++;
-            vetoCode = "timeframe_conflict";
-            vetoReason = (reasoning != "") ? reasoning : "timeframe_conflict";
-            finalSignal = TRADE_SIGNAL_NONE;
-            finalConfidence = 0.0;
-            finalConvictionScore = 0.0;
-            finalDirectionalQuality = 0.0;
-            finalSupportRatio = 0.0;
-            finalDirectionalWeight = 0.0;
-            finalReadinessScore = 0.0;
-            finalContextScore = 0.0;
-            finalCostScore = 0.0;
-            finalConfluence = 0;
-            ArrayResize(selectedContributors, 0);
-            ArrayResize(selectedContributorIndices, 0);
-        }
-        else if(resolvedSignal != finalSignal)
-        {
-            double tfConflictPenalty = 0.5;
-            vetoCode = "timeframe_conflict_attenuated";
-            vetoReason = (reasoning != "") ? reasoning : "timeframe_conflict_attenuated";
-            finalConfidence = ClampUnitValue(finalConfidence * tfConflictPenalty);
-            finalConvictionScore = finalConvictionScore * tfConflictPenalty;
-            finalDirectionalQuality = ClampUnitValue(finalDirectionalQuality * tfConflictPenalty);
-            finalSupportRatio = ClampUnitValue(finalSupportRatio * tfConflictPenalty);
-            finalDirectionalWeight = finalDirectionalWeight * tfConflictPenalty;
-            finalReadinessScore = ClampUnitValue(finalReadinessScore * tfConflictPenalty);
-            finalContextScore = ClampUnitValue(finalContextScore * tfConflictPenalty);
-            finalCostScore = ClampUnitValue(finalCostScore * tfConflictPenalty);
-            PrintFormat("[TF-CONFLICT-ATTENUATED] %s | consensus=%s | tfResolved=%s | penalty=%.2f",
-                        symbol, TradeSignalToString(finalSignal), TradeSignalToString(resolvedSignal), tfConflictPenalty);
-        }
-        else if(resolvedConfidence > 0.0)
-        {
-            finalConfidence = MathMin(finalConfidence, ClampUnitValue(resolvedConfidence));
-        }
-    }
-
-    m_diagQuorumFailed += (ulong)MathMax(0, cycleQuorumFailed);
-
-    if(finalSignal != TRADE_SIGNAL_NONE)
-    {
-        if(selectedSparseFromProbe)
-        {
-            cycleSignalsGenerated++;
-            cycleSignalsAfterPipeline++;
-        }
-
-        cycleSignalsAfterQuorum = 1;
-        m_diagSignalsAfterQuorum += 1;
-        confluence = finalConfluence;
-        confidence = MathMax(0.0, MathMin(1.0, finalConfidence));
-        m_totalSignals++;
-
-        m_lastSignalSymbol = symbol;
-        m_lastSignalTime = TimeCurrent();
-        ArrayCopy(m_lastSignalContributors, selectedContributors);
-        m_lastContributorCount = ArraySize(m_lastSignalContributors);
-        ENUM_STRATEGY_ROLE dominantRole = ResolveDominantRole(selectedContributorIndices);
-        ENUM_STRATEGY_CLUSTER dominantCluster = ResolveDominantCluster(selectedContributorIndices);
-        m_lastSignalRole = StrategyRoleToString(dominantRole);
-        m_lastSignalCluster = StrategyClusterToString(dominantCluster);
-        m_lastSignalClusterCode = StrategyClusterShortCode(dominantCluster);
-        m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
-        m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
-        m_lastCycleSignalAfterQuorum = true;
-        m_lastDecisionContext.symbol = symbol;
-        m_lastDecisionContext.signal = finalSignal;
-        m_lastDecisionContext.decisionClass = (int)decisionClass;
-        m_lastDecisionContext.quorumMode = ConsensusDecisionClassToString(decisionClass);
-        m_lastDecisionContext.confidence = confidence;
-        m_lastDecisionContext.confluence = finalConfluence;
-        m_lastDecisionContext.buyScore = buyScore;
-        m_lastDecisionContext.sellScore = sellScore;
-        m_lastDecisionContext.buySupport = buyWeightSum;
-        m_lastDecisionContext.sellSupport = sellWeightSum;
-        m_lastDecisionContext.readyLiveWeight = readyLiveWeight;
-        m_lastDecisionContext.totalLiveWeight = totalLiveWeight;
-        m_lastDecisionContext.readinessScore = finalReadinessScore;
-        m_lastDecisionContext.contextScore = finalContextScore;
-        m_lastDecisionContext.costScore = finalCostScore;
-        m_lastDecisionContext.diversityScore = CalculateDirectionDiversityScore(selectedContributorIndices);
-        m_lastDecisionContext.convictionScore = finalConvictionScore;
-        m_lastDecisionContext.directionalQuality = finalDirectionalQuality;
-        m_lastDecisionContext.supportRatio = finalSupportRatio;
-        m_lastDecisionContext.directionalWeight = finalDirectionalWeight;
-        m_lastDecisionContext.readyCoverage = readyCoverage;
-        m_lastDecisionContext.quorumGap = 0.0;
-        m_lastDecisionContext.stalenessPenalty = finalStalenessPenalty;
-        m_lastDecisionContext.eligibleLiveVoterCount = eligibleLiveVoterCount;
-        m_lastDecisionContext.effectiveMinVoters = effectiveMinVoters;
-        m_lastDecisionContext.vetoCode = "";
-        m_lastDecisionContext.reason = StringFormat("mode=%s | quality=%.3f | support=%.3f | readyCoverage=%.3f | contributors=%s",
-                                                    m_lastDecisionContext.quorumMode,
-                                                    finalDirectionalQuality,
-                                                    finalSupportRatio,
-                                                    readyCoverage,
-                                                    JoinContributorsWithContext(selectedContributorIndices));
-
-        PrintFormat("[CONSENSUS-QUORUM] %s | class=%s | buyScore=%.3f | sellScore=%.3f | buyQuality=%.3f | sellQuality=%.3f | supportFloor=%.2f | readyWeight=%.3f/%.3f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
-                    symbol,
-                    ConsensusDecisionClassToString(decisionClass),
-                    buyScore,
-                    sellScore,
-                    buyDirectionalQuality,
-                    sellDirectionalQuality,
-                    supportFloor,
-                    readyLiveWeight,
-                    totalLiveWeight,
-                    buyVotes,
-                    sellVotes,
-                    TradeSignalToString(finalSignal));
-        if(decisionClass == CONSENSUS_DECISION_SPARSE_INTRABAR)
-        {
-            PrintFormat("[CONSENSUS-SPARSE] %s | signal=%s | quality=%.3f | support=%.3f | readyCoverage=%.3f | readiness=%.3f | context=%.3f | cost=%.3f | contributors=%s",
-                        symbol,
-                        TradeSignalToString(finalSignal),
-                        finalDirectionalQuality,
-                        finalSupportRatio,
-                        readyCoverage,
-                        finalReadinessScore,
-                        finalContextScore,
-                        finalCostScore,
-                        JoinContributorsWithContext(selectedContributorIndices));
-        }
-        MaybeLogConsensusDiagnostics(symbol);
-        return finalSignal;
-    }
-
-    double bestDirectionalQuality = MathMax(buyDirectionalQuality, sellDirectionalQuality);
-    double bestSupportRatio = MathMax(buySupportRatio, sellSupportRatio);
-    int bestVoterCount = MathMax(buyVotes, sellVotes);
-    bool buyDominant = (buyDirectionalQuality > sellDirectionalQuality) ||
-                       (buyDirectionalQuality == sellDirectionalQuality && buyScore >= sellScore);
-    double dominantReadiness = buyDominant ? buyAverageReadiness : sellAverageReadiness;
-    double dominantContext = buyDominant ? buyAverageContext : sellAverageContext;
-    double dominantCost = buyDominant ? buyAverageCost : sellAverageCost;
-    if(bestVoterCount <= 0)
-    {
-        dominantReadiness = readyCoverage;
-        dominantContext = overallReadyContext;
-        dominantCost = overallReadyCost;
-    }
-    double quorumGap = MathMax(0.0, effectiveQualityThreshold - bestDirectionalQuality);
-    quorumGap = MathMax(quorumGap, MathMax(0.0, supportFloor - bestSupportRatio));
-    if(effectiveMinVoters > 0 && bestVoterCount < effectiveMinVoters)
-        quorumGap = MathMax(quorumGap, (double)(effectiveMinVoters - bestVoterCount) / (double)effectiveMinVoters);
-    if(!readyWeightMet && totalLiveWeight > 0.0)
-        quorumGap = MathMax(quorumGap, ClampUnitValue((minReadyWeight - readyLiveWeight) / totalLiveWeight));
-
-    confidence = 0;
-    confluence = 0;
-    m_lastContributorCount = 0;
-    ArrayResize(m_lastSignalContributors, 0);
-    m_lastSignalRole = "PRIMARY_ALPHA";
-    m_lastSignalCluster = "NONE";
-    m_lastSignalClusterCode = "N";
-    m_lastCycleSignalsGenerated = MathMax(0, cycleSignalsGenerated);
-    m_lastCycleSignalsAfterPipeline = MathMax(0, cycleSignalsAfterPipeline);
-    m_lastCycleSignalAfterQuorum = (cycleSignalsAfterQuorum > 0);
-    m_lastDecisionContext.symbol = symbol;
-    m_lastDecisionContext.signal = TRADE_SIGNAL_NONE;
-    m_lastDecisionContext.decisionClass = (int)((vetoCode != "") ? CONSENSUS_DECISION_VETOED : CONSENSUS_DECISION_NONE);
-    m_lastDecisionContext.quorumMode = (vetoCode != "") ? "VETOED" : "NONE";
-    m_lastDecisionContext.buyScore = buyScore;
-    m_lastDecisionContext.sellScore = sellScore;
-    m_lastDecisionContext.buySupport = buyWeightSum;
-    m_lastDecisionContext.sellSupport = sellWeightSum;
-    m_lastDecisionContext.readyLiveWeight = readyLiveWeight;
-    m_lastDecisionContext.totalLiveWeight = totalLiveWeight;
-    m_lastDecisionContext.readinessScore = dominantReadiness;
-    m_lastDecisionContext.contextScore = dominantContext;
-    m_lastDecisionContext.costScore = dominantCost;
-    m_lastDecisionContext.convictionScore = MathMax(buyScore, sellScore);
-    m_lastDecisionContext.directionalQuality = bestDirectionalQuality;
-    m_lastDecisionContext.supportRatio = bestSupportRatio;
-    m_lastDecisionContext.directionalWeight = MathMax(buyWeightSum, sellWeightSum);
-    m_lastDecisionContext.readyCoverage = readyCoverage;
-    m_lastDecisionContext.quorumGap = ClampUnitValue(quorumGap);
-    m_lastDecisionContext.stalenessPenalty = 0.0;
-    m_lastDecisionContext.eligibleLiveVoterCount = eligibleLiveVoterCount;
-    m_lastDecisionContext.effectiveMinVoters = effectiveMinVoters;
-    m_lastDecisionContext.vetoCode = (vetoCode != "") ? vetoCode : "direction_quorum_not_met";
-    m_lastDecisionContext.reason = (vetoReason != "") ? vetoReason : m_lastDecisionContext.vetoCode;
-    if((buyVotes + sellVotes + probeBuyVotes + probeSellVotes) > 0 && evalMode == EVAL_MODE_INTRABAR)
-    {
-        PrintFormat("[CONSENSUS-NEARMISS] %s | veto=%s | buyScore=%.3f | sellScore=%.3f | buyQuality=%.3f | sellQuality=%.3f | buyVotes=%d | sellVotes=%d | probeBuy=%d | probeSell=%d | readyCoverage=%.3f",
-                    symbol,
-                    m_lastDecisionContext.vetoCode,
-                    buyScore,
-                    sellScore,
-                    buyDirectionalQuality,
-                    sellDirectionalQuality,
-                    buyVotes,
-                    sellVotes,
-                    probeBuyVotes,
-                    probeSellVotes,
-                    readyCoverage);
-    }
-    if(m_lastDecisionContext.reason != "")
-    {
-        PrintFormat("[CONSENSUS-VETO] %s | code=%s | reason=%s | buyScore=%.3f | sellScore=%.3f | buyQuality=%.3f | sellQuality=%.3f | supportFloor=%.2f | readyWeight=%.3f/%.3f | buyVoterCount=%d | sellVoterCount=%d",
-                    symbol,
-                    m_lastDecisionContext.vetoCode,
-                    m_lastDecisionContext.reason,
-                    buyScore,
-                    sellScore,
-                    buyDirectionalQuality,
-                    sellDirectionalQuality,
-                    supportFloor,
-                    readyLiveWeight,
-                    totalLiveWeight,
-                    buyVotes,
-                    sellVotes);
-        PrintFormat("[CONSENSUS-ACTIVE] %s | active={%s} | voted={%s} | raw_none={%s} | filtered={%s} | suppressed={%s}",
-                    symbol,
-                    (StringLen(activeStrategySummary) > 0) ? activeStrategySummary : "None",
-                    (StringLen(votedStrategySummary) > 0) ? votedStrategySummary : "None",
-                    (StringLen(rawNoneStrategySummary) > 0) ? rawNoneStrategySummary : "None",
-                    (StringLen(filteredStrategySummary) > 0) ? filteredStrategySummary : "None",
-                    (StringLen(suppressedStrategySummary) > 0) ? suppressedStrategySummary : "None");
-    }
-    PrintFormat("[CONSENSUS-QUORUM] %s | class=%s | buyScore=%.3f | sellScore=%.3f | threshold=%.2f | supportFloor=%.2f | buyVoterCount=%d | sellVoterCount=%d | signal=%s",
-                symbol,
-                m_lastDecisionContext.quorumMode,
-                buyScore,
-                sellScore,
-                effectiveQualityThreshold,
-                supportFloor,
-                buyVotes,
-                sellVotes,
-                TradeSignalToString(TRADE_SIGNAL_NONE));
-    MaybeLogConsensusDiagnostics(symbol);
-    return TRADE_SIGNAL_NONE;
+    return m_consensusEngine.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
+}
+
+//+------------------------------------------------------------------+
+//| Two-tier consensus evaluation - uses internal consensus logic   |
+//+------------------------------------------------------------------+
+ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::EvaluateConsensusTwoTier(const string symbol, double &confidence, int &confluence, ENUM_SIGNAL_EVAL_MODE evalMode)
+{
+    return m_consensusEngine.EvaluateConsensusTwoTier(symbol, confidence, confluence, evalMode);
 }
 
 //+------------------------------------------------------------------+
@@ -2511,112 +1456,112 @@ else
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const string symbol, double &confidence)
 {
-    int confluence = 0;
-    return GetConsensusSignalForSymbolWithConfluence(symbol, confidence, confluence);
+    return m_consensusEngine.GetConsensusSignalForSymbol(symbol, confidence);
 }
 
 //+------------------------------------------------------------------+
 //| Auto-register Strategies                                        |
 //+------------------------------------------------------------------+
+ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetIntrabarPolicyHelper(int idx)
+{
+    if(idx >= 0 && idx < 32 && m_intrabarPolicyConfig[idx] != INTRABAR_POLICY_OFF)
+        return m_intrabarPolicyConfig[idx];
+    // Default policies per strategy (matching original hardcoded values)
+    if(idx == 9 || idx == 10) return INTRABAR_POLICY_LIVE; // Mean Reversion, Volatility Breakout
+    return INTRABAR_POLICY_OFF;
+}
+
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 {
     int size = ArraySize(flags);
     
     // 0: Momentum (live primary voter) - Tier 3
-    if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, STRATEGY_TIER_3, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, TREND_CLUSTER, true);
-    
-    // 1: Trend (live primary voter) - Tier 2
-    if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, TREND_CLUSTER, true);
-    
-    // 2: Fibonacci REMOVED - Class deleted
-    // if(size > 2 && flags[2]) RegisterStrategy(new CStrategyFibonacci(), "Fibonacci", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-    //                                          PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false);
-    
-    // ELLIOTT WAVE REMOVED - Registration deleted
-    // 3: Elliott Wave (live primary voter) - Tier 1
-    // if(size > 3 && flags[3]) RegisterStrategy(new CStrategyElliottWaveEnhanced(), "Elliott Wave", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-    //                                          PRIMARY_ALPHA, STRUCTURE_CLUSTER, true, false);
-    
-    // 4: Support/Resistance (live primary voter) - Tier 2
-    if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
-    
-    // 5: Unified ICT (live primary voter) - Tier 1
-    if(size > 5 && flags[5]) RegisterStrategy(new CStrategyUnifiedICT(), "Unified ICT", true, 2.2, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
-    
-    // 6: Candlestick (live primary voter) - Tier 2
-    if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+        if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, STRATEGY_TIER_3, PERIOD_CURRENT, GetIntrabarPolicyHelper(0),
+                                                         PRIMARY_ALPHA, TREND_CLUSTER, true);
 
-    // 7: Unicorn Model (live primary voter) - Tier 1
-    if(size > 7 && flags[7]) RegisterStrategy(new CUnicornModelStrategy(), "Unicorn Model", true, 2.4, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+                // 1: Trend (live primary voter) - Tier 2
+                if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(1),
+                                                         PRIMARY_ALPHA, TREND_CLUSTER, true);
 
-    // 8: Power of Three / ICT 2025 (live primary voter) - Tier 1
-    if(size > 8 && flags[8]) RegisterStrategy(new CPowerOfThreeStrategy(), "Power of Three", true, 2.3, STRATEGY_TIER_1, PERIOD_CURRENT, false,
-                                             PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+                // 2: Support/Resistance (live primary voter) - Tier 2
+                        if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(4),
+                                                                 PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
 
-    // 9: Mean Reversion (live primary voter) - Tier 2 - MEAN_REVERSION_CLUSTER
-    if(size > 9 && flags[9]) RegisterStrategy(new CMeanReversionStrategy(), "Mean Reversion", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, true,
-                                             PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
+                        // 5: Unified ICT - REMOVED (over-engineered, 14+ modules, 1850 lines)
 
-    // 10: Volatility Breakout (live primary voter) - Tier 1 - TREND_CLUSTER
-    if(size > 10 && flags[10]) RegisterStrategy(new CVolatilityBreakoutStrategy(), "Volatility Breakout", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, true,
-                                               PRIMARY_ALPHA, TREND_CLUSTER, true);
+                        // 6: Candlestick (live primary voter) - Tier 2
+                if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(6),
+                                                         PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+
+        // 9: Mean Reversion (live primary voter) - Tier 2 - MEAN_REVERSION_CLUSTER
+        if(size > 9 && flags[9]) RegisterStrategy(new CMeanReversionStrategy(), "Mean Reversion", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(9),
+                                                 PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
+
+        // 10: Volatility Breakout (live primary voter) - Tier 1 - TREND_CLUSTER
+        if(size > 10 && flags[10]) RegisterStrategy(new CVolatilityBreakoutStrategy(), "Volatility Breakout", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, GetIntrabarPolicyHelper(10),
+                                                   PRIMARY_ALPHA, TREND_CLUSTER, true);
 
     // 11: Statistical Arbitrage - Requires Python Bridge for real-time correlation matrix
-    // Conditionally registered only when Python bridge is available
-    if(g_pythonBridge != NULL && g_pythonBridge.IsConnected())
-    {
-        if(size > 11 && flags[11]) RegisterStrategy(new CStatisticalArbitrageStrategy(), "Statistical Arbitrage", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                    PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
-        Print("[EnterpriseStrategyManager] Python Bridge available - Statistical Arbitrage strategy registered in shadow mode");
-    }
-    else
-    {
-        Print("[EnterpriseStrategyManager] Python Bridge not available - Skipping Statistical Arbitrage registration");
-    }
+        // Conditionally registered only when Python bridge is available
+        if(g_pythonBridge != NULL && g_pythonBridge.IsConnected())
+        {
+            if(size > 11 && flags[11]) RegisterStrategy(new CStatisticalArbitrageStrategy(), "Statistical Arbitrage", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(11),
+                                                        PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
+            Print("[EnterpriseStrategyManager] Python Bridge available - Statistical Arbitrage strategy registered");
+        }
+        else
+        {
+            Print("[EnterpriseStrategyManager] Python Bridge not available - Skipping Statistical Arbitrage registration");
+        }
 
-    // Batch 103: New ICT/SMC strategies
-    // 12: FVG Scalper - Tier 2 - STRUCTURE_CLUSTER
-    if(size > 12 && flags[12]) RegisterStrategy(new CFVGScalperStrategy(), "FVG Scalper", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+        // Batch 103: New ICT/SMC strategies
+        // 12: FVG Scalper - Tier 2 - STRUCTURE_CLUSTER
+        if(size > 12 && flags[12]) RegisterStrategy(new CFVGScalperStrategy(), "FVG Scalper", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(12),
+                                                    PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
-    // 13: Turtle Soup - Tier 2 - STRUCTURE_CLUSTER
-    if(size > 13 && flags[13]) RegisterStrategy(new CTurtleSoupStrategy(), "Turtle Soup", true, 1.6, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+        // 13: Turtle Soup - Tier 2 - STRUCTURE_CLUSTER
+        if(size > 13 && flags[13]) RegisterStrategy(new CTurtleSoupStrategy(), "Turtle Soup", true, 1.6, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(13),
+                                                    PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
-    // 14: Breaker Block - Tier 2 - STRUCTURE_CLUSTER
-    if(size > 14 && flags[14]) RegisterStrategy(new CBreakerBlockStrategy(), "Breaker Block", true, 1.7, STRATEGY_TIER_2, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+        // 14: Breaker Block - Tier 2 - STRUCTURE_CLUSTER
+        if(size > 14 && flags[14]) RegisterStrategy(new CBreakerBlockStrategy(), "Breaker Block", true, 1.7, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(14),
+                                                    PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
-    // 15: NY Open Gap - Tier 3 - STRUCTURE_CLUSTER (session-limited)
-    if(size > 15 && flags[15]) RegisterStrategy(new CNYOpenGapStrategy(), "NY Open Gap", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+        // 15: NY Open Gap - Tier 3 - STRUCTURE_CLUSTER (session-limited)
+                if(size > 15 && flags[15]) RegisterStrategy(new CNYOpenGapStrategy(), "NY Open Gap", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, GetIntrabarPolicyHelper(15),
+                                                            PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
-    // 16: Asian Range Break - Tier 3 - STRUCTURE_CLUSTER (session-limited)
-    if(size > 16 && flags[16]) RegisterStrategy(new CAsianRangeBreakStrategy(), "Asian Range Break", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, false,
-                                                PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+                // 16: Asian Range Break - Tier 3 - STRUCTURE_CLUSTER (session-limited)
+                if(size > 16 && flags[16]) RegisterStrategy(new CAsianRangeBreakStrategy(), "Asian Range Break", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, GetIntrabarPolicyHelper(16),
+                                                            PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
 
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
           GetActiveStrategyCount());
 }
 
 //+------------------------------------------------------------------+
+//| Reconcile enabled flags with the finalized registry            |
+//| Strategies are auto-registered (AutoRegisterStrategies) BEFORE |
+//| the orchestrator's BuildStrategyRegistry populates the shared  |
+//| CStrategyRegistry with definitions. At that early point         |
+//| IsStrategyActive() returns false (definition not found), so the|
+//| override at RegisterStrategy() locks every strategy disabled.   |
+//| After BuildStrategyRegistry finalizes the mode, this method     |
+//| re-applies the registry's active state so the live strategy     |
+//| objects actually participate in consensus.                      |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SyncEnabledWithRegistry()
+{
+    m_consensusEngine.SyncEnabledWithRegistry();
+}
+
+
+//+------------------------------------------------------------------+
 //| Get Active Strategy Count                                       |
 //+------------------------------------------------------------------+
 int CEnterpriseStrategyManager::GetActiveStrategyCount() const
 {
-    int count = 0;
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(m_strategies[i].enabled)
-            count++;
-    }
-    return count;
+    return m_stateReporter.GetActiveStrategyCount();
 }
 
 //+------------------------------------------------------------------+
@@ -2624,18 +1569,7 @@ int CEnterpriseStrategyManager::GetActiveStrategyCount() const
 //+------------------------------------------------------------------+
 int CEnterpriseStrategyManager::GetActiveBrainStrategyCount() const
 {
-    int count = 0;
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(!m_strategies[i].enabled || m_strategies[i].strategy == NULL)
-            continue;
-
-        ENUM_STRATEGY_TYPE strategyType = m_strategies[i].strategy.GetType();
-        if(strategyType == STRATEGY_BRAIN || strategyType == STRATEGY_AI_ENHANCED)
-            count++;
-    }
-
-    return count;
+    return m_stateReporter.GetActiveBrainStrategyCount();
 }
 
 //+------------------------------------------------------------------+
@@ -2643,37 +1577,7 @@ int CEnterpriseStrategyManager::GetActiveBrainStrategyCount() const
 //+------------------------------------------------------------------+
 string CEnterpriseStrategyManager::GetStrategyReport() const
 {
-    string report = "=== Enterprise Strategy Report ===\n";
-    report += StringFormat("Total Strategies: %d | Active: %d\n", 
-                         m_strategyCount, GetActiveStrategyCount());
-    report += StringFormat("Total Signals: %d | Success Rate: %.1f%%\n",
-                         m_totalSignals, 
-                         m_totalSignals > 0 ? (double)m_successfulSignals/m_totalSignals*100 : 0);
-    
-    report += "\nStrategy Performance:\n";
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        int total = m_strategies[i].successCount + m_strategies[i].failCount;
-        double winRate = total > 0 ? (double)m_strategies[i].successCount/total*100 : 0;
-        
-        report += StringFormat("- %s: %s | Role: %s | Cluster: %s | LiveVote: %s | Trades: %d | Win Rate: %.1f%% | Avg Conf: %.2f | Participation: %.2f\n",
-                             m_strategies[i].name,
-                             m_strategies[i].enabled ? "ON" : "OFF",
-                             StrategyRoleToString((ENUM_STRATEGY_ROLE)m_strategies[i].role),
-                             StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster),
-                             IsStrategyLiveVoter(i) ? "YES" : "NO",
-                             total, winRate, m_strategies[i].avgConfidence, m_strategies[i].participationScore);
-    }
-    
-    if(m_pipeline != NULL)
-    {
-        report += StringFormat("\nPipeline Stats: Processed: %d | Filtered: %d | Filter Rate: %.1f%%\n",
-                             m_pipeline.GetSignalsProcessed(),
-                             m_pipeline.GetSignalsFiltered(),
-                             m_pipeline.GetFilterRate() * 100);
-    }
-    
-    return report;
+    return m_stateReporter.GetStrategyReport();
 }
 
 //+------------------------------------------------------------------+
@@ -2682,22 +1586,22 @@ string CEnterpriseStrategyManager::GetStrategyReport() const
 void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settings)
 {
     // Cache pipeline base confidence floor for quorum eligibility even if the pipeline is disabled.
-    m_pipelineMinConfidence = MathMax(0.0, MathMin(1.0, settings.minConfidence));
+    m_pipelineMinConfidence = MathMax(0.0, MathMin(1.0, settings.confidence.minConfidence));
 
     if(m_pipeline != NULL)
     {
         // Apply runtime filter configuration without re-initializing pipeline engines.
         m_pipeline.SetFilters(settings);
         Print("[EnterpriseStrategyManager] Pipeline filters applied: TrendFilter=",
-              settings.enableTrendFilter, " MinConf=", settings.minConfidence,
-              " IntrabarCap=", settings.intrabarConfidenceCap,
-              " RegimeCost=", settings.enableRegimeCostGate,
-              " MaxSpreadATR=", settings.maxSpreadToAtrRatio,
-              " ShockCooldown=", settings.spreadShockCooldownSeconds,
-              " MaxEntryZ=", settings.maxEntryRangeZScore,
-              " MaxVol=", settings.maxVolatility,
-              " StructureFilter=", settings.enableStructureFilter,
-              " LiquidityFilter=", settings.enableLiquidityFilter);
+              settings.trend.enabled, " MinConf=", settings.confidence.minConfidence,
+              " IntrabarCap=", settings.confidence.intrabarConfidenceCap,
+              " RegimeCost=", settings.regimeCostGate.enabled,
+              " MaxSpreadATR=", settings.regimeCostGate.maxSpreadToAtrRatio,
+              " ShockCooldown=", settings.regimeCostGate.spreadShockCooldownSeconds,
+              " MaxEntryZ=", settings.regimeCostGate.maxEntryRangeZScore,
+              " MaxVol=", settings.volatility.maxVolatility,
+              " StructureFilter=", settings.structure.enabled,
+              " LiquidityFilter=", settings.liquidity.enabled);
     }
 }
 
@@ -2715,121 +1619,43 @@ void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxL
 
 string CEnterpriseStrategyManager::GetStrategyWeightsJSON() const
 {
-    string json = "{";
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        string key = m_strategies[i].name;
-        StringReplace(key, "\\", "\\\\");
-        StringReplace(key, "\"", "\\\"");
-        json += StringFormat("\"%s\":%.4f", key, m_strategies[i].weight);
-        if(i < (m_strategyCount - 1))
-            json += ",";
-    }
-    json += "}";
-    return json;
+    return m_stateReporter.GetStrategyWeightsJSON();
 }
 
 string CEnterpriseStrategyManager::GetStrategyListJSON() const
 {
-    string json = "[";
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(i > 0)
-            json += ",";
-        json += "{";
-        json += "\"name\":\"" + EscapeJsonString(m_strategies[i].name) + "\",";
-        json += "\"symbol\":\"" + EscapeJsonString(m_symbol) + "\",";
-        json += "\"role\":\"" + StrategyRoleToString((ENUM_STRATEGY_ROLE)m_strategies[i].role) + "\",";
-        json += "\"mode\":\"" + (m_strategies[i].enabled && m_strategies[i].liveVotingEnabled ? "ACTIVE" : "DISABLED") + "\",";
-        json += "\"weight\":" + DoubleToString(m_strategies[i].weight, 2) + ",";
-        json += "\"health_score\":" + DoubleToString(m_strategies[i].healthScore, 2) + ",";
-        json += "\"win_rate\":" + DoubleToString(m_strategies[i].recentWinRate, 2) + ",";
-        json += "\"cluster\":\"" + StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_strategies[i].cluster) + "\"";
-        json += "}";
-    }
-    json += "]";
-    return json;
+    return m_stateReporter.GetStrategyListJSON();
 }
 
 string CEnterpriseStrategyManager::GetConsensusContextJSON() const
 {
-    SConsensusDecisionContext ctx = m_lastDecisionContext;
-    string json = "{";
-    json += "\"symbol\":\"" + EscapeJsonString(ctx.symbol) + "\",";
-    json += "\"signal\":\"" + TradeSignalToString(ctx.signal) + "\",";
-    json += "\"confidence\":" + DoubleToString(ctx.confidence, 3) + ",";
-    json += "\"buy_score\":" + DoubleToString(ctx.buyScore, 3) + ",";
-    json += "\"sell_score\":" + DoubleToString(ctx.sellScore, 3) + ",";
-    json += "\"quorum_met\":" + (ctx.signal != TRADE_SIGNAL_NONE ? "true" : "false") + ",";
-    json += "\"veto_code\":\"" + EscapeJsonString(ctx.vetoCode) + "\",";
-    json += "\"active_strategies\":" + IntegerToString(m_strategyCount) + ",";
-    json += "\"voted_strategies\":" + IntegerToString(ctx.eligibleLiveVoterCount) + ",";
-    json += "\"dominant_cluster\":\"" + StrategyClusterToString(ctx.dominantCluster) + "\",";
-    json += "\"quorum_mode\":\"" + EscapeJsonString(ctx.quorumMode) + "\",";
-    json += "\"confluence\":" + IntegerToString(ctx.confluence) + ",";
-    json += "\"reason\":\"" + EscapeJsonString(ctx.reason) + "\"";
-    json += "}";
-    return json;
+    return m_stateReporter.GetConsensusContextJSON();
 }
 
+//+------------------------------------------------------------------+
+//| Consensus Decision Class to String Conversion                    |
+//+------------------------------------------------------------------+
+string CEnterpriseStrategyManager::ConsensusDecisionClassToString(ENUM_CONSENSUS_DECISION_CLASS decisionClass)
+{
+    return CStrategyStateReporter::ConsensusDecisionClassToString(decisionClass);
+}
+
+// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::UpdateStrategyWeights()
 {
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(m_strategies[i].strategy == NULL)
-            continue;
-
-        // Performance-adaptive weight scaling using recent win rate.
-        // This is intentionally conservative and bounded to prevent destabilizing consensus.
-        double base = m_strategies[i].originalWeight > 0.0 ? m_strategies[i].originalWeight : m_strategies[i].weight;
-        double wr = MathMax(0.0, MathMin(1.0, m_strategies[i].recentWinRate));
-        double scale = 0.75 + (wr - 0.50); // 0.25..1.25 around 50% win rate
-        scale = MathMax(0.50, MathMin(1.50, scale));
-        double newWeight = MathMax(0.0, MathMin(10.0, base * scale));
-
-        m_strategies[i].weight = newWeight;
-        m_strategies[i].strategy.SetWeight(newWeight);
-    }
+    m_weightingConfig.UpdateStrategyWeights();
 }
 
+// Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
 void CEnterpriseStrategyManager::CheckStrategyDisabling()
 {
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(!m_strategies[i].enabled)
-            continue;
-
-        if(ShouldDisableStrategy(i))
-        {
-            m_strategies[i].temporarilyDisabled = true;
-            m_strategies[i].disabledUntil = TimeCurrent() + 3600;
-            m_strategies[i].enabled = false;
-            PrintFormat("[Enterprise-Adaptation] Strategy %s disabled by governance | recent_winrate=%.2f | losses=%d",
-                        m_strategies[i].name,
-                        m_strategies[i].recentWinRate,
-                        m_strategies[i].consecutiveLosses);
-        }
-    }
+    m_lifecycle.CheckStrategyDisabling();
 }
 
+// Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
 void CEnterpriseStrategyManager::CheckStrategyReEnabling()
 {
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(m_strategies[i].enabled)
-            continue;
-        if(!m_strategies[i].temporarilyDisabled)
-            continue;
-
-        if(ShouldReEnableStrategy(i))
-        {
-            m_strategies[i].temporarilyDisabled = false;
-            m_strategies[i].disabledUntil = 0;
-            m_strategies[i].enabled = true;
-            PrintFormat("[Enterprise-Adaptation] Strategy %s re-enabled after cooldown",
-                        m_strategies[i].name);
-        }
-    }
+    m_lifecycle.CheckStrategyReEnabling();
 }
 
 bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, const double weight)
@@ -2842,6 +1668,10 @@ bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, c
     m_strategies[index].weight = sanitizedWeight;
     if(m_strategies[index].strategy != NULL)
         m_strategies[index].strategy.SetWeight(sanitizedWeight);
+
+    // L1-007: Update health monitor
+    if(m_healthMonitor != NULL)
+        m_healthMonitor.SetStrategyWeight(index, sanitizedWeight);
 
     return true;
 }
@@ -2900,6 +1730,103 @@ bool CEnterpriseStrategyManager::SetStrategyLiveVotingEligibilityByName(const st
     return true;
 }
 
+//+------------------------------------------------------------------+
+//| Phase C / Slice 4 (C8): per-field accessors for slice modules    |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetStrategyRole(int index, int role)
+{
+    if(index >= 0 && index < m_strategyCount)
+        m_strategies[index].role = role;
+}
+
+void CEnterpriseStrategyManager::SetStrategyCluster(int index, int cluster)
+{
+    if(index >= 0 && index < m_strategyCount)
+        m_strategies[index].cluster = cluster;
+}
+
+void CEnterpriseStrategyManager::SetStrategyLiveVotingEnabled(int index, bool enabled)
+{
+    if(index >= 0 && index < m_strategyCount)
+        m_strategies[index].liveVotingEnabled = enabled;
+}
+
+void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyRaw(int index, int policy)
+{
+    if(index >= 0 && index < m_strategyCount)
+        m_strategies[index].intrabarPolicy = policy;
+}
+
+void CEnterpriseStrategyManager::SetStrategyIntrabarEligible(int index, bool eligible)
+{
+    if(index >= 0 && index < m_strategyCount)
+        m_strategies[index].intrabarEligible = eligible;
+}
+
+//+------------------------------------------------------------------+
+//| Phase C / Slice 4 (C8): 35-field StrategyEntry append           |
+//| Mirrors the original RegisterStrategy append block exactly.      |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
+                                                              double weight, ENUM_STRATEGY_TIER tier,
+                                                              ENUM_TIMEFRAMES resolvedTf,
+                                                              ENUM_INTRABAR_POLICY intrabarPolicy,
+                                                              ENUM_STRATEGY_ROLE role,
+                                                              ENUM_STRATEGY_CLUSTER cluster,
+                                                              bool liveVotingEnabled)
+{
+    int newSize = m_strategyCount + 1;
+    ArrayResize(m_strategies, newSize);
+
+    m_strategies[m_strategyCount].strategy = strategy;
+    m_strategies[m_strategyCount].name = name;
+    m_strategies[m_strategyCount].enabled = enabled;
+    m_strategies[m_strategyCount].intrabarEligible = (intrabarPolicy == INTRABAR_POLICY_LIVE);
+    m_strategies[m_strategyCount].intrabarPolicy = (int)intrabarPolicy;
+    m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
+    m_strategies[m_strategyCount].role = (int)role;
+    m_strategies[m_strategyCount].cluster = (int)cluster;
+    m_strategies[m_strategyCount].tier = tier;
+    m_strategies[m_strategyCount].weight = weight;
+    m_strategies[m_strategyCount].originalWeight = weight;
+    m_strategies[m_strategyCount].timeframe = resolvedTf;
+    m_strategies[m_strategyCount].successCount = 0;
+    m_strategies[m_strategyCount].failCount = 0;
+    m_strategies[m_strategyCount].healthScore = 0.75;
+    m_strategies[m_strategyCount].participationScore = 0.90;
+    m_strategies[m_strategyCount].avgConfidence = 0;
+    m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
+    m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
+    m_strategies[m_strategyCount].lastEvaluationTime = 0;
+    m_strategies[m_strategyCount].consecutiveFilterCount = 0;
+
+    m_strategies[m_strategyCount].totalTrades = 0;
+    m_strategies[m_strategyCount].winningTrades = 0;
+    m_strategies[m_strategyCount].winRate = 0.0;
+    m_strategies[m_strategyCount].avgProfit = 0.0;
+    m_strategies[m_strategyCount].avgLoss = 0.0;
+    m_strategies[m_strategyCount].profitFactor = 0.0;
+    m_strategies[m_strategyCount].sharpeRatio = 0.0;
+    m_strategies[m_strategyCount].recentTradeIndex = 0;
+    m_strategies[m_strategyCount].recentTradeCount = 0;
+    m_strategies[m_strategyCount].recentWinRate = 0.0;
+    m_strategies[m_strategyCount].consecutiveLosses = 0;
+    m_strategies[m_strategyCount].maxConsecutiveLosses = 0;
+    m_strategies[m_strategyCount].consecutiveWins = 0;
+    m_strategies[m_strategyCount].temporarilyDisabled = false;
+    m_strategies[m_strategyCount].disabledUntil = 0;
+    m_strategies[m_strategyCount].lastUpdate = 0;
+
+    ArrayInitialize(m_strategies[m_strategyCount].recentTrades, 0.0);
+    ArrayInitialize(m_strategies[m_strategyCount].regimePerformance, 0.0);
+    ArrayInitialize(m_strategies[m_strategyCount].regimeTrades, 0);
+
+    if(m_healthMonitor != NULL)
+        m_healthMonitor.RegisterStrategy(weight);
+
+    m_strategyCount++;
+}
+
 bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
 {
     int index = FindStrategyIndexByName(name);
@@ -2938,42 +1865,37 @@ bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
 
 string CEnterpriseStrategyManager::GetRegisteredStrategyName(const int index) const
 {
-    if(index < 0 || index >= m_strategyCount)
-        return "";
-    return m_strategies[index].name;
+    return m_stateReporter.GetRegisteredStrategyName(index);
 }
 
 double CEnterpriseStrategyManager::GetRegisteredStrategyWeight(const int index) const
 {
-    if(index < 0 || index >= m_strategyCount)
-        return 0.0;
-    return m_strategies[index].weight;
+    return m_stateReporter.GetRegisteredStrategyWeight(index);
 }
 
 string CEnterpriseStrategyManager::GetRegisteredStrategyRole(const int index) const
 {
-    if(index < 0 || index >= m_strategyCount)
-        return "";
-    return StrategyRoleToString((ENUM_STRATEGY_ROLE)m_strategies[index].role);
+    return m_stateReporter.GetRegisteredStrategyRole(index);
 }
 
 string CEnterpriseStrategyManager::GetRegisteredStrategyCluster(const int index) const
 {
-    if(index < 0 || index >= m_strategyCount)
-        return "";
-    return StrategyClusterToString((ENUM_STRATEGY_CLUSTER)m_strategies[index].cluster);
+    return m_stateReporter.GetRegisteredStrategyCluster(index);
 }
 
 bool CEnterpriseStrategyManager::IsRegisteredStrategyLiveVotingEnabled(const int index) const
 {
-    if(index < 0 || index >= m_strategyCount)
-        return false;
-    return m_strategies[index].liveVotingEnabled;
+    return m_stateReporter.IsRegisteredStrategyLiveVotingEnabled(index);
 }
 
 void CEnterpriseStrategyManager::GetLastSignalContributors(string &contributors[]) const
 {
     ArrayCopy(contributors, m_lastSignalContributors);
+}
+
+void CEnterpriseStrategyManager::GetLastSignalContributorIndices(int &indices[]) const
+{
+    ArrayCopy(indices, m_lastSignalContributorIndices);
 }
 
 bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
@@ -2988,10 +1910,79 @@ bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
     return (m_lastContributorCount > 0 && ArraySize(m_lastSignalContributors) > 0);
 }
 
+//+------------------------------------------------------------------+
+//| Explicit Deinitialization                                        |
+//| Called before destructor to ensure proper cleanup order          |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::Deinit()
+{
+    // Clean up strategies with explicit Deinit call
+    for(int i = 0; i < m_strategyCount; i++)
+    {
+        if(m_strategies[i].strategy != NULL)
+        {
+            m_strategies[i].strategy.Deinit();
+            delete m_strategies[i].strategy;
+            m_strategies[i].strategy = NULL;
+        }
+    }
+    m_strategyCount = 0;
+    ArrayResize(m_strategies, 0);
+    
+    // Clean up components
+    if(m_pipeline != NULL)
+    {
+        delete m_pipeline;
+        m_pipeline = NULL;
+    }
+
+    // Batch 116: Release cached ADX handle
+    if(m_adxHandleCached != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_adxHandleCached);
+        m_adxHandleCached = INVALID_HANDLE;
+    }
+
+    // Clean up FourStateRegimeDetector
+    if(m_fourStateRegimeDetector != NULL)
+    {
+        delete m_fourStateRegimeDetector;
+        m_fourStateRegimeDetector = NULL;
+    }
+
+    if(m_tfConsistency != NULL)
+    {
+        delete m_tfConsistency;
+        m_tfConsistency = NULL;
+    }
+    
+    // L1-007: Clean up components
+    if(m_diagnostics != NULL)
+    {
+        delete m_diagnostics;
+        m_diagnostics = NULL;
+    }
+    
+    if(m_attribution != NULL)
+    {
+        delete m_attribution;
+        m_attribution = NULL;
+    }
+    // Phase C / Slice 1: keep the delegator's mirrored pointer from dangling.
+    m_attributionDelegator.SetAttribution(m_attribution);
+    
+    if(m_healthMonitor != NULL)
+    {
+        delete m_healthMonitor;
+        m_healthMonitor = NULL;
+    }
+    
+    m_initialized = false;
+}
+
 bool CEnterpriseStrategyManager::GetLastDecisionContext(SConsensusDecisionContext &context) const
 {
-    context = m_lastDecisionContext;
-    return (m_lastDecisionContext.signal != TRADE_SIGNAL_NONE);
+    return m_stateReporter.GetLastDecisionContext(context);
 }
 
 void CEnterpriseStrategyManager::GetRoleClusterDiagnosticsTotals(ulong &primarySignals,
@@ -3002,20 +1993,18 @@ void CEnterpriseStrategyManager::GetRoleClusterDiagnosticsTotals(ulong &primaryS
                                                                  ulong &structureClusterSignals,
                                                                  ulong &noneClusterSignals) const
 {
-    primarySignals = m_diagRolePrimarySignals;
-    featureSignals = m_diagRoleFeatureSignals;
-    voteSuppressed = m_diagVoteSuppressed;
-    trendClusterSignals = m_diagClusterTrendSignals;
-    meanReversionClusterSignals = m_diagClusterMeanReversionSignals;
-    structureClusterSignals = m_diagClusterStructureSignals;
-    noneClusterSignals = m_diagClusterNoneSignals;
+    m_stateReporter.GetRoleClusterDiagnosticsTotals(primarySignals,
+                                                    featureSignals,
+                                                    voteSuppressed,
+                                                    trendClusterSignals,
+                                                    meanReversionClusterSignals,
+                                                    structureClusterSignals,
+                                                    noneClusterSignals);
 }
 
 void CEnterpriseStrategyManager::GetLastCycleFunnel(int &signalsGenerated, int &signalsAfterPipeline, bool &signalAfterQuorum) const
 {
-    signalsGenerated = m_lastCycleSignalsGenerated;
-    signalsAfterPipeline = m_lastCycleSignalsAfterPipeline;
-    signalAfterQuorum = m_lastCycleSignalAfterQuorum;
+    m_stateReporter.GetLastCycleFunnel(signalsGenerated, signalsAfterPipeline, signalAfterQuorum);
 }
 
 void CEnterpriseStrategyManager::GetConsensusDiagnosticsSnapshot(ulong &rawNone,
@@ -3036,82 +2025,28 @@ void CEnterpriseStrategyManager::GetConsensusDiagnosticsSnapshot(ulong &rawNone,
                                                                  ulong &uictOtherFilters,
                                                                  ulong &intervalReasonTotal)
 {
-    rawNone = (m_diagRawNone - m_diagSnapshotBaselineRawNone);
-    filteredOut = (m_diagFilteredOut - m_diagSnapshotBaselineFilteredOut);
-    quorumFailed = (m_diagQuorumFailed - m_diagSnapshotBaselineQuorumFailed);
-    intrabarNotEligible = (m_diagIntrabarNotEligible - m_diagSnapshotBaselineIntrabarNotEligible);
-    signalsGenerated = (m_diagSignalsGenerated - m_diagSnapshotBaselineSignalsGenerated);
-    signalsAfterPipeline = (m_diagSignalsAfterPipeline - m_diagSnapshotBaselineSignalsAfterPipeline);
-    signalsAfterQuorum = (m_diagSignalsAfterQuorum - m_diagSnapshotBaselineSignalsAfterQuorum);
-    momentumNone = (m_diagMomentumNone - m_diagSnapshotBaselineMomentumNone);
-    momentumCooldown = (m_diagMomentumCooldown - m_diagSnapshotBaselineMomentumCooldown);
-    momentumLowVolatility = (m_diagMomentumLowVolatility - m_diagSnapshotBaselineMomentumLowVolatility);
-    momentumNoCrossover = (m_diagMomentumNoCrossover - m_diagSnapshotBaselineMomentumNoCrossover);
-    momentumTrendMisaligned = (m_diagMomentumTrendMisaligned - m_diagSnapshotBaselineMomentumTrendMisaligned);
-    momentumNotReady = (m_diagMomentumNotReady - m_diagSnapshotBaselineMomentumNotReady);
-    uictNone = (m_diagUICTNone - m_diagSnapshotBaselineUICTNone);
-    uictNeutralBias = (m_diagUICTNeutralBias - m_diagSnapshotBaselineUICTNeutralBias);
-    uictOtherFilters = (m_diagUICTOtherFilters - m_diagSnapshotBaselineUICTOtherFilters);
-    intervalReasonTotal = rawNone + filteredOut + quorumFailed + intrabarNotEligible;
-
-    m_diagSnapshotBaselineRawNone = m_diagRawNone;
-    m_diagSnapshotBaselineFilteredOut = m_diagFilteredOut;
-    m_diagSnapshotBaselineQuorumFailed = m_diagQuorumFailed;
-    m_diagSnapshotBaselineIntrabarNotEligible = m_diagIntrabarNotEligible;
-    m_diagSnapshotBaselineSignalsGenerated = m_diagSignalsGenerated;
-    m_diagSnapshotBaselineSignalsAfterPipeline = m_diagSignalsAfterPipeline;
-    m_diagSnapshotBaselineSignalsAfterQuorum = m_diagSignalsAfterQuorum;
-    m_diagSnapshotBaselineVoteSuppressed = m_diagVoteSuppressed;
-    m_diagSnapshotBaselineRolePrimarySignals = m_diagRolePrimarySignals;
-    m_diagSnapshotBaselineRoleFeatureSignals = m_diagRoleFeatureSignals;
-    m_diagSnapshotBaselineRoleShadowSignals = m_diagRoleShadowSignals;
-    m_diagSnapshotBaselineClusterTrendSignals = m_diagClusterTrendSignals;
-    m_diagSnapshotBaselineClusterMeanReversionSignals = m_diagClusterMeanReversionSignals;
-    m_diagSnapshotBaselineClusterStructureSignals = m_diagClusterStructureSignals;
-    m_diagSnapshotBaselineClusterNoneSignals = m_diagClusterNoneSignals;
-    m_diagSnapshotBaselineMomentumNone = m_diagMomentumNone;
-    m_diagSnapshotBaselineMomentumCooldown = m_diagMomentumCooldown;
-    m_diagSnapshotBaselineMomentumLowVolatility = m_diagMomentumLowVolatility;
-    m_diagSnapshotBaselineMomentumNoCrossover = m_diagMomentumNoCrossover;
-    m_diagSnapshotBaselineMomentumTrendMisaligned = m_diagMomentumTrendMisaligned;
-    m_diagSnapshotBaselineMomentumNotReady = m_diagMomentumNotReady;
-    m_diagSnapshotBaselineUICTNone = m_diagUICTNone;
-    m_diagSnapshotBaselineUICTNeutralBias = m_diagUICTNeutralBias;
-    m_diagSnapshotBaselineUICTOtherFilters = m_diagUICTOtherFilters;
+    m_stateReporter.GetConsensusDiagnosticsSnapshot(rawNone,
+                                                    filteredOut,
+                                                    quorumFailed,
+                                                    intrabarNotEligible,
+                                                    signalsGenerated,
+                                                    signalsAfterPipeline,
+                                                    signalsAfterQuorum,
+                                                    momentumNone,
+                                                    momentumCooldown,
+                                                    momentumLowVolatility,
+                                                    momentumNoCrossover,
+                                                    momentumTrendMisaligned,
+                                                    momentumNotReady,
+                                                    uictNone,
+                                                    uictNeutralBias,
+                                                    uictOtherFilters,
+                                                    intervalReasonTotal);
 }
 
 bool CEnterpriseStrategyManager::PopClosedTradeAttribution(string &contributors[], double &netProfit)
 {
-    if(!m_hasClosedTradeAttribution)
-    {
-        ArrayResize(contributors, 0);
-        netProfit = 0.0;
-        return false;
-    }
-
-    // Validate input arrays
-    if(ArraySize(m_closedTradeContributors) <= 0)
-    {
-        Print("[EnterpriseStrategyManager] WARNING: PopClosedTradeAttribution called with empty contributors array");
-        m_hasClosedTradeAttribution = false;
-        ArrayResize(contributors, 0);
-        netProfit = 0.0;
-        return false;
-    }
-
-    // Copy contributors to output array
-    int contributorCount = ArraySize(m_closedTradeContributors);
-    ArrayResize(contributors, contributorCount);
-    ArrayCopy(contributors, m_closedTradeContributors);
-    
-    netProfit = m_closedTradeNetProfit;
-
-    // Clear the stored attribution
-    ArrayResize(m_closedTradeContributors, 0);
-    m_closedTradeNetProfit = 0.0;
-    m_hasClosedTradeAttribution = false;
-    
-    return true;
+    return m_attributionDelegator.PopClosedTradeAttribution(contributors, netProfit);
 }
 
 int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
@@ -3135,125 +2070,14 @@ IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
     return m_strategies[idx].strategy;
 }
 
-double CEnterpriseStrategyManager::ClampUnitValue(const double value) const
-{
-    if(!MathIsValidNumber(value))
-        return 0.0;
-    return MathMax(0.0, MathMin(1.0, value));
-}
 
-ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetStrategyIntrabarPolicy(const int strategyIndex) const
-{
-    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
-        return INTRABAR_POLICY_OFF;
 
-    int rawPolicy = m_strategies[strategyIndex].intrabarPolicy;
-    if(rawPolicy < (int)INTRABAR_POLICY_OFF || rawPolicy > (int)INTRABAR_POLICY_LIVE)
-        return m_strategies[strategyIndex].intrabarEligible ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF;
 
-    return (ENUM_INTRABAR_POLICY)rawPolicy;
-}
 
-bool CEnterpriseStrategyManager::IsStrategyIntrabarLiveEligible(const int strategyIndex) const
-{
-    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_LIVE);
-}
-
-bool CEnterpriseStrategyManager::IsStrategyIntrabarProbeEligible(const int strategyIndex) const
-{
-    return (GetStrategyIntrabarPolicy(strategyIndex) == INTRABAR_POLICY_PROBE);
-}
-
-double CEnterpriseStrategyManager::CalculateAverageStrategyMetric(const int &strategyIndices[], const double &metrics[]) const
-{
-    int samples = MathMin(ArraySize(strategyIndices), ArraySize(metrics));
-    if(samples <= 0)
-        return 0.0;
-
-    double weightedSum = 0.0;
-    double totalWeight = 0.0;
-    for(int i = 0; i < samples; i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= m_strategyCount)
-            continue;
-
-        double metric = ClampUnitValue(metrics[i]);
-        double weight = MathMax(0.0, m_strategies[idx].weight);
-        if(weight <= 0.0)
-            continue;
-
-        weightedSum += (metric * weight);
-        totalWeight += weight;
-    }
-
-    if(totalWeight <= 0.0)
-        return 0.0;
-
-    return ClampUnitValue(weightedSum / totalWeight);
-}
 
 //+------------------------------------------------------------------+
 //| Determine if current regime is trending for cross-cluster conflict |
 //+------------------------------------------------------------------+
-bool CEnterpriseStrategyManager::IsTrendingRegime()
-{
-    // Primary: use RegimeEngine via pipeline if available
-    if(m_pipeline != NULL)
-    {
-        CRegimeEngine* regimeEngine = m_pipeline.GetRegimeEngine();
-        if(regimeEngine != NULL)
-        {
-            ENUM_REGIME_STATE state = regimeEngine.GetConfirmedState();
-            return (state == REGIME_TREND);
-        }
-    }
-
-    // FIX: For synthetic indices (Deriv), ADX is unreliable; use volatility-based regime
-    if(IsSyntheticIndexSymbolName(m_symbol))
-    {
-        // Use RegimeEngine if available, otherwise fallback to volatility check
-        // For synthetics without ADX, check if price movement exceeds threshold
-        double atrBuffer[];
-        int atrHandle = iATR(m_symbol, m_baseTimeframe, 14);
-        if(atrHandle != INVALID_HANDLE)
-        {
-            ArraySetAsSeries(atrBuffer, true);
-            if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0 && atrBuffer[0] > 0.0)
-            {
-                double close[];
-                ArraySetAsSeries(close, true);
-                if(CopyClose(m_symbol, m_baseTimeframe, 0, 2, close) == 2 && close[1] > 0.0)
-                {
-                    double change = MathAbs(close[0] - close[1]) / close[1];
-                    IndicatorRelease(atrHandle);
-                    return (change > 0.005); // 0.5% move = trending
-                }
-            }
-            IndicatorRelease(atrHandle);
-        }
-        return false;
-    }
-
-    // Fallback: simple ADX-based check (for forex/metals)
-    // ADX > 25 = trending, otherwise ranging
-    // Batch 116: use cached handle instead of creating/destroying per call
-    if(m_adxHandleCached == INVALID_HANDLE)
-        m_adxHandleCached = iADX(m_symbol, m_baseTimeframe, 14);
-
-    if(m_adxHandleCached != INVALID_HANDLE)
-    {
-        double adxBuffer[];
-        ArraySetAsSeries(adxBuffer, true);
-        if(CopyBuffer(m_adxHandleCached, 0, 0, 1, adxBuffer) > 0)
-        {
-            return (adxBuffer[0] > 25.0);
-        }
-    }
-
-    // Default: assume ranging (conservative)
-    return false;
-}
 
 //+------------------------------------------------------------------+
 //| FALLBACK SOLO SIGNAL: When all strategies abstain, pick best     |
@@ -3261,835 +2085,113 @@ bool CEnterpriseStrategyManager::IsTrendingRegime()
 //| Prevents trading paralysis during low-signal periods             |
 //+------------------------------------------------------------------+
 ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::TryFallbackSoloSignal(const string symbol,
-                                                                    ENUM_SIGNAL_EVAL_MODE evalMode,
-                                                                    double &outConfidence,
-                                                                    int &outConfluence,
-                                                                    string &outReason)
+                                       ENUM_SIGNAL_EVAL_MODE evalMode,
+                                       double &outConfidence,
+                                       int &outConfluence,
+                                       string &outReason)
 {
-    ENUM_TRADE_SIGNAL bestSignal = TRADE_SIGNAL_NONE;
-    double bestScore = -1.0;
-    string bestStrategy = "";
-    
-    // Iterate all strategies and get their raw signals (without pipeline filtering)
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(!m_strategies[i].enabled || m_strategies[i].strategy == NULL)
-            continue;
-        
-        // Skip AI strategies in indicator-only mode
-        ENUM_STRATEGY_TYPE stratType = m_strategies[i].strategy.GetType();
-        bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
-        
-        if(isAI && CheckPointer(g_strategyRegistry) && g_strategyRegistry.GetMode() == EA_MODE_INDICATOR_ONLY)
-            continue;
-        
-        // Get raw signal from strategy
-        double stratConf = 0.0;
-        ENUM_TRADE_SIGNAL signal = m_strategies[i].strategy.GetSignal(stratConf);
-        
-        if(signal == TRADE_SIGNAL_NONE)
-            continue;
-        
-        // Apply basic quality filters (similar to pipeline but lighter)
-        // We want a signal with reasonable confidence and some contextual quality
-        
-        // Build a composite score: confidence * weight * readiness
-        double readinessScore = 0.5; // Default neutral
-        double contextScore = 0.5;   // Default neutral
-        double costScore = 0.5;      // Default neutral
-        
-        double weight = m_strategies[i].weight;
-        double participation = GetStrategyParticipationMultiplier(i);
-        
-        // Score = confidence * weight * participation * (readiness * 0.4 + context * 0.4 + cost * 0.2)
-        double qualityMultiplier = (readinessScore * 0.4 + contextScore * 0.4 + costScore * 0.2);
-        double score = stratConf * weight * participation * qualityMultiplier;
-        
-        // Apply minimum threshold
-        double minSoloConfidence = (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;
-        if(stratConf < minSoloConfidence)
-        {
-            PrintFormat("[CONSENSUS-SOLO-SKIP] %s | %s conf=%.2f < min=%.2f",
-                        symbol, m_strategies[i].name, stratConf, minSoloConfidence);
-            continue;
-        }
-        
-        if(score > bestScore)
-        {
-            bestScore = score;
-            bestSignal = signal;
-            bestStrategy = m_strategies[i].name;
-            outConfidence = MathMin(0.85, stratConf * 0.9); // Slight penalty for solo
-            outConfluence = 1;
-            outReason = "solo_" + m_strategies[i].name;
-        }
-    }
-    
-    if(bestSignal != TRADE_SIGNAL_NONE)
-    {
-        PrintFormat("[CONSENSUS-SOLO-SELECT] %s | Selected %s signal=%s score=%.3f conf=%.2f",
-                    symbol, bestStrategy, EnumToString(bestSignal), bestScore, outConfidence);
-        return bestSignal;
-    }
-    
-    outReason = "no_solo_candidates";
-    return TRADE_SIGNAL_NONE;
+    return m_consensusEngine.TryFallbackSoloSignal(symbol, evalMode, outConfidence, outConfluence, outReason);
 }
 
-double CEnterpriseStrategyManager::GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const
-{
-    // Default multiplier if regime engine unavailable
-    double defaultMult = 1.0;
 
-    if(m_pipeline == NULL)
-        return defaultMult;
-
-    CRegimeEngine* regimeEngine = m_pipeline.GetRegimeEngine();
-    if(regimeEngine == NULL)
-        return defaultMult;
-
-    SRegimeSnapshot snapshot = regimeEngine.GetSnapshot();
-
-    // Map strategy type to regime weight category
-    double categoryMult = defaultMult;
-    switch(strategyType)
-    {
-        case STRATEGY_MOMENTUM:
-            categoryMult = snapshot.momentumWeightMult;
-            break;
-        case STRATEGY_TREND:
-            categoryMult = snapshot.trendWeightMult;
-            break;
-        case STRATEGY_MEAN_REVERSION:
-        case STRATEGY_STATISTICAL_ARBITRAGE:
-            categoryMult = snapshot.meanRevWeightMult;
-            break;
-        case STRATEGY_VOLATILITY_BREAKOUT:
-            categoryMult = snapshot.breakoutWeightMult;
-            break;
-        case STRATEGY_UNIFIED_ICT:
-        case STRATEGY_SUPPORT_RESISTANCE:
-        case STRATEGY_CANDLESTICK:
-        case STRATEGY_FVG_SCALPER:
-        case STRATEGY_TURTLE_SOUP:
-        case STRATEGY_BREAKER_BLOCK:
-        case STRATEGY_NY_OPEN_GAP:
-        case STRATEGY_ASIAN_RANGE_BREAK:
-            categoryMult = snapshot.ictWeightMult;
-            break;
-        default:
-            categoryMult = defaultMult;
-            break;
-    }
-
-    // Defense-in-depth: reject inf/NaN/corrupted weight values
-    if(!MathIsValidNumber(categoryMult) || categoryMult < 0.01 || categoryMult > 10.0)
-    {
-        PrintFormat("[REGIME-WEIGHT-GUARD] categoryMult=%.4f out of range for strategy=%d, resetting to 1.0",
-                    categoryMult, (int)strategyType);
-        categoryMult = defaultMult;
-    }
-
-    // OFI regime integration (Batch 104)
-    // If OFI engine is available, adjust category multiplier based on order flow alignment
-    if(m_ofiEngine != NULL && m_ofiEngine.IsWarmedUp())
-    {
-        double ofiValue = m_ofiEngine.GetOFI();
-        bool isTrending = (snapshot.confirmedState == REGIME_TREND);
-
-        // OFI-aligned regime: boost relevant category
-        // OFI-contradicting regime: reduce relevant category
-        if(isTrending)
-        {
-            // Trending regime: positive OFI confirms bullish trend, negative confirms bearish
-            if((strategyType == STRATEGY_MOMENTUM || strategyType == STRATEGY_TREND) && MathAbs(ofiValue) > 0.3)
-                categoryMult *= 1.2;  // OFI confirms trend
-            else if((strategyType == STRATEGY_MEAN_REVERSION || strategyType == STRATEGY_STATISTICAL_ARBITRAGE) && MathAbs(ofiValue) > 0.3)
-                categoryMult *= 0.7;  // OFI contradicts mean reversion in trend
-        }
-        else
-        {
-            // Ranging regime: strong OFI contradicts range
-            if((strategyType == STRATEGY_MEAN_REVERSION || strategyType == STRATEGY_STATISTICAL_ARBITRAGE) && MathAbs(ofiValue) < 0.15)
-                categoryMult *= 1.2;  // Low OFI confirms range = good for mean reversion
-            else if((strategyType == STRATEGY_MOMENTUM || strategyType == STRATEGY_TREND) && MathAbs(ofiValue) > 0.3)
-                categoryMult *= 0.7;  // Strong OFI in range = trend trying to form
-        }
-    }
-
-    return categoryMult;
-}
 
 bool CEnterpriseStrategyManager::IsStrategyLiveVoter(const int strategyIndex) const
 {
-    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
-        return false;
-    if(!m_strategies[strategyIndex].enabled || m_strategies[strategyIndex].strategy == NULL)
-        return false;
-    if(!m_strategies[strategyIndex].liveVotingEnabled)
-        return false;
-    return true;
+    return m_consensusEngine.IsStrategyLiveVoter(strategyIndex);
 }
 
-double CEnterpriseStrategyManager::GetStrategyReliabilityMultiplier(const int strategyIndex) const
-{
-    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
-        return 0.75;
 
-    double healthScore = m_strategies[strategyIndex].healthScore;
-    if(healthScore <= 0.0)
-        healthScore = 0.75;
 
-    return MathMax(0.55, MathMin(1.15, 0.65 + (0.50 * healthScore)));
-}
 
-double CEnterpriseStrategyManager::GetStrategyParticipationMultiplier(const int strategyIndex) const
-{
-    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
-        return 0.80;
 
-    double participationScore = m_strategies[strategyIndex].participationScore;
-    if(participationScore <= 0.0)
-        participationScore = 0.90;
 
-    return MathMax(0.55, MathMin(1.05, 0.40 + (0.65 * participationScore)));
-}
 
-double CEnterpriseStrategyManager::GetStrategyRoleVoteMultiplier(const int strategyIndex) const
-{
-    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
-        return 1.0;
 
-    ENUM_STRATEGY_ROLE role = (ENUM_STRATEGY_ROLE)m_strategies[strategyIndex].role;
-    if(role == CONTEXT_FEATURE)
-        return 0.85;
-    return 1.0;
-}
 
-double CEnterpriseStrategyManager::CalculateDirectionDiversityScore(const int &strategyIndices[]) const
-{
-    if(ArraySize(strategyIndices) <= 0)
-        return 0.0;
 
-    bool roleSeen[2];
-    bool clusterSeen[4];
-    roleSeen[0] = false;
-    roleSeen[1] = false;
-    clusterSeen[0] = false;
-    clusterSeen[1] = false;
-    clusterSeen[2] = false;
-    clusterSeen[3] = false;
-
-    int roleCount = 0;
-    int clusterCount = 0;
-    for(int i = 0; i < ArraySize(strategyIndices); i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= m_strategyCount)
-            continue;
-
-        int role = m_strategies[idx].role;
-        if(role < 0 || role > 1)
-            role = 0;
-        if(!roleSeen[role])
-        {
-            roleSeen[role] = true;
-            roleCount++;
-        }
-
-        int cluster = m_strategies[idx].cluster;
-        if(cluster < 0 || cluster > 3)
-            cluster = 0;
-        if(!clusterSeen[cluster])
-        {
-            clusterSeen[cluster] = true;
-            clusterCount++;
-        }
-    }
-
-    double roleScore = MathMax(0.0, MathMin(1.0, (double)roleCount / 3.0));
-    double clusterScore = MathMax(0.0, MathMin(1.0, (double)clusterCount / 4.0));
-    return MathMax(0.0, MathMin(1.0, (roleScore * 0.55) + (clusterScore * 0.45)));
-}
-
-void CEnterpriseStrategyManager::AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated)
-{
-    if(!signalGenerated)
-        return;
-
-    if(strategyIndex < 0 || strategyIndex >= m_strategyCount)
-        return;
-
-    ENUM_STRATEGY_ROLE role = (ENUM_STRATEGY_ROLE)m_strategies[strategyIndex].role;
-    ENUM_STRATEGY_CLUSTER cluster = (ENUM_STRATEGY_CLUSTER)m_strategies[strategyIndex].cluster;
-
-    if(role == PRIMARY_ALPHA)
-        m_diagRolePrimarySignals++;
-    else if(role == CONTEXT_FEATURE)
-        m_diagRoleFeatureSignals++;
-    else
-        m_diagRoleShadowSignals++;
-
-    if(cluster == TREND_CLUSTER)
-        m_diagClusterTrendSignals++;
-    else if(cluster == MEAN_REVERSION_CLUSTER)
-        m_diagClusterMeanReversionSignals++;
-    else if(cluster == STRUCTURE_CLUSTER)
-        m_diagClusterStructureSignals++;
-    else
-        m_diagClusterNoneSignals++;
-}
-
-ENUM_STRATEGY_ROLE CEnterpriseStrategyManager::ResolveDominantRole(const int &strategyIndices[]) const
-{
-    double roleWeights[3];
-    roleWeights[0] = 0.0;
-    roleWeights[1] = 0.0;
-    roleWeights[2] = 0.0;
-
-    for(int i = 0; i < ArraySize(strategyIndices); i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= m_strategyCount)
-            continue;
-
-        int role = m_strategies[idx].role;
-        if(role < 0 || role > 2)
-            role = 0;
-
-        double weight = MathMax(0.0, m_strategies[idx].weight);
-        if(weight <= 0.0)
-            continue;
-        roleWeights[role] += weight;
-    }
-
-    int dominant = 0;
-    if(roleWeights[1] > roleWeights[dominant])
-        dominant = 1;
-    if(roleWeights[2] > roleWeights[dominant])
-        dominant = 2;
-
-    return (ENUM_STRATEGY_ROLE)dominant;
-}
-
-ENUM_STRATEGY_CLUSTER CEnterpriseStrategyManager::ResolveDominantCluster(const int &strategyIndices[]) const
-{
-    double clusterWeights[4];
-    clusterWeights[0] = 0.0;
-    clusterWeights[1] = 0.0;
-    clusterWeights[2] = 0.0;
-    clusterWeights[3] = 0.0;
-
-    for(int i = 0; i < ArraySize(strategyIndices); i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= m_strategyCount)
-            continue;
-
-        int cluster = m_strategies[idx].cluster;
-        if(cluster < 0 || cluster > 3)
-            cluster = 0;
-
-        double weight = MathMax(0.0, m_strategies[idx].weight);
-        if(weight <= 0.0)
-            continue;
-        clusterWeights[cluster] += weight;
-    }
-
-    int dominant = 0;
-    if(clusterWeights[1] > clusterWeights[dominant])
-        dominant = 1;
-    if(clusterWeights[2] > clusterWeights[dominant])
-        dominant = 2;
-    if(clusterWeights[3] > clusterWeights[dominant])
-        dominant = 3;
-
-    return (ENUM_STRATEGY_CLUSTER)dominant;
-}
-
-string CEnterpriseStrategyManager::JoinContributorsWithContext(const int &strategyIndices[]) const
-{
-    string summary = "";
-    for(int i = 0; i < ArraySize(strategyIndices); i++)
-    {
-        int idx = strategyIndices[i];
-        if(idx < 0 || idx >= m_strategyCount)
-            continue;
-
-        if(StringLen(summary) > 0)
-            summary += ",";
-
-        string name = m_strategies[idx].name;
-        ENUM_STRATEGY_ROLE role = (ENUM_STRATEGY_ROLE)m_strategies[idx].role;
-        ENUM_STRATEGY_CLUSTER cluster = (ENUM_STRATEGY_CLUSTER)m_strategies[idx].cluster;
-        summary += name + "[" + StrategyRoleToString(role) + "|" + StrategyClusterToString(cluster) + "]";
-    }
-    return summary;
-}
-
-void CEnterpriseStrategyManager::MaybeLogConsensusDiagnostics(const string symbol)
-{
-    datetime now = TimeCurrent();
-    if(m_lastDiagLogTime == 0 || (now - m_lastDiagLogTime) >= m_diagLogIntervalSec)
-    {
-        ulong intervalRawNone = (m_diagRawNone - m_diagRootBaselineRawNone);
-        ulong intervalFilteredOut = (m_diagFilteredOut - m_diagRootBaselineFilteredOut);
-        ulong intervalQuorumFailed = (m_diagQuorumFailed - m_diagRootBaselineQuorumFailed);
-        ulong intervalIntrabarNotEligible = (m_diagIntrabarNotEligible - m_diagRootBaselineIntrabarNotEligible);
-        ulong intervalSignalsGenerated = (m_diagSignalsGenerated - m_diagRootBaselineSignalsGenerated);
-        ulong intervalSignalsAfterPipeline = (m_diagSignalsAfterPipeline - m_diagRootBaselineSignalsAfterPipeline);
-        ulong intervalSignalsAfterQuorum = (m_diagSignalsAfterQuorum - m_diagRootBaselineSignalsAfterQuorum);
-        ulong intervalVoteSuppressed = (m_diagVoteSuppressed - m_diagRootBaselineVoteSuppressed);
-        ulong intervalRolePrimarySignals = (m_diagRolePrimarySignals - m_diagRootBaselineRolePrimarySignals);
-        ulong intervalRoleFeatureSignals = (m_diagRoleFeatureSignals - m_diagRootBaselineRoleFeatureSignals);
-        ulong intervalRoleShadowSignals = (m_diagRoleShadowSignals - m_diagRootBaselineRoleShadowSignals);
-        ulong intervalClusterTrendSignals = (m_diagClusterTrendSignals - m_diagRootBaselineClusterTrendSignals);
-        ulong intervalClusterMeanReversionSignals = (m_diagClusterMeanReversionSignals - m_diagRootBaselineClusterMeanReversionSignals);
-        ulong intervalClusterStructureSignals = (m_diagClusterStructureSignals - m_diagRootBaselineClusterStructureSignals);
-        ulong intervalClusterNoneSignals = (m_diagClusterNoneSignals - m_diagRootBaselineClusterNoneSignals);
-        ulong intervalMomentumNone = (m_diagMomentumNone - m_diagRootBaselineMomentumNone);
-        ulong intervalMomentumCooldown = (m_diagMomentumCooldown - m_diagRootBaselineMomentumCooldown);
-        ulong intervalMomentumLowVolatility = (m_diagMomentumLowVolatility - m_diagRootBaselineMomentumLowVolatility);
-        ulong intervalMomentumNoCrossover = (m_diagMomentumNoCrossover - m_diagRootBaselineMomentumNoCrossover);
-        ulong intervalMomentumTrendMisaligned = (m_diagMomentumTrendMisaligned - m_diagRootBaselineMomentumTrendMisaligned);
-        ulong intervalMomentumNotReady = (m_diagMomentumNotReady - m_diagRootBaselineMomentumNotReady);
-        ulong intervalUICTNone = (m_diagUICTNone - m_diagRootBaselineUICTNone);
-        ulong intervalUICTNeutralBias = (m_diagUICTNeutralBias - m_diagRootBaselineUICTNeutralBias);
-        ulong intervalUICTOtherFilters = (m_diagUICTOtherFilters - m_diagRootBaselineUICTOtherFilters);
-        int liveVoterCount = 0;
-        int dormantLiveCount = 0;
-        double liveParticipationSum = 0.0;
-        string dormantStrategies = "";
-        for(int i = 0; i < m_strategyCount; i++)
-        {
-            if(!IsStrategyLiveVoter(i))
-                continue;
-
-            liveVoterCount++;
-            liveParticipationSum += m_strategies[i].participationScore;
-            if(m_strategies[i].participationScore < 0.60)
-            {
-                dormantLiveCount++;
-                if(dormantStrategies != "")
-                    dormantStrategies += ", ";
-                dormantStrategies += m_strategies[i].name + "(" + DoubleToString(m_strategies[i].participationScore, 2) + ")";
-            }
-        }
-        double avgParticipation = (liveVoterCount > 0) ? ClampUnitValue(liveParticipationSum / liveVoterCount) : 0.0;
-
-        ulong reasonTotal = intervalRawNone + intervalFilteredOut + intervalQuorumFailed + intervalIntrabarNotEligible;
-        double denom = (reasonTotal > 0) ? (double)reasonTotal : 1.0;
-        double pctRawNone = ((double)intervalRawNone / denom) * 100.0;
-        double pctFiltered = ((double)intervalFilteredOut / denom) * 100.0;
-        double pctQuorum = ((double)intervalQuorumFailed / denom) * 100.0;
-        double pctIntrabar = ((double)intervalIntrabarNotEligible / denom) * 100.0;
-
-        string dominantCause = "none";
-        ulong dominantCount = 0;
-        if(intervalIntrabarNotEligible > dominantCount)
-        {
-            dominantCount = intervalIntrabarNotEligible;
-            dominantCause = "intrabar_not_eligible";
-        }
-        if(intervalQuorumFailed > dominantCount)
-        {
-            dominantCount = intervalQuorumFailed;
-            dominantCause = "quorum_failed";
-        }
-        if(intervalFilteredOut > dominantCount)
-        {
-            dominantCount = intervalFilteredOut;
-            dominantCause = "filtered_out";
-        }
-        if(intervalRawNone > dominantCount)
-        {
-            dominantCount = intervalRawNone;
-            dominantCause = "raw_none";
-        }
-
-        LOG_IF8(LOG_LEVEL_DEBUG, "[CONSENSUS-DIAG] %s | generated=%I64u | after_pipeline=%I64u | after_quorum=%I64u | vote_suppressed=%I64u | raw_none=%I64u | filtered_out=%I64u | quorum_failed=%I64u | intrabar_not_eligible=%I64u",
-                    symbol,
-                    intervalSignalsGenerated,
-                    intervalSignalsAfterPipeline,
-                    intervalSignalsAfterQuorum,
-                    intervalVoteSuppressed,
-                    intervalRawNone,
-                    intervalFilteredOut,
-                    intervalQuorumFailed,
-                    intervalIntrabarNotEligible);
-        LOG_IF9(LOG_LEVEL_DEBUG, "[CONSENSUS-ROOT] %s | dominant=%s | intrabar_not_eligible=%.1f%% (%I64u) | quorum_failed=%.1f%% (%I64u) | filtered_out=%.1f%% (%I64u) | raw_none=%.1f%% (%I64u) | total=%I64u",
-                    symbol,
-                    dominantCause,
-                    pctIntrabar, intervalIntrabarNotEligible,
-                    pctQuorum, intervalQuorumFailed,
-                    pctFiltered, intervalFilteredOut,
-                    pctRawNone, intervalRawNone,
-                    reasonTotal);
-        LOG_IF9(LOG_LEVEL_DEBUG, "[CONSENSUS-STRATEGY] %s | momentum_none=%I64u | momentum_cooldown=%I64u | momentum_low_vol=%I64u | momentum_no_crossover=%I64u | momentum_trend_misaligned=%I64u | momentum_not_ready=%I64u | uict_none=%I64u | uict_neutral_bias=%I64u | uict_other_filters=%I64u",
-                    symbol,
-                    intervalMomentumNone,
-                    intervalMomentumCooldown,
-                    intervalMomentumLowVolatility,
-                    intervalMomentumNoCrossover,
-                    intervalMomentumTrendMisaligned,
-                    intervalMomentumNotReady,
-                    intervalUICTNone,
-                    intervalUICTNeutralBias,
-                    intervalUICTOtherFilters);
-        LOG_IF8(LOG_LEVEL_DEBUG, "[CONSENSUS-ROLE] %s | primary=%I64u | feature=%I64u | shadow=%I64u | suppressed=%I64u | live_voters=%d | avg_participation=%.2f | dormant_live=%d | dormant_strategies=%s",
-                    symbol,
-                    intervalRolePrimarySignals,
-                    intervalRoleFeatureSignals,
-                    intervalRoleShadowSignals,
-                    intervalVoteSuppressed,
-                    liveVoterCount,
-                    avgParticipation,
-                    dormantLiveCount,
-                    dormantStrategies);
-
-        // Dormant strategy warning (Issue 12.1): alert when more than half of strategies are dormant
-        if(dormantLiveCount >= 8)
-        {
-            static datetime s_lastDormantWarning = 0;
-            datetime warnNow = TimeCurrent();
-            if(s_lastDormantWarning == 0 || (warnNow - s_lastDormantWarning) >= 300)
-            {
-                LOG_IF3(LOG_LEVEL_WARN, "[STRATEGY-DORMANT-WARNING] %s | dormant_live=%d | avg_participation=%.2f | More than half of strategies are dormant",
-                            symbol, dormantLiveCount, avgParticipation);
-                s_lastDormantWarning = warnNow;
-            }
-        }
-
-        LOG_IF4(LOG_LEVEL_DEBUG, "[CONSENSUS-CLUSTER] %s | trend=%I64u | mean_reversion=%I64u | structure=%I64u | none=%I64u",
-                    symbol,
-                    intervalClusterTrendSignals,
-                    intervalClusterMeanReversionSignals,
-                    intervalClusterStructureSignals,
-                    intervalClusterNoneSignals);
-
-        m_diagRootBaselineRawNone = m_diagRawNone;
-        m_diagRootBaselineFilteredOut = m_diagFilteredOut;
-        m_diagRootBaselineQuorumFailed = m_diagQuorumFailed;
-        m_diagRootBaselineIntrabarNotEligible = m_diagIntrabarNotEligible;
-        m_diagRootBaselineSignalsGenerated = m_diagSignalsGenerated;
-        m_diagRootBaselineSignalsAfterPipeline = m_diagSignalsAfterPipeline;
-        m_diagRootBaselineSignalsAfterQuorum = m_diagSignalsAfterQuorum;
-        m_diagRootBaselineVoteSuppressed = m_diagVoteSuppressed;
-        m_diagRootBaselineRolePrimarySignals = m_diagRolePrimarySignals;
-        m_diagRootBaselineRoleFeatureSignals = m_diagRoleFeatureSignals;
-        m_diagRootBaselineRoleShadowSignals = m_diagRoleShadowSignals;
-        m_diagRootBaselineClusterTrendSignals = m_diagClusterTrendSignals;
-        m_diagRootBaselineClusterMeanReversionSignals = m_diagClusterMeanReversionSignals;
-        m_diagRootBaselineClusterStructureSignals = m_diagClusterStructureSignals;
-        m_diagRootBaselineClusterNoneSignals = m_diagClusterNoneSignals;
-        m_diagRootBaselineMomentumNone = m_diagMomentumNone;
-        m_diagRootBaselineMomentumCooldown = m_diagMomentumCooldown;
-        m_diagRootBaselineMomentumLowVolatility = m_diagMomentumLowVolatility;
-        m_diagRootBaselineMomentumNoCrossover = m_diagMomentumNoCrossover;
-        m_diagRootBaselineMomentumTrendMisaligned = m_diagMomentumTrendMisaligned;
-        m_diagRootBaselineMomentumNotReady = m_diagMomentumNotReady;
-        m_diagRootBaselineUICTNone = m_diagUICTNone;
-        m_diagRootBaselineUICTNeutralBias = m_diagUICTNeutralBias;
-        m_diagRootBaselineUICTOtherFilters = m_diagUICTOtherFilters;
-        m_lastDiagLogTime = now;
-    }
-}
 
 int CEnterpriseStrategyManager::FindAttributionIndexByPositionId(const ulong positionId) const
 {
-    for(int i = 0; i < ArraySize(m_attributionPositionIds); i++)
-    {
-        if(m_attributionPositionIds[i] == positionId)
-            return i;
-    }
-    return -1;
+    return m_attributionDelegator.FindAttributionIndexByPositionId(positionId);
 }
 
 string CEnterpriseStrategyManager::JoinContributors(const string &contributors[]) const
 {
-    string csv = "";
-    for(int i = 0; i < ArraySize(contributors); i++)
-    {
-        if(contributors[i] == "")
-            continue;
-        if(StringLen(csv) > 0)
-            csv += ";";
-        csv += contributors[i];
-    }
-    return csv;
+    return m_attributionDelegator.JoinContributors(contributors);
 }
 
 void CEnterpriseStrategyManager::SplitContributors(const string csv, string &contributors[]) const
 {
-    ArrayResize(contributors, 0);
-    if(csv == "")
-        return;
-
-    string parsed[];
-    int count = StringSplit(csv, ';', parsed);
-    if(count <= 0)
-        return;
-
-    ArrayResize(contributors, count);
-    for(int i = 0; i < count; i++)
-        contributors[i] = parsed[i];
+    m_attributionDelegator.SplitContributors(csv, contributors);
 }
 
 void CEnterpriseStrategyManager::UpsertPositionAttribution(const ulong positionId, const string &contributors[])
 {
-    if(positionId == 0 || ArraySize(contributors) <= 0)
-        return;
-
-    string contributorCsv = JoinContributors(contributors);
-    if(contributorCsv == "")
-        return;
-
-    int idx = FindAttributionIndexByPositionId(positionId);
-    if(idx >= 0)
-    {
-        m_attributionContributorCsv[idx] = contributorCsv;
-        return;
-    }
-
-    int size = ArraySize(m_attributionPositionIds);
-    ArrayResize(m_attributionPositionIds, size + 1);
-    ArrayResize(m_attributionContributorCsv, size + 1);
-    m_attributionPositionIds[size] = positionId;
-    m_attributionContributorCsv[size] = contributorCsv;
+    m_attributionDelegator.UpsertPositionAttribution(positionId, contributors);
 }
 
 bool CEnterpriseStrategyManager::PopPositionAttribution(const ulong positionId, string &contributors[])
 {
-    int idx = FindAttributionIndexByPositionId(positionId);
-    if(idx < 0)
-        return false;
-
-    SplitContributors(m_attributionContributorCsv[idx], contributors);
-
-    int last = ArraySize(m_attributionPositionIds) - 1;
-    if(last >= 0)
-    {
-        if(idx != last)
-        {
-            m_attributionPositionIds[idx] = m_attributionPositionIds[last];
-            m_attributionContributorCsv[idx] = m_attributionContributorCsv[last];
-        }
-        ArrayResize(m_attributionPositionIds, last);
-        ArrayResize(m_attributionContributorCsv, last);
-    }
-
-    return true;
+    return m_attributionDelegator.PopPositionAttribution(positionId, contributors);
 }
 
+//+------------------------------------------------------------------+
+//| Performance / health accounting                                  |
+//|                                                                  |
+//| Phase C / Slice 3 (C5): the implementations moved wholesale into |
+//| CStrategyPerformanceHealth. The manager keeps only forwarders    |
+//| because every one of these is part of its public API (consumed   |
+//| by EAOrchestrator, AIEngine and OnTradeTransaction below).       |
+//+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::UpdatePerformance(const string strategyName, double netProfit)
 {
-    int idx = FindStrategyIndexByName(strategyName);
-    if(idx < 0 || idx >= m_strategyCount)
-        return;
-
-    bool success = (netProfit > 0);
-    
-    // Update trade counts
-    m_strategies[idx].totalTrades++;
-    if(success)
-    {
-        m_strategies[idx].successCount++;
-        m_strategies[idx].winningTrades++;
-        m_strategies[idx].consecutiveWins++;
-        m_strategies[idx].consecutiveLosses = 0;
-
-        // Maintain rolling average profit per winning trade
-        int wins = m_strategies[idx].winningTrades;
-        if(wins > 0)
-        {
-            double prevTotalProfit = m_strategies[idx].avgProfit * (wins - 1);
-            m_strategies[idx].avgProfit = (prevTotalProfit + netProfit) / wins;
-        }
-    }
-    else
-    {
-        m_strategies[idx].failCount++;
-        m_strategies[idx].consecutiveLosses++;
-        m_strategies[idx].consecutiveWins = 0;
-
-        // Maintain rolling average loss magnitude per losing trade
-        int losses = m_strategies[idx].totalTrades - m_strategies[idx].winningTrades;
-        if(losses > 0)
-        {
-            double absLoss = MathAbs(netProfit);
-            double prevTotalLoss = m_strategies[idx].avgLoss * (losses - 1);
-            m_strategies[idx].avgLoss = (prevTotalLoss + absLoss) / losses;
-        }
-        
-        // Update max consecutive losses
-        if(m_strategies[idx].consecutiveLosses > m_strategies[idx].maxConsecutiveLosses)
-        {
-            m_strategies[idx].maxConsecutiveLosses = m_strategies[idx].consecutiveLosses;
-        }
-    }
-
-    // Update recent performance (rolling window)
-    UpdateRecentPerformance(idx, netProfit);
-    
-    // Update regime-specific performance (placeholder for now, can be expanded)
-    // UpdateRegimePerformance(idx, m_currentRegime, netProfit); 
-    
-    // Recalculate metrics (WinRate, ProfitFactor, Sharpe)
-    CalculateStrategyMetrics(idx);
-    
-    // Health score update (original ESM logic blended with AISO metrics)
-    int totalOutcomes = m_strategies[idx].successCount + m_strategies[idx].failCount;
-    if(totalOutcomes > 0)
-    {
-        double realizedWinRate = (double)m_strategies[idx].successCount / (double)totalOutcomes;
-        double sampleTrust = MathMin(1.0, (double)totalOutcomes / 20.0);
-        double prior = 0.55;
-        double blendedWinRate = (prior * (1.0 - sampleTrust)) + (realizedWinRate * sampleTrust);
-        m_strategies[idx].healthScore = MathMax(0.35, MathMin(1.0, blendedWinRate));
-    }
-    
-    m_strategies[idx].lastUpdate = TimeCurrent();
-
-    // Check if strategy needs to be disabled
-    if(ShouldDisableStrategy(idx))
-    {
-        m_strategies[idx].temporarilyDisabled = true;
-        m_strategies[idx].disabledUntil = TimeCurrent() + 3600; // Disable for 1 hour
-        PrintFormat("[Enterprise-Adaptation] Strategy %s DISABLED due to poor performance (WinRate: %.2f, Losses: %d)", 
-                    strategyName, m_strategies[idx].winRate, m_strategies[idx].consecutiveLosses);
-    }
+    m_performanceHealth.UpdatePerformance(strategyName, netProfit);
 }
 
 void CEnterpriseStrategyManager::UpdateRecentPerformance(const int index, const double result)
 {
-    if(index < 0 || index >= m_strategyCount)
-        return;
-    
-    // Add to circular buffer
-    m_strategies[index].recentTrades[m_strategies[index].recentTradeIndex] = result;
-    m_strategies[index].recentTradeIndex = (m_strategies[index].recentTradeIndex + 1) % m_rollingWindowSize;
-    
-    if(m_strategies[index].recentTradeCount < m_rollingWindowSize)
-        m_strategies[index].recentTradeCount++;
+    m_performanceHealth.UpdateRecentPerformance(index, result);
 }
 
 double CEnterpriseStrategyManager::CalculateRecentWinRate(const int index)
 {
-    if(index < 0 || index >= m_strategyCount) return 0.0;
-    if(m_strategies[index].recentTradeCount == 0) return 0.0;
-    
-    int wins = 0;
-    for(int i = 0; i < m_strategies[index].recentTradeCount; i++)
-    {
-        if(m_strategies[index].recentTrades[i] > 0.0) wins++;
-    }
-    
-    return (double)wins / m_strategies[index].recentTradeCount;
+    return m_performanceHealth.CalculateRecentWinRate(index);
 }
 
 double CEnterpriseStrategyManager::CalculateSharpeRatio(const int index)
 {
-    if(index < 0 || index >= m_strategyCount) return 0.0;
-    if(m_strategies[index].recentTradeCount < 5) return 0.0;
-    
-    double sum = 0;
-    for(int i = 0; i < m_strategies[index].recentTradeCount; i++)
-        sum += m_strategies[index].recentTrades[i];
-    
-    double mean = sum / m_strategies[index].recentTradeCount;
-    
-    double sq_sum = 0;
-    for(int i = 0; i < m_strategies[index].recentTradeCount; i++)
-        sq_sum += MathPow(m_strategies[index].recentTrades[i] - mean, 2);
-    
-    double stdev = MathSqrt(sq_sum / m_strategies[index].recentTradeCount);
-    if(stdev == 0) return 0;
-    
-    return mean / stdev;
+    return m_performanceHealth.CalculateSharpeRatio(index);
 }
 
 void CEnterpriseStrategyManager::CalculateStrategyMetrics(const int index)
 {
-    if(index < 0 || index >= m_strategyCount) return;
-    
-    // Calculate win rate
-    if(m_strategies[index].totalTrades > 0)
-        m_strategies[index].winRate = ((double)m_strategies[index].winningTrades / m_strategies[index].totalTrades);
-    
-    // Calculate profit factor
-    if(m_strategies[index].avgLoss > 0.0)
-        m_strategies[index].profitFactor = m_strategies[index].avgProfit / m_strategies[index].avgLoss;
-    else if(m_strategies[index].avgProfit > 0.0)
-        m_strategies[index].profitFactor = 2.0;
-    else
-        m_strategies[index].profitFactor = 0.0;
-    
-    m_strategies[index].sharpeRatio = CalculateSharpeRatio(index);
-    m_strategies[index].recentWinRate = CalculateRecentWinRate(index);
+    m_performanceHealth.CalculateStrategyMetrics(index);
 }
 
 bool CEnterpriseStrategyManager::ShouldDisableStrategy(const int index)
 {
-    if(index < 0 || index >= m_strategyCount) return false;
-    
-    // Only check if we have enough trades
-    if(m_strategies[index].totalTrades < 10) return false;
-    
-    // Disable if win rate is too low
-    if(m_strategies[index].recentWinRate < m_minWinRateThreshold) return true;
-    
-    // Disable if consecutive losses are too high
-    if(m_strategies[index].consecutiveLosses >= m_maxConsecutiveLosses_Limit) return true;
-    
-    return false;
+    return m_performanceHealth.ShouldDisableStrategy(index);
 }
 
 bool CEnterpriseStrategyManager::ShouldReEnableStrategy(const int index)
 {
-    if(index < 0 || index >= m_strategyCount) return false;
-    if(!m_strategies[index].temporarilyDisabled) return true;
-    
-    return (TimeCurrent() >= m_strategies[index].disabledUntil);
+    return m_performanceHealth.ShouldReEnableStrategy(index);
 }
+
+void CEnterpriseStrategyManager::UpdateRegimePerformance(const int index, int regime, const double result)
+{
+    m_performanceHealth.UpdateRegimePerformance(index, regime, result);
+}
+
 
 //+------------------------------------------------------------------+
 //| OnNewBar - CRITICAL for zone scanning and chart drawings         |
 //| Must be called from main EA on each new bar                      |
 //+------------------------------------------------------------------+
+// Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
 void CEnterpriseStrategyManager::OnNewBar(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
-    if(!m_initialized || m_strategyCount == 0)
-        return;
-
-    if(m_drawingManager != NULL)
-        m_drawingManager.CleanupOldObjects();
-
-    datetime barTime = iTime(symbol, timeframe, 0);
-    if(barTime <= 0)
-        barTime = TimeCurrent();
-
-    // Update FourStateRegimeDetector on each new bar
-    if(m_fourStateRegimeDetector != NULL && m_regimeDetectorInitialized)
-    {
-        m_fourStateRegimeDetector.Update();
-    }
-
-    // Call OnNewBar and persist per-bar analysis snapshots
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(m_strategies[i].strategy == NULL)
-            continue;
-
-        if(m_strategies[i].enabled)
-        {
-            m_strategies[i].strategy.OnNewBar(symbol, m_strategies[i].timeframe);
-        }
-        else
-        {
-            m_strategies[i].lastSignal = TRADE_SIGNAL_NONE;
-            m_strategies[i].lastSignalConfidence = 0.0;
-        }
-    }
+    m_lifecycle.OnNewBar(symbol, timeframe);
 }
 
 //+------------------------------------------------------------------+
@@ -4121,7 +2223,10 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                m_lastContributorCount > 0 &&
                ArraySize(m_lastSignalContributors) > 0)
             {
-                UpsertPositionAttribution(positionId, m_lastSignalContributors);
+                if(m_attribution != NULL)
+                {
+                    m_attribution.UpsertPositionAttribution(positionId, m_lastSignalContributors);
+                }
             }
             
             // We care about exits (deals that close a position) to meaningful profit/loss
@@ -4140,27 +2245,33 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                 if(success)
                     m_successfulSignals++;
 
-                m_hasClosedTradeAttribution = false;
-                m_closedTradeNetProfit = 0.0;
-                ArrayResize(m_closedTradeContributors, 0);
-
+                // Pop position attribution from trade attribution manager
                 string contributors[];
-                if(positionId > 0 && PopPositionAttribution(positionId, contributors))
+                if(positionId > 0 && m_attribution != NULL && m_attribution.PopPositionAttribution(positionId, contributors))
                 {
-                    ArrayCopy(m_closedTradeContributors, contributors);
-                    m_closedTradeNetProfit = netProfit;
-                    m_hasClosedTradeAttribution = (ArraySize(m_closedTradeContributors) > 0);
+                    // Store in closed trade attribution for PopClosedTradeAttribution
+                    // The TradeAttributionManager handles this internally
                     for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
                     {
                         if(contributors[contributorIdx] == "")
                             continue;
                         UpdatePerformance(contributors[contributorIdx], netProfit);
+                        // Also update health monitor
+                        if(m_healthMonitor != NULL)
+                        {
+                            int stratIdx = FindStrategyIndexByName(contributors[contributorIdx]);
+                            if(stratIdx >= 0)
+                            {
+                                m_healthMonitor.RecordTradeResult(stratIdx, netProfit);
+                            }
+                        }
                     }
                 }
 
                 // Reset cached contributor context after close in manager-only governance mode.
-                m_lastContributorCount = 0;
-                ArrayResize(m_lastSignalContributors, 0);
+                                m_lastContributorCount = 0;
+                                ArrayResize(m_lastSignalContributors, 0);
+                                ArrayResize(m_lastSignalContributorIndices, 0);
 
                 PrintFormat("[EnterpriseManager] Trade Closed | Symbol: %s | Ticket: %I64u | PositionID: %I64u | Net Profit: %.2f | Result: %s",
                            dealSymbol, dealTicket, positionId, netProfit, success ? "SUCCESS" : "FAILURE");
@@ -4191,303 +2302,218 @@ bool CEnterpriseStrategyManager::IsPositionIdStillOpen(const ulong positionId) c
 //+------------------------------------------------------------------+
 //| Apply Quorum Profile                                             |
 //+------------------------------------------------------------------+
+// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
+// The nested ENUM_QUORUM_PROFILE stays here (it is a user-facing MT5 `input`
+// type) and is forwarded as an int, whose ordinals match QUORUM_PROFILE_*.
 void CEnterpriseStrategyManager::ApplyQuorumProfile(ENUM_QUORUM_PROFILE profile)
 {
-    string profileName;
-    
-    switch(profile)
-    {
-        case QUORUM_CONSERVATIVE:
-            // Conservative: High thresholds, more voters required
-            m_minQuorum = 3;
-            m_intrabarMinQuorum = 2;
-            m_quorumThreshold = 0.70;
-            m_pipelineMinConfidence = 0.50;
-            m_intrabarSingleVoterMinConfidence = 0.80;
-            m_minReadyWeightRatio = 0.60;
-            m_supportFloorNewBar = 0.40;
-            m_supportFloorIntrabar = 0.35;
-            m_sparseIntrabarMinQuality = 0.85;
-            m_sparseIntrabarMinSupportRatio = 0.80;
-            m_sparseIntrabarMinReadyCoverage = 0.70;
-            m_allowSparseIntrabarSingleVoter = false;
-            
-            // Adaptive quorum settings
-            m_adaptiveQualityThreshold_1voter = 0.90;
-            m_adaptiveSupportFloor_1voter = 0.80;
-            m_adaptiveQualityThreshold_2voters = 0.80;
-            m_adaptiveSupportFloor_2voters = 0.70;
-            m_adaptiveQualityThreshold_3plus = 0.70;
-            m_adaptiveSupportFloor_3plus = 0.60;
-            profileName = "CONSERVATIVE";
-            break;
-            
-        case QUORUM_BALANCED:
-            // Balanced: Moderate thresholds
-            m_minQuorum = 2;
-            m_intrabarMinQuorum = 1;
-            m_quorumThreshold = 0.55;
-            m_pipelineMinConfidence = 0.40;
-            m_intrabarSingleVoterMinConfidence = 0.65;
-            m_minReadyWeightRatio = 0.40;
-            m_supportFloorNewBar = 0.30;
-            m_supportFloorIntrabar = 0.25;
-            m_sparseIntrabarMinQuality = 0.65;
-            m_sparseIntrabarMinSupportRatio = 0.55;
-            m_sparseIntrabarMinReadyCoverage = 0.50;
-            m_allowSparseIntrabarSingleVoter = true;
-            
-            // Adaptive quorum settings
-            m_adaptiveQualityThreshold_1voter = 0.75;
-            m_adaptiveSupportFloor_1voter = 0.60;
-            m_adaptiveQualityThreshold_2voters = 0.65;
-            m_adaptiveSupportFloor_2voters = 0.50;
-            m_adaptiveQualityThreshold_3plus = 0.55;
-            m_adaptiveSupportFloor_3plus = 0.40;
-            profileName = "BALANCED";
-            break;
-            
-        case QUORUM_AGGRESSIVE:
-            // Aggressive: Lower thresholds, more signals passed
-            m_minQuorum = 1;
-            m_intrabarMinQuorum = 1;
-            m_quorumThreshold = 0.40;
-            m_pipelineMinConfidence = 0.30;
-            m_intrabarSingleVoterMinConfidence = 0.50;
-            m_minReadyWeightRatio = 0.25;
-            m_supportFloorNewBar = 0.20;
-            m_supportFloorIntrabar = 0.15;
-            m_sparseIntrabarMinQuality = 0.50;
-            m_sparseIntrabarMinSupportRatio = 0.40;
-            m_sparseIntrabarMinReadyCoverage = 0.35;
-            m_allowSparseIntrabarSingleVoter = true;
-            
-            // Adaptive quorum settings
-            m_adaptiveQualityThreshold_1voter = 0.60;
-            m_adaptiveSupportFloor_1voter = 0.40;
-            m_adaptiveQualityThreshold_2voters = 0.50;
-            m_adaptiveSupportFloor_2voters = 0.35;
-            m_adaptiveQualityThreshold_3plus = 0.40;
-            m_adaptiveSupportFloor_3plus = 0.30;
-            profileName = "AGGRESSIVE";
-            break;
-    }
-    
-    PrintFormat("[QUORUM-PROFILE] Applied %s profile | minQuorum=%d | quorumThreshold=%.2f | pipelineMinConfidence=%.2f",
-                profileName, m_minQuorum, m_quorumThreshold, m_pipelineMinConfidence);
+    m_weightingConfig.ApplyQuorumProfile((int)profile);
 }
 
 //+------------------------------------------------------------------+
 //| Apply family-based engine weights for Deriv synthetic indices    |
 //+------------------------------------------------------------------+
+// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::ApplyFamilyEngineWeights(const string symbol)
 {
-    if(m_derivProfiler == NULL)
-        return;
-
-    SDerivProfile profile = m_derivProfiler.GetProfile(symbol);
-    ENUM_DERIV_FAMILY family = profile.family;
-
-    // Strategy name constants matching AutoRegisterStrategies registration names
-    const string VOL_BREAKOUT = "Volatility Breakout";
-    const string MEAN_REVERT  = "Mean Reversion";
-    const string TREND        = "Trend";
-    const string MOMENTUM     = "Momentum";
-    const string STAT_ARB     = "Statistical Arbitrage";
-
-    double volBreakoutMult = 1.0;
-    double meanRevertMult  = 1.0;
-    double trendMult       = 1.0;
-    double momentumMult    = 1.0;
-    double statArbMult     = 1.0;
-
-    switch(family)
-    {
-        case DERIV_CRASH_BOOM:
-            volBreakoutMult = 1.5;
-            meanRevertMult  = 0.5;
-            momentumMult    = 0.5;
-            statArbMult     = 0.0;
-            break;
-        case DERIV_VOLATILITY:
-            volBreakoutMult = 0.3;
-            meanRevertMult  = 1.5;
-            trendMult       = 0.5;
-            momentumMult    = 0.5;
-            statArbMult     = 0.0;
-            break;
-        case DERIV_STEP:
-            meanRevertMult  = 1.5;
-            volBreakoutMult = 0.5;
-            momentumMult    = 0.5;
-            statArbMult     = 0.0;
-            break;
-        case DERIV_JUMP:
-            volBreakoutMult = 1.5;
-            meanRevertMult  = 0.5;
-            momentumMult    = 0.5;
-            statArbMult     = 0.0;
-            break;
-        case DERIV_DEX:
-            volBreakoutMult = 1.5;
-            meanRevertMult  = 0.3;
-            momentumMult    = 0.5;
-            statArbMult     = 0.0;
-            break;
-        default:
-            return;
-    }
-
-    // Apply multipliers to current weights
-    int idx;
-
-    if(volBreakoutMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(VOL_BREAKOUT);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * volBreakoutMult;
-            UpdateStrategyWeightByName(VOL_BREAKOUT, newWeight);
-            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, VOL_BREAKOUT, volBreakoutMult, newWeight);
-        }
-    }
-
-    if(meanRevertMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(MEAN_REVERT);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * meanRevertMult;
-            UpdateStrategyWeightByName(MEAN_REVERT, newWeight);
-            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, MEAN_REVERT, meanRevertMult, newWeight);
-        }
-    }
-
-    if(trendMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(TREND);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * trendMult;
-            UpdateStrategyWeightByName(TREND, newWeight);
-            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, TREND, trendMult, newWeight);
-        }
-    }
-
-    if(momentumMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(MOMENTUM);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * momentumMult;
-            UpdateStrategyWeightByName(MOMENTUM, newWeight);
-            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, MOMENTUM, momentumMult, newWeight);
-        }
-    }
-
-    if(statArbMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(STAT_ARB);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * statArbMult;
-            UpdateStrategyWeightByName(STAT_ARB, newWeight);
-            PrintFormat("[DERIV-WEIGHT] %s | %s x%.1f => %.3f", symbol, STAT_ARB, statArbMult, newWeight);
-        }
-    }
+    m_weightingConfig.ApplyFamilyEngineWeights(symbol);
 }
 
 //+------------------------------------------------------------------+
 //| Apply asset-class-based engine weights using multi-asset profiler|
 //+------------------------------------------------------------------+
+// Phase C / Slice 2 (C4): implementation moved to CConsensusWeightingConfig.
 void CEnterpriseStrategyManager::ApplyAssetClassEngineWeights(const string symbol)
 {
-    // Fallback to family-based weighting if profiler not set
-    if(m_multiAssetProfiler == NULL)
-    {
-        ApplyFamilyEngineWeights(symbol);
-        return;
-    }
+    m_weightingConfig.ApplyAssetClassEngineWeights(symbol);
+}
 
-    ENUM_ASSET_CLASS assetClass = m_multiAssetProfiler.GetAssetClassForSymbol(symbol);
+//+------------------------------------------------------------------+
+//| Enable Strategy By Name                                         |
+//+------------------------------------------------------------------+
+bool CEnterpriseStrategyManager::EnableStrategy(const string name)
+{
+    // Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
+    return m_lifecycle.EnableStrategy(name);
+}
 
-    // Strategy name constants matching AutoRegisterStrategies registration names
-    const string VOL_BREAKOUT = "Volatility Breakout";
-    const string MEAN_REVERT  = "Mean Reversion";
-    const string TREND        = "Trend";
+//+------------------------------------------------------------------+
+//| Disable Strategy By Name                                        |
+//+------------------------------------------------------------------+
+bool CEnterpriseStrategyManager::DisableStrategy(const string name)
+{
+    // Phase C / Slice 3 (C7): implementation moved to CStrategyLifecycle.
+    return m_lifecycle.DisableStrategy(name);
+}
 
-    // Deriv asset classes (4-8) delegate to existing family-based logic
-    if(assetClass >= ASSET_DERIV_CRASHBOOM && assetClass <= ASSET_DERIV_DEX)
-    {
-        ApplyFamilyEngineWeights(symbol);
-        return;
-    }
+//+------------------------------------------------------------------+
+//| Check if magic number is owned by this EA                        |
+//+------------------------------------------------------------------+
+bool CEnterpriseStrategyManager::IsEAOwnedMagic(long magic) const
+{
+    if(m_managedMagic <= 0)
+        return false;
+    if(magic == m_managedMagic)
+        return true;
+    if(magic > m_managedMagic && magic <= m_managedMagicRangeMax)
+        return true;
+    return false;
+}
 
-    double volBreakoutMult = 1.0;
-    double meanRevertMult  = 1.0;
-    double trendMult       = 1.0;
+//+------------------------------------------------------------------+
+//| Get Registered Strategy Count                                    |
+//+------------------------------------------------------------------+
+int CEnterpriseStrategyManager::GetRegisteredStrategyCount() const
+{
+    return m_stateReporter.GetRegisteredStrategyCount();
+}
 
-    switch(assetClass)
-    {
-        case ASSET_FOREX:
-            trendMult       = 1.3;
-            volBreakoutMult = 1.2;
-            meanRevertMult  = 0.7;
-            break;
-        case ASSET_METALS:
-            volBreakoutMult = 1.5;
-            meanRevertMult  = 0.5;
-            break;
-        case ASSET_INDICES:
-            meanRevertMult  = 1.5;
-            volBreakoutMult = 0.5;
-            trendMult       = 0.8;
-            break;
-        case ASSET_ENERGIES:
-            volBreakoutMult = 1.4;
-            trendMult       = 1.2;
-            break;
-        case ASSET_UNIVERSAL:
-        default:
-            // No adjustment for universal/unknown
-            return;
-    }
+//+------------------------------------------------------------------+
+//| Get Pipeline Pointer                                             |
+//+------------------------------------------------------------------+
+CUnifiedSignalPipeline* CEnterpriseStrategyManager::GetPipeline()
+{
+    return m_pipeline;
+}
 
-    // Apply multipliers to current weights
-    int idx;
+//+------------------------------------------------------------------+
+//| Get Ensemble Confidence                                          |
+//+------------------------------------------------------------------+
+double CEnterpriseStrategyManager::GetEnsembleConfidence() const
+{
+    return m_stateReporter.GetEnsembleConfidence();
+}
 
-    if(volBreakoutMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(VOL_BREAKOUT);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * volBreakoutMult;
-            UpdateStrategyWeightByName(VOL_BREAKOUT, newWeight);
-            PrintFormat("[ASSET-CLASS-WEIGHT] %s | %s x%.1f => %.3f", symbol, VOL_BREAKOUT, volBreakoutMult, newWeight);
-        }
-    }
+//+------------------------------------------------------------------+
+//| Get Current Market Regime                                        |
+//+------------------------------------------------------------------+
+ENUM_MARKET_REGIME CEnterpriseStrategyManager::GetCurrentMarketRegime() const
+{
+    return m_currentMarketRegime;
+}
 
-    if(meanRevertMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(MEAN_REVERT);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * meanRevertMult;
-            UpdateStrategyWeightByName(MEAN_REVERT, newWeight);
-            PrintFormat("[ASSET-CLASS-WEIGHT] %s | %s x%.1f => %.3f", symbol, MEAN_REVERT, meanRevertMult, newWeight);
-        }
-    }
+//+------------------------------------------------------------------+
+//| Set Drawing Manager                                              |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetDrawingManager(CChartDrawingManager* drawingManager)
+{
+    m_drawingManager = drawingManager;
+}
 
-    if(trendMult != 1.0)
-    {
-        idx = FindStrategyIndexByName(TREND);
-        if(idx >= 0)
-        {
-            double newWeight = m_strategies[idx].weight * trendMult;
-            UpdateStrategyWeightByName(TREND, newWeight);
-            PrintFormat("[ASSET-CLASS-WEIGHT] %s | %s x%.1f => %.3f", symbol, TREND, trendMult, newWeight);
-        }
-    }
+//+------------------------------------------------------------------+
+//| Get Drawing Manager                                              |
+//+------------------------------------------------------------------+
+CChartDrawingManager* CEnterpriseStrategyManager::GetDrawingManager()
+{
+    return m_drawingManager;
+}
+
+//+------------------------------------------------------------------+
+//| Set Deriv Profiler                                               |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetDerivProfiler(CDerivAssetProfiler* profiler)
+{
+    m_derivProfiler = profiler;
+}
+
+//+------------------------------------------------------------------+
+//| Set Family Weight Matrix                                         |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix)
+{
+    m_familyWeightMatrix = famMatrix;
+}
+
+//+------------------------------------------------------------------+
+//| Set Multi-Asset Profiler                                         |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetMultiAssetProfiler(CMultiAssetProfiler* profiler)
+{
+    m_multiAssetProfiler = profiler;
+}
+
+//+------------------------------------------------------------------+
+//| Set VPIN Filter                                                  |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetVPINFilter(CVPINFilter* vpin)
+{
+    m_vpinFilter = vpin;
+}
+
+//+------------------------------------------------------------------+
+//| Set OFI Engine                                                   |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::SetOFIEngine(COrderFlowImbalanceEngine* ofi)
+{
+    m_ofiEngine = ofi;
+}
+
+//+------------------------------------------------------------------+
+//| Update AI Performance Metrics for AI Strategies (L6-016)        |
+//+------------------------------------------------------------------+
+void CEnterpriseStrategyManager::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)
+{
+    // Phase C / Slice 3 (C5): implementation moved to CStrategyPerformanceHealth.
+    m_performanceHealth.UpdateAIPerformanceMetrics(strategyName, metrics);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Effective Quorum Parameters (Internal)                |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Evaluate Consensus Internal (Main Consensus Logic)              |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Evaluate Consensus Two-Tier Internal (Probe + Full)             |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Evaluate Consensus Probe Only Internal (Fast Path)              |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Try Fallback Solo Signal Internal (When All Strategies Abstain) |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Post-Consensus Signal Validation                                 |
+//|                                                                  |
+//| Phase C / Slice 2 (C3): the implementation and the whole         |
+//| validator configuration block now live in CPostConsensusValidator.|
+//| Only the externally-consumed entry points are forwarded here.    |
+//+------------------------------------------------------------------+
+SPostConsensusValidation CEnterpriseStrategyManager::ValidateSignal(const string symbol,
+                                                                    ENUM_TRADE_SIGNAL signal,
+                                                                    double confidence,
+                                                                    int confluence,
+                                                                    ENUM_SIGNAL_EVAL_MODE evalMode,
+                                                                    const SConsensusDecisionContext& ctx,
+                                                                    ulong scanCycleId,
+                                                                    const string corrId)
+{
+    return m_postConsensusValidator.ValidateSignal(symbol, signal, confidence, confluence,
+                                                   evalMode, ctx, scanCycleId, corrId);
+}
+
+string CEnterpriseStrategyManager::GetValidationStatusReport() const
+{
+    return m_postConsensusValidator.GetValidationStatusReport();
+}
+
+void CEnterpriseStrategyManager::SetValidatorConfig(double intrabarMinQuality,
+                                                    double newBarMinQuality,
+                                                    double hardSpreadCutoff,
+                                                    bool spikeHunterEnabled,
+                                                    bool enableOFI,
+                                                    bool enableVPIN,
+                                                    double baseSpreadATRRatio,
+                                                    double syntheticSpreadATRRatio)
+{
+    m_postConsensusValidator.SetValidatorConfig(intrabarMinQuality, newBarMinQuality, hardSpreadCutoff,
+                                                spikeHunterEnabled, enableOFI, enableVPIN,
+                                                baseSpreadATRRatio, syntheticSpreadATRRatio);
 }
 
 #endif // ENTERPRISE_STRATEGY_MANAGER_MQH

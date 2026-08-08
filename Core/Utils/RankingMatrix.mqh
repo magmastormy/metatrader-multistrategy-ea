@@ -67,7 +67,6 @@ public:
             int posB = StringFind(nameB, "::");
             if(posB >= 0) baseB = StringSubstr(nameB, posB + 2);
 
-            // Fibonacci REMOVED — Trend + S/R confluence escalation replaces the old Trend+Fib pair
             if((baseA == "Trend" && baseB == "Support/Resistance") || (baseA == "Support/Resistance" && baseB == "Trend"))
             {
                 if(confA > 0.65 && confB > 0.65)

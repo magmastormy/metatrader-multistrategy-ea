@@ -61,8 +61,6 @@ private:
     
     // State Tracking
     datetime m_lastSignalBar;
-    string m_lastRejectReasonTag;
-    datetime m_lastRejectLogTime;
     
     // Active pair tracking
     string m_activeLeg1Symbol;
@@ -71,36 +69,11 @@ private:
     double m_activeSpreadStdDev;
     datetime m_pairLastUpdateTime;
     
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager* m_riskManager;
+        // Python Bridge reference (for correlation matrix)
+        CPythonBridge* m_pythonBridge;
     
-    // Python Bridge reference (for correlation matrix)
-    CPythonBridge* m_pythonBridge;
-    
-    // Batch 100: OU Process Engine for mean-reversion-aware z-scores
-    COrnsteinUhlenbeckEngine* m_ouEngine;
-    
-    // Logging helper
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-        
-        PrintFormat("[STATARB] Filtered: %s | Symbol=%s | TF=%s",
-                   reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
-    }
-    
-    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
-    {
-        SetDecisionReasonTag(reasonTag);
-        LogRejectEvent(reasonTag);
-        return TRADE_SIGNAL_NONE;
-    }
+        // Batch 100: OU Process Engine for mean-reversion-aware z-scores
+        COrnsteinUhlenbeckEngine* m_ouEngine;
     
     // Helper: Validate and retrieve SYMBOL_VOLUME_MIN with fallback
     double GetValidatedMinLot(const string symbol)
@@ -139,17 +112,15 @@ public:
         m_hedgeRatio(1.0),
         m_useDynamicHedgeRatio(true),
         m_lastSignalBar(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0),
         m_activeLeg1Symbol(""),
         m_activeLeg2Symbol(""),
         m_activeSpreadMean(0),
         m_activeSpreadStdDev(0),
         m_pairLastUpdateTime(0),
-        m_riskManager(NULL),
-        m_pythonBridge(NULL),
-        m_ouEngine(NULL)
+                m_pythonBridge(NULL),
+                m_ouEngine(NULL)
     {
+        m_strategyPrefix = "STATARB";
         m_minConfidence = 0.70; // High threshold for stat arb (complex strategy)
     }
     
@@ -160,14 +131,13 @@ public:
     }
     
     // Cleanup helper
-    void Cleanup()
-    {
-        // CIndicatorManager handles are managed centrally, no manual release needed
-        // Risk manager and Python bridge are not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
-        m_pythonBridge = NULL;
-        m_ouEngine = NULL;  // Not owned - do NOT delete
-    }
+        void Cleanup()
+        {
+            // CIndicatorManager handles are managed centrally, no manual release needed
+            // Risk manager and Python bridge are not owned by this strategy - do NOT delete
+            m_pythonBridge = NULL;
+            m_ouEngine = NULL;  // Not owned - do NOT delete
+        }
     
     // Batch 100: Set OU engine reference for mean-reversion-aware z-scores
     void SetOUEngine(COrnsteinUhlenbeckEngine* ouEngine) { m_ouEngine = ouEngine; }
@@ -179,19 +149,14 @@ public:
             return false;
         
         // Note: Stat Arb doesn't use traditional indicators on chart symbol
-        // It trades spreads between pairs, so we initialize ATR handles for risk management
+                // It trades spreads between pairs, so we initialize ATR handles for risk management
         
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager == NULL)
-            Print("[STATARB] WARNING: UnifiedRiskManager not provided!");
-        
-        // Python Bridge and OU Engine references are set via SetPythonBridge() and SetOUEngine()
-        // called by the EA after construction. If not set, strategy will reject signals gracefully.
-        if(m_pythonBridge == NULL)
-            Print("[STATARB] WARNING: Python Bridge not set - call SetPythonBridge() from EA initialization");
-        if(m_ouEngine == NULL)
-            Print("[STATARB] WARNING: OU Engine not set - call SetOUEngine() from EA initialization");
+                // Python Bridge and OU Engine references are set via SetPythonBridge() and SetOUEngine()
+                // called by the EA after construction. If not set, strategy will reject signals gracefully.
+                if(m_pythonBridge == NULL)
+                    Print("[STATARB] WARNING: Python Bridge not set - call SetPythonBridge() from EA initialization");
+                if(m_ouEngine == NULL)
+                    Print("[STATARB] WARNING: OU Engine not set - call SetOUEngine() from EA initialization");
         
         PrintFormat("[STATARB] Initialized | Entry_Z=%.1f | Exit_Z=%.1f | Lookback=%d | Min_Corr=%.2f",
                    m_entryZThreshold, m_exitZThreshold, m_lookbackPeriods, m_minCorrelation);
@@ -298,38 +263,39 @@ public:
         }
         
         // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            // Validate primary leg through risk manager
-            double minLot = GetValidatedMinLot(m_symbol);
-            STradeValidationRequest validationReq;
-            ZeroMemory(validationReq);
-            validationReq.symbol = m_symbol;
-            validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            validationReq.lotSize = minLot;
-            validationReq.stopLossPips = 50.0;  // 50 pips SL for stat arb
-            validationReq.takeProfitPips = 100.0;  // 100 pips TP for stat arb
-            validationReq.confidence = signal.confidence;
-            validationReq.strategy = m_name;
-            validationReq.requestTime = TimeCurrent();
+                CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
+                if(riskMgr != NULL)
+                {
+                    // Validate primary leg through risk manager
+                    double minLot = GetValidatedMinLot(m_symbol);
+                    STradeValidationRequest validationReq;
+                    ZeroMemory(validationReq);
+                    validationReq.symbol = m_symbol;
+                    validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+                    validationReq.lotSize = minLot;
+                    validationReq.stopLossPips = 50.0;  // 50 pips SL for stat arb
+                    validationReq.takeProfitPips = 100.0;  // 100 pips TP for stat arb
+                    validationReq.confidence = signal.confidence;
+                    validationReq.strategy = m_name;
+                    validationReq.requestTime = TimeCurrent();
 
-            SValidationResult validationResult = m_riskManager.ValidateTradeRequest(validationReq);
-            if(!validationResult.approved)
-            {
-                SetDecisionReasonTag("STATARB_RISK_REJECTED");
-                PrintFormat("[STATARB] Risk rejected %s spread (Z=%.2f Conf=%.1f%%) | %s",
-                           signal.direction == TRADE_SIGNAL_BUY ? "LONG" : "SHORT",
-                           signal.zScore, signal.confidence * 100, validationResult.message);
-                return TRADE_SIGNAL_NONE;
-            }
+                    SValidationResult validationResult = riskMgr.ValidateTradeRequest(validationReq);
+                    if(!validationResult.approved)
+                    {
+                        SetDecisionReasonTag("STATARB_RISK_REJECTED");
+                        PrintFormat("[STATARB] Risk rejected %s spread (Z=%.2f Conf=%.1f%%) | %s",
+                                   signal.direction == TRADE_SIGNAL_BUY ? "LONG" : "SHORT",
+                                   signal.zScore, signal.confidence * 100, validationResult.message);
+                        return TRADE_SIGNAL_NONE;
+                    }
 
-            // Update lot sizes with minimum lot sizing
-            double minLot2 = GetValidatedMinLot(signal.leg2Symbol);
-            double lotStep2 = GetValidatedLotStep(signal.leg2Symbol);
-            signal.leg1LotSize = minLot;
-            signal.leg2LotSize = MathMax(minLot2,
-                                          MathFloor(m_hedgeRatio * minLot / lotStep2) * lotStep2);
-        }
+                    // Update lot sizes with minimum lot sizing
+                    double minLot2 = GetValidatedMinLot(signal.leg2Symbol);
+                    double lotStep2 = GetValidatedLotStep(signal.leg2Symbol);
+                    signal.leg1LotSize = minLot;
+                    signal.leg2LotSize = MathMax(minLot2,
+                                                  MathFloor(m_hedgeRatio * minLot / lotStep2) * lotStep2);
+                }
         
         // Update state
         m_lastSignalBar = iBars(m_symbol, m_timeframe);
@@ -371,35 +337,6 @@ public:
     void SetPythonBridge(CPythonBridge* bridge)
     {
         m_pythonBridge = bridge;
-    }
-    
-    // Fast probe signal for two-tier consensus path
-    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
-    {
-        if(!IsEnabled() || !m_is_initialized)
-            return TRADE_SIGNAL_NONE;
-        
-        if(!IsPythonBridgeAvailable())
-            return TRADE_SIGNAL_NONE;
-        
-        // Quick z-score extreme check without full pipeline
-        string leg2Symbol = FindBestCorrelatedPair(m_symbol);
-        if(leg2Symbol == "")
-            return TRADE_SIGNAL_NONE;
-        
-        double spreadMean, spreadStdDev;
-        if(!CalculateSpreadStatistics(m_symbol, leg2Symbol, spreadMean, spreadStdDev))
-            return TRADE_SIGNAL_NONE;
-        
-        double currentSpread = GetCurrentSpread(m_symbol, leg2Symbol);
-        double zScore = (spreadStdDev > 0) ? ((currentSpread - spreadMean) / spreadStdDev) : 0;
-        
-        if(zScore < -m_entryZThreshold)
-            return TRADE_SIGNAL_BUY;
-        if(zScore > m_entryZThreshold)
-            return TRADE_SIGNAL_SELL;
-        
-        return TRADE_SIGNAL_NONE;
     }
     
 private:
@@ -560,25 +497,26 @@ private:
     }
     
     // Execute pair trade with hedge ratio sizing
-    bool ExecutePairTrade(const string symbol1, const string symbol2, double hedgeRatio, ENUM_TRADE_SIGNAL direction)
-    {
-        if(m_riskManager == NULL)
-            return false;
+        bool ExecutePairTrade(const string symbol1, const string symbol2, double hedgeRatio, ENUM_TRADE_SIGNAL direction)
+        {
+            CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
+            if(riskMgr == NULL)
+                return false;
         
-        double lot1 = GetValidatedMinLot(symbol1);
-        double minLot2 = GetValidatedMinLot(symbol2);
-        double lotStep2 = GetValidatedLotStep(symbol2);
-        double lot2 = MathMax(minLot2, MathFloor(hedgeRatio * lot1 / lotStep2) * lotStep2);
+            double lot1 = GetValidatedMinLot(symbol1);
+            double minLot2 = GetValidatedMinLot(symbol2);
+            double lotStep2 = GetValidatedLotStep(symbol2);
+            double lot2 = MathMax(minLot2, MathFloor(hedgeRatio * lot1 / lotStep2) * lotStep2);
         
-        PrintFormat("[STATARB-PAIR] Executing pair | %s %.2f %s + %s %.2f %s | Hedge=%.2f",
-                   symbol1, lot1, direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   symbol2, lot2, direction == TRADE_SIGNAL_BUY ? "SELL" : "BUY",
-                   hedgeRatio);
+            PrintFormat("[STATARB-PAIR] Executing pair | %s %.2f %s + %s %.2f %s | Hedge=%.2f",
+                       symbol1, lot1, direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                       symbol2, lot2, direction == TRADE_SIGNAL_BUY ? "SELL" : "BUY",
+                       hedgeRatio);
         
-        // Note: Actual order execution is handled by CTradeManager after consensus approval
-        // This method validates and logs the pair trade intent
-        return true;
-    }
+            // Note: Actual order execution is handled by CTradeManager after consensus approval
+            // This method validates and logs the pair trade intent
+            return true;
+        }
     
     // Validate OU half-life for mean reversion speed filter
     bool ValidHalfLife()

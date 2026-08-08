@@ -22,30 +22,20 @@ class CAsianRangeBreakStrategy : public CStrategyBase
 private:
     CICTKillZones*             m_killZones;
     CMarketStructureAnalyzer*  m_structureAnalyzer;
-    int                        m_lastBarCount;
 
-    // Risk Management (AGENTS.md invariant #1)
-    CUnifiedRiskManager*       m_riskManager;
-
-    bool RefreshForNewBar()
+protected:
+    virtual void HandleNewBar() override { RefreshForNewBar(); }
+    virtual void OnRefreshComponents() override
     {
-        int barCount = iBars(m_symbol, m_timeframe);
-        if(barCount <= 0 || barCount == m_lastBarCount)
-            return false;
-
-        m_lastBarCount = barCount;
         if(m_killZones != NULL) m_killZones.IsInKillZone();  // Refresh session state
         if(m_structureAnalyzer != NULL) m_structureAnalyzer.Update();
-        return true;
     }
 
 public:
     CAsianRangeBreakStrategy(const string name = "Asian Range Break") :
         CStrategyBase(name, 0),
         m_killZones(NULL),
-        m_structureAnalyzer(NULL),
-        m_lastBarCount(0),
-        m_riskManager(NULL)
+        m_structureAnalyzer(NULL)
     {
         OverrideMinConfidence(0.50);
     }
@@ -71,13 +61,6 @@ public:
             return false;
         }
 
-        m_lastBarCount = 0;
-
-        // ARCHITECTURAL FIX: Risk manager is now properly injected via Init() signature
-        m_riskManager = GetUnifiedRiskManager();
-        if(m_riskManager == NULL)
-            Print("[ASIANRB] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
-
         return true;
     }
 
@@ -85,19 +68,12 @@ public:
     {
         if(m_killZones != NULL) { delete m_killZones; m_killZones = NULL; }
         if(m_structureAnalyzer != NULL) { delete m_structureAnalyzer; m_structureAnalyzer = NULL; }
-        // Risk manager is not owned by this strategy - do NOT delete
-        m_riskManager = NULL;
         CStrategyBase::Deinit();
     }
 
     virtual void OnTick() override
     {
         // Intentionally empty - strategy evaluates on new bar only via GetSignal()
-    }
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
-    {
-        if(symbol == m_symbol && timeframe == m_timeframe)
-            RefreshForNewBar();
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -238,47 +214,24 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 11: CRITICAL - Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = bullishBreakout ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = slPips;
-            request.takeProfitPips = tpPips;
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = bullishBreakout ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+        request.stopLossPips = slPips;
+        request.takeProfitPips = tpPips;
+        request.confidence = confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
 
-            CUnifiedRiskManager* riskMgr = m_riskManager;
-            SValidationResult result;
-            ZeroMemory(result);
-            if(riskMgr != NULL)
-                result = (*riskMgr).ValidateTradeRequest(request, "ASIANRB");
-            if(!result.approved)
-            {
-                SetDecisionReasonTag("ASIANRB_RISK_REJECTED");
-                PrintFormat("[ASIANRB] Risk rejected %s at %.5f Conf=%.1f%%",
-                           signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           currentPrice, confidence * 100);
-                return TRADE_SIGNAL_NONE;
-            }
-            confidence *= result.confidenceMultiplier;
-        }
+        if(!ValidateWithRiskManager(request, "ASIANRB", confidence))
+            return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullishBreakout ? "ASIANRB_SIGNAL_BUY" : "ASIANRB_SIGNAL_SELL");
         RecordSignal();
 
         // CONSENSUS LOGGING (AGENTS.md requirement)
-        PrintFormat("[CONSENSUS-DIAG] %s | %s | Range: %.5f | ATR: %.5f | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                   m_symbol,
-                   signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   asianRange,
-                   atr,
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag);
+        LogConsensusDiag(signal, StringFormat("Range: %.5f | ATR: %.5f", asianRange, atr), confidence);
 
         PrintFormat("[ASIANRB] %s: %s | Asian Range: %.5f-%.5f | Range/ATR: %.2f | Structure: %s | Conf: %.1f%%",
                    m_symbol,

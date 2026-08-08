@@ -81,6 +81,10 @@ struct SSafeModePositionState
 class CSafeMode
 {
 private:
+   // L8-019: Callback for position removal notification
+   typedef void (*OnPositionRemovedCallback)(const ulong ticket, const string symbol);
+   OnPositionRemovedCallback m_onPositionRemoved;
+
    SSafeModeConfig          m_config;
    SSafeModePositionState   m_trackedPositions[];
    int                      m_trackedCount;
@@ -108,6 +112,9 @@ private:
       {
          if(!m_trackedPositions[i].isActive)
          {
+            // L8-019: Notify owner via callback before removing
+            if(m_onPositionRemoved != NULL)
+               m_onPositionRemoved(m_trackedPositions[i].ticket, m_trackedPositions[i].symbol);
             for(int j = i; j < m_trackedCount - 1; j++)
                m_trackedPositions[j] = m_trackedPositions[j + 1];
             m_trackedCount--;
@@ -394,6 +401,12 @@ public:
                   m_config.minVoters,
                   m_config.minQuorumThreshold,
                   m_config.maxSpreadATRRatio);
+   }
+
+   // L8-019: Set callback for position removal notification
+   void SetPositionRemovedCallback(OnPositionRemovedCallback callback)
+   {
+      m_onPositionRemoved = callback;
    }
 };
 

@@ -30,6 +30,9 @@ private:
     string              m_symbol;
     ENUM_TIMEFRAMES     m_timeframe;
     
+    // Resolve PERIOD_CURRENT to actual chart timeframe
+    void                ResolveTimeframe();
+    
 public:
                         CFibConfluence();
                        ~CFibConfluence();
@@ -70,7 +73,17 @@ bool CFibConfluence::Initialize(const string symbol, ENUM_TIMEFRAMES timeframe)
 {
     m_symbol = symbol;
     m_timeframe = timeframe;
+    ResolveTimeframe();
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Resolve PERIOD_CURRENT to actual chart timeframe                 |
+//+------------------------------------------------------------------+
+void CFibConfluence::ResolveTimeframe()
+{
+    if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
+        m_timeframe = Period();
 }
 
 //+------------------------------------------------------------------+

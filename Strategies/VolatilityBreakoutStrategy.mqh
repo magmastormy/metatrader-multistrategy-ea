@@ -76,8 +76,6 @@ private:
     // State Tracking
     datetime m_lastSignalBar;
     int m_signalsGenerated;
-    string m_lastRejectReasonTag;
-    datetime m_lastRejectLogTime;
     bool m_inSqueeze;         // Track if we're in a squeeze state
     int     m_kcEmaHandle;        // Keltner Channel EMA midline (v2.0)
     int     m_adxHandle;          // ADX rising filter (v2.0)
@@ -142,28 +140,6 @@ private:
         return true;
     }
 
-    // Logging helper
-    void LogRejectEvent(const string reasonTag)
-    {
-        datetime nowTime = TimeCurrent();
-        if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
-            return;
-        if((nowTime - m_lastRejectLogTime) < 5)
-            return;
-        
-        PrintFormat("[VOLBREAK] Filtered: %s | Symbol=%s | TF=%s",
-                   reasonTag, m_symbol, EnumToString(m_timeframe));
-        m_lastRejectReasonTag = reasonTag;
-        m_lastRejectLogTime = nowTime;
-    }
-    
-    ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag)
-    {
-        SetDecisionReasonTag(reasonTag);
-        LogRejectEvent(reasonTag);
-        return TRADE_SIGNAL_NONE;
-    }
-    
 public:
     // Constructor
     CVolatilityBreakoutStrategy(const string name = "Volatility Breakout v2.0", int magic = 0) :
@@ -181,8 +157,6 @@ public:
         m_riskManager(NULL),
         m_lastSignalBar(0),
         m_signalsGenerated(0),
-        m_lastRejectReasonTag(""),
-        m_lastRejectLogTime(0),
         m_inSqueeze(false),
         m_kcEmaHandle(INVALID_HANDLE),
         m_adxHandle(INVALID_HANDLE),
@@ -192,6 +166,7 @@ public:
         m_breakoutFailed(false),
         m_breakoutFailedDirection(TRADE_SIGNAL_NONE)
     {
+        m_strategyPrefix = "VOLBREAK";
         m_minConfidence = 0.65; // Higher threshold for breakout trades
     }
     
@@ -389,34 +364,18 @@ public:
             return RejectSignal("VOLBREAK_ADX_NOT_RISING");
         }
         
-        // CRITICAL: Validate through UnifiedRiskManager (AGENTS.md invariant #1)
-        if(m_riskManager != NULL)
-        {
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = (signal.stopLoss > 0) ? MathAbs(signal.entryPrice - signal.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.takeProfitPips = (signal.takeProfit > 0) ? MathAbs(signal.takeProfit - signal.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
-            request.confidence = signal.confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
-            
-            CUnifiedRiskManager* riskMgr = m_riskManager;
-            SValidationResult result;
-            ZeroMemory(result);
-            if(riskMgr != NULL)
-                result = (*riskMgr).ValidateTradeRequest(request, "VOLBREAK");
-            if(!result.approved)
-            {
-                SetDecisionReasonTag("VOLBREAK_RISK_REJECTED");
-                PrintFormat("[VOLBREAK] Risk rejected %s at %.5f (SL=%.5f TP=%.5f Conf=%.1f%%) Reason=%s",
-                           signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                           signal.entryPrice, signal.stopLoss, signal.takeProfit, signal.confidence * 100,
-                           result.message);
-                return TRADE_SIGNAL_NONE;
-            }
-        }
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+        request.stopLossPips = (signal.stopLoss > 0) ? MathAbs(signal.entryPrice - signal.stopLoss) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.takeProfitPips = (signal.takeProfit > 0) ? MathAbs(signal.takeProfit - signal.entryPrice) / SymbolInfoDouble(m_symbol, SYMBOL_POINT) : 0;
+        request.confidence = signal.confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
+
+        if(!ValidateWithRiskManager(request, "VOLBREAK", confidence))
+            return TRADE_SIGNAL_NONE;
         
         // Update state
         m_lastSignalBar = iBars(m_symbol, m_timeframe);
@@ -427,17 +386,7 @@ public:
         confidence = signal.confidence;
         
         // CONSENSUS LOGGING (AGENTS.md requirement)
-        PrintFormat("[CONSENSUS-DIAG] %s | %s | Type: %s | BB_Width=%.4f%% | ATR_Ratio=%.2f | Vol=%.2fx | Squeeze=%s | Conf: %.1f%% | Weight: %.2f | Reason: %s",
-                   m_symbol,
-                   signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
-                   EnumToString(signal.entryType),
-                   bbWidthPercent * 100,
-                   atrRatio,
-                   volRatio,
-                   isInSqueeze ? "YES" : "NO",
-                   confidence * 100,
-                   m_weight,
-                   m_lastDecisionReasonTag);
+        LogConsensusDiag(signal.direction, StringFormat("Type: %s | BB_Width=%.4f%% | ATR_Ratio=%.2f | Vol=%.2fx | Squeeze=%s", EnumToString(signal.entryType), bbWidthPercent * 100, atrRatio, volRatio, isInSqueeze ? "YES" : "NO"), confidence);
         
         PrintFormat("[VOLBREAK] %s: %s | Entry: %.5f | SL: %.5f | TP: %.5f | Conf: %.1f%% | %s",
                    m_symbol,
@@ -453,34 +402,6 @@ public:
     
     // Strategy Type
     virtual ENUM_STRATEGY_TYPE GetType() const override { return STRATEGY_VOLATILITY_BREAKOUT; }
-    
-    // Fast probe signal for two-tier consensus path (v2.0)
-    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override
-    {
-        if(!m_is_enabled || !m_is_initialized)
-            return TRADE_SIGNAL_NONE;
-        
-        if(m_bbHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
-            return TRADE_SIGNAL_NONE;
-        
-        // Quick check: price at BB extreme + squeeze state
-        double bbUpper[1], bbLower[1];
-        if(!SafeCopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) ||
-           !SafeCopyBuffer(m_bbHandle, 2, 1, 1, bbLower))
-            return TRADE_SIGNAL_NONE;
-        
-        double close1 = iClose(m_symbol, m_timeframe, 1);
-        
-        // Price near upper band = potential buy breakout
-        if(close1 > bbUpper[0] - (bbUpper[0] - bbLower[0]) * 0.05)
-            return TRADE_SIGNAL_BUY;
-        
-        // Price near lower band = potential sell breakout
-        if(close1 < bbLower[0] + (bbUpper[0] - bbLower[0]) * 0.05)
-            return TRADE_SIGNAL_SELL;
-        
-        return TRADE_SIGNAL_NONE;
-    }
     
 private:
     // Detect if market is in squeeze state

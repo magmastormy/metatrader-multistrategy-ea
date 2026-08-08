@@ -39,20 +39,6 @@ private:
     SEngineSlot m_slots[];
     int m_slotCount;
     
-    int GetSlotIndex(const string symbol, bool createIfMissing = true)
-    {
-        for(int i = 0; i < m_slotCount; i++)
-            if(m_slots[i].symbol == symbol) return i;
-        
-        if(!createIfMissing) return -1;
-        
-        int idx = m_slotCount;
-        ArrayResize(m_slots, idx + 1);
-        m_slots[idx].symbol = symbol;
-        m_slotCount++;
-        return idx;
-    }
-    
     void EnsureEngines(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
         int idx = GetSlotIndex(symbol);
@@ -91,6 +77,58 @@ public:
     {
         ArrayResize(m_slots, 0);
         m_slotCount = 0;
+    }
+    
+    int Count() const { return m_slotCount; }
+    
+    int GetSlotIndex(const string symbol, bool createIfMissing = true)
+    {
+        for(int i = 0; i < m_slotCount; i++)
+            if(m_slots[i].symbol == symbol) return i;
+        
+        if(!createIfMissing) return -1;
+        
+        int idx = m_slotCount;
+        ArrayResize(m_slots, idx + 1);
+        m_slots[idx].symbol = symbol;
+        m_slotCount++;
+        return idx;
+    }
+    
+    bool RegisterVWAPEngine(const string symbol, CVWAPEngine* engine)
+    {
+        if(symbol == "") return false;
+        int idx = GetSlotIndex(symbol, true);
+        m_slots[idx].vwap = engine;
+        return true;
+    }
+    
+    bool RegisterVPEngine(const string symbol, CVolumeProfileEngine* engine)
+    {
+        if(symbol == "") return false;
+        int idx = GetSlotIndex(symbol, true);
+        m_slots[idx].vp = engine;
+        return true;
+    }
+    
+    bool RegisterCVDEngine(const string symbol, CCVDEngine* engine)
+    {
+        if(symbol == "") return false;
+        int idx = GetSlotIndex(symbol, true);
+        m_slots[idx].cvd = engine;
+        return true;
+    }
+    
+    bool RegisterAll(CVWAPEngine* &vwapArr[], CVolumeProfileEngine* &vpArr[], CCVDEngine* &cvdArr[], const string &symbols[], int count)
+    {
+        for(int i = 0; i < count; i++)
+        {
+            if(symbols[i] == "") continue;
+            if(vwapArr[i] != NULL) RegisterVWAPEngine(symbols[i], vwapArr[i]);
+            if(vpArr[i] != NULL) RegisterVPEngine(symbols[i], vpArr[i]);
+            if(cvdArr[i] != NULL) RegisterCVDEngine(symbols[i], cvdArr[i]);
+        }
+        return true;
     }
     
     bool InitializeSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)

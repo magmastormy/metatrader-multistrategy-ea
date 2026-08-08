@@ -19,6 +19,9 @@
 
 class CUnifiedRiskManager;
 
+// Forward declaration for AI adapter (L10-018)
+class CAIAdapter;
+
 //+------------------------------------------------------------------+
 //| Spike hunter configuration struct                                 |
 //+------------------------------------------------------------------+
@@ -26,38 +29,38 @@ struct SSpikeHunterConfig
 {
    double   velocityMultiplier;         // Tick rate multiplier threshold (default 2.5)
    int      minConsecutiveTicks;        // Min consecutive ticks in one direction (default 12)
-   int      consecutiveTickWindowMs;    // Time window for consecutive ticks in ms (default 60000)
+   int      consecutiveTickWindowMs;    // Time window for consecutive ticks in ms (default 10000)
    double   atrCompressionRatio;       // ATR compression threshold (default 0.60)
    int      atrPeriod;                 // ATR period (default 14)
    int      atrSmaPeriod;              // SMA period for ATR baseline (default 50)
-   double   slAtrMultiplier;           // SL = this * ATR (default 1.5)
-   double   tpAtrMultiplier;           // TP = this * ATR (default 3.0)
+   double   slAtrMultiplier;           // SL = this * ATR (default 2.0)
+   double   tpAtrMultiplier;           // TP = this * ATR (default 4.0)
    int      maxSpikePositions;         // Max concurrent spike positions (default 3)
-   int      cooldownMs;                // Cooldown between spike trades in ms (default 60000)
-   int      spikeCooldownForLongTermMs;// Cooldown for long-term entries after spike (default 60000)
-   int      magicOffset;               // Magic number offset from base (default 9000)
+   int      cooldownMs;                // Cooldown between spike trades in ms (default 120000)
+   int      spikeCooldownForLongTermMs;// Cooldown for long-term entries after spike (default 120000)
+   int      magicOffset;               // Magic number offset from base (default 9150 - unique)
    bool     enablePushAlerts;          // Send push notifications (default true)
    int      alertThrottleSeconds;      // Min seconds between push alerts (default 120)
-   int      minConfluence;             // Min detection layers to confirm (default 1)
+   int      minConfluence;             // Min detection layers to confirm (default 2)
 
-   // Default constructor with production defaults
+   // Default constructor with production defaults (ISS-1002)
    SSpikeHunterConfig()
    {
-      velocityMultiplier         = 1.8;
-      minConsecutiveTicks        = 6;
-      consecutiveTickWindowMs    = 60000;
-      atrCompressionRatio       = 0.80;
+      velocityMultiplier         = 2.5;        // Was 1.8 - higher for noise rejection
+      minConsecutiveTicks        = 12;         // Was 6 - more ticks for reliable direction confirmation
+      consecutiveTickWindowMs    = 10000;      // Was 60000 - 10s for spike responsiveness
+      atrCompressionRatio       = 0.60;        // Was 0.80 - tighter compression detection
       atrPeriod                 = 14;
       atrSmaPeriod              = 50;
-      slAtrMultiplier           = 1.5;
-      tpAtrMultiplier           = 3.0;
+      slAtrMultiplier           = 2.0;         // Was 1.5 - wider SL on spikes
+      tpAtrMultiplier           = 4.0;         // Was 3.0 - better R:R
       maxSpikePositions         = 3;
-      cooldownMs                = 60000;
-      spikeCooldownForLongTermMs = 60000;
-      magicOffset               = 9000;
+      cooldownMs                = 120000;      // Was 60000 - longer spike recovery
+      spikeCooldownForLongTermMs = 120000;    // Was 60000
+      magicOffset               = 9150;        // Was 9000 - unique, avoids DERIV_CRASH_BOOM (9000) collision
       enablePushAlerts          = true;
       alertThrottleSeconds      = 120;
-      minConfluence             = 1;
+      minConfluence             = 2;           // Was 1 - require 2/3 layers for quality
    }
 };
 
@@ -139,14 +142,16 @@ private:
    int                             m_baseMagic;
    CPositionSizer*                 m_positionSizer;
    CUnifiedRiskManager*            m_riskManager;
-   CTrade                          m_trade;                // For synchronous order execution
+   CTradeManager*                  m_tradeManager;        // For safe trade execution via TradeManager
+   CTrade                          m_trade;                // For synchronous order execution (legacy)
+   CAIAdapter*                     m_aiAdapter;            // L10-018: AI adapter for vote logging
 
    // Family-specific overrides (Batch 102)
    SSpikeHunterFamilyOverrides     m_familyOverrides[];
    int                             m_familyOverrideCount;
 
    // Alert throttling
-   datetime                        m_lastPushAlertTime;
+   ulong                           m_lastPushAlertTick;    // L10-016: Use GetTickCount() instead of TimeCurrent()
    int                             m_pushAlertCount;
 
    // ATR handle cache
@@ -574,14 +579,14 @@ private:
       }
 
       // Calculate lot size using CPositionSizer
-      double lotSize = 0.0;
-      ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            double lotSize = 0.0;
+            ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
 
-      if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
-      {
-         lotSize = m_positionSizer.CalculateOptimalPositionSize(
-                     symbol, orderType, slPips, 0.80);
-      }
+            if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
+            {
+               lotSize = m_positionSizer.CalculatePositionSize(
+                           symbol, slPips, 0.80);
+            }
       else
       {
          double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
@@ -632,6 +637,9 @@ private:
       // Calculate magic number: baseMagic + familyMagicOffset + symbolIndex
       int magic = m_baseMagic + GetEffectiveMagicOffset(idx) + idx;
 
+      // Direction string for logging
+      string dirStr = (direction == 1) ? "BUY" : "SELL";
+
       // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
       if(m_riskManager != NULL)
       {
@@ -654,41 +662,96 @@ private:
          }
       }
 
-      // Set up trade object
-      m_trade.SetExpertMagicNumber(magic);
-      m_trade.SetDeviationInPoints(50);
-      m_trade.SetTypeFilling(ORDER_FILLING_IOC);
-
-      // Execute trade synchronously (speed matters for spikes)
-      bool result = false;
-      string dirStr = (direction == 1) ? "BUY" : "SELL";
-
-      if(direction == 1)
-         result = m_trade.Buy(lotSize, symbol, entryPrice, sl, tp,
-                     "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_symbolStates[idx].confluenceCount) + "/3");
-      else
-         result = m_trade.Sell(lotSize, symbol, entryPrice, sl, tp,
-                     "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_symbolStates[idx].confluenceCount) + "/3");
-
-      if(result)
+      // L10-008: Use TradeManager for safety checks and execution
+      if(m_tradeManager != NULL)
       {
-         m_symbolStates[idx].lastSpikeTradeTime = TimeCurrent();
-         m_symbolStates[idx].lastSpikeDetectionTime = TimeCurrent();
-         m_symbolStates[idx].inSpikeCooldown = true;
-         m_totalTradesOpened++;
+         // Use TradeManager's OpenPosition which includes preflight validation
+         bool result = m_tradeManager.OpenPosition(
+             symbol,
+             orderType,
+             lotSize,
+             entryPrice,
+             slPips,
+             tpPips,
+             "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_symbolStates[idx].confluenceCount) + "/3",
+            (uint)magic
+         );
+         
+         // L10-018: AI-VOTE logging
+         if(m_aiAdapter != NULL)
+         {
+             PrintFormat("[AI-VOTE] symbol=%s strategy=SpikeHunter vote=%s",
+                         symbol, dirStr);
+         }
+         
+         if(result)
+         {
+            m_symbolStates[idx].lastSpikeTradeTime = TimeCurrent();
+            m_symbolStates[idx].lastSpikeDetectionTime = TimeCurrent();
+            m_symbolStates[idx].inSpikeCooldown = true;
+            m_totalTradesOpened++;
 
-         PrintFormat("[SPIKE-HUNT-TRADE] Symbol=%s Direction=%s Lot=%.2f SL=%.5f TP=%.5f Confluence=%d/3 ATR=%.5f magic=%d",
-                     symbol, dirStr, lotSize, sl, tp,
-                     m_symbolStates[idx].confluenceCount, atr, magic);
+            PrintFormat("[SPIKE-HUNT-TRADE] Symbol=%s Direction=%s Lot=%.2f SL=%.5f TP=%.5f Confluence=%d/3 ATR=%.5f magic=%d",
+                        symbol, dirStr, lotSize, sl, tp,
+                        m_symbolStates[idx].confluenceCount, atr, magic);
+         }
+         else
+         {
+            uint retcode = m_tradeManager.GetLastRetcode();
+            PrintFormat("[SPIKE-HUNT-TRADE-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
+                        symbol, dirStr, lotSize, retcode);
+         }
+         
+         return result;
       }
       else
       {
-         uint retcode = m_trade.ResultRetcode();
-         PrintFormat("[SPIKE-HUNT-TRADE-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
-                     symbol, dirStr, lotSize, retcode);
-      }
+         // Fallback to raw trade object if TradeManager not available (backward compatibility)
+         m_trade.SetExpertMagicNumber(magic);
+         // L10-014: Use dynamic slippage if TradeManager available, else default
+         uint fallbackSlippage = 50;
+         if(m_tradeManager != NULL)
+         {
+             fallbackSlippage = m_tradeManager.GetDynamicSlippage(symbol);
+         }
+         m_trade.SetDeviationInPoints(fallbackSlippage);
+         m_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-      return result;
+         bool result = false;
+         if(direction == 1)
+            result = m_trade.Buy(lotSize, symbol, entryPrice, sl, tp,
+                        "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_symbolStates[idx].confluenceCount) + "/3");
+         else
+            result = m_trade.Sell(lotSize, symbol, entryPrice, sl, tp,
+                        "SPIKE-HUNT|" + dirStr + "|C:" + IntegerToString(m_symbolStates[idx].confluenceCount) + "/3");
+
+         // L10-018: AI-VOTE logging (fallback path)
+         if(m_aiAdapter != NULL)
+         {
+             PrintFormat("[AI-VOTE] symbol=%s strategy=SpikeHunter vote=%s",
+                         symbol, dirStr);
+         }
+
+         if(result)
+         {
+            m_symbolStates[idx].lastSpikeTradeTime = TimeCurrent();
+            m_symbolStates[idx].lastSpikeDetectionTime = TimeCurrent();
+            m_symbolStates[idx].inSpikeCooldown = true;
+            m_totalTradesOpened++;
+
+            PrintFormat("[SPIKE-HUNT-TRADE] Symbol=%s Direction=%s Lot=%.2f SL=%.5f TP=%.5f Confluence=%d/3 ATR=%.5f magic=%d",
+                        symbol, dirStr, lotSize, sl, tp,
+                        m_symbolStates[idx].confluenceCount, atr, magic);
+         }
+         else
+         {
+            uint retcode = m_trade.ResultRetcode();
+            PrintFormat("[SPIKE-HUNT-TRADE-FAILED] Symbol=%s Direction=%s Lot=%.2f retcode=%u",
+                        symbol, dirStr, lotSize, retcode);
+         }
+         
+         return result;
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -699,18 +762,20 @@ private:
       if(!m_config.enablePushAlerts)
          return;
 
-      datetime now = TimeCurrent();
-      int elapsedSeconds = (int)(now - m_lastPushAlertTime);
+      // L10-016: Use GetTickCount() (millisecond) instead of TimeCurrent() (second resolution)
+      ulong now = GetTickCount();
+      int elapsedMs = (int)(now - m_lastPushAlertTick);
+      int throttleMs = m_config.alertThrottleSeconds * 1000;
 
-      if(elapsedSeconds < m_config.alertThrottleSeconds)
+      if(elapsedMs < throttleMs)
       {
-         PrintFormat("[SPIKE-HUNT-ALERT-THROTTLED] Alert suppressed (last sent %ds ago)", elapsedSeconds);
+         PrintFormat("[SPIKE-HUNT-ALERT-THROTTLED] Alert suppressed (last sent %d ms ago)", elapsedMs);
          return;
       }
 
       if(SendNotification(message))
       {
-         m_lastPushAlertTime = now;
+         m_lastPushAlertTick = now;
          m_pushAlertCount++;
          PrintFormat("[SPIKE-HUNT-ALERT] Push notification sent: %s", message);
       }
@@ -730,7 +795,7 @@ public:
       m_familyOverrideCount(0),
        m_positionSizer(NULL),
        m_riskManager(NULL),
-       m_lastPushAlertTime(0),
+       m_lastPushAlertTick(0),
       m_pushAlertCount(0),
       m_totalDetections(0),
       m_totalTradesOpened(0),
@@ -749,12 +814,14 @@ public:
    //+------------------------------------------------------------------+
    //| Initialize the engine with config and dependencies               |
    //+------------------------------------------------------------------+
-   bool Init(const SSpikeHunterConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL)
+   bool Init(const SSpikeHunterConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL, CAIAdapter *pAIAdapter = NULL)
    {
       m_config         = config;
       m_baseMagic      = baseMagic;
       m_positionSizer  = pSizer;
       m_riskManager    = pRiskManager;
+      m_tradeManager   = pTradeManager;
+      m_aiAdapter      = pAIAdapter;
       m_symbolCount    = 0;
 
       PrintFormat("[SPIKE-HUNT-ENGINE] Initialized | velMult=%.1f | minTicks=%d | atrRatio=%.2f | slATR=%.1f | tpATR=%.1f | maxPos=%d | cooldown=%dms | confluence=%d/3 | magicOffset=%d",

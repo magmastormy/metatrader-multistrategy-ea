@@ -10,7 +10,13 @@
 #include "../../Core/Management/EnterpriseStrategyManager.mqh"
 #include "../../Core/Risk/UnifiedRiskManager.mqh"
 #include "../../Core/Risk/PositionSizer.mqh"
+#include "../Risk/RiskTierManager.mqh"
+#include "../Risk/CompoundingTierManager.mqh"
+#include "../../Core/Engines/FamilyStrategyWeightMatrix.mqh"
+#include "../../Core/Engines/SessionWeightManager.mqh"
+#include "../../Core/Engines/SkewStepAnalyzer.mqh"
 #include "../../Core/Utils/Enums.mqh"
+#include "../../Core/Utils/JsonLogger.mqh"
 #include "../../Core/Utils/Instruments.mqh"
 
 // Trade candidate structure - global for cross-class usage
@@ -37,20 +43,22 @@ struct STradeCandidate
     double readinessScore;
     double contextScore;
     double costScore;
-    bool liveAuthorityAllowed;
     double liveAuthorityRiskMult;
     string liveAuthorityReason;
+    bool liveAuthorityAllowed;
     bool hasAIContributor;
     bool hasONNXContributor;
     bool hasIndicatorContributor;
     int indicatorContributorCount;
+    string predictionId;  // For linking trade outcome to NN training (L11-014)
     
     STradeCandidate() : symbol(""), orderType(ORDER_TYPE_BUY), entryPrice(0), stopLossPips(0),
                        takeProfitPips(0), lotSize(0), riskPercent(0), confidence(0),
                        confluence(0), qualityScore(0), convictionScore(0), readinessScore(0), contextScore(0),
-                       costScore(0), liveAuthorityAllowed(false), liveAuthorityRiskMult(1.0),
-                       hasAIContributor(false), hasONNXContributor(false),
-                       hasIndicatorContributor(false), indicatorContributorCount(0) {}
+                       costScore(0), liveAuthorityRiskMult(1.0),
+                       liveAuthorityAllowed(false), hasAIContributor(false), hasONNXContributor(false),
+                       hasIndicatorContributor(false), indicatorContributorCount(0),
+                       predictionId("") {}
 };
 
 class CCandidateBuilder
@@ -61,6 +69,13 @@ private:
     CTradeManager*              m_tradeManager;
     CPerformanceAnalytics*      m_performanceAnalytics;
     CDerivAssetProfiler*        m_derivProfiler;
+    
+    // Additional managers from EAOrchestrator Initialize call
+    CRiskTierManager*           m_riskTierManager;
+    CCompoundingTierManager*    m_compoundingTierManager;
+    CFamilyStrategyWeightMatrix* m_familyWeightMatrix;
+    CSessionWeightManager*      m_sessionWeightManager;
+    CSkewStepAnalyzer*          m_skewStepAnalyzer;
     
     // Config
     double                      m_minRRDefault;
@@ -77,11 +92,17 @@ private:
     double                      m_minRRByCluster[];
     
     // Hybrid gate relaxation
-    int                         m_hybridGateRelaxAfterCycles;
-    double                      m_aiStandaloneMinConfidence;
-    double                      m_aiStandaloneRelaxedConfidence;
-    int                         m_cyclesSinceIndicatorSignal;
-    bool                        m_hybridGateRelaxed;
+        int                         m_hybridGateRelaxAfterCycles;
+        double                      m_aiStandaloneMinConfidence;
+        double                      m_aiStandaloneRelaxedConfidence;
+        // Per-symbol cycle tracking for hybrid gate relaxation
+        string                      m_symbolCyclesSinceIndicator[];
+        int                         m_symbolCyclesSinceIndicatorValues[];
+        int                         m_symbolCycleCount;
+        // Per-symbol hybrid gate relaxed state (L3-014 fix)
+        string                      m_symbolHybridGateRelaxedKeys[];
+        bool                        m_symbolHybridGateRelaxedValues[];
+        int                         m_symbolHybridGateRelaxedCount;
     
     // Helper: check if contributors include indicator strategies
     bool ContributorsIncludeIndicator(const string &contributors[])
@@ -122,23 +143,117 @@ private:
         return count;
     }
 
+    // Helper: Get cycles since indicator signal for a specific symbol
+    int GetCyclesSinceIndicatorSignal(const string &symbol)
+    {
+        for(int i = 0; i < m_symbolCycleCount; i++)
+        {
+            if(m_symbolCyclesSinceIndicator[i] == symbol)
+                return m_symbolCyclesSinceIndicatorValues[i];
+        }
+        return 0; // Not found, return 0
+    }
+
+    // Helper: Set cycles since indicator signal for a specific symbol
+    void SetCyclesSinceIndicatorSignal(const string &symbol, int cycles)
+    {
+        // Find existing entry
+        for(int i = 0; i < m_symbolCycleCount; i++)
+        {
+            if(m_symbolCyclesSinceIndicator[i] == symbol)
+            {
+                m_symbolCyclesSinceIndicatorValues[i] = cycles;
+                return;
+            }
+        }
+        // Add new entry if space available
+        if(m_symbolCycleCount < ArraySize(m_symbolCyclesSinceIndicator))
+        {
+            m_symbolCyclesSinceIndicator[m_symbolCycleCount] = symbol;
+            m_symbolCyclesSinceIndicatorValues[m_symbolCycleCount] = cycles;
+            m_symbolCycleCount++;
+        }
+        // If array is full, we could implement LRU eviction, but for now just skip
+    }
+
+    // Helper: Increment cycles since indicator signal for a specific symbol
+    void IncrementCyclesSinceIndicatorSignal(const string &symbol)
+    {
+        int currentCycles = GetCyclesSinceIndicatorSignal(symbol);
+        SetCyclesSinceIndicatorSignal(symbol, currentCycles + 1);
+    }
+
+    // Helper: Get hybrid gate relaxed state for a specific symbol
+    bool GetHybridGateRelaxed(const string &symbol)
+    {
+        for(int i = 0; i < m_symbolHybridGateRelaxedCount; i++)
+        {
+            if(m_symbolHybridGateRelaxedKeys[i] == symbol)
+                return m_symbolHybridGateRelaxedValues[i];
+        }
+        return false; // Not found, default to false
+    }
+
+    // Helper: Set hybrid gate relaxed state for a specific symbol
+    void SetHybridGateRelaxed(const string &symbol, bool relaxed)
+    {
+        // Find existing entry
+        for(int i = 0; i < m_symbolHybridGateRelaxedCount; i++)
+        {
+            if(m_symbolHybridGateRelaxedKeys[i] == symbol)
+            {
+                m_symbolHybridGateRelaxedValues[i] = relaxed;
+                return;
+            }
+        }
+        // Add new entry if space available
+        if(m_symbolHybridGateRelaxedCount < ArraySize(m_symbolHybridGateRelaxedKeys))
+        {
+            m_symbolHybridGateRelaxedKeys[m_symbolHybridGateRelaxedCount] = symbol;
+            m_symbolHybridGateRelaxedValues[m_symbolHybridGateRelaxedCount] = relaxed;
+            m_symbolHybridGateRelaxedCount++;
+        }
+    }
+
 public:
     CCandidateBuilder() : 
-        m_riskManager(NULL), m_positionSizer(NULL), m_tradeManager(NULL),
-        m_performanceAnalytics(NULL), m_derivProfiler(NULL),
-        m_minRRDefault(2.0), m_minRRMeanReversion(1.5), m_maxRiskPerTrade(5.0),
-        m_maxSpreadToTpRatio(0.15), m_minLotRiskMultiplier(1.5),
-        m_aiDrawdownSizingLimit(0.2), m_antiMartingaleEnabled(true),
-        m_maxPositionsPerSymbol(0), m_portfolioMaxPositionsPerSymbol(0),
-        m_hybridGateRelaxAfterCycles(5), m_aiStandaloneMinConfidence(0.65),
-        m_aiStandaloneRelaxedConfidence(0.65), m_cyclesSinceIndicatorSignal(0),
-        m_hybridGateRelaxed(false)
-    {
-        ArrayResize(m_minRRByCluster, 10);
-        ArrayInitialize(m_minRRByCluster, 2.0);
-        // Cluster-specific overrides
-        m_minRRByCluster[MEAN_REVERSION_CLUSTER] = 1.5;
-    }
+            m_riskManager(NULL), m_positionSizer(NULL), m_tradeManager(NULL),
+            m_performanceAnalytics(NULL), m_derivProfiler(NULL),
+            m_minRRDefault(2.0), m_minRRMeanReversion(1.5), m_maxRiskPerTrade(5.0),
+            m_maxSpreadToTpRatio(0.15), m_minLotRiskMultiplier(1.5),
+            m_aiDrawdownSizingLimit(0.2), m_antiMartingaleEnabled(true),
+            m_maxPositionsPerSymbol(0), m_portfolioMaxPositionsPerSymbol(0),
+            m_hybridGateRelaxAfterCycles(5), m_aiStandaloneMinConfidence(0.65),
+                m_aiStandaloneRelaxedConfidence(0.65), m_symbolCycleCount(0),
+                m_symbolHybridGateRelaxedCount(0),
+                m_riskTierManager(NULL), m_compoundingTierManager(NULL),
+                m_familyWeightMatrix(NULL), m_sessionWeightManager(NULL),
+                m_skewStepAnalyzer(NULL)
+            {
+            ArrayResize(m_minRRByCluster, 10);
+            ArrayInitialize(m_minRRByCluster, 2.0);
+            // Cluster-specific overrides
+            m_minRRByCluster[MEAN_REVERSION_CLUSTER] = 1.5;
+        
+            // Initialize per-symbol cycle tracking arrays
+            ArrayResize(m_symbolCyclesSinceIndicator, 50);
+            ArrayResize(m_symbolCyclesSinceIndicatorValues, 50);
+            for(int _i = 0; _i < 50; _i++)
+            {
+                m_symbolCyclesSinceIndicator[_i] = "";
+                m_symbolCyclesSinceIndicatorValues[_i] = 0;
+            }
+
+            // Initialize per-symbol hybrid gate relaxed state arrays (L3-014 fix)
+            ArrayResize(m_symbolHybridGateRelaxedKeys, 50);
+            ArrayResize(m_symbolHybridGateRelaxedValues, 50);
+            for(int _j = 0; _j < 50; _j++)
+            {
+                m_symbolHybridGateRelaxedKeys[_j] = "";
+                m_symbolHybridGateRelaxedValues[_j] = false;
+            }
+        }
+    
     
     void SetDependencies(CUnifiedRiskManager* risk, CPositionSizer* sizer, CTradeManager* trade,
                          CPerformanceAnalytics* perf, CDerivAssetProfiler* derivProf)
@@ -148,6 +263,23 @@ public:
         m_tradeManager = trade;
         m_performanceAnalytics = perf;
         m_derivProfiler = derivProf;
+    }
+    
+    // Initialize with all dependencies from EAOrchestrator (7 parameters)
+    bool Initialize(CPositionSizer* sizer, CUnifiedRiskManager* risk,
+                    CRiskTierManager* riskTierMgr, CCompoundingTierManager* compoundingTierMgr,
+                    CFamilyStrategyWeightMatrix* familyWeightMatrix,
+                    CSessionWeightManager* sessionWeightMgr,
+                    CSkewStepAnalyzer* skewStepAnalyzer)
+    {
+        m_positionSizer = sizer;
+        m_riskManager = risk;
+        m_riskTierManager = riskTierMgr;
+        m_compoundingTierManager = compoundingTierMgr;
+        m_familyWeightMatrix = familyWeightMatrix;
+        m_sessionWeightManager = sessionWeightMgr;
+        m_skewStepAnalyzer = skewStepAnalyzer;
+        return true;
     }
     
     void Configure(double minRRDefault, double minRRMeanRev, double maxRiskPerTrade,
@@ -170,10 +302,10 @@ public:
     }
     
     // Build candidate from validated signal
-    bool BuildCandidate(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
-                        int confluence, const SConsensusDecisionContext& ctx,
-                        CEnterpriseStrategyManager* manager, ulong scanCycleId,
-                        STradeCandidate &candidate)
+        bool BuildCandidate(const string symbol, ENUM_TRADE_SIGNAL signal, double confidence,
+                            int confluence, const SConsensusDecisionContext& ctx,
+                            CEnterpriseStrategyManager* manager, ulong scanCycleId,
+                            STradeCandidate &candidate, const string corrId = "")
     {
         if(signal == TRADE_SIGNAL_NONE) return false;
         
@@ -204,30 +336,58 @@ public:
         candidate.hasIndicatorContributor = ContributorsIncludeIndicator(contributorsList);
         candidate.indicatorContributorCount = CountIndicatorContributors(contributorsList);
         
-        // Handle hybrid gate relaxation
-        if(candidate.hasIndicatorContributor)
-        {
-            if(m_hybridGateRelaxed)
-                PrintFormat("[HYBRID-GATE-RESTORED] Indicator signal detected, AI threshold restored to %.3f",
-                            m_aiStandaloneMinConfidence);
-            m_cyclesSinceIndicatorSignal = 0;
-            m_hybridGateRelaxed = false;
-        }
-        else if(m_cyclesSinceIndicatorSignal > m_hybridGateRelaxAfterCycles && !m_hybridGateRelaxed)
-        {
-            m_hybridGateRelaxed = true;
-            PrintFormat("[HYBRID-GATE-RELAXED] No indicator signals for %d cycles, AI threshold %.3f -> %.3f",
-                        m_cyclesSinceIndicatorSignal, m_aiStandaloneMinConfidence, m_aiStandaloneRelaxedConfidence);
-        }
+        // Handle hybrid gate relaxation (L3-014: per-symbol tracking)
+                        int cyclesSinceIndicator = GetCyclesSinceIndicatorSignal(symbol);
+                        bool hybridGateRelaxed = GetHybridGateRelaxed(symbol);
+
+                        if(candidate.hasIndicatorContributor)
+                                                {
+                                                    if(hybridGateRelaxed)
+                                                    {
+                                                        // Log with correlation ID
+                                                        if(corrId != "")
+                                                        {
+                                                            CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate restored - indicator signal detected", "HYBRID_GATE_RESTORED", symbol, corrId, 
+                                                                "{\"threshold\":" + DoubleToString(m_aiStandaloneMinConfidence, 3) + "}");
+                                                        }
+                                                        PrintFormat("[HYBRID-GATE-RESTORED] %s | Indicator signal detected, AI threshold restored to %.3f",
+                                                                    symbol, m_aiStandaloneMinConfidence);
+                                                    }
+                                                    SetCyclesSinceIndicatorSignal(symbol, 0);
+                                                    SetHybridGateRelaxed(symbol, false);
+                                                }
+                                                else if(cyclesSinceIndicator > m_hybridGateRelaxAfterCycles && !hybridGateRelaxed)
+                                                {
+                                                    SetHybridGateRelaxed(symbol, true);
+                                                    // Log with correlation ID
+                                                    if(corrId != "")
+                                                    {
+                                                        CJsonLogger::LogInfo("CANDIDATE_BUILDER", "Hybrid gate relaxed - no indicator signals", "HYBRID_GATE_RELAXED", symbol, corrId, 
+                                                            "{\"cycles\":" + IntegerToString(cyclesSinceIndicator) + ",\"threshold_from\":" + DoubleToString(m_aiStandaloneMinConfidence, 3) + ",\"threshold_to\":" + DoubleToString(m_aiStandaloneRelaxedConfidence, 3) + "}");
+                                                    }
+                                                    PrintFormat("[HYBRID-GATE-RELAXED] %s | No indicator signals for %d cycles, AI threshold %.3f -> %.3f",
+                                                                symbol, cyclesSinceIndicator, m_aiStandaloneMinConfidence, m_aiStandaloneRelaxedConfidence);
+                                                }
         
+                // Increment cycle counter for this symbol if no indicator signal
+                if(!candidate.hasIndicatorContributor)
+                {
+                    IncrementCyclesSinceIndicatorSignal(symbol);
+                }
         // Resolve EA mode admission
-        string modeRejectReason = "";
-        double modeConfidenceBonus = 0.0;
-        if(!EvaluateEAModeAdmission(contributorsList, confidence, modeRejectReason, modeConfidenceBonus))
-        {
-            PrintFormat("[CANDIDATE-BUILDER] %s | EA mode admission rejected: %s", symbol, modeRejectReason);
-            return false;
-        }
+                string modeRejectReason = "";
+                double modeConfidenceBonus = 0.0;
+                if(!EvaluateEAModeAdmission(contributorsList, confidence, modeRejectReason, modeConfidenceBonus))
+                {
+                    // Log rejection with correlation ID
+                    if(corrId != "")
+                    {
+                        CJsonLogger::LogSignal(symbol, signal, confidence, "CANDIDATE_BUILDER", corrId, 
+                            "{\"event\":\"ea_mode_admission_rejected\",\"reason\":\"" + modeRejectReason + "\"}");
+                    }
+                    PrintFormat("[CANDIDATE-BUILDER] %s | EA mode admission rejected: %s", symbol, modeRejectReason);
+                    return false;
+                }
         if(modeConfidenceBonus > 0)
         {
             confidence = MathMin(1.0, confidence + modeConfidenceBonus);
@@ -290,23 +450,24 @@ public:
         tradeReq.requestTime = TimeCurrent();
         
         SValidationResult riskResult;
-        if(!ApproveTradeByUnifiedRisk(tradeReq, "pre-size", riskResult, scanCycleId))
+        riskResult = m_riskManager.ValidateTradeRequest(tradeReq, "pre-size", corrId);
+        if(!riskResult.approved)
             return false;
         
         // Calculate final lot size
-        double lotSize = m_positionSizer.CalculateSize(symbol, candidate.orderType, 
-                                                        candidate.stopLossPips, 
-                                                        proposedRisk, 
-                                                        candidate.confidence);
+                double lotSize = m_positionSizer.CalculatePositionSizeWithRisk(symbol, 
+                                                                                candidate.stopLossPips, 
+                                                                                proposedRisk, 
+                                                                                candidate.confidence);
         
-        // Cap for daily budget
-        double remainingDailyRisk = m_riskManager.GetRemainingDailyRiskPercent();
-        if(lotSize > 0 && remainingDailyRisk > 0 && proposedRisk > 0)
-        {
-            lotSize = m_positionSizer.CapLotForDailyBudget(symbol, candidate.orderType, lotSize,
-                                                            candidate.stopLossPips, proposedRisk,
-                                                            remainingDailyRisk, 0.30);
-        }
+                // Cap for daily budget
+                double remainingDailyRisk = m_riskManager.GetRemainingDailyRiskPercent();
+                if(lotSize > 0 && remainingDailyRisk > 0 && proposedRisk > 0)
+                {
+                    lotSize = m_positionSizer.CapLotForDailyBudget(symbol, candidate.orderType, lotSize,
+                                                                    candidate.stopLossPips, proposedRisk,
+                                                                    remainingDailyRisk, 0.30);
+                }
         
         if(lotSize <= 0)
         {
@@ -348,9 +509,9 @@ public:
                                            roleTag, clusterTag, contribSummary,
                                            ctx.convictionScore, ctx.readinessScore, ctx.contextScore, ctx.costScore);
         
-        // Increment cycles since indicator signal
-        if(!candidate.hasIndicatorContributor)
-            m_cyclesSinceIndicatorSignal++;
+        // Increment cycles since indicator signal (L3-014: per-symbol)
+                if(!candidate.hasIndicatorContributor)
+                    IncrementCyclesSinceIndicatorSignal(symbol);
         
         return true;
     }
@@ -388,8 +549,13 @@ public:
         }
         
         // Bound by broker constraints
-        int brokerMinPoints = m_tradeManager.GetMinimumStopPoints(symbol);
+        // NULL-guard: m_tradeManager is wired via SetDependencies(); if that wiring is ever
+        // missing, fall back to SYMBOL_TRADE_STOPS_LEVEL (GetMinimumStopDistance() is itself
+        // essentially max(STOPS_LEVEL, FREEZE_LEVEL)*point, so STOPS_LEVEL is a safe floor).
         int stopLevelPts = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+        double brokerMinPoints = (m_tradeManager != NULL)
+                                     ? m_tradeManager.GetMinimumStopDistance(symbol)
+                                     : (double)stopLevelPts;
         
         double spreadPoints = 0;
         MqlTick tick;
@@ -476,7 +642,8 @@ public:
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            if(PositionGetString(POSITION_SYMBOL) == symbol && IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC)))
+            // NULL-guard: a NULL trade manager simply yields no owned-position match rather than crashing.
+            if(PositionGetString(POSITION_SYMBOL) == symbol && (m_tradeManager != NULL && m_tradeManager.IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))))
                 existingCount++;
         }
         
@@ -599,19 +766,35 @@ public:
     }
     
     // Diagnostics
-    string GetStatusReport() const
-    {
-        string report = "[CandidateBuilder] Config:\n";
-        report += "  MinRRDefault=" + DoubleToString(m_minRRDefault, 1);
-        report += " | MinRRMeanRev=" + DoubleToString(m_minRRMeanReversion, 1) + "\n";
-        report += "  MaxRiskPerTrade=" + DoubleToString(m_maxRiskPerTrade, 1) + "%\n";
-        report += "  HybridGateRelaxCycles=" + IntegerToString(m_hybridGateRelaxAfterCycles);
-        report += " | AIStandaloneConf=" + DoubleToString(m_aiStandaloneMinConfidence, 2);
-        report += " | AIRelaxedConf=" + DoubleToString(m_aiStandaloneRelaxedConfidence, 2) + "\n";
-        report += "  CyclesSinceIndicator=" + IntegerToString(m_cyclesSinceIndicatorSignal);
-        report += " | GateRelaxed=" + (m_hybridGateRelaxed ? "YES" : "NO");
-        return report;
-    }
+        string GetStatusReport() const
+        {
+            string report = "[CandidateBuilder] Config:\n";
+            report += "  MinRRDefault=" + DoubleToString(m_minRRDefault, 1);
+            report += " | MinRRMeanRev=" + DoubleToString(m_minRRMeanReversion, 1) + "\n";
+            report += "  MaxRiskPerTrade=" + DoubleToString(m_maxRiskPerTrade, 1) + "%\n";
+            report += "  HybridGateRelaxCycles=" + IntegerToString(m_hybridGateRelaxAfterCycles);
+            report += " | AIStandaloneConf=" + DoubleToString(m_aiStandaloneMinConfidence, 2);
+            report += " | AIRelaxedConf=" + DoubleToString(m_aiStandaloneRelaxedConfidence, 2) + "\n";
+            // L3-014: Show per-symbol hybrid gate state
+            for(int i = 0; i < m_symbolCycleCount; i++)
+            {
+                string symbol = m_symbolCyclesSinceIndicator[i];
+                if(symbol == "") continue;
+                int cycles = m_symbolCyclesSinceIndicatorValues[i];
+                bool relaxed = false;
+                // Find hybrid gate relaxed state for this symbol
+                for(int j = 0; j < m_symbolHybridGateRelaxedCount; j++)
+                {
+                    if(m_symbolHybridGateRelaxedKeys[j] == symbol)
+                    {
+                        relaxed = m_symbolHybridGateRelaxedValues[j];
+                        break;
+                    }
+                }
+                report += "  " + symbol + ": cycles=" + IntegerToString(cycles) + " relaxed=" + (relaxed ? "YES" : "NO") + "\n";
+            }
+            return report;
+        }
 };
 
 #endif // CORE_ORCHESTRATION_CANDIDATE_BUILDER_MQH

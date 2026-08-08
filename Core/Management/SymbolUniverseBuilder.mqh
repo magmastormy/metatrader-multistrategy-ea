@@ -27,13 +27,103 @@ private:
             string existingUpper = activePairs[i];
             StringToUpper(existingUpper);
             
-            if(StringFind(symUpper, existingUpper) >= 0 || StringFind(existingUpper, symUpper) >= 0)
+            // Exact match already handled by ContainsSymbol
+            if(symUpper == existingUpper)
+                continue;
+            
+            // For Deriv synthetic indices: compare the index number/name
+            if(StringFind(symUpper, "VOLATILITY") >= 0 && StringFind(existingUpper, "VOLATILITY") >= 0)
             {
-                if(symUpper != existingUpper)
+                // Extract index number: "Volatility 25 Index" -> 25
+                int symNum = ExtractVolatilityIndex(symUpper);
+                int existingNum = ExtractVolatilityIndex(existingUpper);
+                if(symNum > 0 && symNum == existingNum)
                     return true;
             }
+            else if((StringFind(symUpper, "BOOM") >= 0 || StringFind(symUpper, "CRASH") >= 0) &&
+                    (StringFind(existingUpper, "BOOM") >= 0 || StringFind(existingUpper, "CRASH") >= 0))
+            {
+                // Boom/Crash: compare the number (1000, 500, etc.)
+                int symNum = ExtractBoomCrashIndex(symUpper);
+                int existingNum = ExtractBoomCrashIndex(existingUpper);
+                if(symNum > 0 && symNum == existingNum)
+                    return true;
+            }
+            else if(StringFind(symUpper, "JUMP") >= 0 && StringFind(existingUpper, "JUMP") >= 0)
+            {
+                // Jump: compare the number (25, 75, etc.)
+                int symNum = ExtractJumpIndex(symUpper);
+                int existingNum = ExtractJumpIndex(existingUpper);
+                if(symNum > 0 && symNum == existingNum)
+                    return true;
+            }
+            else if(StringFind(symUpper, "STEP INDEX") >= 0 && StringFind(existingUpper, "STEP INDEX") >= 0)
+            {
+                // Step Index variants - they are different indices
+                return true;
+            }
+            // For Forex: compare base/quote currencies (first 3 and last 3 chars for 6-char pairs)
+            else if(StringLen(symUpper) >= 6 && StringLen(existingUpper) >= 6)
+            {
+                string symBase = StringSubstr(symUpper, 0, 3);
+                string symQuote = StringSubstr(symUpper, StringLen(symUpper) - 3, 3);
+                string existingBase = StringSubstr(existingUpper, 0, 3);
+                string existingQuote = StringSubstr(existingUpper, StringLen(existingUpper) - 3, 3);
+                
+                // Same base and quote = same pair (e.g., EURUSD vs EURUSDm)
+                if(symBase == existingBase && symQuote == existingQuote)
+                    return true;
+                
+                // Same base, different quote = cross pair (not similar for our purposes)
+                // Same quote, different base = major/cross (not similar)
+            }
+            
+            return false;
         }
         return false;
+    }
+    
+    // Helper to extract volatility index number
+    static int ExtractVolatilityIndex(const string sym)
+    {
+        int pos = StringFind(sym, "VOLATILITY");
+        if(pos < 0) return 0;
+        int numStart = pos + StringLen("VOLATILITY");
+        string rest = StringSubstr(sym, numStart);
+        StringTrimLeft(rest);
+        int endPos = StringFind(rest, " ");
+        if(endPos < 0) endPos = StringLen(rest);
+        string numStr = StringSubstr(rest, 0, endPos);
+        return (int)StringToInteger(numStr);
+    }
+    
+    // Helper to extract Boom/Crash index
+    static int ExtractBoomCrashIndex(const string sym)
+    {
+        int pos = StringFind(sym, "BOOM");
+        if(pos < 0) pos = StringFind(sym, "CRASH");
+        if(pos < 0) return 0;
+        int numStart = pos + 4; // BOOM or CRASH = 4 chars
+        string rest = StringSubstr(sym, numStart);
+        StringTrimLeft(rest);
+        int endPos = StringFind(rest, " ");
+        if(endPos < 0) endPos = StringLen(rest);
+        string numStr = StringSubstr(rest, 0, endPos);
+        return (int)StringToInteger(numStr);
+    }
+    
+    // Helper to extract Jump index
+    static int ExtractJumpIndex(const string sym)
+    {
+        int pos = StringFind(sym, "JUMP");
+        if(pos < 0) return 0;
+        int numStart = pos + 4; // JUMP = 4 chars
+        string rest = StringSubstr(sym, numStart);
+        StringTrimLeft(rest);
+        int endPos = StringFind(rest, " ");
+        if(endPos < 0) endPos = StringLen(rest);
+        string numStr = StringSubstr(rest, 0, endPos);
+        return (int)StringToInteger(numStr);
     }
 
 public:
@@ -47,7 +137,7 @@ public:
         return false;
     }
 
-    static bool Build(const string rawSymbols, string &activePairs[], const SSymbolValidationConfig &config)
+    static bool Build(const string rawSymbols, string &activePairs[], const SSymbolValidationConfig &config, const string chartSymbol = "")
     {
         ArrayResize(activePairs, 0);
 
@@ -230,6 +320,30 @@ public:
                 accepted += activePairs[a];
             }
             PrintFormat("[SYMBOL-VALIDATION] Accepted symbols: %s", accepted);
+        }
+
+        // L7-021: Auto-add chart symbol if provided and not already in universe
+        if(chartSymbol != "" && !ContainsSymbol(activePairs, chartSymbol))
+        {
+            if(SymbolSelect(chartSymbol, true))
+            {
+                long symbolTradeMode = SymbolInfoInteger(chartSymbol, SYMBOL_TRADE_MODE);
+                if(symbolTradeMode != SYMBOL_TRADE_MODE_DISABLED && symbolTradeMode != SYMBOL_TRADE_MODE_CLOSEONLY)
+                {
+                    int size = ArraySize(activePairs);
+                    ArrayResize(activePairs, size + 1);
+                    activePairs[size] = chartSymbol;
+                    PrintFormat("[SYMBOL-UNIVERSE] Auto-added chart symbol: %s", chartSymbol);
+                }
+                else
+                {
+                    PrintFormat("[SYMBOL-UNIVERSE] Chart symbol %s not tradeable (mode=%d), not adding", chartSymbol, symbolTradeMode);
+                }
+            }
+            else
+            {
+                PrintFormat("[SYMBOL-UNIVERSE] Failed to select chart symbol %s, not adding", chartSymbol);
+            }
         }
 
         return (ArraySize(activePairs) > 0);

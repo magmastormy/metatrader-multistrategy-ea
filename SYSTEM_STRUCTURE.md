@@ -1,11 +1,12 @@
-# SYSTEM\_STRUCTURE.md
+# SYSTEM_STRUCTURE.md
 
 ## Document Metadata
 
-- Last Updated: 2026-07-13
+- Last Updated: 2026-08-06
+- Last Architecture Sync: 2026-08-06
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 123
+- Current Batch: 142
 
 ## 1. System Goal
 
@@ -45,7 +46,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - **Memory Leak Elimination**: All strategy registration paths (`RegisterManagerAIAdapterByName`, `RegisterIndicatorStrategyByName`, `InitializeNeuralNetForSymbol`) now properly delete allocated objects on registration failure. Covers 17 strategy types and 3 AI adapter types.
   - **MQL5 API Error Handling**: `GetMinimumStopPoints()` made public for EA access. `Initialize()` parameter changed from `uint` to `long`. Added error propagation for `CopyBuffer`, `OrderSend`, `SymbolInfoInteger`, `SymbolInfoDouble`.
   - **Resource Cleanup Verification**: All dynamic allocations in `OnDeinit()` verified with matching deletions. `CIndicatorManager::DestroyInstance()` called. ONNX handles released via `COnnxBrain::Deinit()`.
-- **Batch 123 (Dead Code Removal — Shadow Mode & Dormancy/Blacklist Elimination)** — Complete removal of legacy shadow mode infrastructure and dead dormancy/blacklist tracking code. The system now operates in live-only mode with clean execution paths:
+- **Batch 123 (Dead Code Removal — Shadow Mode & Dormancy/Blacklist Encapsulation)** — Complete removal of legacy shadow mode infrastructure and encapsulation of dormancy/blacklist tracking into registry classes. The system now operates in live-only mode with clean execution paths:
   - **Shadow Mode Removal** (~400+ lines across 8 files):
     - Removed `InpShadowMode` and `InpShadowModeEnabled` input parameters from main EA
     - Removed `m_shadowMode` member and `SetShadowMode()` from `CDiagnosticsManager`
@@ -58,12 +59,14 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
     - Removed `SHADOW_RESEARCH` role references from consensus diagnostics
     - Removed `g_hbShadowTrades` global variable and all increments
     - Removed shadow trade execution path and `[SHADOW-TRADE]` logging from main EA
-  - **Dormancy/Blacklist Code Removal** (~60 lines from main EA):
-    - Removed `g_dormantConsecutiveCount[]`, `g_dormantCooldownUntil[]`, `g_dormantCooldownSymbols[]` global arrays
-    - Removed `DORMANT_COOLDOWN_THRESHOLD` and `DORMANT_COOLDOWN_MINUTES` constants
-    - Removed `g_scalpBlacklistFailCount[]`, `g_scalpBlacklisted[]`, `g_scalpBlacklistDay[]`, `g_scalpBlacklistSymbols[]` global arrays
-    - Removed `SCALP_BLACKLIST_THRESHOLD` constant
+  - **Dormancy/Blacklist Encapsulation** (~60 lines from main EA):
+    - Removed `g_dormantConsecutiveCount[]`, `g_dormantCooldownUntil[]`, `g_dormantCooldownSymbols[]` global arrays from main EA
+    - Removed `DORMANT_COOLDOWN_THRESHOLD` and `DORMANT_COOLDOWN_MINUTES` constants from main EA
+    - Removed `g_scalpBlacklistFailCount[]`, `g_scalpBlacklisted[]`, `g_scalpBlacklistDay[]`, `g_scalpBlacklistSymbols[]` global arrays from main EA
+    - Removed `SCALP_BLACKLIST_THRESHOLD` constant from main EA
     - Dormancy tracking now fully encapsulated in `CSymbolScanScheduler` / `CScanSchedulerRegistry`
+    - Scalp blacklist tracking now fully encapsulated in `CScanSchedulerRegistry` / `CSymbolStateTracker`
+    - `CSignalGenerator` implements dormancy warning logic for signal evaluation
   - **Documentation Updates**: Updated `README.md`, `changelogs.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, `SYSTEM_AUDIT_TRACE.md`
   - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified
 
@@ -77,38 +80,63 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - **Files Changed**: `Core/Utils/Enums.mqh`, `Core/Management/DiagnosticsManager.mqh`, `Core/Management/EnterpriseStrategyManager.mqh`, `Core/Pipeline/UnifiedSignalPipeline.mqh`, `MultiStrategyAutonomousEA.mq5`
   - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified
 
+- **Batch 129 (Layer 4 Signal Pipeline & Filtering — Complete Audit Fixes)** — Resolved all 15 issues from `layer_4.md` audit across signal pipeline, engines, and timeframe consistency:
+  - **L4-001 CRITICAL: Filter Chain Abstraction with Early Exit** — Added configurable filter order via `SignalFilterSettings.filterOrder[]`, implemented early-exit in `ProcessSignal()` after each filter failure, skips disabled filters entirely, added `BuildFilterOrderMap()` for runtime filter execution ordering
+  - **L4-002 HIGH: Stale Intrabar Cache** — `RefreshStructuralContext()` now includes intrabar context in cache key with `m_intrabarContext` tracking for cache invalidation
+  - **L4-003 HIGH: Quality Score Weight Normalization** — Renormalized `CalculateQualityScore()` weights to sum to 1.0, removed ad-hoc +0.05 filter bonus, integrated as proper weighted component
+  - **L4-004 HIGH: Confidence Threshold Variable Naming** — Fixed `multiplierThreshold` → `effectiveMinConfidence` naming inconsistency, consolidated threshold calculation logic
+  - **L4-005 MEDIUM: Engine Health Check Uses Readiness State** — `CheckEngineHealth()` now verifies `GetReadinessSnapshot().state == HEALTHY || REUSED_SNAPSHOT`, added `m_lastEngineDataTimestamp` per engine for staleness detection
+  - **L4-006 MEDIUM: Consolidated ApplySpreadFilter Overloads** — Unified both overloads to use `ratio = spread / atr` comparison, extracted common logic to `CheckSpreadRatio()` helper, renamed parameters consistently to `maxSpreadToAtrRatio`
+  - **L4-007 MEDIUM: Budget Exhaustion Auto-Clear** — Added `ResetBudgetExhausted()` called at session rollover (00:00 server time), tracks `m_budgetExhaustedSessionDate` for daily auto-reset, added `CheckBudgetExhaustedAutoClear()` in `ProcessSignal()`
+  - **L4-008 MEDIUM: ADX Handle Race Condition** (TrendEngine) — Added `m_adxReinitPending` flag for handle reinitialization, `IndicatorsReadyForRead()` waits for `BarsCalculated() >= minBars*2` before clearing flag, resets `m_consecutiveAdxFailures` only after successful data read
+  - **L4-009 MEDIUM: Swing Detection Real-Time Flaw** (StructureEngine) — Added `IsPotentialSwingHigh/Low()` checking only left side (historical) for real-time, `IsConfirmedSwingHigh/Low()` checking both sides for historical confirmation, `ConfirmPotentialSwings()` to validate pending potential swings on next bar, member variables: `m_potentialSwingHighPrice`, `m_potentialSwingHighIndex`, `m_potentialSwingHighValid`, `m_potentialSwingLowPrice`, `m_potentialSwingLowIndex`, `m_potentialSwingLowValid`, updated `DetectSwingPoints()` to track potential swings and confirm them when right-side data available
+  - **L4-010 LOW: Weighted Resolution Ignores NONE Signals** (TimeframeConsistency) — `ResolveWeighted()` now tracks `totalActiveWeight` (non-NONE signals only), normalizes confidence by active weight, returns NONE with 0 confidence if all signals are NONE
+  - **L4-011 LOW: Snapshot Reuse Ignores Regime Transitions** (RegimeEngine) — `TryReuseRecentSnapshot()` now validates regime state consistency by calling `BuildFallbackIndicators()` and `EstimateRegimeStateFromFallback()` to compare current vs snapshot regime, invalidates snapshot if regime differs
+  - **L4-012 LOW: SignalFilterSettings Grouped** — **COMPLETED** Grouped 18 flat settings into nested structs: `TrendFilterSettings` (`enabled`, `minStrength`), `VolatilityFilterSettings` (`enabled`, `maxVolatility`), `LiquidityFilterSettings` (`enabled`), `StructureFilterSettings` (`enabled`), `SessionFilterSettings` (`enableTimeFilter`, `enableSessionFilter`, `allowSyntheticOffHours`, `tradeLondonSession`, `tradeNewYorkSession`, `tradeTokyoSession`), `RegimeCostGateSettings` (`enabled`, `maxSpreadToAtrRatio`, `spreadShockCooldownSeconds`, `maxEntryRangeZScore`), `ConfidenceSettings` (`minConfidence`, `intrabarConfidenceCap`), `FilterOrderSettings` (`filterOrder[7]`, `filterOrderCount`). Added `Validate()` method with range checks on all nested structs, added `ApplyPreset(ENUM_FILTER_PRESET)` for CONSERVATIVE/BALANCED/AGGRESSIVE configurations. Updated all call sites in `ProcessSignal()`, `ComputeReadinessScore()`, `ApplyRegimeAndCostGate()`, `ApplySpreadFilter()`, `ApplyFilterPreset()`, `ApplyTimeFilter()`, `ApplySessionFilter()`, `ApplyVolatilityFilter()`.
+  - **L4-013 LOW: Regime Gate Log Throttling** — Added `m_regimeGateLogCounter` and `m_regimeGateLogInterval` (default 10), detailed regime snapshot logging now throttled to 1 in N signals
+  - **L4-014 LOW: Duplicate ATR Calculation** (VolatilityEngine) — Extracted `CalculateAtrFromRates()` static helper used by both `BuildFallbackMetrics()` and `ValidateAtrCalculation()`, eliminated duplicate Wilder's ATR implementation
+  - **L4-015 LOW: Magic Numbers in Readiness Score** — **COMPLETED** Added `SReadinessComponentWeights` struct with configurable weights: `trendWeight`, `structureWeight`, `liquidityWeight`, `volatilityWeight`, `regimeWeight`. Added `Validate()` method. Updated `ComputeReadinessScore()` to use weighted component scores from `m_filters.readinessWeights` instead of hardcoded values. Added `stalenessPenaltyMax` and `stalenessPenaltyDivisor` to `SReadinessScoreConfig` for configurable staleness penalty. Updated `RefreshEvidenceFromEngines()` and `ApplyRegimeAndCostGate()` to use config values.
+  - **Files Modified**: `Core/Pipeline/UnifiedSignalPipeline.mqh`, `Core/Engines/TrendEngine.mqh`, `Core/Engines/StructureEngine.mqh`, `Core/Engines/VolatilityEngine.mqh`, `Core/Signals/TimeframeConsistency.mqh`, `Core/Engines/RegimeEngine.mqh`
+  - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified
+
+- Batch 130 (2026-07-25): Layer 6 Strategy Implementation Logic — All 4 remaining issues resolved (L6-007, L6-008, L6-013, L6-016). Intrabar PROBE mode wired through config chain; participation score update logic implemented in ConsensusEngine; GetQuickProbeSignal() removed from IStrategy and 5 strategies; AIPerformanceFeedback integrated with EnterpriseStrategyManager weight adaptation for AI strategies.
+- Batch 140 (2026-08-05): Phase 4-5 Strategy Duplication Consolidation + God Object Decomposition — `CStrategyBase` expanded with shared helpers (`LogRejectEvent`/`RejectSignal`, `RefreshForNewBar`/`OnRefreshComponents`, `ValidateWithRiskManager`, `LogConsensusDiag`) eliminating ~260 lines of duplicated boilerplate across strategy files. `EAOrchestrator.mqh` decomposed: `SOrchestratorConfig` extracted to `OrchestratorConfig.mqh` (710 lines) and `InitializeStrategyConfigs` extracted to `StrategyConfigBuilder.mqh` (249 lines), reducing EAOrchestrator 5,529 → 4,571 lines (17.3% smaller). Pure structural refactoring, no runtime behavior change.
+
 ---
 
 ## 2. Top-Level Runtime Topology
 
 ### 2.1 Entrypoint and orchestration
 
-- File: `MultiStrategyAutonomousEA.mq5`
-- Responsibilities:
-  - initialize mandatory runtime subsystems first and isolate optional AI/bootstrap failures behind readiness flags
-  - initialize the shared universal transformer service before optional AI brains register symbols, and keep the service lazy-safe for late callers
-  - validate active symbols and emit startup account-capacity diagnostics before live execution
-  - reject symbols with extreme spreads (>1000 points) during symbol validation to prevent wasted evaluation cycles
-  - rebuild cadence scheduler state as one unit after manager bootstrap so symbol-bar times, intrabar timers, pending new-bar work, and scan-state backoff cannot drift out of sync
-  - reconstruct cooldown/trade-timing state from EA-owned open positions and deal history on startup
-  - keep `OnTimer()` as the single heavy-evaluation owner and keep `OnTick()` constrained to safety/lifecycle work
-  - maintain cadence loops (new-bar/intrabar)
+- File: `Core/Orchestration/EAOrchestrator.mqh` (primary coordination class)
+- **Config/data modules extracted from EAOrchestrator (Batch 140):**
+  - `Core/Orchestration/OrchestratorConfig.mqh` — `SOrchestratorConfig` struct + helper structs (pure data definitions, zero invariant risk)
+  - `Core/Orchestration/StrategyConfigBuilder.mqh` — `CStrategyConfigBuilder::Initialize()` static method (pure EA-input → config mapping, no runtime behavior)
+- Thin EA entry point: `MultiStrategyAutonomousEA.mq5` delegates to `CEAOrchestrator` via builder pattern
+- **Testing EA entry point:** `MultiStrategyTestingEA.mq5` — standalone testing EA with Complete Test Profile System (45 predefined profiles). See [README.md#standalone-testing-ea](README.md#standalone-testing-ea) for details.
+- Responsibilities (EAOrchestrator):
+  - initialize all owned subsystems (risk, trade, position, signal, AI, registry aggregator) in deterministic order
+  - initialize `CRegistryAggregator` as unified registry access point for mathematical, institutional, neural net, drawing, scan, symbol state, and strategy registries
+  - initialize `CMagicNumberAllocator` as centralized magic number allocation service
+  - initialize per-symbol `CEnterpriseStrategyManager` instances with injected strategy registry
+  - wire mathematical engines (Hurst, OU, OFI, VPIN, Kalman, CPD, Four-State, VolTarget, ExitOpt, LiqSweep, RangeComp) and institutional engines (VWAP, VP, CVD) to registries
+  - initialize AI subsystems (NextGenStrategyBrain, AIEngine, NeuralNetwork adapters via StrategyFactory) with clear ownership (adapters own NNs)
+  - maintain cadence loops (new-bar/intrabar) via `OnTimer()`/`OnTick()` delegation
   - delegate position lifecycle management to `CPositionLifecycleManager` (SRE, structural invalidation, breakeven/trailing, safe mode)
   - delegate heartbeat and diagnostics to `CDiagnosticsManager` (core heartbeat, consensus diagnostics, conversion rates, risk budget snapshot)
   - delegate unprotected position tracking and SL remediation to `CUnprotectedPositionTracker` (3-attempt escalation)
   - delegate synthetic tick spike monitoring and trading pause to `CSyntheticSpikeMonitor`
   - delegate trade attribution and NN prediction mapping to `CTradeAttributionManager`
-  - delegate symbol scan scheduling and intrabar scoring to `CSymbolScanScheduler`
-  - budget heavy signal evaluations across both new-bar and intrabar paths via `InpMaxSignalEvaluationsPerCycle`, carrying deferred new-bar symbols forward to later cycles
+  - delegate symbol scan scheduling and intrabar scoring to `CScanSchedulerRegistry`
+  - budget heavy signal evaluations across both new-bar and intrabar paths via config
   - budget intrabar scans by symbol yield instead of blindly scanning the whole intrabar universe every cycle
   - apply per-symbol intrabar backoff after repeated low-yield or readiness-faulted scans
   - self-heal cadence scheduler state at runtime if any scheduler array drifts away from the active symbol set
   - dispatch per-symbol evaluations
   - rank approved candidates across symbols before execution
   - reserve every staged candidate as a virtual position inside unified risk before it can enter the ranked execution list
-  - execute up to `InpMaxTradeSendsPerCycle` ranked candidates per scan cycle through `CTradeManager`, preserving runtime execution ownership
+  - execute up to configured max trade sends per scan cycle through `CTradeManager`, preserving runtime execution ownership
   - detect synthetic-index tick-velocity spikes and trigger flatten-plus-pause protection
-  - register the `Unicorn Model` and `Power of Three` ICT expansion strategies as manager-owned Tier-1 participants
   - own the non-AI confidence policy inputs for pipeline and manager admission stages
   - resolve strategy registration timeframes per strategy so scalp/intrabar modules can use lower timeframes than the attached chart when explicitly configured
   - adapt per-symbol runtime profiles (strategy roster, intrabar policy, and context posture) by instrument class when symbol-class profiles are enabled
@@ -118,6 +146,21 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - coordinate validator/risk/execution path
   - enforce live-authority source defaults: AI/ONNX enabled, global live execution allowed, EA-owned same-symbol stacking, and no one-voter sparse intrabar admission
   - handle runtime telemetry and deinitialization
+
+- Thin EA (`MultiStrategyAutonomousEA.mq5`) responsibilities:
+  - parse input parameters into `SOrchestratorConfig`
+  - construct `CEAOrchestrator` via `CEAOrchestratorBuilder`
+  - call `orchestrator.Initialize(config)`
+  - forward `OnTick()`, `OnTimer()`, `OnDeinit()` to orchestrator
+  - no business logic in EA file
+
+- Testing EA (`MultiStrategyTestingEA.mq5`) responsibilities:
+  - Same orchestration flow as main EA but with Complete Test Profile System integration
+  - Applies test profile flags to `SOrchestratorConfig` via `ApplyCompleteTestProfile()` before initialization
+  - Provides 45 predefined test profiles (single components, suites, aggregate modes, full system)
+  - Logs activation matrix (`[ACTIVATION-MATRIX]`) and per-symbol effective component report (`[PER-SYMBOL-REPORT]`) on init
+  - Use for isolated component testing, backtesting optimization, and regression validation
+  - No business logic changes — only input flag override via test profiles
 
 ### 2.2 Per-symbol strategy domain
 
@@ -554,7 +597,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Broker trading day reset: `m_tradingDayStartHour` (configurable, default 0) ensures daily risk counters reset at the correct broker trading day boundary
   - Rationalized defaults: baseRiskPerTradePercent=1%, maxRiskPerTradePercent=5%, maxDailyRiskPercent=5%, maxPortfolioRiskPercent=15%
 - Enhancements to `CPositionSizer`:
-  - `POSITION_SIZE_KELLY` mode: half-Kelly fraction with 25% cap, `CalculateKellyFraction()` computes from recent trade history
+  - `POSITION_SIZE_KELLY` mode: **consolidated to Bayesian Kelly modifier** (L5-012), falls back to fixed risk sizing; `CBayesianKellyModifier` applies quarter Kelly (25%) with Beta-Binomial priors
   - Equity compounding: `CalculateCompoundingMultiplier()` with sqrt upside / linear downside scaling
   - Unified correlation: `SetCorrelationEngine()` delegates to `CCorrelationEngine` instead of internal Pearson
   - Conditional logging: `m_logLevel` + `SetLogLevel()` gates `LogSizingDecision()` output
@@ -567,6 +610,11 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - Volatility direction: `GetVolatilityDirection()` classifies ATR as EXPANDING/CONTRACTING/STABLE; `GetVolatilityDirectionMultiplier()` applies 1.2x/0.8x/1.0x
   - Multi-timeframe confluence: `IsAlignedWithHigherTF()` checks EMA50 on next higher timeframe
   - All intelligence factors applied in `GetSignal()` before returning to manager consensus
+  - **Batch 140 shared helpers (Phase 4 debloat):** Consolidated duplicated strategy boilerplate into protected virtual methods so all strategies share one implementation:
+    - `LogRejectEvent()` / `RejectSignal()` — throttled reject logging via `m_strategyPrefix`, `m_lastRejectReasonTag`, `m_lastRejectLogTime` (removed from 8 strategy files)
+    - `RefreshForNewBar()` + `OnRefreshComponents()` virtual hook — new-bar guard via `m_lastBarCount`; 5 strategies override `HandleNewBar()`/`OnRefreshComponents()` instead of duplicating boilerplate
+    - `ValidateWithRiskManager()` — pre-trade risk-validation helper (consolidated into 11 of 12 strategies; StatisticalArbitrage skipped — different pattern)
+    - `LogConsensusDiag()` — `[CONSENSUS-DIAG]` logging helper (consolidated into 9 of 12 strategies; 3 outliers skipped — structural variations)
 - Enhancements to `CEnterpriseStrategyManager`:
   - Per-cluster conviction tracking (trendClusterBuyConviction/SellConviction, meanRevClusterBuyConviction/SellConviction)
   - Cross-cluster conflict resolution: opposing cluster conviction subtracted, regime-weighted
@@ -1199,7 +1247,7 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Virtual reservation tracing: `[RISK-VIRTUAL]`
 - AI liveness: `[AI-VOTE]`
 - confirmed deals: `[TRADE-CONFIRMED]`
-- Shadow actions: `[SHADOW-TRADE]`
+- Authority gate actions: `[AUTHORITY-REJECT]` / `[AUTHORITY-REDUCED]`
 - Execution outcomes: `[TRADE-SUCCESS]`, `[TRADE-ERROR]`, `[TRADE-EXECUTION]`, `[EXECUTION-RECEIPT]`, `[EXECUTION-TELEMETRY]`, `[FILL-DIFF]`
 - Python bridge health: `[PYTHON-BRIDGE-DASHBOARD]`
 - Scalp cost viability: `[SCALP-COST-VETO]`
@@ -1312,4 +1360,20 @@ Any structural change must update all of:
 - `CAdvancedSignalValidator` explicitly filters `PainX`, `SFX Vol`, `GainX`, `FX Vol`, and `FlipX` as synthetic 24/7 symbols, allowing them to bypass MT5 weekend and off-hours session blocking.
 - `CTradeManager` recognizes the same extended list of synthetics, ensuring live execution paths remain open globally.
 - `CMarketAnalysis` safely classifies these assets for specialized indicator handling to prevent volatility/ADX calculation faults unique to their tick profiles.
+
+## 15. 2026-08-06 Phase 6-7 Execution Flow Optimization + File Hygiene
+
+- `CPythonBridge` gained three private JSON parsing helpers (`ParseJsonDouble`, `ParseJsonString`, `ParseJsonInteger`) that eliminate 18+ duplicated field-extraction patterns across `ParsePredictionResponse`, `GetPairCorrelation`, `FindBestCorrelatedPair`, and `ParseVersionResponse`. The helpers take a key name and handle the find/extract/parse cycle generically.
+- `CEnsembleAIStrategyAdapter` TODO comments resolved — `TrainStep()` and `OnRegimeChange()` documented as intentional no-ops due to parameter mismatch between the adapter interface and `CEnsembleMetaLearner`'s method signatures.
+- `SignalValidator.mqh` confirmed already merged into `EnterpriseStrategyManager.mqh` — post-consensus validation (spread/ATR/OFI/VPIN checks) runs within `GetConsensusSignalForSymbolWithConfluenceMode()`.
+- `IRegistry.mqh` provides template-based `CRegistryBase<T>` with full Get/Register/Unregister/Has/Count/Clear implementation. None of the 6 concrete registries currently inherit from it — all are too specialized (multi-pointer slots, scalar state, create-on-demand logic).
+- `Core/Position/PositionManager.mqh` is the sole position manager (not a duplicate of a non-existent `Core/Trading/PositionManager.mqh`). Actively included by 5 files via `../Position/PositionManager.mqh`.
+- Dashboard `App.tsx` now imports real page components from `./pages/` instead of rendering inline "Coming Soon" stubs for all 8 routes.
+
+## 16. 2026-08-06 Phase 6.2 + 7.4 — Position Sizing Consolidation + Error Logging
+
+- `UnifiedRiskManager.mqh` no longer carries a redundant `<minLot` validation branch (formerly ~22 lines) that hard-coded `if(riskRatio <= 15.0)` with no config binding. The lot-size gate is now `if(request.lotSize > maxLot)` using `SYMBOL_VOLUME_MAX`. `CPositionSizer` remains the single authority for min-lot round-up.
+- Min-lot round-up tolerance is restored to 15x (reverted the L5-002 1x clamp) in three places: URM config default `minLotRiskMultiplier = 15.0`, `CPositionSizer` hard cap `if(riskRatio > 15.0)`, and the `SetMinLotRiskMultiplier` setter clamp `MathMin(MathMax(1.0, multiplier), 15.0)`.
+- EA inputs `InpAllowMinLotRoundUp = true` and `InpMinLotRiskMultiplier = 15.0` expose the round-up policy to the user.
+- 38 `PrintFormat("[DBG-RET0] ...")` debug statements were added to ambiguous `return 0.0` paths across `UnifiedRiskManager.mqh` (16), `TradeManager.mqh` (14), `PositionSizer.mqh` (5), and `PythonBridge.mqh` (3). Logging only — no runtime behavior change. Documented valid returns (hedging-mode path, already-braced inline early-exits) were skipped.
 

@@ -12,6 +12,8 @@
 #include "../../AIModules/OnnxBrain.mqh"
 #include "../AI/AIFeatureVectorBuilder.mqh"
 #include "../AI/PipelineScaler.mqh"
+#include "../AI/IFeaturePipeline.mqh"
+#include "../AI/FeaturePipelineONNX.mqh"
 
 class COnnxAIStrategyAdapter : public IAIStrategy
 {
@@ -41,6 +43,10 @@ private:
     int             m_barCounter;
     datetime        m_voteWindowStart;  // Rolling vote window start time
     
+    // Feature pipeline for centralized feature engineering
+    CFeaturePipelineONNX* m_featurePipeline;
+    bool              m_ownsPipeline;
+    
     // Direction calibration rolling window (last 20 predictions)
     int  m_directionWindow[20];  // 1=BUY, -1=SELL, 0=NONE
     int  m_directionWindowIdx;   // Circular buffer index
@@ -48,6 +54,11 @@ private:
     uint m_lastCalibrationWarningTick;  // Throttle calibration warning logs (GetTickCount-based, Issue 12.3)
     int  m_consecutiveBiasedVotes;  // Consecutive degenerate-vote counter
     datetime m_lastNoSignalDiagTime; // Throttle NO_SIGNAL diagnostic logs
+    
+    // Configurable direction calibration parameters (L11-009)
+    int  m_calibrationWindowSize;    // Window size for direction calibration (default 20)
+    double m_calibrationRatioThreshold; // Ratio threshold for degenerate detection (default 0.70)
+    int  m_minDirectionalCount;      // Minimum directional signals needed (default 5)
     
     bool IsValidConfidence(const double conf) const
     {
@@ -135,6 +146,12 @@ public:
         m_lastCalibrationWarningTick = 0;
         m_consecutiveBiasedVotes = 0;
         m_lastNoSignalDiagTime = 0;
+        m_featurePipeline = NULL;
+        m_ownsPipeline = false;
+        // Initialize configurable calibration parameters (L11-009)
+        m_calibrationWindowSize = 20;
+        m_calibrationRatioThreshold = 0.70;
+        m_minDirectionalCount = 5;
         ArrayInitialize(m_directionWindow, 0);
     }
 
@@ -163,6 +180,14 @@ public:
         }
 
         m_brain.SetWatchPath("EAModels\\ONNX\\model_update.onnx", 100);
+        
+        // Initialize feature pipeline
+        if(m_featurePipeline == NULL)
+        {
+            m_featurePipeline = new CFeaturePipelineONNX(m_scalerWatchPath);
+            m_ownsPipeline = true;
+        }
+        
         if(m_scaler.LoadParams(m_scalerWatchPath, true))
             PrintFormat("[ONNX] Loaded scaler parameters | features=%d | path=%s",
                         m_scaler.GetFeatureCount(), m_scalerWatchPath);
@@ -173,7 +198,31 @@ public:
     virtual void Deinit(void) override
     {
         m_brain.Deinit();
+        
+        // Clean up feature pipeline
+        if(m_ownsPipeline && m_featurePipeline != NULL)
+        {
+            delete m_featurePipeline;
+            m_featurePipeline = NULL;
+        }
+        
         m_lastDecisionReasonTag = "ONNX_DEINIT";
+    }
+
+    // Initialize AI model with symbol/timeframe/risk manager after factory creation
+    virtual bool InitializeAI(const string symbol, const ENUM_TIMEFRAMES timeframe, void* unifiedRiskManager) override
+    {
+        // For ONNX AI, the model is initialized in Init()
+        // This method just updates symbol/timeframe if needed
+        if(m_brain.IsLoaded())
+        {
+            m_symbol = symbol;
+            m_timeframe = timeframe;
+            m_lastDecisionReasonTag = "ONNX_AI_INITIALIZED";
+            return true;
+        }
+        m_lastDecisionReasonTag = "ONNX_AI_INIT_FAILED";
+        return false;
     }
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) override
@@ -212,27 +261,11 @@ public:
 
         m_voteCount++;
         double features[];
-        if(!CAIFeatureVectorBuilder::BuildNNFeatureVector(m_symbol, m_timeframe, features, 1))
+        // Use feature pipeline instead of direct builder calls
+        if(m_featurePipeline == NULL || !m_featurePipeline.BuildFeatures(m_symbol, m_timeframe, features, 1))
         {
             m_noneVotes++;
             m_lastDecisionReasonTag = "ONNX_FEATURES_UNAVAILABLE";
-            LogVoteHeartbeat();
-            return TRADE_SIGNAL_NONE;
-        }
-
-        // Reuse 'now' from line 126 instead of redeclaring
-        if(m_lastScalerCheckTime == 0 || (now - m_lastScalerCheckTime) >= 10)
-        {
-            if(m_scaler.MaybeReload(m_scalerWatchPath, true))
-                PrintFormat("[ONNX] Reloaded scaler parameters | features=%d | path=%s",
-                            m_scaler.GetFeatureCount(), m_scalerWatchPath);
-            m_lastScalerCheckTime = now;
-        }
-
-        if(m_scaler.IsLoaded() && !m_scaler.Apply(features))
-        {
-            m_noneVotes++;
-            m_lastDecisionReasonTag = "ONNX_SCALER_APPLY_FAILED";
             LogVoteHeartbeat();
             return TRADE_SIGNAL_NONE;
         }
@@ -319,9 +352,7 @@ public:
         LogVoteHeartbeat();
         return signal;
     }
-
-    virtual void OnNewBar(void) override {}
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override {}
+    
     virtual string GetName(void) const override { return "ONNX AI"; }
     virtual ENUM_STRATEGY_TYPE GetType(void) const override { return STRATEGY_AI_ENHANCED; }
     virtual bool IsEnabled(void) const override { return m_enabled; }
@@ -331,32 +362,36 @@ public:
     
     virtual bool IsDirectionDegenerate(void) const override
     {
-        if(m_directionWindowCount < 20)
+        int windowSize = m_calibrationWindowSize;
+        if(m_directionWindowCount < windowSize)
             return false;
         int buyCount = 0, sellCount = 0;
-        for(int i = 0; i < 20; i++)
+        int limit = MathMin(windowSize, 20); // Array is fixed at 20
+        for(int i = 0; i < limit; i++)
         {
             if(m_directionWindow[i] == 1) buyCount++;
             else if(m_directionWindow[i] == -1) sellCount++;
         }
         int directionalCount = buyCount + sellCount;
-        if(directionalCount < 5) return false;  // Not enough directional data
+        if(directionalCount < m_minDirectionalCount) return false;  // Not enough directional data
         double buyRatio = (double)buyCount / (double)directionalCount;
         double sellRatio = (double)sellCount / (double)directionalCount;
-        return (buyRatio > 0.70 || sellRatio > 0.70);
+        return (buyRatio > m_calibrationRatioThreshold || sellRatio > m_calibrationRatioThreshold);
     }
     
     double GetDirectionalBias(void) const
     {
-        if(m_directionWindowCount < 20) return 0.0;
+        int windowSize = m_calibrationWindowSize;
+        if(m_directionWindowCount < windowSize) return 0.0;
         int buyCount = 0, sellCount = 0;
-        for(int i = 0; i < 20; i++)
+        int limit = MathMin(windowSize, 20); // Array is fixed at 20
+        for(int i = 0; i < limit; i++)
         {
             if(m_directionWindow[i] == 1) buyCount++;
             else if(m_directionWindow[i] == -1) sellCount++;
         }
         int directionalCount = buyCount + sellCount;
-        if(directionalCount < 5) return 0.0;
+        if(directionalCount < m_minDirectionalCount) return 0.0;
         return (double)buyCount / (double)directionalCount;
     }
     
@@ -374,17 +409,45 @@ public:
         return baseWeight * 0.70;      // Mild bias: 30% penalty
     }
     virtual bool ValidateParameters(void) override { return m_brain.IsLoaded(); }
-    virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
+    
+        virtual bool ValidateRiskManagerInjection(void) const override
+        {
+            return false; // Default: risk manager not injected
+        }
+    
+        virtual bool ShouldBypassTierConfidenceFloor(void) const override
+        {
+            return false; // Default: no bypass
+        }
+    
+        virtual datetime GetLastSignalTime(void) const override { return m_lastSignalTime; }
     virtual string GetLastDecisionReasonTag(void) const override { return m_lastDecisionReasonTag; }
     virtual void SetConfidenceThreshold(double threshold) override { m_minConfidence = threshold; }
-
+    
+    // Configurable direction calibration setters (L11-009)
+    virtual void SetCalibrationWindowSize(int size) { m_calibrationWindowSize = MathMax(5, MathMin(size, 20)); }
+    virtual void SetCalibrationRatioThreshold(double threshold) { m_calibrationRatioThreshold = MathMax(0.5, MathMin(threshold, 0.95)); }
+    virtual void SetMinDirectionalCount(int count) { m_minDirectionalCount = MathMax(1, MathMin(count, 20)); }
+    
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) override
     {
         signals = (int)m_voteCount;
         successful = m_brain.GetActiveWins();
         accuracy = m_brain.GetActiveAccuracy();
     }
-    
+
+    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
+    {
+    }
+
+    virtual void OnTick(void) override
+    {
+    }
+
+    virtual void OnTimer(void) override
+    {
+    }
+
     virtual double GetUncertainty(void) override
     {
         return 1.0 - m_brain.GetConfidence();
@@ -415,7 +478,7 @@ public:
         m_brain.SetTemperature(temperature);
     }
     
-    virtual int GetRegimeState(void) const override
+    virtual int GetCurrentRegime(void) const override
     {
         return 0;
     }
@@ -428,6 +491,43 @@ public:
     virtual string GetLastLoadStatus(void) const override
     {
         return m_brain.IsLoaded() ? "LOADED" : "NOT_LOADED";
+    }
+
+    // IUncertaintyEstimation
+    virtual void GetConfidenceInterval(double &lower, double &upper) const override
+    {
+        double unc = 1.0 - m_brain.GetConfidence();
+        double conf = 1.0 - unc;
+        lower = MathMax(0.0, conf - unc);
+        upper = MathMin(1.0, conf + unc);
+    }
+
+    // IOnlineTraining
+    virtual void EnableOnlineTraining(const bool enable) override
+    {
+        // ONNX models don't support online training
+    }
+
+    virtual bool TrainStep(void) override
+    {
+        return false; // Not supported for ONNX
+    }
+
+    virtual string GetTrainingState(void) const override
+    {
+        return "NOT_SUPPORTED";
+    }
+
+    // IRegimeAware
+    virtual void OnRegimeChange(const int newRegime) override
+    {
+        // ONNX doesn't have regime awareness
+    }
+
+    // IModelHealth
+    virtual double GetHealthScore(void) const override
+    {
+        return IsModelHealthy() ? 1.0 : 0.0;
     }
 };
 

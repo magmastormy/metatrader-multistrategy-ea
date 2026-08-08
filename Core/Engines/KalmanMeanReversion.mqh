@@ -154,15 +154,24 @@ public:
         m_lastZScore(0.0),
         m_lastInnovation(0.0),
         m_lastBarTime(0),
-        m_lastLogTime(0),
-        m_warmedUp(false),
-        m_barCount(0)
-    {
-    }
+                m_lastLogTime(0),
+                m_warmedUp(false),
+                m_barCount(0)
+            {
+                // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
+                ResolveTimeframe();
+            }
 
-    ~CKalmanMeanReversion() {}
+            ~CKalmanMeanReversion() {}
 
-    //--- Configure FLS parameters
+            // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe
+            void ResolveTimeframe()
+            {
+                if(m_timeframe == PERIOD_CURRENT || m_timeframe == 0)
+                    m_timeframe = Period();
+            }
+
+            //--- Configure FLS parameters
     void Configure(double lambda, double forgettingFactor)
     {
         m_lambda = MathMax(10.0, lambda);
@@ -415,6 +424,27 @@ public:
     SKalmanMRSnapshot GetSnapshot() const { return m_lastSnapshot; }
 
     bool IsWarmedUp() const { return m_warmedUp && m_barCount >= 10; }
-};
+
+        // --- Cleanup ---
+        void Deinit()
+        {
+            // CKalmanMeanReversion holds no indicator handles or external resources.
+            // Dynamic arrays are auto-managed. Reset state for potential reuse.
+            m_mu = 0.0;
+            m_kappa = 0.0;
+            m_P_mu_mu = 1.0;
+            m_P_mu_kappa = 0.0;
+            m_P_kappa_kappa = 1.0;
+            m_sigma = 0.0;
+            m_sigmaSq = 0.0;
+            m_lastZScore = 0.0;
+            m_lastInnovation = 0.0;
+            m_lastBarTime = 0;
+            m_lastLogTime = 0;
+            m_warmedUp = false;
+            m_barCount = 0;
+            m_lastSnapshot = SKalmanMRSnapshot();
+        }
+    };
 
 #endif // KALMAN_MEAN_REVERSION_MQH

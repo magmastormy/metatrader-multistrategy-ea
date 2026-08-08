@@ -32,8 +32,11 @@ public:
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) = 0;
     
     // Update strategy on new bar
-    virtual void OnNewBar(void) = 0;
-    virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) = 0;
+        virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) = 0;
+    
+        // Tick and timer events
+        virtual void OnTick(void) = 0;
+        virtual void OnTimer(void) = 0;
     
     // Get strategy name
     virtual string GetName(void) const = 0;
@@ -61,18 +64,28 @@ public:
     
     // Get strategy statistics
     virtual void GetStatistics(int &signals, int &successful, double &accuracy) = 0;
-
-    // Last cycle decision reason tag for telemetry attribution.
-    // Empty string means strategy does not expose a reason.
-    virtual string GetLastDecisionReasonTag(void) const { return ""; }
-
-    // Set confidence threshold for the strategy
+// Set confidence threshold for the strategy
     virtual void SetConfidenceThreshold(double threshold) {}
 
-    // Quick-probe signal — fast indicators only, O(1) with cached values.
-    // Returns NONE by default. Strategies that can produce fast signals override this.
-    // Used by two-tier consensus: Tier 1 quick-probe evaluation for early quorum short-circuit.
-    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() { return TRADE_SIGNAL_NONE; }
-};
+        // Validate that unified risk manager was properly injected during initialization
+        // Returns true if risk manager is available, false if strategy will bypass risk validation
+        virtual bool ValidateRiskManagerInjection(void) const = 0;
+
+            // Check if strategy should bypass tier confidence floor (for strategies like Trend, S/R)
+                        // Default implementation returns false - strategies can override if needed
+                        virtual bool ShouldBypassTierConfidenceFloor(void) const = 0;
+
+                        // Check if AI model should be disabled (for AI strategies)
+                        // Default implementation returns false - AI strategies can override
+                        virtual bool ShouldDisableModel(void) const = 0;
+
+                        // Initialize AI model with symbol/timeframe/risk manager after factory creation
+                        // Default implementation does nothing - AI strategies should override
+                        virtual bool InitializeAI(const string symbol, const ENUM_TIMEFRAMES timeframe, void* unifiedRiskManager) { return true; }
+
+                // AI-specific degradation monitoring - default implementations for non-AI strategies
+                virtual bool IsDirectionDegenerate(void) const { return false; }
+                virtual double GetCalibratedWeight(double baseWeight) const { return baseWeight; }
+            };
 
 #endif // INTERFACES_ISTRATEGY_MQH

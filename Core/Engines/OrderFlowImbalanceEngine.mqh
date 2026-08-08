@@ -188,6 +188,7 @@ public:
     bool              GetSnapshot(SOFISnapshot &snap) const;
     bool              IsWarmedUp()       const;
     void              Reset();
+    void              Deinit();
 };
 
 //+------------------------------------------------------------------+
@@ -465,6 +466,31 @@ void COrderFlowImbalanceEngine::Reset()
     m_snapshot          = SOFISnapshot();
 
     PrintFormat("[OFI] RESET | symbol=%s", m_symbol);
+}
+
+//+------------------------------------------------------------------+
+//| Cleanup external resources                                       |
+//+------------------------------------------------------------------+
+void COrderFlowImbalanceEngine::Deinit()
+{
+    // COrderFlowImbalanceEngine owns dynamic arrays in SOFIWindowState structs
+    ArrayFree(m_fast.buyVolumes);
+    ArrayFree(m_fast.sellVolumes);
+    ArrayFree(m_medium.buyVolumes);
+    ArrayFree(m_medium.sellVolumes);
+    ArrayFree(m_slow.buyVolumes);
+    ArrayFree(m_slow.sellVolumes);
+    
+    m_fast.windowSize = 0;
+    m_medium.windowSize = 0;
+    m_slow.windowSize = 0;
+    m_fast.count = 0;
+    m_medium.count = 0;
+    m_slow.count = 0;
+    
+    m_symbol = "";
+    m_tickCount = 0;
+    m_snapshot = SOFISnapshot();
 }
 
 #endif // ORDER_FLOW_IMBALANCE_ENGINE_MQH

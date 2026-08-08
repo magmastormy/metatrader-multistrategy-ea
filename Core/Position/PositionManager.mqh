@@ -15,6 +15,41 @@
 #include "../Risk/FullMarginMode.mqh"
 #include "../Utils/Enums.mqh"
 
+//+------------------------------------------------------------------+
+//| Position State Structure (merged from PositionStateManager)     |
+//+------------------------------------------------------------------+
+struct SPositionState
+{
+    ulong positionId;           // Position ticket ID
+    string symbol;              // Symbol
+    ENUM_ORDER_TYPE orderType;  // Order type
+    double volume;              // Volume
+    double price;               // Entry price
+    double slPips;              // Stop loss in pips
+    double tpPips;              // Take profit in pips
+    int clusterCode;            // Cluster code
+    string strategyRole;        // Strategy role
+    string predictionId;        // Prediction ID associated with position
+    datetime aiPredictionTime;  // AI prediction time
+    ENUM_TRADE_SIGNAL aiPredictionSignal; // AI prediction signal
+    
+    SPositionState()
+    {
+        positionId = 0;
+        symbol = "";
+        orderType = ORDER_TYPE_BUY;
+        volume = 0;
+        price = 0;
+        slPips = 0;
+        tpPips = 0;
+        clusterCode = 0;
+        strategyRole = "";
+        predictionId = "";
+        aiPredictionTime = 0;
+        aiPredictionSignal = TRADE_SIGNAL_NONE;
+    }
+};
+
 // Volatility regime tracking struct (must be global for pointer usage)
 struct SVolatilityRegime
 {
@@ -99,6 +134,11 @@ private:
     
     SVolatilityRegime       m_volatilityRegimes[];
     int                     m_volatilityRegimeCount;
+    
+    // Position state tracking (merged from PositionStateManager)
+    static const int        MAX_POSITION_STATES;
+    SPositionState          m_positionStates[];
+    int                     m_positionStateCount;
     
     // Loss tracking
     int                     m_consecutiveLossCount;
@@ -393,6 +433,9 @@ private:
     
     void CleanupPyramidStates()
     {
+        // L8-017: SPyramidState contains only basic data types (ulong, int, double, bool)
+        // No indicator handles, order tickets, or dynamic arrays to release.
+        // This method simply removes states where the base position no longer exists.
         int write = 0;
         for(int i = 0; i < m_pyramidStateCount; i++)
         {
@@ -563,9 +606,263 @@ private:
         int maxMagic = m_magicNumber + 10000; // Approximate range
         return (magic >= m_magicNumber && magic <= maxMagic);
     }
+    
+    // --- Position State Tracking (merged from PositionStateManager) ---
+    int FindPositionStateIndex(const ulong positionId)
+    {
+        for(int i = 0; i < m_positionStateCount; i++)
+        {
+            if(m_positionStates[i].positionId == positionId)
+                return i;
+        }
+        return -1;
+    }
+    
+    void UpsertPositionPredictionId(const ulong positionId, const string predictionId)
+    {
+        if(positionId == 0 || predictionId == "")
+            return;
+            
+        int idx = FindPositionStateIndex(positionId);
+        if(idx >= 0)
+        {
+            m_positionStates[idx].predictionId = predictionId;
+            return;
+        }
+        
+        // Check bounds before adding new state
+        if(m_positionStateCount >= MAX_POSITION_STATES)
+        {
+            // Remove oldest entry to make room
+            for(int i = 0; i < m_positionStateCount - 1; i++)
+            {
+                m_positionStates[i] = m_positionStates[i + 1];
+            }
+            m_positionStateCount--;
+            ArrayResize(m_positionStates, m_positionStateCount);
+        }
+        
+        // Create new state
+        ArrayResize(m_positionStates, m_positionStateCount + 1);
+        ZeroMemory(m_positionStates[m_positionStateCount]);
+        SPositionState newState;
+        newState.positionId = positionId;
+        newState.predictionId = predictionId;
+        newState.aiPredictionTime = 0;
+        newState.aiPredictionSignal = TRADE_SIGNAL_NONE;
+        m_positionStates[m_positionStateCount] = newState;
+        m_positionStateCount++;
+    }
+    
+    string GetPositionPredictionId(const ulong positionId)
+    {
+        int idx = FindPositionStateIndex(positionId);
+        if(idx < 0 || idx >= m_positionStateCount)
+            return "";
+        return m_positionStates[idx].predictionId;
+    }
+    
+    void RemovePositionPrediction(const ulong positionId)
+    {
+        int idx = FindPositionStateIndex(positionId);
+        if(idx < 0)
+            return;
+            
+        // Shift elements
+        for(int i = idx; i < m_positionStateCount - 1; i++)
+        {
+            m_positionStates[i] = m_positionStates[i + 1];
+        }
+        
+        m_positionStateCount--;
+        ArrayResize(m_positionStates, m_positionStateCount);
+    }
+    
+    void UpsertPositionAIPrediction(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
+    {
+        if(positionId == 0 || predictionTime <= 0 || predictionSignal == TRADE_SIGNAL_NONE)
+            return;
+            
+        int idx = FindPositionStateIndex(positionId);
+        if(idx >= 0)
+        {
+            m_positionStates[idx].aiPredictionTime = predictionTime;
+            m_positionStates[idx].aiPredictionSignal = predictionSignal;
+            return;
+        }
+        
+        // Check bounds before adding new state
+        if(m_positionStateCount >= MAX_POSITION_STATES)
+        {
+            // Remove oldest entry to make room
+            for(int i = 0; i < m_positionStateCount - 1; i++)
+            {
+                m_positionStates[i] = m_positionStates[i + 1];
+            }
+            m_positionStateCount--;
+            ArrayResize(m_positionStates, m_positionStateCount);
+        }
+        
+        // Create new state
+        ArrayResize(m_positionStates, m_positionStateCount + 1);
+        SPositionState newState;
+        newState.positionId = positionId;
+        newState.predictionId = "";
+        newState.aiPredictionTime = predictionTime;
+        newState.aiPredictionSignal = predictionSignal;
+        m_positionStates[m_positionStateCount] = newState;
+        m_positionStateCount++;
+    }
+    
+    datetime GetPositionAIPredictionTime(const ulong positionId)
+    {
+        int idx = FindPositionStateIndex(positionId);
+        if(idx < 0 || idx >= m_positionStateCount)
+            return 0;
+        return m_positionStates[idx].aiPredictionTime;
+    }
+    
+    ENUM_TRADE_SIGNAL GetPositionAIPredictionSignal(const ulong positionId)
+    {
+        int idx = FindPositionStateIndex(positionId);
+        if(idx < 0 || idx >= m_positionStateCount)
+            return TRADE_SIGNAL_NONE;
+        return m_positionStates[idx].aiPredictionSignal;
+    }
+    
+    void RemovePositionAIPrediction(const ulong positionId)
+    {
+        int idx = FindPositionStateIndex(positionId);
+        if(idx < 0)
+            return;
+            
+        // Shift elements
+        for(int i = idx; i < m_positionStateCount - 1; i++)
+        {
+            m_positionStates[i] = m_positionStates[i + 1];
+        }
+        
+        m_positionStateCount--;
+        ArrayResize(m_positionStates, m_positionStateCount);
+    }
+    
+    void ClearAllPositionStates()
+    {
+        m_positionStateCount = 0;
+        ArrayResize(m_positionStates, 0);
+    }
+    
+    bool GetPositionStateByIndex(const int index, SPositionState &state)
+    {
+        if(index < 0 || index >= m_positionStateCount)
+            return false;
+        state = m_positionStates[index];
+        return true;
+    }
 
 public:
-    CPositionManager() : 
+    void RegisterPositionState(const ulong positionId, const string symbol, ENUM_ORDER_TYPE orderType,
+                               double volume, double price, double slPips, double tpPips,
+                               int clusterCode, const string strategyRole)
+    {
+        if(positionId == 0) return;
+        
+        // Check if already exists
+        int idx = FindPositionStateIndex(positionId);
+        if(idx >= 0) return;
+        
+        // Check bounds before adding new state
+        if(m_positionStateCount >= MAX_POSITION_STATES)
+        {
+            // Remove oldest entry to make room
+            for(int i = 0; i < m_positionStateCount - 1; i++)
+            {
+                m_positionStates[i] = m_positionStates[i + 1];
+            }
+            m_positionStateCount--;
+            ArrayResize(m_positionStates, m_positionStateCount);
+        }
+        
+        // Create new state
+        ArrayResize(m_positionStates, m_positionStateCount + 1);
+        SPositionState newState;
+        newState.positionId = positionId;
+        newState.symbol = symbol;
+        newState.orderType = orderType;
+        newState.volume = volume;
+        newState.price = price;
+        newState.slPips = slPips;
+        newState.tpPips = tpPips;
+        newState.clusterCode = clusterCode;
+        newState.strategyRole = strategyRole;
+        newState.predictionId = "";
+        newState.aiPredictionTime = 0;
+        newState.aiPredictionSignal = TRADE_SIGNAL_NONE;
+        m_positionStates[m_positionStateCount] = newState;
+        m_positionStateCount++;
+    }
+    
+    int RemoveStalePositionStates()
+    {
+        int removed = 0;
+        for(int i = m_positionStateCount - 1; i >= 0; i--)
+        {
+            if(!PositionSelectByTicket(m_positionStates[i].positionId))
+            {
+                // Position no longer exists, remove from tracking
+                for(int j = i; j < m_positionStateCount - 1; j++)
+                {
+                    m_positionStates[j] = m_positionStates[j + 1];
+                }
+                m_positionStateCount--;
+                removed++;
+            }
+        }
+        
+        if(removed > 0)
+        {
+            ArrayResize(m_positionStates, m_positionStateCount);
+        }
+        
+        return removed;
+    }
+    
+
+public:
+    int GetAllPositionStateIds(ulong &positionIds[])
+    {
+        ArrayResize(positionIds, m_positionStateCount);
+        for(int i = 0; i < m_positionStateCount; i++)
+        {
+            positionIds[i] = m_positionStates[i].positionId;
+        }
+        return m_positionStateCount;
+    }
+    
+    int GetPositionStateCount() const { return m_positionStateCount; }
+    
+    bool IsPositionStateInitialized() const { return true; }
+    
+    void PrintPositionStateDebugInfo()
+    {
+        PrintFormat("[POSITION-MANAGER-STATE] Tracking %d positions (max: %d)", m_positionStateCount, MAX_POSITION_STATES);
+        
+        int withPrediction = 0;
+        int withAIPrediction = 0;
+        
+        for(int i = 0; i < m_positionStateCount; i++)
+        {
+            if(m_positionStates[i].predictionId != "")
+                withPrediction++;
+            if(m_positionStates[i].aiPredictionTime > 0)
+                withAIPrediction++;
+        }
+        
+        PrintFormat("[POSITION-MANAGER-STATE] With prediction ID: %d | With AI prediction: %d",
+                    withPrediction, withAIPrediction);
+    }
+
+    CPositionManager() :
         m_tradeManager(NULL), m_regimeEngine(NULL), m_riskTierManager(NULL),
         m_safeMode(NULL), m_fullMarginMode(NULL), m_slGuard(NULL),
         m_enabled(true), m_breakevenBufferPts(120.0), m_trailingDistancePts(300.0),
@@ -585,10 +882,12 @@ public:
         m_partialProfitPercent(25.0),
         m_pyramidStateCount(0), m_volatilityRegimeCount(0),
         m_consecutiveLossCount(0), m_lastLossTime(0), m_consecutiveLossCooldownUntil(0),
-        m_dailyLossAmount(0.0), m_dailyRiskBudget(0.0), m_dailyResetTime(0)
+        m_dailyLossAmount(0.0), m_dailyRiskBudget(0.0), m_dailyResetTime(0),
+        m_positionStateCount(0)
     {
         ArrayResize(m_pyramidStates, 0);
         ArrayResize(m_volatilityRegimes, 0);
+        ArrayResize(m_positionStates, 0);
     }
     
     ~CPositionManager()
@@ -601,7 +900,7 @@ public:
                     CSafeMode* safe, CFullMarginMode* fullMargin, CIntelligentSLGuard* slGuard,
                     int magicNumber)
     {
-        if(tm == NULL || regime == NULL || rtm == NULL)
+        if(tm == NULL || rtm == NULL)
             return false;
         
         m_tradeManager = tm;
@@ -723,6 +1022,59 @@ public:
         report += " | VolRegimes=" + IntegerToString(m_volatilityRegimeCount);
         return report;
     }
+    
+    // Position State Tracking accessors (for TradeAttributionManager)
+    int FindPredictionPositionIndex(const ulong positionId)
+    {
+        return FindPositionStateIndex(positionId);
+    }
+    
+    void UpsertPredictionPositionMap(const ulong positionId, const string predictionId)
+    {
+        UpsertPositionPredictionId(positionId, predictionId);
+    }
+    
+    string GetPredictionIdForPosition(const ulong positionId)
+    {
+        return GetPositionPredictionId(positionId);
+    }
+    
+    void RemovePredictionPositionMap(const ulong positionId)
+    {
+        RemovePositionPrediction(positionId);
+    }
+    
+    int FindAIPredictionPositionIndex(const ulong positionId)
+    {
+        return FindPositionStateIndex(positionId);
+    }
+    
+    void UpsertAIPredictionPositionMap(const ulong positionId, const datetime predictionTime, const ENUM_TRADE_SIGNAL predictionSignal)
+    {
+        UpsertPositionAIPrediction(positionId, predictionTime, predictionSignal);
+    }
+    
+    datetime GetAIPredictionTimeForPosition(const ulong positionId)
+    {
+        return GetPositionAIPredictionTime(positionId);
+    }
+    
+    ENUM_TRADE_SIGNAL GetAIPredictionSignalForPosition(const ulong positionId)
+    {
+        return GetPositionAIPredictionSignal(positionId);
+    }
+    
+    void RemoveAIPredictionPositionMap(const ulong positionId)
+    {
+        RemovePositionAIPrediction(positionId);
+    }
+    
+    void ClearAllPositionStateMaps()
+    {
+        ClearAllPositionStates();
+    }
 };
+
+const int CPositionManager::MAX_POSITION_STATES = 500;
 
 #endif // CORE_POSITION_POSITION_MANAGER_MQH

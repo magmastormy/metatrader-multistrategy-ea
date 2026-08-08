@@ -100,6 +100,9 @@ private:
     // State
     double m_kama;
     double m_kamaPrev;
+    double m_erNumerator;
+    double m_erDenominator;
+    double m_scalingConstant;
     double m_volHistory[];
     int    m_volCursor;
     int    m_volCount;
@@ -237,18 +240,23 @@ public:
         m_lowVolThreshold(0.25),
         m_kama(0),
         m_kamaPrev(0),
+        m_erNumerator(0),
+        m_erDenominator(0),
+        m_scalingConstant(0),
         m_volCursor(0),
         m_volCount(0),
         m_currentVol(0),
-        m_lastRegime(FSTATE_LOW_VOL_BULL),
-        m_barsInRegime(0),
-        m_barsSinceRegimeChange(0),
-        m_lastChangeTime(0),
-        m_lastBarTime(0),
-        m_lastLogTime(0)
-    {
-        ArrayResize(m_volHistory, 252);
-    }
+                m_lastRegime(FSTATE_LOW_VOL_BULL),
+                m_barsInRegime(0),
+                m_barsSinceRegimeChange(0),
+                m_lastChangeTime(0),
+                m_lastBarTime(0),
+                m_lastLogTime(0)
+            {
+                ArrayResize(m_volHistory, 252);
+                // L2-019: Resolve PERIOD_CURRENT to actual chart timeframe immediately
+                ResolveTimeframe();
+            }
 
     ~CFourStateRegimeDetector() {}
 
@@ -444,6 +452,22 @@ public:
     double GetICTWeightMult() const { return m_lastSnapshot.ictWeightMult; }
 
     SFourStateSnapshot GetSnapshot() const { return m_lastSnapshot; }
-};
+
+        // --- Cleanup ---
+        void Deinit()
+        {
+            // CFourStateRegimeDetector holds no indicator handles or external resources.
+            // Dynamic arrays are auto-managed. Reset state for potential reuse.
+            m_kama = 0.0;
+            m_erNumerator = 0.0;
+            m_erDenominator = 0.0;
+            m_scalingConstant = 0.0;
+            m_barsInRegime = 0;
+            m_lastChangeTime = 0;
+            m_lastBarTime = 0;
+            m_lastLogTime = 0;
+            m_lastSnapshot = SFourStateSnapshot();
+        }
+    };
 
 #endif // FOUR_STATE_REGIME_DETECTOR_MQH

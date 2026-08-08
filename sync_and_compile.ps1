@@ -1,9 +1,13 @@
 # sync_and_compile.ps1 — Sync project files to Deriv MT5 terminal and compile
-# Usage: .\sync_and_compile.ps1 [-SkipCompile] [-KeepLog]
+# Usage: .\sync_and_compile.ps1 [-SkipCompile] [-KeepLog] [-All]
+#   -SkipCompile : sync only, no compilation
+#   -KeepLog    : keep per-file compile logs
+#   -All        : compile ALL root .mq5 files (default: only the autonomous EA)
 
 param(
     [switch]$SkipCompile = $false,
-    [switch]$KeepLog = $false
+    [switch]$KeepLog = $false,
+    [switch]$All = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,7 +29,7 @@ if (-not (Test-Path $MetaEditor)) { throw "MetaEditor not found: $MetaEditor" }
 $EADst = Join-Path $MQL5Dir "Experts\$EAFolder"
 
 # --- Excluded directories (not synced to MT5) ---
-$ExcludedDirs = @("Dashboard", "node_modules", ".venv-ea-dashboard", ".trae")
+$ExcludedDirs = @("Dashboard", "node_modules", ".venv-ea-dashboard", ".trae", "MQHModelTrainer")
 
 # --- Sync functions ---
 function Sync-Directory($Src, $Dst) {
@@ -145,15 +149,9 @@ if (Test-Path $utilSrc) {
 }
 Write-Host "[SYNC] Utilities/: $utilCount files updated"
 
-# --- Sync MQHModelTrainer/ ---
-Write-Host "[SYNC] Syncing MQHModelTrainer/..." -ForegroundColor Cyan
-$mqtSrc = Join-Path $ProjectRoot "MQHModelTrainer"
-$mqtDst = Join-Path $EADst "MQHModelTrainer"
+# --- Skip MQHModelTrainer/ (training sub-project; not needed for EA runtime, keeps sync fast) ---
+Write-Host "[SYNC] Skipping MQHModelTrainer/ (excluded for faster sync)" -ForegroundColor Gray
 $mqtCount = 0
-if (Test-Path $mqtSrc) {
-    $mqtCount = Sync-Recursive $mqtSrc $mqtDst
-}
-Write-Host "[SYNC] MQHModelTrainer/: $mqtCount files updated"
 
 # --- Sync Resources/ (all file types, including .bin, .onnx) ---
 Write-Host "[SYNC] Syncing Resources/..." -ForegroundColor Cyan
@@ -213,56 +211,110 @@ if ($SkipCompile) {
     exit 0
 }
 
-# --- Compile ---
+# --- Compile ONLY the autonomous EA (skip other project .mq5 files) ---
 Write-Host ""
-Write-Host "[COMPILE] Starting MetaEditor compilation..." -ForegroundColor Cyan
+Write-Host "[COMPILE] Starting MetaEditor compilation — compiling ONLY $MainEA (other .mq5 files are synced but not compiled)..." -ForegroundColor Cyan
 
-$eaPath = Join-Path $EADst $MainEA
-if (-not (Test-Path $eaPath)) {
-    throw "EA file not found at: $eaPath"
-}
-
-$logFile = Join-Path $ProjectRoot "compile_result.log"
-if (Test-Path $logFile) { Remove-Item $logFile -Force }
-
-$compileArgs = "/compile:`"$eaPath`" /log:`"$logFile`""
-Write-Host "[COMPILE] $MetaEditor $compileArgs" -ForegroundColor Gray
-
-$proc = Start-Process -FilePath $MetaEditor -ArgumentList $compileArgs -NoNewWindow -Wait -PassThru
-
-# --- Parse results ---
-Start-Sleep -Milliseconds 500
-
-if (Test-Path $logFile) {
-    $logContent = Get-Content $logFile -Raw
-    Write-Host ""
-    Write-Host "=== COMPILE LOG ===" -ForegroundColor White
-    Write-Host $logContent
-
-    # Check for errors
-    $errorCount = ([regex]::Matches($logContent, '\berror\b')).Count
-    $warnCount = ([regex]::Matches($logContent, '\bwarning\b')).Count
-
-    Write-Host ""
-    if ($errorCount -gt 0) {
-        Write-Host "[COMPILE] FAILED — $errorCount errors, $warnCount warnings" -ForegroundColor Red
-    } else {
-        Write-Host "[COMPILE] SUCCESS — 0 errors, $warnCount warnings" -ForegroundColor Green
-    }
-
-    if (-not $KeepLog -and $errorCount -eq 0) {
-        Remove-Item $logFile -Force
-        Write-Host "[COMPILE] Log file removed (use -KeepLog to preserve)" -ForegroundColor Gray
-    }
+# Only the autonomous EA is compiled by default. Other project .mq5 files (Testing EA,
+# trainers, evaluators, exporters, etc.) are still synced but intentionally NOT compiled.
+# Pass -All to compile every root .mq5 file.
+if ($All) {
+    $projectMq5Files = @(Get-ChildItem $ProjectRoot -Filter "*.mq5" -File)
 } else {
-    Write-Host "[COMPILE] No log file generated. Exit code: $($proc.ExitCode)" -ForegroundColor Yellow
+    $mainEaSrc = Join-Path $ProjectRoot $MainEA
+    if (-not (Test-Path $mainEaSrc)) {
+        throw "Main EA not found: $mainEaSrc"
+    }
+    $projectMq5Files = @([System.IO.FileInfo]$mainEaSrc)
 }
 
+Write-Host "[COMPILE] Found $($projectMq5Files.Count) project .mq5 file(s) to compile" -ForegroundColor Gray
 
+$totalErrors = 0
+$totalWarnings = 0
+$results = @()
+
+foreach ($srcFile in $projectMq5Files) {
+    $fileName = $srcFile.Name
+    $dstFile = Join-Path $EADst $fileName
+    
+    # Only compile if the file exists in the MT5 terminal (it should be synced already)
+    if (-not (Test-Path $dstFile)) {
+        Write-Host "[COMPILE] SKIP $fileName (not found in MT5 terminal)" -ForegroundColor Yellow
+        continue
+    }
+
+    $fileLog = Join-Path $ProjectRoot "compile_$($srcFile.BaseName).log"
+    if (Test-Path $fileLog) { Remove-Item $fileLog -Force }
+
+    $compileArgs = "/compile:`"$dstFile`" /log:`"$fileLog`""
+    Write-Host "[COMPILE] Compiling $fileName..." -ForegroundColor Gray
+
+    $proc = Start-Process -FilePath $MetaEditor -ArgumentList $compileArgs -NoNewWindow -Wait -PassThru
+    Start-Sleep -Milliseconds 300
+
+    $fileErrors = 0
+    $fileWarnings = 0
+    if (Test-Path $fileLog) {
+        $logContent = Get-Content $fileLog -Raw
+        
+        # Parse "Result:" line for accurate error/warning counts
+        $resultLine = ($logContent -split "`n" | Where-Object { $_ -match 'Result:' } | Select-Object -First 1)
+        if ($resultLine) {
+            # Parse "Result: X errors, Y warnings" format
+            if ($resultLine -match '(\d+)\s+errors?') { $fileErrors = [int]$Matches[1] }
+            if ($resultLine -match '(\d+)\s+warnings?') { $fileWarnings = [int]$Matches[1] }
+            Write-Host "  $($resultLine.Trim())" -ForegroundColor $(if ($fileErrors -gt 0) { "Red" } else { "Green" })
+        } else {
+            # Fallback: count error/warning lines with line number pattern
+            $errorMatches = [regex]::Matches($logContent, '^\s*\d+:\s*error\s+\d+:', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+            $warningMatches = [regex]::Matches($logContent, '^\s*\d+:\s*warning\s+\d+:', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+            $fileErrors = $errorMatches.Count
+            $fileWarnings = $warningMatches.Count
+            Write-Host "  File: $fileErrors errors, $fileWarnings warnings" -ForegroundColor $(if ($fileErrors -gt 0) { "Red" } else { "Green" })
+        }
+
+        # Print error lines with file:line details
+        if ($fileErrors -gt 0) {
+            $errorLines = $logContent -split "`n" | Where-Object { $_ -match 'error\s+\d+:' }
+            foreach ($el in $errorLines) {
+                Write-Host "  | $($el.Trim())" -ForegroundColor Red
+            }
+        }
+        
+        # Print warning lines if any
+        if ($fileWarnings -gt 0) {
+            $warningLines = $logContent -split "`n" | Where-Object { $_ -match 'warning\s+\d+:' }
+            foreach ($wl in $warningLines) {
+                Write-Host "  | $($wl.Trim())" -ForegroundColor Yellow
+            }
+        }
+
+        # Clean up per-file log unless KeepLog
+        if (-not $KeepLog) {
+            Remove-Item $fileLog -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-Host "  No log file generated for $fileName (exit code: $($proc.ExitCode))" -ForegroundColor Yellow
+    }
+
+    $totalErrors += $fileErrors
+    $totalWarnings += $fileWarnings
+    $results += [PSCustomObject]@{
+        File     = $fileName
+        Errors   = $fileErrors
+        Warnings = $fileWarnings
+    }
+}
 
 # --- Final summary ---
 Write-Host ""
 Write-Host "=== COMPILE SUMMARY ===" -ForegroundColor White
+foreach ($r in $results) {
+    $color = if ($r.Errors -gt 0) { "Red" } elseif ($r.Warnings -gt 0) { "Yellow" } else { "Green" }
+    Write-Host ("  {0,-40} {1} errors, {2} warnings" -f $r.File, $r.Errors, $r.Warnings) -ForegroundColor $color
+}
+Write-Host ""
 if ($totalErrors -gt 0) {
     Write-Host "[COMPILE] OVERALL FAILED — $totalErrors total errors, $totalWarnings total warnings" -ForegroundColor Red
 } else {

@@ -56,6 +56,10 @@ enum ENUM_ERROR_SEVERITY
     ERROR_FATAL = 4          // Fatal error, emergency shutdown
 };
 
+// L5-006: Additional error codes for PositionSizer
+#define ERROR_INVALID_PARAM ERROR_RECOVERABLE
+#define ERROR_INVALID_INPUT ERROR_RECOVERABLE
+
 #ifndef SEVERITY_INFO
 #define SEVERITY_INFO ERROR_INFO
 #endif
@@ -240,6 +244,7 @@ public:
     
     static bool Initialize(const string logFileName, const ENUM_ERROR_SEVERITY minLevel = ERROR_INFO);
     static void Shutdown();
+    static void DestroyInstance();
 };
 
 class CErrorHandling
@@ -542,7 +547,7 @@ string CEnhancedErrorHandler::FormatErrorMessage(const ENUM_ERROR_SEVERITY sever
     
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
     string component = (context.component != "") ? context.component : "GLOBAL";
-    string symbolName = (context.symbol != "") ? context.symbol : "N/A";
+    string errSymbol = (context.symbol != "") ? context.symbol : "N/A";
     string operation = (context.operation != "") ? context.operation : "N/A";
     string details = (context.additionalInfo != "") ? context.additionalInfo : "No details";
     
@@ -551,7 +556,7 @@ string CEnhancedErrorHandler::FormatErrorMessage(const ENUM_ERROR_SEVERITY sever
         severityStr,
         component,
         operation,
-        symbolName,
+        errSymbol,
         context.errorCode,
         details
     );
@@ -993,6 +998,41 @@ void CEnhancedErrorHandler::UpdateErrorCounters(const ENUM_ERROR_SEVERITY severi
 void CEnhancedErrorHandler::Shutdown()
 {
     m_loggingEnabled = false;
+}
+
+void CEnhancedErrorHandler::DestroyInstance()
+{
+    if(m_instance != NULL)
+    {
+        // Flush any pending log writes
+        if(m_logFile != "" && m_loggingEnabled)
+        {
+            int handle = FileOpen(m_logFile, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI, '\t');
+            if(handle != INVALID_HANDLE)
+            {
+                FileClose(handle);
+            }
+        }
+        
+        // Delete the singleton instance
+        delete m_instance;
+        m_instance = NULL;
+        
+        // Reset static members
+        m_logFile = "";
+        m_loggingEnabled = false;
+        m_minLogLevel = ERROR_INFO;
+        m_verbosityLevel = VERBOSITY_NORMAL;
+        for(int i = 0; i < 5; i++)
+            m_errorCount[i] = 0;
+        m_lastError = 0;
+        m_emergencyMode = false;
+        m_componentCount = 0;
+        m_gracefulDegradation = true;
+        m_aggregationCount = 0;
+        m_aggregationWindowSeconds = 300;
+        m_aggregationEnabled = true;
+    }
 }
 
 #endif // CORE_ERROR_HANDLING_MQH

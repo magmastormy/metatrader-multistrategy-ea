@@ -44,6 +44,10 @@ protected:
     string            m_lastDecisionReasonTag;
     int               m_regimeDetailedType;   // Regime context from RegimeEngine (ENUM_DETAILED_REGIME as int)
     int               m_strategyCluster;      // Strategy cluster type (ENUM_STRATEGY_CLUSTER as int)
+    string            m_strategyPrefix;       // Logging prefix for reject events (set by subclasses)
+    string            m_lastRejectReasonTag;  // Last reject reason (for dedup throttling)
+    datetime          m_lastRejectLogTime;    // Timestamp of last reject log entry
+    int               m_lastBarCount;         // Bar count for new-bar detection (RefreshForNewBar)
 
     CTradeManager*    m_tradeManager;
     CPositionSizer*   m_positionSizer;
@@ -63,7 +67,6 @@ public:
     virtual void Deinit(void);
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence);
-    virtual void OnNewBar(void);
 
     virtual string GetName(void) const;
     virtual ENUM_STRATEGY_TYPE GetType(void) const;
@@ -74,10 +77,14 @@ public:
     virtual bool ValidateParameters(void);
     virtual datetime GetLastSignalTime(void) const;
     virtual void GetStatistics(int &signals, int &successful, double &accuracy);
-    virtual string GetLastDecisionReasonTag(void) const override;
+    virtual string GetLastDecisionReasonTag(void) const;
     virtual void SetConfidenceThreshold(double threshold) override;
-    virtual ENUM_TRADE_SIGNAL GetQuickProbeSignal() override { return TRADE_SIGNAL_NONE; }
-
+    virtual bool ValidateRiskManagerInjection(void) const override;
+    virtual bool ShouldBypassTierConfidenceFloor(void) const override;
+    // AI-specific degradation monitoring - default implementations for non-AI strategies
+    virtual bool IsDirectionDegenerate(void) const override { return false; }
+    virtual bool ShouldDisableModel(void) const override { return false; }
+    virtual double GetCalibratedWeight(double baseWeight) const override { return baseWeight; }
 
     virtual void Update(void);
 
@@ -94,6 +101,26 @@ protected:
     void RecordSignal(const bool successful = false);
     void RecordSignalOutcome(const bool successful);
     void SetDecisionReasonTag(const string tag);
+
+    // Reject signal helpers (shared by all derived strategies)
+    virtual void LogRejectEvent(const string reasonTag);
+    virtual ENUM_TRADE_SIGNAL RejectSignal(const string reasonTag);
+
+    // New-bar refresh: common boilerplate (bar count guard) + virtual hook for strategy-specific component updates
+    bool RefreshForNewBar();
+    virtual void OnRefreshComponents() {}
+
+    // Risk validation helper - validates a trade request through CUnifiedRiskManager
+    // Returns true if approved (and applies confidence multiplier)
+    // Returns false if rejected (and sets decision reason tag + logs rejection)
+    // If no risk manager is injected, returns true (matches existing null-skip behavior)
+    bool ValidateWithRiskManager(const STradeValidationRequest &request,
+                                 const string tagPrefix,
+                                 double &confidence);
+
+    // Consensus diagnostic logging helper - standardizes the [CONSENSUS-DIAG] wrapper
+    // Each strategy passes its indicator-specific context as a pre-formatted string
+    void LogConsensusDiag(ENUM_TRADE_SIGNAL signal, const string context, double confidence, const string reasonSuffix = "");
 
     // Feature 1: Regime-Aware Strategy Weighting
     double GetRegimeConfidenceMultiplier();
@@ -120,8 +147,6 @@ public:
     virtual int GetTotalTrades() const;
     virtual int GetWinningTrades() const;
     virtual int GetLosingTrades() const;
-    virtual double GetTotalProfit() const;
-    virtual double GetTotalLoss() const;
 
     virtual void ResetMetrics();
     bool IsErrorRateLimitExceeded();
@@ -147,6 +172,10 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_lastDecisionReasonTag("BASE_UNSET"),
     m_regimeDetailedType(0),
     m_strategyCluster(0),
+    m_strategyPrefix("STRATEGY"),
+    m_lastRejectReasonTag(""),
+    m_lastRejectLogTime(0),
+    m_lastBarCount(0),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_unifiedRiskManager(NULL),
@@ -275,11 +304,6 @@ ENUM_TRADE_SIGNAL CStrategyBase::GetSignal(double &confidence)
     return signal;
 }
 
-void CStrategyBase::OnNewBar(void)
-{
-    OnNewBar(m_symbol, m_timeframe);
-}
-
 string CStrategyBase::GetName(void) const
 {
     return m_name;
@@ -332,6 +356,16 @@ string CStrategyBase::GetLastDecisionReasonTag(void) const
     return m_lastDecisionReasonTag;
 }
 
+bool CStrategyBase::ValidateRiskManagerInjection(void) const
+{
+    return (m_unifiedRiskManager != NULL);
+}
+
+bool CStrategyBase::ShouldBypassTierConfidenceFloor(void) const
+{
+    return false; // Default: no bypass
+}
+
 void CStrategyBase::Update(void)
 {
     if(!m_is_enabled || !m_is_initialized)
@@ -364,6 +398,97 @@ void CStrategyBase::RecordSignalOutcome(const bool successful)
 void CStrategyBase::SetDecisionReasonTag(const string tag)
 {
     m_lastDecisionReasonTag = tag;
+}
+
+//+------------------------------------------------------------------+
+//| LogRejectEvent - throttled reject logging with dedup            |
+//| Uses m_strategyPrefix for strategy-specific log identification   |
+//+------------------------------------------------------------------+
+void CStrategyBase::LogRejectEvent(const string reasonTag)
+{
+    datetime nowTime = TimeCurrent();
+    if(reasonTag == m_lastRejectReasonTag && (nowTime - m_lastRejectLogTime) <= 15)
+        return;
+    if((nowTime - m_lastRejectLogTime) < 5)
+        return;
+
+    PrintFormat("[%s] Filtered: %s | Symbol=%s | TF=%s",
+                m_strategyPrefix, reasonTag, m_symbol, EnumToString(m_timeframe));
+    m_lastRejectReasonTag = reasonTag;
+    m_lastRejectLogTime = nowTime;
+}
+
+//+------------------------------------------------------------------+
+//| RejectSignal - set reason tag, log, and return NONE             |
+//+------------------------------------------------------------------+
+ENUM_TRADE_SIGNAL CStrategyBase::RejectSignal(const string reasonTag)
+{
+    SetDecisionReasonTag(reasonTag);
+    LogRejectEvent(reasonTag);
+    return TRADE_SIGNAL_NONE;
+}
+
+//+------------------------------------------------------------------+
+//| RefreshForNewBar - common new-bar detection + component refresh  |
+//| Returns true if a new bar was detected and components refreshed   |
+//+------------------------------------------------------------------+
+bool CStrategyBase::RefreshForNewBar()
+{
+    int barCount = iBars(m_symbol, m_timeframe);
+    if(barCount <= 0 || barCount == m_lastBarCount)
+        return false;
+
+    m_lastBarCount = barCount;
+    OnRefreshComponents();
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| ValidateWithRiskManager - unified risk validation gate helper     |
+//| Consolidates ~150 lines of duplicated boilerplate across strategies|
+//+------------------------------------------------------------------+
+bool CStrategyBase::ValidateWithRiskManager(const STradeValidationRequest &request,
+                                             const string tagPrefix,
+                                             double &confidence)
+{
+    CUnifiedRiskManager* riskMgr = GetUnifiedRiskManager();
+    if(riskMgr == NULL)
+        return true; // No risk manager injected — allow trade (backward compat)
+
+    SValidationResult result;
+    ZeroMemory(result);
+    result = (*riskMgr).ValidateTradeRequest(request, tagPrefix);
+
+    if(!result.approved)
+    {
+        SetDecisionReasonTag(tagPrefix + "_RISK_REJECTED");
+        PrintFormat("[%s] Risk rejected | Conf=%.1f%% | Reason=%s",
+                    tagPrefix, confidence * 100, result.message);
+        return false;
+    }
+
+    // BUGFIX (consensus-conf): guard against a non-positive multiplier silently
+    // zeroing an approved signal's confidence. A valid adjustment is > 0; anything
+    // <= 0 (e.g. an uninitialized/ZeroMemory'd field) is treated as 1.0 = no change.
+    double confMult = (result.confidenceMultiplier > 0.0) ? result.confidenceMultiplier : 1.0;
+    confidence *= confMult;
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| LogConsensusDiag - standardized [CONSENSUS-DIAG] logging wrapper  |
+//| Output: [CONSENSUS-DIAG] symbol | BUY/SELL | context | Conf | Wt  |
+//+------------------------------------------------------------------+
+void CStrategyBase::LogConsensusDiag(ENUM_TRADE_SIGNAL signal, const string context, double confidence, const string reasonSuffix)
+{
+    PrintFormat("[CONSENSUS-DIAG] %s | %s | %s | Conf: %.1f%% | Weight: %.2f | Reason: %s%s",
+                m_symbol,
+                signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL",
+                context,
+                confidence * 100,
+                m_weight,
+                m_lastDecisionReasonTag,
+                reasonSuffix);
 }
 
 void CStrategyBase::SetConfidenceThreshold(double threshold)
@@ -426,16 +551,6 @@ int CStrategyBase::GetWinningTrades() const
 int CStrategyBase::GetLosingTrades() const
 {
     return 0;
-}
-
-double CStrategyBase::GetTotalProfit() const
-{
-    return 0.0;
-}
-
-double CStrategyBase::GetTotalLoss() const
-{
-    return 0.0;
 }
 
 void CStrategyBase::ResetMetrics()

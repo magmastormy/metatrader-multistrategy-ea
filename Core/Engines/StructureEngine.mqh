@@ -97,16 +97,31 @@ private:
     string m_symbol;                // Current symbol for logging
     
     // State tracking
-    SwingPoint m_swingHighs[];     // Array of swing highs
-    SwingPoint m_swingLows[];      // Array of swing lows
-    MarketStructureState m_state;   // Current structure state
+        SwingPoint m_swingHighs[];     // Array of swing highs
+        SwingPoint m_swingLows[];      // Array of swing lows
+        MarketStructureState m_state;   // Current structure state
+    
+        // Potential swing tracking for real-time detection (L4-009 fix)
+        double m_potentialSwingHighPrice;    // Price of potential swing high
+        int    m_potentialSwingHighIndex;    // Index of potential swing high
+        double m_potentialSwingLowPrice;     // Price of potential swing low
+        int    m_potentialSwingLowIndex;     // Index of potential swing low
+        bool   m_potentialSwingHighValid;    // Flag if potential swing high is valid
+        bool   m_potentialSwingLowValid;     // Flag if potential swing low is valid
     
     // Diagnostics
     CSignalDiagnostics* m_diagnostics;
     
     // Internal methods
-    bool IsSwingHigh(const MqlRates &rates[], int index, int period);
-    bool IsSwingLow(const MqlRates &rates[], int index, int period);
+        bool IsSwingHigh(const MqlRates &rates[], int index, int period);
+        bool IsSwingLow(const MqlRates &rates[], int index, int period);
+    
+        // Real-time swing detection methods (L4-009 fix)
+        bool IsPotentialSwingHigh(const MqlRates &rates[], int index, int period);
+        bool IsPotentialSwingLow(const MqlRates &rates[], int index, int period);
+        bool IsConfirmedSwingHigh(const MqlRates &rates[], int index, int period);
+        bool IsConfirmedSwingLow(const MqlRates &rates[], int index, int period);
+        void ConfirmPotentialSwings(const MqlRates &rates[], int currentBarIndex);
     double CalculateSwingStrength(const MqlRates &rates[], int index, bool isHigh);
     void UpdateStructureState(const SwingPoint &newPoint, bool isHigh);
     bool DetectBOS(const SwingPoint &current, const SwingPoint &previous);
@@ -156,7 +171,13 @@ CStructureEngine::CStructureEngine() :
     m_structureThreshold(0.0),
     m_sweepThreshold(5.0),
     m_useATR(true),
-    m_diagnostics(NULL)
+    m_diagnostics(NULL),
+    m_potentialSwingHighPrice(0),
+    m_potentialSwingHighIndex(-1),
+    m_potentialSwingLowPrice(0),
+    m_potentialSwingLowIndex(-1),
+    m_potentialSwingHighValid(false),
+    m_potentialSwingLowValid(false)
 {
     ArrayResize(m_swingHighs, 0);
     ArrayResize(m_swingLows, 0);
@@ -212,11 +233,47 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
     
     m_symbol = symbol;
     
-    // Clear old swings
-    ArrayResize(m_swingHighs, 0);
-    ArrayResize(m_swingLows, 0);
+    // L4-009 Fix: First, confirm potential swings from previous calls
+    // (right side data may now be available)
+    ConfirmPotentialSwings(rates, copied - 1);
     
-    // Detect swing points
+    // L4-009 Fix: Check for NEW potential swings at recent bars (indices < m_swingPeriod)
+    // These bars don't have enough future data for full confirmation yet
+    for(int i = 0; i < m_swingPeriod && i < copied; i++)
+    {
+        // Check for potential swing high (left side only)
+        if(IsPotentialSwingHigh(rates, i, m_swingPeriod))
+        {
+            // Store as potential swing high for confirmation on next bars
+            m_potentialSwingHighValid = true;
+            m_potentialSwingHighIndex = i;
+            m_potentialSwingHighPrice = rates[i].high;
+            
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection("POTENTIAL_SWING_HIGH", m_symbol, rates[i].high,
+                                             rates[i].high, 0, true, 0);
+            }
+        }
+        
+        // Check for potential swing low (left side only)
+        if(IsPotentialSwingLow(rates, i, m_swingPeriod))
+        {
+            // Store as potential swing low for confirmation on next bars
+            m_potentialSwingLowValid = true;
+            m_potentialSwingLowIndex = i;
+            m_potentialSwingLowPrice = rates[i].low;
+            
+            if(m_diagnostics != NULL)
+            {
+                m_diagnostics.LogSMCDetection("POTENTIAL_SWING_LOW", m_symbol, rates[i].low,
+                                             rates[i].low, 0, true, 0);
+            }
+        }
+    }
+    
+    // Detect CONFIRMED swing points for historical bars (both sides available)
+    // Only process bars that have enough left AND right context
     for(int i = m_swingPeriod; i < copied - m_swingPeriod; i++)
     {
         // Check for swing high
@@ -287,7 +344,7 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
                 if(DetectCHOCH(point, m_swingLows[size-1]))
                 {
                     m_diagnostics.LogSMCDetection("CHOCH_LOW", m_symbol, point.price,
-                                                 m_swingLows[size-1].price, point.price,
+                                                 point.price, m_swingLows[size-1].price,
                                                  true, point.strength);
                 }
             }
@@ -306,6 +363,45 @@ bool CStructureEngine::DetectSwingPoints(const string symbol, ENUM_TIMEFRAMES ti
     }
     
     // Calculate overall structure strength
+            // L4-009 Fix: Check for potential swing high/low at current bar (index 0) and recent bars
+            // These bars don't have enough future data for full confirmation yet
+            for(int i = 0; i < m_swingPeriod && i < copied; i++)
+            {
+                // Check for potential swing high (left side only)
+                if(IsPotentialSwingHigh(rates, i, m_swingPeriod))
+                {
+                    // Store as potential swing high for confirmation on next bars
+                    m_potentialSwingHighValid = true;
+                    m_potentialSwingHighIndex = i;
+                    m_potentialSwingHighPrice = rates[i].high;
+            
+                    if(m_diagnostics != NULL)
+                    {
+                        m_diagnostics.LogSMCDetection("POTENTIAL_SWING_HIGH", m_symbol, rates[i].high,
+                                                     rates[i].high, 0, true, 0);
+                    }
+                }
+        
+                // Check for potential swing low (left side only)
+                if(IsPotentialSwingLow(rates, i, m_swingPeriod))
+                {
+                    // Store as potential swing low for confirmation on next bars
+                    m_potentialSwingLowValid = true;
+                    m_potentialSwingLowIndex = i;
+                    m_potentialSwingLowPrice = rates[i].low;
+            
+                    if(m_diagnostics != NULL)
+                    {
+                        m_diagnostics.LogSMCDetection("POTENTIAL_SWING_LOW", m_symbol, rates[i].low,
+                                                     rates[i].low, 0, true, 0);
+                    }
+                }
+            }
+    
+            // L4-009 Fix: Confirm potential swings when right side data becomes available
+            ConfirmPotentialSwings(rates, copied - 1);
+    
+            // Calculate overall structure strength
     if(ArraySize(m_swingHighs) > 1 && ArraySize(m_swingLows) > 1)
     {
         double highDiff = m_swingHighs[ArraySize(m_swingHighs)-1].price - 
@@ -415,6 +511,268 @@ bool CStructureEngine::IsSwingLow(const MqlRates &rates[], int index, int period
     {
         double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
         return (rates[index].high - low) > m_minSwingSize * point;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if bar is a potential swing high (left side only - real-time)
+//+------------------------------------------------------------------+
+bool CStructureEngine::IsPotentialSwingHigh(const MqlRates &rates[], int index, int period)
+{
+    if(index < period || index >= ArraySize(rates))
+        return false;
+    
+    double high = rates[index].high;
+    
+    // Check left side only (historical confirmation)
+    for(int i = 1; i <= period; i++)
+    {
+        if(rates[index - i].high >= high)
+            return false;
+    }
+    
+    // Verify minimum swing size (same logic as IsSwingHigh)
+    double avgBody = 0;
+    int count = 0;
+    for(int i = index - period; i <= index; i++)
+    {
+        if(i >= 0 && i < ArraySize(rates))
+        {
+            avgBody += MathAbs(rates[i].close - rates[i].open);
+            count++;
+        }
+    }
+    avgBody = (count > 0) ? avgBody / count : 0;
+    
+    if(m_useATR)
+    {
+        return avgBody > 0 && (high - rates[index].low) > avgBody * 2;
+    }
+    else
+    {
+        double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        return (high - rates[index].low) > m_minSwingSize * point;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if bar is a potential swing low (left side only - real-time)
+//+------------------------------------------------------------------+
+bool CStructureEngine::IsPotentialSwingLow(const MqlRates &rates[], int index, int period)
+{
+    if(index < period || index >= ArraySize(rates))
+        return false;
+    
+    double low = rates[index].low;
+    
+    // Check left side only (historical confirmation)
+    for(int i = 1; i <= period; i++)
+    {
+        if(rates[index - i].low <= low)
+            return false;
+    }
+    
+    // Verify minimum swing size (same logic as IsSwingLow)
+    double avgBody = 0;
+    int count = 0;
+    for(int i = index - period; i <= index; i++)
+    {
+        if(i >= 0 && i < ArraySize(rates))
+        {
+            avgBody += MathAbs(rates[i].close - rates[i].open);
+            count++;
+        }
+    }
+    avgBody = (count > 0) ? avgBody / count : 0;
+    
+    if(m_useATR)
+    {
+        return avgBody > 0 && (rates[index].high - low) > avgBody * 2;
+    }
+    else
+    {
+        double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        return (rates[index].high - low) > m_minSwingSize * point;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if bar is a confirmed swing high (both sides - historical)
+//+------------------------------------------------------------------+
+bool CStructureEngine::IsConfirmedSwingHigh(const MqlRates &rates[], int index, int period)
+{
+    if(index < period || index >= ArraySize(rates) - period)
+        return false;
+    
+    double high = rates[index].high;
+    
+    // Check left side
+    for(int i = 1; i <= period; i++)
+    {
+        if(rates[index - i].high >= high)
+            return false;
+    }
+    
+    // Check right side (future bars)
+    for(int i = 1; i <= period; i++)
+    {
+        if(rates[index + i].high > high)
+            return false;
+    }
+    
+    // Verify minimum swing size
+    double avgBody = 0;
+    int count = 0;
+    for(int i = index - period; i <= index + period; i++)
+    {
+        if(i >= 0 && i < ArraySize(rates))
+        {
+            avgBody += MathAbs(rates[i].close - rates[i].open);
+            count++;
+        }
+    }
+    avgBody = (count > 0) ? avgBody / count : 0;
+    
+    if(m_useATR)
+    {
+        return avgBody > 0 && (high - rates[index].low) > avgBody * 2;
+    }
+    else
+    {
+        double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        return (high - rates[index].low) > m_minSwingSize * point;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if bar is a confirmed swing low (both sides - historical)
+//+------------------------------------------------------------------+
+bool CStructureEngine::IsConfirmedSwingLow(const MqlRates &rates[], int index, int period)
+{
+    if(index < period || index >= ArraySize(rates) - period)
+        return false;
+    
+    double low = rates[index].low;
+    
+    // Check left side
+    for(int i = 1; i <= period; i++)
+    {
+        if(rates[index - i].low <= low)
+            return false;
+    }
+    
+    // Check right side (future bars)
+    for(int i = 1; i <= period; i++)
+    {
+        if(rates[index + i].low < low)
+            return false;
+    }
+    
+    // Verify minimum swing size
+    double avgBody = 0;
+    int count = 0;
+    for(int i = index - period; i <= index + period; i++)
+    {
+        if(i >= 0 && i < ArraySize(rates))
+        {
+            avgBody += MathAbs(rates[i].close - rates[i].open);
+            count++;
+        }
+    }
+    avgBody = (count > 0) ? avgBody / count : 0;
+    
+    if(m_useATR)
+    {
+        return avgBody > 0 && (rates[index].high - low) > avgBody * 2;
+    }
+    else
+    {
+        double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+        return (rates[index].high - low) > m_minSwingSize * point;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Confirm potential swings when right side becomes available
+//+------------------------------------------------------------------+
+void CStructureEngine::ConfirmPotentialSwings(const MqlRates &rates[], int currentBarIndex)
+{
+    // Check if potential swing high can now be confirmed (right side available)
+    if(m_potentialSwingHighValid && m_potentialSwingHighIndex >= 0)
+    {
+        // The potential swing was at index m_potentialSwingHighIndex
+        // Now we need to check if the right side (currentBarIndex - m_potentialSwingHighIndex bars)
+        // satisfies the swing condition
+        int barsSincePotential = currentBarIndex - m_potentialSwingHighIndex;
+        
+        if(barsSincePotential >= m_swingPeriod)
+        {
+            // Enough bars have passed, check if right side is confirmed
+            if(IsConfirmedSwingHigh(rates, m_potentialSwingHighIndex, m_swingPeriod))
+            {
+                // Confirmed! Add to swing highs array
+                SwingPoint point;
+                point.price = m_potentialSwingHighPrice;
+                point.time = rates[m_potentialSwingHighIndex].time;
+                point.bar = m_potentialSwingHighIndex;
+                point.type = STRUCT_TYPE_HH; // Will be updated by UpdateStructureState
+                point.strength = CalculateSwingStrength(rates, m_potentialSwingHighIndex, true);
+                point.isValid = true;
+                
+                int size = ArraySize(m_swingHighs);
+                ArrayResize(m_swingHighs, size + 1);
+                m_swingHighs[size] = point;
+                
+                UpdateStructureState(point, true);
+                
+                if(m_diagnostics != NULL)
+                {
+                    m_diagnostics.LogSMCDetection("CONFIRMED_SWING_HIGH", m_symbol, point.price, 
+                                                 point.price, 0, true, point.strength);
+                }
+            }
+            // Whether confirmed or not, clear the potential swing
+            m_potentialSwingHighValid = false;
+            m_potentialSwingHighIndex = -1;
+            m_potentialSwingHighPrice = 0;
+        }
+    }
+    
+    // Check if potential swing low can now be confirmed
+    if(m_potentialSwingLowValid && m_potentialSwingLowIndex >= 0)
+    {
+        int barsSincePotential = currentBarIndex - m_potentialSwingLowIndex;
+        
+        if(barsSincePotential >= m_swingPeriod)
+        {
+            if(IsConfirmedSwingLow(rates, m_potentialSwingLowIndex, m_swingPeriod))
+            {
+                // Confirmed! Add to swing lows array
+                SwingPoint point;
+                point.price = m_potentialSwingLowPrice;
+                point.time = rates[m_potentialSwingLowIndex].time;
+                point.bar = m_potentialSwingLowIndex;
+                point.type = STRUCT_TYPE_LL; // Will be updated by UpdateStructureState
+                point.strength = CalculateSwingStrength(rates, m_potentialSwingLowIndex, false);
+                point.isValid = true;
+                
+                int size = ArraySize(m_swingLows);
+                ArrayResize(m_swingLows, size + 1);
+                m_swingLows[size] = point;
+                
+                UpdateStructureState(point, false);
+                
+                if(m_diagnostics != NULL)
+                {
+                    m_diagnostics.LogSMCDetection("CONFIRMED_SWING_LOW", m_symbol, point.price,
+                                                 point.price, 0, true, point.strength);
+                }
+            }
+            // Whether confirmed or not, clear the potential swing
+            m_potentialSwingLowValid = false;
+            m_potentialSwingLowIndex = -1;
+            m_potentialSwingLowPrice = 0;
+        }
     }
 }
 
@@ -760,6 +1118,14 @@ void CStructureEngine::Reset()
     ArrayResize(m_swingHighs, 0);
     ArrayResize(m_swingLows, 0);
     m_state = MarketStructureState();
+    
+    // L4-009 Fix: Reset potential swing tracking variables
+    m_potentialSwingHighValid = false;
+    m_potentialSwingHighIndex = -1;
+    m_potentialSwingHighPrice = 0;
+    m_potentialSwingLowValid = false;
+    m_potentialSwingLowIndex = -1;
+    m_potentialSwingLowPrice = 0;
 }
 
 #endif // STRUCTURE_ENGINE_MQH

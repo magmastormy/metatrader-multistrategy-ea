@@ -27,6 +27,7 @@ input bool enableVisualization = true;
 input bool saveModel = true;
 
 #include "Core/AI/AIFeatureVectorBuilder.mqh"
+#include "Core/Orchestration/GlobalDefs.mqh"
 #include "AIModules/AIConfig.mqh"
 #include "MQHModelTrainer/Data/CSVDataLoader.mqh"
 #include "MQHModelTrainer/Data/DataPreprocessor.mqh"

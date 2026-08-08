@@ -1,14 +1,14 @@
 # MetaTrader Multi-Strategy Autonomous EA
 
 ![Status](https://img.shields.io/badge/status-production-blue)
-![Batch](https://img.shields.io/badge/batch-126-green)
+![Batch](https://img.shields.io/badge/batch-140-green)
 ![Platform](https://img.shields.io/badge/platform-MetaTrader%205-orange)
-![Strategies](https://img.shields.io/badge/strategies-15-purple)
+![Strategies](https://img.shields.io/badge/strategies-20-purple)
 ![Academic Rigor](https://img.shields.io/badge/academic_rigor-validated-brightgreen)
 
 ## Overview
 
-**MultiStrategyAutonomousEA** is an autonomous multi-strategy trading system for MetaTrader 5 that combines 15+ strategy modules across three tiers (Institutional, Structure, Indicator) through a weighted consensus voting mechanism. Built for serious traders who need enterprise-grade signal validation before any order touches the broker.
+**MultiStrategyAutonomousEA** is an autonomous multi-strategy trading system for MetaTrader 5 that combines 20 strategy modules across three tiers (Institutional, Structure, Indicator) through a weighted consensus voting mechanism. Built for serious traders who need enterprise-grade signal validation before any order touches the broker.
 
 The system covers **Forex, Metals, Indices, Energies, and 18 Deriv synthetic index families** with per-asset-class optimization — automatically detecting instrument types and applying tailored risk parameters, lot scaling, and strategy weights. AI modes (Indicator Only, AI Only, Hybrid) let operators control the blend of human-designed strategies and machine-learned predictions.
 
@@ -20,9 +20,21 @@ Designed for production: every trade entry passes through a multi-layer pre-trad
 
 **Layer 2 Initialization & Lifecycle Audit (Batch 126):** Two-phase enterprise manager initialization documented, verbose diagnostics gated behind log levels via LOG_IF macro, pipeline dependencies documented for InpUseSignalPipeline.
 
+**Layer 4 Signal Pipeline & Filtering (Batch 129):** Complete audit of signal pipeline and filtering layer — all 15 issues from `layer_4.md` resolved. Key improvements: configurable filter chain with early-exit, intrabar-aware cache invalidation, quality score weight normalization, grouped SignalFilterSettings with Validate/ApplyPreset, readiness score component weights made configurable, ADX handle race condition fixed, swing detection real-time support, NONE signal handling in weighted MTF resolution, regime snapshot reuse with transition validation, log throttling, duplicate ATR calculation eliminated.
+
+**Layer 6 Strategy Implementation Logic (Batch 130):** Complete resolution of all 4 remaining issues from `layer_6.md`:
+- **L6-007 MEDIUM**: Intrabar policy PROBE mode wired through EA inputs → SOrchestratorConfig → AutoRegisterStrategies. Strategies 15-16 (NY Open Gap, Asian Range Break) now use configured intrabar policies.
+- **L6-008 MEDIUM**: Participation score update logic implemented. ConsensusEngine now calls `UpdateParticipationScore(strategyIndex, signalType)` for all strategies (signal=1, filtered=0, none=-1), feeding into weight adaptation via health monitor.
+- **L6-013 LOW**: `GetQuickProbeSignal()` removed from IStrategy interface and all 5 implementations (MeanReversion, SimpleMomentum, StatisticalArbitrage, Candlestick, VolatilityBreakout). Two-tier consensus path was unused; removal simplifies LSP contract.
+- **L6-016 LOW**: AIPerformanceFeedback integrated with EnterpriseStrategyManager weight adaptation. AI metrics (accuracy, profitability, recent accuracy) now update strategy health scores and apply profitability multipliers for AI strategies (Neural Network, Transformer, Ensemble, ONNX).
+
+**Layer 12 Main EA Entrypoint Flow Audit (Batch 139):** All 18 issues from `AUDIT_Layer12_MainEAEntryFlow.md` resolved. Key fixes: SymbolScanScheduler intrabar scoring temporal mismatch corrected (state now updated AFTER consensus); ManageAllPositions optimized with EA-owned position ticket cache (O(1) vs O(n)); ProcessTradingLogic decomposed into 7 focused methods; OnTimer processes async confirmations; crash recovery state atomic write without FILE_COMMON; heartbeat deltas via snapshots; CIndicatorManager::DestroyInstance() and OnChartEvent verified.
+
+**Phase 4-5 Strategy Debloat (Batch 140):** Strategy duplication consolidated into `CStrategyBase` (reject logging, new-bar refresh, risk-validation helper, consensus-diag logging) — ~260 lines of duplicated boilerplate removed across strategy files. God object `EAOrchestrator.mqh` decomposed: `SOrchestratorConfig` extracted to `OrchestratorConfig.mqh` (710 lines) and `InitializeStrategyConfigs` extracted to `StrategyConfigBuilder.mqh` (249 lines), reducing EAOrchestrator from 5,529 → 4,571 lines (17.3% smaller). No runtime behavior change — pure structural refactoring. Compiles with 0 errors, 0 warnings.
+
 ## Key Features
 
-- **Multi-Strategy Consensus** — 15 strategy modules vote through weighted quorum; no single strategy can unilaterally enter a trade
+- **Multi-Strategy Consensus** — 20 strategy modules vote through weighted quorum; no single strategy can unilaterally enter a trade
 - **3-Tier Signal Architecture** — Institutional (ICT/SMC), Structure (S/R, Trend), and Indicator (Momentum, Candlestick, MA) tiers with configurable weights
 - **AI Integration** — 4 AI adapters (Neural Network, Transformer, Ensemble, ONNX) with Indicator Only / AI Only / Hybrid modes
 - **Multi-Asset Class Profiling** — Auto-detection and per-class parameterization for Forex, Metals, Indices, Energies, and 18 Deriv synthetics
@@ -77,6 +89,46 @@ Designed for production: every trade entry passes through a multi-layer pre-trad
 6. **Choose Mode** — Set `InpEAMode` to `INDICATOR_ONLY`, `AI_ONLY`, or `HYBRID`
 7. **Go Live** — EA runs in live mode by default
 
+## Standalone Testing EA
+
+For isolated component testing and backtesting optimization, use `MultiStrategyTestingEA.mq5` instead of the main EA. This standalone testing EA includes the **Complete Test Profile System** with 45 predefined test profiles:
+
+### Test Profile Categories
+
+| Category | Profiles | Description |
+|----------|----------|-------------|
+| **Special / Utility** | 2 | `TEST_PROFILE_CUSTOM` (manual flags), `TEST_PROFILE_DISABLE_ALL` (baseline noise floor) |
+| **Single Indicator Strategies** | 17 | Test each of the 19 registry strategies individually (Momentum, Trend, SR, ICT, Candle, Unicorn, POT, MR, VB, StatArb, FVG, Turtle, Breaker, NYGap, Asian, LiqSweep, RangeComp) |
+| **Single AI Strategies** | 4 | Neural Network, Transformer, Ensemble, ONNX AI modes individually |
+| **Single Independent Engines** | 4 | Fast Scalp, Spike Hunter, Grid Recovery, ATR Scalping engines individually |
+| **Curated Strategy Families** | 5 | Trend Suite, MeanRev Suite, ICT/SMC Suite, Session Suite, Scalp Engines Suite |
+| **Aggregate Modes** | 5 | All Indicators, All Indicators Live, AI Suite, All Engines, All Engines Safe |
+| **Full System Modes** | 5 | Full Indicators, Full Hybrid, Full With Engines, Full With Engines Safe, Everything |
+
+### Key Input Parameters (Testing EA only)
+
+| Parameter | Default | Description |
+|-----------|:-------:|-------------|
+| `InpCompleteTestProfile` | `TEST_PROFILE_CUSTOM` | Select from 45 predefined test profiles |
+| `InpTestProfileOverrideAll` | `true` | If true, profile overrides all individual input flags |
+| `InpIncludeDeadCodeInProfiles` | `false` | Include dead-code strategies (Hurst, OU Process) in profiles |
+
+### Usage
+
+1. **Attach Testing EA** — Drag `MultiStrategyTestingEA.mq5` onto chart instead of main EA
+2. **Select Profile** — Set `InpCompleteTestProfile` to desired test mode (e.g., `TEST_PROFILE_SINGLE_MOMENTUM`, `TEST_PROFILE_ALL_INDICATORS`, `TEST_PROFILE_FULL_HYBRID`)
+3. **Run Backtest** — Use Strategy Tester with the selected profile for isolated component validation
+4. **Review Logs** — Check `[ACTIVATION-MATRIX]` and `[PER-SYMBOL-REPORT]` logs for effective component configuration
+
+### Benefits
+
+- **Isolated Testing** — Test single strategies/engines without modifying main EA inputs
+- **No Code Changes** — Main production EA remains untouched
+- **45 Predefined Profiles** — Comprehensive coverage from single components to full system
+- **Activation Matrix Logging** — Automatic logging of what's active per profile
+- **Per-Symbol Reporting** — See exactly which components run on each symbol
+- **Optimization Ready** — Works with MT5 optimizer for single-component parameter sweeps
+
 ## Configuration
 
 ### Risk Management
@@ -120,23 +172,39 @@ Designed for production: every trade entry passes through a multi-layer pre-trad
 
 ## Strategy Roster
 
+### Indicator-Based Strategies (15 Active)
+
 | Strategy | Tier | Cluster | Weight | Description |
 |----------|:----:|---------|:------:|-------------|
-| Unified ICT | 1 | STRUCTURE | 1.2 | ICT/SMC: FVG, OB, BOS/CHOCH, CISD, kill zones |
+| Momentum | 3 | TREND | 1.0 | Simplified 4-indicator momentum with scalp mode |
+| Trend | 2 | TREND | 1.2 | EMA crossover + ADX + multi-TF alignment |
+| Support/Resistance | 2 | MEAN_REVERSION | 1.5 | S/R with Fibonacci confluence + Hurst filter |
+| Candlestick | 2 | STRUCTURE | 1.5 | Engulfing, pin bar, Doji patterns |
+| UnifiedICT | 2 | STRUCTURE | 1.5 | ICT/SMC structure with order blocks and FVG |
+| Unicorn Model | 1 | STRUCTURE | 2.4 | Unicorn pattern (OB + FVG confluence) |
+| Power of Three | 1 | STRUCTURE | 2.3 | Accumulation/Manipulation/Distribution |
+| Mean Reversion | 2 | MEAN_REVERSION | 1.8 | Bollinger band reversion with z-score |
+| Volatility Breakout | 1 | TREND | 2.0 | ATR compression breakout |
+| Statistical Arbitrage* | 2 | MEAN_REVERSION | 1.8 | Pair correlation / spread reversion (Python bridge required) |
 | FVG Scalper | 2 | STRUCTURE | 1.8 | Fair Value Gap scalper with structure alignment |
 | Turtle Soup | 2 | STRUCTURE | 1.6 | Liquidity sweep detection + confirmation |
 | Breaker Block | 2 | STRUCTURE | 1.7 | Failed OB → breaker retest entries |
 | NY Open Gap | 3 | STRUCTURE | 1.3 | NY session open gap fade |
 | Asian Range Break | 3 | STRUCTURE | 1.3 | Asian range breakout at London open |
-| Power of Three | 1 | STRUCTURE | 1.2 | Accumulation/Manipulation/Distribution |
-| Unicorn Model | 1 | STRUCTURE | 1.2 | Unicorn pattern (OB + FVG confluence) |
-| Support/Resistance | 3 | MEAN_REVERSION | 1.0 | S/R with Fibonacci confluence + Hurst filter |
-| Trend | 3 | TREND | 1.0 | EMA crossover + ADX + multi-TF alignment |
-| Momentum | 3 | TREND | 1.0 | Simplified 4-indicator momentum with scalp mode |
-| Candlestick | 3 | MEAN_REVERSION | 0.8 | Engulfing, pin bar, Doji patterns |
-| Mean Reversion | 3 | MEAN_REVERSION | 1.0 | Bollinger band reversion with z-score |
-| Volatility Breakout | 3 | TREND | 1.0 | ATR compression breakout |
-| Statistical Arbitrage | 3 | MEAN_REVERSION | 0.8 | Pair correlation / spread reversion |
+
+*Statistical Arbitrage is only registered when Python Bridge is connected.
+
+### AI Adapters (5 Registered)
+
+| Adapter | Tier | Cluster | Weight | Description |
+|---------|:----:|---------|:------:|-------------|
+| Neural Network AI | 2 | NONE | 1.0* | LSTM/MLP neural network via `CAIStrategyAdapter` |
+| Transformer AI | 2 | NONE | 1.0* | Transformer attention model via `CTransformerAIStrategyAdapter` |
+| Ensemble AI | 2 | NONE | 1.0* | Ensemble of multiple AI models via `CEnsembleAIStrategyAdapter` |
+| ONNX AI | 2 | NONE | 2.0* | ONNX runtime inference via `COnnxAIStrategyAdapter` |
+| Python Bridge AI | 2 | NONE | 1.5* | External Python inference via `CPythonBridgeAIStrategyAdapter` |
+
+*AI adapter weights are scaled by `InpAIWeightMultiplier` input parameter.
 
 ## Risk Management
 
@@ -169,6 +237,9 @@ The EA supports three AI operating modes:
 
 All adapters are symbol-scoped, bar-cached, and register through the enterprise strategy manager for consensus participation. Disabled adapters are not instantiated.
 
+**AI Vote Heartbeat Monitoring (L11-004):**
+Runtime verification of `[AI-VOTE]` heartbeats is now implemented. The diagnostics manager tracks vote activity per symbol per AI type (NeuralNet, Transformer, Ensemble, ONNX). If any enabled AI adapter fails to log a vote within 30 seconds during active trading, a `[AI-VOTE-MISSING]` warning is emitted with symbol, AI type, last vote timestamp, and staleness duration.
+
 ## Python Integration
 
 The Python ML pipeline (`Python/`) provides:
@@ -182,27 +253,28 @@ The Python ML pipeline (`Python/`) provides:
 ## Project Structure
 
 ```
-MultiStrategyAutonomousEA.mq5    # EA entry point
-IndicatorManager.mqh             # Singleton indicator cache
+MultiStrategyAutonomousEA.mq5       # Main EA entry point (production)
+MultiStrategyTestingEA.mq5          # Standalone testing EA with Complete Test Profile System
+IndicatorManager.mqh                # Singleton indicator cache
 Core/
-  ├── Engines/                   # Market analysis engines (Trend, Regime, Volatility, Hurst, VPIN, OU, OFI, VWAP, VolumeProfile, CVD)
-  ├── Pipeline/                  # UnifiedSignalPipeline (regime, cost, spread filtering)
-  ├── Management/                # EnterpriseStrategyManager, PositionLifecycleManager, SymbolUniverseBuilder
-  ├── Risk/                      # UnifiedRiskManager, PositionSizer, PortfolioRiskManager, CorrelationEngine, EquityCurveManager
-  ├── Trading/                   # TradeManager, PositionStateManager, TradeAttributionManager
-  ├── Scalp/                     # SpikeHunterEngine, GridRecoveryEngine, ATRScalpingEngine, FastScalpEngine
-  ├── Strategy/                  # AI adapters (ONNX, Transformer, Ensemble), StrategyBase, StrategyRegistry
-  ├── AI/                        # AIFeatureVectorBuilder, PipelineScaler, NNModelStorage
-  ├── Processing/                # TickSafetyMonitor, BarProcessor, DerivAssetProfiler, MultiAssetProfiler
-  ├── Signals/                   # SignalDiagnostics, TimeframeConsistency
-  ├── Monitoring/                # PerformanceAnalytics
-  ├── Visualization/             # VisualDashboard, ChartDrawingManager
-  ├── Utils/                     # PythonBridge, Instruments, Enums, SessionManager, ErrorHandling
-  └── Cache/                     # ATRCache, ConsensusCache
-Strategies/                      # 15 strategy modules
-Python/                          # ML training, ONNX export, ZMQ bridge
-Resources/                       # Trained ONNX models
-Dashboard/                       # Dashboard components
+  Engines/                      # Market analysis engines (Trend, Regime, Volatility, Hurst, VPIN, OU, OFI, VWAP, VolumeProfile, CVD)
+  Pipeline/                     # UnifiedSignalPipeline (regime, cost, spread filtering)
+  Management/                   # EnterpriseStrategyManager, PositionLifecycleManager, SymbolUniverseBuilder
+  Risk/                         # UnifiedRiskManager, PositionSizer, PortfolioRiskManager, CorrelationEngine, EquityCurveManager
+  Trading/                      # TradeManager, PositionStateManager, TradeAttributionManager
+  Scalp/                        # SpikeHunterEngine, GridRecoveryEngine, ATRScalpingEngine, FastScalpEngine
+  Strategy/                     # AI adapters (ONNX, Transformer, Ensemble), StrategyBase, StrategyRegistry
+  AI/                           # AIFeatureVectorBuilder, PipelineScaler, NNModelStorage
+  Processing/                   # TickSafetyMonitor, BarProcessor, DerivAssetProfiler, MultiAssetProfiler
+  Signals/                      # SignalDiagnostics, TimeframeConsistency
+  Monitoring/                   # PerformanceAnalytics
+  Visualization/                # VisualDashboard, ChartDrawingManager
+  Utils/                        # PythonBridge, Instruments, Enums, SessionManager, ErrorHandling
+  Cache/                        # ATRCache, ConsensusCache
+Strategies/                         # 15 strategy modules
+Python/                             # ML training, ONNX export, ZMQ bridge
+Resources/                          # Trained ONNX models
+Dashboard/                          # Dashboard components
 ```
 
 ## Documentation

@@ -25,7 +25,9 @@ private:
     // Configuration
     int      m_lookback;            // H1 bars for Pearson calculation (default 30)
     int      m_refreshIntervalSec;  // Seconds between matrix rebuilds (default 300)
-    double   m_conservativeFallback;// Value returned when data insufficient (default 1.0)
+    double   m_conservativeFallback;// Value returned when data insufficient (default 0.0)
+    double   m_assetClassThreshold; // L5-016: Correlation threshold for same asset class (default 0.85)
+    double   m_crossAssetThreshold; // L5-016: Correlation threshold for different asset classes (default 0.7)
 
     // Symbol registry (fixed-size)
     string   m_symbols[CORR_ENGINE_MAX_SYMBOLS];
@@ -37,6 +39,9 @@ private:
     // Cache timing
     datetime m_lastRefreshTime;
     bool     m_initialized;
+
+    // L5-017: Track if symbols have changed since last rebuild
+    bool     m_symbolsChanged;
 
     // Internal helpers
     int      FindSymbolIndex(const string symbol) const;
@@ -51,7 +56,10 @@ public:
             ~CCorrelationEngine();
 
     // Initialize with configurable parameters
-    bool     Initialize(int lookback = 30, int refreshIntervalSec = 300);
+    bool     Initialize(int lookback = 30, int refreshIntervalSec = 300,
+                        double conservativeFallback = 0.0,
+                        double assetClassThreshold = 0.85,
+                        double crossAssetThreshold = 0.7);
 
     // Refresh the correlation matrix if enough time has elapsed.
     // Call this from the main loop or before querying correlations.
@@ -59,6 +67,9 @@ public:
 
     // Force an immediate matrix rebuild (e.g., after symbol changes)
     void     ForceRefresh();
+
+    // L5-017: Mark symbols as changed to trigger rebuild
+    void     SetSymbolsChanged(bool changed) { m_symbolsChanged = changed; }
 
     // Primary query API
     double   GetCorrelation(const string sym1, const string sym2);
@@ -71,6 +82,9 @@ public:
 
     // Clear symbol registry (call on deinit or when symbols change significantly)
     void     Reset();
+
+    // Get current configuration for diagnostics
+    string   GetConfig() const;
 };
 
 //+------------------------------------------------------------------+
@@ -79,10 +93,13 @@ public:
 CCorrelationEngine::CCorrelationEngine() :
     m_lookback(30),
     m_refreshIntervalSec(300),
-    m_conservativeFallback(1.0),
+    m_conservativeFallback(0.0),
+    m_assetClassThreshold(0.85),
+    m_crossAssetThreshold(0.7),
     m_symbolCount(0),
     m_lastRefreshTime(0),
-    m_initialized(false)
+    m_initialized(false),
+    m_symbolsChanged(false)
 {
     ArrayInitialize(m_matrix, 0.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
@@ -90,16 +107,12 @@ CCorrelationEngine::CCorrelationEngine() :
 }
 
 //+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
-CCorrelationEngine::~CCorrelationEngine()
-{
-}
-
-//+------------------------------------------------------------------+
 //| Initialize                                                       |
 //+------------------------------------------------------------------+
-bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec)
+bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec,
+                                    double conservativeFallback,
+                                    double assetClassThreshold,
+                                    double crossAssetThreshold)
 {
     if(lookback < 10)
         lookback = 10;
@@ -110,16 +123,20 @@ bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec)
 
     m_lookback = lookback;
     m_refreshIntervalSec = refreshIntervalSec;
+    m_conservativeFallback = MathMax(0.0, MathMin(1.0, conservativeFallback));
+    m_assetClassThreshold = MathMax(0.0, MathMin(1.0, assetClassThreshold));
+    m_crossAssetThreshold = MathMax(0.0, MathMin(1.0, crossAssetThreshold));
     m_symbolCount = 0;
     m_lastRefreshTime = 0;
     m_initialized = true;
+    m_symbolsChanged = false;
 
     ArrayInitialize(m_matrix, 0.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
 
-    PrintFormat("[CORR-ENGINE] Initialized | Lookback=%d H1 bars | Refresh=%d sec | Conservative fallback=%.1f",
-                m_lookback, m_refreshIntervalSec, m_conservativeFallback);
+    PrintFormat("[CORR-ENGINE] Initialized | Lookback=%d H1 bars | Refresh=%d sec | Conservative fallback=%.1f | AssetClass=%.2f | CrossAsset=%.2f",
+                m_lookback, m_refreshIntervalSec, m_conservativeFallback, m_assetClassThreshold, m_crossAssetThreshold);
 
     return true;
 }
@@ -254,7 +271,7 @@ void CCorrelationEngine::ComputeMatrix()
 }
 
 //+------------------------------------------------------------------+
-//| Refresh if enough time has elapsed                               |
+//| Refresh if enough time has elapsed or symbols changed            |
 //+------------------------------------------------------------------+
 void CCorrelationEngine::Refresh()
 {
@@ -262,7 +279,10 @@ void CCorrelationEngine::Refresh()
         return;
 
     datetime now = TimeCurrent();
-    if(m_lastRefreshTime > 0 && (now - m_lastRefreshTime) < m_refreshIntervalSec)
+    bool timeElapsed = (m_lastRefreshTime == 0 || (now - m_lastRefreshTime) >= m_refreshIntervalSec);
+    
+    // L5-017: Also refresh if symbols have changed
+    if(!timeElapsed && !m_symbolsChanged)
         return;
 
     // Batch 119: Prune stale symbols before computing matrix
@@ -270,10 +290,12 @@ void CCorrelationEngine::Refresh()
 
     ComputeMatrix();
     m_lastRefreshTime = now;
+    m_symbolsChanged = false; // Reset after rebuild
 }
 
 //+------------------------------------------------------------------+
 //| Prune symbols that no longer have open positions                 |
+//| L5-018 FIX: Full matrix rebuild after pruning to maintain consistency |
 //+------------------------------------------------------------------+
 void CCorrelationEngine::PruneStaleSymbols()
 {
@@ -305,7 +327,6 @@ void CCorrelationEngine::PruneStaleSymbols()
             if(writeIdx != i)
             {
                 m_symbols[writeIdx] = m_symbols[i];
-                // Copy matrix row/col would be complex — just mark for rebuild
             }
             writeIdx++;
         }
@@ -314,8 +335,9 @@ void CCorrelationEngine::PruneStaleSymbols()
     if(writeIdx < m_symbolCount)
     {
         m_symbolCount = writeIdx;
-        // Force matrix rebuild on next compute since symbols shifted
+        // L5-018 FIX: Force full matrix rebuild on next compute since symbols shifted
         m_lastRefreshTime = 0;
+        m_symbolsChanged = true;
     }
 }
 
@@ -351,10 +373,21 @@ double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
 
     // If matrix is stale, refresh it
     datetime now = TimeCurrent();
-    if(m_lastRefreshTime == 0 || (now - m_lastRefreshTime) >= m_refreshIntervalSec)
+    if(m_lastRefreshTime == 0 || (now - m_lastRefreshTime) >= m_refreshIntervalSec || m_symbolsChanged)
         Refresh();
 
     return GetCachedCorrelation(idx1, idx2);
+}
+
+//+------------------------------------------------------------------+
+//| Get configuration for diagnostics                                |
+//+------------------------------------------------------------------+
+string CCorrelationEngine::GetConfig() const
+{
+    return StringFormat("Lookback=%d | Refresh=%ds | Fallback=%.2f | AssetClass=%.2f | CrossAsset=%.2f | Symbols=%d | Initialized=%s",
+                        m_lookback, m_refreshIntervalSec, m_conservativeFallback,
+                        m_assetClassThreshold, m_crossAssetThreshold, m_symbolCount,
+                        m_initialized ? "true" : "false");
 }
 
 //+------------------------------------------------------------------+
@@ -403,6 +436,18 @@ void CCorrelationEngine::Reset()
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
         m_symbols[i] = "";
     m_lastRefreshTime = 0;
+}
+
+//+------------------------------------------------------------------+
+//| Destructor                                                       |
+//+------------------------------------------------------------------+
+CCorrelationEngine::~CCorrelationEngine()
+{
+    // Cleanup - array memory is automatically managed
+    m_symbolCount = 0;
+    ArrayInitialize(m_matrix, 0.0);
+    for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
+        m_symbols[i] = "";
 }
 
 #endif // CORE_RISK_CORRELATION_ENGINE_MQH

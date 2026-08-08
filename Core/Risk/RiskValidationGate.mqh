@@ -590,9 +590,17 @@ bool CRiskValidationGate::ValidateRiskLimits(const STradeValidationRequest &requ
 
 //+------------------------------------------------------------------+
 //| Validate portfolio risk                                        |
+//| L5-009 FIX: Delegates to CUnifiedRiskManager (single authority) |
 //+------------------------------------------------------------------+
 bool CRiskValidationGate::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message)
 {
+    // Delegate to CUnifiedRiskManager - single authoritative risk contract
+    if(CheckPointer(m_unifiedRiskManager) != POINTER_INVALID)
+    {
+        return m_unifiedRiskManager.ValidatePortfolioRisk(request, tradeRiskPercent, message);
+    }
+    
+    // Fallback if UnifiedRiskManager not set (should not happen in production)
     CPortfolioRiskManager* manager = m_portfolioRiskManager;
 
     if(CheckPointer(manager) == POINTER_INVALID)

@@ -153,11 +153,6 @@ public:
     bool DrawEqualHighs(datetime time1, datetime time2, datetime time3, double price);
     bool DrawEqualLows(datetime time1, datetime time2, datetime time3, double price);
     
-    bool DrawWaveCount(datetime time, double price, int waveNumber, bool isImpulse = true);
-    bool DrawWaveLabel(datetime time, double price, const string label, bool isImpulse = true);
-    bool DrawFibProjection(datetime time1, double price1, datetime time2, double price2,
-                          datetime time3, double price3);
-    
     // Signal Markers
     bool DrawEntrySignal(datetime time, double price, bool isBuy, double confidence,
                         const string strategyName, const string reason = "");
@@ -1004,36 +999,6 @@ bool CChartDrawingManager::DrawEqualLows(datetime time1, datetime time2, datetim
 
     DebouncedRedraw();
     return true;
-}
-
-//+------------------------------------------------------------------+
-//| Draw Wave Count                                                 |
-// ELLIOTT WAVE REMOVED - Method deleted
-//+------------------------------------------------------------------+
-bool CChartDrawingManager::DrawWaveCount(datetime time, double price, int waveNumber, bool isImpulse)
-{
-    // ELLIOTT WAVE REMOVED - Returns false
-    return false;
-}
-
-//+------------------------------------------------------------------+
-//| Draw Wave Label                                                 |
-// ELLIOTT WAVE REMOVED - Method deleted
-//+------------------------------------------------------------------+
-bool CChartDrawingManager::DrawWaveLabel(datetime time, double price, const string label, bool isImpulse)
-{
-    // ELLIOTT WAVE REMOVED - Returns false
-    return false;
-}
-
-//+------------------------------------------------------------------+
-//| Draw Fibonacci Projection                                       |
-// ELLIOTT WAVE REMOVED - Method deleted
-//+------------------------------------------------------------------+
-bool CChartDrawingManager::DrawFibProjection(datetime time1, double price1, datetime time2, double price2, datetime time3, double price3)
-{
-    // ELLIOTT WAVE REMOVED - Returns false
-    return false;
 }
 
 //+------------------------------------------------------------------+

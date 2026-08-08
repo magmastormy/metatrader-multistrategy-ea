@@ -168,15 +168,24 @@ public:
    }
 
    string GetDiagnostics() const
-   {
-      return StringFormat("phase=%s | score=%.2f | sizing=%.2f | P(counter)=%.2f | stepsSinceLarge=%d | small=%d | large=%d",
-                          GetPhaseName(), m_lastResult.phaseScore, m_lastResult.sizingMultiplier,
-                          m_lastResult.counterMoveProbability, m_lastResult.stepsSinceLastLarge,
-                          m_lastResult.smallStepCount, m_lastResult.largeStepCount);
-   }
+      {
+         return StringFormat("phase=%s | score=%.2f | sizing=%.2f | P(counter)=%.2f | stepsSinceLarge=%d | small=%d | large=%d",
+                             GetPhaseName(), m_lastResult.phaseScore, m_lastResult.sizingMultiplier,
+                             m_lastResult.counterMoveProbability, m_lastResult.stepsSinceLastLarge,
+                             m_lastResult.smallStepCount, m_lastResult.largeStepCount);
+      }
 
-   bool IsInitialized() const { return m_initialized; }
-   int GetTotalStepsRecorded() const { return m_totalSteps; }
-};
+      string GetHeartbeatString() const
+      {
+         return StringFormat("phase=%d | score=%.3f | mult=%.2f | counter_prob=%.2f | since_large=%d | small=%d | large=%d | due=%s",
+                             (int)m_lastResult.phase, m_lastResult.phaseScore, m_lastResult.sizingMultiplier,
+                             m_lastResult.counterMoveProbability, m_lastResult.stepsSinceLastLarge,
+                             m_lastResult.smallStepCount, m_lastResult.largeStepCount,
+                             m_lastResult.isCounterMoveDue ? "Y" : "N");
+      }
+
+      bool IsInitialized() const { return m_initialized; }
+      int GetTotalStepsRecorded() const { return m_totalSteps; }
+   };
 
 #endif // CORE_ENGINES_SKEW_STEP_ANALYZER_MQH

@@ -95,6 +95,8 @@ CIndicatorManager *CIndicatorManager::m_instance = NULL;
 
 //+------------------------------------------------------------------+
 //| Get the singleton instance                                        |
+//| Thread-safety: MQL5 is single-threaded, so no synchronization    |
+//| needed. This is acceptable for MT5's execution model.            |
 //+------------------------------------------------------------------+
 CIndicatorManager *CIndicatorManager::Instance()
 {

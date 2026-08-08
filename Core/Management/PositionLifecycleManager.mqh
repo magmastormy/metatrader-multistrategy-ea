@@ -94,9 +94,10 @@ private:
     double m_atrMultiplier;
 
     // Magic number for position filtering
-    int    m_magicNumber;
+        int    m_magicNumber;
+        int    m_maxClusterCode;  // L7-008: Dynamic max cluster code from MagicNumberAllocator
 
-    // I2: Intelligent SL Guard
+        // I2: Intelligent SL Guard
     CIntelligentSLGuard m_slGuard;
     CRegimeEngine*      m_regimeEngine;
 
@@ -222,18 +223,19 @@ public:
     }
 
     bool Initialize(CTradeManager* tm, CConsensusCache* cache,
-                    CRiskTierManager* rtm, CSafeMode* sm, int magicNumber)
-    {
-        if(tm == NULL || cache == NULL || rtm == NULL)
-            return false;
-        m_tradeManager = tm;
-        m_consensusCache = cache;
-        m_riskTierManager = rtm;
-        m_safeMode = sm;
-        m_magicNumber = magicNumber;
-        m_initialized = true;
-        return true;
-    }
+                        CRiskTierManager* rtm, CSafeMode* sm, int magicNumber, int maxClusterCode)
+        {
+            if(tm == NULL || cache == NULL || rtm == NULL)
+                return false;
+            m_tradeManager = tm;
+            m_consensusCache = cache;
+            m_riskTierManager = rtm;
+            m_safeMode = sm;
+            m_magicNumber = magicNumber;
+            m_maxClusterCode = maxClusterCode;  // L7-008
+            m_initialized = true;
+            return true;
+        }
 
     void SetManagers(CEnterpriseStrategyManager* &managers[], string &symbols[], int count)
     {
@@ -324,12 +326,13 @@ public:
     void SetRegimeEngine(CRegimeEngine* engine) { m_regimeEngine = engine; }
 
     //--- Check if a magic number falls within this EA's ownership range
-    //--- Range: [m_magicNumber, m_magicNumber + symbolCount*100 + 99]
-    bool IsEAOwnedMagic(long magic) const
-    {
-        int maxMagic = m_magicNumber + m_symbolCount * 100 + 99;
-        return (magic >= m_magicNumber && magic <= maxMagic);
-    }
+        //--- Range: [m_magicNumber, m_magicNumber + symbolCount*100 + m_maxClusterCode]
+        //--- L7-008: Uses dynamic max cluster code from MagicNumberAllocator
+        bool IsEAOwnedMagic(long magic) const
+        {
+            int maxMagic = m_magicNumber + m_symbolCount * 100 + m_maxClusterCode;
+            return (magic >= m_magicNumber && magic <= maxMagic);
+        }
 
     //--- Get enterprise manager for a symbol
     CEnterpriseStrategyManager* GetManagerForSymbol(const string symbol)

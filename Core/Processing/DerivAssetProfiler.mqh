@@ -64,6 +64,11 @@ struct SDerivProfile
    int               spikeCooldownSec; // Cooldown between spike trades in seconds
    int               spikeWindowBars;  // Lookback bars for spike detection
 
+   // L7-006: Per-family strategy enablement flags
+   bool              enableTrendStrategies;  // Enable trend-following strategies
+   bool              enableMomentumStrategies; // Enable momentum strategies
+   bool              enableIntrabarOverride; // Allow intrabar policy override for this family
+
    // Default constructor — MQL5 requires explicit string initialization
    SDerivProfile()
    {
@@ -86,6 +91,9 @@ struct SDerivProfile
       gridProgressionFactor = 0.0;
       spikeCooldownSec     = 0;
       spikeWindowBars      = 0;
+      enableTrendStrategies  = true;  // Default: enabled
+      enableMomentumStrategies = true; // Default: enabled
+      enableIntrabarOverride = false; // Default: disabled
    }
 };
 
@@ -96,6 +104,7 @@ class CDerivAssetProfiler
 {
 private:
    SDerivProfile  m_profiles[19];  // 18 families + unknown
+   bool           m_logFamilyDetection;  // L7-013: Enable logging for family detection
 
    //+------------------------------------------------------------------+
    //| Initialize all family profiles with production defaults          |
@@ -122,6 +131,8 @@ private:
       m_profiles[DERIV_CRASH_BOOM].gridProgressionFactor = 1.5;
       m_profiles[DERIV_CRASH_BOOM].spikeCooldownSec     = 60;
       m_profiles[DERIV_CRASH_BOOM].spikeWindowBars      = 50;
+      m_profiles[DERIV_CRASH_BOOM].enableTrendStrategies  = true;  // Crash/Boom can trend during spikes
+      m_profiles[DERIV_CRASH_BOOM].enableMomentumStrategies = true;
 
       // DERIV_VOLATILITY (index 1)
       m_profiles[DERIV_VOLATILITY].family               = DERIV_VOLATILITY;
@@ -143,6 +154,8 @@ private:
       m_profiles[DERIV_VOLATILITY].gridProgressionFactor = 1.5;
       m_profiles[DERIV_VOLATILITY].spikeCooldownSec     = 45;
       m_profiles[DERIV_VOLATILITY].spikeWindowBars      = 40;
+      m_profiles[DERIV_VOLATILITY].enableTrendStrategies  = false; // Volatility indices don't trend
+      m_profiles[DERIV_VOLATILITY].enableMomentumStrategies = false;
 
       // DERIV_STEP (index 2)
       m_profiles[DERIV_STEP].family                     = DERIV_STEP;
@@ -164,6 +177,8 @@ private:
       m_profiles[DERIV_STEP].gridProgressionFactor      = 1.618;
       m_profiles[DERIV_STEP].spikeCooldownSec           = 30;
       m_profiles[DERIV_STEP].spikeWindowBars            = 35;
+      m_profiles[DERIV_STEP].enableTrendStrategies  = false; // Step indices don't trend
+      m_profiles[DERIV_STEP].enableMomentumStrategies = false;
 
       // DERIV_JUMP (index 3)
       m_profiles[DERIV_JUMP].family                     = DERIV_JUMP;
@@ -185,6 +200,8 @@ private:
       m_profiles[DERIV_JUMP].gridProgressionFactor      = 0.0;
       m_profiles[DERIV_JUMP].spikeCooldownSec           = 60;
       m_profiles[DERIV_JUMP].spikeWindowBars            = 15;
+      m_profiles[DERIV_JUMP].enableTrendStrategies  = false; // Jump indices are spike-based
+      m_profiles[DERIV_JUMP].enableMomentumStrategies = false;
 
       // DERIV_DEX (index 4)
       m_profiles[DERIV_DEX].family                      = DERIV_DEX;
@@ -206,6 +223,8 @@ private:
       m_profiles[DERIV_DEX].gridProgressionFactor       = 0.0;
       m_profiles[DERIV_DEX].spikeCooldownSec            = 90;
       m_profiles[DERIV_DEX].spikeWindowBars             = 20;
+      m_profiles[DERIV_DEX].enableTrendStrategies  = false;
+      m_profiles[DERIV_DEX].enableMomentumStrategies = false;
 
       // DERIV_MULTISTEP (index 5)
       m_profiles[DERIV_MULTISTEP].family                = DERIV_MULTISTEP;
@@ -227,6 +246,8 @@ private:
       m_profiles[DERIV_MULTISTEP].gridProgressionFactor = 1.618;
       m_profiles[DERIV_MULTISTEP].spikeCooldownSec      = 30;
       m_profiles[DERIV_MULTISTEP].spikeWindowBars       = 35;
+      m_profiles[DERIV_MULTISTEP].enableTrendStrategies  = false;
+      m_profiles[DERIV_MULTISTEP].enableMomentumStrategies = false;
 
       // DERIV_EXPONENTIAL (index 6)
       m_profiles[DERIV_EXPONENTIAL].family              = DERIV_EXPONENTIAL;
@@ -248,6 +269,8 @@ private:
       m_profiles[DERIV_EXPONENTIAL].gridProgressionFactor = 0.0;
       m_profiles[DERIV_EXPONENTIAL].spikeCooldownSec    = 45;
       m_profiles[DERIV_EXPONENTIAL].spikeWindowBars     = 40;
+      m_profiles[DERIV_EXPONENTIAL].enableTrendStrategies  = true;  // Exponential growth trends
+      m_profiles[DERIV_EXPONENTIAL].enableMomentumStrategies = true;
 
       // DERIV_HYBRID (index 7)
       m_profiles[DERIV_HYBRID].family                   = DERIV_HYBRID;
@@ -261,7 +284,7 @@ private:
       m_profiles[DERIV_HYBRID].magicOffset              = 9600;
       m_profiles[DERIV_HYBRID].maxDrawdownPercent       = 12;
       m_profiles[DERIV_HYBRID].enableSpikeHunter        = true;
-      m_profiles[DERIV_HYBRID].enableGridRecovery       = false;  // FIX: Disable grid recovery on all synthetics
+      m_profiles[DERIV_HYBRID].enableGridRecovery       = false;
       m_profiles[DERIV_HYBRID].enableHurstRegime        = true;
       m_profiles[DERIV_HYBRID].enableOUFilter           = false;
       m_profiles[DERIV_HYBRID].gridFactorATR            = 0.25;
@@ -269,6 +292,8 @@ private:
       m_profiles[DERIV_HYBRID].gridProgressionFactor    = 1.5;
       m_profiles[DERIV_HYBRID].spikeCooldownSec         = 60;
       m_profiles[DERIV_HYBRID].spikeWindowBars          = 45;
+      m_profiles[DERIV_HYBRID].enableTrendStrategies  = true;
+      m_profiles[DERIV_HYBRID].enableMomentumStrategies = true;
 
       // DERIV_RANGE_BREAK (index 8)
       m_profiles[DERIV_RANGE_BREAK].family              = DERIV_RANGE_BREAK;
@@ -282,7 +307,7 @@ private:
       m_profiles[DERIV_RANGE_BREAK].magicOffset         = 9650;
       m_profiles[DERIV_RANGE_BREAK].maxDrawdownPercent  = 10;
       m_profiles[DERIV_RANGE_BREAK].enableSpikeHunter   = false;
-      m_profiles[DERIV_RANGE_BREAK].enableGridRecovery  = false;  // FIX: Disable grid recovery on all synthetics
+      m_profiles[DERIV_RANGE_BREAK].enableGridRecovery  = false;
       m_profiles[DERIV_RANGE_BREAK].enableHurstRegime   = true;
       m_profiles[DERIV_RANGE_BREAK].enableOUFilter      = true;
       m_profiles[DERIV_RANGE_BREAK].gridFactorATR       = 0.0;
@@ -290,6 +315,8 @@ private:
       m_profiles[DERIV_RANGE_BREAK].gridProgressionFactor = 0.0;
       m_profiles[DERIV_RANGE_BREAK].spikeCooldownSec    = 45;
       m_profiles[DERIV_RANGE_BREAK].spikeWindowBars     = 40;
+      m_profiles[DERIV_RANGE_BREAK].enableTrendStrategies  = false;
+      m_profiles[DERIV_RANGE_BREAK].enableMomentumStrategies = false;
 
       // DERIV_SKEW_STEP (index 9)
       m_profiles[DERIV_SKEW_STEP].family                = DERIV_SKEW_STEP;
@@ -303,7 +330,7 @@ private:
       m_profiles[DERIV_SKEW_STEP].magicOffset           = 9700;
       m_profiles[DERIV_SKEW_STEP].maxDrawdownPercent    = 9;
       m_profiles[DERIV_SKEW_STEP].enableSpikeHunter     = false;
-      m_profiles[DERIV_SKEW_STEP].enableGridRecovery    = false;  // FIX: Disable grid recovery on all synthetics
+      m_profiles[DERIV_SKEW_STEP].enableGridRecovery    = false;
       m_profiles[DERIV_SKEW_STEP].enableHurstRegime     = true;
       m_profiles[DERIV_SKEW_STEP].enableOUFilter        = true;
       m_profiles[DERIV_SKEW_STEP].gridFactorATR         = 0.20;
@@ -311,6 +338,8 @@ private:
       m_profiles[DERIV_SKEW_STEP].gridProgressionFactor = 1.618;
       m_profiles[DERIV_SKEW_STEP].spikeCooldownSec      = 30;
       m_profiles[DERIV_SKEW_STEP].spikeWindowBars       = 35;
+      m_profiles[DERIV_SKEW_STEP].enableTrendStrategies  = false;
+      m_profiles[DERIV_SKEW_STEP].enableMomentumStrategies = false;
 
       // DERIV_VOL_SWITCH (index 10)
       m_profiles[DERIV_VOL_SWITCH].family               = DERIV_VOL_SWITCH;
@@ -332,6 +361,8 @@ private:
       m_profiles[DERIV_VOL_SWITCH].gridProgressionFactor = 0.0;
       m_profiles[DERIV_VOL_SWITCH].spikeCooldownSec     = 45;
       m_profiles[DERIV_VOL_SWITCH].spikeWindowBars      = 40;
+      m_profiles[DERIV_VOL_SWITCH].enableTrendStrategies  = true;  // Volatility changes can trend
+      m_profiles[DERIV_VOL_SWITCH].enableMomentumStrategies = true;
 
       // DERIV_DRIFT_SWITCH (index 11)
       m_profiles[DERIV_DRIFT_SWITCH].family             = DERIV_DRIFT_SWITCH;
@@ -355,130 +386,130 @@ private:
       m_profiles[DERIV_DRIFT_SWITCH].spikeWindowBars    = 40;
 
       // DERIV_TREK (index 12)
-      m_profiles[DERIV_TREK].family                     = DERIV_TREK;
-      m_profiles[DERIV_TREK].familyName                 = "Trek";
-      m_profiles[DERIV_TREK].spikeThreshold             = 3.0;
-      m_profiles[DERIV_TREK].atrCompressionRatio        = 0.79;
-      m_profiles[DERIV_TREK].atrMultiplierSL            = 1.4;
-      m_profiles[DERIV_TREK].atrMultiplierTP            = 2.3;
-      m_profiles[DERIV_TREK].hurstThreshold             = 0.50;
-      m_profiles[DERIV_TREK].riskPerTrade               = 1.1;
-      m_profiles[DERIV_TREK].magicOffset                = 9850;
-      m_profiles[DERIV_TREK].maxDrawdownPercent         = 11;
-      m_profiles[DERIV_TREK].enableSpikeHunter          = false;
-      m_profiles[DERIV_TREK].enableGridRecovery         = false;
-      m_profiles[DERIV_TREK].enableHurstRegime          = true;
-      m_profiles[DERIV_TREK].enableOUFilter             = false;
-      m_profiles[DERIV_TREK].gridFactorATR              = 0.0;
-      m_profiles[DERIV_TREK].maxGridLevels              = 0;
-      m_profiles[DERIV_TREK].gridProgressionFactor      = 0.0;
-      m_profiles[DERIV_TREK].spikeCooldownSec           = 45;
-      m_profiles[DERIV_TREK].spikeWindowBars            = 40;
+            m_profiles[DERIV_TREK].family                     = DERIV_TREK;
+            m_profiles[DERIV_TREK].familyName                 = "Trek";
+            m_profiles[DERIV_TREK].spikeThreshold             = 3.0;
+            m_profiles[DERIV_TREK].atrCompressionRatio        = 0.79;
+            m_profiles[DERIV_TREK].atrMultiplierSL            = 1.4;
+            m_profiles[DERIV_TREK].atrMultiplierTP            = 2.3;
+            m_profiles[DERIV_TREK].hurstThreshold             = 0.50;
+            m_profiles[DERIV_TREK].riskPerTrade               = 1.1;
+            m_profiles[DERIV_TREK].magicOffset                = 9850;
+            m_profiles[DERIV_TREK].maxDrawdownPercent         = 11;
+            m_profiles[DERIV_TREK].enableSpikeHunter          = false;
+            m_profiles[DERIV_TREK].enableGridRecovery         = false;
+            m_profiles[DERIV_TREK].enableHurstRegime          = true;
+            m_profiles[DERIV_TREK].enableOUFilter             = false;
+            m_profiles[DERIV_TREK].gridFactorATR              = 0.0;
+            m_profiles[DERIV_TREK].maxGridLevels              = 0;
+            m_profiles[DERIV_TREK].gridProgressionFactor      = 0.0;
+            m_profiles[DERIV_TREK].spikeCooldownSec           = 45;
+            m_profiles[DERIV_TREK].spikeWindowBars            = 40;
 
-      // DERIV_TACTICAL (index 13)
-      m_profiles[DERIV_TACTICAL].family                 = DERIV_TACTICAL;
-      m_profiles[DERIV_TACTICAL].familyName             = "Tactical";
-      m_profiles[DERIV_TACTICAL].spikeThreshold         = 3.0;
-      m_profiles[DERIV_TACTICAL].atrCompressionRatio    = 0.79;
-      m_profiles[DERIV_TACTICAL].atrMultiplierSL        = 1.4;
-      m_profiles[DERIV_TACTICAL].atrMultiplierTP        = 2.3;
-      m_profiles[DERIV_TACTICAL].hurstThreshold         = 0.50;
-      m_profiles[DERIV_TACTICAL].riskPerTrade           = 1.1;
-      m_profiles[DERIV_TACTICAL].magicOffset            = 9850;
-      m_profiles[DERIV_TACTICAL].maxDrawdownPercent     = 11;
-      m_profiles[DERIV_TACTICAL].enableSpikeHunter      = false;
-      m_profiles[DERIV_TACTICAL].enableGridRecovery     = false;
-      m_profiles[DERIV_TACTICAL].enableHurstRegime      = true;
-      m_profiles[DERIV_TACTICAL].enableOUFilter         = false;
-      m_profiles[DERIV_TACTICAL].gridFactorATR          = 0.0;
-      m_profiles[DERIV_TACTICAL].maxGridLevels          = 0;
-      m_profiles[DERIV_TACTICAL].gridProgressionFactor  = 0.0;
-      m_profiles[DERIV_TACTICAL].spikeCooldownSec       = 45;
-      m_profiles[DERIV_TACTICAL].spikeWindowBars        = 40;
+            // DERIV_TACTICAL (index 13) - FIXED: was 9850 (collision with TREK/DERIVED), now 9860
+            m_profiles[DERIV_TACTICAL].family                 = DERIV_TACTICAL;
+            m_profiles[DERIV_TACTICAL].familyName             = "Tactical";
+            m_profiles[DERIV_TACTICAL].spikeThreshold         = 3.0;
+            m_profiles[DERIV_TACTICAL].atrCompressionRatio    = 0.79;
+            m_profiles[DERIV_TACTICAL].atrMultiplierSL        = 1.4;
+            m_profiles[DERIV_TACTICAL].atrMultiplierTP        = 2.3;
+            m_profiles[DERIV_TACTICAL].hurstThreshold         = 0.50;
+            m_profiles[DERIV_TACTICAL].riskPerTrade           = 1.1;
+            m_profiles[DERIV_TACTICAL].magicOffset            = 9860;
+            m_profiles[DERIV_TACTICAL].maxDrawdownPercent     = 11;
+            m_profiles[DERIV_TACTICAL].enableSpikeHunter      = false;
+            m_profiles[DERIV_TACTICAL].enableGridRecovery     = false;
+            m_profiles[DERIV_TACTICAL].enableHurstRegime      = true;
+            m_profiles[DERIV_TACTICAL].enableOUFilter         = false;
+            m_profiles[DERIV_TACTICAL].gridFactorATR          = 0.0;
+            m_profiles[DERIV_TACTICAL].maxGridLevels          = 0;
+            m_profiles[DERIV_TACTICAL].gridProgressionFactor  = 0.0;
+            m_profiles[DERIV_TACTICAL].spikeCooldownSec       = 45;
+            m_profiles[DERIV_TACTICAL].spikeWindowBars        = 40;
 
-      // DERIV_DERIVED (index 14)
-      m_profiles[DERIV_DERIVED].family                  = DERIV_DERIVED;
-      m_profiles[DERIV_DERIVED].familyName              = "Derived";
-      m_profiles[DERIV_DERIVED].spikeThreshold          = 3.0;
-      m_profiles[DERIV_DERIVED].atrCompressionRatio     = 0.79;
-      m_profiles[DERIV_DERIVED].atrMultiplierSL         = 1.4;
-      m_profiles[DERIV_DERIVED].atrMultiplierTP         = 2.3;
-      m_profiles[DERIV_DERIVED].hurstThreshold          = 0.50;
-      m_profiles[DERIV_DERIVED].riskPerTrade            = 1.1;
-      m_profiles[DERIV_DERIVED].magicOffset             = 9850;
-      m_profiles[DERIV_DERIVED].maxDrawdownPercent      = 11;
-      m_profiles[DERIV_DERIVED].enableSpikeHunter       = false;
-      m_profiles[DERIV_DERIVED].enableGridRecovery      = false;
-      m_profiles[DERIV_DERIVED].enableHurstRegime       = true;
-      m_profiles[DERIV_DERIVED].enableOUFilter          = false;
-      m_profiles[DERIV_DERIVED].gridFactorATR           = 0.0;
-      m_profiles[DERIV_DERIVED].maxGridLevels           = 0;
-      m_profiles[DERIV_DERIVED].gridProgressionFactor   = 0.0;
-      m_profiles[DERIV_DERIVED].spikeCooldownSec        = 45;
-      m_profiles[DERIV_DERIVED].spikeWindowBars         = 40;
+            // DERIV_DERIVED (index 14) - FIXED: was 9850 (collision with TREK/TACTICAL), now 9870
+            m_profiles[DERIV_DERIVED].family                  = DERIV_DERIVED;
+            m_profiles[DERIV_DERIVED].familyName              = "Derived";
+            m_profiles[DERIV_DERIVED].spikeThreshold          = 3.0;
+            m_profiles[DERIV_DERIVED].atrCompressionRatio     = 0.79;
+            m_profiles[DERIV_DERIVED].atrMultiplierSL         = 1.4;
+            m_profiles[DERIV_DERIVED].atrMultiplierTP         = 2.3;
+            m_profiles[DERIV_DERIVED].hurstThreshold          = 0.50;
+            m_profiles[DERIV_DERIVED].riskPerTrade            = 1.1;
+            m_profiles[DERIV_DERIVED].magicOffset             = 9870;
+            m_profiles[DERIV_DERIVED].maxDrawdownPercent      = 11;
+            m_profiles[DERIV_DERIVED].enableSpikeHunter       = false;
+            m_profiles[DERIV_DERIVED].enableGridRecovery      = false;
+            m_profiles[DERIV_DERIVED].enableHurstRegime       = true;
+            m_profiles[DERIV_DERIVED].enableOUFilter          = false;
+            m_profiles[DERIV_DERIVED].gridFactorATR           = 0.0;
+            m_profiles[DERIV_DERIVED].maxGridLevels           = 0;
+            m_profiles[DERIV_DERIVED].gridProgressionFactor   = 0.0;
+            m_profiles[DERIV_DERIVED].spikeCooldownSec        = 45;
+            m_profiles[DERIV_DERIVED].spikeWindowBars         = 40;
 
       // DERIV_STABLE_SPREAD (index 15)
-      m_profiles[DERIV_STABLE_SPREAD].family            = DERIV_STABLE_SPREAD;
-      m_profiles[DERIV_STABLE_SPREAD].familyName        = "StableSpread";
-      m_profiles[DERIV_STABLE_SPREAD].spikeThreshold    = 4.0;
-      m_profiles[DERIV_STABLE_SPREAD].atrCompressionRatio = 0.65;
-      m_profiles[DERIV_STABLE_SPREAD].atrMultiplierSL   = 0.60;
-      m_profiles[DERIV_STABLE_SPREAD].atrMultiplierTP   = 1.00;
-      m_profiles[DERIV_STABLE_SPREAD].hurstThreshold    = 0.38;
-      m_profiles[DERIV_STABLE_SPREAD].riskPerTrade      = 0.50;
-      m_profiles[DERIV_STABLE_SPREAD].magicOffset       = 9900;
-      m_profiles[DERIV_STABLE_SPREAD].maxDrawdownPercent = 6;
-      m_profiles[DERIV_STABLE_SPREAD].enableSpikeHunter = false;
-      m_profiles[DERIV_STABLE_SPREAD].enableGridRecovery = false;  // FIX: Disable grid recovery on all synthetics
-      m_profiles[DERIV_STABLE_SPREAD].enableHurstRegime = true;
-      m_profiles[DERIV_STABLE_SPREAD].enableOUFilter    = true;
-      m_profiles[DERIV_STABLE_SPREAD].gridFactorATR     = 0.15;
-      m_profiles[DERIV_STABLE_SPREAD].maxGridLevels     = 12;
-      m_profiles[DERIV_STABLE_SPREAD].gridProgressionFactor = 1.618;
-      m_profiles[DERIV_STABLE_SPREAD].spikeCooldownSec  = 20;
-      m_profiles[DERIV_STABLE_SPREAD].spikeWindowBars   = 30;
+            m_profiles[DERIV_STABLE_SPREAD].family            = DERIV_STABLE_SPREAD;
+            m_profiles[DERIV_STABLE_SPREAD].familyName        = "StableSpread";
+            m_profiles[DERIV_STABLE_SPREAD].spikeThreshold    = 4.0;
+            m_profiles[DERIV_STABLE_SPREAD].atrCompressionRatio = 0.65;
+            m_profiles[DERIV_STABLE_SPREAD].atrMultiplierSL   = 0.60;
+            m_profiles[DERIV_STABLE_SPREAD].atrMultiplierTP   = 1.00;
+            m_profiles[DERIV_STABLE_SPREAD].hurstThreshold    = 0.38;
+            m_profiles[DERIV_STABLE_SPREAD].riskPerTrade      = 0.50;
+            m_profiles[DERIV_STABLE_SPREAD].magicOffset       = 9900;
+            m_profiles[DERIV_STABLE_SPREAD].maxDrawdownPercent = 6;
+            m_profiles[DERIV_STABLE_SPREAD].enableSpikeHunter = false;
+            m_profiles[DERIV_STABLE_SPREAD].enableGridRecovery = false;  // FIX: Disable grid recovery on all synthetics
+            m_profiles[DERIV_STABLE_SPREAD].enableHurstRegime = true;
+            m_profiles[DERIV_STABLE_SPREAD].enableOUFilter    = true;
+            m_profiles[DERIV_STABLE_SPREAD].gridFactorATR     = 0.15;
+            m_profiles[DERIV_STABLE_SPREAD].maxGridLevels     = 12;
+            m_profiles[DERIV_STABLE_SPREAD].gridProgressionFactor = 1.618;
+            m_profiles[DERIV_STABLE_SPREAD].spikeCooldownSec  = 20;
+            m_profiles[DERIV_STABLE_SPREAD].spikeWindowBars   = 30;
 
-      // DERIV_PAIRS_ARBITRAGE (index 16)
-      m_profiles[DERIV_PAIRS_ARBITRAGE].family          = DERIV_PAIRS_ARBITRAGE;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].familyName      = "PairsArbitrage";
-      m_profiles[DERIV_PAIRS_ARBITRAGE].spikeThreshold  = 4.5;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].atrCompressionRatio = 0.60;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].atrMultiplierSL = 0.50;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].atrMultiplierTP = 0.80;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].hurstThreshold  = 0.35;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].riskPerTrade    = 0.40;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].magicOffset     = 9900;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].maxDrawdownPercent = 5;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].enableSpikeHunter = false;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].enableGridRecovery = false;  // FIX: Disable grid recovery on all synthetics
-      m_profiles[DERIV_PAIRS_ARBITRAGE].enableHurstRegime = true;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].enableOUFilter  = true;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].gridFactorATR   = 0.15;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].maxGridLevels   = 12;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].gridProgressionFactor = 1.618;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].spikeCooldownSec = 20;
-      m_profiles[DERIV_PAIRS_ARBITRAGE].spikeWindowBars = 30;
+            // DERIV_PAIRS_ARBITRAGE (index 16) - FIXED: was 9900 (collision with STABLE_SPREAD), now 9910
+            m_profiles[DERIV_PAIRS_ARBITRAGE].family          = DERIV_PAIRS_ARBITRAGE;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].familyName      = "PairsArbitrage";
+            m_profiles[DERIV_PAIRS_ARBITRAGE].spikeThreshold  = 4.5;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].atrCompressionRatio = 0.60;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].atrMultiplierSL = 0.50;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].atrMultiplierTP = 0.80;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].hurstThreshold  = 0.35;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].riskPerTrade    = 0.40;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].magicOffset     = 9910;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].maxDrawdownPercent = 5;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].enableSpikeHunter = false;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].enableGridRecovery = false;  // FIX: Disable grid recovery on all synthetics
+            m_profiles[DERIV_PAIRS_ARBITRAGE].enableHurstRegime = true;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].enableOUFilter  = true;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].gridFactorATR   = 0.15;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].maxGridLevels   = 12;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].gridProgressionFactor = 1.618;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].spikeCooldownSec = 20;
+            m_profiles[DERIV_PAIRS_ARBITRAGE].spikeWindowBars = 30;
 
       // DERIV_SPOT_VOLATILITY (index 17)
       m_profiles[DERIV_SPOT_VOLATILITY].family          = DERIV_SPOT_VOLATILITY;
       m_profiles[DERIV_SPOT_VOLATILITY].familyName      = "SpotVolatility";
       m_profiles[DERIV_SPOT_VOLATILITY].spikeThreshold  = 3.5;
       m_profiles[DERIV_SPOT_VOLATILITY].atrCompressionRatio = 0.75;
-      m_profiles[DERIV_SPOT_VOLATILITY].atrMultiplierSL = 1.0;
-      m_profiles[DERIV_SPOT_VOLATILITY].atrMultiplierTP = 1.5;
-      m_profiles[DERIV_SPOT_VOLATILITY].hurstThreshold  = 0.45;
-      m_profiles[DERIV_SPOT_VOLATILITY].riskPerTrade    = 1.0;
-      m_profiles[DERIV_SPOT_VOLATILITY].magicOffset     = 9100;
-      m_profiles[DERIV_SPOT_VOLATILITY].maxDrawdownPercent = 10;
-      m_profiles[DERIV_SPOT_VOLATILITY].enableSpikeHunter = false;
-      m_profiles[DERIV_SPOT_VOLATILITY].enableGridRecovery = true;
-      m_profiles[DERIV_SPOT_VOLATILITY].enableHurstRegime = true;
-      m_profiles[DERIV_SPOT_VOLATILITY].enableOUFilter  = true;
-      m_profiles[DERIV_SPOT_VOLATILITY].gridFactorATR   = 0.25;
-      m_profiles[DERIV_SPOT_VOLATILITY].maxGridLevels   = 8;
-      m_profiles[DERIV_SPOT_VOLATILITY].gridProgressionFactor = 1.5;
-      m_profiles[DERIV_SPOT_VOLATILITY].spikeCooldownSec = 45;
-      m_profiles[DERIV_SPOT_VOLATILITY].spikeWindowBars = 40;
+            m_profiles[DERIV_SPOT_VOLATILITY].atrMultiplierSL = 1.0;
+            m_profiles[DERIV_SPOT_VOLATILITY].atrMultiplierTP = 1.5;
+            m_profiles[DERIV_SPOT_VOLATILITY].hurstThreshold  = 0.45;
+            m_profiles[DERIV_SPOT_VOLATILITY].riskPerTrade    = 1.0;
+            m_profiles[DERIV_SPOT_VOLATILITY].magicOffset     = 9150;
+            m_profiles[DERIV_SPOT_VOLATILITY].maxDrawdownPercent = 10;
+            m_profiles[DERIV_SPOT_VOLATILITY].enableSpikeHunter = false;
+            m_profiles[DERIV_SPOT_VOLATILITY].enableGridRecovery = true;
+            m_profiles[DERIV_SPOT_VOLATILITY].enableHurstRegime = true;
+            m_profiles[DERIV_SPOT_VOLATILITY].enableOUFilter  = true;
+            m_profiles[DERIV_SPOT_VOLATILITY].gridFactorATR   = 0.25;
+            m_profiles[DERIV_SPOT_VOLATILITY].maxGridLevels   = 8;
+            m_profiles[DERIV_SPOT_VOLATILITY].gridProgressionFactor = 1.5;
+            m_profiles[DERIV_SPOT_VOLATILITY].spikeCooldownSec = 45;
+            m_profiles[DERIV_SPOT_VOLATILITY].spikeWindowBars = 40;
 
       // DERIV_UNKNOWN (index 18)
       m_profiles[DERIV_UNKNOWN].family                  = DERIV_UNKNOWN;
@@ -506,10 +537,13 @@ public:
    //+------------------------------------------------------------------+
    //| Constructor                                                       |
    //+------------------------------------------------------------------+
-   CDerivAssetProfiler()
+   CDerivAssetProfiler() : m_logFamilyDetection(true)
    {
       InitializeProfiles();
    }
+
+   // L7-013: Setter for family detection logging
+   void SetLogFamilyDetection(bool enabled) { m_logFamilyDetection = enabled; }
 
    //+------------------------------------------------------------------+
    //| Detect the Deriv family for a symbol using priority-ordered      |
@@ -592,7 +626,12 @@ public:
          return DERIV_SPOT_VOLATILITY;
 
       // No match found
-      return DERIV_UNKNOWN;
+            ENUM_DERIV_FAMILY result = DERIV_UNKNOWN;
+            if(m_logFamilyDetection)
+            {
+               PrintFormat("[DERIV-PROFILER] %s &#x2192; family=%s (priority=0 - UNKNOWN)", symbol, EnumToString(result));
+            }
+            return result;
    }
 
    //+------------------------------------------------------------------+

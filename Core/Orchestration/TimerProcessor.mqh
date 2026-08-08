@@ -20,7 +20,7 @@
 #include "../../Core/Processing/SymbolScanScheduler.mqh"
 #include "../../Core/Utils/Enums.mqh"
 #include "../../Core/Trading/TradeManager.mqh"
-#include "../../Core/Trading/PositionStateManager.mqh"
+#include "../Position/PositionManager.mqh"
 
 class CTimerProcessor
 {
@@ -28,7 +28,7 @@ private:
     CEAOrchestrator*          m_orchestrator;
     CUnifiedRiskManager*      m_riskManager;
     CTradeManager*            m_tradeManager;
-    CPositionStateManager*    m_positionStateManager;
+    CPositionManager*       m_positionManager;
     CAIEngine*                m_aiEngine;
     CAIPerformanceFeedback*   m_aiFeedback;
     CCompoundingTierManager*  m_compoundingTierManager;
@@ -66,7 +66,7 @@ private:
     int m_heartbeatInterval;
 
 public:
-    CTimerProcessor() : m_orchestrator(NULL), m_riskManager(NULL), m_tradeManager(NULL), m_positionStateManager(NULL),
+    CTimerProcessor() : m_orchestrator(NULL), m_riskManager(NULL), m_tradeManager(NULL), m_positionManager(NULL),
                         m_aiEngine(NULL), m_aiFeedback(NULL), m_compoundingTierManager(NULL), m_familyWeightMatrix(NULL),
                         m_sessionWeightManager(NULL), m_skewStepAnalyzer(NULL), m_unprotectedTracker(NULL),
                         m_scanScheduler(NULL), m_lastProfitTargetDay(0), m_dailyProfitTargetReached(false),
@@ -80,7 +80,7 @@ public:
     ~CTimerProcessor() {}
     
     void SetDependencies(CEAOrchestrator* orchestrator, CUnifiedRiskManager* riskManager,
-                         CTradeManager* tradeManager, CPositionStateManager* positionStateManager,
+                         CTradeManager* tradeManager, CPositionManager* positionManager,
                          CAIEngine* aiEngine, CAIPerformanceFeedback* aiFeedback,
                          CCompoundingTierManager* compoundingTierManager,
                          CFamilyStrategyWeightMatrix* familyWeightMatrix,
@@ -92,7 +92,7 @@ public:
         m_orchestrator = orchestrator;
         m_riskManager = riskManager;
         m_tradeManager = tradeManager;
-        m_positionStateManager = positionStateManager;
+        m_positionManager = positionManager;
         m_aiEngine = aiEngine;
         m_aiFeedback = aiFeedback;
         m_compoundingTierManager = compoundingTierManager;
