@@ -23,6 +23,9 @@
 #include "RiskOpposingConflictGuard.mqh"
 #include "RiskCircuitBreaker.mqh"
 #include "RiskMarginHealth.mqh"
+// Phase E3 extracted sub-modules (behaviour-preserving decomposition)
+#include "RiskTieredCorrelation.mqh"
+#include "RiskAdaptiveTuner.mqh"
 #include <Trade/Trade.mqh>
 
 //+------------------------------------------------------------------+
@@ -165,12 +168,12 @@ private:
     // Lifetime: EAOrchestrator creates/owns; UnifiedRiskManager only references
     CPerformanceAnalytics* m_performanceAnalytics;
 
-    double m_activeRiskPerTradePercent;
+    // Phase E3: m_activeRiskPerTradePercent now lives in CRiskAdaptiveTuner.
     double m_dailyRiskUsedPercent;
     double m_dailyStartEquity;
     datetime m_lastDailyReset;
     bool m_initialized;
-    bool m_conservativeMode;
+    // Phase E3: m_conservativeMode now lives in CRiskAdaptiveTuner.
     datetime m_lastPressureLogTime;
     
     // Phase E2: drawdown / daily-loss circuit breakers, graduated auto-recovery
@@ -188,15 +191,13 @@ private:
     int m_symbolBudgetCount;
     datetime m_lastBudgetRefresh;
 
-    // Profit-adjusted risk budget: fraction of unrealized profit that frees up risk budget
-    double m_riskReductionFactor;
+    // Phase E3: m_riskReductionFactor now lives in CRiskAdaptiveTuner.
 
     // Per-symbol risk overrides (family-specific risk parameters)
     SSymbolRiskOverride m_riskOverrides[];
     int m_riskOverrideCount;
 
-    // Issue 17: Last computed throttle pressure (1.0 = no pressure, 0.0 = max pressure)
-    double m_lastThrottlePressure;
+    // Phase E3: m_lastThrottlePressure now lives in CRiskAdaptiveTuner.
 
     long m_eaMagicNumber;  // Batch 119: EA magic number for position filtering
 
@@ -227,6 +228,16 @@ private:
     // OWNED: Value member - constructor performs the zero-init that used to
     // live in this class's initialiser list.
     CRiskValidationStats m_validationStats;
+    // Phase E3: tiered correlation logic (threshold config + portfolio PRM pointer).
+    // OWNED: Value member - constructor seeds the threshold defaults and
+    // sets the portfolio risk manager pointer that used to be accessed
+    // directly as m_portfolioRiskManager in URM's method bodies.
+    CRiskTieredCorrelation m_tieredCorrelation;
+    // Phase E3: adaptive risk-sizing state (active risk, conservative mode,
+    // throttle pressure, risk reduction factor).
+    // OWNED: Value member - constructor performs the zero-init that used to
+    // live in this class's initialiser list.
+    CRiskAdaptiveTuner m_adaptiveTuner;
 
     // Additional validation parameters (formerly in CRiskValidationGate)
     double m_emergencyRiskOverride;   // Blueprint 10.4: 0-100 scale (5.0 = 5%)
@@ -282,7 +293,7 @@ public:
     // Register accepted risk usage only after successful execution.
     void RegisterExecutedTradeRisk(const SValidationResult &validationResult, const double fillRatio = 1.0);
 
-    double GetActiveRiskPerTradePercent() const { return m_activeRiskPerTradePercent; }
+    double GetActiveRiskPerTradePercent() const { return m_adaptiveTuner.GetActiveRiskPerTradePercent(); }
     double GetMinLotRiskMultiplier() const { return m_config.minLotRiskMultiplier; }
     double GetRecommendedRiskPerTradePercent(const double requestedRiskPercent = 0.0);
     double GetRemainingDailyRiskPercent();
@@ -404,7 +415,8 @@ void CUnifiedRiskManager::SetPerformanceAnalytics(CPerformanceAnalytics* analyti
 void CUnifiedRiskManager::SetBaseRiskPerTrade(double riskPercent)
 {
     m_config.baseRiskPerTradePercent = ClampRiskPercent(riskPercent);
-    m_activeRiskPerTradePercent = ClampRiskPercent(riskPercent);
+    // Phase E3 forwarder -> CRiskAdaptiveTuner::SetActiveRiskPerTradePercent
+    m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(riskPercent));
 }
 
 //+------------------------------------------------------------------+
@@ -429,7 +441,8 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
         m_config.maxPositionsSameBase    = tierMaxPositions;
 
         // Update active risk per trade
-        m_activeRiskPerTradePercent = ClampRiskPercent(m_config.baseRiskPerTradePercent);
+        // Phase E3 forwarder -> CRiskAdaptiveTuner::SetActiveRiskPerTradePercent
+        m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(m_config.baseRiskPerTradePercent));
 
         // Update portfolio risk manager limits (no reinitialization)
         m_portfolioRiskManager.SetMaxPortfolioRisk(effectivePortfolio);
@@ -515,7 +528,8 @@ double CUnifiedRiskManager::GetEffectiveRiskPerTrade(const string symbol) const
             return MathMin(m_riskOverrides[i].riskPerTradePercent, m_config.maxRiskPerTradePercent);
     }
     // L5-020 FIX: Return active risk per trade (reduced in conservative mode) instead of base risk
-    return m_activeRiskPerTradePercent;
+    // Phase E3 forwarder -> CRiskAdaptiveTuner::GetActiveRiskPerTradePercent
+    return m_adaptiveTuner.GetActiveRiskPerTradePercent();
 }
 
 //+------------------------------------------------------------------+
@@ -537,12 +551,13 @@ double CUnifiedRiskManager::GetEffectiveMaxDrawdown(const string symbol) const
 //+------------------------------------------------------------------+
 CUnifiedRiskManager::CUnifiedRiskManager() :
     m_performanceAnalytics(NULL),
-    m_activeRiskPerTradePercent(1.0),  // Blueprint 10.4: 0-100 scale (1.0 = 1%)
+    // Phase E3: m_activeRiskPerTradePercent, m_riskReductionFactor,
+    // m_lastThrottlePressure, m_conservativeMode now live in
+    // CRiskAdaptiveTuner::CRiskAdaptiveTuner() (identical values).
     m_dailyRiskUsedPercent(0.0),
     m_dailyStartEquity(0.0),
     m_lastDailyReset(0),
     m_initialized(false),
-    m_conservativeMode(false),
     m_lastPressureLogTime(0),
     // Phase E2: circuit-breaker defaults now live in
     // CRiskCircuitBreaker::CRiskCircuitBreaker() (identical values).
@@ -550,9 +565,7 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_tradingDayStartHour(0),
     m_symbolBudgetCount(0),
     m_lastBudgetRefresh(0),
-    m_riskReductionFactor(0.5),
     m_riskOverrideCount(0),
-    m_lastThrottlePressure(1.0),
     m_eaMagicNumber(0),
     // Validation gate state (moved from CRiskValidationGate)
     m_clusterGovernanceEnabled(true),
@@ -587,6 +600,13 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
 
     // Phase E2: per-cluster risk caps (Fix #11) default overrides are now
     // seeded by CRiskClusterBudget::CRiskClusterBudget() (identical values).
+
+    // Phase E3: sync correlation threshold config to CRiskTieredCorrelation
+    // and wire the portfolio risk manager pointer (stable for URM's lifetime).
+    m_tieredCorrelation.SetThresholds(m_config.correlationThreshold,
+                                      m_config.correlationReduceThreshold,
+                                      m_config.correlationBlockThreshold);
+    m_tieredCorrelation.SetPortfolioRiskManager(&m_portfolioRiskManager);
 }
 
 //+------------------------------------------------------------------+
@@ -642,6 +662,12 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     if(m_config.minLotRiskMultiplier <= 0.0)
         m_config.minLotRiskMultiplier = 1.0;
 
+    // Phase E3: sync correlation threshold config to CRiskTieredCorrelation
+    // after clamping is complete.
+    m_tieredCorrelation.SetThresholds(m_config.correlationThreshold,
+                                      m_config.correlationReduceThreshold,
+                                      m_config.correlationBlockThreshold);
+
     if(!m_portfolioRiskManager.Initialize(m_config.maxPortfolioRiskPercent, m_config.correlationThreshold))
     {
         Print("[RISK-UNIFIED] Failed to initialize portfolio risk manager");
@@ -649,7 +675,8 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     }
 
     m_eaMagicNumber = 0;
-    m_activeRiskPerTradePercent = ClampRiskPercent(m_config.baseRiskPerTradePercent);
+    // Phase E3 forwarder -> CRiskAdaptiveTuner::SetActiveRiskPerTradePercent
+    m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(m_config.baseRiskPerTradePercent));
     m_dailyRiskUsedPercent = 0.0;
     m_virtualPositionBook.Clear();
     m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -668,9 +695,11 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     m_initialized = true;
 
     // Risk percent scale validation — catch misconfiguration early
-    if(m_activeRiskPerTradePercent < 0.01 || m_activeRiskPerTradePercent > 20.0)
+    // Phase E3: read from CRiskAdaptiveTuner
+    double activeRiskCheck = m_adaptiveTuner.GetActiveRiskPerTradePercent();
+    if(activeRiskCheck < 0.01 || activeRiskCheck > 20.0)
         PrintFormat("WARNING: Risk per trade %.2f%% is outside safe range [0.01, 20.0] — verify input scale is 0-100 not 0-1",
-                    m_activeRiskPerTradePercent);
+                    activeRiskCheck);
 
     PrintFormat("[RISK-UNIFIED] Initialized | Base %.2f%% | Range %.2f-%.2f%% | Daily %.2f%% | Portfolio %.2f%%",
                 m_config.baseRiskPerTradePercent,
@@ -1338,7 +1367,8 @@ void CUnifiedRiskManager::RegisterExecutedTradeRisk(const SValidationResult &val
 
     double riskUsed = validationResult.riskPercent;
     if(riskUsed <= 0.0)
-        riskUsed = m_activeRiskPerTradePercent;
+        // Phase E3: read from CRiskAdaptiveTuner
+        riskUsed = m_adaptiveTuner.GetActiveRiskPerTradePercent();
     double normalizedFillRatio = MathMax(0.0, MathMin(1.0, fillRatio));
     m_dailyRiskUsedPercent += MathMax(0.0, riskUsed * normalizedFillRatio);
 }
@@ -1370,13 +1400,17 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
         return 0.0;
     }
 
+    // Phase E3: cache adaptive-tuner state in locals (single-threaded EA, no race)
+    double activeRisk = m_adaptiveTuner.GetActiveRiskPerTradePercent();
+    bool conservative = m_adaptiveTuner.IsConservativeMode();
+
     double reservedRisk = GetReservedVirtualRiskPercent();
     double effectiveDailyRisk = GetEffectiveDailyRiskUsedPercent(reservedRisk);
     double openExposureRisk = GetCurrentOpenExposureRiskPercent() + reservedRisk;
     double remainingDailyRisk = MathMax(0.0, m_config.maxDailyRiskPercent - effectiveDailyRisk);
     double remainingPortfolioRisk = MathMax(0.0, m_config.maxPortfolioRiskPercent - openExposureRisk);
-    double recommended = (requestedRiskPercent > 0.0) ? requestedRiskPercent : m_activeRiskPerTradePercent;
-    recommended = MathMin(recommended, m_activeRiskPerTradePercent);
+    double recommended = (requestedRiskPercent > 0.0) ? requestedRiskPercent : activeRisk;
+    recommended = MathMin(recommended, activeRisk);
     recommended = MathMin(recommended, remainingDailyRisk);
     recommended = MathMin(recommended, remainingPortfolioRisk);
 
@@ -1403,11 +1437,12 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     else if(portfolioUtilization >= 0.65)
         pressureMultiplier = MathMin(pressureMultiplier, 0.85);
 
-    if(m_conservativeMode)
+    if(conservative)
         pressureMultiplier = MathMin(pressureMultiplier, 0.80);
 
     // Issue 17: Store throttle pressure for position-limit adjustment
-    m_lastThrottlePressure = pressureMultiplier;
+    // Phase E3 forwarder -> CRiskAdaptiveTuner::SetThrottlePressure
+    m_adaptiveTuner.SetThrottlePressure(pressureMultiplier);
 
     recommended *= pressureMultiplier;
     recommended = MathMin(recommended, remainingDailyRisk);
@@ -1424,15 +1459,15 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
         if(m_lastPressureLogTime == 0 || (now - m_lastPressureLogTime) >= 60)
         {
             PrintFormat("[RISK-THROTTLE] requested=%.2f | active=%.2f | recommended=%.2f | pressure=%.2f | daily_used=%.2f/%.2f | portfolio_used=%.2f/%.2f | conservative=%s",
-                        requestedRiskPercent > 0.0 ? requestedRiskPercent : m_activeRiskPerTradePercent,
-                        m_activeRiskPerTradePercent,
+                        requestedRiskPercent > 0.0 ? requestedRiskPercent : activeRisk,
+                        activeRisk,
                         recommended,
                         pressureMultiplier,
                         effectiveDailyRisk,
                         m_config.maxDailyRiskPercent,
                         openExposureRisk,
                         m_config.maxPortfolioRiskPercent,
-                        m_conservativeMode ? "true" : "false");
+                        conservative ? "true" : "false");
             m_lastPressureLogTime = now;
         }
     }
@@ -1466,9 +1501,10 @@ int CUnifiedRiskManager::GetVirtualReservationCount() const
 //+------------------------------------------------------------------+
 //| Issue 17: Expose last throttle pressure                          |
 //+------------------------------------------------------------------+
+// Phase E3 forwarder -> CRiskAdaptiveTuner::GetThrottlePressure
 double CUnifiedRiskManager::GetThrottlePressure() const
 {
-    return m_lastThrottlePressure;
+    return m_adaptiveTuner.GetThrottlePressure();
 }
 
 //+------------------------------------------------------------------+
@@ -1479,7 +1515,7 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     SUnifiedRiskSnapshot snapshot;
     ZeroMemory(snapshot);
 
-    snapshot.activeRiskPerTradePercent = m_activeRiskPerTradePercent;
+    snapshot.activeRiskPerTradePercent = m_adaptiveTuner.GetActiveRiskPerTradePercent();
     snapshot.dailyEntryRiskUsedPercent = MathMax(0.0, m_dailyRiskUsedPercent);
     snapshot.dailyMarkToMarketLossPercent = CalculateDailyMarkToMarketLossPercent();
     snapshot.openExposureRiskPercent = GetCurrentOpenExposureRiskPercent();
@@ -1489,7 +1525,7 @@ SUnifiedRiskSnapshot CUnifiedRiskManager::GetSnapshot()
     snapshot.portfolioRiskPercent = snapshot.openExposureRiskPercent + snapshot.virtualReservedRiskPercent;
     snapshot.virtualReservationCount = GetVirtualReservationCount();
     snapshot.emergencyMode = m_portfolioRiskManager.IsEmergencyMode();
-    snapshot.conservativeMode = m_conservativeMode;
+    snapshot.conservativeMode = m_adaptiveTuner.IsConservativeMode();
 
     // Inline stats (formerly from m_validationGate)
     int total = m_validationStats.GetValidationCount();
@@ -1588,48 +1624,19 @@ double CUnifiedRiskManager::GetEffectiveDailyRiskUsedPercent(const double additi
 //+------------------------------------------------------------------+
 //| Update adaptive risk                                             |
 //+------------------------------------------------------------------+
+// Phase E3 forwarder -> CRiskAdaptiveTuner::UpdateAdaptiveRiskLevel
+// Config values and analytics pointer are passed as parameters because
+// they change at runtime (ApplyTierOverrides / SetPerformanceAnalytics).
 void CUnifiedRiskManager::UpdateAdaptiveRiskLevel()
 {
-    double targetRisk = m_config.baseRiskPerTradePercent;
-    m_conservativeMode = false;
-
-    if(!m_config.enableAdaptiveSizing)
-    {
-        m_activeRiskPerTradePercent = ClampRiskPercent(targetRisk);
-        return;
-    }
-
-    CPerformanceAnalytics* analytics = m_performanceAnalytics;
-    if(CheckPointer(analytics) == POINTER_INVALID)
-    {
-        m_activeRiskPerTradePercent = ClampRiskPercent(targetRisk);
-        return;
-    }
-
-    SPerformanceMetrics perf = analytics.GetPerformanceMetrics();
-    if(perf.totalTrades < m_config.adaptationMinTrades)
-    {
-        m_activeRiskPerTradePercent = ClampRiskPercent(targetRisk);
-        return;
-    }
-
-    double reductionFactor = analytics.GetRecommendedRiskReduction();
-    reductionFactor = MathMax(0.1, MathMin(1.0, reductionFactor));
-
-    double drawdownValue = analytics.GetCurrentDrawdown();
-    if(drawdownValue >= m_config.drawdownCriticalPercent)
-        reductionFactor = MathMin(reductionFactor, 0.35);
-    else if(drawdownValue >= m_config.drawdownWarningPercent)
-        reductionFactor = MathMin(reductionFactor, 0.65);
-
-    if(analytics.ShouldEnableConservativeMode())
-    {
-        m_conservativeMode = true;
-        reductionFactor = MathMin(reductionFactor, 0.60);
-    }
-
-    targetRisk = m_config.baseRiskPerTradePercent * reductionFactor;
-    m_activeRiskPerTradePercent = ClampRiskPercent(targetRisk);
+    m_adaptiveTuner.UpdateAdaptiveRiskLevel(m_config.baseRiskPerTradePercent,
+                                            m_config.enableAdaptiveSizing,
+                                            m_config.adaptationMinTrades,
+                                            m_config.drawdownWarningPercent,
+                                            m_config.drawdownCriticalPercent,
+                                            m_config.minRiskPerTradePercent,
+                                            m_config.maxRiskPerTradePercent,
+                                            m_performanceAnalytics);
 }
 
 //+------------------------------------------------------------------+
@@ -1690,7 +1697,7 @@ bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
 
     return m_circuitBreaker.CheckDrawdownCircuitBreaker(m_config.drawdownWarningPercent,
                                                         m_config.drawdownCriticalPercent,
-                                                        m_conservativeMode);
+                                                        m_adaptiveTuner.IsConservativeMode());
 }
 
 //+------------------------------------------------------------------+
@@ -1737,7 +1744,7 @@ void CUnifiedRiskManager::ResetEmergencyCloseRequested()
 // Phase E2 forwarder -> CRiskCircuitBreaker::ResetCircuitBreaker
 void CUnifiedRiskManager::ResetCircuitBreaker()
 {
-    m_circuitBreaker.ResetCircuitBreaker(m_conservativeMode);
+    m_circuitBreaker.ResetCircuitBreaker(m_adaptiveTuner.IsConservativeMode());
 }
 
 //+------------------------------------------------------------------+
@@ -1781,15 +1788,10 @@ void CUnifiedRiskManager::RestoreCircuitBreakerState(double savedPeakEquity, dou
 //+------------------------------------------------------------------+
 //| Helper: Get correlation between two symbols (Phase 2.2: engine)  |
 //+------------------------------------------------------------------+
+// Phase E3 forwarder -> CRiskTieredCorrelation::GetSymbolCorrelation
 double CUnifiedRiskManager::GetSymbolCorrelation(const string symbol1, const string symbol2)
 {
-    // Delegate to unified correlation engine via portfolio risk manager
-    CCorrelationEngine* engine = m_portfolioRiskManager.GetCorrelationEngine();
-    if(engine != NULL)
-        return engine.GetCorrelation(symbol1, symbol2);
-
-    // Fallback: conservative return when engine unavailable
-    return 1.0;
+    return m_tieredCorrelation.GetSymbolCorrelation(symbol1, symbol2);
 }
 
 //+------------------------------------------------------------------+
@@ -1881,7 +1883,7 @@ bool CUnifiedRiskManager::CheckCircuitBreakerRecovery()
         return false;
 
     return m_circuitBreaker.CheckCircuitBreakerRecovery(m_config.drawdownCriticalPercent,
-                                                        m_conservativeMode);
+                                                        m_adaptiveTuner.IsConservativeMode());
 }
 
 //+------------------------------------------------------------------+
@@ -1894,7 +1896,7 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
     if(!m_initialized)
         return MARGIN_HEALTH_OK;
 
-    return m_marginHealth.MonitorMarginHealth(m_circuitBreaker, m_conservativeMode);
+    return m_marginHealth.MonitorMarginHealth(m_circuitBreaker, m_adaptiveTuner.IsConservativeMode());
 }
 
 //+------------------------------------------------------------------+
@@ -2205,7 +2207,9 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
 //+------------------------------------------------------------------+
 double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const double rawUsedRisk)
 {
-    if(rawUsedRisk <= 0.0 || m_riskReductionFactor <= 0.0)
+    // Phase E3: read reduction factor from CRiskAdaptiveTuner
+    double riskReductionFactor = m_adaptiveTuner.GetRiskReductionFactor();
+    if(rawUsedRisk <= 0.0 || riskReductionFactor <= 0.0)
         return MathMax(0.0, rawUsedRisk);
 
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -2232,14 +2236,14 @@ double CUnifiedRiskManager::ApplyPnlRiskAdjustment(const string symbol, const do
 
     // Convert unrealized profit to risk-percent terms
     double profitRiskPct = (unrealizedProfit / equity) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
-    double reduction = MathMax(0.0, profitRiskPct * m_riskReductionFactor);
+    double reduction = MathMax(0.0, profitRiskPct * riskReductionFactor);
     double adjustedUsedRisk = rawUsedRisk - reduction;
     adjustedUsedRisk = MathMax(0.0, adjustedUsedRisk);
 
     if(adjustedUsedRisk < rawUsedRisk)
     {
         PrintFormat("[RISK-BUDGET-PNL-ADJUSTED] Symbol=%s, usedRisk=%.2f%% reduced to %.2f%% (unrealized profit=%.2f, factor=%.1f)",
-                    symbol, rawUsedRisk, adjustedUsedRisk, unrealizedProfit, m_riskReductionFactor);
+                    symbol, rawUsedRisk, adjustedUsedRisk, unrealizedProfit, riskReductionFactor);
     }
 
     return adjustedUsedRisk;
@@ -2380,64 +2384,13 @@ bool CUnifiedRiskManager::ValidatePortfolioRisk(const STradeValidationRequest &r
     return true;
 }
 
+// Phase E3 forwarder -> CRiskTieredCorrelation::ValidateCorrelationLimits
+// maxPositionsSameBase and eaMagicNumber are passed from the forwarder
+// because they change at runtime (ApplyTierOverrides / SetEAMagicNumber).
 bool CUnifiedRiskManager::ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk)
 {
-    // Check same base currency limit
-    int sameBaseCount = 0;
-    // Batch 118: Extract base currency up to first non-alpha character (handles US30, BTCUSD, etc.)
-    string symbolBase = "";
-    for(int c = 0; c < StringLen(request.symbol); c++)
-    {
-        ushort ch = StringGetCharacter(request.symbol, c);
-        if((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))
-            symbolBase += ShortToString(ch);
-        else
-            break;
-    }
-    if(StringLen(symbolBase) < 3)
-        symbolBase = StringSubstr(request.symbol, 0, 3);  // fallback
-    
-    // Batch 119: Only count EA-owned positions (filter by magic number)
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        if(PositionSelectByTicket(PositionGetTicket(i)))
-        {
-            string posSymbol = PositionGetString(POSITION_SYMBOL);
-            long posMagic = PositionGetInteger(POSITION_MAGIC);
-            // Only count positions with magic 0 (manual) or matching EA magic
-            if(StringFind(posSymbol, symbolBase) >= 0 &&
-               (posMagic == 0 || posMagic == m_eaMagicNumber))
-                sameBaseCount++;
-        }
-    }
-    
-    if(sameBaseCount >= m_config.maxPositionsSameBase)
-    {
-        message = StringFormat("Too many positions on base %s (>= %d)", symbolBase, m_config.maxPositionsSameBase);
-        correlationRisk = 1.0;
-        return false;
-    }
-    
-    correlationRisk = CalculateCorrelationRisk(request.symbol);
-    
-    if(correlationRisk > m_config.correlationThreshold)
-    {
-        message = StringFormat("Correlation risk %.2f exceeds threshold %.2f", correlationRisk, m_config.correlationThreshold);
-        return false;
-    }
-    
-    if(CheckPointer(&m_portfolioRiskManager) != POINTER_INVALID)
-    {
-        CPortfolioRiskManager* manager = &m_portfolioRiskManager;
-        if(!PortfolioCorrelationAllowed(request.symbol))
-        {
-            string correlationReason = "";  // GetLastBlockReason would need to be added
-            message = (correlationReason != "") ? correlationReason : "Correlation limit exceeded";
-            return false;
-        }
-    }
-    
-    return true;
+    return m_tieredCorrelation.ValidateCorrelationLimits(request.symbol, message, correlationRisk,
+                                                         m_config.maxPositionsSameBase, m_eaMagicNumber);
 }
 
 bool CUnifiedRiskManager::ValidateMarginRequirements(const STradeValidationRequest &request, string &message)
@@ -2674,25 +2627,10 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     return totalRisk;
 }
 
+// Phase E3 forwarder -> CRiskTieredCorrelation::CalculateCorrelationRisk
 double CUnifiedRiskManager::CalculateCorrelationRisk(const string symbolParam)
 {
-    double maxCorrelation = 0.0;
-    
-    // Check correlation with all open positions
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        if(PositionSelectByTicket(PositionGetTicket(i)))
-        {
-            string existingSymbol = PositionGetString(POSITION_SYMBOL);
-            if(existingSymbol != symbolParam)
-            {
-                double correlation = CalculateSymbolCorrelation(symbolParam, existingSymbol);
-                maxCorrelation = MathMax(maxCorrelation, MathAbs(correlation));
-            }
-        }
-    }
-    
-    return maxCorrelation;
+    return m_tieredCorrelation.CalculateCorrelationRisk(symbolParam);
 }
 
 double CUnifiedRiskManager::CalculatePortfolioRiskAfterTrade(const double additionalRisk)
@@ -2726,9 +2664,10 @@ bool CUnifiedRiskManager::PortfolioAllowsTrade(const string symbolParam, const d
     return m_portfolioRiskManager.IsTradeAllowed(symbolParam, lotSize);
 }
 
+// Phase E3 forwarder -> CRiskTieredCorrelation::PortfolioCorrelationAllowed
 bool CUnifiedRiskManager::PortfolioCorrelationAllowed(const string symbolParam)
 {
-    return m_portfolioRiskManager.CheckCorrelationLimits(symbolParam);
+    return m_tieredCorrelation.PortfolioCorrelationAllowed(symbolParam);
 }
 
 bool CUnifiedRiskManager::PortfolioEmergencyActive()
@@ -2776,24 +2715,16 @@ bool CUnifiedRiskManager::CheckAccountTradingPermissions(void)
     return true;
 }
 
+// Phase E3 forwarder -> CRiskTieredCorrelation::CalculateSymbolCorrelation
 double CUnifiedRiskManager::CalculateSymbolCorrelation(const string symbol1, const string symbol2)
 {
-    // Delegate to unified correlation engine via portfolio risk manager
-    if(CheckPointer(&m_portfolioRiskManager) != POINTER_INVALID)
-    {
-        CCorrelationEngine* engine = m_portfolioRiskManager.GetCorrelationEngine();
-        if(engine != NULL)
-            return engine.GetCorrelation(symbol1, symbol2);
-    }
-    
-    // Fallback: conservative return when engine unavailable
-    return 1.0;
+    return m_tieredCorrelation.CalculateSymbolCorrelation(symbol1, symbol2);
 }
 
+// Phase E3 forwarder -> CRiskTieredCorrelation::GetMaxCorrelationWithPortfolio
 double CUnifiedRiskManager::GetMaxCorrelationWithPortfolio(const string symbolParam)
 {
-    // This is an alias for CalculateCorrelationRisk
-    return CalculateCorrelationRisk(symbolParam);
+    return m_tieredCorrelation.GetMaxCorrelationWithPortfolio(symbolParam);
 }
 
 // Phase E1 forwarder -> CRiskValidationStats::WriteAuditLog
