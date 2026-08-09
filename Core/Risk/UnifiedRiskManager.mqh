@@ -1324,9 +1324,12 @@ bool CUnifiedRiskManager::CheckDrawdownCircuitBreaker()
     if(!m_initialized)
         return false;
 
-    return m_circuitBreaker.CheckDrawdownCircuitBreaker(m_config.drawdownWarningPercent,
-                                                        m_config.drawdownCriticalPercent,
-                                                        m_adaptiveTuner.IsConservativeMode());
+    bool conservative = m_adaptiveTuner.IsConservativeMode();
+    bool result = m_circuitBreaker.CheckDrawdownCircuitBreaker(m_config.drawdownWarningPercent,
+                                                               m_config.drawdownCriticalPercent,
+                                                               conservative);
+    m_adaptiveTuner.SetConservativeMode(conservative);
+    return result;
 }
 
 //+------------------------------------------------------------------+
@@ -1373,7 +1376,9 @@ void CUnifiedRiskManager::ResetEmergencyCloseRequested()
 // Phase E2 forwarder -> CRiskCircuitBreaker::ResetCircuitBreaker
 void CUnifiedRiskManager::ResetCircuitBreaker()
 {
-    m_circuitBreaker.ResetCircuitBreaker(m_adaptiveTuner.IsConservativeMode());
+    bool conservative = m_adaptiveTuner.IsConservativeMode();
+    m_circuitBreaker.ResetCircuitBreaker(conservative);
+    m_adaptiveTuner.SetConservativeMode(conservative);
 }
 
 //+------------------------------------------------------------------+
@@ -1511,8 +1516,11 @@ bool CUnifiedRiskManager::CheckCircuitBreakerRecovery()
     if(!m_initialized)
         return false;
 
-    return m_circuitBreaker.CheckCircuitBreakerRecovery(m_config.drawdownCriticalPercent,
-                                                        m_adaptiveTuner.IsConservativeMode());
+    bool conservative = m_adaptiveTuner.IsConservativeMode();
+    bool result = m_circuitBreaker.CheckCircuitBreakerRecovery(m_config.drawdownCriticalPercent,
+                                                               conservative);
+    m_adaptiveTuner.SetConservativeMode(conservative);
+    return result;
 }
 
 //+------------------------------------------------------------------+
@@ -1525,7 +1533,10 @@ ENUM_MARGIN_HEALTH_LEVEL CUnifiedRiskManager::MonitorMarginHealth()
     if(!m_initialized)
         return MARGIN_HEALTH_OK;
 
-    return m_marginHealth.MonitorMarginHealth(m_circuitBreaker, m_adaptiveTuner.IsConservativeMode());
+    bool conservative = m_adaptiveTuner.IsConservativeMode();
+    ENUM_MARGIN_HEALTH_LEVEL level = m_marginHealth.MonitorMarginHealth(m_circuitBreaker, conservative);
+    m_adaptiveTuner.SetConservativeMode(conservative);
+    return level;
 }
 
 //+------------------------------------------------------------------+
