@@ -59,156 +59,16 @@ class CFourStateRegimeDetector;  // Forward declaration for market regime detect
 class CStrategyRegistry;
 
 //+------------------------------------------------------------------+
-//| Strategy Registration Entry                                     |
+//| Phase G / G1: struct StrategyEntry and the shared enum->text free  |
+//| helpers (StrategyRoleToString, StrategyClusterToString,            |
+//| StrategyClusterShortCode, IntrabarPolicyToString,                  |
+//| TradeSignalToString, IsInfrastructureNoSignalReasonTag,            |
+//| ClampUnitValue) moved verbatim into EntStrategyTypes.mqh. It is    |
+//| included at the exact position the originals occupied: after the   |
+//| strategy-registry include, before the slice-module includes, so    |
+//| every collaborator still sees them BEFORE its own definition.      |
 //+------------------------------------------------------------------+
-struct StrategyEntry
-{
-    IStrategy* strategy;
-    string name;
-    bool enabled;
-    bool intrabarEligible;
-    int intrabarPolicy;
-    bool liveVotingEnabled;
-    int role;
-    int cluster;
-    ENUM_STRATEGY_TIER tier;             // Strategy Tier (Ranking Matrix)
-    double weight;
-    double originalWeight;              // Track original weight for decay recovery
-    ENUM_TIMEFRAMES timeframe;
-    int successCount;
-    int failCount;
-    double healthScore;
-    double participationScore;
-    double avgConfidence;
-    ENUM_TRADE_SIGNAL lastSignal;
-    double lastSignalConfidence;
-    datetime lastEvaluationTime;
-    int consecutiveFilterCount;         // Count consecutive no-signal cycles for decay
-
-    // Performance metrics ported from AISO
-    int totalTrades;
-    int winningTrades;
-    double winRate;
-    double avgProfit;
-    double avgLoss;
-    double profitFactor;
-    double sharpeRatio;
-    
-    // Recent performance tracking (20-trade rolling window)
-    double recentTrades[20];
-    int recentTradeIndex;
-    int recentTradeCount;
-    double recentWinRate;
-    
-    // Consecutive performance tracking
-    int consecutiveLosses;
-    int maxConsecutiveLosses;
-    int consecutiveWins;
-    
-    // Adaptation flags
-    bool temporarilyDisabled;
-    datetime disabledUntil;
-    datetime lastUpdate;
-
-    // Consensus component scores (populated by pipeline/consensus engine)
-    double participation;        // Participation multiplier [0-1]
-    double readinessScore;       // Readiness score [0-1]
-    double contextScore;         // Context score [0-1]
-    double costScore;            // Cost score [0-1]
-    bool isProbeEligible;        // Eligible for intrabar probe voting
-
-    // Market regime performance
-    double regimePerformance[5];
-    int regimeTrades[5];
-};
-
-
-
-
-
-string StrategyRoleToString(const ENUM_STRATEGY_ROLE role)
-{
-    switch(role)
-    {
-        case PRIMARY_ALPHA: return "PRIMARY_ALPHA";
-        case CONTEXT_FEATURE: return "CONTEXT_FEATURE";
-        default: return "PRIMARY_ALPHA";
-    }
-}
-
-string StrategyClusterToString(const ENUM_STRATEGY_CLUSTER cluster)
-{
-    switch(cluster)
-    {
-        case TREND_CLUSTER: return "TREND_CLUSTER";
-        case MEAN_REVERSION_CLUSTER: return "MEAN_REVERSION_CLUSTER";
-        case STRUCTURE_CLUSTER: return "STRUCTURE_CLUSTER";
-        case SCALP_CLUSTER: return "SCALP_CLUSTER";
-        case STRATEGY_CLUSTER_NONE:
-        default:
-            return "NONE";
-    }
-}
-
-string StrategyClusterShortCode(const ENUM_STRATEGY_CLUSTER cluster)
-{
-    switch(cluster)
-    {
-        case TREND_CLUSTER: return "T";
-        case MEAN_REVERSION_CLUSTER: return "R";
-        case STRUCTURE_CLUSTER: return "S";
-        case SCALP_CLUSTER: return "X";
-        case STRATEGY_CLUSTER_NONE:
-        default:
-            return "N";
-    }
-}
-
-string IntrabarPolicyToString(const ENUM_INTRABAR_POLICY policy)
-{
-    switch(policy)
-    {
-        case INTRABAR_POLICY_OFF: return "OFF";
-        case INTRABAR_POLICY_PROBE: return "PROBE";
-        case INTRABAR_POLICY_LIVE: return "LIVE";
-        default: return "OFF";
-    }
-}
-
-
-string TradeSignalToString(const ENUM_TRADE_SIGNAL signal)
-{
-    switch(signal)
-    {
-        case TRADE_SIGNAL_BUY: return "BUY";
-        case TRADE_SIGNAL_SELL: return "SELL";
-        case TRADE_SIGNAL_NONE: return "NONE";
-        default: return "UNKNOWN";
-    }
-}
-
-bool IsInfrastructureNoSignalReasonTag(const string reasonTag)
-{
-    if(reasonTag == "")
-        return false;
-
-    return (StringFind(reasonTag, "_WARMING_UP") >= 0 ||
-            StringFind(reasonTag, "_UNAVAILABLE") >= 0 ||
-            StringFind(reasonTag, "_DISABLED_OR_UNAVAILABLE") >= 0 ||
-            StringFind(reasonTag, "_DISABLED_OR_UNINIT") >= 0 ||
-            StringFind(reasonTag, "_INVALID_HANDLES") >= 0 ||
-            StringFind(reasonTag, "_INIT_FAILED") >= 0 ||
-            StringFind(reasonTag, "_FEATURES_UNAVAILABLE") >= 0 ||
-            StringFind(reasonTag, "_SCALER_APPLY_FAILED") >= 0 ||
-            StringFind(reasonTag, "_INFERENCE_FAILED") >= 0 ||
-            StringFind(reasonTag, "_MODEL_UNAVAILABLE") >= 0);
-}
-
-// Clamp value to [0.0, 1.0] range
-inline double ClampUnitValue(const double value)
-{
-    return MathMax(0.0, MathMin(1.0, value));
-}
+#include "EntStrategyTypes.mqh"
 
 // Phase C / Slice 1 extracted collaborators. Included here (after the shared
 // free helpers above, before the manager class) so that:
@@ -231,33 +91,26 @@ inline double ClampUnitValue(const double value)
 // C9, the consensus decision core, moved wholesale into CConsensusEngine.
 #include "ConsensusEngine.mqh"
 
+// Phase G extracted collaborators. Same rationale as the Phase C slices:
+// each is held BY VALUE by the manager, so its complete type must be visible
+// here. Include order is load-bearing:
+//   EntStrategyQuorumConfig  -> StrategyMgrInfrastructure::Initialize() takes it
+//                               by reference;
+//   EntStrategyTypes (above) -> StrategyMgrRoster stores StrategyEntry[];
+//   AttributionDelegator (above) -> EntStrategySignalContext takes it by
+//                               const reference.
+#include "EntStrategyQuorumConfig.mqh"    // G2: quorum / adaptation config store
+#include "EntStrategySignalContext.mqh"   // G3: last-signal + cycle telemetry
+#include "StrategyMgrRoster.mqh"          // G4: registered-strategy roster
+#include "StrategyMgrInfrastructure.mqh"  // G5: collaborator plumbing + lifecycle
+#include "StrategyMgrTradeFeedback.mqh"   // G6: magic ownership + trade feedback
+
 //+------------------------------------------------------------------+
 //| Enterprise Strategy Manager Class                               |
 //+------------------------------------------------------------------+
 class CEnterpriseStrategyManager
 {
 private:
-    CUnifiedSignalPipeline* m_pipeline;
-    CTimeframeConsistency* m_tfConsistency;
-    CTradeManager* m_tradeManager;   // CRITICAL FIX: Store for strategy initialization
-    CPositionSizer* m_positionSizer; // CRITICAL FIX: Store for strategy initialization
-    CUnifiedRiskManager* m_unifiedRiskManager; // Unified risk validation gate (injected)
-    CDerivAssetProfiler* m_derivProfiler;      // Deriv family profiler for engine weighting
-    CMultiAssetProfiler* m_multiAssetProfiler;  // Multi-asset profiler (Batch 103)
-    CChartDrawingManager* m_drawingManager; // Central drawing manager for the symbol
-    CVPINFilter* m_vpinFilter;        // VPIN toxicity filter for consensus (Batch 104)
-    COrderFlowImbalanceEngine* m_ofiEngine;  // OFI for regime integration (Batch 104)
-    CFamilyStrategyWeightMatrix* m_familyWeightMatrix;  // I1: Per-family cluster weight multipliers
-    CFourStateRegimeDetector* m_fourStateRegimeDetector; // Four-state regime detector
-    CStrategyRegistry* m_strategyRegistry;                // L1-004: Injected registry (no global singleton)
-    ENUM_MARKET_REGIME m_currentMarketRegime;
-    bool m_regimeDetectorInitialized;
-    
-    // L1-007: Component delegation
-    CDiagnosticsManager* m_diagnostics;
-    CTradeAttributionManager* m_attribution;
-    CStrategyHealthMonitor* m_healthMonitor;
-
     // Phase C / Slice 1: extracted collaborators (owned by value, no lifetime management)
     CStrategyStateReporter m_stateReporter;      // C1: read-only telemetry / JSON reporting
     CAttributionDelegator  m_attributionDelegator; // C2: attribution forwarders
@@ -276,89 +129,18 @@ private:
 
     // Phase C / Slice 5: extracted collaborator (owned by value, no lifetime management)
     CConsensusEngine       m_consensusEngine; // C9: consensus decision core (owns m_lastDecisionContext)
-    
-    StrategyEntry m_strategies[];
-    int m_strategyCount;
-    int m_maxStrategies; // Max strategy limit
-    
-    string m_symbol;
-    ENUM_TIMEFRAMES m_baseTimeframe;
-    long m_managedMagic;
-    long m_managedMagicRangeMax;
-    
-    bool m_initialized;
-    bool m_usePipeline;
-    int  m_adxHandleCached;    // Cached ADX handle for IsTrendingRegime() (Batch 116)
-    
-    // Statistics
-    int m_totalSignals;
-    int m_successfulSignals;
-    double m_avgConfidence;
 
-    // L1-007: Health monitor configuration (mirrored for fallback when m_healthMonitor == NULL)
-    double m_minWinRateThreshold;
-    int m_maxConsecutiveLosses_Limit;
-    int m_rollingWindowSize;
-
-    // Consensus configuration (mirrored for internal consensus logic)
-    int m_minQuorum;
-    int m_intrabarMinQuorum;
-    bool m_intrabarDynamicQuorumEnabled;
-    double m_intrabarSingleVoterMinConfidence;
-    double m_quorumThreshold;
-    double m_pipelineMinConfidence;
-    double m_conflictDeadband;
-    double m_minReadyWeightRatio;
-    double m_supportFloorNewBar;
-    double m_supportFloorIntrabar;
-    double m_sparseIntrabarMinQuality;
-    double m_sparseIntrabarMinSupportRatio;
-    double m_sparseIntrabarMinReadyCoverage;
-    double m_sparseIntrabarConfidencePenalty;
-    bool m_allowSparseIntrabarSingleVoter;
-    bool m_adaptiveQuorumEnabled;
-    double m_adaptiveQualityThreshold_1voter;
-    double m_adaptiveSupportFloor_1voter;
-    double m_adaptiveQualityThreshold_2voters;
-    double m_adaptiveSupportFloor_2voters;
-    double m_adaptiveQualityThreshold_3plus;
-    double m_adaptiveSupportFloor_3plus;
-    double m_strategyActivityDecayRate;
-    int m_strategyInactiveCounterThreshold;
-    bool m_regimeRelaxActive;
-    double m_regimeRelaxFactor;
-    double m_performanceDecayFactor;
-    double m_maxDrawdownLimit;
-
-    // Post-consensus validation configuration: Phase C / Slice 2 (C3) moved this
-    // block into CPostConsensusValidator, which now owns it. No reader remained
-    // outside the validator methods.
-
-    // Participation score multiplier formula parameters (L6-008)
-    double m_participationFormulaBase;
-    double m_participationFormulaCoeff;
-    double m_participationFormulaMin;
-    double m_participationFormulaMax;
-
-    // Intrabar policy configuration per strategy index (L6-007)
-    ENUM_INTRABAR_POLICY m_intrabarPolicyConfig[32];
-
-    // Last orchestrated decision context for basic trade attribution
-        string m_lastSignalContributors[];
-        int m_lastSignalContributorIndices[];
-        int m_lastContributorCount;
-        string m_lastSignalSymbol;
-        datetime m_lastSignalTime;
-        string m_lastSignalRole;
-        string m_lastSignalCluster;
-        string m_lastSignalClusterCode;
-        // Phase C / Slice 5 (C9): m_lastDecisionContext moved into CConsensusEngine,
-        // which is its single writer. GetLastDecisionContextValue() now forwards there.
-
-    // Last-cycle funnel snapshot (for EA-level heartbeat conversion metrics)
-    int m_lastCycleSignalsGenerated;
-    int m_lastCycleSignalsAfterPipeline;
-    bool m_lastCycleSignalAfterQuorum;
+    // Phase G extracted collaborators (owned by value, no lifetime management).
+    // Together they hold ALL of the manager's former loose state: the
+    // collaborator pointers / symbol / init flags (G5), the registered-strategy
+    // roster (G4), the consensus-quorum configuration (G2), the last-signal and
+    // cycle telemetry (G3) and the magic-ownership window (G6). The manager
+    // itself is now stateless apart from these members.
+    CEntStrategyQuorumConfig   m_quorumConfig;   // G2: quorum / adaptation config
+    CEntStrategySignalContext  m_signalContext;  // G3: last-signal + cycle telemetry
+    CStrategyMgrRoster         m_roster;         // G4: registered-strategy roster
+    CStrategyMgrInfrastructure m_infra;          // G5: collaborator plumbing + lifecycle
+    CStrategyMgrTradeFeedback  m_tradeFeedback;  // G6: magic ownership + trade feedback
 
     bool IsPositionIdStillOpen(const ulong positionId) const;
     int FindStrategyIndexByName(const string name) const;
@@ -423,69 +205,78 @@ public:
     CEnterpriseStrategyManager();
     ~CEnterpriseStrategyManager();
     
-    // L1-007: Component accessors
-    CDiagnosticsManager* GetDiagnostics() { return m_diagnostics; }
-    void SetDiagnosticsManager(CDiagnosticsManager* diagnostics) { m_diagnostics = diagnostics; }
-    CTradeAttributionManager* GetAttribution() { return m_attribution; }
+    // L1-007: Component accessors (Phase G / G5: storage lives in m_infra)
+    CDiagnosticsManager* GetDiagnostics() { return m_infra.GetDiagnostics(); }
+    void SetDiagnosticsManager(CDiagnosticsManager* diagnostics) { m_infra.SetDiagnosticsManager(diagnostics); }
+    CTradeAttributionManager* GetAttribution() { return m_infra.GetAttribution(); }
     void SetAttributionManager(CTradeAttributionManager* attribution)
-         { m_attribution = attribution; m_attributionDelegator.SetAttribution(m_attribution); }
-    CStrategyHealthMonitor* GetHealthMonitor() { return m_healthMonitor; }
+         { m_infra.SetAttributionManager(attribution); m_attributionDelegator.SetAttribution(m_infra.GetAttribution()); }
+    CStrategyHealthMonitor* GetHealthMonitor() { return m_infra.GetHealthMonitor(); }
 
     //--- Phase C / Slice 1: minimal read-only accessor surface consumed by
     //--- CStrategyStateReporter. These expose existing state verbatim; they add
     //--- no logic and are the only way the reporter observes this manager.
-    int    GetStrategyCount() const { return m_strategyCount; }
+    int    GetStrategyCount() const { return m_roster.GetStrategyCount(); }
     bool   IsStrategyEnabled(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].enabled : false; }
+           { return m_roster.IsStrategyEnabled(index); }
     IStrategy* GetStrategyPtr(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].strategy : NULL; }
+           { return m_roster.GetStrategyPtr(index); }
     string GetStrategyName(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].name : ""; }
+           { return m_roster.GetStrategyName(index); }
     double GetStrategyWeight(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].weight : 0.0; }
+           { return m_roster.GetStrategyWeight(index); }
     int    GetStrategyRole(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].role : 0; }
+           { return m_roster.GetStrategyRole(index); }
     int    GetStrategyCluster(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].cluster : 0; }
+           { return m_roster.GetStrategyCluster(index); }
     bool   IsStrategyLiveVotingEnabled(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].liveVotingEnabled : false; }
+           { return m_roster.IsStrategyLiveVotingEnabled(index); }
     int    GetStrategySuccessCount(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].successCount : 0; }
+           { return m_roster.GetStrategySuccessCount(index); }
     int    GetStrategyFailCount(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].failCount : 0; }
+           { return m_roster.GetStrategyFailCount(index); }
     double GetStrategyAvgConfidence(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgConfidence : 0.0; }
+           { return m_roster.GetStrategyAvgConfidence(index); }
     double GetStrategyParticipationScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].participationScore : 0.0; }
+           { return m_roster.GetStrategyParticipationScore(index); }
     double GetStrategyHealthScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].healthScore : 0.0; }
+           { return m_roster.GetStrategyHealthScore(index); }
     double GetStrategyRecentWinRate(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentWinRate : 0.0; }
+           { return m_roster.GetStrategyRecentWinRate(index); }
     bool   GetStrategyIsLiveVoter(const int index) const { return IsStrategyLiveVoter(index); }
-    CUnifiedSignalPipeline* GetPipelineConst() const { return m_pipeline; }
-    CDiagnosticsManager*    GetDiagnosticsConst() const { return m_diagnostics; }
-    string GetManagedSymbol() const { return m_symbol; }
-    int    GetTotalSignals() const { return m_totalSignals; }
-    int    GetSuccessfulSignals() const { return m_successfulSignals; }
+    CUnifiedSignalPipeline* GetPipelineConst() const { return m_infra.GetPipeline(); }
+    CDiagnosticsManager*    GetDiagnosticsConst() const { return m_infra.GetDiagnostics(); }
+    string GetManagedSymbol() const { return m_infra.GetManagedSymbol(); }
+    int    GetTotalSignals() const { return m_signalContext.GetTotalSignals(); }
+    int    GetSuccessfulSignals() const { return m_signalContext.GetSuccessfulSignals(); }
     void   GetLastDecisionContextValue(SConsensusDecisionContext &out) const
            { m_consensusEngine.GetLastDecisionContextValue(out); }
-    int    GetLastCycleSignalsGeneratedValue() const { return m_lastCycleSignalsGenerated; }
-    int    GetLastCycleSignalsAfterPipelineValue() const { return m_lastCycleSignalsAfterPipeline; }
-    bool   GetLastCycleSignalAfterQuorumValue() const { return m_lastCycleSignalAfterQuorum; }
+    int    GetLastCycleSignalsGeneratedValue() const { return m_signalContext.GetLastCycleSignalsGenerated(); }
+    int    GetLastCycleSignalsAfterPipelineValue() const { return m_signalContext.GetLastCycleSignalsAfterPipeline(); }
+    bool   GetLastCycleSignalAfterQuorumValue() const { return m_signalContext.GetLastCycleSignalAfterQuorum(); }
+
+    //--- Phase G / G3: last-signal contributor telemetry consumed by
+    //--- CStrategyMgrTradeFeedback (G6) through its m_src back-pointer. The
+    //--- storage moved into CEntStrategySignalContext, so these four are the
+    //--- manager-side handles the trade-feedback module reads/writes through.
+    int  GetLastContributorCountValue() const { return m_signalContext.GetLastContributorCount(); }
+    int  GetLastContributorArraySize() const  { return m_signalContext.GetContributorArraySize(); }
+    void IncrementSuccessfulSignals()         { m_signalContext.IncrementSuccessfulSignals(); }
+    void ResetLastContributorContext()        { m_signalContext.ResetContributorContext(); }
 
     //--- Phase C / Slice 2: additional read-only accessors consumed by
     //--- CPostConsensusValidator (C3) and CConsensusWeightingConfig (C4).
     //--- Same contract as the Slice 1 block: expose existing state verbatim,
     //--- add no logic.
-    COrderFlowImbalanceEngine*   GetOFIEngineConst() const          { return m_ofiEngine; }
-    CVPINFilter*                 GetVPINFilterConst() const         { return m_vpinFilter; }
-    CMultiAssetProfiler*         GetMultiAssetProfilerConst() const { return m_multiAssetProfiler; }
-    CDerivAssetProfiler*         GetDerivProfilerConst() const      { return m_derivProfiler; }
-    CFamilyStrategyWeightMatrix* GetFamilyWeightMatrixConst() const { return m_familyWeightMatrix; }
+    COrderFlowImbalanceEngine*   GetOFIEngineConst() const          { return m_infra.GetOFIEngine(); }
+    CVPINFilter*                 GetVPINFilterConst() const         { return m_infra.GetVPINFilter(); }
+    CMultiAssetProfiler*         GetMultiAssetProfilerConst() const { return m_infra.GetMultiAssetProfiler(); }
+    CDerivAssetProfiler*         GetDerivProfilerConst() const      { return m_infra.GetDerivProfiler(); }
+    CFamilyStrategyWeightMatrix* GetFamilyWeightMatrixConst() const { return m_infra.GetFamilyWeightMatrix(); }
     double GetStrategyAvgProfit(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgProfit : 0.0; }
+           { return m_roster.GetStrategyAvgProfit(index); }
     double GetStrategyOriginalWeight(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].originalWeight : 0.0; }
+           { return m_roster.GetStrategyOriginalWeight(index); }
     int    GetStrategyIndexByName(const string name) const { return FindStrategyIndexByName(name); }
 
     //--- Narrow raw weight mutator for C4. Mirrors exactly what
@@ -493,13 +284,7 @@ public:
     //--- push it to the strategy object, WITHOUT touching the health monitor
     //--- (that is UpdateStrategyWeightByName's behaviour, deliberately distinct).
     void   ApplyRawStrategyWeight(const int index, const double weight)
-    {
-        if(index < 0 || index >= m_strategyCount)
-            return;
-        m_strategies[index].weight = weight;
-        if(m_strategies[index].strategy != NULL)
-            m_strategies[index].strategy.SetWeight(weight);
-    }
+           { m_roster.ApplyRawStrategyWeight(index, weight); }
 
     //--- Phase C / Slice 3: accessor surface consumed by
     //--- CStrategyPerformanceHealth (C5) and CStrategyLifecycle (C7).
@@ -512,92 +297,90 @@ public:
 
     //--- read half
     int      GetStrategyTotalTrades(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].totalTrades : 0; }
+             { return m_roster.GetStrategyTotalTrades(index); }
     int      GetStrategyWinningTrades(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].winningTrades : 0; }
+             { return m_roster.GetStrategyWinningTrades(index); }
     double   GetStrategyWinRate(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].winRate : 0.0; }
+             { return m_roster.GetStrategyWinRate(index); }
     double   GetStrategyAvgLoss(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].avgLoss : 0.0; }
+             { return m_roster.GetStrategyAvgLoss(index); }
     int      GetStrategyConsecutiveWins(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveWins : 0; }
+             { return m_roster.GetStrategyConsecutiveWins(index); }
     int      GetStrategyConsecutiveLosses(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].consecutiveLosses : 0; }
+             { return m_roster.GetStrategyConsecutiveLosses(index); }
     int      GetStrategyMaxConsecutiveLosses(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].maxConsecutiveLosses : 0; }
+             { return m_roster.GetStrategyMaxConsecutiveLosses(index); }
     int      GetStrategyRecentTradeIndex(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentTradeIndex : 0; }
+             { return m_roster.GetStrategyRecentTradeIndex(index); }
     int      GetStrategyRecentTradeCount(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].recentTradeCount : 0; }
+             { return m_roster.GetStrategyRecentTradeCount(index); }
     double   GetStrategyRecentTrade(const int index, const int slot) const
-             { return (index >= 0 && index < m_strategyCount && slot >= 0 && slot < 20)
-                      ? m_strategies[index].recentTrades[slot] : 0.0; }
+             { return m_roster.GetStrategyRecentTrade(index, slot); }
     bool     IsStrategyTemporarilyDisabled(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].temporarilyDisabled : false; }
+             { return m_roster.IsStrategyTemporarilyDisabled(index); }
     datetime GetStrategyDisabledUntil(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].disabledUntil : 0; }
+             { return m_roster.GetStrategyDisabledUntil(index); }
     ENUM_TIMEFRAMES GetStrategyTimeframe(const int index) const
-             { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].timeframe : m_baseTimeframe; }
-    double   GetMinWinRateThreshold() const      { return m_minWinRateThreshold; }
-    int      GetMaxConsecutiveLossesLimit() const { return m_maxConsecutiveLosses_Limit; }
-    int      GetRollingWindowSize() const        { return m_rollingWindowSize; }
-    bool     IsManagerInitialized() const        { return m_initialized; }
-    CFourStateRegimeDetector* GetFourStateRegimeDetectorConst() const { return m_fourStateRegimeDetector; }
-    bool     IsRegimeDetectorInitialized() const { return m_regimeDetectorInitialized; }
+             { return m_roster.GetStrategyTimeframe(index, m_infra.GetBaseTimeframe()); }
+    double   GetMinWinRateThreshold() const      { return m_quorumConfig.GetMinWinRateThreshold(); }
+    int      GetMaxConsecutiveLossesLimit() const { return m_quorumConfig.GetMaxConsecutiveLossesLimit(); }
+    int      GetRollingWindowSize() const        { return m_quorumConfig.GetRollingWindowSize(); }
+    bool     IsManagerInitialized() const        { return m_infra.IsManagerInitialized(); }
+    CFourStateRegimeDetector* GetFourStateRegimeDetectorConst() const { return m_infra.GetFourStateRegimeDetector(); }
+    bool     IsRegimeDetectorInitialized() const { return m_infra.IsRegimeDetectorInitialized(); }
 
     //--- write half (dumb field writers, all bounds-checked)
     void SetStrategyTotalTrades(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].totalTrades = value; }
+         { m_roster.SetStrategyTotalTrades(index, value); }
     void SetStrategySuccessCount(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].successCount = value; }
+         { m_roster.SetStrategySuccessCount(index, value); }
     void SetStrategyFailCount(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].failCount = value; }
+         { m_roster.SetStrategyFailCount(index, value); }
     void SetStrategyWinningTrades(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].winningTrades = value; }
+         { m_roster.SetStrategyWinningTrades(index, value); }
     void SetStrategyConsecutiveWins(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].consecutiveWins = value; }
+         { m_roster.SetStrategyConsecutiveWins(index, value); }
     void SetStrategyConsecutiveLosses(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].consecutiveLosses = value; }
+         { m_roster.SetStrategyConsecutiveLosses(index, value); }
     void SetStrategyMaxConsecutiveLosses(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].maxConsecutiveLosses = value; }
+         { m_roster.SetStrategyMaxConsecutiveLosses(index, value); }
     void SetStrategyAvgProfit(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].avgProfit = value; }
+         { m_roster.SetStrategyAvgProfit(index, value); }
     void SetStrategyAvgLoss(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].avgLoss = value; }
+         { m_roster.SetStrategyAvgLoss(index, value); }
     void SetStrategyWinRate(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].winRate = value; }
+         { m_roster.SetStrategyWinRate(index, value); }
     void SetStrategyProfitFactor(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].profitFactor = value; }
+         { m_roster.SetStrategyProfitFactor(index, value); }
     void SetStrategySharpeRatio(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].sharpeRatio = value; }
+         { m_roster.SetStrategySharpeRatio(index, value); }
     void SetStrategyRecentWinRate(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentWinRate = value; }
+         { m_roster.SetStrategyRecentWinRate(index, value); }
     void SetStrategyHealthScore(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].healthScore = value; }
+         { m_roster.SetStrategyHealthScore(index, value); }
     void SetStrategyLastUpdate(const int index, const datetime value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastUpdate = value; }
+         { m_roster.SetStrategyLastUpdate(index, value); }
     void SetStrategyTemporarilyDisabled(const int index, const bool value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].temporarilyDisabled = value; }
+         { m_roster.SetStrategyTemporarilyDisabled(index, value); }
     void SetStrategyDisabledUntil(const int index, const datetime value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].disabledUntil = value; }
+         { m_roster.SetStrategyDisabledUntil(index, value); }
     //--- Writes ONLY the entry flag. It deliberately does NOT push the value to
     //--- the IStrategy object: CheckStrategyDisabling/ReEnabling never did, and
     //--- EnableStrategy/DisableStrategy push it themselves via GetStrategyPtr().
     void SetStrategyEnabledFlag(const int index, const bool value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].enabled = value; }
+         { m_roster.SetStrategyEnabledFlag(index, value); }
     //--- slot bound is the fixed recentTrades[20] capacity; unreachable in
     //--- practice because m_rollingWindowSize is fixed at 20 (no setter).
     void SetStrategyRecentTrade(const int index, const int slot, const double value)
-         { if(index >= 0 && index < m_strategyCount && slot >= 0 && slot < 20)
-               m_strategies[index].recentTrades[slot] = value; }
+         { m_roster.SetStrategyRecentTrade(index, slot, value); }
     void SetStrategyRecentTradeIndex(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentTradeIndex = value; }
+         { m_roster.SetStrategyRecentTradeIndex(index, value); }
     void SetStrategyRecentTradeCount(const int index, const int value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].recentTradeCount = value; }
+         { m_roster.SetStrategyRecentTradeCount(index, value); }
     void SetStrategyLastSignal(const int index, const ENUM_TRADE_SIGNAL value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastSignal = value; }
+         { m_roster.SetStrategyLastSignal(index, value); }
     void SetStrategyLastSignalConfidence(const int index, const double value)
-         { if(index >= 0 && index < m_strategyCount) m_strategies[index].lastSignalConfidence = value; }
+         { m_roster.SetStrategyLastSignalConfidence(index, value); }
 
     //--- Phase C / Slice 5: accessor surface consumed by CConsensusEngine (C9).
     //--- Same contract as Slice 1/2/3: every accessor exposes exactly one
@@ -607,44 +390,44 @@ public:
     //--- governance setters, all of which stay in this manager). The single
     //--- mutator, SetAdxHandleCached, exists only because IsTrendingRegime()
     //--- lazily caches the ADX handle exactly as the original inline body did.
-    CTimeframeConsistency* GetTFConsistencyConst() const   { return m_tfConsistency; }
-    CStrategyRegistry*     GetStrategyRegistryConst() const { return m_strategyRegistry; }
-    ENUM_TIMEFRAMES        GetBaseTimeframe() const         { return m_baseTimeframe; }
+    CTimeframeConsistency* GetTFConsistencyConst() const   { return m_infra.GetTFConsistency(); }
+    CStrategyRegistry*     GetStrategyRegistryConst() const { return m_infra.GetStrategyRegistry(); }
+    ENUM_TIMEFRAMES        GetBaseTimeframe() const         { return m_infra.GetBaseTimeframe(); }
 
     int    GetStrategyIntrabarPolicyRaw(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarPolicy : (int)INTRABAR_POLICY_OFF; }
+           { return m_roster.GetStrategyIntrabarPolicyRaw(index); }
     bool   GetStrategyIntrabarEligible(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].intrabarEligible : false; }
+           { return m_roster.GetStrategyIntrabarEligible(index); }
     bool   IsStrategyProbeEligible(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].isProbeEligible : false; }
+           { return m_roster.IsStrategyProbeEligible(index); }
     double GetStrategyReadinessScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].readinessScore : 0.0; }
+           { return m_roster.GetStrategyReadinessScore(index); }
     double GetStrategyContextScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].contextScore : 0.0; }
+           { return m_roster.GetStrategyContextScore(index); }
     double GetStrategyCostScore(const int index) const
-           { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].costScore : 0.0; }
+           { return m_roster.GetStrategyCostScore(index); }
 
     //--- consensus configuration (GetMinQuorum() already exists above)
-    int    GetIntrabarMinQuorum() const              { return m_intrabarMinQuorum; }
-    bool   IsIntrabarDynamicQuorumEnabled() const    { return m_intrabarDynamicQuorumEnabled; }
-    double GetQuorumThreshold() const                { return m_quorumThreshold; }
-    double GetPipelineMinConfidence() const          { return m_pipelineMinConfidence; }
-    double GetConflictDeadband() const               { return m_conflictDeadband; }
-    double GetMinReadyWeightRatio() const            { return m_minReadyWeightRatio; }
-    double GetSupportFloorNewBar() const             { return m_supportFloorNewBar; }
-    double GetSupportFloorIntrabar() const           { return m_supportFloorIntrabar; }
-    double GetSparseIntrabarMinQuality() const       { return m_sparseIntrabarMinQuality; }
-    double GetSparseIntrabarMinSupportRatio() const  { return m_sparseIntrabarMinSupportRatio; }
+    int    GetIntrabarMinQuorum() const              { return m_quorumConfig.GetIntrabarMinQuorum(); }
+    bool   IsIntrabarDynamicQuorumEnabled() const    { return m_quorumConfig.IsIntrabarDynamicQuorumEnabled(); }
+    double GetQuorumThreshold() const                { return m_quorumConfig.GetQuorumThreshold(); }
+    double GetPipelineMinConfidence() const          { return m_quorumConfig.GetPipelineMinConfidence(); }
+    double GetConflictDeadband() const               { return m_quorumConfig.GetConflictDeadband(); }
+    double GetMinReadyWeightRatio() const            { return m_quorumConfig.GetMinReadyWeightRatio(); }
+    double GetSupportFloorNewBar() const             { return m_quorumConfig.GetSupportFloorNewBar(); }
+    double GetSupportFloorIntrabar() const           { return m_quorumConfig.GetSupportFloorIntrabar(); }
+    double GetSparseIntrabarMinQuality() const       { return m_quorumConfig.GetSparseIntrabarMinQuality(); }
+    double GetSparseIntrabarMinSupportRatio() const  { return m_quorumConfig.GetSparseIntrabarMinSupportRatio(); }
 
     //--- participation score formula parameters (L6-008)
-    double GetParticipationFormulaBase() const       { return m_participationFormulaBase; }
-    double GetParticipationFormulaCoeff() const      { return m_participationFormulaCoeff; }
-    double GetParticipationFormulaMin() const        { return m_participationFormulaMin; }
-    double GetParticipationFormulaMax() const        { return m_participationFormulaMax; }
+    double GetParticipationFormulaBase() const       { return m_quorumConfig.GetParticipationFormulaBase(); }
+    double GetParticipationFormulaCoeff() const      { return m_quorumConfig.GetParticipationFormulaCoeff(); }
+    double GetParticipationFormulaMin() const        { return m_quorumConfig.GetParticipationFormulaMin(); }
+    double GetParticipationFormulaMax() const        { return m_quorumConfig.GetParticipationFormulaMax(); }
 
     //--- cached ADX handle (Batch 116) read/write half for IsTrendingRegime()
-    int    GetAdxHandleCached() const                { return m_adxHandleCached; }
-    void   SetAdxHandleCached(const int handle)      { m_adxHandleCached = handle; }
+    int    GetAdxHandleCached() const                { return m_infra.GetAdxHandleCached(); }
+    void   SetAdxHandleCached(const int handle)      { m_infra.SetAdxHandleCached(handle); }
 
     // Initialization
     bool Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, 
@@ -654,7 +437,7 @@ public:
                    const long managedMagic = 0);
     
     // L1-004: Set strategy registry (replaces global singleton)
-    void SetStrategyRegistry(CStrategyRegistry* registry) { m_strategyRegistry = registry; }
+    void SetStrategyRegistry(CStrategyRegistry* registry) { m_infra.SetStrategyRegistry(registry); }
     
     // Strategy management
     bool RegisterStrategy(IStrategy* strategy, const string name, 
@@ -682,7 +465,7 @@ public:
     void SetPipelineFilters(SignalFilterSettings &settings);
     void SetOrchestratorMode(double minWinRate, int maxLosses);
     void SetMinQuorum(int quorum);
-    void SetManagedMagicRangeMax(long rangeMax) { m_managedMagicRangeMax = rangeMax; }
+    void SetManagedMagicRangeMax(long rangeMax) { m_tradeFeedback.SetManagedMagicRangeMax(rangeMax); }
     bool IsEAOwnedMagic(long magic) const;
     void SetQuorumThreshold(const double threshold);
     void SetIntrabarMinQuorum(int quorum);
@@ -703,10 +486,10 @@ public:
     //--- Phase C / Slice 4 (C8): narrow per-field accessors consumed by
     //--- CStrategyRegistryState / CIntrabarPolicy back-pointers (m_src).
     //--- Each is a logic-free forwarder over existing members.
-    int    GetMaxStrategies() const { return m_maxStrategies; }
-    CTradeManager*        GetTradeManagerConst() const { return m_tradeManager; }
-    CPositionSizer*       GetPositionSizerConst() const { return m_positionSizer; }
-    CUnifiedRiskManager*  GetUnifiedRiskManagerConst() const { return m_unifiedRiskManager; }
+    int    GetMaxStrategies() const { return m_roster.GetMaxStrategies(); }
+    CTradeManager*        GetTradeManagerConst() const { return m_infra.GetTradeManager(); }
+    CPositionSizer*       GetPositionSizerConst() const { return m_infra.GetPositionSizer(); }
+    CUnifiedRiskManager*  GetUnifiedRiskManagerConst() const { return m_infra.GetUnifiedRiskManager(); }
     bool   IsPythonBridgeConnected() const { return (g_pythonBridge != NULL && g_pythonBridge.IsConnected()); }
 
     void SetStrategyRole(int index, int role);
@@ -865,94 +648,39 @@ public:
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
-CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
-    m_pipeline(NULL),
-    m_tfConsistency(NULL),
-    m_tradeManager(NULL),
-    m_positionSizer(NULL),
-    m_unifiedRiskManager(NULL),
-    m_derivProfiler(NULL),
-    m_multiAssetProfiler(NULL),
-    m_vpinFilter(NULL),
-    m_ofiEngine(NULL),
-    m_familyWeightMatrix(NULL),
-    m_fourStateRegimeDetector(NULL),
-    m_strategyRegistry(NULL),                // L1-004: Injected registry
-    m_regimeDetectorInitialized(false),
-    m_strategyCount(0),
-    m_maxStrategies(25),
-    m_managedMagic(0),
-    m_managedMagicRangeMax(0),
-    m_initialized(false),
-    m_usePipeline(true),
-    m_adxHandleCached(INVALID_HANDLE),  // Batch 116: cached ADX handle
-    m_diagnostics(NULL),
-    m_attribution(NULL),
-    m_healthMonitor(NULL),
-    m_drawingManager(NULL),
-    m_totalSignals(0),
-    m_successfulSignals(0),
-    m_avgConfidence(0.0),
-    m_minWinRateThreshold(0.40),
-    m_maxConsecutiveLosses_Limit(5),
-    m_rollingWindowSize(20),
-    m_minQuorum(1),
-    m_intrabarMinQuorum(1),
-    m_intrabarDynamicQuorumEnabled(true),
-    m_intrabarSingleVoterMinConfidence(0.75),
-    m_quorumThreshold(0.60),
-    m_pipelineMinConfidence(0.40),
-    m_conflictDeadband(0.35),         // [PROFIT-02] default deadband raised (audit: 0.30-0.35)
-    m_minReadyWeightRatio(0.30),
-    m_supportFloorNewBar(0.30),        // [PROFIT-11] ratio field, not a count
-    m_supportFloorIntrabar(0.25),      // [PROFIT-11] ratio field, not a count
-    m_sparseIntrabarMinQuality(0.65),
-    m_sparseIntrabarMinSupportRatio(0.30),
-    m_sparseIntrabarMinReadyCoverage(0.50),
-    m_sparseIntrabarConfidencePenalty(0.10),
-    m_allowSparseIntrabarSingleVoter(false),
-    m_adaptiveQuorumEnabled(false),
-    m_adaptiveQualityThreshold_1voter(0.80),
-    m_adaptiveSupportFloor_1voter(1),
-    m_adaptiveQualityThreshold_2voters(0.70),
-    m_adaptiveSupportFloor_2voters(2),
-    m_adaptiveQualityThreshold_3plus(0.60),
-    m_adaptiveSupportFloor_3plus(3),
-    m_strategyActivityDecayRate(0.95),
-    m_strategyInactiveCounterThreshold(10),
-    m_regimeRelaxActive(false),
-    m_regimeRelaxFactor(0.80),
-    m_performanceDecayFactor(0.95),
-    m_maxDrawdownLimit(0.20),
-    // Phase C / Slice 2: the post-consensus validator config block (including the
-    // 15000-pt hard spread cutoff bugfix default) now lives in, and is initialised
-    // by, CPostConsensusValidator's own constructor.
-    m_participationFormulaBase(0.40),
-    m_participationFormulaCoeff(0.65),
-    m_participationFormulaMin(0.55),
-    m_participationFormulaMax(1.05)
+//--- Phase G: the whole initialiser list moved with the state it initialised.
+//--- Every former scalar now lives in the module that owns it and is set by
+//--- that module's own constructor, VERBATIM:
+//---   CStrategyMgrInfrastructure() - collaborator pointers, m_symbol,
+//---       m_baseTimeframe, m_initialized, m_usePipeline, m_adxHandleCached,
+//---       m_diagnostics, m_attribution, m_healthMonitor, m_drawingManager;
+//---   CStrategyMgrRoster()         - m_strategyCount(0), m_maxStrategies(25)
+//---                                  and ArrayResize(m_strategies, 0);
+//---   CEntStrategyQuorumConfig()   - the entire quorum / adaptation /
+//---       participation block, INCLUDING the [PROFIT-02] conflict deadband
+//---       (0.35) and the two [PROFIT-11] support floors (0.30 / 0.25), which
+//---       are carried over byte-for-byte together with their marker comments;
+//---   CEntStrategySignalContext()  - m_totalSignals, m_successfulSignals,
+//---       m_avgConfidence, m_currentMarketRegime, the last-signal tags and
+//---       ArrayResize of both contributor arrays;
+//---   CStrategyMgrTradeFeedback()  - m_managedMagic, m_managedMagicRangeMax;
+//---   CIntrabarPolicy()            - the 32-slot policy table reset to
+//---                                  INTRABAR_POLICY_OFF.
+//--- Phase C / Slice 2: the post-consensus validator config block (including
+//--- the 15000-pt hard spread cutoff bugfix default) is likewise initialised by
+//--- CPostConsensusValidator's own constructor.
+CEnterpriseStrategyManager::CEnterpriseStrategyManager()
 {
-    ArrayResize(m_strategies, 0);
-    ArrayResize(m_lastSignalContributors, 0);
-    ArrayResize(m_lastSignalContributorIndices, 0);
-    
-    // L6-007: Initialize intrabar policy config with defaults
-    for(int i = 0; i < 32; i++)
-    {
-        m_intrabarPolicyConfig[i] = INTRABAR_POLICY_OFF;
-    }
-    
-    // L1-007: Create component instances
-    m_diagnostics = NULL; // Injected from EAOrchestrator
-    m_attribution = NULL; // Injected from EAOrchestrator
-    // m_consensus removed - consensus logic moved into EnterpriseStrategyManager
-    m_healthMonitor = new CStrategyHealthMonitor();
+    // L1-007: Create component instances. m_diagnostics / m_attribution stay
+    // NULL (injected from EAOrchestrator); the health monitor is allocated by
+    // the infrastructure module exactly as the inline constructor used to do.
+    m_infra.AllocateHealthMonitor();
 
     // Phase C / Slice 1: bind extracted collaborators at the earliest safe point.
     // The reporter observes this manager read-only; the delegator mirrors the
     // (still NULL) attribution pointer and is re-bound by SetAttributionManager().
     m_stateReporter.SetSource(GetPointer(this));
-    m_attributionDelegator.SetAttribution(m_attribution);
+    m_attributionDelegator.SetAttribution(m_infra.GetAttribution());
 
     // Phase C / Slice 2: same binding site. Both collaborators point at this
     // manager for its whole lifetime (unlike the attribution delegator, they
@@ -966,10 +694,20 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
     m_performanceHealth.SetSource(GetPointer(this));
     m_lifecycle.SetSource(GetPointer(this));
 
+    // Phase C / Slice 4: same binding site. Both were previously left unbound
+    // because the manager still carried the inline bodies; now that those
+    // bodies are forwarders, the back-pointers must be live.
+    m_intrabarPolicy.SetSource(GetPointer(this));
+    m_registryState.SetSource(GetPointer(this));
+
     // Phase C / Slice 5: same binding site. The consensus engine re-reads the
     // pipeline / registry / diagnostics from this manager on every call and
     // mirrors no injected pointer, so it needs no re-sync on Deinit either.
     m_consensusEngine.SetSource(GetPointer(this));
+
+    // Phase G / G6: the trade-feedback module reads the manager's symbol,
+    // attribution, health monitor and contributor telemetry through m_src.
+    m_tradeFeedback.SetSource(GetPointer(this));
 }
 
 //+------------------------------------------------------------------+
@@ -977,52 +715,17 @@ CEnterpriseStrategyManager::CEnterpriseStrategyManager() :
 //+------------------------------------------------------------------+
 CEnterpriseStrategyManager::~CEnterpriseStrategyManager()
 {
-    // Clean up strategies
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(m_strategies[i].strategy != NULL)
-        {
-            m_strategies[i].strategy.Deinit();
-            delete m_strategies[i].strategy;
-            m_strategies[i].strategy = NULL;
-        }
-    }
-    
-    if(m_pipeline != NULL)
-    {
-        delete m_pipeline;
-        m_pipeline = NULL;
-    }
+    // Phase G / G4: the strategy teardown loop moved to the roster (identical
+    // in both call sites). Note the destructor deliberately does NOT reset
+    // m_strategyCount / resize the array afterwards - only Deinit() did that,
+    // so ClearRoster() is intentionally not called here.
+    m_roster.DeleteAllStrategies();
 
-    // Batch 116: Release cached ADX handle
-    if(m_adxHandleCached != INVALID_HANDLE)
-    {
-        IndicatorRelease(m_adxHandleCached);
-        m_adxHandleCached = INVALID_HANDLE;
-    }
-
-    // Clean up FourStateRegimeDetector
-    if(m_fourStateRegimeDetector != NULL)
-    {
-        delete m_fourStateRegimeDetector;
-        m_fourStateRegimeDetector = NULL;
-    }
-
-    if(m_tfConsistency != NULL)
-    {
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-    }
-    
-    // L1-007: Clean up components
-    // m_diagnostics is injected from EAOrchestrator - do not delete
-    // m_attribution is injected from EAOrchestrator - do not delete
-    // m_consensus removed - consensus logic moved into EnterpriseStrategyManager
-    if(m_healthMonitor != NULL)
-    {
-        delete m_healthMonitor;
-        m_healthMonitor = NULL;
-    }
+    // Phase G / G5: pipeline, cached ADX handle, FourStateRegimeDetector,
+    // TimeframeConsistency and the health monitor are released in the exact
+    // original order. m_diagnostics / m_attribution are injected from
+    // EAOrchestrator and are deliberately NOT deleted here.
+    m_infra.ReleaseOnDestruct();
 }
 
 //+------------------------------------------------------------------+
@@ -1044,133 +747,23 @@ bool CEnterpriseStrategyManager::Initialize(const string symbol, ENUM_TIMEFRAMES
                                            CUnifiedRiskManager* unifiedRiskManagerPtr,
                                            const long managedMagic)
 {
-    m_symbol = symbol;
-    m_baseTimeframe = timeframe;
-    m_managedMagic = managedMagic;
-    m_managedMagicRangeMax = managedMagic; // Default: exact match; EA will update after symbol universe is built
-    m_usePipeline = usePipeline;
-    m_tradeManager = tradeManagerPtr;   // CRITICAL FIX: Store for strategy initialization
-    m_positionSizer = positionSizerPtr; // CRITICAL FIX: Store for strategy initialization
-    m_unifiedRiskManager = unifiedRiskManagerPtr; // ARCHITECTURAL FIX: Inject unified risk manager
-    
-    // Initialize pipeline
-    if(m_usePipeline)
-    {
-        m_pipeline = new CUnifiedSignalPipeline();
-        if(m_pipeline != NULL)
-        {
-            SignalFilterSettings filters;
-            if(!m_pipeline.Initialize(filters))
-            {
-                Print("[EnterpriseStrategyManager] ERROR: Pipeline initialization failed for ", symbol);
-                delete m_pipeline;
-                m_pipeline = NULL;
-                return false;
-            }
-        }
-        else
-        {
-            Print("[EnterpriseStrategyManager] ERROR: Pipeline allocation failed for ", symbol);
-            return false;
-        }
-    }
+    // Phase G / G6: Initialize() seeded BOTH magic fields from the same
+    // argument (m_managedMagic = m_managedMagicRangeMax = managedMagic);
+    // SetManagedMagic() reproduces that exactly.
+    m_tradeFeedback.SetManagedMagic(managedMagic);
 
-    if(m_tfConsistency != NULL)
-    {
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-    }
-
-    m_tfConsistency = new CTimeframeConsistency();
-    if(m_tfConsistency == NULL)
-    {
-        Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency allocation failed for ", symbol);
-        // L2-010: Clean up pipeline on allocation failure
-        if(m_pipeline != NULL)
-        {
-            delete m_pipeline;
-            m_pipeline = NULL;
-        }
-        return false;
-    }
-    if(!m_tfConsistency.Initialize(CONFLICT_RES_WEIGHTED, 0.6, false))
-    {
-        Print("[EnterpriseStrategyManager] ERROR: TimeframeConsistency initialization failed for ", symbol);
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-        // L2-010: Clean up pipeline on initialization failure
-        if(m_pipeline != NULL)
-        {
-            delete m_pipeline;
-            m_pipeline = NULL;
-        }
-        return false;
-    }
-    
-    m_initialized = true;
-    m_drawingManager = NULL;
-    
-    // L1-007: m_diagnostics is injected from EAOrchestrator - do not create here
-    // m_diagnostics = new CDiagnosticsCollector();
-    // if(m_diagnostics != NULL)
-    //     {
-    //         m_diagnostics.SetLogIntervalSeconds(60);
-    //     }
-    
-    // L1-007: m_attribution is injected from EAOrchestrator - do not create here
-    // m_attribution = new CAttributionTracker();
-    
-    // L1-007: Consensus logic moved into EnterpriseStrategyManager - no separate CConsensusEngine
-    // m_consensus = new CConsensusEngine();
-    // ... consensus configuration removed ...
-    
-    // LEAK-FIX: the constructor (line 724) already allocated m_healthMonitor.
-    // Delete any pre-existing instance before re-allocating so the first one is not orphaned.
-    if(m_healthMonitor != NULL)
-    {
-        delete m_healthMonitor;
-        m_healthMonitor = NULL;
-    }
-    m_healthMonitor = new CStrategyHealthMonitor();
-    if(m_healthMonitor != NULL)
-    {
-        m_healthMonitor.SetOrchestratorMode(m_minWinRateThreshold, m_maxConsecutiveLosses_Limit);
-        m_healthMonitor.SetPerformanceDecayFactor(m_performanceDecayFactor);
-        m_healthMonitor.SetRollingWindowSize(m_rollingWindowSize);
-        m_healthMonitor.SetMaxDrawdownLimit(m_maxDrawdownLimit);
-        m_healthMonitor.SetStrategyActivityDecayRate(m_strategyActivityDecayRate);
-        m_healthMonitor.SetStrategyInactiveCounterThreshold(m_strategyInactiveCounterThreshold);
-    }
-    
-    // L6-008: Health monitor is used directly by internal consensus logic
-    // No separate consensus engine to wire
-    
-    // Initialize FourStateRegimeDetector
-    m_fourStateRegimeDetector = new CFourStateRegimeDetector(m_symbol, m_baseTimeframe);
-    if(m_fourStateRegimeDetector != NULL)
-    {
-        if(m_fourStateRegimeDetector.Initialize())
-        {
-            Print("[EnterpriseStrategyManager] FourStateRegimeDetector initialized for ", m_symbol);
-            m_regimeDetectorInitialized = true;
-        }
-        else
-        {
-            Print("[EnterpriseStrategyManager] WARNING: FourStateRegimeDetector initialization failed for ", m_symbol);
-            delete m_fourStateRegimeDetector;
-            m_fourStateRegimeDetector = NULL;
-            m_regimeDetectorInitialized = false;
-        }
-    }
-    else
-    {
-        m_regimeDetectorInitialized = false;
-    }
-    
-    Print("[EnterpriseStrategyManager] Initialized for ", symbol, " on ", EnumToString(timeframe));
-    Print("[EnterpriseStrategyManager] Pipeline: ", m_usePipeline ? "ENABLED" : "DISABLED");
-    
-    return true;
+    // Phase G / G5: the two-phase bring-up (symbol/timeframe/pipeline flag and
+    // the injected trade manager, position sizer and unified risk manager;
+    // Phase 1 pipeline + TimeframeConsistency with their rollback paths;
+    // health-monitor re-allocation seeded from the quorum config; Phase 2
+    // FourStateRegimeDetector) moved verbatim into the infrastructure module.
+    // The quorum config is passed by reference because the health monitor is
+    // seeded from GetMinWinRateThreshold / GetMaxConsecutiveLossesLimit /
+    // GetPerformanceDecayFactor / GetRollingWindowSize / GetMaxDrawdownLimit /
+    // GetStrategyActivityDecayRate / GetStrategyInactiveCounterThreshold.
+    return m_infra.Initialize(symbol, timeframe, usePipeline,
+                              tradeManagerPtr, positionSizerPtr, unifiedRiskManagerPtr,
+                              m_quorumConfig);
 }
 
 //+------------------------------------------------------------------+
@@ -1185,126 +778,13 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
                                                  ENUM_STRATEGY_CLUSTER cluster,
                                                  bool liveVotingEnabled)
 {
-    if(strategy == NULL || !m_initialized)
-        return false;
-        
-    // L1-010: Check with StrategyRegistry if this strategy should be active in current mode
-        // The 'enabled' parameter is advisory; registry is the single source of truth
-        if(m_strategyRegistry != NULL)
-        {
-            // Check if strategy is registered and mode-permissive
-            if(!m_strategyRegistry.IsStrategyActive(name))
-            {
-                PrintFormat("[ENTERPRISE] Strategy %s disabled by registry (mode filter or not registered)", name);
-                enabled = false;  // Override: registry says this strategy is not active
-            }
-        }
-    
-    // Prevent unbounded strategy growth
-    if(m_strategyCount >= m_maxStrategies)
-    {
-        Print("[EnterpriseStrategyManager] ERROR: Max strategy limit reached (", m_maxStrategies, ")");
-        delete strategy;
-        return false;
-    }
-    
-    // Initialize strategy with VALID pointers (ARCHITECTURAL FIX: inject unified risk manager)
-    ENUM_TIMEFRAMES resolvedTf = (tf == PERIOD_CURRENT ? m_baseTimeframe : tf);
-    bool initSuccess = strategy.Init(m_symbol, resolvedTf,
-                                     m_tradeManager, m_positionSizer, m_unifiedRiskManager);
-    
-    if(!initSuccess)
-        {
-            Print("[EnterpriseStrategyManager] ERROR: Strategy ", name, " initialization failed. Skipping registration.");
-            delete strategy;
-            return false;
-        }
-    
-    // L6-010: Initialize AI model after factory creation
-    // This ensures AI adapters have proper symbol/timeframe/risk context
-    if(!strategy.InitializeAI(m_symbol, resolvedTf, m_unifiedRiskManager))
-    {
-        Print("[EnterpriseStrategyManager] WARNING: Strategy ", name, " AI initialization failed. Continuing with base initialization.");
-        // Don't fail registration - AI initialization failure is non-fatal for some adapters
-    }
-    
-    // L6-001 CRITICAL FIX: Validate risk manager injection after initialization
-        if(!strategy.ValidateRiskManagerInjection())
-        {
-            Print("[EnterpriseStrategyManager] CRITICAL: Strategy ", name, " failed risk manager injection validation. Strategy will bypass risk validation - rejecting registration.");
-            delete strategy;
-            return false;
-        }
-    
-        // CRITICAL FIX: Synchronize enabled state with strategy object
-    strategy.SetEnabled(enabled);
-    strategy.SetWeight(weight);
-    
-    // Add to array
-    int newSize = m_strategyCount + 1;
-    ArrayResize(m_strategies, newSize);
-    
-    m_strategies[m_strategyCount].strategy = strategy;
-        m_strategies[m_strategyCount].name = name;
-        m_strategies[m_strategyCount].enabled = enabled;
-        m_strategies[m_strategyCount].intrabarEligible = (intrabarPolicy == INTRABAR_POLICY_LIVE);
-        m_strategies[m_strategyCount].intrabarPolicy = (int)intrabarPolicy;
-        m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
-        m_strategies[m_strategyCount].role = (int)role;
-        m_strategies[m_strategyCount].cluster = (int)cluster;
-        m_strategies[m_strategyCount].tier = tier; // Store tier
-        m_strategies[m_strategyCount].weight = weight;
-        m_strategies[m_strategyCount].originalWeight = weight;  // Track for decay recovery
-        m_strategies[m_strategyCount].timeframe = resolvedTf;
-        m_strategies[m_strategyCount].successCount = 0;
-        m_strategies[m_strategyCount].failCount = 0;
-        m_strategies[m_strategyCount].healthScore = 0.75;
-    m_strategies[m_strategyCount].participationScore = 0.90;
-    m_strategies[m_strategyCount].avgConfidence = 0;
-    m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
-    m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
-    m_strategies[m_strategyCount].lastEvaluationTime = 0;
-    m_strategies[m_strategyCount].consecutiveFilterCount = 0;  // Track filters for weight decay
-    
-    // Performance metrics ported from AISO
-    m_strategies[m_strategyCount].totalTrades = 0;
-    m_strategies[m_strategyCount].winningTrades = 0;
-    m_strategies[m_strategyCount].winRate = 0.0;
-    m_strategies[m_strategyCount].avgProfit = 0.0;
-    m_strategies[m_strategyCount].avgLoss = 0.0;
-    m_strategies[m_strategyCount].profitFactor = 0.0;
-    m_strategies[m_strategyCount].sharpeRatio = 0.0;
-    m_strategies[m_strategyCount].recentTradeIndex = 0;
-    m_strategies[m_strategyCount].recentTradeCount = 0;
-    m_strategies[m_strategyCount].recentWinRate = 0.0;
-    m_strategies[m_strategyCount].consecutiveLosses = 0;
-    m_strategies[m_strategyCount].maxConsecutiveLosses = 0;
-    m_strategies[m_strategyCount].consecutiveWins = 0;
-    m_strategies[m_strategyCount].temporarilyDisabled = false;
-    m_strategies[m_strategyCount].disabledUntil = 0;
-    m_strategies[m_strategyCount].lastUpdate = 0;
-    
-    ArrayInitialize(m_strategies[m_strategyCount].recentTrades, 0.0);
-    ArrayInitialize(m_strategies[m_strategyCount].regimePerformance, 0.0);
-    ArrayInitialize(m_strategies[m_strategyCount].regimeTrades, 0);
-    
-    // L1-007: Register with health monitor
-    if(m_healthMonitor != NULL)
-    {
-        m_healthMonitor.RegisterStrategy(weight);
-    }
-    
-    m_strategyCount++;
-    
-    Print("[EnterpriseStrategyManager] Registered strategy: ", name, 
-          " | Enabled: ", enabled, " | Tier: ", (int)tier, " | Weight: ", weight,
-          " | TF: ", EnumToString(resolvedTf),
-          " | Intrabar: ", IntrabarPolicyToString((ENUM_INTRABAR_POLICY)m_strategies[m_strategyCount - 1].intrabarPolicy),
-          " | Role: ", StrategyRoleToString(role),
-          " | Cluster: ", StrategyClusterToString(cluster),
-          " | LiveVote: ", liveVotingEnabled ? "YES" : "NO");
-    
-    return true;
+    // Phase C / Slice 4 (C8): the whole registration sequence (initialized
+    // guard, registry mode-filter override, max-strategy cap, strategy Init /
+    // InitializeAI / ValidateRiskManagerInjection, enabled+weight push, the
+    // 35-field append via AppendRegisteredStrategyEntry and the summary Print)
+    // moved verbatim into CStrategyRegistryState::RegisterStrategy().
+    return m_registryState.RegisterStrategy(strategy, name, enabled, weight, tier, tf,
+                                            intrabarPolicy, role, cluster, liveVotingEnabled);
 }
 
 //+------------------------------------------------------------------+
@@ -1312,104 +792,95 @@ bool CEnterpriseStrategyManager::RegisterStrategy(IStrategy* strategy, const str
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetMinQuorum(int quorum)
 {
-    m_minQuorum = MathMax(1, quorum);
+    m_quorumConfig.SetMinQuorum(quorum);
 }
 
 void CEnterpriseStrategyManager::SetIntrabarMinQuorum(int quorum)
 {
-    m_intrabarMinQuorum = MathMax(1, quorum);
+    m_quorumConfig.SetIntrabarMinQuorum(quorum);
 }
 
 void CEnterpriseStrategyManager::SetIntrabarDynamicQuorumEnabled(const bool enabled)
 {
-    m_intrabarDynamicQuorumEnabled = enabled;
+    m_quorumConfig.SetIntrabarDynamicQuorumEnabled(enabled);
 }
 
 void CEnterpriseStrategyManager::SetIntrabarSingleVoterMinConfidence(const double minConfidence)
 {
-    m_intrabarSingleVoterMinConfidence = MathMax(0.0, MathMin(1.0, minConfidence));
+    m_quorumConfig.SetIntrabarSingleVoterMinConfidence(minConfidence);
 }
 
 void CEnterpriseStrategyManager::SetQuorumThreshold(const double threshold)
 {
-    m_quorumThreshold = MathMax(0.0, MathMin(1.0, threshold));
+    m_quorumConfig.SetQuorumThreshold(threshold);
 }
 
 void CEnterpriseStrategyManager::SetConflictDeadband(const double deadband)
 {
-    m_conflictDeadband = MathMax(0.0, MathMin(0.5, deadband));
+    m_quorumConfig.SetConflictDeadband(deadband);
 }
 
 void CEnterpriseStrategyManager::SetMinReadyWeightRatio(const double ratio)
 {
-    m_minReadyWeightRatio = MathMax(0.0, MathMin(1.0, ratio));
+    m_quorumConfig.SetMinReadyWeightRatio(ratio);
 }
 
 void CEnterpriseStrategyManager::SetSupportFloors(const double newBarFloor, const double intrabarFloor)
 {
-    m_supportFloorNewBar = MathMax(0.0, MathMin(1.0, newBarFloor));
-    m_supportFloorIntrabar = MathMax(0.0, MathMin(1.0, intrabarFloor));
+    m_quorumConfig.SetSupportFloors(newBarFloor, intrabarFloor);
 }
 
 void CEnterpriseStrategyManager::SetSparseIntrabarThresholds(const double minQuality,
                                      const double minSupportRatio,
                                      const double minReadyCoverage)
 {
-    m_sparseIntrabarMinQuality = MathMax(0.0, MathMin(1.0, minQuality));
-    m_sparseIntrabarMinSupportRatio = MathMax(0.0, MathMin(1.0, minSupportRatio));
-    m_sparseIntrabarMinReadyCoverage = MathMax(0.0, MathMin(1.0, minReadyCoverage));
+    m_quorumConfig.SetSparseIntrabarThresholds(minQuality, minSupportRatio, minReadyCoverage);
 }
 
 void CEnterpriseStrategyManager::SetAllowSparseIntrabarSingleVoter(const bool enabled)
 {
-    m_allowSparseIntrabarSingleVoter = enabled;
+    m_quorumConfig.SetAllowSparseIntrabarSingleVoter(enabled);
 }
 
 // Intrabar policy configuration per strategy index (L6-007)
 void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyConfig(int strategyIndex, ENUM_INTRABAR_POLICY policy)
 {
-    if(strategyIndex >= 0 && strategyIndex < 32)
-    {
-        m_intrabarPolicyConfig[strategyIndex] = policy;
-    }
+    // Phase C / Slice 4 (C6): the 32-slot policy table lives in CIntrabarPolicy.
+    m_intrabarPolicy.SetStrategyIntrabarPolicyConfig(strategyIndex, policy);
 }
 
 ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetStrategyIntrabarPolicyConfig(int strategyIndex) const
 {
-    if(strategyIndex >= 0 && strategyIndex < 32)
-    {
-        return m_intrabarPolicyConfig[strategyIndex];
-    }
-    return INTRABAR_POLICY_OFF;
+    // Phase C / Slice 4 (C6): bounds check + INTRABAR_POLICY_OFF default moved.
+    return m_intrabarPolicy.GetStrategyIntrabarPolicyConfig(strategyIndex);
 }
 
 // Participation formula configuration (L6-008)
 void CEnterpriseStrategyManager::SetParticipationFormulaBase(const double base)
 {
-    m_participationFormulaBase = MathMax(0.0, MathMin(1.0, base));
+    m_quorumConfig.SetParticipationFormulaBase(base);
 }
 void CEnterpriseStrategyManager::SetParticipationFormulaCoeff(const double coeff)
 {
-    m_participationFormulaCoeff = MathMax(0.0, MathMin(2.0, coeff));
+    m_quorumConfig.SetParticipationFormulaCoeff(coeff);
 }
 void CEnterpriseStrategyManager::SetParticipationFormulaMin(const double minVal)
 {
-    m_participationFormulaMin = MathMax(0.0, MathMin(1.0, minVal));
+    m_quorumConfig.SetParticipationFormulaMin(minVal);
 }
 void CEnterpriseStrategyManager::SetParticipationFormulaMax(const double maxVal)
 {
-    m_participationFormulaMax = MathMax(0.0, MathMin(2.0, maxVal));
+    m_quorumConfig.SetParticipationFormulaMax(maxVal);
 }
 
 void CEnterpriseStrategyManager::SetConsensusDiagnosticsIntervalSeconds(const int seconds)
 {
-    if(m_diagnostics != NULL)
-        m_diagnostics.SetLogIntervalSeconds(seconds);
+    m_infra.SetConsensusDiagnosticsIntervalSeconds(seconds);
 }
 
 int CEnterpriseStrategyManager::GetMinQuorum() const
 {
-    return m_minQuorum;
+    return m_quorumConfig.GetMinQuorum();
 }
 
 //+------------------------------------------------------------------+
@@ -1464,11 +935,8 @@ ENUM_TRADE_SIGNAL CEnterpriseStrategyManager::GetConsensusSignalForSymbol(const 
 //+------------------------------------------------------------------+
 ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetIntrabarPolicyHelper(int idx)
 {
-    if(idx >= 0 && idx < 32 && m_intrabarPolicyConfig[idx] != INTRABAR_POLICY_OFF)
-        return m_intrabarPolicyConfig[idx];
-    // Default policies per strategy (matching original hardcoded values)
-    if(idx == 9 || idx == 10) return INTRABAR_POLICY_LIVE; // Mean Reversion, Volatility Breakout
-    return INTRABAR_POLICY_OFF;
+    // Phase C / Slice 4 (C6): table lookup + the idx 9/10 LIVE defaults moved.
+    return m_intrabarPolicy.GetIntrabarPolicyHelper(idx);
 }
 
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
@@ -1585,24 +1053,13 @@ string CEnterpriseStrategyManager::GetStrategyReport() const
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settings)
 {
-    // Cache pipeline base confidence floor for quorum eligibility even if the pipeline is disabled.
-    m_pipelineMinConfidence = MathMax(0.0, MathMin(1.0, settings.confidence.minConfidence));
+    // Phase G / G2: cache pipeline base confidence floor for quorum eligibility
+    // even if the pipeline is disabled (identical MathMax/MathMin clamp).
+    m_quorumConfig.CachePipelineMinConfidence(settings.confidence.minConfidence);
 
-    if(m_pipeline != NULL)
-    {
-        // Apply runtime filter configuration without re-initializing pipeline engines.
-        m_pipeline.SetFilters(settings);
-        Print("[EnterpriseStrategyManager] Pipeline filters applied: TrendFilter=",
-              settings.trend.enabled, " MinConf=", settings.confidence.minConfidence,
-              " IntrabarCap=", settings.confidence.intrabarConfidenceCap,
-              " RegimeCost=", settings.regimeCostGate.enabled,
-              " MaxSpreadATR=", settings.regimeCostGate.maxSpreadToAtrRatio,
-              " ShockCooldown=", settings.regimeCostGate.spreadShockCooldownSeconds,
-              " MaxEntryZ=", settings.regimeCostGate.maxEntryRangeZScore,
-              " MaxVol=", settings.volatility.maxVolatility,
-              " StructureFilter=", settings.structure.enabled,
-              " LiquidityFilter=", settings.liquidity.enabled);
-    }
+    // Phase G / G5: the pipeline NULL-guard, SetFilters() call and the summary
+    // Print moved verbatim into the infrastructure module.
+    m_infra.ApplyPipelineFilters(settings);
 }
 
 //+------------------------------------------------------------------+
@@ -1610,11 +1067,9 @@ void CEnterpriseStrategyManager::SetPipelineFilters(SignalFilterSettings &settin
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetOrchestratorMode(double minWinRate, int maxLosses)
 {
-    m_minWinRateThreshold = MathMax(0.0, MathMin(1.0, minWinRate));
-    m_maxConsecutiveLosses_Limit = MathMax(1, maxLosses);
-    PrintFormat("[EnterpriseStrategyManager] Adaptation thresholds updated | MinWinRate=%.2f | MaxConsecutiveLosses=%d",
-                m_minWinRateThreshold,
-                m_maxConsecutiveLosses_Limit);
+    // Phase G / G2: both adaptation thresholds and the summary PrintFormat
+    // moved verbatim into the quorum-config module.
+    m_quorumConfig.SetOrchestratorMode(minWinRate, maxLosses);
 }
 
 string CEnterpriseStrategyManager::GetStrategyWeightsJSON() const
@@ -1660,74 +1115,41 @@ void CEnterpriseStrategyManager::CheckStrategyReEnabling()
 
 bool CEnterpriseStrategyManager::UpdateStrategyWeightByName(const string name, const double weight)
 {
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    double sanitizedWeight = MathMax(0.0, MathMin(10.0, weight));
-    m_strategies[index].weight = sanitizedWeight;
-    if(m_strategies[index].strategy != NULL)
-        m_strategies[index].strategy.SetWeight(sanitizedWeight);
-
-    // L1-007: Update health monitor
-    if(m_healthMonitor != NULL)
-        m_healthMonitor.SetStrategyWeight(index, sanitizedWeight);
-
-    return true;
+    // Phase G / G4: lookup, 0..10 weight clamp, entry + IStrategy::SetWeight
+    // push and the health-monitor sync moved verbatim into the roster. The
+    // health monitor is owned by G5, so it is passed in explicitly.
+    return m_roster.UpdateStrategyWeightByName(name, weight, m_infra.GetHealthMonitor());
 }
 
 bool CEnterpriseStrategyManager::SetStrategyIntrabarEligibilityByName(const string name, bool enabled)
 {
-    return SetStrategyIntrabarPolicyByName(name, enabled ? INTRABAR_POLICY_LIVE : INTRABAR_POLICY_OFF);
+    // Phase C / Slice 4 (C6): same LIVE/OFF mapping, now inside CIntrabarPolicy.
+    return m_intrabarPolicy.SetStrategyIntrabarEligibilityByName(name, enabled);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyIntrabarPolicyByName(const string name, ENUM_INTRABAR_POLICY policy)
 {
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_strategies[index].intrabarPolicy = (int)policy;
-    m_strategies[index].intrabarEligible = (policy == INTRABAR_POLICY_LIVE);
-    PrintFormat("[EnterpriseStrategyManager] Intrabar policy updated: %s => %s",
-                name, IntrabarPolicyToString(policy));
-    return true;
+    // Phase C / Slice 4 (C6): lookup, raw-policy + eligibility write and the
+    // PrintFormat moved verbatim into CIntrabarPolicy.
+    return m_intrabarPolicy.SetStrategyIntrabarPolicyByName(name, policy);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role)
 {
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_strategies[index].role = (int)role;
-    PrintFormat("[EnterpriseStrategyManager] Role updated: %s => %s",
-                name, StrategyRoleToString(role));
-    return true;
+    // Phase C / Slice 4 (C8): lookup, role write and PrintFormat moved verbatim.
+    return m_registryState.SetStrategyRoleByName(name, role);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster)
 {
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_strategies[index].cluster = (int)cluster;
-    PrintFormat("[EnterpriseStrategyManager] Cluster updated: %s => %s",
-                name, StrategyClusterToString(cluster));
-    return true;
+    // Phase C / Slice 4 (C8): lookup, cluster write and PrintFormat moved verbatim.
+    return m_registryState.SetStrategyClusterByName(name, cluster);
 }
 
 bool CEnterpriseStrategyManager::SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled)
 {
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_strategies[index].liveVotingEnabled = enabled;
-    PrintFormat("[EnterpriseStrategyManager] Live voting updated: %s => %s",
-                name, enabled ? "ENABLED" : "DISABLED");
-    return true;
+    // Phase C / Slice 4 (C8): lookup, live-vote write and PrintFormat moved.
+    return m_registryState.SetStrategyLiveVotingEligibilityByName(name, enabled);
 }
 
 //+------------------------------------------------------------------+
@@ -1735,32 +1157,27 @@ bool CEnterpriseStrategyManager::SetStrategyLiveVotingEligibilityByName(const st
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetStrategyRole(int index, int role)
 {
-    if(index >= 0 && index < m_strategyCount)
-        m_strategies[index].role = role;
+    m_roster.SetStrategyRole(index, role);
 }
 
 void CEnterpriseStrategyManager::SetStrategyCluster(int index, int cluster)
 {
-    if(index >= 0 && index < m_strategyCount)
-        m_strategies[index].cluster = cluster;
+    m_roster.SetStrategyCluster(index, cluster);
 }
 
 void CEnterpriseStrategyManager::SetStrategyLiveVotingEnabled(int index, bool enabled)
 {
-    if(index >= 0 && index < m_strategyCount)
-        m_strategies[index].liveVotingEnabled = enabled;
+    m_roster.SetStrategyLiveVotingEnabled(index, enabled);
 }
 
 void CEnterpriseStrategyManager::SetStrategyIntrabarPolicyRaw(int index, int policy)
 {
-    if(index >= 0 && index < m_strategyCount)
-        m_strategies[index].intrabarPolicy = policy;
+    m_roster.SetStrategyIntrabarPolicyRaw(index, policy);
 }
 
 void CEnterpriseStrategyManager::SetStrategyIntrabarEligible(int index, bool eligible)
 {
-    if(index >= 0 && index < m_strategyCount)
-        m_strategies[index].intrabarEligible = eligible;
+    m_roster.SetStrategyIntrabarEligible(index, eligible);
 }
 
 //+------------------------------------------------------------------+
@@ -1775,69 +1192,19 @@ void CEnterpriseStrategyManager::AppendRegisteredStrategyEntry(IStrategy* strate
                                                               ENUM_STRATEGY_CLUSTER cluster,
                                                               bool liveVotingEnabled)
 {
-    int newSize = m_strategyCount + 1;
-    ArrayResize(m_strategies, newSize);
-
-    m_strategies[m_strategyCount].strategy = strategy;
-    m_strategies[m_strategyCount].name = name;
-    m_strategies[m_strategyCount].enabled = enabled;
-    m_strategies[m_strategyCount].intrabarEligible = (intrabarPolicy == INTRABAR_POLICY_LIVE);
-    m_strategies[m_strategyCount].intrabarPolicy = (int)intrabarPolicy;
-    m_strategies[m_strategyCount].liveVotingEnabled = liveVotingEnabled;
-    m_strategies[m_strategyCount].role = (int)role;
-    m_strategies[m_strategyCount].cluster = (int)cluster;
-    m_strategies[m_strategyCount].tier = tier;
-    m_strategies[m_strategyCount].weight = weight;
-    m_strategies[m_strategyCount].originalWeight = weight;
-    m_strategies[m_strategyCount].timeframe = resolvedTf;
-    m_strategies[m_strategyCount].successCount = 0;
-    m_strategies[m_strategyCount].failCount = 0;
-    m_strategies[m_strategyCount].healthScore = 0.75;
-    m_strategies[m_strategyCount].participationScore = 0.90;
-    m_strategies[m_strategyCount].avgConfidence = 0;
-    m_strategies[m_strategyCount].lastSignal = TRADE_SIGNAL_NONE;
-    m_strategies[m_strategyCount].lastSignalConfidence = 0.0;
-    m_strategies[m_strategyCount].lastEvaluationTime = 0;
-    m_strategies[m_strategyCount].consecutiveFilterCount = 0;
-
-    m_strategies[m_strategyCount].totalTrades = 0;
-    m_strategies[m_strategyCount].winningTrades = 0;
-    m_strategies[m_strategyCount].winRate = 0.0;
-    m_strategies[m_strategyCount].avgProfit = 0.0;
-    m_strategies[m_strategyCount].avgLoss = 0.0;
-    m_strategies[m_strategyCount].profitFactor = 0.0;
-    m_strategies[m_strategyCount].sharpeRatio = 0.0;
-    m_strategies[m_strategyCount].recentTradeIndex = 0;
-    m_strategies[m_strategyCount].recentTradeCount = 0;
-    m_strategies[m_strategyCount].recentWinRate = 0.0;
-    m_strategies[m_strategyCount].consecutiveLosses = 0;
-    m_strategies[m_strategyCount].maxConsecutiveLosses = 0;
-    m_strategies[m_strategyCount].consecutiveWins = 0;
-    m_strategies[m_strategyCount].temporarilyDisabled = false;
-    m_strategies[m_strategyCount].disabledUntil = 0;
-    m_strategies[m_strategyCount].lastUpdate = 0;
-
-    ArrayInitialize(m_strategies[m_strategyCount].recentTrades, 0.0);
-    ArrayInitialize(m_strategies[m_strategyCount].regimePerformance, 0.0);
-    ArrayInitialize(m_strategies[m_strategyCount].regimeTrades, 0);
-
-    if(m_healthMonitor != NULL)
-        m_healthMonitor.RegisterStrategy(weight);
-
-    m_strategyCount++;
+    // Phase G / G4: the ArrayResize, all 35 StrategyEntry field writes, the three
+    // ArrayInitialize calls and the m_strategyCount++ moved verbatim into the
+    // roster. The health monitor is owned by G5, so it is passed in explicitly
+    // (the roster performs the same NULL-guarded RegisterStrategy(weight) call).
+    m_roster.AppendRegisteredStrategyEntry(strategy, name, enabled, weight, tier,
+                                           resolvedTf, intrabarPolicy, role, cluster,
+                                           liveVotingEnabled, m_infra.GetHealthMonitor());
 }
 
 bool CEnterpriseStrategyManager::SetStrategyConfidenceThresholdByName(const string name, const double threshold)
 {
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    if(m_strategies[index].strategy == NULL)
-        return false;
-
-    m_strategies[index].strategy.SetConfidenceThreshold(threshold);
-    return true;
+    // Phase G / G4: lookup, NULL-strategy guard and SetConfidenceThreshold moved.
+    return m_roster.SetStrategyConfidenceThresholdByName(name, threshold);
 }
 
 
@@ -1846,20 +1213,9 @@ bool CEnterpriseStrategyManager::SetStrategyGovernanceByName(const string name,
                                                              ENUM_STRATEGY_CLUSTER cluster,
                                                              const bool liveVotingEnabled)
 {
-    int index = FindStrategyIndexByName(name);
-    if(index < 0)
-        return false;
-
-    m_strategies[index].role = (int)role;
-    m_strategies[index].cluster = (int)cluster;
-    m_strategies[index].liveVotingEnabled = liveVotingEnabled;
-
-    PrintFormat("[EnterpriseStrategyManager] Governance updated: %s | role=%s | cluster=%s | live_vote=%s",
-                name,
-                StrategyRoleToString(role),
-                StrategyClusterToString(cluster),
-                liveVotingEnabled ? "ENABLED" : "DISABLED");
-    return true;
+    // Phase C / Slice 4 (C8): lookup, the three governance writes and the
+    // PrintFormat moved verbatim into CStrategyRegistryState.
+    return m_registryState.SetStrategyGovernanceByName(name, role, cluster, liveVotingEnabled);
 }
 
 
@@ -1890,12 +1246,12 @@ bool CEnterpriseStrategyManager::IsRegisteredStrategyLiveVotingEnabled(const int
 
 void CEnterpriseStrategyManager::GetLastSignalContributors(string &contributors[]) const
 {
-    ArrayCopy(contributors, m_lastSignalContributors);
+    m_signalContext.GetLastSignalContributors(contributors);
 }
 
 void CEnterpriseStrategyManager::GetLastSignalContributorIndices(int &indices[]) const
 {
-    ArrayCopy(indices, m_lastSignalContributorIndices);
+    m_signalContext.GetLastSignalContributorIndices(indices);
 }
 
 bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
@@ -1903,11 +1259,12 @@ bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
                                                                string &clusterCode,
                                                                string &contributorsCsv) const
 {
-    roleTag = m_lastSignalRole;
-    clusterTag = m_lastSignalCluster;
-    clusterCode = m_lastSignalClusterCode;
-    contributorsCsv = JoinContributors(m_lastSignalContributors);
-    return (m_lastContributorCount > 0 && ArraySize(m_lastSignalContributors) > 0);
+    // Phase G / G3: the role/cluster tags and contributor CSV live in the
+    // signal-context module. JoinContributors() is itself a forwarder to
+    // m_attributionDelegator, so the delegator is handed over directly.
+    return m_signalContext.GetLastSignalExecutionContext(m_attributionDelegator,
+                                                         roleTag, clusterTag,
+                                                         clusterCode, contributorsCsv);
 }
 
 //+------------------------------------------------------------------+
@@ -1916,68 +1273,21 @@ bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::Deinit()
 {
-    // Clean up strategies with explicit Deinit call
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(m_strategies[i].strategy != NULL)
-        {
-            m_strategies[i].strategy.Deinit();
-            delete m_strategies[i].strategy;
-            m_strategies[i].strategy = NULL;
-        }
-    }
-    m_strategyCount = 0;
-    ArrayResize(m_strategies, 0);
-    
-    // Clean up components
-    if(m_pipeline != NULL)
-    {
-        delete m_pipeline;
-        m_pipeline = NULL;
-    }
+    // Phase G / G4: strategy teardown loop, then the Deinit-only roster reset
+    // (m_strategyCount = 0; ArrayResize(m_strategies, 0)) the destructor omits.
+    m_roster.DeleteAllStrategies();
+    m_roster.ClearRoster();
 
-    // Batch 116: Release cached ADX handle
-    if(m_adxHandleCached != INVALID_HANDLE)
-    {
-        IndicatorRelease(m_adxHandleCached);
-        m_adxHandleCached = INVALID_HANDLE;
-    }
+    // Phase G / G5: pipeline, ADX handle, regime detector, TF consistency,
+    // diagnostics and attribution - in the original order. Unlike the
+    // destructor, Deinit() DOES delete the injected diagnostics/attribution.
+    m_infra.ReleaseOnDeinit();
 
-    // Clean up FourStateRegimeDetector
-    if(m_fourStateRegimeDetector != NULL)
-    {
-        delete m_fourStateRegimeDetector;
-        m_fourStateRegimeDetector = NULL;
-    }
-
-    if(m_tfConsistency != NULL)
-    {
-        delete m_tfConsistency;
-        m_tfConsistency = NULL;
-    }
-    
-    // L1-007: Clean up components
-    if(m_diagnostics != NULL)
-    {
-        delete m_diagnostics;
-        m_diagnostics = NULL;
-    }
-    
-    if(m_attribution != NULL)
-    {
-        delete m_attribution;
-        m_attribution = NULL;
-    }
     // Phase C / Slice 1: keep the delegator's mirrored pointer from dangling.
-    m_attributionDelegator.SetAttribution(m_attribution);
-    
-    if(m_healthMonitor != NULL)
-    {
-        delete m_healthMonitor;
-        m_healthMonitor = NULL;
-    }
-    
-    m_initialized = false;
+    m_attributionDelegator.SetAttribution(m_infra.GetAttribution());
+
+    // Phase G / G5: health monitor teardown + m_initialized = false.
+    m_infra.FinishDeinit();
 }
 
 bool CEnterpriseStrategyManager::GetLastDecisionContext(SConsensusDecisionContext &context) const
@@ -2051,12 +1361,8 @@ bool CEnterpriseStrategyManager::PopClosedTradeAttribution(string &contributors[
 
 int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
 {
-    for(int i = 0; i < m_strategyCount; i++)
-    {
-        if(m_strategies[i].name == name)
-            return i;
-    }
-    return -1;
+    // Phase G / G4: identical linear name scan, now over the roster's array.
+    return m_roster.FindStrategyIndexByName(name);
 }
 
 //+------------------------------------------------------------------+
@@ -2064,10 +1370,8 @@ int CEnterpriseStrategyManager::FindStrategyIndexByName(const string name) const
 //+------------------------------------------------------------------+
 IStrategy* CEnterpriseStrategyManager::GetStrategyByName(const string name)
 {
-    int idx = FindStrategyIndexByName(name);
-    if(idx < 0 || idx >= m_strategyCount)
-        return NULL;
-    return m_strategies[idx].strategy;
+    // Phase C / Slice 4 (C8): same lookup + bounds guard + pointer return.
+    return m_registryState.GetStrategyByName(name);
 }
 
 
@@ -2201,102 +1505,19 @@ void CEnterpriseStrategyManager::OnTradeTransaction(const MqlTradeTransaction& t
                                                    const MqlTradeRequest& request,
                                                    const MqlTradeResult& result)
 {
-    // Check for transaction adding a deal (trade execution)
-    if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
-    {
-        ulong dealTicket = trans.deal;
-        if(HistoryDealSelect(dealTicket))
-        {
-            long dealMagic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
-            if(m_managedMagic > 0 && !IsEAOwnedMagic(dealMagic))
-                return;
-
-            string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
-            if(dealSymbol != "" && dealSymbol != m_symbol)
-                return;
-
-            ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-            ulong positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
-
-            if((entryType == DEAL_ENTRY_IN || entryType == DEAL_ENTRY_INOUT) &&
-               positionId > 0 &&
-               m_lastContributorCount > 0 &&
-               ArraySize(m_lastSignalContributors) > 0)
-            {
-                if(m_attribution != NULL)
-                {
-                    m_attribution.UpsertPositionAttribution(positionId, m_lastSignalContributors);
-                }
-            }
-            
-            // We care about exits (deals that close a position) to meaningful profit/loss
-            if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY || entryType == DEAL_ENTRY_INOUT)
-            {
-                // Avoid double-counting partial closes; attribute only once when position is fully closed.
-                if(positionId > 0 && IsPositionIdStillOpen(positionId))
-                    return;
-
-                double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
-                double swap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
-                double commission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
-                double netProfit = profit + swap + commission;
-                
-                bool success = (netProfit > 0);
-                if(success)
-                    m_successfulSignals++;
-
-                // Pop position attribution from trade attribution manager
-                string contributors[];
-                if(positionId > 0 && m_attribution != NULL && m_attribution.PopPositionAttribution(positionId, contributors))
-                {
-                    // Store in closed trade attribution for PopClosedTradeAttribution
-                    // The TradeAttributionManager handles this internally
-                    for(int contributorIdx = 0; contributorIdx < ArraySize(contributors); contributorIdx++)
-                    {
-                        if(contributors[contributorIdx] == "")
-                            continue;
-                        UpdatePerformance(contributors[contributorIdx], netProfit);
-                        // Also update health monitor
-                        if(m_healthMonitor != NULL)
-                        {
-                            int stratIdx = FindStrategyIndexByName(contributors[contributorIdx]);
-                            if(stratIdx >= 0)
-                            {
-                                m_healthMonitor.RecordTradeResult(stratIdx, netProfit);
-                            }
-                        }
-                    }
-                }
-
-                // Reset cached contributor context after close in manager-only governance mode.
-                                m_lastContributorCount = 0;
-                                ArrayResize(m_lastSignalContributors, 0);
-                                ArrayResize(m_lastSignalContributorIndices, 0);
-
-                PrintFormat("[EnterpriseManager] Trade Closed | Symbol: %s | Ticket: %I64u | PositionID: %I64u | Net Profit: %.2f | Result: %s",
-                           dealSymbol, dealTicket, positionId, netProfit, success ? "SUCCESS" : "FAILURE");
-            }
-        }
-    }
+    // Phase G / G6: the whole DEAL_ADD funnel (magic/symbol ownership guards,
+    // entry-side UpsertPositionAttribution, the partial-close guard, the
+    // net-profit computation, the per-contributor UpdatePerformance +
+    // health-monitor RecordTradeResult loop, the contributor-context reset and
+    // the "Trade Closed" PrintFormat) moved verbatim into the trade-feedback
+    // module, which reads this manager back through its m_src back-pointer.
+    m_tradeFeedback.OnTradeTransaction(trans, request, result);
 }
 
 bool CEnterpriseStrategyManager::IsPositionIdStillOpen(const ulong positionId) const
 {
-    if(positionId == 0)
-        return false;
-
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket == 0 || !PositionSelectByTicket(ticket))
-            continue;
-
-        ulong openPositionId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
-        if(openPositionId == positionId)
-            return true;
-    }
-
-    return false;
+    // Phase G / G6: identical PositionsTotal() scan on POSITION_IDENTIFIER.
+    return m_tradeFeedback.IsPositionIdStillOpen(positionId);
 }
 
 //+------------------------------------------------------------------+
@@ -2351,13 +1572,8 @@ bool CEnterpriseStrategyManager::DisableStrategy(const string name)
 //+------------------------------------------------------------------+
 bool CEnterpriseStrategyManager::IsEAOwnedMagic(long magic) const
 {
-    if(m_managedMagic <= 0)
-        return false;
-    if(magic == m_managedMagic)
-        return true;
-    if(magic > m_managedMagic && magic <= m_managedMagicRangeMax)
-        return true;
-    return false;
+    // Phase G / G6: identical exact-match + [magic, rangeMax] window test.
+    return m_tradeFeedback.IsEAOwnedMagic(magic);
 }
 
 //+------------------------------------------------------------------+
@@ -2373,7 +1589,7 @@ int CEnterpriseStrategyManager::GetRegisteredStrategyCount() const
 //+------------------------------------------------------------------+
 CUnifiedSignalPipeline* CEnterpriseStrategyManager::GetPipeline()
 {
-    return m_pipeline;
+    return m_infra.GetPipeline();
 }
 
 //+------------------------------------------------------------------+
@@ -2389,7 +1605,7 @@ double CEnterpriseStrategyManager::GetEnsembleConfidence() const
 //+------------------------------------------------------------------+
 ENUM_MARKET_REGIME CEnterpriseStrategyManager::GetCurrentMarketRegime() const
 {
-    return m_currentMarketRegime;
+    return m_signalContext.GetCurrentMarketRegime();
 }
 
 //+------------------------------------------------------------------+
@@ -2397,7 +1613,7 @@ ENUM_MARKET_REGIME CEnterpriseStrategyManager::GetCurrentMarketRegime() const
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetDrawingManager(CChartDrawingManager* drawingManager)
 {
-    m_drawingManager = drawingManager;
+    m_infra.SetDrawingManager(drawingManager);
 }
 
 //+------------------------------------------------------------------+
@@ -2405,7 +1621,7 @@ void CEnterpriseStrategyManager::SetDrawingManager(CChartDrawingManager* drawing
 //+------------------------------------------------------------------+
 CChartDrawingManager* CEnterpriseStrategyManager::GetDrawingManager()
 {
-    return m_drawingManager;
+    return m_infra.GetDrawingManager();
 }
 
 //+------------------------------------------------------------------+
@@ -2413,7 +1629,7 @@ CChartDrawingManager* CEnterpriseStrategyManager::GetDrawingManager()
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetDerivProfiler(CDerivAssetProfiler* profiler)
 {
-    m_derivProfiler = profiler;
+    m_infra.SetDerivProfiler(profiler);
 }
 
 //+------------------------------------------------------------------+
@@ -2421,7 +1637,7 @@ void CEnterpriseStrategyManager::SetDerivProfiler(CDerivAssetProfiler* profiler)
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetFamilyWeightMatrix(CFamilyStrategyWeightMatrix* famMatrix)
 {
-    m_familyWeightMatrix = famMatrix;
+    m_infra.SetFamilyWeightMatrix(famMatrix);
 }
 
 //+------------------------------------------------------------------+
@@ -2429,7 +1645,7 @@ void CEnterpriseStrategyManager::SetFamilyWeightMatrix(CFamilyStrategyWeightMatr
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetMultiAssetProfiler(CMultiAssetProfiler* profiler)
 {
-    m_multiAssetProfiler = profiler;
+    m_infra.SetMultiAssetProfiler(profiler);
 }
 
 //+------------------------------------------------------------------+
@@ -2437,7 +1653,7 @@ void CEnterpriseStrategyManager::SetMultiAssetProfiler(CMultiAssetProfiler* prof
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetVPINFilter(CVPINFilter* vpin)
 {
-    m_vpinFilter = vpin;
+    m_infra.SetVPINFilter(vpin);
 }
 
 //+------------------------------------------------------------------+
@@ -2445,7 +1661,7 @@ void CEnterpriseStrategyManager::SetVPINFilter(CVPINFilter* vpin)
 //+------------------------------------------------------------------+
 void CEnterpriseStrategyManager::SetOFIEngine(COrderFlowImbalanceEngine* ofi)
 {
-    m_ofiEngine = ofi;
+    m_infra.SetOFIEngine(ofi);
 }
 
 //+------------------------------------------------------------------+
