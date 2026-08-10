@@ -2,6 +2,10 @@
 //| GridRecoveryEngine.mqh                                           |
 //| Grid recovery engine for mean-reverting synthetic indices        |
 //| Places progressive grid levels when Hurst confirms mean-reversion|
+//|                                                                  |
+//| Thin coordinator: shared types, grid level math, drawdown guards,|
+//| ATR handles, statistics and order execution live in the          |
+//| GridRecovery* modules included below. Behaviour is unchanged.    |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, Aggressive Trading Systems"
 #property link      "https://www.aggressivetrading.com"
@@ -21,87 +25,14 @@ class CUnifiedRiskManager;
 // Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-//+------------------------------------------------------------------+
-//| Grid progression type                                             |
-//+------------------------------------------------------------------+
-enum ENUM_GRID_PROGRESSION
-{
-   GRID_PROGRESSION_MARTINGALE,    // Lot = baseLot * (factor ^ level)
-   GRID_PROGRESSION_FIBONACCI      // Lot = baseLot * fib(level)
-};
-
-//+------------------------------------------------------------------+
-//| Grid recovery configuration struct                                |
-//+------------------------------------------------------------------+
-struct SGridRecoveryConfig
-{
-   double   gridFactorATR;           // Grid spacing as fraction of ATR (0.20)
-   int      maxGridLevels;           // Max grid levels (8)
-   ENUM_GRID_PROGRESSION progressionType;  // Martingale or Fibonacci
-   double   progressionFactor;       // Lot multiplier per level (1.5 for Martingale)
-   double   activationHurstThreshold;// Only activate when Hurst < this (0.45)
-   int      atrPeriod;               // ATR period (14)
-   double   slAtrMultiplier;         // SL = ATR * this per level (1.5)
-   double   tpAtrMultiplier;         // TP = 0.5 * grid size per level
-   int      magicOffset;             // Magic number offset (8000)
-   int      maxDrawdownPercent;      // Max total grid drawdown % (15)
-   int      cooldownMs;              // Cooldown between grid entries in ms (30000)
-   double   maxCumulativeLotMultiplier; // Cap on total lots vs base lot (3.0)
-   double   equityFloorPercent;      // Min equity % of initial before blocking new levels (50)
-   bool     enableAIMode;            // L10-018: Enable AI-VOTE logging
-
-   // Default constructor with production defaults
-   SGridRecoveryConfig()
-   {
-      gridFactorATR            = 0.20;
-      maxGridLevels            = 8;
-      progressionType          = GRID_PROGRESSION_FIBONACCI;
-      progressionFactor        = 1.5;
-      activationHurstThreshold = 0.45;
-      atrPeriod                = 14;
-      slAtrMultiplier          = 1.5;
-      tpAtrMultiplier          = 0.5;   // 0.5 * grid spacing
-      magicOffset              = 8000;
-      maxDrawdownPercent       = 15;
-      cooldownMs               = 30000;
-      maxCumulativeLotMultiplier = 3.0; // Cap total exposure at 3x base lot
-      equityFloorPercent       = 50.0;  // Stop grid if equity drops below 50% of initial
-      enableAIMode             = false; // L10-018: AI-VOTE logging disabled by default
-   }
-};
-
-//+------------------------------------------------------------------+
-//| Single grid level tracking                                        |
-//+------------------------------------------------------------------+
-struct SGridLevel
-{
-   int      level;          // Grid level number (0-based)
-   double   lotSize;        // Lot size for this level
-   double   entryPrice;     // Entry price for this level
-   double   sl;             // Stop loss price
-   double   tp;             // Take profit price
-   ulong    ticket;         // Position ticket (0 if not filled)
-   bool     isActive;       // Whether this level is active/filled
-};
-
-//+------------------------------------------------------------------+
-//| Per-symbol grid state tracking                                    |
-//+------------------------------------------------------------------+
-struct SGridSymbolState
-{
-   string      symbol;
-   bool        isActive;               // Is this symbol being monitored
-   SGridLevel  levels[];               // Array of grid levels for this symbol
-   int         activeLevelCount;       // Count of active levels
-   double      totalGridRisk;          // Sum of risk across all levels
-   double      baseLotSize;            // Base lot size for level 0
-   int         direction;              // 1=BUY, -1=SELL
-   datetime    lastGridEntryTime;      // When last grid entry was placed
-   double      currentATR;             // Current ATR value
-   double      atrSMA;                 // ATR EMA value (L10-017: incremental EMA)
-   bool        hurstRegimeConfirmed;   // Hurst < threshold = mean-reversion confirmed
-   double      initialEquity;          // Equity at grid activation (for floor check)
-};
+// Extracted modules (structural debloat — no behaviour change)
+#include "GridRecoveryTypes.mqh"
+#include "GridRecoveryLevels.mqh"
+#include "GridRecoverySequence.mqh"
+#include "GridRecoveryDrawdown.mqh"
+#include "GridRecoveryMetrics.mqh"
+#include "GridRecoveryAtr.mqh"
+#include "GridRecoveryExecution.mqh"
 
 //+------------------------------------------------------------------+
 //| CGridRecoveryEngine — Grid recovery for mean-reverting synthetics |
@@ -114,127 +45,42 @@ private:
    int                       m_symbolCount;
    int                       m_baseMagic;
    CPositionSizer*           m_positionSizer;
-   CUnifiedRiskManager*      m_riskManager;
-   CTradeManager*            m_tradeManager;    // L10-014: Use TradeManager for dynamic slippage
-   CTrade                    m_trade;           // Fallback only
-   CAIAdapter*               m_aiAdapter;       // L10-018: AI adapter for voting
 
-   // ATR indicator handles per symbol
-   int                       m_atrHandles[];
-
-   // Statistics
-   int                       m_totalGridsOpened;
-   int                       m_totalGridsClosed;
-   int                       m_totalLevelsPlaced;
+   // Extracted collaborators (owned by value)
+   CGridRecoveryAtr          m_atr;         // ATR indicator handles per symbol
+   CGridRecoveryMetrics      m_metrics;     // Statistics
+   CGridRecoveryExecution    m_execution;   // Risk gate + trade execution
 
    //+------------------------------------------------------------------+
    //| Find symbol index in the states array                             |
    //+------------------------------------------------------------------+
    int FindSymbolIndex(const string symbol) const
    {
-      for(int i = 0; i < m_symbolCount; i++)
-      {
-         if(m_symbolStates[i].symbol == symbol)
-            return i;
-      }
-      return -1;
+      return CGridRecoveryLevels::FindSymbolIndex(m_symbolStates, m_symbolCount, symbol);
    }
 
    //+------------------------------------------------------------------+
    //| Initialize a symbol state slot with defaults                      |
    //+------------------------------------------------------------------+
-      void InitializeSymbolState(int idx, const string symbol)
-      {
-         m_symbolStates[idx].symbol                = symbol;
-         m_symbolStates[idx].isActive              = true;
-         m_symbolStates[idx].activeLevelCount      = 0;
-         m_symbolStates[idx].totalGridRisk         = 0.0;
-         m_symbolStates[idx].baseLotSize           = 0.0;
-         m_symbolStates[idx].direction             = 0;
-         m_symbolStates[idx].lastGridEntryTime     = 0;
-         m_symbolStates[idx].currentATR            = 0.0;
-         m_symbolStates[idx].atrSMA                = 0.0;
-         m_symbolStates[idx].hurstRegimeConfirmed  = false;
-         m_symbolStates[idx].initialEquity         = 0.0;
-
-         // Initialize levels array
-         ArrayResize(m_symbolStates[idx].levels, m_config.maxGridLevels);
-         for(int l = 0; l < m_config.maxGridLevels; l++)
-         {
-            m_symbolStates[idx].levels[l].level       = l;
-            m_symbolStates[idx].levels[l].lotSize     = 0.0;
-            m_symbolStates[idx].levels[l].entryPrice  = 0.0;
-            m_symbolStates[idx].levels[l].sl          = 0.0;
-            m_symbolStates[idx].levels[l].tp          = 0.0;
-            m_symbolStates[idx].levels[l].ticket      = 0;
-            m_symbolStates[idx].levels[l].isActive    = false;
-         }
-      }
+   void InitializeSymbolState(int idx, const string symbol)
+   {
+      CGridRecoveryLevels::InitializeSymbolState(m_symbolStates[idx], symbol, m_config.maxGridLevels);
+   }
 
    //+------------------------------------------------------------------+
    //| Update ATR value for a symbol                                     |
    //+------------------------------------------------------------------+
-      void UpdateATR(int idx)
-      {
-         if(m_atrHandles[idx] == INVALID_HANDLE)
-            return;
-
-         // Read current ATR value
-         double atrBuf[];
-         ArraySetAsSeries(atrBuf, true);
-         if(CopyBuffer(m_atrHandles[idx], 0, 0, 1, atrBuf) <= 0)
-            return;
-
-         m_symbolStates[idx].currentATR = atrBuf[0];
-
-         // L10-017: Use incremental EMA instead of full CopyBuffer loop for efficiency
-         // EMA formula: EMA_today = alpha * value_today + (1 - alpha) * EMA_yesterday
-         // alpha = 2 / (period + 1)
-         const int atrEmaPeriod = 50;
-         double alpha = 2.0 / (atrEmaPeriod + 1.0);
-      
-         if(m_symbolStates[idx].atrSMA <= 0.0)
-         {
-            // First initialization - use simple average from available history
-            double atrHistory[];
-            ArraySetAsSeries(atrHistory, true);
-            int copied = CopyBuffer(m_atrHandles[idx], 0, 0, atrEmaPeriod, atrHistory);
-            if(copied > 0)
-            {
-               double sum = 0.0;
-               for(int i = 0; i < copied; i++)
-                  sum += atrHistory[i];
-               m_symbolStates[idx].atrSMA = sum / (double)copied;
-            }
-            else
-            {
-               m_symbolStates[idx].atrSMA = atrBuf[0];
-            }
-         }
-         else
-         {
-            // Incremental EMA update - O(1) instead of O(n)
-            m_symbolStates[idx].atrSMA = alpha * atrBuf[0] + (1.0 - alpha) * m_symbolStates[idx].atrSMA;
-         }
-      }
+   void UpdateATR(int idx)
+   {
+      m_atr.UpdateATR(idx, m_symbolStates[idx]);
+   }
 
    //+------------------------------------------------------------------+
    //| Calculate Fibonacci number for a given level                      |
-   //| fib(0)=1, fib(1)=1, fib(2)=2, fib(3)=3, fib(4)=5, fib(5)=8     |
    //+------------------------------------------------------------------+
    int FibonacciNumber(int level) const
    {
-      if(level <= 1)
-         return 1;
-
-      int a = 1, b = 1;
-      for(int i = 2; i <= level; i++)
-      {
-         int temp = a + b;
-         a = b;
-         b = temp;
-      }
-      return b;
+      return CGridRecoveryLevels::FibonacciNumber(level);
    }
 
    //+------------------------------------------------------------------+
@@ -242,116 +88,23 @@ private:
    //+------------------------------------------------------------------+
    double NormalizeLot(const string symbol, double lotSize) const
    {
-      double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-      double minVol  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-      double maxVol  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-
-      if(stepVol <= 0.0) stepVol = 0.01;
-      if(minVol <= 0.0)  minVol  = 0.01;
-
-      lotSize = MathFloor((lotSize + 1e-12) / stepVol) * stepVol;
-
-      // FIX: Reject lots below minimum instead of rounding up (prevents 15x risk multiplier)
-      if(lotSize < minVol)
-         return 0.0;  // Signal invalid - caller should skip this grid level
-      if(lotSize > maxVol)
-         lotSize = maxVol;
-
-      return NormalizeDouble(lotSize, 2);
+      return CGridRecoveryLevels::NormalizeLot(symbol, lotSize);
    }
 
-//+------------------------------------------------------------------+
-//| Cap lot size to available margin                                  |
-//+------------------------------------------------------------------+
-double CapLotToMargin(double lotSize, const string symbol, ENUM_ORDER_TYPE orderType) const
-{
-   double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-   double marginPerLot = 0.0;
-   double priceForMargin = (orderType == ORDER_TYPE_BUY)
-                           ? SymbolInfoDouble(symbol, SYMBOL_ASK)
-                           : SymbolInfoDouble(symbol, SYMBOL_BID);
-
-   bool marginCalcOk = OrderCalcMargin(orderType, symbol, 1.0, priceForMargin, marginPerLot);
-   
-   // Fallback: estimate margin from contract size and leverage if OrderCalcMargin fails
-   if(!marginCalcOk || marginPerLot <= 0.0)
+   //+------------------------------------------------------------------+
+   //| Cap lot size to available margin                                  |
+   //+------------------------------------------------------------------+
+   double CapLotToMargin(double lotSize, const string symbol, ENUM_ORDER_TYPE orderType) const
    {
-      double contractSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-      
-      // For Deriv synthetics: use ACCOUNT_LEVERAGE (1:1000 = 1000)
-      long leverageLong = AccountInfoInteger(ACCOUNT_LEVERAGE);
-      double leverage = (double)leverageLong;
-      if(leverage <= 0) leverage = 1000.0; // Default for Deriv
-      
-      if(contractSize > 0 && leverage > 0 && priceForMargin > 0)
-      {
-         // Rough margin estimate: 1 lot * contractSize * price / leverage
-         marginPerLot = priceForMargin * contractSize / leverage;
-         
-         PrintFormat("[GRID-RECOVERY-MARGIN] %s OrderCalcMargin failed/zero, fallback: leverage=%d contract=%.2f price=%.5f -> marginPerLot=%.2f", 
-                     symbol, (int)leverage, contractSize, priceForMargin, marginPerLot);
-      }
-      else
-      {
-         PrintFormat("[GRID-RECOVERY-MARGIN] %s margin calc FAILED - missing data, using symbol max volume cap only", symbol);
-         // Just cap to symbol max volume
-         double symbolMaxVolume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-         double cappedLot = MathMin(lotSize, symbolMaxVolume);
-         if(cappedLot < lotSize)
-         {
-            PrintFormat("[GRID-RECOVERY-MARGIN] %s lot capped from %.2f to %.2f (symbol max volume)",
-                        symbol, lotSize, cappedLot);
-         }
-         return cappedLot;
-      }
+      return CGridRecoveryLevels::CapLotToMargin(lotSize, symbol, orderType);
    }
-
-   double maxLotByMargin = freeMargin / (marginPerLot * 1.5); // 1.5x safety buffer
-   double symbolMaxVolume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-   double cappedLot = MathMin(lotSize, MathMin(maxLotByMargin, symbolMaxVolume));
-
-   // Additional safety: ensure lot is valid for symbol
-   double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-   double minVol  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-   if(stepVol > 0.0)
-   {
-      cappedLot = MathFloor((cappedLot + 1e-12) / stepVol) * stepVol;
-   }
-   if(cappedLot < minVol) cappedLot = 0.0; // Signal invalid
-
-   if(cappedLot < lotSize)
-   {
-      PrintFormat("[GRID-RECOVERY-MARGIN] %s lot capped from %.2f to %.2f (margin_max=%.2f vol_max=%.2f marginPerLot=%.2f freeMargin=%.2f leverage=%d)",
-                  symbol, lotSize, cappedLot, maxLotByMargin, symbolMaxVolume, marginPerLot, freeMargin, (int)AccountInfoInteger(ACCOUNT_LEVERAGE));
-   }
-
-   return cappedLot;
-}
 
    //+------------------------------------------------------------------+
    //| Calculate grid drawdown as percentage of equity                   |
    //+------------------------------------------------------------------+
    double CalculateGridDrawdownPercent(int idx) const
    {
-      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-      if(equity <= 0.0)
-         return 0.0;
-
-      double totalDrawdown = 0.0;
-      for(int l = 0; l < m_symbolStates[idx].activeLevelCount; l++)
-      {
-         if(!m_symbolStates[idx].levels[l].isActive || m_symbolStates[idx].levels[l].ticket == 0)
-            continue;
-
-         if(PositionSelectByTicket(m_symbolStates[idx].levels[l].ticket))
-         {
-            double profit = PositionGetDouble(POSITION_PROFIT);
-            if(profit < 0.0)
-               totalDrawdown += MathAbs(profit);
-         }
-      }
-
-      return (totalDrawdown / equity) * 100.0;
+      return CGridRecoveryDrawdown::CalculateGridDrawdownPercent(m_symbolStates[idx]);
    }
 
 public:
@@ -361,11 +114,7 @@ public:
    CGridRecoveryEngine() :
       m_symbolCount(0),
       m_baseMagic(0),
-       m_positionSizer(NULL),
-       m_riskManager(NULL),
-       m_totalGridsOpened(0),
-      m_totalGridsClosed(0),
-      m_totalLevelsPlaced(0)
+      m_positionSizer(NULL)
    {
    }
 
@@ -380,29 +129,27 @@ public:
    //+------------------------------------------------------------------+
    //| Initialize the engine with config and dependencies               |
    //+------------------------------------------------------------------+
-      bool Init(const SGridRecoveryConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL, CAIAdapter *pAIAdapter = NULL)
-      {
-         m_config         = config;
-         m_baseMagic      = baseMagic;
-         m_positionSizer  = pSizer;
-         m_riskManager    = pRiskManager;
-         m_tradeManager   = pTradeManager;  // L10-014: Store TradeManager for dynamic slippage
-         m_aiAdapter      = pAIAdapter;     // L10-018: Store AI adapter
-         m_symbolCount    = 0;
+   bool Init(const SGridRecoveryConfig &config, int baseMagic, CPositionSizer *pSizer, CUnifiedRiskManager *pRiskManager = NULL, CTradeManager *pTradeManager = NULL, CAIAdapter *pAIAdapter = NULL)
+   {
+      m_config         = config;
+      m_baseMagic      = baseMagic;
+      m_positionSizer  = pSizer;
+      m_execution.Configure(pRiskManager, pTradeManager, pAIAdapter);
+      m_symbolCount    = 0;
 
-         PrintFormat("[GRID-RECOVERY] Initialized | gridATR=%.2f | maxLevels=%d | progression=%s | factor=%.2f | hurst=%.2f | slATR=%.1f | tpATR=%.1f | magicOffset=%d | maxDD=%d%% | cooldown=%dms",
-                     m_config.gridFactorATR,
-                     m_config.maxGridLevels,
-                     m_config.progressionType == GRID_PROGRESSION_MARTINGALE ? "MARTINGALE" : "FIBONACCI",
-                     m_config.progressionFactor,
-                     m_config.activationHurstThreshold,
-                     m_config.slAtrMultiplier,
-                     m_config.tpAtrMultiplier,
-                     m_config.magicOffset,
-                     m_config.maxDrawdownPercent,
-                     m_config.cooldownMs);
-         return true;
-      }
+      PrintFormat("[GRID-RECOVERY] Initialized | gridATR=%.2f | maxLevels=%d | progression=%s | factor=%.2f | hurst=%.2f | slATR=%.1f | tpATR=%.1f | magicOffset=%d | maxDD=%d%% | cooldown=%dms",
+                  m_config.gridFactorATR,
+                  m_config.maxGridLevels,
+                  m_config.progressionType == GRID_PROGRESSION_MARTINGALE ? "MARTINGALE" : "FIBONACCI",
+                  m_config.progressionFactor,
+                  m_config.activationHurstThreshold,
+                  m_config.slAtrMultiplier,
+                  m_config.tpAtrMultiplier,
+                  m_config.magicOffset,
+                  m_config.maxDrawdownPercent,
+                  m_config.cooldownMs);
+      return true;
+   }
 
    //+------------------------------------------------------------------+
    //| Add a symbol to monitor for grid recovery                        |
@@ -417,7 +164,7 @@ public:
       }
 
       // Create ATR indicator handle
-      int atrHandle = iATR(symbol, PERIOD_M1, m_config.atrPeriod);
+      int atrHandle = CGridRecoveryAtr::CreateHandle(symbol, m_config.atrPeriod);
       if(atrHandle == INVALID_HANDLE)
       {
          PrintFormat("[GRID-RECOVERY] Failed to create ATR handle for %s", symbol);
@@ -435,12 +182,12 @@ public:
       for(int i = 0; i < m_symbolCount; i++)
          m_symbolStates[i] = tempStates[i];
 
-      ArrayResize(m_atrHandles, newSize);
+      m_atr.Resize(newSize);
 
       // Initialize new slot
       m_symbolStates[m_symbolCount].symbol = symbol;
       InitializeSymbolState(m_symbolCount, symbol);
-      m_atrHandles[m_symbolCount] = atrHandle;
+      m_atr.SetHandle(m_symbolCount, atrHandle);
       m_symbolCount++;
 
       PrintFormat("[GRID-RECOVERY] Symbol added: %s (index=%d atrHandle=%d)",
@@ -453,18 +200,11 @@ public:
    //+------------------------------------------------------------------+
    void Deinit()
    {
-      for(int i = 0; i < m_symbolCount; i++)
-      {
-         if(m_atrHandles[i] != INVALID_HANDLE)
-         {
-            IndicatorRelease(m_atrHandles[i]);
-            m_atrHandles[i] = INVALID_HANDLE;
-         }
-      }
+      m_atr.ReleaseAll(m_symbolCount);
       m_symbolCount = 0;
 
       PrintFormat("[GRID-RECOVERY] Deinitialized | gridsOpened=%d | gridsClosed=%d | levelsPlaced=%d",
-                  m_totalGridsOpened, m_totalGridsClosed, m_totalLevelsPlaced);
+                  m_metrics.TotalGridsOpened(), m_metrics.TotalGridsClosed(), m_metrics.TotalLevelsPlaced());
    }
 
    //+------------------------------------------------------------------+
@@ -491,27 +231,7 @@ public:
       {
          if(ShouldActivateGrid(idx))
          {
-            // Batch 117: Use price SMA (not ATR SMA) for direction determination
-            // Compute 50-bar price SMA to determine mean-reversion direction
-            double midPrice = (bid + ask) / 2.0;
-            double priceSMA = 0;
-            double closes[];
-            ArraySetAsSeries(closes, true);
-            int copied = CopyClose(symbol, PERIOD_CURRENT, 0, 50, closes);
-            if(copied >= 50)
-            {
-               for(int j = 0; j < 50; j++)
-                  priceSMA += closes[j];
-               priceSMA /= 50.0;
-            }
-            else
-               priceSMA = midPrice; // fallback: no direction bias
-
-            int direction = 0;
-            if(midPrice < priceSMA)
-               direction = 1;   // BUY grid — price below SMA, expect reversion up
-            else
-               direction = -1;  // SELL grid — price above SMA, expect reversion down
+            int direction = CGridRecoverySequence::DetermineGridDirection(symbol, bid, ask);
 
             // Open the first grid level
             if(OpenGridLevel(idx, direction, 0))
@@ -519,7 +239,7 @@ public:
                m_symbolStates[idx].direction = direction;
                m_symbolStates[idx].activeLevelCount = 1;
                m_symbolStates[idx].lastGridEntryTime = TimeCurrent();
-               m_totalGridsOpened++;
+               m_metrics.RecordGridOpened();
 
                PrintFormat("[GRID-RECOVERY] Grid activated: %s direction=%s ATR=%.5f atrSMA=%.5f",
                            symbol, direction == 1 ? "BUY" : "SELL", atr, m_symbolStates[idx].atrSMA);
@@ -532,28 +252,7 @@ public:
       ManageGridPositions(idx);
 
       // Check if all levels are in profit (close entire grid)
-      bool allInProfit = true;
-      for(int l = 0; l < m_symbolStates[idx].activeLevelCount; l++)
-      {
-         if(!m_symbolStates[idx].levels[l].isActive || m_symbolStates[idx].levels[l].ticket == 0)
-            continue;
-
-         if(PositionSelectByTicket(m_symbolStates[idx].levels[l].ticket))
-         {
-            double profit = PositionGetDouble(POSITION_PROFIT);
-            if(profit <= 0.0)
-            {
-               allInProfit = false;
-               break;
-            }
-         }
-         else
-         {
-            // Position no longer exists — mark as inactive
-            m_symbolStates[idx].levels[l].isActive = false;
-            m_symbolStates[idx].levels[l].ticket = 0;
-         }
-      }
+      bool allInProfit = CGridRecoverySequence::AllLevelsInProfit(m_symbolStates[idx]);
 
       if(allInProfit && m_symbolStates[idx].activeLevelCount > 0)
       {
@@ -567,160 +266,132 @@ public:
    //| Requires: Hurst regime confirmed, no existing grid, cooldown ok   |
    //+------------------------------------------------------------------+
    bool ShouldActivateGrid(int idx)
+   {
+      // Must have Hurst regime confirmed (mean-reversion)
+      if(!m_symbolStates[idx].hurstRegimeConfirmed)
+         return false;
+
+      // No existing active grid
+      if(m_symbolStates[idx].activeLevelCount > 0)
+         return false;
+
+      // Check cooldown
+      datetime now = TimeCurrent();
+      if(m_symbolStates[idx].lastGridEntryTime > 0)
       {
-         // Must have Hurst regime confirmed (mean-reversion)
-         if(!m_symbolStates[idx].hurstRegimeConfirmed)
+         ulong elapsedMs = (ulong)((now - m_symbolStates[idx].lastGridEntryTime) * 1000);
+         if(elapsedMs < (ulong)m_config.cooldownMs)
             return false;
-
-         // No existing active grid
-         if(m_symbolStates[idx].activeLevelCount > 0)
-            return false;
-
-         // Check cooldown
-         datetime now = TimeCurrent();
-         if(m_symbolStates[idx].lastGridEntryTime > 0)
-         {
-            ulong elapsedMs = (ulong)((now - m_symbolStates[idx].lastGridEntryTime) * 1000);
-            if(elapsedMs < (ulong)m_config.cooldownMs)
-               return false;
-         }
-
-         // Check max drawdown
-         if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
-            return false;
-
-         // L10-003: Equity floor check - don't activate grid if equity below floor
-         double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-         if(currentEquity > 0.0 && m_config.equityFloorPercent > 0.0)
-         {
-            // For initial activation, we use current equity as baseline
-            // The floor will be enforced on subsequent levels via initialEquity
-            double minEquity = currentEquity * (m_config.equityFloorPercent / 100.0);
-            if(currentEquity < minEquity)
-            {
-               PrintFormat("[GRID-RECOVERY] REJECTED: Equity %.2f below floor %.2f%% of baseline",
-                           currentEquity, m_config.equityFloorPercent);
-               return false;
-            }
-         }
-
-         return true;
       }
+
+      // Check max drawdown
+      if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
+         return false;
+
+      // L10-003: Equity floor check - don't activate grid if equity below floor
+      if(!CGridRecoveryDrawdown::PassesActivationEquityFloor(m_config.equityFloorPercent))
+         return false;
+
+      return true;
+   }
 
    //+------------------------------------------------------------------+
    //| Open a grid level order                                           |
    //+------------------------------------------------------------------+
    bool OpenGridLevel(int idx, int direction, int level)
+   {
+      if(level < 0 || level >= m_config.maxGridLevels)
       {
-         if(level < 0 || level >= m_config.maxGridLevels)
+         PrintFormat("[GRID-RECOVERY] Invalid level %d for %s (max=%d)",
+                     level, m_symbolStates[idx].symbol, m_config.maxGridLevels);
+         return false;
+      }
+
+      string symbol = m_symbolStates[idx].symbol;
+      double atr = m_symbolStates[idx].currentATR;
+
+      if(atr <= 0.0)
+      {
+         PrintFormat("[GRID-RECOVERY] ATR is zero for %s — cannot calculate grid", symbol);
+         return false;
+      }
+
+      // Calculate grid spacing
+      double gridSpacing = m_config.gridFactorATR * atr;
+
+      // Calculate entry price
+      double entryPrice = 0.0;
+      if(level == 0)
+      {
+         // First level: use current market price
+         double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+         entryPrice = (direction == 1) ? ask : bid;
+
+         // L10-003: Record initial equity when grid is first activated
+         m_symbolStates[idx].initialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+         PrintFormat("[GRID-RECOVERY] Grid activated for %s | initialEquity=%.2f | floor=%.1f%%",
+                     symbol, m_symbolStates[idx].initialEquity, m_config.equityFloorPercent);
+      }
+      else
+      {
+         // Subsequent levels: offset from previous level entry
+         double prevEntry = m_symbolStates[idx].levels[level - 1].entryPrice;
+         if(prevEntry <= 0.0)
          {
-            PrintFormat("[GRID-RECOVERY] Invalid level %d for %s (max=%d)",
-                        level, m_symbolStates[idx].symbol, m_config.maxGridLevels);
+            PrintFormat("[GRID-RECOVERY] Previous level entry is zero for %s level %d", symbol, level);
             return false;
          }
 
-         string symbol = m_symbolStates[idx].symbol;
-         double atr = m_symbolStates[idx].currentATR;
-
-         if(atr <= 0.0)
-         {
-            PrintFormat("[GRID-RECOVERY] ATR is zero for %s — cannot calculate grid", symbol);
-            return false;
-         }
-
-         // Calculate grid spacing
-         double gridSpacing = m_config.gridFactorATR * atr;
-
-         // Calculate entry price
-         double entryPrice = 0.0;
-         if(level == 0)
-         {
-            // First level: use current market price
-            double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-            double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-            entryPrice = (direction == 1) ? ask : bid;
-
-            // L10-003: Record initial equity when grid is first activated
-            m_symbolStates[idx].initialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-            PrintFormat("[GRID-RECOVERY] Grid activated for %s | initialEquity=%.2f | floor=%.1f%%",
-                        symbol, m_symbolStates[idx].initialEquity, m_config.equityFloorPercent);
-         }
+         // Grid moves against the direction: BUY grid adds levels below, SELL grid above
+         if(direction == 1)
+            entryPrice = prevEntry - gridSpacing;   // BUY grid: lower entries
          else
-         {
-            // Subsequent levels: offset from previous level entry
-            double prevEntry = m_symbolStates[idx].levels[level - 1].entryPrice;
-            if(prevEntry <= 0.0)
-            {
-               PrintFormat("[GRID-RECOVERY] Previous level entry is zero for %s level %d", symbol, level);
-               return false;
-            }
+            entryPrice = prevEntry + gridSpacing;   // SELL grid: higher entries
+      }
 
-            // Grid moves against the direction: BUY grid adds levels below, SELL grid above
-            if(direction == 1)
-               entryPrice = prevEntry - gridSpacing;   // BUY grid: lower entries
-            else
-               entryPrice = prevEntry + gridSpacing;   // SELL grid: higher entries
-         }
+      // L10-003: Equity floor check - stop grid if equity dropped below floor
+      if(!CGridRecoveryDrawdown::PassesLevelEquityFloor(m_symbolStates[idx].initialEquity, m_config.equityFloorPercent, level))
+         return false;
 
-         // L10-003: Equity floor check - stop grid if equity dropped below floor
-         double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-         if(m_symbolStates[idx].initialEquity > 0.0 && m_config.equityFloorPercent > 0.0)
+      // Calculate lot size
+      double baseLot = m_symbolStates[idx].baseLotSize;
+      if(baseLot <= 0.0)
+      {
+         // Calculate base lot using position sizer
+         if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
          {
-            double floorEquity = m_symbolStates[idx].initialEquity * (m_config.equityFloorPercent / 100.0);
-            if(currentEquity < floorEquity)
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            if(point > 0.0)
             {
-               PrintFormat("[GRID-RECOVERY] REJECTED L%d: Equity %.2f below floor %.2f (%.1f%% of initial %.2f)",
-                           level, currentEquity, floorEquity, m_config.equityFloorPercent, m_symbolStates[idx].initialEquity);
-               return false;
+               double slDist = atr * m_config.slAtrMultiplier;
+               double slPips = slDist / point;
+               baseLot = m_positionSizer.CalculatePositionSize(
+                           symbol, slPips, 0.60);
             }
          }
 
-         // Calculate lot size
-         double baseLot = m_symbolStates[idx].baseLotSize;
          if(baseLot <= 0.0)
          {
-            // Calculate base lot using position sizer
-            if(m_positionSizer != NULL && m_positionSizer.IsInitialized())
-            {
-               double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-               if(point > 0.0)
-               {
-                  double slDistance = atr * m_config.slAtrMultiplier;
-                  double slPips = slDistance / point;
-                  baseLot = m_positionSizer.CalculatePositionSize(
-                              symbol, slPips, 0.60);
-               }
-            }
-
-            if(baseLot <= 0.0)
-            {
-               double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-               baseLot = (minLot > 0.0) ? minLot : 0.01;
-            }
-
-            m_symbolStates[idx].baseLotSize = baseLot;
+            double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+            baseLot = (minLot > 0.0) ? minLot : 0.01;
          }
 
-         double lotSize = CalculateGridLot(level, baseLot);
+         m_symbolStates[idx].baseLotSize = baseLot;
+      }
 
-         // L10-003: Cap cumulative lot multiplier to prevent unbounded martingale risk
-         double cumulativeLotRatio = 0.0;
-         for(int l = 0; l <= level; l++)
-         {
-            cumulativeLotRatio += CalculateGridLot(l, baseLot) / baseLot;
-         }
-         if(cumulativeLotRatio > m_config.maxCumulativeLotMultiplier)
-         {
-            PrintFormat("[GRID-RECOVERY] REJECTED L%d: Cumulative lot ratio %.2f exceeds max %.2f (baseLot=%.2f)",
-                        level, cumulativeLotRatio, m_config.maxCumulativeLotMultiplier, baseLot);
-            return false;
-         }
+      double lotSize = CalculateGridLot(level, baseLot);
 
-         // Debug: log lot calculation details
-         PrintFormat("[GRID-RECOVERY-DEBUG] %s L%d | baseLot=%.2f progressionType=%s factor=%.2f rawLot=%.2f cumRatio=%.2f/%.2f",
-                     symbol, level, baseLot,
-                     m_config.progressionType == GRID_PROGRESSION_MARTINGALE ? "MARTINGALE" : "FIBONACCI",
-                     m_config.progressionFactor, lotSize, cumulativeLotRatio, m_config.maxCumulativeLotMultiplier);
+      // L10-003: Cap cumulative lot multiplier to prevent unbounded martingale risk
+      double cumulativeLotRatio = 0.0;
+      if(!CGridRecoveryLevels::PassesCumulativeLotCap(m_config, level, baseLot, cumulativeLotRatio))
+         return false;
+
+      // Debug: log lot calculation details
+      PrintFormat("[GRID-RECOVERY-DEBUG] %s L%d | baseLot=%.2f progressionType=%s factor=%.2f rawLot=%.2f cumRatio=%.2f/%.2f",
+                  symbol, level, baseLot,
+                  m_config.progressionType == GRID_PROGRESSION_MARTINGALE ? "MARTINGALE" : "FIBONACCI",
+                  m_config.progressionFactor, lotSize, cumulativeLotRatio, m_config.maxCumulativeLotMultiplier);
 
       // Normalize and cap lot
       ENUM_ORDER_TYPE orderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -746,71 +417,22 @@ public:
       double tpDistance = m_config.tpAtrMultiplier * gridSpacing;
 
       double sl = 0.0, tp = 0.0;
-      if(direction == 1) // BUY
-      {
-         sl = NormalizeDouble(entryPrice - slDistance, digits);
-         tp = NormalizeDouble(entryPrice + tpDistance, digits);
-      }
-      else // SELL
-      {
-         sl = NormalizeDouble(entryPrice + slDistance, digits);
-         tp = NormalizeDouble(entryPrice - tpDistance, digits);
-      }
+      CGridRecoveryLevels::CalculateStops(direction, entryPrice, slDistance, tpDistance, digits, sl, tp);
 
       // Calculate magic number: baseMagic + magicOffset + symbolIndex * 100 + level
       // FIX: Include level in magic to prevent collision across 8 grid levels
       int magic = m_baseMagic + m_config.magicOffset + idx * 100 + level;
 
       // Pre-trade risk validation via UnifiedRiskManager (AGENTS.md invariant #1)
-      if(m_riskManager != NULL)
-      {
-         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-         double slPips = (point > 0.0) ? (slDistance / point) : 0.0;
-         STradeValidationRequest riskReq;
-         ZeroMemory(riskReq);
-         riskReq.symbol       = symbol;
-         riskReq.orderType    = orderType;
-         riskReq.lotSize      = lotSize;
-         riskReq.stopLossPips = slPips;
-         riskReq.confidence   = 0.6;
-         riskReq.strategy     = "GRID-RECOVERY";
-         riskReq.requestTime  = TimeCurrent();
-
-         SValidationResult riskResult = m_riskManager.ValidateTradeRequest(riskReq, "grid-pretrade");
-         if(!riskResult.approved)
-         {
-            PrintFormat("[GRID-RECOVERY] REJECTED by risk manager | symbol=%s level=%d | reason=%s", symbol, level, riskResult.reason);
-            return false;
-         }
-      }
+      if(!m_execution.PassesRiskValidation(symbol, orderType, lotSize, slDistance, level))
+         return false;
 
       // L10-018: AI-VOTE logging
-      if(m_aiAdapter != NULL)
-      {
-         PrintFormat("[AI-VOTE] symbol=%s strategy=GridRecovery vote=%s",
-                     symbol, direction == 1 ? "BUY" : "SELL");
-      }
+      m_execution.LogAIVote(symbol, direction);
 
-      // L10-014: Use dynamic slippage from TradeManager if available, else fallback
-      uint slippage = 50; // fallback
-      if(m_tradeManager != NULL)
-      {
-         slippage = m_tradeManager.GetDynamicSlippage(symbol);
-      }
-
-      // Set up trade object
-      m_trade.SetExpertMagicNumber(magic);
-      m_trade.SetDeviationInPoints(slippage);
-      m_trade.SetTypeFilling(ORDER_FILLING_IOC);
-
-      // Execute trade
-      bool result = false;
-      string comment = "GRID-RECOVERY|L:" + IntegerToString(level) + "|D:" + IntegerToString(direction);
-
-      if(direction == 1)
-         result = m_trade.Buy(lotSize, symbol, entryPrice, sl, tp, comment);
-      else
-         result = m_trade.Sell(lotSize, symbol, entryPrice, sl, tp, comment);
+      // L10-014: Execute with dynamic slippage from TradeManager if available
+      ulong resultTicket = 0;
+      bool result = m_execution.ExecuteEntry(symbol, direction, level, lotSize, entryPrice, sl, tp, magic, resultTicket);
 
       if(result)
       {
@@ -818,53 +440,14 @@ public:
          m_symbolStates[idx].levels[level].entryPrice  = entryPrice;
          m_symbolStates[idx].levels[level].sl          = sl;
          m_symbolStates[idx].levels[level].tp          = tp;
-         m_symbolStates[idx].levels[level].ticket      = m_trade.ResultOrder();
+         m_symbolStates[idx].levels[level].ticket      = resultTicket;
          m_symbolStates[idx].levels[level].isActive    = true;
          m_symbolStates[idx].lastGridEntryTime         = TimeCurrent();
-         m_totalLevelsPlaced++;
+         m_metrics.RecordLevelPlaced();
 
          // Update total grid risk
          double risk = lotSize * slDistance;
          m_symbolStates[idx].totalGridRisk += risk;
-
-         PrintFormat("[GRID-RECOVERY] Level opened: %s L%d %s lot=%.2f entry=%.5f SL=%.5f TP=%.5f magic=%d",
-                     symbol, level, direction == 1 ? "BUY" : "SELL",
-                     lotSize, entryPrice, sl, tp, magic);
-      }
-      else
-      {
-         uint retcode = m_trade.ResultRetcode();
-         PrintFormat("[GRID-RECOVERY-FAILED] %s L%d %s lot=%.2f retcode=%u | price=%.5f SL=%.5f TP=%.5f magic=%d",
-                     symbol, level, direction == 1 ? "BUY" : "SELL", lotSize, retcode, entryPrice, sl, tp, magic);
-         
-         // Additional debug info for common errors
-         if(retcode == 10016) // ERR_INVALID_VOLUME
-         {
-            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_INVALID_VOLUME: lot=%.2f minVol=%.2f maxVol=%.2f step=%.4f | freeMargin=%.2f leverage=%d",
-                        symbol, lotSize,
-                        SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN),
-                        SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX),
-                        SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP),
-                        AccountInfoDouble(ACCOUNT_MARGIN_FREE),
-                        AccountInfoInteger(ACCOUNT_LEVERAGE));
-         }
-         else if(retcode == 10014) // ERR_INVALID_PRICE
-         {
-            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_INVALID_PRICE: entryPrice=%.5f SL=%.5f TP=%.5f digits=%d",
-                        symbol, entryPrice, sl, tp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS));
-         }
-         else if(retcode == 10008) // ERR_NOT_ENOUGH_MONEY
-         {
-            double usedMargin = 0.0;
-            // ACCOUNT_MARGIN_USED may not be available in all MT5 builds
-            // Fallback: used margin = margin - free margin
-            double totalMargin = AccountInfoDouble(ACCOUNT_MARGIN);
-            double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-            usedMargin = totalMargin - freeMargin;
-            if(usedMargin < 0) usedMargin = 0;
-            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_NOT_ENOUGH_MONEY: lot=%.2f freeMargin=%.2f usedMargin=%.2f totalMargin=%.2f",
-                        symbol, lotSize, freeMargin, usedMargin, totalMargin);
-         }
       }
 
       return result;
@@ -896,28 +479,8 @@ public:
       ulong elapsedMs = (ulong)((now - m_symbolStates[idx].lastGridEntryTime) * 1000);
 
       // Scan active levels and check if we need to add the next one
-      int currentActiveCount = 0;
       int lastActiveLevel = -1;
-
-      for(int l = 0; l < m_symbolStates[idx].activeLevelCount; l++)
-      {
-         if(m_symbolStates[idx].levels[l].isActive)
-         {
-            // Verify position still exists
-            if(m_symbolStates[idx].levels[l].ticket > 0)
-            {
-               if(!PositionSelectByTicket(m_symbolStates[idx].levels[l].ticket))
-               {
-                  // Position closed — mark inactive
-                  m_symbolStates[idx].levels[l].isActive = false;
-                  m_symbolStates[idx].levels[l].ticket = 0;
-                  continue;
-               }
-            }
-            currentActiveCount++;
-            lastActiveLevel = l;
-         }
-      }
+      int currentActiveCount = CGridRecoverySequence::ScanActiveLevels(m_symbolStates[idx], lastActiveLevel);
 
       // If no active levels remain, grid has completed
       if(currentActiveCount == 0 && m_symbolStates[idx].activeLevelCount > 0)
@@ -926,7 +489,7 @@ public:
          m_symbolStates[idx].activeLevelCount = 0;
          m_symbolStates[idx].direction = 0;
          m_symbolStates[idx].totalGridRisk = 0.0;
-         m_totalGridsClosed++;
+         m_metrics.RecordGridClosed();
          return;
       }
 
@@ -939,15 +502,9 @@ public:
             // Check if price has moved against us enough to warrant next level
             double gridSpacing = m_config.gridFactorATR * atr;
             double lastEntry = m_symbolStates[idx].levels[lastActiveLevel].entryPrice;
-            double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-            double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-            double currentPrice = (direction == 1) ? bid : ask;
 
-            bool priceMovedEnough = false;
-            if(direction == 1)
-               priceMovedEnough = (lastEntry - currentPrice >= gridSpacing * 0.8);
-            else
-               priceMovedEnough = (currentPrice - lastEntry >= gridSpacing * 0.8);
+            bool priceMovedEnough = CGridRecoverySequence::HasPriceMovedForNextLevel(
+                                       symbol, direction, lastEntry, gridSpacing);
 
             if(priceMovedEnough)
             {
@@ -967,19 +524,7 @@ public:
    //+------------------------------------------------------------------+
    double CalculateGridLot(int level, double baseLot)
    {
-      if(level == 0)
-         return baseLot;
-
-      if(m_config.progressionType == GRID_PROGRESSION_MARTINGALE)
-      {
-         // Lot = baseLot * (progressionFactor ^ level)
-         return baseLot * MathPow(m_config.progressionFactor, level);
-      }
-      else // GRID_PROGRESSION_FIBONACCI
-      {
-         // Lot = baseLot * fib(level)
-         return baseLot * (double)FibonacciNumber(level);
-      }
+      return CGridRecoveryLevels::CalculateGridLot(m_config, level, baseLot);
    }
 
    //+------------------------------------------------------------------+
@@ -1025,17 +570,10 @@ public:
 
          if(PositionSelectByTicket(m_symbolStates[idx].levels[l].ticket))
          {
-            if(!m_trade.PositionClose(m_symbolStates[idx].levels[l].ticket))
-            {
-               uint retcode = m_trade.ResultRetcode();
-               PrintFormat("[GRID-RECOVERY-CLOSE-FAILED] %s L%d ticket=%I64u retcode=%u",
-                           symbol, l, m_symbolStates[idx].levels[l].ticket, retcode);
+            if(!m_execution.ClosePositionTicket(symbol, l, m_symbolStates[idx].levels[l].ticket))
                allClosed = false;
-            }
             else
-            {
                closedCount++;
-            }
          }
 
          m_symbolStates[idx].levels[l].isActive = false;
@@ -1046,7 +584,7 @@ public:
       m_symbolStates[idx].activeLevelCount = 0;
       m_symbolStates[idx].direction = 0;
       m_symbolStates[idx].totalGridRisk = 0.0;
-      m_totalGridsClosed++;
+      m_metrics.RecordGridClosed();
 
       PrintFormat("[GRID-RECOVERY] Closed grid for %s | closed=%d | allClosed=%s",
                   symbol, closedCount, allClosed ? "true" : "false");
@@ -1059,20 +597,7 @@ public:
    //+------------------------------------------------------------------+
    int GetActiveGridPositions()
    {
-      int count = 0;
-      int total = PositionsTotal();
-      for(int i = 0; i < total; i++)
-      {
-         ulong ticket = PositionGetTicket(i);
-         if(ticket <= 0) continue;
-         if(PositionSelectByTicket(ticket))
-         {
-            string comment = PositionGetString(POSITION_COMMENT);
-            if(StringFind(comment, "GRID-RECOVERY") >= 0)
-               count++;
-         }
-      }
-      return count;
+      return CGridRecoveryMetrics::GetActiveGridPositions();
    }
 
    //+------------------------------------------------------------------+
@@ -1116,9 +641,9 @@ public:
    {
       PrintFormat("[GRID-RECOVERY-DIAG] symbols=%d | gridsOpened=%d | gridsClosed=%d | levelsPlaced=%d | activePositions=%d",
                   m_symbolCount,
-                  m_totalGridsOpened,
-                  m_totalGridsClosed,
-                  m_totalLevelsPlaced,
+                  m_metrics.TotalGridsOpened(),
+                  m_metrics.TotalGridsClosed(),
+                  m_metrics.TotalLevelsPlaced(),
                   GetActiveGridPositions());
 
       for(int i = 0; i < m_symbolCount; i++)

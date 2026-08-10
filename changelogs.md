@@ -2,6 +2,36 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file. Older batch entries (Batch 101 and prior) are archived in [`docs/changelogs_old.md`](docs/changelogs_old.md).
 
+## [Unreleased] - 2026-08-11
+
+### Batch 143: God-Object Decomposition Program — Batch 1 (next5) + Batch 2 (next5b) (2026-08-09 → 2026-08-11)
+
+#### Implementation Summary
+Mechanical God-Object decomposition with **ZERO behavior change** (exact public-signature preservation, thin one-line forwarders, extracted modules own fields by value or as static helpers). Two batches landed:
+
+**Batch 1 — next5 (commit 618dcd7):**
+- `Core/Trading/TradeManager.mqh` 3308 → 2261 (5 `TradeMgr*` modules)
+- `Core/Pipeline/UnifiedSignalPipeline.mqh` 2223 → 918 (6 `SignalPipeline*` modules)
+- `Core/Scalp/FastScalpEngine.mqh` ~1748 → 468 (11 `FastScalp*` modules)
+- `Core/Management/DiagnosticsManager.mqh` 1706 → 897 (5 `DiagMgr*` modules)
+- `Core/Engines/TrendEngine.mqh` 1646 → 911 (7 `Trend*` modules)
+
+**Batch 2 — next5b (this commit):**
+- `Core/Scalp/GridRecoveryEngine.mqh` 1156 → 681 (7 `GridRecovery*` modules)
+- `Core/Scalp/SpikeHunterEngine.mqh` 1150 → 310 (6 `SpikeHunter*` modules)
+- `Core/Engines/StructureEngine.mqh` 1131 → 491 (5 `Structure*` modules)
+- `Core/Engines/MarketAnalysis.mqh` 1102 → 139 (6 `MarketAnalysis*` modules)
+- `Core/Utils/ErrorHandling.mqh` 1038 → 42 (6 `ErrorHandling*` modules)
+
+**Totals:** 10 God Objects decomposed; ~13,300 → ~6,400 lines in the decomposed mains; 64 new focused modules. Every file verified by comment/string-aware delimiter tripwire (35/35 balanced), include-completeness check, and agent `IS_PASS` against 5 structural gates.
+
+#### Known follow-ups
+- `Core/Engines/TrendEngine.mqh`: pre-existing dead branch `bool adxValid = !useAdxModel;` never set true on the healthy-ADX path — flagged, not fixed (no-behavior-change mandate).
+- `Core/Orchestration/EAOrchestrator.mqh` (~3712 LoC) and `Core/Risk/*` managers remain as candidate batches.
+
+#### Files Changed
+- 10 modified main `.mqh` files + 64 new module `.mqh` files (per-file lists above) + this changelog.
+
 ## [Unreleased] - 2026-08-06
 
 ### Batch 140: Phase 4-5 — Strategy Duplication Consolidation + God Object Decomposition (2026-08-05)
