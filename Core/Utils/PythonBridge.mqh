@@ -13,119 +13,29 @@
 #include "ErrorHandling.mqh"
 
 //+------------------------------------------------------------------+
-//| Python Bridge Health State Enum                                  |
+//| Structural decomposition (behaviour unchanged).                  |
+//| This header is a thin coordinator: it aggregates the extracted   |
+//| modules so that every symbol previously declared here remains    |
+//| available to any translation unit including this file, and       |
+//| forwards each public call to the owning module.                  |
+//|                                                                  |
+//|  PyBridgeTypes.mqh     - ENUM_PYTHON_BRIDGE_STATE and the        |
+//|                          SPythonBridgeVersion / HealthStatus /   |
+//|                          Response structures                     |
+//|  PyBridgeProtocol.mqh  - stateless message framing: JSON escape, |
+//|                          scalar extraction, response parsing,    |
+//|                          request building, version validation    |
+//|  PyBridgeTransport.mqh - connection/session state, HTTP          |
+//|                          transport and bridge-state logging      |
+//|  PyBridgeHealth.mqh    - heartbeat, reconnection backoff, server |
+//|                          version negotiation, log throttling     |
+//|  PyBridgeRequests.mqh  - prediction and correlation dispatch     |
 //+------------------------------------------------------------------+
-enum ENUM_PYTHON_BRIDGE_STATE
-{
-   PYTHON_BRIDGE_DISCONNECTED = 0,   // Not connected
-   PYTHON_BRIDGE_CONNECTING   = 1,   // Attempting connection
-   PYTHON_BRIDGE_CONNECTED    = 2,   // Connected and healthy
-   PYTHON_BRIDGE_ERROR        = 3    // Error state
-};
-
-//+------------------------------------------------------------------+
-//| Python Bridge Version Information                                |
-//+------------------------------------------------------------------+
-struct SPythonBridgeVersion
-{
-   string             version;         // Server version string
-   int                major;           // Major version
-   int                minor;           // Minor version
-   int                patch;           // Patch version
-   bool               compatible;      // Is compatible with this client
-   
-   SPythonBridgeVersion()
-   {
-      version = "";
-      major = 0;
-      minor = 0;
-      patch = 0;
-      compatible = false;
-   }
-};
-
-//+------------------------------------------------------------------+
-//| Python Bridge Health Status                                      |
-//+------------------------------------------------------------------+
-struct SPythonBridgeHealthStatus
-{
-   ENUM_PYTHON_BRIDGE_STATE state;    // Connection state
-   bool               connected;       // Is connected
-   bool               healthy;         // Is healthy
-   datetime           last_heartbeat;  // Last successful heartbeat
-   int                reconnect_attempts; // Number of reconnect attempts
-   int                request_count;   // Total requests sent
-   int                success_count;   // Successful requests
-   int                error_count;     // Failed requests
-   string             last_error;      // Last error message
-   SPythonBridgeVersion version;       // Server version info
-   
-   SPythonBridgeHealthStatus()
-   {
-      state = PYTHON_BRIDGE_DISCONNECTED;
-      connected = false;
-      healthy = false;
-      last_heartbeat = 0;
-      reconnect_attempts = 0;
-      request_count = 0;
-      success_count = 0;
-      error_count = 0;
-      last_error = "";
-   }
-};
-
-//+------------------------------------------------------------------+
-//| Python Bridge Response Structure                                 |
-//+------------------------------------------------------------------+
-struct SPythonBridgeResponse
-{
-   bool               success;         // Request successful
-   string             error_message;   // Error message if failed
-   double             buy_prob;        // Buy probability
-   double             sell_prob;       // Sell probability
-   double             hold_prob;       // Hold probability
-   double             lgbm_buy;        // LGBM buy probability
-   double             lgbm_sell;       // LGBM sell probability
-   double             stacker_signal;  // Stacker signal
-   string             ts;              // Timestamp
-   string             mode;            // Response mode
-   double             adapted_features[]; // Adapted features (for doubleadapt)
-   int                family_id;       // Deriv family ID (-1 = universal)
-   string             family_name;     // Family name from Python
-   double             catboost_buy;    // CatBoost buy probability
-   double             catboost_sell;   // CatBoost sell probability
-   double             xgboost_buy;     // XGBoost buy probability
-   double             xgboost_sell;    // XGBoost sell probability
-   double             onnx_buy;        // ONNX buy probability (family-specific)
-   double             onnx_sell;       // ONNX sell probability (family-specific)
-   int                asset_class;     // Asset class ID (-1 = not specified)
-   string             asset_class_name; // Asset class name
-
-   SPythonBridgeResponse()
-   {
-      success = false;
-      error_message = "";
-      buy_prob = 0.0;
-      sell_prob = 0.0;
-      hold_prob = 0.0;
-      lgbm_buy = 0.0;
-      lgbm_sell = 0.0;
-      stacker_signal = 0.0;
-      ts = "";
-      mode = "";
-      ArrayResize(adapted_features, 0);
-      family_id = -1;
-      family_name = "";
-      catboost_buy = 0.0;
-      catboost_sell = 0.0;
-      xgboost_buy = 0.0;
-      xgboost_sell = 0.0;
-      onnx_buy = 0.0;
-      onnx_sell = 0.0;
-      asset_class = -1;
-      asset_class_name = "";
-   }
-};
+#include "PyBridgeTypes.mqh"
+#include "PyBridgeProtocol.mqh"
+#include "PyBridgeTransport.mqh"
+#include "PyBridgeHealth.mqh"
+#include "PyBridgeRequests.mqh"
 
 //+------------------------------------------------------------------+
 //| Python Bridge Class                                              |
@@ -133,38 +43,8 @@ struct SPythonBridgeResponse
 class CPythonBridge
 {
 private:
-   string              m_endpoint;          // Server endpoint (http://host:port)
-   ENUM_PYTHON_BRIDGE_MODE m_mode;          // Bridge mode
-   int                 m_request_timeout;   // Request timeout (ms)
-   int                 m_heartbeat_timeout; // Heartbeat timeout (s)
-   datetime            m_last_heartbeat;    // Last successful heartbeat
-   datetime            m_last_reconnect;    // Last reconnection attempt
-   int                 m_reconnect_attempts;// Number of reconnect attempts
-   int                 m_max_reconnect_attempts; // Max reconnect attempts
-   int                 m_reconnect_backoff; // Reconnect backoff (ms)
-   ENUM_PYTHON_BRIDGE_STATE m_state;        // Current bridge state
-   bool                m_initialized;       // Initialized flag
-   SPythonBridgeVersion m_server_version;   // Server version info
-   int                 m_request_count;     // Total requests count
-   int                 m_success_count;     // Successful requests count
-   int                 m_error_count;       // Failed requests count
-   string              m_last_error;        // Last error message
-   datetime            m_lastNotConfiguredLogTime; // Throttle NOT_CONFIGURED dashboard logs
-   
-   // Internal methods
-   string              EscapeJsonString(const string &str);
-   bool                SendHttpRequest(const string &method, const string &url,
-                                       const string &post_data, string &response);
-   SPythonBridgeResponse ParsePredictionResponse(const string &json_str);
-   void                LogBridgeState(string message, ENUM_ERROR_LEVEL level = ERROR_LEVEL_INFO);
-   bool                ValidateJsonResponse(const string &json_str);
-   bool                ParseVersionResponse(const string &json_str, SPythonBridgeVersion &version);
-   bool                CheckVersionCompatibility(const SPythonBridgeVersion &version);
-
-   // JSON parsing helpers (Phase 6.3 — consolidated from 18+ duplicated patterns)
-   double              ParseJsonDouble(const string &json_str, const string &key);
-   string              ParseJsonString(const string &json_str, const string &key);
-   long                ParseJsonInteger(const string &json_str, const string &key);
+   CPyBridgeTransport  m_transport;         // Endpoint/mode/state/counters + HTTP
+   CPyBridgeHealth     m_health;            // Heartbeat/reconnect/version/throttle
    
 public:
    // Constructor/Destructor
@@ -187,7 +67,7 @@ public:
    
    // Version checking
    bool              CheckVersion();
-   SPythonBridgeVersion GetServerVersion() const { return m_server_version; }
+   SPythonBridgeVersion GetServerVersion() const { return m_health.GetServerVersion(); }
    
    // Prediction methods
    SPythonBridgeResponse Predict(const double &features[], int features_size,
@@ -210,15 +90,15 @@ public:
    bool              FindBestCorrelatedPair(const string symbol, string &bestPair, double &correlation);
    
    // Getters
-   ENUM_PYTHON_BRIDGE_STATE GetState() const { return m_state; }
-   ENUM_PYTHON_BRIDGE_MODE  GetMode() const { return m_mode; }
-   bool              IsConnected() const { return m_state == PYTHON_BRIDGE_CONNECTED; }
-   bool              IsInitialized() const { return m_initialized; }
-   string            GetEndpoint() const { return m_endpoint; }
-   int               GetRequestCount() const { return m_request_count; }
-   int               GetSuccessCount() const { return m_success_count; }
-   int               GetErrorCount() const { return m_error_count; }
-   string            GetLastError() const { return m_last_error; }
+   ENUM_PYTHON_BRIDGE_STATE GetState() const { return m_transport.GetState(); }
+   ENUM_PYTHON_BRIDGE_MODE  GetMode() const { return m_transport.GetMode(); }
+   bool              IsConnected() const { return m_transport.IsConnected(); }
+   bool              IsInitialized() const { return m_transport.IsInitialized(); }
+   string            GetEndpoint() const { return m_transport.GetEndpoint(); }
+   int               GetRequestCount() const { return m_transport.GetRequestCount(); }
+   int               GetSuccessCount() const { return m_transport.GetSuccessCount(); }
+   int               GetErrorCount() const { return m_transport.GetErrorCount(); }
+   string            GetLastError() const { return m_transport.GetLastError(); }
    
    // Utility
    bool              AttemptReconnect();
@@ -226,26 +106,10 @@ public:
 };
 
 //+------------------------------------------------------------------+
-//| Constructor                                                      |
+//| Constructor (module members self-initialize to the same defaults)|
 //+------------------------------------------------------------------+
 CPythonBridge::CPythonBridge()
 {
-   m_endpoint = "http://127.0.0.1:8000";
-   m_mode = PYTHON_BRIDGE_OBSERVE;
-   m_request_timeout = 2000;
-   m_heartbeat_timeout = 30;
-   m_last_heartbeat = 0;
-   m_last_reconnect = 0;
-   m_reconnect_attempts = 0;
-   m_max_reconnect_attempts = 5;
-   m_reconnect_backoff = 2000;
-   m_state = PYTHON_BRIDGE_DISCONNECTED;
-   m_initialized = false;
-   m_request_count = 0;
-   m_success_count = 0;
-   m_error_count = 0;
-   m_last_error = "";
-   m_lastNotConfiguredLogTime = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -266,30 +130,9 @@ bool CPythonBridge::Initialize(const string &endpoint,
                                 int max_reconnect_attempts,
                                 int reconnect_backoff_ms)
 {
-   m_endpoint = endpoint;
-   m_mode = mode;
-   m_request_timeout = request_timeout_ms;
-   m_heartbeat_timeout = heartbeat_timeout_s;
-   m_max_reconnect_attempts = max_reconnect_attempts;
-   m_reconnect_backoff = reconnect_backoff_ms;
-   m_initialized = true;
-   
-   LogBridgeState("Python bridge initialized with endpoint: " + m_endpoint);
-   
-   // Attempt initial health check — skip during init to avoid blocking WebRequest
-   // Health check will happen on first timer tick instead
-   if(m_mode != PYTHON_BRIDGE_OFF)
-   {
-      m_state = PYTHON_BRIDGE_DISCONNECTED;
-      LogBridgeState("Python bridge initialized (health check deferred to timer)");
-   }
-   else
-   {
-      m_state = PYTHON_BRIDGE_DISCONNECTED;
-      LogBridgeState("Python bridge disabled by configuration");
-   }
-   
-   return true;
+   m_transport.Configure(endpoint, mode, request_timeout_ms);
+   m_health.Configure(heartbeat_timeout_s, max_reconnect_attempts, reconnect_backoff_ms);
+   return m_transport.CompleteInitialization();
 }
 
 //+------------------------------------------------------------------+
@@ -297,205 +140,14 @@ bool CPythonBridge::Initialize(const string &endpoint,
 //+------------------------------------------------------------------+
 void CPythonBridge::Shutdown()
 {
-   if(m_initialized)
+   if(m_transport.IsInitialized())
    {
-      LogBridgeState("Python bridge shutting down | requests=" + IntegerToString(m_request_count) + 
-                       " success=" + IntegerToString(m_success_count) + " errors=" + IntegerToString(m_error_count));
+      m_transport.LogShutdown();
       
       // Reset all state
-      m_initialized = false;
-      m_state = PYTHON_BRIDGE_DISCONNECTED;
-      m_endpoint = "";
-      m_mode = PYTHON_BRIDGE_OFF;
-      m_request_timeout = 0;
-      m_heartbeat_timeout = 0;
-      m_last_heartbeat = 0;
-      m_last_reconnect = 0;
-      m_reconnect_attempts = 0;
-      m_max_reconnect_attempts = 0;
-      m_reconnect_backoff = 0;
-      m_request_count = 0;
-      m_success_count = 0;
-      m_error_count = 0;
-      m_last_error = "";
-      m_lastNotConfiguredLogTime = 0;
-      m_server_version.version = "";
-      m_server_version.compatible = false;
+      m_transport.Reset();
+      m_health.Reset();
    }
-}
-
-//+------------------------------------------------------------------+
-//| Escape JSON string                                               |
-//+------------------------------------------------------------------+
-string CPythonBridge::EscapeJsonString(const string &str)
-{
-   string result = str;
-   StringReplace(result, "\\", "\\\\");
-   StringReplace(result, "\"", "\\\"");
-   StringReplace(result, "\n", "\\n");
-   StringReplace(result, "\r", "\\r");
-   StringReplace(result, "\t", "\\t");
-   return result;
-}
-
-//+------------------------------------------------------------------+
-//| Send HTTP request                                                |
-//+------------------------------------------------------------------+
-bool CPythonBridge::SendHttpRequest(const string &method, const string &url,
-                                    const string &post_data, string &response)
-{
-   if(!m_initialized)
-      return false;
-   
-   string headers = "Content-Type: application/json\r\n";
-   uchar request_array[];
-   uchar response_array[];
-   string response_headers;
-   
-   // Convert post data to uchar array (only for POST/PUT with data)
-   if(post_data != "")
-   {
-      if(StringToCharArray(post_data, request_array) < 0)
-         return false;
-      
-      // Trim null terminator
-      ArrayResize(request_array, ArraySize(request_array) - 1);
-   }
-   
-   // Send request
-   int res = WebRequest(method, url, headers, m_request_timeout,
-                       request_array, response_array, response_headers);
-   
-   if(res == -1)
-   {
-      int err = ::GetLastError();
-      LogBridgeState("HTTP request failed: " + IntegerToString(err), ERROR_LEVEL_ERROR);
-      return false;
-   }
-   
-   if(res >= 400)
-   {
-      m_state = PYTHON_BRIDGE_DISCONNECTED;
-      LogBridgeState("HTTP " + IntegerToString(res) + " from " + url, ERROR_LEVEL_ERROR);
-      return false;
-   }
-   
-   // Convert response to string
-   response = CharArrayToString(response_array);
-   return true;
-}
-
-//+------------------------------------------------------------------+
-//| JSON parsing helpers (Phase 6.3 — consolidated from 18+ patterns)|
-//+------------------------------------------------------------------+
-double CPythonBridge::ParseJsonDouble(const string &json_str, const string &key)
-{
-   string searchKey = "\"" + key + "\":";
-   int pos = StringFind(json_str, searchKey);
-   if(pos == -1) { PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 395, __FUNCTION__); return 0.0; }
-
-   string val_str = StringSubstr(json_str, pos + StringLen(searchKey));
-   int end_pos = StringFind(val_str, ",");
-   if(end_pos == -1) end_pos = StringFind(val_str, "}");
-   if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-   return StringToDouble(val_str);
-}
-
-string CPythonBridge::ParseJsonString(const string &json_str, const string &key)
-{
-   string searchKey = "\"" + key + "\":";
-   int pos = StringFind(json_str, searchKey);
-   if(pos == -1) return "";
-
-   int val_start = StringFind(json_str, "\"", pos + StringLen(searchKey));
-   int val_end   = StringFind(json_str, "\"", val_start + 1);
-   if(val_start != -1 && val_end != -1)
-      return StringSubstr(json_str, val_start + 1, val_end - val_start - 1);
-   return "";
-}
-
-long CPythonBridge::ParseJsonInteger(const string &json_str, const string &key)
-{
-   string searchKey = "\"" + key + "\":";
-   int pos = StringFind(json_str, searchKey);
-   if(pos == -1) return 0;
-
-   string val_str = StringSubstr(json_str, pos + StringLen(searchKey));
-   int end_pos = StringFind(val_str, ",");
-   if(end_pos == -1) end_pos = StringFind(val_str, "}");
-   if(end_pos != -1) val_str = StringSubstr(val_str, 0, end_pos);
-   return StringToInteger(val_str);
-}
-
-//+------------------------------------------------------------------+
-//| Parse prediction response JSON                                   |
-//+------------------------------------------------------------------+
-SPythonBridgeResponse CPythonBridge::ParsePredictionResponse(const string &json_str)
-{
-   SPythonBridgeResponse result;
-   
-   if(json_str == "")
-   {
-      result.success = false;
-      result.error_message = "Empty response from server";
-      return result;
-   }
-   
-   // Check for error in response
-   if(StringFind(json_str, "\"error\"") != -1)
-   {
-      result.success = false;
-      result.error_message = ParseJsonString(json_str, "error");
-      if(result.error_message == "")
-         result.error_message = "Unknown error in server response";
-      return result;
-   }
-   
-   result.success = true;
-
-   // Extract numeric fields via consolidated helper (Phase 6.3)
-   result.buy_prob       = ParseJsonDouble(json_str, "buy_prob");
-   result.sell_prob      = ParseJsonDouble(json_str, "sell_prob");
-   result.hold_prob      = ParseJsonDouble(json_str, "hold_prob");
-   result.lgbm_buy       = ParseJsonDouble(json_str, "lgbm_buy");
-   result.lgbm_sell      = ParseJsonDouble(json_str, "lgbm_sell");
-   result.stacker_signal = ParseJsonDouble(json_str, "stacker_signal");
-   result.catboost_buy   = ParseJsonDouble(json_str, "catboost_buy");
-   result.catboost_sell  = ParseJsonDouble(json_str, "catboost_sell");
-   result.xgboost_buy    = ParseJsonDouble(json_str, "xgboost_buy");
-   result.xgboost_sell   = ParseJsonDouble(json_str, "xgboost_sell");
-   result.onnx_buy       = ParseJsonDouble(json_str, "onnx_buy");
-   result.onnx_sell      = ParseJsonDouble(json_str, "onnx_sell");
-
-   // Extract integer fields
-   result.family_id     = (int)ParseJsonInteger(json_str, "family_id");
-   result.asset_class   = (int)ParseJsonInteger(json_str, "asset_class");
-
-   // Extract string fields
-   result.family_name     = ParseJsonString(json_str, "family_name");
-   result.asset_class_name = ParseJsonString(json_str, "asset_class_name");
-   result.ts            = ParseJsonString(json_str, "ts");
-   result.mode          = ParseJsonString(json_str, "mode");
-
-   return result;
-}
-
-//+------------------------------------------------------------------+
-//| Log bridge state                                                 |
-//+------------------------------------------------------------------+
-void CPythonBridge::LogBridgeState(string message, ENUM_ERROR_LEVEL level)
-{
-   string state_str;
-   switch(m_state)
-   {
-      case PYTHON_BRIDGE_DISCONNECTED: state_str = "DISCONNECTED"; break;
-      case PYTHON_BRIDGE_CONNECTING:   state_str = "CONNECTING";   break;
-      case PYTHON_BRIDGE_CONNECTED:    state_str = "CONNECTED";    break;
-      case PYTHON_BRIDGE_ERROR:        state_str = "ERROR";        break;
-   }
-   CEnhancedErrorHandler::LogError((ENUM_ERROR_SEVERITY)level, 
-                                    "PythonBridge [" + state_str + "]", 
-                                    message, 0);
 }
 
 //+------------------------------------------------------------------+
@@ -503,34 +155,7 @@ void CPythonBridge::LogBridgeState(string message, ENUM_ERROR_LEVEL level)
 //+------------------------------------------------------------------+
 bool CPythonBridge::CheckHealth()
 {
-   if(m_mode == PYTHON_BRIDGE_OFF)
-      return false;
-   
-   string response;
-   string healthUrl = m_endpoint + "/health";
-   bool success = SendHttpRequest("GET", healthUrl, "", response);
-   
-   if(success && StringFind(response, "\"status\":\"healthy\"") != -1)
-   {
-      m_last_heartbeat = TimeCurrent();
-      if(m_state != PYTHON_BRIDGE_CONNECTED)
-      {
-         m_state = PYTHON_BRIDGE_CONNECTED;
-         m_reconnect_attempts = 0;
-         LogBridgeState("Python bridge connection restored");
-      }
-      return true;
-   }
-   else
-   {
-      // Handle disconnection
-      if(m_state == PYTHON_BRIDGE_CONNECTED)
-      {
-         m_state = PYTHON_BRIDGE_DISCONNECTED;
-         LogBridgeState("Python bridge disconnected - will attempt reconnection", ERROR_LEVEL_WARNING);
-      }
-      return AttemptReconnect();
-   }
+   return m_health.CheckHealth(m_transport);
 }
 
 //+------------------------------------------------------------------+
@@ -538,33 +163,7 @@ bool CPythonBridge::CheckHealth()
 //+------------------------------------------------------------------+
 bool CPythonBridge::SendHeartbeat()
 {
-   if(m_mode == PYTHON_BRIDGE_OFF)
-      return false;
-   
-   string response;
-   string heartbeatUrl = m_endpoint + "/heartbeat";
-   bool success = SendHttpRequest("GET", heartbeatUrl, "", response);
-   
-   if(success && StringFind(response, "\"status\":\"ok\"") != -1)
-   {
-      m_last_heartbeat = TimeCurrent();
-      if(m_state != PYTHON_BRIDGE_CONNECTED)
-      {
-         m_state = PYTHON_BRIDGE_CONNECTED;
-         m_reconnect_attempts = 0;
-         LogBridgeState("Python bridge connection restored via heartbeat");
-      }
-      return true;
-   }
-   else
-   {
-      if(m_state == PYTHON_BRIDGE_CONNECTED)
-      {
-         m_state = PYTHON_BRIDGE_DISCONNECTED;
-         LogBridgeState("Python bridge heartbeat failed", ERROR_LEVEL_WARNING);
-      }
-      return AttemptReconnect();
-   }
+   return m_health.SendHeartbeat(m_transport);
 }
 
 //+------------------------------------------------------------------+
@@ -572,63 +171,31 @@ bool CPythonBridge::SendHeartbeat()
 //+------------------------------------------------------------------+
 bool CPythonBridge::AttemptReconnect()
 {
-   if(m_mode == PYTHON_BRIDGE_OFF)
-      return false;
-   
-   datetime now = TimeCurrent();
-   
-   // Check backoff
-   if((now - m_last_reconnect) < (m_reconnect_backoff / 1000))
-      return false;
-   
-   // Check max attempts
-   if(m_reconnect_attempts >= m_max_reconnect_attempts)
-   {
-      if(m_state != PYTHON_BRIDGE_ERROR)
-      {
-         // In OBSERVE mode, Python sidecar is optional — stay DISCONNECTED, not ERROR
-         if(m_mode == PYTHON_BRIDGE_OBSERVE)
-         {
-            m_state = PYTHON_BRIDGE_DISCONNECTED;
-            LogBridgeState("Max reconnection attempts reached - Python sidecar not available (OBSERVE mode, using local AI fallback)", ERROR_LEVEL_WARNING);
-         }
-         else
-         {
-            m_state = PYTHON_BRIDGE_ERROR;
-            LogBridgeState("Max reconnection attempts reached - using local AI fallback", ERROR_LEVEL_ERROR);
-         }
-      }
-      return false;
-   }
-   
-   m_last_reconnect = now;
-   m_reconnect_attempts++;
-   m_state = PYTHON_BRIDGE_CONNECTING;
-   
-   string reconnectMsg = "Attempting reconnection (" + IntegerToString(m_reconnect_attempts) + 
-                         "/" + IntegerToString(m_max_reconnect_attempts) + ")...";
-   LogBridgeState(reconnectMsg);
-   
-   // Try health check
-   string response;
-   string healthUrl = m_endpoint + "/health";
-   bool success = SendHttpRequest("GET", healthUrl, "", response);
-   
-   if(success && StringFind(response, "\"status\":\"healthy\"") != -1)
-   {
-      m_state = PYTHON_BRIDGE_CONNECTED;
-      m_reconnect_attempts = 0;
-      m_last_heartbeat = now;
-      LogBridgeState("Reconnection successful!");
-      return true;
-   }
-   else
-   {
-      // Exponential backoff
-      m_reconnect_backoff = MathMin(m_reconnect_backoff * 2, 30000);
-      m_state = PYTHON_BRIDGE_DISCONNECTED;
-      return false;
-   }
+   return m_health.AttemptReconnect(m_transport);
+}
+
+//+------------------------------------------------------------------+
+//| Check server version                                             |
+//+------------------------------------------------------------------+
+bool CPythonBridge::CheckVersion()
+{
+   return m_health.CheckVersion(m_transport);
+}
+
+//+------------------------------------------------------------------+
+//| Get health status                                                 |
+//+------------------------------------------------------------------+
+SPythonBridgeHealthStatus CPythonBridge::GetHealthStatus()
+{
+   return m_health.GetHealthStatus(m_transport);
+}
+
+//+------------------------------------------------------------------+
+//| Should log NOT_CONFIGURED dashboard entry (throttled to 300s)    |
+//+------------------------------------------------------------------+
+bool CPythonBridge::ShouldLogNotConfigured()
+{
+   return m_health.ShouldLogNotConfigured();
 }
 
 //+------------------------------------------------------------------+
@@ -641,60 +208,8 @@ SPythonBridgeResponse CPythonBridge::Predict(const double &features[], int featu
                                               int asset_class,
                                               const string asset_class_name)
 {
-   SPythonBridgeResponse result;
-   
-   // Check if bridge is available
-   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized)
-   {
-      result.success = false;
-      result.error_message = "Python bridge disabled";
-      return result;
-   }
-   
-   // Check health first
-   if(!CheckHealth())
-   {
-      result.success = false;
-      result.error_message = "Python bridge not available";
-      return result;
-   }
-   
-   // Build JSON request
-   string json = "{\"features\":[";
-   for(int i = 0; i < features_size; i++)
-   {
-      if(i > 0) json += ",";
-      json += DoubleToString(features[i], 10);
-   }
-   json += "],\"mode\":\"" + EscapeJsonString(mode) + "\"";
-   if(family_id >= 0)
-      json += ",\"family_id\":" + IntegerToString(family_id);
-   if(symbol != "")
-      json += ",\"symbol\":\"" + EscapeJsonString(symbol) + "\"";
-   // Batch 103: Multi-asset class routing
-   if(asset_class >= 0)
-      json += ",\"asset_class\":" + IntegerToString(asset_class);
-   if(asset_class_name != "")
-      json += ",\"asset_class_name\":\"" + EscapeJsonString(asset_class_name) + "\"";
-   json += "}";
-   
-   // Send request
-   string response;
-   string requestUrl = m_endpoint + "/predict";
-   if(SendHttpRequest("POST", requestUrl, json, response))
-   {
-      result = ParsePredictionResponse(response);
-      if(result.success)
-         m_last_heartbeat = TimeCurrent();
-   }
-   else
-   {
-      result.success = false;
-      result.error_message = "Failed to send prediction request";
-      m_state = PYTHON_BRIDGE_DISCONNECTED;
-   }
-   
-   return result;
+   return CPyBridgeRequests::Predict(m_transport, m_health, features, features_size, mode,
+                                     family_id, symbol, asset_class, asset_class_name);
 }
 
 //+------------------------------------------------------------------+
@@ -702,7 +217,7 @@ SPythonBridgeResponse CPythonBridge::Predict(const double &features[], int featu
 //+------------------------------------------------------------------+
 SPythonBridgeResponse CPythonBridge::PredictDoubleAdapt(const double &features[], int features_size)
 {
-   return Predict(features, features_size, "doubleadapt");
+   return CPyBridgeRequests::PredictDoubleAdapt(m_transport, m_health, features, features_size);
 }
 
 //+------------------------------------------------------------------+
@@ -710,7 +225,7 @@ SPythonBridgeResponse CPythonBridge::PredictDoubleAdapt(const double &features[]
 //+------------------------------------------------------------------+
 SPythonBridgeResponse CPythonBridge::PredictMamlPpo(const double &features[], int features_size)
 {
-   return Predict(features, features_size, "maml_ppo");
+   return CPyBridgeRequests::PredictMamlPpo(m_transport, m_health, features, features_size);
 }
 
 //+------------------------------------------------------------------+
@@ -719,7 +234,8 @@ SPythonBridgeResponse CPythonBridge::PredictMamlPpo(const double &features[], in
 SPythonBridgeResponse CPythonBridge::PredictFamily(const double &features[], int features_size,
                                                     int family_id, const string symbol)
 {
-   return Predict(features, features_size, "ensemble", family_id, symbol);
+   return CPyBridgeRequests::PredictFamily(m_transport, m_health, features, features_size,
+                                           family_id, symbol);
 }
 
 //+------------------------------------------------------------------+
@@ -729,300 +245,30 @@ SPythonBridgeResponse CPythonBridge::PredictMultiAsset(const double &features[],
                                                         int asset_class, const string asset_class_name,
                                                         int family_id, const string symbol)
 {
-   return Predict(features, features_size, "ensemble", family_id, symbol, asset_class, asset_class_name);
-}
-
-//+------------------------------------------------------------------+
-//| Validate JSON response                                           |
-//+------------------------------------------------------------------+
-bool CPythonBridge::ValidateJsonResponse(const string &json_str)
-{
-   if(json_str == "")
-      return false;
-   
-   // Basic JSON validation - check for balanced braces
-   int brace_count = 0;
-   int bracket_count = 0;
-   int quote_count = 0;
-   bool in_string = false;
-   
-   for(int i = 0; i < StringLen(json_str); i++)
-   {
-      ushort c = StringGetCharacter(json_str, i);
-      
-      if(c == '"' && (i == 0 || StringGetCharacter(json_str, i-1) != '\\'))
-         in_string = !in_string;
-      
-      if(in_string)
-         continue;
-      
-      if(c == '{') brace_count++;
-      if(c == '}') brace_count--;
-      if(c == '[') bracket_count++;
-      if(c == ']') bracket_count--;
-      
-      if(brace_count < 0 || bracket_count < 0)
-         return false;
-   }
-   
-   return (brace_count == 0 && bracket_count == 0 && !in_string);
-}
-
-//+------------------------------------------------------------------+
-//| Parse version response                                           |
-//+------------------------------------------------------------------+
-bool CPythonBridge::ParseVersionResponse(const string &json_str, SPythonBridgeVersion &version)
-{
-   if(!ValidateJsonResponse(json_str))
-      return false;
-
-   // Extract version string
-   version.version = ParseJsonString(json_str, "version");
-   
-   // Parse version components
-   if(version.version != "")
-   {
-      string parts[];
-      int parts_count = StringSplit(version.version, '.', parts);
-      if(parts_count >= 1) version.major = (int)StringToInteger(parts[0]);
-      if(parts_count >= 2) version.minor = (int)StringToInteger(parts[1]);
-      if(parts_count >= 3) version.patch = (int)StringToInteger(parts[2]);
-   }
-   
-   // Check compatibility
-   version.compatible = CheckVersionCompatibility(version);
-   
-   return true;
-}
-
-//+------------------------------------------------------------------+
-//| Check version compatibility                                      |
-//+------------------------------------------------------------------+
-bool CPythonBridge::CheckVersionCompatibility(const SPythonBridgeVersion &version)
-{
-   const int REQUIRED_MAJOR = 1;
-   const int REQUIRED_MINOR = 0;
-   
-   // Major version must match
-   if(version.major != REQUIRED_MAJOR)
-      return false;
-   
-   // Minor version must be >= required
-   if(version.minor < REQUIRED_MINOR)
-      return false;
-   
-   return true;
-}
-
-//+------------------------------------------------------------------+
-//| Check server version                                             |
-//+------------------------------------------------------------------+
-bool CPythonBridge::CheckVersion()
-{
-   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized)
-      return false;
-   
-   string response;
-   string versionUrl = m_endpoint + "/version";
-   if(SendHttpRequest("GET", versionUrl, "", response))
-   {
-      if(ParseVersionResponse(response, m_server_version))
-      {
-         if(m_server_version.compatible)
-         {
-            LogBridgeState("Python bridge version OK: " + m_server_version.version);
-            return true;
-         }
-         else
-         {
-            LogBridgeState("Python bridge version incompatible! Required: " + 
-                          IntegerToString(1) + "." + IntegerToString(0) + 
-                          ", Got: " + m_server_version.version, ERROR_LEVEL_ERROR);
-            m_state = PYTHON_BRIDGE_ERROR;
-            return false;
-         }
-      }
-   }
-   
-   LogBridgeState("Failed to check Python bridge version", ERROR_LEVEL_WARNING);
-   return false;
-}
-
-//+------------------------------------------------------------------+
-//| Get health status                                                 |
-//+------------------------------------------------------------------+
-SPythonBridgeHealthStatus CPythonBridge::GetHealthStatus()
-{
-   SPythonBridgeHealthStatus status;
-   
-   status.state = m_state;
-   status.connected = IsConnected();
-   status.healthy = (m_state == PYTHON_BRIDGE_CONNECTED && 
-                     (TimeCurrent() - m_last_heartbeat) < m_heartbeat_timeout);
-   status.last_heartbeat = m_last_heartbeat;
-   status.reconnect_attempts = m_reconnect_attempts;
-   status.request_count = m_request_count;
-   status.success_count = m_success_count;
-   status.error_count = m_error_count;
-   status.last_error = m_last_error;
-   status.version = m_server_version;
-   
-   return status;
+   return CPyBridgeRequests::PredictMultiAsset(m_transport, m_health, features, features_size,
+                                               asset_class, asset_class_name, family_id, symbol);
 }
 
 //+------------------------------------------------------------------+
 //| ENHANCEMENT: Get Correlation Matrix (Batch 93 - Week 4)          |
-//| Fetches correlation matrix from Python server                    |
-//| Returns flattened matrix (row-major order): matrix[i*size + j]   |
 //+------------------------------------------------------------------+
 bool CPythonBridge::GetCorrelationMatrix(double &corrMatrix[], int &size, string &symbols[])
 {
-   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected())
-      return false;
-   
-   // Request correlation matrix from Python endpoint
-   string response;
-   string corrUrl = m_endpoint + "/correlation_matrix";
-   
-   if(!SendHttpRequest("GET", corrUrl, "", response))
-   {
-      m_last_error = "Failed to fetch correlation matrix";
-      m_error_count++;
-      return false;
-   }
-   
-   // Parse JSON response containing correlation matrix
-   // Expected format: {"symbols": ["Vol75", "Vol100", ...], "matrix": [[1.0, 0.85, ...], ...]}
-   // For now, parse what we can and return partial results
-   if(StringFind(response, "\"matrix\"") != -1)
-   {
-      // Matrix endpoint returned data — extract symbol count
-      int symPos = StringFind(response, "\"symbols\"");
-      if(symPos != -1)
-      {
-         // Count symbols by counting commas in the array
-         int arrStart = StringFind(response, "[", symPos);
-         int arrEnd = StringFind(response, "]", arrStart);
-         if(arrStart != -1 && arrEnd != -1)
-         {
-            string arrStr = StringSubstr(response, arrStart + 1, arrEnd - arrStart - 1);
-            int symCount = 1;
-            for(int c = 0; c < StringLen(arrStr); c++)
-               if(StringGetCharacter(arrStr, c) == ',') symCount++;
-
-            PrintFormat("[PYTHON-BRIDGE] Correlation matrix received: %d symbols", symCount);
-            // Full matrix parsing would be complex; log success and return true
-            // so callers know the endpoint works
-            m_last_error = "";
-            return true;
-         }
-      }
-   }
-
-   m_last_error = "Correlation matrix endpoint returned no parseable data";
-   return false;
+   return CPyBridgeRequests::GetCorrelationMatrix(m_transport, corrMatrix, size, symbols);
 }
 
 //+------------------------------------------------------------------+
 //| ENHANCEMENT: Get Pair Correlation (Batch 93 - Week 4)            |
-//| Returns correlation between two symbols                          |
 //+------------------------------------------------------------------+
 double CPythonBridge::GetPairCorrelation(const string symbol1, const string symbol2)
 {
-   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected()) {
-       PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 933, __FUNCTION__);
-      return 0.0;
-   }
-   
-   // Request specific pair correlation
-   string response;
-   string corrUrl = m_endpoint + "/correlation?symbol1=" + symbol1 + "&symbol2=" + symbol2;
-   
-   if(SendHttpRequest("GET", corrUrl, "", response))
-   {
-      // Parse JSON response {"correlation": 0.85}
-      if(StringFind(response, "\"correlation\":") != -1)
-      {
-         double corr = ParseJsonDouble(response, "correlation");
-         if(corr >= -1.0 && corr <= 1.0)
-         {
-            PrintFormat("[PYTHON-BRIDGE] Pair correlation: %s/%s = %.4f", symbol1, symbol2, corr);
-            return corr;
-         }
-      }
-      // Fallback: check for error
-      if(StringFind(response, "\"error\"") != -1)
-         PrintFormat("[PYTHON-BRIDGE] Pair correlation error for %s/%s", symbol1, symbol2);
-   }
-   
-   PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 956, __FUNCTION__);
-   return 0.0;
+   return CPyBridgeRequests::GetPairCorrelation(m_transport, symbol1, symbol2);
 }
 
 //+------------------------------------------------------------------+
 //| ENHANCEMENT: Find Best Correlated Pair (Batch 93 - Week 4)       |
-//| Finds the most highly correlated symbol for a given symbol       |
 //+------------------------------------------------------------------+
 bool CPythonBridge::FindBestCorrelatedPair(const string symbol, string &bestPair, double &correlation)
 {
-   if(m_mode == PYTHON_BRIDGE_OFF || !m_initialized || !IsConnected())
-   {
-      bestPair = "";
-      correlation = 0.0;
-      return false;
-   }
-   
-   // Request best pair from Python
-   string response;
-   string bestPairUrl = m_endpoint + "/best_pair?symbol=" + symbol;
-   
-   if(SendHttpRequest("GET", bestPairUrl, "", response))
-   {
-      // Parse JSON response {"best_pair": "Vol100", "correlation": 0.92}
-      string foundPair = "";
-      double foundCorr = 0.0;
-      bool parsed = false;
-
-      // Extract best_pair
-      if(StringFind(response, "\"best_pair\":") != -1)
-      {
-         foundPair = ParseJsonString(response, "best_pair");
-         if(StringLen(foundPair) > 0) parsed = true;
-      }
-
-      // Extract correlation
-      if(StringFind(response, "\"correlation\":") != -1)
-         foundCorr = ParseJsonDouble(response, "correlation");
-
-      if(parsed && StringLen(foundPair) > 0 && foundCorr >= -1.0 && foundCorr <= 1.0)
-      {
-         bestPair = foundPair;
-         correlation = foundCorr;
-         PrintFormat("[PYTHON-BRIDGE] Best pair for %s: %s (corr=%.4f)", symbol, bestPair, correlation);
-         return true;
-      }
-
-      // Fallback: check for error
-      if(StringFind(response, "\"error\"") != -1)
-         PrintFormat("[PYTHON-BRIDGE] Best pair error for %s", symbol);
-   }
-   
-   bestPair = "";
-   correlation = 0.0;
-   return false;
+   return CPyBridgeRequests::FindBestCorrelatedPair(m_transport, symbol, bestPair, correlation);
 }
-
-//+------------------------------------------------------------------+
-//| Should log NOT_CONFIGURED dashboard entry (throttled to 300s)    |
-//+------------------------------------------------------------------+
-bool CPythonBridge::ShouldLogNotConfigured()
-{
-   datetime now = TimeCurrent();
-   if(m_lastNotConfiguredLogTime == 0 || (now - m_lastNotConfiguredLogTime) >= 300)
-   {
-      m_lastNotConfiguredLogTime = now;
-      return true;
-   }
-   return false;
-}
-
