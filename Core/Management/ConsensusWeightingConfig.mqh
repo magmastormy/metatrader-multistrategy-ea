@@ -149,21 +149,21 @@ void CConsensusWeightingConfig::ApplyQuorumProfile(const int profile)
     switch(profile)
     {
         case QUORUM_PROFILE_CONSERVATIVE:
-            m_src.SetMinQuorum(3);
-            m_src.SetQuorumThreshold(0.65);
-            m_src.SetSupportFloors(0.40, 0.35);
+            m_src.SetMinQuorum(2);
+            m_src.SetQuorumThreshold(0.60);
+            m_src.SetSupportFloors(0.35, 0.30);
             m_src.SetIntrabarDynamicQuorumEnabled(true);
             break;
         case QUORUM_PROFILE_BALANCED:
             m_src.SetMinQuorum(1);
-            m_src.SetQuorumThreshold(0.55);
-            m_src.SetSupportFloors(0.30, 0.25);
+            m_src.SetQuorumThreshold(0.50);
+            m_src.SetSupportFloors(0.25, 0.20);
             m_src.SetIntrabarDynamicQuorumEnabled(true);
             break;
         case QUORUM_PROFILE_AGGRESSIVE:
             m_src.SetMinQuorum(1);
-            m_src.SetQuorumThreshold(0.50);
-            m_src.SetSupportFloors(0.20, 0.15);
+            m_src.SetQuorumThreshold(0.45);
+            m_src.SetSupportFloors(0.15, 0.10);
             m_src.SetIntrabarDynamicQuorumEnabled(false);
             break;
     }

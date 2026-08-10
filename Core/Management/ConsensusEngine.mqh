@@ -838,8 +838,8 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
         }
     }
 
-    buyQuorum = MathMax(0.35, MathMin(0.85, baseQuorumThreshold + qualityAdjustmentBuy));
-    sellQuorum = MathMax(0.35, MathMin(0.85, baseQuorumThreshold + qualityAdjustmentSell));
+    buyQuorum = MathMax(0.30, MathMin(0.80, baseQuorumThreshold + qualityAdjustmentBuy));
+    sellQuorum = MathMax(0.30, MathMin(0.80, baseQuorumThreshold + qualityAdjustmentSell));
 
     // Log quorum parameters for diagnostics
     PrintFormat("[CONSENSUS-QUORUM] %s | mode=%s | minVoters=%d | supportFloor=%.2f | qualityThresh=%.2f | buyQuorum=%.2f | sellQuorum=%.2f",

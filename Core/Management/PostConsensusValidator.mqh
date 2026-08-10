@@ -382,18 +382,27 @@ bool CPostConsensusValidator::CheckOFIConfirmation(const string symbol,
         return true;
     }
 
-    // 4. OFI directional but contradicts consensus -> veto
+    // 4. OFI directional but strongly contradicts consensus -> veto.
+    //    Mild contradictions (|ofi_z| < 1.0) no longer hard-kill the trade
+    //    (openness refinement): only a statistically-significant OFI
+    //    divergence vetoes the signal.
     if(ofiSignal != signal)
     {
         double ofiValue = ofiEngine.GetOFI();
-        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=ofi_contradiction | signal=%s conf=%.2f | ofi=%s ofi_z=%.2f",
+        if(MathAbs(ofiValue) >= 1.0)
+        {
+            PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=ofi_contradiction | signal=%s conf=%.2f | ofi=%s ofi_z=%.2f",
+                        symbol, EnumToString(signal), confidence, EnumToString(ofiSignal), ofiValue);
+            PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=ofi_contradiction | consensus=%s ofi=%s ofi_z=%.2f | conf=%.2f",
+                        scanCycleId, symbol, EnumToString(signal), EnumToString(ofiSignal), ofiValue, confidence);
+            return false;
+        }
+        // Mild OFI contradiction: allow the trade, just record it.
+        PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=ofi_mild_contradiction_allowed | signal=%s conf=%.2f | ofi=%s ofi_z=%.2f",
                     symbol, EnumToString(signal), confidence, EnumToString(ofiSignal), ofiValue);
-        PrintFormat("[SIGNAL-REJECTED] cycle=%I64u | %s | reason=ofi_contradiction | consensus=%s ofi=%s ofi_z=%.2f | conf=%.2f",
-                    scanCycleId, symbol, EnumToString(signal), EnumToString(ofiSignal), ofiValue, confidence);
-        return false;
     }
 
-    // OFI agrees with consensus or is same direction
+    // OFI agrees with consensus, is neutral, or only mildly contradicts
     return true;
 }
 

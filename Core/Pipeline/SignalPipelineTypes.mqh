@@ -166,7 +166,7 @@ struct SConfidenceSettings
     double minConfidence;
     double intrabarConfidenceCap;
     
-    SConfidenceSettings() : minConfidence(0.40), intrabarConfidenceCap(0.05) {}
+    SConfidenceSettings() : minConfidence(0.35), intrabarConfidenceCap(0.05) {}
     
     bool Validate() const
     {
@@ -275,7 +275,7 @@ struct SignalFilterSettings
                 structure.enabled = true;
                 session.enableTimeFilter = true; session.enableSessionFilter = true;
                 regimeCostGate.enabled = true; regimeCostGate.maxSpreadToAtrRatio = 0.15; regimeCostGate.maxEntryRangeZScore = 2.0;
-                confidence.minConfidence = 0.55; confidence.intrabarConfidenceCap = 0.03;
+                confidence.minConfidence = 0.45; confidence.intrabarConfidenceCap = 0.03;
                 break;
                 
             case FILTER_PRESET_BALANCED:

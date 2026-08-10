@@ -4,6 +4,27 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 
 ## [Unreleased] - 2026-08-11
 
+### Batch 144: God-Object Decomposition — next5c + Strategy Openness Refinement (2026-08-11)
+
+#### Decomposition — next5c (commit e483d5b)
+Mechanical God-Object decomposition, zero behavior change:
+- `Core/Scalp/ATRScalpingEngine.mqh` 836 → 326 (7 `ATRScalp*` modules)
+- `Core/Monitoring/PerformanceAnalytics.mqh` 946 → 474 (5 `PerfAnalytics*` modules)
+- `Core/Utils/PythonBridge.mqh` 1028 → 274 (5 `PyBridge*` modules)
+- `Core/Utils/DashboardBridge.mqh` 950 → 215 (5 `DashBridge*` modules)
+- `Core/Engines/RegimeEngine.mqh` 925 → 390 (7 `Regime*` modules)
+- Added explicit 0-warnings/0-errors discipline to the extraction pattern (one agent confirmed a real MetaEditor compile: 0 errors, 0 warnings).
+
+#### Strategy Openness Refinement (behavior change — makes entry gating LESS strict)
+Preserves the risk gate (`CUnifiedRiskManager` pre-trade) and the ATR-crisis volatility gate. Loosens only the consensus / confidence / OFI gates:
+- `Core/Management/ConsensusWeightingConfig.mqh`: lowered quorum thresholds + support floors across all profiles (balanced 0.55→0.50; conservative minQuorum 3→2, threshold 0.65→0.60; aggressive 0.50→0.45). EA defaults to BALANCED, so the active threshold drops 0.55→0.50.
+- `Core/Management/ConsensusEngine.mqh`: effective quorum clamp 0.35/0.85 → 0.30/0.80 (quorum can never become over-strict).
+- `Core/Pipeline/SignalPipelineTypes.mqh`: default `minConfidence` 0.40→0.35; trend-mode floor 0.55→0.45 (opens trend trades).
+- `Core/Management/PostConsensusValidator.mqh`: OFI hard-veto softened — only a STRONG contradiction (|ofi_z| ≥ 1.0) vetoes; a mild contradiction is now logged and allowed.
+
+#### Files Changed
+- 5 modified next5c mains + 30 new modules + 4 strategy-refinement files + this changelog.
+
 ### Batch 143: God-Object Decomposition Program — Batch 1 (next5) + Batch 2 (next5b) (2026-08-09 → 2026-08-11)
 
 #### Implementation Summary
