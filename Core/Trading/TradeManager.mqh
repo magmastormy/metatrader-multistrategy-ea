@@ -39,9 +39,16 @@
 #include "TradeStatsTracker.mqh"
 // Phase D T3: position SL/TP state registry extracted out of this file
 #include "PositionStateTracker.mqh"
-
-
-
+// Phase D T4: TradeManager God-Object split — stateless price/risk math,
+// per-symbol CTrade registry, deferred confirmation queue, send preflight
+// and the async (OrderSendAsync) executor now live in their own modules.
+// Included ABOVE the class body because CTradeManager holds the stateful
+// ones BY VALUE and therefore needs their complete types.
+#include "TradeMgrPricing.mqh"
+#include "TradeMgrSymbolTradeRegistry.mqh"
+#include "TradeMgrConfirmationQueue.mqh"
+#include "TradeMgrPreflight.mqh"
+#include "TradeMgrAsyncExecutor.mqh"
 
 
 // Forward declarations
@@ -51,38 +58,17 @@ class CPositionSizer;
 class CTradeManager;
 class CPerformanceAnalytics;
 
-// Pending confirmation tracking for non-blocking execution
-struct SPendingConfirmation
-{
-    ulong    orderTicket;
-    string   symbol;
-    double   expectedPrice;
-    datetime sentAt;
-    int      checkAttempts;
-    bool     isActive;
-};
+// Phase D T4: SPendingConfirmation + MAX_PENDING_CONFIRMATIONS moved to
+// CTradeMgrConfirmationQueue (Core/Trading/TradeMgrConfirmationQueue.mqh).
 
 // Trade execution settings
 #define MAX_TRADE_RETRIES 4
 #define TRADE_RETRY_DELAY 150 // ms
 #define MAX_ORDERS_PER_SYMBOL 5
 #define ORDER_TIMEOUT_SECONDS 30
-#define MAX_PENDING_CONFIRMATIONS 20
 
-// Per-symbol magic offset for family-specific magic number differentiation
-struct SSymbolMagicOffset
-{
-    string   symbol;
-    long     magicOffset;
-    bool     hasOffset;
-
-    SSymbolMagicOffset()
-    {
-        symbol      = "";
-        magicOffset = 0;
-        hasOffset   = false;
-    }
-};
+// Phase D T4: SSymbolMagicOffset moved to CTradeMgrSymbolTradeRegistry
+// (Core/Trading/TradeMgrSymbolTradeRegistry.mqh).
 
 //+------------------------------------------------------------------+
 //| Trade Manager Class                                            |
@@ -97,15 +83,11 @@ private:
     CHistoryOrderInfo m_historyOrderInfo;    // History order info
     CSessionManager m_sessionManager;        // Session manager object
 
-    // Per-symbol CTrade instances to avoid race conditions in multi-symbol trading (L10-013)
-    struct SSymbolTradeObject {
-        string symbol;
-        CTrade trade;
-        bool initialized;
-        SSymbolTradeObject() : symbol(""), trade(), initialized(false) {}
-    };
-    SSymbolTradeObject m_symbolTrades[];
-    int m_symbolTradeCount;
+    // Per-symbol CTrade instances to avoid race conditions in multi-symbol
+    // trading (L10-013) — Phase D T4: state owned by
+    // CTradeMgrSymbolTradeRegistry, which also owns the magic-offset table
+    // and the EA-owned position ticket cache.
+    CTradeMgrSymbolTradeRegistry m_symbolRegistry;
 
     // Dependencies (owned externally)
     CPerformanceAnalytics* m_perfAnalytics;  // Performance analytics
@@ -155,13 +137,13 @@ private:
     CATRCache m_atrCache;
 
     // Pending confirmation tracking for non-blocking execution
-    SPendingConfirmation m_pendingConfirmations[MAX_PENDING_CONFIRMATIONS];
-    int m_pendingConfirmationCount;
+    // Phase D T4: state owned by CTradeMgrConfirmationQueue
+    // (Core/Trading/TradeMgrConfirmationQueue.mqh)
+    CTradeMgrConfirmationQueue m_confirmationQueue;
 
-    // Async trade execution tracking
-    SAsyncTradeRequest m_pendingAsyncTrades[];  // Dynamic array of pending async confirmations
-    int                m_maxPendingAsync;        // Maximum pending async trades (default 10)
-    bool               m_asyncModeEnabled;       // Whether async mode is active
+    // Async trade execution tracking — Phase D T4: state owned by
+    // CTradeMgrAsyncExecutor (Core/Trading/TradeMgrAsyncExecutor.mqh)
+    CTradeMgrAsyncExecutor m_asyncExecutor;
 
     // Trade execution state
     MqlTradeResult m_lastTradeResult;        // Result of the last trade operation
@@ -173,8 +155,8 @@ private:
     STradeExecutionReceipt m_lastExecutionReceipt;
 
     // EA-owned position ticket cache for O(1) position management (L12-008)
-    ulong m_eaOwnedPositionTickets[];
-    int m_eaOwnedPositionCount;
+    // Phase D T4: state owned by CTradeMgrSymbolTradeRegistry
+    // (m_symbolRegistry).
 
     // Order tracking
     struct PendingOrder {
@@ -196,8 +178,8 @@ private:
     CPositionStateTracker m_positionStateTracker;
 
     // Per-symbol magic offset for family-specific magic number differentiation
-        SSymbolMagicOffset m_magicOffsets[];
-        int m_magicOffsetCount;
+        // Phase D T4: state owned by CTradeMgrSymbolTradeRegistry
+        // (m_symbolRegistry).
 
         // L10-005: Account margin mode caching (hedging/netting compliance)
         ENUM_ACCOUNT_MARGIN_MODE m_accountMarginMode;
@@ -232,27 +214,8 @@ private:
         //+------------------------------------------------------------------+
         //| Get net position volume for netting mode compliance             |
         //+------------------------------------------------------------------+
-        double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type) const
-        {
-           if(m_accountMarginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
-              return 0.0; // Not applicable in hedging mode
-       
-           double netVolume = 0.0;
-           for(int i = PositionsTotal() - 1; i >= 0; i--)
-           {
-              ulong ticket = PositionGetTicket(i);
-              if(ticket > 0 && PositionSelectByTicket(ticket))
-              {
-                 if(PositionGetString(POSITION_SYMBOL) == symbol)
-                 {
-                    ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-                    if(posType == type)
-                       netVolume += PositionGetDouble(POSITION_VOLUME);
-                 }
-              }
-           }
-           return netVolume;
-        }
+        // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+        double GetNetPositionVolume(const string symbol, ENUM_POSITION_TYPE type) const { return CTradeMgrPricing::GetNetPositionVolume(symbol, type, m_accountMarginMode); }
 
     //+------------------------------------------------------------------+
     //| Position state registry — Phase D T3: thin forwarders onto       |
@@ -269,69 +232,23 @@ private:
 
     //+------------------------------------------------------------------+
     //| EA-owned position ticket cache helpers (L12-008)               |
+    //| Phase D T4: thin forwarders onto CTradeMgrSymbolTradeRegistry.  |
     //+------------------------------------------------------------------+
-    void AddEAOwnedPosition(ulong ticket)
-    {
-        if(ticket == 0) return;
-        
-        // Check if already in cache
-        for(int i = 0; i < m_eaOwnedPositionCount; i++)
-        {
-            if(m_eaOwnedPositionTickets[i] == ticket)
-                return; // Already cached
-        }
-        
-        int newSize = m_eaOwnedPositionCount + 1;
-        ArrayResize(m_eaOwnedPositionTickets, newSize);
-        m_eaOwnedPositionTickets[m_eaOwnedPositionCount] = ticket;
-        m_eaOwnedPositionCount++;
-    }
+    void AddEAOwnedPosition(ulong ticket) { m_symbolRegistry.AddEAOwnedPosition(ticket); }
 
-    void RemoveEAOwnedPosition(ulong ticket)
-    {
-        if(ticket == 0) return;
-        
-        for(int i = 0; i < m_eaOwnedPositionCount; i++)
-        {
-            if(m_eaOwnedPositionTickets[i] == ticket)
-            {
-                // Shift remaining elements
-                for(int j = i; j < m_eaOwnedPositionCount - 1; j++)
-                {
-                    m_eaOwnedPositionTickets[j] = m_eaOwnedPositionTickets[j + 1];
-                }
-                m_eaOwnedPositionCount--;
-                ArrayResize(m_eaOwnedPositionTickets, m_eaOwnedPositionCount);
-                return;
-            }
-        }
-    }
+    void RemoveEAOwnedPosition(ulong ticket) { m_symbolRegistry.RemoveEAOwnedPosition(ticket); }
 
-    void ClearEAOwnedPositions()
-    {
-        m_eaOwnedPositionCount = 0;
-        ArrayResize(m_eaOwnedPositionTickets, 0);
-    }
+    void ClearEAOwnedPositions() { m_symbolRegistry.ClearEAOwnedPositions(); }
 
-    int GetEAOwnedPositionCount() const
-    {
-        return m_eaOwnedPositionCount;
-    }
+    int GetEAOwnedPositionCount() const { return m_symbolRegistry.GetEAOwnedPositionCount(); }
 
-    ulong GetEAOwnedPositionTicket(int index) const
-    {
-        if(index >= 0 && index < m_eaOwnedPositionCount)
-            return m_eaOwnedPositionTickets[index];
-        return 0;
-    }
+    ulong GetEAOwnedPositionTicket(int index) const { return m_symbolRegistry.GetEAOwnedPositionTicket(index); }
 
     //+------------------------------------------------------------------+
     //| Check if two double values are approximately equal               |
     //+------------------------------------------------------------------+
-    bool DoubleEquals(double a, double b, double epsilon = 0.00001)
-    {
-        return MathAbs(a - b) < epsilon;
-    }
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    bool DoubleEquals(double a, double b, double epsilon = 0.00001) { return CTradeMgrPricing::DoubleEquals(a, b, epsilon); }
 
     //+------------------------------------------------------------------+
     //| Log error with context                                           |
@@ -377,28 +294,8 @@ private:
     //+------------------------------------------------------------------+
     //| Calculate Average True Range (ATR) for volatility measurement    |
     //+------------------------------------------------------------------+
-    double CalculateATR(const string symbolParam, ENUM_TIMEFRAMES timeframe, int period)
-    {
-        double atrValues[];
-        CIndicatorManager* manager = CIndicatorManager::Instance();
-        if(manager == NULL) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 537, __FUNCTION__);
-            return 0.0;
-        }
-
-        int atrHandle = manager.GetATRHandle(symbolParam, timeframe, period);
-        if(atrHandle == INVALID_HANDLE) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 541, __FUNCTION__);
-            return 0.0;
-        }
-
-        if(CopyBuffer(atrHandle, 0, 0, 1, atrValues) > 0)
-        {
-            return atrValues[0];
-        }
-        PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 547, __FUNCTION__);
-        return 0.0;
-    }
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    double CalculateATR(const string symbolParam, ENUM_TIMEFRAMES timeframe, int period) { return CTradeMgrPricing::CalculateATR(symbolParam, timeframe, period); }
 
     //+------------------------------------------------------------------+
     //| Log trade error with context                                     |
@@ -426,52 +323,8 @@ private:
 
     bool IsSuccessfulFillRetcode(const uint retcode) const { return CTradeRetcodeClassifier::IsSuccessfulFillRetcode(retcode); }
 
-    void ApplyFillingModeForSymbol(const string symbolParam)
-    {
-        if(symbolParam == "")
-            return;
-
-        // Analyze market conditions to choose appropriate fill mode
-        bool useIOC = true;
-
-        // Get spread for the symbol
-        double spreadPoints = (double)SymbolInfoInteger(symbolParam, SYMBOL_SPREAD);
-        double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-        if(point <= 0.0)
-            point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-        if(point <= 0.0)
-            point = 0.00001; // Fallback for invalid symbol data
-
-        // Get ATR volatility to assess market conditions
-        double volatilityMultiplier = 1.0;
-        if(m_marketAnalysis != NULL)
-        {
-            double atr = m_marketAnalysis.GetATR(symbolParam, 14);
-            if(atr > 0.0)
-            {
-                double atrPoints = atr / point;
-                // If spread is very high relative to volatility, use FOK to avoid partial fills at bad prices
-                if(spreadPoints > atrPoints * 0.5)
-                {
-                    useIOC = false; // Use FOK in high spread/volatility conditions
-                }
-            }
-        }
-
-        // Choose fill mode based on analysis
-        if(useIOC)
-        {
-            m_trade.SetTypeFilling(ORDER_FILLING_IOC);
-        }
-        else
-        {
-            m_trade.SetTypeFilling(ORDER_FILLING_FOK);
-        }
-
-        // Fallback to symbol default or base mode if needed
-        if(!m_trade.SetTypeFillingBySymbol(symbolParam))
-            m_trade.SetTypeFilling(m_orderFillMode);
-    }
+    // Phase D T4: moved to CTradeMgrPreflight (Core/Trading/TradeMgrPreflight.mqh)
+    void ApplyFillingModeForSymbol(const string symbolParam) { CTradeMgrPreflight::ApplyFillingModeForSymbol(symbolParam, m_trade, m_marketAnalysis, m_orderFillMode); }
 
     void ResetExecutionReceipt(const string symbolParam, const double requestedVolume)
     {
@@ -480,178 +333,28 @@ private:
         m_lastExecutionReceipt.requestedVolume = requestedVolume;
     }
 
+    // Phase D T4: moved to CTradeMgrPreflight (Core/Trading/TradeMgrPreflight.mqh)
     bool ValidateExecutionPreflight(const string symbolName,
                                     const ENUM_ORDER_TYPE orderType,
                                     const double executionPrice,
                                     const double requestedPrice,
                                     string &reason)
     {
-        reason = "";
-        if(!IsMarketOpen(symbolName))
-        {
-            reason = "market_unavailable";
-            return false;
-        }
-
-        MqlTick tick;
-        if(!SymbolInfoTick(symbolName, tick))
-        {
-            reason = "tick_unavailable";
-            return false;
-        }
-
-        datetime tickTime = (tick.time > 0) ? (datetime)tick.time : TimeCurrent();
-        int tickAgeSeconds = (int)MathMax(0, TimeCurrent() - tickTime);
-        if(tickAgeSeconds > 30)
-        {
-            reason = StringFormat("stale_tick age=%ds", tickAgeSeconds);
-            return false;
-        }
-
-        double bid = tick.bid;
-        double ask = tick.ask;
-        if(bid <= 0.0 || ask <= 0.0 || ask < bid)
-        {
-            reason = "invalid_quote";
-            return false;
-        }
-
-        double spread = ask - bid;
-        double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
-        if(point <= 0.0)
-            point = 0.00001;
-        double spreadPoints = spread / point;
-        if(m_maxEntrySpreadPoints > 0.0 && spreadPoints > m_maxEntrySpreadPoints)
-        {
-            reason = StringFormat("spread_points %.1f exceeds %.1f", spreadPoints, m_maxEntrySpreadPoints);
-            return false;
-        }
-
-        if(m_maxEntryDriftPoints > 0.0 && requestedPrice > 0.0)
-        {
-            double driftPoints = MathAbs(executionPrice - requestedPrice) / point;
-            double effectiveDriftLimit = m_maxEntryDriftPoints;
-            double atr = m_atrCache.GetATR(symbolName, PERIOD_M15);
-                        if(atr == EMPTY_VALUE || atr <= 0.0)
-                        {
-                            atr = CalculateATR(symbolName, PERIOD_M15, m_dynamicSlippageAtrPeriod);
-                            if(atr > 0.0)
-                            {
-                                datetime barTime = iTime(symbolName, PERIOD_M15, 0);
-                                m_atrCache.StoreATR(symbolName, PERIOD_M15, atr, barTime);
-                            }
-            }
-
-            // Fix #12-13: Symbol-class-aware drift limits for synthetic indices
-            bool isSynthetic = IsSyntheticIndexSymbolName(symbolName);
-            double atrMultiplier = isSynthetic ? 0.50 : 0.30;
-            double spreadFloorMultiplier = isSynthetic ? 3.0 : 2.0;
-
-            if(atr > 0.0)
-                effectiveDriftLimit = MathMax(effectiveDriftLimit, (atr / point) * atrMultiplier);
-            effectiveDriftLimit = MathMax(effectiveDriftLimit, spreadPoints * spreadFloorMultiplier);
-
-            if(isSynthetic)
-            {
-                PrintFormat("[DRIFT-SYNTHETIC] symbol=%s | atr_mult=%.2f | spread_floor_mult=%.1f | drift_limit=%.1f | atr_pts=%.1f",
-                            symbolName, atrMultiplier, spreadFloorMultiplier, effectiveDriftLimit,
-                            (atr > 0.0) ? (atr / point) : 0.0);
-            }
-
-            if(driftPoints > effectiveDriftLimit)
-            {
-                reason = StringFormat("entry_drift_points %.1f exceeds %.1f", driftPoints, effectiveDriftLimit);
-                return false;
-            }
-        }
-
-        double minStopDistance = GetMinimumStopDistance(symbolName);
-        double spreadHardLimit = MathMax(minStopDistance * 2.0, executionPrice * 0.0015);
-        if(spread > spreadHardLimit)
-        {
-            reason = StringFormat("spread_anomaly spread=%.5f limit=%.5f", spread, spreadHardLimit);
-            return false;
-        }
-
-        if(orderType == ORDER_TYPE_BUY && executionPrice < bid)
-        {
-            reason = "buy_price_below_bid";
-            return false;
-        }
-
-        if(orderType == ORDER_TYPE_SELL && executionPrice > ask)
-        {
-            reason = "sell_price_above_ask";
-            return false;
-        }
-
-        return true;
+        return CTradeMgrPreflight::ValidateExecutionPreflight(symbolName, orderType, executionPrice, requestedPrice,
+                                                              m_sessionManager, m_atrCache,
+                                                              m_maxEntrySpreadPoints, m_maxEntryDriftPoints,
+                                                              m_dynamicSlippageAtrPeriod, reason);
     }
 
+    // Phase D T4: moved to CTradeMgrPreflight (Core/Trading/TradeMgrPreflight.mqh)
     bool ConfirmExecutionReceipt(const string symbolName,
                                  const ENUM_ORDER_TYPE orderType,
                                  const double requestedVolume,
                                  const double fallbackPrice,
                                  const MqlTradeResult &tradeResult)
     {
-        datetime historyFrom = TimeCurrent() - 300;
-        datetime historyTo = TimeCurrent() + 60;
-
-        // Single non-blocking check �?no Sleep loop
-        if(HistorySelect(historyFrom, historyTo))
-        {
-            if(tradeResult.deal > 0 && HistoryDealSelect(tradeResult.deal))
-            {
-                string dealSymbol = HistoryDealGetString(tradeResult.deal, DEAL_SYMBOL);
-                long dealEntry = HistoryDealGetInteger(tradeResult.deal, DEAL_ENTRY);
-                long dealType = HistoryDealGetInteger(tradeResult.deal, DEAL_TYPE);
-                bool directionMatches = ((orderType == ORDER_TYPE_BUY && dealType == DEAL_TYPE_BUY) ||
-                                         (orderType == ORDER_TYPE_SELL && dealType == DEAL_TYPE_SELL));
-                if(dealSymbol == symbolName &&
-                   directionMatches &&
-                   (dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT))
-                {
-                    double dealVolume = HistoryDealGetDouble(tradeResult.deal, DEAL_VOLUME);
-                    double dealPrice = HistoryDealGetDouble(tradeResult.deal, DEAL_PRICE);
-                    if(dealVolume > 0.0)
-                        m_lastExecutionReceipt.filledVolume = dealVolume;
-                    if(dealPrice > 0.0)
-                        m_lastExecutionReceipt.averagePrice = dealPrice;
-                    else if(m_lastExecutionReceipt.averagePrice <= 0.0)
-                        m_lastExecutionReceipt.averagePrice = fallbackPrice;
-
-                    m_lastExecutionReceipt.accepted = true;
-                    m_lastExecutionReceipt.partialFill = (m_lastExecutionReceipt.filledVolume > 0.0 &&
-                                                          m_lastExecutionReceipt.filledVolume + 1e-8 < requestedVolume);
-                    m_lastExecutionReceipt.note = "history_deal_confirmed";
-                    return true;
-                }
-            }
-        }
-
-        // Deal not found yet �?defer to pending confirmation for later resolution
-        if(tradeResult.order > 0 && m_pendingConfirmationCount < MAX_PENDING_CONFIRMATIONS)
-        {
-            int idx = m_pendingConfirmationCount;
-            m_pendingConfirmations[idx].orderTicket   = tradeResult.order;
-            m_pendingConfirmations[idx].symbol        = symbolName;
-            m_pendingConfirmations[idx].expectedPrice = fallbackPrice;
-            m_pendingConfirmations[idx].sentAt        = TimeCurrent();
-            m_pendingConfirmations[idx].checkAttempts = 0;
-            m_pendingConfirmations[idx].isActive      = true;
-            m_pendingConfirmationCount++;
-            PrintFormat("[EXECUTION-DEFERRED] %s | order=%I64u | added to pending confirmation queue",
-                        symbolName, tradeResult.order);
-        }
-
-        // Optimistic return �?broker accepted the order, confirmation deferred
-        m_lastExecutionReceipt.accepted = true;
-        if(m_lastExecutionReceipt.averagePrice <= 0.0)
-            m_lastExecutionReceipt.averagePrice = fallbackPrice;
-        if(m_lastExecutionReceipt.filledVolume <= 0.0)
-            m_lastExecutionReceipt.filledVolume = 0.0;
-        m_lastExecutionReceipt.note = "broker_accept_deferred";
-        return true;
+        return CTradeMgrPreflight::ConfirmExecutionReceipt(symbolName, orderType, requestedVolume, fallbackPrice,
+                                                           tradeResult, m_lastExecutionReceipt, m_confirmationQueue);
     }
 
 public:
@@ -682,11 +385,7 @@ public:
         m_baseSlippage(10),
         m_emergencyStop(false),
         m_logLevel(1),
-        m_pendingConfirmationCount(0),
-        m_maxPendingAsync(10),
-        m_asyncModeEnabled(false),
         m_pendingOrderCount(0),
-        m_magicOffsetCount(0),
         m_totalTrades(0),
         m_successfulTrades(0),
         m_failedTrades(0),
@@ -704,8 +403,8 @@ public:
         // (m_positionStateTracker).
         // Phase D T2a: execution-quality metrics zeroing now happens in the
         // CExecutionQualityTracker constructor (m_execQuality).
-        m_eaOwnedPositionCount = 0;
-        ArrayResize(m_eaOwnedPositionTickets, 0);
+        // Phase D T4: EA-owned ticket cache zeroing now happens in the
+        // CTradeMgrSymbolTradeRegistry constructor (m_symbolRegistry).
     }
 
 public:
@@ -714,25 +413,16 @@ public:
     {
         // Clean up persisted async trades file
         CleanupPersistedAsyncTrades();
-        
+
         // Reset ATR cache
         m_atrCache.Reset();
-        
-        // Free dynamic arrays
-        ArrayFree(m_pendingAsyncTrades);
-        ArrayFree(m_magicOffsets);
-        
+
+        // Free dynamic arrays — Phase D T4: owned by the extracted modules
+        m_asyncExecutor.FreePending();
+        m_symbolRegistry.FreeMagicOffsets();
+
         // Clear pending confirmations
-        m_pendingConfirmationCount = 0;
-        for(int i = 0; i < MAX_PENDING_CONFIRMATIONS; i++)
-        {
-            m_pendingConfirmations[i].orderTicket = 0;
-            m_pendingConfirmations[i].symbol = "";
-            m_pendingConfirmations[i].expectedPrice = 0.0;
-            m_pendingConfirmations[i].sentAt = 0;
-            m_pendingConfirmations[i].checkAttempts = 0;
-            m_pendingConfirmations[i].isActive = false;
-        }
+        m_confirmationQueue.Clear();
     }
 
     // Initialization
@@ -753,82 +443,22 @@ public:
     bool IsEAOwnedMagic(const long magic) const { return (m_magicRangeMax > m_magicNumber) ? (magic >= m_magicNumber && magic <= m_magicRangeMax) : (magic == m_magicNumber); }
 
     // L10-013: Update all per-symbol CTrade instances with new slippage
-    void UpdatePerSymbolSlippage(const uint slippage)
-    {
-        for(int i = 0; i < m_symbolTradeCount; i++)
-        {
-            if(m_symbolTrades[i].initialized)
-                m_symbolTrades[i].trade.SetDeviationInPoints(slippage);
-        }
-    }
+    // Phase D T4: thin forwarders onto CTradeMgrSymbolTradeRegistry
+    void UpdatePerSymbolSlippage(const uint slippage) { m_symbolRegistry.UpdatePerSymbolSlippage(slippage); }
 
     // L10-013: Update all per-symbol CTrade instances with new magic number
-    void UpdatePerSymbolMagicNumber(const long magicNumber)
-    {
-        for(int i = 0; i < m_symbolTradeCount; i++)
-        {
-            if(m_symbolTrades[i].initialized)
-                m_symbolTrades[i].trade.SetExpertMagicNumber(magicNumber);
-        }
-    }
+    void UpdatePerSymbolMagicNumber(const long magicNumber) { m_symbolRegistry.UpdatePerSymbolMagicNumber(magicNumber); }
 
     // L10-013: Update all per-symbol CTrade instances with new fill mode
-    void UpdatePerSymbolFillMode(const ENUM_ORDER_TYPE_FILLING mode)
-    {
-        for(int i = 0; i < m_symbolTradeCount; i++)
-        {
-            if(m_symbolTrades[i].initialized)
-                m_symbolTrades[i].trade.SetTypeFilling(mode);
-        }
-    }
+    void UpdatePerSymbolFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_symbolRegistry.UpdatePerSymbolFillMode(mode); }
 
     // L10-013: Update all per-symbol CTrade instances with new async mode
-    void UpdatePerSymbolAsyncMode(const bool enabled)
-    {
-        for(int i = 0; i < m_symbolTradeCount; i++)
-        {
-            if(m_symbolTrades[i].initialized)
-                m_symbolTrades[i].trade.SetAsyncMode(enabled);
-        }
-    }
+    void UpdatePerSymbolAsyncMode(const bool enabled) { m_symbolRegistry.UpdatePerSymbolAsyncMode(enabled); }
 
     //--- Per-symbol magic offset for family-specific magic number differentiation
-    void SetMagicOffsetForSymbol(const string symbol, int offset)
-    {
-        // Find existing
-        for(int i = 0; i < m_magicOffsetCount; i++)
-        {
-            if(m_magicOffsets[i].symbol == symbol)
-            {
-                m_magicOffsets[i].magicOffset = offset;
-                m_magicOffsets[i].hasOffset = true;
-                return;
-            }
-        }
-        // Add new using temp struct pattern for string members
-        int newSize = m_magicOffsetCount + 1;
-        SSymbolMagicOffset tempOffsets[];
-        ArrayResize(tempOffsets, newSize);
-        for(int i = 0; i < m_magicOffsetCount; i++)
-            tempOffsets[i] = m_magicOffsets[i];
-        ArrayResize(m_magicOffsets, newSize);
-        for(int i = 0; i < m_magicOffsetCount; i++)
-            m_magicOffsets[i] = tempOffsets[i];
-        m_magicOffsets[m_magicOffsetCount].symbol = symbol;
-        m_magicOffsets[m_magicOffsetCount].magicOffset = offset;
-        m_magicOffsets[m_magicOffsetCount].hasOffset = true;
-        m_magicOffsetCount++;
-    }
+    void SetMagicOffsetForSymbol(const string symbol, int offset) { m_symbolRegistry.SetMagicOffsetForSymbol(symbol, offset); }
 
-    int GetMagicOffsetForSymbol(const string symbol) const
-    {
-        for(int i = 0; i < m_magicOffsetCount; i++)
-        {
-            if(m_magicOffsets[i].symbol == symbol && m_magicOffsets[i].hasOffset)
-                return (int)m_magicOffsets[i].magicOffset;
-        }
-        return 0;
-    }
+    int GetMagicOffsetForSymbol(const string symbol) const { return m_symbolRegistry.GetMagicOffsetForSymbol(symbol); }
     void SetOrderFillMode(const ENUM_ORDER_TYPE_FILLING mode) { m_orderFillMode = mode; m_trade.SetTypeFilling(m_orderFillMode); UpdatePerSymbolFillMode(m_orderFillMode); }
     void SetProtectiveModifyCooldownSeconds(const int seconds) { m_minModifyIntervalSec = MathMax(1, seconds); }
     void SetLogLevel(const int level) { m_logLevel = MathMax(0, MathMin(4, level)); }
@@ -852,7 +482,7 @@ public:
 
     //--- Async trade execution interface (OrderSendAsync + OnTradeTransaction)
     // Enable or disable async mode
-    void SetAsyncMode(bool enabled) { m_asyncModeEnabled = enabled; m_trade.SetAsyncMode(m_asyncModeEnabled); UpdatePerSymbolAsyncMode(m_asyncModeEnabled); }
+    void SetAsyncMode(bool enabled) { m_asyncExecutor.SetAsyncModeEnabled(enabled); m_trade.SetAsyncMode(m_asyncExecutor.IsAsyncModeEnabled()); UpdatePerSymbolAsyncMode(m_asyncExecutor.IsAsyncModeEnabled()); }
 
     // Submit trade asynchronously via OrderSendAsync
     bool SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
@@ -1001,78 +631,9 @@ public:
     void GetLastExecutionReceipt(STradeExecutionReceipt &receipt) const { receipt = m_lastExecutionReceipt; }
 
     // Check and resolve pending execution confirmations (call from main tick loop)
-    void CheckPendingConfirmations()
-    {
-        if(m_pendingConfirmationCount <= 0)
-            return;
-
-        datetime historyFrom = TimeCurrent() - 300;
-        datetime historyTo = TimeCurrent() + 60;
-
-        for(int i = m_pendingConfirmationCount - 1; i >= 0; i--)
-        {
-            if(!m_pendingConfirmations[i].isActive)
-                continue;
-
-            m_pendingConfirmations[i].checkAttempts++;
-
-            bool resolved = false;
-            if(HistorySelect(historyFrom, historyTo))
-            {
-                int totalDeals = HistoryDealsTotal();
-                for(int d = 0; d < totalDeals; d++)
-                {
-                    ulong dealTicket = HistoryDealGetTicket(d);
-                    if(dealTicket == 0)
-                        continue;
-
-                    long dealOrderId = HistoryDealGetInteger(dealTicket, DEAL_ORDER);
-                    if((ulong)dealOrderId == m_pendingConfirmations[i].orderTicket)
-                    {
-                        string dealSymbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
-                        if(dealSymbol == m_pendingConfirmations[i].symbol)
-                        {
-                            double dealPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
-                            double dealVolume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
-                            PrintFormat("[EXECUTION-CONFIRMED] %s | order=%I64u | deal=%I64u | price=%.5f | volume=%.2f | attempts=%d",
-                                        dealSymbol,
-                                        m_pendingConfirmations[i].orderTicket,
-                                        dealTicket,
-                                        dealPrice,
-                                        dealVolume,
-                                        m_pendingConfirmations[i].checkAttempts);
-                            resolved = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if(resolved || m_pendingConfirmations[i].checkAttempts >= 5)
-            {
-                if(!resolved)
-                {
-                    PrintFormat("[EXECUTION-TIMEOUT] %s | order=%I64u | attempts=%d | no deal found after max checks",
-                                m_pendingConfirmations[i].symbol,
-                                m_pendingConfirmations[i].orderTicket,
-                                m_pendingConfirmations[i].checkAttempts);
-                }
-
-                // Remove by shifting
-                for(int j = i; j < m_pendingConfirmationCount - 1; j++)
-                {
-                    m_pendingConfirmations[j] = m_pendingConfirmations[j + 1];
-                }
-                m_pendingConfirmationCount--;
-                m_pendingConfirmations[m_pendingConfirmationCount].isActive = false;
-                m_pendingConfirmations[m_pendingConfirmationCount].orderTicket = 0;
-                m_pendingConfirmations[m_pendingConfirmationCount].symbol = "";
-                m_pendingConfirmations[m_pendingConfirmationCount].expectedPrice = 0.0;
-                m_pendingConfirmations[m_pendingConfirmationCount].sentAt = 0;
-                m_pendingConfirmations[m_pendingConfirmationCount].checkAttempts = 0;
-            }
-        }
-    }
+    // Phase D T4: moved to CTradeMgrConfirmationQueue
+    // (Core/Trading/TradeMgrConfirmationQueue.mqh)
+    void CheckPendingConfirmations() { m_confirmationQueue.CheckPendingConfirmations(); }
 
     // Statistics — Phase D T2b: forwarders onto CTradeStatsTracker
     void GetTradeStatistics(int &total, int &successful, int &failed, double &successRate)
@@ -1223,11 +784,7 @@ public:
             m_slippage = params.recommendedSlippage;
             m_trade.SetDeviationInPoints(m_slippage);
             // L10-013: Update all per-symbol CTrade instances
-            for(int i = 0; i < m_symbolTradeCount; i++)
-            {
-                if(m_symbolTrades[i].initialized)
-                    m_symbolTrades[i].trade.SetDeviationInPoints(m_slippage);
-            }
+            m_symbolRegistry.UpdatePerSymbolSlippage(m_slippage);
             PrintFormat("[SMART-ROUTING] Adjusted slippage to %d pts: %s",
                        m_slippage, params.reason);
         }
@@ -1237,11 +794,7 @@ public:
         {
             m_trade.SetTypeFilling(params.recommendedFillMode);
             // L10-013: Update all per-symbol CTrade instances
-            for(int i = 0; i < m_symbolTradeCount; i++)
-            {
-                if(m_symbolTrades[i].initialized)
-                    m_symbolTrades[i].trade.SetTypeFilling(params.recommendedFillMode);
-            }
+            m_symbolRegistry.UpdatePerSymbolFillMode(params.recommendedFillMode);
             PrintFormat("[SMART-ROUTING] Changed fill mode to %d: %s",
                        params.recommendedFillMode, params.reason);
         }
@@ -1309,8 +862,7 @@ bool CTradeManager::Initialize(const long magicNumber,
     m_lastExecutionReceipt = STradeExecutionReceipt();
 
     // L10-013: Initialize per-symbol CTrade array
-    m_symbolTradeCount = 0;
-    ArrayResize(m_symbolTrades, 0);
+    m_symbolRegistry.ResetSymbolTrades();
 
     // L10-005: Initialize account margin mode cache for hedging/netting compliance
     InitializeMarginMode();
@@ -1329,21 +881,12 @@ bool CTradeManager::Initialize(const long magicNumber,
         // Reset ATR cache
         m_atrCache.Reset();
     
-        // Free dynamic arrays
-        ArrayFree(m_pendingAsyncTrades);
-        ArrayFree(m_magicOffsets);
-    
+        // Free dynamic arrays — Phase D T4: owned by the extracted modules
+        m_asyncExecutor.FreePending();
+        m_symbolRegistry.FreeMagicOffsets();
+
         // Clear pending confirmations
-        m_pendingConfirmationCount = 0;
-        for(int i = 0; i < MAX_PENDING_CONFIRMATIONS; i++)
-        {
-            m_pendingConfirmations[i].orderTicket = 0;
-            m_pendingConfirmations[i].symbol = "";
-            m_pendingConfirmations[i].expectedPrice = 0.0;
-            m_pendingConfirmations[i].sentAt = 0;
-            m_pendingConfirmations[i].checkAttempts = 0;
-            m_pendingConfirmations[i].isActive = false;
-        }
+        m_confirmationQueue.Clear();
     
         Print("[TRADE-MANAGER] Deinit complete - async trades cleaned up");
             }
@@ -1353,35 +896,10 @@ bool CTradeManager::Initialize(const long magicNumber,
         //+------------------------------------------------------------------+
         CTrade* CTradeManager::GetSymbolTrade(const string symbol)
         {
-            // Search for existing instance
-            for(int i = 0; i < m_symbolTradeCount; i++)
-            {
-                if(m_symbolTrades[i].symbol == symbol)
-                {
-                    if(!m_symbolTrades[i].initialized)
-                    {
-                        m_symbolTrades[i].trade.SetExpertMagicNumber(m_magicNumber);
-                        m_symbolTrades[i].trade.SetDeviationInPoints(m_slippage);
-                        m_symbolTrades[i].trade.SetTypeFilling(m_orderFillMode);
-                        m_symbolTrades[i].trade.SetAsyncMode(m_useAsyncMode);
-                        m_symbolTrades[i].initialized = true;
-                    }
-                    return GetPointer(m_symbolTrades[i].trade);
-                }
-            }
-
-            // Create new instance
-            int newSize = m_symbolTradeCount + 1;
-            ArrayResize(m_symbolTrades, newSize);
-            m_symbolTrades[m_symbolTradeCount].symbol = symbol;
-            m_symbolTrades[m_symbolTradeCount].trade.SetExpertMagicNumber(m_magicNumber);
-            m_symbolTrades[m_symbolTradeCount].trade.SetDeviationInPoints(m_slippage);
-            m_symbolTrades[m_symbolTradeCount].trade.SetTypeFilling(m_orderFillMode);
-            m_symbolTrades[m_symbolTradeCount].trade.SetAsyncMode(m_useAsyncMode);
-            m_symbolTrades[m_symbolTradeCount].initialized = true;
-            m_symbolTradeCount++;
-
-            return GetPointer(m_symbolTrades[m_symbolTradeCount - 1].trade);
+            // Phase D T4: pool owned by CTradeMgrSymbolTradeRegistry; the four
+            // configuration values it needs are passed in explicitly so the
+            // registry keeps no back-pointer to CTradeManager.
+            return m_symbolRegistry.GetSymbolTrade(symbol, m_magicNumber, m_slippage, m_orderFillMode, m_useAsyncMode);
         }
 
         //+------------------------------------------------------------------+
@@ -2124,13 +1642,8 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 //+------------------------------------------------------------------+
 double CTradeManager::NormalizePrice(const string symbolName, const double price)
 {
-    if(price <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2499, __FUNCTION__);
-        return 0.0;
-    }
-
-    int digits = (int)SymbolInfoInteger(symbolName, SYMBOL_DIGITS);
-    return NormalizeDouble(price, digits);
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::NormalizePrice(symbolName, price);
 }
 
 //+------------------------------------------------------------------+
@@ -2138,35 +1651,8 @@ double CTradeManager::NormalizePrice(const string symbolName, const double price
 //+------------------------------------------------------------------+
 double CTradeManager::NormalizeVolume(const string symbolName, const double volume)
 {
-    double minVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MIN);
-    double maxVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MAX);
-    double stepVolume = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_STEP);
-    if(stepVolume <= 0.0 || !MathIsValidNumber(stepVolume))
-        stepVolume = 0.01;
-
-    if(volume < minVolume || !MathIsValidNumber(volume)) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2517, __FUNCTION__);
-        return 0.0;
-    }
-
-    int volumeDigits = 0;
-    double stepProbe = stepVolume;
-    while(volumeDigits < 8 && MathAbs(stepProbe - MathRound(stepProbe)) > 1e-8 && MathIsValidNumber(stepProbe))
-    {
-        stepProbe *= 10.0;
-        volumeDigits++;
-    }
-
-    double normalized = MathFloor((volume + 1e-12) / stepVolume) * stepVolume;
-    normalized = NormalizeDouble(normalized, volumeDigits);
-    normalized = MathMin(normalized, maxVolume);
-
-    if(normalized < minVolume) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2532, __FUNCTION__);
-        return 0.0;
-    }
-
-    return normalized;
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::NormalizeVolume(symbolName, volume);
 }
 
 //+------------------------------------------------------------------+
@@ -2175,24 +1661,8 @@ double CTradeManager::NormalizeVolume(const string symbolName, const double volu
 double CTradeManager::CalculateStopLoss(const string symbolParam, const ENUM_ORDER_TYPE orderType,
                                        const double price, const double stopLossPips)
 {
-    if(stopLossPips <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2544, __FUNCTION__);
-        return 0.0;
-    }
-
-    double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-    double stopLoss = 0.0;
-
-    if(orderType == ORDER_TYPE_BUY)
-    {
-        stopLoss = price - (stopLossPips * point);
-    }
-    else if(orderType == ORDER_TYPE_SELL)
-    {
-        stopLoss = price + (stopLossPips * point);
-    }
-
-    return NormalizePrice(symbolParam, stopLoss);
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::CalculateStopLoss(symbolParam, orderType, price, stopLossPips);
 }
 
 //+------------------------------------------------------------------+
@@ -2201,24 +1671,8 @@ double CTradeManager::CalculateStopLoss(const string symbolParam, const ENUM_ORD
 double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_ORDER_TYPE orderType,
                                          const double price, const double takeProfitPips)
 {
-    if(takeProfitPips <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2568, __FUNCTION__);
-        return 0.0;
-    }
-
-    double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-    double takeProfit = 0.0;
-
-    if(orderType == ORDER_TYPE_BUY)
-    {
-        takeProfit = price + (takeProfitPips * point);
-    }
-    else if(orderType == ORDER_TYPE_SELL)
-    {
-        takeProfit = price - (takeProfitPips * point);
-    }
-
-    return NormalizePrice(symbolParam, takeProfit);
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::CalculateTakeProfit(symbolParam, orderType, price, takeProfitPips);
 }
 
 
@@ -2227,33 +1681,8 @@ double CTradeManager::CalculateTakeProfit(const string symbolParam, const ENUM_O
 //+------------------------------------------------------------------+
 bool CTradeManager::IsOrderTypeAllowedForSymbol(const string symbolName, const ENUM_ORDER_TYPE orderType, string &reason)
 {
-    reason = "";
-    ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(symbolName, SYMBOL_TRADE_MODE);
-    if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
-    {
-        reason = "Symbol trading disabled";
-        return false;
-    }
-
-    if(tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
-    {
-        reason = "Symbol is close-only";
-        return false;
-    }
-
-    if(orderType == ORDER_TYPE_BUY && tradeMode == SYMBOL_TRADE_MODE_SHORTONLY)
-    {
-        reason = "BUY not allowed by symbol trade mode";
-        return false;
-    }
-
-    if(orderType == ORDER_TYPE_SELL && tradeMode == SYMBOL_TRADE_MODE_LONGONLY)
-    {
-        reason = "SELL not allowed by symbol trade mode";
-        return false;
-    }
-
-    return true;
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::IsOrderTypeAllowedForSymbol(symbolName, orderType, reason);
 }
 
 //+------------------------------------------------------------------+
@@ -2261,20 +1690,9 @@ bool CTradeManager::IsOrderTypeAllowedForSymbol(const string symbolName, const E
 //+------------------------------------------------------------------+
 double CTradeManager::GetCurrentExecutionPrice(const string symbolName, const ENUM_ORDER_TYPE orderType)
 {
-    double price = (orderType == ORDER_TYPE_SELL) ?
-                   SymbolInfoDouble(symbolName, SYMBOL_BID) :
-                   SymbolInfoDouble(symbolName, SYMBOL_ASK);
-
-    if(price <= 0.0)
-    {
-        m_symbolInfo.Name(symbolName);
-        m_symbolInfo.Refresh();
-        price = (orderType == ORDER_TYPE_SELL) ?
-                SymbolInfoDouble(symbolName, SYMBOL_BID) :
-                SymbolInfoDouble(symbolName, SYMBOL_ASK);
-    }
-
-    return NormalizePrice(symbolName, price);
+    // Phase D T4: moved to CTradeMgrPricing; m_symbolInfo is passed by
+    // reference because the fallback path refreshes it in place.
+    return CTradeMgrPricing::GetCurrentExecutionPrice(symbolName, orderType, m_symbolInfo);
 }
 
 //+------------------------------------------------------------------+
@@ -2282,17 +1700,8 @@ double CTradeManager::GetCurrentExecutionPrice(const string symbolName, const EN
 //+------------------------------------------------------------------+
 double CTradeManager::GetMinimumStopDistance(const string symbolName)
 {
-    double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
-    if(point <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2648, __FUNCTION__);
-        return 0.0;
-    }
-
-    int stopLevel = (int)SymbolInfoInteger(symbolName, SYMBOL_TRADE_STOPS_LEVEL);
-    int freezeLevel = (int)SymbolInfoInteger(symbolName, SYMBOL_TRADE_FREEZE_LEVEL);
-    int requiredPoints = MathMax(stopLevel, freezeLevel);
-
-    return (double)requiredPoints * point;
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::GetMinimumStopDistance(symbolName);
 }
 
 
@@ -2377,21 +1786,8 @@ bool CTradeManager::ShouldUpdateTrailingStop(const ulong ticket, const double di
 double CTradeManager::CalculatePositionRisk(const string symbolParam, const double volume,
                                            const double stopLossPips)
 {
-    double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
-    double tickSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
-    double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-
-    if(tickValue <= 0 || tickSize <= 0 || point <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2744, __FUNCTION__);
-        return 0.0;
-    }
-
-    double stopDistancePrice = stopLossPips * point;
-    double riskPerLot = (stopDistancePrice / tickSize) * tickValue;
-    
-    // L10-006: Add commission cost to risk calculation
-    double commissionCost = GetRoundTripCommissionCost(symbolParam, volume);
-    return volume * riskPerLot + commissionCost;
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::CalculatePositionRisk(symbolParam, volume, stopLossPips);
 }
 
 
@@ -2400,33 +1796,8 @@ double CTradeManager::CalculatePositionRisk(const string symbolParam, const doub
 //+------------------------------------------------------------------+
 double CTradeManager::GetRoundTripCommissionCost(const string symbol, const double volume)
 {
-    double commission = 0.0;
-    
-    // Check for explicit commission (per lot, per side)
-    // NOTE: MQL5 has no SYMBOL_TRADE_COMMISSION constant; commission is broker-set
-    // and not directly queryable. Fall through to spread-based estimation below.
-    double commissionPerLot = 0.0;
-    if(commissionPerLot > 0.0)
-    {
-        // Commission is charged per side, so round-trip = 2 * commissionPerLot * volume
-        commission = commissionPerLot * 2.0 * volume;
-    }
-    else
-    {
-        // Many synthetic brokers embed commission in spread
-        // Estimate via spread cost: spread * tickValue * volume
-        double spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
-        double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-        double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-        
-        if(spread > 0.0 && tickValue > 0.0 && tickSize > 0.0)
-        {
-            double spreadPoints = spread / tickSize;
-            commission = spreadPoints * tickValue * volume; // Entry + exit spread cost
-        }
-    }
-    
-    return commission;
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::GetRoundTripCommissionCost(symbol, volume);
 }
 
 
@@ -2436,27 +1807,8 @@ double CTradeManager::GetRoundTripCommissionCost(const string symbol, const doub
 double CTradeManager::GetEstimatedSwapCost(const string symbol, const ENUM_ORDER_TYPE orderType,
                                           const double volume, const int estimatedHoldDays)
 {
-    if(estimatedHoldDays <= 0) { PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2796, __FUNCTION__); return 0.0; }
-    
-    double swapLong = SymbolInfoDouble(symbol, SYMBOL_SWAP_LONG);
-    double swapShort = SymbolInfoDouble(symbol, SYMBOL_SWAP_SHORT);
-    
-    double swapPerLot = (orderType == ORDER_TYPE_BUY) ? swapLong : swapShort;
-    
-    // Swap is typically in points per lot per day
-    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-    double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-    double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-    
-    if(point <= 0 || tickValue <= 0 || tickSize <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2809, __FUNCTION__);
-        return 0.0;
-    }
-    
-    // Convert swap points to currency per lot per day
-    double swapPerLotPerDay = (swapPerLot * point / tickSize) * tickValue;
-    
-    return swapPerLotPerDay * volume * estimatedHoldDays;
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::GetEstimatedSwapCost(symbol, orderType, volume, estimatedHoldDays);
 }
 
 
@@ -2782,83 +2134,26 @@ bool CTradeManager::NormalizeAndValidateStops(const string symbol,
                                              double &tpOut,
                                              string &errorMsg)
 {
-    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-    double minDistance = GetMinimumStopDistance(symbol);
-
-    // Normalize input values
-    slOut = NormalizeDouble(slOut, digits);
-    tpOut = NormalizeDouble(tpOut, digits);
-
-    // Validate Stop Loss
-    if(slOut > 0)
-    {
-        double dist = MathAbs(price - slOut);
-        if(dist < minDistance)
-        {
-            // Adjust to minimum distance
-            if(orderType == ORDER_TYPE_BUY)
-                slOut = price - minDistance - point;
-            else
-                slOut = price + minDistance + point;
-
-            slOut = NormalizeDouble(slOut, digits);
-        }
-    }
-
-    // Validate Take Profit
-    if(tpOut > 0)
-    {
-        double dist = MathAbs(price - tpOut);
-        if(dist < minDistance)
-        {
-            // Adjust to minimum distance
-            if(orderType == ORDER_TYPE_BUY)
-                tpOut = price + minDistance + point;
-            else
-                tpOut = price - minDistance - point;
-
-            tpOut = NormalizeDouble(tpOut, digits);
-        }
-    }
-
-    return true;
+    // Phase D T4: moved to CTradeMgrPricing (Core/Trading/TradeMgrPricing.mqh)
+    return CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, price, tp, slOut, tpOut, errorMsg);
 }
 
 //+------------------------------------------------------------------+
 //| Send trade asynchronously via OrderSendAsync                     |
+//| Phase D T4: split across CTradeMgrAsyncExecutor. The guards that |
+//| only read async state live in CheckSendGuards(); the volume /    |
+//| price / preflight resolution stays here because it needs the     |
+//| CTradeManager-owned pricing, ATR cache and slippage config; the  |
+//| request build + OrderSendAsync + pending bookkeeping is          |
+//| SubmitAsync(). Order of operations is byte-for-byte unchanged.   |
 //+------------------------------------------------------------------+
 bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbol,
                                    double lot, double price, double sl, double tp,
                                    ulong magic, int timeoutMs)
 {
-    // Guard: async mode must be enabled
-    if(!m_asyncModeEnabled)
-    {
-        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=AsyncModeDisabled", symbol);
+    // Guards: async mode enabled, non-empty symbol, positive lot, pending limit
+    if(!m_asyncExecutor.CheckSendGuards(symbol, lot))
         return false;
-    }
-
-    // Validate inputs
-    if(symbol == "")
-    {
-        Print("[ASYNC-TRADE-REJECTED] reason=EmptySymbol");
-        return false;
-    }
-    if(lot <= 0.0)
-    {
-        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=InvalidLot lot=%.2f", symbol, lot);
-        return false;
-    }
-
-    // Enforce maximum pending limit
-    int pendingCount = ArraySize(m_pendingAsyncTrades);
-    if(pendingCount >= m_maxPendingAsync)
-    {
-        PrintFormat("[ASYNC-TRADE-REJECTED] %s | reason=MaxPendingReached count=%d max=%d",
-                    symbol, pendingCount, m_maxPendingAsync);
-        return false;
-    }
 
     // Normalize volume and price
     double normalizedLot = NormalizeVolume(symbol, lot);
@@ -2890,187 +2185,29 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     ApplyFillingModeForSymbol(symbol);
     UpdateDynamicSlippage(symbol);
 
-    // Build the trade request
-    MqlTradeRequest request = {};
-    request.action    = TRADE_ACTION_DEAL;
-    request.symbol    = symbol;
-    request.volume    = normalizedLot;
-    request.type      = orderType;
-    request.price     = executionPrice;
-    request.sl        = sl;
-    request.tp        = tp;
-    request.magic     = magic;
-    request.comment   = "AsyncTrade";
-    request.deviation = m_slippage;
-    request.type_filling = m_orderFillMode;
-
-    // FIX: Generate idempotency key for deduplication
-    // Use symbol + orderType + lot + price + sl + tp + magic + time (seconds precision) to create unique key
-    string idempotencyKey = StringFormat("ASYNC_%s_%s_%.2f_%.5f_%.5f_%.5f_%I64u_%d",
-                                         symbol, EnumToString(orderType), normalizedLot, executionPrice, sl, tp, magic, (int)TimeCurrent());
-
-    // Submit via OrderSendAsync
-    MqlTradeResult result = {};
-    bool sent = OrderSendAsync(request, result);
-
-    if(!sent)
-    {
-        PrintFormat("[ASYNC-TRADE-FAILED] %s | retcode=%u | comment=%s | err=%d",
-                    symbol, result.retcode, result.comment, GetLastError());
-        return false;
-    }
-
-    // Store in pending array for later confirmation via OnTradeTransaction
-    int newSize = ArraySize(m_pendingAsyncTrades) + 1;
-    ArrayResize(m_pendingAsyncTrades, newSize);
-    int idx = newSize - 1;
-
-    m_pendingAsyncTrades[idx].ticket      = result.order;
-    m_pendingAsyncTrades[idx].symbol      = symbol;
-    m_pendingAsyncTrades[idx].orderType   = orderType;
-    m_pendingAsyncTrades[idx].lot         = normalizedLot;
-    m_pendingAsyncTrades[idx].price       = executionPrice;
-    m_pendingAsyncTrades[idx].sl          = sl;
-    m_pendingAsyncTrades[idx].tp          = tp;
-    m_pendingAsyncTrades[idx].magic       = magic;
-    m_pendingAsyncTrades[idx].submitTime  = TimeCurrent();
-    m_pendingAsyncTrades[idx].timeoutMs   = timeoutMs;
-    m_pendingAsyncTrades[idx].confirmed   = false;
-    m_pendingAsyncTrades[idx].expired     = false;
-    // FIX: Set idempotency key for deduplication
-    m_pendingAsyncTrades[idx].idempotencyKey = idempotencyKey;
-    m_pendingAsyncTrades[idx].retryCount = 0;
-    m_pendingAsyncTrades[idx].persisted = false;
-    m_pendingAsyncTrades[idx].persistedTime = 0;
-
-    PrintFormat("[ASYNC-TRADE-SENT] Symbol=%s Type=%s Lot=%.2f Price=%.5f Ticket=%I64u Key=%s",
-                symbol, EnumToString(orderType), normalizedLot, executionPrice, result.order, idempotencyKey);
-
-    // FIX: Persist async trade request to CSV for replay on restart
-    PersistAsyncTradeRequest(m_pendingAsyncTrades[idx]);
-
-    return true;
+    // Build the request, submit via OrderSendAsync and record it as pending
+    return m_asyncExecutor.SubmitAsync(orderType, symbol, normalizedLot, executionPrice, sl, tp,
+                                       magic, timeoutMs, m_slippage, m_orderFillMode);
 }
 
 //+------------------------------------------------------------------+
 //| Process trade transaction event (call from OnTradeTransaction)    |
+//| Phase D T4: moved to CTradeMgrAsyncExecutor                       |
 //+------------------------------------------------------------------+
 void CTradeManager::ProcessTradeTransaction(const MqlTradeTransaction &trans,
                                             const MqlTradeRequest &request,
                                             const MqlTradeResult &result)
 {
-    // Only process deal-add transactions (completed fills)
-    if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
-        return;
-
-    int pendingCount = ArraySize(m_pendingAsyncTrades);
-    if(pendingCount == 0)
-        return;
-
-    ulong dealOrder = (ulong)trans.order;
-
-    // Search for matching pending request by order ticket
-    for(int i = pendingCount - 1; i >= 0; i--)
-    {
-        if(m_pendingAsyncTrades[i].ticket == dealOrder && !m_pendingAsyncTrades[i].confirmed)
-        {
-            // Mark as confirmed
-            m_pendingAsyncTrades[i].confirmed = true;
-
-            // Calculate slippage
-            double pointSize = SymbolInfoDouble(m_pendingAsyncTrades[i].symbol, SYMBOL_POINT);
-            // Guard against denormalized/zero point size to prevent NaN slippage
-            if(pointSize <= 1e-15) pointSize = 1e-15;
-            double slippage = 0.0;
-            if(pointSize > 0.0 && trans.price > 0.0 && m_pendingAsyncTrades[i].price > 0.0)
-                slippage = MathAbs(trans.price - m_pendingAsyncTrades[i].price) / pointSize;
-
-            PrintFormat("[ASYNC-TRADE-CONFIRMED] Ticket=%I64u Price=%.5f (expected=%.5f slippage=%.1f pts)",
-                        m_pendingAsyncTrades[i].ticket,
-                        trans.price,
-                        m_pendingAsyncTrades[i].price,
-                        slippage);
-
-            // Update execution quality metrics
-            STradeExecutionReceipt receipt;
-            receipt.accepted        = true;
-            receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
-            receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
-            receipt.filledVolume    = trans.volume;
-            receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
-            receipt.averagePrice    = trans.price;
-            receipt.slippagePoints  = slippage;
-            receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
-            receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
-            receipt.symbol          = m_pendingAsyncTrades[i].symbol;
-            receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
-            receipt.note            = "async_confirmed";
-            if(m_pendingAsyncTrades[i].submitTime > 0)
-            {
-                ulong elapsedMs = (ulong)(TimeCurrent() - m_pendingAsyncTrades[i].submitTime) * 1000;
-                receipt.roundTripMs = elapsedMs;
-            }
-            UpdateExecutionMetrics(receipt);
-
-            // Remove confirmed entry by shifting remaining elements
-            for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
-                m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
-            ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
-
-            break;
-        }
-    }
+    m_asyncExecutor.ProcessTradeTransaction(trans, request, result, m_execQuality);
 }
 
 //+------------------------------------------------------------------+
 //| Check for timed-out async trades (call from OnTimer)              |
+//| Phase D T4: moved to CTradeMgrAsyncExecutor                       |
 //+------------------------------------------------------------------+
 void CTradeManager::CheckAsyncTimeouts()
 {
-    int pendingCount = ArraySize(m_pendingAsyncTrades);
-    if(pendingCount == 0)
-        return;
-
-    datetime checkTime = TimeCurrent();
-
-    for(int i = pendingCount - 1; i >= 0; i--)
-    {
-        if(m_pendingAsyncTrades[i].confirmed || m_pendingAsyncTrades[i].expired)
-            continue;
-
-        // Calculate elapsed time in milliseconds
-        long elapsedMs = (long)(checkTime - m_pendingAsyncTrades[i].submitTime) * 1000;
-
-        if(elapsedMs > m_pendingAsyncTrades[i].timeoutMs)
-        {
-            m_pendingAsyncTrades[i].expired = true;
-
-            PrintFormat("[ASYNC-TRADE-TIMEOUT] Ticket=%I64u expired after %I64dms (limit=%dms)",
-                        m_pendingAsyncTrades[i].ticket,
-                        elapsedMs,
-                        m_pendingAsyncTrades[i].timeoutMs);
-
-            // Update execution metrics for the timeout
-            STradeExecutionReceipt receipt;
-            receipt.accepted        = false;
-            receipt.orderTicket     = m_pendingAsyncTrades[i].ticket;
-            receipt.requestedVolume = m_pendingAsyncTrades[i].lot;
-            receipt.requestedPrice  = m_pendingAsyncTrades[i].price;
-            receipt.stopLoss        = m_pendingAsyncTrades[i].sl;
-            receipt.takeProfit      = m_pendingAsyncTrades[i].tp;
-            receipt.symbol          = m_pendingAsyncTrades[i].symbol;
-            receipt.submitTime      = m_pendingAsyncTrades[i].submitTime;
-            receipt.note            = "async_timeout";
-            if(m_pendingAsyncTrades[i].submitTime > 0)
-                receipt.roundTripMs = (ulong)elapsedMs;
-            UpdateExecutionMetrics(receipt);
-
-            // Remove expired entry by shifting remaining elements
-            for(int j = i; j < ArraySize(m_pendingAsyncTrades) - 1; j++)
-                m_pendingAsyncTrades[j] = m_pendingAsyncTrades[j + 1];
-            ArrayResize(m_pendingAsyncTrades, ArraySize(m_pendingAsyncTrades) - 1);
-        }
-    }
+    m_asyncExecutor.CheckAsyncTimeouts(m_execQuality);
 }
 
 //+------------------------------------------------------------------+
@@ -3078,7 +2215,7 @@ void CTradeManager::CheckAsyncTimeouts()
 //+------------------------------------------------------------------+
 int CTradeManager::GetPendingAsyncCount() const
 {
-    return ArraySize(m_pendingAsyncTrades);
+    return m_asyncExecutor.GetPendingAsyncCount();
 }
 
 //+------------------------------------------------------------------+
@@ -3086,9 +2223,7 @@ int CTradeManager::GetPendingAsyncCount() const
 //+------------------------------------------------------------------+
 ulong CTradeManager::GetPendingAsyncTicket(int index) const
 {
-    if(index < 0 || index >= ArraySize(m_pendingAsyncTrades))
-        return 0;
-    return m_pendingAsyncTrades[index].ticket;
+    return m_asyncExecutor.GetPendingAsyncTicket(index);
 }
 
 //+------------------------------------------------------------------+
@@ -3096,43 +2231,7 @@ ulong CTradeManager::GetPendingAsyncTicket(int index) const
 //+------------------------------------------------------------------+
 void CTradeManager::PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
 {
-    string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
-    int handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
-    if(handle == INVALID_HANDLE)
-    {
-        PrintFormat("[ASYNC-PERSIST] ERROR: Cannot open %s for writing", fileName);
-        return;
-    }
-
-    // Check if file is empty (needs header)
-    bool writeHeader = (FileSize(handle) == 0);
-
-    if(writeHeader)
-    {
-        FileWrite(handle, "ticket,symbol,orderType,lot,price,sl,tp,magic,submitTime,timeoutMs,confirmed,expired,idempotencyKey,retryCount,persisted,persistedTime,comment");
-    }
-
-    string line = StringFormat("%I64u,%s,%s,%.2f,%.5f,%.5f,%.5f,%I64u,%d,%d,%d,%d,%s,%d,%d,%d,%s",
-                               asyncTrade.ticket,
-                               asyncTrade.symbol,
-                               EnumToString(asyncTrade.orderType),
-                               asyncTrade.lot,
-                               asyncTrade.price,
-                               asyncTrade.sl,
-                               asyncTrade.tp,
-                               asyncTrade.magic,
-                               (int)asyncTrade.submitTime,
-                               asyncTrade.timeoutMs,
-                               asyncTrade.confirmed ? 1 : 0,
-                               asyncTrade.expired ? 1 : 0,
-                               asyncTrade.idempotencyKey,
-                               asyncTrade.retryCount,
-                               asyncTrade.persisted ? 1 : 0,
-                               (int)asyncTrade.persistedTime,
-                               asyncTrade.comment);
-
-    FileWrite(handle, line);
-    FileClose(handle);
+    CTradeMgrAsyncExecutor::PersistAsyncTradeRequest(asyncTrade);
 }
 
 //+------------------------------------------------------------------+
@@ -3140,107 +2239,7 @@ void CTradeManager::PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrad
 //+------------------------------------------------------------------+
 void CTradeManager::ReplayAsyncTradeRequests()
 {
-    string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
-    int handle = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
-    if(handle == INVALID_HANDLE)
-    {
-        PrintFormat("[ASYNC-REPLAY] No async trade persistence file found: %s", fileName);
-        return;
-    }
-
-    int replayed = 0;
-    string line;
-    bool skipHeader = true;
-
-    while(!FileIsEnding(handle))
-    {
-        line = FileReadString(handle);
-        if(StringLen(line) == 0) continue;
-
-        if(skipHeader)
-        {
-            skipHeader = false;
-            continue;
-        }
-
-        string fields[];
-        int count = StringSplit(line, ',', fields);
-        if(count < 17) continue;  // Need all fields
-
-// Parse fields
-        ulong ticket = (ulong)StringToInteger(fields[0]);
-        string symbol = fields[1];
-        ENUM_ORDER_TYPE orderType = OrderTypeFromString(fields[2]);
-        double lot = StringToDouble(fields[3]);
-        double price = StringToDouble(fields[4]);
-        double sl = StringToDouble(fields[5]);
-        double tp = StringToDouble(fields[6]);
-        ulong magic = (ulong)StringToInteger(fields[7]);
-        datetime submitTime = (datetime)StringToInteger(fields[8]);
-        int timeoutMs = (int)StringToInteger(fields[9]);
-        bool confirmed = StringToInteger(fields[10]) == 1;
-        bool expired = StringToInteger(fields[11]) == 1;
-        string idempotencyKey = fields[12];
-        int retryCount = (int)StringToInteger(fields[13]);
-        bool persisted = StringToInteger(fields[14]) == 1;
-        datetime persistedTime = (datetime)StringToInteger(fields[15]);
-        string comment = fields[16];
-
-        // Skip already confirmed/expired trades
-        if(confirmed || expired)
-            continue;
-
-        // Check if we already have this idempotency key in pending array (deduplication)
-        bool duplicate = false;
-        for(int i = 0; i < ArraySize(m_pendingAsyncTrades); i++)
-        {
-            if(m_pendingAsyncTrades[i].idempotencyKey == idempotencyKey)
-            {
-                duplicate = true;
-                break;
-            }
-        }
-
-        if(duplicate)
-        {
-            PrintFormat("[ASYNC-REPLAY] Skipping duplicate idempotency key: %s", idempotencyKey);
-            continue;
-        }
-
-        // Add to pending array for confirmation on next OnTradeTransaction
-        int newSize = ArraySize(m_pendingAsyncTrades) + 1;
-        ArrayResize(m_pendingAsyncTrades, newSize);
-        int idx = newSize - 1;
-
-        m_pendingAsyncTrades[idx].ticket = ticket;
-        m_pendingAsyncTrades[idx].symbol = symbol;
-        m_pendingAsyncTrades[idx].orderType = orderType;
-        m_pendingAsyncTrades[idx].lot = lot;
-        m_pendingAsyncTrades[idx].price = price;
-        m_pendingAsyncTrades[idx].sl = sl;
-        m_pendingAsyncTrades[idx].tp = tp;
-        m_pendingAsyncTrades[idx].magic = magic;
-        m_pendingAsyncTrades[idx].submitTime = submitTime;
-        m_pendingAsyncTrades[idx].timeoutMs = timeoutMs;
-        m_pendingAsyncTrades[idx].confirmed = false;
-        m_pendingAsyncTrades[idx].expired = false;
-        m_pendingAsyncTrades[idx].idempotencyKey = idempotencyKey;
-        m_pendingAsyncTrades[idx].retryCount = retryCount;
-        m_pendingAsyncTrades[idx].persisted = true;
-        m_pendingAsyncTrades[idx].persistedTime = persistedTime;
-        m_pendingAsyncTrades[idx].comment = comment;
-
-        replayed++;
-        PrintFormat("[ASYNC-REPLAY] Replayed async trade: %s %s %.2f @ %.5f (key=%s)",
-                    symbol, EnumToString(orderType), lot, price, idempotencyKey);
-    }
-
-    FileClose(handle);
-
-    if(replayed > 0)
-    {
-        PrintFormat("[ASYNC-REPLAY] Replayed %d unconfirmed async trade(s) from persistence", replayed);
-    }
+    m_asyncExecutor.ReplayAsyncTradeRequests();
 }
 
 //+------------------------------------------------------------------+
@@ -3248,12 +2247,7 @@ void CTradeManager::ReplayAsyncTradeRequests()
 //+------------------------------------------------------------------+
 bool CTradeManager::IsDuplicateIdempotencyKey(const string key) const
 {
-    for(int i = 0; i < ArraySize(m_pendingAsyncTrades); i++)
-    {
-        if(m_pendingAsyncTrades[i].idempotencyKey == key)
-            return true;
-    }
-    return false;
+    return m_asyncExecutor.IsDuplicateIdempotencyKey(key);
 }
 
 //+------------------------------------------------------------------+
@@ -3261,48 +2255,7 @@ bool CTradeManager::IsDuplicateIdempotencyKey(const string key) const
 //+------------------------------------------------------------------+
 void CTradeManager::CleanupPersistedAsyncTrades()
 {
-    string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
-    int handle = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
-    if(handle == INVALID_HANDLE)
-        return;
-
-    // Read all lines
-    string lines[];
-    string line;
-    bool skipHeader = true;
-    while(!FileIsEnding(handle))
-    {
-        line = FileReadString(handle);
-        if(StringLen(line) == 0) continue;
-        if(skipHeader) { skipHeader = false; continue; }
-
-        string fields[];
-        int count = StringSplit(line, ',', fields);
-        if(count < 11) continue;
-
-        bool confirmed = StringToInteger(fields[10]) == 1;
-        bool expired = StringToInteger(fields[11]) == 1;
-
-        // Keep only unconfirmed, unexpired trades
-        if(!confirmed && !expired)
-        {
-            int newSize = ArraySize(lines) + 1;
-            ArrayResize(lines, newSize);
-            lines[newSize - 1] = line;
-        }
-    }
-    FileClose(handle);
-
-    // Rewrite file with only active trades
-    handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
-    if(handle == INVALID_HANDLE) return;
-
-    FileWrite(handle, "ticket,symbol,orderType,lot,price,sl,tp,magic,submitTime,timeoutMs,confirmed,expired,idempotencyKey,retryCount,persisted,persistedTime,comment");
-    for(int i = ArraySize(lines) - 1; i >= 0; i--)
-    {
-        FileWrite(handle, lines[i]);
-    }
-    FileClose(handle);
+    CTradeMgrAsyncExecutor::CleanupPersistedAsyncTrades();
 }
 
 #endif // CORE_TRADE_MANAGER_MQH
