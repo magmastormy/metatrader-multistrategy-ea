@@ -140,7 +140,8 @@ bool CDashboardBridge::PushState()
 {
    if(!m_transport.BeginPush())
       return false;
-   return m_transport.FinishPush(CDashBridgePanels::BuildStateJson(m_protocol, m_health));
+   string stateJson = CDashBridgePanels::BuildStateJson(m_protocol, m_health);
+   return m_transport.FinishPush(stateJson);
 }
 
 //+------------------------------------------------------------------+

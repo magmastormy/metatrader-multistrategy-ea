@@ -4,6 +4,47 @@ All notable changes to the `metatrader-multistrategy-ea` project are documented 
 
 ## [Unreleased] - 2026-08-11
 
+### Batch 145: Unified Data-Driven Strategy Catalog (2026-08-11)
+
+#### Implementation Summary
+Structural refactor only — **trading behavior preserved byte-for-byte**. Every strategy registration path (12 indicator strategies + 5 AI adapters) now reads from ONE catalog file instead of three hand-maintained if-chains.
+
+**New file — `Core/Strategy/StrategyCatalog.mqh`** (~290 lines)
+- 8 sections: per-strategy includes, catalog enums (`ENUM_CATALOG_KIND`, `ENUM_CATALOG_AI`), the `SStrategyDefinition` row struct (18 fields), storage (`g_strategyCatalog[]`, `g_strategyCatalogCreators[]`, count/built flags), `CATALOG_SIMPLE_CREATOR` creator macro, `CatalogAdd()`, `BuildStrategyCatalog()` (17 rows), and lookups/gates (`CatalogFindByName`, `CatalogSymbolAllowed`, `CatalogFlagEnabled`, `CatalogLogIndexAudit`).
+- Every strategy owns exactly 3 anchored lines tagged `// [CAT:<Name>]` (include / creator / row).
+
+#### Add–Remove Contract
+- **Add a strategy:** 1 new class file under `Strategies/`, then 3 anchored lines in `StrategyCatalog.mqh` (include, `CATALOG_SIMPLE_CREATOR`, `CatalogAdd`). Nothing else in `Core/` is touched.
+- **Remove a strategy:** delete the 3 lines carrying its `[CAT:]` anchor.
+
+#### File Change Map
+| File | Change |
+|---|---|
+| `Core/Strategy/StrategyCatalog.mqh` | **NEW** — single source of registration truth |
+| `Core/Management/EnterpriseStrategyManager.mqh` | 12 `Strategies/*` includes → 1 catalog include; `AutoRegisterStrategies()` if-chain (67 lines) → 1 catalog loop |
+| `Core/Orchestration/EAOrchestrator.mqh` | 5 `Initialize*AIForSymbol()` (362 lines) → `IsCatalogAIRowEnabled` / `CatalogAIPreCreateGate` / `PrepareCatalogAIAdapter` / `RegisterCatalogAIAdapter` / `RegisterCatalogAIStrategiesForSymbol`; the 5 call sites → 1 call |
+| `Core/Management/StrategyRegistryState.mqh` | dead duplicate include block (15 lines), dead `AutoRegisterStrategies` decl + 73-line body removed |
+| `Core/Factory/StrategyFactory.mqh`, `Core/Registry/MathematicalEngineRegistry.mqh` | **untouched** (their includes are still required) |
+
+#### Bug Fixed — F4: AI adapter double-delete
+`CEnterpriseStrategyManager::RegisterStrategy()` already deletes the strategy object when registration fails. Four of the five AI paths (Transformer, Ensemble, ONNX, Python Bridge) then called `delete adapter` again — a double free. Only the Neural Network path was correct. The shared `RegisterCatalogAIAdapter()` tail now never deletes after a failed `RegisterStrategy`, making all five paths consistent and safe. `delete adapter` is still performed (correctly) when adapter *preparation* fails, since the manager does not own it yet.
+
+#### Bug Fixed — pre-existing `DashboardBridge.mqh:143` compile error (0/0 blocker)
+The Batch 144 `DashboardBridge` decomposition (commit `e483d5b`) left `CDashboardBridge::PushState()` calling `m_transport.FinishPush(CDashBridgePanels::BuildStateJson(m_protocol, m_health))` — passing an rvalue to a `string&` parameter (compiler error 200 "parameter passed as reference, variable expected" + warning 39). This meant the **EA did not build on `main`** (no `.ex5` emitted). Fixed the same proven way as `UnifiedRiskManager`: capture `BuildStateJson(...)` into a local `string stateJson` and pass `stateJson`. A full headless compile of `MultiStrategyAutonomousEA.mq5` now reports **0 errors, 0 warnings**. This defect was independent of Batch 145 (Batch 145 adds zero new diagnostics) but is closed here so the deliverable meets the 0/0 requirement.
+
+#### Invariants Preserved
+- The 12 legacy `flagsIndex` literals are kept exactly: `{0, 1, 4, 6, 9, 10, 11, 12, 13, 14, 15, 16}`. They are **not** remapped to `SI_*`.
+- All weights / tiers / roles / clusters / timeframes / intrabar policies are identical to the previous `RegisterStrategy` call sites.
+- Statistical Arbitrage still registers only when `g_pythonBridge != NULL && g_pythonBridge.IsConnected()`, and both original `Print` lines fire in their original relative positions.
+- Python Bridge **AI** keeps its own, different gate (`m_pythonBridge != NULL && m_pythonBridge.IsInitialized()`); the two bridge predicates were deliberately **not** unified.
+- `SyncEnabledWithRegistry`, `CStrategyRegistryState::RegisterStrategy`, `BuildStrategyRegistry`, the consensus core, health monitor, ONNX backoff manager and pipeline wiring are untouched.
+
+#### Latent Defects Found, NOT Fixed in Batch 145
+Each of these is reported (F1 is now logged at runtime by `CatalogLogIndexAudit()`) and **deferred to a separate user decision** — fixing any of them changes trading behavior.
+- **F1 — legacy flag index vs semantic `SI_*` index mismatch.** For 8 of the 12 rows the legacy `flagsIndex` diverges from the semantic `ENUM_STRATEGY_INDEX` slot. Consequences: **2 strategies are effectively dead** (NY Open Gap → legacy slot 15, Asian Range Break → legacy slot 16; those slots are never populated) and **6 are mis-gated** (Mean Reversion, Volatility Breakout, Statistical Arbitrage, FVG Scalper, Turtle Soup, Breaker Block read a neighbouring strategy's enable flag). Now emitted as `[CATALOG-AUDIT] ... MISMATCH` / `DEAD_SLOT` lines at registration time. **Not fixed** — the remap would enable/disable live strategies.
+- **F2 — `StrategyConfigBuilder` slot [13] double-write.** Two different strategies write the same flag slot; the second write wins. **Not fixed.**
+- **F3 — `PythonBridgeAI` missing from the outer AI gate.** The `:3505` gate ORs `enableNeuralNetwork || enableTransformer || enableEnsemble || enableOnnxAI` but omits `enablePythonBridgeAI`, so a Python-Bridge-AI-only configuration never reaches AI adapter registration. Preserved as-is. **Not fixed.**
+
 ### Batch 144: God-Object Decomposition — next5c + Strategy Openness Refinement (2026-08-11)
 
 #### Decomposition — next5c (commit e483d5b)

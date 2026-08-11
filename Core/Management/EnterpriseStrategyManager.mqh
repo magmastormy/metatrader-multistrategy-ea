@@ -23,21 +23,11 @@
 #include "../../Core/AI/AIPerformanceFeedback.mqh"
 #include "../../Core/Utils/JsonLogger.mqh"
 
-// Retained production strategy inventory (7 kept in codebase)
-#include "../../Strategies/SimpleMomentumStrategy.mqh"
-#include "../../Strategies/StrategyTrend.mqh"
-#include "../../Strategies/StrategySupportResistance.mqh"
-#include "../../Strategies/StrategyCandlestick.mqh"
-#include "../../Strategies/MeanReversionStrategy.mqh"
-#include "../../Strategies/VolatilityBreakoutStrategy.mqh"
-#include "../../Strategies/StatisticalArbitrageStrategy.mqh"
-
-// Batch 103: New ICT/SMC strategies
-#include "../../Strategies/FVGScalperStrategy.mqh"
-#include "../../Strategies/TurtleSoupStrategy.mqh"
-#include "../../Strategies/BreakerBlockStrategy.mqh"
-#include "../../Strategies/NYOpenGapStrategy.mqh"
-#include "../../Strategies/AsianRangeBreakStrategy.mqh"
+// Batch 145: the whole production strategy inventory now lives in ONE
+// data-driven catalog. StrategyCatalog.mqh pulls in every concrete strategy
+// class header itself, so it is included at the exact position the 12 direct
+// includes occupied and downstream modules still see the concrete types.
+#include "../Strategy/StrategyCatalog.mqh"
 
 // Forward declarations
 class CEnhancedErrorHandler;
@@ -939,69 +929,66 @@ ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetIntrabarPolicyHelper(int idx
     return m_intrabarPolicy.GetIntrabarPolicyHelper(idx);
 }
 
+// Batch 145: the hand-written if-chain is replaced by one pass over the
+// shared catalog (Core/Strategy/StrategyCatalog.mqh). Gate order, weights,
+// tiers, clusters, intrabar policies and both Statistical Arbitrage log
+// lines are preserved exactly as the if-chain emitted them.
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 {
-    int size = ArraySize(flags);
-    
-    // 0: Momentum (live primary voter) - Tier 3
-        if(size > 0 && flags[0]) RegisterStrategy(new CSimpleMomentumStrategy(), "Momentum", true, 1.0, STRATEGY_TIER_3, PERIOD_CURRENT, GetIntrabarPolicyHelper(0),
-                                                         PRIMARY_ALPHA, TREND_CLUSTER, true);
+    BuildStrategyCatalog();
+    CatalogLogIndexAudit();
 
-                // 1: Trend (live primary voter) - Tier 2
-                if(size > 1 && flags[1]) RegisterStrategy(new CStrategyTrend(), "Trend", true, 1.2, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(1),
-                                                         PRIMARY_ALPHA, TREND_CLUSTER, true);
+    const int    size     = ArraySize(flags);
+    const bool   bridgeUp = (g_pythonBridge != NULL && g_pythonBridge.IsConnected());
+    const string sym      = GetManagedSymbol();
 
-                // 2: Support/Resistance (live primary voter) - Tier 2
-                        if(size > 4 && flags[4]) RegisterStrategy(new CStrategySupportResistance(), "Support/Resistance", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(4),
-                                                                 PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
+    for(int i = 0; i < g_strategyCatalogCount; i++)
+    {
+        if(g_strategyCatalog[i].kind != CAT_KIND_INDICATOR)
+            continue;
+        if(!CatalogSymbolAllowed(i, sym))
+            continue;
 
-                        // 5: Unified ICT - REMOVED (over-engineered, 14+ modules, 1850 lines)
-
-                        // 6: Candlestick (live primary voter) - Tier 2
-                if(size > 6 && flags[6]) RegisterStrategy(new CStrategyCandlestick(), "Candlestick", true, 1.5, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(6),
-                                                         PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
-
-        // 9: Mean Reversion (live primary voter) - Tier 2 - MEAN_REVERSION_CLUSTER
-        if(size > 9 && flags[9]) RegisterStrategy(new CMeanReversionStrategy(), "Mean Reversion", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(9),
-                                                 PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
-
-        // 10: Volatility Breakout (live primary voter) - Tier 1 - TREND_CLUSTER
-        if(size > 10 && flags[10]) RegisterStrategy(new CVolatilityBreakoutStrategy(), "Volatility Breakout", true, 2.0, STRATEGY_TIER_1, PERIOD_CURRENT, GetIntrabarPolicyHelper(10),
-                                                   PRIMARY_ALPHA, TREND_CLUSTER, true);
-
-    // 11: Statistical Arbitrage - Requires Python Bridge for real-time correlation matrix
-        // Conditionally registered only when Python bridge is available
-        if(g_pythonBridge != NULL && g_pythonBridge.IsConnected())
+        // Hard prerequisite gate (Statistical Arbitrage needs the Python bridge)
+        if(g_strategyCatalog[i].requiresPythonBridge)
         {
-            if(size > 11 && flags[11]) RegisterStrategy(new CStatisticalArbitrageStrategy(), "Statistical Arbitrage", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(11),
-                                                        PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true);
+            if(!bridgeUp)
+            {
+                Print("[EnterpriseStrategyManager] Python Bridge not available - Skipping Statistical Arbitrage registration");
+                continue;
+            }
+        }
+
+        // Legacy enable-flag gate (literal indices preserved verbatim)
+        const int fi = g_strategyCatalog[i].flagsIndex;
+        if(fi >= 0 && !(size > fi && flags[fi]))
+        {
+            if(g_strategyCatalog[i].requiresPythonBridge)
+                Print("[EnterpriseStrategyManager] Python Bridge available - Statistical Arbitrage strategy registered");
+            continue;
+        }
+
+        IStrategy* s = NULL;
+        if(g_strategyCatalogCreators[i] != NULL)
+            s = g_strategyCatalogCreators[i]();
+        if(s == NULL)
+        {
+            PrintFormat("[CATALOG] creator returned NULL for %s", g_strategyCatalog[i].name);
+            continue;
+        }
+
+        const int pIdx = g_strategyCatalog[i].policyIndex;
+        ENUM_INTRABAR_POLICY pol = (pIdx >= 0) ? GetIntrabarPolicyHelper(pIdx)
+                                               : g_strategyCatalog[i].fixedPolicy;
+
+        RegisterStrategy(s, g_strategyCatalog[i].name, true, g_strategyCatalog[i].weight,
+                         g_strategyCatalog[i].tier, g_strategyCatalog[i].timeframe, pol,
+                         g_strategyCatalog[i].role, g_strategyCatalog[i].cluster,
+                         g_strategyCatalog[i].liveVoting);
+
+        if(g_strategyCatalog[i].requiresPythonBridge)
             Print("[EnterpriseStrategyManager] Python Bridge available - Statistical Arbitrage strategy registered");
-        }
-        else
-        {
-            Print("[EnterpriseStrategyManager] Python Bridge not available - Skipping Statistical Arbitrage registration");
-        }
-
-        // Batch 103: New ICT/SMC strategies
-        // 12: FVG Scalper - Tier 2 - STRUCTURE_CLUSTER
-        if(size > 12 && flags[12]) RegisterStrategy(new CFVGScalperStrategy(), "FVG Scalper", true, 1.8, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(12),
-                                                    PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
-
-        // 13: Turtle Soup - Tier 2 - STRUCTURE_CLUSTER
-        if(size > 13 && flags[13]) RegisterStrategy(new CTurtleSoupStrategy(), "Turtle Soup", true, 1.6, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(13),
-                                                    PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
-
-        // 14: Breaker Block - Tier 2 - STRUCTURE_CLUSTER
-        if(size > 14 && flags[14]) RegisterStrategy(new CBreakerBlockStrategy(), "Breaker Block", true, 1.7, STRATEGY_TIER_2, PERIOD_CURRENT, GetIntrabarPolicyHelper(14),
-                                                    PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
-
-        // 15: NY Open Gap - Tier 3 - STRUCTURE_CLUSTER (session-limited)
-                if(size > 15 && flags[15]) RegisterStrategy(new CNYOpenGapStrategy(), "NY Open Gap", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, GetIntrabarPolicyHelper(15),
-                                                            PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
-
-                // 16: Asian Range Break - Tier 3 - STRUCTURE_CLUSTER (session-limited)
-                if(size > 16 && flags[16]) RegisterStrategy(new CAsianRangeBreakStrategy(), "Asian Range Break", true, 1.3, STRATEGY_TIER_3, PERIOD_CURRENT, GetIntrabarPolicyHelper(16),
-                                                            PRIMARY_ALPHA, STRUCTURE_CLUSTER, true);
+    }
 
     Print("[EnterpriseStrategyManager] Auto-registration complete. Active strategies: ",
           GetActiveStrategyCount());

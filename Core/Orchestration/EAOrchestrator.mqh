@@ -2177,367 +2177,291 @@ void ReleaseNeuralNetStrategies()
     m_attributionManager.ClearAll();
 }
 
-bool InitializeNeuralNetForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
-{
-    if(!m_config.enableNeuralNetwork)
-    return false;
+    //==============================================================//
+    // Batch 145: catalog-driven AI adapter registration.            //
+    // The five hand-written Initialize*AIForSymbol() functions were //
+    // collapsed into one loop over the CAT_KIND_AI rows of          //
+    // Core/Strategy/StrategyCatalog.mqh. Every gate, prep step and  //
+    // log line of the originals is preserved; the only behavioural  //
+    // change is the F4 fix (no delete after a failed                //
+    // RegisterStrategy - the manager already destroyed the adapter).//
+    //==============================================================//
 
-    CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(symbol);
-    if(symbolManager == NULL)
+    // Per-row master switch (mirrors the old `if(!m_config.enableX) return false;`)
+    bool IsCatalogAIRowEnabled(const ENUM_CATALOG_AI k)
     {
-        Print("[AI-MODE] Skipping NN initialization; no strategy manager for ", symbol);
-        return false;
-    }
-
-    // Check if already initialized for this symbol
-    for(int i = 0; i < ArraySize(m_neuralNetStrategies); i++)
-    {
-        if(m_neuralNetStrategySymbols[i] == symbol && m_neuralNetStrategies[i] != NULL)
-        return true;
-    }
-
-    // L1-008: Use factory to create Neural Network AI adapter (adapter owns NN)
-    CStrategyFactory::SStrategyConfig cfg;
-    cfg.symbol = symbol;
-    cfg.timeframe = timeframe;
-    cfg.weight = 1.0;
-    cfg.tier = STRATEGY_TIER_2;
-    cfg.intrabarEligible = false;
-    cfg.liveVotingEnabled = true;
-    cfg.role = PRIMARY_ALPHA;
-    cfg.cluster = STRATEGY_CLUSTER_NONE;
-
-    CAIStrategyAdapter* adapter = (CAIStrategyAdapter*)CStrategyFactory::Create("Neural Network AI", cfg);
-    if(adapter == NULL)
-    {
-        Print("[AI-MODE] Failed to create Neural Network AI adapter for ", symbol);
-        return false;
-    }
-
-    // Get the neural network from adapter and initialize it
-    CNeuralNetworkStrategy* nn = adapter.GetNeuralNetwork();
-    if(nn == NULL)
-    {
-        Print("[AI-MODE] Adapter has no neural network for ", symbol);
-        delete adapter;
-        return false;
-    }
-
-    nn.SetOnlineTrainingEnabled(m_config.enableNNOnlineTraining);
-    nn.SetWeightMutationEnabled(m_config.enableNNWeightMutation);
-    nn.SetConfidenceThreshold(ResolveAIRuntimeVoteThreshold(ResolveEffectiveEAMode()));
-
-    if(!nn.Initialize(symbol, timeframe))
-    {
-        Print("[AI-MODE] Neural Network initialization failed for ", symbol);
-        delete adapter; // Adapter owns NN, will clean up
-        return false;
-    }
-
-    nn.ConfigureOnlineLearning(m_config.enableNNOnlineTraining && m_config.enableNNPseudoLabeling,
-    m_config.nnPseudoLabelBarsAhead,
-    m_config.nnSampleIntervalSeconds,
-    m_config.nnCheckpointEveryLabeled);
-
-    // Store reference for backward compatibility (dashboard, etc.)
-    int currentSize = ArraySize(m_neuralNetStrategies);
-    ArrayResize(m_neuralNetStrategies, currentSize + 1);
-    ArrayResize(m_neuralNetStrategySymbols, currentSize + 1);
-    m_neuralNetStrategies[currentSize] = nn;  // Non-owning reference
-    m_neuralNetStrategySymbols[currentSize] = symbol;
-
-    // Register adapter with symbol manager (manager takes ownership)
-    CStrategyRegistry* stratRegLocal = m_registryAggregator.GetStrategyRegistry();
-    double aiWeight = -1.0;
-    if(stratRegLocal != NULL)
-    aiWeight = stratRegLocal.GetWeightByName("Neural Network AI");
-    if(aiWeight <= 0.0)
-    aiWeight = MathMax(0.1, m_config.aiWeightMultiplier);
-    if(!symbolManager.RegisterStrategy(adapter, "Neural Network AI", true, aiWeight, STRATEGY_TIER_2, PERIOD_CURRENT, INTRABAR_POLICY_LIVE, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true))
-    {
-        Print("[AI-MODE] WARNING: Failed to register NN adapter for ", symbol);
-        if(stratRegLocal != NULL)
-        stratRegLocal.MarkRegistered("Neural Network AI", false, "nn_adapter_register_failed");
-        // Adapter will be deleted by symbol manager on failure
-        return false;
-    }
-    if(stratRegLocal != NULL)
-    stratRegLocal.MarkRegistered("Neural Network AI", true);
-
-    Print("[AI-MODE] Neural Network ready for ", symbol);
-        return true;
-    }
-
-    // Initialize Transformer AI adapter for a symbol
-    bool InitializeTransformerAIForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
-    {
-        if(!m_config.enableTransformer)
-            return false;
-
-        CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(symbol);
-        if(symbolManager == NULL)
+        switch(k)
         {
-            Print("[AI-MODE] Skipping Transformer AI initialization; no strategy manager for ", symbol);
-            return false;
+            case CAT_AI_NEURAL_NET:    return m_config.enableNeuralNetwork;
+            case CAT_AI_TRANSFORMER:   return m_config.enableTransformer;
+            case CAT_AI_ENSEMBLE:      return m_config.enableEnsemble;
+            case CAT_AI_ONNX:          return m_config.enableOnnxAI;
+            case CAT_AI_PYTHON_BRIDGE: return m_config.enablePythonBridgeAI;
+            default:                   return false;
         }
+    }
 
-        // Check if already initialized for this symbol
-        // Note: We don't track Transformer adapters separately since they don't have internal state like NN
+    // Gates that ran BEFORE the factory call in the original functions.
+    // Returning false skips the row; alreadyLive=true means the row is
+    // already satisfied for this symbol (old NN early `return true`).
+    bool CatalogAIPreCreateGate(const ENUM_CATALOG_AI k, const string symbol, bool &alreadyLive)
+    {
+        alreadyLive = false;
 
-        // Use factory to create Transformer AI adapter
-        CStrategyFactory::SStrategyConfig cfg;
-        cfg.symbol = symbol;
-        cfg.timeframe = timeframe;
-        cfg.weight = 1.0;
-        cfg.tier = STRATEGY_TIER_2;
-        cfg.intrabarEligible = false;
-        cfg.liveVotingEnabled = true;
-        cfg.role = PRIMARY_ALPHA;
-        cfg.cluster = STRATEGY_CLUSTER_NONE;
+        switch(k)
+        {
+            case CAT_AI_NEURAL_NET:
+            {
+                // Check if already initialized for this symbol
+                for(int i = 0; i < ArraySize(m_neuralNetStrategies); i++)
+                {
+                    if(m_neuralNetStrategySymbols[i] == symbol && m_neuralNetStrategies[i] != NULL)
+                    {
+                        alreadyLive = true;
+                        return false;
+                    }
+                }
+                return true;
+            }
 
-        CTransformerAIStrategyAdapter* adapter = (CTransformerAIStrategyAdapter*)CStrategyFactory::Create("Transformer AI", cfg);
+            case CAT_AI_ONNX:
+                // Backoff/disable state machine lives in CONNXInitManager; it emits
+                // the retry log line and clears the disabled flag when a retry is
+                // granted. Still in backoff => skip this attempt.
+                return m_onnxInit.ShouldAttemptInit(symbol);
+
+            case CAT_AI_PYTHON_BRIDGE:
+                // Python Bridge AI keeps its OWN predicate (IsInitialized), which is
+                // deliberately different from the Statistical Arbitrage bridge gate.
+                if(m_pythonBridge == NULL || !m_pythonBridge.IsInitialized())
+                {
+                    Print("[AI-MODE] Python Bridge not initialized; skipping Python Bridge AI for ", symbol);
+                    return false;
+                }
+                return true;
+
+            default:
+                return true;
+        }
+    }
+
+    // Adapter-specific preparation performed after the factory call and
+    // before registration. Caller owns `adapter` until this returns true.
+    bool PrepareCatalogAIAdapter(const ENUM_CATALOG_AI k, IStrategy* adapter,
+                                 const string symbol, ENUM_TIMEFRAMES tf)
+    {
         if(adapter == NULL)
-        {
-            Print("[AI-MODE] Failed to create Transformer AI adapter for ", symbol);
             return false;
-        }
 
-        // Initialize the adapter (Transformer AI doesn't need separate NN initialization)
-        if(!adapter.InitializeAI(symbol, timeframe, NULL))
+        switch(k)
         {
-            Print("[AI-MODE] Transformer AI adapter initialization failed for ", symbol);
-            delete adapter;
-            return false;
+            case CAT_AI_NEURAL_NET:
+            {
+                CAIStrategyAdapter* nnAdapter = (CAIStrategyAdapter*)adapter;
+
+                // Get the neural network from adapter and initialize it
+                CNeuralNetworkStrategy* nn = nnAdapter.GetNeuralNetwork();
+                if(nn == NULL)
+                {
+                    Print("[AI-MODE] Adapter has no neural network for ", symbol);
+                    return false;
+                }
+
+                nn.SetOnlineTrainingEnabled(m_config.enableNNOnlineTraining);
+                nn.SetWeightMutationEnabled(m_config.enableNNWeightMutation);
+                nn.SetConfidenceThreshold(ResolveAIRuntimeVoteThreshold(ResolveEffectiveEAMode()));
+
+                if(!nn.Initialize(symbol, tf))
+                {
+                    Print("[AI-MODE] Neural Network initialization failed for ", symbol);
+                    return false;
+                }
+
+                nn.ConfigureOnlineLearning(m_config.enableNNOnlineTraining && m_config.enableNNPseudoLabeling,
+                                           m_config.nnPseudoLabelBarsAhead,
+                                           m_config.nnSampleIntervalSeconds,
+                                           m_config.nnCheckpointEveryLabeled);
+
+                // Store reference for backward compatibility (dashboard, etc.)
+                int currentSize = ArraySize(m_neuralNetStrategies);
+                ArrayResize(m_neuralNetStrategies, currentSize + 1);
+                ArrayResize(m_neuralNetStrategySymbols, currentSize + 1);
+                m_neuralNetStrategies[currentSize] = nn;  // Non-owning reference
+                m_neuralNetStrategySymbols[currentSize] = symbol;
+                return true;
+            }
+
+            case CAT_AI_TRANSFORMER:
+            {
+                CTransformerAIStrategyAdapter* tAdapter = (CTransformerAIStrategyAdapter*)adapter;
+                if(!tAdapter.InitializeAI(symbol, tf, NULL))
+                {
+                    Print("[AI-MODE] Transformer AI adapter initialization failed for ", symbol);
+                    return false;
+                }
+                return true;
+            }
+
+            case CAT_AI_ENSEMBLE:
+            {
+                CEnsembleAIStrategyAdapter* eAdapter = (CEnsembleAIStrategyAdapter*)adapter;
+                if(!eAdapter.InitializeAI(symbol, tf, NULL))
+                {
+                    Print("[AI-MODE] Ensemble AI adapter initialization failed for ", symbol);
+                    return false;
+                }
+                return true;
+            }
+
+            case CAT_AI_ONNX:
+            {
+                COnnxAIStrategyAdapter* oAdapter = (COnnxAIStrategyAdapter*)adapter;
+                if(!oAdapter.InitializeAI(symbol, tf, NULL))
+                {
+                    Print("[AI-MODE] ONNX AI adapter initialization failed for ", symbol);
+                    HandleONNXInitFailure(symbol);
+                    return false;
+                }
+                return true;
+            }
+
+            case CAT_AI_PYTHON_BRIDGE:
+            {
+                CPythonBridgeAIStrategyAdapter* pAdapter = (CPythonBridgeAIStrategyAdapter*)adapter;
+
+                // Set Python Bridge reference BEFORE initialization
+                pAdapter.SetPythonBridge(m_pythonBridge);
+
+                if(!pAdapter.InitializeAI(symbol, tf, NULL))
+                {
+                    Print("[AI-MODE] Python Bridge AI adapter initialization failed for ", symbol);
+                    return false;
+                }
+                return true;
+            }
+
+            default:
+                return false;
         }
+    }
+
+    // Shared registration tail: weight resolution, RegisterStrategy, registry
+    // bookkeeping and the ONNX success/failure hooks.
+    bool RegisterCatalogAIAdapter(CEnterpriseStrategyManager* mgr, const int catIdx,
+                                  IStrategy* adapter, const string symbol)
+    {
+        if(mgr == NULL || adapter == NULL)
+            return false;
+        if(catIdx < 0 || catIdx >= g_strategyCatalogCount)
+            return false;
+
+        const string          name = g_strategyCatalog[catIdx].name;
+        const ENUM_CATALOG_AI k    = g_strategyCatalog[catIdx].aiKind;
 
         // Register adapter with symbol manager (manager takes ownership)
         CStrategyRegistry* stratRegLocal = m_registryAggregator.GetStrategyRegistry();
         double aiWeight = -1.0;
         if(stratRegLocal != NULL)
-            aiWeight = stratRegLocal.GetWeightByName("Transformer AI");
+            aiWeight = stratRegLocal.GetWeightByName(name);
         if(aiWeight <= 0.0)
-            aiWeight = MathMax(0.1, m_config.aiWeightMultiplier);
-        if(!symbolManager.RegisterStrategy(adapter, "Transformer AI", true, aiWeight, STRATEGY_TIER_2, PERIOD_CURRENT, INTRABAR_POLICY_LIVE, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true))
+            aiWeight = (g_strategyCatalog[catIdx].aiFallbackWeight > 0.0)
+                       ? g_strategyCatalog[catIdx].aiFallbackWeight
+                       : MathMax(0.1, m_config.aiWeightMultiplier);
+
+        if(!mgr.RegisterStrategy(adapter, name, true, aiWeight,
+                                 g_strategyCatalog[catIdx].tier,
+                                 g_strategyCatalog[catIdx].timeframe,
+                                 g_strategyCatalog[catIdx].fixedPolicy,
+                                 g_strategyCatalog[catIdx].role,
+                                 g_strategyCatalog[catIdx].cluster,
+                                 g_strategyCatalog[catIdx].liveVoting))
         {
-            Print("[AI-MODE] WARNING: Failed to register Transformer AI adapter for ", symbol);
+            Print("[AI-MODE] WARNING: Failed to register ", name, " adapter for ", symbol);
             if(stratRegLocal != NULL)
-                stratRegLocal.MarkRegistered("Transformer AI", false, "transformer_adapter_register_failed");
-            delete adapter;
+                stratRegLocal.MarkRegistered(name, false, g_strategyCatalog[catIdx].failReason);
+            // Batch 145 / F4 fix: RegisterStrategy() already deleted the adapter on
+            // failure - deleting it here again was a double free (4 of the 5 old
+            // paths did exactly that).
+            if(k == CAT_AI_ONNX)
+                HandleONNXInitFailure(symbol);
             return false;
         }
-        if(stratRegLocal != NULL)
-            stratRegLocal.MarkRegistered("Transformer AI", true);
 
-        Print("[AI-MODE] Transformer AI ready for ", symbol);
+        if(stratRegLocal != NULL)
+            stratRegLocal.MarkRegistered(name, true);
+
+        if(k == CAT_AI_ONNX)
+            m_onnxInit.RegisterSuccess();   // Success - reset retry count
+
+        Print("[AI-MODE] ", name, " ready for ", symbol);
         return true;
     }
 
-    // Initialize Ensemble AI adapter for a symbol
-    bool InitializeEnsembleAIForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
+    // Register every enabled AI catalog row for one symbol.
+    // Returns the number of rows that are live for the symbol.
+    int RegisterCatalogAIStrategiesForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
     {
-        if(!m_config.enableEnsemble)
-            return false;
+        BuildStrategyCatalog();
 
         CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(symbol);
         if(symbolManager == NULL)
         {
-            Print("[AI-MODE] Skipping Ensemble AI initialization; no strategy manager for ", symbol);
-            return false;
+            Print("[AI-MODE] Skipping AI adapter initialization; no strategy manager for ", symbol);
+            return 0;
         }
 
-        // Use factory to create Ensemble AI adapter
-        CStrategyFactory::SStrategyConfig cfg;
-        cfg.symbol = symbol;
-        cfg.timeframe = timeframe;
-        cfg.weight = 1.0;
-        cfg.tier = STRATEGY_TIER_2;
-        cfg.intrabarEligible = false;
-        cfg.liveVotingEnabled = true;
-        cfg.role = PRIMARY_ALPHA;
-        cfg.cluster = STRATEGY_CLUSTER_NONE;
-
-        CEnsembleAIStrategyAdapter* adapter = (CEnsembleAIStrategyAdapter*)CStrategyFactory::Create("Ensemble AI", cfg);
-        if(adapter == NULL)
+        int okCount = 0;
+        for(int i = 0; i < g_strategyCatalogCount; i++)
         {
-            Print("[AI-MODE] Failed to create Ensemble AI adapter for ", symbol);
-            return false;
-        }
+            if(g_strategyCatalog[i].kind != CAT_KIND_AI)
+                continue;
 
-        // Initialize the adapter
-        if(!adapter.InitializeAI(symbol, timeframe, NULL))
-        {
-            Print("[AI-MODE] Ensemble AI adapter initialization failed for ", symbol);
-            delete adapter;
-            return false;
-        }
+            const ENUM_CATALOG_AI k = g_strategyCatalog[i].aiKind;
+            if(!IsCatalogAIRowEnabled(k))
+                continue;
+            if(!CatalogSymbolAllowed(i, symbol))
+                continue;
 
-        // Register adapter with symbol manager (manager takes ownership)
-        CStrategyRegistry* stratRegLocal = m_registryAggregator.GetStrategyRegistry();
-        double aiWeight = -1.0;
-        if(stratRegLocal != NULL)
-            aiWeight = stratRegLocal.GetWeightByName("Ensemble AI");
-        if(aiWeight <= 0.0)
-            aiWeight = MathMax(0.1, m_config.aiWeightMultiplier);
-        if(!symbolManager.RegisterStrategy(adapter, "Ensemble AI", true, aiWeight, STRATEGY_TIER_2, PERIOD_CURRENT, INTRABAR_POLICY_LIVE, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true))
-        {
-            Print("[AI-MODE] WARNING: Failed to register Ensemble AI adapter for ", symbol);
-            if(stratRegLocal != NULL)
-                stratRegLocal.MarkRegistered("Ensemble AI", false, "ensemble_adapter_register_failed");
-            delete adapter;
-            return false;
-        }
-        if(stratRegLocal != NULL)
-            stratRegLocal.MarkRegistered("Ensemble AI", true);
-
-        Print("[AI-MODE] Ensemble AI ready for ", symbol);
-        return true;
-    }
-
-    // Initialize ONNX AI adapter for a symbol
-        bool InitializeONNXAIForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
-        {
-            if(!m_config.enableOnnxAI)
-                return false;
-
-            // Check if ONNX session is disabled and if we should retry.
-            // Backoff/disable state machine lives in CONNXInitManager; it emits the
-            // retry log line and clears the disabled flag when a retry is granted.
-            if(!m_onnxInit.ShouldAttemptInit(symbol))
+            bool alreadyLive = false;
+            if(!CatalogAIPreCreateGate(k, symbol, alreadyLive))
             {
-                // Still in backoff period, skip this attempt
-                return false;
+                if(alreadyLive)
+                    okCount++;
+                continue;
             }
 
-            CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(symbol);
-            if(symbolManager == NULL)
-            {
-                Print("[AI-MODE] Skipping ONNX AI initialization; no strategy manager for ", symbol);
-                return false;
-            }
-
-            // Use factory to create ONNX AI adapter
+            // L1-008: Use factory to create the AI adapter (adapter owns its model)
             CStrategyFactory::SStrategyConfig cfg;
-            cfg.symbol = symbol;
-            cfg.timeframe = timeframe;
-            cfg.weight = 1.0;
-            cfg.tier = STRATEGY_TIER_2;
-            cfg.intrabarEligible = false;
+            cfg.symbol            = symbol;
+            cfg.timeframe         = timeframe;
+            cfg.weight            = 1.0;
+            cfg.tier              = STRATEGY_TIER_2;
+            cfg.intrabarEligible  = false;
             cfg.liveVotingEnabled = true;
-            cfg.role = PRIMARY_ALPHA;
-            cfg.cluster = STRATEGY_CLUSTER_NONE;
+            cfg.role              = PRIMARY_ALPHA;
+            cfg.cluster           = STRATEGY_CLUSTER_NONE;
 
-            COnnxAIStrategyAdapter* adapter = (COnnxAIStrategyAdapter*)CStrategyFactory::Create("ONNX AI", cfg);
+            IStrategy* adapter = CStrategyFactory::Create(g_strategyCatalog[i].factoryName, cfg);
             if(adapter == NULL)
             {
-                Print("[AI-MODE] Failed to create ONNX AI adapter for ", symbol);
-                HandleONNXInitFailure(symbol);
-                return false;
+                Print("[AI-MODE] Failed to create ", g_strategyCatalog[i].name, " adapter for ", symbol);
+                if(k == CAT_AI_ONNX)
+                    HandleONNXInitFailure(symbol);
+                continue;
             }
 
-            // Initialize the adapter
-            if(!adapter.InitializeAI(symbol, timeframe, NULL))
+            if(!PrepareCatalogAIAdapter(k, adapter, symbol, timeframe))
             {
-                Print("[AI-MODE] ONNX AI adapter initialization failed for ", symbol);
+                // Not yet owned by any manager - the orchestrator must free it.
                 delete adapter;
-                HandleONNXInitFailure(symbol);
-                return false;
+                continue;
             }
 
-            // Register adapter with symbol manager (manager takes ownership)
-            CStrategyRegistry* stratRegLocal = m_registryAggregator.GetStrategyRegistry();
-            double aiWeight = -1.0;
-            if(stratRegLocal != NULL)
-                aiWeight = stratRegLocal.GetWeightByName("ONNX AI");
-            if(aiWeight <= 0.0)
-                aiWeight = 2.0; // ONNX AI default weight is 2.0
-            if(!symbolManager.RegisterStrategy(adapter, "ONNX AI", true, aiWeight, STRATEGY_TIER_2, PERIOD_CURRENT, INTRABAR_POLICY_LIVE, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true))
-            {
-                Print("[AI-MODE] WARNING: Failed to register ONNX AI adapter for ", symbol);
-                if(stratRegLocal != NULL)
-                    stratRegLocal.MarkRegistered("ONNX AI", false, "onnx_adapter_register_failed");
-                delete adapter;
-                HandleONNXInitFailure(symbol);
-                return false;
-            }
-            if(stratRegLocal != NULL)
-                stratRegLocal.MarkRegistered("ONNX AI", true);
-
-            // Success - reset retry count
-            m_onnxInit.RegisterSuccess();
-
-        Print("[AI-MODE] ONNX AI ready for ", symbol);
-        return true;
-    }
-
-    // Initialize Python Bridge AI adapter for a symbol
-    bool InitializePythonBridgeAIForSymbol(const string symbol, ENUM_TIMEFRAMES timeframe)
-    {
-        if(!m_config.enablePythonBridgeAI)
-            return false;
-
-        CEnterpriseStrategyManager* symbolManager = GetEnterpriseManagerForSymbol(symbol);
-        if(symbolManager == NULL)
-        {
-            Print("[AI-MODE] Skipping Python Bridge AI initialization; no strategy manager for ", symbol);
-            return false;
+            if(RegisterCatalogAIAdapter(symbolManager, i, adapter, symbol))
+                okCount++;
         }
 
-        // Check if Python Bridge is available
-        if(m_pythonBridge == NULL || !m_pythonBridge.IsInitialized())
-        {
-            Print("[AI-MODE] Python Bridge not initialized; skipping Python Bridge AI for ", symbol);
-            return false;
-        }
-
-        // Use factory to create Python Bridge AI adapter
-        CStrategyFactory::SStrategyConfig cfg;
-        cfg.symbol = symbol;
-        cfg.timeframe = timeframe;
-        cfg.weight = 1.5;
-        cfg.tier = STRATEGY_TIER_2;
-        cfg.intrabarEligible = false;
-        cfg.liveVotingEnabled = true;
-        cfg.role = PRIMARY_ALPHA;
-        cfg.cluster = STRATEGY_CLUSTER_NONE;
-
-        CPythonBridgeAIStrategyAdapter* adapter = (CPythonBridgeAIStrategyAdapter*)CStrategyFactory::Create("Python Bridge AI", cfg);
-        if(adapter == NULL)
-        {
-            Print("[AI-MODE] Failed to create Python Bridge AI adapter for ", symbol);
-            return false;
-        }
-
-        // Set Python Bridge reference
-        adapter.SetPythonBridge(m_pythonBridge);
-
-        // Initialize the adapter
-        if(!adapter.InitializeAI(symbol, timeframe, NULL))
-        {
-            Print("[AI-MODE] Python Bridge AI adapter initialization failed for ", symbol);
-            delete adapter;
-            return false;
-        }
-
-        // Register adapter with symbol manager (manager takes ownership)
-        CStrategyRegistry* stratRegLocal = m_registryAggregator.GetStrategyRegistry();
-        double aiWeight = -1.0;
-        if(stratRegLocal != NULL)
-            aiWeight = stratRegLocal.GetWeightByName("Python Bridge AI");
-        if(aiWeight <= 0.0)
-            aiWeight = 1.5; // Python Bridge AI default weight
-        if(!symbolManager.RegisterStrategy(adapter, "Python Bridge AI", true, aiWeight, STRATEGY_TIER_2, PERIOD_CURRENT, INTRABAR_POLICY_LIVE, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true))
-        {
-            Print("[AI-MODE] WARNING: Failed to register Python Bridge AI adapter for ", symbol);
-            if(stratRegLocal != NULL)
-                stratRegLocal.MarkRegistered("Python Bridge AI", false, "python_bridge_adapter_register_failed");
-            delete adapter;
-            return false;
-        }
-        if(stratRegLocal != NULL)
-            stratRegLocal.MarkRegistered("Python Bridge AI", true);
-
-        Print("[AI-MODE] Python Bridge AI ready for ", symbol);
-        return true;
+        return okCount;
     }
 
     // Helper to handle ONNX initialization failure with retry tracking.
@@ -3581,47 +3505,18 @@ else
 if(m_config.enableAIMode && (m_config.enableNeuralNetwork || m_config.enableTransformer || m_config.enableEnsemble || m_config.enableOnnxAI))
 {
     ReleaseNeuralNetStrategies();
-    int nnInitCount = 0;
-    int transformerInitCount = 0;
-    int ensembleInitCount = 0;
-    int onnxInitCount = 0;
-    int pythonBridgeInitCount = 0;
+    // Batch 145: one catalog pass per symbol replaces the five per-adapter calls.
+    // The per-row m_config.enableX gate now lives in IsCatalogAIRowEnabled().
+    int aiAdapterInitCount = 0;
     for(int i = 0; i < m_managerCount; i++)
     {
         string symbol = m_enterpriseManagerSymbols[i];
         ENUM_TIMEFRAMES timeframe = (ENUM_TIMEFRAMES)Period();
-        
-        if(m_config.enableNeuralNetwork)
-        {
-            if(InitializeNeuralNetForSymbol(symbol, timeframe))
-                nnInitCount++;
-        }
-        if(m_config.enableTransformer)
-        {
-            if(InitializeTransformerAIForSymbol(symbol, timeframe))
-                transformerInitCount++;
-        }
-        if(m_config.enableEnsemble)
-        {
-            if(InitializeEnsembleAIForSymbol(symbol, timeframe))
-                ensembleInitCount++;
-        }
-        if(m_config.enableOnnxAI)
-        {
-            if(InitializeONNXAIForSymbol(symbol, timeframe))
-                onnxInitCount++;
-        }
-        if(m_config.enablePythonBridgeAI)
-        {
-            if(InitializePythonBridgeAIForSymbol(symbol, timeframe))
-                pythonBridgeInitCount++;
-        }
+
+        aiAdapterInitCount += RegisterCatalogAIStrategiesForSymbol(symbol, timeframe);
     }
-    PrintFormat("[AI-MODE] Neural Network managers initialized: %d", nnInitCount);
-    PrintFormat("[AI-MODE] Transformer AI managers initialized: %d", transformerInitCount);
-    PrintFormat("[AI-MODE] Ensemble AI managers initialized: %d", ensembleInitCount);
-    PrintFormat("[AI-MODE] ONNX AI managers initialized: %d", onnxInitCount);
-    PrintFormat("[AI-MODE] Python Bridge AI managers initialized: %d", pythonBridgeInitCount);
+    PrintFormat("[AI-MODE] Catalog AI adapters initialized: %d across %d manager(s)",
+                aiAdapterInitCount, m_managerCount);
 }
 
 // Phase 4: Initialize AI Engine for Adaptation (orchestrator-owned)
