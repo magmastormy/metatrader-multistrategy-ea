@@ -15,10 +15,16 @@
 //|        c) one CatalogAdd(...) row (section 7)                    |
 //| REMOVE A STRATEGY: delete the 3 lines carrying its [CAT:] anchor.|
 //|                                                                  |
-//| NOTE (Batch 145 invariant): flagsIndex holds the LEGACY literal  |
-//| index used by the historical if-chain. For rows 5..12 it does    |
-//| NOT match the semantic SI_* index; that divergence is preserved  |
-//| byte-for-byte and only reported by CatalogLogIndexAudit().       |
+//| NOTE: each row carries the SEMANTIC slot pair only (Batch 147     |
+//| removed the legacy flagsIndex / policyIndex literals entirely):  |
+//|   enable slot : siIndex      - the ENUM_STRATEGY_INDEX slot that  |
+//|                 COrchestratorStrategyFlagBuilder::BuildStrategyFlags|
+//|                 actually writes.                                  |
+//|   policy slot : siPolicyIndex - the StrategyConfigBuilder slot     |
+//|                 holding THIS strategy's own intrabar policy.      |
+//| Reader (CatalogEnableSlot) and writer (BuildStrategyFlags) now    |
+//| agree by construction, so every InpEnable* toggle controls its     |
+//| own strategy. The historical legacy divergence is gone.           |
 //+------------------------------------------------------------------+
 #ifndef CORE_STRATEGY_STRATEGY_CATALOG_MQH
 #define CORE_STRATEGY_STRATEGY_CATALOG_MQH
@@ -42,6 +48,8 @@
 #include "../../Strategies/BreakerBlockStrategy.mqh"         // [CAT:Breaker Block]
 #include "../../Strategies/NYOpenGapStrategy.mqh"            // [CAT:NY Open Gap]
 #include "../../Strategies/AsianRangeBreakStrategy.mqh"      // [CAT:Asian Range Break]
+#include "../../Strategies/LiquiditySweepStrategy.mqh"        // [CAT:Liquidity Sweep]
+#include "../../Strategies/RangeCompressionBreakout.mqh"      // [CAT:Range Compression]
 
 //==================================================================//
 // 2. CATALOG ENUMS                                                  //
@@ -71,10 +79,9 @@ struct SStrategyDefinition
     ENUM_CATALOG_KIND     kind;                 // indicator vs AI adapter
     ENUM_CATALOG_AI       aiKind;               // which AI adapter (CAT_AI_NONE for indicators)
     string                factoryName;          // CStrategyFactory key (AI rows only)
-    int                   flagsIndex;           // LEGACY enable-flag slot (-1 = always on)
-    int                   siIndex;              // semantic ENUM_STRATEGY_INDEX slot (-1 = n/a)
-    int                   policyIndex;          // GetIntrabarPolicyHelper() index (-1 = use fixedPolicy)
-    ENUM_INTRABAR_POLICY  fixedPolicy;          // used when policyIndex < 0
+    int                   siIndex;              // enable-flag slot (ENUM_STRATEGY_INDEX); -1 = always on
+    int                   siPolicyIndex;        // intrabar-policy slot (own StrategyConfigBuilder row); -1 = use fixedPolicy
+    ENUM_INTRABAR_POLICY  fixedPolicy;          // used when the active policy slot < 0
     double                weight;               // registration weight (indicator rows)
     double                aiFallbackWeight;     // AI weight when registry lookup fails (<0 = multiplier)
     ENUM_STRATEGY_TIER    tier;
@@ -114,6 +121,8 @@ CATALOG_SIMPLE_CREATOR(CatCreate_TurtleSoup,           CTurtleSoupStrategy)     
 CATALOG_SIMPLE_CREATOR(CatCreate_BreakerBlock,         CBreakerBlockStrategy)        // [CAT:Breaker Block]
 CATALOG_SIMPLE_CREATOR(CatCreate_NYOpenGap,            CNYOpenGapStrategy)           // [CAT:NY Open Gap]
 CATALOG_SIMPLE_CREATOR(CatCreate_AsianRangeBreak,      CAsianRangeBreakStrategy)     // [CAT:Asian Range Break]
+CATALOG_SIMPLE_CREATOR(CatCreate_LiquiditySweep,        CLiquiditySweepStrategy)      // [CAT:Liquidity Sweep]
+CATALOG_SIMPLE_CREATOR(CatCreate_RangeCompression,      CRangeCompressionBreakout)   // [CAT:Range Compression]
 
 //==================================================================//
 // 6. ROW APPEND                                                     //
@@ -122,9 +131,8 @@ void CatalogAdd(const string name,
                 const ENUM_CATALOG_KIND kind,
                 const ENUM_CATALOG_AI aiKind,
                 const string factoryName,
-                const int flagsIndex,
                 const int siIndex,
-                const int policyIndex,
+                const int siPolicyIndex,
                 const ENUM_INTRABAR_POLICY fixedPolicy,
                 const double weight,
                 const double aiFallbackWeight,
@@ -155,9 +163,8 @@ void CatalogAdd(const string name,
     g_strategyCatalog[i].kind                 = kind;
     g_strategyCatalog[i].aiKind               = aiKind;
     g_strategyCatalog[i].factoryName          = factoryName;
-    g_strategyCatalog[i].flagsIndex           = flagsIndex;
     g_strategyCatalog[i].siIndex              = siIndex;
-    g_strategyCatalog[i].policyIndex          = policyIndex;
+    g_strategyCatalog[i].siPolicyIndex        = siPolicyIndex;
     g_strategyCatalog[i].fixedPolicy          = fixedPolicy;
     g_strategyCatalog[i].weight               = weight;
     g_strategyCatalog[i].aiFallbackWeight     = aiFallbackWeight;
@@ -176,8 +183,9 @@ void CatalogAdd(const string name,
 
 //==================================================================//
 // 7. CATALOG DEFINITION (17 rows: 12 indicator + 5 AI)              //
-//    Values below are byte-identical to the pre-Batch-145           //
-//    RegisterStrategy() call sites. Do not "tidy" them.             //
+//    Each row carries its SEMANTIC slot pair (siIndex / siPolicyIndex).|
+//    Batch 147 removed the legacy flagsIndex/policyIndex literals;  //
+//    reader and writer now agree by construction.                   //
 //==================================================================//
 void BuildStrategyCatalog()
 {
@@ -185,25 +193,38 @@ void BuildStrategyCatalog()
         return;
 
     //--- 12 indicator strategies (legacy if-chain order preserved) ---
-    CatalogAdd("Momentum",              CAT_KIND_INDICATOR, CAT_AI_NONE, "",  0, SI_MOMENTUM,              0, INTRABAR_POLICY_OFF, 1.0, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_Momentum);             // [CAT:Momentum]
-    CatalogAdd("Trend",                 CAT_KIND_INDICATOR, CAT_AI_NONE, "",  1, SI_TREND,                 1, INTRABAR_POLICY_OFF, 1.2, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_Trend);                // [CAT:Trend]
-    CatalogAdd("Support/Resistance",    CAT_KIND_INDICATOR, CAT_AI_NONE, "",  4, SI_SUPPORT_RESISTANCE,    4, INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, "", "", CatCreate_SupportResistance);    // [CAT:Support/Resistance]
-    CatalogAdd("Candlestick",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  6, SI_CANDLESTICK,           6, INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_Candlestick);          // [CAT:Candlestick]
-    CatalogAdd("Mean Reversion",        CAT_KIND_INDICATOR, CAT_AI_NONE, "",  9, SI_MEAN_REVERSION,        9, INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, "", "", CatCreate_MeanReversion);        // [CAT:Mean Reversion]
-    CatalogAdd("Volatility Breakout",   CAT_KIND_INDICATOR, CAT_AI_NONE, "", 10, SI_VOLATILITY_BREAKOUT,  10, INTRABAR_POLICY_OFF, 2.0, -1.0, STRATEGY_TIER_1, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_VolatilityBreakout);   // [CAT:Volatility Breakout]
-    CatalogAdd("Statistical Arbitrage", CAT_KIND_INDICATOR, CAT_AI_NONE, "", 11, SI_STATISTICAL_ARBITRAGE,11, INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true,  true, "", "", CatCreate_StatisticalArbitrage); // [CAT:Statistical Arbitrage]
-    CatalogAdd("FVG Scalper",           CAT_KIND_INDICATOR, CAT_AI_NONE, "", 12, SI_FVG_SCALPER,          12, INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_FVGScalper);           // [CAT:FVG Scalper]
-    CatalogAdd("Turtle Soup",           CAT_KIND_INDICATOR, CAT_AI_NONE, "", 13, SI_TURTLE_SOUP,          13, INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_TurtleSoup);           // [CAT:Turtle Soup]
-    CatalogAdd("Breaker Block",         CAT_KIND_INDICATOR, CAT_AI_NONE, "", 14, SI_BREAKER_BLOCK,        14, INTRABAR_POLICY_OFF, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_BreakerBlock);         // [CAT:Breaker Block]
-    CatalogAdd("NY Open Gap",           CAT_KIND_INDICATOR, CAT_AI_NONE, "", 15, SI_NY_OPEN_GAP,          15, INTRABAR_POLICY_OFF, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_NYOpenGap);            // [CAT:NY Open Gap]
-    CatalogAdd("Asian Range Break",     CAT_KIND_INDICATOR, CAT_AI_NONE, "", 16, SI_ASIAN_RANGE_BREAK,    16, INTRABAR_POLICY_OFF, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_AsianRangeBreak);      // [CAT:Asian Range Break]
+    //    Each row carries its SEMANTIC slot pair only: siIndex (the slot
+    //    BuildStrategyFlags writes) and siPolicyIndex (this strategy's own
+    //    StrategyConfigBuilder intrabar-policy row). The legacy flagsIndex /
+    //    policyIndex literals were removed in Batch 147.
+    CatalogAdd("Momentum",              CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_MOMENTUM,              0,  INTRABAR_POLICY_OFF, 1.0, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_Momentum);             // [CAT:Momentum]
+    CatalogAdd("Trend",                 CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_TREND,                 1,  INTRABAR_POLICY_OFF, 1.2, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_Trend);                // [CAT:Trend]
+    CatalogAdd("Support/Resistance",    CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_SUPPORT_RESISTANCE,    2,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, "", "", CatCreate_SupportResistance);    // [CAT:Support/Resistance]
+    CatalogAdd("Candlestick",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_CANDLESTICK,           4,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_Candlestick);          // [CAT:Candlestick]
+    CatalogAdd("Mean Reversion",        CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_MEAN_REVERSION,        7,  INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true, false, "", "", CatCreate_MeanReversion);        // [CAT:Mean Reversion]
+    CatalogAdd("Volatility Breakout",   CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_VOLATILITY_BREAKOUT,  8,  INTRABAR_POLICY_OFF, 2.0, -1.0, STRATEGY_TIER_1, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_VolatilityBreakout);   // [CAT:Volatility Breakout]
+    CatalogAdd("Statistical Arbitrage", CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_STATISTICAL_ARBITRAGE,22,  INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, MEAN_REVERSION_CLUSTER, true,  true, "", "", CatCreate_StatisticalArbitrage); // [CAT:Statistical Arbitrage]
+    CatalogAdd("FVG Scalper",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_FVG_SCALPER,          21,  INTRABAR_POLICY_OFF, 1.8, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_FVGScalper);           // [CAT:FVG Scalper]
+    CatalogAdd("Turtle Soup",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_TURTLE_SOUP,          14,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_TurtleSoup);           // [CAT:Turtle Soup]
+    CatalogAdd("Breaker Block",         CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_BREAKER_BLOCK,        15,  INTRABAR_POLICY_OFF, 1.7, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_BreakerBlock);         // [CAT:Breaker Block]
+    CatalogAdd("NY Open Gap",           CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_NY_OPEN_GAP,          16,  INTRABAR_POLICY_OFF, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_NYOpenGap);            // [CAT:NY Open Gap]
+    CatalogAdd("Asian Range Break",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_ASIAN_RANGE_BREAK,    17,  INTRABAR_POLICY_OFF, 1.3, -1.0, STRATEGY_TIER_3, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_AsianRangeBreak);      // [CAT:Asian Range Break]
+    //    NOTE: Liquidity Sweep & Range Compression were previously only auxiliary engines in
+    //    OrchestratorMathEngineHub. They now also vote in consensus (Batch 2026-08-14) following
+    //    the exact pattern already used by FVG/Turtle/Breaker/NY/Asian: the SAME shared
+    //    CStrategyRegistry is fed both by the legacy RegisterDefinition list (EAOrchestrator) and
+    //    by this catalog's AutoRegisterStrategies -> RegisterStrategy. siPolicyIndex = -1 (no
+    //    dedicated StrategyConfigBuilder row) so they fall back to fixedPolicy = INTRABAR_POLICY_OFF.
+    CatalogAdd("Liquidity Sweep",       CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_LIQUIDITY_SWEEP,     17,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_LiquiditySweep);      // [CAT:Liquidity Sweep]
+    CatalogAdd("Range Compression",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_RANGE_COMPRESSION,   18,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_RangeCompression);    // [CAT:Range Compression]
 
     //--- 5 AI adapters (created by CStrategyFactory, registered by the orchestrator) ---
-    CatalogAdd("Neural Network AI", CAT_KIND_AI, CAT_AI_NEURAL_NET,    "Neural Network AI", -1, -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "nn_adapter_register_failed",            NULL); // [CAT:Neural Network AI]
-    CatalogAdd("Transformer AI",    CAT_KIND_AI, CAT_AI_TRANSFORMER,   "Transformer AI",    -1, -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "transformer_adapter_register_failed",   NULL); // [CAT:Transformer AI]
-    CatalogAdd("Ensemble AI",       CAT_KIND_AI, CAT_AI_ENSEMBLE,      "Ensemble AI",       -1, -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "ensemble_adapter_register_failed",      NULL); // [CAT:Ensemble AI]
-    CatalogAdd("ONNX AI",           CAT_KIND_AI, CAT_AI_ONNX,          "ONNX AI",           -1, -1, -1, INTRABAR_POLICY_LIVE, 0.0,  2.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "onnx_adapter_register_failed",          NULL); // [CAT:ONNX AI]
-    CatalogAdd("Python Bridge AI",  CAT_KIND_AI, CAT_AI_PYTHON_BRIDGE, "Python Bridge AI",  -1, -1, -1, INTRABAR_POLICY_LIVE, 0.0,  1.5, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "python_bridge_adapter_register_failed", NULL); // [CAT:Python Bridge AI]
+    //    Both policy slots are -1: AI rows always resolve to fixedPolicy=LIVE.
+    CatalogAdd("Neural Network AI", CAT_KIND_AI, CAT_AI_NEURAL_NET,    "Neural Network AI", -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "nn_adapter_register_failed",            NULL); // [CAT:Neural Network AI]
+    CatalogAdd("Transformer AI",    CAT_KIND_AI, CAT_AI_TRANSFORMER,   "Transformer AI",    -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "transformer_adapter_register_failed",   NULL); // [CAT:Transformer AI]
+    CatalogAdd("Ensemble AI",       CAT_KIND_AI, CAT_AI_ENSEMBLE,      "Ensemble AI",       -1, -1, INTRABAR_POLICY_LIVE, 0.0, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "ensemble_adapter_register_failed",      NULL); // [CAT:Ensemble AI]
+    CatalogAdd("ONNX AI",           CAT_KIND_AI, CAT_AI_ONNX,          "ONNX AI",           -1, -1, INTRABAR_POLICY_LIVE, 0.0,  2.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "onnx_adapter_register_failed",          NULL); // [CAT:ONNX AI]
+    CatalogAdd("Python Bridge AI",  CAT_KIND_AI, CAT_AI_PYTHON_BRIDGE, "Python Bridge AI",  -1, -1, INTRABAR_POLICY_LIVE, 0.0,  1.5, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRATEGY_CLUSTER_NONE, true, false, "", "python_bridge_adapter_register_failed", NULL); // [CAT:Python Bridge AI]
 
     g_strategyCatalogBuilt = true;
 }
@@ -238,37 +259,53 @@ bool CatalogSymbolAllowed(const int i, const string symbol)
 }
 
 //+------------------------------------------------------------------+
-//| Legacy enable-flag gate. flagsIndex < 0 means "always enabled".  |
+//| Active enable-flag slot for a row.                                |
+//| Batch 147: the legacy flagsIndex literal was removed, so this    |
+//| returns siIndex unconditionally - the slot BuildStrategyFlags    |
+//| (the only writer of the flag vector) actually populates.         |
+//| Returns -1 for "always enabled".                                  |
 //+------------------------------------------------------------------+
-bool CatalogFlagEnabled(const int i, const bool &flags[])
+int CatalogEnableSlot(const int i)
 {
     if(i < 0 || i >= g_strategyCatalogCount)
-        return false;
-    const int fi = g_strategyCatalog[i].flagsIndex;
-    if(fi < 0)
-        return true;
-    return (fi < ArraySize(flags) && flags[fi]);
+        return -1;
+    return g_strategyCatalog[i].siIndex;
 }
 
 //+------------------------------------------------------------------+
-//| Audit-only: report legacy flag slot vs semantic SI_* slot drift. |
-//| Reports, never repairs - the remap is a deferred user decision.  |
+//| Active intrabar-policy slot for a row.                            |
+//| Batch 147: the legacy policyIndex literal was removed; returns    |
+//| siPolicyIndex (this strategy's own StrategyConfigBuilder row).    |
+//| Returns -1 when the row should fall back to fixedPolicy.          |
+//+------------------------------------------------------------------+
+int CatalogPolicySlot(const int i)
+{
+    if(i < 0 || i >= g_strategyCatalogCount)
+        return -1;
+    return g_strategyCatalog[i].siPolicyIndex;
+}
+
+// Removed in Batch 147: CatalogFlagEnabled (legacy dual-scheme gate) is no
+// longer used - AutoRegisterStrategies reads flags[CatalogEnableSlot(i)] directly.
+
+//+------------------------------------------------------------------+
+//| Report the active slot scheme and per-row resolution.             |
+//| Batch 147: the legacy scheme was removed, so this logs SEMANTIC   |
+//| only. Reader (CatalogEnableSlot) and writer (BuildStrategyFlags)  |
+//| agree by construction - no drift is possible.                     |
 //+------------------------------------------------------------------+
 void CatalogLogIndexAudit()
 {
+    PrintFormat("[CATALOG-AUDIT] slot_scheme=SEMANTIC (legacy literals removed in Batch 147)");
+
     for(int i = 0; i < g_strategyCatalogCount; i++)
     {
-        const int fi = g_strategyCatalog[i].flagsIndex;
-        const int si = g_strategyCatalog[i].siIndex;
-        if(fi < 0 || si < 0 || fi == si)
+        if(g_strategyCatalog[i].kind != CAT_KIND_INDICATOR)
             continue;
-
-        PrintFormat("[CATALOG-AUDIT] %s legacy_flags_index=%d semantic_si_index=%d MISMATCH",
-                    g_strategyCatalog[i].name, fi, si);
-
-        if(fi == 15 || fi == 16)
-            PrintFormat("[CATALOG-AUDIT] %s DEAD_SLOT legacy_flags_index=%d is never populated - strategy can never register",
-                        g_strategyCatalog[i].name, fi);
+        PrintFormat("[CATALOG-AUDIT] %s enable_slot=%d policy_slot=%d",
+                    g_strategyCatalog[i].name,
+                    g_strategyCatalog[i].siIndex,
+                    g_strategyCatalog[i].siPolicyIndex);
     }
 }
 

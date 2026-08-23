@@ -540,6 +540,10 @@ public:
     bool IsRegisteredStrategyLiveVotingEnabled(const int index) const;
     void GetLastSignalContributors(string &contributors[]) const;
     void GetLastSignalContributorIndices(int &indices[]) const;
+    // FINDING 0 (STRATEGY_AUDIT_2026-08-14): return the strategy-designed SL/TP
+    // (pips) from the highest-priority consensus contributor that proposed one.
+    // Returns false if no contributor stashed a proposal (caller keeps fallback).
+    bool GetConsensusProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const;
     bool GetLastSignalExecutionContext(string &roleTag,
                                        string &clusterTag,
                                        string &clusterCode,
@@ -936,6 +940,9 @@ ENUM_INTRABAR_POLICY CEnterpriseStrategyManager::GetIntrabarPolicyHelper(int idx
 void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
 {
     BuildStrategyCatalog();
+
+    // Batch 147: legacy slot scheme removed; CatalogEnableSlot/CatalogPolicySlot
+    // now resolve the SEMANTIC slots unconditionally.
     CatalogLogIndexAudit();
 
     const int    size     = ArraySize(flags);
@@ -959,8 +966,10 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
             }
         }
 
-        // Legacy enable-flag gate (literal indices preserved verbatim)
-        const int fi = g_strategyCatalog[i].flagsIndex;
+        // Enable-flag gate. Batch 147: the slot is the SEMANTIC siIndex, which is
+        // exactly the slot BuildStrategyFlags (the only writer of the flag vector)
+        // populates. Each strategy therefore reads its own enable flag.
+        const int fi = CatalogEnableSlot(i);
         if(fi >= 0 && !(size > fi && flags[fi]))
         {
             if(g_strategyCatalog[i].requiresPythonBridge)
@@ -977,7 +986,11 @@ void CEnterpriseStrategyManager::AutoRegisterStrategies(bool &flags[])
             continue;
         }
 
-        const int pIdx = g_strategyCatalog[i].policyIndex;
+        // Intrabar policy slot. Batch 147: siPolicyIndex is the StrategyConfigBuilder
+        // slot this strategy actually owns (the legacy policyIndex that landed on a
+        // neighbour's row was removed). CIntrabarPolicy's always-LIVE fallback is now
+        // fixed to the semantic slots 7/8.
+        const int pIdx = CatalogPolicySlot(i);
         ENUM_INTRABAR_POLICY pol = (pIdx >= 0) ? GetIntrabarPolicyHelper(pIdx)
                                                : g_strategyCatalog[i].fixedPolicy;
 
@@ -1239,6 +1252,25 @@ void CEnterpriseStrategyManager::GetLastSignalContributors(string &contributors[
 void CEnterpriseStrategyManager::GetLastSignalContributorIndices(int &indices[]) const
 {
     m_signalContext.GetLastSignalContributorIndices(indices);
+}
+
+//+------------------------------------------------------------------+
+//| GetConsensusProposedStops - FINDING 0: surface designed stops    |
+//| Walks the consensus contributor indices (highest priority first)  |
+//| and returns the first strategy that stashed a real SL/TP.         |
+//+------------------------------------------------------------------+
+bool CEnterpriseStrategyManager::GetConsensusProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const
+{
+    int indices[];
+    m_signalContext.GetLastSignalContributorIndices(indices);
+    for(int i = 0; i < ArraySize(indices); i++)
+    {
+        int idx = indices[i];
+        IStrategy* p = m_roster.GetStrategyPtr(idx);
+        if(p != NULL && p.GetProposedStops(signal, slPips, tpPips))
+            return true;
+    }
+    return false;
 }
 
 bool CEnterpriseStrategyManager::GetLastSignalExecutionContext(string &roleTag,

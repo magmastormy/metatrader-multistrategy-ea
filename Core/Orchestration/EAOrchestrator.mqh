@@ -1989,22 +1989,18 @@ string BuildEnabledStrategyList(const bool& strategyFlags[])
     return COrchestratorSymbolClassifier::BuildEnabledStrategyList(strategyFlags);
 }
 
-void RegisterManagerStrategiesFromRegistry(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
-{
-    // This would register strategies based on flags - simplified for now
-    // In production, this iterates through strategy registry and creates/registers each enabled strategy
-    // The actual implementation would be more complex
-}
-
 void ApplyInstitutionalStrategyGovernance(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
 {
-    // Apply institutional governance rules - placeholder
+    // Institutional governance hook. No governance layer is active in this build; strategies are
+    // registered and weighted through the standard consensus pipeline. Kept as an explicit
+    // pass-through so the caller's intent is preserved without changing behaviour.
 }
 
 void ApplyStrategyWeights(CEnterpriseStrategyManager* manager, const string& symbol, const bool& strategyFlags[])
 {
-    // Apply strategy weights from config - placeholder
-    // Actual implementation would set weights on each registered strategy
+    // Strategy weights are applied through the consensus/role-cluster pipeline, not here.
+    // Kept as an explicit pass-through; wiring a separate weight-application step is a future
+    // enhancement, not a behavioural change to make silently.
 }
 
 string GetInstrumentExecutionProfileName(const string& symbol)
@@ -3381,26 +3377,6 @@ int GetEAPositionCount() const
     return count;
 }
 
-int GetEAPositionCountForSymbol(const string symbol, bool onlyThisEAMagic = true) const
-{
-    if(symbol == "") return 0;
-
-    int count = 0;
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-
-        if(PositionGetString(POSITION_SYMBOL) != symbol)
-        continue;
-
-        if(onlyThisEAMagic && !IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC)))
-        continue;
-
-        count++;
-    }
-    return count;
-}
 
 bool IsEAOwnedMagic(long magic) const
 {
@@ -3574,10 +3550,6 @@ bool GetTradingEnabled() const { return m_tradingEnabled; }
 
 // L10-012: Getters for engine state restoration on restart
 CTradeManager* GetTradeManager() { return GetPointer(m_tradeManager); }
-CFastScalpEngine* GetFastScalpEngine() { return GetPointer(m_scalpEngine); }
-CSpikeHunterEngine* GetSpikeHunterEngine() { return GetPointer(m_spikeHunter); }
-CGridRecoveryEngine* GetGridRecoveryEngine() { return GetPointer(m_gridRecovery); }
-CATRScalpingEngine* GetATRScalpingEngine() { return GetPointer(m_atrScalping); }
 
 //+------------------------------------------------------------------+
 //| Update AI vote activity for DiagnosticsManager [L11-004]         |

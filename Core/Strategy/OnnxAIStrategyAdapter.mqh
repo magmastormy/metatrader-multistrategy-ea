@@ -40,7 +40,6 @@ private:
     ulong           m_sellVotes;
     ulong           m_noneVotes;
     datetime        m_lastVoteLogTime;
-    int             m_barCounter;
     datetime        m_voteWindowStart;  // Rolling vote window start time
     
     // Feature pipeline for centralized feature engineering
@@ -139,7 +138,6 @@ public:
         m_sellVotes = 0;
         m_noneVotes = 0;
         m_lastVoteLogTime = 0;
-        m_barCounter = 0;
         m_voteWindowStart = TimeCurrent();
         m_directionWindowIdx = 0;
         m_directionWindowCount = 0;
@@ -170,7 +168,6 @@ public:
         m_hasCachedSignal = false;
         m_cachedSignal = TRADE_SIGNAL_NONE;
         m_cachedConfidence = 0.0;
-        m_barCounter = 0;
         m_lastScalerCheckTime = 0;
 
         if(!m_brain.Init(m_modelBuffer))
@@ -179,8 +176,7 @@ public:
             return false;
         }
 
-        m_brain.SetWatchPath("EAModels\\ONNX\\model_update.onnx", 100);
-        
+        // Live-only: no shadow/hot-swap model watch (removed 2026-08-14).
         // Initialize feature pipeline
         if(m_featurePipeline == NULL)
         {
@@ -271,9 +267,6 @@ public:
         }
 
         m_brain.PushFeatures(features, ArraySize(features));
-        m_barCounter++;
-        if((m_barCounter % 10) == 0)
-            m_brain.CheckForModelUpdate(features, ArraySize(features));
 
         // Gate on readiness FIRST (buffer not yet full = warmup, not an error).
         // Only attempt inference once the rolling window is full; a failure

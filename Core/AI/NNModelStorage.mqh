@@ -11,18 +11,14 @@
 string NNModelStorage_SanitizeToken(const string value);
 string NNModelStorage_GetTimestamp();
 string NNModelStorage_GetBaseName(const string symbol, const ENUM_TIMEFRAMES timeframe, const int version = 5);
-string NNModelStorage_GetLegacyBaseName(const string symbol, const ENUM_TIMEFRAMES timeframe);
 string NNModelStorage_GetPrimaryPath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int version = 5);
 string NNModelStorage_GetBackupPath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int version = 5);
 string NNModelStorage_GetTempPath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int version = 5);
-string NNModelStorage_GetLegacyPrimaryPath(const string symbol, const ENUM_TIMEFRAMES timeframe);
-string NNModelStorage_GetLegacyBackupPath(const string symbol, const ENUM_TIMEFRAMES timeframe);
 string NNModelStorage_GetArchivePath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int oldVersion);
 void NNModelStorage_EnsureFolders();
 bool NNModelStorage_CopyBinaryFile(const string sourceFile, const string targetFile);
 bool NNModelStorage_PromoteTempToPrimary(const string tempFile, const string primaryFile, const string backupFile);
 bool NNModelStorage_ArchiveOldCheckpoint(const string sourceFile, const string archivePath);
-bool NNModelStorage_LegacyCheckpointExists(const string symbol, const ENUM_TIMEFRAMES timeframe);
 
 // Function implementations
 string NNModelStorage_SanitizeToken(const string value)
@@ -59,13 +55,6 @@ string NNModelStorage_GetBaseName(const string symbol, const ENUM_TIMEFRAMES tim
     return StringFormat("EAModels\\NN\\%s_%s_v%d", safeSymbol, safeTf, version);
 }
 
-string NNModelStorage_GetLegacyBaseName(const string symbol, const ENUM_TIMEFRAMES timeframe)
-{
-    string safeSymbol = NNModelStorage_SanitizeToken(symbol);
-    string safeTf = IntegerToString((int)timeframe);
-    return StringFormat("EAModels\\NN\\%s_%s", safeSymbol, safeTf);
-}
-
 string NNModelStorage_GetPrimaryPath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int version = 5)
 {
     return NNModelStorage_GetBaseName(symbol, timeframe, version) + ".bin";
@@ -79,16 +68,6 @@ string NNModelStorage_GetBackupPath(const string symbol, const ENUM_TIMEFRAMES t
 string NNModelStorage_GetTempPath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int version = 5)
 {
     return NNModelStorage_GetBaseName(symbol, timeframe, version) + ".tmp";
-}
-
-string NNModelStorage_GetLegacyPrimaryPath(const string symbol, const ENUM_TIMEFRAMES timeframe)
-{
-    return NNModelStorage_GetLegacyBaseName(symbol, timeframe) + ".bin";
-}
-
-string NNModelStorage_GetLegacyBackupPath(const string symbol, const ENUM_TIMEFRAMES timeframe)
-{
-    return NNModelStorage_GetLegacyBaseName(symbol, timeframe) + ".prev.bin";
 }
 
 string NNModelStorage_GetArchivePath(const string symbol, const ENUM_TIMEFRAMES timeframe, const int oldVersion)
@@ -178,13 +157,6 @@ bool NNModelStorage_ArchiveOldCheckpoint(const string sourceFile, const string a
 
     FileDelete(sourceFile, FILE_COMMON);
     return true;
-}
-
-bool NNModelStorage_LegacyCheckpointExists(const string symbol, const ENUM_TIMEFRAMES timeframe)
-{
-    string legacyPrimary = NNModelStorage_GetLegacyPrimaryPath(symbol, timeframe);
-    string legacyBackup = NNModelStorage_GetLegacyBackupPath(symbol, timeframe);
-    return (FileIsExist(legacyPrimary, FILE_COMMON) || FileIsExist(legacyBackup, FILE_COMMON));
 }
 
 #endif // CORE_AI_NN_MODEL_STORAGE_MQH

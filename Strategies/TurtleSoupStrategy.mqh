@@ -176,6 +176,7 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "TURTLE-SOUP", confidence))
             return TRADE_SIGNAL_NONE;
 

@@ -1,7 +1,9 @@
 //+------------------------------------------------------------------+
 //| NYOpenGapStrategy.mqh                                            |
 //| NY Open Gap: NDOG fade with FVG confluence during NY open       |
-//| Trades the gap-fill tendency at 13:30-14:00 UTC (9:30-10 AM EST)|
+//| Trades the gap-fill tendency at 13:30-14:00 UTC                  |
+//| (= 09:30-10:00 NY local during US daylight time; shift +1h for  |
+//|  US standard time). Window is evaluated in GMT, NOT broker time. |
 //|                                                                  |
 //| Batch 103: Session-specific strategy for forex/metals/indices     |
 //+------------------------------------------------------------------+
@@ -17,7 +19,7 @@
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 
 // CNYOpenGapStrategy trades the NDOG fade with FVG confluence during NY open.
-// Targets gap-fill tendency at 13:30-14:00 UTC (9:30-10 AM EST).
+// Targets gap-fill tendency at 13:30-14:00 UTC (NY 09:30-10:00 local in US DST).
 class CNYOpenGapStrategy : public CStrategyBase
 {
 private:
@@ -97,9 +99,12 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Time filter: only trade during 13:30-14:00 UTC (9:30-10:00 AM EST) ---
+        // --- Time filter: only trade during 13:30-14:00 UTC ---
+        // FIX (2026-08-14): use TimeGMT(), not TimeCurrent(). TimeCurrent() is broker-local
+        // time, so on a non-UTC broker the window would fire at the wrong clock hour (or never).
+        // The window is defined in UTC, so it must be evaluated in GMT.
         MqlDateTime dt;
-        TimeCurrent(dt);
+        TimeGMT(dt);
         bool inWindow = (dt.hour == 13 && dt.min >= 30) || (dt.hour == 14 && dt.min == 0);
         if(!inWindow)
         {
@@ -114,7 +119,13 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Detect gap: current day open vs previous day close ---
+        // --- Detect gap: current day D1 open vs previous D1 close ---
+        // NOTE (2026-08-14): this is a daily-gap PROXY. A true NDOG (New York Day Open Gap)
+        // is the gap between the prior NY session close (~16:00 ET) and the current NY open
+        // (~09:30 ET). D1 bars roll at broker midnight, not the NY session, so on a UTC broker
+        // this measures the gap at ~19:00 ET, not 09:30 ET. The SessionGapDetector (m_sessionGapDetector)
+        // already computes the proper NDOG for the nearGapLevel check. A full fix = derive the gap
+        // from the H1 bar at the NY open (DST-aware). Documented as a follow-up (see STRATEGY_AUDIT_2026-08-14).
         if(iBars(m_symbol, PERIOD_D1) < 3)
         {
             SetDecisionReasonTag("NYGAP_INSUFFICIENT_D1_BARS");
@@ -230,6 +241,7 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "NYGAP", confidence))
             return TRADE_SIGNAL_NONE;
 

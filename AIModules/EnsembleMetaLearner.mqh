@@ -735,23 +735,6 @@ public:
         return model.TrainStep(data, targetClass, loss);
     }
 
-    ENUM_MARKET_REGIME DetectMarketRegimeLegacy(const double &marketData[])
-    {
-        if(ArraySize(marketData) < 50)
-            return MARKET_REGIME_RANGING;
-
-        bool stale = (m_lastRegimeUpdate > 0 && (TimeCurrent() - m_lastRegimeUpdate) > 300);
-        if(stale || m_lastRegimeUpdate == 0)
-            UpdateRegimeState(marketData);
-
-        double atrRatio = (m_atrLong > 1e-9) ? (m_atrShort / (m_atrLong + 1e-9)) : 1.0;
-        if(atrRatio > 1.5)
-            return MARKET_REGIME_VOLATILE;
-        if(MathAbs(m_trendStrength) > 0.003)
-            return MARKET_REGIME_TRENDING;
-        return MARKET_REGIME_RANGING;
-    }
-
     ENUM_MARKET_REGIME DetectMarketRegime(const double &marketData[])
     {
         UpdateRegimeState(marketData);

@@ -128,8 +128,8 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
     // Update recent performance (rolling window)
     UpdateRecentPerformance(idx, netProfit);
 
-    // Update regime-specific performance (placeholder for now, can be expanded)
-    // UpdateRegimePerformance(idx, m_currentRegime, netProfit);
+    // Regime-specific performance attribution is owned by the health monitor; no per-trade
+    // regime update is performed here.
 
     // Recalculate metrics (WinRate, ProfitFactor, Sharpe)
     CalculateStrategyMetrics(idx);
@@ -355,8 +355,8 @@ void CStrategyPerformanceHealth::UpdateRegimePerformance(const int index, int re
     // Fallback if health monitor not initialized
     if(index < 0 || index >= m_src.GetStrategyCount()) return;
 
-    // This would update regime-specific performance in the strategy entry
-    // Currently a placeholder as regime tracking is handled by the health monitor
+    // Regime-specific performance is tracked by the health monitor; this hook intentionally
+    // performs no per-trade regime update.
 }
 
 //+------------------------------------------------------------------+

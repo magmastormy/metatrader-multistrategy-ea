@@ -56,9 +56,11 @@ private:
     double m_exitZThreshold;        // Z-score threshold for exit (default: 0.5)
     int m_lookbackPeriods;          // Lookback for z-score calculation (default: 50)
     double m_minCorrelation;        // Minimum correlation to consider pair (default: 0.85)
-    double m_hedgeRatio;            // Fixed hedge ratio if not dynamic (default: 1.0)
-    bool m_useDynamicHedgeRatio;    // Use rolling regression for hedge ratio
-    
+    double m_hedgeRatio;            // Fixed hedge ratio (default: 1.0)
+    double m_slZBuffer;             // Adverse SL distance in z (sigma) for stat arb (default: 1.0)
+    // NOTE (2026-08-14): a m_useDynamicHedgeRatio flag was previously declared/initialized
+    // but never read anywhere; it has been removed. Hedge ratio is currently fixed at m_hedgeRatio.
+
     // State Tracking
     datetime m_lastSignalBar;
     
@@ -110,7 +112,7 @@ public:
         m_lookbackPeriods(50),
         m_minCorrelation(0.85),
         m_hedgeRatio(1.0),
-        m_useDynamicHedgeRatio(true),
+        m_slZBuffer(1.0),
         m_lastSignalBar(0),
         m_activeLeg1Symbol(""),
         m_activeLeg2Symbol(""),
@@ -273,12 +275,23 @@ public:
                     validationReq.symbol = m_symbol;
                     validationReq.orderType = (signal.direction == TRADE_SIGNAL_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
                     validationReq.lotSize = minLot;
-                    validationReq.stopLossPips = 50.0;  // 50 pips SL for stat arb
-                    validationReq.takeProfitPips = 100.0;  // 100 pips TP for stat arb
+                    // FINDING 0 LIVE (2026-08-14): these proposed stops NOW reach the
+                    // execution path. Derive SL/TP from the spread's volatility (sigma)
+                    // instead of fixed pips — adverse move = m_slZBuffer sigma, target =
+                    // reversion to the exit z-threshold. R:R is inherently >= mean-rev floor.
+                    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+                    if(point <= 0) point = 0.00001;
+                    double spreadStdDevPips = (spreadStdDev > 0) ? (spreadStdDev / point) : 0.0;
+                    if(spreadStdDevPips <= 0) spreadStdDevPips = 50.0;  // fallback if sigma unknown
+                    double tpZ = MathAbs(zScore) - m_exitZThreshold;    // reversion distance to exit
+                    if(tpZ < 0.5) tpZ = 0.5;
+                    validationReq.stopLossPips = m_slZBuffer * spreadStdDevPips;
+                    validationReq.takeProfitPips = tpZ * spreadStdDevPips;
                     validationReq.confidence = signal.confidence;
                     validationReq.strategy = m_name;
                     validationReq.requestTime = TimeCurrent();
 
+                    SetProposedStops(validationReq.stopLossPips, validationReq.takeProfitPips); // FINDING 0
                     SValidationResult validationResult = riskMgr.ValidateTradeRequest(validationReq);
                     if(!validationResult.approved)
                     {

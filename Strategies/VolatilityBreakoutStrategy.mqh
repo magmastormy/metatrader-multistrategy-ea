@@ -69,6 +69,8 @@ private:
     double m_volumeMultiplier;// Volume surge multiplier (default: 1.5x average)
     double m_atrExpansionMult;// ATR expansion multiplier (default: 1.3x)
     int m_lookbackPeriods;    // Lookback for squeeze detection (default: 10)
+    double m_atrStopMult;      // ATR-based stop distance (default: 1.5) — F6: capital-efficient SL
+    double m_atrTargetMult;    // ATR-based target distance (default: 3.0) — 2.0R designed profile
     
     // Risk Management (AGENTS.md invariant #1)
     CUnifiedRiskManager* m_riskManager;
@@ -154,6 +156,8 @@ public:
         m_volumeMultiplier(1.5),
         m_atrExpansionMult(1.3),
         m_lookbackPeriods(10),
+        m_atrStopMult(1.5),
+        m_atrTargetMult(3.0),
         m_riskManager(NULL),
         m_lastSignalBar(0),
         m_signalsGenerated(0),
@@ -374,6 +378,7 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "VOLBREAK", confidence))
             return TRADE_SIGNAL_NONE;
         
@@ -465,6 +470,9 @@ private:
         {
             signal.entryType = VB_ENTRY_FAILURE_REVERSAL;
             signal.direction = failureDirection;
+            signal.entryPrice = price;
+            signal.stopLoss = (failureDirection == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+            signal.takeProfit = (failureDirection == TRADE_SIGNAL_BUY) ? (price + m_atrTargetMult * curATR) : (price - m_atrTargetMult * curATR);
             signal.confidence = 0.70;
             signal.reason = "Breakout failure reversal";
             PrintFormat("[VOL-BREAKOUT] Breakout failure reversal | Direction=%s",
@@ -478,6 +486,9 @@ private:
         {
             signal.entryType = VB_ENTRY_RETEST;
             signal.direction = retestDirection;
+            signal.entryPrice = price;
+            signal.stopLoss = (retestDirection == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+            signal.takeProfit = (retestDirection == TRADE_SIGNAL_BUY) ? (price + m_atrTargetMult * curATR) : (price - m_atrTargetMult * curATR);
             signal.confidence = 0.78;
             signal.reason = "Breakout + retest confirmation";
             PrintFormat("[VOL-BREAKOUT] Retest entry | Direction=%s",
@@ -498,8 +509,8 @@ private:
                 signal.entryType = VB_ENTRY_DOUBLE_SQUEEZE;
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle;
-                signal.takeProfit = price + (curATR * 2.5);
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+                signal.takeProfit = price + m_atrTargetMult * curATR;
                 signal.confidence = 0.85;
                 signal.reason = "BB+KC Double Squeeze (TTM Squeeze)";
 
@@ -517,8 +528,8 @@ private:
                 signal.entryType = VB_ENTRY_COMBINED_SIGNAL;
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle; // Below middle band
-                signal.takeProfit = price + (curATR * 2.5); // 2.5x ATR target
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR); // Below middle band
+                signal.takeProfit = price + m_atrTargetMult * curATR; // 2.5x ATR target
                 signal.confidence = 0.80 + (volRatio - 1.0) * 0.05; // Boost with volume
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
@@ -535,8 +546,8 @@ private:
                 signal.entryType = VB_ENTRY_SQUEEZE_BREAKOUT;
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle;
-                signal.takeProfit = price + (curATR * 2.0); // 2x ATR target
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+                signal.takeProfit = price + m_atrTargetMult * curATR; // 2x ATR target
                 signal.confidence = 0.70 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = isInSqueeze ? "Squeeze breakout" : "ATR expansion breakout";
@@ -550,8 +561,8 @@ private:
                 signal.entryType = VB_ENTRY_ATR_EXPANSION;
                 signal.direction = TRADE_SIGNAL_BUY;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle;
-                signal.takeProfit = price + (curATR * 1.8);
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+                signal.takeProfit = price + m_atrTargetMult * curATR;
                 signal.confidence = 0.65;
                 signal.reason = "BB breakout with volume";
                 
@@ -570,8 +581,8 @@ private:
                 signal.entryType = VB_ENTRY_DOUBLE_SQUEEZE;
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle;
-                signal.takeProfit = price - (curATR * 2.5);
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+                signal.takeProfit = price - m_atrTargetMult * curATR;
                 signal.confidence = 0.85;
                 signal.reason = "BB+KC Double Squeeze (TTM Squeeze)";
 
@@ -589,8 +600,8 @@ private:
                 signal.entryType = VB_ENTRY_COMBINED_SIGNAL;
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle; // Above middle band
-                signal.takeProfit = price - (curATR * 2.5);
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR); // Above middle band
+                signal.takeProfit = price - m_atrTargetMult * curATR;
                 signal.confidence = 0.80 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = "Combined: Squeeze breakout + ATR expansion + Volume surge";
@@ -607,8 +618,8 @@ private:
                 signal.entryType = VB_ENTRY_SQUEEZE_BREAKOUT;
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle;
-                signal.takeProfit = price - (curATR * 2.0);
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+                signal.takeProfit = price - m_atrTargetMult * curATR;
                 signal.confidence = 0.70 + (volRatio - 1.0) * 0.05;
                 signal.confidence = MathMin(1.0, signal.confidence);
                 signal.reason = isInSqueeze ? "Squeeze breakout" : "ATR expansion breakout";
@@ -622,8 +633,8 @@ private:
                 signal.entryType = VB_ENTRY_ATR_EXPANSION;
                 signal.direction = TRADE_SIGNAL_SELL;
                 signal.entryPrice = price;
-                signal.stopLoss = bbMiddle;
-                signal.takeProfit = price - (curATR * 1.8);
+                signal.stopLoss = (signal.direction == TRADE_SIGNAL_BUY) ? (price - m_atrStopMult * curATR) : (price + m_atrStopMult * curATR);
+                signal.takeProfit = price - m_atrTargetMult * curATR;
                 signal.confidence = 0.65;
                 signal.reason = "BB breakout with volume";
                 

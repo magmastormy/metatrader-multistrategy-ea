@@ -16,7 +16,7 @@ Maintain and evolve `metatrader-multistrategy-ea` with production-safe disciplin
 1. Determinism over convenience.
 2. One authority per domain (consensus, risk, execution, lifecycle).
 3. Log-driven verification before claims.
-4. Shadow-first rollout for meaningful behavior changes.
+4. Live-only operation: no shadow/paper mode — changes are validated via compile + static review and deployed straight to live.
 5. Documentation updates are part of completion, not optional follow-up.
 
 ## 3. Non-Negotiable Technical Invariants
@@ -62,7 +62,7 @@ A valid AI-related change must include evidence of:
 ### 5.2 Runtime test mode policy
 - Prefer persistent terminal sessions (normal or `/portable`).
 - Avoid repeated `/config` launch loops for manual workflows.
-- Use shadow mode for major changes before live send.
+- Major changes ship straight to live; validate via compile + static review (AGENTS.md §3 invariants) and log-driven verification (§6) before deploy.
 
 ## 6. Logging and Validation Checklist
 After any strategy/risk/execution change, verify:

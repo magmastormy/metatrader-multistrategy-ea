@@ -104,7 +104,7 @@ struct SSymbolExportContext
     // Consensus manager
     CEnterpriseStrategyManager* strategyManager;
 
-    // Stub dependencies (owned)
+    // Owned dependencies (used for feature export; no live trading)
     CTradeManager*      tradeManager;
     CPositionSizer*     positionSizer;
     CUnifiedRiskManager* riskManager;
@@ -223,7 +223,7 @@ bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
 //+------------------------------------------------------------------+
 bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
 {
-    // Create stub dependencies (no actual trading)
+    // Create owned dependencies (used for feature export; no live trading)
     g_contexts[ctxIdx].tradeManager = new CTradeManager();
     if(g_contexts[ctxIdx].tradeManager == NULL)
         return false;
@@ -557,7 +557,7 @@ bool ExportSymbolTrainingData(const int fileHandle,
             double features[];
             if(shift < 1 || !CAIFeatureVectorBuilder::BuildNNFeatureVector(g_contexts[ctxIdx].symbol, timeframe, features, shift))
             {
-                // Fill with empty placeholder if feature extraction fails
+                // Emit an empty feature row if feature extraction fails
                 for(int f = 0; f < FEATURE_VECTOR_SIZE; f++)
                     row += ",";
                 rowsWritten++;
@@ -733,7 +733,7 @@ void Cleanup()
         if(g_contexts[i].ofiEngine != NULL)     { delete g_contexts[i].ofiEngine;     g_contexts[i].ofiEngine = NULL;     }
         if(g_contexts[i].vpinFilter != NULL)    { delete g_contexts[i].vpinFilter;    g_contexts[i].vpinFilter = NULL;    }
 
-        // Delete stub dependencies
+        // Delete owned dependencies
         if(g_contexts[i].tradeManager != NULL)  { delete g_contexts[i].tradeManager;  g_contexts[i].tradeManager = NULL;  }
         if(g_contexts[i].positionSizer != NULL) { delete g_contexts[i].positionSizer; g_contexts[i].positionSizer = NULL; }
         if(g_contexts[i].riskManager != NULL)   { delete g_contexts[i].riskManager;   g_contexts[i].riskManager = NULL;   }

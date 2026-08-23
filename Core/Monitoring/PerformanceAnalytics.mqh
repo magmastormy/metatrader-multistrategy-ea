@@ -137,7 +137,6 @@ private:
     
     // Helper functions
     double CalculateStandardDeviation(const double &returns[]);
-    void ResizeArrays(const int newSize);
     void LogPerformanceUpdate(const string message);
 };
 
@@ -352,17 +351,6 @@ void CPerformanceAnalytics::CalculateRecoveryFactor(void)
 double CPerformanceAnalytics::CalculateStandardDeviation(const double &returns[])
 {
     return CPerfAnalyticsMath::CalculateStandardDeviation(returns);
-}
-
-//+------------------------------------------------------------------+
-//| Resize Arrays (deprecated - using circular buffer)              |
-//+------------------------------------------------------------------+
-void CPerformanceAnalytics::ResizeArrays(const int newSize)
-{
-    // No longer needed - using fixed-size circular buffer
-    // ArrayResize(m_dailyReturns, newSize);
-    // ArrayResize(m_equityCurve, newSize);
-    // ArrayResize(m_tradeTimes, newSize);
 }
 
 //+------------------------------------------------------------------+

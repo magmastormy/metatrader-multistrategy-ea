@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| OnnxBrain.mqh                                                    |
-//| Rolling-window ONNX inference with optional hot-swap shadow mode |
+//| Rolling-window ONNX inference (Live-only; no shadow/hot-swap)    |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -34,26 +34,9 @@ private:
     float  m_probs[ONNX_N_CLASSES];
     int    m_signal;
     double m_confidence;
-    string m_watchPath;
-    long   m_lastModelTime;
-    long   m_shadowHandle;
-    int    m_shadowBarsCount;
-    int    m_shadowBarsNeeded;
-    double m_promotionThreshold;
-    double m_shadowWins;
-    double m_shadowTotal;
-    double m_activeWins;
+    double m_activeWins;        // Live-model accuracy tracking (active model only)
     double m_activeTotal;
-    double m_shadowPnl;
     double m_activePnl;
-    double m_shadowMaxDD;
-    double m_activeMaxDD;
-    double m_shadowPeakPnl;
-    double m_activePeakPnl;
-    int    m_shadowWarmup;
-    int    m_shadowSignal;
-    double m_shadowConfidence;
-    bool   m_hasShadowPrediction;
     bool   m_fallbackToCpu;
     double m_temperature;
 
@@ -187,26 +170,9 @@ public:
         m_head = 0;
         m_signal = 1;
         m_confidence = 0.0;
-        m_watchPath = "";
-        m_lastModelTime = 0;
-        m_shadowHandle = INVALID_HANDLE;
-        m_shadowBarsCount = 0;
-        m_shadowBarsNeeded = 100;
-        m_promotionThreshold = 0.01;
-        m_shadowWins = 0.0;
-        m_shadowTotal = 0.0;
         m_activeWins = 0.0;
         m_activeTotal = 0.0;
-        m_shadowPnl = 0.0;
         m_activePnl = 0.0;
-        m_shadowMaxDD = 0.0;
-        m_activeMaxDD = 0.0;
-        m_shadowPeakPnl = 0.0;
-        m_activePeakPnl = 0.0;
-        m_shadowWarmup = 0;
-        m_shadowSignal = 1;
-        m_shadowConfidence = 0.0;
-        m_hasShadowPrediction = false;
         m_fallbackToCpu = false;
         for(int i = 0; i < ONNX_SEQ_LEN; i++)
             for(int j = 0; j < ONNX_FEAT_DIM; j++)
@@ -241,25 +207,12 @@ public:
     {
         if(m_handle != INVALID_HANDLE)
             OnnxRelease(m_handle);
-        if(m_shadowHandle != INVALID_HANDLE)
-            OnnxRelease(m_shadowHandle);
         m_handle = INVALID_HANDLE;
-        m_shadowHandle = INVALID_HANDLE;
         m_loaded = false;
         m_full = false;
-        m_shadowBarsCount = 0;
-        m_shadowWins = 0.0;
-        m_shadowTotal = 0.0;
         m_activeWins = 0.0;
         m_activeTotal = 0.0;
-        m_shadowPnl = 0.0;
         m_activePnl = 0.0;
-        m_shadowMaxDD = 0.0;
-        m_activeMaxDD = 0.0;
-        m_shadowPeakPnl = 0.0;
-        m_activePeakPnl = 0.0;
-        m_shadowWarmup = 0;
-        m_hasShadowPrediction = false;
         m_fallbackToCpu = false;
         m_temperature = 1.0;
     }
@@ -282,19 +235,6 @@ public:
         for(int i = 0; i < ONNX_N_CLASSES; i++)
             m_probs[i] = probs[i];
 
-        if(m_shadowHandle != INVALID_HANDLE && m_shadowWarmup >= ONNX_SEQ_LEN)
-        {
-            float shadowProbs[];
-            if(RunHandle(m_shadowHandle, m_shadowSignal, m_shadowConfidence, shadowProbs))
-                m_hasShadowPrediction = true;
-            else
-                m_hasShadowPrediction = false;
-        }
-        else
-        {
-            m_hasShadowPrediction = false;
-        }
-
         return true;
     }
 
@@ -314,163 +254,11 @@ public:
             out[i] = m_probs[i];
     }
 
-    void SetWatchPath(string path, int shadowBars = 100)
-    {
-        m_watchPath = path;
-        m_shadowBarsNeeded = MathMax(10, shadowBars);
-        m_shadowBarsCount = 0;
-        m_shadowWarmup = 0;
-    }
-
-    void CheckForModelUpdate(const double &features[], const int size)
-    {
-        if(m_watchPath == "" || !FileIsExist(m_watchPath, FILE_COMMON))
-            return;
-        int fh = FileOpen(m_watchPath, FILE_READ | FILE_BIN | FILE_COMMON);
-        if(fh == INVALID_HANDLE)
-            return;
-
-        long fileTime = (long)FileGetInteger(fh, FILE_MODIFY_DATE);
-        if(fileTime <= m_lastModelTime)
-        {
-            FileClose(fh);
-            return;
-        }
-
-        uchar newModelBuf[];
-        int bytes = (int)FileSize(fh);
-        if(bytes <= 0 || bytes > 50 * 1024 * 1024)
-        {
-            FileClose(fh);
-            PrintFormat("[ONNX] Hot-swap: invalid file size %d bytes", bytes);
-            return;
-        }
-        ArrayResize(newModelBuf, bytes);
-        uint bytesRead = FileReadArray(fh, newModelBuf, 0, bytes);
-        FileClose(fh);
-        if((int)bytesRead != bytes)
-        {
-            PrintFormat("[ONNX] Hot-swap: read mismatch expected=%d got=%d", bytes, bytesRead);
-            return;
-        }
-
-        if(m_shadowHandle != INVALID_HANDLE)
-            OnnxRelease(m_shadowHandle);
-        if(!InitHandleFromBuffer(newModelBuf, m_shadowHandle))
-        {
-            Print("[ONNX] Hot-swap shadow model failed to initialize");
-            return;
-        }
-
-        m_shadowBarsCount = 0;
-        m_shadowWins = 0.0;
-        m_shadowTotal = 0.0;
-        m_activeWins = 0.0;
-        m_activeTotal = 0.0;
-        m_shadowWarmup = 0;
-        m_lastModelTime = fileTime;
-        m_hasShadowPrediction = false;
-        Print("[ONNX] Hot-swap shadow model armed");
-    }
-
-    void RecordOutcome(const bool activeCorrect, const bool shadowCorrect)
-    {
-        RecordOutcomePnl(activeCorrect, shadowCorrect, 0.0);
-    }
-
-    void RecordOutcomePnl(const bool activeCorrect, const bool shadowCorrect, const double tradePnl)
-    {
-        if(m_shadowHandle == INVALID_HANDLE)
-            return;
-
-        if(m_shadowWarmup < ONNX_SEQ_LEN)
-        {
-            m_shadowWarmup++;
-            return;
-        }
-
-        m_shadowBarsCount++;
-        if(activeCorrect)
-            m_activeWins++;
-        m_activeTotal++;
-        if(shadowCorrect)
-            m_shadowWins++;
-        m_shadowTotal++;
-
-        m_activePnl += tradePnl;
-        m_shadowPnl += tradePnl;
-        if(m_activePnl > m_activePeakPnl)
-            m_activePeakPnl = m_activePnl;
-        if(m_shadowPnl > m_shadowPeakPnl)
-            m_shadowPeakPnl = m_shadowPnl;
-        double activeDD = m_activePeakPnl - m_activePnl;
-        double shadowDD = m_shadowPeakPnl - m_shadowPnl;
-        if(activeDD > m_activeMaxDD)
-            m_activeMaxDD = activeDD;
-        if(shadowDD > m_shadowMaxDD)
-            m_shadowMaxDD = shadowDD;
-
-        if(m_shadowBarsCount < m_shadowBarsNeeded)
-            return;
-
-        double activeAcc = m_activeWins / (m_activeTotal + 1e-9);
-        double shadowAcc = m_shadowWins / (m_shadowTotal + 1e-9);
-        double activeExpectancy = (m_activeTotal > 0) ? (m_activePnl / m_activeTotal) : 0.0;
-        double shadowExpectancy = (m_shadowTotal > 0) ? (m_shadowPnl / m_shadowTotal) : 0.0;
-        double activePF = 0.0;
-        double shadowPF = 0.0;
-        if(m_activeMaxDD > 1e-9)
-            activePF = (m_activePnl > 0) ? (m_activePnl / m_activeMaxDD) : 0.0;
-        if(m_shadowMaxDD > 1e-9)
-            shadowPF = (m_shadowPnl > 0) ? (m_shadowPnl / m_shadowMaxDD) : 0.0;
-
-        bool shadowWins = false;
-        if(shadowExpectancy > activeExpectancy + m_promotionThreshold)
-        {
-            if(m_shadowMaxDD <= m_activeMaxDD * 1.5)
-                shadowWins = true;
-        }
-        if(!shadowWins && shadowAcc > activeAcc + m_promotionThreshold + 0.02)
-        {
-            if(m_shadowMaxDD <= m_activeMaxDD * 1.2)
-                shadowWins = true;
-        }
-
-        if(shadowWins)
-        {
-            if(m_handle != INVALID_HANDLE)
-                OnnxRelease(m_handle);
-            m_handle = m_shadowHandle;
-            m_shadowHandle = INVALID_HANDLE;
-            m_loaded = true;
-            PrintFormat("[AI-HOT-SWAP] PROMOTED shadow model | shadow_acc=%.3f acc=%.3f | shadow_exp=%.4f active_exp=%.4f | shadow_pf=%.3f active_pf=%.3f",
-                        shadowAcc, activeAcc, shadowExpectancy, activeExpectancy, shadowPF, activePF);
-        }
-        else
-        {
-            OnnxRelease(m_shadowHandle);
-            m_shadowHandle = INVALID_HANDLE;
-            PrintFormat("[AI-HOT-SWAP] REJECTED shadow model | shadow_acc=%.3f acc=%.3f | shadow_exp=%.4f active_exp=%.4f | shadow_pf=%.3f active_pf=%.3f",
-                        shadowAcc, activeAcc, shadowExpectancy, activeExpectancy, shadowPF, activePF);
-        }
-
-        m_shadowBarsCount = 0;
-        m_shadowWins = 0.0;
-        m_shadowTotal = 0.0;
-        m_activeWins = 0.0;
-        m_activeTotal = 0.0;
-        m_shadowPnl = 0.0;
-        m_activePnl = 0.0;
-        m_shadowMaxDD = 0.0;
-        m_activeMaxDD = 0.0;
-        m_shadowPeakPnl = 0.0;
-        m_activePeakPnl = 0.0;
-        m_hasShadowPrediction = false;
-    }
-
-    bool HasShadowPrediction() const { return m_hasShadowPrediction; }
-    int GetShadowSignal() const { return m_shadowSignal; }
-    double GetShadowConfidence() const { return m_shadowConfidence; }
+    // [REMOVED 2026-08-14] Shadow-model hot-swap / auto-promotion logic removed.
+    // Operation is Live-only: the active ONNX model is loaded once at Init and
+    // used as-is. No shadow handle, no model file watch, no hot-swap, no promotion.
+    // Live-model accuracy getters (GetActiveWins / GetActiveAccuracy) are retained
+    // as no-op counters for diagnostic reporting.
 };
 
 #endif // __ONNX_BRAIN_MQH__

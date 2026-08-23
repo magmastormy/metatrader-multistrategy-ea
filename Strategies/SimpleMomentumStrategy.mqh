@@ -848,6 +848,7 @@ public:
             request.strategy = GetName();
             request.clusterCode = "";
 
+            SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
             if(!ValidateWithRiskManager(request, "MOMENTUM", confidence))
                 return TRADE_SIGNAL_NONE;
             

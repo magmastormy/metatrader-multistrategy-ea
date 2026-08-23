@@ -32,8 +32,12 @@ struct SStrategyIntrabarConfig
     SStrategyIntrabarConfig() : name(""), defaultPolicy(INTRABAR_POLICY_OFF), syntheticLeanPrimary(false) {}
 };
 
-// Maximum number of strategies for static array sizing
-#define MAX_STRATEGY_CONFIGS 22
+// Maximum number of strategies for static array sizing.
+// Batch 146: 22 -> 23. Slots [21] (FVG Scalper) and [22] (Statistical
+// Arbitrage) were added so those two strategies own a policy row instead of
+// borrowing / clobbering a neighbour's. Legacy mode never indexes 21/22 and
+// both are written INTRABAR_POLICY_OFF, so the legacy table stays identical.
+#define MAX_STRATEGY_CONFIGS 23
 
 //+------------------------------------------------------------------+
 //| SOrchestratorConfig - All input parameters grouped by domain     |
@@ -83,7 +87,6 @@ struct SOrchestratorConfig
     double  syntheticADXNoTrendThreshold;
     bool    useCuratedStrategySet;
     bool    useSymbolClassProfiles;
-
     // Batch 114
     bool    enableKalmanMR;
     double  kalmanLambda;
@@ -441,7 +444,6 @@ struct SOrchestratorConfig
         syntheticADXNoTrendThreshold = 10.0;
         useCuratedStrategySet = true;
         useSymbolClassProfiles = false;
-
         enableKalmanMR = true;
         kalmanLambda = 500.0;
         enableChangepointDetect = true;

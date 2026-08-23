@@ -234,6 +234,7 @@ public:
             request.strategy = GetName();
             request.clusterCode = "";
 
+            SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
             if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
                 return TRADE_SIGNAL_NONE;
         }
@@ -255,6 +256,7 @@ public:
             request.strategy = GetName();
             request.clusterCode = "";
 
+            SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
             if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
                 return TRADE_SIGNAL_NONE;
         }

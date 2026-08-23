@@ -422,6 +422,27 @@ public:
         return signal;
     }
 
+    //--- Consensus interface (Batch 2026-08-14, FINDING 0):
+    //    Routes the consensus GetSignal(double&) -> ExecuteSignal into this strategy's
+    //    squeeze-breakout logic. Previously this class was only instantiated as an auxiliary
+    //    engine in OrchestratorMathEngineHub and never voted in consensus. Now it votes, and
+    //    its price-based SL/TP are stashed as pips for the execution path (consumed only when
+    //    InpUseStrategyStops is enabled).
+    virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence)
+    {
+        SCompressionSignal sig = GetSignal();
+        confidence = sig.confidence;
+        m_lastDecisionReasonTag = sig.reason;
+        if(sig.direction != TRADE_SIGNAL_NONE && sig.entryPrice > 0)
+        {
+            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            if(point > 0)
+                SetProposedStops(MathAbs(sig.entryPrice - sig.stopLoss) / point,
+                                 MathAbs(sig.takeProfit - sig.entryPrice) / point);
+        }
+        return sig.direction;
+    }
+
     //--- Standard interface
     ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_MOMENTUM; }
     string GetStrategyName() const { return "RangeCompressionBreakout"; }

@@ -102,6 +102,10 @@ input double   InpLotSize = 0.1;
 input bool     InpUseEnhancedRisk = true;
 input double   InpMaxRiskPerTrade = 5.0;
 input double   InpMaxDailyRisk = 40.0;
+
+// FINDING 0 (STRATEGY_AUDIT_2026-08-14): use strategy-designed SL/TP instead of
+// the generic fallback in the consensus execution path. ENABLED for LIVE operation.
+input bool     InpUseStrategyStops = true;
 input double   InpMaxPortfolioRisk = 60.0;
 input double   InpMaxDrawdown = 15.0;
 input double   InpDailyLossLimitPercent = 10.0;
@@ -1659,24 +1663,6 @@ string GetDeInitReasonText(int reasonCode)
 
 int GetMagicNumberPrefix() { return (int)InpMagicNumber; }
 
-double CalculateATRForSymbol(const string symbol, int period=14, ENUM_TIMEFRAMES tf=PERIOD_CURRENT)
-{
-    double atr[];
-    ArraySetAsSeries(atr, true);
-    if(CopyBuffer(iATR(symbol, tf, period), 0, 0, 2, atr) <= 0) return 0;
-    return atr[0];
-}
-
-string ArrayToString(const double &arr[])
-{
-    string result = "";
-    for(int i = 0; i < ArraySize(arr); i++)
-    {
-        if(StringLen(result) > 0) result += ",";
-        result += DoubleToString(arr[i], 5);
-    }
-    return result;
-}
 
 //+------------------------------------------------------------------+
 //| Restore Engine States (from MultiStrategyAutonomousEA.mq5)      |
@@ -1735,11 +1721,11 @@ void RestoreEngineStates()
 }
 
 //+------------------------------------------------------------------+
-//| Input Validation (placeholder - full impl in main EA)           |
+//| Input Validation (Testing EA subset)                            |
 //+------------------------------------------------------------------+
 bool ValidateInputs()
 {
-    // Basic validation - full validation would mirror main EA
+    // Validates the subset of inputs that are relevant to the Testing EA.
     if(InpMagicNumber <= 0)
     {
         Print("[VALIDATION] InpMagicNumber must be > 0");

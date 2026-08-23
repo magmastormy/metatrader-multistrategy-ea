@@ -1,10 +1,10 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-08-06
-- Last Architecture Sync: 2026-08-06
+- Last Updated: 2026-08-11
+- Last Architecture Sync: 2026-08-11
 - Scope: End-to-end lifecycle and logic traces
-- Current Batch: 142
+- Current Batch: 149
 
 ## Scope
 - Primary orchestration: `Core/Orchestration/EAOrchestrator.mqh` (single composition root)
@@ -898,6 +898,90 @@ No new log signatures added (existing `[RECOVERY]` telemetry covers crash recove
 
 ---
 
+## Strategy Registration: Semantic Slot Repair (Batch 146, 2026-08-11)
+
+### Scope
+Closes F1 / F5 / F2 from the Batch 145 deferred-defect list. All three shipped **dormant** behind `InpUseSemanticStrategyIndices` (default `false`), so the default lifecycle is unchanged.
+
+- **F1** — `AutoRegisterStrategies` read legacy literal enable slots while the sole producer of `strategyFlags[]` writes semantic `SI_*` slots. 8 rows mismatched; 2 (NY Open Gap, Asian Range Break) could never register.
+- **F5** — the catalog's `policyIndex` did not match the `StrategyConfigBuilder` slot table, so 10 rows resolved a neighbour's intrabar policy; the always-LIVE fallback was hardcoded to slots `9/10`.
+- **F2** — `StrategyConfigBuilder` wrote slot `[13]` twice (Python Bridge AI, then FVG Scalper); Statistical Arbitrage had no row at all and read Ensemble AI's.
+
+### Lifecycle Changes
+
+**Registration ordering (unchanged in shape, now scheme-aware)**
+1. `BuildStrategyFlags` writes `strategyFlags[]` at `SI_*` slots (sole producer — unchanged).
+2. `CEAOrchestrator` calls `manager.SetUseSemanticStrategyIndices(m_config.useSemanticStrategyIndices)` — **new step**, placed before the intrabar policy loop and before `AutoRegisterStrategies()`.
+3. Policy loop pushes `strategyIntrabarConfigs[0..22]` (was `0..21`) into `CIntrabarPolicy`.
+4. `AutoRegisterStrategies` reads the scheme once (`const bool semantic = m_useSemanticStrategyIndices;`), emits `CatalogLogIndexAudit(semantic)`, then resolves both the enable slot (`CatalogEnableSlot`) and the policy slot (`CatalogPolicySlot`) through it.
+
+**Single entry point for the scheme**
+`CEnterpriseStrategyManager::SetUseSemanticStrategyIndices()` sets `m_useSemanticStrategyIndices` **and** forwards to `CIntrabarPolicy::SetSemanticPolicySlots()`. The enable gate and the intrabar LIVE fallback are therefore flipped atomically; the split between them is exactly what allowed F1/F5 to hide.
+
+**Config table sizing**
+`MAX_STRATEGY_CONFIGS` 22 → 23. New rows: 21 = FVG Scalper, 22 = Statistical Arbitrage, both `INTRABAR_POLICY_OFF`. `CIntrabarPolicy::m_policyConfig` is sized `INTRABAR_POLICY_CONFIG_SLOTS = 32`, so the count increase cannot overflow; the two extra writes are `OFF`-over-`OFF`.
+
+**Legacy path preserved**
+The FVG Scalper slot-13 clobber is retained verbatim under `if(!config.useSemanticStrategyIndices)`, because legacy catalog row "Turtle Soup" resolves policy slot 13 and must keep seeing FVG's `OFF`. Legacy policy slots top out at 16, so nothing indexes 21/22 in legacy mode.
+
+**Statistical Arbitrage conditional registration is unchanged** — still gated on `g_pythonBridge != NULL && g_pythonBridge.IsConnected()`, still MEAN_REVERSION_CLUSTER / PRIMARY_ALPHA (see "Current Runtime Evidence" above).
+
+### Files Modified
+- `Core/Strategy/StrategyCatalog.mqh` (`siPolicyIndex` column; `CatalogEnableSlot` / `CatalogPolicySlot`; mode-aware `CatalogFlagEnabled` / `CatalogLogIndexAudit`)
+- `Core/Management/EnterpriseStrategyManager.mqh` (`m_useSemanticStrategyIndices`, `SetUseSemanticStrategyIndices()`, slot resolution in `AutoRegisterStrategies`)
+- `Core/Management/IntrabarPolicy.mqh` (`m_semanticPolicySlots`, `SetSemanticPolicySlots()`, scheme-aware LIVE fallback)
+- `Core/Orchestration/StrategyConfigBuilder.mqh` (legacy-gated slot-13 clobber; new rows 21/22)
+- `Core/Orchestration/OrchestratorConfig.mqh` (`MAX_STRATEGY_CONFIGS` 23; `useSemanticStrategyIndices` + `Reset()` default)
+- `Core/Orchestration/EAOrchestrator.mqh` (scheme selection call site)
+- `MultiStrategyAutonomousEA.mq5`, `MultiStrategyTestingEA.mq5` (input + wiring)
+
+### Log Signatures
+- `[CATALOG-AUDIT] slot_scheme=LEGACY|SEMANTIC (InpUseSemanticStrategyIndices=…)` — one line per manager init.
+- `[CATALOG-AUDIT] <name> enable_slot legacy=N semantic=M MISMATCH -> using X` — 8 lines.
+- `[CATALOG-AUDIT] <name> policy_slot legacy=N semantic=M MISMATCH -> using X` — 10 lines.
+- `[CATALOG-AUDIT] <name> DEAD_SLOT legacy_flags_index=15|16 …` — legacy mode only.
+
+### Compilation
+Headless MetaEditor compile of `MultiStrategyAutonomousEA.mq5`: **0 errors, 0 warnings** (158,103 ms, `X64 Regular`). Artifacts synced to the live terminal tree; `.ex5` rebuilt 2026-08-11 10:44:52.
+
+### Not Covered
+- **F3** (`PythonBridgeAI` absent from the outer AI gate, `EAOrchestrator.mqh:3505`) — out of the approved scope, unchanged.
+- **F6** (misleading Statistical Arbitrage "registered" log on the skip path) — out of the approved scope, unchanged.
+- Runtime validation with `InpUseSemanticStrategyIndices = true` still owed; requires a shadow/backtest session.
+
+---
+
+## Strategy Registration: Legacy Slot Scheme Removed (Batch 147, 2026-08-11)
+
+### Scope
+Per the user directive ("legacy code and legacy functions must disappear"), this removes the dual-scheme plumbing that Batch 146 shipped dormant. Batch 146 made the corrected semantic scheme available behind `InpUseSemanticStrategyIndices` (default `false`); Batch 147 **deletes** the legacy branch so semantic is the only path.
+
+### Changes
+- Deleted `input bool InpUseSemanticStrategyIndices` (both EAs) and `SOrchestratorConfig::useSemanticStrategyIndices` (+ `Reset()` default).
+- Deleted `CEnterpriseStrategyManager::m_useSemanticStrategyIndices` + `SetUseSemanticStrategyIndices()`; `AutoRegisterStrategies` now calls `CatalogLogIndexAudit()`, `CatalogEnableSlot(i)`, `CatalogPolicySlot(i)` unconditionally.
+- Deleted `CIntrabarPolicy::m_semanticPolicySlots` + `SetSemanticPolicySlots()`; `GetIntrabarPolicyHelper` hardcodes `idx == 7 || idx == 8` → `INTRABAR_POLICY_LIVE`.
+- Removed `SStrategyDefinition::flagsIndex` / `policyIndex`; `CatalogEnableSlot` / `CatalogPolicySlot` / `CatalogLogIndexAudit` are now no-arg. `CatalogFlagEnabled` removed.
+- `CEAOrchestrator` no longer selects a scheme; `StrategyConfigBuilder` no longer gates the FVG Scalper slot-13 clobber (removed — Python Bridge AI owns slot 13, FVG owns 21).
+
+### Ownership (final)
+- `COrchestratorStrategyFlagBuilder::BuildStrategyFlags` writes `SI_*` slots (sole producer).
+- `CEnterpriseStrategyManager::AutoRegisterStrategies` reads `CatalogEnableSlot(i)` → `flags[SI_*]` (sole reader). Reader/writer agree by construction.
+- `CatalogLogIndexAudit()` prints `slot_scheme=SEMANTIC (legacy literals removed in Batch 147)`.
+
+### Files Modified
+- `Core/Strategy/StrategyCatalog.mqh` (`siIndex`/`siPolicyIndex` only; no-arg resolvers; `CatalogFlagEnabled` removed)
+- `Core/Management/EnterpriseStrategyManager.mqh` (scheme flag + setter removed; unconditional `AutoRegisterStrategies`)
+- `Core/Management/IntrabarPolicy.mqh` (`m_semanticPolicySlots`/`SetSemanticPolicySlots` removed; hardcoded `7/8` LIVE)
+- `Core/Orchestration/EAOrchestrator.mqh` (scheme-selection call removed)
+- `Core/Orchestration/OrchestratorConfig.mqh` (`useSemanticStrategyIndices` removed)
+- `Core/Orchestration/StrategyConfigBuilder.mqh` (legacy-gated slot-13 clobber removed)
+- `MultiStrategyAutonomousEA.mq5`, `MultiStrategyTestingEA.mq5` (input + wiring removed)
+
+### Compilation
+Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 0 warnings** (105,436 ms); `MultiStrategyTestingEA.mq5` **0 errors, 0 warnings** (80,932 ms). Both `.ex5` rebuilt 2026-08-11.
+
+---
+
 ## 2026-03-31 AXIOM Refactor Trace
 - Removed dead AI/control-flow weight:
   - `CNextGenStrategyBrain` no longer carries the dormant Python/cloud branch or cloud-status labeling
@@ -1283,3 +1367,40 @@ No new log signatures added (existing `[RECOVERY]` telemetry covers crash recove
 - **Files Changed:** `Core/Risk/UnifiedRiskManager.mqh`, `Core/Risk/PositionSizer.mqh`, `MultiStrategyAutonomousEA.mq5`, `Core/Trading/TradeManager.mqh`, `Core/Utils/PythonBridge.mqh`.
 - **Runtime Invariants Preserved:** All 5 AGENTS.md §3 invariants verified — risk authority, execution ownership, lifecycle ownership, strategy consensus, indicator cleanup unchanged.
 - **Compilation:** 0 errors, 0 warnings. `.ex5` produced at 1,397,708 bytes.
+
+---
+
+## Batch 148 — Debt-Marker Hunt & Dead-Code Removal (2026-08-11)
+
+- **Trigger:** User directive to hunt for placeholder / legacy / backward / backtrack / incomplete-code markers across the repo and fix them.
+- **Method:** Repo-wide grep for `placeholder|legacy|backward|backtrack|todo|fixme|stub|not implemented|deprecated|obsolete`, then triage each hit by reading the function body and confirming callers via grep (trust-but-verify before any deletion).
+- **Deletions (all verified 0 callers):**
+  - `EAOrchestrator.mqh` — removed empty free function `RegisterManagerStrategiesFromRegistry()`.
+  - `AIModules/EnsembleMetaLearner.mqh` — removed dead `DetectMarketRegimeLegacy()` (HMM-based `DetectMarketRegime` is the live path).
+  - `Core/AI/NNModelStorage.mqh` — removed 4 dead legacy checkpoint helpers (`GetLegacyBaseName`, `GetLegacyPrimaryPath`, `GetLegacyBackupPath`, `LegacyCheckpointExists`) and their declarations.
+  - `Core/Monitoring/PerformanceAnalytics.mqh` — removed empty deprecated `CPerformanceAnalytics::ResizeArrays()` (decl + def).
+  - `Core/Risk/PortfolioRiskManager.mqh` — removed dead deprecated `CPortfolioRiskManager::RecordTradeReturn()` (superseded by `RecordEquityCurveReturn`).
+  - `Core/Management/ConsensusEngine.mqh` — removed dead `CConsensusEngine::AccumulateRoleClusterSignalDiagnostics()` wrapper (decl + def; 0 callers).
+- **Comment cleans (working code, misleading "placeholder"/"stub" wording removed):** `EAOrchestrator.mqh`, `Core/Management/DiagMgrCounters.mqh`, `Core/Management/StrategyPerformanceHealth.mqh` (×2), `MultiStrategyTestingEA.mq5`, `TrainingDataExporter.mq5` (×4).
+- **Intentionally deferred (wired stubs / interface no-ops — left unchanged to preserve invariants):** `SafeModeConfig` news-avoidance, `DashBridgePanels` scalp JSON, `EnsembleAIStrategyAdapter::TrainStep`/`OnRegimeChange`, `PythonBridgeAIStrategyAdapter::SetTemperature`, `EnsembleMetaLearner` adapter-default stubs, `NeuralNetworkStrategy::SetWeightMutationEnabled`, `StrategyBase::ValidateWithRiskManager`, `SpikeHunterExecutor::m_trade` fallback.
+- **Lifecycle impact:** No ownership transfer. Pure dead-code removal + comment accuracy. No behavioral change for any retained path.
+- **Runtime Invariants Preserved:** All 5 AGENTS.md §3 invariants unchanged (no risk/execution/lifecycle/consensus/cleanup paths touched).
+- **Compilation:** 0 errors, 0 warnings for `MultiStrategyAutonomousEA.mq5` and `MultiStrategyTestingEA.mq5`, headless MetaEditor, `X64 Regular`.
+
+---
+
+## Batch 149 — Deeper Structural Dead-Code Removal (2026-08-11)
+
+- **Trigger:** User directive to go deeper than marker-word hunting and fix structural debt (dead code that a green build does not prove is unused). MQL5 has no unused-symbol diagnostic, so dead methods are common.
+- **Method:** Repo-wide grep to confirm zero external callers for each candidate (definition-only), then delete and compile-verify. A clean compile (no undefined-reference error) is the authoritative proof the method was uncalled.
+- **Deletions (all compile-verified 0 errors):**
+  - `Core/Orchestration/EAOrchestrator.mqh` — removed 4 dead engine getters (`GetFastScalpEngine`, `GetSpikeHunterEngine`, `GetGridRecoveryEngine`, `GetATRScalpingEngine`; only `GetTradeManager` is live) and dead `GetEAPositionCountForSymbol()`.
+  - `Core/Trading/TradeManager.mqh` — removed dead getters `GetRiskManager()`, `GetMarketAnalysis()`, `GetLastRequestedStopLoss()`, `GetLastRequestedTakeProfit()`, `GetLastRequestId()`, and the dead multi-line `ApplySmartOrderRouting()`.
+  - `MultiStrategyAutonomousEA.mq5` & `MultiStrategyTestingEA.mq5` — removed dead duplicated free functions `CalculateATRForSymbol()` and `ArrayToString()` (identical copies, zero callers in both).
+- **Investigated and KEPT (intentional, not debt):**
+  - `CPyBridgeHealth::Reset()` — called only from `CPythonBridge::Shutdown()`; zeroing `m_max_reconnect_attempts` is shutdown-only and `Configure()` re-sets it on re-init. Correct, not a bug.
+  - `CTradeManager` mirror members `m_totalTrades` / `m_successfulTrades` / `m_failedTrades` / `m_lastTradeTime` — `Core/Trading/TradeStatsTracker.mqh:17` documents they were "DELIBERATELY NOT MOVED"; intentional backward-compat surface.
+- **Deferred follow-up (recommended):** An automated no-caller scan flagged larger getter/method clusters needing per-symbol compile verification before deletion — `NeuralNetworkStrategy.mqh` (~15), `EnsembleMetaLearner.mqh` (~10), `AIEngine.mqh` (~15), and `Core/Risk/*` getters. Candidate for a Batch 150 compile-verified sweep.
+- **Lifecycle impact:** No ownership transfer. Pure dead-code removal. No behavioral change for any retained path.
+- **Runtime Invariants Preserved:** All 5 AGENTS.md §3 invariants unchanged.
+- **Compilation:** 0 errors, 0 warnings for `MultiStrategyAutonomousEA.mq5` (68,308 ms) and `MultiStrategyTestingEA.mq5` (65,305 ms), headless MetaEditor, `X64 Regular`.

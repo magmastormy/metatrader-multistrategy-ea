@@ -1,11 +1,11 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-08-06
-- Last Architecture Sync: 2026-08-06
+- Last Updated: 2026-08-11
+- Last Architecture Sync: 2026-08-11
 - Scope: Runtime signal-to-execution flow
 - Source: `Core/Orchestration/EAOrchestrator.mqh`
-- Current Batch: 142
+- Current Batch: 146
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -370,6 +370,21 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Protective lifecycle thresholds are now risk-relative: breakeven, trailing, and partial-close activation must clear both the configured pip floor and a fraction of the trade's original stop distance.
 - Protective stop modifications are validated against executable quote side with extra stop/freeze cushion and one widened retry on `TRADE_RETCODE_INVALID_STOPS`.
 - The EA-level generic breakeven/trailing loop is now opt-in via `InpEnablePositionLifecycleManager`; when left off, only strategy-defined SL/TP and risk/execution protections manage the trade.
+
+### Slot Resolution — which policy row a strategy actually reads (Batch 147, semantic-only)
+
+Before Batch 146 the intrabar policy slot was resolved from the catalog's legacy `policyIndex`, which did not match the `StrategyConfigBuilder` slot table, and the always-LIVE fallback was hardcoded to slots `9/10`. Batch 146 made the scheme switchable; **Batch 147 removed the legacy scheme entirely**, so resolution is now unconditional semantic.
+
+Resolution order:
+
+1. `BuildStrategyFlags` writes `strategyFlags[]` at `SI_*` slots (sole producer — unchanged).
+2. The policy loop pushes `strategyIntrabarConfigs[0..22]` into `CIntrabarPolicy::m_policyConfig` (32 slots).
+3. `AutoRegisterStrategies` resolves each row's enable slot via `CatalogEnableSlot(i)` (→ `SI_*`) and its policy slot via `CatalogPolicySlot(i)` (→ the strategy's own `siPolicyIndex`). Both are unconditional.
+4. `CIntrabarPolicy::GetIntrabarPolicyHelper(idx)` returns the configured policy if it is not `OFF`; otherwise it applies the always-LIVE fallback for the Mean Reversion / Volatility Breakout pair at fixed semantic slots `7/8`.
+
+Enable-flag resolution: `CatalogEnableSlot(i)` returns the strategy's `SI_*` slot. Since `BuildStrategyFlags` is the only writer and writes `SI_*` slots, reader and writer agree by construction.
+
+`[CATALOG-AUDIT]` lines are emitted at registration time on every boot: `slot_scheme=SEMANTIC (legacy literals removed in Batch 147)` plus each strategy's `enable_slot=` / `policy_slot=`. There are no MISMATCH or DEAD_SLOT lines because only one scheme exists.
 
 ## Strategy Governance Policy
 - Manager-level strategy metadata controls live-vote authority:

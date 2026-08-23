@@ -169,15 +169,10 @@ public:
         config.strategyIntrabarConfigs[13].defaultPolicy = config.intrabarEligibilityPythonBridgeAI;
         config.strategyIntrabarConfigs[13].syntheticLeanPrimary = false;
 
-        // Strategy 14: FVG Scalper (uses defaults)
-        config.strategyTimeframeConfigs[13].defaultTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[13].intrabarEnabled = false;
-        config.strategyTimeframeConfigs[13].intrabarTF = PERIOD_CURRENT;
-        config.strategyTimeframeConfigs[13].forceHigherOnM1Synthetic = false;
-
-        config.strategyIntrabarConfigs[13].name = "FVG Scalper";
-        config.strategyIntrabarConfigs[13].defaultPolicy = INTRABAR_POLICY_OFF;
-        config.strategyIntrabarConfigs[13].syntheticLeanPrimary = false;
+        // Batch 147 (F2): the historical FVG Scalper slot-13 clobber was removed.
+        // Python Bridge AI keeps its own row at slot 13; FVG Scalper owns slot 21
+        // (see the tail of this method). Turtle Soup now reads its own builder row
+        // rather than FVG's OFF.
 
         // Strategy 14: Turtle Soup
         config.strategyTimeframeConfigs[14].name = "Turtle Soup";
@@ -255,6 +250,33 @@ public:
         config.strategyIntrabarConfigs[20].name = "Exit Optimizer";
         config.strategyIntrabarConfigs[20].defaultPolicy = INTRABAR_POLICY_OFF;
         config.strategyIntrabarConfigs[20].syntheticLeanPrimary = false;
+
+        // ---- Batch 147 (F2/F5): rows for the two strategies that never owned one.
+        // FVG Scalper owns slot 21 and Statistical Arbitrage owns slot 22
+        // (catalog siPolicyIndex 21 / 22). These are now the rows those strategies
+        // resolve to; both carry INTRABAR_POLICY_OFF.
+
+        // Strategy 21: FVG Scalper (was clobbering slot 13)
+        config.strategyTimeframeConfigs[21].name = "FVG Scalper";
+        config.strategyTimeframeConfigs[21].defaultTF = PERIOD_CURRENT;
+        config.strategyTimeframeConfigs[21].intrabarEnabled = false;
+        config.strategyTimeframeConfigs[21].intrabarTF = PERIOD_CURRENT;
+        config.strategyTimeframeConfigs[21].forceHigherOnM1Synthetic = false;
+
+        config.strategyIntrabarConfigs[21].name = "FVG Scalper";
+        config.strategyIntrabarConfigs[21].defaultPolicy = INTRABAR_POLICY_OFF;
+        config.strategyIntrabarConfigs[21].syntheticLeanPrimary = false;
+
+        // Strategy 22: Statistical Arbitrage (had no row at all; legacy read Ensemble AI's)
+        config.strategyTimeframeConfigs[22].name = "Statistical Arbitrage";
+        config.strategyTimeframeConfigs[22].defaultTF = PERIOD_CURRENT;
+        config.strategyTimeframeConfigs[22].intrabarEnabled = false;
+        config.strategyTimeframeConfigs[22].intrabarTF = PERIOD_CURRENT;
+        config.strategyTimeframeConfigs[22].forceHigherOnM1Synthetic = false;
+
+        config.strategyIntrabarConfigs[22].name = "Statistical Arbitrage";
+        config.strategyIntrabarConfigs[22].defaultPolicy = INTRABAR_POLICY_OFF;
+        config.strategyIntrabarConfigs[22].syntheticLeanPrimary = false;
 
         config.strategyConfigCount = MAX_STRATEGY_CONFIGS;
 

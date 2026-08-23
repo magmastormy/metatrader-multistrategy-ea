@@ -571,6 +571,7 @@ ENUM_TRADE_SIGNAL CStrategySupportResistance::GetSignal(double &confidence)
         request.strategy = GetName();
         request.clusterCode = "";
 
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "SR", confidence))
             return TRADE_SIGNAL_NONE;
         

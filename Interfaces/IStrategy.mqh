@@ -30,6 +30,13 @@ public:
     
     // Get trading signal
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence) = 0;
+
+    // FINDING 0 (STRATEGY_AUDIT_2026-08-14): surface the strategy's designed
+    // stop-loss / take-profit (in pips) so the consensus execution path can use
+    // them instead of the generic fallback. Default returns false (no proposal
+    // -> the candidate builder keeps its existing fallback). Strategies that
+    // compute real stops override this via CStrategyBase::SetProposedStops().
+    virtual bool GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const { return false; }
     
     // Update strategy on new bar
         virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) = 0;

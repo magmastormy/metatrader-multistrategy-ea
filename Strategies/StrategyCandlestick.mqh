@@ -491,6 +491,7 @@ private:
         request.strategy = GetName();
         request.clusterCode = "";
 
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "CANDLE", confidence))
             return TRADE_SIGNAL_NONE;
 
@@ -520,8 +521,6 @@ private:
 
         return 0.0;
     }
-
-    bool CheckTrendAlignment(bool isBullish, int barIndex) { if(m_ema50Handle == INVALID_HANDLE || m_ema200Handle == INVALID_HANDLE) return true; double ema50[1], ema200[1]; if(CopyBuffer(m_ema50Handle, 0, barIndex, 1, ema50) <= 0 || CopyBuffer(m_ema200Handle, 0, barIndex, 1, ema200) <= 0) return true; bool uptrend = (ema50[0] > ema200[0]); bool downtrend = (ema50[0] < ema200[0]); return isBullish ? uptrend : downtrend; }
 
     void DrawPatternSignal(datetime time, double price, double strength, bool isBullish, const string patternName)
     {

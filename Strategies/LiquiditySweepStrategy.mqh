@@ -489,6 +489,28 @@ public:
         return signal;
     }
 
+    //--- Consensus interface (Batch 2026-08-14, FINDING 0):
+    //    Routes the consensus GetSignal(double&) -> ExecuteSignal into this strategy's
+    //    designed liquidity-sweep logic. Previously this class overrode a NON-virtual
+    //    GetSignal() (no-arg) and was therefore never called by the consensus base wrapper,
+    //    so its signals only fired as an auxiliary engine AND bypassed the unified risk gate.
+    //    Now it votes in consensus and stashes its price-based SL/TP as pips for the
+    //    execution path (consumed only when InpUseStrategyStops is enabled).
+    virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence)
+    {
+        SLiquiditySweepSignal sig = GetSignal();
+        confidence = sig.confidence;
+        m_lastDecisionReasonTag = sig.reason;
+        if(sig.direction != TRADE_SIGNAL_NONE && sig.entryPrice > 0)
+        {
+            double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+            if(point > 0)
+                SetProposedStops(MathAbs(sig.entryPrice - sig.stopLoss) / point,
+                                 MathAbs(sig.takeProfit - sig.entryPrice) / point);
+        }
+        return sig.direction;
+    }
+
     //--- Standard interface
     ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_UNIFIED_ICT; }
     string GetStrategyName() const { return "LiquiditySweep"; }

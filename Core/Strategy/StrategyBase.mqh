@@ -48,6 +48,8 @@ protected:
     string            m_lastRejectReasonTag;  // Last reject reason (for dedup throttling)
     datetime          m_lastRejectLogTime;    // Timestamp of last reject log entry
     int               m_lastBarCount;         // Bar count for new-bar detection (RefreshForNewBar)
+    double            m_proposedSLpips;       // FINDING 0: stashed strategy-designed SL (pips)
+    double            m_proposedTPpips;       // FINDING 0: stashed strategy-designed TP (pips)
 
     CTradeManager*    m_tradeManager;
     CPositionSizer*   m_positionSizer;
@@ -67,6 +69,10 @@ public:
     virtual void Deinit(void);
 
     virtual ENUM_TRADE_SIGNAL GetSignal(double &confidence);
+
+    // FINDING 0: return the strategy-designed SL/TP (pips) stashed via
+    // SetProposedStops(), or false if none were stashed this signal cycle.
+    virtual bool GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const override;
 
     virtual string GetName(void) const;
     virtual ENUM_STRATEGY_TYPE GetType(void) const;
@@ -101,6 +107,12 @@ protected:
     void RecordSignal(const bool successful = false);
     void RecordSignalOutcome(const bool successful);
     void SetDecisionReasonTag(const string tag);
+
+    // FINDING 0: stash the strategy's designed SL/TP (pips) so GetProposedStops()
+    // can return them to the consensus execution path. Call from ExecuteSignal
+    // right before returning a real signal (typically from the local
+    // STradeValidationRequest the strategy already builds for its risk gate).
+    void SetProposedStops(double slPips, double tpPips);
 
     // Reject signal helpers (shared by all derived strategies)
     virtual void LogRejectEvent(const string reasonTag);
@@ -176,6 +188,8 @@ CStrategyBase::CStrategyBase(const string name, const int magic) :
     m_lastRejectReasonTag(""),
     m_lastRejectLogTime(0),
     m_lastBarCount(0),
+    m_proposedSLpips(0.0),
+    m_proposedTPpips(0.0),
     m_tradeManager(NULL),
     m_positionSizer(NULL),
     m_unifiedRiskManager(NULL),
@@ -273,6 +287,10 @@ ENUM_TRADE_SIGNAL CStrategyBase::GetSignal(double &confidence)
 {
     confidence = 0.0;
     m_lastDecisionReasonTag = "";
+    // FINDING 0: reset stashed stops each call so a proposal can never leak
+    // from a previous (non-firing) cycle into a later consensus decision.
+    m_proposedSLpips = 0.0;
+    m_proposedTPpips = 0.0;
     if(!m_is_enabled || !m_is_initialized)
     {
         m_lastDecisionReasonTag = "BASE_DISABLED_OR_UNINITIALIZED";
@@ -398,6 +416,29 @@ void CStrategyBase::RecordSignalOutcome(const bool successful)
 void CStrategyBase::SetDecisionReasonTag(const string tag)
 {
     m_lastDecisionReasonTag = tag;
+}
+
+//+------------------------------------------------------------------+
+//| SetProposedStops - stash designed SL/TP (pips) for FINDING 0      |
+//+------------------------------------------------------------------+
+void CStrategyBase::SetProposedStops(double slPips, double tpPips)
+{
+    m_proposedSLpips = slPips;
+    m_proposedTPpips = tpPips;
+}
+
+//+------------------------------------------------------------------+
+//| GetProposedStops - return stashed SL/TP if a real proposal exists |
+//+------------------------------------------------------------------+
+bool CStrategyBase::GetProposedStops(ENUM_TRADE_SIGNAL signal, double &slPips, double &tpPips) const
+{
+    if(m_proposedSLpips > 0.0 && m_proposedTPpips > 0.0)
+    {
+        slPips = m_proposedSLpips;
+        tpPips = m_proposedTPpips;
+        return true;
+    }
+    return false;
 }
 
 //+------------------------------------------------------------------+

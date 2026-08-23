@@ -1,55 +1,27 @@
-
 interface StatusBadgeProps {
   status: 'online' | 'offline' | 'warning' | 'danger' | 'pending' | 'active' | 'inactive';
   label?: string;
-  size?: 'sm' | 'md' | 'lg';
   showDot?: boolean;
   className?: string;
 }
 
-const statusConfig = {
-  online: { dot: 'status-online', text: 'text-success', bg: 'bg-success/10', border: 'border-success/20', label: 'Online' },
-  offline: { dot: 'status-offline', text: 'text-text-muted', bg: 'bg-surface-2', border: 'border-border-default', label: 'Offline' },
-  warning: { dot: 'status-warning', text: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/20', label: 'Warning' },
-  danger: { dot: 'status-danger', text: 'text-danger', bg: 'bg-danger/10', border: 'border-danger/20', label: 'Danger' },
-  pending: { dot: 'status-warning', text: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/20', label: 'Pending' },
-  active: { dot: 'status-online', text: 'text-success', bg: 'bg-success/10', border: 'border-success/20', label: 'Active' },
-  inactive: { dot: 'status-offline', text: 'text-text-muted', bg: 'bg-surface-2', border: 'border-border-default', label: 'Inactive' },
+// Maps the legacy status vocabulary to the minimal badge system.
+const map: Record<StatusBadgeProps['status'], { cls: string; dot: string; def: string }> = {
+  online:  { cls: 'on',    dot: 'on',   def: 'Online' },
+  active:  { cls: 'on',    dot: 'on',   def: 'Active' },
+  offline: { cls: '',      dot: 'off',  def: 'Offline' },
+  inactive: { cls: '',     dot: 'off',  def: 'Inactive' },
+  warning: { cls: 'warn',  dot: 'warn', def: 'Warning' },
+  danger:  { cls: 'neg',   dot: 'warn', def: 'Danger' },
+  pending: { cls: 'warn',  dot: 'warn', def: 'Pending' },
 };
 
-const sizeClasses = {
-  sm: 'px-2 py-0.5 text-[10px] gap-1',
-  md: 'px-2.5 py-1 text-xs gap-1.5',
-  lg: 'px-3 py-1.5 text-sm gap-2',
-};
-
-const dotSizes = {
-  sm: 'status-dot-sm',
-  md: 'status-dot',
-  lg: 'status-dot-lg',
-};
-
-export default function StatusBadge({
-  status,
-  label,
-  size = 'md',
-  showDot = true,
-  className = '',
-}: StatusBadgeProps) {
-  const config = statusConfig[status];
-  const displayLabel = label || config.label;
-
+export default function StatusBadge({ status, label, showDot = true, className = '' }: StatusBadgeProps) {
+  const m = map[status];
   return (
-    <span
-      className={`
-        inline-flex items-center font-medium
-        ${config.bg} ${config.border} ${config.text}
-        rounded-full border
-        ${sizeClasses[size]} ${className}
-      `}
-    >
-      {showDot && <span className={`${config.dot} ${dotSizes[size]}`} />}
-      {displayLabel}
+    <span className={`badge ${m.cls} ${className}`}>
+      {showDot && <span className={`dot ${m.dot}`} />}
+      {label ?? m.def}
     </span>
   );
 }

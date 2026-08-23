@@ -403,7 +403,13 @@ public:
             return false;
         
         // Calculate SL/TP
-        if(!CalculateStops(symbol, signal, candidate, ctx))
+        // FINDING 0 (STRATEGY_AUDIT_2026-08-14): when InpUseStrategyStops is
+        // enabled, prefer the consensus strategy's designed SL/TP (pips) over the
+        // generic fallback. Now ENABLED for LIVE (shadow mode removed 2026-08-14);
+        // the generic fallback only applies when no consensus proposal exists.
+        double propSL = 0.0, propTP = 0.0;
+        bool useStratStops = (::InpUseStrategyStops) && manager.GetConsensusProposedStops(signal, propSL, propTP);
+        if(!CalculateStops(symbol, signal, candidate, ctx, useStratStops, propSL, propTP))
             return false;
         
         // Check execution cost
@@ -519,33 +525,54 @@ public:
     // === Helper methods ===
     
     bool CalculateStops(const string symbol, ENUM_TRADE_SIGNAL signal, STradeCandidate &candidate,
-                        const SConsensusDecisionContext& ctx)
+                        const SConsensusDecisionContext& ctx,
+                        bool useStrategyStops = false, double proposedSL = 0.0, double proposedTP = 0.0)
     {
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         if(point <= 0) point = 0.00001;
         
         bool isSynthetic = IsSyntheticIndexSymbolName(symbol);
+
+        // Determine minRR based on cluster (needed before any stop branch)
+        double minRR = m_minRRDefault;
+        if(ctx.dominantCluster == MEAN_REVERSION_CLUSTER)
+            minRR = m_minRRMeanReversion;
         
-        // Get ATR from pipeline
+        // Get ATR from pipeline (currently wired to NULL/0 in this build)
         CUnifiedSignalPipeline* pipeline = NULL; // Would be passed in real implementation
         double atrValue = 0;
         
-        // Simplified ATR-based stop calculation
         double stopLossPips = 0;
-        if(atrValue > 0)
+        double takeProfitPips = 0;
+
+        // FINDING 0 (STRATEGY_AUDIT_2026-08-14): use the consensus strategy's
+        // designed SL/TP when the flag is enabled and a real proposal exists.
+        if(useStrategyStops && proposedSL > 0)
+        {
+            stopLossPips = proposedSL;
+            takeProfitPips = (proposedTP > 0) ? proposedTP : proposedSL * minRR;
+            // Enforce the cluster minimum R:R on the proposed target
+            if(takeProfitPips < stopLossPips * minRR)
+                takeProfitPips = stopLossPips * minRR;
+            PrintFormat("[CANDIDATE-BUILDER] %s | FINDING0 strategy-proposed stops | SL=%.1f TP=%.1f minRR=%.2f",
+                        symbol, stopLossPips, takeProfitPips, minRR);
+        }
+        else if(atrValue > 0)
         {
             if(isSynthetic)
                 stopLossPips = (atrValue * 1.5) / point;
             else
                 stopLossPips = (atrValue / point) * 2.0;
+            takeProfitPips = stopLossPips * minRR;
         }
         else
         {
-            // Fallback
+            // Fallback when no consensus strategy proposed stops (or flag disabled)
             int stopLevelPts = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
             double fallbackByStopLevel = MathMax(30.0, (double)stopLevelPts * 2.0);
             double fallbackByPrice = (candidate.entryPrice * (isSynthetic ? 0.010 : 0.003)) / point;
             stopLossPips = MathMax(fallbackByStopLevel, fallbackByPrice);
+            takeProfitPips = stopLossPips * minRR;
         }
         
         // Bound by broker constraints
@@ -568,13 +595,6 @@ public:
         if(maxSlPips < minSlPips) maxSlPips = minSlPips;
         
         stopLossPips = MathMax(minSlPips, MathMin(maxSlPips, stopLossPips));
-        
-        // Determine minRR based on cluster
-        double minRR = m_minRRDefault;
-        if(ctx.dominantCluster == MEAN_REVERSION_CLUSTER)
-            minRR = m_minRRMeanReversion;
-        
-        double takeProfitPips = stopLossPips * minRR;
         takeProfitPips = MathMin(takeProfitPips, maxSlPips * minRR);
         
         candidate.stopLossPips = stopLossPips;

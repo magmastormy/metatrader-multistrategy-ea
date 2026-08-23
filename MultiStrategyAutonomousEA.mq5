@@ -20,10 +20,14 @@ bool g_shuttingDown;
 // Forward declaration for GetDeInitReasonText
 string GetDeInitReasonText(int reasonCode);
 
-//--- Input Parameters (same as before, passed to orchestrator config)
-// General
+//--- Input Parameters (passed to orchestrator config). Grouped with 'input group' directives (collapsible in the MT5 inputs tab).
+input group "Identity & EA Mode";
 input long     InpMagicNumber = 123456;
 input int      InpConfigVersion = 109;  // L7-005: Config version for migration tracking
+input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID;
+input bool     InpStrictEAMode = false;
+
+input group "Risk & Money Management";
 input double   InpLotSize = 0.1;
 input bool     InpUseEnhancedRisk = true;
 input double   InpMaxRiskPerTrade = 5.0;
@@ -32,23 +36,39 @@ input double   InpMaxPortfolioRisk = 60.0;
 input double   InpMaxDrawdown = 15.0;
 input double   InpDailyLossLimitPercent = 10.0;
 input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE;
-input bool     InpEnableCompoundingTiers = true;
-input int      InpCompoundingTierCheckIntervalSec = 60;
-input bool     InpEnableSessionWeights = true;
-input int      InpSessionDSTOffsetHours = 0;  // L7-022: DST offset for session weights (-12 to +12)
-input bool     InpEnableSkewStepAnalyzer = true;
-input bool     InpEnableFamilyWeightMatrix = true;
 input bool     InpAllowMinLotRoundUp = true;
 input double   InpMinLotRiskMultiplier = 15.0;
-input string   InpSymbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
-input int      InpMinSecondsBetweenTrades = 10;
+input double   InpKellyFraction = 0.25;
+input int      InpEquityCurveEmaPeriod = 20;
+input double   InpEquityCurveReductionFactor = 0.50;
+
+input group "Compounding & Auto Mode-Switch";
+input bool     InpEnableCompoundingTiers = true;
+input int      InpCompoundingTierCheckIntervalSec = 60;
+input bool     InpEnableAutoModeSwitch = true;
+input double   InpConservativeBaseRiskPct = 1.0;
+input double   InpAggressiveBaseRiskPct = 3.0;
+input double   InpModeSwitchDrawdownPct = 5.0;
+input int      InpModeSwitchWinStreak = 5;
+
+input group "Portfolio & Position Limits";
 input int      InpMaxPositionsTotal = 15;
 input int      InpMaxPositionsTotalMin = 3;
 input int      InpMaxPositionsPerSymbol = 5;
 input int      InpMaxPositionsPerSymbolMin = 1;
 input int      InpMaxTradeSendsPerCycle = 3;
+input int      InpMinSecondsBetweenTrades = 10;
+input int      InpPortfolioMaxPositionsPerSymbol = 3;
+input int      InpMaxPositionsSameBase = 3;
 
-// Strategy selection
+input group "Symbol Universe & Liquidity";
+input string   InpSymbolsToTrade = "Volatility 25 Index,Volatility 75 Index,Boom 1000 Index,Crash 1000 Index,Jump 25 Index,Jump 75 Index,Step Index,EURUSD,GBPUSD,USDJPY,AUDUSD,XAUUSD,BTCUSD";
+input bool     InpAutoAddChartSymbol = true;       // L7-021: Auto-add chart symbol to universe if missing
+input long     InpSymbolMaxSpreadPoints = 1500;
+input long     InpSymbolMinDailyVolumeLots = 1000;
+input bool     InpSymbolEnableVolumeCheck = true;
+
+input group "Strategies - Classic Set";
 input bool     InpEnableMomentum = true;
 input bool     InpEnableTrend = true;
 input bool     InpEnableSupportResistance = true;
@@ -62,12 +82,15 @@ input bool     InpEnableBreakerBlock = true;
 input bool     InpEnableNYOpenGap = true;
 input bool     InpEnableAsianRangeBreak = true;
 input bool     InpEnableStatisticalArbitrage = false;
-input double   InpTrendADXNoTrendThreshold = 12.0;
-input double   InpSyntheticADXNoTrendThreshold = 10.0;
 input bool     InpUseCuratedStrategySet = true;
 input bool     InpUseSymbolClassProfiles = false;
 
-// Batch 114
+// FINDING 0 (STRATEGY_AUDIT_2026-08-14): when true, the consensus execution path
+// uses each strategy's designed stop-loss / take-profit (in pips) instead of the
+// generic fallback. ENABLED for LIVE operation (shadow mode removed 2026-08-14).
+input bool     InpUseStrategyStops = true;
+
+input group "Strategies - Statistical & Adaptive";
 input bool     InpEnableKalmanMR = true;
 input double   InpKalmanLambda = 500.0;
 input bool     InpEnableChangepointDetect = true;
@@ -81,26 +104,36 @@ input bool     InpEnableLiquiditySweep = true;
 input bool     InpEnableRangeCompression = true;
 input bool     InpEnableExitOptimizer = true;
 
-// EA operating mode
-input ENUM_EA_MODE InpEAMode = EA_MODE_HYBRID;
-input bool     InpEnableVisualAnalysis = true;
-input int      InpMaxVisualObjects = 500;
-input bool     InpStrictEAMode = false;
+input group "Strategies - Microstructure Engines";
+input bool     InpEnableHurstEngine = true;
+input int      InpHurstLookback = 300;
+input bool     InpEnableOUProcess = true;
+input int      InpOULookback = 100;
+input bool     InpEnableOFIProxy = true;
+input int      InpOFISlowWindow = 100;
+input bool     InpEnableVPINFilter = true;
+input double   InpVPINExtremeThreshold = 0.7;
+input int      InpVPINNumBuckets = 50;
+input bool     InpEnableVWAPEngine = true;
+input bool     InpEnableVolumeProfile = true;
+input bool     InpEnableCVDEngine = true;
+input int      InpVWAPMinPeriodBars = 30;
+input double   InpVWAPBand1 = 1.0;
+input double   InpVWAPBand2 = 1.5;
+input double   InpVWAPBand3 = 2.0;
+input int      InpVPLookback = 20;
+input int      InpVPResolution = 20;
+input int      InpCVDDivergenceLookback = 30;
+input bool     InpMultiAssetProfilerEnabled = true;
+input bool     InpDerivProfilerEnabled = true;
+input bool     InpGridRecoveryEnabled = true;
+input bool     InpATRScalpingEnabled = true;
 
-// Consensus quorum
-input CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE InpQuorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
-input double   InpQuorumThreshold = 0.60;
-input int      InpMinLiveVoters = 2;
-input double   InpConsensusConflictDeadband = 0.05;
-input double   InpConsensusMinReadyWeightRatio = 0.40;
-input double   InpConsensusSupportFloorNewBar = 0.20;
-input double   InpConsensusSupportFloorIntrabar = 0.15;
-input bool     InpAllowSparseIntrabarSingleVoter = false;
-input double   InpSparseIntrabarMinQuality = 0.85;
-input double   InpSparseIntrabarMinSupportRatio = 0.40;
-input double   InpSparseIntrabarMinReadyCoverage = 0.85;
+input group "Trend & ADX Thresholds";
+input double   InpTrendADXNoTrendThreshold = 12.0;
+input double   InpSyntheticADXNoTrendThreshold = 10.0;
 
-// Strategy weights
+input group "Strategy Weights (Consensus)";
 input double   InpWeightMomentum = 1.0;
 input double   InpWeightTrend = 1.2;
 input double   InpWeightSupportResistance = 1.8;
@@ -116,7 +149,30 @@ input double   InpWeightAsianRangeBreak = 1.3;
 input double   InpWeightLiquiditySweep = 1.9;
 input double   InpWeightRangeCompression = 1.7;
 
-// AI Engine settings
+input group "Regime, Skew & Family Weighting";
+input bool     InpEnableSessionWeights = true;
+input int      InpSessionDSTOffsetHours = 0;  // L7-022: DST offset for session weights (-12 to +12)
+input bool     InpEnableSkewStepAnalyzer = true;
+input bool     InpEnableFamilyWeightMatrix = true;
+input int      InpSkewStepBufferSize = 200;
+input double   InpSkewStepCalmThreshold = 0.80;
+input double   InpSkewStepSmallThreshold = 0.2;
+input double   InpSkewStepLargeThreshold = 0.5;
+
+input group "Consensus & Quorum";
+input CEnterpriseStrategyManager::ENUM_QUORUM_PROFILE InpQuorumProfile = CEnterpriseStrategyManager::QUORUM_BALANCED;
+input double   InpQuorumThreshold = 0.60;
+input int      InpMinLiveVoters = 2;
+input double   InpConsensusConflictDeadband = 0.05;
+input double   InpConsensusMinReadyWeightRatio = 0.40;
+input double   InpConsensusSupportFloorNewBar = 0.20;
+input double   InpConsensusSupportFloorIntrabar = 0.15;
+input bool     InpAllowSparseIntrabarSingleVoter = false;
+input double   InpSparseIntrabarMinQuality = 0.85;
+input double   InpSparseIntrabarMinSupportRatio = 0.40;
+input double   InpSparseIntrabarMinReadyCoverage = 0.85;
+
+input group "AI/ML - Master Toggles";
 input bool     InpEnableAIMode = false;
 input bool     InpEnableNeuralNetwork = false;
 input bool     InpEnableTransformer = false;
@@ -124,24 +180,34 @@ input bool     InpEnableEnsemble = false;
 input bool     InpEnableOnnxAI = false;
 input bool     InpEnablePythonBridgeAI = false;
 input ENUM_PYTHON_BRIDGE_MODE InpPythonBridgeMode = PYTHON_BRIDGE_OFF;
+input bool     InpEnableExternalLLM = false;
+
+input group "AI/ML - Python Bridge";
 input string   InpPythonBridgeEndpoint = "http://127.0.0.1:8000";
 input int      InpPythonBridgeRequestTimeoutMs = 2000;
 input int      InpPythonBridgeHeartbeatTimeoutSec = 30;
 input int      InpPythonBridgeMaxReconnectAttempts = 5;
 input int      InpPythonBridgeReconnectBackoffMs = 2000;
-input bool     InpEnableExternalLLM = false;
+
+input group "AI/ML - External LLM";
 input string   InpExternalLLMEndpoint = "http://localhost:11434";
+
+input group "AI/ML - Tuning";
 input double   InpAIConfidenceThreshold = 0.70;
 input double   InpAIWeightMultiplier = 1.0;
 input double   InpAIDrawdownSizingLimit = 0.20;
 
-// Dashboard
-input bool     InpDashboardEnabled = true;
-input string   InpDashboardEndpoint = "http://127.0.0.1:8765";
-input int      InpDashboardPushIntervalSec = 5;
-input bool     InpDashboardControlEnabled = false;
+input group "AI/ML - Neural Network Training";
+input bool     InpEnableNNOnlineTraining = true;
+input bool     InpEnableNNWeightMutation = false;
+input bool     InpEnableNNPseudoLabeling = true;
+input int      InpNNPseudoLabelBarsAhead = 10;
+input int      InpNNSampleIntervalSeconds = 15;
+input int      InpNNCheckpointEveryLabeled = 10;
+input bool     InpEnableNNAttributionDiagnostics = false;
+input bool     InpRunNNAttributionSelfTest = false;
 
-// Live authority gate
+input group "AI/ML - Authority & Live Gating";
 input bool     InpEnableLiveAuthorityGate = false;
 input bool     InpAllowAIWarmStartLive = true;
 input bool     InpAllowHybridAIStandalone = true;
@@ -160,15 +226,33 @@ input double   InpAIBootstrapRiskMultiplier = 0.50;
 input double   InpAIPromotedRiskMultiplier = 1.00;
 input double   InpNonAIPromotedRiskMultiplier = 0.65;
 
-// NN attribution
-input bool     InpEnableNNAttributionDiagnostics = false;
-input bool     InpRunNNAttributionSelfTest = false;
-
-// Runtime cadence
+input group "Hybrid Cadence & Intrabar Scan";
 input bool     InpEnableHybridCadence = true;
 input int      InpIntrabarScanSeconds = 5;
 input bool     InpIntrabarChartSymbolOnly = false;
 input bool     InpIntrabarDynamicQuorumEnabled = true;
+input int      InpMaxIntrabarSymbolsPerCycle = 6;
+input int      InpMaxSignalEvaluationsPerCycle = 8;
+input int      InpIntrabarBackoffMaxSeconds = 60;
+input int      InpReadinessReuseTtlSeconds = 60;
+
+input group "Intrabar Eligibility Policies";
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMomentum = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTrend = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilitySupportResistance = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityUnifiedICT = INTRABAR_POLICY_OFF;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityCandlestick = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityUnicornModel = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityPowerOfThree = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMeanReversion = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityVolatilityBreakout = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityNeuralNetworkAI = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTransformerAI = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
+input ENUM_INTRABAR_POLICY InpIntrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
+
+input group "Pipeline, Spread & Crisis Filters";
+input bool     InpUseSignalPipeline = true;
 input double   InpPipelineMinConfidence = 0.55;
 input double   InpIntrabarSingleVoterMinConfidence = 0.95;
 input double   InpSyntheticLeanSparseIntrabarMinQuality = 0.85;
@@ -185,35 +269,14 @@ input double   InpAtrCrisisRatioThresholdDefault = 8.0;
 input double   InpHardSpreadCutoffPoints = 200.0;
 input int      InpDeadlockAttributionIntervalSec = 60;
 input int      InpHeartbeatInterval = 60;
+
+input group "Momentum Scalping";
 input bool     InpEnableMomentumScalping = true;
 input int      InpMomentumScalpCooldownSeconds = 20;
 input ENUM_TIMEFRAMES InpMomentumScalpTimeframe = PERIOD_M5;
 input ENUM_TIMEFRAMES InpCandlestickIntrabarTimeframe = PERIOD_M5;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMomentum = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTrend = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilitySupportResistance = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityUnifiedICT = INTRABAR_POLICY_OFF;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityCandlestick = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityUnicornModel = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityPowerOfThree = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityMeanReversion = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityVolatilityBreakout = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityNeuralNetworkAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityTransformerAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityEnsembleAI = INTRABAR_POLICY_LIVE;
-input ENUM_INTRABAR_POLICY InpIntrabarEligibilityOnnxAI = INTRABAR_POLICY_LIVE;
-input int      InpMaxIntrabarSymbolsPerCycle = 6;
-input int      InpMaxSignalEvaluationsPerCycle = 8;
-input int      InpIntrabarBackoffMaxSeconds = 60;
-input int      InpReadinessReuseTtlSeconds = 60;
-input bool     InpEnableNNOnlineTraining = true;
-input bool     InpEnableNNWeightMutation = false;
-input bool     InpEnableNNPseudoLabeling = true;
-input int      InpNNPseudoLabelBarsAhead = 10;
-input int      InpNNSampleIntervalSeconds = 15;
-input int      InpNNCheckpointEveryLabeled = 10;
 
-// Signal validator
+input group "Signal Validator (Quality Gates)";
 input int      InpValidatorNewBarMinConfluence = 1;
 input double   InpValidatorNewBarMinQuality = 0.68;
 input double   InpValidatorNewBarMinConfidence = 0.55;
@@ -221,62 +284,59 @@ input int      InpValidatorIntrabarMinConfluence = 1;
 input double   InpValidatorIntrabarMinQuality = 0.70;
 input double   InpValidatorIntrabarMinConfidence = 0.60;
 
-// Execution safety
+input group "Execution & Orders";
 input ENUM_ORDER_TYPE_FILLING InpOrderFillingMode = ORDER_FILLING_IOC;
 input int      InpTradeSlippagePoints = 50;
 input double   InpMaxEntrySpreadPoints = 15000.0;
 input double   InpMaxEntryDriftPoints = 80.0;
 input int      InpProtectiveModifyCooldownSec = 5;
+
+input group "Signal-Reversal Exit";
 input bool     InpEnableSignalReversalExit = true;
 input double   InpSignalReversalMinConfidence = 0.58;
 input bool     InpSignalReversalProfitGuard = true;
 input double   InpSignalReversalMinLossR = 0.25;
 input double   InpSignalReversalMaxLossR = 0.82;
 input int      InpSignalReversalMinTimeSec = 45;
-input bool     InpEnableStructuralInvalidation = true;
+
+input group "Position Lifecycle & Trailing";
 input bool     InpEnablePositionLifecycleManager = true;
 input double   InpLifecycleBreakevenBufferPoints = 50.0;
 input double   InpLifecycleTrailingDistancePoints = 150.0;
 input double   InpLifecycleTrailingStepPoints = 30.0;
 input bool     InpLifecycleUseATRTrailing = false;
 input double   InpLifecycleATRMultiplier = 1.5;
-
-// Max hold time
+input bool     InpEnableStructuralInvalidation = true;
 input bool     InpEnableMaxHoldTime = true;
 input int      InpMaxHoldHoursIntraday = 24;
 input int      InpMaxHoldHoursSwing = 120;
 input bool     InpMaxHoldOnlyIfLoss = true;
 
-// Emergency
+input group "Emergency & Unprotected Remediation";
 input bool     InpEmergencyFlattenAllAccountPositions = true;
 input int      InpUnprotectedRemediationIntervalSec = 15;
 input int      InpUnprotectedMaxRestoreAttempts = 3;
 input bool     InpCloseUnprotectedOnRemediationFailure = true;
+
+input group "Synthetic Spike";
 input double   InpSyntheticSpikeVelocityMultiplier = 3.0;
 input int      InpSyntheticSpikePauseSeconds = 30;
+input int      InpSpikeConfirmWindows = 2;
 
-// Fast scalp engine
+input group "Scalp Engine";
 input bool     InpEnableScalpEngine = true;
 input bool     InpScalpAsyncMode = false;
 input uint     InpScalpMaxLatencyMs = 500;
+input bool     InpAllowSyntheticOffHours = true;
 
-// Dynamic slippage
+input group "Dynamic Slippage";
 input bool     InpEnableDynamicSlippage = true;
 input double   InpDynamicSlippageAtrPercent = 0.20;
 input int      InpDynamicSlippageMinPoints = 10;
 input int      InpDynamicSlippageMaxMultiplier = 10;
 input int      InpDynamicSlippageAtrPeriod = 14;
 
-// Spike detection
-input int      InpSpikeConfirmWindows = 2;
-
-// Skew Step Analyzer (L7-023)
-input int      InpSkewStepBufferSize = 200;
-input double   InpSkewStepCalmThreshold = 0.80;
-input double   InpSkewStepSmallThreshold = 0.2;
-input double   InpSkewStepLargeThreshold = 0.5;
-
-// Spike Hunter
+input group "Spike Hunter";
 input bool     InpSpikeHunterEnabled = true;
 input double   InpSpikeHunterVelocityMult = 1.8;
 input int      InpSpikeHunterMinConsecTicks = 8;
@@ -291,80 +351,39 @@ input bool     InpSpikeHunterPushAlerts = true;
 input int      InpSpikeHunterAlertThrottle = 120;
 input int      InpSpikeHunterMinConfluence = 2;
 
-// Multi-asset profiler
-input bool     InpMultiAssetProfilerEnabled = true;
-input bool     InpDerivProfilerEnabled = true;
-input bool     InpGridRecoveryEnabled = true;
-input bool     InpATRScalpingEnabled = true;
+input group "Visualization";
+input bool     InpEnableVisualAnalysis = true;
+input int      InpMaxVisualObjects = 500;
 
-// Mathematical engines
-input bool     InpEnableHurstEngine = true;
-input int      InpHurstLookback = 300;
-input bool     InpEnableOUProcess = true;
-input int      InpOULookback = 100;
-input bool     InpEnableOFIProxy = true;
-input int      InpOFISlowWindow = 100;
-input bool     InpEnableVPINFilter = true;
-input double   InpVPINExtremeThreshold = 0.7;
-input int      InpVPINNumBuckets = 50;
+input group "Dashboard";
+input bool     InpDashboardEnabled = true;
+input string   InpDashboardEndpoint = "http://127.0.0.1:8765";
+input int      InpDashboardPushIntervalSec = 5;
+input bool     InpDashboardControlEnabled = false;
 
-// Institutional TA
-input bool     InpEnableVWAPEngine = true;
-input bool     InpEnableVolumeProfile = true;
-input bool     InpEnableCVDEngine = true;
-input int      InpVWAPMinPeriodBars = 30;
-input double   InpVWAPBand1 = 1.0;
-input double   InpVWAPBand2 = 1.5;
-input double   InpVWAPBand3 = 2.0;
-input int      InpVPLookback = 20;
-input int      InpVPResolution = 20;
-input int      InpCVDDivergenceLookback = 30;
-
-// Enterprise mode
-input bool     InpUseSignalPipeline = true;
-input bool     InpAllowSyntheticOffHours = true;
+input group "Signal Filters";
 input double   InpMinTrendStrength = 50.0;
 input double   InpMaxVolatility = 3.0;
 input bool     InpEnableStructureFilter = true;
 input bool     InpEnableLiquidityFilter = true;
 input bool     InpSignalScanOnNewBarOnly = false;
-input int      InpPortfolioMaxPositionsPerSymbol = 3;
-input int      InpMaxPositionsSameBase = 3;
+
+input group "Cluster Risk Governance";
 input bool     InpEnableClusterRiskGovernance = true;
 input bool     InpEnableClusterMutex = true;
 input int      InpRiskMaxConcurrentPerCluster = 3;
 input double   InpRiskMaxClusterExposurePct = 5.0;
 
-// Portfolio profit target
+input group "Profit Targets & Daily Halt";
 input double   InpDailyProfitTargetPercent = 2.0;
 input double   InpProfitTrailFactor = 0.7;
 input double   InpProfitTargetHardFloorRatio = 0.50;
 input int      InpDailyHaltCooldownMinutes = 30;
 
-// Dual-Mode Auto-Switching
-input bool     InpEnableAutoModeSwitch = true;
-input double   InpConservativeBaseRiskPct = 1.0;
-input double   InpAggressiveBaseRiskPct = 3.0;
-input double   InpModeSwitchDrawdownPct = 5.0;
-input int      InpModeSwitchWinStreak = 5;
-
-// Symbol Validation (L7-003)
-input long     InpSymbolMaxSpreadPoints = 1500;
-input long     InpSymbolMinDailyVolumeLots = 1000;
-input bool     InpSymbolEnableVolumeCheck = true;
-
-// Logging
+input group "Logging";
 input int      InpLogLevel = 1;
 input int      InpLogVerbosity = 3;  // 0=SILENT, 1=ERRORS_ONLY, 2=WARNING, 3=NORMAL, 4=VERBOSE, 5=DEBUG
 input bool     InpLogDerivFamilyDetection = true;  // L7-013: Enable logging for Deriv family detection
-
-// Symbol Universe
-input bool     InpAutoAddChartSymbol = true;       // L7-021: Auto-add chart symbol to universe if missing
-
-// Batch 99
-input int      InpEquityCurveEmaPeriod = 20;
-input double   InpEquityCurveReductionFactor = 0.50;
-input double   InpKellyFraction = 0.25;
 
 //+------------------------------------------------------------------+
 //| EAOrchestrator instance - the composition root                   |
@@ -1415,21 +1434,3 @@ string GetDeInitReasonText(int reasonCode)
 //+------------------------------------------------------------------+
 int GetMagicNumberPrefix() { return (int)InpMagicNumber; }
 
-double CalculateATRForSymbol(const string symbol, int period=14, ENUM_TIMEFRAMES tf=PERIOD_CURRENT)
-{
-    double atr[];
-    ArraySetAsSeries(atr, true);
-    if(CopyBuffer(iATR(symbol, tf, period), 0, 0, 2, atr) <= 0) return 0;
-    return atr[0];
-}
-
-string ArrayToString(const double &arr[])
-{
-    string result = "";
-    for(int i = 0; i < ArraySize(arr); i++)
-    {
-        if(StringLen(result) > 0) result += ",";
-        result += DoubleToString(arr[i], 5);
-    }
-    return result;
-}

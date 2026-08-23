@@ -432,9 +432,7 @@ public:
         void Deinit();
     
         // Getters for dependencies
-    CPortfolioRiskManager* GetRiskManager() const { return m_riskManager; }
     CPositionSizer* GetPositionSizer() const { return m_positionSizer; }
-    CMarketAnalysis* GetMarketAnalysis() const { return m_marketAnalysis; }
 
     // Set trading parameters
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); UpdatePerSymbolSlippage(m_slippage); }
@@ -624,9 +622,6 @@ public:
     double CalculateTakeProfit(const string symbol, const ENUM_ORDER_TYPE orderType, const double price, const double takeProfitPips);
     ulong GetLastTicket() const { return (m_lastTradeResult.order > 0) ? m_lastTradeResult.order : m_trade.ResultOrder(); }
     double GetLastRequestedPrice() const { return m_lastRequestedPrice; }
-    double GetLastRequestedStopLoss() const { return m_lastRequestedStopLoss; }
-    double GetLastRequestedTakeProfit() const { return m_lastRequestedTakeProfit; }
-    uint GetLastRequestId() const { return m_lastTradeResult.request_id; }
     uint GetLastRetcode() const { return m_lastTradeResult.retcode; }
     void GetLastExecutionReceipt(STradeExecutionReceipt &receipt) const { receipt = m_lastExecutionReceipt; }
 
@@ -767,40 +762,6 @@ public:
         return params;
     }
 
-    // Apply smart order routing recommendations
-    bool ApplySmartOrderRouting(const string symbol)
-    {
-        SSmartOrderParams params = AnalyzeAndRecommendOrderParams(symbol);
-
-        if(!params.shouldTrade)
-        {
-            PrintFormat("[SMART-ROUTING] NOT TRADING: %s", params.reason);
-            return false;
-        }
-
-        // Apply recommended slippage
-        if(params.recommendedSlippage != m_slippage)
-        {
-            m_slippage = params.recommendedSlippage;
-            m_trade.SetDeviationInPoints(m_slippage);
-            // L10-013: Update all per-symbol CTrade instances
-            m_symbolRegistry.UpdatePerSymbolSlippage(m_slippage);
-            PrintFormat("[SMART-ROUTING] Adjusted slippage to %d pts: %s",
-                       m_slippage, params.reason);
-        }
-
-        // Apply recommended fill mode
-        if(params.recommendedFillMode != m_orderFillMode)
-        {
-            m_trade.SetTypeFilling(params.recommendedFillMode);
-            // L10-013: Update all per-symbol CTrade instances
-            m_symbolRegistry.UpdatePerSymbolFillMode(params.recommendedFillMode);
-            PrintFormat("[SMART-ROUTING] Changed fill mode to %d: %s",
-                       params.recommendedFillMode, params.reason);
-        }
-
-        return true;
-    }
 
 private:
     // Internal helper functions

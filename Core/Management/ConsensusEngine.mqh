@@ -136,7 +136,6 @@ public:
     ENUM_STRATEGY_ROLE    ResolveDominantRole(const int &strategyIndices[]) const;
     ENUM_STRATEGY_CLUSTER ResolveDominantCluster(const int &strategyIndices[]) const;
     string JoinContributorsWithContext(const int &strategyIndices[]) const;
-    void   AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated);
     void   MaybeLogConsensusDiagnostics(const string symbol);
 
 private:
@@ -642,20 +641,6 @@ double CConsensusEngine::CalculateDirectionDiversityScore(const int &strategyInd
     double roleScore = MathMax(0.0, MathMin(1.0, (double)roleCount / 3.0));
     double clusterScore = MathMax(0.0, MathMin(1.0, (double)clusterCount / 4.0));
     return MathMax(0.0, MathMin(1.0, (roleScore * 0.55) + (clusterScore * 0.45)));
-}
-
-void CConsensusEngine::AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated)
-{
-    if(m_src == NULL)
-        return;
-
-    CDiagnosticsManager* diagnostics = m_src.GetDiagnosticsConst();
-    if(diagnostics != NULL)
-    {
-        diagnostics.AccumulateRoleClusterSignalDiagnostics(strategyIndex, signalGenerated);
-    }
-    // Note: The strategy role/cluster info needs to be passed to diagnostics collector
-    // For now, the diagnostics collector has a placeholder implementation
 }
 
 ENUM_STRATEGY_ROLE CConsensusEngine::ResolveDominantRole(const int &strategyIndices[]) const

@@ -553,10 +553,12 @@ void CDiagMgrCounters::ResetConsensusDiagnostics()
 //+------------------------------------------------------------------+
 void CDiagMgrCounters::AccumulateRoleClusterSignalDiagnostics(const int strategyIndex, const bool signalGenerated)
 {
+    // Role/cluster signal attribution needs per-strategy role/cluster metadata, which is not
+    // available at this call site (only strategyIndex + a boolean signal flag are passed). The
+    // dedicated per-role / per-cluster tally methods in this class own that attribution; this
+    // hook intentionally early-outs when no signal was generated.
     if(!signalGenerated)
         return;
-    // Note: Strategy-specific role/cluster tracking would need access to strategy metadata
-    // This is a placeholder for when strategy info is available
 }
 
 //+------------------------------------------------------------------+

@@ -104,7 +104,6 @@ public:
     void SetCacheRefreshInterval(int seconds) { m_cacheRefreshIntervalSec = (seconds > 0 ? seconds : 60); }
 
     // CVaR (Conditional Value at Risk) — public interface
-    void   RecordTradeReturn(double pnlPercent);
     double CalculateCVaR(double confidence = 0.95) const;
     bool   IsCVaRLimitExceeded(double proposedRiskPct) const;
     double GetCurrentCVaR() const;
@@ -779,29 +778,6 @@ double CPortfolioRiskManager::GetEffectiveCorrelationThreshold(string symbol1, s
         return m_assetClassCorrThreshold;
 
     return m_crossAssetCorrThreshold;
-}
-
-//+------------------------------------------------------------------+
-//| Record a closed trade P&L as percentage of equity (DEPRECATED)   |
-//| Use RecordEquityCurveReturn instead for CVaR (L5-015)           |
-//+------------------------------------------------------------------+
-void CPortfolioRiskManager::RecordTradeReturn(double pnlPercent)
-{
-    // Circular buffer: overwrite oldest entry when full
-    if(m_returnCount < m_maxReturnHistory)
-    {
-        m_tradeReturns[m_returnCount] = pnlPercent;
-        m_returnCount++;
-    }
-    else
-    {
-        // Shift left and append at end (oldest discarded)
-        for(int i = 0; i < m_maxReturnHistory - 1; i++)
-            m_tradeReturns[i] = m_tradeReturns[i + 1];
-        m_tradeReturns[m_maxReturnHistory - 1] = pnlPercent;
-    }
-
-    PrintFormat("[CVAR-RECORD] Trade return recorded: %.4f (total samples: %d)", pnlPercent, m_returnCount);
 }
 
 //+------------------------------------------------------------------+

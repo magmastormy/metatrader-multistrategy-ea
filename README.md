@@ -170,6 +170,19 @@ For isolated component testing and backtesting optimization, use `MultiStrategyT
 | `InpEnableUnicornModel` | true | Unicorn model |
 | `InpEnableStatArb` | true | Statistical arbitrage |
 
+### Strategy Slot Scheme (semantic-only, Batch 147)
+
+The per-strategy enable flags (`strategyFlags[]`) are written by a single producer (`COrchestratorStrategyFlagBuilder::BuildStrategyFlags`) at **semantic `SI_*`** slots, and `CEnterpriseStrategyManager::AutoRegisterStrategies` reads them back through `CatalogEnableSlot(i)` — so reader and writer always agree. The legacy literal slot scheme that Batch 146 shipped dormant was **removed entirely in Batch 147**; there is no mode switch.
+
+| Slot | Resolved by | Notes |
+|---|---|---|
+| Enable flag | `SI_*` (`ENUM_STRATEGY_INDEX`), via `CatalogEnableSlot(i)` | `-1` = always on |
+| Intrabar policy | own `StrategyConfigBuilder` row, via `CatalogPolicySlot(i)` | `-1` = use `fixedPolicy` |
+
+The always-LIVE intrabar fallback for Mean Reversion / Volatility Breakout is hardcoded to semantic slots `7/8` in `CIntrabarPolicy::GetIntrabarPolicyHelper`.
+
+Registration prints a `[CATALOG-AUDIT]` block on every boot confirming `slot_scheme=SEMANTIC` and listing each strategy's enable/policy slot.
+
 ## Strategy Roster
 
 ### Indicator-Based Strategies (15 Active)

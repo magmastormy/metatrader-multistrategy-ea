@@ -2,11 +2,11 @@
 
 ## Document Metadata
 
-- Last Updated: 2026-08-06
-- Last Architecture Sync: 2026-08-06
+- Last Updated: 2026-08-11
+- Last Architecture Sync: 2026-08-11
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 142
+- Current Batch: 146
 
 ## 1. System Goal
 
@@ -194,6 +194,25 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
   - host the new ICT expansion modules (`CUnicornModelStrategy`, `CPowerOfThreeStrategy`) alongside existing `Unified ICT`
   - apply trend-direction bias check: raise effectiveQualityThreshold to 0.70 when strong trend opposes consensus direction
   - apply AI calibration: degenerate models (direction ratio > 0.80 in last 20 predictions) have effective weight reduced by 50% via `GetCalibratedWeight()`
+
+#### 2.2.1 Strategy slot-scheme ownership (Batch 147 — semantic-only)
+
+`strategyFlags[]` has exactly **one** producer and **one** reader, and they agree by construction:
+
+| Role | Owner | Slot space |
+|---|---|---|
+| Written | `COrchestratorStrategyFlagBuilder::BuildStrategyFlags` | semantic `SI_*` (`ENUM_STRATEGY_INDEX`) |
+| Read | `CEnterpriseStrategyManager::AutoRegisterStrategies` via `CatalogEnableSlot(i)` | semantic `SI_*` |
+| Intrabar policy | `StrategyConfigBuilder` slot table → `CIntrabarPolicy` | each strategy's own `siPolicyIndex` |
+
+Ownership after Batch 147 (legacy scheme deleted):
+
+- **`CEnterpriseStrategyManager` owns registration.** `AutoRegisterStrategies` calls `CatalogLogIndexAudit()` (no arg), `CatalogEnableSlot(i)`, `CatalogPolicySlot(i)` — all unconditional semantic. There is no scheme flag to set; `SetUseSemanticStrategyIndices` was removed.
+- **`StrategyCatalog` resolves slots, never decides.** `CatalogEnableSlot(i)` and `CatalogPolicySlot(i)` are the only slot resolvers; `CatalogFlagEnabled` was removed. `CatalogLogIndexAudit()` prints `slot_scheme=SEMANTIC (legacy literals removed in Batch 147)` and is report-only.
+- **`CIntrabarPolicy` holds the hard-coded LIVE fallback pair** (Mean Reversion / Volatility Breakout) at semantic slots `7/8`. The always-LIVE pair no longer depends on a scheme — it is fixed at the semantic slots, which is exactly what the producer writes.
+- **`MAX_STRATEGY_CONFIGS` = 23.** Slots 21 (FVG Scalper) and 22 (Statistical Arbitrage) own their own rows. `CIntrabarPolicy::m_policyConfig` is sized 32, so the count is safely absorbed.
+
+There is no legacy default — the semantic scheme is the only scheme.
 
 ### 2.3 Extracted Lifecycle Managers
 

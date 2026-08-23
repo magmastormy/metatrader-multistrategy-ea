@@ -117,20 +117,38 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 6: Measure Asian session range (00:00-06:00 UTC) on M5
-        // 6 hours of M5 bars = 72 bars, starting from bar 1 (completed bars)
-        int asianBars = 72;  // 6 hours * 12 bars/hour on M5
-        int highestBar = iHighest(m_symbol, PERIOD_M5, MODE_HIGH, asianBars, 1);
-        int lowestBar  = iLowest(m_symbol, PERIOD_M5, MODE_LOW, asianBars, 1);
+        // Step 6: Measure Asian session range (00:00-06:00 UTC) on M5, GMT-anchored.
+        // F7 (STRATEGY_AUDIT_2026-08-14): the previous version counted 72 M5 bars back
+        // from "now", which drifts away from the true Asian session on a non-UTC broker.
+        // We now anchor to absolute UTC datetimes via iBarShift so the range always
+        // covers 00:00-06:00 UTC regardless of broker timezone.
+        MqlDateTime gmt;
+        TimeToStruct(TimeGMT(), gmt);
+        gmt.hour = 0; gmt.min = 0; gmt.sec = 0;
+        datetime asianStart = StructToTime(gmt);   // today 00:00 UTC
+        gmt.hour = 6;
+        datetime asianEnd   = StructToTime(gmt);   // today 06:00 UTC
 
-        if(highestBar < 0 || lowestBar < 0)
+        int idxEnd   = iBarShift(m_symbol, PERIOD_M5, asianEnd,   true); // <=06:00 bar (London open; excluded)
+        int idxStart = iBarShift(m_symbol, PERIOD_M5, asianStart, true); // <=00:00 bar (Asian open; included)
+        if(idxEnd < 0 || idxStart < 0 || idxStart <= idxEnd)
         {
             SetDecisionReasonTag("ASIANRB_RANGE_DATA_UNAVAILABLE");
             return TRADE_SIGNAL_NONE;
         }
+        int rangeCount = idxStart - idxEnd;          // Asian bars sit between idxEnd (excl) and idxStart (incl)
+        int rangeStart = idxEnd + 1;                 // most-recent Asian bar, just before London open
 
-        double asianHigh = iHigh(m_symbol, PERIOD_M5, highestBar);
-        double asianLow  = iLow(m_symbol, PERIOD_M5, lowestBar);
+        double highs[];
+        double lows[];
+        if(CopyHigh(m_symbol, PERIOD_M5, rangeStart, rangeCount, highs) <= 0 ||
+           CopyLow(m_symbol, PERIOD_M5, rangeStart, rangeCount, lows)   <= 0)
+        {
+            SetDecisionReasonTag("ASIANRB_RANGE_DATA_UNAVAILABLE");
+            return TRADE_SIGNAL_NONE;
+        }
+        double asianHigh = highs[ArrayMaximum(highs)];
+        double asianLow  = lows[ArrayMinimum(lows)];
 
         if(asianHigh <= 0 || asianLow <= 0 || asianHigh <= asianLow)
         {
@@ -224,6 +242,7 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
         if(!ValidateWithRiskManager(request, "ASIANRB", confidence))
             return TRADE_SIGNAL_NONE;
 
