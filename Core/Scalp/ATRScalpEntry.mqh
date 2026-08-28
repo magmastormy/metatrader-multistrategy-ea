@@ -15,7 +15,7 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
-#include "../Risk/RiskValidationGate.mqh"
+#include "../Risk/UnifiedRiskManager.mqh"
 #include <Trade\Trade.mqh>
 
 #include "ATRScalpTypes.mqh"
@@ -23,7 +23,7 @@
 class CUnifiedRiskManager;
 
 //+------------------------------------------------------------------+
-//| CATRScalpEntry â€” owns the entry dependencies and open counter     |
+//| CATRScalpEntry â€?owns the entry dependencies and open counter     |
 //+------------------------------------------------------------------+
 class CATRScalpEntry
 {
@@ -71,7 +71,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[ATR-SCALP] ATR is zero for %s â€” cannot calculate SL/TP", symbol);
+         PrintFormat("[ATR-SCALP] ATR is zero for %s â€?cannot calculate SL/TP", symbol);
          return false;
       }
 

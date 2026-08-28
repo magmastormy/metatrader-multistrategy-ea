@@ -419,16 +419,23 @@ public:
             while(m_currentBucketTotalVol >= m_bucketVolumeSize && m_bucketVolumeSize > 0.0)
             {
                 double excessVolume = m_currentBucketTotalVol - m_bucketVolumeSize;
-                double excessRatio = excessVolume / m_currentBucketTotalVol;
-            
+                double excessRatio  = excessVolume / m_currentBucketTotalVol;
+
+                // Batch 152 (H-03): snapshot the side volumes BEFORE CompleteBucket()
+                // zeroed them - the old code multiplied the already-zeroed members,
+                // so every overflow bucket carried buy=sell=0 (imbalance 0) and
+                // diluted VPIN exactly during high-volume bursts.
+                double carryBuyVol  = m_currentBucketBuyVol * excessRatio;
+                double carrySellVol = m_currentBucketSellVol * excessRatio;
+
                 // Complete one bucket with the exact bucket size
                 CompleteBucket();
-            
+
                 // Carry overflow to next bucket proportionally
                 if(excessVolume > 0.0)
                 {
-                    m_currentBucketBuyVol = m_currentBucketBuyVol * excessRatio;
-                    m_currentBucketSellVol = m_currentBucketSellVol * excessRatio;
+                    m_currentBucketBuyVol   = carryBuyVol;
+                    m_currentBucketSellVol  = carrySellVol;
                     m_currentBucketTotalVol = excessVolume;
                 }
                 else

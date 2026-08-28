@@ -143,9 +143,14 @@ bool CADXPositionSizing::Initialize(const string symbol, ENUM_TIMEFRAMES timefra
 //+------------------------------------------------------------------+
 void CADXPositionSizing::Deinit()
 {
+    // Batch 156: this handle comes from CIndicatorManager's shared cache
+    // (GetADXHandle) and is the SAME handle CMultiEMASystem depends on.
+    // Releasing it here killed the ADX feed for every consumer after any
+    // strategy re-init (OnDeinit->OnInit on TF/input change), freezing EMA
+    // updates and silently stopping the whole Trend stack. Every sibling
+    // class documents this rule - this was the outlier.
     if(m_adxHandle != INVALID_HANDLE)
     {
-        IndicatorRelease(m_adxHandle);
         m_adxHandle = INVALID_HANDLE;
     }
 }

@@ -313,37 +313,42 @@ public:
         double prevPrice = iClose(m_symbol, m_timeframe, 2);
         
         // --- VOLUME CONFIRMATION ---
+        // Batch 150: static arrays are NOT as-series - [0] is the OLDEST of the
+        // copied window. count=11,start=1 -> newest (shift 1) is index 10.
         double volRatio = 1.0;
         if(volumeAvailable)
         {
-            double currentVol = volumeBuffer[0];
+            double currentVol = volumeBuffer[10];
             double avgVol = 0;
-            for(int i = 1; i < 11; i++)
+            for(int i = 0; i < 10; i++)
                 avgVol += volumeBuffer[i];
             avgVol /= 10.0;
             volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
         }
-        
-        // --- VOLATILITY ANALYSIS ---
-        double curATR = atrBuffer[0];
+
+        // --- VOLATILITY ANALYSIS --- (same ordering rule: newest ATR = index 11)
+        double curATR = atrBuffer[11];
         double avgATR = 0;
         for(int i = 1; i < 11; i++)
             avgATR += atrBuffer[i];
         avgATR /= 10.0;
-        
+
         double atrRatio = (avgATR > 0) ? (curATR / avgATR) : 1.0;
-        
-        // Calculate BB width for squeeze detection
-        double bbWidth = bbUpper[0] - bbLower[0];
-        double bbWidthPercent = (bbMiddle[0] > 0) ? (bbWidth / bbMiddle[0]) : 0;
+
+        // Calculate BB width for squeeze detection (bb buffers: count=2,start=1 -> newest = [1])
+        double bbWidth = bbUpper[1] - bbLower[1];
+        double bbWidthPercent = (bbMiddle[1] > 0) ? (bbWidth / bbMiddle[1]) : 0;
         
         // Detect squeeze state
         bool isInSqueeze = DetectSqueezeState(bbWidthPercent);
         
         // --- SIGNAL DETECTION ---
+        // Batch 155: pass the newest closed-bar bands ([1]); [0] is shift-2
+        // under SafeCopyBuffer's oldest-first layout, which fed two-bars-old
+        // levels into the breach test and missed real breakouts.
         SVolatilityBreakoutSignal signal = DetectBreakoutSignal(
             currentPrice, prevPrice,
-            bbUpper[0], bbMiddle[0], bbLower[0],
+            bbUpper[1], bbMiddle[1], bbLower[1],
             curATR, atrRatio,
             volRatio,
             isInSqueeze
@@ -677,7 +682,10 @@ private:
         if(!SafeCopyBuffer(m_adxHandle, 0, 1, 2, adx))
             return true;
 
-        return adx[0] > adx[1];  // ADX increasing = volatility expanding
+        // Batch 155: SafeCopyBuffer lands oldest-first ([0]=shift 2, [1]=shift 1),
+        // so the old "adx[0] > adx[1]" tested ADX FALLING and blocked every
+        // breakout entry. Rising = newer above older.
+        return adx[1] > adx[0];  // ADX increasing = volatility expanding
     }
 
     // Breakout with Retest Confirmation (v2.0)

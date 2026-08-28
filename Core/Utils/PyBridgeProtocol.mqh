@@ -65,7 +65,7 @@ double CPyBridgeProtocol::ParseJsonDouble(const string &json_str, const string &
 {
    string searchKey = "\"" + key + "\":";
    int pos = StringFind(json_str, searchKey);
-   if(pos == -1) { PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 395, __FUNCTION__); return 0.0; }
+   if(pos == -1) { return 0.0; }
 
    string val_str = StringSubstr(json_str, pos + StringLen(searchKey));
    int end_pos = StringFind(val_str, ",");

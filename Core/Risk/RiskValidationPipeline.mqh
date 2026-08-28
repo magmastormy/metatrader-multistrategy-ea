@@ -153,6 +153,7 @@ public:
                                           const STradeValidationRequest &request,
                                           const double riskPercent) = 0;
     virtual void   ReleaseVirtualPosition(const string ownerTag) = 0;
+    virtual void   UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent) = 0;
 
     //--- per-symbol risk budgeting (owner holds the m_symbolBudgets array)
     virtual bool   IsSymbolBudgetAvailable(const string symbol, const double riskPct) = 0;
@@ -330,10 +331,15 @@ public:
                           const string phaseTag = "runtime",
                           const string corrId = "");
 
+    // Batch 152: validation body, wrapped by Run() for timing + approve/reject counts.
+    SValidationResult RunInternal(const STradeValidationRequest &request,
+                          const string phaseTag = "runtime",
+                          const string corrId = "");
+
     //--- The 7 validation steps (moved out of CUnifiedRiskManager).
     bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
     bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
-    bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
+    bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message, const double ownReservationRiskPercent = 0.0);
     bool ValidateClusterGovernance(const STradeValidationRequest &request, const double tradeRiskPercent, string &message);
     bool ValidateCorrelationLimits(const STradeValidationRequest &request, string &message, double &correlationRisk);
     bool ValidateMarginRequirements(const STradeValidationRequest &request, string &message);
@@ -361,10 +367,27 @@ public:
 //|   GetEffectiveRiskPerTrade()           -> m_host.GetEffectiveRiskPerTrade() |
 //|   GetSymbolCorrelation()               -> m_tieredCorrelation.GetSymbolCorrelation() |
 //+------------------------------------------------------------------+
-SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &request,
+    // Batch 152: Run() is now a timing/counting wrapper; the validation body lives
+    // in RunInternal(). This fixes two telemetry defects: metrics received END-time
+    // as START (elapsed ~0) and rejected validations were never counted.
+    SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &request,
+                          const string phaseTag,
+                          const string corrId)
+    {
+        ulong validationStartUs = GetMicrosecondCount();
+        SValidationResult result = RunInternal(request, phaseTag, corrId);
+        if(result.approved)
+            m_validationStats.RecordApproval();
+        else
+            m_validationStats.RecordRejection();
+        m_host.UpdatePerformanceMetrics(validationStartUs);
+        return result;
+    }
+
+    SValidationResult CRiskValidationPipeline::RunInternal(const STradeValidationRequest &request,
                                                const string phaseTag,
                                                const string corrId)
-{
+    {
     // Refresh the local view of the owner's config before anything reads it.
     SyncConfig();
 
@@ -475,8 +498,18 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
 
     // Reserve virtual position early to account for this trade in portfolio risk
     // Will be released on any rejection, kept on approval
+    // Batch 151: Reserve() rejects riskPercent <= 0.0, so the old 0.0 placeholder
+    // silently disabled every reservation (virtualReserved was always false and the
+    // post-approval budget window was unprotected). Reserve with the provisional
+    // request risk, then sync to the validated risk via UpdateVirtualPositionRisk()
+    // once lot adjustments are final.
+    int preValidationReservations = m_virtualPositionBook.GetReservationCount();
+    double provTradeRisk = m_host.CalculateTradeRisk(request.symbol, request.lotSize, request.stopLossPips);
+    double provDenom = CRiskMath::GetRiskDenominator();
+    double provisionalRiskPct = (provTradeRisk > 0.0 && provDenom > 0.0) ? (provTradeRisk / provDenom) * 100.0 : 0.0;
     string virtualOwnerTag = StringFormat("%s_%s_%lld", request.symbol, EnumToString(request.orderType), GetMicrosecondCount());
-    bool virtualReserved = m_host.ReserveVirtualPosition(virtualOwnerTag, request, 0.0); // riskPercent will be updated after validation
+    bool virtualReserved = (provisionalRiskPct > 0.0) &&
+                           m_host.ReserveVirtualPosition(virtualOwnerTag, request, provisionalRiskPct);
 
     // Inline validation from CRiskValidationGate::ValidateTradeRequest
     // 1. Validate basic parameters
@@ -510,7 +543,7 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
     result.riskPercent = tradeRisk;
     
     // 3. Validate portfolio risk
-    if(!ValidatePortfolioRisk(request, tradeRisk, validationMessage))
+    if(!ValidatePortfolioRisk(request, tradeRisk, validationMessage, virtualReserved ? provisionalRiskPct : 0.0))
     {
         result.message = "Portfolio risk validation failed: " + validationMessage;
         result.severity = ERROR_LEVEL_ERROR;
@@ -577,15 +610,13 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
         return result;
     }
     
-    // All validations passed
+    // All validations passed (provisional - lot floor / budget / family /
+    // correlation gates below can still reject). Approval bookkeeping runs
+    // once, at the final exit point.
     result.approved = true;
     result.message = "Trade request approved";
     result.portfolioRisk = m_host.CalculatePortfolioRiskAfterTrade(tradeRisk);
     result.severity = ERROR_LEVEL_INFO;
-    m_validationStats.RecordApproval();
-    
-    m_host.LogValidationResult(request, result);
-    m_host.UpdatePerformanceMetrics(GetMicrosecondCount());
 
     // Lot size floor: if the validation gate allowed a below-minimum lot through
     // (small account round-up path), adjust to the broker minimum lot.
@@ -617,6 +648,7 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
                 StringFormat("Lot %.3f < min %.3f, risk ratio %.1fx > cap %.1fx", result.adjustedLotSize, brokerMinLot, riskRatio, m_config.minLotRiskMultiplier),
                 riskRatio, m_config.minLotRiskMultiplier, corrId);
             CJsonLogger::ClearCorrelationId();
+            if(virtualReserved) m_host.ReleaseVirtualPosition(virtualOwnerTag);
             return result;
         }
     }
@@ -631,7 +663,9 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
         // allow the trade even if it exceeds the symbol allocation.
         // The portfolio-level check below will still gate the total risk.
         int openPositionCount = PositionsTotal();
-        int virtualReservationCount = m_virtualPositionBook.GetReservationCount();
+        // Batch 151: count reservations made BEFORE this validation - our own early
+        // reservation must not disable the cold-start bootstrap bypass
+        int virtualReservationCount = preValidationReservations;
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
 
         if(isColdStart && result.riskPercent <= m_host.GetEffectiveRiskPerTrade(request.symbol))
@@ -653,6 +687,7 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
                 StringFormat("Used %.2f%% + new %.2f%% > alloc %.2f%%", used, result.riskPercent, allocation),
                 used + result.riskPercent, allocation, corrId);
             CJsonLogger::ClearCorrelationId();
+            if(virtualReserved) m_host.ReleaseVirtualPosition(virtualOwnerTag);
             return result;
         }
     }
@@ -665,7 +700,9 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
         // the portfolio cap evenly across requesting symbols. Each symbol's risk must still
         // be within the per-trade max, and the total is capped at portfolio max.
         int openPositionCount = PositionsTotal();
-        int virtualReservationCount = m_virtualPositionBook.GetReservationCount();
+        // Batch 151: count reservations made BEFORE this validation - our own early
+        // reservation must not disable the cold-start bootstrap bypass
+        int virtualReservationCount = preValidationReservations;
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
 
         if(isColdStart && result.riskPercent > 0.0 && result.riskPercent <= m_host.GetEffectiveRiskPerTrade(request.symbol))
@@ -784,7 +821,16 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
             double reduceFactor = 1.0 - ((maxCorrelation - m_config.correlationReduceThreshold) / denom);
             reduceFactor = MathMax(0.25, MathMin(1.0, reduceFactor));
             double originalLot = result.adjustedLotSize;
-            result.adjustedLotSize = NormalizeDouble(result.adjustedLotSize * reduceFactor, 2);
+            // Batch 152: align to the symbol's volume step instead of blind 2dp
+            // rounding (0.001-step symbols got off-step lots -> invalid-volume rejects)
+            double volStep = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_STEP);
+            if(volStep > 0.0)
+            {
+                long wholeSteps = (long)MathFloor((result.adjustedLotSize * reduceFactor) / volStep + 1e-9);
+                result.adjustedLotSize = NormalizeDouble(wholeSteps * volStep, 8);
+            }
+            else
+                result.adjustedLotSize = NormalizeDouble(result.adjustedLotSize * reduceFactor, 2);
             result.requiresAdjustment = true;
             CJsonLogger::LogInfo("RiskGateReduce", 
                 StringFormat("Correlation reduce | corr=%.2f | factor=%.2f | lot %.2f->%.2f",
@@ -792,21 +838,17 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
         }
     }
 
-    // Batch 116: Recompute risk percent after correlation reduction to avoid stale over-rejection
+    // Batch 116: Recompute risk percent after correlation reduction to avoid stale over-rejection.
+    // Batch 150: route through the host's CalculateTradeRisk + canonical denominator so
+    // the reduced-lot risk uses the same pip convention as the initial calculation
+    // (the old local formula assumed pips = price/(point*10) and inflated risk ~10x,
+    // spuriously tripping DAILY_RISK_WOULD_EXCEED right after lot reduction).
     if(result.requiresAdjustment && result.adjustedLotSize > 0.0 && result.adjustedLotSize != request.lotSize)
     {
-        double point = SymbolInfoDouble(request.symbol, SYMBOL_POINT);
-        double tickValue = SymbolInfoDouble(request.symbol, SYMBOL_TRADE_TICK_VALUE);
-        double tickSize = SymbolInfoDouble(request.symbol, SYMBOL_TRADE_TICK_SIZE);
-        if(point > 0.0 && tickValue > 0.0 && tickSize > 0.0 && request.stopLossPips > 0.0)
-        {
-            double slDistancePrice = request.stopLossPips * point * 10.0;
-            double slTicks = slDistancePrice / tickSize;
-            double riskAmount = result.adjustedLotSize * slTicks * tickValue;
-            double equity = MathMin(AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY));
-            if(equity > 0.0)
-                result.riskPercent = (riskAmount / equity) * 100.0;
-        }
+        double tradeRiskReduced = m_host.CalculateTradeRisk(request.symbol, result.adjustedLotSize, request.stopLossPips);
+        double riskDenom = CRiskMath::GetRiskDenominator();
+        if(tradeRiskReduced > 0.0 && riskDenom > 0.0)
+            result.riskPercent = (tradeRiskReduced / riskDenom) * 100.0;
     }
 
     double projectedDailyRisk = m_host.GetEffectiveDailyRiskUsedPercent(reservedRisk + MathMax(0.0, result.riskPercent));
@@ -824,20 +866,45 @@ SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &re
             return result;
         }
 
+    // Batch 151: CVaR tail-risk gate - previously IsCVaRLimitExceeded had no
+    // caller, so the designed limit never blocked anything. Compares the
+    // worst-tail equity-curve loss fraction plus this trade's risk fraction
+    // against m_cvarMaxRisk; the 20-sample arming guard lives inside.
+    if(m_portfolioRiskManager.IsCVaRLimitExceeded(MathMax(0.0, result.riskPercent) / 100.0))
+    {
+        result.approved = false;
+        result.severity = ERROR_LEVEL_WARNING;
+        result.message = StringFormat("CVaR tail-risk limit exceeded (%s): worst-case equity loss + %.2f%% trade risk above cap",
+                                      phaseTag, result.riskPercent);
+        CJsonLogger::LogRiskEvent("RiskGateReject", request.symbol, "CVAR_TAIL_RISK",
+            "Worst-tail equity-curve loss + proposed trade risk exceeds CVaR cap",
+            MathAbs(m_portfolioRiskManager.GetCurrentCVaR()), result.riskPercent / 100.0, corrId);
+        CJsonLogger::ClearCorrelationId();
+        PrintFormat("[RISK-GATE-REJECT] %s | reason=cvar_tail_risk | risk=%.2f%% | phase=%s",
+                    request.symbol, result.riskPercent, phaseTag);
+        if(virtualReserved) m_host.ReleaseVirtualPosition(virtualOwnerTag);
+        return result;
+    }
+
+    // Batch 151: sync the reservation to the final adjusted risk so post-approval
+    // budget checks see the real exposure, not the provisional estimate
+    if(virtualReserved && result.riskPercent > 0.0)
+        m_host.UpdateVirtualPositionRisk(virtualOwnerTag, result.riskPercent);
+
     // All validations passed - APPROVED
     result.approved = true;
     result.message = "Trade request approved";
     result.portfolioRisk = m_host.CalculatePortfolioRiskAfterTrade(tradeRisk);
     result.severity = ERROR_LEVEL_INFO;
-    m_validationStats.RecordApproval();
-    
+    // Batch 152: approval/rejection counting + validation timing now happen in the
+    // Run() wrapper (metrics previously received END-time as START).
+
     CJsonLogger::LogRiskEvent("RiskGateApprove", request.symbol, "APPROVED",
         StringFormat("riskPercent=%.2f portfolioRisk=%.2f lot=%.2f", result.riskPercent, result.portfolioRisk, result.adjustedLotSize),
         result.riskPercent, result.adjustedLotSize, corrId);
-    
+
     m_host.LogValidationResult(request, result);
-    m_host.UpdatePerformanceMetrics(GetMicrosecondCount());
-    
+
     CJsonLogger::ClearCorrelationId();
     return result;
 }
@@ -962,7 +1029,7 @@ bool CRiskValidationPipeline::ValidateRiskLimits(const STradeValidationRequest &
 //| Step 3 - Portfolio risk validation                                |
 //| Relocated verbatim from CUnifiedRiskManager::ValidatePortfolioRisk |
 //+------------------------------------------------------------------+
-bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message)
+bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message, const double ownReservationRiskPercent)
 {
     if(!IsWired())
     {
@@ -986,8 +1053,10 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
     }
     
     // L5-009 FIX: Use same calculation as GetRemainingPortfolioRiskPercent() to include virtual reservations
+    // Batch 152: the book already contains THIS trade's own provisional reservation
+    // (booked before validation) - subtract it so the proposed risk is not counted twice.
     double openExposureRisk = m_portfolioRiskManager.GetPortfolioRisk();
-    double reservedRisk = m_virtualPositionBook.GetReservedRiskPercent();
+    double reservedRisk = m_virtualPositionBook.GetReservedRiskPercent() - MathMax(0.0, ownReservationRiskPercent);
     double currentRisk = openExposureRisk + reservedRisk;
     double totalRisk = currentRisk + tradeRiskPercent;
     
@@ -1201,8 +1270,12 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
                     if(currentPrice <= 0.0) currentPrice = SymbolInfoDouble(request.symbol, SYMBOL_ASK);
                     if(!OrderCalcMargin(request.orderType, request.symbol, netVolume, currentPrice, marginRequired))
                     {
+                        // Batch 152: was fail-open (marginRequired = 0.0 passed the
+                        // affordability check trivially). Match the primary-path
+                        // behavior above and fail closed instead.
                         PrintFormat("[RISK-VALIDATION] OrderCalcMargin failed for %s: %d", request.symbol, GetLastError());
-                        marginRequired = 0.0; // Conservative fallback
+                        message = StringFormat("Unable to calculate net margin requirement for %s", request.symbol);
+                        return false;
                     }
                 }
                 break;

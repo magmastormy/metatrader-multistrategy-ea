@@ -122,18 +122,27 @@ public:
          }
       }
 
-      // Detect EMA crossover direction
-      if(fastOk && slowOk)
-      {
-         double fastCurr = emaFastBuf[0], fastPrev = emaFastBuf[1];
-         double slowCurr = emaSlowBuf[0], slowPrev = emaSlowBuf[1];
+         // Detect EMA crossover direction
+         if(fastOk && slowOk)
+         {
+            double fastCurr = emaFastBuf[0], fastPrev = emaFastBuf[1];
+            double slowCurr = emaSlowBuf[0], slowPrev = emaSlowBuf[1];
 
-         if(fastPrev <= slowPrev && fastCurr > slowCurr)
-            state.lastEmaCrossDirection = 1;   // Bullish cross
-         else if(fastPrev >= slowPrev && fastCurr < slowCurr)
-            state.lastEmaCrossDirection = -1;  // Bearish cross
-         // Keep previous cross direction if no new cross
-      }
+            // Batch 152 (S-M-02): stamp the bar a cross is detected on. The old
+            // code latched the direction forever, so EvaluateScalpSignal could
+            // trade a cross from hours ago as if it were fresh.
+            if(fastPrev <= slowPrev && fastCurr > slowCurr)
+            {
+               state.lastEmaCrossDirection = 1;   // Bullish cross
+               state.lastEmaCrossBarTime = iTime(state.symbol, PERIOD_M1, 0);
+            }
+            else if(fastPrev >= slowPrev && fastCurr < slowCurr)
+            {
+               state.lastEmaCrossDirection = -1;  // Bearish cross
+               state.lastEmaCrossBarTime = iTime(state.symbol, PERIOD_M1, 0);
+            }
+            // Keep previous cross direction if no new cross
+         }
 
       // RSI
       if(m_rsiHandles[idx] != INVALID_HANDLE)
@@ -153,9 +162,12 @@ public:
    //+------------------------------------------------------------------+
    int EvaluateScalpSignal(SATRScalpSymbolState &state, const SATRScalpingConfig &config)
    {
-      // Must have a fresh EMA crossover
+      // Must have a fresh EMA crossover - Batch 152 (S-M-02): the cross must
+      // have been detected on the current M1 bar, not latched from earlier.
       int crossDir = state.lastEmaCrossDirection;
       if(crossDir == 0)
+         return 0;
+      if(state.lastEmaCrossBarTime == 0 || state.lastEmaCrossBarTime != iTime(state.symbol, PERIOD_M1, 0))
          return 0;
 
       // RSI confirmation

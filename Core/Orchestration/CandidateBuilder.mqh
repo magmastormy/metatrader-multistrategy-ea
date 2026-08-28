@@ -508,17 +508,30 @@ public:
             lotSize = brokerMinLot;
         
         candidate.lotSize = lotSize;
-        candidate.riskPercent = proposedRisk;
+
+        // Batch 152: post-size re-gate. The pre-size validation ran at broker-minimum
+        // lot; the shipped lot is the product of the sizing modifiers below and can
+        // carry several times the proposed risk with no gate behind it.
+        double finalTradeRisk = m_riskManager.CalculateTradeRisk(symbol, candidate.lotSize, candidate.stopLossPips);
+        double riskDenom = CRiskMath::GetRiskDenominator();
+        double finalRiskPct = (finalTradeRisk > 0.0 && riskDenom > 0.0) ? (finalTradeRisk / riskDenom) * 100.0 : proposedRisk;
+        if(finalRiskPct > m_riskManager.GetEffectiveRiskPerTrade(symbol))
+        {
+            PrintFormat("[RISK-GATE-REJECT] %s | reason=post_size_risk_cap | final_lot=%.2f | final_risk=%.2f%% > cap=%.2f%%",
+                        symbol, candidate.lotSize, finalRiskPct, m_riskManager.GetEffectiveRiskPerTrade(symbol));
+            return false;
+        }
+        candidate.riskPercent = finalRiskPct;
         
         // Build reasoning
         candidate.reasoning = StringFormat("role=%s | cluster=%s | contributors=%s | conviction=%.2f | readiness=%.2f | context=%.2f | cost=%.2f",
                                            roleTag, clusterTag, contribSummary,
                                            ctx.convictionScore, ctx.readinessScore, ctx.contextScore, ctx.costScore);
         
-        // Increment cycles since indicator signal (L3-014: per-symbol)
-                if(!candidate.hasIndicatorContributor)
-                    IncrementCyclesSinceIndicatorSignal(symbol);
-        
+        // Batch 151: removed the second IncrementCyclesSinceIndicatorSignal() here -
+        // it double-counted every successful build (the increment at the hybrid-gate
+        // block above already ran), relaxing the AI threshold at 2x speed.
+
         return true;
     }
     
@@ -679,8 +692,11 @@ public:
     double ApplyDrawdownScaling(const string symbol, double lotSize, double proposedRisk)
     {
         if(!m_antiMartingaleEnabled) return lotSize;
-        
-        double peakEquity = AccountInfoDouble(ACCOUNT_EQUITY); // Would track peak
+
+        // Batch 151: the old code read ACCOUNT_EQUITY into BOTH peak and current,
+        // so drawdown was always 0 and this scaler was a no-op. Peak equity comes
+        // from the risk circuit breaker's tracked high-water mark.
+        double peakEquity = (m_riskManager != NULL) ? m_riskManager.GetPeakEquity() : 0.0;
         double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
         
         if(peakEquity > 0 && m_aiDrawdownSizingLimit > 0)

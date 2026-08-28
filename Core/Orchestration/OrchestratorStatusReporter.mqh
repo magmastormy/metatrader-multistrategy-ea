@@ -6,7 +6,6 @@
 //| method is pure string assembly over collaborator status text: it  |
 //| reads no orchestrator state it does not receive, mutates nothing, |
 //| and is only consumed by the heartbeat log                         |
-//| (TimerProcessor.mqh -> m_orchestrator.GetStatusReport()).         |
 //|                                                                  |
 //| Wiring: the orchestrator injects its collaborators once, from     |
 //| WireAndValidateDependencies(). The volatile per-cycle counters    |

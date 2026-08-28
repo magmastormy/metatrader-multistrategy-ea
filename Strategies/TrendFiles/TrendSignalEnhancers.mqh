@@ -84,7 +84,9 @@ double CTrendSignalEnhancer::GetATR()
     if(m_atrHandle == INVALID_HANDLE) return 0;
 
     double atrBuf[1];
-    if(CopyBuffer(m_atrHandle, 0, 0, 1, atrBuf) > 0)
+    // Batch 158: closed-bar discipline — shift 1 (last completed bar),
+    // not shift 0 (forming bar). AS_SERIES on dynamic array: [0]=newest.
+    if(CopyBuffer(m_atrHandle, 0, 1, 1, atrBuf) > 0)
         return atrBuf[0];
 
     return 0;

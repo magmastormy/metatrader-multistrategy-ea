@@ -449,17 +449,19 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
     if(!HasStructureBreak())
         return BMS_NONE;
     
-    ENUM_TIMEFRAMES tf = m_timeframe;
-    
+    // Batch 156: classify by PeriodSeconds - the raw enum-range compare left
+    // H2..H12 falling through every branch, so those charts returned BMS_NONE forever.
+    int tfSeconds = PeriodSeconds(m_timeframe);
+
     // Minor BMS (15m and below)
-    if(tf <= PERIOD_M15)
+    if(tfSeconds <= PeriodSeconds(PERIOD_M15))
     {
         m_structure.lastBMSType = BMS_MINOR;
         m_structure.lastBMSTime = TimeCurrent();
         return BMS_MINOR;
     }
-    // Significant BMS (15m to 1H)
-    else if(tf >= PERIOD_M15 && tf <= PERIOD_H1)
+    // Significant BMS (above 15m up to 1H)
+    else if(tfSeconds <= PeriodSeconds(PERIOD_H1))
     {
         if(HasMomentum())
         {
@@ -468,8 +470,8 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
             return BMS_SIGNIFICANT;
         }
     }
-    // Major BMS (Daily+)
-    else if(tf >= PERIOD_D1)
+    // Major BMS (above 1H, incl. H2-H12 and Daily+)
+    else
     {
         if(HasMomentum() && HasVolume())
         {
@@ -478,7 +480,7 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
             return BMS_MAJOR;
         }
     }
-    
+
     return BMS_NONE;
 }
 
@@ -487,7 +489,9 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
 //+------------------------------------------------------------------+
 bool CMarketStructureAnalyzer::HasStructureBreak()
 {
-    double close = iClose(m_symbol, m_timeframe, 0);
+    // Batch 156: evaluate the last CLOSED bar (shift 1) - classifying breaks off
+    // the forming bar flipped structure flags tick-by-tick.
+    double close = iClose(m_symbol, m_timeframe, 1);
     m_structure.lastBreakType = STRUCT_BREAK_NONE;
     m_structure.lastBreakWasCHoCH = false;
     m_structure.lastBreakWasBOS   = false;
@@ -918,17 +922,19 @@ bool CMarketStructureAnalyzer::GetLastSwingLow(SStructuralPoint &swing)
 //+------------------------------------------------------------------+
 bool CMarketStructureAnalyzer::DetectFastCHOCH()
 {
-    double close0 = iClose(m_symbol, m_timeframe, 0);
-    if(close0 <= 0) return false;
+    // Batch 157: judge the last CLOSED close - the forming-bar close flip-flopped
+    // this bonus tick-by-tick inside FVGScalper/AsianRangeBreak confidence scores.
+    double close1 = iClose(m_symbol, m_timeframe, 1);
+    if(close1 <= 0) return false;
 
     // Check if close is above the nearest swing high (bullish CHoCH)
     double swingHigh = GetSwingHighLevel(20);
-    if(swingHigh > 0 && close0 > swingHigh)
+    if(swingHigh > 0 && close1 > swingHigh)
         return true;
 
     // Check if close is below the nearest swing low (bearish CHoCH)
     double swingLow = GetSwingLowLevel(20);
-    if(swingLow > 0 && close0 < swingLow)
+    if(swingLow > 0 && close1 < swingLow)
         return true;
 
     return false;
@@ -940,18 +946,20 @@ bool CMarketStructureAnalyzer::DetectFastCHOCH()
 //+------------------------------------------------------------------+
 bool CMarketStructureAnalyzer::DetectWickBOS()
 {
-    double high0 = iHigh(m_symbol, m_timeframe, 0);
-    double low0 = iLow(m_symbol, m_timeframe, 0);
-    if(high0 <= 0 || low0 <= 0) return false;
+    // Batch 157: closed bars only (no external consumer yet; kept consistent
+    // with the closed-bar convention so future consumers inherit sane behavior).
+    double high1 = iHigh(m_symbol, m_timeframe, 1);
+    double low1 = iLow(m_symbol, m_timeframe, 1);
+    if(high1 <= 0 || low1 <= 0) return false;
 
     // Wick above swing high = bullish BOS
     double swingHigh = GetSwingHighLevel(10);
-    if(swingHigh > 0 && high0 > swingHigh)
+    if(swingHigh > 0 && high1 > swingHigh)
         return true;
 
     // Wick below swing low = bearish BOS
     double swingLow = GetSwingLowLevel(10);
-    if(swingLow > 0 && low0 < swingLow)
+    if(swingLow > 0 && low1 < swingLow)
         return true;
 
     return false;
@@ -963,11 +971,13 @@ bool CMarketStructureAnalyzer::DetectWickBOS()
 //+------------------------------------------------------------------+
 bool CMarketStructureAnalyzer::DetectCISDDisplacement()
 {
-    double close0 = iClose(m_symbol, m_timeframe, 0);
-    double close5 = iClose(m_symbol, m_timeframe, 5);
-    if(close0 <= 0 || close5 <= 0) return false;
+    // Batch 157: measure across CLOSED bars (shifts 1..6) - including the forming
+    // bar biased displacement low for most of each bar's life.
+    double close1 = iClose(m_symbol, m_timeframe, 1);
+    double close6 = iClose(m_symbol, m_timeframe, 6);
+    if(close1 <= 0 || close6 <= 0) return false;
 
-    double displacement = MathAbs(close0 - close5);
+    double displacement = MathAbs(close1 - close6);
     double atr = GetATR(14);
     if(atr <= 0) return false;
 

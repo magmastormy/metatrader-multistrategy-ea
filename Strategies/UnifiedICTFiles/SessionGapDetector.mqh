@@ -129,16 +129,14 @@ bool CSessionGapDetector::Initialize(const string symbol, ENUM_TIMEFRAMES timefr
 //+------------------------------------------------------------------+
 double CSessionGapDetector::GetATR(int period)
 {
-    int handle = iATR(m_symbol, m_timeframe, period);
+    // Batch 157: shared indicator-manager handle (was created+released twice per
+    // Update); the manager owns the handle lifecycle.
+    int handle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(handle == INVALID_HANDLE) return 0;
 
     double buf[1];
     if(CopyBuffer(handle, 0, 0, 1, buf) > 0)
-    {
-        IndicatorRelease(handle);
         return buf[0];
-    }
-    IndicatorRelease(handle);
     return 0;
 }
 
@@ -169,7 +167,10 @@ bool CSessionGapDetector::DetectNDOG()
 
     double gapSize = MathAbs(todayOpen - prevClose);
     double atr = GetATR(14);
-    double minSize = (atr > 0) ? atr * m_minGapSize : SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 5;
+    // Batch 156: fail closed without ATR - the old 5*point fallback sat below
+    // tick noise on synthetics and manufactured phantom NDOG zones.
+    if(atr <= 0) return false;
+    double minSize = atr * m_minGapSize;
 
     if(gapSize < minSize) return false;
 
@@ -203,7 +204,9 @@ bool CSessionGapDetector::DetectNWOG()
 
     double gapSize = MathAbs(thisWeekOpen - prevWeekClose);
     double atr = GetATR(14);
-    double minSize = (atr > 0) ? atr * m_minGapSize : SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 10;
+    // Batch 156: fail closed without ATR (see DetectNDOG)
+    if(atr <= 0) return false;
+    double minSize = atr * m_minGapSize;
 
     if(gapSize < minSize) return false;
 
@@ -234,7 +237,9 @@ void CSessionGapDetector::UpdateFillStatus(SSessionGap &gap)
     if(gap.isFilled || !gap.isValid) return;
 
     // Check last 50 bars (on current timeframe) for fill
-    for(int i = 0; i < 50; i++)
+    // Batch 156: closed bars only (shift 1) - intrabar pokes no longer latch
+    // isFilled/isMitigated off the forming bar.
+    for(int i = 1; i < 50; i++)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime < gap.openTime) break;
@@ -248,7 +253,8 @@ void CSessionGapDetector::UpdateFillStatus(SSessionGap &gap)
         double filled       = MathMax(0.0, filledTop - filledBottom);
 
         if(gap.size > 0)
-            gap.fillPercent = MathMin(100.0, (filled / gap.size) * 100.0);
+            gap.fillPercent = MathMax(gap.fillPercent,  // Batch 156: deepest penetration, not the oldest bar's overlap
+                                      MathMin(100.0, (filled / gap.size) * 100.0));
 
         // Mitigated: price reached midpoint
         if(!gap.isMitigated && ((gap.isBullishGap && low <= gap.midpoint) ||

@@ -1603,6 +1603,11 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
     if(g_orchestrator != NULL && g_orchestrator.GetSystemInitialized())
     {
         g_orchestrator.GetTradeManager().ProcessTradeTransaction(trans, request, result);
+
+        // Batch 154: closed-trade feedback - per-strategy attribution/health
+        // fan-out plus account-level learners (performance analytics, loss
+        // guard, live-authority outcome recording).
+        g_orchestrator.ProcessManagerTradeTransactions(trans, request, result);
     }
 }
 
@@ -1693,8 +1698,9 @@ void RestoreEngineStates()
         datetime timeOpen = (datetime)PositionGetInteger(POSITION_TIME);
         string comment = PositionGetString(POSITION_COMMENT);
 
-        int magicPrefix = (int)(magic / 100);
-        if(magicPrefix != InpMagicNumber) continue;
+        // Batch 152 (T-03): range-based ownership check (the old magic/100 prefix
+        // test truncated two digits and never matched InpMagicNumber).
+        if(!g_orchestrator.GetTradeManager().IsEAOwnedMagic((long)magic)) continue;
 
         if(StringFind(comment, "GRID-RECOVERY") >= 0)
         {

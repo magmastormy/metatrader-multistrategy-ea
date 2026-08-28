@@ -76,16 +76,22 @@ private:
         
         // direction: +1 = bullish (fast crosses above slow)
         // direction: -1 = bearish (fast crosses below slow)
-        for(int i = 0; i < minBars; i++)
+        // Batch 155: non-series copies are OLDEST-first, so the newest closed
+        // bar (the cross bar itself) sits at index maxBars-1 and older bars
+        // walk backwards from there. The old loop scanned indices 0..minBars-1
+        // - bars BEFORE the crossover - where diff <= threshold is expected,
+        // so any persistence requirement >= 2 rejected every valid cross.
+        for(int k = 0; k < minBars; k++)
         {
-            double diff = fastBuffer[i] - slowBuffer[i];
-            
+            int idx = maxBars - 1 - k;
+            double diff = fastBuffer[idx] - slowBuffer[idx];
+
             if(direction > 0) // Bullish: fast must be above slow + threshold
             {
                 if(diff <= threshold)
                 {
-                    PrintFormat("[MOMENTUM] Crossover validation FAILED at bar %d: diff=%.5f <= threshold=%.5f", 
-                               i, diff, threshold);
+                    PrintFormat("[MOMENTUM] Crossover validation FAILED at bar %d: diff=%.5f <= threshold=%.5f",
+                               k, diff, threshold);
                     return false;
                 }
             }
@@ -93,8 +99,8 @@ private:
             {
                 if(diff >= -threshold)
                 {
-                    PrintFormat("[MOMENTUM] Crossover validation FAILED at bar %d: diff=%.5f >= -threshold=%.5f", 
-                               i, diff, -threshold);
+                    PrintFormat("[MOMENTUM] Crossover validation FAILED at bar %d: diff=%.5f >= -threshold=%.5f",
+                               k, diff, -threshold);
                     return false;
                 }
             }
@@ -116,32 +122,36 @@ private:
             return false; // Skip on data error
         
         // Look for divergence over last 3-5 bars
+        // Batch 155: non-series copies land OLDEST-first, so index 0 is the
+        // oldest bar of the window and index 5 is the newest closed bar. The
+        // old code compared them the other way round, testing price falling
+        // into the cross instead of making a fresh extreme.
         for(int lookback = 3; lookback <= 5; lookback++)
         {
             // Bullish Divergence: Price makes lower low, RSI makes higher low
             if(signal == TRADE_SIGNAL_BUY)
             {
-                bool priceLowerLow = (priceBuffer[0] < priceBuffer[lookback]);
-                bool rsiHigherLow = (rsiBuffer[0] > rsiBuffer[lookback]);
-                
+                bool priceLowerLow = (priceBuffer[5] < priceBuffer[5 - lookback]);
+                bool rsiHigherLow = (rsiBuffer[5] > rsiBuffer[5 - lookback]);
+
                 if(priceLowerLow && rsiHigherLow)
                 {
                     PrintFormat("[MOMENTUM-DIV] Bullish divergence detected | Price: %.5f -> %.5f | RSI: %.1f -> %.1f",
-                               priceBuffer[lookback], priceBuffer[0], rsiBuffer[lookback], rsiBuffer[0]);
+                               priceBuffer[5 - lookback], priceBuffer[5], rsiBuffer[5 - lookback], rsiBuffer[5]);
                     return true;
                 }
             }
-            
+
             // Bearish Divergence: Price makes higher high, RSI makes lower high
             if(signal == TRADE_SIGNAL_SELL)
             {
-                bool priceHigherHigh = (priceBuffer[0] > priceBuffer[lookback]);
-                bool rsiLowerHigh = (rsiBuffer[0] < rsiBuffer[lookback]);
-                
+                bool priceHigherHigh = (priceBuffer[5] > priceBuffer[5 - lookback]);
+                bool rsiLowerHigh = (rsiBuffer[5] < rsiBuffer[5 - lookback]);
+
                 if(priceHigherHigh && rsiLowerHigh)
                 {
                     PrintFormat("[MOMENTUM-DIV] Bearish divergence detected | Price: %.5f -> %.5f | RSI: %.1f -> %.1f",
-                               priceBuffer[lookback], priceBuffer[0], rsiBuffer[lookback], rsiBuffer[0]);
+                               priceBuffer[5 - lookback], priceBuffer[5], rsiBuffer[5 - lookback], rsiBuffer[5]);
                     return true;
                 }
             }
@@ -162,8 +172,11 @@ private:
            !SafeCopyBuffer(m_macdHandle, 1, 1, 2, macdSignal))
             return true;  // Data unavailable = don't block
 
-        double histNow = macdMain[0] - macdSignal[0];
-        double histPrev = macdMain[1] - macdSignal[1];
+        // Batch 155: non-series copies are oldest-first, so [1] is the newest
+        // closed bar and [0] is the bar before it. The old read had them
+        // swapped, "confirming" BUYs with a falling histogram.
+        double histNow = macdMain[1] - macdSignal[1];
+        double histPrev = macdMain[0] - macdSignal[0];
 
         if(signal == TRADE_SIGNAL_BUY)
             return (histNow > 0 && histNow > histPrev);  // Rising positive histogram
@@ -248,9 +261,12 @@ private:
             double volBuffer[11];
             if(SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volBuffer))
             {
-                double currentVol = volBuffer[0];
+                // Batch 155: oldest-first layout - the newest closed bar is
+                // volBuffer[10], not [0] (which was shift-11, a month of bars
+                // back on higher TFs). The old read compared stale volume.
+                double currentVol = volBuffer[10];
                 double avgVol = 0;
-                for(int i = 1; i < 11; i++)
+                for(int i = 0; i < 10; i++)
                     avgVol += volBuffer[i];
                 avgVol /= 10.0;
 
@@ -360,8 +376,10 @@ private:
 
         if(fastOk)
         {
-            fastNow = fastBuffer[0];
-            fastPrev = fastBuffer[1];
+            // Batch 150: static arrays are NOT as-series - [0] is the OLDEST of the
+            // copied window. start=1,count=2 -> [0]=shift 2 (prev), [1]=shift 1 (now).
+            fastNow = fastBuffer[1];
+            fastPrev = fastBuffer[0];
         }
         else
         {
@@ -373,8 +391,8 @@ private:
 
         if(slowOk)
         {
-            slowNow = slowBuffer[0];
-            slowPrev = slowBuffer[1];
+            slowNow = slowBuffer[1];   // Batch 150: [1]=shift 1 (newer), see fast comment
+            slowPrev = slowBuffer[0];
         }
         else
         {
@@ -399,11 +417,14 @@ private:
         double fastBuffer[3];
 
         // Closed-bar values: shift 1 (current signal), shift 2 (previous), shift 3 (2-bars-ago)
+        // Batch 155: non-series copies are OLDEST-first - [0]=shift 3,
+        // [2]=shift 1. The old mapping handed back reversed history, so the
+        // ROC multiplier rewarded deceleration and punished acceleration.
         if(!SafeCopyBuffer(m_fastHandle, 0, 1, 3, fastBuffer)) return false;
 
-        emaNow = fastBuffer[0];
+        emaNow = fastBuffer[2];
         emaPrev = fastBuffer[1];
-        emaPrev2 = fastBuffer[2];
+        emaPrev2 = fastBuffer[0];
         return true;
     }
 
@@ -651,17 +672,29 @@ public:
         double staticThreshold = m_thresholdPoints * point;
 
         // --- VOLATILITY FILTER ---
-        double atrWindow[2];
-        if(!SafeCopyBuffer(m_atrHandle, 0, 1, 2, atrWindow))
+        // Batch 155: 10-bar window, oldest-first layout -> [9] is the newest
+        // closed bar. The old code read [0] of a 2-bar copy (the OLDER bar)
+        // and compared it against m_minVolatility, an FX-scale absolute
+        // floor: EURUSD M1 was permanently "too quiet" while synthetics with
+        // huge absolute ATRs sailed through every gate untested.
+        double atrWindow[10];
+        if(!SafeCopyBuffer(m_atrHandle, 0, 1, 10, atrWindow))
             return RejectSignal("MOMENTUM_ATR_UNAVAILABLE");
-        if(atrWindow[0] < m_minVolatility) 
+        double curATR = atrWindow[9];
+        double avgATR = 0.0;
+        for(int i = 0; i < 9; i++)
+            avgATR += atrWindow[i];
+        avgATR /= 9.0;
+        double close1Vol = iClose(m_symbol, m_timeframe, 1);
+        double volFloor = MathMin(m_minVolatility, close1Vol * 0.0001);
+        if(curATR < volFloor)
         {
-            // Market too quiet
+            // Market too quiet (relative to this symbol's price scale)
             return RejectSignal("MOMENTUM_LOW_VOLATILITY");
         }
-        
+
         // Calculate dynamic threshold using ATR
-        double atrThreshold = atrWindow[0] * m_atrThresholdMult;
+        double atrThreshold = curATR * m_atrThresholdMult;
         double threshold = MathMax(staticThreshold, atrThreshold);
 
         // --- EXHAUSTION FILTER (RSI) ---
@@ -787,14 +820,17 @@ public:
             
             // ENHANCEMENT: Volatility-Adjusted Confidence (Batch 93 - Week 1)
             // Reduce confidence during extreme volatility (uncertainty)
-            double atrRatio = atrWindow[0] / m_minVolatility;
-            if(atrRatio > 3.0) // Extreme volatility
+            // Batch 155: ratio is now against the symbol's own recent ATR
+            // average, not the fixed FX-scale floor - the old formula read
+            // ~100x on synthetics and taxed every signal by 40%.
+            double atrRatio = (avgATR > 0.0) ? curATR / avgATR : 1.0;
+            if(atrRatio > 2.0) // Extreme volatility expansion
             {
                 momentumConfidence *= 0.6; // Reduce by 40%
                 PrintFormat("[MOMENTUM-VOL] High volatility detected | ATR ratio=%.2f | Confidence reduced to %.1f%%",
                            atrRatio, momentumConfidence * 100);
             }
-            else if(atrRatio > 2.0) // Elevated volatility
+            else if(atrRatio > 1.5) // Elevated volatility
             {
                 momentumConfidence *= 0.8; // Reduce by 20%
                 PrintFormat("[MOMENTUM-VOL] Elevated volatility | ATR ratio=%.2f | Confidence adjusted to %.1f%%",
@@ -821,7 +857,7 @@ public:
             double atrBuffer[2];
             double atr = 0.0;
             if(SafeCopyBuffer(m_atrHandle, 0, 1, 2, atrBuffer))
-                atr = atrBuffer[0];
+                atr = atrBuffer[1]; // Batch 155: [1] is the newest closed bar under oldest-first layout
             double currentPrice = (signal == TRADE_SIGNAL_BUY) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK) : SymbolInfoDouble(m_symbol, SYMBOL_BID);
             double slDistance = (atr > 0) ? (atr * 2.0) : (currentPrice * 0.01); // 2x ATR or 1% fallback
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);

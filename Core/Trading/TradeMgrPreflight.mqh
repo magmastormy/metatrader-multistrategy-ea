@@ -87,9 +87,17 @@ public:
             trade.SetTypeFilling(ORDER_FILLING_FOK);
         }
 
-        // Fallback to symbol default or base mode if needed
-        if(!trade.SetTypeFillingBySymbol(symbolParam))
-            trade.SetTypeFilling(orderFillMode);
+        // Batch 151: keep the IOC/FOK decision unless the symbol does not
+        // support it - SetTypeFillingBySymbol() unconditionally overwrote the
+        // spread/volatility analysis above with the symbol default, making
+        // that selection dead code.
+        const int fillingFlags = (int)SymbolInfoInteger(symbolParam, SYMBOL_FILLING_MODE);
+        const bool iocAllowed = ((fillingFlags & SYMBOL_FILLING_IOC) != 0);
+        const bool fokAllowed = ((fillingFlags & SYMBOL_FILLING_FOK) != 0);
+        if(useIOC && !iocAllowed)
+            trade.SetTypeFilling(fokAllowed ? ORDER_FILLING_FOK : orderFillMode);
+        else if(!useIOC && !fokAllowed)
+            trade.SetTypeFilling(iocAllowed ? ORDER_FILLING_IOC : orderFillMode);
     }
 
     //+--------------------------------------------------------------+

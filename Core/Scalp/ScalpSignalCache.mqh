@@ -262,14 +262,24 @@ public:
          if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE || m_cache[m_cacheCount].emaSlowHandle == INVALID_HANDLE ||
             m_cache[m_cacheCount].atrHandle == INVALID_HANDLE)
          {
-            // Fallback: if emaFast failed but emaSlow is valid, use emaSlow as substitute
+            // Batch 152 (S-M-06): do NOT alias emaFastHandle to the slow handle.
+            // Two identical series make every crossover comparison degenerate
+            // (fastCurr>slowCurr is never true) and poison downstream consumers
+            // of emaFast values. Exclude the symbol from the cache instead.
             if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE &&
                m_cache[m_cacheCount].emaSlowHandle != INVALID_HANDLE &&
                m_cache[m_cacheCount].atrHandle != INVALID_HANDLE)
             {
-               PrintFormat("[SCALP-FALLBACK] emaFast unavailable for %s, using emaSlow(%d) as substitute — crossover detection DISABLED for this symbol",
-                           sym, m_emaSlowPeriod);
-               m_cache[m_cacheCount].emaFastHandle = m_cache[m_cacheCount].emaSlowHandle;
+               PrintFormat("[SCALP-CACHE] ERROR: emaFast unavailable for %s after retries - symbol excluded | emaFast=%d emaSlow=%d atr=%d",
+                           sym, m_cache[m_cacheCount].emaFastHandle, m_cache[m_cacheCount].emaSlowHandle, m_cache[m_cacheCount].atrHandle);
+               // Batch 117: Reset fields individually (ZeroMemory corrupts string reference counting)
+               m_cache[m_cacheCount].symbol = "";
+               m_cache[m_cacheCount].emaFastHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].emaSlowHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].atrHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].rsiHandle = INVALID_HANDLE;
+               m_cache[m_cacheCount].isValid = false;
+               continue;
             }
             else if(m_cache[m_cacheCount].emaFastHandle == INVALID_HANDLE &&
                     m_cache[m_cacheCount].emaSlowHandle != INVALID_HANDLE &&

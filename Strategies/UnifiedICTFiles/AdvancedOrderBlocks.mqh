@@ -310,7 +310,10 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
 
 double CAdvancedOrderBlockDetector::GetATRValue(int period)
 {
-    int atrHandle = iATR(m_symbol, m_timeframe, period);
+    // Batch 157: shared indicator-manager handle instead of create/release per
+    // call - this churned an iATR handle on every scan and inside each Source-OB
+    // walk. The manager owns the handle lifecycle.
+    int atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(atrHandle == INVALID_HANDLE)
         return 0.0;
 
@@ -319,7 +322,6 @@ double CAdvancedOrderBlockDetector::GetATRValue(int period)
     double atr = 0.0;
     if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)
         atr = atrBuf[0];
-    IndicatorRelease(atrHandle);
     return atr;
 }
 
@@ -433,9 +435,10 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
 
         if(c < o)  // Bearish candle
         {
+            // Batch 156: shift grows going OLDER, so the first match walking away
+            // from the impulse start IS the last sell before the flip.
             sourceOBBar = i;
-            // Do NOT break — keep looking for the LAST bearish candle
-            // (we want the one closest to the impulse start)
+            break;
         }
     }
 
@@ -448,16 +451,8 @@ bool CAdvancedOrderBlockDetector::DetectBullishSourceOB(SAdvancedOrderBlock &ob)
     double l = iLow(m_symbol,   m_timeframe, sourceOBBar);
 
     double body = MathAbs(o - c);
-    double atr  = 0;
-    int atrHandle = iATR(m_symbol, m_timeframe, 14);
-    if(atrHandle != INVALID_HANDLE)
-    {
-        double atrBuf[];
-        ArraySetAsSeries(atrBuf, true);
-        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)
-            atr = atrBuf[0];
-        IndicatorRelease(atrHandle);
-    }
+
+    double atr  = GetATRValue(14);  // Batch 157: shared handle - was an inline iATR create/release
 
     // Relaxed: body must be at least 10% of ATR (was 20%) for better OB detection
     if(atr > 0 && body < atr * 0.10) return false;
@@ -501,6 +496,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
         if(c > o)  // Bullish candle — last one before bearish impulse = source OB
         {
             sourceOBBar = i;
+            break;  // Batch 156: first match is the closest to the impulse - see DetectBullishSourceOB
         }
     }
 
@@ -512,16 +508,7 @@ bool CAdvancedOrderBlockDetector::DetectBearishSourceOB(SAdvancedOrderBlock &ob)
     double l = iLow(m_symbol,   m_timeframe, sourceOBBar);
     double body = MathAbs(o - c);
 
-    double atr = 0;
-    int atrHandle = iATR(m_symbol, m_timeframe, 14);
-    if(atrHandle != INVALID_HANDLE)
-    {
-        double atrBuf[];
-        ArraySetAsSeries(atrBuf, true);
-        if(CopyBuffer(atrHandle, 0, 0, 1, atrBuf) > 0)
-            atr = atrBuf[0];
-        IndicatorRelease(atrHandle);
-    }
+    double atr = GetATRValue(14);  // Batch 157: shared handle - was an inline iATR create/release
 
     // Relaxed: body must be at least 10% of ATR (was 20%) for better OB detection
     if(atr > 0 && body < atr * 0.10) return false;
@@ -691,11 +678,11 @@ bool CAdvancedOrderBlockDetector::DetectBullishBreakerBlock(SAdvancedOrderBlock 
     
     for(int i = swingHighBar - 3; i <= swingHighBar + 3; i++)
     {
-        if(i < 0) continue;
-        
+        if(i <= 0) continue;  // Batch 157: exclude the forming bar from breaker candidacy
+
         double open = iOpen(m_symbol, m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
-        
+
         if(close <= open) continue; // Must be bullish
         
         double body = close - open;
@@ -748,11 +735,11 @@ bool CAdvancedOrderBlockDetector::DetectBearishBreakerBlock(SAdvancedOrderBlock 
     
     for(int i = swingLowBar - 3; i <= swingLowBar + 3; i++)
     {
-        if(i < 0) continue;
-        
+        if(i <= 0) continue;  // Batch 157: exclude the forming bar from breaker candidacy
+
         double open = iOpen(m_symbol, m_timeframe, i);
         double close = iClose(m_symbol, m_timeframe, i);
-        
+
         if(close >= open) continue; // Must be bearish
         
         double body = open - close;
@@ -1029,7 +1016,9 @@ bool CAdvancedOrderBlockDetector::DetectBullishVacuumBlock(SAdvancedOrderBlock &
         long avgVolume = GetAverageVolume(i + 1, 20);
         if(close <= open || range <= (atr * 1.5) || avgVolume <= 0)
             continue;
-        if((double)barVolume >= ((double)avgVolume * 0.30))
+        // Batch 157: <30% of average made this class near-unreachable (big ranges
+        // attract volume); "vacuum" now means materially below-average participation.
+        if((double)barVolume >= ((double)avgVolume * 0.65))
             continue;
 
         double voidRatio = ((double)avgVolume - (double)barVolume) / (double)avgVolume;
@@ -1081,7 +1070,8 @@ bool CAdvancedOrderBlockDetector::DetectBearishVacuumBlock(SAdvancedOrderBlock &
         long avgVolume = GetAverageVolume(i + 1, 20);
         if(close >= open || range <= (atr * 1.5) || avgVolume <= 0)
             continue;
-        if((double)barVolume >= ((double)avgVolume * 0.30))
+        // Batch 157: <30% of average made this class near-unreachable - see bullish variant
+        if((double)barVolume >= ((double)avgVolume * 0.65))
             continue;
 
         double voidRatio = ((double)avgVolume - (double)barVolume) / (double)avgVolume;
@@ -1168,7 +1158,9 @@ bool CAdvancedOrderBlockDetector::CheckMitigation(SAdvancedOrderBlock &ob)
     ob.mitigationLevel = isBullishOB ? ob.bottom : ob.top;
 
     // Walk forward from OB formation time
-    for(int i = 0; i < 200; i++)
+    // Batch 156: skip the forming bar (shift 0) - intrabar pokes were latching
+    // isMitigated/isTested off unclosed candles.
+    for(int i = 1; i < 200; i++)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime <= ob.time) break;
@@ -1307,8 +1299,11 @@ double CAdvancedOrderBlockDetector::FindOldHigh(int startBar, int endBar)
 //+------------------------------------------------------------------+
 bool CAdvancedOrderBlockDetector::IsNearSupportLevel(double price)
 {
-    double tolerance = 20 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+    // Batch 156: ATR-relative floor - 20*point is ~0.2 absolute on synthetics,
+    // permanently false against prices in the hundreds/thousands.
+    double tolerance = MathMax(20 * SymbolInfoDouble(m_symbol, SYMBOL_POINT),
+                               GetATRValue(14) * 0.25);
+
     double yesterdayLow = iLow(m_symbol, PERIOD_D1, 1);
     if(MathAbs(price - yesterdayLow) < tolerance) return true;
     

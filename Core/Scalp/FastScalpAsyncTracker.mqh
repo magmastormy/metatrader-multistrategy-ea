@@ -48,7 +48,9 @@ public:
       m_asyncMode(false),
       m_maxLatencyMs(500)
    {
-      ZeroMemory(m_pendingAsync);
+      // Batch 152 (S-M-04): field-wise reset (string member, see SScalpPendingAsync::Reset)
+      for(int i = 0; i < ArraySize(m_pendingAsync); i++)
+         m_pendingAsync[i].Reset();
    }
 
    //--- Was CFastScalpEngine::GetPendingAsyncCount()
@@ -142,7 +144,10 @@ public:
             {
                double point = SymbolInfoDouble(m_pendingAsync[i].symbol, SYMBOL_POINT);
                double oneRPrice = 0.0;
-               if(point > 0.0)
+               // Batch 152 (S-L-03): with scalpSLPips==0 this used to collapse
+               // oneRPrice onto the entry price, triggering the 50% partial on
+               // the very first tick after the fill.
+               if(point > 0.0 && config.scalpSLPips > 0.0)
                {
                   if(m_pendingAsync[i].direction == 1)  // BUY
                      oneRPrice = m_pendingAsync[i].entryPrice + config.scalpSLPips * point;
@@ -220,7 +225,8 @@ public:
       for(int j = index; j < m_pendingAsyncCount - 1; j++)
          m_pendingAsync[j] = m_pendingAsync[j + 1];
 
-      ZeroMemory(m_pendingAsync[m_pendingAsyncCount - 1]);
+      // Clear tail slot (field-wise - Batch 152 S-M-04)
+      m_pendingAsync[m_pendingAsyncCount - 1].Reset();
       m_pendingAsyncCount--;
    }
 };

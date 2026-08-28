@@ -152,6 +152,9 @@ private:
     {
         STierConfig c;
         c.riskPerTradePct     = 4.0;
+        // Batch 152: this preset omitted the override - ApplyTierOverrides wrote
+        // maxRiskPerTradePercent=0 and adaptive sizing collapsed to its floor.
+        c.maxRiskPerTradeOverride = 8.0;  // L5-006: 2x riskPerTradePct (mirrors CompoundingTierManager)
         c.dailyRiskPct        = 12.0;
         c.portfolioRiskPct    = 20.0;
         c.maxPositions        = 2;

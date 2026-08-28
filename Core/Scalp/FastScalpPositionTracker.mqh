@@ -40,7 +40,10 @@ private:
 public:
    CFastScalpPositionTracker() : m_scalpPositionCount(0)
    {
-      ZeroMemory(m_scalpPositions);
+      // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the string
+      // member's reference count (see SScalpPositionState::Reset).
+      for(int i = 0; i < ArraySize(m_scalpPositions); i++)
+         m_scalpPositions[i].Reset();
    }
 
    //--- Number of tracked scalp positions
@@ -115,8 +118,8 @@ public:
             for(int j = i; j < m_scalpPositionCount - 1; j++)
                m_scalpPositions[j] = m_scalpPositions[j + 1];
             m_scalpPositionCount--;
-            // Clear last slot
-            ZeroMemory(m_scalpPositions[m_scalpPositionCount]);
+            // Clear last slot (field-wise - Batch 152 S-M-04)
+            m_scalpPositions[m_scalpPositionCount].Reset();
             return;
          }
       }

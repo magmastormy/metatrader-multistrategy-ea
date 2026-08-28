@@ -53,7 +53,11 @@ public:
         if(bodyRatio < 1.10)
             return false;
 
-        double tolerance = MathMax(_Point * 2.0, atr * 0.02);
+        // Batch 156: _Point is the CHART symbol's point; this strategy runs on
+        // manager symbols that can differ (synthetics vs an FX chart), making
+        // the tolerance wrong by orders of magnitude. Use the traded symbol.
+        double point = SymbolInfoDouble(m_analyzer.GetSymbol(), SYMBOL_POINT);
+        double tolerance = MathMax(point * 2.0, atr * 0.02);
         
         // BULLISH ENGULFING
         if(current.isBullish && previous.isBearish)

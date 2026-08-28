@@ -213,10 +213,12 @@ void BuildStrategyCatalog()
     //    OrchestratorMathEngineHub. They now also vote in consensus (Batch 2026-08-14) following
     //    the exact pattern already used by FVG/Turtle/Breaker/NY/Asian: the SAME shared
     //    CStrategyRegistry is fed both by the legacy RegisterDefinition list (EAOrchestrator) and
-    //    by this catalog's AutoRegisterStrategies -> RegisterStrategy. siPolicyIndex = -1 (no
-    //    dedicated StrategyConfigBuilder row) so they fall back to fixedPolicy = INTRABAR_POLICY_OFF.
-    CatalogAdd("Liquidity Sweep",       CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_LIQUIDITY_SWEEP,     17,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_LiquiditySweep);      // [CAT:Liquidity Sweep]
-    CatalogAdd("Range Compression",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_RANGE_COMPRESSION,   18,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_RangeCompression);    // [CAT:Range Compression]
+    //    by this catalog's AutoRegisterStrategies -> RegisterStrategy.
+    //    Batch 151: both own dedicated StrategyConfigBuilder rows (18/19). The old literals
+    //    cross-wired them into Asian Range Break's row 17 / each other's rows, so a future
+    //    policy change on one strategy would have silently leaked into its neighbour.
+    CatalogAdd("Liquidity Sweep",       CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_LIQUIDITY_SWEEP,     18,  INTRABAR_POLICY_OFF, 1.5, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, STRUCTURE_CLUSTER,      true, false, "", "", CatCreate_LiquiditySweep);      // [CAT:Liquidity Sweep]
+    CatalogAdd("Range Compression",     CAT_KIND_INDICATOR, CAT_AI_NONE, "",  SI_RANGE_COMPRESSION,   19,  INTRABAR_POLICY_OFF, 1.6, -1.0, STRATEGY_TIER_2, PERIOD_CURRENT, PRIMARY_ALPHA, TREND_CLUSTER,          true, false, "", "", CatCreate_RangeCompression);    // [CAT:Range Compression]
 
     //--- 5 AI adapters (created by CStrategyFactory, registered by the orchestrator) ---
     //    Both policy slots are -1: AI rows always resolve to fixedPolicy=LIVE.

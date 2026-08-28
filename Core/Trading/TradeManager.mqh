@@ -103,6 +103,7 @@ private:
     string m_expertName;                     // Expert advisor name
     bool m_useAsyncMode;                     // Use asynchronous order execution
     ENUM_ORDER_TYPE_FILLING m_orderFillMode; // Preferred broker fill policy
+    ulong m_pendingExplicitMagic;            // Batch 152 (T-01): absolute magic for the next send (0 = derive base+offset)
     int m_minModifyIntervalSec;              // Minimum interval between routine stop updates
     double m_maxEntrySpreadPoints;           // Hard quote-spread gate before market send
     double m_maxEntryDriftPoints;            // Hard drift gate between signal price and send price
@@ -821,6 +822,7 @@ bool CTradeManager::Initialize(const long magicNumber,
     m_lastRequestedStopLoss = 0.0;
     m_lastRequestedTakeProfit = 0.0;
     m_lastExecutionReceipt = STradeExecutionReceipt();
+    m_pendingExplicitMagic = 0;
 
     // L10-013: Initialize per-symbol CTrade array
     m_symbolRegistry.ResetSymbolTrades();
@@ -1048,9 +1050,12 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
     }
     else
     {
-        int errCode = GetLastError();
+        // Batch 152 (T-06): report the per-symbol instance's retcode - m_trade is
+        // the unused default and its last retcode belongs to some other operation.
+        uint retcode = symbolTrade.ResultRetcode();
         LogTradeOperation("PARTIAL_CLOSE", symbol, orderType, normalizedVolume, false,
-                          StringFormat("Partial close failed - %d (%s)", errCode, GetTradeErrorDescription(m_trade.ResultRetcode())));
+                          StringFormat("Partial close failed - retcode=%u (%s) | err=%d",
+                                       retcode, GetTradeErrorDescription(retcode), GetLastError()));
     }
 
     return result;
@@ -1423,6 +1428,20 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
         // L10-013: Use per-symbol CTrade instance to avoid race conditions
         CTrade* symbolTrade = GetSymbolTrade(symbolName);
+
+        // Batch 152 (T-01): the per-symbol pool is stamped once with the bare base
+        // magic, so per-strategy offsets never reached the broker. Stamp the final
+        // magic before each send: an explicit override ships as-is (SpikeHunter
+        // precomputes base+offset+idx), otherwise base + per-symbol strategy offset -
+        // matching what the journal claims the order carries.
+        if(symbolTrade != NULL)
+        {
+            ulong shipMagic = (m_pendingExplicitMagic > 0)
+                              ? m_pendingExplicitMagic
+                              : (ulong)(m_magicNumber + (long)GetMagicOffsetForSymbol(symbolName));
+            symbolTrade.SetExpertMagicNumber(shipMagic);
+        }
+        m_pendingExplicitMagic = 0;
         
         bool sendAccepted = false;
         ulong sendStartUs = GetMicrosecondCount();
@@ -1779,17 +1798,13 @@ double CTradeManager::GetEstimatedSwapCost(const string symbol, const ENUM_ORDER
 //+------------------------------------------------------------------+
 void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double profit, const bool isWin)
 {
-    if(!PositionSelectByTicket(ticket))
-        return;
-
-    // L10-006: Get position details to calculate commission/swap costs
-    string symbol = PositionGetString(POSITION_SYMBOL);
-    double volume = PositionGetDouble(POSITION_VOLUME);
-    ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-    ENUM_ORDER_TYPE orderType = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-    double swap = PositionGetDouble(POSITION_SWAP);
-    // POSITION_COMMISSION is deprecated; sum commission from deals via HistorySelectByPosition
+    // Batch 151: this runs after PositionClose - the live position no longer
+    // exists, so the old PositionSelectByTicket(ticket) gate returned false on
+    // every call and RecordTrade() never executed. Commission and swap are now
+    // sourced from deal history, which survives the close (and captures the
+    // closing deal's commission that a live-position read could never see).
     double commission = 0.0;
+    double swap = 0.0;
     if(HistorySelectByPosition(ticket))
     {
         int totalDeals = HistoryDealsTotal();
@@ -1797,7 +1812,11 @@ void CTradeManager::UpdatePerformanceMetrics(const ulong ticket, const double pr
         {
             ulong dealTicket = HistoryDealGetTicket(i);
             if(dealTicket > 0)
+            {
+                // POSITION_COMMISSION is deprecated; sum costs from deals
                 commission += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                swap += HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+            }
         }
     }
     
@@ -2040,15 +2059,11 @@ bool CTradeManager::OpenPosition(const string symbol,
         return false;
     }
 
-    // Update magic number if provided
-    if(magicNumber > 0)
-    {
-        m_trade.SetExpertMagicNumber(magicNumber + GetMagicOffsetForSymbol(symbol));
-    }
-    else
-    {
-        m_trade.SetExpertMagicNumber(m_magicNumber + GetMagicOffsetForSymbol(symbol));
-    }
+    // Batch 152 (T-01): forward the caller's magic decision to the send site.
+    // This used to write base+offset into the unused default m_trade while the real
+    // send went through the per-symbol pool stamped once with the bare base magic -
+    // so every strategy shipped an identical broker-side magic.
+    m_pendingExplicitMagic = (ulong)magicNumber;
 
     double validationPrice = price;
     if(validationPrice <= 0.0)
@@ -2059,7 +2074,8 @@ bool CTradeManager::OpenPosition(const string symbol,
 
     if(executed)
     {
-        long journalMagic = (long)(m_magicNumber + GetMagicOffsetForSymbol(symbol));
+        long journalMagic = (magicNumber > 0) ? (long)magicNumber
+                            : (long)(m_magicNumber + GetMagicOffsetForSymbol(symbol));
         double journalPrice = (m_lastExecutionReceipt.averagePrice > 0.0) ? m_lastExecutionReceipt.averagePrice : price;
         double journalSL = 0.0;
         double journalTP = 0.0;
@@ -2067,9 +2083,12 @@ bool CTradeManager::OpenPosition(const string symbol,
             journalSL = CalculateStopLoss(symbol, orderType, journalPrice, stopLossPips);
         if(takeProfitPips > 0.0)
             journalTP = CalculateTakeProfit(symbol, orderType, journalPrice, takeProfitPips);
-        ulong journalTicket = (m_lastExecutionReceipt.dealTicket > 0) ? m_lastExecutionReceipt.dealTicket
-                             : (m_lastExecutionReceipt.orderTicket > 0) ? m_lastExecutionReceipt.orderTicket
-                             : m_trade.ResultDeal();
+        // Batch 150: cache must hold POSITION tickets. On hedging (and netting) the
+        // position ticket equals the opening ORDER ticket; storing dealTicket poisoned
+        // the L12-008 cache (PositionSelectByTicket always failed -> BE/trailing dead).
+        ulong journalTicket = (m_lastExecutionReceipt.orderTicket > 0) ? m_lastExecutionReceipt.orderTicket
+                             : (m_lastExecutionReceipt.dealTicket > 0) ? m_lastExecutionReceipt.dealTicket
+                             : m_trade.ResultOrder();
         JournalTradeOpen(journalTicket, symbol, orderType, normalizedVolume,
                          journalPrice, journalSL, journalTP, journalMagic, "entry");
         
@@ -2115,6 +2134,14 @@ bool CTradeManager::SendTradeAsync(ENUM_ORDER_TYPE orderType, const string symbo
     // Guards: async mode enabled, non-empty symbol, positive lot, pending limit
     if(!m_asyncExecutor.CheckSendGuards(symbol, lot))
         return false;
+
+    // Batch 152 (T-04): defense-in-depth parity with the sync path - the async
+    // submission bypassed the mandatory-SL gate and could ship a naked position.
+    if(sl <= 0.0)
+    {
+        PrintFormat("[EXECUTION-BLOCKED] %s | reason=MandatoryStopLoss | path=async", symbol);
+        return false;
+    }
 
     // Normalize volume and price
     double normalizedLot = NormalizeVolume(symbol, lot);

@@ -57,6 +57,7 @@ private:
         double m_minMultiplier;
         bool   m_allowNoTrendTrading;   // If false, returns 0 for no trend (blocks trade)
         bool   m_lazyInitialized;       // Track lazy initialization state
+        bool   m_handleOwned;           // Batch 152 (M-16): true only when handle was created locally (iADX fallback); shared CIndicatorManager handles must never be released
 
         double GetADX()
     {
@@ -85,27 +86,31 @@ public:
         m_veryStrongMultiplier(1.5),
         m_minMultiplier(1.0),        // L5-008: Default 1.0x (no adjustment) instead of blocking
         m_allowNoTrendTrading(true),
-        m_lazyInitialized(false)
+        m_lazyInitialized(false),
+        m_handleOwned(false)
     {}
 
     ~CADXLotModifier()
     {
-        if(m_adxHandle != INVALID_HANDLE)
+        if(m_adxHandle != INVALID_HANDLE && m_handleOwned)
         {
             IndicatorRelease(m_adxHandle);
-            m_adxHandle = INVALID_HANDLE;
         }
+        m_adxHandle = INVALID_HANDLE;
+        m_handleOwned = false;
     }
 
     bool Initialize(const string symbol, const ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT,
                         const int adxPeriod = 14)
         {
-            // Batch 119: Release previous handle if re-initializing
-            if(m_adxHandle != INVALID_HANDLE)
+            // Release previous handle only if we own it (Batch 152 M-16:
+            // handles borrowed from CIndicatorManager are shared and must survive us)
+            if(m_adxHandle != INVALID_HANDLE && m_handleOwned)
             {
                 IndicatorRelease(m_adxHandle);
-                m_adxHandle = INVALID_HANDLE;
             }
+            m_adxHandle = INVALID_HANDLE;
+            m_handleOwned = false;
 
             m_symbol = symbol;
             m_adxPeriod = adxPeriod;
@@ -116,7 +121,7 @@ public:
             {
                 m_adxHandle = indicatorManager.GetADXHandle(symbol, timeframe, adxPeriod);
                 if(m_adxHandle != INVALID_HANDLE)
-                    return true;
+                    return true;   // borrowed handle: m_handleOwned stays false
             }
 
             // Fallback: create own handle
@@ -126,6 +131,7 @@ public:
                 Print("[ADX-MODIFIER] Failed to create ADX handle for ", symbol);
                 return false;
             }
+            m_handleOwned = true;
 
             return true;
         }
@@ -575,7 +581,10 @@ private:
                 IndicatorRelease(m_atrHandle);
                 m_atrHandle = INVALID_HANDLE;
             }
-            m_atrHandle = iATR(symbol, PERIOD_CURRENT, m_atrPeriod);
+            // Batch 152 (M-15): anchor to D1 — the annualization below assumes
+            // avgATR/price is a DAILY volatility; using PERIOD_CURRENT made the
+            // resulting lot size depend on the chart timeframe the EA runs on.
+            m_atrHandle = iATR(symbol, PERIOD_D1, m_atrPeriod);
             m_atrSymbol = symbol;
             if(m_atrHandle == INVALID_HANDLE)
                 return 0.0;

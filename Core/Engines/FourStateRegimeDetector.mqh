@@ -290,12 +290,13 @@ public:
         
             double closes[];
             ArraySetAsSeries(closes, true);
-            int copied = CopyClose(m_symbol, m_timeframe, 0, m_volHistoryWindow + m_volCalcPeriod + 10, closes);
+            // Batch 158: shift 1 = last closed bar (not shift 0 = forming bar)
+            int copied = CopyClose(m_symbol, m_timeframe, 1, m_volHistoryWindow + m_volCalcPeriod + 10, closes);
             if(copied < m_volCalcPeriod + 10)
                 return false;
 
         // Initialize KAMA with SMA of oldest available bars
-        // ArraySetAsSeries: index 0 = most recent, index copied-1 = oldest
+        // ArraySetAsSeries: index 0 = most recent closed bar, index copied-1 = oldest
         double sum = 0;
         int smaEnd = MathMin(m_kamaPeriod, copied);
         for(int i = copied - 1; i >= copied - smaEnd && i >= 0; i--)
@@ -329,32 +330,33 @@ public:
         return (m_volCount >= 10);
     }
 
-    //--- Update: called each bar
+//--- Update: called each bar
         bool Update()
         {
             // Resolve PERIOD_CURRENT to actual timeframe if not already resolved
             ResolveTimeframe();
         
             datetime currentBarTime = iTime(m_symbol, m_timeframe, 0);
-        if(currentBarTime <= 0)
-            return false;
-        if(currentBarTime == m_lastBarTime && m_lastSnapshot.timestamp > 0)
-            return true;
+            if(currentBarTime <= 0)
+                return false;
+            if(currentBarTime == m_lastBarTime && m_lastSnapshot.timestamp > 0)
+                return true;
 
-        // Get closes
-        double closes[];
-        ArraySetAsSeries(closes, true);
-        int copied = CopyClose(m_symbol, m_timeframe, 0, MathMax(m_volCalcPeriod + 10, m_kamaPeriod + 5), closes);
-        if(copied < m_kamaPeriod + 2)
-            return false;
+            // Get closes
+            double closes[];
+            ArraySetAsSeries(closes, true);
+            // Batch 158: shift 1 = last closed bar (not shift 0 = forming bar)
+            int copied = CopyClose(m_symbol, m_timeframe, 1, MathMax(m_volCalcPeriod + 10, m_kamaPeriod + 5), closes);
+            if(copied < m_kamaPeriod + 2)
+                return false;
 
-        // Update KAMA
-        m_kamaPrev = m_kama;
-        m_kama = ComputeKAMA(closes, copied);
-        double kamaSlope = (m_kama > m_kamaPrev) ? 1.0 : -1.0;
+            // Update KAMA
+            m_kamaPrev = m_kama;
+            m_kama = ComputeKAMA(closes, copied);
+            double kamaSlope = (m_kama > m_kamaPrev) ? 1.0 : -1.0;
 
-        // Determine trend direction
-        bool isBullish = (closes[0] > m_kama);
+            // Determine trend direction using closed bar
+            bool isBullish = (closes[0] > m_kama);
 
         // Update volatility
         m_currentVol = ComputeRealizedVol(closes, MathMin(m_volCalcPeriod, copied));

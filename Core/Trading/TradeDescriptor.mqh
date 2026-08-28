@@ -48,6 +48,16 @@ public:
             case TRADE_RETCODE_POSITION_CLOSED:  return "Position closed";
             case TRADE_RETCODE_TRADE_DISABLED:   return "Trading disabled";
             case TRADE_RETCODE_HEDGE_PROHIBITED: return "Hedging prohibited";
+            // Batch 152 (T-11): async/partial/connection outcomes were falling
+            // through to "Unknown error" although they are routine live results.
+            case TRADE_RETCODE_PLACED:           return "Order placed";
+            case TRADE_RETCODE_DONE_PARTIAL:     return "Partial fill";
+            case TRADE_RETCODE_INVALID_FILL:     return "Invalid fill type";
+            case TRADE_RETCODE_CONNECTION:       return "No connection to server";
+            case TRADE_RETCODE_LOCKED:           return "Request locked";
+            case TRADE_RETCODE_FROZEN:           return "Position frozen";
+            case TRADE_RETCODE_LIMIT_ORDERS:     return "Pending order limit reached";
+            case TRADE_RETCODE_LIMIT_VOLUME:     return "Volume limit reached";
             case TRADE_RETCODE_DONE:             return "Success";
             default:                             return "Unknown error (" + IntegerToString(errorCode) + ")";
         }

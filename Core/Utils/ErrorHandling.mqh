@@ -23,8 +23,8 @@
 //|                                                                  |
 //|  ErrorHandlingTypes.mqh  - enums, structs, severity macros,      |
 //|                            forward declarations                  |
-//|  ErrorHandlingCore.mqh   - CEnhancedErrorHandler / CErrorHandling|
-//|                            declarations, static state storage,   |
+//|  ErrorHandlingCore.mqh   - CEnhancedErrorHandler declaration,    |
+//|                            static state storage,                 |
 //|                            singleton + lifecycle methods         |
 //|  ErrorHandlingFormat.mqh - message formatting and error-code     |
 //|                            classification helpers                |

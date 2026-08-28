@@ -22,16 +22,16 @@ class CTradeRetcodeClassifier
 {
 public:
     //+------------------------------------------------------------------+
-    //| Retcodes worth retrying repeatedly (transient market/network)    |
+    //| Retcodes worth retrying repeatedly (transient market conditions) |
+    //| Batch 150: TIMEOUT/CONNECTION removed - order state is UNKNOWN   |
+    //| after these; resending can duplicate a filled order.             |
     //+------------------------------------------------------------------+
     static bool IsTransientTradeRetcode(const uint retcode)
     {
         return (retcode == TRADE_RETCODE_REQUOTE ||
                 retcode == TRADE_RETCODE_PRICE_CHANGED ||
                 retcode == TRADE_RETCODE_PRICE_OFF ||
-                retcode == TRADE_RETCODE_TIMEOUT ||
-                retcode == TRADE_RETCODE_TOO_MANY_REQUESTS ||
-                retcode == TRADE_RETCODE_CONNECTION);
+                retcode == TRADE_RETCODE_TOO_MANY_REQUESTS);
     }
 
     //+------------------------------------------------------------------+

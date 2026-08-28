@@ -7,7 +7,7 @@
 //| DECOMPOSED: CSpikeHunterEngine is now a thin coordinator. The     |
 //| implementation lives in focused SpikeHunter* modules, each owning |
 //| one cohesive concern. Every public method below is a signature-   |
-//| identical forwarder â€” no behaviour, threshold or log tag changed. |
+//| identical forwarder â€?no behaviour, threshold or log tag changed. |
 //|                                                                  |
 //|   SpikeHunterTypes.mqh      SSpikeHunterConfig + state structs    |
 //|   SpikeHunterOverrides.mqh  Batch-102 family override table       |
@@ -26,7 +26,7 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
-#include "../Risk/RiskValidationGate.mqh"
+#include "../Risk/UnifiedRiskManager.mqh"
 #include <Trade\Trade.mqh>
 
 class CUnifiedRiskManager;
@@ -43,7 +43,7 @@ class CAIAdapter;
 #include "SpikeHunterExecutor.mqh"
 
 //+------------------------------------------------------------------+
-//| CSpikeHunterEngine â€” Spike hunting engine for synthetic CFDs      |
+//| CSpikeHunterEngine â€?Spike hunting engine for synthetic CFDs      |
 //| (coordinator)                                                     |
 //+------------------------------------------------------------------+
 class CSpikeHunterEngine
@@ -189,7 +189,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Process a tick for a given symbol â€” call every tick               |
+   //| Process a tick for a given symbol â€?call every tick               |
    //+------------------------------------------------------------------+
    void ProcessTick(const string symbol, double bid, double ask)
    {
@@ -216,7 +216,7 @@ public:
          return;
       }
 
-      // Spike detected â€” record detection time for long-term cooldown
+      // Spike detected â€?record detection time for long-term cooldown
       m_detector.MarkSpikeDetected(idx);
       m_totalDetections++;
 
@@ -224,7 +224,7 @@ public:
       int direction = DetermineSpikeDirection(idx);
       if(direction == 0)
       {
-         PrintFormat("[SPIKE-HUNT-DETECT] %s confluence=%d/3 but no direction determined â€” skipping",
+         PrintFormat("[SPIKE-HUNT-DETECT] %s confluence=%d/3 but no direction determined â€?skipping",
                      symbol, m_detector.GetConfluenceCount(idx));
          m_totalTradesSkipped++;
          return;
@@ -241,7 +241,7 @@ public:
       // Check if we can open a trade
       if(!CanOpenSpikeTrade(idx))
       {
-         PrintFormat("[SPIKE-HUNT-SKIP] %s â€” cooldown or max positions reached", symbol);
+         PrintFormat("[SPIKE-HUNT-SKIP] %s â€?cooldown or max positions reached", symbol);
          m_totalTradesSkipped++;
          return;
       }

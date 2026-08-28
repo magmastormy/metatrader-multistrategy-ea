@@ -24,7 +24,6 @@ public:
     static double CalculateSpreadCost(const string symbol, const double volume)
     {
         if(symbol == "" || volume <= 0.0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1605, __FUNCTION__);
             return 0.0;
         }
 
@@ -34,7 +33,6 @@ public:
         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
 
         if(point <= 0.0 || tickSize <= 0.0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1613, __FUNCTION__);
             return 0.0;
         }
 

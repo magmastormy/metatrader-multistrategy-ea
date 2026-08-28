@@ -151,34 +151,30 @@ public:
       double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
 
       // MQL5 does not have SYMBOL_TRADE_COMMISSION — estimate commission from
-      // SYMBOL_TRADE_TICK_VALUE_PROFIT and SYMBOL_TRADE_CONTRACT_SIZE
+      // the gap between SYMBOL_TRADE_TICK_VALUE_PROFIT and _LOSS
       // For synthetic CFDs, commission is often embedded in the spread.
       // We use a conservative estimate: commission ≈ 0 if not detectable.
-      double commissionPerLot = 0.0;
 
-      // Try to detect commission from the difference between tick value profit and loss
+      // Broker-reported money-per-tick-per-lot asymmetry = commission per tick
       double tickValueProfit = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_PROFIT);
       double tickValueLoss   = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
-      if(tickValueProfit > 0.0 && tickValueLoss > 0.0)
-      {
-         // If tick values differ, the difference is broker commission per tick
-         double commissionPerTick = MathAbs(tickValueProfit - tickValueLoss);
-         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-         if(tickSize > 0.0)
-            commissionPerLot = commissionPerTick * (1.0 / tickSize); // Convert to per-lot
-      }
 
       // Total cost = spread + estimated commission (round-trip)
+      // Batch 152 (L-01): commissionPerTick is money/tick/lot; converting to points
+      // means dividing by tickValue (money/tick/lot) -> ticks, then tickSize/point
+      // -> points. The old chain built "commissionPerLot" by dividing by tickSize
+      // and then multiplied by pointValue (money/price), producing garbage units
+      // that hard-rejected every candidate on any symbol reporting asymmetric
+      // tick values (symmetric values short-circuit to comm=0, masking the bug).
       double commissionPoints = 0.0;
-      if(commissionPerLot > 0.0)
+      double commissionPerTick = MathAbs(tickValueProfit - tickValueLoss);
+      if(commissionPerTick > 0.0)
       {
          double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
          double tickSize  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-         if(tickValue > 0.0 && tickSize > 0.0)
-         {
-            double pointValue = tickValue / tickSize;
-            commissionPoints = commissionPerLot * 2.0 * pointValue; // Round-trip
-         }
+         double point     = SymbolInfoDouble(symbol, SYMBOL_POINT);
+         if(tickValue > 0.0 && tickSize > 0.0 && point > 0.0)
+            commissionPoints = (commissionPerTick / tickValue) * (tickSize / point) * 2.0; // Round-trip
       }
 
       double totalCostPoints = spreadPoints + commissionPoints;

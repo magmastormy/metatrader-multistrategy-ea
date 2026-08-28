@@ -227,6 +227,9 @@ double CTrendTrailingStop::GetEMA21TrailStop(bool isBuy)
     if(m_emaSystem == NULL) return 0;
     
     double ema21 = m_emaSystem.GetEMA21(0);
+    // Batch 156: unwarmed EMA feed returns 0 - a sell trail stop would collapse
+    // to ~buffer and TRAIL_HYBRID's MathMin could emit it as a real SL.
+    if(ema21 <= 0) return 0;
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
     
@@ -246,9 +249,10 @@ double CTrendTrailingStop::GetEMA8TrailStop(bool isBuy)
     if(m_emaSystem == NULL) return 0;
     
     double ema8 = m_emaSystem.GetEMA8(0);
+    if(ema8 <= 0) return 0;  // Batch 156: unwarmed feed guard - see GetEMA21TrailStop
     double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
     if(point <= 0) point = 0.0001;
-    
+
     double buffer = (m_emaBuffer * 0.5) * point;  // Tighter buffer for 8 EMA
     
     if(isBuy)
@@ -263,7 +267,8 @@ double CTrendTrailingStop::GetEMA8TrailStop(bool isBuy)
 double CTrendTrailingStop::GetATRTrailStop(bool isBuy, double highestOrLowest)
 {
     double atr = GetATR(14);
-    
+    if(atr <= 0) return 0;  // Batch 156: unwarmed ATR - a zero-width trail emits invalid stops
+
     if(isBuy)
         return highestOrLowest - (m_atrMultiplier * atr);
     else
@@ -296,10 +301,13 @@ double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
             
         case TRAIL_HYBRID:
             {
-                // Use the better of EMA21 or ATR trailing
+                // Use the better of EMA21 or ATR trailing.
+                // Batch 156: getters now return 0 while unwarmed. MathMax handles a
+                // dead leg for buys, but MathMin for sells would select the 0 - so
+                // the sell side only combines two live stops.
                 double emaSL = GetEMA21TrailStop(tradeInfo.isBuy);
                 double atrSL;
-                
+
                 if(tradeInfo.isBuy)
                 {
                     atrSL = GetATRTrailStop(true, tradeInfo.highestPrice);
@@ -308,7 +316,10 @@ double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
                 else
                 {
                     atrSL = GetATRTrailStop(false, tradeInfo.lowestPrice);
-                    newSL = MathMin(emaSL, atrSL);  // Lower SL for sell
+                    if(emaSL > 0 && atrSL > 0)
+                        newSL = MathMin(emaSL, atrSL);  // Lower SL for sell
+                    else
+                        newSL = (emaSL > 0) ? emaSL : atrSL;
                 }
             }
             break;
@@ -328,7 +339,9 @@ double CTrendTrailingStop::CalculateNewSL(const STradeTrailInfo &tradeInfo)
 //+------------------------------------------------------------------+
 double CTrendTrailingStop::CalculateTrailingStop(STradeTrailInfo &tradeInfo)
 {
-    double lastPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+    // Batch 157: sell positions close at ASK - tracking their extreme off BID
+    // understates adverse excursion by the spread.
+    double lastPrice = SymbolInfoDouble(m_symbol, tradeInfo.isBuy ? SYMBOL_BID : SYMBOL_ASK);
     
     // Update highest/lowest
     if(tradeInfo.isBuy)

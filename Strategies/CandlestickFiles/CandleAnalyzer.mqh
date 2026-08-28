@@ -103,10 +103,16 @@ public:
     {
         double atr[];
         ArraySetAsSeries(atr, true);
-        
-        if(CopyBuffer(m_atrHandle, 0, 0, 1, atr) <= 0)
+
+        // Batch 156: closed bar (shift 1) - patterns are judged on closed
+        // bars, normalizing against the forming bar's partial ATR flipped
+        // range gates early in each bar.
+        if(CopyBuffer(m_atrHandle, 0, 1, 1, atr) <= 0)
             return 0.0;
-        
+
         return atr[0];
     }
+
+    string GetSymbol() const { return m_symbol; }
+    ENUM_TIMEFRAMES GetTimeframe() const { return m_timeframe; }
 };

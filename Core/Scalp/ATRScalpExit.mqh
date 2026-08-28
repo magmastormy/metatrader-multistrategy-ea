@@ -21,12 +21,44 @@
 //+------------------------------------------------------------------+
 class CATRScalpExit
 {
+private:
+   // Batch 152 (S-H-04): tickets that already took their 1R partial. Without
+   // this latch every tick re-closed half of the remaining volume - a geometric
+   // decay into repeated deal fees.
+   static ulong s_partialedTickets[];
+   static int   s_partialedCount;
+
+   static void PrunePartialedLatches()
+   {
+      for(int i = s_partialedCount - 1; i >= 0; i--)
+      {
+         if(!PositionSelectByTicket(s_partialedTickets[i]))
+         {
+            for(int j = i; j < s_partialedCount - 1; j++)
+               s_partialedTickets[j] = s_partialedTickets[j + 1];
+            s_partialedCount--;
+         }
+      }
+   }
+
+   static bool HasTakenPartial(const ulong ticket)
+   {
+      for(int p = 0; p < s_partialedCount; p++)
+      {
+         if(s_partialedTickets[p] == ticket)
+            return true;
+      }
+      return false;
+   }
+
 public:
    //+------------------------------------------------------------------+
    //| Manage open scalp positions: partial close, breakeven, trailing   |
    //+------------------------------------------------------------------+
    static void ManageScalpPositions(const string symbol, CTrade &trade)
    {
+      PrunePartialedLatches();
+
       int total = PositionsTotal();
       int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -67,7 +99,7 @@ public:
          else
             slDistancePoints = MathAbs(currentSL - openPrice) / point;
 
-         // 1. Partial close at 1R profit (50% of position)
+         // 1. Partial close at 1R profit (50% of position) - once per ticket
          if(profitPoints >= slDistancePoints && slDistancePoints > 0.0)
          {
             double minVol  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
@@ -78,10 +110,14 @@ public:
             halfVol = MathFloor((halfVol + 1e-12) / stepVol) * stepVol;
             halfVol = NormalizeDouble(halfVol, 2);
 
-            if(halfVol >= minVol && halfVol < volume)
+            if(!HasTakenPartial(ticket) && halfVol >= minVol && halfVol < volume)
             {
                if(trade.PositionClosePartial(ticket, halfVol))
                {
+                  if(s_partialedCount >= ArraySize(s_partialedTickets))
+                     ArrayResize(s_partialedTickets, s_partialedCount + 16);
+                  s_partialedTickets[s_partialedCount++] = ticket;
+
                   PrintFormat("[ATR-SCALP-PARTIAL] %s | ticket=%I64u | closed=%.2f | profit_pts=%.1f | 1R=%.1f",
                               symbol, ticket, halfVol, profitPoints, slDistancePoints);
                }
@@ -147,5 +183,9 @@ public:
       }
    }
 };
+
+//--- Batch 152 (S-H-04): static latch storage
+ulong CATRScalpExit::s_partialedTickets[];
+int   CATRScalpExit::s_partialedCount = 0;
 
 #endif // CORE_SCALP_ATR_SCALP_EXIT_MQH

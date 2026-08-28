@@ -2,11 +2,11 @@
 
 ## Document Metadata
 
-- Last Updated: 2026-08-11
+- Last Updated: 2026-08-28
 - Last Architecture Sync: 2026-08-11
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 146
+- Current Batch: 158
 
 ## 1. System Goal
 
@@ -67,6 +67,7 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
     - Dormancy tracking now fully encapsulated in `CSymbolScanScheduler` / `CScanSchedulerRegistry`
     - Scalp blacklist tracking now fully encapsulated in `CScanSchedulerRegistry` / `CSymbolStateTracker`
     - `CSignalGenerator` implements dormancy warning logic for signal evaluation
+  - **Batch 150 ownership corrections (2026-08-23)**: `CSignalGenerator` owns per-symbol new-bar gating (`m_lastEvalBar[]`) and stores results by manager index; `CScanSchedulerRegistry::CheckNewBar` is the single bar-rollover authority consumed by `EAOrchestrator::ProcessNewBars`; `CTradeRetcodeClassifier` no longer retries UNKNOWN-state retcodes (TIMEOUT/CONNECTION); `CPosLifecycleExit` owns the once-per-ticket partial-close marker.
   - **Documentation Updates**: Updated `README.md`, `changelogs.md`, `SYSTEM_STRUCTURE.md`, `RUNTIME_DECISION_GRAPH.md`, `SYSTEM_AUDIT_TRACE.md`
   - **Runtime Invariants Preserved**: All 5 AGENTS.md §3 invariants verified
 
@@ -101,6 +102,8 @@ The system prioritizes deterministic control flow, explicit diagnostics, live-ca
 
 - Batch 130 (2026-07-25): Layer 6 Strategy Implementation Logic — All 4 remaining issues resolved (L6-007, L6-008, L6-013, L6-016). Intrabar PROBE mode wired through config chain; participation score update logic implemented in ConsensusEngine; GetQuickProbeSignal() removed from IStrategy and 5 strategies; AIPerformanceFeedback integrated with EnterpriseStrategyManager weight adaptation for AI strategies.
 - Batch 140 (2026-08-05): Phase 4-5 Strategy Duplication Consolidation + God Object Decomposition — `CStrategyBase` expanded with shared helpers (`LogRejectEvent`/`RejectSignal`, `RefreshForNewBar`/`OnRefreshComponents`, `ValidateWithRiskManager`, `LogConsensusDiag`) eliminating ~260 lines of duplicated boilerplate across strategy files. `EAOrchestrator.mqh` decomposed: `SOrchestratorConfig` extracted to `OrchestratorConfig.mqh` (710 lines) and `InitializeStrategyConfigs` extracted to `StrategyConfigBuilder.mqh` (249 lines), reducing EAOrchestrator 5,529 → 4,571 lines (17.3% smaller). Pure structural refactoring, no runtime behavior change.
+
+- Batch 158 (2026-08-28): Signal-suppression audit sweep — unaudited strategy files + ATR handle caching — Final sweep of the signal-suppression audit campaign (Batches 155–157 covered the strategy emission paths and detector/analyzer layer). Fixed: TrendEntryTypes/TrendSignalEnhancers GetATR() forming-bar (shift 0) → closed-bar (shift 1); FourStateRegimeDetector KAMA/trend reads forming bar close → shift 1; StatisticalArbitrageStrategy static array oldest-first read → dynamic array with ArraySetAsSeries; BreakerBlock/FVGScalper/TurtleSoup FX-calibrated SYMBOL_POINT pip conversions → ATR-denominated scale-free (1 ATR = 1 unit); StrategySupportResistance ApplyFibConfluence per-call iATR create/release → cached shared handle via CIndicatorManager. All 7 EAs compile 0 errors / 0 warnings.
 
 ---
 
@@ -394,7 +397,7 @@ There is no legacy default — the semantic scheme is the only scheme.
   - daily/portfolio risk budgeting and drawdown controls
   - mark-to-market aware daily budget enforcement
   - hard veto on unprotected (no-SL) open positions
-  - enforce cluster-aware governance (same-symbol opposing-cluster mutex + per-cluster caps) through `CRiskValidationGate`
+  - enforce cluster-aware governance (same-symbol opposing-cluster mutex + per-cluster caps) through `CRiskValidationPipeline` (Batch 151: the never-instantiated `RiskValidationGate.mqh` duplicate was deleted)
   - split budget telemetry (`entry`, `mtm`, `open_exposure`, `effective`) for operator clarity
   - expose unprotected-position state for runtime remediation workflows
   - executed-risk registration after successful synchronous sends, scaled by actual fill ratio
@@ -404,7 +407,8 @@ There is no legacy default — the semantic scheme is the only scheme.
   - enforce daily P\&L loss limit circuit breaker via `dailyLossLimitPercent`, `CheckDailyLossLimit()`, and `m_dailyLossHaltActive` state
   - reset daily risk counters at configurable `m_tradingDayStartHour` instead of relying on MT5 server day boundary
   - apply rationalized safe defaults: 1% base risk, 5% max per trade, 5% daily, 15% portfolio
-  - maintain a scan-time `CVirtualPositionBook` so cycle-best reservations count against projected daily and portfolio usage before the final execution winner is sent
+  - maintain a scan-time `CVirtualPositionBook` so approved-candidate reservations count against projected daily and portfolio usage and guard against opposing cross-cluster entries (Batch 151: reservations book the provisional request risk, sync to the final adjusted risk via `UpdateVirtualPositionRisk`, and expire after their 60s TTL; previously a zero-risk placeholder made every reservation silently fail)
+  - day-rollover uses pure `TradingDayKey()` comparisons (Batch 151): `CheckDailyLossLimit` no longer mutates `m_lastTradingDayKey` ahead of `CheckAndResetDailyLimits`
   - **Batch 102 family-specific risk overrides:** `SSymbolRiskOverride` struct provides per-family risk and drawdown scaling. CrashBoom: 1.5% risk, 15% drawdown; Volatility: 1.0% risk, 10% drawdown; Step: 0.8% risk, 8% drawdown; Jump: 2.0% risk, 20% drawdown; DEX: 1.5% risk, 15% drawdown. Applied during pre-trade risk validation via `m_riskOverrides[]` array populated from `CDerivAssetProfiler` profiles.
 - **Module 4 Hardening (Batch 85):**
   - Safe default risk limits (2% per trade, 6% daily, 10% portfolio) when config values are invalid
@@ -429,6 +433,13 @@ There is no legacy default — the semantic scheme is the only scheme.
   - emergency-aware protective modification flow
   - expose execution receipt status (`requestId`, retcode, requested/fill volume, request/fill price, slippage points, round-trip latency, retry count, avg fill price) for post-send handling
   - check market hours before position closure/modification (blocks only when `SYMBOL_TRADE_MODE_DISABLED`, allows `SYMBOL_TRADE_MODE_CLOSEONLY`)
+- **Batch 152 magic-send authority:** `CTradeManager::OpenPosition(magicNumber>0)` records the caller's ABSOLUTE magic in `m_pendingExplicitMagic`, and the actual send (`ExecuteMarketOrder` via `GetSymbolTrade`) ships it verbatim; callers passing 0 derive base+symbol-offset as before. SpikeHunter's precomputed absolute magics therefore land inside `IsEAOwnedMagic` instead of being double-offset out of range. The async path enforces the same mandatory-SL invariant as the sync path (`[EXECUTION-BLOCKED] reason=MandatoryStopLoss | path=async`).
+- **Batch 152 ownership checks:** manual-close restore gates in both EAs use `IsEAOwnedMagic()` (the previous `(int)(magic/100)` arithmetic matched no EA-owned ticket); scalp deal confirms flow from `OnTradeTransaction` -> `ProcessScalpDealConfirmed`.
+- **Batch 153 telemetry + lifecycle hygiene:** the orchestrator scan loop now writes the heartbeat funnel counters (`IncScansAttempted` per symbol slot, `IncNoSignalCount` on generator-empty slots, `IncValidatorRejects` on failed post-consensus validation) — `[HEARTBEAT] scans/no_signal/validator_reject` and the status report's `Scans=` field were previously hard-zero because no writer existed. Trade attribution splits the contributor CSV via `CTradeAttributionManager::SplitContributors()` (previously stored as one malformed name). `CleanupOnInitFailure()` mirrors `Shutdown()`'s release sequence (math hub, EA-owned sizing modifiers, neural nets, drawing managers, Deriv-engine deinits, TradeManager deinit, scalp cache, uncertainty, error-handler singleton) so a late init failure no longer leaks objects with live indicator handles. Dead zero-caller code removed: `CErrorHandling` wrapper class, five dead `CPositionManager`/StateStore position-state methods, two dead `CSignalGenerator` methods. The strategy performance feedback loop (`CEnterpriseStrategyManager::OnTradeTransaction` chain, `CPerformanceAnalytics::RecordClosedTrade`, loss-guard trade accounting) remains unwired by explicit product decision — see SYSTEM_AUDIT_TRACE.md.
+- **Batch 154 closed-trade feedback loop (live):** both EAs route `OnTradeTransaction` into `EAOrchestrator::ProcessManagerTradeTransactions`: (1) fan-out to every symbol manager so attribution pop / per-strategy `UpdatePerformance` / health monitor / governance disable write-through run; (2) on full closes of EA-owned positions (`POSITION_IDENTIFIER` re-check excludes partial closes) feed `CPerformanceAnalytics::RecordClosedTrade`, `CPositionManager::RecordClosedTrade` and `CLiveAuthorityResolver::RecordOutcome` via an execution-time provenance map (position id → contributor summary + owning manager). AI-contributed candidates can now promote to PROVEN_AI (≥0.75× risk after 30 tracked trades with expectancyR ≥0.3 / PF ≥1.2); the bootstrap cap is unchanged for unproven AI. Prerequisite repairs: health-monitor re-enable predicate accepts cooldown-served recovery with a rolling-sample reset (post-disable wins were unreachable), and an orchestrator-owned 60s governance sweep in `ProcessTradingLogic` runs disable/re-enable independent of AI mode. Legacy Deriv engines remain parked with explicit `PARKED:` init logging; VPIN/institutional layer stays documented-dormant.
+- **Batch 155 strategy emission-path repairs (signal-suppression bugs, 9 files):** series-ordering corruption fixed where static (non-series) buffers filled OLDEST-first but were read as newest-first — `VolatilityBreakout.ADXRising()` was inverted (required ADX falling), `SimpleMomentum` MACD/volume/ROC/divergence/hysteresis reads reversed, `MeanReversion` divergence window + synthetic-mode bands stale by two bars, `MultiEMASystem` EMA/ADX buffers reverse-mapped to `[k]=shift k+1` (the entire StrategyTrend trend state ran nine bars stale), and `StrategyTrend.MACDConfirmed` now/prev un-swapped. Scale fixes: Momentum's FX-scale absolute ATR floor capped at 1bp of price and its volatility confidence tax re-anchored to the symbol's own 10-bar ATR average; TrendEntryTypes pullback tolerance widens to 0.25×ATR (was 15 POINTS ≈ 1.5 pips). Confidence-economics: MeanReversion RSI-only/BB-touch tiers rebased so they clear the 0.60 floor (hierarchy preserved); LiquiditySweep daily high/low sweeps get a level bonus (+0.10) and stops sit beyond the swept wick extreme instead of inside it. Wiring: the orchestrator dependency pass injects the Python bridge into Statistical Arbitrage (catalog path never did — registered-but-permanently-mute). Robustness: AsianRangeBreak uses exact=false bar lookup and sqrt-of-time-scaled expected range (6h M5 window vs per-bar chart-TF ATR was unsatisfiable on M1/M5, vacuous on H4/D1); NYOpenGap/AsianRangeBreak synthetic skips use the full `IsSyntheticIndexSymbolName` umbrella; RangeCompression reads closed bars only and exempts counter-trend FADE entries from the momentum-only trend filter. Consensus quorum, risk gates and per-strategy quality floors untouched; Turtle Soup/Breaker Block/FVG conjunctive scarcity documented as design, not defect.
+- **Batch 156 detector-layer repairs (helpers feeding the strategies):** same defect classes audited one layer below the strategies. Chronology: `TrendlineDetector` pair-anchor inversion fixed (p1/p2 were assigned newest/oldest then required p1 older — zero trendlines ever built) and `NormalizeSlope` is ATR-relative (pip-based angles saturated past the ±70° gate on synthetics); `AdvancedOrderBlocks` Source-OB walk breaks on the first match closest to the impulse start (was keeping the oldest candle in a 20-bar window — mis-anchored zones every scan). Closed-bar state: SR bounce/trendline-bounce rejection reads, `DetectBreakout` (+1bp-of-price tolerance floor), OB `CheckMitigation`, FVG `CheckRebalance` (fillPercent keeps deepest penetration), session-gap `UpdateFillStatus`, and `HasStructureBreak` all ignore the forming bar — no more intrabar latching of permanent state or per-tick structure-flag flips feeding FVG/TurtleSoup/BreakerBlock confluence bonuses. Starved paths: `DetectExternalSwingLiquidity` per-side budgets (sell-side pools were structurally never emitted), `DetectBMS` PeriodSeconds classification (H2–H12 fell through every enum branch → permanent BMS_NONE), NDOG/NWOG fail closed without ATR (5/10-point fallback manufactured phantom gaps). Scale/candle chain: engulfing tolerance uses the analyzed symbol's point+ATR (was chart `_Point`), AOB key-level tolerance ATR-floored (20×point ≈ 0.2 absolute on synthetics), pin-bar zero-body squeeze fix + fail-closed ATR gates (pin/doji/hammer), hammer/star merged with prior-trend context split and dominant-wick scoring, CandleAnalyzer shift-1 ATR + symbol accessors, StrategyCandlestick 8-site 50/50 strength/confluence blend with ATR-floored SL padding. Shared feeds: `ADXPositionSizing` no longer `IndicatorRelease()`s the manager-owned shared ADX handle (re-init permanently killed the Trend stack's ADX feed); `TrendTrailingStop` unwarmed-feed guards return "no trail" and TRAIL_HYBRID's sell side combines only live stops (a ~0 stop previously won MathMin selection).
+- **Batch 157 scout-findings sweep closure:** every remaining audit finding sorted. `LiquidityDetector`: equal-highs/lows tolerance floored at 0.2bp of price at all three sites (`equalTolerancePips` was multiplied by raw POINT — detection effectively dead outside FX), sweep-confidence penetration normalized by the sweep bar's range, `IsAtPsychologicalLevel` gains a magnitude-based round grid for non-FX digits. `AdvancedOrderBlocks`: breaker windows exclude the forming bar, vacuum-block volume gate relaxed to <65% of average (was <30% on a ≥1.5×ATR range bar — practically unreachable), and all iATR create/release churn (GetATRValue + two inline Source-OB copies) replaced with shared CIndicatorManager handles; SessionGapDetector::GetATR likewise. `MarketStructureAnalyzer`: DetectFastCHOCH/DetectWickBOS/DetectCISDDisplacement judge closed bars (FVGScalper/AsianRangeBreak confidence bonuses were flip-flopping tick-by-tick). `TrendTrailingStop`: sell extremes tracked off ASK. Re-adjudicated with evidence, no change: the reported min-lot clamp-up does not exist; the roleReversed copy-set is an inert no-op (the real defect — HasRoleReversed's own 10-point match tolerance, dead on synthetics — is now 1bp-of-price floored).
 - **Batch 87 Module 5 Execution Hardening:**
   - Dynamic slippage adjustment based on ATR volatility (configurable percentage, min/max bounds)
   - Order fill mode selection based on spread and volatility conditions (IOC vs FOK)
@@ -607,6 +618,7 @@ There is no legacy default — the semantic scheme is the only scheme.
   - `OnTimer()` retains full consensus logic (pipeline → manager → validator → risk → execution)
   - Scalp fast path reads from `CScalpSignalCache` for zero-computation indicator access
   - Scalp entries still pass through `CUnifiedRiskManager` pre-trade gating (AGENTS.md invariant #1 preserved)
+  - **Batch 152 fast-path completion:** the fast path refreshes its own cache (`UpdateOnNewBar` + `UpdateTickValues`, self-throttled to new bars) at head and runs the full management set per tick (`SyncScalpPositionTracking / ManageScalpPositions / CheckPendingAsyncOrders / CheckPendingScalpOrders`); async fills confirm via `OnTradeTransaction` -> `ProcessScalpDealConfirmed`. ATR-scalp partial-profit is ticket-latched (one partial per position lifetime, latch pruned on close); same-bar EMA-cross re-entries are locked out per symbol; grid-recovery activation floor baselines on ACCOUNT_BALANCE (was equity-vs-equity, never failed).
 
 ### 2.18 Risk Enhancement domain (Batch 97)
 
@@ -621,6 +633,15 @@ There is no legacy default — the semantic scheme is the only scheme.
   - Unified correlation: `SetCorrelationEngine()` delegates to `CCorrelationEngine` instead of internal Pearson
   - Conditional logging: `m_logLevel` + `SetLogLevel()` gates `LogSizingDecision()` output
   - **Batch 98 stateless refactor**: `CalculateSize()` is now truly stateless via `CalculateOptimalPositionSizeCore()` — the save/restore hack on `m_lots` has been removed; callers receive the computed size without side effects on internal state
+- **Batch 152 sizing/risk-math corrections:**
+  - `CPositionSizer::CalculateRiskPerLot` uses the execution pip convention (`stopLossPips * point`, no ×10): fixed-risk lots now match actual stop geometry — LIVE-BEHAVIOR CHANGE, sizes move ~10x toward configured risk
+  - `NormalizeLot` floors to whole `SYMBOL_VOLUME_STEP`s with 8-digit cleanup (no trailing 2dp re-rounding)
+  - `CADXLotModifier` tracks handle provenance (`m_handleOwned`): shared `CIndicatorManager` handles are never released; only fallback-created ones are
+  - `CVolatilityTargetingModifier` anchors volatility ATR to `PERIOD_D1` (chart-TF-independent; annualization assumes daily vol)
+  - `CRiskSymbolStats` computes win-rate + profit-factor in one pass, memoized per symbol behind a 60s TTL (full-history `HistorySelect(0,...)` scans eliminated from the per-symbol budget refresh)
+  - `CUnifiedRiskManager::CalculatePositionRiskPercent` converts tickValue per-tick via `point/tickSize` (symbols where tickSize≠point)
+  - `CCorrelationEngine::GetCorrelation` pins both query symbols across the internal refresh so `PruneStaleSymbols` cannot drop/shift a fresh candidate mid-query
+  - `CRiskAdaptiveTuner` may only RAISE conservative mode; escalation/clear ownership belongs to the circuit breaker's bool& write-backs
 
 ### 2.19 Strategy Intelligence domain (Batch 97)
 
@@ -674,6 +695,7 @@ There is no legacy default — the semantic scheme is the only scheme.
   - 100-trade lookback window for historical tail-risk estimation
   - `IsCVaRLimitExceeded()` gate blocks new entries when portfolio tail risk exceeds threshold
   - Integrates with `CUnifiedRiskManager` as an additional pre-trade veto check
+  - Batch 151 wiring (flagged-item closure): `CUnifiedRiskManager::RefreshRuntimeState()` feeds the minute-gated `UpdateEquityCurve()` sampler; `CRiskValidationPipeline` vets proposed risk (as a fraction) against the gate before final approval and releases the virtual reservation on reject. Arms only after 20 equity samples (~20 minutes uptime).
 
 ### 2.23 Async Trade Executor domain (Batch 99)
 

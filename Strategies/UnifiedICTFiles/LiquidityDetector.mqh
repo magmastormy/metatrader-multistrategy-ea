@@ -209,7 +209,12 @@ void CLiquidityDetector::Update()
 //+------------------------------------------------------------------+
 void CLiquidityDetector::DetectEqualHighsLows(int lookback)
 {
-    double tolerance = m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+    // Batch 157: the "pips" tolerance was multiplied by raw POINT (half a tick on
+    // FX, 0.05 absolute on synthetics priced in thousands) - equal highs/lows were
+    // effectively dead outside FX. Floor at 0.2bp of price so the band scales with
+    // instrument value; FX behavior is preserved (points term still dominates there).
+    double tolerance = MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT),
+                               SymbolInfoDouble(m_symbol, SYMBOL_BID) * 0.00002);
     
     double high[], low[];
     datetime time[];
@@ -645,7 +650,12 @@ bool CLiquidityDetector::DetectTurtleSoup(STurtleSoupSignal &signal, const int m
                 signal.sweepPrice = high;
                 signal.reclaimClose = close;
                 signal.eventTime = iTime(m_symbol, m_timeframe, shift);
-                signal.confidence = MathMin(0.95, 0.60 + pool.strength * 0.25 + ((high - pool.price) / (10.0 * point)) * 0.05);
+                // Batch 157: penetration normalized by the sweep bar's own range
+                // (scale-free) - the old points-based term saturated instantly on
+                // synthetics and carried zero discrimination.
+                double barRange = high - low;
+                double penTerm = (barRange > 0.0) ? ((high - pool.price) / barRange) * 0.05 : 0.0;
+                signal.confidence = MathMin(0.95, 0.60 + pool.strength * 0.25 + penTerm);
                 return true;
             }
 
@@ -657,7 +667,9 @@ bool CLiquidityDetector::DetectTurtleSoup(STurtleSoupSignal &signal, const int m
                 signal.sweepPrice = low;
                 signal.reclaimClose = close;
                 signal.eventTime = iTime(m_symbol, m_timeframe, shift);
-                signal.confidence = MathMin(0.95, 0.60 + pool.strength * 0.25 + ((pool.price - low) / (10.0 * point)) * 0.05);
+                double barRange2 = high - low;
+                double penTerm2 = (barRange2 > 0.0) ? ((pool.price - low) / barRange2) * 0.05 : 0.0;  // Batch 157: scale-free, see above
+                signal.confidence = MathMin(0.95, 0.60 + pool.strength * 0.25 + penTerm2);
                 return true;
             }
         }
@@ -699,18 +711,30 @@ double CLiquidityDetector::CalculateLiquidityStrength(int bar1, int bar2)
 //+------------------------------------------------------------------+
 bool CLiquidityDetector::IsAtPsychologicalLevel(double price)
 {
+    if(price <= 0) return false;
+
     int digits = (int)SymbolInfoInteger(m_symbol, SYMBOL_DIGITS);
-    
+
+    // Batch 157: digits==2 synthetics never earned the bonus before (only the
+    // FX branches returned true). Keep the FX grids and add a magnitude-based
+    // round-number grid for everything else.
     if(digits == 5 || digits == 3)
     {
         double normalized = MathRound(price * 10000) / 10000;
         double fraction = normalized - MathFloor(normalized);
-        
+
         if(MathAbs(fraction - 0.0000) < 0.0002) return true;
         if(MathAbs(fraction - 0.0050) < 0.0002) return true;
+        return false;
     }
-    
-    return false;
+
+    // Generic round grid one order of magnitude below the price itself
+    // (e.g. price ~50,000 -> levels every 1,000; tolerance ~0.2% of grid).
+    double grid = MathPow(10.0, MathFloor(MathLog10(price)) - 1.0);
+    if(grid <= 0) return false;
+
+    double nearest = MathRound(price / grid) * grid;
+    return MathAbs(price - nearest) < grid * 0.002;
 }
 
 //+------------------------------------------------------------------+
@@ -834,9 +858,13 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
 {
     ArrayResize(pools, 0);
     int found = 0;
+    // Batch 156: per-side budgets - the shared counter let the swing-high pass
+    // consume every slot, so sell-side pools were never emitted.
+    int maxPerSide = MathMax(1, maxPools / 2);
+    int foundHighs = 0;
 
     // Scan for swing highs (external buy-side liquidity)
-    for(int i = 2; i < lookback - 2 && found < maxPools; i++)
+    for(int i = 2; i < lookback - 2 && foundHighs < maxPerSide; i++)
     {
         double h = iHigh(m_symbol, m_timeframe, i);
         double hLeft = iHigh(m_symbol, m_timeframe, i + 1);
@@ -860,7 +888,7 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
             for(int j = i + 2; j < MathMin(i + 20, lookback - 2); j++)
             {
                 double h2 = iHigh(m_symbol, m_timeframe, j);
-                if(h2 > 0 && MathAbs(h2 - h) < m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT))
+                if(h2 > 0 && MathAbs(h2 - h) < MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT), h * 0.00002))  // Batch 157: scale-free floor
                 {
                     pool.strength = MathMin(1.0, pool.strength + 0.15);
                     break;
@@ -870,11 +898,12 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
             ArrayResize(pools, found + 1);
             pools[found] = pool;
             found++;
+            foundHighs++;
         }
     }
 
     // Scan for swing lows (external sell-side liquidity)
-    for(int i = 2; i < lookback - 2 && found < maxPools; i++)
+    for(int i = 2; i < lookback - 2 && found - foundHighs < maxPerSide; i++)
     {
         double l = iLow(m_symbol, m_timeframe, i);
         double lLeft = iLow(m_symbol, m_timeframe, i + 1);
@@ -895,7 +924,7 @@ int CLiquidityDetector::DetectExternalSwingLiquidity(SExternalLiquidityPool &poo
             for(int j = i + 2; j < MathMin(i + 20, lookback - 2); j++)
             {
                 double l2 = iLow(m_symbol, m_timeframe, j);
-                if(l2 > 0 && MathAbs(l2 - l) < m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT))
+                if(l2 > 0 && MathAbs(l2 - l) < MathMax(m_equalTolerance * SymbolInfoDouble(m_symbol, SYMBOL_POINT), l * 0.00002))  // Batch 157: scale-free floor
                 {
                     pool.strength = MathMin(1.0, pool.strength + 0.15);
                     break;

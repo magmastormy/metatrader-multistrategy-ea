@@ -74,6 +74,14 @@ public:
         m_validationCount++;
     }
 
+    //--- Batch 152: rejection counterpart - m_rejectedCount existed but had no
+    //--- writer, so rejection telemetry always read zero.
+    void RecordRejection()
+    {
+        m_rejectedCount++;
+        m_validationCount++;
+    }
+
     //--- Aggregated stats (original CUnifiedRiskManager::GetValidationStats).
     void GetStats(int &total, int &approved, int &rejected, double &approvalRate)
     {

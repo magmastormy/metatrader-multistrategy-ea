@@ -649,11 +649,16 @@ bool CSupportResistanceDetector::IsAtResistanceLevel(double price, double tolera
 //+------------------------------------------------------------------+
 bool CSupportResistanceDetector::DetectBreakout(double price, int &brokenLevelIndex)
 {
-    double tolerance = 5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    
+    // Batch 156: scale-free floor - 5*point is ~0.05 absolute on synthetics, so
+    // noise wicks could permanently consume levels; 1bp of price keeps it sane
+    // on FX (≈0.5 pip) and synthetics alike.
+    double tolerance = MathMax(5 * SymbolInfoDouble(m_symbol, SYMBOL_POINT), price * 0.0001);
+
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    if(CopyRates(m_symbol, m_timeframe, 0, 3, rates) < 3)
+    // Batch 156: closed bars only - rates[0] was the forming bar, letting an
+    // intrabar transient mark m_levels[].isBroken permanently.
+    if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) < 3)
         return false;
     
     for(int i = 0; i < m_levelCount; i++)
@@ -697,8 +702,10 @@ bool CSupportResistanceDetector::HasRoleReversed(double price)
     {
         if(m_levels[i].isBroken && !m_levels[i].roleReversed)
         {
-            double tolerance = 10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-            
+            // Batch 157: scale-free floor - 10*point (~0.1 absolute on synthetics)
+            // meant price crossing a broken level could never register.
+            double tolerance = MathMax(10 * SymbolInfoDouble(m_symbol, SYMBOL_POINT), price * 0.0001);
+
             if(MathAbs(price - m_levels[i].price) < tolerance)
             {
                 m_levels[i].roleReversed = true;

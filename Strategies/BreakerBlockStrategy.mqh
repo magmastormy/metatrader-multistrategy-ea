@@ -212,54 +212,44 @@ public:
 
         // --- Step 8: Calculate SL/TP ---
         // SL beyond breaker boundary + 0.5*ATR, TP at 2R
+        // Batch 158: use ATR directly (scale-free) instead of SYMBOL_POINT pips
+        // which are FX-calibrated and break on Deriv synthetics (point=0.01, prices in 1000s).
         double atr = m_structureAnalyzer.GetATR(14);
-        double slPrice;
-        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+        double slPrice, tpPrice, slDistance;
 
         if(bullish)
         {
             // For BUY: SL below breaker bottom - 0.5*ATR
             slPrice = bestOB.bottom - 0.5 * atr;
-            double slDistance = MathAbs(currentPrice - slPrice);
-            double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
-            double tpPips = slPips * 2.0;  // 2R
-
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = ORDER_TYPE_BUY;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = slPips;
-            request.takeProfitPips = tpPips;
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
-
-            SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
-            if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
-                return TRADE_SIGNAL_NONE;
+            slDistance = MathAbs(currentPrice - slPrice);
+            tpPrice = currentPrice + 2.0 * slDistance;  // 2R
         }
         else
         {
             // For SELL: SL above breaker top + 0.5*ATR
             slPrice = bestOB.top + 0.5 * atr;
-            double slDistance = MathAbs(slPrice - currentPrice);
-            double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
-            double tpPips = slPips * 2.0;  // 2R
-
-            STradeValidationRequest request;
-            request.symbol = m_symbol;
-            request.orderType = ORDER_TYPE_SELL;
-            request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
-            request.stopLossPips = slPips;
-            request.takeProfitPips = tpPips;
-            request.confidence = confidence;
-            request.strategy = GetName();
-            request.clusterCode = "";
-
-            SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
-            if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
-                return TRADE_SIGNAL_NONE;
+            slDistance = MathAbs(slPrice - currentPrice);
+            tpPrice = currentPrice - 2.0 * slDistance;  // 2R
         }
+
+        // Convert to pips using scale-free ATR denominator (1 ATR = 1 unit)
+        // Risk manager expects pips; we feed ATR-multiple so it scales correctly on all symbols.
+        double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
+        double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
+
+        STradeValidationRequest request;
+        request.symbol = m_symbol;
+        request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+        request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
+        request.stopLossPips = slPips;
+        request.takeProfitPips = tpPips;
+        request.confidence = confidence;
+        request.strategy = GetName();
+        request.clusterCode = "";
+
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
+            return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullish ? "BREAKER_SIGNAL_BUY" : "BREAKER_SIGNAL_SELL");
         RecordSignal();

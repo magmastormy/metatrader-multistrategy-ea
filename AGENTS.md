@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-07-01
+- Last Updated: 2026-08-28
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 109 - Enterprise Coding Standards + Codebase Compliance
+- Latest Batch: Batch 158 - Signal-suppression audit sweep (unaudited strategy files + ATR handle caching)
 
 ## 1. Mission
 Maintain and evolve `metatrader-multistrategy-ea` with production-safe discipline:

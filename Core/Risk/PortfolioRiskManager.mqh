@@ -50,7 +50,11 @@ private:
         double   perSymbolRisk[];        // Per-symbol risk % (dynamic array)
         string   perSymbolName[];        // Symbol names corresponding to perSymbolRisk
         datetime lastFullRefresh;        // Last time full refresh was done
-        int      positionCount;          // Number of positions at last refresh
+        int      positionCount;          // Risk-bearing positions at last refresh (SL-protected only)
+        int      rawPositionCount;       // Batch 151: PositionsTotal() snapshot - the staleness probe
+                                          // must compare like with like, positionCount excludes
+                                          // positions without computable risk and would force a
+                                          // full rescan on every call while any SL-less position exists
         bool     isValid;                // Whether cache is valid
                 int      version;                // Version counter for race condition prevention (L5-006)
     };
@@ -70,6 +74,7 @@ private:
     int    m_maxEquityCurveHistory;  // Max history size for equity curve
     int    m_equityCurveReturnCount;
     double m_lastEquity;
+    datetime m_lastEquitySampleTime; // Batch 151: sampling throttle for UpdateEquityCurve
     bool   m_useEquityCurveForCVaR;
 
     // L5-016: Configurable asset class correlation thresholds
@@ -164,6 +169,7 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_maxEquityCurveHistory(500),
     m_equityCurveReturnCount(0),
     m_lastEquity(0.0),
+    m_lastEquitySampleTime(0),
     m_useEquityCurveForCVaR(true),
     m_assetClassCorrThreshold(0.85),
     m_crossAssetCorrThreshold(0.7)
@@ -171,6 +177,7 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     m_riskCache.totalRiskPct = 0.0;
     m_riskCache.lastFullRefresh = 0;
     m_riskCache.positionCount = 0;
+    m_riskCache.rawPositionCount = 0;
     m_riskCache.isValid = false;
     ArrayResize(m_riskCache.perSymbolRisk, 0);
     ArrayResize(m_riskCache.perSymbolName, 0);
@@ -218,6 +225,7 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     m_riskCache.totalRiskPct = 0.0;
     m_riskCache.lastFullRefresh = 0;
     m_riskCache.positionCount = 0;
+    m_riskCache.rawPositionCount = 0;
     m_riskCache.isValid = false;
     ArrayResize(m_riskCache.perSymbolRisk, 0);
     ArrayResize(m_riskCache.perSymbolName, 0);
@@ -239,7 +247,7 @@ double CPortfolioRiskManager::GetPortfolioRisk()
     // Check if cache needs refresh
         if(!m_riskCache.isValid ||
            (int)(TimeCurrent() - m_riskCache.lastFullRefresh) > m_cacheRefreshIntervalSec ||
-           PositionsTotal() != m_riskCache.positionCount)
+           PositionsTotal() != m_riskCache.rawPositionCount)
     {
         // L5-006 FIX: Double-checked locking with version counter
         // Read version before refresh
@@ -652,6 +660,7 @@ void CPortfolioRiskManager::RefreshRiskCache()
     }
 
     m_riskCache.lastFullRefresh = TimeCurrent();
+    m_riskCache.rawPositionCount = PositionsTotal();
         m_riskCache.isValid = true;
         m_riskCache.version++; // Increment again to mark completion
     }
@@ -787,8 +796,10 @@ double CPortfolioRiskManager::GetEffectiveCorrelationThreshold(string symbol1, s
 //+------------------------------------------------------------------+
 void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
 {
+    // Batch 151: this buffer is m_maxEquityCurveHistory-sized (500); the old
+    // m_maxReturnHistory cap (100) silently truncated it to a quarter capacity.
     // Circular buffer: overwrite oldest entry when full
-    if(m_equityCurveReturnCount < m_maxReturnHistory)
+    if(m_equityCurveReturnCount < m_maxEquityCurveHistory)
     {
         m_equityCurveReturns[m_equityCurveReturnCount] = equityPercentChange;
         m_equityCurveReturnCount++;
@@ -796,9 +807,9 @@ void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
     else
     {
         // Shift left and append at end (oldest discarded)
-        for(int i = 0; i < m_maxReturnHistory - 1; i++)
+        for(int i = 0; i < m_maxEquityCurveHistory - 1; i++)
             m_equityCurveReturns[i] = m_equityCurveReturns[i + 1];
-        m_equityCurveReturns[m_maxReturnHistory - 1] = equityPercentChange;
+        m_equityCurveReturns[m_maxEquityCurveHistory - 1] = equityPercentChange;
     }
 
     PrintFormat("[CVAR-EQUITY] Equity curve return recorded: %.4f (total samples: %d)", 
@@ -810,10 +821,19 @@ void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
 //+------------------------------------------------------------------+
 void CPortfolioRiskManager::UpdateEquityCurve()
 {
+    // Batch 151: the caller (URM::RefreshRuntimeState) runs per cycle, so
+    // sampling is minute-throttled here - the rolling window then holds
+    // minute-scale returns instead of tick noise (and RecordEquityCurveReturn
+    // logs unconditionally, so unthrottled calls would spam).
+    datetime nowTime = TimeCurrent();
+    if(m_lastEquitySampleTime > 0 && nowTime - m_lastEquitySampleTime < 60)
+        return;
+    m_lastEquitySampleTime = nowTime;
+
     double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     if(currentEquity <= 0.0)
         return;
-    
+
     if(m_lastEquity > 0.0)
     {
         double equityChange = (currentEquity - m_lastEquity) / m_lastEquity;
@@ -829,25 +849,19 @@ void CPortfolioRiskManager::UpdateEquityCurve()
 double CPortfolioRiskManager::CalculateCVaR(double confidence) const
 {
     // Use equity curve returns for CVaR (L5-015)
-    int count = m_equityCurveReturnCount;
+    // Batch 151: pick the copy source once - the old inline test re-checked
+    // m_equityCurveReturnCount after 'count' had already fallen back to trade
+    // returns, reading uninitialized slots when mixing sources
+    bool useEquityCurve = (m_equityCurveReturnCount >= 2);
+    int count = useEquityCurve ? m_equityCurveReturnCount : m_returnCount;
     if(count < 2)
-    {
-        // Fallback to trade returns if no equity curve data
-        count = m_returnCount;
-        if(count < 2)
-            return 0.0;
-    }
+        return 0.0;
 
     // Copy returns to a local array for sorting (const method cannot modify members)
     double sortedReturns[];
     ArrayResize(sortedReturns, count);
     for(int i = 0; i < count; i++)
-    {
-        if(m_equityCurveReturnCount > 0)
-            sortedReturns[i] = m_equityCurveReturns[i];
-        else
-            sortedReturns[i] = m_tradeReturns[i];
-    }
+        sortedReturns[i] = useEquityCurve ? m_equityCurveReturns[i] : m_tradeReturns[i];
 
     // Sort ascending — worst returns first
     ArraySort(sortedReturns);
@@ -873,7 +887,10 @@ double CPortfolioRiskManager::CalculateCVaR(double confidence) const
 bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
 {
     // Not enough data to make a reliable CVaR estimate — don't block
-    if(m_returnCount < 20)
+    // Batch 151: guard the data source actually used (equity curve). The old
+    // m_returnCount check tested the never-populated trade-return buffer, so
+    // the limit could never arm.
+    if(m_equityCurveReturnCount < 20)
         return false;
 
     double cvar = CalculateCVaR(m_cvarConfidence);
@@ -881,13 +898,22 @@ bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
 
     if(absCvar + proposedRiskPct > m_cvarMaxRisk)
     {
-        PrintFormat("[CVAR-CHECK] CVaR=%.2f%% + proposed=%.2f%% vs limit=%.2f%% → BLOCKED",
+        // Batch 152: every denial is a live veto - always logged. The ALLOW line is
+        // throttled to once per minute; it fired per validated trade once the gate
+        // went live and drowned the log.
+        PrintFormat("[CVAR-CHECK] CVaR=%.2f%% + proposed=%.2f%% vs limit=%.2f%% → DENIED",
                     absCvar * 100.0, proposedRiskPct * 100.0, m_cvarMaxRisk * 100.0);
         return true;
     }
 
-    PrintFormat("[CVAR-CHECK] CVaR=%.2f%% + proposed=%.2f%% vs limit=%.2f%% → ALLOWED",
-                absCvar * 100.0, proposedRiskPct * 100.0, m_cvarMaxRisk * 100.0);
+    static datetime s_lastAllowedLog = 0;
+    datetime nowTime = TimeCurrent();
+    if(nowTime - s_lastAllowedLog >= 60)
+    {
+        PrintFormat("[CVAR-CHECK] CVaR=%.2f%% + proposed=%.2f%% vs limit=%.2f%% → ALLOWED",
+                    absCvar * 100.0, proposedRiskPct * 100.0, m_cvarMaxRisk * 100.0);
+        s_lastAllowedLog = nowTime;
+    }
     return false;
 }
 

@@ -270,6 +270,18 @@ class CEAOrchestrator
     int      m_consecutiveZeroSignalCycles;
     int      m_zeroSignalFallbackThreshold;
 
+    // Batch 154: provenance of AI-contributed executed trades, keyed by open
+    // position id. Fed when the position fully closes into
+    // CLiveAuthorityResolver::RecordOutcome so PROVEN_AI promotion accumulates
+    // evidence (the resolver's 30-trade/expectancy gate was unreachable because
+    // RecordOutcome had zero callers). Parallel arrays: MQL5 forbids dynamic
+    // arrays of structs that themselves contain arrays.
+    ulong    m_execProvPositionIds[];
+    int      m_execProvManagerIdx[];
+    string   m_execProvContributorCsv[];
+    string   m_execProvIndicesCsv[];
+    int      m_execProvCount;
+
     // Diagnostics logger (Blueprint 3.6: off-journal logging)
     // RETAINED (Phase B-1): no LogXxx()/WriteToFile() calls exist, but InitializeEx()
     // opens "MultiStrategyEA_diagnostics.log" and emits [DIAG-LOGGER] journal lines,
@@ -325,6 +337,7 @@ class CEAOrchestrator
         // Phase F: the six profit-target initialisers moved verbatim into the
         // COrchestratorProfitGuard constructor (m_profitGuard is a by-value member).
         m_lastTradeTime(0), m_scanCycleSequence(0), m_cyclesSinceIndicatorSignal(0),
+    m_execProvCount(0),
         m_hybridGateRelaxed(false), m_callCount(0),
         m_currentRegime(MARKET_REGIME_UNKNOWN),
         m_totalActivePositions(0),
@@ -468,11 +481,54 @@ class CEAOrchestrator
 // L7-018: Cleanup helper for init failure paths
 void CleanupOnInitFailure()
 {
+    // Batch 153: mirror the resource releases Shutdown() performs. Init can
+    // fail AFTER the EA-owned modifiers, math engines, scalp cache and neural
+    // nets were created (e.g. WireAndValidateDependencies failure) - those
+    // objects and their indicator handles previously survived a failed init.
+
+    // Cleanup mathematical / institutional engines
+    m_mathEngineHub.ReleaseAll();
+
+    // EA-owned position-sizing modifiers (PositionSizer holds non-owning refs)
+    if(m_positionSizer.IsInitialized())
+        m_positionSizer.ClearModifiers();
+    if(m_bayesianKellyModifier != NULL) { delete m_bayesianKellyModifier; m_bayesianKellyModifier = NULL; }
+    if(m_equityCurveLotModifier != NULL) { delete m_equityCurveLotModifier; m_equityCurveLotModifier = NULL; }
+    if(m_adxModifier != NULL) { delete m_adxModifier; m_adxModifier = NULL; }
+    if(m_equityCurveManager != NULL) { delete m_equityCurveManager; m_equityCurveManager = NULL; }
+
+    // Neural net strategies
+    for(int i = 0; i < ArraySize(m_neuralNetStrategies); i++)
+    {
+        if(m_neuralNetStrategies[i] != NULL) { delete m_neuralNetStrategies[i]; m_neuralNetStrategies[i] = NULL; }
+    }
+    ArrayResize(m_neuralNetStrategies, 0);
+    ArrayResize(m_neuralNetStrategySymbols, 0);
+
+    // Drawing managers
+    for(int i = 0; i < ArraySize(m_drawingManagers); i++)
+    {
+        if(m_drawingManagers[i] != NULL) { delete m_drawingManagers[i]; m_drawingManagers[i] = NULL; }
+    }
+    ArrayResize(m_drawingManagers, 0);
+    ArrayResize(m_drawingManagerSymbols, 0);
+
+    // Deriv engines + async trade persistence + scalp cache
+    m_spikeHunter.Deinit();
+    m_gridRecovery.Deinit();
+    m_atrScalping.Deinit();
+    m_tradeManager.Deinit();
+    m_scalpCache.Cleanup();
+    UncertaintyDeinit();
+
     // Cleanup registry aggregator (which owns strategy registry and other sub-registries)
     m_registryAggregator.Deinitialize();
 
     // Cleanup AI subsystems
     CleanupAISubsystems();
+
+    // Destroy error handler singleton
+    CEnhancedErrorHandler::DestroyInstance();
 
     // Cleanup Python Bridge
     if(CheckPointer(m_pythonBridge) == POINTER_DYNAMIC)
@@ -590,8 +646,7 @@ if(symbolCount <= 0)
 m_managerCount = symbolCount;
 ArrayResize(m_enterpriseManagers, symbolCount);
 ArrayResize(m_enterpriseManagerSymbols, symbolCount);
-ArrayResize(m_enterpriseManagers, symbolCount);
-ArrayResize(m_enterpriseManagerSymbols, symbolCount);
+// Batch 152 (ORCH-16): duplicate ArrayResize pair removed.
 
 for(int i = 0; i < symbolCount; i++)
 {
@@ -649,7 +704,15 @@ LogAIRuntimeTopology();
 LogPositionLifecycleConfig();
 
 // Initialize Python Bridge
+// Batch 152 (ORCH-14): new can return NULL under memory pressure - guard
+// instead of dereferencing.
 m_pythonBridge = new CPythonBridge();
+if(m_pythonBridge == NULL)
+{
+    Print("[CRITICAL] Python Bridge allocation FAILED");
+    CleanupOnInitFailure();
+    return false;
+}
 m_pythonBridge.Initialize(
 m_config.pythonBridgeEndpoint,
 m_config.pythonBridgeMode,
@@ -660,7 +723,14 @@ m_config.pythonBridgeReconnectBackoffMs
 );
 
 // Initialize Dashboard Bridge
+// Batch 152 (ORCH-14): allocation guard, same as the Python bridge.
 m_dashboardBridge = new CDashboardBridge();
+if(m_dashboardBridge == NULL)
+{
+    Print("[CRITICAL] Dashboard Bridge allocation FAILED");
+    CleanupOnInitFailure();
+    return false;
+}
 m_dashboardBridge.Initialize(
 m_config.dashboardEndpoint,
 false,
@@ -903,16 +973,8 @@ else
     Print("[INIT] CompoundingTierManager disabled — using static tier");
 }
 
-// Initialize Family Strategy Weight Matrix (I1)
-if(m_config.enableFamilyWeightMatrix)
-{
-    m_familyWeightMatrix.Initialize();
-    Print("[INIT] FamilyStrategyWeightMatrix initialized");
-}
-else
-{
-    Print("[INIT] FamilyStrategyWeightMatrix disabled");
-}
+// Batch 152 (ORCH-16): first of two identical FamilyStrategyWeightMatrix init
+// blocks removed - Initialize() is idempotent and the later block below owns it.
 
 // L1-015: Initialize Magic Number Allocator
 m_magicNumberAllocator.Initialize((int)m_config.magicNumber, MAGIC_SYMBOL_MULTIPLIER);
@@ -1137,7 +1199,10 @@ if(m_config.spikeHunterEnabled)
     spikeConfig.maxSpikePositions        = m_config.spikeHunterMaxPositions;
     spikeConfig.cooldownMs               = m_config.spikeHunterCooldownMs;
     spikeConfig.spikeCooldownForLongTermMs = m_config.spikeHunterLongTermCooldownMs;
-    spikeConfig.magicOffset              = 9000;
+    // Batch 152 (S-M-05): must stay 9150 - the old hardcoded 9000 collides with
+    // DERIV_CRASH_BOOM's family offset, so spike-hunter orders could share magics
+    // with crash-boom profile orders on the same symbol.
+    spikeConfig.magicOffset              = 9150;
     spikeConfig.enablePushAlerts         = m_config.spikeHunterPushAlerts;
     spikeConfig.alertThrottleSeconds     = m_config.spikeHunterAlertThrottle;
     spikeConfig.minConfluence            = m_config.spikeHunterMinConfluence;
@@ -1149,7 +1214,8 @@ if(m_config.spikeHunterEnabled)
             if(m_enterpriseManagerSymbols[i] != "")
             m_spikeHunter.AddSymbol(m_enterpriseManagerSymbols[i]);
         }
-        Print("[SPIKE-HUNTER] Initialized with ", m_managerCount, " symbols");
+        Print("[SPIKE-HUNTER] Initialized with ", m_managerCount, " symbols",
+              " | PARKED: not wired into the tick loop (documented-dormant; ProcessTick has no caller)");
     }
 else
 Print("[SPIKE-HUNTER] Initialization FAILED");
@@ -1257,7 +1323,8 @@ if(m_config.multiAssetProfilerEnabled)
                         PrintFormat("[DERIV-PROFILER] %s family=%s -> GridRecovery enabled", sym, profile.familyName);
                     }
                 }
-                Print("[GRID-RECOVERY] Initialized for mean-reversion families");
+                Print("[GRID-RECOVERY] Initialized for mean-reversion families",
+              " | PARKED: not wired into the tick loop (documented-dormant; ProcessTick has no caller)");
             }
         else
         Print("[GRID-RECOVERY] Initialization FAILED");
@@ -1304,7 +1371,8 @@ if(m_config.multiAssetProfilerEnabled)
                 sym, profile.familyName, spikeIntervalSec);
             }
         }
-        Print("[ATR-SCALP] Initialized for between-spike families");
+        Print("[ATR-SCALP] Initialized for between-spike families",
+              " | PARKED: not wired into the tick loop (documented-dormant; ProcessTick has no caller)");
     }
 else
 Print("[ATR-SCALP] Initialization FAILED");
@@ -1500,6 +1568,17 @@ bool InitializeComponents()
         return false;
     }
     Print("[INIT] CandidateBuilder initialized");
+
+    // Batch 151: CCandidateBuilder::Configure() had zero callers, so the per-symbol
+    // position caps stayed at their constructor default 0 (= limit bypassed at
+    // CheckSymbolPositionLimit) and minLotRiskMultiplier ignored the configured
+    // input used by PositionSizer / the risk pipeline. Values without any config
+    // source keep their tuned constructor defaults.
+    m_candidateBuilder.Configure(2.0, 1.5, 5.0,
+                                 0.15, m_config.minLotRiskMultiplier, m_config.aiDrawdownSizingLimit,
+                                 true, m_config.maxPositionsPerSymbol, m_config.portfolioMaxPositionsPerSymbol,
+                                 m_config.hybridGateRelaxAfterCycles, m_config.aiStandaloneMinConfidence,
+                                 m_config.aiStandaloneRelaxedConfidence);
 
     // EXEC-01: CandidateBuilder + TradeExecutor dependency wiring moved to
     // WireAndValidateDependencies() (called once at the end of Initialize).
@@ -1737,6 +1816,14 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
                     if(saPtr != NULL)
                     {
                         saPtr.SetOUEngine(m_mathEngineHub.GetOUEngine(mathIdx));
+                        // Batch 155: the catalog registration path never injects
+                        // the bridge, so the instance-level gate stayed NULL even
+                        // when registration passed its global-bridge prerequisite -
+                        // every signal died as STATARB_PYTHON_BRIDGE_UNAVAILABLE.
+                        CPythonBridge* saBridge = ((g_pythonBridge != NULL && g_pythonBridge.IsConnected())
+                                                   ? g_pythonBridge : m_pythonBridge);
+                        if(saBridge != NULL)
+                            saPtr.SetPythonBridge(saBridge);
                         if(m_config.logLevel >= 3)
                         PrintFormat("[WIRE] OU wired to Statistical Arbitrage | Symbol=%s", sym);
                     }
@@ -1746,7 +1833,7 @@ for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
     }
 }
 if(m_config.logLevel >= 2)
-PrintFormat("[MAGIC-RANGE] base=%d | symbols=%d | range_max=%u | encoding=BASE+symbolIndex*%d+clusterCode",
+PrintFormat("[MAGIC-RANGE] base=%I64d | symbols=%d | range_max=%I64d | encoding=BASE+symbolIndex*%d+clusterCode",
 m_config.magicNumber, symbolCount, magicRangeMax, MAGIC_SYMBOL_MULTIPLIER);
 
 return true;
@@ -2139,6 +2226,17 @@ bool BuildStrategyRegistry(const bool& strategyFlags[])
         return false;
     }
 
+    // Batch 152 (ORCH-02): Configure() had zero callers, so the per-candidate
+    // live-authority gate ran on constructor defaults and silently ignored
+    // m_config.eaMode / aiStandaloneMinConfidence. Wire it once mode resolution
+    // has settled. The remaining three values have no user-facing config fields;
+    // they restate the legacy constructor defaults explicitly.
+    m_liveAuthority.Configure(effectiveMode,
+                              m_config.aiStandaloneMinConfidence,
+                              0.5,   // aiBootstrapRiskMultiplier
+                              2,     // authorityMinConfluence
+                              0.3);  // authorityMinExpectancyR
+
     PrintFormat("[STRATEGY-REGISTRY] %s", strategyRegistry.BuildStatusReport());
     return true;
 }
@@ -2526,8 +2624,10 @@ void ReleaseEnterpriseManagers()
 
 void OnTick()
 {
-    ulong tickStartTime = GetMicrosecondCount();
-    
+    // Batch 152 (ORCH-08.6): m_callCount was read by GetStatusReport but had no
+    // writer, so the status line reported Cycle=0 forever.
+    m_callCount++;
+
     // L5-019: Check for emergency close request from circuit breaker
     if(m_unifiedRiskManager.IsEmergencyCloseRequested())
     {
@@ -2536,20 +2636,15 @@ void OnTick()
         m_unifiedRiskManager.ResetEmergencyCloseRequested();
     }
 
-    ulong safetyStart = GetMicrosecondCount();
-            ProcessTickSafetyLoop();
-            CJsonLogger::LogPerformance("EAOrchestrator", "ProcessTickSafetyLoop_us", (double)(GetMicrosecondCount() - safetyStart), CCorrelationIdGenerator::Generate());
+    ProcessTickSafetyLoop();
 
     // Batch 100: Feed tick data to VPIN and OFI engines (throttled to 200ms)
-    ulong vpinStart = GetMicrosecondCount();
     // Phase F: loop + 200 ms throttle moved verbatim into the hub. The loop
     // bound stays ArraySize(m_mathEngineSymbols), which the hub exposes as
     // GetSymbolCount(), so the iteration count is unchanged.
     m_mathEngineHub.FeedMicrostructure(m_mathEngineHub.GetSymbolCount());
-            CJsonLogger::LogPerformance("EAOrchestrator", "VPIN_OFI_Feed_us", (double)(GetMicrosecondCount() - vpinStart), CCorrelationIdGenerator::Generate());
 
     // I4: Feed tick data to Skew Step Analyzer (throttled to 500ms)
-    ulong skewStart = GetMicrosecondCount();
     if(m_config.enableSkewStepAnalyzer && m_skewStepAnalyzer.IsInitialized())
     {
         static uint s_lastSkewStepFeed = 0;
@@ -2580,18 +2675,18 @@ void OnTick()
             s_lastSkewStepFeed = nowMs;
         }
     }
-            CJsonLogger::LogPerformance("EAOrchestrator", "SkewStepAnalyzer_Feed_us", (double)(GetMicrosecondCount() - skewStart), CCorrelationIdGenerator::Generate());
 
-    // Fast-path scalp signal evaluation on ticks (dual-path architecture)
-    ulong scalpStart = GetMicrosecondCount();
-    if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized())
+    // Fast-path scalp signal evaluation on ticks (dual-path architecture).
+    // Batch 150: throttled to 1s - it previously scanned the full symbol universe
+    // on EVERY tick (ShouldEnterScalp does indicator/ATR/cost/risk work per symbol).
+    static uint s_lastScalpFastPathMs = 0;
+    uint scalpNowMs = GetTickCount();
+    if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized()
+       && scalpNowMs - s_lastScalpFastPathMs >= 1000)
     {
+        s_lastScalpFastPathMs = scalpNowMs;
         ProcessScalpFastPath();
     }
-            CJsonLogger::LogPerformance("EAOrchestrator", "ProcessScalpFastPath_us", (double)(GetMicrosecondCount() - scalpStart), CCorrelationIdGenerator::Generate());
-
-    // Overall tick processing time
-            CJsonLogger::LogPerformance("EAOrchestrator", "OnTick_Total_us", (double)(GetMicrosecondCount() - tickStartTime), CCorrelationIdGenerator::Generate());
 }
 
 void OnTimer()
@@ -2870,6 +2965,12 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
 // L12-012: Process pending async trade confirmations and timeouts
     m_tradeManager.CheckAsyncTimeouts();
 
+    // Batch 152 (ORCH-04): drain the executor's confirmation queue. Execute()
+    // queues every fill for history-based resolution (attribution, position
+    // state, NN prediction mapping), but nothing ever called
+    // CheckPendingConfirmations() - the queue only ever grew.
+    m_tradeExecutor.CheckPendingConfirmations();
+
     // Emit heartbeat diagnostics (L9-001 through L9-004)
     static datetime s_lastHeartbeat = 0;
     if(s_lastHeartbeat == 0 || (now - s_lastHeartbeat) >= m_config.heartbeatInterval)
@@ -3041,6 +3142,24 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     // Refresh runtime state - risk state, profit target, auto mode
     RefreshRuntimeState();
 
+    // Batch 154: orchestrator-owned strategy lifecycle governance. The only
+    // previous caller of CheckStrategyDisabling/CheckStrategyReEnabling was
+    // AIEngine::AdaptToPerformance, gated on AI mode AND prediction accuracy -
+    // with AI off, a strategy auto-disabled by trade feedback could never come
+    // back. Sweep both directions on a 60s cadence regardless of AI mode.
+    static datetime s_lastGovernanceSweep = 0;
+    datetime nowGov = TimeCurrent();
+    if(nowGov - s_lastGovernanceSweep >= 60)
+    {
+        for(int gi = 0; gi < m_managerCount; gi++)
+        {
+            if(m_enterpriseManagers[gi] == NULL) continue;
+            m_enterpriseManagers[gi].CheckStrategyDisabling();
+            m_enterpriseManagers[gi].CheckStrategyReEnabling();
+        }
+        s_lastGovernanceSweep = nowGov;
+    }
+
     // Process AI subsystems - neural network, AI engine, AI feedback
     ProcessAISubsystems();
 
@@ -3107,9 +3226,24 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 
 void ProcessTickSafetyLoop()
 {
-    // Delegate to tick safety monitor
-    // m_tickSafetyMonitor.Process(); // Method not found - using ValidateTick/IsTradingAllowed instead
-    // m_spikeMonitor.Process(); // Method not found - using HandleEmergencyDrawdown/IsPaused instead
+    // Batch 152 (ORCH-01): this was an empty stub whose old delegations were
+    // commented out during the God-Object split ("method not found"). Ownership
+    // of every concern it once routed is LIVE elsewhere - keep this record so
+    // the stub is not mistaken for dead safety equipment:
+    //  - Drawdown halt / conservative mode / emergency flatten:
+    //    CRiskCircuitBreaker (drawdownWarning/CriticalPercent from
+    //    m_config.maxDrawdown) -> CUnifiedRiskManager -> OnTick() honors
+    //    IsEmergencyCloseRequested() with CloseAllPositions(). Wiring
+    //    CSyntheticSpikeMonitor::HandleEmergencyDrawdown here would create a
+    //    second flatten authority with unconfigured thresholds.
+    //  - Trading-pause expiry: m_spikeMonitor.ReleasePauseIfExpired() runs via
+    //    the cycle gate (IsPaused).
+    //  - Spread / free-margin / margin-level health: CRiskMarginHealth inside
+    //    CRiskValidationPipeline (Phase E2) plus TradeManager preflight gates;
+    //    CTickSafetyMonitor remains a passive query API used by those paths.
+    //  - Synthetic tick-rate spike detection (EvaluateSpike): single-symbol
+    //    (_Symbol) legacy with no multi-symbol configuration - deliberately
+    //    NOT revived with invented thresholds.
 }
 
 void FeedMicrostructureEngines()
@@ -3149,11 +3283,184 @@ void FeedMicrostructureEngines()
     }
 }
 
+// Batch 152 (S-H-01): OnTradeTransaction forwarder - confirm filled async scalp
+// orders into the position tracker (no-op when nothing is pending).
+void ProcessScalpDealConfirmed(const ulong dealTicket, const ulong orderTicket)
+{
+    if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized())
+        m_scalpEngine.OnDealConfirmed(dealTicket, orderTicket);
+}
+
+// ============ Batch 154: closed-trade feedback loop ============
+// The EA's OnTradeTransaction routes DEAL_ADD events here. Two jobs:
+//  1. fan the transaction out to every symbol manager so per-strategy
+//     attribution pop / UpdatePerformance / health monitor / auto-disable run;
+//  2. feed account-level learners on full closes of EA-owned positions:
+//     CPerformanceAnalytics::RecordClosedTrade (sole writer of win-rate/PF/
+//     momentum stats consumed by live lot scaling + risk snapshots),
+//     loss-guard consecutive-loss accounting, and live-authority outcome
+//     learning (PROVEN_AI promotion).
+
+bool IsEAPositionIdOpen(const ulong positionId)
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+        if((ulong)PositionGetInteger(POSITION_IDENTIFIER) == positionId) return true;
+    }
+    return false;
+}
+
+void RemoveExecutedTradeProvenance(const int index)
+{
+    if(index < 0 || index >= m_execProvCount) return;
+    for(int i = index; i < m_execProvCount - 1; i++)
+    {
+        m_execProvPositionIds[i]   = m_execProvPositionIds[i + 1];
+        m_execProvManagerIdx[i]    = m_execProvManagerIdx[i + 1];
+        m_execProvContributorCsv[i] = m_execProvContributorCsv[i + 1];
+        m_execProvIndicesCsv[i]    = m_execProvIndicesCsv[i + 1];
+    }
+    m_execProvCount--;
+    ArrayResize(m_execProvPositionIds, m_execProvCount);
+    ArrayResize(m_execProvManagerIdx, m_execProvCount);
+    ArrayResize(m_execProvContributorCsv, m_execProvCount);
+    ArrayResize(m_execProvIndicesCsv, m_execProvCount);
+}
+
+void RecordExecutedTradeProvenance(const ulong positionId, const int managerIdx,
+                                   const string contributorSummary, const int &strategyIndices[])
+{
+    if(positionId == 0 || contributorSummary == "") return;
+    if(managerIdx < 0 || managerIdx >= m_managerCount) return;
+
+    // Ring cap: drop oldest when full.
+    if(m_execProvCount >= 512)
+        RemoveExecutedTradeProvenance(0);
+
+    int n = m_execProvCount;
+    ArrayResize(m_execProvPositionIds, n + 1);
+    ArrayResize(m_execProvManagerIdx, n + 1);
+    ArrayResize(m_execProvContributorCsv, n + 1);
+    ArrayResize(m_execProvIndicesCsv, n + 1);
+    m_execProvPositionIds[n] = positionId;
+    m_execProvManagerIdx[n] = managerIdx;
+    m_execProvContributorCsv[n] = contributorSummary;
+
+    string idxCsv = "";
+    for(int i = 0; i < ArraySize(strategyIndices); i++)
+    {
+        if(i > 0) idxCsv += ",";
+        idxCsv += IntegerToString(strategyIndices[i]);
+    }
+    m_execProvIndicesCsv[n] = idxCsv;
+    m_execProvCount++;
+}
+
+void FeedAuthorityOutcome(const ulong positionId, const double netProfit)
+{
+    int found = -1;
+    for(int i = 0; i < m_execProvCount; i++)
+    {
+        if(m_execProvPositionIds[i] == positionId) { found = i; break; }
+    }
+    if(found < 0) return;
+
+    int managerIdx           = m_execProvManagerIdx[found];
+    string contributorCsv    = m_execProvContributorCsv[found];
+    string indicesCsv        = m_execProvIndicesCsv[found];
+    RemoveExecutedTradeProvenance(found);
+
+    // Rebuild the strategy-index array for ExtractAIName.
+    string parts[];
+    int partsCount = StringSplit(indicesCsv, ',', parts);
+    int strategyIndices[];
+    ArrayResize(strategyIndices, 0);
+    for(int p = 0; p < partsCount; p++)
+    {
+        if(parts[p] == "") continue;
+        int n2 = ArraySize(strategyIndices) + 1;
+        ArrayResize(strategyIndices, n2);
+        strategyIndices[n2 - 1] = (int)StringToInteger(parts[p]);
+    }
+
+    if(managerIdx < 0 || managerIdx >= m_managerCount || m_enterpriseManagers[managerIdx] == NULL) return;
+    if(ArraySize(strategyIndices) == 0) return;
+
+    // Approximate R: profit relative to one unit of configured per-trade risk on
+    // current equity - a consistent denominator is sufficient for the resolver's
+    // promote/demote thresholds.
+    double riskMoney = AccountInfoDouble(ACCOUNT_EQUITY) * m_config.maxRiskPerTrade / 100.0;
+    double profitR = (riskMoney > 0.0) ? netProfit / riskMoney : 0.0;
+    bool isWin = (netProfit > 0.0);
+
+    m_liveAuthority.SetStrategyManager(m_enterpriseManagers[managerIdx]);
+    string aiName = m_liveAuthority.ExtractAIName(contributorCsv, strategyIndices);
+    if(aiName == "") return;
+
+    m_liveAuthority.RecordOutcome(aiName, profitR, isWin);
+    PrintFormat("[AUTHORITY-LEARN] %s | profit=%.2f | R=%.2f | win=%s", aiName, netProfit, profitR, isWin ? "Y" : "N");
+}
+
+void ProcessManagerTradeTransactions(const MqlTradeTransaction &trans,
+                                     const MqlTradeRequest &request,
+                                     const MqlTradeResult &result)
+{
+    // 1) Per-strategy fan-out: attribution pop, UpdatePerformance, health
+    //    monitor, governance disable write-through. Each manager filters by
+    //    its own symbol/magic internally.
+    for(int i = 0; i < m_managerCount; i++)
+    {
+        if(m_enterpriseManagers[i] == NULL) continue;
+        m_enterpriseManagers[i].OnTradeTransaction(trans, request, result);
+    }
+
+    // 2) Account-level feeds on full closes of EA-owned positions only.
+    if(trans.type != TRADE_TRANSACTION_DEAL_ADD || trans.deal == 0) return;
+    if(!HistoryDealSelect(trans.deal)) return;
+
+    long magic = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+    if(!m_tradeManager.IsEAOwnedMagic(magic)) return;
+
+    ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+    if(entryType != DEAL_ENTRY_OUT && entryType != DEAL_ENTRY_OUT_BY && entryType != DEAL_ENTRY_INOUT) return;
+
+    ulong positionId = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+    if(positionId == 0 || IsEAPositionIdOpen(positionId)) return; // skip partial closes
+
+    double netProfit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
+                     + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
+                     + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+
+    m_performanceAnalytics.RecordClosedTrade(trans.deal, netProfit);
+    m_positionManager.RecordClosedTrade(netProfit);
+    FeedAuthorityOutcome(positionId, netProfit);
+}
+
 void ProcessScalpFastPath()
 {
     // Fast-path scalp signal evaluation on ticks (dual-path architecture)
     if(m_config.enableScalpEngine && m_scalpEngine.IsInitialized())
     {
+        // Batch 152 (S-H-02): the cache was filled once at Initialize() and then
+        // frozen - UpdateOnNewBar()/UpdateTickValues() had zero callers, so entry
+        // decisions ran on init-time indicator snapshots forever. UpdateOnNewBar
+        // self-throttles to actual new bars per symbol; UpdateTickValues reads
+        // only SymbolInfoDouble.
+        m_scalpCache.UpdateOnNewBar();
+        m_scalpCache.UpdateTickValues();
+
+        // Batch 152 (S-H-01): drive the scalp lifecycle before scanning for new
+        // entries. These had zero callers, so open scalps never received their
+        // 1R partial / breakeven / trailing management, tracker state drifted
+        // from the terminal, and pending sync+async orders were never confirmed
+        // or expired.
+        m_scalpEngine.SyncScalpPositionTracking();
+        m_scalpEngine.ManageScalpPositions();
+        m_scalpEngine.CheckPendingAsyncOrders();
+        m_scalpEngine.CheckPendingScalpOrders();
+
         // Iterate over all managed symbols for scalp opportunities
         for(int si = 0; si < m_managerCount; si++)
         {
@@ -3202,40 +3509,32 @@ void UpdateAutoModeSwitch()
 
 void ProcessNewBars()
 {
-    bool anyNewBar = false;
+    // Batch 150: GetScanScheduler() always returned NULL, which silently disabled the
+    // entire bar-lifecycle path (OnNewBar delivery, consensus-cache invalidation,
+    // AI adaptation). Route through the scan registry that actually holds bar state.
+    CScanSchedulerRegistry* scanReg = m_registryAggregator.GetScanRegistry();
+    if(scanReg == NULL) return;
 
+    ENUM_TIMEFRAMES tf = (ENUM_TIMEFRAMES)Period();
     for(int i = 0; i < m_managerCount; i++)
     {
         string symbol = m_enterpriseManagerSymbols[i];
-        datetime currentBar = iTime(symbol, (ENUM_TIMEFRAMES)Period(), 0);
+        if(symbol == "" || m_enterpriseManagers[i] == NULL) continue;
+
+        datetime currentBar = iTime(symbol, tf, 0);
         if(currentBar <= 0) continue;
+        if(!scanReg.CheckNewBar(symbol, currentBar)) continue;
 
-        CSymbolScanScheduler* scheduler = m_registryAggregator.GetScanScheduler(symbol);
-        if(scheduler != NULL)
-        {
-            // CheckNewBar not available on CSymbolScanScheduler - using inline bar time comparison
-            datetime lastBarTime = scheduler.GetLastSymbolBarTime(i);
-            if(lastBarTime != currentBar || lastBarTime == 0)
-            {
-                scheduler.SetLastSymbolBarTime(i, currentBar);
-                scheduler.SetPendingNewBarScan(i, true);
-                scheduler.ResetIntrabarBackoff(i);
+        m_consensusCache.Invalidate(symbol);
+        m_enterpriseManagers[i].OnNewBar(symbol, tf);
 
-                anyNewBar = true;
-                m_consensusCache.Invalidate(symbol);
+        // AI engine adaptation
+        if(m_config.enableAIMode && m_aiEngine != NULL)
+            m_aiEngine.ProcessAdaptation();
 
-                if(m_enterpriseManagers[i] != NULL)
-                m_enterpriseManagers[i].OnNewBar(symbol, (ENUM_TIMEFRAMES)Period());
-
-                // AI engine adaptation
-                if(m_config.enableAIMode && m_aiEngine != NULL)
-                m_aiEngine.ProcessAdaptation();
-
-                // AI feedback
-                if(m_aiFeedbackReady)
-                m_aiFeedback.CheckAutomaticRetraining();
-            }
-        }
+        // AI feedback
+        if(m_aiFeedbackReady)
+            m_aiFeedback.CheckAutomaticRetraining();
     }
 }
 
@@ -3257,49 +3556,29 @@ void GenerateAndProcessSignals(const string cycleCorrId)
 
     bool canOpenNewTrades = !(cooldownBlocked || positionLimitBlocked || unprotectedBlocked || spikePaused || m_profitGuard.IsTradingHalted());
 
-    // Generate signals (new bar mode) - with performance timing
+        // Generate signals (new bar mode) - with performance timing
         ulong startSignalGen = GetMicrosecondCount();
         CSignalGenerator::SSignalResult newBarSignals[];
         m_signalGenerator.GenerateSignals(EVAL_MODE_NEW_BAR, newBarSignals, cycleCorrId);
             ulong signalGenTime = GetMicrosecondCount() - startSignalGen;
             CJsonLogger::LogPerformance("EAOrchestrator", "GenerateAndProcessSignals_SignalGen_us", (double)signalGenTime, cycleCorrId);
 
-        // L12-003 Fix: Update SymbolScanScheduler state AFTER consensus decision
-        datetime nowTime = TimeCurrent();
-        for(int si = 0; si < ArraySize(newBarSignals); si++)
-        {
-            string symbol = m_enterpriseManagerSymbols[si];
-            if(symbol == "") continue;
-        
-            CSymbolScanScheduler* scheduler = m_registryAggregator.GetScanScheduler(symbol);
-            if(scheduler == NULL) continue;
-        
-            SConsensusDecisionContext ctx = newBarSignals[si].decisionContext;
-            int cycleSignalsGenerated = 0;
-            int cycleSignalsAfterPipeline = 0;
-        
-            if(m_enterpriseManagers[si] != NULL)
-            {
-                int gen, pipe;
-                bool quorum;
-                m_enterpriseManagers[si].GetLastCycleFunnel(gen, pipe, quorum);
-                cycleSignalsGenerated = gen;
-                cycleSignalsAfterPipeline = pipe;
-            }
-        
-            scheduler.UpdateSymbolScanStateAfterDecision(symbol, m_scanCycleSequence, si, false,
-                                                         cycleSignalsGenerated, cycleSignalsAfterPipeline,
-                                                         ctx, nowTime);
-        
-            scheduler.SetLastSymbolBarTime(si, nowTime);
-        }
-
         // Validate and build candidates
     ulong startCandidateBuild = GetMicrosecondCount();
     int candidatesBuilt = 0;
     for(int i = 0; i < ArraySize(newBarSignals); i++)
     {
-        if(!newBarSignals[i].valid) continue;
+        // Batch 153: these funnel counters had zero writers, so [HEARTBEAT]
+        // always printed scans=0 / no_signal=0 / validator_reject=0 and the
+        // status report's Scans= field was permanently 0. Count every symbol
+        // slot as one attempted scan.
+        m_heartbeat.IncScansAttempted();
+
+        if(!newBarSignals[i].valid)
+        {
+            m_heartbeat.IncNoSignalCount();
+            continue;
+        }
 
         string symbol = m_enterpriseManagerSymbols[i];
         CEnterpriseStrategyManager* manager = m_enterpriseManagers[i];
@@ -3318,7 +3597,11 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 newBarSignals[i].confluence, EVAL_MODE_NEW_BAR, newBarSignals[i].decisionContext,
                 ++m_scanCycleSequence, cycleCorrId);
 
-        if(!validation.passed) continue;
+        if(!validation.passed)
+        {
+            m_heartbeat.IncValidatorRejects();
+            continue;
+        }
 
         // Build candidate
                 if(!m_candidateBuilder.BuildCandidate(symbol, newBarSignals[i].signal, newBarSignals[i].confidence,
@@ -3350,13 +3633,37 @@ void GenerateAndProcessSignals(const string cycleCorrId)
                 // Check entry blocks
                 if(!canOpenNewTrades) continue;
 
-                // Execute trade
-                m_tradeExecutor.Execute(candidate, cycleCorrId);
+                // Execute trade; only a real send arms the min-seconds-between-trades
+                // cooldown (m_lastTradeTime was never written before, gate was inert).
+                CTradeExecutor::SExecutionResult execResult = m_tradeExecutor.Execute(candidate, cycleCorrId);
+                if(execResult.executed)
+                {
+                    m_lastTradeTime = TimeCurrent();
+                    m_heartbeat.IncSignalsSent();
+                    // Batch 152: book the executed risk into the daily budget. The only
+                    // writer of realized per-trade risk had zero callers, so the daily
+                    // entry budget never accrued from executed trades.
+                    SValidationResult executedRisk;
+                    executedRisk.riskPercent = candidate.riskPercent;
+                    double fillRatio = (candidate.lotSize > 0.0 && execResult.filledVolume > 0.0)
+                                       ? MathMin(1.0, execResult.filledVolume / candidate.lotSize) : 1.0;
+                    m_unifiedRiskManager.RegisterExecutedTradeRisk(executedRisk, fillRatio);
 
-                // Update heartbeat
+                    // Batch 154: remember AI-contributed trades so their full close
+                    // feeds CLiveAuthorityResolver::RecordOutcome (PROVEN_AI promotion).
+                    if(candidate.hasAIContributor && execResult.dealTicket > 0
+                       && HistoryDealSelect(execResult.dealTicket))
+                    {
+                        long provPosId = HistoryDealGetInteger(execResult.dealTicket, DEAL_POSITION_ID);
+                        if(provPosId > 0)
+                            RecordExecutedTradeProvenance((ulong)provPosId, i,
+                                                          candidate.contributorSummary, strategyIndices);
+                    }
+                }
+
+                // Update heartbeat funnel (validated + risk-approved reached execution)
                 m_heartbeat.IncSignalsValidated();
                 m_heartbeat.IncSignalsRiskApproved();
-                m_heartbeat.IncSignalsSent();
             }
     
     // Performance timing for total method
@@ -3392,9 +3699,7 @@ double CalculateDailyPnLPercent()
 
 // ============ Diagnostics ============
 
-// Heartbeat status text. MUST stay public: TimerProcessor.mqh calls
-// m_orchestrator.GetStatusReport() from the heartbeat block.
-// Assembly moved to COrchestratorStatusReporter (collaborators injected once in
+// Heartbeat status text. Assembly moved to COrchestratorStatusReporter (collaborators injected once in
 // WireAndValidateDependencies); the per-cycle counters below cannot be captured
 // by pointer in MQL5, so they are forwarded on each call. Output is unchanged.
 string GetStatusReport() const

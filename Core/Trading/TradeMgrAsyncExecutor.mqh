@@ -318,12 +318,15 @@ public:
     static void PersistAsyncTradeRequest(const SAsyncTradeRequest &asyncTrade)
     {
         string fileName = "async_trades_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv";
-        int handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
+        // Batch 150: FILE_WRITE alone truncates - every persist erased the whole
+        // crash-recovery ledger. Open read+write and append at end instead.
+        int handle = FileOpen(fileName, FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
         if(handle == INVALID_HANDLE)
         {
             PrintFormat("[ASYNC-PERSIST] ERROR: Cannot open %s for writing", fileName);
             return;
         }
+        FileSeek(handle, 0, SEEK_END);
 
         // Check if file is empty (needs header)
         bool writeHeader = (FileSize(handle) == 0);

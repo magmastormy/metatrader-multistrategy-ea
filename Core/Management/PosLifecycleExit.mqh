@@ -32,6 +32,12 @@ private:
     int    m_maxHoldHoursSwing;      // Max hold time for swing (H4 and higher) — default 120h (5 days)
     bool   m_maxHoldOnlyIfLoss;      // Only close if position is in loss (default true)
 
+    // Batch 150: tickets that already took their partial close. Without this marker
+    // the partial-profit rule closed m_partialProfitPercent of remaining volume
+    // every tick until the position was gone.
+    ulong  m_partialDoneTickets[];
+    int    m_partialDoneCount;
+
 public:
     CPosLifecycleExit() :
         m_partialProfitTakingEnabled(false),
@@ -40,7 +46,8 @@ public:
         m_maxHoldTimeEnabled(true),
         m_maxHoldHoursIntraday(24),
         m_maxHoldHoursSwing(120),
-        m_maxHoldOnlyIfLoss(true)
+        m_maxHoldOnlyIfLoss(true),
+        m_partialDoneCount(0)
     {}
 
     //--- EXECUTION REFINEMENT: Configure partial profit taking
@@ -65,13 +72,48 @@ public:
     bool IsMaxHoldTimeEnabled()         const { return m_maxHoldTimeEnabled; }
 
     //--- EXECUTION REFINEMENT: Partial profit taking management
+    bool PartialAlreadyTaken(const ulong ticket) const
+    {
+        for(int i = 0; i < m_partialDoneCount; i++)
+            if(m_partialDoneTickets[i] == ticket) return true;
+        return false;
+    }
+
+    void MarkPartialTaken(const ulong ticket)
+    {
+        if(PartialAlreadyTaken(ticket)) return;
+        int n = m_partialDoneCount;
+        ArrayResize(m_partialDoneTickets, n + 1);
+        m_partialDoneTickets[n] = ticket;
+        m_partialDoneCount = n + 1;
+    }
+
+    // Drop markers for positions that no longer exist (lazy compaction)
+    void CompactPartialMarkers()
+    {
+        int w = 0;
+        for(int i = 0; i < m_partialDoneCount; i++)
+        {
+            if(PositionSelectByTicket(m_partialDoneTickets[i]))
+                m_partialDoneTickets[w++] = m_partialDoneTickets[i];
+        }
+        if(w != m_partialDoneCount)
+        {
+            m_partialDoneCount = w;
+            ArrayResize(m_partialDoneTickets, w);
+        }
+    }
+
     void ManagePartialProfitTaking(CTradeManager* tradeManager, const int magicBase, const int magicMax)
     {
+        if(m_partialDoneCount > 64) CompactPartialMarkers();
+
         for(int i = PositionsTotal() - 1; i >= 0; i--)
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
             if(!CPosLifecycleMagicFilter::IsOwned(PositionGetInteger(POSITION_MAGIC), magicBase, magicMax)) continue;
+            if(PartialAlreadyTaken(ticket)) continue;   // one partial per position lifetime
 
             string symbol = PositionGetString(POSITION_SYMBOL);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
@@ -104,9 +146,10 @@ public:
 
                 if(closeAmount >= 0.01)
                 {
-                    PrintFormat("[PARTIAL-PROFIT] Taking partial profit | ticket=%d | amount=%.2f | profit=%.5f",
+                    PrintFormat("[PARTIAL-PROFIT] Taking partial profit | ticket=%I64u | amount=%.2f | profit=%.5f",
                                 ticket, closeAmount, profitDistance);
-                    tradeManager.ClosePositionPartial(ticket, closeAmount, "Partial Profit");
+                    if(tradeManager.ClosePositionPartial(ticket, closeAmount, "Partial Profit"))
+                        MarkPartialTaken(ticket);
                 }
             }
         }

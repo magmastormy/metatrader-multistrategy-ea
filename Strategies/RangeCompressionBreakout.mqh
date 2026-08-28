@@ -99,16 +99,19 @@ private:
     {
         long vol[];
         ArraySetAsSeries(vol, true);
-        int copied = CopyTickVolume(m_symbol, m_timeframe, 0, m_volumeLookback + 1, vol);
-        if(copied < m_volumeLookback + 1)
+        // Batch 155: copy one extra bar - vol[0] is the FORMING bar whose
+        // partial tick volume biases the surge test false; judge the last
+        // CLOSED bar against the preceding full bars instead.
+        int copied = CopyTickVolume(m_symbol, m_timeframe, 0, m_volumeLookback + 2, vol);
+        if(copied < m_volumeLookback + 2)
             return false;
 
         double avgVol = 0;
-        for(int i = 1; i <= m_volumeLookback; i++)
+        for(int i = 2; i <= m_volumeLookback + 1; i++)
             avgVol += (double)vol[i];
         avgVol /= (double)m_volumeLookback;
 
-        return (avgVol > 0 && vol[0] > avgVol * m_volumeConfirmRatio);
+        return (avgVol > 0 && (double)vol[1] > avgVol * m_volumeConfirmRatio);
     }
 
 public:
@@ -205,27 +208,30 @@ public:
             return signal;
 
         // Get BB values
+        // Batch 155: read CLOSED bars (start=1). The old start=0 pulled the
+        // forming bar, whose close is ~the open at evaluation time, so the
+        // band-breach test was a timing lottery under once-per-bar polling.
         double bbUpper[1], bbMiddle[1], bbLower[1];
-        if(CopyBuffer(m_bbHandle, 1, 0, 1, bbUpper) != 1 ||
-           CopyBuffer(m_bbHandle, 0, 0, 1, bbMiddle) != 1 ||
-           CopyBuffer(m_bbHandle, 2, 0, 1, bbLower) != 1)
+        if(CopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) != 1 ||
+           CopyBuffer(m_bbHandle, 0, 1, 1, bbMiddle) != 1 ||
+           CopyBuffer(m_bbHandle, 2, 1, 1, bbLower) != 1)
             return signal;
 
         // Get ATR for Keltner Channel
         double atr[1];
-        if(CopyBuffer(m_atrHandle, 0, 0, 1, atr) != 1 || atr[0] <= 0)
+        if(CopyBuffer(m_atrHandle, 0, 1, 1, atr) != 1 || atr[0] <= 0)
             return signal;
 
         // Get close price
         double close[1];
-        if(CopyClose(m_symbol, m_timeframe, 0, 1, close) != 1)
+        if(CopyClose(m_symbol, m_timeframe, 1, 1, close) != 1)
             return signal;
 
         // Compute Keltner Channel manually
         // KC Middle = EMA(20), KC Upper/Lower = EMA ± 1.5 * ATR
         double ema[];
         ArraySetAsSeries(ema, true);
-        int copied = CopyClose(m_symbol, m_timeframe, 0, m_kcPeriod + 1, ema);
+        int copied = CopyClose(m_symbol, m_timeframe, 1, m_kcPeriod + 1, ema);
         if(copied < m_kcPeriod + 1)
             return signal;
 
@@ -311,7 +317,12 @@ public:
                     return signal;
 
                 // Trend direction filter (Issue #28): Only trade in direction of MA trend
-                if(m_useTrendFilter && m_maHandle != INVALID_HANDLE)
+                // Batch 155: fade entries are COUNTER-TREND BY DESIGN - the
+                // old unconditional filter killed every one of them, because
+                // right after an upside breach price is almost always above
+                // the MA (and vice versa). The filter keeps policing
+                // momentum entries only.
+                if(m_useTrendFilter && !isFade && m_maHandle != INVALID_HANDLE)
                 {
                     double maVal[1];
                     if(CopyBuffer(m_maHandle, 0, 0, 1, maVal) == 1 && maVal[0] > 0)

@@ -64,6 +64,7 @@ struct SATRScalpSymbolState
    double   emaSlowValue;
    double   rsiValue;
    int      lastEmaCrossDirection;     // 0=none, 1=bullish cross, -1=bearish cross
+   datetime lastEmaCrossBarTime;       // Batch 152 (S-M-02): M1 bar the cross was detected on - entries require this to be the current bar
    datetime lastSpikeTime;             // From external spike detection
    int      expectedSpikeIntervalSec;  // e.g., 900 for DEX 900, 1200 for Jump
    bool     inSpikeWindow;             // True if within spikeWindowAvoidMinutes of expected spike

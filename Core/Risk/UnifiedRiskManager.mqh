@@ -290,6 +290,8 @@ public:
                                         const double riskPercent);
     // IRiskPipelineHost
     virtual void ReleaseVirtualPosition(const string ownerTag);
+    // IRiskPipelineHost
+    virtual void UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent);
     void ClearVirtualPositions();
 
     // Register accepted risk usage only after successful execution.
@@ -414,6 +416,7 @@ public:
 
 private:
     void UpdateAdaptiveRiskLevel();
+    int TradingDayKey(const datetime nowTime) const;
     bool IsNewTradingDay(const datetime nowTime);
     double ClampRiskPercent(const double value) const;
     double CalculateDailyMarkToMarketLossPercent();
@@ -794,6 +797,10 @@ void CUnifiedRiskManager::RefreshRuntimeState()
     // Phase E2 forwarder -> CRiskCircuitBreaker::RefreshPeakAndDrawdown
     m_circuitBreaker.RefreshPeakAndDrawdown();
 
+    // Batch 151: feed the CVaR equity sampler (minute-gated inside) so
+    // IsCVaRLimitExceeded / GetCurrentCVaR work on real data
+    m_portfolioRiskManager.UpdateEquityCurve();
+
     CheckAndResetDailyLimits();
     UpdateAdaptiveRiskLevel();
     CheckCircuitBreakerRecovery();
@@ -974,6 +981,16 @@ void CUnifiedRiskManager::ReleaseVirtualPosition(const string ownerTag)
     }
 }
 
+// Batch 151: keep an early reservation's risk in sync with the final validated
+// risk (lot floor / correlation-reduce adjustments land after Reserve).
+void CUnifiedRiskManager::UpdateVirtualPositionRisk(const string ownerTag, const double riskPercent)
+{
+    if(m_virtualPositionBook.UpdateRisk(ownerTag, riskPercent))
+    {
+        PrintFormat("[RISK-VIRTUAL] update | owner=%s | risk=%.2f", ownerTag, riskPercent);
+    }
+}
+
 void CUnifiedRiskManager::ClearVirtualPositions()
 {
     int count = m_virtualPositionBook.GetReservationCount();
@@ -1009,7 +1026,6 @@ double CUnifiedRiskManager::GetRemainingDailyRiskPercent()
 {
     double remaining = m_config.maxDailyRiskPercent - GetEffectiveDailyRiskUsedPercent(GetReservedVirtualRiskPercent());
     if(remaining < 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1392, __FUNCTION__);
         return 0.0;
     }
     return remaining;
@@ -1018,14 +1034,12 @@ double CUnifiedRiskManager::GetRemainingDailyRiskPercent()
 double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double requestedRiskPercent)
 {
     if(!m_initialized) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1399, __FUNCTION__);
         return 0.0;
     }
 
     CheckAndResetDailyLimits();
 
     if(m_portfolioRiskManager.IsEmergencyMode() || HasUnprotectedPositions()) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1404, __FUNCTION__);
         return 0.0;
     }
 
@@ -1044,7 +1058,6 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     recommended = MathMin(recommended, remainingPortfolioRisk);
 
     if(recommended <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1417, __FUNCTION__);
         return 0.0;
     }
 
@@ -1078,7 +1091,6 @@ double CUnifiedRiskManager::GetRecommendedRiskPerTradePercent(const double reque
     recommended = MathMin(recommended, remainingPortfolioRisk);
 
     if(recommended <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1448, __FUNCTION__);
         return 0.0;
     }
 
@@ -1111,7 +1123,6 @@ double CUnifiedRiskManager::GetRemainingPortfolioRiskPercent()
 {
     double remaining = m_config.maxPortfolioRiskPercent - (GetCurrentOpenExposureRiskPercent() + GetReservedVirtualRiskPercent());
     if(remaining < 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1479, __FUNCTION__);
         return 0.0;
     }
     return remaining;
@@ -1212,7 +1223,6 @@ double CUnifiedRiskManager::CalculateDailyMarkToMarketLossPercent()
         baselineEquity = AccountInfoDouble(ACCOUNT_BALANCE);
 
     if(baselineEquity <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1577, __FUNCTION__);
         return 0.0;
     }
 
@@ -1269,32 +1279,27 @@ void CUnifiedRiskManager::UpdateAdaptiveRiskLevel()
 }
 
 //+------------------------------------------------------------------+
-//| Day rollover check — uses broker trading day boundary             |
+//| Broker-day key computation (pure — Batch 151)                    |
 //+------------------------------------------------------------------+
-bool CUnifiedRiskManager::IsNewTradingDay(const datetime nowTime)
+int CUnifiedRiskManager::TradingDayKey(const datetime nowTime) const
 {
     MqlDateTime dt;
     TimeToStruct(nowTime, dt);
 
-    // Calculate effective trading day date.
     // If current hour is before the trading day start hour,
     // we're still in the previous trading day.
-    int effectiveDay = dt.day;
-    int effectiveMon = dt.mon;
-    int effectiveYear = dt.year;
-
     if(dt.hour < m_tradingDayStartHour)
-    {
-        // Subtract one day — we're in the previous trading day
-        datetime yesterday = nowTime - 86400;
-        MqlDateTime dtYesterday;
-        TimeToStruct(yesterday, dtYesterday);
-        effectiveDay = dtYesterday.day;
-        effectiveMon = dtYesterday.mon;
-        effectiveYear = dtYesterday.year;
-    }
+        TimeToStruct(nowTime - 86400, dt);
 
-    int currentTradingDayKey = effectiveYear * 10000 + effectiveMon * 100 + effectiveDay;
+    return dt.year * 10000 + dt.mon * 100 + dt.day;
+}
+
+//+------------------------------------------------------------------+
+//| Day rollover check — uses broker trading day boundary             |
+//+------------------------------------------------------------------+
+bool CUnifiedRiskManager::IsNewTradingDay(const datetime nowTime)
+{
+    int currentTradingDayKey = TradingDayKey(nowTime);
 
     if(currentTradingDayKey != m_lastTradingDayKey)
     {
@@ -1463,7 +1468,6 @@ SDrawdownState CUnifiedRiskManager::GetDrawdownState()
 double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
 {
     if(!PositionSelectByTicket(ticket)) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1950, __FUNCTION__);
         return 0.0;
     }
     
@@ -1476,29 +1480,31 @@ double CUnifiedRiskManager::CalculatePositionRiskPercent(ulong ticket)
     // Closed or closing positions may still pass PositionSelectByTicket but return
     // zero volume or zero SL — skip them to prevent phantom risk
     if(volume <= 0.0 || sl == 0.0 || openPrice == 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1961, __FUNCTION__);
         return 0.0;
     }
     
     string symbol = PositionGetString(POSITION_SYMBOL);
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-    
+    double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+
     if(point <= 0.0 || tickValue <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1968, __FUNCTION__);
         return 0.0;
     }
-    
+
     // Issue 16 fix: Use mark-to-market SL distance (current price to SL) instead of
     // entry price to SL. This ensures the risk budget reflects actual current exposure,
     // not the historical entry-based exposure. If price has moved toward SL, the
     // real risk is lower; if moved away, it's higher.
     double slDistance = MathAbs(currentPrice - sl) / point;
-    double riskAmount = volume * slDistance * tickValue;
+    // Batch 152 (M-13): distance is in POINTS but tickValue is per TICK - they are
+    // only identical when tickSize == point (5-digit FX). Scale like
+    // CalculateMinLotRiskPercent does so index/metal symbols stop understating risk.
+    double ticksPerPoint = (tickSize > 0.0) ? (point / tickSize) : 1.0;
+    double riskAmount = volume * slDistance * tickValue * ticksPerPoint;
     
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     if(equity <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 1979, __FUNCTION__);
         return 0.0;
     }
     
@@ -1553,11 +1559,11 @@ bool CUnifiedRiskManager::CheckDailyLossLimit()
     datetime nowTime = TimeCurrent();
 
     // Reset halt on new trading day.
-    // NOTE: IsNewTradingDay() mutates m_lastTradingDayKey, so it MUST stay
-    // short-circuited behind the halt flag exactly as in the original code -
-    // eagerly evaluating it here would advance the trading-day key and break
-    // CheckAndResetDailyLimits().
-    if(m_circuitBreaker.IsDailyLossHaltActive() && IsNewTradingDay(nowTime))
+    // Batch 151: TradingDayKey() is a pure read - this site can no longer advance
+    // m_lastTradingDayKey ahead of CheckAndResetDailyLimits() and steal its
+    // one-shot daily budget reset (the old IsNewTradingDay() mutation did).
+    if(m_circuitBreaker.IsDailyLossHaltActive()
+       && TradingDayKey(nowTime) != m_lastTradingDayKey)
         m_circuitBreaker.ResetDailyLossHalt();
 
     return m_circuitBreaker.EvaluateDailyLossLimit(nowTime,
@@ -1800,7 +1806,6 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
     if(equity <= 0.0)
         equity = AccountInfoDouble(ACCOUNT_BALANCE);
     if(equity <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2583, __FUNCTION__);
         return 0.0;
     }
 
@@ -1808,7 +1813,6 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
     double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
     double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
     if(point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2589, __FUNCTION__);
         return 0.0;
     }
 
@@ -1948,7 +1952,6 @@ bool CUnifiedRiskManager::ValidateClusterGovernance(const STradeValidationReques
 double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double lotSize, double stopLossPips) const
 {
     if(symbolParam == "" || stopLossPips <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 3096, __FUNCTION__);
         return 0.0;
     }
     
@@ -1958,7 +1961,6 @@ double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double 
     double contractSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_CONTRACT_SIZE);
     
     if(tickValue <= 0 || point <= 0 || tickSize <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 3105, __FUNCTION__);
         return 0.0;
     }
     
@@ -2126,7 +2128,6 @@ bool CUnifiedRiskManager::ParseClusterCodeFromComment(const string comment, stri
 double CUnifiedRiskManager::EstimatePositionRiskPercent(const ulong ticket) const
 {
     if(ticket == 0 || !PositionSelectByTicket(ticket)) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 3350, __FUNCTION__);
         return 0.0;
     }
     

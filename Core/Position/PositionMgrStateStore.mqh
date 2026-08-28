@@ -216,12 +216,6 @@ public:
         ArrayResize(m_positionStates, m_positionStateCount);
     }
 
-    void ClearAllPositionStates()
-    {
-        m_positionStateCount = 0;
-        ArrayResize(m_positionStates, 0);
-    }
-
     bool GetPositionStateByIndex(const int index, SPositionState &state)
     {
         if(index < 0 || index >= m_positionStateCount)
@@ -271,63 +265,12 @@ public:
         m_positionStateCount++;
     }
 
-    int RemoveStalePositionStates()
-    {
-        int removed = 0;
-        for(int i = m_positionStateCount - 1; i >= 0; i--)
-        {
-            if(!PositionSelectByTicket(m_positionStates[i].positionId))
-            {
-                // Position no longer exists, remove from tracking
-                for(int j = i; j < m_positionStateCount - 1; j++)
-                {
-                    m_positionStates[j] = m_positionStates[j + 1];
-                }
-                m_positionStateCount--;
-                removed++;
-            }
-        }
-
-        if(removed > 0)
-        {
-            ArrayResize(m_positionStates, m_positionStateCount);
-        }
-
-        return removed;
-    }
-
-    int GetAllPositionStateIds(ulong &positionIds[])
-    {
-        ArrayResize(positionIds, m_positionStateCount);
-        for(int i = 0; i < m_positionStateCount; i++)
-        {
-            positionIds[i] = m_positionStates[i].positionId;
-        }
-        return m_positionStateCount;
-    }
+    // Batch 153: ClearAllPositionStates / RemoveStalePositionStates /
+    // GetAllPositionStateIds / IsPositionStateInitialized /
+    // PrintPositionStateDebugInfo were removed - zero callers repo-wide
+    // once the CPositionManager forwarders were deleted.
 
     int GetPositionStateCount() const { return m_positionStateCount; }
-
-    bool IsPositionStateInitialized() const { return true; }
-
-    void PrintPositionStateDebugInfo()
-    {
-        PrintFormat("[POSITION-MANAGER-STATE] Tracking %d positions (max: %d)", m_positionStateCount, MAX_POSITION_STATES);
-
-        int withPrediction = 0;
-        int withAIPrediction = 0;
-
-        for(int i = 0; i < m_positionStateCount; i++)
-        {
-            if(m_positionStates[i].predictionId != "")
-                withPrediction++;
-            if(m_positionStates[i].aiPredictionTime > 0)
-                withAIPrediction++;
-        }
-
-        PrintFormat("[POSITION-MANAGER-STATE] With prediction ID: %d | With AI prediction: %d",
-                    withPrediction, withAIPrediction);
-    }
 };
 
 const int CPositionMgrStateStore::MAX_POSITION_STATES = 500;

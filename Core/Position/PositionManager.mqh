@@ -220,12 +220,7 @@ private:
     {
         m_stateStore.RemovePositionAIPrediction(positionId);
     }
-    
-    void ClearAllPositionStates()
-    {
-        m_stateStore.ClearAllPositionStates();
-    }
-    
+
     bool GetPositionStateByIndex(const int index, SPositionState &state)
     {
         return m_stateStore.GetPositionStateByIndex(index, state);
@@ -239,27 +234,12 @@ public:
         m_stateStore.RegisterPositionState(positionId, symbol, orderType, volume, price,
                                            slPips, tpPips, clusterCode, strategyRole);
     }
-    
-    int RemoveStalePositionStates()
-    {
-        return m_stateStore.RemoveStalePositionStates();
-    }
-    
 
-public:
-    int GetAllPositionStateIds(ulong &positionIds[])
-    {
-        return m_stateStore.GetAllPositionStateIds(positionIds);
-    }
-    
     int GetPositionStateCount() const { return m_stateStore.GetPositionStateCount(); }
-    
-    bool IsPositionStateInitialized() const { return m_stateStore.IsPositionStateInitialized(); }
-    
-    void PrintPositionStateDebugInfo()
-    {
-        m_stateStore.PrintPositionStateDebugInfo();
-    }
+
+    // Batch 153: RemoveStalePositionStates / GetAllPositionStateIds /
+    // IsPositionStateInitialized / PrintPositionStateDebugInfo /
+    // ClearAllPositionStateMaps were removed - zero callers repo-wide.
 
     CPositionManager() :
         m_tradeManager(NULL), m_regimeEngine(NULL), m_riskTierManager(NULL),
@@ -431,11 +411,6 @@ public:
     void RemoveAIPredictionPositionMap(const ulong positionId)
     {
         RemovePositionAIPrediction(positionId);
-    }
-    
-    void ClearAllPositionStateMaps()
-    {
-        ClearAllPositionStates();
     }
 };
 

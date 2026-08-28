@@ -211,25 +211,27 @@ public:
         
         // --- VOLUME CONFIRMATION ---
         // Current volume vs average of last 10 bars
-        double currentVol = volumeBuffer[0];
+        // Batch 150: static arrays are NOT as-series - [0] is the OLDEST of the
+        // copied window. count=11,start=1 -> newest (shift 1) is index 10.
+        double currentVol = volumeBuffer[10];
         double avgVol = 0;
-        for(int i = 1; i < 11; i++)
+        for(int i = 0; i < 10; i++)
             avgVol += volumeBuffer[i];
         avgVol /= 10.0;
-        
+
         double volRatio = (avgVol > 0) ? (currentVol / avgVol) : 1.0;
-        
+
         if(volRatio < m_minVolumeRatio)
         {
             PrintFormat("[MEANREV-VOL] Low volume | Ratio=%.2f < %.2f", volRatio, m_minVolumeRatio);
             return RejectSignal("MEANREV_LOW_VOLUME");
         }
-        
-        // --- SIGNAL DETECTION ---
+
+        // --- SIGNAL DETECTION --- (bb/rsi buffers: count=2,start=1 -> newest = [1])
         SMeanReversionSignal signal = DetectMeanReversionSignal(
             currentPrice, prevPrice,
-            bbUpper[0], bbMiddle[0], bbLower[0],
-            rsiBuffer[0],
+            bbUpper[1], bbMiddle[1], bbLower[1],
+            rsiBuffer[1],
             volRatio
         );
         
@@ -381,9 +383,11 @@ public:
         bool spiked = MathAbs(currentPrice - price5BarsAgo) > 2.0 * atr14;
         
         // 1.5σ BB touch (main signal condition)
-        bool touchLower = currentPrice <= bbLower[0];
-        bool touchUpper = currentPrice >= bbUpper[0];
-        
+        // Batch 155: [1] is the newest closed bar under oldest-first layout;
+        // [0] was shift-2, so touches were judged against two-bars-old bands.
+        bool touchLower = currentPrice <= bbLower[1];
+        bool touchUpper = currentPrice >= bbUpper[1];
+
         SMeanReversionSignal signal;
         signal.direction = TRADE_SIGNAL_NONE;
 
@@ -392,8 +396,8 @@ public:
             signal.entryType = MR_ENTRY_BB_TOUCH;
             signal.direction = TRADE_SIGNAL_BUY;
             signal.entryPrice = currentPrice;
-            signal.stopLoss = bbLower[0] - (bbUpper[0] - bbLower[0]) * 0.3;
-            signal.takeProfit = bbMiddle[0];
+            signal.stopLoss = bbLower[1] - (bbUpper[1] - bbLower[1]) * 0.3;
+            signal.takeProfit = bbMiddle[1];
             signal.confidence = 0.65;
             signal.reason = "Synthetic: BB lower touch + spike detected";
         }
@@ -403,8 +407,8 @@ public:
             signal.entryType = MR_ENTRY_BB_TOUCH;
             signal.direction = TRADE_SIGNAL_SELL;
             signal.entryPrice = currentPrice;
-            signal.stopLoss = bbUpper[0] + (bbUpper[0] - bbLower[0]) * 0.3;
-            signal.takeProfit = bbMiddle[0];
+            signal.stopLoss = bbUpper[1] + (bbUpper[1] - bbLower[1]) * 0.3;
+            signal.takeProfit = bbMiddle[1];
             signal.confidence = 0.65;
             signal.reason = "Synthetic: BB upper touch + spike detected";
         }
@@ -494,21 +498,25 @@ private:
             return true;
         
         // Check for divergence over last 5-10 bars
+        // Batch 155: non-series copies are OLDEST-first - [10] is the newest
+        // closed bar, not [0]. The old comparison tested price recovering
+        // across the window instead of making a fresh extreme, rejecting
+        // healthy fade continuations at random.
         for(int lookback = 5; lookback <= 10; lookback++)
         {
             if(direction == TRADE_SIGNAL_BUY)
             {
                 // Bullish divergence: price lower low + RSI higher low = NOT mean reversion
-                bool priceLowerLow = (priceLow[0] < priceLow[lookback]);
-                bool rsiHigherLow = (rsi[0] > rsi[lookback]);
+                bool priceLowerLow = (priceLow[10] < priceLow[10 - lookback]);
+                bool rsiHigherLow = (rsi[10] > rsi[10 - lookback]);
                 if(priceLowerLow && rsiHigherLow)
                     return false;  // Divergence present = don't trade
             }
             else
             {
                 // Bearish divergence: price higher high + RSI lower high
-                bool priceHigherHigh = (priceHigh[0] > priceHigh[lookback]);
-                bool rsiLowerHigh = (rsi[0] < rsi[lookback]);
+                bool priceHigherHigh = (priceHigh[10] > priceHigh[10 - lookback]);
+                bool rsiLowerHigh = (rsi[10] < rsi[10 - lookback]);
                 if(priceHigherHigh && rsiLowerHigh)
                     return false;
             }
@@ -629,38 +637,45 @@ private:
         if(priceAtLowerBB)
         {
             // Single signal: BB touch only
+            // Batch 155: base was 0.60 with a x0.85 no-Stochastic penalty -
+            // every no-Stoch variant landed at 0.51-0.58, under the 0.60
+            // floor, so the path only ever fired WITH a Stochastic extreme.
+            // Rebased so the weakened tier survives the floor as designed.
             signal.entryType = MR_ENTRY_BB_TOUCH;
             signal.direction = TRADE_SIGNAL_BUY;
             signal.entryPrice = price;
             signal.stopLoss = bbLower - (bbUpper - bbLower) * 0.5;
             signal.takeProfit = bbMiddle; // Target middle band
-            signal.confidence = 0.60 + (volRatio - 1.0) * 0.08;
+            signal.confidence = 0.70 + (volRatio - 1.0) * 0.08;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "BB lower band touch";
-            
+
             // v2.0: Require Stochastic confirmation for BB-only entries
             if(!StochasticExtreme(signal.direction))
             {
                 // No Stochastic confirmation: reduce confidence
-                signal.confidence *= 0.85;
+                signal.confidence *= 0.90;
                 signal.reason += " (no Stoch confirm)";
             }
-            
+
             return signal;
         }
-        
+
         if(rsiOversold)
         {
             // Single signal: RSI oversold only
+            // Batch 155: base 0.58 + volume bonus maxed out just under the
+            // 0.60 floor - this entry class could never fire. 0.65 keeps it
+            // the weakest viable tier.
             signal.entryType = MR_ENTRY_RSI_EXTREME;
             signal.direction = TRADE_SIGNAL_BUY;
             signal.entryPrice = price;
             signal.stopLoss = price - (bbUpper - bbLower) * 0.3; // ATR-based SL
             signal.takeProfit = bbMiddle;
-            signal.confidence = 0.58 + (volRatio - 1.0) * 0.07;
+            signal.confidence = 0.65 + (volRatio - 1.0) * 0.07;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "RSI oversold";
-            
+
             return signal;
         }
         
@@ -695,13 +710,13 @@ private:
 
         if(priceAtUpperBB)
         {
-            // Single signal: BB touch only
+            // Single signal: BB touch only (Batch 155: rebased, see BUY side)
             signal.entryType = MR_ENTRY_BB_TOUCH;
             signal.direction = TRADE_SIGNAL_SELL;
             signal.entryPrice = price;
             signal.stopLoss = bbUpper + (bbUpper - bbLower) * 0.5;
             signal.takeProfit = bbMiddle; // Target middle band
-            signal.confidence = 0.60 + (volRatio - 1.0) * 0.08;
+            signal.confidence = 0.70 + (volRatio - 1.0) * 0.08;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "BB upper band touch";
 
@@ -709,25 +724,25 @@ private:
             if(!StochasticExtreme(signal.direction))
             {
                 // No Stochastic confirmation: reduce confidence
-                signal.confidence *= 0.85;
+                signal.confidence *= 0.90;
                 signal.reason += " (no Stoch confirm)";
             }
-            
+
             return signal;
         }
-        
+
         if(rsiOverbought)
         {
-            // Single signal: RSI overbought only
+            // Single signal: RSI overbought only (Batch 155: rebased, see BUY side)
             signal.entryType = MR_ENTRY_RSI_EXTREME;
             signal.direction = TRADE_SIGNAL_SELL;
             signal.entryPrice = price;
             signal.stopLoss = price + (bbUpper - bbLower) * 0.3;
             signal.takeProfit = bbMiddle;
-            signal.confidence = 0.58 + (volRatio - 1.0) * 0.07;
+            signal.confidence = 0.65 + (volRatio - 1.0) * 0.07;
             signal.confidence = MathMin(1.0, signal.confidence);
             signal.reason = "RSI overbought";
-            
+
             return signal;
         }
         

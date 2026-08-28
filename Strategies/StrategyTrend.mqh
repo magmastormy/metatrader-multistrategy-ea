@@ -72,8 +72,11 @@ private:
            !SafeCopyBuffer(m_macdHandle, 1, 1, 2, macdSignal))
             return true;
 
-        double histNow = macdMain[0] - macdSignal[0];
-        double histPrev = macdMain[1] - macdSignal[1];
+        // Batch 155: non-series copies are oldest-first, so [1] is the newest
+        // closed bar and [0] the bar before it. The swapped read confirmed
+        // BUYs with a FALLING histogram.
+        double histNow = macdMain[1] - macdSignal[1];
+        double histPrev = macdMain[0] - macdSignal[0];
 
         if(signal == TRADE_SIGNAL_BUY)
             return (histNow > histPrev);
@@ -541,7 +544,9 @@ private:
         if(CopyBuffer(m_htfHandleADX, 0, 0, 3, adxBuffer) < 3)
             return true; // Skip on data error
 
-        double htfADX = adxBuffer[0];
+        // Batch 150: raw CopyBuffer into a static array is NOT as-series - [0] is the
+        // OLDEST of the window. start=0,count=3 -> shift 1 (last closed HTF bar) = [1].
+        double htfADX = adxBuffer[1];
 
         // HTF must have sufficient trend strength — lower threshold for synthetics
         bool isSynthetic = (m_assetClassId >= 4 && m_assetClassId <= 8);
@@ -559,8 +564,8 @@ private:
            CopyBuffer(m_htfHandleADX, 2, 0, 3, minusDIBuffer) < 3)
             return true; // Skip on data error
 
-        double htfPlusDI = plusDIBuffer[0];
-        double htfMinusDI = minusDIBuffer[0];
+        double htfPlusDI = plusDIBuffer[1];
+        double htfMinusDI = minusDIBuffer[1];
 
         // For BUY signals, HTF should be bullish (+DI > -DI)
         if(ltfSignal == TRADE_SIGNAL_BUY && htfPlusDI <= htfMinusDI)

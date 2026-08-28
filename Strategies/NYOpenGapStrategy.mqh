@@ -90,10 +90,10 @@ public:
         }
 
         // --- Synthetic symbol filter: NY Open Gap only works on forex/metals/indices ---
-        if(IsVolatilitySyntheticSymbolName(m_symbol) ||
-           IsBoomCrashSyntheticSymbolName(m_symbol) ||
-           IsJumpSyntheticSymbolName(m_symbol) ||
-           IsStepSyntheticSymbolName(m_symbol))
+        // Batch 155: umbrella check - the old 4-family test let DEX and the
+        // other Deriv families through into NY-open logic that is meaningless
+        // on 24/7 synthetics (including weekend "gaps").
+        if(IsSyntheticIndexSymbolName(m_symbol))
         {
             SetDecisionReasonTag("NYGAP_SYNTHETIC_SKIP");
             return TRADE_SIGNAL_NONE;

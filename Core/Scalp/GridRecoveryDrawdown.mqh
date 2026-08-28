@@ -53,14 +53,20 @@ public:
    //+------------------------------------------------------------------+
    static bool PassesActivationEquityFloor(double equityFloorPercent)
    {
+      // Batch 152 (S-M-01): the old check computed the floor from CURRENT equity
+      // itself (equity*pct% >= equity whenever pct<=100), so it could never
+      // reject. Baseline on BALANCE instead - equity well below balance means
+      // floating losses already exist, which is exactly when a recovery grid
+      // must not activate.
       double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-      if(currentEquity > 0.0 && equityFloorPercent > 0.0)
+      double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+      if(currentEquity > 0.0 && balance > 0.0 && equityFloorPercent > 0.0)
       {
-         double minEquity = currentEquity * (equityFloorPercent / 100.0);
+         double minEquity = balance * (equityFloorPercent / 100.0);
          if(currentEquity < minEquity)
          {
-            PrintFormat("[GRID-RECOVERY] REJECTED: Equity %.2f below floor %.2f%% of baseline",
-                        currentEquity, equityFloorPercent);
+            PrintFormat("[GRID-RECOVERY] REJECTED: Equity %.2f below activation floor %.2f (%.2f%% of balance %.2f)",
+                        currentEquity, minEquity, equityFloorPercent, balance);
             return false;
          }
       }

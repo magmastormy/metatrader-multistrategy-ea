@@ -211,15 +211,33 @@ void CMultiEMASystem::Deinit()
 //+------------------------------------------------------------------+
 bool CMultiEMASystem::UpdateEMAValues()
 {
-    if(CopyBuffer(m_ema8Handle, 0, 0, 10, m_ema8) < 10) return false;
-    if(CopyBuffer(m_ema21Handle, 0, 0, 10, m_ema21) < 10) return false;
-    if(CopyBuffer(m_ema50Handle, 0, 0, 10, m_ema50) < 10) return false;
-    if(CopyBuffer(m_ema200Handle, 0, 0, 10, m_ema200) < 10) return false;
-    if(CopyBuffer(m_adxHandle, 0, 0, 2, m_adx) < 2) return false;
-    if(CopyBuffer(m_atrHandle, 0, 0, 1, m_atr) < 1) return false;
-    if(CopyBuffer(m_adxHandle, 1, 0, 1, m_plusDI) < 1) return false;
-    if(CopyBuffer(m_adxHandle, 2, 0, 1, m_minusDI) < 1) return false;
-    
+    // Batch 155: static member arrays cannot carry the AS_SERIES flag, so the
+    // old plain CopyBuffer calls filled them OLDEST-first - every "[0] =
+    // current" read in this class was actually the value from NINE bars ago,
+    // and crosses/slope/alignment all ran on badly stale data. Reverse-map
+    // each buffer so [k] = shift k+1 (the closed-bar convention used across
+    // the strategy suite).
+    double e8[], e21[], e50[], e200[];
+    if(CopyBuffer(m_ema8Handle, 0, 1, 10, e8) < 10) return false;
+    if(CopyBuffer(m_ema21Handle, 0, 1, 10, e21) < 10) return false;
+    if(CopyBuffer(m_ema50Handle, 0, 1, 10, e50) < 10) return false;
+    if(CopyBuffer(m_ema200Handle, 0, 1, 10, e200) < 10) return false;
+    for(int k = 0; k < 10; k++)
+    {
+        int src     = 9 - k;
+        m_ema8[k]   = e8[src];
+        m_ema21[k]  = e21[src];
+        m_ema50[k]  = e50[src];
+        m_ema200[k] = e200[src];
+    }
+    double adxBuf[];
+    if(CopyBuffer(m_adxHandle, 0, 1, 2, adxBuf) < 2) return false;
+    m_adx[0] = adxBuf[1];  // newest closed bar
+    m_adx[1] = adxBuf[0];  // the bar before it
+    if(CopyBuffer(m_atrHandle, 0, 1, 1, m_atr) < 1) return false;
+    if(CopyBuffer(m_adxHandle, 1, 1, 1, m_plusDI) < 1) return false;
+    if(CopyBuffer(m_adxHandle, 2, 1, 1, m_minusDI) < 1) return false;
+
     return true;
 }
 
@@ -258,7 +276,12 @@ void CMultiEMASystem::CalculateTrendState()
         m_currentTrend.slope = 0;
     
     // Momentum (8 EMA direction)
-    m_currentTrend.momentum = (m_ema8[0] - m_ema8[1]) / m_ema8[1];
+    // Batch 155: guarded - the array is zero-initialized during indicator
+    // warmup and a 0 denominator produced inf/NaN in a downstream-read field.
+    if(m_ema8[1] != 0.0)
+        m_currentTrend.momentum = (m_ema8[0] - m_ema8[1]) / m_ema8[1];
+    else
+        m_currentTrend.momentum = 0.0;
     
     // Track consistency
     if((m_currentTrend.isUptrend && prevState.isUptrend) ||

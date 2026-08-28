@@ -235,7 +235,10 @@ bool CSRBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    if(CopyRates(m_symbol, m_timeframe, 0, 3, rates) != 3)
+    // Batch 156: judge the last CLOSED bar (shift 1). The old start=0 read
+    // the forming bar - at bar open its body is ~zero so rejection never
+    // passed, mid-bar it fired on candles that could vanish by close.
+    if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
     
     // Pin bar with long lower wick
@@ -263,7 +266,8 @@ bool CSRBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    if(CopyRates(m_symbol, m_timeframe, 0, 3, rates) != 3)
+    // Batch 156: closed bar (shift 1) - see HasBullishRejection
+    if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
     
     // Pin bar with long upper wick
@@ -805,7 +809,8 @@ bool CTrendlineBounceStrategy::HasBullishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    if(CopyRates(m_symbol, m_timeframe, 0, 3, rates) != 3)
+    // Batch 156: closed bar (shift 1) - see CSRBounceStrategy::HasBullishRejection
+    if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
     
     double lowerWick = MathMin(rates[0].open, rates[0].close) - rates[0].low;
@@ -830,7 +835,8 @@ bool CTrendlineBounceStrategy::HasBearishRejection()
 {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    if(CopyRates(m_symbol, m_timeframe, 0, 3, rates) != 3)
+    // Batch 156: closed bar (shift 1) - see CSRBounceStrategy::HasBullishRejection
+    if(CopyRates(m_symbol, m_timeframe, 1, 3, rates) != 3)
         return false;
     
     double upperWick = rates[0].high - MathMax(rates[0].open, rates[0].close);

@@ -9,6 +9,9 @@
 
 bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double &buffer[])
 {
+    // Batch 150: Sleep(10) removed - it stalled OnTick up to 30ms per failing buffer
+    // (14 strategies x several buffers) exactly during indicator warmup. Immediate
+    // retries still cover the async-recalc race without blocking the tick path.
     for(int attempt = 0; attempt < 3; attempt++)
     {
         if(CopyBuffer(handle, bufferIndex, startPos, count, buffer) >= count)
@@ -16,7 +19,6 @@ bool SafeCopyBuffer(int handle, int bufferIndex, int startPos, int count, double
             CIndicatorManager::Instance().AccessHandle(handle);
             return true;
         }
-        Sleep(10);
     }
     return false;
 }

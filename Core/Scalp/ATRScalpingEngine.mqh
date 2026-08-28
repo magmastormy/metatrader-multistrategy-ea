@@ -18,13 +18,13 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
-#include "../Risk/RiskValidationGate.mqh"
+#include "../Risk/UnifiedRiskManager.mqh"
 #include "../../IndicatorManager.mqh"
 #include <Trade\Trade.mqh>
 
 class CUnifiedRiskManager;
 
-// Extracted modules (structural debloat â€” no behaviour change)
+// Extracted modules (structural debloat â€?no behaviour change)
 #include "ATRScalpTypes.mqh"
 #include "ATRScalpRegistry.mqh"
 #include "ATRScalpFilter.mqh"
@@ -34,7 +34,7 @@ class CUnifiedRiskManager;
 #include "ATRScalpMetrics.mqh"
 
 //+------------------------------------------------------------------+
-//| CATRScalpingEngine â€” ATR-based between-spike scalping engine      |
+//| CATRScalpingEngine â€?ATR-based between-spike scalping engine      |
 //+------------------------------------------------------------------+
 class CATRScalpingEngine
 {
@@ -188,7 +188,7 @@ public:
          return false;
       }
 
-      // Resize arrays â€” use temp struct pattern for string members
+      // Resize arrays â€?use temp struct pattern for string members
       int newSize = m_symbolCount + 1;
 
       CATRScalpRegistry::GrowStates(m_symbolStates, m_symbolCount, newSize);
@@ -209,7 +209,7 @@ public:
    //+------------------------------------------------------------------+
    void Deinit()
    {
-      // Batch 117: Handles are owned by CIndicatorManager â€” do NOT release them
+      // Batch 117: Handles are owned by CIndicatorManager â€?do NOT release them
       // Just invalidate our references to prevent stale handle usage
       m_signal.InvalidateHandles(m_symbolCount);
       m_symbolCount = 0;
@@ -219,7 +219,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Process a tick for a given symbol â€” call every tick               |
+   //| Process a tick for a given symbol â€?call every tick               |
    //+------------------------------------------------------------------+
    void ProcessTick(const string symbol, double bid, double ask)
    {
@@ -284,7 +284,7 @@ public:
          return;
 
       m_symbolStates[idx].lastSpikeTime = TimeCurrent();
-      PrintFormat("[ATR-SCALP] Spike detected for %s â€” updated lastSpikeTime", symbol);
+      PrintFormat("[ATR-SCALP] Spike detected for %s â€?updated lastSpikeTime", symbol);
    }
 
    //+------------------------------------------------------------------+
@@ -295,7 +295,7 @@ public:
       int idx = FindSymbolIndex(symbol);
       if(idx < 0)
       {
-         PrintFormat("[ATR-SCALP] Cannot set spike interval â€” symbol %s not registered", symbol);
+         PrintFormat("[ATR-SCALP] Cannot set spike interval â€?symbol %s not registered", symbol);
          return;
       }
 

@@ -375,11 +375,17 @@ double CTrendlineDetector::NormalizeSlope(double slope)
     int periodSeconds = PeriodSeconds(m_timeframe);
     if(periodSeconds <= 0) return 0;
 
-    double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-    if(point <= 0) return 0;
+    // Batch 156: scale-free normalization. The old formula divided the
+    // per-bar move by 10*POINT ("pips"), which saturates arctan near 90
+    // degrees on synthetics priced in thousands - IsValidSlopeAngle then
+    // rejected nearly every real trendline. Express the slope in ATRs per
+    // bar instead: a usable line advances a fraction of an ATR per bar,
+    // regardless of instrument price scale.
+    double atr = GetATR(14);
+    if(atr <= 0) return 0;
 
-    double slopePipsPerBar = (slope * periodSeconds) / (point * 10.0);
-    double angleRad = MathArctan(slopePipsPerBar / 5.0);
+    double slopeAtrPerBar = (slope * periodSeconds) / atr;
+    double angleRad = MathArctan(slopeAtrPerBar);
     return angleRad * 180.0 / M_PI;
 }
 
@@ -396,8 +402,14 @@ void CTrendlineDetector::FindSupportTrendlines()
         // Inner loop: P2 (newer anchor point, must be more recent than P1)
         for(int j = i + 1; j < m_swingLowCount && m_trendlineCount < m_maxTrendlines; j++)
         {
-            SSwingPoint p1 = m_swingLows[i];  // Older (higher bar index)
-            SSwingPoint p2 = m_swingLows[j];  // Newer (lower bar index)
+            // Batch 156: the swing arrays are NEWEST-first (barIndex grows as
+            // the detection scan walks into the past), so with the old
+            // assignment p1=i / p2=j we had barIndex[i] < barIndex[j] for
+            // EVERY pair and the "P1 must be older" guard skipped all of
+            // them - zero trendlines were ever detected. Take p1 from the
+            // deeper index so it is genuinely the older anchor.
+            SSwingPoint p1 = m_swingLows[j];  // Older (higher bar index)
+            SSwingPoint p2 = m_swingLows[i];  // Newer (lower bar index)
 
             // P1 must be older (higher bar index in series)
             if(p1.barIndex <= p2.barIndex) continue;
@@ -462,8 +474,10 @@ void CTrendlineDetector::FindResistanceTrendlines()
     {
         for(int j = i + 1; j < m_swingHighCount && m_trendlineCount < m_maxTrendlines; j++)
         {
-            SSwingPoint p1 = m_swingHighs[i];
-            SSwingPoint p2 = m_swingHighs[j];
+            // Batch 156: newest-first arrays - p1 must come from the deeper
+            // index to be the older anchor (see FindSupportTrendlines).
+            SSwingPoint p1 = m_swingHighs[j];
+            SSwingPoint p2 = m_swingHighs[i];
 
             if(p1.barIndex <= p2.barIndex) continue;
             if(!IsLineViable(p1, p2)) continue;

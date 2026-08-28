@@ -5,8 +5,7 @@
 //| Extracted from Core/Trading/TradeManager.mqh (God-Object split). |
 //| Every member is a static pure function - this module holds NO    |
 //| instance state. Bodies are verbatim copies of the original       |
-//| CTradeManager methods, including the [DBG-RET0] diagnostics, so  |
-//| execution behaviour is byte-identical.                           |
+//| CTradeManager methods, so execution behaviour is byte-identical. |
 //|                                                                  |
 //| NO BACK-POINTER: the two helpers that originally touched         |
 //| CTradeManager state (GetCurrentExecutionPrice -> m_symbolInfo)   |
@@ -46,13 +45,11 @@ public:
         double atrValues[];
         CIndicatorManager* manager = CIndicatorManager::Instance();
         if(manager == NULL) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 537, __FUNCTION__);
             return 0.0;
         }
 
         int atrHandle = manager.GetATRHandle(symbolParam, timeframe, period);
         if(atrHandle == INVALID_HANDLE) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 541, __FUNCTION__);
             return 0.0;
         }
 
@@ -60,7 +57,6 @@ public:
         {
             return atrValues[0];
         }
-        PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 547, __FUNCTION__);
         return 0.0;
     }
 
@@ -70,7 +66,6 @@ public:
     static double NormalizePrice(const string symbolName, const double price)
     {
         if(price <= 0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2499, __FUNCTION__);
             return 0.0;
         }
 
@@ -90,7 +85,6 @@ public:
             stepVolume = 0.01;
 
         if(volume < minVolume || !MathIsValidNumber(volume)) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2517, __FUNCTION__);
             return 0.0;
         }
 
@@ -107,7 +101,6 @@ public:
         normalized = MathMin(normalized, maxVolume);
 
         if(normalized < minVolume) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2532, __FUNCTION__);
             return 0.0;
         }
 
@@ -121,7 +114,6 @@ public:
                                     const double price, const double stopLossPips)
     {
         if(stopLossPips <= 0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2544, __FUNCTION__);
             return 0.0;
         }
 
@@ -147,7 +139,6 @@ public:
                                       const double price, const double takeProfitPips)
     {
         if(takeProfitPips <= 0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2568, __FUNCTION__);
             return 0.0;
         }
 
@@ -230,7 +221,6 @@ public:
     {
         double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
         if(point <= 0.0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2648, __FUNCTION__);
             return 0.0;
         }
 
@@ -335,7 +325,7 @@ public:
     static double GetEstimatedSwapCost(const string symbol, const ENUM_ORDER_TYPE orderType,
                                        const double volume, const int estimatedHoldDays)
     {
-        if(estimatedHoldDays <= 0) { PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2796, __FUNCTION__); return 0.0; }
+        if(estimatedHoldDays <= 0) { return 0.0; }
 
         double swapLong = SymbolInfoDouble(symbol, SYMBOL_SWAP_LONG);
         double swapShort = SymbolInfoDouble(symbol, SYMBOL_SWAP_SHORT);
@@ -348,7 +338,6 @@ public:
         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
 
         if(point <= 0 || tickValue <= 0 || tickSize <= 0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2809, __FUNCTION__);
             return 0.0;
         }
 
@@ -369,7 +358,6 @@ public:
         double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
 
         if(tickValue <= 0 || tickSize <= 0 || point <= 0) {
-            PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 2744, __FUNCTION__);
             return 0.0;
         }
 

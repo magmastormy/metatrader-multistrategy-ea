@@ -13,7 +13,7 @@
 #ifndef CORE_SCALP_GRID_RECOVERY_EXECUTION_MQH
 #define CORE_SCALP_GRID_RECOVERY_EXECUTION_MQH
 
-#include "../Risk/RiskValidationGate.mqh"
+#include "../Risk/UnifiedRiskManager.mqh"
 #include <Trade\Trade.mqh>
 
 #include "GridRecoveryTypes.mqh"
@@ -24,7 +24,7 @@ class CUnifiedRiskManager;
 class CAIAdapter;
 
 //+------------------------------------------------------------------+
-//| CGridRecoveryExecution â€” owns the trade execution dependencies    |
+//| CGridRecoveryExecution â€?owns the trade execution dependencies    |
 //+------------------------------------------------------------------+
 class CGridRecoveryExecution
 {
@@ -142,9 +142,12 @@ public:
                      symbol, level, direction == 1 ? "BUY" : "SELL", lotSize, retcode, entryPrice, sl, tp, magic);
 
          // Additional debug info for common errors
-         if(retcode == 10016) // ERR_INVALID_VOLUME
+         // Batch 152 (T-11): these branches tested MQL4-era numbers against MQL5
+         // retcodes (10016 is TRADE_DISABLED, 10014 is INVALID_VOLUME, 10008 is
+         // PLACED) - use the official symbolic codes and drop the stale comments.
+         if(retcode == TRADE_RETCODE_INVALID_VOLUME)
          {
-            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_INVALID_VOLUME: lot=%.2f minVol=%.2f maxVol=%.2f step=%.4f | freeMargin=%.2f leverage=%d",
+            PrintFormat("[GRID-RECOVERY-ERROR] %s TRADE_RETCODE_INVALID_VOLUME: lot=%.2f minVol=%.2f maxVol=%.2f step=%.4f | freeMargin=%.2f leverage=%d",
                         symbol, lotSize,
                         SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN),
                         SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX),
@@ -152,12 +155,12 @@ public:
                         AccountInfoDouble(ACCOUNT_MARGIN_FREE),
                         AccountInfoInteger(ACCOUNT_LEVERAGE));
          }
-         else if(retcode == 10014) // ERR_INVALID_PRICE
+         else if(retcode == TRADE_RETCODE_INVALID_PRICE)
          {
-            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_INVALID_PRICE: entryPrice=%.5f SL=%.5f TP=%.5f digits=%d",
+            PrintFormat("[GRID-RECOVERY-ERROR] %s TRADE_RETCODE_INVALID_PRICE: entryPrice=%.5f SL=%.5f TP=%.5f digits=%d",
                         symbol, entryPrice, sl, tp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS));
          }
-         else if(retcode == 10008) // ERR_NOT_ENOUGH_MONEY
+         else if(retcode == TRADE_RETCODE_NO_MONEY)
          {
             double usedMargin = 0.0;
             // ACCOUNT_MARGIN_USED may not be available in all MT5 builds
@@ -166,7 +169,7 @@ public:
             double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
             usedMargin = totalMargin - freeMargin;
             if(usedMargin < 0) usedMargin = 0;
-            PrintFormat("[GRID-RECOVERY-ERROR] %s ERR_NOT_ENOUGH_MONEY: lot=%.2f freeMargin=%.2f usedMargin=%.2f totalMargin=%.2f",
+            PrintFormat("[GRID-RECOVERY-ERROR] %s TRADE_RETCODE_NO_MONEY: lot=%.2f freeMargin=%.2f usedMargin=%.2f totalMargin=%.2f",
                         symbol, lotSize, freeMargin, usedMargin, totalMargin);
          }
       }

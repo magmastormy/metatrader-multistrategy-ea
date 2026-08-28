@@ -186,7 +186,9 @@ double CTrendEntryTypes::GetATR(int period)
     
     double atr[];
     ArraySetAsSeries(atr, true);
-    if(CopyBuffer(handle, 0, 0, 1, atr) <= 0)
+    // Batch 158: closed-bar discipline — shift 1 (last completed bar),
+    // not shift 0 (forming bar). AS_SERIES on dynamic array: [0]=newest.
+    if(CopyBuffer(handle, 0, 1, 1, atr) <= 0)
     {
         if(handle != m_atrHandle) IndicatorRelease(handle);
         return 0;
@@ -353,11 +355,19 @@ STrendEntrySignal CTrendEntryTypes::GetPullbackEntry()
         return signal;
     
     // Check if close1 was at 21 EMA
+    // Batch 155: the raw distance-in-points test against 15 POINTS (=1.5 pips
+    // on 5-digit FX, ~0.15 price units on synthetics priced in hundreds)
+    // made this entry unreachable almost everywhere. Widen the tolerance to
+    // a quarter ATR when that is larger - the standard "at the EMA" band -
+    // while keeping the configured points value as a floor.
     double ema21 = m_emaSystem.GetEMA21(1);
     double ema50 = m_emaSystem.GetEMA50(1);
     double distance = MathAbs(close1 - ema21) / point;
-    
-    if(distance > m_pullbackTolerance)
+    double tolerancePoints = m_pullbackTolerance;
+    if(atr > 0 && (atr * 0.25) / point > tolerancePoints)
+        tolerancePoints = (atr * 0.25) / point;
+
+    if(distance > tolerancePoints)
         return signal;
     
     if(trend.isUptrend && ema21 > ema50)

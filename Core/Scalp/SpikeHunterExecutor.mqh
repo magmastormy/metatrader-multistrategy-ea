@@ -9,10 +9,10 @@
 //|   m_trade (CTrade fallback), m_aiAdapter, m_totalTradesOpened    |
 //|                                                                  |
 //| Moved logic (verbatim):                                          |
-//|   GetActiveSpikePositions() â€” SPIKE-HUNT comment scan (static,   |
+//|   GetActiveSpikePositions() â€?SPIKE-HUNT comment scan (static,   |
 //|                               it never touched engine state)     |
-//|   CanOpenSpikeTrade()       â€” cooldown + max concurrent gate     |
-//|   OpenSpikeTrade()          â€” ATR SL/TP, position sizing, margin |
+//|   CanOpenSpikeTrade()       â€?cooldown + max concurrent gate     |
+//|   OpenSpikeTrade()          â€?ATR SL/TP, position sizing, margin |
 //|                               cap, lot-step normalisation, magic |
 //|                               composition, UnifiedRiskManager    |
 //|                               pre-trade gate (AGENTS.md #1),     |
@@ -38,7 +38,7 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
-#include "../Risk/RiskValidationGate.mqh"
+#include "../Risk/UnifiedRiskManager.mqh"
 #include <Trade\Trade.mqh>
 
 #include "SpikeHunterTypes.mqh"
@@ -50,7 +50,7 @@ class CUnifiedRiskManager;
 class CAIAdapter;
 
 //+------------------------------------------------------------------+
-//| CSpikeHunterExecutor â€” stateful spike trade gating + execution    |
+//| CSpikeHunterExecutor â€?stateful spike trade gating + execution    |
 //+------------------------------------------------------------------+
 class CSpikeHunterExecutor
 {
@@ -81,7 +81,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Dependency injection â€” mirrors the CSpikeHunterEngine::Init       |
+   //| Dependency injection â€?mirrors the CSpikeHunterEngine::Init       |
    //| assignment block one-for-one.                                     |
    //+------------------------------------------------------------------+
    void Init(const SSpikeHunterConfig &config,
@@ -156,7 +156,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[SPIKE-HUNT-TRADE] ATR is zero for %s â€” cannot calculate SL/TP", symbol);
+         PrintFormat("[SPIKE-HUNT-TRADE] ATR is zero for %s â€?cannot calculate SL/TP", symbol);
          return false;
       }
 

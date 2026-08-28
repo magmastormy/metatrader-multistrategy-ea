@@ -236,7 +236,10 @@ public:
          int direction = (signal == TRADE_SIGNAL_BUY) ? 1 : -1;
 
          // Use TradeManager's async method which includes preflight validation
-         ulong magic = magicNumber;
+         // Batch 152 (T-01): carry the per-symbol strategy offset like the sync
+         // path does, so async scalp positions land in the EA-owned magic range
+         // that ownership scans actually match.
+         ulong magic = (ulong)((long)magicNumber + tradeManager.GetMagicOffsetForSymbol(symbol));
          bool sent = tradeManager.SendTradeAsync(orderType, symbol, lotSize,
                                                   entryPrice, sl, tp,
                                                   magic, 5000);
@@ -250,8 +253,11 @@ public:
          }
 
          // Track the pending async order locally for management
-         asyncTracker.OnAsyncOrderSent(tradeManager.GetPendingAsyncCount() > 0 ?
-                          tradeManager.GetPendingAsyncTicket(0) : 0,
+         // Batch 152 (T-10): the request we just submitted was appended at the END
+         // of the pending array - index 0 is the oldest, possibly unrelated entry.
+         int lastPendingIdx = tradeManager.GetPendingAsyncCount() - 1;
+         asyncTracker.OnAsyncOrderSent(lastPendingIdx >= 0 ?
+                          tradeManager.GetPendingAsyncTicket(lastPendingIdx) : 0,
                           symbol, direction, lotSize, entryPrice, sl, tp);
 
          lastScalpTime = TimeCurrent();

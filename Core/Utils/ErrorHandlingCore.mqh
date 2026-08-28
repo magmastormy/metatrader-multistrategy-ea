@@ -84,44 +84,9 @@ public:
     static void DestroyInstance();
 };
 
-class CErrorHandling
-{
-public:
-    CErrorHandling() {}
-    ~CErrorHandling() {}
-
-    void LogError(const string component, const string message, const int errorCode = 0)
-    {
-        SErrorContext context;
-        context.component = component;
-        context.operation = "LogError";
-        context.symbol = "";
-        context.errorCode = errorCode;
-        context.additionalInfo = message;
-        context.timestamp = TimeCurrent();
-        context.severity = ERROR_RECOVERABLE;
-
-        CEnhancedErrorHandler* localErrorHandler = CEnhancedErrorHandler::GetInstance();
-        if(CheckPointer(localErrorHandler) != POINTER_INVALID) {
-            CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, context);
-        }
-    }
-
-    void LogError(const ENUM_ERROR_SEVERITY severity, const SErrorContext &context) {}
-    
-    void LogError(const ENUM_ERROR_SEVERITY severity, const string component, 
-                 const string message, const int errorCode = 0)
-    {
-        SErrorContext context;
-        context.component = component;
-        context.operation = "LogError";
-        context.symbol = "";
-        context.errorCode = errorCode;
-        context.additionalInfo = message;
-        context.timestamp = TimeCurrent();
-        context.severity = severity;
-    }
-};
+// Batch 153: the CErrorHandling instance-wrapper class was removed - it had
+// zero references repo-wide and its non-trivial overloads either dropped the
+// payload or double-routed into CEnhancedErrorHandler.
 
 //+------------------------------------------------------------------+
 //| Static member storage                                            |

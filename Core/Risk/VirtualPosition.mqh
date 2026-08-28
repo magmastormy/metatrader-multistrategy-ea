@@ -95,6 +95,25 @@ public:
         }
     }
 
+    // Batch 151: update an existing reservation's risk percent once the
+    // validated/adjusted lot is known. Reserve() rejects riskPercent <= 0.0,
+    // so a zero-risk placeholder can never sit in the book.
+    bool UpdateRisk(const string ownerTag, const double riskPercent)
+    {
+        if(ownerTag == "" || riskPercent <= 0.0)
+            return false;
+
+        bool updated = false;
+        for(int i = ArraySize(m_positions) - 1; i >= 0; i--)
+        {
+            if(m_positions[i].ownerTag != ownerTag)
+                continue;
+            m_positions[i].riskPercent = riskPercent;
+            updated = true;
+        }
+        return updated;
+    }
+
     bool Reserve(const string ownerTag,
                  const string symbol,
                  const ENUM_ORDER_TYPE orderType,

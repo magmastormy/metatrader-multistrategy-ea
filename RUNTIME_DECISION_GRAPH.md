@@ -1,11 +1,11 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-08-11
-- Last Architecture Sync: 2026-08-11
+- Last Updated: 2026-08-28
+- Last Architecture Sync: 2026-08-23
 - Scope: Runtime signal-to-execution flow
 - Source: `Core/Orchestration/EAOrchestrator.mqh`
-- Current Batch: 146
+ - Current Batch: 158
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -15,8 +15,8 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - **Testing EA**: `MultiStrategyTestingEA.mq5` — Standalone testing entry point with Complete Test Profile System (45 profiles)
 - Registry Access: `CRegistryAggregator` (unified access to mathematical, institutional, neural net, drawing, scan, symbol state, strategy registries)
 - Magic Number Allocation: `CMagicNumberAllocator` (centralized allocation service)
-- Fast-Path Tick Processing: `Core/Orchestration/TickProcessor.mqh`
-- Heavy Timer Processing: `Core/Orchestration/TimerProcessor.mqh`
+- Fast-Path Tick Processing: inline in `EAOrchestrator` (`ProcessTickSafetyLoop`; TickProcessor.mqh deleted in Batch 151 - zero callers)
+- Heavy Timer Processing: inline in `EAOrchestrator` (`OnTimer` -> `ProcessTradingLogic`; TimerProcessor.mqh deleted in Batch 151 - zero callers)
 - Signal Generation: `Core/Orchestration/SignalGenerator.mqh`
 - Multi-Tier Validation: `Core/Orchestration/SignalValidator.mqh`
 - Candidate Building: `Core/Orchestration/CandidateBuilder.mqh`
@@ -37,7 +37,7 @@ Defines the authoritative runtime decision path and ownership boundaries between
 - Python bridge integration: `CPythonBridge` in `Core/Utils/PythonBridge.mqh`
 - Shared engine & scalability: `CSharedEngineManager` (Batch 91)
 - Error aggregation & verbosity: `CEnhancedErrorHandler` (enhanced in Batch 91)
-- Bar processing & multi-timeframe: `CBarProcessor` (enhanced in Batch 91)
+- Bar processing & multi-timeframe: inline per-symbol bar gating in `EAOrchestrator::ProcessNewBars` via `CScanSchedulerRegistry` (BarProcessor.mqh deleted in Batch 151 - zero callers)
 - Scalping engine: `CFastScalpEngine` + `CScalpSignalCache` (Batch 97)
 - Scalp strategies: `CScalpMomentumStrategy`, `CScalpSpreadStrategy`, `CScalpVolatilityBreakout` (Batch 97)
 - Position lifecycle: `CPositionLifecycleManager` (Batch 98)
@@ -211,13 +211,10 @@ flowchart TD
   U1 -->|Yes| U2[Cap lot to margin limit - log SCALP-LOT-CAPPED]
   U1 -->|No| V
   U2 --> V[UnifiedRisk post-size validation]
-  V --> V1{CVaR limit exceeded?}
-  V1 -->|Yes| V2[Block trade - log CVAR-CHECK]
-  V1 -->|No| W
-  V2 --> T[Risk rejection]
-  W{Pass?}
+  V --> VC[CVaR tail-risk veto gate ACTIVE - IsCVaRLimitExceeded checked in pipeline pre-approval, reservation released on reject; minute-gated UpdateEquityCurve fed from RefreshRuntimeState Batch 151]
+  VC --> W{Pass?}
   W -->|No| T
-  W -->|Yes| X[Reserve virtual risk and stage approved candidate]
+  W -->|Yes| X[Reserve virtual risk and stage approved candidate - Batch 151: reservation books provisional risk then syncs final adjusted risk]
 
   X --> X1{More symbols?}
   X1 -->|Yes| E4
@@ -338,6 +335,65 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Batch 158 Signal-Suppression Audit Sweep — Unaudited Strategy Files (2026-08-28)
+Final sweep of the signal-suppression audit campaign. Remaining unaudited strategy files and one efficiency defect in S/R strategy Fibonacci confluence helper:
+- **TrendEntryTypes.mqh / TrendSignalEnhancers.mqh:** `GetATR()` forming-bar (shift 0) → closed-bar (shift 1). ATR normalization no longer flips range gates early each bar.
+- **FourStateRegimeDetector.mqh:** KAMA trend slope and regime classification read `iClose(...,0)` → shift 1 (last closed bar). Regime state stable intrabar.
+- **StatisticalArbitrageStrategy.mqh:** `CalculateSpreadStatistics()` static array oldest-first read → dynamic array with `ArraySetAsSeries(true)` so `[0]` = newest closed bar. Spread stats use correct bars.
+- **BreakerBlockStrategy.mqh / FVGScalperStrategy.mqh / TurtleSoupStrategy.mqh:** FX-calibrated `SYMBOL_POINT` pip conversions → ATR-denominated scale-free pips (1 ATR = 1 unit). No FX calibration; entries no longer scale-distorted on synthetics.
+- **StrategySupportResistance.mqh:** `ApplyFibConfluence()` per-call `iATR` create/release → cached shared handle via `CIndicatorManager::Instance().GetATRHandle()` in `Init()`. No handle churn per signal.
+All 7 EAs compile 0 errors / 0 warnings.
+
+## Batch 157 Scout-Findings Sweep Closure (2026-08-24)
+
+## Batch 156 Detector-Layer Repairs (2026-08-24)
+Decision inputs feeding strategy votes are now computed from closed bars and correctly anchored:
+- **Candlestick chain:** hammer/pin-bar/doji/engulfing/star patterns evaluate the last CLOSED bar with fail-closed ATR sanity gates; inverted-hammer vs shooting-star decided by prior-trend context and scored on the dominant wick; pattern confidence = 50% pattern strength + 50% confluence (multiplicative deflation removed); SL padding floored at 0.15×ATR.
+- **Closed-bar state latching:** SR rejection candles, breakout detection (levels are consumed only by closed-bar closes), OB mitigation, FVG rebalance, session-gap fill status and structure-break classification all ignore intrabar pokes — tradeable/untradeable sets can no longer flip tick-by-tick.
+- **Trendlines:** anchor pairs ordered oldest→newest correctly (the detector previously built zero lines) and slope angles normalize ATR-relative, so angle gates behave identically on FX and synthetics.
+- **ICT detectors:** Source OB = last opposite candle before the impulse (was the oldest in a 20-bar window → stale zone anchors every scan); external swing liquidity emits both sides under per-side budgets; BMS classification by PeriodSeconds revives H2–H12 charts; session-gap minimum size fails closed without ATR instead of accepting point-scale phantom gaps.
+- **Trailing:** unwarmed EMA/ATR feeds yield "no trail"; TRAIL_HYBRID cannot emit a degenerate near-zero stop for sells.
+
+## Batch 155 Strategy Emission-Path Repairs (2026-08-24)
+- **Series-ordering corrections (decision-path effect):** static (non-series) buffers fill OLDEST-first under CopyBuffer; several strategies read them newest-first. Repairs that change live decisions: `VolatilityBreakout.ADXRising()` was inverted (gate demanded ADX falling → `VOLBREAK_ADX_NOT_RISING` rejected nearly all breakouts); `SimpleMomentum` MACD confirmation, volume-surge slot, ROC acceleration mapping, RSI-divergence window and crossover-hysteresis scan direction were all reversed (hysteresis ≥2 was a total kill-switch); `MultiEMASystem` buffers are reverse-mapped to `[k]=shift k+1` so StrategyTrend crosses/slope/alignment/consistency evaluate on recent closed bars instead of nine-bars-stale data; `StrategyTrend.MACDConfirmed` now/prev un-swapped; `MeanReversion` divergence window fixed and synthetic-mode band touches judged on shift-1 bands.
+- **Scale corrections:** Momentum's absolute ATR floor (`m_minVolatility`) is capped at 1 basis point of price (M1 FX charts were permanently `MOMENTUM_LOW_VOLATILITY`) and the volatility confidence tax compares current ATR to the symbol's own 10-bar ATR average (was: ratio vs the FX-scale floor — ~100× on synthetics, permanent 40% haircut). TrendEntryTypes pullback tolerance widens to max(configured points, 0.25×ATR) — 15 points ≈ 1.5 pips made pullback entries unreachable.
+- **Confidence economics:** MeanReversion RSI-only base 0.58→0.65 and BB-touch 0.60→0.70 with ×0.90 no-Stoch penalty — both tiers clear the 0.60 floor while staying below DOUBLE_SIGNAL. LiquiditySweep DAILY_HIGH/LOW sweeps earn +0.10 level bonus (were default-zero, maxing under the floor) and stops are placed beyond the swept wick extreme (level ∓ wick×1.1) instead of inside already-traded price.
+- **Wiring:** Statistical Arbitrage receives the Python bridge in the orchestrator dependency-wiring pass (the catalog registration path never injected it — bridge-up registration still produced permanent `STATARB_PYTHON_BRIDGE_UNAVAILABLE` rejections).
+- **Session/synthetic gates:** NYOpenGap + AsianRangeBreak skip the full `IsSyntheticIndexSymbolName` umbrella (DEX/RangeBreak/Trek/etc. previously ran meaningless session logic, weekend "gaps" included). AsianRangeBreak's exact=true M5 bar lookup relaxed to exact=false (one missing midnight bar no longer kills the day) and its tightness filter compares against a sqrt-of-time-scaled expected 6h range (per-bar chart-TF ATR was unsatisfiable on M1/M5, vacuous on H4/D1).
+- **RangeCompression:** all reads moved to closed bars (shift 1; forming-bar close≈open made the breach test a timing lottery and partial tick volume biased volume confirm false); the counter-trend FADE branch is exempt from the trend filter (it fired counter-trend by design and was always `TREND_FILTER_REJECT`ed).
+- **Deliberately unchanged:** consensus quorum/risk gating untouched; Turtle Soup (sweep+CISD conjunction), Breaker Block (single-zone rebuild) and FVG (strongest-zone-only) scarcity documented as design.
+
+## Batch 154 Product Decisions Executed (2026-08-24)
+- **Closed-trade feedback is live (behavior activation):** EA `OnTradeTransaction` → `ProcessManagerTradeTransactions`. Manager fan-out runs per-strategy attribution/health; full closes of EA-owned positions (partial closes excluded via `POSITION_IDENTIFIER` re-check) feed `CPerformanceAnalytics::RecordClosedTrade`, loss-guard accounting, and `CLiveAuthorityResolver::RecordOutcome`.
+- **Governance loop:** strategy auto-disable (win-rate floor / consecutive-loss limit) removes a voter for a 1-hour cooldown; an orchestrator-owned 60s sweep in `ProcessTradingLogic` re-enables cooldown-served strategies regardless of AI mode. Recovery predicate fixed: serving the cooldown suffices (post-disable wins were unreachable), and the rolling sample resets on re-enable so stale losses cannot insta-redisable.
+- **AI promotion path:** executed AI-contributed trades store provenance (position id → contributor summary + owning manager) at send time; on full close the resolver records the outcome (`[AUTHORITY-LEARN]`). At ≥30 tracked trades with expectancyR ≥0.3, PF ≥1.2, <4 consecutive losses, AI candidates promote from bootstrap cap to ≥0.75× risk (`PROVEN_AI`). Cap unchanged below that bar; R approximated as netProfit / (equity × maxRiskPerTrade/100).
+- **Parked by decision:** SpikeHunter/GridRecovery/ATRScalping stay unwired — init logs now state `PARKED: not wired into the tick loop`; VPIN/institutional layer stays documented-dormant.
+
+## Batch 153 Hygiene Closure (2026-08-24)
+- **Heartbeat funnel counters are live:** the scan loop now writes `scans` (every symbol slot), `no_signal` (generator-empty slot) and `validator_reject` (`ValidateSignal` fail) into `CHeartbeatTelemetry`. `[HEARTBEAT] scans/no_signal/validator_reject` and the status report `Scans=` field were hard-zero before this batch because no writer existed — all-zero baselines in old logs are NOT expected values going forward. Decision semantics unchanged: these counters are observability only, nothing branches on them.
+- **Attribution contributor split:** `RecordAttribution` splits the candidate's contributor CSV via `CTradeAttributionManager::SplitContributors`; attribution rows now list individual contributors instead of one malformed combined string.
+- **Init-failure cleanup parity:** `CleanupOnInitFailure()` performs the same release sequence as `Shutdown()` (math hub -> EA-owned sizing modifiers -> neural nets/drawing managers -> Deriv-engine deinits -> TradeManager deinit -> scalp cache -> uncertainty -> registry -> AI subsystems -> error-handler singleton -> bridges), so a failed init after subsystem creation leaves no objects or indicator handles behind.
+- **Dead code removed (zero callers):** `CErrorHandling` wrapper; `CPositionManager`/StateStore `RemoveStalePositionStates` / `GetAllPositionStateIds` / `IsPositionStateInitialized` / `PrintPositionStateDebugInfo` / `ClearAllPositionStateMaps(+ClearAllPositionStates)` chain; `CSignalGenerator::SetEvalBudget` / `GetLastDecisionContextFromManager`.
+- **Documented unwired (product decision pending):** the closed-trade feedback loop — `CEnterpriseStrategyManager::OnTradeTransaction` (per-strategy performance/health/auto-disable), `CPerformanceAnalytics::RecordClosedTrade` (account win-rate/PF/momentum/drawdown feeding the momentum lot scale and URM snapshots) and `CPositionMgrLossGuard::RecordClosedTrade` (consecutive-loss accounting) have no call sites. All consumers treat "no data" as neutral today; wiring them ACTIVATES adaptive behavior and requires an explicit decision.
+
+## Batch 152 Full Audit Closure (2026-08-23)
+- **Sizing geometry (live behavior):** `CalculateRiskPerLot` now computes SL distance as `stopLossPips * point` — identical to where execution actually places stops. The former ×10 inflated risk-per-lot, so every fixed-risk entry sized ~10x below configured risk. Post-deploy lots are visibly larger by design; the post-size risk gate remains binding.
+- **Magic routing:** explicit magic overrides (`OpenPosition(magic>0)`) ship verbatim via `m_pendingExplicitMagic`; zero still derives base+symbol-offset. SpikeHunter tickets are EA-owned again; manual-close restore gates use the same `IsEAOwnedMagic` range check.
+- **Async send path** enforces the mandatory-SL invariant (block + `[EXECUTION-BLOCKED] reason=MandatoryStopLoss | path=async`), matching the sync gate.
+- **Scalp fast path is self-sufficient per tick:** cache refresh at head (new-bar throttled), then sync-tracking -> manage -> pending-order/async checks; deal confirms arrive via `OnTradeTransaction`. Partial-profit exits are once-per-ticket latched.
+- **Live-authority gates are configured:** resolver candidate gates read policy from `m_liveAuthority.Configure(...)` instead of defaults; spike-detector magics moved to offset 9150 (9000 collided with DERIV_CRASH_BOOM).
+- **Symbol-budget path cost:** win-rate/profit-factor feed the allocation weight from a 60s memoized single-pass scan (was: full-history materialization twice per symbol per refresh).
+- **Conservative flag ownership:** only the circuit breaker lowers conservative mode (bool& write-backs); analytics may raise it. No more next-validation wipe of breaker escalation.
+- **Correlation queries are prune-safe:** both query symbols pinned across the internal matrix refresh; indices re-resolved after.
+- **Margin health authority split (documented):** pre-trade free-margin/margin-level gate = pipeline Step 6 (live); periodic margin monitor = intentionally unwired so the circuit breaker stays the single reactive-flatten authority.
+
+## Batch 150 Runtime Corrections (2026-08-23)
+- `ProcessNewBars` now actually runs: it was gated behind `CRegistryAggregator::GetScanScheduler()` which always returned NULL, so no symbol ever received `OnNewBar` and the consensus cache was never invalidated on bar close. It is wired through `CScanSchedulerRegistry::CheckNewBar`.
+- NEW_BAR signal evaluation is per-symbol bar-gated inside `CSignalGenerator` (`m_lastEvalBar[]`): a symbol's consensus is evaluated once per closed bar, not on every 1s timer pass. Dormancy warnings therefore accrue per bar, not per second.
+- Signal results are stored by manager index (`results[managerIdx]`); the consumer in `GenerateAndProcessSignals` pairs each result with its own symbol/manager. Previously a densely appended result array caused wrong-symbol validation/execution.
+- The min-seconds-between-trades cooldown is functional again: `m_lastTradeTime` is stamped on successful execution (it was declared but never written).
+- Scalp fast path is throttled to 1s; five per-tick JSON performance logs were removed from `OnTick`.
 - Cooldown, total-position, unprotected-position, and per-symbol capacity checks are entry gates, not scan gates; the EA keeps evaluating symbols while blocked from sending.
 - Vote admission into timeframe consistency and quorum uses the pipeline's effective confidence floor for that evaluation, not just the static base pipeline minimum.
 - Quorum uses normalized weighted conviction pooling (intrabar eligibility defines the active live-voter pool for intrabar scans):

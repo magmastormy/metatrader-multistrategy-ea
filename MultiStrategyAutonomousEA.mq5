@@ -1172,9 +1172,11 @@ bool ValidateInputs()
             datetime timeOpen = posInfo.Time();
             string comment = posInfo.Comment();
         
-            // Check if position belongs to this EA (magic number prefix)
-            int magicPrefix = (int)(magic / 100);
-            if(magicPrefix != InpMagicNumber) continue;
+            // Batch 152 (T-03): ownership check must be the EA-magic RANGE test.
+            // The old (int)(magic/100) != InpMagicNumber prefix test truncated the
+            // last two digits (123656 -> 1236), so it never matched and restart
+            // restore silently skipped every EA-owned position.
+            if(!g_orchestrator.GetTradeManager().IsEAOwnedMagic((long)magic)) continue;
         
             // Identify engine by comment tag (more reliable than magic offset)
             if(StringFind(comment, "GRID-RECOVERY") >= 0)
@@ -1368,6 +1370,17 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
     {
         // Forward to TradeManager for async trade confirmation handling
         g_orchestrator.GetTradeManager().ProcessTradeTransaction(trans, request, result);
+
+        // Batch 152 (S-H-01): route deal confirmations into the scalp async
+        // tracker. Without this, filled async scalp orders never registered in
+        // the position tracker and their 1R/breakeven management never applied.
+        if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+            g_orchestrator.ProcessScalpDealConfirmed(trans.deal, trans.order);
+
+        // Batch 154: closed-trade feedback - per-strategy attribution/health
+        // fan-out plus account-level learners (performance analytics, loss
+        // guard, live-authority outcome recording).
+        g_orchestrator.ProcessManagerTradeTransactions(trans, request, result);
     }
 }
 

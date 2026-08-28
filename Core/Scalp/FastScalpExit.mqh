@@ -95,7 +95,10 @@ public:
 
          double oneRPrice = 0.0;
          ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-         if(point > 0.0)
+         // Batch 152 (S-L-03): with SL==0 the old math produced a garbage 1R
+         // (2x open price on buys, 0 on sells) - leave it unset so the partial
+         // stage stays disabled for naked positions.
+         if(point > 0.0 && sl > 0.0)
          {
             double slDistance = MathAbs(openPrice - sl) / point;
             if(posType == POSITION_TYPE_BUY)

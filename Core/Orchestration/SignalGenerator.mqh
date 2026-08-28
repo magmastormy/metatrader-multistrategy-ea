@@ -20,22 +20,7 @@ private:
     string m_symbols[];
     int m_managerCount;
     CConsensusCache* m_consensusCache;
-    
-    // Token bucket throttling
-    int m_tokens;
-    int m_maxTokens;
-    int m_tokensPerSecond;
-    datetime m_lastTokenRefill;
-    
-    // Sliding window for rate limiting
-    datetime m_evalTimestamps[];
-    int m_maxEvaluationsPerWindow;
-    int m_windowSeconds;
-    
-    // Concurrency control
-    int m_maxConcurrentEvaluations;
-    int m_activeEvaluations;
-    
+
     // Evaluation budget (per cycle limits)
     int m_evalBudgetPerCycle;
     int m_intrabarBudgetPerCycle;
@@ -46,7 +31,10 @@ private:
     
     // L12-013: Fair rotation index for signal evaluation budget
     int m_evalStartIndex;
-    
+
+    // Last evaluated bar time per manager index (new-bar cadence gate)
+    datetime m_lastEvalBar[];
+
     // Dormancy tracking
     enum
     {
@@ -71,14 +59,10 @@ public:
         SSignalResult() : signal(TRADE_SIGNAL_NONE), confidence(0), confluence(0), valid(false) {}
     };
     
-    CSignalGenerator() : m_managerCount(0), m_consensusCache(NULL), 
-                             m_tokens(10), m_maxTokens(10), m_tokensPerSecond(10), m_lastTokenRefill(0),
-                             m_maxEvaluationsPerWindow(50), m_windowSeconds(10), m_maxConcurrentEvaluations(5),
-                             m_activeEvaluations(0), m_evalBudgetPerCycle(8), m_intrabarBudgetPerCycle(3),
+    CSignalGenerator() : m_managerCount(0), m_consensusCache(NULL),
+                             m_evalBudgetPerCycle(8), m_intrabarBudgetPerCycle(3),
                              m_pendingCount(0), m_dormantCount(0), m_evalStartIndex(0)
         {
-            ArrayResize(m_evalTimestamps, m_maxEvaluationsPerWindow);
-            ArrayResize(m_pendingSymbols, m_managerCount);
         }
     
     ~CSignalGenerator() {}
@@ -94,25 +78,22 @@ public:
             m_symbols[i] = symbols[i];
         }
         m_consensusCache = cache;
+        ArrayResize(m_lastEvalBar, count);
+        ArrayInitialize(m_lastEvalBar, 0);
+        ArrayResize(m_pendingSymbols, count);
         Print("[SignalGenerator] Initialized with ", count, " symbol managers");
     }
     
-    void SetEvalBudget(int newBarBudget, int intrabarBudget)
-    {
-        m_evalBudgetPerCycle = MathMax(1, newBarBudget);
-        m_intrabarBudgetPerCycle = MathMax(1, intrabarBudget);
-    }
-    
+    // Batch 153: SetEvalBudget removed - zero callers; the eval budget is
+    // config-driven only (see m_evalBudgetPerCycle initialiser).
+
     // Main signal generation entry point
                 bool GenerateSignals(ENUM_SIGNAL_EVAL_MODE evalMode, SSignalResult &results[], const string corrId = "")
                 {
                     ulong startTime = GetMicrosecondCount();
                     datetime now = TimeCurrent();
-                
-                    // Refill token bucket
-                    RefillTokens(now);
-                
-                    // Periodic dormancy array compaction (every 60s)
+
+                // Periodic dormancy array compaction (every 60s)
                     static datetime s_lastDormantCompact = 0;
                     if(now - s_lastDormantCompact >= 60)
                     {
@@ -120,50 +101,29 @@ public:
                         s_lastDormantCompact = now;
                     }
                 
-                    // Check sliding window rate limit
-                    if(!CheckSlidingWindow(now))
-                    {
-                        PrintFormat("[SIGNAL-GENERATOR] Rate limit exceeded, skipping evaluation");
-                        return false;
-                    }
-        
-                // Check concurrency limit
-                if(m_activeEvaluations >= m_maxConcurrentEvaluations)
-                {
-                    PrintFormat("[SIGNAL-GENERATOR] Max concurrent evaluations (%d) reached, skipping", m_maxConcurrentEvaluations);
-                    return false;
-                }
-        
-                m_activeEvaluations++;
-        
+                    // Batch 151: removed decorative throttles (token bucket never
+                    // decremented, sliding window wrote a single fixed slot,
+                    // concurrency counter peaked at 1 in this single-threaded loop).
+                    // The per-cycle eval budget below is the real limiter.
+
                 ArrayResize(results, m_managerCount);
                 int signalsGenerated = 0;
-                int newBarCount = 0;
-                int intrabarCount = 0;
-        
-                // Count pending new-bar scans
-                for(int i = 0; i < m_managerCount; i++)
-                {
-                    if(evalMode == EVAL_MODE_NEW_BAR)
-                        newBarCount++;
-                    else
-                        intrabarCount++;
-                }
-        
+                int evaluationsUsed = 0;
+
                 int evalBudget = (evalMode == EVAL_MODE_NEW_BAR) ? m_evalBudgetPerCycle : m_intrabarBudgetPerCycle;
                 int selectedCount = 0;
-        
+
                 // Select symbols to evaluate (rotation + priority)
                 bool selected[];
                 ArrayResize(selected, m_managerCount);
                 ArrayInitialize(selected, false);
-        
+
                 // For new bar: prioritize symbols with pending new bars
                 // For intrabar: prioritize by score
                 SelectSymbolsForEval(evalMode, evalBudget, selected, selectedCount);
 
                 // Process pending symbols first (from previous budget overflow)
-                for(int pi = 0; pi < m_pendingCount && signalsGenerated < evalBudget; pi++)
+                for(int pi = 0; pi < m_pendingCount && evaluationsUsed < evalBudget; pi++)
                 {
                     string pendingSymbol = m_pendingSymbols[pi];
                     int managerIdx = FindManagerIndex(pendingSymbol);
@@ -172,42 +132,45 @@ public:
                         // This pending symbol was already selected, skip duplicate
                         continue;
                     }
-            
+
                     // Try to evaluate this pending symbol
                     if(managerIdx >= 0)
                     {
                         CEnterpriseStrategyManager* manager = m_managers[managerIdx];
                         if(manager != NULL && !IsInDormantCooldown(pendingSymbol))
-                                                {
-                                                    EvaluateSymbol(pendingSymbol, manager, evalMode, results, signalsGenerated, corrId);
-                                                }
+                        {
+                            EvaluateSymbol(managerIdx, manager, evalMode, results, signalsGenerated, evaluationsUsed, corrId);
+                        }
                     }
                 }
-        
+
                 // Clear pending list after processing
                 m_pendingCount = 0;
-        
+
                 // Process newly selected symbols
-                for(int i = 0; i < m_managerCount && signalsGenerated < evalBudget; i++)
+                for(int i = 0; i < m_managerCount && evaluationsUsed < evalBudget; i++)
                 {
                     if(!selected[i]) continue;
-            
-                    string symbol = m_symbols[i];
+
                     CEnterpriseStrategyManager* manager = m_managers[i];
                     if(manager == NULL) continue;
-            
+
                     // Check dormancy
-                    if(IsInDormantCooldown(symbol))
+                    if(IsInDormantCooldown(m_symbols[i]))
                         continue;
-            
+
                     // Evaluate symbol
-                                        EvaluateSymbol(symbol, manager, evalMode, results, signalsGenerated, corrId);
+                    EvaluateSymbol(i, manager, evalMode, results, signalsGenerated, evaluationsUsed, corrId);
                 }
         
                 // If we couldn't process all selected symbols due to budget, queue them
+                // Batch 152 (ORCH-07): the processing loops above bound work by
+                // evaluationsUsed, and signalsGenerated <= evaluationsUsed always -
+                // gating requeue on signalsGenerated let starved symbols fall
+                // through without being queued for the next cycle.
                 for(int i = 0; i < m_managerCount; i++)
                 {
-                    if(selected[i] && signalsGenerated >= evalBudget)
+                    if(selected[i] && evaluationsUsed >= evalBudget)
                     {
                         if(m_pendingCount < ArraySize(m_pendingSymbols))
                         {
@@ -217,10 +180,6 @@ public:
                     }
                 }
         
-                // Record evaluation timestamp for sliding window
-                m_evalTimestamps[m_activeEvaluations % m_maxEvaluationsPerWindow] = now;
-                m_activeEvaluations--;
-        
                 // Performance timing log
                                         ulong elapsed = GetMicrosecondCount() - startTime;
                                         CJsonLogger::LogPerformance("SignalGenerator", "GenerateSignals_us", (double)elapsed, corrId);
@@ -229,9 +188,9 @@ public:
                 static datetime s_lastBudgetLog = 0;
                 if(TimeCurrent() - s_lastBudgetLog >= 60)
                 {
-                    PrintFormat("[SCAN-BUDGET] mode=%s | evalBudget=%d | signalsGenerated=%d | pending=%d | activeEvals=%d | tokens=%d",
+                    PrintFormat("[SCAN-BUDGET] mode=%s | evalBudget=%d | evaluations=%d | signalsGenerated=%d | pending=%d",
                                (evalMode == EVAL_MODE_NEW_BAR) ? "NEW_BAR" : "INTRABAR",
-                               evalBudget, signalsGenerated, m_pendingCount, m_activeEvaluations, m_tokens);
+                               evalBudget, evaluationsUsed, signalsGenerated, m_pendingCount);
                     s_lastBudgetLog = TimeCurrent();
                 }
         
@@ -394,40 +353,6 @@ public:
         }
     }
     
-    // Token bucket refill
-    void RefillTokens(datetime now)
-    {
-        if(m_lastTokenRefill == 0)
-        {
-            m_lastTokenRefill = now;
-            m_tokens = m_maxTokens;
-            return;
-        }
-        
-        int secondsElapsed = (int)(now - m_lastTokenRefill);
-        if(secondsElapsed > 0)
-        {
-            int tokensToAdd = secondsElapsed * m_tokensPerSecond;
-            m_tokens = MathMin(m_maxTokens, m_tokens + tokensToAdd);
-            m_lastTokenRefill = now;
-        }
-    }
-    
-    // Check sliding window rate limit
-    bool CheckSlidingWindow(datetime now)
-    {
-        int countInWindow = 0;
-        datetime windowStart = now - m_windowSeconds;
-        
-        for(int i = 0; i < m_maxEvaluationsPerWindow; i++)
-        {
-            if(m_evalTimestamps[i] >= windowStart && m_evalTimestamps[i] > 0)
-                countInWindow++;
-        }
-        
-        return countInWindow < m_maxEvaluationsPerWindow;
-    }
-    
     // Find manager index by symbol
         int FindManagerIndex(const string symbol) const
         {
@@ -440,66 +365,56 @@ public:
         }
 
         // Evaluate a single symbol: consensus -> validation -> candidate building
-                void EvaluateSymbol(const string symbol, CEnterpriseStrategyManager* manager, ENUM_SIGNAL_EVAL_MODE evalMode, SSignalResult &results[], int &signalsGenerated, const string corrId = "")
+        // Results are written into results[managerIdx] so the consumer's index-by-manager
+        // pairing stays correct; signalsGenerated only counts non-empty slots.
+        void EvaluateSymbol(const int managerIdx, CEnterpriseStrategyManager* manager, ENUM_SIGNAL_EVAL_MODE evalMode, SSignalResult &results[], int &signalsGenerated, int &evaluationsUsed, const string corrId = "")
         {
+            string symbol = m_symbols[managerIdx];
+            if(managerIdx < 0 || managerIdx >= ArraySize(results)) return;
+
+            // New-bar mode: evaluate a symbol at most once per bar of its chart timeframe.
+            // Without this gate the 1s cadence re-evaluates unchanged bars and the
+            // dormancy tracker blacklists quiet symbols within seconds.
+            if(evalMode == EVAL_MODE_NEW_BAR)
+            {
+                datetime barTime = iTime(symbol, (ENUM_TIMEFRAMES)Period(), 0);
+                if(barTime <= 0 || barTime == m_lastEvalBar[managerIdx]) return;
+                m_lastEvalBar[managerIdx] = barTime;
+            }
+            evaluationsUsed++;
+
             double confidence = 0.0;
             int confluence = 0;
-        
+
             // Get consensus signal from manager
             ENUM_TRADE_SIGNAL signal = manager.GetConsensusSignalForSymbolWithConfluenceMode(symbol, confidence, confluence, evalMode);
-        
+
             if(signal == TRADE_SIGNAL_NONE)
             {
                 // No signal - record dormancy if enabled
                 RecordDormancyWarning(symbol);
                 return;
             }
-        
+
             // Clear dormancy warning on valid signal
             ClearDormancyWarning(symbol);
-        
+
             // Get decision context for validation
             SConsensusDecisionContext ctx;
             manager.GetLastDecisionContext(ctx);
-            
-            // Validation is now performed in EAOrchestrator using EnterpriseStrategyManager's ValidateSignal()
-            // This method just generates signals; post-consensus validation happens later
-            bool validated = true;
-            string vetoReason = "";
-        
-            if(validated)
-            {
-                // Store the result
-                int idx = signalsGenerated;
-                ArrayResize(results, idx + 1);
-                results[idx].signal = signal;
-                results[idx].confidence = confidence;
-                results[idx].confluence = confluence;
-                results[idx].decisionContext = ctx;
-                results[idx].valid = true;
-                results[idx].vetoReason = "";
-                signalsGenerated++;
-            }
-            else
-            {
-                // Validation failed
-                int idx = signalsGenerated;
-                ArrayResize(results, idx + 1);
-                results[idx].signal = signal;
-                results[idx].confidence = confidence;
-                results[idx].confluence = confluence;
-                results[idx].decisionContext = ctx;
-                results[idx].valid = false;
-                results[idx].vetoReason = vetoReason;
-                signalsGenerated++;
-            }
+
+            // Validation is performed in EAOrchestrator using EnterpriseStrategyManager's ValidateSignal()
+            results[managerIdx].signal = signal;
+            results[managerIdx].confidence = confidence;
+            results[managerIdx].confluence = confluence;
+            results[managerIdx].decisionContext = ctx;
+            results[managerIdx].valid = true;
+            results[managerIdx].vetoReason = "";
+            signalsGenerated++;
         }
 
-        // Method to get last decision context from manager
-        bool GetLastDecisionContextFromManager(CEnterpriseStrategyManager* manager, SConsensusDecisionContext &ctx)
-        {
-            return manager.GetLastDecisionContext(ctx);
-        }
+        // Batch 153: GetLastDecisionContextFromManager removed - zero callers;
+        // EvaluateSymbol calls manager.GetLastDecisionContext() directly.
 
     };
 

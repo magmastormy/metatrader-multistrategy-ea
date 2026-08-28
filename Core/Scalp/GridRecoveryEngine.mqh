@@ -17,7 +17,7 @@
 
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
-#include "../Risk/RiskValidationGate.mqh"
+#include "../Risk/UnifiedRiskManager.mqh"
 #include <Trade\Trade.mqh>
 
 class CUnifiedRiskManager;
@@ -25,7 +25,7 @@ class CUnifiedRiskManager;
 // Forward declaration for AI adapter (L10-018)
 class CAIAdapter;
 
-// Extracted modules (structural debloat â€” no behaviour change)
+// Extracted modules (structural debloat â€?no behaviour change)
 #include "GridRecoveryTypes.mqh"
 #include "GridRecoveryLevels.mqh"
 #include "GridRecoverySequence.mqh"
@@ -35,7 +35,7 @@ class CAIAdapter;
 #include "GridRecoveryExecution.mqh"
 
 //+------------------------------------------------------------------+
-//| CGridRecoveryEngine â€” Grid recovery for mean-reverting synthetics |
+//| CGridRecoveryEngine â€?Grid recovery for mean-reverting synthetics |
 //+------------------------------------------------------------------+
 class CGridRecoveryEngine
 {
@@ -208,7 +208,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Process a tick for a given symbol â€” call every tick               |
+   //| Process a tick for a given symbol â€?call every tick               |
    //+------------------------------------------------------------------+
    void ProcessTick(const string symbol, double bid, double ask)
    {
@@ -248,7 +248,7 @@ public:
          return;
       }
 
-      // Grid is active â€” manage existing positions
+      // Grid is active â€?manage existing positions
       ManageGridPositions(idx);
 
       // Check if all levels are in profit (close entire grid)
@@ -256,7 +256,7 @@ public:
 
       if(allInProfit && m_symbolStates[idx].activeLevelCount > 0)
       {
-         PrintFormat("[GRID-RECOVERY] All levels in profit for %s â€” closing grid", symbol);
+         PrintFormat("[GRID-RECOVERY] All levels in profit for %s â€?closing grid", symbol);
          CloseAllGrids(symbol);
       }
    }
@@ -312,7 +312,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[GRID-RECOVERY] ATR is zero for %s â€” cannot calculate grid", symbol);
+         PrintFormat("[GRID-RECOVERY] ATR is zero for %s â€?cannot calculate grid", symbol);
          return false;
       }
 
@@ -454,7 +454,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Manage grid positions â€” check filled levels, add next if needed    |
+   //| Manage grid positions â€?check filled levels, add next if needed    |
    //+------------------------------------------------------------------+
    void ManageGridPositions(int idx)
    {
@@ -468,7 +468,7 @@ public:
       // Check drawdown limit
       if(CalculateGridDrawdownPercent(idx) >= m_config.maxDrawdownPercent)
       {
-         PrintFormat("[GRID-RECOVERY] Max drawdown reached for %s (%.1f%% >= %d%%) â€” closing grid",
+         PrintFormat("[GRID-RECOVERY] Max drawdown reached for %s (%.1f%% >= %d%%) â€?closing grid",
                      symbol, CalculateGridDrawdownPercent(idx), m_config.maxDrawdownPercent);
          CloseAllGrids(symbol);
          return;
@@ -485,7 +485,7 @@ public:
       // If no active levels remain, grid has completed
       if(currentActiveCount == 0 && m_symbolStates[idx].activeLevelCount > 0)
       {
-         PrintFormat("[GRID-RECOVERY] Grid completed for %s â€” all levels closed", symbol);
+         PrintFormat("[GRID-RECOVERY] Grid completed for %s â€?all levels closed", symbol);
          m_symbolStates[idx].activeLevelCount = 0;
          m_symbolStates[idx].direction = 0;
          m_symbolStates[idx].totalGridRisk = 0.0;
@@ -511,7 +511,7 @@ public:
                if(OpenGridLevel(idx, direction, nextLevel))
                {
                   m_symbolStates[idx].activeLevelCount = nextLevel + 1;
-                  PrintFormat("[GRID-RECOVERY] Added level %d for %s â€” price moved against grid",
+                  PrintFormat("[GRID-RECOVERY] Added level %d for %s â€?price moved against grid",
                               nextLevel, symbol);
                }
             }

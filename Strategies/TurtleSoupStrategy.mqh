@@ -146,32 +146,35 @@ public:
         }
 
         // Step 6: Calculate SL beyond false break extreme + 0.3*ATR, TP at 2R
+        // Batch 158: scale-free ATR-denominated pips (1 ATR = 1 unit)
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double atr = m_structureAnalyzer.GetATR(14);
-        double slPrice, slDistance;
+        double slPrice, slDistance, tpPrice;
 
         if(bullish)
         {
             // Bullish turtle soup: SL below the sweep low + 0.3*ATR
             slPrice = turtleSoup.sweepPrice - 0.3 * atr;
             slDistance = MathAbs(currentPrice - slPrice);
+            tpPrice = currentPrice + 2.0 * slDistance;
         }
         else
         {
             // Bearish turtle soup: SL above the sweep high + 0.3*ATR
             slPrice = turtleSoup.sweepPrice + 0.3 * atr;
             slDistance = MathAbs(slPrice - currentPrice);
+            tpPrice = currentPrice - 2.0 * slDistance;
         }
 
-        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
+        double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
+        double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
 
         STradeValidationRequest request;
         request.symbol = m_symbol;
         request.orderType = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
         request.lotSize = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
         request.stopLossPips = slPips;
-        request.takeProfitPips = slPips * 2.0; // 2R take profit
+        request.takeProfitPips = tpPips;
         request.confidence = confidence;
         request.strategy = GetName();
         request.clusterCode = "";

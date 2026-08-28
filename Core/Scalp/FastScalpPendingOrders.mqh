@@ -43,7 +43,9 @@ private:
 public:
    CFastScalpPendingOrders() : m_pendingOrderCount(0)
    {
-      ZeroMemory(m_pendingOrders);
+      // Batch 152 (S-M-04): field-wise reset (string member, see SPendingScalpOrder::Reset)
+      for(int i = 0; i < ArraySize(m_pendingOrders); i++)
+         m_pendingOrders[i].Reset();
    }
 
    //--- Was CFastScalpEngine::GetPendingOrderCount()
@@ -242,7 +244,8 @@ public:
       for(int j = index; j < m_pendingOrderCount - 1; j++)
          m_pendingOrders[j] = m_pendingOrders[j + 1];
 
-      ZeroMemory(m_pendingOrders[m_pendingOrderCount - 1]);
+      // Clear tail slot (field-wise - Batch 152 S-M-04)
+      m_pendingOrders[m_pendingOrderCount - 1].Reset();
       m_pendingOrderCount--;
    }
 };

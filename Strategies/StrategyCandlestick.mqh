@@ -1,4 +1,4 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //| StrategyCandlestick.mqh                                          |
 //| Candlestick Pattern Strategy - Multi-pattern detection and       |
 //| confluence scoring for institutional-grade pattern trading        |
@@ -135,7 +135,7 @@ public:
             m_lastDecisionReasonTag = "CANDLE_INIT_FAILED";
             Print("[CANDLESTICK] Failed to initialize candle analyzer");
 
-            // Cleanup on failure — handles managed by CIndicatorManager
+            // Cleanup on failure 鈥?handles managed by CIndicatorManager
             m_atrHandle = INVALID_HANDLE;
             m_ema50Handle = INVALID_HANDLE;
             m_ema200Handle = INVALID_HANDLE;
@@ -166,7 +166,7 @@ public:
 
     virtual void Deinit() override
     {
-        // Handles are managed by CIndicatorManager — no IndicatorRelease needed
+        // Handles are managed by CIndicatorManager 鈥?no IndicatorRelease needed
         m_atrHandle = INVALID_HANDLE;
         m_ema50Handle = INVALID_HANDLE;
         m_ema200Handle = INVALID_HANDLE;
@@ -231,7 +231,10 @@ public:
             int minIdx = ArrayMinimum(prices);
             double swingLow = prices[minIdx];
 
-            double sl = swingLow - (SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 10);
+            // Batch 156: pad below the swing by max(10 points, 15% ATR) -
+            // on synthetics 10 points is ~0.10 price units, parking the stop
+            // ON the swing low inside noise.
+            double sl = swingLow - MathMax(SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 10, atr * 0.15);
 
             // Cap SL distance to 3x ATR to prevent excessive risk
             if(entryPrice - sl > atr * 3.0)
@@ -258,7 +261,8 @@ public:
             int maxIdx = ArrayMaximum(highPrices);
             double swingHigh = highPrices[maxIdx];
 
-            double sl = swingHigh + (SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 10);
+            // Batch 156: pad above the swing by max(10 points, 15% ATR) - see BUY side
+            double sl = swingHigh + MathMax(SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 10, atr * 0.15);
 
             // Cap SL distance to 3x ATR
             if(sl - entryPrice > atr * 3.0)
@@ -314,7 +318,12 @@ protected:
             int score = BuildConfluenceScore(true, star.patternPrice, star.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = star.strength * m_confluence.GetConfidence();
+                // Batch 156: all eight pattern sites blend pattern strength and
+                // confluence 50/50 instead of multiplying them - the old
+                // strength(0.5-0.95) x confluence(0.7-1.0) product landed most
+                // real detections at ~0.35-0.55, hugging/below the consuming
+                // filter floors and starving the strategy's vote volume.
+                confidence = (0.5 * star.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(star.time, star.patternPrice, confidence, star.isBullish,
                                   star.type == STAR_MORNING ? "Morning Star" : "Evening Star");
                 PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
@@ -332,7 +341,7 @@ protected:
             int score = BuildConfluenceScore(true, soldiers.patternPrice, soldiers.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = soldiers.strength * m_confluence.GetConfidence();
+                confidence = (0.5 * soldiers.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(soldiers.time, soldiers.patternPrice, confidence, soldiers.isBullish,
                                   soldiers.isBullish ? "Three White Soldiers" : "Three Black Crows");
                 PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
@@ -352,7 +361,7 @@ protected:
             int score = BuildConfluenceScore(true, engulfing.engulfingClose, engulfing.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = engulfing.strength * m_confluence.GetConfidence();
+                confidence = (0.5 * engulfing.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(engulfing.time, engulfing.engulfingClose, confidence, engulfing.isBullish, "Engulfing");
                 PrintFormat("[CANDLE-PATTERN] %s | Engulfing %s | Score=%d/100 | %s",
                            m_symbol, engulfing.isBullish ? "BULL" : "BEAR",
@@ -373,7 +382,7 @@ protected:
             int score = BuildConfluenceScore(true, harami.patternPrice, harami.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = harami.strength * m_confluence.GetConfidence();
+                confidence = (0.5 * harami.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(harami.time, harami.patternPrice, confidence, harami.isBullish,
                                   harami.isBullish ? "Bullish Harami" : "Bearish Harami");
                 PrintFormat("[CANDLE-PATTERN] %s | Harami %s | Score=%d/100 | %s",
@@ -391,7 +400,7 @@ protected:
             int score = BuildConfluenceScore(true, piercing.patternPrice, piercing.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = piercing.strength * m_confluence.GetConfidence();
+                confidence = (0.5 * piercing.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(piercing.time, piercing.patternPrice, confidence, piercing.isBullish,
                                   piercing.isBullish ? "Piercing Line" : "Dark Cloud Cover");
                 PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
@@ -412,7 +421,7 @@ protected:
             int score = BuildConfluenceScore(true, pinBar.nosePrice, isBullishPin, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = pinBar.strength * m_confluence.GetConfidence();
+                confidence = (0.5 * pinBar.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(pinBar.time, pinBar.nosePrice, confidence, isBullishPin, "Pin Bar");
                 PrintFormat("[CANDLE-PATTERN] %s | Pin Bar %s | Score=%d/100 | %s",
                            m_symbol, isBullishPin ? "BULL" : "BEAR",
@@ -433,7 +442,7 @@ protected:
             int score = BuildConfluenceScore(true, hammer.patternPrice, hammer.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = hammer.strength * m_confluence.GetConfidence();
+                confidence = (0.5 * hammer.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(hammer.time, hammer.patternPrice, confidence, hammer.isBullish,
                                   hammer.type == HAMMER_SHOOTING_STAR ? "Shooting Star" : "Hammer");
                 PrintFormat("[CANDLE-PATTERN] %s | %s | Score=%d/100 | %s",
@@ -451,7 +460,7 @@ protected:
             int score = BuildConfluenceScore(true, doji.patternPrice, doji.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                confidence = doji.strength * m_confluence.GetConfidence();
+                confidence = (0.5 * doji.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(doji.time, doji.patternPrice, confidence, doji.isBullish,
                                   doji.type == DOJI_DRAGONFLY ? "Dragonfly Doji" :
                                   doji.type == DOJI_GRAVESTONE ? "Gravestone Doji" : "Doji");

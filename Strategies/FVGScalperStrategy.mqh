@@ -226,7 +226,6 @@ public:
         // --- Step 6: Calculate SL/TP ---
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double atr = m_structureAnalyzer.GetATR(14);
-        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
 
         double slPrice, tpPrice, slDistance;
         if(bullish)
@@ -242,8 +241,9 @@ public:
             tpPrice = currentPrice - 1.5 * slDistance;  // 1.5R
         }
 
-        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
-        double tpPips = (point > 0 && slDistance > 0) ? (1.5 * slDistance / point) : 0.0;
+        // Batch 158: scale-free ATR-denominated pips (1 ATR = 1 unit)
+        double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
+        double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
 
         STradeValidationRequest request;
         request.symbol = m_symbol;

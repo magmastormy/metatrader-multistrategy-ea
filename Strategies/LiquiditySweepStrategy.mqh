@@ -173,6 +173,15 @@ private:
             case LIQ_LEVEL_PREV_SESSION_LOW:
                 confidence += 0.1; // Session levels are strong
                 break;
+            // Batch 155: daily highs/lows fell into default (no bonus), and
+            // with the 0.3xATR wick cap the wick term tops out at ~0.09, so
+            // daily-level sweeps maxed out just around the 0.6 floor and
+            // were mostly rejected - the strongest daily liquidity pool was
+            // effectively untradeable.
+            case LIQ_LEVEL_DAILY_HIGH:
+            case LIQ_LEVEL_DAILY_LOW:
+                confidence += 0.1; // Daily extremes carry major resting liquidity
+                break;
             case LIQ_LEVEL_EQUAL_HIGHS:
             case LIQ_LEVEL_EQUAL_LOWS:
                 confidence += 0.15; // Equal levels are strongest liquidity
@@ -461,14 +470,18 @@ public:
         signal.confidence = bestConfidence;
 
         // SL/TP based on sweep structure
+        // Batch 155: the sweep wick trades from the level out to level-wick
+        // (BUY side), so parking the stop HALF-WAY INSIDE the wick put it in
+        // already-traded price - instant stop-outs and stops-level rejections.
+        // Place it beyond the sweep extreme with a small buffer.
         if(bestDirection == TRADE_SIGNAL_BUY)
         {
-            signal.stopLoss = bestSweepLevel - bestSweepWick * 0.5; // Below the sweep wick
+            signal.stopLoss = bestSweepLevel - bestSweepWick * 1.1; // Beyond the swept extreme
             signal.takeProfit = close + (close - signal.stopLoss) * 2.0; // 2R target
         }
         else
         {
-            signal.stopLoss = bestSweepLevel + bestSweepWick * 0.5; // Above the sweep wick
+            signal.stopLoss = bestSweepLevel + bestSweepWick * 1.1; // Beyond the swept extreme
             signal.takeProfit = close - (signal.stopLoss - close) * 2.0; // 2R target
         }
 

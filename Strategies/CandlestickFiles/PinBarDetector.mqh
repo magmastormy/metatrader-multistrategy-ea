@@ -46,15 +46,20 @@ public:
         SCandleProperties candle = m_analyzer.AnalyzeCandle(barIndex);
         
         double atr = m_analyzer.GetATR(14);
-        if(candle.totalRange < atr * m_minRangeATR)
+        // Batch 156: fail CLOSED during ATR warmup like the other detectors
+        if(atr <= 0 || candle.totalRange < atr * m_minRangeATR)
             return false;
-        
+
         if(candle.bodyRatio > m_maxBodyRatio)
             return false;
-        
+
         // BULLISH PIN BAR (Hammer)
+        // Batch 156: the opposite-wick test used body*0.5, which is
+        // unsatisfiable as the body approaches zero - the purest pins (the
+        // whole point of the pattern) could never qualify. Bound it by range
+        // instead so near-zero-body pins stay detectable.
         if(candle.lowerWick >= candle.body * m_minWickRatio &&
-           candle.upperWick < candle.body * 0.5)
+           candle.upperWick < MathMax(candle.body * 0.5, candle.totalRange * 0.12))
         {
             double closePosition = (candle.close - candle.low) / candle.totalRange;
             if(closePosition < 0.75)
@@ -74,7 +79,7 @@ public:
         
         // BEARISH PIN BAR (Shooting Star)
         else if(candle.upperWick >= candle.body * m_minWickRatio &&
-                candle.lowerWick < candle.body * 0.5)
+                candle.lowerWick < MathMax(candle.body * 0.5, candle.totalRange * 0.12))
         {
             double closePosition = (candle.close - candle.low) / candle.totalRange;
             if(closePosition > 0.25)

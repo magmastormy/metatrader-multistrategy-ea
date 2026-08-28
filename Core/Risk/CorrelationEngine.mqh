@@ -43,6 +43,13 @@ private:
     // L5-017: Track if symbols have changed since last rebuild
     bool     m_symbolsChanged;
 
+    // Batch 152: symbols pinned during an in-flight GetCorrelation query - a NEW-entry
+    // candidate has no open position, so the prune pass must not remove it (or shift
+    // its index) between registration and the matrix read.
+    bool     m_pinQueriedSymbols;
+    string   m_pinnedSymbolA;
+    string   m_pinnedSymbolB;
+
     // Internal helpers
     int      FindSymbolIndex(const string symbol) const;
     int      RegisterSymbol(const string symbol);
@@ -130,6 +137,9 @@ bool CCorrelationEngine::Initialize(int lookback, int refreshIntervalSec,
     m_lastRefreshTime = 0;
     m_initialized = true;
     m_symbolsChanged = false;
+    m_pinQueriedSymbols = false;
+    m_pinnedSymbolA = "";
+    m_pinnedSymbolB = "";
 
     ArrayInitialize(m_matrix, 0.0);
     for(int i = 0; i < CORR_ENGINE_MAX_SYMBOLS; i++)
@@ -318,11 +328,15 @@ void CCorrelationEngine::PruneStaleSymbols()
         }
     }
 
-    // Remove symbols without positions (shift array left)
+    // Remove symbols without positions (shift array left).
+    // Batch 152: keep pinned query symbols - a candidate being correlated has no open
+    // position by definition and would otherwise be pruned mid-query.
     int writeIdx = 0;
     for(int i = 0; i < m_symbolCount; i++)
     {
-        if(hasPosition[i])
+        bool isPinned = (m_pinQueriedSymbols &&
+                         (m_symbols[i] == m_pinnedSymbolA || m_symbols[i] == m_pinnedSymbolB));
+        if(hasPosition[i] || isPinned)
         {
             if(writeIdx != i)
             {
@@ -371,10 +385,24 @@ double CCorrelationEngine::GetCorrelation(const string sym1, const string sym2)
     if(idx1 == CORR_ENGINE_INVALID_IDX || idx2 == CORR_ENGINE_INVALID_IDX)
         return m_conservativeFallback;
 
+    // Batch 152: pin the queried symbols across the refresh so PruneStaleSymbols
+    // cannot drop the candidate (no open position yet) or shift indices mid-query.
+    m_pinnedSymbolA = sym1;
+    m_pinnedSymbolB = sym2;
+    m_pinQueriedSymbols = true;
+
     // If matrix is stale, refresh it
     datetime now = TimeCurrent();
     if(m_lastRefreshTime == 0 || (now - m_lastRefreshTime) >= m_refreshIntervalSec || m_symbolsChanged)
         Refresh();
+
+    m_pinQueriedSymbols = false;
+
+    // Re-resolve indices: pruning may have shifted slots
+    idx1 = FindSymbolIndex(sym1);
+    idx2 = FindSymbolIndex(sym2);
+    if(idx1 == CORR_ENGINE_INVALID_IDX || idx2 == CORR_ENGINE_INVALID_IDX)
+        return m_conservativeFallback;
 
     return GetCachedCorrelation(idx1, idx2);
 }

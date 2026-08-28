@@ -426,7 +426,6 @@ double CPositionSizer::CalculatePositionSize(const string symbol, double stopLos
     // Validate against broker constraints
     if(!ValidatePositionSize(symbol, finalSize, stopLossPips))
     {
-        PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 429, __FUNCTION__);
         return 0.0;
     }
     
@@ -741,7 +740,11 @@ bool CPositionSizer::ValidatePositionSize(const string symbol, double &lotSize, 
     // Normalize to step
     if(stepLot > 0.0)
     {
-        lotSize = NormalizeDouble(MathFloor(lotSize / stepLot) * stepLot, 2);
+        // Batch 152: the old trailing NormalizeDouble(...,2) re-broke SYMBOL_VOLUME_STEP
+        // of 0.001 (floored 0.999 was rounded back off-step -> invalid-volume rejects).
+        // Floor to whole steps and clean FP dust at 8 digits instead.
+        long wholeSteps = (long)MathFloor(lotSize / stepLot + 1e-9);
+        lotSize = NormalizeDouble(wholeSteps * stepLot, 8);
     }
     
     // Final validation
@@ -763,7 +766,9 @@ double CPositionSizer::NormalizeVolume(const string symbolParam, double volume)
     if(step <= 0.0)
         return volume;
     
-    double normalized = NormalizeDouble(MathFloor(volume / step) * step, 2);
+    // Batch 152: floor to whole steps (8-digit cleanup, not 2dp - see NormalizeLot note)
+    long wholeSteps = (long)MathFloor(volume / step + 1e-9);
+    double normalized = NormalizeDouble(wholeSteps * step, 8);
     
     if(normalized < minVol)
         normalized = minVol;
@@ -873,7 +878,6 @@ double CPositionSizer::GetRiskDenominator(void)
 double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const double stopLossPips)
 {
     if(symbolParam == "" || stopLossPips <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 875, __FUNCTION__);
         return 0.0;
     }
 
@@ -884,12 +888,15 @@ double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const doubl
     string accountCurrency = AccountInfoString(ACCOUNT_CURRENCY);
 
     if(tickValue <= 0.0 || tickSize <= 0.0 || point <= 0.0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 884, __FUNCTION__);
         return 0.0;
     }
 
-    // Calculate SL distance in ticks
-    double slDistancePrice = stopLossPips * point * 10.0;
+    // Batch 152 (H-6): this used to be stopLossPips * point * 10.0 - a pip
+    // convention nothing else in the codebase shares. Execution places stops at
+    // pips*point (CTradeMgrPricing::CalculateStops) and URM risk math uses
+    // pips*point too, so per-lot risk came out 10x high and every FIXED_RISK
+    // sized position traded at ~1/10 of the configured risk.
+    double slDistancePrice = stopLossPips * point;
     double slTicks = slDistancePrice / tickSize;
 
     // Risk per 1.0 lot in profit currency
@@ -958,13 +965,11 @@ double CPositionSizer::GetATR(const string symbol, int period, ENUM_TIMEFRAMES t
     }
 
     if(m_atrHandle == INVALID_HANDLE) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 956, __FUNCTION__);
         return 0.0;
     }
 
     double atr[];
     if(CopyBuffer(m_atrHandle, 0, 0, 1, atr) <= 0) {
-        PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 960, __FUNCTION__);
         return 0.0;
     }
 
@@ -1011,10 +1016,12 @@ void CPositionSizer::UpdateRiskMetrics()
         double stopLossPips = 0.0;
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         
+        // Batch 152 (H-6): divide by point only - actual stops are placed at
+        // pips*point, and CalculateRiskPerLot now expects the same convention.
         if(type == POSITION_TYPE_BUY)
-            stopLossPips = (openPrice - sl) / (point * 10.0);
+            stopLossPips = (openPrice - sl) / point;
         else
-            stopLossPips = (sl - openPrice) / (point * 10.0);
+            stopLossPips = (sl - openPrice) / point;
 
         if(stopLossPips <= 0.0)
             continue;
@@ -1032,13 +1039,10 @@ void CPositionSizer::UpdateRiskMetrics()
             m_openPositions++;
         }
     }
-
-    // Convert to percentage using the same stress denominator as the risk gate.
-    double riskDenominator = GetRiskDenominator();
-    if(riskDenominator > 0.0)
-    {
-        m_currentTotalRisk = (m_currentTotalRisk / riskDenominator) * 100.0;
-    }
+    // Batch 150: removed the post-loop second division by the risk denominator.
+    // riskPct is already a percentage; rescaling again understated
+    // m_currentTotalRisk by ~denominator/100 (e.g. ~100x on $10k equity) and
+    // permanently disarmed the portfolio-risk cap.
 }
 
 //+------------------------------------------------------------------+

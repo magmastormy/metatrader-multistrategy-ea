@@ -292,14 +292,13 @@ public:
     {
         if(m_attributionManager == NULL) return;
         
+        // Batch 153: the summary CSV used to be stored as a single-element
+        // array ("would split by comma" was never implemented), so every
+        // attribution row carried one malformed "S1,S3,AI:x" string instead
+        // of the individual contributor names.
         string contributors[];
-        if(candidate.contributorSummary != "")
-        {
-            // Parse contributor summary
-            // In real implementation, would split by comma
-            ArrayResize(contributors, 1);
-            contributors[0] = candidate.contributorSummary;
-        }
+        if(m_attributionManager != NULL && candidate.contributorSummary != "")
+            m_attributionManager.SplitContributors(candidate.contributorSummary, contributors);
         
         m_attributionManager.RecordPositionAttribution(
             dealTicket,
@@ -384,29 +383,10 @@ public:
     
     string GetTradeErrorDescription(int errorCode)
     {
-        switch(errorCode)
-        {
-            case 10004: return "Requote";
-            case 10005: return "Price off";
-            case 10006: return "Invalid price";
-            case 10007: return "Invalid stops";
-            case 10008: return "Invalid volume";
-            case 10009: return "Market closed";
-            case 10010: return "Insufficient funds";
-            case 10011: return "Price changed";
-            case 10012: return "Off quotes";
-            case 10013: return "Invalid expiration";
-            case 10014: return "Order changed";
-            case 10015: return "Too many requests";
-            case 10016: return "Trade disabled";
-            case 10017: return "Trade timeout";
-            case 10018: return "Order locked";
-            case 10019: return "Order frozen";
-            case 10020: return "Invalid fill";
-            case 10021: return "Connection error";
-            case 10022: return "Deadline exceeded";
-            default: return "Error " + IntegerToString(errorCode);
-        }
+        // Batch 152 (T-11): this table used invented retcode mappings (e.g. 10008
+        // PLACED labeled "Invalid volume", 10009 DONE labeled "Market closed"),
+        // poisoning rejection reasons. Delegate to the authoritative descriptor.
+        return CTradeDescriptor::GetTradeErrorDescription(errorCode);
     }
     
     // Diagnostics

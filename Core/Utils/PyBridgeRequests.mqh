@@ -208,7 +208,6 @@ double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
 {
    if(transport.GetMode() == PYTHON_BRIDGE_OFF || !transport.IsInitialized() || !transport.IsConnected())
    {
-      PrintFormat("[DBG-RET0] %s:%d %s() return 0.0", __FILE__, 933, __FUNCTION__);
       return 0.0;
    }
    
@@ -233,7 +232,6 @@ double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
          PrintFormat("[PYTHON-BRIDGE] Pair correlation error for %s/%s", symbol1, symbol2);
    }
    
-   PrintFormat("[DBG-RET0] %s:%d %s() returned 0.0", __FILE__, 956, __FUNCTION__);
    return 0.0;
 }
 

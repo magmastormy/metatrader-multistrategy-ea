@@ -79,6 +79,21 @@ struct SPendingScalpOrder
    double   takeProfit;
    datetime placedAt;
    bool     isActive;
+
+   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // count of the string member.
+   void Reset()
+   {
+      ticket     = 0;
+      symbol     = "";
+      orderType  = ORDER_TYPE_BUY;
+      lotSize    = 0.0;
+      entryPrice = 0.0;
+      stopLoss   = 0.0;
+      takeProfit = 0.0;
+      placedAt   = 0;
+      isActive   = false;
+   }
 };
 
 //+------------------------------------------------------------------+
@@ -96,6 +111,22 @@ struct SScalpPendingAsync
    uint     sendTimestampMs;  // GetTickCount at send time
    bool     confirmed;        // Whether deal was confirmed
    bool     expired;          // Whether order expired
+
+   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // count of the string member.
+   void Reset()
+   {
+      symbol          = "";
+      orderTicket     = 0;
+      direction       = 0;
+      lotSize         = 0.0;
+      entryPrice      = 0.0;
+      stopLoss        = 0.0;
+      takeProfit      = 0.0;
+      sendTimestampMs = 0;
+      confirmed       = false;
+      expired         = false;
+   }
 };
 
 //+------------------------------------------------------------------+
@@ -111,6 +142,20 @@ struct SScalpPositionState
    double   originalSL;
    double   originalTP;
    double   oneRProfitPrice;   // Price at 1R profit (for partial close)
+
+   // Batch 152 (S-M-04): field-wise reset - ZeroMemory corrupts the reference
+   // count of the string member.
+   void Reset()
+   {
+      ticket          = 0;
+      symbol          = "";
+      breakevenSet    = false;
+      partialClosed   = false;
+      entryPrice      = 0.0;
+      originalSL      = 0.0;
+      originalTP      = 0.0;
+      oneRProfitPrice = 0.0;
+   }
 };
 
 #endif // CORE_SCALP_FAST_SCALP_TYPES_MQH

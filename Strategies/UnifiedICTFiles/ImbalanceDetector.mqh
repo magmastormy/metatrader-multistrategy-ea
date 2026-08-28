@@ -322,7 +322,9 @@ bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
 {
     if(imb.hasRebalanced) return true;
 
-    for(int i = 0; i < 100; i++)
+    // Batch 156: closed bars only (shift 1) - intrabar pokes were latching
+    // hasRebalanced off unclosed candles.
+    for(int i = 1; i < 100; i++)
     {
         datetime barTime = iTime(m_symbol, m_timeframe, i);
         if(barTime <= imb.time) break;
@@ -347,7 +349,7 @@ bool CImbalanceDetector::CheckRebalance(SImbalance &imb)
         double filledBottom = MathMax(low, imb.bottom);
         double filledRange  = MathMax(0.0, filledTop - filledBottom);
         if(imb.size > 0)
-            imb.fillPercent = (filledRange / imb.size) * 100.0;
+            imb.fillPercent = MathMax(imb.fillPercent, (filledRange / imb.size) * 100.0);  // Batch 156: keep deepest penetration, not the oldest bar's
 
         // CORRECTED MITIGATION RULE:
         // Bullish FVG mitigated when close < bottom (full break below)

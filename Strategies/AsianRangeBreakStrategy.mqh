@@ -89,10 +89,11 @@ public:
         }
 
         // Step 2: Synthetic symbol filter - this strategy ONLY works on forex/metals/indices
-        if(IsVolatilitySyntheticSymbolName(m_symbol) ||
-           IsBoomCrashSyntheticSymbolName(m_symbol) ||
-           IsJumpSyntheticSymbolName(m_symbol) ||
-           IsStepSyntheticSymbolName(m_symbol))
+        // Batch 155: the old 4-family check let DEX/RangeBreak/Trek/etc.
+        // slip through into London-open logic that is meaningless on them
+        // (they trade 24/7 including weekends). The umbrella check covers
+        // every Deriv synthetic family.
+        if(IsSyntheticIndexSymbolName(m_symbol))
         {
             SetDecisionReasonTag("ASIANRB_SYNTHETIC_SKIP");
             return TRADE_SIGNAL_NONE;
@@ -129,8 +130,12 @@ public:
         gmt.hour = 6;
         datetime asianEnd   = StructToTime(gmt);   // today 06:00 UTC
 
-        int idxEnd   = iBarShift(m_symbol, PERIOD_M5, asianEnd,   true); // <=06:00 bar (London open; excluded)
-        int idxStart = iBarShift(m_symbol, PERIOD_M5, asianStart, true); // <=00:00 bar (Asian open; included)
+        // Batch 155: exact=false - exact=true demanded M5 bars opening at
+        // PRECISELY 00:00:00 and 06:00:00 UTC, so a single missing bar in
+        // the feed killed the whole day (ASIANRB_RANGE_DATA_UNAVAILABLE).
+        // iBarShift then returns the nearest bar at-or-before each anchor.
+        int idxEnd   = iBarShift(m_symbol, PERIOD_M5, asianEnd,   false); // <=06:00 bar (London open; excluded)
+        int idxStart = iBarShift(m_symbol, PERIOD_M5, asianStart, false); // <=00:00 bar (Asian open; included)
         if(idxEnd < 0 || idxStart < 0 || idxStart <= idxEnd)
         {
             SetDecisionReasonTag("ASIANRB_RANGE_DATA_UNAVAILABLE");
@@ -158,7 +163,13 @@ public:
 
         double asianRange = asianHigh - asianLow;
 
-        // Step 7: Range filter - only trade if range < 0.8 * ATR(14) (tight range = more likely to break)
+        // Step 7: Range filter - only trade if the Asian range is tight.
+        // Batch 155: dimensional fix. atr is a per-BAR figure on the strategy
+        // timeframe while asianRange always spans 6 hours of M5 data, so the
+        // old direct comparison rejected virtually every day on M1/M5
+        // (ASIANRB_RANGE_TOO_WIDE) and passed everything on H4/D1. Scale the
+        // ATR to the expected move over 6 hours (sqrt-of-time diffusion
+        // exponent) so the comparison is like-for-like on any timeframe.
         double atr = m_structureAnalyzer.GetATR(14);
         if(atr <= 0)
         {
@@ -166,7 +177,13 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        if(asianRange >= 0.8 * atr)
+        int tfSeconds = PeriodSeconds(m_timeframe);
+        double barsIn6h = (tfSeconds > 0) ? (double)(6 * 3600) / (double)tfSeconds : 72.0;
+        if(barsIn6h < 1.0)
+            barsIn6h = 1.0;
+        double expectedRange = atr * MathPow(barsIn6h, 0.7);
+
+        if(asianRange >= 0.8 * expectedRange)
         {
             SetDecisionReasonTag("ASIANRB_RANGE_TOO_WIDE");
             return TRADE_SIGNAL_NONE;
@@ -193,7 +210,8 @@ public:
         double score = 0.50;
 
         // Range compression boost: tighter range = stronger signal
-        if(asianRange < 0.5 * atr)
+        // (Batch 155: measured against the 6h-scaled expectation, see Step 7)
+        if(asianRange < 0.5 * expectedRange)
             score += 0.10;
 
         // Structure alignment boost

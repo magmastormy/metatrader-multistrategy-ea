@@ -150,10 +150,21 @@ private:
     bool ShouldReEnableStrategy(const SStrategyHealthEntry &entry) const
     {
         if(!entry.temporarilyDisabled) return false;
+        // Batch 154: a disabled strategy cannot trade, so demanding post-disable
+        // wins below was unreachable - once disabled it stayed disabled until EA
+        // restart. Serving the cooldown is now sufficient for a fresh sample;
+        // the same disable limits re-arm immediately if performance is still poor
+        // (CheckAllStrategiesReEnabling resets the rolling sample on re-enable).
         if(entry.disabledUntil > 0 && TimeCurrent() < entry.disabledUntil) return false;
-        if(entry.recentTradeCount >= 3 && entry.recentWinRate >= m_minWinRateThreshold) return true;
-        if(entry.consecutiveWins >= 2) return true;
-        return false;
+        return true;
+    }
+    void ResetRecoverySample(SStrategyHealthEntry &entry)
+    {
+        entry.recentTradeIndex = 0;
+        entry.recentTradeCount = 0;
+        entry.recentWinRate = 0.0;
+        entry.consecutiveLosses = 0;
+        entry.consecutiveWins = 0;
     }
     void UpdateRecentPerformance(SStrategyHealthEntry &entry, const double result)
     {
@@ -441,6 +452,10 @@ public:
             {
                 m_healthEntries[i].temporarilyDisabled = false;
                 m_healthEntries[i].disabledUntil = 0;
+                // Batch 154: fresh sample after cooldown - stale losing trades in
+                // the rolling window would insta-redisable the strategy on its
+                // first new loss without it ever getting a real chance.
+                ResetRecoverySample(m_healthEntries[i]);
             }
         }
     }

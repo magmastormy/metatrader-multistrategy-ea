@@ -47,6 +47,7 @@ private:
     CSupportResistanceDetector* m_srDetector;
     CTrendlineDetector*         m_trendDetector;
     CFibConfluence*             m_fibModule;  // Fibonacci confluence helper
+    int                         m_atrHandle;  // Cached ATR handle from CIndicatorManager
     
     // Trading Strategies
     CSRBounceStrategy*          m_bounceStrategy;
@@ -127,7 +128,8 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
         m_drawOnChartSymbolOnly(true),
         m_signalsGenerated(0),
         m_levelsDetected(0),
-        m_trendlinesDetected(0)
+        m_trendlinesDetected(0),
+        m_atrHandle(INVALID_HANDLE)
 {
     m_minConfidence = 0.45; // Reduced from 0.50 to allow more M1/M5 level participation
 }
@@ -156,6 +158,8 @@ void CStrategySupportResistance::Cleanup()
         // Hurst/VPIN engines are not owned - do NOT delete
         m_hurstEngine = NULL;
         m_vpinFilter = NULL;
+    // ATR handle is cached from CIndicatorManager (shared ownership) - do NOT release
+    m_atrHandle = INVALID_HANDLE;
 }
 
 //+------------------------------------------------------------------+
@@ -187,6 +191,13 @@ bool CStrategySupportResistance::Init(const string symbol, const ENUM_TIMEFRAMES
     if(m_fibModule != NULL)
     {
         (*m_fibModule).Initialize(m_symbol, m_timeframe);
+    }
+
+    // Initialize cached ATR handle for Fib confluence proximity checks
+    m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
+    if(m_atrHandle == INVALID_HANDLE)
+    {
+        Print("[S/R v1.0] WARNING: Failed to create cached ATR handle for Fib confluence");
     }
     
     // Initialize Bounce Strategy
@@ -628,16 +639,14 @@ double CStrategySupportResistance::ApplyFibConfluence(ENUM_TRADE_SIGNAL signal, 
 
     if(fibCount == 0) return confidence;
 
-    // Get current ATR for proximity tolerance
-    int atrHandle = iATR(m_symbol, m_timeframe, 14);
-    if(atrHandle == INVALID_HANDLE) return confidence;
+    // Get current ATR from cached handle (shared, owned by CIndicatorManager)
+    if(m_atrHandle == INVALID_HANDLE) return confidence;
 
     double atrBuf[];
     ArraySetAsSeries(atrBuf, true);
     double atr = 0.0;
-    if(CopyBuffer(atrHandle, 0, 1, 1, atrBuf) >= 1)
+    if(CopyBuffer(m_atrHandle, 0, 1, 1, atrBuf) >= 1)
         atr = atrBuf[0];
-    IndicatorRelease(atrHandle);
 
     if(atr <= 0.0) return confidence;
 

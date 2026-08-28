@@ -121,7 +121,12 @@ public:
                                  CPerformanceAnalytics* performanceAnalytics)
     {
         double targetRisk = baseRiskPerTradePercent;
-        m_conservativeMode = false;
+        // Batch 152: never blind-clear here. The circuit breaker owns escalation AND
+        // clearing through bool& write-backs (CheckDrawdownCircuitBreaker /
+        // CheckCircuitBreakerRecovery); resetting unconditionally wiped a
+        // breaker-escalated conservative state on the very next validation.
+        // Analytics may only raise the flag below; breaker recovery lowers it.
+        bool conservativeHeld = m_conservativeMode;
 
         if(!enableAdaptiveSizing)
         {
@@ -156,6 +161,12 @@ public:
         {
             m_conservativeMode = true;
             reductionFactor = MathMin(reductionFactor, 0.60);
+        }
+        else if(!conservativeHeld)
+        {
+            // No breaker hold and analytics healthy - explicit clear keeps the flag
+            // from latching on a single stale trigger.
+            m_conservativeMode = false;
         }
 
         targetRisk = baseRiskPerTradePercent * reductionFactor;

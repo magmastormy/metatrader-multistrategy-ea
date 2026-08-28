@@ -415,7 +415,11 @@ private:
                                    double &mean, double &stdDev)
     {
         // Fetch historical prices for both legs
+        // Batch 158: static arrays from CopyClose with shift>0 fill OLDEST-first ([0]=oldest).
+        // Use dynamic arrays + ArraySetAsSeries(true) so [0]=newest closed bar.
         double prices1[], prices2[];
+        ArraySetAsSeries(prices1, true);
+        ArraySetAsSeries(prices2, true);
         if(CopyClose(leg1, PERIOD_CURRENT, 1, m_lookbackPeriods, prices1) < m_lookbackPeriods ||
            CopyClose(leg2, PERIOD_CURRENT, 1, m_lookbackPeriods, prices2) < m_lookbackPeriods)
         {
@@ -428,6 +432,7 @@ private:
         
         for(int i = 0; i < m_lookbackPeriods; i++)
         {
+            // With AS_SERIES=true, [i] = i bars ago from last closed bar
             spreads[i] = prices1[i] - (prices2[i] * m_hedgeRatio);
         }
         
