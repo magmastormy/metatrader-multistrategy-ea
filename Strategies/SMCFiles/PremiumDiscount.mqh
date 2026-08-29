@@ -169,10 +169,13 @@ void CSMCPremiumDiscount::CalculateRange()
     // Fallback: find the most recent significant swing high and low
     // Use a tighter lookback (50 bars) to find the most recent relevant swing
     int lookback = MathMin(50, iBars(m_symbol, m_timeframe) - 1);
+    int maxBars = iBars(m_symbol, m_timeframe);
+    int safeLookback = (maxBars > 7) ? MathMin(lookback, maxBars - 4) : MathMax(3, MathMin(lookback, maxBars - 4));
+    if(safeLookback < 3) safeLookback = 3;
     double swingHigh = 0, swingLow = DBL_MAX;
     int swingHighBar = -1, swingLowBar = -1;
 
-    for(int i = 3; i < lookback - 3; i++)
+    for(int i = 3; i <= safeLookback && (i + 3) < maxBars; i++)
     {
         double h = iHigh(m_symbol, m_timeframe, i);
         double l = iLow(m_symbol,  m_timeframe, i);

@@ -146,9 +146,9 @@ public:
         }
 
         // Step 6: Calculate SL beyond false break extreme + 0.3*ATR, TP at 2R
-        // Batch 158: scale-free ATR-denominated pips (1 ATR = 1 unit)
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double atr = m_structureAnalyzer.GetATR(14);
+        double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
         double slPrice, slDistance, tpPrice;
 
         if(bullish)
@@ -166,8 +166,11 @@ public:
             tpPrice = currentPrice - 2.0 * slDistance;
         }
 
-        double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
-        double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
+        // Convert to actual pips (price distance / point), not ATR multiples
+        // Risk validation pipeline expects stopLossPips in pips (price points)
+        double tpDistance = MathAbs(tpPrice - currentPrice);
+        double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
+        double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : 0.0;
 
         STradeValidationRequest request;
         request.symbol = m_symbol;

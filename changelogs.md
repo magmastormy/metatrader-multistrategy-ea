@@ -2,7 +2,27 @@
 
 All notable changes to the `metatrader-multistrategy-ea` project are documented in this file. Older batch entries (Batch 101 and prior) are archived in [`docs/changelogs_old.md`](docs/changelogs_old.md).
 
-## [Unreleased] - 2026-08-28
+## [Unreleased] - 2026-08-29
+
+### Batch 159: `@20260829` log-driven risk-safety fixes (crash-recovery checksum + trade-risk calc)
+
+#### Context
+Driven by the latest live log `20260829.log` (12,208 lines, Volatility 75 Index M1 master, equity ~$17,130, compounding Tier 7 `MAXIMUM_GROWTH` active → 15% risk/trade, 35% daily, 50% portfolio). Two defects found in the log were traced to root cause and fixed. Both are account-protecting (they prevent silent state loss and oversized positions). No risk-tier *values* were changed — those are policy (see Risk Flag below).
+
+#### Fixed
+- **`crash_recovery_helpers.mqh` — `[RECOVERY-STATE] Checksum mismatch ... rejecting` (every startup).** `WriteCrashRecoveryState` computed the xorshift checksum over the full `{"version":1,...}` string, but `ReadCrashRecoveryState` recomputes it over the inner `"version":1,...}` portion (the leading `{` is dropped when the `checksum` field is prepended). The two strings never matched, so **every saved crash-recovery state was permanently rejected** — the EA restarted blind on every launch. Fix: write-side now hashes the same `dataObject = StringSubstr(json,1)` ("version":1,...}) that the read-side hashes, so they are byte-identical by construction. State now round-trips.
+- **`Core/Risk/UnifiedRiskManager.mqh::CalculateTradeRisk` — understated risk let oversized trades past the post-size cap.** The function used a fragile `tickValue/tickSize/point` chain with **no currency conversion** (unlike `PositionSizer::CalculateRiskPerLot`, which does convert). On the live run, Boom/Crash/Jump were correctly rejected at `final_risk=14% > cap=1.50%`, but **Volatility 75 Index slipped through at 10.40 lots (~32% account risk per trade)** because its risk came out understated. Fix: compute risk with the broker-authoritative `OrderCalcProfit` (exact account-currency P/L at the stop price, symbol-agnostic, includes synthetic indices), with the manual math retained only as a fallback. The post-size re-gate in `CandidateBuilder.mqh` (line ~515) now gets a correct `finalRiskPct` for every symbol, so the 1.50% cap is enforced uniformly.
+
+#### Verification
+- Compile: `MetaEditor64 /compile:MultiStrategyAutonomousEA.mq5` → **0 errors, 0 warnings**, `.ex5` produced (1.54 MB).
+- `OrderCalcProfit` resolves on this build; the old manual path is kept as fallback.
+- Runtime signatures to watch on next EA start: `[RECOVERY-STATE]` should now log a successful load instead of `Checksum mismatch ... rejecting`; `[RISK-GATE-REJECT] ... reason=post_size_risk_cap` should now also fire for Volatility 75 Index when a sized trade would exceed the effective per-trade cap (previously it passed).
+
+#### Risk Flag (needs user decision — NOT changed)
+- **Compounding tier mismatch:** `CompoundingTierManager.mqh` Tier 7 (`MAXIMUM_GROWTH`, $10k–$50k) applies **15% risk/trade / 35% daily / 50% portfolio**. The in-code comment says "15% risk for <$10K equity" but the range is $10k–$50k, so an account at $17k runs the most aggressive tier. The ladder is also non-monotonic (4→5→4→2.5→1.5→5→10→15→1.5%). This is **by-design per prior explicit user request** and AGENTS.md forbids silent behavior change, so left as-is. If you want a safer curve (e.g., cap Tier 7 at 5–8% and flatten the ladder), say so and I'll implement + recompile.
+- **Post-size cap is 1.50%** (`GetEffectiveRiskPerTrade` via `CRiskAdaptiveTuner`) while the compounding tier *says* 15%. The cap is what actually saved the account this run; the tier label is cosmetic until the cap is raised. Confirm the intended relationship.
+
+### Batch 158: Signal-suppression audit sweep — unaudited strategy files + ATR handle caching
 
 > **Consolidated campaign report:** [`docs/SIGNAL_SUPPRESSION_AUDIT_B155-B157.md`](docs/SIGNAL_SUPPRESSION_AUDIT_B155-B157.md) — per-file ledger of all ~55 signal-suppression repairs across Batches 155–157, the seven defect classes, adjudicated-not-changed items, and runtime validation signatures.
 

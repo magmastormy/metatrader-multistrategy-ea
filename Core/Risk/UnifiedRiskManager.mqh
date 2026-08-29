@@ -1817,23 +1817,19 @@ double CUnifiedRiskManager::CalculateMinLotRiskPercent(const string symbol)
     }
 
     // Estimate SL distance using ATR(14) on the daily timeframe as a reasonable default
-    // Batch 116: use static cached handle to avoid repeated create/destroy overhead
+    // FIX: Use IndicatorManager instead of static cache to avoid handle invalidation crashes
     double slDistancePoints = 0.0;
-    static int s_atrHandle = INVALID_HANDLE;
-    static string s_atrSymbol = "";
-    if(s_atrHandle == INVALID_HANDLE || s_atrSymbol != symbol)
+    CIndicatorManager* indManager = CIndicatorManager::Instance();
+    if(indManager != NULL)
     {
-        if(s_atrHandle != INVALID_HANDLE)
-            IndicatorRelease(s_atrHandle);
-        s_atrHandle = iATR(symbol, PERIOD_D1, 14);
-        s_atrSymbol = symbol;
-    }
-    if(s_atrHandle != INVALID_HANDLE)
-    {
-        double atrValues[];
-        ArraySetAsSeries(atrValues, true);
-        if(CopyBuffer(s_atrHandle, 0, 0, 1, atrValues) == 1 && atrValues[0] > 0.0)
-            slDistancePoints = atrValues[0] / point;
+        int atrHandle = indManager.GetATRHandle(symbol, PERIOD_D1, 14);
+        if(atrHandle != INVALID_HANDLE)
+        {
+            double atrValues[];
+            ArraySetAsSeries(atrValues, true);
+            if(CopyBuffer(atrHandle, 0, 0, 1, atrValues) == 1 && atrValues[0] > 0.0)
+                slDistancePoints = atrValues[0] / point;
+        }
     }
 
     // Fallback: use 100 pips if ATR unavailable
@@ -1951,39 +1947,44 @@ bool CUnifiedRiskManager::ValidateClusterGovernance(const STradeValidationReques
 
 double CUnifiedRiskManager::CalculateTradeRisk(const string symbolParam, double lotSize, double stopLossPips) const
 {
-    if(symbolParam == "" || stopLossPips <= 0) {
+    if(symbolParam == "" || stopLossPips <= 0 || lotSize <= 0) {
         return 0.0;
     }
-    
-    double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
-    double tickSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
+
     double point = SymbolInfoDouble(symbolParam, SYMBOL_POINT);
-    double contractSize = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_CONTRACT_SIZE);
-    
-    if(tickValue <= 0 || point <= 0 || tickSize <= 0) {
+    if(point <= 0) {
         return 0.0;
     }
-    
-    // 🔥 FIX: Calculate risk properly based on symbol type
-    // stopLossPips is actually in POINTS (e.g., 50 points)
-    // For EURGBP: point = 0.00001, so 50 points = 0.0005 = 5 pips
-    // For EURUSD: point = 0.00001, so 50 points = 0.0005 = 5 pips
-    
-    double stopLossPrice = stopLossPips * point;  // Convert points to price difference
-    double riskPerLot = (stopLossPrice / tickSize) * tickValue;  // Risk per 1.0 lot
-    double totalRisk = lotSize * riskPerLot;
-    
-    // Debug logging for problem symbols
-    static datetime g_lastRiskCalcLog = 0;
-    if((symbolParam == "EURGBP.0" || symbolParam == "XPTUSD.0") && 
-       TimeCurrent() - g_lastRiskCalcLog > 120)
-    {
-        PrintFormat("[RISK-CALC-DEBUG] %s: Lot=%.2f, SL_pts=%.0f, Point=%.5f, TickVal=%.2f, TickSz=%.5f, Risk=$%.2f",
-                   symbolParam, lotSize, stopLossPips, point, tickValue, tickSize, totalRisk);
-        g_lastRiskCalcLog = TimeCurrent();
-    }
-    
-    return totalRisk;
+
+    double dist = stopLossPips * point;  // price distance of the stop
+
+    // Authoritative, symbol- and account-currency-agnostic risk:
+    // ask/bid the broker's own P/L for closing at the stop price. This is
+    // exact for every symbol (synthetic indices included) and removes the
+    // fragile tickValue/tickSize/point/currency chain that previously
+    // UNDERSTATED risk for some synthetic indices (e.g. Volatility 75),
+    // letting oversized trades through the post-size re-gate.
+    double ask = SymbolInfoDouble(symbolParam, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(symbolParam, SYMBOL_BID);
+    double risk = 0.0;
+    double p = 0.0;
+    // BUY stopped at ask-dist, SELL stopped at bid+dist; risk is the loss magnitude.
+    if(OrderCalcProfit(ORDER_TYPE_BUY, symbolParam, lotSize, ask, ask - dist, p) && p < 0.0)
+        risk = -p;
+    if(OrderCalcProfit(ORDER_TYPE_SELL, symbolParam, lotSize, bid, bid + dist, p) && p < 0.0)
+        risk = MathMax(risk, -p);
+
+    if(risk > 0.0)
+        return risk;
+
+    // Fallback: manual math if OrderCalcProfit is unavailable for this symbol.
+    double tickValue = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_VALUE);
+    double tickSize  = SymbolInfoDouble(symbolParam, SYMBOL_TRADE_TICK_SIZE);
+    if(tickValue <= 0 || tickSize <= 0)
+        return 0.0;
+    double stopLossPrice = dist;
+    double riskPerLot = (stopLossPrice / tickSize) * tickValue;
+    return lotSize * riskPerLot;
 }
 
 // Phase E3 forwarder -> CRiskTieredCorrelation::CalculateCorrelationRisk

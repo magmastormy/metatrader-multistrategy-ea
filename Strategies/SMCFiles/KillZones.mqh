@@ -58,7 +58,7 @@ private:
     
     // Session definitions
     SSessionInfo    m_sessions[9];  // expanded for Silver Bullet windows
-    int             m_sessionCount;
+    int             m_sessionCount;       // initialized to 8, array holds 9
     
     // Configuration
     bool            m_enableAsian;
@@ -475,7 +475,7 @@ bool CICTKillZones::IsDSTActive()
             
             // Find the first Sunday
             int firstDay = 1;
-            MqlDateTime tempDt;
+            MqlDateTime tempDt = {0};
             tempDt.year = dt.year;
             tempDt.mon = 3;
             tempDt.day = firstDay;
@@ -514,7 +514,7 @@ bool CICTKillZones::IsDSTActive()
             
             for(int d = 1; d <= 7; d++)
             {
-                MqlDateTime tempDt;
+                MqlDateTime tempDt = {0};
                 tempDt.year = dt.year;
                 tempDt.mon = 11;
                 tempDt.day = d;

@@ -34,9 +34,14 @@ bool WriteCrashRecoveryState(const string &fileName,
     json += "\"timestamp\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\"";
     json += "}";
 
-    // Compute checksum
-    ulong checksum = ComputeStateChecksum(json);
-    json = "{\"checksum\":" + IntegerToString((long)checksum) + "," + StringSubstr(json, 1);
+    // Compute checksum over the data object EXCLUDING the leading '{'
+    // so it matches exactly what ReadCrashRecoveryState recomputes
+    // (it skips "checksum":N, and the following ',' and hashes the rest).
+    // Old code hashed the full {"version":...} string, which never matched
+    // the inner "version":... at read time, so every saved state was rejected.
+    string dataObject = StringSubstr(json, 1); // drop leading '{' -> "version":1,...}
+    ulong checksum = ComputeStateChecksum(dataObject);
+    json = "{\"checksum\":" + IntegerToString((long)checksum) + "," + dataObject;
 
     // Write and close - with error checking for partial writes
     int bytesWritten = (int)FileWriteString(fh, json);
