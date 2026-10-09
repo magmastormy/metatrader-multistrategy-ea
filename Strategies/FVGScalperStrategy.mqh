@@ -1,5 +1,3 @@
-// FVG Scalper: Fair Value Gap re-entry with rejection candle
-// confirmation and structure context alignment
 #ifndef FVG_SCALPER_STRATEGY_MQH
 #define FVG_SCALPER_STRATEGY_MQH
 
@@ -15,7 +13,6 @@ private:
     CImbalanceDetector*       m_imbalanceDetector;
     CMarketStructureAnalyzer* m_structureAnalyzer;
 
-    // Configurable scoring weights
     double m_baseScore;       // Base confidence (default: 0.55)
     double m_structureBonus;  // Structure alignment bonus (default: 0.08)
     double m_chochBonus;      // Fast CHOCH bonus (default: 0.07)
@@ -71,7 +68,7 @@ public:
             return false;
         }
 
-                // Risk manager is accessed via base class GetUnifiedRiskManager()
+                // Risk manager comes from the base class; without it trades skip validation
                 if(GetUnifiedRiskManager() == NULL)
                     Print("[FVG-SCALPER] WARNING: UnifiedRiskManager not provided - trades will bypass validation!");
 
@@ -107,7 +104,6 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 1: Find nearest FVG ---
         int bullIdx = m_imbalanceDetector.FindBestBullishImbalance();
         int bearIdx = m_imbalanceDetector.FindBestBearishImbalance();
 
@@ -115,7 +111,7 @@ public:
         SImbalance fvg;
         bool foundFVG = false;
 
-        // Prefer the strongest FVG; if both exist, pick the stronger one
+        // When both directions have an FVG, the stronger one wins
         if(bullIdx >= 0 && bearIdx >= 0)
         {
             SImbalance bullFVG, bearFVG;
@@ -153,7 +149,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 2: Check if current price is inside the FVG zone (use bar 1 = last closed bar) ---
+        // Price must sit inside the FVG zone; read bar 1 (last closed bar), not the forming bar
         double close1 = iClose(m_symbol, m_timeframe, 1);
         double open1  = iOpen(m_symbol, m_timeframe, 1);
         double high1  = iHigh(m_symbol, m_timeframe, 1);
@@ -172,9 +168,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 3: Check for rejection candle pattern ---
-        // Bullish rejection: close > open AND (close - low) > 2 * (high - close)
-        // Bearish rejection: close < open AND (high - close) > 2 * (close - low)
+        // Rejection candle = body beyond open with the dominant wick at least 2x the opposite one
         bool bullishRejection = (close1 > open1) && ((close1 - low1) > 2.0 * (high1 - close1));
         bool bearishRejection = (close1 < open1) && ((high1 - close1) > 2.0 * (close1 - low1));
 
@@ -189,10 +183,8 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 4: Signal direction ---
         ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
 
-        // --- Step 5: Build confidence score ---
         double score = m_baseScore;
 
         // Structure alignment bonus: FVG direction matches market structure
@@ -201,12 +193,10 @@ public:
         if(structureAligned)
             score += m_structureBonus;
 
-        // Fast CHOCH confirmation bonus
         bool fastCHOCH = m_structureAnalyzer.DetectFastCHOCH();
         if(fastCHOCH)
             score += m_chochBonus;
 
-        // CISD displacement bonus
         bool cisdDisplacement = m_structureAnalyzer.DetectCISDDisplacement();
         if(cisdDisplacement)
             score += m_cisdBonus;
@@ -220,7 +210,6 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 6: Calculate SL/TP ---
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double atr = m_structureAnalyzer.GetATR(14);
 
@@ -238,7 +227,7 @@ public:
             tpPrice = currentPrice - 1.5 * slDistance;  // 1.5R
         }
 
-        // Batch 158: scale-free ATR-denominated pips (1 ATR = 1 unit)
+        // Pips are ATR-denominated (1 ATR = 1 unit): SYMBOL_POINT pips are FX-calibrated and break on synthetics
         double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
         double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
 
@@ -252,14 +241,13 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
-        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // proposed stops must be published before risk gating
         if(!ValidateWithRiskManager(request, "FVG_SCALPER", confidence))
             return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullish ? "FVG_SCALPER_SIGNAL_BUY" : "FVG_SCALPER_SIGNAL_SELL");
         RecordSignal();
 
-        // CONSENSUS LOGGING (AGENTS.md requirement)
         LogConsensusDiag(signal, StringFormat("FVG: %s | Zone: %.5f-%.5f", fvg.isBullish ? "Bull" : "Bear", fvg.bottom, fvg.top), confidence);
 
         PrintFormat("[FVG-SCALPER] %s: %s | FVG Zone: %.5f-%.5f | Entry: %.5f | SL: %.5f | Conf: %.1f%% | Struct: %s | CHOCH: %s | CISD: %s",

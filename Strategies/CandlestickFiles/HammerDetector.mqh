@@ -1,4 +1,3 @@
-// Hammer / Shooting Star Detection
 #property copyright "Copyright 2026"
 #property strict
 
@@ -7,9 +6,9 @@
 enum ENUM_HAMMER_TYPE
 {
     HAMMER_NONE = 0,
-    HAMMER_BULLISH,         // Hammer (bullish reversal at bottom)
-    HAMMER_INVERTED,        // Inverted Hammer (bullish reversal at bottom)
-    HAMMER_SHOOTING_STAR    // Shooting Star (bearish reversal at top)
+    HAMMER_BULLISH,         // bullish, at the bottom
+    HAMMER_INVERTED,        // also bullish, at the bottom
+    HAMMER_SHOOTING_STAR    // bearish, at the top
 };
 
 struct SHammerPattern
@@ -40,12 +39,11 @@ public:
         SCandleProperties candle = m_analyzer.AnalyzeCandle(barIndex);
 
         double atr = m_analyzer.GetATR(14);
-        // Batch 156: fail CLOSED during ATR warmup like the other detectors -
-        // an unnormalized gate let warmup noise vote into consensus.
+        // Fail CLOSED during ATR warmup, like the other detectors: an unnormalized
+        // gate lets warmup noise vote into consensus.
         if(atr <= 0 || candle.totalRange < atr * 0.5)
             return false;
 
-        // Hammer: small body at top, long lower wick
         if(candle.lowerWick >= candle.body * m_minWickRatio &&
            candle.upperWick <= candle.totalRange * m_maxUpperWickRatio &&
            candle.bodyRatio < 0.40)
@@ -58,14 +56,9 @@ public:
             return true;
         }
 
-        // Inverted Hammer / Shooting Star: IDENTICAL geometry (small body,
-        // long upper wick) - only prior trend context separates them.
-        // Batch 156: both branches previously carried byte-identical
-        // conditions, so the Shooting-Star path was unreachable and every
-        // top-of-uptrend star was force-classified bullish (a BUY at tops -
-        // inverted direction exactly where the pattern's edge is bearish).
-        // Textbook context: rising closes into the pattern => Shooting Star
-        // (bearish), otherwise => Inverted Hammer (bullish).
+        // Identical geometry: only prior trend separates them - rising closes into the pattern
+        // => Shooting Star (bearish), otherwise Inverted Hammer (bullish). Without that trend
+        // check the Shooting Star path is unreachable and tops get voted as BUYs.
         if(candle.upperWick >= candle.body * m_minWickRatio &&
            candle.lowerWick <= candle.totalRange * m_maxUpperWickRatio &&
            candle.bodyRatio < 0.40)
@@ -75,9 +68,8 @@ public:
             bool risingIntoPattern = (cPrev > 0 && cBefore > 0 && cPrev > cBefore);
 
             hammer.time = candle.time;
-            // Score the DOMINANT (upper) wick for both shapes - the old
-            // inverted-hammer path scored the tiny lower wick, deflating
-            // strength below tradeable floors.
+            // Score the dominant (upper) wick for both shapes: scoring the tiny lower wick
+            // deflates inverted-hammer strength below tradeable floors.
             hammer.strength = CalculateHammerStrength(candle, false);
             if(risingIntoPattern)
             {
@@ -89,7 +81,7 @@ public:
             {
                 hammer.type = HAMMER_INVERTED;
                 hammer.isBullish = true;
-                hammer.strength *= 0.85; // counter-shape dampening kept
+                hammer.strength *= 0.85; // inverted hammer is the weaker counter-shape
                 hammer.patternPrice = candle.low;
             }
             return true;
@@ -114,13 +106,12 @@ private:
         else if(wickRatio >= 2.0)
             strength += 0.10;
 
-        // Small body = stronger
         if(candle.bodyRatio < 0.15)
             strength += 0.15;
         else if(candle.bodyRatio < 0.25)
             strength += 0.10;
 
-        // Close near the body (top for hammer, bottom for shooting star)
+        // Bonus when the close sits in the top 30% (hammer) or bottom 30% (shooting star)
         double closePosition = (candle.close - candle.low) / (candle.totalRange + 0.000001);
         if(isBullish && closePosition > 0.70)
             strength += 0.10;

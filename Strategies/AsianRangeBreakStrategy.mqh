@@ -1,18 +1,15 @@
-// Asian Range Break: London-open breakout of Asian session range
-// Tight Asian range + London expansion = high-probability breakout
-// Batch 103: Session-specific strategy for forex/metals/indices
 #ifndef ASIAN_RANGE_BREAK_STRATEGY_MQH
 #define ASIAN_RANGE_BREAK_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
-// Risk Manager for AGENTS.md invariant #1
+// Mandatory: every entry gates through CUnifiedRiskManager
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "../Core/Utils/Instruments.mqh"
 #include "SMCFiles/KillZones.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 
-// CAsianRangeBreakStrategy trades London-open breakouts of the Asian session
-// range. Tight Asian range + London expansion = high-probability breakout.
+// CAsianRangeBreakStrategy trades London-open breakouts of the Asian session range;
+// a tight range ahead of the London expansion is the edge.
 class CAsianRangeBreakStrategy : public CStrategyBase
 {
 private:
@@ -77,25 +74,21 @@ public:
         confidence = 0.0;
         SetDecisionReasonTag("ASIANRB_UNSET");
 
-        // Step 1: Check enabled and initialized
         if(!IsEnabled() || !m_is_initialized)
         {
             SetDecisionReasonTag("ASIANRB_DISABLED_OR_UNINIT");
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 2: Synthetic symbol filter - this strategy ONLY works on forex/metals/indices
-        // Batch 155: the old 4-family check let DEX/RangeBreak/Trek/etc.
-        // slip through into London-open logic that is meaningless on them
-        // (they trade 24/7 including weekends). The umbrella check covers
-        // every Deriv synthetic family.
+        // Forex/metals/indices only: the old 4-family check let DEX/RangeBreak/Trek through into
+        // London-open logic that is meaningless on 24/7 weekend-trading symbols; this covers all.
         if(IsSyntheticIndexSymbolName(m_symbol))
         {
             SetDecisionReasonTag("ASIANRB_SYNTHETIC_SKIP");
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 3: Time filter - only trade during London open window 07:00-07:30 UTC
+        // London open window only: 07:00-07:30, read on the GMT clock
         MqlDateTime dt;
         TimeToStruct(TimeGMT(), dt);
         if(dt.hour != 7 || dt.min > 30)
@@ -104,32 +97,25 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 4: Refresh for new bar
         RefreshForNewBar();
 
-        // Step 5: Check components not NULL
         if(m_killZones == NULL || m_structureAnalyzer == NULL)
         {
             SetDecisionReasonTag("ASIANRB_COMPONENTS_NOT_READY");
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 6: Measure Asian session range (00:00-06:00 UTC) on M5, GMT-anchored.
-        // F7 (STRATEGY_AUDIT_2026-08-14): the previous version counted 72 M5 bars back
-        // from "now", which drifts away from the true Asian session on a non-UTC broker.
-        // We now anchor to absolute UTC datetimes via iBarShift so the range always
-        // covers 00:00-06:00 UTC regardless of broker timezone.
+        // Asian session range 00:00-06:00 UTC on M5, anchored to absolute GMT datetimes via
+        // iBarShift: counting bars back from "now" drifts off the session on a non-UTC broker.
         MqlDateTime gmt;
         TimeToStruct(TimeGMT(), gmt);
         gmt.hour = 0; gmt.min = 0; gmt.sec = 0;
-        datetime asianStart = StructToTime(gmt);   // today 00:00 UTC
+        datetime asianStart = StructToTime(gmt);
         gmt.hour = 6;
-        datetime asianEnd   = StructToTime(gmt);   // today 06:00 UTC
+        datetime asianEnd   = StructToTime(gmt);
 
-        // Batch 155: exact=false - exact=true demanded M5 bars opening at
-        // PRECISELY 00:00:00 and 06:00:00 UTC, so a single missing bar in
-        // the feed killed the whole day (ASIANRB_RANGE_DATA_UNAVAILABLE).
-        // iBarShift then returns the nearest bar at-or-before each anchor.
+        // exact=false so one missing 00:00/06:00 M5 print does not kill the whole day
+        // (exact=true demanded them and fell out as ASIANRB_RANGE_DATA_UNAVAILABLE).
         int idxEnd   = iBarShift(m_symbol, PERIOD_M5, asianEnd,   false); // <=06:00 bar (London open; excluded)
         int idxStart = iBarShift(m_symbol, PERIOD_M5, asianStart, false); // <=00:00 bar (Asian open; included)
         if(idxEnd < 0 || idxStart < 0 || idxStart <= idxEnd)
@@ -159,13 +145,9 @@ public:
 
         double asianRange = asianHigh - asianLow;
 
-        // Step 7: Range filter - only trade if the Asian range is tight.
-        // Batch 155: dimensional fix. atr is a per-BAR figure on the strategy
-        // timeframe while asianRange always spans 6 hours of M5 data, so the
-        // old direct comparison rejected virtually every day on M1/M5
-        // (ASIANRB_RANGE_TOO_WIDE) and passed everything on H4/D1. Scale the
-        // ATR to the expected move over 6 hours (sqrt-of-time diffusion
-        // exponent) so the comparison is like-for-like on any timeframe.
+        // Tight-range gate: ATR is per-bar on this timeframe while the range always spans 6h of M5,
+        // so ATR is scaled by barsIn6h^0.7 (diffusion) for a like-for-like compare. Raw ATR rejected
+        // almost every day on M1/M5 and passed everything on H4/D1.
         double atr = m_structureAnalyzer.GetATR(14);
         if(atr <= 0)
         {
@@ -185,7 +167,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 8: Breakout confirmation (use bar 1 = last closed bar)
+        // Breakout is confirmed on bar 1 (last closed bar), never the forming bar
         double currentClose = iClose(m_symbol, m_timeframe, 1);
         if(currentClose <= 0)
         {
@@ -202,21 +184,18 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 9: Confidence calculation
         double score = 0.50;
 
-        // Range compression boost: tighter range = stronger signal
-        // (Batch 155: measured against the 6h-scaled expectation, see Step 7)
+        // Compression boost: range under half the 6h-scaled expectation
         if(asianRange < 0.5 * expectedRange)
             score += 0.10;
 
-        // Structure alignment boost
         bool structureAligned = bullishBreakout ? m_structureAnalyzer.IsBullishStructure()
                                                 : m_structureAnalyzer.IsBearishStructure();
         if(structureAligned)
             score += 0.08;
 
-        // Fast CHOCH boost (recent structure shift confirms breakout direction)
+        // Fast CHOCH: a recent structure shift in the breakout direction
         if(m_structureAnalyzer.DetectFastCHOCH())
             score += 0.07;
 
@@ -229,11 +208,10 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 10: Determine signal and SL/TP
         ENUM_TRADE_SIGNAL signal = bullishBreakout ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
-        // SL at opposite range boundary, TP at 2x range size
+        // SL at the opposite range boundary, TP at 2x range size
         double slPrice = bullishBreakout ? asianLow : asianHigh;
         double slDistance = MathAbs(currentPrice - slPrice);
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -256,14 +234,13 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
-        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // proposed stops must be published before risk gating
         if(!ValidateWithRiskManager(request, "ASIANRB", confidence))
             return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullishBreakout ? "ASIANRB_SIGNAL_BUY" : "ASIANRB_SIGNAL_SELL");
         RecordSignal();
 
-        // CONSENSUS LOGGING (AGENTS.md requirement)
         LogConsensusDiag(signal, StringFormat("Range: %.5f | ATR: %.5f", asianRange, atr), confidence);
 
         PrintFormat("[ASIANRB] %s: %s | Asian Range: %.5f-%.5f | Range/ATR: %.2f | Structure: %s | Conf: %.1f%%",

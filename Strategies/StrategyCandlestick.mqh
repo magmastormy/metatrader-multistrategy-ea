@@ -1,8 +1,4 @@
-﻿//+------------------------------------------------------------------+
-//| StrategyCandlestick.mqh                                          |
-//| Candlestick Pattern Strategy - Multi-pattern detection and       |
-//| confluence scoring for institutional-grade pattern trading        |
-//+------------------------------------------------------------------+
+﻿// StrategyCandlestick.mqh
 #ifndef STRATEGY_CANDLESTICK_MQH
 #define STRATEGY_CANDLESTICK_MQH
 
@@ -23,7 +19,6 @@
 #include "CandlestickFiles/PiercingDetector.mqh"
 #include "CandlestickFiles/CandleConfluenceScorer.mqh"
 
-// Candle Pattern Types (v2.0 - 15 patterns)
 enum ENUM_CANDLE_PATTERN
 {
     PATTERN_NONE = 0,
@@ -47,8 +42,7 @@ enum ENUM_CANDLE_PATTERN
     PATTERN_DARK_CLOUD
 };
 
-// CStrategyCandlestick implements multi-pattern candlestick detection with
-// confluence scoring for institutional-grade pattern trading.
+// Multi-pattern candlestick detection, each pattern gated by a confluence score.
 class CStrategyCandlestick : public CStrategyBase
 {
 private:
@@ -68,7 +62,7 @@ private:
 
     bool              m_requireTrendAlignment;
     CChartDrawingManager* m_drawingManager;
-    bool              m_drawOnChartSymbolOnly;  // Only draw when strategy symbol matches chart symbol
+    bool              m_drawOnChartSymbolOnly;
     int               m_atrHandle;
     int               m_ema50Handle;
     int               m_ema200Handle;
@@ -93,14 +87,13 @@ public:
 
     virtual bool Init(const string symbol, const ENUM_TIMEFRAMES timeframe, void* tradeManagerPtr, void* positionSizerPtr, void* unifiedRiskManagerPtr = NULL) override
     {
-        // Call base class Init (handles symbol, timeframe, trade manager, position sizer, unified risk manager)
         if(!CStrategyBase::Init(symbol, timeframe, tradeManagerPtr, positionSizerPtr, unifiedRiskManagerPtr))
         {
             m_lastDecisionReasonTag = "CANDLE_INIT_FAILED";
             return false;
         }
 
-        // Create ATR handle for pattern normalization via CIndicatorManager
+        // ATR normalizes pattern size
         m_atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, 14);
         if(m_atrHandle == INVALID_HANDLE)
         {
@@ -109,7 +102,7 @@ public:
             return false;
         }
 
-        // Create EMA handles for trend alignment (if enabled) via CIndicatorManager
+        // EMA50/EMA200 back the optional trend-alignment gate
         if(m_requireTrendAlignment)
         {
             m_ema50Handle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
@@ -124,7 +117,7 @@ public:
             }
         }
 
-        // Create EMA8/EMA21 for short-term trend alignment (confluence scoring)
+        // EMA8/EMA21 feed the confluence score's short-term trend alignment
         m_ema8Handle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 8, 0, MODE_EMA, PRICE_CLOSE);
         m_ema21Handle = CIndicatorManager::Instance().GetMAHandle(m_symbol, m_timeframe, 21, 0, MODE_EMA, PRICE_CLOSE);
 
@@ -133,7 +126,6 @@ public:
             m_lastDecisionReasonTag = "CANDLE_INIT_FAILED";
             Print("[CANDLESTICK] Failed to initialize candle analyzer");
 
-            // Cleanup on failure 鈥?handles managed by CIndicatorManager
             m_atrHandle = INVALID_HANDLE;
             m_ema50Handle = INVALID_HANDLE;
             m_ema200Handle = INVALID_HANDLE;
@@ -153,7 +145,6 @@ public:
         if(m_drawingManager != NULL)
         {
             m_drawingManager.Initialize(m_symbol, m_timeframe, "CANDLE");
-            // Default config sufficient - signal markers enabled automatically
         }
 
         PrintFormat("[CANDLESTICK] Strategy initialized for %s on %s (ATR: %d, EMA50: %d, EMA200: %d)",
@@ -164,18 +155,16 @@ public:
 
     virtual void Deinit() override
     {
-        // Handles are managed by CIndicatorManager 鈥?no IndicatorRelease needed
+        // Indicator handles belong to CIndicatorManager: nothing to release here
         m_atrHandle = INVALID_HANDLE;
         m_ema50Handle = INVALID_HANDLE;
         m_ema200Handle = INVALID_HANDLE;
         m_ema8Handle = INVALID_HANDLE;
         m_ema21Handle = INVALID_HANDLE;
 
-        // Cleanup drawing objects
         if(m_drawingManager != NULL)
             m_drawingManager.CleanupAll();
 
-        // Call base class Deinit
         CStrategyBase::Deinit();
 
         m_lastDecisionReasonTag = "CANDLE_DEINIT";
@@ -183,16 +172,15 @@ public:
 
     virtual void OnNewBar(const string symbol, const ENUM_TIMEFRAMES timeframe) override
     {
-        // Drawing cleanup for any symbol/timeframe
+        // Object cleanup runs for any symbol/timeframe; the base applies its own match check
         if(m_drawingManager != NULL)
             m_drawingManager.CleanupOldObjects();
-        // Call base for standard handling (checks match, calls HandleNewBar)
         CStrategyBase::OnNewBar(symbol, timeframe);
     }
 
     virtual double CalculateStopLoss(ENUM_TRADE_SIGNAL signal, double entryPrice, double atr)
     {
-        // ATR availability guard: when ATR=0 (indicator not ready), use stops level as fallback
+        // ATR=0 means the indicator is not ready: fall back to the broker's stops level
         if(atr <= 0.0)
         {
             double stopsLevel = (double)SymbolInfoInteger(m_symbol, SYMBOL_TRADE_STOPS_LEVEL);
@@ -201,19 +189,18 @@ public:
                 atr = stopsLevel * point * 3.0;  // 3x stops level as ATR proxy
             else
             {
-                // No ATR and no stops level -- reject signal
-                return 0.0;  // Will be caught by SL > 0 check downstream
+                // No ATR and no stops level: reject (0.0 fails the SL > 0 check downstream)
+                return 0.0;
             }
         }
 
         int barIndex = 1;
 
-        // Use array-based CopyLow for efficiency instead of manual loop
         double prices[5];
         if(CopyLow(m_symbol, m_timeframe, 1, 5, prices) < 5)
         {
             double sl = (signal == TRADE_SIGNAL_BUY) ? entryPrice - (atr * 2.0) : entryPrice + (atr * 2.0);
-            // Final validation: SL must be different from entry price
+            // Under 5 bars of history: 2x ATR fallback, SL must still clear the entry
             if(signal == TRADE_SIGNAL_BUY && sl >= entryPrice)
                 return 0.0;
             if(signal == TRADE_SIGNAL_SELL && sl <= entryPrice)
@@ -225,16 +212,14 @@ public:
 
         if(signal == TRADE_SIGNAL_BUY)
         {
-            // Find swing low using ArrayMinimum
             int minIdx = ArrayMinimum(prices);
             double swingLow = prices[minIdx];
 
-            // Batch 156: pad below the swing by max(10 points, 15% ATR) -
-            // on synthetics 10 points is ~0.10 price units, parking the stop
-            // ON the swing low inside noise.
+            // Pad below the swing by max(10 points, 15% ATR): on synthetics 10 points is
+            // ~0.10 price units, so an unpadded stop sits ON the swing low inside noise.
             double sl = swingLow - MathMax(SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 10, atr * 0.15);
 
-            // Cap SL distance to 3x ATR to prevent excessive risk
+            // Distance above 3x ATR is clamped back to 2x ATR
             if(entryPrice - sl > atr * 3.0)
                 sl = entryPrice - (atr * 2.0);
 
@@ -246,7 +231,6 @@ public:
         }
         else if(signal == TRADE_SIGNAL_SELL)
         {
-            // Find swing high using ArrayMaximum
             double highPrices[5];
             if(CopyHigh(m_symbol, m_timeframe, 1, 5, highPrices) < 5)
             {
@@ -259,10 +243,10 @@ public:
             int maxIdx = ArrayMaximum(highPrices);
             double swingHigh = highPrices[maxIdx];
 
-            // Batch 156: pad above the swing by max(10 points, 15% ATR) - see BUY side
+            // Pad above the swing by max(10 points, 15% ATR) - see the BUY branch
             double sl = swingHigh + MathMax(SymbolInfoDouble(m_symbol, SYMBOL_POINT) * 10, atr * 0.15);
 
-            // Cap SL distance to 3x ATR
+            // Same 3x ATR clamp as BUY
             if(sl - entryPrice > atr * 3.0)
                 sl = entryPrice + (atr * 2.0);
 
@@ -304,23 +288,16 @@ protected:
         m_lastDecisionReasonTag = "CANDLE_UNSET";
         int barIndex = 1;
 
-        // Collect all detected patterns with their scores
-        // Priority: 3-candle > 2-candle > 1-candle patterns
-
-        // === 3-CANDLE PATTERNS (highest reliability) ===
-
-        // Morning Star / Evening Star
+        // Evaluation order is the precedence: 3-candle patterns win over 2-candle,
+        // which win over 1-candle.
         SStarPattern star;
         if(m_star.DetectStar(barIndex, star))
         {
             int score = BuildConfluenceScore(true, star.patternPrice, star.isBullish, barIndex);
             if(m_confluence.HasSignal())
             {
-                // Batch 156: all eight pattern sites blend pattern strength and
-                // confluence 50/50 instead of multiplying them - the old
-                // strength(0.5-0.95) x confluence(0.7-1.0) product landed most
-                // real detections at ~0.35-0.55, hugging/below the consuming
-                // filter floors and starving the strategy's vote volume.
+                // Strength and confluence blend 50/50: their product (0.5-0.95 x 0.7-1.0)
+                // put most detections under consumer confidence floors, starving vote volume.
                 confidence = (0.5 * star.strength + 0.5 * m_confluence.GetConfidence());
                 DrawPatternSignal(star.time, star.patternPrice, confidence, star.isBullish,
                                   star.type == STAR_MORNING ? "Morning Star" : "Evening Star");
@@ -332,7 +309,6 @@ protected:
             }
         }
 
-        // Three White Soldiers / Three Black Crows
         SThreeSoldiersPattern soldiers;
         if(m_threeSoldiers.DetectThreeSoldiers(barIndex, soldiers))
         {
@@ -350,9 +326,6 @@ protected:
             }
         }
 
-        // === 2-CANDLE PATTERNS ===
-
-        // Engulfing (existing, enhanced with confluence)
         SEngulfingPattern engulfing;
         if(m_engulfing.DetectEngulfing(barIndex, engulfing))
         {
@@ -390,7 +363,6 @@ protected:
             }
         }
 
-        // Piercing Line / Dark Cloud Cover
         SPiercingPattern piercing;
         if(m_piercing.DetectPiercing(barIndex, piercing))
         {
@@ -408,9 +380,6 @@ protected:
             }
         }
 
-        // === 1-CANDLE PATTERNS ===
-
-        // Pin Bar (existing, enhanced with confluence)
         SPinBar pinBar;
         if(m_pinBar.DetectPinBar(barIndex, pinBar))
         {
@@ -432,7 +401,6 @@ protected:
             }
         }
 
-        // Hammer / Shooting Star
         SHammerPattern hammer;
         if(m_hammer.DetectHammer(barIndex, hammer))
         {
@@ -450,7 +418,6 @@ protected:
             }
         }
 
-        // Doji
         SDojiPattern doji;
         if(m_doji.DetectDoji(barIndex, doji))
         {
@@ -476,10 +443,8 @@ protected:
     }
 
 private:
-    // Common validation + signal return for all pattern types
     ENUM_TRADE_SIGNAL ValidateAndReturnSignal(bool isBullish, double patternPrice, double &confidence, int barIndex, const string reasonTag)
     {
-        // Validate SL
         double atr = GetATR(barIndex);
         double sl = CalculateStopLoss(isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL, patternPrice, atr);
         if(sl <= 0.0 || sl == patternPrice)
@@ -497,11 +462,10 @@ private:
         request.strategy = GetName();
         request.clusterCode = "";
 
-        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // proposed stops must be published before risk gating
         if(!ValidateWithRiskManager(request, "CANDLE", confidence))
             return TRADE_SIGNAL_NONE;
 
-        // Log to consensus protocol
         PrintFormat("[CONSENSUS-DIAG] %s | %s | Pattern: %s | Conf: %.1f%% | Weight: %.2f | Confluence: %d | Reason: %s",
                    m_symbol,
                    isBullish ? "BUY" : "SELL",
@@ -515,7 +479,6 @@ private:
         return isBullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
     }
 
-    // Helper method to get current ATR value
     double GetATR(int barIndex)
     {
         if(m_atrHandle == INVALID_HANDLE)
@@ -538,13 +501,12 @@ private:
         m_drawingManager.DrawEntrySignal(time, price, isBullish, strength, "Candlestick", patternName);
     }
 
-    // Check if pattern price is at a key level (S/R, EMA, FVG)
     bool IsAtKeyLevel(double patternPrice, int barIndex)
     {
         double atr = GetATR(barIndex);
         if(atr <= 0) return false;
 
-        // Check EMA proximity (EMA21 and EMA50)
+        // Within 0.3*ATR of EMA21 or EMA50 counts as a key level
         if(m_ema21Handle != INVALID_HANDLE)
         {
             double ema21[1];
@@ -565,7 +527,7 @@ private:
             }
         }
 
-        // Check recent swing highs/lows as S/R proxy
+        // Otherwise the last 20 bars of swing highs/lows act as the S/R proxy, same 0.3*ATR proximity
         double highs[20], lows[20];
         if(CopyHigh(m_symbol, m_timeframe, 1, 20, highs) >= 20 &&
            CopyLow(m_symbol, m_timeframe, 1, 20, lows) >= 20)
@@ -582,12 +544,10 @@ private:
         return false;
     }
 
-    // Check short-term trend alignment (EMA8 vs EMA21)
     bool IsShortTermTrendAligned(bool isBullish, int barIndex)
     {
-        // Batch 169: fail closed. This feeds a confluence point, so returning
-        // true on missing EMA data awarded trend alignment to trades the
-        // filter was supposed to vet.
+        // Fail closed on missing EMA8/EMA21: this feeds a confluence point, so returning
+        // true would grant alignment to trades the filter never vetted.
         if(m_ema8Handle == INVALID_HANDLE || m_ema21Handle == INVALID_HANDLE)
             return false;
 
@@ -597,12 +557,11 @@ private:
             return false;
 
         if(isBullish)
-            return ema8[0] > ema21[0];  // Bullish pattern in uptrend
+            return ema8[0] > ema21[0];
         else
-            return ema8[0] < ema21[0];  // Bearish pattern in downtrend
+            return ema8[0] < ema21[0];
     }
 
-    // Build confluence score for a detected pattern
     int BuildConfluenceScore(bool patternValid, double patternPrice, bool isBullish, int barIndex)
     {
         m_confluence.Reset();

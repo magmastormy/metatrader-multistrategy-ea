@@ -1,20 +1,15 @@
-// Turtle Soup: false breakout of liquidity + structure alignment
-// + FVG confluence bonus
-// Batch 103: New ICT/SMC strategy
 #ifndef TURTLE_SOUP_STRATEGY_MQH
 #define TURTLE_SOUP_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
-// Risk Manager for AGENTS.md invariant #1
+// Mandatory: every entry gates through CUnifiedRiskManager
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "UnifiedICTFiles/LiquidityDetector.mqh"
 #include "UnifiedICTFiles/ImbalanceDetector.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 
-// Turtle Soup: false breakout of liquidity + structure alignment
-
-// CTurtleSoupStrategy detects false breakouts at liquidity pools and combines
-// with FVG confluence for high-probability reversal entries.
+// CTurtleSoupStrategy trades false breakouts of liquidity pools, confirmed by
+// structure alignment and scored with an FVG confluence bonus.
 class CTurtleSoupStrategy : public CStrategyBase
 {
 private:
@@ -97,7 +92,6 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 1: Detect Turtle Soup signal (false breakout of liquidity)
         STurtleSoupSignal turtleSoup;
         if(!m_liquidityDetector.DetectTurtleSoup(turtleSoup, 4))
         {
@@ -105,15 +99,13 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 2: Determine direction from turtle soup
         bool bullish = turtleSoup.bullish;
         ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
 
-        // Step 3: Check structure alignment
         bool structureAligned = bullish ? m_structureAnalyzer.IsBullishStructure()
                                         : m_structureAnalyzer.IsBearishStructure();
 
-        // Fast CHOCH (CISD) as alternative structure confirmation
+        // Either structure alignment or a fast CISD qualifies the reversal
         bool fastCHOCH = bullish ? m_structureAnalyzer.IsCISD(POSITION_TYPE_BUY, 1)
                                  : m_structureAnalyzer.IsCISD(POSITION_TYPE_SELL, 1);
 
@@ -123,12 +115,10 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 4: FVG confluence bonus
         int imbIdx = bullish ? m_imbalanceDetector.FindBestBullishImbalance()
                              : m_imbalanceDetector.FindBestBearishImbalance();
         bool hasFVGConfluence = (imbIdx >= 0);
 
-        // Step 5: Build confidence score
         double score = 0.50 + turtleSoup.confidence * 0.15;
         if(structureAligned) score += 0.10;
         if(hasFVGConfluence) score += 0.08;
@@ -142,7 +132,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // Step 6: Calculate SL beyond false break extreme + 0.3*ATR, TP at 2R
+        // SL beyond the false-break extreme by 0.3*ATR, TP at 2R
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
         double atr = m_structureAnalyzer.GetATR(14);
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -150,21 +140,19 @@ public:
 
         if(bullish)
         {
-            // Bullish turtle soup: SL below the sweep low + 0.3*ATR
             slPrice = turtleSoup.sweepPrice - 0.3 * atr;
             slDistance = MathAbs(currentPrice - slPrice);
             tpPrice = currentPrice + 2.0 * slDistance;
         }
         else
         {
-            // Bearish turtle soup: SL above the sweep high + 0.3*ATR
             slPrice = turtleSoup.sweepPrice + 0.3 * atr;
             slDistance = MathAbs(slPrice - currentPrice);
             tpPrice = currentPrice - 2.0 * slDistance;
         }
 
-        // Convert to actual pips (price distance / point), not ATR multiples
-        // Risk validation pipeline expects stopLossPips in pips (price points)
+        // Unlike the ATR-multiple denominators in the ICT strategies, this one feeds the risk
+        // pipeline real price points: distance / SYMBOL_POINT.
         double tpDistance = MathAbs(tpPrice - currentPrice);
         double slPips = (point > 0 && slDistance > 0) ? (slDistance / point) : 0.0;
         double tpPips = (point > 0 && tpDistance > 0) ? (tpDistance / point) : 0.0;
@@ -179,14 +167,13 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
-        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // proposed stops must be published before risk gating
         if(!ValidateWithRiskManager(request, "TURTLE-SOUP", confidence))
             return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullish ? "TURTLE_SIGNAL_BUY" : "TURTLE_SIGNAL_SELL");
         RecordSignal();
 
-        // CONSENSUS LOGGING (AGENTS.md requirement)
         LogConsensusDiag(signal, StringFormat("TS-Conf: %.2f | Struct: %s | FVG: %s | CHOCH: %s", turtleSoup.confidence, structureAligned ? "Yes" : "No", hasFVGConfluence ? "Yes" : "No", fastCHOCH ? "Yes" : "No"), confidence);
 
         PrintFormat("[TURTLE-SOUP] %s: %s | Ref: %.5f | Sweep: %.5f | Conf: %.1f%% | Struct: %s | FVG: %s",

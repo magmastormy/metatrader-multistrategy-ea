@@ -1,13 +1,8 @@
-// ICT Breaker Block Strategy: breaker OB retest + FVG confluence
-// with structure alignment and CISD displacement confirmation
-// Detects breaker blocks (OB_BREAKER_BULL/OB_BREAKER_BEAR), waits
-// for price retest of the breaker zone, and confirms with opposing
-// FVG confluence, CISD displacement, and market structure context.
 #ifndef BREAKER_BLOCK_STRATEGY_MQH
 #define BREAKER_BLOCK_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
-// Risk Manager for AGENTS.md invariant #1
+// Mandatory: every entry gates through CUnifiedRiskManager
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 #include "UnifiedICTFiles/MarketStructureAnalyzer.mqh"
 #include "UnifiedICTFiles/AdvancedOrderBlocks.mqh"
@@ -97,7 +92,7 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 1: Find breaker OBs that are NOT mitigated (use bar 1 = last closed bar) ---
+        // Unmitigated breaker OBs only; price reads bar 1 (last closed bar), not the forming bar
         double currentClose = iClose(m_symbol, m_timeframe, 1);
         double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
 
@@ -114,17 +109,14 @@ public:
             if(ob.isMitigated)
                 continue;
 
-            // Only consider breaker block types
             if(ob.type != OB_BREAKER_BULL && ob.type != OB_BREAKER_BEAR)
                 continue;
 
-            // Check if price is retesting the breaker zone
-            // Price retest: current close is between ob.bottom and ob.top
+            // Retest = current close inside ob.bottom..ob.top
             bool priceInZone = (currentClose >= ob.bottom && currentClose <= ob.top);
             if(!priceInZone)
                 continue;
 
-            // Pick the strongest breaker that price is retesting
             if(ob.strength > bestBreakerStrength)
             {
                 bestBreakerStrength = ob.strength;
@@ -139,7 +131,6 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 2: Determine direction from breaker type ---
         SAdvancedOrderBlock bestOB;
         if(!m_obDetector.GetOrderBlock(bestBreakerIdx, bestOB))
         {
@@ -149,15 +140,12 @@ public:
 
         bool bullish = (bestBreakerType == OB_BREAKER_BULL);
 
-        // For bearish breaker (OB_BREAKER_BEAR): price retests → SELL
-        // For bullish breaker (OB_BREAKER_BULL): price retests → BUY
+        // Bullish breaker retest = BUY, bearish breaker retest = SELL
         ENUM_TRADE_SIGNAL signal = bullish ? TRADE_SIGNAL_BUY : TRADE_SIGNAL_SELL;
 
-        // --- Step 3: Apply OB freshness weighting ---
         double freshness = m_obDetector.GetFreshness(bestBreakerIdx);
 
-        // --- Step 4: Check for opposing FVG confluence ---
-        // For bearish breaker, find bearish FVG; for bullish breaker, find bullish FVG
+        // FVG confluence means an imbalance in the breaker's own direction
         int imbIdx = bullish ? m_imbalanceDetector.FindBestBullishImbalance()
                              : m_imbalanceDetector.FindBestBearishImbalance();
         bool hasFVGConfluence = (imbIdx >= 0);
@@ -169,23 +157,21 @@ public:
                 hasFVGConfluence = false;
         }
 
-        // --- Step 5: CISD displacement check ---
+        // CISD displacement within the last 3 bars
         bool hasCISD = m_structureAnalyzer.HasRecentBullishCISD(3);
         if(!bullish)
             hasCISD = m_structureAnalyzer.HasRecentBearishCISD(3);
 
-        // --- Step 6: Structure alignment ---
         bool structureAligned = bullish ? m_structureAnalyzer.IsBullishStructure()
                                         : m_structureAnalyzer.IsBearishStructure();
 
-        // --- Step 7: Build confidence score ---
         double score = 0.55;  // Base confidence
 
         // Freshness boost: fresh OBs (> 0.7) get +0.08
         if(freshness > 0.7)
             score += 0.08;
 
-        // Opposing FVG confluence: +0.10
+        // FVG confluence: +0.10
         if(hasFVGConfluence)
             score += 0.10;
 
@@ -206,30 +192,25 @@ public:
             return TRADE_SIGNAL_NONE;
         }
 
-        // --- Step 8: Calculate SL/TP ---
-        // SL beyond breaker boundary + 0.5*ATR, TP at 2R
-        // Batch 158: use ATR directly (scale-free) instead of SYMBOL_POINT pips
-        // which are FX-calibrated and break on Deriv synthetics (point=0.01, prices in 1000s).
+        // SL beyond the breaker boundary by 0.5*ATR, TP at 2R. Stops are ATR-denominated, not
+        // SYMBOL_POINT pips: points are FX-calibrated and break on synthetics (point=0.01, prices in 1000s).
         double atr = m_structureAnalyzer.GetATR(14);
         double slPrice, tpPrice, slDistance;
 
         if(bullish)
         {
-            // For BUY: SL below breaker bottom - 0.5*ATR
             slPrice = bestOB.bottom - 0.5 * atr;
             slDistance = MathAbs(currentPrice - slPrice);
             tpPrice = currentPrice + 2.0 * slDistance;  // 2R
         }
         else
         {
-            // For SELL: SL above breaker top + 0.5*ATR
             slPrice = bestOB.top + 0.5 * atr;
             slDistance = MathAbs(slPrice - currentPrice);
             tpPrice = currentPrice - 2.0 * slDistance;  // 2R
         }
 
-        // Convert to pips using scale-free ATR denominator (1 ATR = 1 unit)
-        // Risk manager expects pips; we feed ATR-multiple so it scales correctly on all symbols.
+        // Pips are fed to the risk manager as ATR multiples (1 ATR = 1 unit) so they scale on every symbol
         double slPips = (atr > 0) ? (slDistance / atr) : 0.0;
         double tpPips = (atr > 0) ? (MathAbs(tpPrice - currentPrice) / atr) : 0.0;
 
@@ -243,14 +224,13 @@ public:
         request.strategy = GetName();
         request.clusterCode = "";
 
-        SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+        SetProposedStops(request.stopLossPips, request.takeProfitPips); // proposed stops must be published before risk gating
         if(!ValidateWithRiskManager(request, "BREAKER-BLOCK", confidence))
             return TRADE_SIGNAL_NONE;
 
         SetDecisionReasonTag(bullish ? "BREAKER_SIGNAL_BUY" : "BREAKER_SIGNAL_SELL");
         RecordSignal();
 
-        // CONSENSUS LOGGING (AGENTS.md requirement)
         LogConsensusDiag(signal, StringFormat("Breaker: %s | FVG: %s | Fresh: %.2f | CISD: %s | Struct: %s", EnumToString(bestBreakerType), hasFVGConfluence ? "Yes" : "No", freshness, hasCISD ? "Yes" : "No", structureAligned ? "Yes" : "No"), confidence);
 
         PrintFormat("[BREAKER-BLOCK] %s: %s | Zone: %.5f-%.5f | Freshness: %.2f | FVG: %s | CISD: %s | Conf: %.1f%%",
