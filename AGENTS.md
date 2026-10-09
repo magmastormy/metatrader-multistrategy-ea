@@ -1,9 +1,10 @@
 # AGENTS.md
 
 ## Document Metadata
-- Last Updated: 2026-08-28
+- Last Updated: 2026-10-09
 - Scope: Agent workflow contract for this repository
-- Latest Batch: Batch 158 - Signal-suppression audit sweep (unaudited strategy files + ATR handle caching)
+- Latest Batch: Batch 170 - Engine send governance, min-lot risk ceiling, real-volume honesty, one exit authority per book
+- Changelog: `changelogs.md` restarts at Batch 170; Batches 102-169 are archived in `docs/changelogs_batch102-169.md`
 
 ## 1. Mission
 Maintain and evolve `metatrader-multistrategy-ea` with production-safe discipline:

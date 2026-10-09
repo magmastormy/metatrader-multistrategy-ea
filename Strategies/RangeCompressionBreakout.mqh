@@ -325,7 +325,9 @@ public:
                 if(m_useTrendFilter && !isFade && m_maHandle != INVALID_HANDLE)
                 {
                     double maVal[1];
-                    if(CopyBuffer(m_maHandle, 0, 0, 1, maVal) == 1 && maVal[0] > 0)
+                    // Batch 169: shift 1, matching the closed-bar `close[0]` it is
+                    // compared against (every other read in this function is shift 1).
+                    if(CopyBuffer(m_maHandle, 0, 1, 1, maVal) == 1 && maVal[0] > 0)
                     {
                         // For BUY: price should be above MA (uptrend)
                         // For SELL: price should be below MA (downtrend)

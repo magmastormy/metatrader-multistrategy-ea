@@ -588,13 +588,16 @@ private:
     // Check short-term trend alignment (EMA8 vs EMA21)
     bool IsShortTermTrendAligned(bool isBullish, int barIndex)
     {
+        // Batch 169: fail closed. This feeds a confluence point, so returning
+        // true on missing EMA data awarded trend alignment to trades the
+        // filter was supposed to vet.
         if(m_ema8Handle == INVALID_HANDLE || m_ema21Handle == INVALID_HANDLE)
-            return true;  // No data = don't block
+            return false;
 
         double ema8[1], ema21[1];
         if(CopyBuffer(m_ema8Handle, 0, barIndex, 1, ema8) <= 0 ||
            CopyBuffer(m_ema21Handle, 0, barIndex, 1, ema21) <= 0)
-            return true;
+            return false;
 
         if(isBullish)
             return ema8[0] > ema21[0];  // Bullish pattern in uptrend

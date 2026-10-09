@@ -7,14 +7,11 @@
 #define SYNTHETIC_SPIKE_MONITOR_MQH
 
 #include "..\Utils\Instruments.mqh"
+#include "..\Utils\MagicRange.mqh"
 #include "..\Trading\TradeManager.mqh"
 #include "..\Risk\UnifiedRiskManager.mqh"
 #include "..\..\IndicatorManager.mqh"
 #include "TickSafetyMonitor.mqh"
-
-// Magic number range constants (must match main EA definitions)
-#define SPIKE_MAGIC_SYMBOL_MULTIPLIER 100
-#define SPIKE_MAGIC_MAX_CLUSTER_CODE  99
 
 //+------------------------------------------------------------------+
 //| Synthetic Spike Monitor Class                                     |
@@ -38,10 +35,6 @@ private:
     CUnifiedRiskManager* m_riskManager;
     CTickSafetyMonitor*  m_tickSafetyMonitor;
 
-    // --- Magic number range for EA ownership check ---
-    int      m_magicNumber;
-    int      m_symbolCount;
-
     // --- Spike event counter ---
     ulong    m_spikeEventCount;
 
@@ -57,8 +50,6 @@ public:
         m_tradeManager(NULL),
         m_riskManager(NULL),
         m_tickSafetyMonitor(NULL),
-        m_magicNumber(0),
-        m_symbolCount(1),
         m_spikeEventCount(0)
     {
     }
@@ -73,15 +64,14 @@ public:
         m_tickSafetyMonitor  = &tickSafety;
     }
 
-    //--- Magic number configuration (call from OnInit)
-    void SetMagicNumber(int magicNumber) { m_magicNumber = magicNumber; }
-    void SetSymbolCount(int symbolCount) { m_symbolCount = (symbolCount > 0) ? symbolCount : 1; }
-
-    //--- Check if a magic number falls within this EA's ownership range
+    //--- Check if a magic number falls within this EA's ownership range.
+    //--- Batch 168: delegates to CMagicRange. The local
+    //--- base + symbolCount*100 + 99 window excluded the asset-class offsets
+    //--- this EA ships with, so emergency flatten treated EA positions as
+    //--- foreign unless flattenAll was set.
     bool IsEAOwnedMagic(long magic) const
     {
-        int maxMagic = m_magicNumber + m_symbolCount * SPIKE_MAGIC_SYMBOL_MULTIPLIER + SPIKE_MAGIC_MAX_CLUSTER_CODE;
-        return (magic >= m_magicNumber && magic <= maxMagic);
+        return IsMagicOwned(magic);
     }
 
     //--- Trading pause methods

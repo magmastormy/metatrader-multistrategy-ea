@@ -23,6 +23,18 @@ class CPositionSizer;
 class CPerformanceAnalytics;
 
 //+------------------------------------------------------------------+
+//| Batch 170: hard ceiling on the min-lot round-up multiplier.      |
+//| Rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN multiplies    |
+//| the risk the pre-trade gate approved, because sizing happens     |
+//| after that gate. 3x on a 1% account means a 3% worst-case fill   |
+//| which is survivable; 15x (what live_overrides.json asked for)    |
+//| is not.                                                          |
+//+------------------------------------------------------------------+
+#ifndef MAX_MIN_LOT_RISK_MULTIPLIER
+#define MAX_MIN_LOT_RISK_MULTIPLIER 3.0
+#endif
+
+//+------------------------------------------------------------------+
 //| Position Sizing Parameters Structure                           |
 //+------------------------------------------------------------------+
 struct SPositionSizingParams
@@ -76,7 +88,7 @@ struct SPositionSizingParams
         equityCurveMinMultiplier(0.25),
         equityCurveMaxMultiplier(2.0),
         allowMinLotRoundUp(false),
-        minLotRiskMultiplier(15.0)
+        minLotRiskMultiplier(MAX_MIN_LOT_RISK_MULTIPLIER)
     {}
 };
 
@@ -708,18 +720,15 @@ bool CPositionSizer::ValidatePositionSize(const string symbol, double &lotSize, 
             {
                 // Check if rounding up exceeds allowed risk multiplier
                 double riskRatio = minLot / lotSize;
-                // Min-lot round-up tolerance: allow up to 15x risk multiplier (reverted L5-002 1x clamp)
-                if(riskRatio > 15.0)
-                {
-                    CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                             StringFormat("Min lot round-up exceeds 15x risk cap: %.2fx > 15.0x", riskRatio), 0);
-                    return false;
-                }
+                // Batch 170: removed the redundant `> 15.0` pre-check - it could
+                // never bind, because the configured ceiling is itself clamped to
+                // MAX_MIN_LOT_RISK_MULTIPLIER (3.0) in SetMinLotRiskMultiplier.
                 if(riskRatio > m_params.minLotRiskMultiplier)
                 {
-                    CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "PositionSizer", 
-                             StringFormat("Min lot round-up exceeds risk multiplier: %.2fx > %.2fx", 
-                                         riskRatio, m_params.minLotRiskMultiplier), 0);
+                    CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "PositionSizer",
+                             StringFormat("Min lot round-up refused: %.2f -> %.2f lots is %.2fx the sized risk, ceiling %.2fx (raise the stop distance or accept %.2fx to trade this symbol at min lot)",
+                                         lotSize, minLot, riskRatio, m_params.minLotRiskMultiplier,
+                                         m_params.minLotRiskMultiplier), 0);
                     return false;
                 }
                 lotSize = minLot;
@@ -843,8 +852,17 @@ void CPositionSizer::SetAllowMinLotRoundUp(bool allow)
 
 void CPositionSizer::SetMinLotRiskMultiplier(double multiplier)
 {
-    // L5-002: Hard cap at 1.0x risk (no multiplier allowed)
-    m_params.minLotRiskMultiplier = MathMin(MathMax(1.0, multiplier), 15.0);
+    // Batch 170: the ceiling is enforced in code, not config. Rounding a sub-minimum
+    // lot up to the broker minimum multiplies the risk the pre-trade gate approved
+    // (that gate sees the sized lot, this sizer runs after it), so the multiplier IS
+    // the per-trade risk cap on a small account: with maxRiskPerTrade 1.0 and the
+    // previously-allowed 15.0, one position could risk 15% of equity.
+    double clamped = MathMin(MathMax(1.0, multiplier), MAX_MIN_LOT_RISK_MULTIPLIER);
+    if(MathAbs(clamped - multiplier) > 0.000001)
+        PrintFormat("[RISK-MINLOT] round-up multiplier %.2fx requested, %.2fx applied (code ceiling - a min-lot round-up multiplies the risk the pre-trade gate approved)",
+                    multiplier, clamped);
+
+    m_params.minLotRiskMultiplier = clamped;
 }
 
 //+------------------------------------------------------------------+

@@ -14,6 +14,13 @@
 //+------------------------------------------------------------------+
 #include "Core/Orchestration/GlobalDefs.mqh"
 
+// Production logging & tracing
+#include "Core/Utils/StructuredLogger.mqh"
+#include "Core/Utils/CorrelationId.mqh"
+
+CStructuredLogger g_structLog;
+CCorrelationIdManager g_corrIdManager;
+
 // L2-001: Global shutdown flag to prevent OnTimer accessing resources during deinit
 bool g_shuttingDown;
 
@@ -30,11 +37,14 @@ input bool     InpStrictEAMode = false;
 input group "Risk & Money Management";
 input double   InpLotSize = 0.1;
 input bool     InpUseEnhancedRisk = true;
-input double   InpMaxRiskPerTrade = 5.0;
-input double   InpMaxDailyRisk = 40.0;
-input double   InpMaxPortfolioRisk = 60.0;
+input double   InpMaxRiskPerTrade = 1.0;       // PHASE0 recalibration (was 5.0): 1% per-trade is pro norm; 5% was account-destroying
+input double   InpMaxDailyRisk = 4.0;         // PHASE0 recalibration (was 40.0): 4% daily loss cap; 40% = lose-more-than-human
+input double   InpMaxPortfolioRisk = 12.0;    // PHASE0 recalibration (was 60.0): 12% portfolio risk cap
 input double   InpMaxDrawdown = 15.0;
-input double   InpDailyLossLimitPercent = 10.0;
+input double   InpDailyLossLimitPercent = 4.0;  // PHASE0 recalibration (was 10.0): hard daily stop at 4%
+input bool     InpBasketEquityStopEnabled = true;       // Theme 3 (23662): halt entries on basket DD breach
+input double   InpBasketEquityStopDrawdownPct = 10.0;   // % drawdown from equity peak that triggers
+input bool     InpBasketEquityStopCloseOnBreach = false; // also magic-filtered close of EA basket
 input ENUM_RISK_TIER InpRiskTier = RISK_TIER_MODERATE;
 input bool     InpAllowMinLotRoundUp = true;
 input double   InpMinLotRiskMultiplier = 15.0;
@@ -46,8 +56,8 @@ input group "Compounding & Auto Mode-Switch";
 input bool     InpEnableCompoundingTiers = true;
 input int      InpCompoundingTierCheckIntervalSec = 60;
 input bool     InpEnableAutoModeSwitch = true;
-input double   InpConservativeBaseRiskPct = 1.0;
-input double   InpAggressiveBaseRiskPct = 3.0;
+input double   InpConservativeBaseRiskPct = 0.5;  // PHASE0 recalibration (was 1.0)
+input double   InpAggressiveBaseRiskPct = 1.5;  // PHASE0 recalibration (was 3.0)
 input double   InpModeSwitchDrawdownPct = 5.0;
 input int      InpModeSwitchWinStreak = 5;
 
@@ -173,13 +183,13 @@ input double   InpSparseIntrabarMinSupportRatio = 0.40;
 input double   InpSparseIntrabarMinReadyCoverage = 0.85;
 
 input group "AI/ML - Master Toggles";
-input bool     InpEnableAIMode = false;
-input bool     InpEnableNeuralNetwork = false;
-input bool     InpEnableTransformer = false;
-input bool     InpEnableEnsemble = false;
-input bool     InpEnableOnnxAI = false;
-input bool     InpEnablePythonBridgeAI = false;
-input ENUM_PYTHON_BRIDGE_MODE InpPythonBridgeMode = PYTHON_BRIDGE_OFF;
+input bool     InpEnableAIMode = true;
+input bool     InpEnableNeuralNetwork = true;
+input bool     InpEnableTransformer = true;
+input bool     InpEnableEnsemble = true;
+input bool     InpEnableOnnxAI = true;
+input bool     InpEnablePythonBridgeAI = true;
+input ENUM_PYTHON_BRIDGE_MODE InpPythonBridgeMode = PYTHON_BRIDGE_OBSERVE;
 input bool     InpEnableExternalLLM = false;
 
 input group "AI/ML - Python Bridge";
@@ -203,7 +213,7 @@ input bool     InpEnableNNWeightMutation = false;
 input bool     InpEnableNNPseudoLabeling = true;
 input int      InpNNPseudoLabelBarsAhead = 10;
 input int      InpNNSampleIntervalSeconds = 15;
-input int      InpNNCheckpointEveryLabeled = 10;
+input int      InpNNCheckpointEveryLabeled = 3;
 input bool     InpEnableNNAttributionDiagnostics = false;
 input bool     InpRunNNAttributionSelfTest = false;
 
@@ -313,7 +323,7 @@ input int      InpMaxHoldHoursSwing = 120;
 input bool     InpMaxHoldOnlyIfLoss = true;
 
 input group "Emergency & Unprotected Remediation";
-input bool     InpEmergencyFlattenAllAccountPositions = true;
+input bool     InpEmergencyFlattenAllAccountPositions = false; // true = emergency flatten may close positions this EA did not open (manual trades / other EAs). Off by default (Batch 168).
 input int      InpUnprotectedRemediationIntervalSec = 15;
 input int      InpUnprotectedMaxRestoreAttempts = 3;
 input bool     InpCloseUnprotectedOnRemediationFailure = true;
@@ -730,6 +740,11 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.equityCurveEmaPeriod = InpEquityCurveEmaPeriod;
         config.equityCurveReductionFactor = InpEquityCurveReductionFactor;
         config.kellyFraction = InpKellyFraction;
+
+        // Theme 3 (article 23662): basket-level equity stop
+        config.basketEquityStopEnabled = InpBasketEquityStopEnabled;
+        config.basketEquityStopDrawdownPct = InpBasketEquityStopDrawdownPct;
+        config.basketEquityStopCloseOnBreach = InpBasketEquityStopCloseOnBreach;
     
         // Strict EA Mode (L7-025)
                 config.strictEAMode = InpStrictEAMode;
@@ -1015,7 +1030,7 @@ bool ValidateInputs()
         // InpAllowSyntheticOffHours only relevant if synthetics present
         if(InpAllowSyntheticOffHours && !hasSynthetics)
         {
-            Print("[VALIDATION] WARNING: InpAllowSyntheticOffHours=true but no synthetic symbols in universe; input will have no effect");
+            Print("[VALIDATION] INFO: InpAllowSyntheticOffHours=true but no synthetic symbols in universe; input will have no effect");
         }
     
         // InpUseSymbolClassProfiles=false with synthetics is dangerous
@@ -1059,7 +1074,7 @@ bool ValidateInputs()
                 
                     if(!hasIOC && !hasFOK)
                     {
-                        PrintFormat("[VALIDATION] WARNING: Scalp engine enabled but symbol %s does not support IOC or FOK filling mode (mode=%d)", sym, fillingMode);
+                        PrintFormat("[VALIDATION] INFO: Scalp engine: symbol %s does not support IOC/FOK (mode=%d); scalp orders will use market (RETURN) fill", sym, fillingMode);
                     }
                 }
                 start = comma + 1;
@@ -1234,6 +1249,9 @@ bool ValidateInputs()
         // Set global log level for legacy code compatibility
         g_logLevel = MathMax(0, MathMin(4, InpLogLevel));
     
+        // Initialize structured logger
+        g_structLog.Init("MultiStrategyEA");
+    
         Print("[MULTI-STRATEGY-EA] ========================================");
     Print("[MULTI-STRATEGY-EA] Advanced AI Trading System v2.0 Starting (Orchestrator Architecture)");
     Print("[MULTI-STRATEGY-EA] ========================================");
@@ -1329,6 +1347,9 @@ void OnDeinit(const int reason)
     
     // L9-006: Shutdown CJsonLogger to flush buffers and close file handles
     CJsonLogger::Shutdown();
+    
+    // Shutdown structured logger
+    g_structLog.Shutdown();
     
     // Kill the timer
     EventKillTimer();

@@ -1,10 +1,10 @@
 # System Audit Trace
 
 ## Document Metadata
-- Last Updated: 2026-08-28
-- Last Architecture Sync: 2026-08-23
+- Last Updated: 2026-10-09
+- Last Architecture Sync: 2026-10-08
 - Scope: End-to-end lifecycle and logic traces
- - Current Batch: 158
+ - Current Batch: 170
 
 ## Scope
 - Primary orchestration: `Core/Orchestration/EAOrchestrator.mqh` (single composition root)
@@ -1482,3 +1482,32 @@ Headless MetaEditor, `X64 Regular`: `MultiStrategyAutonomousEA.mq5` **0 errors, 
 - **Lifecycle impact:** No ownership transfer. Pure dead-code removal. No behavioral change for any retained path.
 - **Runtime Invariants Preserved:** All 5 AGENTS.md §3 invariants unchanged.
 - **Compilation:** 0 errors, 0 warnings for `MultiStrategyAutonomousEA.mq5` (68,308 ms) and `MultiStrategyTestingEA.mq5` (65,305 ms), headless MetaEditor, `X64 Regular`.
+
+## Batch 168-169 Risk-Safety and Execution-Truthfulness Lifecycle Trace (2026-10-08)
+
+- **Init order (changed):** `ConfigureMagicOwnership(m_config.magicNumber, 0)` runs immediately after `m_tradeManager.Initialize` so the ownership predicate is live before any position is scanned; it is re-run with the real symbol count inside `InitializeEnterpriseManagers`, followed by `ValidateMagicOwnershipCoverage(base, maxShippedAssetOffset)` which aborts init if the largest offset the EA will ship (DERIV `UNKNOWN` = 9999) falls outside the window. Previously five predicates disagreed and no assertion existed.
+- **Crash-recovery read/apply (changed):** state is read into orchestrator members and applied *after* `CUnifiedRiskManager::Initialize`, which resets peak equity, breach counts and both halt flags. The old order restored state ~340 lines earlier and then overwrote it, so recovery was a no-op. `SeedTradingDayKey()` suppresses the first-cycle daily reset that would otherwise re-clobber a same-day restore.
+- **Persistence trigger (changed):** `PersistRiskRuntimeState()` is called on a 30 s `GetTickCount()` cadence plus at shutdown, not only from `Shutdown()`. A crash or a stalled feed (no ticks) therefore leaves a recoverable file; `TimeCurrent()` was rejected as the clock because it stops with the feed — the exact condition recovery exists for.
+- **Position inventory (changed):** `ManageAllPositions` walks `PositionsTotal()` through `IsMagicOwned`; the in-memory EA ticket cache is no longer the source of truth for what gets trailing/breakeven treatment. Consequence: positions that survive a restart or arrive via the async path are managed, and `InpMaxPositionsTotal`/per-symbol caps begin to bind.
+- **Exit authority (changed):** `ManageOpenPositions()` → `CPositionLifecycleManager::ManagePositions()`. Signal-reversal exit, breakeven, trailing, max-hold and loss-minimization moved from dead code to live; `CloseAllPositions` is magic-scoped, with account-wide flatten requiring the now-default-false `emergencyFlattenAllAccountPositions`.
+- **Breaker lifecycle (changed):** drawdown and daily-loss evaluation moved into `RefreshRuntimeState()`, so halts and `m_emergencyCloseRequested` arm on tick/timer even when no candidate reaches the pre-trade pipeline. Verified that a halt does not freeze management: entries are vetoed by the pipeline while exit paths keep running.
+- **Send lifecycle (changed):** a send is confirmed by locating the resulting live position (symbol + type + owned magic + opened within 30 s) rather than by absence of an error; retries re-check before resending (`[EXECUTION-DEDUP]`); queue expiry emits `[EXECUTION-UNCONFIRMED]` + `[RISK-UNRECONCILED]`; partial fills journal at filled volume.
+- **Stop lifecycle (changed):** stop distances are floored (broker level, 1.5 spreads, 10 points) before sizing, and `NormalizeAndValidateStops` can now reject — broker-forced widening above 1.25x of the sized stop, or a target inside 4x the round-trip spread cost. Both feed the same `GetRoundTripCostPrice` definition.
+- **Deinit:** unchanged; `CIndicatorManager::DestroyInstance()` still runs (AGENTS.md §3.5).
+- **Runtime Invariants Preserved:** §3.1 pre-trade risk gate, §3.2 `CTradeManager` execution ownership, §3.3 EA-loop-owned lifecycle, §3.4 symbol-scoped manager consensus, §3.5 indicator cleanup — all intact. The new gates only add vetoes; none bypass risk or move ownership.
+- **Compilation:** `MultiStrategyAutonomousEA.mq5` 0 errors / 0 warnings (93,469 ms) for the policy half after the execution half; sibling root programs compiled with `-All`.
+- **Outstanding:** runtime log evidence per AGENTS.md §6 is still to be captured on a live session — see the Batch 168/169 Risk Flag entries in `changelogs.md`.
+
+## Batch 170 Engine Sends, Min-Lot Ceiling and Exit-Authority Split (2026-10-09)
+
+- **Send sites (governed, still outside the manager):** `ATRScalpEntry`, `GridRecoveryExecution`, `SpikeHunterExecutor` and `FastScalpPendingOrders` each now call `CTradeMgrPricing::NormalizeAndValidateStops` before building the request, so the broker stop minimum, the sized-stop widening refusal and the take-profit-must-clear-the-spread test apply to them. Pending orders map `ORDER_TYPE_*_LIMIT` to the market equivalent because the validator keys adjustment direction on `ORDER_TYPE_BUY`. The sends themselves still bypass `CTradeManager`, so no fill verification, retry dedup or journal entry exists on those paths — documented gap against AGENTS.md §3.2, not a silent one.
+- **Engine liveness re-established during this work:** ATR-scalp, grid-recovery and spike-hunter are initialized and given symbols but have **no tick-loop caller**, so their ungoverned sends were latent. The live bypass path is the fast-scalp engine's pending-order book.
+- **Risk math lifecycle:** `CPositionSizer::SetMinLotRiskMultiplier` clamps to `MAX_MIN_LOT_RISK_MULTIPLIER` (3.0) at config time and logs `[RISK-MINLOT]`; the unreachable `riskRatio > 15.0` pre-check inside `ValidatePositionSize` was removed. Round-up occurs after `ValidateTradeRequest` has already approved the sized lot, which is why the ceiling lives in the sizer.
+- **Loss-guard lifecycle:** `CPosLifecycleLossGuard` gained `SetDailyRiskBudgetPercent`; `m_dailyRiskBudgetPercent` had no writer at all, so its daily-loss breaker could never arm. The budget is stored as a percent and converted against `min(balance, equity)` at each check rather than frozen at init equity. `CPositionManager::SetDailyRiskBudget` (the deactivated manager) was left in place untouched.
+- **Exit-authority split:** positions whose comment starts with `ATR-SCALP`, `GRID-RECOVERY`, `SPIKE-HUNT` or `SCALP|` are skipped by `CTradeManager::ManageAllPositions` (breakeven + trailing), `PosLifecycleExit` (partial close, max-hold), `PosLifecycleLossGuard`, `PosLifecyclePyramid`, `PosLifecycleVolatility` (dynamic SL/TP) and `CPositionLifecycleManager`'s signal-reversal and ranging-regime loops. Ownership tests elsewhere (risk aggregation, daily-loss accounting, unprotected-SL remediation, journal reconciliation) still see them as EA positions.
+- **Known fragility of the discriminator:** the split is comment-based. Magic could not be used — the ATR scalp offset (7000) is `ASSET_FOREX`'s offset and grid's family config inherits `profile.magicOffset` from the Deriv profiler, so an engine-reserved magic band would collide with `offset + symbolIndex*100` composition. If a broker rewrites an order comment so the tag is not at index 0, the position silently returns to lifecycle management.
+- **Substring bug:** `FastScalpExit` and `FastScalpPositionTracker` matched `"SCALP"` anywhere in the comment, which also matched `ATR-SCALP`; the fast-scalp engine was registering and closing another engine's positions. Both now require index 0.
+- **Volume lifecycle:** `CreateEnginesForSymbol` gates OFI and VPIN behind the same synthetic-index exclusion Batch 107 applied to VWAP/Volume Profile/CVD, and `HasOnlyTickVolume` (`MqlRates.real_volume`) emits a per-symbol `[VOLUME-PROXY]` line when the broker supplies no traded volume. `CandidateBuilder::ApplyVPINScaling` and `ApplyVolTargetScaling` were deleted: both were `return lotSize;` stubs whose callers' comments claimed resizing.
+- **Deinit:** unchanged; `CIndicatorManager::DestroyInstance()` still runs (AGENTS.md §3.5).
+- **Runtime Invariants:** §3.1 pre-trade risk gate intact on all four engine paths (verified at each `ValidateTradeRequest` call site). §3.2 remains violated by the engine sends — documented, with the protective gates applied in place as mitigation. §3.3/§3.4/§3.5 unchanged.
+- **Compilation:** 0 errors / 0 warnings. One real error found and fixed during the batch: `CopyRealTickVolume` is undeclared in this MQL5 build (8 cascading parse errors), replaced by `MqlRates.real_volume` via `CopyRates`.

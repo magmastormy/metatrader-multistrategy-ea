@@ -165,6 +165,30 @@ public:
     // Was the "Batch 100: Initialize per-symbol mathematical engines using
     // pre-allocated arrays" block inside
     // CEAOrchestrator::InitializeEnterpriseManagerForSymbol().
+    //+--------------------------------------------------------------+
+    //| True when this broker publishes no traded volume for the     |
+    //| symbol, so anything volume-derived is running on tick counts.|
+    //| MqlRates.real_volume is zero on every symbol without exchange|
+    //| volume (spot FX, CFD and synthetic indices), which is the    |
+    //| only in-terminal way to know before an engine consumes the   |
+    //| difference.                                                  |
+    //+--------------------------------------------------------------+
+    static bool HasOnlyTickVolume(const string symbol)
+    {
+        MqlRates rates[];
+        ArraySetAsSeries(rates, true);
+        int copied = CopyRates(symbol, (ENUM_TIMEFRAMES)Period(), 0, 20, rates);
+        if(copied <= 0)
+            return true;
+
+        for(int i = 0; i < copied; i++)
+        {
+            if(rates[i].real_volume > 0)
+                return false;
+        }
+        return true;
+    }
+
     void CreateEnginesForSymbol(const SOrchestratorConfig &config, const string symbol)
     {
         int idx = m_mathEngineCount;
@@ -190,8 +214,19 @@ public:
         }
 
         // OFI Proxy Engine
+        //
+        // Batch 170: every engine below is volume-derived. MQL5 exposes two very
+        // different things called "volume": traded volume (real, only on exchange
+        // symbols) and tick volume (how many times the price moved in a bar).
+        // iVolume/CopyTickVolume return the latter, and SYNTHETIC INDEX SYMBOLS
+        // have no traded volume at all, so OFI/VPIN were computing order-flow
+        // toxicity from a price-update count. VWAP, Volume Profile and CVD were
+        // already excluded for synthetics (Batch 107); OFI and VPIN were not.
+        const bool volumeEnginesAllowed =
+            !COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol);
+
         m_ofiEngines[idx] = NULL;
-        if(config.enableOFIProxy)
+        if(config.enableOFIProxy && volumeEnginesAllowed)
         {
             m_ofiEngines[idx] = new COrderFlowImbalanceEngine();
             if(m_ofiEngines[idx] != NULL)
@@ -204,11 +239,23 @@ public:
 
         // VPIN Filter
         m_vpinFilters[idx] = NULL;
-        if(config.enableVPINFilter)
+        if(config.enableVPINFilter && volumeEnginesAllowed)
         {
             m_vpinFilters[idx] = new CVPINFilter(symbol, 0, config.vpinNumBuckets, config.vpinExtremeThreshold);
             if(m_vpinFilters[idx] != NULL && config.logLevel >= 3)
             PrintFormat("[MATH-ENGINE] VPIN filter initialized for %s | buckets=%d | extreme=%.2f", symbol, config.vpinNumBuckets, config.vpinExtremeThreshold);
+        }
+
+        if(!volumeEnginesAllowed &&
+           (config.enableOFIProxy || config.enableVPINFilter || config.enableVWAPEngine ||
+            config.enableVolumeProfile || config.enableCVDEngine))
+        {
+            PrintFormat("[VOLUME-PROXY] %s | synthetic index symbols publish no traded volume - OFI/VPIN/VWAP/VolumeProfile/CVD left DISABLED for this symbol (inputs request them; tick volume is not order flow)",
+                        symbol);
+        }
+        else if(HasOnlyTickVolume(symbol))
+        {
+            PrintFormat("[VOLUME-PROXY] %s | no traded volume from this broker - volume-derived engines are running on TICK volume as a proxy", symbol);
         }
 
         // Batch 107: VWAP Engine (forex only)

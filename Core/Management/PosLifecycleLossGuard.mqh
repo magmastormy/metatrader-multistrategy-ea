@@ -35,7 +35,11 @@ private:
     datetime m_lastLossTime;
     datetime m_consecutiveLossCooldownUntil;
     double   m_dailyLossAmount;
-    double   m_dailyRiskBudget;
+    // Batch 170: held as a PERCENT of equity, not a money budget. The money form
+    // could only be set once, so it froze against start-of-day equity and went
+    // stale through any drawdown or deposit; deriving it from live equity at the
+    // check needs no refresh path.
+    double   m_dailyRiskBudgetPercent;
     datetime m_dailyResetTime;
 
 public:
@@ -50,9 +54,16 @@ public:
         m_lastLossTime(0),
         m_consecutiveLossCooldownUntil(0),
         m_dailyLossAmount(0.0),
-        m_dailyRiskBudget(0.0),
+        m_dailyRiskBudgetPercent(0.0),
         m_dailyResetTime(0)
     {}
+
+    //--- Batch 170: without this caller the daily-loss breaker below could never
+    //--- arm, because m_dailyRiskBudgetPercent had no writer and stayed 0.
+    void SetDailyRiskBudgetPercent(const double percent)
+    {
+        m_dailyRiskBudgetPercent = MathMax(0.0, percent);
+    }
 
     //--- EXECUTION REFINEMENT: Configure loss minimization
     void Configure(bool adverseMomentumExit, double adverseMomentumATR,
@@ -74,15 +85,18 @@ public:
     //--- EXECUTION REFINEMENT: Loss minimization management
     void ManageLossMinimization(CTradeManager* tradeManager, const int magicBase, const int magicMax)
     {
-        // Reset daily loss tracking at midnight
+        // Reset daily loss tracking at server midnight.
+        // Batch 168: the old test was `now >= midnight + 86400` with midnight
+        // derived from `now`, which can never be true - so m_dailyLossAmount
+        // accumulated across days and, once the daily breaker had a budget to
+        // compare against, it would halt trading permanently instead of for one
+        // day. Compare the anchored day boundary instead.
         datetime now = TimeCurrent();
-        MqlDateTime dt;
-        TimeToStruct(now, dt);
-        datetime midnight = StringToTime(IntegerToString(dt.year) + "." + IntegerToString(dt.mon) + "." + IntegerToString(dt.day) + " 00:00:00");
-        if(now >= midnight + 86400)  // Next day
+        datetime todayMidnight = now - (now % 86400);
+        if(m_dailyResetTime != todayMidnight)
         {
             m_dailyLossAmount = 0.0;
-            m_dailyResetTime = midnight;
+            m_dailyResetTime  = todayMidnight;
         }
 
         // Check consecutive loss cooldown
@@ -98,16 +112,22 @@ public:
         }
 
         // Check daily loss circuit breaker
-        if(m_dailyLossCircuitBreakerPercent > 0 && m_dailyRiskBudget > 0)
+        if(m_dailyLossCircuitBreakerPercent > 0 && m_dailyRiskBudgetPercent > 0)
         {
-            double dailyLossLimit = m_dailyRiskBudget * (m_dailyLossCircuitBreakerPercent / 100.0);
-            if(m_dailyLossAmount >= dailyLossLimit)
+            // CRiskMath-consistent denominator: a falling equity must not raise the
+            // money limit, so budget off the smaller of balance/equity.
+            double denominator = MathMin(AccountInfoDouble(ACCOUNT_BALANCE),
+                                          AccountInfoDouble(ACCOUNT_EQUITY));
+            double dailyLossLimit = denominator * (m_dailyRiskBudgetPercent / 100.0)
+                                    * (m_dailyLossCircuitBreakerPercent / 100.0);
+            if(dailyLossLimit > 0.0 && m_dailyLossAmount >= dailyLossLimit)
             {
                 static datetime lastCircuitLog = 0;
                 if(now - lastCircuitLog > 60)
                 {
-                    PrintFormat("[LOSS-MIN] Daily loss circuit breaker triggered | loss=%.2f limit=%.2f | stopping trading",
-                                m_dailyLossAmount, dailyLossLimit);
+                    PrintFormat("[LOSS-MIN] Daily loss circuit breaker triggered | loss=%.2f limit=%.2f (budget %.2f%% of %.2f x %.0f%%) | stopping trading",
+                                m_dailyLossAmount, dailyLossLimit, m_dailyRiskBudgetPercent,
+                                denominator, m_dailyLossCircuitBreakerPercent);
                     lastCircuitLog = now;
                 }
                 return;  // Stop trading for the day
@@ -119,7 +139,9 @@ public:
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            if(!CPosLifecycleMagicFilter::IsOwned(PositionGetInteger(POSITION_MAGIC), magicBase, magicMax)) continue;
+            if(!CPosLifecycleMagicFilter::IsLifecycleManaged(PositionGetInteger(POSITION_MAGIC),
+                                                             PositionGetString(POSITION_COMMENT),
+                                                             magicBase, magicMax)) continue;
 
             string symbol = PositionGetString(POSITION_SYMBOL);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);

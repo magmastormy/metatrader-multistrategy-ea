@@ -340,7 +340,19 @@ public:
                    confidence * 100,
                    signal.reason);
         
-        return signal.direction;
+        // Batch 169: abstain instead of voting. The edge here is the spread
+        // between two instruments, but only m_symbol can be sent through the
+        // consensus path: ExecutePairTrade has no callers and signal.leg2Symbol /
+        // leg2LotSize are computed then discarded, so returning signal.direction
+        // booked an unhedged directional position against a two-leg signal, with
+        // SL/TP derived from the spread's sigma. The leg's own drift, not the
+        // spread, decided the outcome, and no risk budget knew it was
+        // market-neutral by assumption. Re-enable when both legs are executable.
+        PrintFormat("[STATARB-UNHEDGED] %s+%s | signal valid (Z=%.2f Conf=%.1f%%) but leg2 is never sent - abstaining instead of voting a naked %s on %s",
+                   leg1Symbol, leg2Symbol, zScore, confidence * 100,
+                   signal.direction == TRADE_SIGNAL_BUY ? "BUY" : "SELL", m_symbol);
+        SetDecisionReasonTag("STATARB_NAKED_LEG");
+        return TRADE_SIGNAL_NONE;
     }
     
     // Strategy Type
@@ -539,8 +551,13 @@ private:
     // Validate OU half-life for mean reversion speed filter
     bool ValidHalfLife()
     {
-        if(m_ouEngine == NULL || !m_ouEngine.IsWarmedUp())
-            return true;  // No OU engine = allow (don't block)
+        // Batch 169: no engine = feature not wired, so don't block; but an
+        // engine that exists and has not warmed up has no half-life estimate,
+        // and trading on an unestimated reversion speed is a blind trade.
+        if(m_ouEngine == NULL)
+            return true;
+        if(!m_ouEngine.IsWarmedUp())
+            return false;
         
         double halfLife = m_ouEngine.GetHalfLife();
         // Only trade if mean reversion speed is in reasonable range

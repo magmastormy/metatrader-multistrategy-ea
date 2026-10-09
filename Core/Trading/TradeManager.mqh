@@ -28,6 +28,7 @@
 #include "../../IndicatorManager.mqh"
 #include "../Cache/ATRCache.mqh"
 #include "../Utils/Instruments.mqh"
+#include "../Utils/MagicRange.mqh"
 #include "../Utils/TradeJournal.mqh"
 #include "TradeTypes.mqh"
 // Phase D T1: stateless helpers extracted out of this file
@@ -325,7 +326,19 @@ private:
     bool IsSuccessfulFillRetcode(const uint retcode) const { return CTradeRetcodeClassifier::IsSuccessfulFillRetcode(retcode); }
 
     // Phase D T4: moved to CTradeMgrPreflight (Core/Trading/TradeMgrPreflight.mqh)
-    void ApplyFillingModeForSymbol(const string symbolParam) { CTradeMgrPreflight::ApplyFillingModeForSymbol(symbolParam, m_trade, m_marketAnalysis, m_orderFillMode); }
+    // Batch 169: takes the CTrade that will actually send. This used to configure
+    // m_trade while ExecuteMarketOrder sends through the pooled per-symbol
+    // instance stamped once at creation, so the broker fill-mode compatibility
+    // decision never reached the wire.
+    void ApplyFillingModeForSymbol(const string symbolParam, CTrade* targetTrade = NULL)
+    {
+        // MQL5 cannot bind a reference from a conditional expression (error 229),
+        // so the two cases are dispatched separately.
+        if(targetTrade != NULL)
+            CTradeMgrPreflight::ApplyFillingModeForSymbol(symbolParam, *targetTrade, m_marketAnalysis, m_orderFillMode);
+        else
+            CTradeMgrPreflight::ApplyFillingModeForSymbol(symbolParam, m_trade, m_marketAnalysis, m_orderFillMode);
+    }
 
     void ResetExecutionReceipt(const string symbolParam, const double requestedVolume)
     {
@@ -439,7 +452,19 @@ public:
     void SetSlippage(const uint slippage) { m_slippage = slippage; m_baseSlippage = slippage; m_trade.SetDeviationInPoints(m_slippage); UpdatePerSymbolSlippage(m_slippage); }
     void SetMagicNumber(const long magicNumber) { m_magicNumber = magicNumber; m_trade.SetExpertMagicNumber(m_magicNumber); UpdatePerSymbolMagicNumber(m_magicNumber); }
     void SetMagicRangeMax(const long magicRangeMax) { m_magicRangeMax = magicRangeMax; }
-    bool IsEAOwnedMagic(const long magic) const { return (m_magicRangeMax > m_magicNumber) ? (magic >= m_magicNumber && magic <= m_magicRangeMax) : (magic == m_magicNumber); }
+    //--- Batch 168: ownership window comes from CMagicRange, the single
+    //--- authority. The old inline range test excluded every asset-class-offset
+    //--- position (base+7000..9400), so trailing/breakeven/pyramid silently
+    //--- skipped the EA's own trades. Until SetMagicRangeMax has run, fall back
+    //--- to a minimum-width window rather than exact-base match, so an init
+    //--- ordering slip cannot re-open that hole.
+    bool IsEAOwnedMagic(const long magic) const
+    {
+        long upper = (m_magicRangeMax >= m_magicNumber)
+                     ? m_magicRangeMax
+                     : CMagicRange::ComputeMax(m_magicNumber, 1);
+        return CMagicRange::IsOwned(magic, m_magicNumber, upper);
+    }
 
     // L10-013: Update all per-symbol CTrade instances with new slippage
     // Phase D T4: thin forwarders onto CTradeMgrSymbolTradeRegistry
@@ -600,7 +625,10 @@ public:
 
     bool ClosePosition(const ulong ticket, const string reason = "Manual close");
     bool ClosePositionPartial(const ulong ticket, double volume, const string reason = "Partial close");
-    bool CloseAllPositions(const string symbol = "", const string reason = "Close all");
+    //--- Batch 168: EA-scoped by default. flattenAllAccountPositions is the only
+    //--- way to close positions this EA did not open, and it is opt-in.
+    bool CloseAllPositions(const string symbol = "", const string reason = "Close all",
+                           const bool flattenAllAccountPositions = false);
 
     bool ModifyPosition(const ulong ticket,
                        const double newStopLoss,
@@ -1062,10 +1090,12 @@ bool CTradeManager::ClosePositionPartial(const ulong ticket, double volume, cons
 }
 //| Close All Positions                                             |
 //+------------------------------------------------------------------+
-bool CTradeManager::CloseAllPositions(const string symbolParam, const string reason)
+bool CTradeManager::CloseAllPositions(const string symbolParam, const string reason,
+                                      const bool flattenAllAccountPositions)
 {
     int totalPositions = PositionsTotal();
     int closedCount = 0;
+    int skippedForeign = 0;
     bool allSuccess = true;
     datetime closeStartTime = TimeCurrent();
     const int TIMEOUT_SECONDS = 10;
@@ -1082,6 +1112,17 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
         ulong ticket = PositionGetTicket(i);
         if(ticket > 0)
         {
+            // Batch 168: magic ownership gate. This is the emergency flatten path,
+            // and it previously closed EVERY position on the account - including
+            // the user's manual trades and other EAs' books - on any circuit
+            // breaker trip. Account-wide flatten now requires an explicit opt-in.
+            if(!flattenAllAccountPositions &&
+               !IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC)))
+            {
+                skippedForeign++;
+                continue;
+            }
+
             if(symbolParam == "" || PositionGetString(POSITION_SYMBOL) == symbolParam)
             {
                 if(ClosePosition(ticket, reason))
@@ -1094,6 +1135,9 @@ bool CTradeManager::CloseAllPositions(const string symbolParam, const string rea
 
     if(closedCount > 0)
         PrintFormat("[TRADE-MANAGER] CloseAllPositions completed: %d positions closed", closedCount);
+    if(skippedForeign > 0)
+        PrintFormat("[TRADE-MANAGER] CloseAllPositions skipped %d foreign position(s) (not EA-owned magic) | flatten_all=%s",
+                    skippedForeign, flattenAllAccountPositions ? "true" : "false");
 
     // L12-008: Clear EA-owned position cache after closing all
     ClearEAOwnedPositions();
@@ -1428,19 +1472,36 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
         // L10-013: Use per-symbol CTrade instance to avoid race conditions
         CTrade* symbolTrade = GetSymbolTrade(symbolName);
+        if(symbolTrade == NULL)
+        {
+            LogError("Per-symbol trade instance unavailable", symbolName);
+            m_lastExecutionReceipt.accepted = false;
+            m_lastExecutionReceipt.note = "No symbol trade instance";
+            break;
+        }
+
+        // Batch 169: configure the fill mode on the instance that will send.
+        ApplyFillingModeForSymbol(symbolName, symbolTrade);
+
+        // Batch 169: set the deviation on THIS instance, from THIS symbol.
+        // UpdateDynamicSlippage() writes one shared m_slippage and pushes it to every
+        // pooled instance, so a send for symbol B carried whichever symbol was
+        // evaluated last. Deviation is points, and points mean very different money
+        // across symbols (50 points = 5 pips on EURUSD, $0.50 on XAUUSD), so a
+        // stale cross-symbol value caused either chronic requotes or silently
+        // accepted slippage.
+        uint sendDeviation = m_enableDynamicSlippage ? GetDynamicSlippage(symbolName) : m_baseSlippage;
+        symbolTrade.SetDeviationInPoints(sendDeviation);
 
         // Batch 152 (T-01): the per-symbol pool is stamped once with the bare base
         // magic, so per-strategy offsets never reached the broker. Stamp the final
         // magic before each send: an explicit override ships as-is (SpikeHunter
         // precomputes base+offset+idx), otherwise base + per-symbol strategy offset -
         // matching what the journal claims the order carries.
-        if(symbolTrade != NULL)
-        {
-            ulong shipMagic = (m_pendingExplicitMagic > 0)
-                              ? m_pendingExplicitMagic
-                              : (ulong)(m_magicNumber + (long)GetMagicOffsetForSymbol(symbolName));
-            symbolTrade.SetExpertMagicNumber(shipMagic);
-        }
+        ulong shipMagic = (m_pendingExplicitMagic > 0)
+                          ? m_pendingExplicitMagic
+                          : (ulong)(m_magicNumber + (long)GetMagicOffsetForSymbol(symbolName));
+        symbolTrade.SetExpertMagicNumber(shipMagic);
         m_pendingExplicitMagic = 0;
         
         bool sendAccepted = false;
@@ -1478,6 +1539,17 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
         if(pointSize > 0.0 && m_lastExecutionReceipt.requestedPrice > 0.0 && m_lastExecutionReceipt.averagePrice > 0.0)
             m_lastExecutionReceipt.slippagePoints = MathAbs(m_lastExecutionReceipt.averagePrice - m_lastExecutionReceipt.requestedPrice) / pointSize;
 
+        // Batch 169: realized slippage was measured and only ever printed in a
+        // summary line, never compared to the deviation the order was sent with. A
+        // fill that ran past the accepted deviation is a real cost the strategy edge
+        // must absorb, so it is surfaced here for log-driven verification.
+        if(m_lastExecutionReceipt.slippagePoints > (double)sendDeviation && m_lastExecutionReceipt.slippagePoints > 0.0)
+        {
+            PrintFormat("[EXECUTION-SLIPPAGE-EXCESS] %s | filled=%.5f vs requested=%.5f | slippage=%.1f pts > deviation=%.1f pts",
+                        symbolName, m_lastExecutionReceipt.averagePrice, m_lastExecutionReceipt.requestedPrice,
+                        m_lastExecutionReceipt.slippagePoints, (double)sendDeviation);
+        }
+
         if(!sendAccepted)
         {
             m_lastExecutionReceipt.accepted = false;
@@ -1497,6 +1569,29 @@ bool CTradeManager::ExecuteMarketOrder(const string symbolName, const ENUM_ORDER
 
             if(IsTransientTradeRetcode(retcode))
             {
+                // Batch 169: a transient retcode does not mean "not dealt". REQUOTE,
+                // PRICE_CHANGED and CONNECTION_LOSS can all follow a fill the server
+                // already executed, and this loop re-ran only the preflight gates before
+                // resending - so it opened a SECOND full-risk position on hedging accounts
+                // and doubled volume on netting ones. If a position this send just
+                // produced already exists, accept it instead of resending.
+                ulong dupTicket = 0;
+                double dupVolume = 0.0;
+                if(CTradeMgrPreflight::FindFreshPositionForSend(symbolName, orderType, volume,
+                                                               dupTicket, dupVolume))
+                {
+                    m_lastExecutionReceipt.accepted = true;
+                    m_lastExecutionReceipt.filledVolume = dupVolume;
+                    m_lastExecutionReceipt.partialFill = (dupVolume + 1e-8 < volume);
+                    m_lastExecutionReceipt.note = "dedup_position_exists";
+                    executionConfirmed = true;
+                    PrintFormat("[EXECUTION-DEDUP] %s | retcode=%u but position ticket=%I64u already exists (%.2f of %.2f lots) - refusing to resend",
+                                symbolName, retcode, dupTicket, dupVolume, volume);
+                    LogTradeOperation("OPEN", symbolName, orderType, dupVolume, true,
+                                      StringFormat("retcode=%u dedup: position %I64u already open", tradeResult.retcode, dupTicket));
+                    break;
+                }
+
                 retryCount++;
                 if(retryCount < MAX_TRADE_RETRIES)
                 {
@@ -1869,19 +1964,23 @@ void CTradeManager::ManageAllPositions(const double breakevenBuffer,
                                        const bool useATRTrailing,
                                        const double atrMultiplier)
 {
-    // L12-008: Use EA-owned position ticket cache for O(1) iteration instead of scanning all positions
-    for(int i = GetEAOwnedPositionCount() - 1; i >= 0; i--)
+    //--- Batch 168: scan live positions through the ownership authority. The L12-008
+    //--- ticket-cache iteration could only ever reach positions this process had
+    //--- opened synchronously, so after a restart or an async fill the loop body
+    //--- never ran and surviving positions got no breakeven or trailing stop.
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
     {
-        ulong ticket = GetEAOwnedPositionTicket(i);
+        ulong ticket = PositionGetTicket(i);
         if(ticket == 0) continue;
-        
-        if(!PositionSelectByTicket(ticket))
-        {
-            // Position no longer exists, remove from cache
-            RemoveEAOwnedPosition(ticket);
-            continue;
-        }
-        
+        if(!PositionSelectByTicket(ticket)) continue;
+        if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+
+        // Batch 170: breakeven and trailing belong to whoever owns the exit. The
+        // scalp/grid/spike engines close and partial-close their own positions, so
+        // moving their stops from here fought the engine that opened them and cut
+        // scalps short of their targets.
+        if(IsEngineManagedPosition(PositionGetString(POSITION_COMMENT))) continue;
+
         string symbolName = PositionGetString(POSITION_SYMBOL);
         double currentPriceValue = PositionGetDouble(POSITION_PRICE_CURRENT);
         double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -2086,10 +2185,28 @@ bool CTradeManager::OpenPosition(const string symbol,
         // Batch 150: cache must hold POSITION tickets. On hedging (and netting) the
         // position ticket equals the opening ORDER ticket; storing dealTicket poisoned
         // the L12-008 cache (PositionSelectByTicket always failed -> BE/trailing dead).
+        // Batch 169: journal the volume that actually FILLED. A DONE_PARTIAL left
+        // the ledger recording the requested volume, so journal-vs-broker exposure
+        // disagreed by the unfilled remainder and any downstream reconciliation
+        // (orphan detection, attribution) worked from a position size that did not
+        // exist.
+        double journalVolume = normalizedVolume;
+        if(m_lastExecutionReceipt.partialFill && m_lastExecutionReceipt.filledVolume > 0.0 &&
+           m_lastExecutionReceipt.filledVolume < normalizedVolume)
+        {
+            journalVolume = m_lastExecutionReceipt.filledVolume;
+            PrintFormat("[PARTIAL-FILL-LEDGER] %s | requested=%.2f filled=%.2f | ledger records the filled volume; the remainder is NOT re-sent by design (a second send would open a separate position)",
+                        symbol, normalizedVolume, journalVolume);
+        }
+
+        // Batch 169: fall back to the retcode of the instance that actually sent.
+        // m_trade.ResultOrder() is the unused default instance, so this returned
+        // another symbol's last order ticket and poisoned the cache with a foreign
+        // or phantom ticket.
         ulong journalTicket = (m_lastExecutionReceipt.orderTicket > 0) ? m_lastExecutionReceipt.orderTicket
                              : (m_lastExecutionReceipt.dealTicket > 0) ? m_lastExecutionReceipt.dealTicket
-                             : m_trade.ResultOrder();
-        JournalTradeOpen(journalTicket, symbol, orderType, normalizedVolume,
+                             : m_lastTradeResult.order;
+        JournalTradeOpen(journalTicket, symbol, orderType, journalVolume,
                          journalPrice, journalSL, journalTP, journalMagic, "entry");
         
         // L12-008: Add to EA-owned position cache

@@ -10,6 +10,8 @@
 #ifndef CORE_TRADE_JOURNAL_MQH
 #define CORE_TRADE_JOURNAL_MQH
 
+#include "MagicRange.mqh"
+
 //+------------------------------------------------------------------+
 //| Write a single CSV row to the trade journal                     |
 //+------------------------------------------------------------------+
@@ -172,9 +174,12 @@ void ReconcileTradeJournal(uint eaMagicNumber)
 
         if(!foundClose)
         {
-            // Check if this trade belongs to this EA's magic range
+            // Check if this trade belongs to this EA's magic range.
+            // Batch 168: the old `eaMagicNumber .. +999` window excluded every
+            // asset-class-offset position, so the EA never reconciled its own
+            // orphaned open trades and reported them as closed.
             long tradeMagic = openEvents[i].magic;
-            if(eaMagicNumber > 0 && (tradeMagic < (long)eaMagicNumber || tradeMagic > (long)eaMagicNumber + 999))
+            if(eaMagicNumber > 0 && !IsMagicOwned(tradeMagic))
                 continue;
 
             // Check if position still exists in MT5

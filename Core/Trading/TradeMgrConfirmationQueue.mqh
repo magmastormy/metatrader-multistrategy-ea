@@ -33,6 +33,8 @@
 
 #define MAX_PENDING_CONFIRMATIONS 20
 
+#include "../Utils/MagicRange.mqh"
+
 // Pending confirmation tracking for non-blocking execution
 struct SPendingConfirmation
 {
@@ -136,10 +138,32 @@ public:
             {
                 if(!resolved)
                 {
-                    PrintFormat("[EXECUTION-TIMEOUT] %s | order=%I64u | attempts=%d | no deal found after max checks",
-                                m_pendingConfirmations[i].symbol,
-                                m_pendingConfirmations[i].orderTicket,
-                                m_pendingConfirmations[i].checkAttempts);
+                    // Batch 169: this branch used to print and drop, leaving a send that
+                    // the broker may well have filled with no deal ever attributed to it -
+                    // the order was counted as executed downstream but never reconciled.
+                    // On expiry, look for the position the send actually produced so the
+                    // outcome is recorded rather than assumed.
+                    bool positionExists = HasOpenPositionForSymbol(m_pendingConfirmations[i].symbol);
+                    if(positionExists)
+                    {
+                        PrintFormat("[EXECUTION-CONFIRMED-BY-POSITION] %s | order=%I64u | attempts=%d | no deal found but EA position is OPEN - fill happened, deal history did not attribute it",
+                                    m_pendingConfirmations[i].symbol,
+                                    m_pendingConfirmations[i].orderTicket,
+                                    m_pendingConfirmations[i].checkAttempts);
+                        LogCriticalUnreconciled(m_pendingConfirmations[i].symbol,
+                                                m_pendingConfirmations[i].orderTicket,
+                                                "position_open_no_deal");
+                    }
+                    else
+                    {
+                        PrintFormat("[EXECUTION-UNCONFIRMED] %s | order=%I64u | attempts=%d | no deal and no position - order did not execute",
+                                    m_pendingConfirmations[i].symbol,
+                                    m_pendingConfirmations[i].orderTicket,
+                                    m_pendingConfirmations[i].checkAttempts);
+                        LogCriticalUnreconciled(m_pendingConfirmations[i].symbol,
+                                                m_pendingConfirmations[i].orderTicket,
+                                                "no_fill_no_deal");
+                    }
                 }
 
                 // Remove by shifting
@@ -156,6 +180,35 @@ public:
                 m_pendingConfirmations[m_pendingConfirmationCount].checkAttempts = 0;
             }
         }
+    }
+
+    //+--------------------------------------------------------------+
+    //| Does this EA hold an open position on the symbol?            |
+    //| Ownership comes from CMagicRange so only this EA's positions  |
+    //| are considered, never the user's or another EA's.            |
+    //+--------------------------------------------------------------+
+    bool HasOpenPositionForSymbol(const string symbolName)
+    {
+        for(int p = PositionsTotal() - 1; p >= 0; p--)
+        {
+            ulong ticket = PositionGetTicket(p);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(PositionGetString(POSITION_SYMBOL) != symbolName) continue;
+            if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
+            return true;
+        }
+        return false;
+    }
+
+    //+--------------------------------------------------------------+
+    //| Surface an unreconciled send loudly. This path used to be a   |
+    //| silent drop; the log signature is what an operator needs to   |
+    //| act on, and AGENTS.md requires decisions stay explainable.    |
+    //+--------------------------------------------------------------+
+    void LogCriticalUnreconciled(const string symbolName, const ulong orderTicket, const string outcome)
+    {
+        PrintFormat("[RISK-UNRECONCILED] CRITICAL | %s | order=%I64u | outcome=%s | verify the basket and any unprotected position on this symbol",
+                    symbolName, orderTicket, outcome);
     }
 
     //+--------------------------------------------------------------+

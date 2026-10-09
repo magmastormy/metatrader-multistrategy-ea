@@ -38,6 +38,8 @@
 #ifndef CORE_RISK_RISK_CIRCUIT_BREAKER_MQH
 #define CORE_RISK_RISK_CIRCUIT_BREAKER_MQH
 
+#include "../Utils/MagicRange.mqh"
+
 //+------------------------------------------------------------------+
 //| Circuit breaker state holder (stateful, owned by value)          |
 //+------------------------------------------------------------------+
@@ -267,10 +269,16 @@ public:
 
     //--- Restore circuit breaker state from crash recovery file.
     //--- `dailyStartEquity` is the owner's shared daily-start equity field.
+    //--- Batch 168: the halt flags are now part of the restore. They were not
+    //--- persisted at all, so any restart (recompile, param change, VPS reboot)
+    //--- silently re-armed a daily-loss halt that had already been earned, letting
+    //--- the EA trade a second full daily budget on the same day.
     void RestoreCircuitBreakerState(const double savedPeakEquity,
                                     const double savedDailyStartEquity,
                                     const int savedBreachCount,
                                     const double savedMaxDrawdown,
+                                    const bool restoreDailyLossHalt,
+                                    const bool restoreTradingHalt,
                                     double &dailyStartEquity)
     {
         if(savedPeakEquity > 0.0)
@@ -281,8 +289,21 @@ public:
         if(savedMaxDrawdown >= 0.0)
             m_maxDrawdownFromPeak = savedMaxDrawdown;
 
-        PrintFormat("[RISK-CIRCUIT-BREAKER] Restored from crash recovery | peakEquity=%.2f | dailyStartEquity=%.2f | breachCount=%d | maxDD=%.2f%%",
-                    m_peakEquity, dailyStartEquity, m_drawdownBreachCount, m_maxDrawdownFromPeak);
+        if(restoreDailyLossHalt)
+        {
+            m_dailyLossHaltActive = true;
+            m_dailyLossHaltDate   = TimeCurrent();
+        }
+        if(restoreTradingHalt)
+        {
+            m_tradingEnabled = false;
+            m_cbTriggeredAt  = TimeCurrent();
+        }
+
+        PrintFormat("[RISK-CIRCUIT-BREAKER] Restored from crash recovery | peakEquity=%.2f | dailyStartEquity=%.2f | breachCount=%d | maxDD=%.2f%% | dailyHalt=%s | tradingHalted=%s",
+                    m_peakEquity, dailyStartEquity, m_drawdownBreachCount, m_maxDrawdownFromPeak,
+                    restoreDailyLossHalt ? "ACTIVE" : "clear",
+                    m_tradingEnabled ? "enabled" : "HALTED");
     }
 
     //+--------------------------------------------------------------+
@@ -418,8 +439,16 @@ public:
         if(m_dailyLossHaltActive)
             return false;
 
-        // Calculate daily P&L: realized deals today + current unrealized P&L
+        // Calculate daily P&L: realized deals today + current unrealized P&L.
+        // Batch 168: EA-scoped. This previously summed every deal on the account
+        // and took account-wide floating P&L, so a user's profitable manual trades
+        // masked EA losses (the halt never fired) and, conversely, another EA's or
+        // the user's loss could halt this EA for someone else's drawdown. When the
+        // ownership authority is not yet configured it counts everything, because
+        // excluding rows there would fail open.
+        bool scopeToEA = IsMagicOwnershipConfigured();
         double dailyRealizedPL = 0.0;
+        double unrealizedPL = 0.0;
         datetime dayStart = StringToTime(TimeToString(nowTime, TIME_DATE));
         HistorySelect(dayStart, nowTime);
 
@@ -429,8 +458,14 @@ public:
             ulong dealTicket = HistoryDealGetTicket(i);
             if(dealTicket <= 0) continue;
             ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-            if(dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_INOUT)
+            // DEAL_ENTRY_OUT_BY closes a hedging-account position by offset; it was
+            // omitted, so realized losses on hedging accounts were undercounted.
+            if(dealEntry == DEAL_ENTRY_OUT || dealEntry == DEAL_ENTRY_INOUT || dealEntry == DEAL_ENTRY_OUT_BY)
             {
+                if(scopeToEA &&
+                   !IsMagicOwned(HistoryDealGetInteger(dealTicket, DEAL_MAGIC)))
+                    continue;
+
                 double dealProfit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
                 double dealSwap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
                 double dealCommission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
@@ -438,8 +473,23 @@ public:
             }
         }
 
-        // Current unrealized P&L across all open positions
-        double unrealizedPL = AccountInfoDouble(ACCOUNT_EQUITY) - AccountInfoDouble(ACCOUNT_BALANCE);
+        // Unrealized P&L across this EA's open positions only.
+        if(scopeToEA)
+        {
+            for(int p = PositionsTotal() - 1; p >= 0; p--)
+            {
+                ulong ticket = PositionGetTicket(p);
+                if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+                if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
+                unrealizedPL += PositionGetDouble(POSITION_PROFIT)
+                              + PositionGetDouble(POSITION_SWAP);
+            }
+        }
+        else
+        {
+            unrealizedPL = AccountInfoDouble(ACCOUNT_EQUITY) - AccountInfoDouble(ACCOUNT_BALANCE);
+        }
+
         double dailyPL = dailyRealizedPL + unrealizedPL;
 
         // L5-011 FIX: Use daily starting equity as denominator, not peak equity

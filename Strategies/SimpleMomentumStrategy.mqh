@@ -164,13 +164,17 @@ private:
     // Returns true if MACD histogram confirms the signal direction
     bool MACDConfirmed(ENUM_TRADE_SIGNAL signal)
     {
+        // Batch 169: fail closed. These paths returned true ("don't block") when the
+        // indicator handle was invalid or the copy failed, so a data outage counted
+        // as confirmation and produced trades with no evidence behind them. An
+        // unavailable filter is not a passing filter.
         if(m_macdHandle == INVALID_HANDLE)
-            return true;  // No MACD = don't block
+            return false;
 
         double macdMain[2], macdSignal[2];
         if(!SafeCopyBuffer(m_macdHandle, 0, 1, 2, macdMain) ||
            !SafeCopyBuffer(m_macdHandle, 1, 1, 2, macdSignal))
-            return true;  // Data unavailable = don't block
+            return false;
 
         // Batch 155: non-series copies are oldest-first, so [1] is the newest
         // closed bar and [0] is the bar before it. The old read had them
@@ -188,12 +192,13 @@ private:
     // Returns true if ADX indicates a trending market (ADX > 20)
     bool StrongTrend()
     {
+        // Batch 169: fail closed - no ADX data must not read as "trend confirmed".
         if(m_adxHandle == INVALID_HANDLE)
-            return true;  // No ADX = don't block
+            return false;
 
         double adxBuffer[1];
         if(!SafeCopyBuffer(m_adxHandle, 0, 1, 1, adxBuffer))
-            return true;
+            return false;
 
         return adxBuffer[0] > m_adxThreshold;
     }

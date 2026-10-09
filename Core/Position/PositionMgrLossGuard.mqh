@@ -121,7 +121,7 @@ public:
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            if(!CPositionMgrMagicFilter::IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC), magicNumber)) continue;
+            if(!CPositionMgrMagicFilter::IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
 
             double profit = PositionGetDouble(POSITION_PROFIT);
             double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -131,10 +131,25 @@ public:
             if(slPrice > 0)
             {
                 double slDistance = MathAbs(openPrice - slPrice);
-                double currentDrawdown = MathAbs(openPrice - currentPrice);
-                double lossPercent = (slDistance > 0) ? (currentDrawdown / slDistance) * 100.0 : 0;
+                // Adverse (loss-direction) excursion ONLY. The prior code used
+                // MathAbs(openPrice - currentPrice), which also counts FAVORABLE
+                // price moves -- so a winning position could trip "Position Loss
+                // Limit" once price ran >=75% of the SL distance in profit,
+                // churning profitable trades within seconds. We now measure only
+                // the move against the position (toward the SL) and require the
+                // trade to actually be underwater before closing it.
+                double lossPercent = 0.0;
+                if(profit < 0.0)
+                {
+                    double adverseExcursion = 0.0;
+                    if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+                        adverseExcursion = MathMax(0.0, openPrice - currentPrice);
+                    else
+                        adverseExcursion = MathMax(0.0, currentPrice - openPrice);
+                    lossPercent = (slDistance > 0) ? (adverseExcursion / slDistance) * 100.0 : 0.0;
+                }
 
-                if(lossPercent >= m_positionLossLimitPercent)
+                if(lossPercent >= m_positionLossLimitPercent && profit < 0.0)
                 {
                     string sym = PositionGetString(POSITION_SYMBOL);
                     PrintFormat("[LOSS-MIN] Position %d on %s hit position loss limit: %.1f%% > %.1f%%",

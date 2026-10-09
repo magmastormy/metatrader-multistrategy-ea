@@ -2,11 +2,11 @@
 
 ## Document Metadata
 
-- Last Updated: 2026-08-28
-- Last Architecture Sync: 2026-08-11
+- Last Updated: 2026-10-09
+- Last Architecture Sync: 2026-10-08
 - Scope: Full structural description of runtime system
 - Source of Truth: Current repository implementation
-- Current Batch: 158
+- Current Batch: 170
 
 ## 1. System Goal
 
@@ -1227,12 +1227,38 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - This prevents duplicate strategy consensus passes in the same wall-clock second.
 - Connectivity gating blocks signal evaluation while terminal connection is down.
 
+### 4.8 Risk, Cost and Execution Authorities (Batch 168-169)
+
+Ownership and single sources of truth introduced or moved by the live-money audit:
+
+| Domain | Authority | Notes |
+|---|---|---|
+| Magic-number ownership | `Core/Utils/MagicRange.mqh` (`ConfigureMagicOwnership`/`IsMagicOwned`/`IsMagicOwnershipConfigured`/`ValidateMagicOwnershipCoverage`) | Replaced five disagreeing windows. Configured in `CEAOrchestrator::Initialize` after the symbol universe is known; the asset-class offset span (10000, covering `DERIV_UNKNOWN` = 9999) is asserted at startup. Every close/modify predicate routes through it; fail closed when unconfigured, except loss aggregation which falls back to counting everything. |
+| Exit management | `CPositionLifecycleManager::ManagePositions()` via `ManageOpenPositions()` | The previously-live `CPositionManager::ManagePositions()` path was never configured and its signal-reversal exit was a stub. |
+| Position inventory | `PositionsTotal()` filtered by ownership | `CTradeManager::ManageAllPositions` no longer trusts the in-memory ticket cache, which was written only by the synchronous open path. |
+| Breaker evaluation | `CUnifiedRiskManager::RefreshRuntimeState()` | Drawdown and daily-loss breakers run continuously, not only when a candidate reaches the pipeline. |
+| Risk-state persistence | `PersistRiskRuntimeState`/`RestoreRiskRuntimeState` (version:2 state file) | Restore is applied *after* `CUnifiedRiskManager::Initialize`, written on a `GetTickCount()`-based 30 s cadence, and carries halt flags plus the broker trading-day key. |
+| Authorised risk ceiling | `CUnifiedRiskManager` envelope (`m_envelope*`) | Captured from config before any compounding tier writes; `ApplyTierOverrides` can only clamp downward. |
+| Round-trip cost | `CTradeMgrPricing::GetRoundTripCostPrice` | One definition of cost, used by both the risk money model and the take-profit expectancy gate. |
+| Stop feasibility | `CTradeMgrPricing::GetMinimumStopDistance` / `GetBrokerStopLevelDistance` | The former is the sizing floor (broker level, 1.5 spreads, 10 points); the latter is the broker-only term used by the preflight spread-anomaly gate, kept separate because a spread-derived floor is circular there. |
+| Consensus voter floor | `MIN_CONSENSUS_VOTERS` in `CConsensusEngine::CalculateEffectiveQuorumParamsInternal` | Policy floor applied at the decision point; the old formula capped the requirement at the number of voters actually eligible. |
+| Min-lot risk ceiling | `MAX_MIN_LOT_RISK_MULTIPLIER` in `Core/Risk/PositionSizer.mqh` | Bounds the post-approval round-up; config is clamped to it because the round-up multiplies the risk the gate signed off. |
+| Exit authority per book | `IsEngineManagedPosition()` (`Core/Utils/MagicRange.mqh`) + `CPosLifecycleMagicFilter::IsLifecycleManaged` | Engine-stamped send comments (ATR-SCALP / GRID-RECOVERY / SPIKE-HUNT / SCALP\|) are EA-owned but engine-exited; lifecycle stops touching them. Magic cannot separate the books because the engines compose offsets from the same asset-offset space. |
+| Volume-data capability | `COrchestratorMathEngineHub::HasOnlyTickVolume` | `MqlRates.real_volume` probe; synthetic-index symbols get no OFI/VPIN engines and tick-volume-only symbols are labelled with `[VOLUME-PROXY]`. |
+
+- `config.allowSparseIntrabarSingleVoter` / `SetAllowSparseIntrabarSingleVoter` remains stored but unread (`IsSparseIntrabarSingleVoterAllowed` has no caller); it is not a bypass of the voter floor.
+- `CStatisticalArbitrageStrategy` abstains (`[STATARB-UNHEDGED]`) because only one leg of a pair signal is executable; `ExecutePairTrade` has no callers.
+
 ## 5. Data and Control Boundaries
 
 ### 5.1 What can veto a trade
 
 - Validator failure.
 - Unified risk rejection.
+- Consensus admitting fewer than `MIN_CONSENSUS_VOTERS` agreeing voters.
+- Strategy confirmer with unavailable indicator data (fail closed since Batch 169 — a missing handle or short copy is a veto, not a pass).
+- Execution preflight (market closed, stale tick, quote anomaly, spread anomaly, entry drift).
+- Stop feasibility: a broker-forced SL widening beyond `MAX_ACCEPTABLE_STOP_WIDENING_RATIO` of the sized distance, or a take-profit under `MIN_TP_COST_MULTIPLE` times the round-trip spread cost.
 - Execution failure after approval.
 
 ### 5.2 What cannot bypass risk
@@ -1250,6 +1276,9 @@ The `StrategySupportResistance` and `TrendlineDetector` operate under a rigid, n
 - Equity curve authority: `CEquityCurveManager` — position size modulation based on equity vs EMA; multiplier 0.50 when equity < EMA, 1.0 when above
 - CVaR authority: `CPortfolioRiskManager::IsCVaRLimitExceeded()` — portfolio risk capped by historical tail risk; 95% confidence, 10% max risk, 100-trade lookback
 - Spike hunting authority: `CSpikeHunterEngine` — 3-layer spike detection and independent spike trade execution for synthetic CFD indices; symbol-aware direction mapping, magic offset 9000, push alerts throttled 120s, entry cooldown 60s
+- Magic ownership authority (Batch 168): `CMagicRange` / `IsMagicOwned()` — the only predicate that decides whether a position belongs to the EA; superseded per-module windows that disagreed by up to 9400 points
+- Authorised-risk authority (Batch 169): `CUnifiedRiskManager` configured envelope — compounding tiers may reduce, never raise, per-trade/daily/portfolio/drawdown limits
+- Transaction-cost authority (Batch 169): `CTradeMgrPricing::GetRoundTripCostPrice()` — one spread-cost definition for both risk math and the entry expectancy gate
 
 ## 6. Runtime Modes
 

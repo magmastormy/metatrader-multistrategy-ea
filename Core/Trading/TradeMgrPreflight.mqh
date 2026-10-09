@@ -27,6 +27,7 @@
 #include <Trade/Trade.mqh>
 #include "../Utils/SessionManager.mqh"
 #include "../Utils/Instruments.mqh"
+#include "../Utils/MagicRange.mqh"
 #include "../Cache/ATRCache.mqh"
 #include "../Engines/MarketAnalysis.mqh"
 #include "TradeTypes.mqh"
@@ -88,16 +89,20 @@ public:
         }
 
         // Batch 151: keep the IOC/FOK decision unless the symbol does not
-        // support it - SetTypeFillingBySymbol() unconditionally overwrote the
-        // spread/volatility analysis above with the symbol default, making
-        // that selection dead code.
+        // support it.
+        // Batch 169: the fallback used to be `orderFillMode`, which the trade
+        // manager initialises to ORDER_FILLING_IOC - so on a broker that allows
+        // neither FOK nor IOC the sender still shipped IOC and the order was
+        // rejected with INVALID_FILL (10030). ORDER_FILLING_RETURN imposes no fill
+        // constraint and is accepted universally; SL/TP travel in the same request,
+        // so RETURN does not expose an unprotected-fill window.
         const int fillingFlags = (int)SymbolInfoInteger(symbolParam, SYMBOL_FILLING_MODE);
         const bool iocAllowed = ((fillingFlags & SYMBOL_FILLING_IOC) != 0);
         const bool fokAllowed = ((fillingFlags & SYMBOL_FILLING_FOK) != 0);
         if(useIOC && !iocAllowed)
-            trade.SetTypeFilling(fokAllowed ? ORDER_FILLING_FOK : orderFillMode);
+            trade.SetTypeFilling(fokAllowed ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
         else if(!useIOC && !fokAllowed)
-            trade.SetTypeFilling(iocAllowed ? ORDER_FILLING_IOC : orderFillMode);
+            trade.SetTypeFilling(iocAllowed ? ORDER_FILLING_IOC : ORDER_FILLING_RETURN);
     }
 
     //+--------------------------------------------------------------+
@@ -193,13 +198,24 @@ public:
             }
         }
 
-        double minStopDistance = CTradeMgrPricing::GetMinimumStopDistance(symbolName);
-        double spreadHardLimit = MathMax(minStopDistance * 2.0, executionPrice * 0.0015);
+        // Batch 169: the anomaly floor must come from the broker's declared stop
+        // level, not from GetMinimumStopDistance(). That helper now folds a 1.5x
+        // spread term into its result, so `minStopDistance * 2` was always at
+        // least 3x the spread and this gate could never fire.
+        double brokerStopDistance = CTradeMgrPricing::GetBrokerStopLevelDistance(symbolName);
+        double spreadHardLimit = MathMax(brokerStopDistance * 2.0, executionPrice * 0.0015);
         if(spread > spreadHardLimit)
         {
             reason = StringFormat("spread_anomaly spread=%.5f limit=%.5f", spread, spreadHardLimit);
             return false;
         }
+
+        // Batch 169: the absolute maxEntrySpreadPoints gate is a catastrophic-quote
+        // backstop only - it is deliberately loose (15000 points) so synthetic
+        // indices, whose normal spreads run into four figures, are not filtered
+        // wholesale. The relative gate above (0.15% of price) is what protects
+        // FX and metals; the expectancy gate in NormalizeAndValidateStops is what
+        // stops a wide spread swallowing a narrow target.
 
         if(orderType == ORDER_TYPE_BUY && executionPrice < bid)
         {
@@ -262,8 +278,37 @@ public:
             }
         }
 
-        // Deal not found yet - defer to pending confirmation for later resolution
-        confirmationQueue.Enqueue(symbolName, tradeResult.order, fallbackPrice);
+        // Deal not found yet - defer to pending confirmation for later resolution.
+        //
+        // Batch 169: two holes closed here.
+        // (1) Enqueue() only stores the entry when orderTicket > 0, so a broker that
+        //     returns order=0 left the send accepted but permanently untracked - no
+        //     resolver would ever look at it. That case is now logged at CRITICAL.
+        // (2) A deferred send was claimed accepted with filledVolume forced to 0.
+        //     Before accepting that, check whether the position actually exists on
+        //     the terminal: a fill that has no visible deal yet still produces a
+        //     position, and confirming from the position (with its real volume)
+        //     keeps the journal and the risk ledger truthful instead of optimistic.
+        if(tradeResult.order > 0)
+            confirmationQueue.Enqueue(symbolName, tradeResult.order, fallbackPrice);
+        else
+            PrintFormat("[EXECUTION-UNTRACKABLE] %s | retcode=%u | broker returned order=0, deferred confirmation is impossible - relying on position scan",
+                        symbolName, tradeResult.retcode);
+
+        ulong filledTicket = 0;
+        double filledVolume = 0.0;
+        if(FindFreshPositionForSend(symbolName, orderType, requestedVolume, filledTicket, filledVolume))
+        {
+            receipt.accepted = true;
+            receipt.filledVolume = filledVolume;
+            if(receipt.averagePrice <= 0.0)
+                receipt.averagePrice = fallbackPrice;
+            receipt.partialFill = (filledVolume > 0.0 && filledVolume + 1e-8 < requestedVolume);
+            receipt.note = "position_confirmed_deferred";
+            PrintFormat("[EXECUTION-CONFIRMED-BY-POSITION] %s | ticket=%I64u | filled=%.2f of %.2f | retcode=%u (no deal visible yet)",
+                        symbolName, filledTicket, filledVolume, requestedVolume, tradeResult.retcode);
+            return true;
+        }
 
         // Optimistic return - broker accepted the order, confirmation deferred
         receipt.accepted = true;
@@ -273,6 +318,43 @@ public:
             receipt.filledVolume = 0.0;
         receipt.note = "broker_accept_deferred";
         return true;
+    }
+
+    //+--------------------------------------------------------------+
+    //| Find a position that just appeared for this send             |
+    //| Used to confirm a fill whose deal is not in history yet, and  |
+    //| to stop a retry duplicating an order the server already dealt. |
+    //+--------------------------------------------------------------+
+    static bool FindFreshPositionForSend(const string symbolName,
+                                         const ENUM_ORDER_TYPE orderType,
+                                         const double requestedVolume,
+                                         ulong &ticketOut,
+                                         double &volumeOut)
+    {
+        ticketOut = 0;
+        volumeOut = 0.0;
+
+        // Only positions opened in the last 30 s count, so pre-existing positions on
+        // the same symbol (other strategies, earlier layers) cannot be mistaken for
+        // this send.
+        datetime cutoff = TimeCurrent() - 30;
+        ENUM_POSITION_TYPE wantType = (orderType == ORDER_TYPE_BUY)
+                                      ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+
+        for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+            if(PositionGetString(POSITION_SYMBOL) != symbolName) continue;
+            if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != wantType) continue;
+            if(!IsMagicOwned(PositionGetInteger(POSITION_MAGIC))) continue;
+            if((datetime)PositionGetInteger(POSITION_TIME) < cutoff) continue;
+
+            ticketOut = ticket;
+            volumeOut = PositionGetDouble(POSITION_VOLUME);
+            return true;
+        }
+        return false;
     }
 };
 

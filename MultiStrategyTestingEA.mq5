@@ -15,6 +15,18 @@
 //+------------------------------------------------------------------+
 #include "Core/Orchestration/GlobalDefs.mqh"
 
+// Production logging & tracing. Both managers are DEFINED here to resolve the
+// `extern` globals declared in their respective headers (pulled in transitively
+// via EAOrchestrator.mqh). The Main EA defines the same two globals at
+// MultiStrategyAutonomousEA.mq5:21-22. Without these definitions the Testing EA
+// fails to link with error 370: unresolved extern variable
+// ('g_structLog' / 'g_corrIdManager').
+#include "Core/Utils/StructuredLogger.mqh"
+#include "Core/Utils/CorrelationId.mqh"
+
+CStructuredLogger     g_structLog;
+CCorrelationIdManager g_corrIdManager;
+
 // L2-001: Global shutdown flag to prevent OnTimer accessing resources during deinit
 bool g_shuttingDown;
 
@@ -289,7 +301,7 @@ input bool     InpEnableNNWeightMutation = false;
 input bool     InpEnableNNPseudoLabeling = true;
 input int      InpNNPseudoLabelBarsAhead = 10;
 input int      InpNNSampleIntervalSeconds = 15;
-input int      InpNNCheckpointEveryLabeled = 10;
+input int      InpNNCheckpointEveryLabeled = 3;
 
 input group "=== SIGNAL VALIDATOR ==="
 input int      InpValidatorNewBarMinConfluence = 1;
@@ -326,7 +338,7 @@ input int      InpMaxHoldHoursSwing = 120;
 input bool     InpMaxHoldOnlyIfLoss = true;
 
 input group "=== EMERGENCY PROTOCOLS ==="
-input bool     InpEmergencyFlattenAllAccountPositions = true;
+input bool     InpEmergencyFlattenAllAccountPositions = false; // Batch 168: opt-in account-wide flatten
 input int      InpUnprotectedRemediationIntervalSec = 15;
 input int      InpUnprotectedMaxRestoreAttempts = 3;
 input bool     InpCloseUnprotectedOnRemediationFailure = true;

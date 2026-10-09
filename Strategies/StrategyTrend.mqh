@@ -537,12 +537,16 @@ private:
     // Check if HTF trend confirms LTF signal
     bool IsHTFTrendConfirmed(ENUM_TRADE_SIGNAL ltfSignal)
     {
+        // Batch 169: fail closed. Every path here returned true on a missing handle
+        // or a short copy, so the higher-timeframe filter — the main protection
+        // against taking an LTF wiggle against an HTF trend - disappeared whenever
+        // indicator data was unavailable, and those were the trades it took.
         if(m_htfHandleADX == INVALID_HANDLE)
-            return true; // Skip HTF check if handle not available
+            return false;
 
         double adxBuffer[3];
         if(CopyBuffer(m_htfHandleADX, 0, 0, 3, adxBuffer) < 3)
-            return true; // Skip on data error
+            return false;
 
         // Batch 150: raw CopyBuffer into a static array is NOT as-series - [0] is the
         // OLDEST of the window. start=0,count=3 -> shift 1 (last closed HTF bar) = [1].
@@ -562,7 +566,7 @@ private:
         double plusDIBuffer[3], minusDIBuffer[3];
         if(CopyBuffer(m_htfHandleADX, 1, 0, 3, plusDIBuffer) < 3 ||
            CopyBuffer(m_htfHandleADX, 2, 0, 3, minusDIBuffer) < 3)
-            return true; // Skip on data error
+            return false;  // Batch 169: fail closed on data error
 
         double htfPlusDI = plusDIBuffer[1];
         double htfMinusDI = minusDIBuffer[1];

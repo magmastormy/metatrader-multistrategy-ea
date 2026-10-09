@@ -152,7 +152,10 @@ public:
          if(PositionSelectByTicket(ticket))
          {
             string comment = PositionGetString(POSITION_COMMENT);
-            if(StringFind(comment, "SCALP") >= 0)
+            // Batch 170: prefix, not substring. "ATR-SCALP" contains "SCALP", so the
+            // old test made this engine claim the ATR scalp engine's positions - and
+            // FastScalpExit would then close them.
+            if(StringFind(comment, "SCALP") == 0)
                count++;
          }
       }
@@ -167,7 +170,7 @@ public:
       if(!PositionSelectByTicket(ticket))
          return false;
       string comment = PositionGetString(POSITION_COMMENT);
-      return (StringFind(comment, "SCALP") >= 0);
+      return (StringFind(comment, "SCALP") == 0);
    }
 };
 

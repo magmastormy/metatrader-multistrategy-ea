@@ -26,6 +26,7 @@
 
 #include <Trade\Trade.mqh>
 #include "../Utils/Enums.mqh"
+#include "../Trading/TradeMgrPricing.mqh"
 #include "FastScalpTypes.mqh"
 #include "FastScalpFilters.mqh"
 
@@ -142,6 +143,18 @@ public:
          pendingType = ORDER_TYPE_SELL_LIMIT;
       }
 
+      // Batch 170: shared stop-feasibility and expectancy gate. The validator keys
+      // its adjustment direction on ORDER_TYPE_BUY, so the pending type is mapped
+      // to its market equivalent here rather than passed through.
+      string scalpStopError = "";
+      if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol,
+                                                     (pendingType == ORDER_TYPE_BUY_LIMIT) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                                                     entryPrice, tp, sl, tp, scalpStopError))
+      {
+         PrintFormat("[SCALP-PENDING] STOPS REJECTED | %s | %s", symbol, scalpStopError);
+         return false;
+      }
+
       // Use CTradeManager's underlying CTrade object via OpenPosition is not suitable
       // for pending orders — use MQL5 trade API directly
       MqlTradeRequest request = {};
@@ -157,7 +170,10 @@ public:
       request.deviation = 50;
       request.magic     = magicNumber;
       request.comment   = "SCALP|PEND";
-      request.type_filling = ORDER_FILLING_IOC;
+      // L7-015: honor the symbol's supported fill mode; fall back to RETURN (correct for pending orders) when IOC/FOK unavailable
+      long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+      request.type_filling = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
+                            (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
 
       if(!OrderSend(request, result))
       {

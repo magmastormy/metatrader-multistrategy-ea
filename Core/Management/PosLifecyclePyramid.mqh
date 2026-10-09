@@ -95,7 +95,9 @@ public:
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            if(!CPosLifecycleMagicFilter::IsOwned(PositionGetInteger(POSITION_MAGIC), magicBase, magicMax)) continue;
+            if(!CPosLifecycleMagicFilter::IsLifecycleManaged(PositionGetInteger(POSITION_MAGIC),
+                                                             PositionGetString(POSITION_COMMENT),
+                                                             magicBase, magicMax)) continue;
 
             string symbol = PositionGetString(POSITION_SYMBOL);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);

@@ -81,7 +81,10 @@ public:
          if(!PositionSelectByTicket(ticket)) continue;
 
          string comment = PositionGetString(POSITION_COMMENT);
-         if(StringFind(comment, "SCALP") < 0) continue;
+         // Batch 170: prefix test. As a substring, "SCALP" also matched "ATR-SCALP",
+         // so this engine registered the ATR scalp engine's positions and closed them
+         // on its own 1R/partial rules. See FastScalpPositionTracker.
+         if(StringFind(comment, "SCALP") != 0) continue;
 
          // Already tracked?
          if(tracker.FindScalpPositionState(ticket) >= 0) continue;

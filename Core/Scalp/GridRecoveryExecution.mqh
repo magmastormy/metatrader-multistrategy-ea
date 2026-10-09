@@ -14,6 +14,7 @@
 #define CORE_SCALP_GRID_RECOVERY_EXECUTION_MQH
 
 #include "../Risk/UnifiedRiskManager.mqh"
+#include "../Trading/TradeMgrPricing.mqh"
 #include <Trade\Trade.mqh>
 
 #include "GridRecoveryTypes.mqh"
@@ -24,7 +25,7 @@ class CUnifiedRiskManager;
 class CAIAdapter;
 
 //+------------------------------------------------------------------+
-//| CGridRecoveryExecution â€?owns the trade execution dependencies    |
+//| CGridRecoveryExecution ï¿½?owns the trade execution dependencies    |
 //+------------------------------------------------------------------+
 class CGridRecoveryExecution
 {
@@ -106,6 +107,18 @@ public:
    {
       ticketOut = 0;
 
+      // Batch 170: shared stop-feasibility and expectancy gate (see ATRScalpEntry).
+      // Grid levels are added into a moving market, so a level whose stop sits
+      // inside the broker minimum or whose target cannot clear the spread is the
+      // worst place to discover it.
+      ENUM_ORDER_TYPE gridOrderType = (direction == 1) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      string gridStopError = "";
+      if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, gridOrderType, entryPrice, tp, sl, tp, gridStopError))
+      {
+         PrintFormat("[GRID-RECOVERY] STOPS REJECTED | %s L%d | %s", symbol, level, gridStopError);
+         return false;
+      }
+
       // L10-014: Use dynamic slippage from TradeManager if available, else fallback
       uint slippage = 50; // fallback
       if(m_tradeManager != NULL)
@@ -116,7 +129,11 @@ public:
       // Set up trade object
       m_trade.SetExpertMagicNumber(magic);
       m_trade.SetDeviationInPoints(slippage);
-      m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+      // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
+      long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+      ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
+                                         (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
+      m_trade.SetTypeFilling(scalpFill);
 
       // Execute trade
       bool result = false;

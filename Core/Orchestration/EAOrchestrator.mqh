@@ -24,6 +24,7 @@
 #include "../../Core/Risk/UnifiedRiskManager.mqh"
 #include "../../Core/Risk/PositionSizer.mqh"
 #include "../../Core/Trading/TradeManager.mqh"
+#include "../../Core/Risk/BasketEquityStop.mqh"      // Theme 3: basket-level equity stop (article 23662)
 #include "../../Core/Engines/RegimeEngine.mqh"
 #include "../../Core/Risk/RiskTierManager.mqh"
 #include "../../Core/Risk/SafeModeConfig.mqh"
@@ -50,6 +51,7 @@
 #include "../../Core/Utils/LogMacros.mqh"
 #include "../../Core/Utils/Enums.mqh"
 #include "../../Core/Utils/Instruments.mqh"
+#include "../../Core/Utils/MagicRange.mqh"
 #include "../../Core/Engines/MarketAnalysis.mqh"
 #include "../../Core/Engines/StructureEngine.mqh"
 #include "../../Core/Engines/TrendEngine.mqh"
@@ -75,14 +77,22 @@
 #include "../../Core/Strategy/StrategyRegistry.mqh"
 #include "../../Core/Management/SymbolUniverseBuilder.mqh"
 #include "../../Core/Risk/MagicNumberAllocator.mqh"
+#include "../../Core/Utils/StructuredLogger.mqh"
+#include "../../Core/Utils/CorrelationId.mqh"
+#include "../../Core/Config/LiveConfigReloader.mqh"
+#include "../../Core/Visualization/RiskDashboardPanel.mqh"
+#include "../../Core/Monitoring/SymbolHealthMonitor.mqh"
 #include "../../crash_recovery_helpers.mqh"
 #include <Trade\SymbolInfo.mqh>
 #include <Trade\AccountInfo.mqh>
 #include <Object.mqh>
 
 // Magic number constants for EA-owned position management
+// Batch 168: guarded, because CMagicRange in Core/Utils/MagicRange.mqh is now
+// the single owner of this arithmetic and is included earlier.
+#ifndef MAGIC_SYMBOL_MULTIPLIER
 #define MAGIC_SYMBOL_MULTIPLIER 100
-#define MAGIC_MAX_CLUSTER_CODE  99
+#endif
 
 // Strategy constants
 #define STRATEGY_COUNT 21  // Number of indicator strategies in flags array (0-20, max enum value is STRATEGY_EXIT_OPTIMIZER=20)
@@ -298,9 +308,29 @@ class CEAOrchestrator
     // COrchestratorProfitGuard (Core/Orchestration/OrchestratorProfitGuard.mqh).
     // Held BY VALUE; its constructor reproduces the original initialiser list.
     COrchestratorProfitGuard m_profitGuard;
+    CBasketEquityStop      m_basketEquityStop;   // Theme 3: basket-level equity stop (article 23662)
     bool   m_shuttingDown;
     bool   m_bridgesReady;
     datetime m_lastPush;
+
+    // === Batch 168: crash-recovery state ==================================
+    // Read at the top of Initialize() and applied only after
+    // CUnifiedRiskManager::Initialize(), which resets breaker state. Applying
+    // earlier let that reset win and silently discarded the restore.
+    bool     m_recoveryStateLoaded;
+    double   m_savedEquityBaseline;
+    double   m_savedPeakEquity;
+    int      m_savedDDBreachCount;
+    double   m_savedDDMax;
+    int      m_savedHaltFlags;      // bit0 = daily-loss halt, bit1 = drawdown halt
+    int      m_savedTradingDayKey;  // broker trading day the saved state belongs to
+    uint     m_lastStatePersistTime; // GetTickCount() ms, wall clock
+
+    // === Production Monitoring Components ===
+    CLiveConfigReloader      m_configReloader;
+    CRiskDashboardPanel      m_riskDashboard;
+    CSymbolHealthMonitor     m_symbolHealth;
+    string                   m_currentCorrId;
 
     // Dual-mode auto-switching
     enum ENUM_AUTO_SWITCH_MODE { AUTO_MODE_CONSERVATIVE = 0, AUTO_MODE_AGGRESSIVE = 1, AUTO_MODE_EMERGENCY = 2 };
@@ -344,6 +374,11 @@ class CEAOrchestrator
         m_zeroSignalFallbackThreshold(20),
         m_currentTradingMode(AUTO_MODE_CONSERVATIVE),
         m_lastCvarLogTime(0), m_shuttingDown(false), m_bridgesReady(false), m_lastPush(0),
+        m_recoveryStateLoaded(false),
+        m_savedEquityBaseline(0.0), m_savedPeakEquity(0.0),
+        m_savedDDBreachCount(0), m_savedDDMax(0.0),
+        m_savedHaltFlags(0), m_savedTradingDayKey(0),
+        m_lastStatePersistTime(0),
         m_aiBrainReady(false), m_aiEngineReady(false), m_aiFeedbackReady(false),
         m_aiTopologyLogged(false),
         m_adxModifier(NULL)
@@ -413,6 +448,10 @@ class CEAOrchestrator
 
         // Shutdown JSON Logger
         CJsonLogger::Shutdown();
+        
+        // Shutdown production monitoring components
+        m_riskDashboard.Destroy();
+        m_symbolHealth.SetEnabled(false);
 
         // Shutdown Signal Diagnostics
         if(m_signalDiagnostics != NULL)
@@ -453,29 +492,97 @@ class CEAOrchestrator
         // Uncertainty deinit
         UncertaintyDeinit();
 
-        // L2-003/L2-013: Write crash recovery state on shutdown
-        double currentPeakEquity = m_unifiedRiskManager.GetPeakEquity();
-        double currentDailyStartEquity = m_unifiedRiskManager.GetDailyStartEquity();
-        int currentDDBreachCount = m_unifiedRiskManager.GetDrawdownBreachCount();
-        double currentDDMax = m_unifiedRiskManager.GetMaxDrawdownFromPeak();
-
-        if(WriteCrashRecoveryState(CRASH_RECOVERY_STATE_FILE,
-        currentDailyStartEquity, currentPeakEquity,
-        currentDDBreachCount, currentDDMax))
-        {
-            PrintFormat("[RECOVERY] Crash recovery state written to %s | peakEquity=%.2f | ddBreachCount=%d | ddMax=%.2f%%",
-            CRASH_RECOVERY_STATE_FILE, currentPeakEquity, currentDDBreachCount, currentDDMax);
-        }
-    else
-    {
-        PrintFormat("[RECOVERY] WARNING: Failed to write crash recovery state to %s", CRASH_RECOVERY_STATE_FILE);
-    }
+        // L2-003/L2-013: Write crash recovery state on shutdown.
+        // Batch 168: same helper the periodic writer uses, forced. Previously this
+        // was the ONLY write in the program, so a real crash (terminal kill, VPS
+        // reboot, power loss) left no state at all - the file named
+        // CrashRecoveryState.json was only ever produced by a graceful deinit.
+        PersistRiskRuntimeState(true);
 
     m_systemInitialized = false;
     m_tradingEnabled = false;
     m_dependenciesValid = false;
 
     Print("[EAOrchestrator] Shutdown complete");
+}
+
+//+------------------------------------------------------------------+
+//| Batch 168: apply crash-recovery state after risk-manager init     |
+//+------------------------------------------------------------------+
+void RestoreRiskRuntimeState()
+{
+    if(!m_recoveryStateLoaded)
+        return;
+
+    // The daily-start baseline and the daily-loss halt are day-scoped. A saved
+    // state from a previous broker day must not re-anchor today's budget, and
+    // must not carry yesterday's halt into today either. version:1 files carry no
+    // day key, so they restore only the non-day-scoped fields.
+    int currentDayKey = m_unifiedRiskManager.GetCurrentTradingDayKey();
+    bool dayMatches = (m_savedTradingDayKey != 0 && m_savedTradingDayKey == currentDayKey);
+
+    bool restoreDailyLossHalt = dayMatches && (m_savedHaltFlags & 1) != 0;
+    bool restoreTradingHalt   = (m_savedHaltFlags & 2) != 0;
+
+    m_unifiedRiskManager.RestoreCircuitBreakerState(
+        m_savedPeakEquity,
+        dayMatches ? m_savedEquityBaseline : 0.0,
+        m_savedDDBreachCount,
+        m_savedDDMax,
+        restoreDailyLossHalt,
+        restoreTradingHalt);
+
+    // Batch 168: without this the first CheckAndResetDailyLimits() of the restart
+    // would overwrite the restored baseline as if a new broker day had begun.
+    if(dayMatches)
+        m_unifiedRiskManager.SeedTradingDayKey(m_savedTradingDayKey);
+
+    PrintFormat("[RECOVERY] Applied after risk manager init | dayKey saved=%d current=%d (%s) | dailyHalt=%s | drawdownHalt=%s",
+                m_savedTradingDayKey, currentDayKey,
+                dayMatches ? "same broker day" : "stale - daily budget re-anchored",
+                restoreDailyLossHalt ? "RESUMED" : "clear",
+                restoreTradingHalt ? "RESUMED" : "clear");
+
+    m_recoveryStateLoaded = false;
+}
+
+//+------------------------------------------------------------------+
+//| Batch 168: persist circuit-breaker state. Throttled unless forced |
+//+------------------------------------------------------------------+
+void PersistRiskRuntimeState(const bool force)
+{
+    // Wall-clock throttle. TimeCurrent() only advances with ticks, so gating a
+    // crash-recovery write on it would stall persistence on a quiet symbol or over
+    // a weekend - the same defect the audit flagged in the remediation throttle.
+    // The day key below stays on TimeCurrent(), which is the broker-day basis.
+    uint nowMs = GetTickCount();
+    if(!force && m_lastStatePersistTime != 0 && (nowMs - m_lastStatePersistTime) < 30000)
+        return;
+    m_lastStatePersistTime = nowMs;
+
+    int haltFlags = 0;
+    if(m_unifiedRiskManager.IsDailyLossHaltActive())
+        haltFlags |= 1;
+    if(!m_unifiedRiskManager.IsTradingEnabled())
+        haltFlags |= 2;
+
+    if(WriteCrashRecoveryState(CRASH_RECOVERY_STATE_FILE,
+    m_unifiedRiskManager.GetDailyStartEquity(),
+    m_unifiedRiskManager.GetPeakEquity(),
+    m_unifiedRiskManager.GetDrawdownBreachCount(),
+    m_unifiedRiskManager.GetMaxDrawdownFromPeak(),
+    haltFlags,
+    m_unifiedRiskManager.GetCurrentTradingDayKey()))
+    {
+        // Log only when a halt is being recorded, so the 30s cadence stays quiet.
+        if(haltFlags != 0)
+            PrintFormat("[RECOVERY] State written | haltFlags=%d (bit0 daily-loss, bit1 drawdown) | peakEquity=%.2f",
+                        haltFlags, m_unifiedRiskManager.GetPeakEquity());
+    }
+    else
+    {
+        PrintFormat("[RECOVERY] WARNING: Failed to write crash recovery state to %s", CRASH_RECOVERY_STATE_FILE);
+    }
 }
 
 // L7-018: Cleanup helper for init failure paths
@@ -562,40 +669,42 @@ void InitializeStrategyConfigs() { CStrategyConfigBuilder::Initialize(m_config);
 // Initialize with config only - orchestrator creates its own managers
 bool Initialize(const SOrchestratorConfig& config)
 {
-    // L2-003/L2-013: Read crash recovery state IMMEDIATELY at start of Initialize()
-    // (before any other init, so we don't lose state if crash occurs during init)
-    double savedEquityBaseline = 0.0;
-    double savedPeakEquity = 0.0;
-    int savedDDBreachCount = 0;
-    double savedDDMax = 0.0;
+    // L2-003/L2-013: Read crash recovery state at start of Initialize() so it is in
+    // hand before anything can fail, but DO NOT apply it here.
+    //
+    // Batch 168: the old code applied the restore here and then called
+    // CUnifiedRiskManager::Initialize() further down the same call chain, whose
+    // InitializeState() overwrote peak equity with current equity, zeroed the
+    // breach count and cleared both halts. The restore was therefore a no-op on
+    // every restart. It is now stashed and applied by RestoreRiskRuntimeState()
+    // after the risk manager is initialized.
+    //
+    // The file is no longer deleted after a successful read: state is now written
+    // periodically, so the file is the crash-recovery record and deleting it was
+    // what made a second restart lose everything.
+    m_recoveryStateLoaded = false;
+    m_savedEquityBaseline = 0.0;
+    m_savedPeakEquity     = 0.0;
+    m_savedDDBreachCount  = 0;
+    m_savedDDMax          = 0.0;
+    m_savedHaltFlags      = 0;
+    m_savedTradingDayKey  = 0;
+
     string savedTimestamp = "";
-
     if(ReadCrashRecoveryState(CRASH_RECOVERY_STATE_FILE,
-    savedEquityBaseline, savedPeakEquity,
-    savedDDBreachCount, savedDDMax, savedTimestamp))
+    m_savedEquityBaseline, m_savedPeakEquity,
+    m_savedDDBreachCount, m_savedDDMax, savedTimestamp,
+    m_savedHaltFlags, m_savedTradingDayKey))
     {
-        PrintFormat("[RECOVERY] Crash recovery state loaded from %s | equityBaseline=%.2f | peakEquity=%.2f | ddBreachCount=%d | ddMax=%.2f%% | timestamp=%s",
-        CRASH_RECOVERY_STATE_FILE, savedEquityBaseline, savedPeakEquity, savedDDBreachCount, savedDDMax, savedTimestamp);
-
-        // Restore circuit breaker state in risk manager
-        m_unifiedRiskManager.RestoreCircuitBreakerState(savedPeakEquity, savedEquityBaseline,
-        savedDDBreachCount, savedDDMax);
-
-        // CRITICAL: Delete state file IMMEDIATELY after successful read
-        // (not at end of OnInit) to prevent stale state if crash occurs during init
-        if(FileDelete(CRASH_RECOVERY_STATE_FILE, 0))
-        {
-            PrintFormat("[RECOVERY] State file %s deleted after successful read", CRASH_RECOVERY_STATE_FILE);
-        }
+        m_recoveryStateLoaded = true;
+        PrintFormat("[RECOVERY] Crash recovery state loaded from %s | equityBaseline=%.2f | peakEquity=%.2f | ddBreachCount=%d | ddMax=%.2f%% | haltFlags=%d | dayKey=%d | timestamp=%s | applying after risk manager init",
+        CRASH_RECOVERY_STATE_FILE, m_savedEquityBaseline, m_savedPeakEquity, m_savedDDBreachCount,
+        m_savedDDMax, m_savedHaltFlags, m_savedTradingDayKey, savedTimestamp);
+    }
     else
     {
-        PrintFormat("[RECOVERY] WARNING: Failed to delete state file %s", CRASH_RECOVERY_STATE_FILE);
+        PrintFormat("[RECOVERY] No valid crash recovery state found at %s (first run or file corrupted)", CRASH_RECOVERY_STATE_FILE);
     }
-}
-else
-{
-    PrintFormat("[RECOVERY] No valid crash recovery state found at %s (first run or file corrupted)", CRASH_RECOVERY_STATE_FILE);
-}
 
 m_config = config;
 
@@ -618,10 +727,14 @@ else
 InitializeStrategyConfigs();
 
 // L7-003: Build validated symbol universe using SymbolUniverseBuilder
-// L7-019: Unify spread limits - use maxEntrySpreadPoints for both validation and execution
-// Apply 10x multiplier for synthetic symbols in SymbolUniverseBuilder
+// Batch 169: restore the intended source for this limit. "Unify spread limits"
+// pointed the universe filter at maxEntrySpreadPoints (15000), so nothing was
+// ever rejected at init; the builder's own comment ("1500 -> 15000 for
+// synthetics") shows it was written against symbolMaxSpreadPoints, which is the
+// knob the config exposes for this. The 15000-point figure stays where it
+// belongs - a catastrophic-quote backstop at send time.
 SSymbolValidationConfig symConfig;
-symConfig.maxSpreadPoints = (long)m_config.maxEntrySpreadPoints;
+symConfig.maxSpreadPoints = m_config.symbolMaxSpreadPoints;
 symConfig.minDailyVolumeLots = m_config.symbolMinDailyVolumeLots;
 symConfig.enableVolumeCheck = m_config.symbolEnableVolumeCheck;
 
@@ -808,6 +921,60 @@ if(!InitializeComponents())
         return false;
     }
 
+    // Initialize production monitoring components
+    m_configReloader.Init("Config/live_overrides.json", 30);
+    
+    // Create callback objects for config sections (IConfigCallback interface)
+    class CRiskConfigCallback : public IConfigCallback
+    {
+    public:
+        virtual void OnConfigChange(string section, string json) override {
+            Print("[LIVE-CONFIG] Risk section reloaded");
+        }
+        virtual string GetSectionName() const override { return "Risk"; }
+    };
+    
+    class CWeightsConfigCallback : public IConfigCallback
+    {
+    public:
+        virtual void OnConfigChange(string section, string json) override {
+            Print("[LIVE-CONFIG] Weights section reloaded");
+        }
+        virtual string GetSectionName() const override { return "Weights"; }
+    };
+    
+    class CThresholdsConfigCallback : public IConfigCallback
+    {
+    public:
+        virtual void OnConfigChange(string section, string json) override {
+            Print("[LIVE-CONFIG] Thresholds section reloaded");
+        }
+        virtual string GetSectionName() const override { return "Thresholds"; }
+    };
+    
+    class CSymbolsConfigCallback : public IConfigCallback
+    {
+    public:
+        virtual void OnConfigChange(string section, string json) override {
+            Print("[LIVE-CONFIG] Symbols section reloaded");
+        }
+        virtual string GetSectionName() const override { return "Symbols"; }
+    };
+    
+    CRiskConfigCallback* riskCb = new CRiskConfigCallback();
+    CWeightsConfigCallback* weightsCb = new CWeightsConfigCallback();
+    CThresholdsConfigCallback* thresholdsCb = new CThresholdsConfigCallback();
+    CSymbolsConfigCallback* symbolsCb = new CSymbolsConfigCallback();
+    
+    m_configReloader.RegisterCallback(riskCb);
+    m_configReloader.RegisterCallback(weightsCb);
+    m_configReloader.RegisterCallback(thresholdsCb);
+    m_configReloader.RegisterCallback(symbolsCb);
+    
+    m_riskDashboard.Init(ChartID(), CORNER_RIGHT_UPPER, 10, 10);
+    
+    m_symbolHealth.Init(30, 120, 3.0, 300, true);
+    
     Print("[EAOrchestrator] Initialized with ", symbolCount, " symbol managers");
     return true;
 }
@@ -831,6 +998,11 @@ bool InitializeSubsystems()
         Print("[CRITICAL] Failed to initialize TradeManager");
         return false;
     }
+    // Batch 168: configure the ownership window as early as possible so no
+    // consumer ever evaluates magic numbers against an unset range. Re-run
+    // below with the real symbol count once the universe exists.
+    ConfigureMagicOwnership(m_config.magicNumber, 0);
+    m_tradeManager.SetMagicRangeMax(g_magicMax);
     m_tradeManager.SetLogLevel(m_config.logLevel);
 
     // Initialize risk manager
@@ -858,6 +1030,11 @@ bool InitializeSubsystems()
         Print("[CRITICAL] UnifiedRiskManager failed to initialize!");
         return false;
     }
+
+    // Batch 168: apply crash-recovery state only now that the risk manager has
+    // finished resetting it. This is the ordering fix - the same restore used to
+    // run at the top of Initialize() and be overwritten here.
+    RestoreRiskRuntimeState();
     m_unifiedRiskManager.SetEAMagicNumber(m_config.magicNumber);
     Print("[INIT] UnifiedRiskManager initialized as single risk authority");
 
@@ -905,6 +1082,12 @@ if(m_equityCurveManager != NULL)
 PrintFormat("[RISK] EquityCurveManager initialized with emaPeriod=%d", m_config.equityCurveEmaPeriod);
 else
 Print("[RISK] WARNING: Failed to create EquityCurveManager — equity curve sizing disabled");
+
+// Theme 3: basket-level equity stop (article 23662) — configure before trading loop
+m_basketEquityStop.Configure(m_config.basketEquityStopEnabled,
+                             m_config.basketEquityStopDrawdownPct,
+                             m_config.basketEquityStopCloseOnBreach,
+                             GetPointer(m_tradeManager), (int)m_config.magicNumber);
 
 // Initialize BayesianKellyModifier (Batch 99)
 m_bayesianKellyModifier = new CBayesianKellyModifier(m_config.kellyFraction);
@@ -1034,8 +1217,12 @@ else
 }
 
 // Initialize unprotected position tracker
+// Batch 168: no magic arguments. The previous call passed
+// ArraySize(m_enterpriseManagerSymbols) as maxMagicNumber while the universe was
+// still empty, yielding the empty range [base, 13]; the tracker then classified
+// every no-SL position as external and its SL/force-close escalation never ran.
+// Ownership now resolves through CMagicRange, configured just below.
 m_unprotectedTracker.Initialize(&m_tradeManager, &m_unifiedRiskManager,
-m_config.magicNumber, ArraySize(m_enterpriseManagerSymbols),
 m_config.unprotectedRemediationIntervalSec, m_config.unprotectedMaxRestoreAttempts);
 
 // Initialize FullMarginMode or SafeMode (Phase 6)
@@ -1073,7 +1260,12 @@ if(m_lifecycleManager.Initialize(&m_tradeManager, &m_consensusCache, &m_riskTier
     m_config.maxHoldHoursIntraday,
     m_config.maxHoldHoursSwing,
     m_config.maxHoldOnlyIfLoss);
-    Print("[INIT] PositionLifecycleManager initialized (Blueprint R6a)");
+    // Batch 170: the loss guard's daily-loss circuit breaker compares realised
+    // losses against maxDailyRisk x its own trigger percent. The budget had no
+    // writer, so the breaker could never arm on the live path.
+    m_lifecycleManager.SetDailyRiskBudgetPercent(m_config.maxDailyRisk);
+    PrintFormat("[INIT] PositionLifecycleManager initialized (Blueprint R6a) | dailyRiskBudget=%.2f%% of equity",
+                m_config.maxDailyRisk);
     }
     else
     Print("[INIT] WARNING: PositionLifecycleManager initialization failed");
@@ -1126,7 +1318,6 @@ m_tickSafetyMonitor.SetEmergencyStop(false);
 
 // Initialize spike monitor
 m_spikeMonitor.Initialize(m_tradeManager, m_unifiedRiskManager, m_tickSafetyMonitor);
-m_spikeMonitor.SetMagicNumber((int)m_config.magicNumber);
 
 // Initialize AI subsystems if enabled
 if(m_config.enableAIMode)
@@ -1735,9 +1926,26 @@ if(managerInitCount <= 0 || ArraySize(m_enterpriseManagers) <= 0)
 }
 
 // Update magic range max now that symbol universe is known
+// Batch 168: one formula, asserted before it is trusted. Orders ship with an
+// asset-class offset of up to 9999 (CDerivAssetProfiler::DERIV_UNKNOWN), so a
+// window sized only by symbolCount*100 excluded every position this EA opens.
 int symbolCount = ArraySize(m_enterpriseManagerSymbols);
-long magicRangeMax = m_config.magicNumber + symbolCount * MAGIC_SYMBOL_MULTIPLIER + MAGIC_MAX_CLUSTER_CODE;
+ConfigureMagicOwnership(m_config.magicNumber, symbolCount);
+long magicRangeMax = g_magicMax;
 m_tradeManager.SetMagicRangeMax(magicRangeMax);
+
+int maxShippedOffset = 0;
+for(int ms = 0; ms < symbolCount; ms++)
+{
+    if(m_enterpriseManagerSymbols[ms] == "") continue;
+    int off = m_multiAssetProfiler.GetMagicOffset(m_enterpriseManagerSymbols[ms]);
+    if(off > maxShippedOffset) maxShippedOffset = off;
+}
+if(!ValidateMagicOwnershipCoverage(m_config.magicNumber, maxShippedOffset))
+{
+    Print("[CRITICAL] Magic ownership window does not cover the offsets this EA ships with - refusing to trade");
+    return false;
+}
 // Propagate magic range to all enterprise managers
 for(int mi = 0; mi < ArraySize(m_enterpriseManagers); mi++)
 {
@@ -2632,9 +2840,13 @@ void OnTick()
     if(m_unifiedRiskManager.IsEmergencyCloseRequested())
     {
         PrintFormat("[RISK-EMERGENCY] Emergency close requested - closing all positions");
-        m_tradeManager.CloseAllPositions();
+        m_tradeManager.CloseAllPositions("", "Emergency close", m_config.emergencyFlattenAllAccountPositions);
         m_unifiedRiskManager.ResetEmergencyCloseRequested();
     }
+
+    // Theme 3: basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
+    if(m_basketEquityStop.ShouldCloseBasket())
+        m_basketEquityStop.CloseBasket();
 
     ProcessTickSafetyLoop();
 
@@ -2699,9 +2911,13 @@ void OnTimer()
     if(m_unifiedRiskManager.IsEmergencyCloseRequested())
     {
         PrintFormat("[RISK-EMERGENCY] Emergency close requested - closing all positions");
-        m_tradeManager.CloseAllPositions();
+        m_tradeManager.CloseAllPositions("", "Emergency close", m_config.emergencyFlattenAllAccountPositions);
         m_unifiedRiskManager.ResetEmergencyCloseRequested();
     }
+
+    // Theme 3: basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
+    if(m_basketEquityStop.ShouldCloseBasket())
+        m_basketEquityStop.CloseBasket();
 
     // Error handling wrapper
     bool timerError = false;
@@ -2933,6 +3149,9 @@ m_spikeMonitor.ReleasePauseIfExpired();
 if(m_equityCurveManager != NULL)
 m_equityCurveManager.Update(AccountInfoDouble(ACCOUNT_EQUITY));
 
+// Theme 3: update basket equity stop peak/DD tracking each timer tick
+m_basketEquityStop.Update(AccountInfoDouble(ACCOUNT_EQUITY));
+
 // Batch 100 + Batch 114: bar-level engine updates (Hurst, OU, Grid-Hurst
 // bridge, Kalman, CPD, Four-State, VolTarget). Phase F: both loops moved
 // verbatim into COrchestratorMathEngineHub::UpdateTimerEngines. m_gridRecovery
@@ -2980,6 +3199,30 @@ if(s_lastIndicatorEviction == 0 || (now - s_lastIndicatorEviction) >= 60)
         m_heartbeat.Emit(GetPointer(m_diagnosticsManager));
         s_lastHeartbeat = now;
     }
+    
+    // Production monitoring components
+    m_configReloader.CheckAndReload();
+    m_riskDashboard.OnTimer();
+    m_symbolHealth.OnTick(_Symbol);
+    m_symbolHealth.CheckAllSymbols(m_config.symbolsToTrade);
+    
+    // Update risk dashboard metrics
+    SUnifiedRiskSnapshot riskSnap = m_unifiedRiskManager.GetSnapshot();
+    double portfolioRisk = riskSnap.portfolioRiskPercent;
+    double dailyRisk = riskSnap.dailyRiskUsedPercent;
+    double drawdown = riskSnap.currentDrawdownPercent;
+    int posTotal = GetEAPositionCount();
+    int posLimit = m_config.maxPositionsTotal;
+    double marginUsed = AccountInfoDouble(ACCOUNT_MARGIN) > 0 ? 
+                        (AccountInfoDouble(ACCOUNT_MARGIN) - AccountInfoDouble(ACCOUNT_MARGIN_FREE)) / AccountInfoDouble(ACCOUNT_MARGIN) * 100 : 0;
+    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double unrealized = equity - balance;
+    string eaMode = EnumToString(m_config.eaMode);
+    
+    m_riskDashboard.UpdateMetrics(portfolioRisk, dailyRisk, drawdown, posTotal, posLimit, 
+                                  marginUsed, freeMargin, eaMode, equity, balance, unrealized);
 
     ProcessTradingLogic(true);  // true = called from timer
 }
@@ -3020,11 +3263,15 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
         if(m_unifiedRiskManager.IsEmergencyCloseRequested())
         {
             PrintFormat("[EMERGENCY-CLOSE] Circuit breaker emergency close requested - closing all positions");
-            m_tradeManager.CloseAllPositions();
+            m_tradeManager.CloseAllPositions("", "Emergency close", m_config.emergencyFlattenAllAccountPositions);
             m_unifiedRiskManager.ResetEmergencyCloseRequested();
             CJsonLogger::ClearCorrelationId();
             return false;
         }
+
+        // Theme 3: basket equity stop close-on-breach sweep (magic-filtered; manual positions safe)
+        if(m_basketEquityStop.ShouldCloseBasket())
+            m_basketEquityStop.CloseBasket();
 
         if(!m_systemInitialized || !m_tradingEnabled)
         {
@@ -3049,16 +3296,19 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
 
         // Check unprotected positions
         m_unprotectedTracker.AttemptRemediation();
+
+        // Batch 168: persist circuit-breaker state on the runtime cadence (30s
+        // throttle inside) so a crash or VPS reboot leaves something to recover.
+        PersistRiskRuntimeState(false);
     }
 
     // Process AI subsystems: neural network, AI engine, AI feedback
     void ProcessAISubsystems()
     {
-        // Neural network online learning
+        // Neural network online learning (driven via CRegistryAggregator, which owns the full CNeuralNetRegistry definition)
         if(m_config.enableAIMode && m_config.enableNeuralNetwork && m_config.enableNNOnlineTraining)
         {
-            // m_nnRegistry.TickOnlineLearningAll(); // Method doesn't exist, use individual calls
-            // Would iterate through symbols and call online learning per symbol
+            m_registryAggregator.TickNeuralNetOnlineLearning();
         }
 
         // AI engine adaptation
@@ -3120,9 +3370,18 @@ bool enableCompoundingTiers, ENUM_RISK_TIER riskTier)
     // Manage open positions
     void ManageOpenPositions()
     {
-        // Manage positions
-        m_positionManager.ManagePositions();
-    
+        // Batch 168: single exit authority. CPositionLifecycleManager is the object
+        // that receives ConfigureSRE / ConfigureLifecycle / ConfigureMaxHoldTime /
+        // ConfigurePyramiding from the EA inputs (see InitializeSubsystems), but its
+        // ManagePositions() had no caller at all. The live caller was
+        // CPositionManager::ManagePositions(), which is never configured and whose
+        // signal-reversal exit is a hardcoded stub (PositionMgrSRE.mqh
+        // `opposingSignal = false`), so every exit input was dead and losers rode to
+        // the broker-side SL.
+        // m_positionManager still owns the position-state registry and closed-trade
+        // recording consumed by attribution and the NN linkage below.
+        m_lifecycleManager.ManagePositions();
+
         // Process closed positions for NN training linkage (L11-014)
         ProcessClosedPositionsForNNTraining();
     }
@@ -3461,6 +3720,11 @@ void ProcessScalpFastPath()
         m_scalpEngine.CheckPendingAsyncOrders();
         m_scalpEngine.CheckPendingScalpOrders();
 
+        // Theme 3: basket equity stop halts NEW scalp entries (existing scalps
+        // were already managed by the calls above).
+        if(m_basketEquityStop.IsHaltActive())
+            return;
+
         // Iterate over all managed symbols for scalp opportunities
         for(int si = 0; si < m_managerCount; si++)
         {
@@ -3554,7 +3818,7 @@ void GenerateAndProcessSignals(const string cycleCorrId)
     bool unprotectedBlocked = m_unifiedRiskManager.HasUnprotectedPositions();
     bool spikePaused = m_spikeMonitor.IsPaused();
 
-    bool canOpenNewTrades = !(cooldownBlocked || positionLimitBlocked || unprotectedBlocked || spikePaused || m_profitGuard.IsTradingHalted());
+    bool canOpenNewTrades = !(cooldownBlocked || positionLimitBlocked || unprotectedBlocked || spikePaused || m_profitGuard.IsTradingHalted() || m_basketEquityStop.IsHaltActive());
 
         // Generate signals (new bar mode) - with performance timing
         ulong startSignalGen = GetMicrosecondCount();

@@ -53,6 +53,10 @@ struct SOrchestratorConfig
     double  maxPortfolioRisk;
     double  maxDrawdown;
     double  dailyLossLimitPercent;
+    // Theme 3 (article 23662): basket-level equity stop — peak-equity drawdown guard
+    bool    basketEquityStopEnabled;
+    double  basketEquityStopDrawdownPct;
+    bool    basketEquityStopCloseOnBreach;
     ENUM_RISK_TIER riskTier;
     bool    enableCompoundingTiers;
         int     compoundingTierCheckIntervalSec;
@@ -578,7 +582,7 @@ struct SOrchestratorConfig
         enableNNPseudoLabeling = true;
         nnPseudoLabelBarsAhead = 10;
         nnSampleIntervalSeconds = 15;
-        nnCheckpointEveryLabeled = 10;
+        nnCheckpointEveryLabeled = 3;
 
         validatorNewBarMinConfluence = 1;
         validatorNewBarMinQuality = 0.68;
@@ -611,7 +615,11 @@ struct SOrchestratorConfig
         maxHoldHoursSwing = 120;
         maxHoldOnlyIfLoss = true;
 
-        emergencyFlattenAllAccountPositions = true;
+        // Batch 168: opt-in. Emergency flatten previously closed every position
+        // on the account - manual trades and other EAs included - on any circuit
+        // breaker trip. EA-scoped is now the default; set true only on a
+        // single-strategy account you fully control.
+        emergencyFlattenAllAccountPositions = false;
         unprotectedRemediationIntervalSec = 15;
         unprotectedMaxRestoreAttempts = 3;
         closeUnprotectedOnRemediationFailure = true;

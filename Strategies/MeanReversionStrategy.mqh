@@ -254,6 +254,13 @@ public:
         
         // NEW: Block mean reversion in trending markets (ADX > 25)
         double adx = GetADX(14);
+        // Batch 169: ADX unknown (-1) must block, not pass. Standing aside when the
+        // trend filter cannot be evaluated is the safe reading of "not trending".
+        if(adx < 0.0)
+        {
+            SetDecisionReasonTag("MEANREV_ADX_UNAVAILABLE");
+            return RejectSignal("MEANREV_ADX_UNAVAILABLE");
+        }
         if(adx > 25.0)
         {
             SetDecisionReasonTag("MEANREV_TRENDING_MARKET");
@@ -471,12 +478,16 @@ private:
     // Stochastic Extreme Confirmation (v2.0)
     bool StochasticExtreme(ENUM_TRADE_SIGNAL direction)
     {
+        // Batch 169: fail closed. Returned true when the handle was invalid or the
+        // copy failed, and callers read true as confirmation - so a data outage
+        // granted the +0.05 confidence boost and skipped the x0.90 weakening penalty.
+        // Missing evidence must never raise confidence.
         if(m_stochHandle == INVALID_HANDLE)
-            return true;  // No Stochastic = don't block
+            return false;
         
         double stochK[1];
         if(CopyBuffer(m_stochHandle, 0, 1, 1, stochK) <= 0)
-            return true;
+            return false;
         
         if(direction == TRADE_SIGNAL_BUY)
             return stochK[0] < 20.0;  // Oversold
@@ -488,14 +499,16 @@ private:
     // Returns true if NO divergence (safe to trade)
     bool NoDivergence(ENUM_TRADE_SIGNAL direction)
     {
+        // Batch 169: fail closed - "no divergence" cannot be concluded from missing
+        // data, and this is used as an entry gate.
         if(m_rsiHandle == INVALID_HANDLE)
-            return true;  // No RSI = don't block
+            return false;
         
         double priceLow[11], priceHigh[11], rsi[11];
         if(CopyLow(m_symbol, m_timeframe, 1, 11, priceLow) < 11 ||
            CopyHigh(m_symbol, m_timeframe, 1, 11, priceHigh) < 11 ||
            CopyBuffer(m_rsiHandle, 0, 1, 11, rsi) < 11)
-            return true;
+            return false;
         
         // Check for divergence over last 5-10 bars
         // Batch 155: non-series copies are OLDEST-first - [10] is the newest
@@ -530,9 +543,12 @@ private:
     bool MeanRevertingRegime()
     {
         if(m_hurstEngine == NULL)
-            return true;  // Allow if not configured
+            return true;  // Feature not wired for this roster - not this strategy's gate
+        // Batch 169: an engine that IS wired but has not warmed up has no regime
+        // opinion, so it cannot certify "mean reverting". Previously warmup returned
+        // true and every entry passed the regime lockout during the whole warmup.
         if(!m_hurstEngine.IsWarmedUp())
-            return true;  // Allow during warmup
+            return false;
         return m_hurstEngine.GetRegime() == HURST_MEAN_REVERTING;
     }
     
@@ -541,12 +557,12 @@ private:
     bool SufficientBandWidth()
     {
         if(m_bbHandle == INVALID_HANDLE)
-            return true;
+            return false;  // Batch 169: fail closed - BB width is this strategy's premise
         
         double bbUpper[1], bbLower[1];
         if(CopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) <= 0 ||
            CopyBuffer(m_bbHandle, 2, 1, 1, bbLower) <= 0)
-            return true;
+            return false;
         
         double currentWidth = bbUpper[0] - bbLower[0];
         
@@ -564,7 +580,7 @@ private:
             }
         }
         
-        if(validBars < 10) return true;  // Not enough data
+        if(validBars < 10) return false;  // Batch 169: not enough history to judge width
         avgWidth /= validBars;
         
         return currentWidth > avgWidth;  // Current width > average = sufficient
@@ -584,16 +600,21 @@ private:
     }
     
     // Get ADX value for trend filter (Issue #27)
+    // Batch 169: returns -1 when ADX is unavailable. The old 0.0 sentinel made the
+    // `adx > 25` trend lockout pass on missing data, i.e. the filter that is supposed
+    // to stop mean reversion inside a trend was disabled by exactly the outage that
+    // should make it stand aside. Also reads the closed bar (shift 1) instead of the
+    // forming one.
     double GetADX(int period)
     {
         if(m_adxHandle == INVALID_HANDLE)
-            return 0.0;
-        
+            return -1.0;
+
         double adxBuffer[1];
-        if(CopyBuffer(m_adxHandle, 0, 0, 1, adxBuffer) > 0 && adxBuffer[0] > 0.0)
+        if(CopyBuffer(m_adxHandle, 0, 1, 1, adxBuffer) > 0 && adxBuffer[0] > 0.0)
             return adxBuffer[0];
-        
-        return 0.0;
+
+        return -1.0;
     }
     
     // Detect mean reversion signal

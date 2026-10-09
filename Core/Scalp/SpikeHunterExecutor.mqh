@@ -9,10 +9,10 @@
 //|   m_trade (CTrade fallback), m_aiAdapter, m_totalTradesOpened    |
 //|                                                                  |
 //| Moved logic (verbatim):                                          |
-//|   GetActiveSpikePositions() â€?SPIKE-HUNT comment scan (static,   |
+//|   GetActiveSpikePositions() ï¿½?SPIKE-HUNT comment scan (static,   |
 //|                               it never touched engine state)     |
-//|   CanOpenSpikeTrade()       â€?cooldown + max concurrent gate     |
-//|   OpenSpikeTrade()          â€?ATR SL/TP, position sizing, margin |
+//|   CanOpenSpikeTrade()       ï¿½?cooldown + max concurrent gate     |
+//|   OpenSpikeTrade()          ï¿½?ATR SL/TP, position sizing, margin |
 //|                               cap, lot-step normalisation, magic |
 //|                               composition, UnifiedRiskManager    |
 //|                               pre-trade gate (AGENTS.md #1),     |
@@ -39,6 +39,7 @@
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
+#include "../Trading/TradeMgrPricing.mqh"
 #include <Trade\Trade.mqh>
 
 #include "SpikeHunterTypes.mqh"
@@ -50,7 +51,7 @@ class CUnifiedRiskManager;
 class CAIAdapter;
 
 //+------------------------------------------------------------------+
-//| CSpikeHunterExecutor â€?stateful spike trade gating + execution    |
+//| CSpikeHunterExecutor ï¿½?stateful spike trade gating + execution    |
 //+------------------------------------------------------------------+
 class CSpikeHunterExecutor
 {
@@ -81,7 +82,7 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Dependency injection â€?mirrors the CSpikeHunterEngine::Init       |
+   //| Dependency injection ï¿½?mirrors the CSpikeHunterEngine::Init       |
    //| assignment block one-for-one.                                     |
    //+------------------------------------------------------------------+
    void Init(const SSpikeHunterConfig &config,
@@ -156,7 +157,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[SPIKE-HUNT-TRADE] ATR is zero for %s â€?cannot calculate SL/TP", symbol);
+         PrintFormat("[SPIKE-HUNT-TRADE] ATR is zero for %s ï¿½?cannot calculate SL/TP", symbol);
          return false;
       }
 
@@ -240,6 +241,14 @@ public:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
+      // Batch 170: shared stop-feasibility and expectancy gate (see ATRScalpEntry).
+      string spikeStopError = "";
+      if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, entryPrice, tp, sl, tp, spikeStopError))
+      {
+         PrintFormat("[SPIKE-HUNT] STOPS REJECTED | %s | %s", symbol, spikeStopError);
+         return false;
+      }
+
       // Calculate magic number: baseMagic + familyMagicOffset + symbolIndex
       int magic = m_baseMagic + m_detector.GetEffectiveMagicOffset(idx) + idx;
 
@@ -311,6 +320,9 @@ public:
       else
       {
          // Fallback to raw trade object if TradeManager not available (backward compatibility)
+         // Batch 170: this is the branch that actually runs - EAOrchestrator's
+         // m_spikeHunter.Init(...) passes no CTradeManager, so the governed send
+         // path above is unreachable and the stop gate had to be added here too.
          m_trade.SetExpertMagicNumber(magic);
          // L10-014: Use dynamic slippage if TradeManager available, else default
          uint fallbackSlippage = 50;
@@ -319,7 +331,11 @@ public:
              fallbackSlippage = m_tradeManager.GetDynamicSlippage(symbol);
          }
          m_trade.SetDeviationInPoints(fallbackSlippage);
-         m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+         // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
+         long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+         ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
+                                            (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
+         m_trade.SetTypeFilling(scalpFill);
 
          bool result = false;
          if(direction == 1)

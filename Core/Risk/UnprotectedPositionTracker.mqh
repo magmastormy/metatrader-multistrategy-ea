@@ -7,14 +7,9 @@
 #define CORE_RISK_UNPROTECTED_POSITION_TRACKER_MQH
 
 #include "../Utils/Enums.mqh"
+#include "../Utils/MagicRange.mqh"
 #include "UnifiedRiskManager.mqh"
 #include "../Trading/TradeManager.mqh"
-
-//+------------------------------------------------------------------+
-//| Magic-number range constants (mirrored from EA globals)          |
-//+------------------------------------------------------------------+
-#define UNPROT_MAGIC_SYMBOL_MULTIPLIER 100
-#define UNPROT_MAGIC_MAX_CLUSTER_CODE  99
 
 //+------------------------------------------------------------------+
 //| Unprotected Position Tracker                                     |
@@ -33,8 +28,6 @@ private:
 
     CTradeManager*       m_tradeManager;
     CUnifiedRiskManager* m_riskManager;
-    long                 m_minMagicNumber;    // L5-022: Min magic number (inclusive)
-    long                 m_maxMagicNumber;    // L5-022: Max magic number (inclusive)
     int                  m_remediationIntervalSec;
     int                  m_maxRestoreAttempts;
 
@@ -47,8 +40,6 @@ public:
     CUnprotectedPositionTracker()
         : m_tradeManager(NULL),
           m_riskManager(NULL),
-          m_minMagicNumber(0),
-          m_maxMagicNumber(0),
           m_lastAttempt(0),
           m_remediationIntervalSec(15),
           m_maxRestoreAttempts(3),
@@ -62,16 +53,18 @@ public:
 
     //+------------------------------------------------------------------+
     //| Initialize with external dependencies                           |
-    //| L5-022: Pass min/max magic numbers directly                     |
+    //| Batch 168: the magic window is no longer passed in here. The     |
+    //| previous call site handed the symbol-array length to the         |
+    //| maxMagicNumber parameter, producing the empty range              |
+    //| [123456, 13] - so IsEAOwnedMagic was false for every position    |
+    //| and no-SL remediation never ran. Ownership now resolves through  |
+    //| CMagicRange, configured once by the orchestrator.                |
     //+------------------------------------------------------------------+
     void Initialize(CTradeManager* tradeMgr, CUnifiedRiskManager* riskMgr,
-                    long minMagicNumber, long maxMagicNumber,
                     int remediationIntervalSec = 15, int maxRestoreAttempts = 3)
     {
         m_tradeManager  = tradeMgr;
         m_riskManager   = riskMgr;
-        m_minMagicNumber = minMagicNumber;
-        m_maxMagicNumber = maxMagicNumber;
         m_remediationIntervalSec = MathMax(5, remediationIntervalSec);
         m_maxRestoreAttempts      = MathMax(1, maxRestoreAttempts);
     }
@@ -88,11 +81,11 @@ public:
 
     //+------------------------------------------------------------------+
     //| Check if a magic number falls within this EA's ownership range   |
-    //| L5-022: Uses configured min/max magic range                     |
+    //| Batch 168: resolves through CMagicRange, the single authority.   |
     //+------------------------------------------------------------------+
     bool IsEAOwnedMagic(long magic) const
     {
-        return (magic >= m_minMagicNumber && magic <= m_maxMagicNumber);
+        return IsMagicOwned(magic);
     }
 
     //+------------------------------------------------------------------+

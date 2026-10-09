@@ -172,6 +172,24 @@ private:
 
     long m_eaMagicNumber;  // Batch 119: EA magic number for position filtering
 
+    // Batch 169: operator-configured risk envelope, captured once at Initialize.
+    // CCompoundingTierManager derives risk from the EQUITY BRACKET, not from the
+    // config: tiers 5-7 set 5%/10%/15% per trade, 15%/25%/35% daily and up to 50%
+    // portfolio, silently replacing whatever live_overrides.json says (1%/4%/12%).
+    // A bracket-driven ceiling above the operator's stated risk is not a setting the
+    // operator can see, so ApplyTierOverrides now treats the configured values as a
+    // hard ceiling. Tiers may still LOWER risk (conservative), never raise it past
+    // what was configured.
+    double m_envelopeMaxRiskPerTradePercent;
+    double m_envelopeBaseRiskPerTradePercent;
+    double m_envelopeMaxDailyRiskPercent;
+    double m_envelopeMaxPortfolioRiskPercent;
+    double m_envelopeDrawdownWarningPercent;
+    double m_envelopeDrawdownCriticalPercent;
+    double m_envelopeDailyLossLimitPercent;
+    int    m_envelopeMaxPositionsSameBase;
+    bool   m_envelopeCaptured;
+
         // Deriv asset profiler for family detection
         CDerivAssetProfiler m_derivAssetProfiler;
 
@@ -340,8 +358,19 @@ public:
     double GetDailyStartEquity() const;
     int    GetDrawdownBreachCount() const;
     double GetMaxDrawdownFromPeak() const;
+    // Batch 168: halt flags are persisted and restored, and the pure trading-day
+    // key is exposed so the writer can stamp which broker day the state belongs to.
+    bool   IsDailyLossHaltActive() const;
+    int    GetCurrentTradingDayKey();
+    //--- Batch 168: CUnifiedRiskManager::Initialize leaves m_lastTradingDayKey at 0,
+    //--- so the first CheckAndResetDailyLimits() of every restart reports a "new
+    //--- trading day" and overwrites m_dailyStartEquity with current equity - which
+    //--- clobbered the restored baseline. Seeding the key suppresses that spurious
+    //--- reset when the saved state is from the same broker day.
+    void   SeedTradingDayKey(int dayKey);
     void   RestoreCircuitBreakerState(double savedPeakEquity, double savedDailyStartEquity,
-                                      int savedBreachCount, double savedMaxDrawdown);
+                                      int savedBreachCount, double savedMaxDrawdown,
+                                      bool restoreDailyLossHalt, bool restoreTradingHalt);
 
     // Daily P&L Loss Limit circuit breaker
     // IRiskPipelineHost
@@ -459,21 +488,58 @@ void CUnifiedRiskManager::ApplyTierOverrides(double tierRiskPerTradePct,
                                              double maxRiskPerTradeOverride)
 {
     // Update config parameters controlled by tier system
-        m_config.baseRiskPerTradePercent = tierRiskPerTradePct;
-        m_config.maxRiskPerTradePercent  = maxRiskPerTradeOverride;  // L5-006: use explicit override instead of 2x formula
-        m_config.maxDailyRiskPercent     = effectiveDaily;
-        m_config.maxPortfolioRiskPercent = effectivePortfolio;
-        m_config.drawdownWarningPercent  = effectiveDdWarning;
-        m_config.drawdownCriticalPercent = effectiveDdCritical;
-        m_config.dailyLossLimitPercent   = effectiveDailyLossLimit;
-        m_config.maxPositionsSameBase    = tierMaxPositions;
+    //
+    // Batch 169: every tier value is clamped to the operator's configured envelope.
+    // The equity-bracket table in CCompoundingTierManager used to be an unconditional
+    // assignment, so a $10k-$50k account silently traded at 15% risk per trade, 35%
+    // daily and 50% portfolio while live_overrides.json said 1% / 4% / 12%. Lowering
+    // risk is still allowed; raising it past what was configured is not.
+    double clampedBaseRisk   = m_envelopeCaptured ? MathMin(tierRiskPerTradePct, m_envelopeBaseRiskPerTradePercent) : tierRiskPerTradePct;
+    double clampedMaxRisk    = m_envelopeCaptured ? MathMin(maxRiskPerTradeOverride, m_envelopeMaxRiskPerTradePercent) : maxRiskPerTradeOverride;
+    double clampedDaily      = m_envelopeCaptured ? MathMin(effectiveDaily, m_envelopeMaxDailyRiskPercent) : effectiveDaily;
+    double clampedPortfolio  = m_envelopeCaptured ? MathMin(effectivePortfolio, m_envelopeMaxPortfolioRiskPercent) : effectivePortfolio;
+    double clampedDdWarning  = m_envelopeCaptured ? MathMin(effectiveDdWarning, m_envelopeDrawdownWarningPercent) : effectiveDdWarning;
+    double clampedDdCritical = m_envelopeCaptured ? MathMin(effectiveDdCritical, m_envelopeDrawdownCriticalPercent) : effectiveDdCritical;
+    double clampedDailyLoss  = m_envelopeCaptured ? MathMin(effectiveDailyLossLimit, m_envelopeDailyLossLimitPercent) : effectiveDailyLossLimit;
+    int    clampedSameBase   = (m_envelopeCaptured && m_envelopeMaxPositionsSameBase > 0)
+                               ? MathMin(tierMaxPositions, m_envelopeMaxPositionsSameBase) : tierMaxPositions;
+
+    // A clamped ceiling can invert the warning/critical pair (critical must exceed
+    // warning); restore the same +4 relationship Initialize uses.
+    if(clampedDdCritical <= clampedDdWarning)
+        clampedDdCritical = clampedDdWarning + 4.0;
+
+    // Base risk must never exceed the per-trade cap after clamping.
+    if(clampedBaseRisk > clampedMaxRisk)
+        clampedBaseRisk = clampedMaxRisk;
+
+    if(clampedBaseRisk < tierRiskPerTradePct || clampedMaxRisk < maxRiskPerTradeOverride ||
+       clampedDaily < effectiveDaily || clampedPortfolio < effectivePortfolio ||
+       clampedDdCritical < effectiveDdCritical || clampedDailyLoss < effectiveDailyLossLimit ||
+       clampedSameBase < tierMaxPositions)
+    {
+        PrintFormat("[RISK-ENVELOPE] Tier %s values clamped to configured ceiling | risk %.2f%%->%.2f%% max %.2f%%->%.2f%% daily %.2f%%->%.2f%% portfolio %.2f%%->%.2f%% ddCrit %.2f%%->%.2f%% dailyLoss %.2f%%->%.2f%% sameBase %d->%d",
+                    "COMPOUNDING", tierRiskPerTradePct, clampedBaseRisk,
+                    maxRiskPerTradeOverride, clampedMaxRisk, effectiveDaily, clampedDaily,
+                    effectivePortfolio, clampedPortfolio, effectiveDdCritical, clampedDdCritical,
+                    effectiveDailyLossLimit, clampedDailyLoss, tierMaxPositions, clampedSameBase);
+    }
+
+    m_config.baseRiskPerTradePercent = clampedBaseRisk;
+    m_config.maxRiskPerTradePercent  = clampedMaxRisk;
+    m_config.maxDailyRiskPercent     = clampedDaily;
+    m_config.maxPortfolioRiskPercent = clampedPortfolio;
+    m_config.drawdownWarningPercent  = clampedDdWarning;
+    m_config.drawdownCriticalPercent = clampedDdCritical;
+    m_config.dailyLossLimitPercent   = clampedDailyLoss;
+    m_config.maxPositionsSameBase    = clampedSameBase;
 
         // Update active risk per trade
         // Phase E3 forwarder -> CRiskAdaptiveTuner::SetActiveRiskPerTradePercent
         m_adaptiveTuner.SetActiveRiskPerTradePercent(ClampRiskPercent(m_config.baseRiskPerTradePercent));
 
         // Update portfolio risk manager limits (no reinitialization)
-        m_portfolioRiskManager.SetMaxPortfolioRisk(effectivePortfolio);
+        m_portfolioRiskManager.SetMaxPortfolioRisk(clampedPortfolio);
 
         PrintFormat("[RISK-INIT-SINGLE] Tier overrides applied (no reinit) | risk=%.1f%% | maxRisk=%.1f%% | daily=%.1f%% | portfolio=%.1f%% | ddWarn=%.1f%% | ddCrit=%.1f%%",
                     m_config.baseRiskPerTradePercent,
@@ -595,6 +661,15 @@ CUnifiedRiskManager::CUnifiedRiskManager() :
     m_lastBudgetRefresh(0),
     m_riskOverrideCount(0),
     m_eaMagicNumber(0),
+    m_envelopeMaxRiskPerTradePercent(0.0),
+    m_envelopeBaseRiskPerTradePercent(0.0),
+    m_envelopeMaxDailyRiskPercent(0.0),
+    m_envelopeMaxPortfolioRiskPercent(0.0),
+    m_envelopeDrawdownWarningPercent(0.0),
+    m_envelopeDrawdownCriticalPercent(0.0),
+    m_envelopeDailyLossLimitPercent(0.0),
+    m_envelopeMaxPositionsSameBase(0),
+    m_envelopeCaptured(false),
     // Validation gate state (moved from CRiskValidationGate)
     m_clusterGovernanceEnabled(true),
     m_clusterMutexEnabled(true),
@@ -727,6 +802,29 @@ bool CUnifiedRiskManager::Initialize(const SUnifiedRiskConfig &config,
     if(m_config.minLotRiskMultiplier <= 0.0)
         m_config.minLotRiskMultiplier = 1.0;
 
+    // Batch 169: snapshot the operator's configured envelope after the sanity
+    // clamping above and before any tier can overwrite it. Captured once, because
+    // ApplyTierOverrides mutates m_config in place and is called repeatedly as
+    // equity brackets change - without a stable snapshot the ceiling would drift
+    // down (or up) with each tier switch.
+    if(!m_envelopeCaptured)
+    {
+        m_envelopeMaxRiskPerTradePercent   = m_config.maxRiskPerTradePercent;
+        m_envelopeBaseRiskPerTradePercent  = m_config.baseRiskPerTradePercent;
+        m_envelopeMaxDailyRiskPercent      = m_config.maxDailyRiskPercent;
+        m_envelopeMaxPortfolioRiskPercent  = m_config.maxPortfolioRiskPercent;
+        m_envelopeDrawdownWarningPercent   = m_config.drawdownWarningPercent;
+        m_envelopeDrawdownCriticalPercent  = m_config.drawdownCriticalPercent;
+        m_envelopeDailyLossLimitPercent    = m_config.dailyLossLimitPercent;
+        m_envelopeMaxPositionsSameBase     = m_config.maxPositionsSameBase;
+        m_envelopeCaptured = true;
+        PrintFormat("[RISK-ENVELOPE] Operator ceiling captured | risk/trade<=%.2f%% daily<=%.2f%% portfolio<=%.2f%% ddWarn<=%.2f%% ddCrit<=%.2f%% dailyLoss<=%.2f%% sameBase<=%d",
+                    m_envelopeMaxRiskPerTradePercent, m_envelopeMaxDailyRiskPercent,
+                    m_envelopeMaxPortfolioRiskPercent, m_envelopeDrawdownWarningPercent,
+                    m_envelopeDrawdownCriticalPercent, m_envelopeDailyLossLimitPercent,
+                    m_envelopeMaxPositionsSameBase);
+    }
+
     // Phase E3: sync correlation threshold config to CRiskTieredCorrelation
     // after clamping is complete.
     m_tieredCorrelation.SetThresholds(m_config.correlationThreshold,
@@ -804,6 +902,18 @@ void CUnifiedRiskManager::RefreshRuntimeState()
     CheckAndResetDailyLimits();
     UpdateAdaptiveRiskLevel();
     CheckCircuitBreakerRecovery();
+
+    // Batch 168: arm the breakers on the runtime cadence, not only when a trade is
+    // attempted. Both evaluators were reachable exclusively through
+    // CRiskValidationPipeline::RunInternal, i.e. only when a candidate reached the
+    // risk gate. With entries blocked upstream (halt, cooldown, no consensus, or no
+    // candidates at all) m_tradingEnabled, m_drawdownBreachCount and
+    // m_emergencyCloseRequested were never set, so the drawdown breaker and the
+    // daily-loss halt could fail to trigger at any depth of drawdown. Both calls are
+    // idempotent - the breaker guards its state transitions with m_tradingEnabled /
+    // m_dailyLossHaltActive, so repeated evaluation cannot inflate the breach count.
+    CheckDrawdownCircuitBreaker();
+    CheckDailyLossLimit();
 }
 
 //+------------------------------------------------------------------+
@@ -1417,11 +1527,36 @@ double CUnifiedRiskManager::GetMaxDrawdownFromPeak() const
 //+------------------------------------------------------------------+
 // Phase E2 forwarder -> CRiskCircuitBreaker::RestoreCircuitBreakerState
 void CUnifiedRiskManager::RestoreCircuitBreakerState(double savedPeakEquity, double savedDailyStartEquity,
-                                                     int savedBreachCount, double savedMaxDrawdown)
+                                                     int savedBreachCount, double savedMaxDrawdown,
+                                                     bool restoreDailyLossHalt, bool restoreTradingHalt)
 {
     m_circuitBreaker.RestoreCircuitBreakerState(savedPeakEquity, savedDailyStartEquity,
                                                 savedBreachCount, savedMaxDrawdown,
+                                                restoreDailyLossHalt, restoreTradingHalt,
                                                 m_dailyStartEquity);
+}
+
+//+------------------------------------------------------------------+
+//| Halt state readers for crash-recovery persistence                |
+//+------------------------------------------------------------------+
+bool CUnifiedRiskManager::IsDailyLossHaltActive() const
+{
+    return m_circuitBreaker.IsDailyLossHaltActive();
+}
+
+//--- Pure read (Batch 151): does not advance m_lastTradingDayKey, so it is safe
+//--- to call from the periodic state writer without stealing the daily reset.
+int CUnifiedRiskManager::GetCurrentTradingDayKey()
+{
+    return TradingDayKey(TimeCurrent());
+}
+
+void CUnifiedRiskManager::SeedTradingDayKey(int dayKey)
+{
+    if(dayKey <= 0)
+        return;
+    m_lastTradingDayKey = dayKey;
+    PrintFormat("[RISK-UNIFIED] Trading day key seeded to %d - suppresses the spurious daily reset on restart", dayKey);
 }
 
 //+------------------------------------------------------------------+

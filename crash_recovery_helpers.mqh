@@ -14,10 +14,16 @@ ulong ComputeStateChecksum(const string &jsonData)
     return hash;
 }
 
-// Write crash recovery state as JSON with atomic write and checksum
-bool WriteCrashRecoveryState(const string &fileName, 
+// Write crash recovery state as JSON with atomic write and checksum.
+// Batch 168: the state now carries the halt flags and the broker trading-day key.
+// Previously only equity anchors were saved, so a restart cleared the daily-loss
+// halt and let the EA trade a second full daily budget after it had already spent
+// one; and nothing was written except on graceful deinit, so a real crash left
+// nothing to recover.
+bool WriteCrashRecoveryState(const string &fileName,
                               double equityBaseline, double peakEquity,
-                              int ddBreachCount, double ddMax)
+                              int ddBreachCount, double ddMax,
+                              int haltFlags, int tradingDayKey)
 {
     string tempFile = fileName + ".tmp";
         int fh = FileOpen(tempFile, FILE_WRITE | FILE_TXT | FILE_ANSI);
@@ -26,11 +32,13 @@ bool WriteCrashRecoveryState(const string &fileName,
 
     // Build JSON
     string json = "{";
-    json += "\"version\":1,";
+    json += "\"version\":2,";
     json += "\"equity_baseline\":" + DoubleToString(equityBaseline, 2) + ",";
     json += "\"peak_equity\":" + DoubleToString(peakEquity, 2) + ",";
     json += "\"dd_breach_count\":" + IntegerToString(ddBreachCount) + ",";
     json += "\"dd_max\":" + DoubleToString(ddMax, 2) + ",";
+    json += "\"halt_flags\":" + IntegerToString(haltFlags) + ",";
+    json += "\"trading_day_key\":" + IntegerToString(tradingDayKey) + ",";
     json += "\"timestamp\":\"" + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\"";
     json += "}";
 
@@ -114,7 +122,8 @@ bool ExtractStringFromJson(const string &json, const string &key, string &out)
 // Read and validate crash recovery state JSON
 bool ReadCrashRecoveryState(const string &fileName,
                              double &equityBaseline, double &peakEquity,
-                             int &ddBreachCount, double &ddMax, string &timestamp)
+                             int &ddBreachCount, double &ddMax, string &timestamp,
+                             int &haltFlags, int &tradingDayKey)
 {
     int fh = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_ANSI);
     if(fh == INVALID_HANDLE)
@@ -164,10 +173,19 @@ bool ReadCrashRecoveryState(const string &fileName,
     if(!ExtractDoubleFromJson(json, "dd_max", ddMax)) return false;
     if(!ExtractStringFromJson(json, "timestamp", timestamp)) return false;
 
+    // Batch 168 fields. version:1 files (written before this change) legitimately
+    // lack them, so they default rather than reject - otherwise the first upgrade
+    // restart would silently discard a live drawdown halt.
+    haltFlags = 0;
+    tradingDayKey = 0;
+    ExtractIntFromJson(json, "halt_flags", haltFlags);
+    ExtractIntFromJson(json, "trading_day_key", tradingDayKey);
+
     // Validate bounds
     if(equityBaseline < 0 || peakEquity < 0 || ddBreachCount < 0 || ddMax < 0)
         return false;
     if(equityBaseline > 1e9 || peakEquity > 1e9) return false; // sanity bounds
+    if(haltFlags < 0 || haltFlags > 3) return false;
 
     return true;
 }

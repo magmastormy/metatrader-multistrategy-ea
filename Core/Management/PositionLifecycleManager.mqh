@@ -77,8 +77,10 @@ private:
     CPosLifecycleExit       m_exitRules;    // partial profit taking + max hold time
 
     //--- Upper bound of this EA's magic ownership range.
-    //--- Computed on demand so no ownership state is duplicated in the modules.
-    int MagicMax() const { return m_magicNumber + m_symbolCount * 100 + m_maxClusterCode; }
+    //--- Batch 168: delegates to CMagicRange so this and every other ownership
+    //--- test agree. The old `base + symbolCount*100 + cluster` window excluded
+    //--- the asset-class offsets (7000..9999) that orders actually ship with.
+    int MagicMax() const { return (int)CMagicRange::ComputeMax(m_magicNumber, m_symbolCount); }
 
 public:
     CPositionLifecycleManager() :
@@ -210,6 +212,16 @@ public:
             return CPosLifecycleMagicFilter::IsOwned(magic, m_magicNumber, maxMagic);
         }
 
+        //--- Batch 170: the exit-side test. Same window, minus the scalp/grid/spike
+        //--- books whose own engines already own their exits. Reads the position the
+        //--- caller selected.
+        bool IsPositionLifecycleManaged() const
+        {
+            if(!IsEAOwnedMagic((long)PositionGetInteger(POSITION_MAGIC)))
+                return false;
+            return !IsEngineManagedPosition(PositionGetString(POSITION_COMMENT));
+        }
+
     //--- Get enterprise manager for a symbol
     CEnterpriseStrategyManager* GetManagerForSymbol(const string symbol)
     {
@@ -263,7 +275,7 @@ public:
         {
             ulong ticket = PositionGetTicket(i);
             if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-            if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+            if(!IsPositionLifecycleManaged()) continue;
 
             string sym = PositionGetString(POSITION_SYMBOL);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
@@ -401,7 +413,7 @@ public:
             {
                 ulong ticket = PositionGetTicket(i);
                 if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-                if(!IsEAOwnedMagic(PositionGetInteger(POSITION_MAGIC))) continue;
+                if(!IsPositionLifecycleManaged()) continue;
 
                 double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
                 double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
@@ -516,6 +528,13 @@ public:
     void ManageLossMinimization()
     {
         m_lossGuard.ManageLossMinimization(m_tradeManager, m_magicNumber, MagicMax());
+    }
+
+    // Batch 170: the loss guard's daily-loss breaker needs a budget to compare
+    // against; without this pass-through it had no way to be given one.
+    void SetDailyRiskBudgetPercent(const double percent)
+    {
+        m_lossGuard.SetDailyRiskBudgetPercent(percent);
     }
 
     // EXECUTION REFINEMENT: Partial profit taking management — delegated to CPosLifecycleExit

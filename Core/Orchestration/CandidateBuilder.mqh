@@ -487,12 +487,12 @@ public:
         // Apply momentum scaling
         lotSize = ApplyMomentumScaling(symbol, lotSize);
         
-        // Apply VPIN toxicity scaling
-        lotSize = ApplyVPINScaling(symbol, lotSize);
-        
-        // Apply volatility targeting scaling
-        lotSize = ApplyVolTargetScaling(symbol, lotSize);
-        
+        // Batch 170: removed the VPIN-toxicity and volatility-targeting scaling
+        // steps. Both were `return lotSize;` stubs ("Would use m_mathRegistry if
+        // available") sitting under comments claiming they resized the lot, while
+        // the validator status report printed a LastVPINMultiplier that no caller
+        // consumed. VPIN still vetoes signals; it never sized, and the code no
+        // longer implies otherwise.
         // Apply Skew Step scaling
         lotSize = ApplySkewStepScaling(symbol, lotSize);
         
@@ -515,11 +515,28 @@ public:
         double finalTradeRisk = m_riskManager.CalculateTradeRisk(symbol, candidate.lotSize, candidate.stopLossPips);
         double riskDenom = CRiskMath::GetRiskDenominator();
         double finalRiskPct = (finalTradeRisk > 0.0 && riskDenom > 0.0) ? (finalTradeRisk / riskDenom) * 100.0 : proposedRisk;
-        if(finalRiskPct > m_riskManager.GetEffectiveRiskPerTrade(symbol))
+        double riskCap = m_riskManager.GetEffectiveRiskPerTrade(symbol);
+        if(riskCap <= 0.0)
         {
-            PrintFormat("[RISK-GATE-REJECT] %s | reason=post_size_risk_cap | final_lot=%.2f | final_risk=%.2f%% > cap=%.2f%%",
-                        symbol, candidate.lotSize, finalRiskPct, m_riskManager.GetEffectiveRiskPerTrade(symbol));
+            // Kill-switch: risk is disabled for this symbol — do not trade.
+            PrintFormat("[RISK-GATE-REJECT] %s | reason=risk_disabled | cap=%.2f%%", symbol, riskCap);
             return false;
+        }
+        if(finalRiskPct > riskCap)
+        {
+            // Post-size re-gate (Batch 152): the sizing modifiers below can push the
+            // shipped lot above the per-trade risk cap. Rejecting the whole candidate
+            // discards a valid signal and starves the basket (defeats the multi-strategy
+            // mandate). Instead CLAMP the lot so the realized risk equals the cap and let
+            // the trade proceed — risk compliance is preserved, trade frequency is not.
+            double compliantLot = candidate.lotSize * (riskCap / finalRiskPct);
+            double brokerMinLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+            if(compliantLot < brokerMinLot)
+                compliantLot = brokerMinLot;
+            PrintFormat("[RISK-GATE-CLAMP] %s | final_lot=%.2f -> %.2f | risk=%.2f%% -> cap=%.2f%%",
+                        symbol, lotSize, compliantLot, finalRiskPct, riskCap);
+            candidate.lotSize = compliantLot;
+            finalRiskPct = riskCap;
         }
         candidate.riskPercent = finalRiskPct;
         
@@ -739,18 +756,6 @@ public:
                         symbol, momentumScale, lotSize, newLot);
             return newLot;
         }
-        return lotSize;
-    }
-    
-    double ApplyVPINScaling(const string symbol, double lotSize)
-    {
-        // Would use m_mathRegistry if available
-        return lotSize;
-    }
-    
-    double ApplyVolTargetScaling(const string symbol, double lotSize)
-    {
-        // Would use m_mathRegistry if available
         return lotSize;
     }
     

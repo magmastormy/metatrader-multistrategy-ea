@@ -23,6 +23,34 @@
 #include "../../IndicatorManager.mqh"
 
 //+------------------------------------------------------------------+
+//| Stop-distance and stop-adjustment limits (Batch 169)             |
+//| MIN_STOP_SPREAD_MULTIPLIER  - a stop closer than 1.5 spreads is  |
+//|                               inside the noise band, not a stop. |
+//| MIN_STOP_DISTANCE_POINTS    - absolute floor when the broker     |
+//|                               reports stops level 0.             |
+//| MAX_ACCEPTABLE_STOP_WIDENING_RATIO - lots are sized on the       |
+//|                               requested stop; if the broker      |
+//|                               minimum forces it wider than this, |
+//|                               realised risk exceeds sized risk   |
+//|                               and the trade must be rejected.    |
+//| MIN_TP_COST_MULTIPLE - least the take-profit must clear the      |
+//|                               round-trip spread cost, or the     |
+//|                               trade cannot pay for itself.       |
+//+------------------------------------------------------------------+
+#ifndef MIN_STOP_SPREAD_MULTIPLIER
+#define MIN_STOP_SPREAD_MULTIPLIER 1.5
+#endif
+#ifndef MIN_STOP_DISTANCE_POINTS
+#define MIN_STOP_DISTANCE_POINTS 10
+#endif
+#ifndef MAX_ACCEPTABLE_STOP_WIDENING_RATIO
+#define MAX_ACCEPTABLE_STOP_WIDENING_RATIO 1.25
+#endif
+#ifndef MIN_TP_COST_MULTIPLE
+#define MIN_TP_COST_MULTIPLE 4.0
+#endif
+
+//+------------------------------------------------------------------+
 //| Trade Manager Pricing Helpers                                    |
 //| Broker-constraint aware normalisation and cost arithmetic.       |
 //+------------------------------------------------------------------+
@@ -228,7 +256,52 @@ public:
         int freezeLevel = (int)SymbolInfoInteger(symbolName, SYMBOL_TRADE_FREEZE_LEVEL);
         int requiredPoints = MathMax(stopLevel, freezeLevel);
 
+        // Batch 169: floor. Many brokers report SYMBOL_TRADE_STOPS_LEVEL = 0, which
+        // previously produced a 0-point minimum, so a 1-point stop was accepted and
+        // then rejected by the server (INVALID_STOPS) or placed inside the spread
+        // where it triggers on noise. Require the greater of the broker level, a
+        // spread multiple (a stop inside the spread is not a stop) and 10 points.
+        int spreadPoints = (int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD);
+        int spreadBasedMinimum = (int)MathCeil(spreadPoints * MIN_STOP_SPREAD_MULTIPLIER);
+        requiredPoints = MathMax(requiredPoints, MathMax(spreadBasedMinimum, MIN_STOP_DISTANCE_POINTS));
+
         return (double)requiredPoints * point;
+    }
+
+    //+--------------------------------------------------------------+
+    //| Broker-declared stop/freeze distance only, in price units.    |
+    //| GetMinimumStopDistance() deliberately folds in a spread       |
+    //| multiple, which makes it circular for the spread-anomaly gate |
+    //| in preflight: a limit of 2 * (1.5 * spread) can never be      |
+    //| exceeded by that spread. This is the term that belongs there. |
+    //+--------------------------------------------------------------+
+    static double GetBrokerStopLevelDistance(const string symbolName)
+    {
+        double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+        if(point <= 0.0) {
+            return 0.0;
+        }
+        int stopLevel = (int)SymbolInfoInteger(symbolName, SYMBOL_TRADE_STOPS_LEVEL);
+        int freezeLevel = (int)SymbolInfoInteger(symbolName, SYMBOL_TRADE_FREEZE_LEVEL);
+        return (double)MathMax(stopLevel, freezeLevel) * point;
+    }
+
+    //+--------------------------------------------------------------+
+    //| Round-trip transaction cost, expressed in PRICE units        |
+    //|                                                              |
+    //| Buying at ask and selling at bid costs exactly one quoted    |
+    //| spread against the mid, so the factor is 1.0 - the previous  |
+    //| 2.0 "paid entering and leaving" double-counted the same half |
+    //| spread on each side and every risk estimate that adds this   |
+    //| term was inflated accordingly.                               |
+    //+--------------------------------------------------------------+
+    static double GetRoundTripCostPrice(const string symbol)
+    {
+        double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        if(spreadPoints <= 0.0 || point <= 0.0)
+            return 0.0;
+        return spreadPoints * point;
     }
 
     //+--------------------------------------------------------------+
@@ -249,6 +322,15 @@ public:
         // Normalize input values
         slOut = NormalizeDouble(slOut, digits);
         tpOut = NormalizeDouble(tpOut, digits);
+
+        // Batch 169: capture the distance the position was SIZED at before any
+        // broker-driven adjustment, and be able to reject. This function used to
+        // `return true` unconditionally, which made the caller's reject branch dead
+        // code, and it silently pushed a too-close SL out to minDistance *after*
+        // lot sizing - so realised risk exceeded sized risk by however much the
+        // stop widened, escaping the per-trade risk cap (which is evaluated on the
+        // pre-trade stopLossPips).
+        double requestedSlDistance = (slOut > 0.0) ? MathAbs(price - slOut) : 0.0;
 
         // Validate Stop Loss
         if(slOut > 0)
@@ -282,6 +364,34 @@ public:
             }
         }
 
+        double finalSlDistance = (slOut > 0.0) ? MathAbs(price - slOut) : 0.0;
+        if(requestedSlDistance > 0.0 && finalSlDistance > requestedSlDistance * MAX_ACCEPTABLE_STOP_WIDENING_RATIO)
+        {
+            errorMsg = StringFormat("SL widened from %.1f to %.1f points (%.2fx) to satisfy broker minimum %.1f points - lots were sized on the tighter stop, so this trade would risk more than authorised",
+                                    requestedSlDistance / point, finalSlDistance / point,
+                                    finalSlDistance / requestedSlDistance, minDistance / point);
+            return false;
+        }
+
+        // Batch 169: cost-aware target. Nothing in the entry path compared the
+        // reward with the round-trip cost - the absolute spread gate was set to
+        // 15000 points so it never bound either. A take-profit that does not
+        // clear a small multiple of the spread is negative expectancy before
+        // the first tick, so reject it here, the one place both are known.
+        double costPrice = GetRoundTripCostPrice(symbol);
+        if(tpOut > 0.0 && costPrice > 0.0 && point > 0.0)
+        {
+            double tpDistance = MathAbs(price - tpOut);
+            double requiredTp = costPrice * MIN_TP_COST_MULTIPLE;
+            if(tpDistance < requiredTp)
+            {
+                errorMsg = StringFormat("TP distance %.1f points is below %.1f points (%.0fx the %.1f-point round-trip cost) - target does not pay for the spread",
+                                        tpDistance / point, requiredTp / point,
+                                        MIN_TP_COST_MULTIPLE, costPrice / point);
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -290,33 +400,25 @@ public:
     //+--------------------------------------------------------------+
     static double GetRoundTripCommissionCost(const string symbol, const double volume)
     {
-        double commission = 0.0;
+        // Batch 169: unit fix. SYMBOL_SPREAD is ALREADY expressed in points, so the
+        // old `spread / tickSize` produced ~2,000,000 "points" on a 20-point EURUSD
+        // spread and inflated every risk estimate that adds this term by orders of
+        // magnitude. Money moved per point = tickValue / tickSize * point.
+        // The explicit-commission branch was removed because MQL5 exposes no
+        // SYMBOL_TRADE_COMMISSION constant; a hard 0.0 made it dead code. Brokers
+        // that charge per-lot commission must supply it through the cost model
+        // (CTradeSpreadCostModel) rather than an uneditable literal here.
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
 
-        // Check for explicit commission (per lot, per side)
-        // NOTE: MQL5 has no SYMBOL_TRADE_COMMISSION constant; commission is broker-set
-        // and not directly queryable. Fall through to spread-based estimation below.
-        double commissionPerLot = 0.0;
-        if(commissionPerLot > 0.0)
-        {
-            // Commission is charged per side, so round-trip = 2 * commissionPerLot * volume
-            commission = commissionPerLot * 2.0 * volume;
-        }
-        else
-        {
-            // Many synthetic brokers embed commission in spread
-            // Estimate via spread cost: spread * tickValue * volume
-            double spread = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
-            double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-            double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+        double costPrice = GetRoundTripCostPrice(symbol);
+        if(costPrice <= 0.0 || point <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
+            return 0.0;
 
-            if(spread > 0.0 && tickValue > 0.0 && tickSize > 0.0)
-            {
-                double spreadPoints = spread / tickSize;
-                commission = spreadPoints * tickValue * volume; // Entry + exit spread cost
-            }
-        }
-
-        return commission;
+        double moneyPerPoint = (tickValue / tickSize) * point;
+        double costPoints = costPrice / point;
+        return costPoints * moneyPerPoint * volume;
     }
 
     //+--------------------------------------------------------------+

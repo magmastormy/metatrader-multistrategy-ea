@@ -251,6 +251,19 @@ The EA enforces a **multi-layer pre-trade risk gate** before any order reaches t
 8. **Spread/Session/Regime** — Filters reject signals during adverse conditions
 9. **Unprotected Position Tracker** — Blocks new entries when positions lack protective stops
 10. **Daily Loss Limit** — Circuit breaker halts trading on excessive daily loss
+11. **Stop Feasibility and Expectancy** — Rejects a trade whose stop must widen more than 1.25x past the distance lots were sized at, or whose take-profit is under 4x the round-trip spread cost (Batch 169)
+
+### What the operator will notice after Batch 168-169
+
+- **Protective code runs for the first time.** Trailing stops, breakeven, signal-reversal exit, max-hold, loss-minimization, no-stop remediation and drawdown/daily halts previously classified the EA's own positions as foreign and returned early *without logging*. Expect `[MAGIC-AUTHORITY]`, `[SL-GUARD]`, `[SCALP-EXIT]` and exit activity that never appeared before.
+- **Halts survive a restart** and are re-armed at runtime, so an EA that used to resume trading after a same-day halt now stays halted until the recovery cooldown clears.
+- **Fewer, smaller trades.** Consensus needs two independent voters; indicator/data gaps now veto instead of passing; targets that do not clear the spread are refused. Authorized risk per trade is clamped to the configured limit (compounding tiers can reduce it, never raise it), while the corrected cost model lowers *estimated* risk so more of what remains passes the gate.
+- **Execution is verified, not assumed.** Fills are confirmed against live positions, retries dedup before resending, and unreconciled sends log `[EXECUTION-UNCONFIRMED]` / `[RISK-UNRECONCILED]` instead of disappearing.
+- **Statistical arbitrage abstains** (`[STATARB-UNHEDGED]`) until both legs of a pair signal are executable; it is disabled in the live config today.
+- **Small accounts may see trades refused on size.** A lot that would have to round up to the broker minimum by more than 3x the approved risk is now refused (`[PositionSizer] Min lot round-up refused`). Widen the stop; do not raise the ceiling.
+- **Scalp positions are exited by the scalp engine again.** Batch 168 switched lifecycle breakeven/trailing on for every owned position, which was cutting fast-scalp trades short of their own targets; engine-tagged positions are now excluded from lifecycle exits (they still count in risk and daily-loss accounting).
+- **Order-flow filters no longer fire on made-up volume.** OFI and VPIN are disabled for synthetic-index symbols, and any symbol whose broker publishes no traded volume logs `[VOLUME-PROXY]` at init.
+- **Log verification is still owed.** These batches ship on compile + static review (AGENTS.md §5.2); confirm the signatures above on the first live or demo session before trusting the equity curve.
 
 ## AI Integration
 

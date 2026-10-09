@@ -16,6 +16,7 @@
 #include "../Utils/Instruments.mqh"
 #include "../Risk/PositionSizer.mqh"
 #include "../Risk/UnifiedRiskManager.mqh"
+#include "../Trading/TradeMgrPricing.mqh"
 #include <Trade\Trade.mqh>
 
 #include "ATRScalpTypes.mqh"
@@ -23,7 +24,7 @@
 class CUnifiedRiskManager;
 
 //+------------------------------------------------------------------+
-//| CATRScalpEntry â€?owns the entry dependencies and open counter     |
+//| CATRScalpEntry ï¿½?owns the entry dependencies and open counter     |
 //+------------------------------------------------------------------+
 class CATRScalpEntry
 {
@@ -71,7 +72,7 @@ public:
 
       if(atr <= 0.0)
       {
-         PrintFormat("[ATR-SCALP] ATR is zero for %s â€?cannot calculate SL/TP", symbol);
+         PrintFormat("[ATR-SCALP] ATR is zero for %s ï¿½?cannot calculate SL/TP", symbol);
          return false;
       }
 
@@ -153,6 +154,19 @@ public:
          tp = NormalizeDouble(entryPrice - tpDistance, digits);
       }
 
+      // Batch 170: shared stop-feasibility and expectancy gate. This engine sends
+      // through its own CTrade object rather than CTradeManager, so the broker
+      // minimum stop distance, the sized-stop widening rejection and the
+      // take-profit-must-clear-the-spread test were all absent here - scalp
+      // entries placed stops inside the spread and targets that cannot pay for
+      // the round trip. Stops are validated before the send, not adjusted after.
+      string scalpStopError = "";
+      if(!CTradeMgrPricing::NormalizeAndValidateStops(symbol, orderType, entryPrice, tp, sl, tp, scalpStopError))
+      {
+         PrintFormat("[ATR-SCALP] STOPS REJECTED | %s | %s", symbol, scalpStopError);
+         return false;
+      }
+
       // Calculate magic number: baseMagic + magicOffset + symbolIndex
       int magic = m_baseMagic + config.magicOffset + idx;
 
@@ -180,7 +194,11 @@ public:
       // Set up trade object
       trade.SetExpertMagicNumber(magic);
       trade.SetDeviationInPoints(50);
-      trade.SetTypeFilling(ORDER_FILLING_IOC);
+      // L7-015: honor the symbol's supported fill mode; fall back to market (RETURN) when IOC/FOK unavailable
+      long symFillMode = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+      ENUM_ORDER_TYPE_FILLING scalpFill = ((symFillMode & SYMBOL_FILLING_IOC) != 0) ? ORDER_FILLING_IOC :
+                                         (((symFillMode & SYMBOL_FILLING_FOK) != 0) ? ORDER_FILLING_FOK : ORDER_FILLING_RETURN);
+      trade.SetTypeFilling(scalpFill);
 
       // Execute trade
       bool result = false;

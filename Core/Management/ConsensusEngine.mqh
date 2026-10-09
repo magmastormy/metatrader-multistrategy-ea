@@ -78,9 +78,20 @@
                                                   // ENUM_INTRABAR_POLICY, SConsensusDecisionContext
 #include "../../Interfaces/IStrategy.mqh"         // IStrategy::GetSignal / GetType / SetEnabled
 #include "../Pipeline/UnifiedSignalPipeline.mqh"  // CUnifiedSignalPipeline::ProcessSignal
+#include "../Engines/RegimeEngine.mqh"             // CRegimeEngine::GetSnapshot (regime vote weighting)
 #include "../Strategy/StrategyRegistry.mqh"       // CStrategyRegistry::IsStrategyActive / GetMode
 #include "../Utils/JsonLogger.mqh"                // CJsonLogger, CCorrelationIdGenerator
 #include "DiagnosticsManager.mqh"                 // CDiagnosticsManager
+
+//+------------------------------------------------------------------+
+//| Minimum independent voters required for a consensus entry        |
+//| (Batch 169). A policy floor applied at the decision point, so it |
+//| holds regardless of which quorum profile is selected and is not  |
+//| degraded when few strategies are eligible on a symbol.          |
+//+------------------------------------------------------------------+
+#ifndef MIN_CONSENSUS_VOTERS
+#define MIN_CONSENSUS_VOTERS 2
+#endif
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
@@ -122,7 +133,7 @@ public:
 
     //--- vote / weighting helpers
     bool   IsStrategyLiveVoter(const int strategyIndex) const;
-    double GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const;
+    double GetRegimeCategoryMultiplier(const string symbol, ENUM_STRATEGY_TYPE strategyType) const;
     double GetStrategyReliabilityMultiplier(const int strategyIndex) const;
     double GetStrategyParticipationMultiplier(const int strategyIndex) const;
     double GetStrategyRoleVoteMultiplier(const int strategyIndex) const;
@@ -519,10 +530,101 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignal(const string symbol,
 //+------------------------------------------------------------------+
 //| Consensus fallback multipliers (hardcoded defaults preserved)    |
 //+------------------------------------------------------------------+
-double CConsensusEngine::GetRegimeCategoryMultiplier(ENUM_STRATEGY_TYPE strategyType) const
+//+------------------------------------------------------------------+
+//| Hard regime gate (file-scope helper, Phase 2 rebuild).           |
+//| Returns 0.0 when a strategy category has NO edge in the current  |
+//| regime (vote is hard-disabled); 1.0 when allowed; 0.25-0.40 to   |
+//| strongly deweight in ambiguous regimes. Regime-neutral strategies|
+//| (ICT, AI, SR, candlestick, stat-arb) always pass (1.0).          |
+//+------------------------------------------------------------------+
+double RegimeStateHardGate(ENUM_REGIME_STATE state, ENUM_STRATEGY_TYPE t)
 {
-    // Regime-based weighting unavailable - return default
-    return 1.0;
+    bool isTrendLike     = (t == STRATEGY_TREND || t == STRATEGY_MOMENTUM);
+    bool isReversionLike = (t == STRATEGY_MEAN_REVERSION || t == STRATEGY_RANGE_COMPRESSION);
+
+    switch(state)
+    {
+        case REGIME_TREND:
+            // Confirmed trend: fading it (mean reversion) is the fastest way to blow an account.
+            if(isReversionLike) return 0.0;
+            return 1.0;
+        case REGIME_RANGE:
+            // Range-bound chop: trend/momentum systems whipsaw and bleed. Reversion is king here.
+            if(isTrendLike) return 0.0;
+            return 1.0;
+        case REGIME_BREAKOUT:
+            // Breakout: momentum/breakout thrive; reversion still dangerous -> strongly deweight (not hard-kill).
+            if(isReversionLike) return 0.25;
+            return 1.0;
+        case REGIME_CHAOS:
+            return 0.40;   // deweight everything, never hard-kill (avoid whipsaw death)
+        default:
+            return 1.0;
+    }
+}
+
+double CConsensusEngine::GetRegimeCategoryMultiplier(const string symbol, ENUM_STRATEGY_TYPE strategyType) const
+{
+    // REBUILD (2026-09-18): the prior version floored the regime multiplier at 0.4 and "could NEVER
+    // invert or zero a vote", which forced trend systems to vote inside ranges and reversion systems
+    // inside trends - the core "baby-learning-to-walk" defect that makes the EA lose more than a human.
+    // We now HARD-GATE: a strategy category with no edge in the current regime contributes ZERO to the
+    // consensus, and unclassified regimes are deweighted (stand-aside bias) instead of full-weighted.
+    if(m_src == NULL)
+        return 1.0;
+
+    CUnifiedSignalPipeline* pipeline = m_src.GetPipelineConst();
+    if(pipeline == NULL)
+        return 1.0;
+
+    CRegimeEngine* regime = pipeline.GetRegimeEngine(symbol);
+    if(regime == NULL)
+        return 1.0;
+
+    SRegimeSnapshot snap = regime.GetSnapshot();
+
+    // UNCLASSIFIED / warmup: never full-weight. Deliberate stand-aside bias.
+    if(!snap.valid)
+        return 0.30;
+
+    // HARD REGIME GATE - does this strategy category have any edge in the current regime?
+    double gate = RegimeStateHardGate(snap.state, strategyType);
+    if(gate <= 0.0)
+        return 0.0;   // category has no business trading this regime -> disable vote entirely
+
+    // Per-category weight from the live regime composite (Hurst-blended).
+    double catMult = 1.0;
+    switch(strategyType)
+    {
+        case STRATEGY_TREND:              catMult = snap.trendWeightMult;     break;
+        case STRATEGY_MOMENTUM:           catMult = snap.momentumWeightMult;  break;
+        case STRATEGY_MEAN_REVERSION:     catMult = snap.meanRevWeightMult;    break;
+        case STRATEGY_VOLATILITY_BREAKOUT:
+        case STRATEGY_RANGE_COMPRESSION:  catMult = snap.breakoutWeightMult;   break;
+        case STRATEGY_UNIFIED_ICT:
+        case STRATEGY_UNICORN_MODEL:
+        case STRATEGY_POWER_OF_THREE:
+        case STRATEGY_FVG_SCALPER:
+        case STRATEGY_BREAKER_BLOCK:
+        case STRATEGY_LIQUIDITY_SWEEP:
+        case STRATEGY_TURTLE_SOUP:        catMult = snap.ictWeightMult;        break;
+        // AI / ONNX / CUSTOM / Statistical Arbitrage / Support-Resistance / Candlestick / Exit-Optimizer:
+        // regime-neutral by design (1.0) - their edge is not a single regime category.
+        default:                          catMult = 1.0;                       break;
+    }
+
+    // Low-confidence / transition regime: deweight but don't hard-kill (prevents whipsaw death).
+    double confMult = 1.0;
+    if(snap.state == REGIME_CHAOS)
+        confMult = 0.30;
+    else if(snap.regimeConfidence < 0.35)
+        confMult = 0.55;
+
+    if(!MathIsValidNumber(catMult) || catMult < 0.0)
+        return 1.0;
+
+    double mult = catMult * gate * confMult;
+    return MathMax(0.0, MathMin(2.5, mult));
 }
 
 bool CConsensusEngine::IsStrategyLiveVoter(const int strategyIndex) const
@@ -792,9 +894,20 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
     int baseMinQuorum = (evalMode == EVAL_MODE_INTRABAR) ? m_src.GetIntrabarMinQuorum() : m_src.GetMinQuorum();
     double baseQuorumThreshold = m_src.GetQuorumThreshold();
 
-    // Effective minimum voters - ensure at least baseMinQuorum
-    // [PROFIT-01] Cap quorum at the voters actually available; never require unanimity.
-    effectiveMinVoters = MathMax(1, MathMin(baseMinQuorum, eligibleLiveVoterCount));
+    // Effective minimum voters.
+    //
+    // Batch 169: MIN_CONSENSUS_VOTERS is a policy floor that no quorum profile can
+    // lower. Two defects made "consensus" decorative:
+    //  (1) ApplyQuorumProfile sets minQuorum=1 for the BALANCED (default) and
+    //      AGGRESSIVE profiles, so a single strategy could win outright.
+    //  (2) The old line capped the requirement at the number of voters actually
+    //      eligible - `MathMin(baseMinQuorum, eligibleLiveVoterCount)` - so even a
+    //      configured 2 degraded to 1 whenever only one strategy was live on the
+    //      symbol. Combined with quorum being measured against votes CAST (1/1 =
+    //      1.00), a lone voter cleared every gate.
+    // Requiring two independent voters is the point of a multi-strategy EA; one
+    // strategy agreeing with itself is not agreement.
+    effectiveMinVoters = MathMax(baseMinQuorum, MIN_CONSENSUS_VOTERS);
 
     // Support floor based on evaluation mode
     supportFloor = (evalMode == EVAL_MODE_INTRABAR) ? m_src.GetSupportFloorIntrabar() : m_src.GetSupportFloorNewBar();
@@ -933,9 +1046,9 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         double participation = GetStrategyParticipationMultiplier(i);
         double reliability = GetStrategyReliabilityMultiplier(i);
 
-        // Weighted score = confidence * weight * participation * reliability
+        // Weighted score = confidence * weight * participation * reliability * regime
         double weight = m_src.GetStrategyWeight(i);
-        double score = stratConf * weight * participation * reliability;
+        double score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType());
 
         // Track directional quality
         if(signal == TRADE_SIGNAL_BUY)
@@ -1248,7 +1361,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusProbeOnlyInternal(const str
         double weight = m_src.GetStrategyWeight(i);
         double participation = GetStrategyParticipationMultiplier(i);
         double reliability = GetStrategyReliabilityMultiplier(i);
-        double score = stratConf * weight * participation * reliability;
+        double score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, m_src.GetStrategyPtr(i).GetType());
 
         if(signal == TRADE_SIGNAL_BUY)
         {
@@ -1390,7 +1503,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignalInternal(const string s
         double contextScore = m_src.GetStrategyContextScore(i);
         double costScore = m_src.GetStrategyCostScore(i);
         double qualityMultiplier = (readinessScore * 0.4 + contextScore * 0.4 + costScore * 0.2);
-        double score = stratConf * weight * participation * reliability * qualityMultiplier;
+        double score = stratConf * weight * participation * reliability * qualityMultiplier * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType());
 
         // Apply minimum threshold (relaxed for solo fallback)
         double minSoloConfidence = (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;

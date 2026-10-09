@@ -93,11 +93,14 @@ private:
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
         int needed = m_bbPeriod + 5;
-        int copied = CopyRates(m_symbol, m_timeframe, 0, needed, rates);
+        // Batch 169: copy from shift 1. Copying from 0 put the still-forming
+        // bar in rates[0], so the band was stretched by a bar whose close had
+        // not happened yet - the breakout level moved as the bar moved.
+        int copied = CopyRates(m_symbol, m_timeframe, 1, needed, rates);
         if(copied < m_bbPeriod)
             return false;
 
-        // Compute mean of close prices over bbPeriod bars (starting from bar 1)
+        // Compute mean of close prices over bbPeriod closed bars
         double sum = 0;
         for(int i = 0; i < m_bbPeriod; i++)
             sum += rates[i].close;
@@ -124,11 +127,14 @@ private:
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
         int needed = m_atrPeriod + 5;
-        int copied = CopyRates(m_symbol, m_timeframe, 0, needed, rates);
+        // Batch 169: shift 1 so the forming bar cannot inflate ATR - this
+        // feeds the stop distance, so an inflated reading widened stops and
+        // the risk charged for them.
+        int copied = CopyRates(m_symbol, m_timeframe, 1, needed, rates);
         if(copied < m_atrPeriod + 1)  // Need prev close for True Range
             return false;
 
-        // Compute True Range for each bar, then average over atrPeriod bars (starting from bar 1)
+        // Compute True Range for each closed bar, then average over atrPeriod bars
         double sumTR = 0;
         for(int i = 0; i < m_atrPeriod; i++)
         {
@@ -675,12 +681,13 @@ private:
     // ADX Rising Filter (v2.0)
     bool ADXRising()
     {
+        // Batch 169: fail closed - missing ADX is not "expanding volatility".
         if(m_adxHandle == INVALID_HANDLE)
-            return true;  // No ADX = don't block
+            return false;
 
         double adx[2];
         if(!SafeCopyBuffer(m_adxHandle, 0, 1, 2, adx))
-            return true;
+            return false;
 
         // Batch 155: SafeCopyBuffer lands oldest-first ([0]=shift 2, [1]=shift 1),
         // so the old "adx[0] > adx[1]" tested ADX FALLING and blocked every

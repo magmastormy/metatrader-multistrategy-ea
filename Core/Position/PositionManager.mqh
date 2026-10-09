@@ -177,7 +177,7 @@ private:
     // --- Magic number check (forwarder -> CPositionMgrMagicFilter) ---
     bool IsEAOwnedMagic(long magic) const
     {
-        return CPositionMgrMagicFilter::IsEAOwnedMagic(magic, m_magicNumber);
+        return CPositionMgrMagicFilter::IsEAOwnedMagic(magic);
     }
     
     // --- Position State Tracking (forwarders -> CPositionMgrStateStore) ---

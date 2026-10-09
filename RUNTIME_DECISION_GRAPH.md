@@ -1,11 +1,11 @@
 # Runtime Decision Graph
 
 ## Document Metadata
-- Last Updated: 2026-08-28
+- Last Updated: 2026-10-09
 - Last Architecture Sync: 2026-08-23
 - Scope: Runtime signal-to-execution flow
 - Source: `Core/Orchestration/EAOrchestrator.mqh`
- - Current Batch: 158
+ - Current Batch: 170
 
 ## Purpose
 Defines the authoritative runtime decision path and ownership boundaries between signal generation, validation, risk veto, execution, and post-trade feedback.
@@ -335,6 +335,39 @@ The main EA delegates to the following extracted managers instead of inline logi
 - Intrabar scans are now budgeted per cycle and ranked by symbol yield instead of simple full-set round-robin.
 - Symbols back off after repeated `raw_none` / `zero_voter` intrabar outcomes and recover on the next new bar.
 - Intrabar/new-bar consensus behavior is manager-controlled.
+
+## Batch 170 Engine Send Governance, Min-Lot Ceiling, Volume Honesty (2026-10-09)
+- **Stop gates reach the engine paths:** `CTradeMgrPricing::NormalizeAndValidateStops` now runs before every send in `ATRScalpEntry`, `GridRecoveryExecution`, `SpikeHunterExecutor` and `FastScalpPendingOrders`. Those paths build their own `CTrade`/`MqlTradeRequest`, so Batch 169's broker-minimum, stop-widening and target-expectancy checks did not reach them. Rejection logs `[ATR-SCALP] STOPS REJECTED` / `[GRID-RECOVERY] STOPS REJECTED` / `[SPIKE-HUNT] STOPS REJECTED` / `[SCALP-PENDING] STOPS REJECTED`.
+- **Min-lot round-up capped:** `MAX_MIN_LOT_RISK_MULTIPLIER` (3.0) bounds how far a sub-minimum lot may be rounded up after the pre-trade gate approved it; the configured 15.0 is clamped with `[RISK-MINLOT]`.
+- **Daily-loss breaker armed:** `CPosLifecycleLossGuard` budget was unwritable (`m_dailyRiskBudgetPercent` had no setter); now set from `m_config.maxDailyRisk` and evaluated against `min(balance, equity)` at check time.
+- **One exit authority per book:** positions whose comment starts with `ATR-SCALP`, `GRID-RECOVERY`, `SPIKE-HUNT` or `SCALP|` are EA-**owned** (risk, exposure, daily loss still count them) but excluded from lifecycle exits via `CPosLifecycleMagicFilter::IsLifecycleManaged` / `CPositionLifecycleManager::IsPositionLifecycleManaged` / the tag test inside `CTradeManager::ManageAllPositions`. Before this, Batch 168's newly-live breakeven and trailing were fighting the fast-scalp engine's own 1R and partial closes.
+- **Comment matching tightened:** `FastScalpExit` and `FastScalpPositionTracker` matched `"SCALP"` as a substring, which also matched `ATR-SCALP` — one engine was claiming another's positions. Both require index 0.
+- **Volume-derived vetoes:** OFI and VPIN are no longer created for synthetic-index symbols (the exclusion Batch 107 already applied to VWAP/Volume Profile/CVD), and `[VOLUME-PROXY]` logs per symbol when the broker publishes no traded volume, so tick-volume-as-real-volume is labelled rather than assumed.
+- **Two fake sizing steps deleted:** `ApplyVPINScaling` and `ApplyVolTargetScaling` were `return lotSize;` stubs under comments claiming they resized; the report's `LastVPINMultiplier` was never consumed.
+- **Unchanged hazard, deliberately:** the engine paths still send outside `CTradeManager`, so they get no fill verification, retry dedup or journal entry. AGENTS.md §3.2 is still not literally satisfied for them.
+
+## Batch 169 Execution Truthfulness and Cost-Aware Entry Gates (2026-10-08)
+Second tier of the live-money audit; the decision path now verifies what it did and refuses trades that cannot pay for themselves.
+- **Entry gate — quorum:** `effectiveMinVoters` floor raised from 1 to `MIN_CONSENSUS_VOTERS 2`. A single live voter no longer constitutes consensus; symbols with fewer than two eligible voters abstain instead of trading.
+- **Entry gate — confirmers:** every indicator-absent / short-copy path in `SimpleMomentum.MACDConfirmed|StrongTrend`, `VolatilityBreakout.ADXRising`, `MeanReversion.StochasticExtreme|NoDivergence|SufficientBandWidth|MeanRevertingRegime`, `StrategyTrend.IsHTFTrendConfirmed`, `StrategyCandlestick.IsShortTermTrendAligned` and `StatArb.ValidHalfLife` flipped from `return true` to `return false`. `MeanReversion.GetADX` returns a `-1` sentinel that hard-rejects with `MEANREV_ADX_UNAVAILABLE` rather than `0.0` clearing the ADX lockout. Data loss now means "no trade", not "unvetted trade".
+- **Entry gate — bar anchoring:** `VolatilityBreakout.CalculateFallbackBB|CalculateFallbackATR`, `LiquiditySweep.FindEqualLevels` + its ATR read, and `RangeCompressionBreakout`'s trend-filter MA all moved from the forming bar (shift 0) to the last closed bar. Stops and breakout levels no longer re-derive from the bar in progress.
+- **Entry gate — expectancy:** `CTradeMgrPricing::NormalizeAndValidateStops` rejects when the take-profit distance is under `MIN_TP_COST_MULTIPLE` (4x) the round-trip spread cost. New `GetRoundTripCostPrice` is the single cost definition; `GetRoundTripCommissionCost` no longer double-counts the spread and no longer divides an already-points `SYMBOL_SPREAD` by `tickSize`.
+- **Pre-trade risk gate:** `CUnifiedRiskManager` captures a configured-limits *envelope* before any compounding tier can write, and `ApplyTierOverrides` clamps risk per trade, daily, portfolio, drawdown warning/critical, daily-loss limit and same-base position caps to it (`[RISK-ENVELOPE] ... clamped`). Tier tables can reduce authorised risk, never raise it.
+- **Execution confirmation:** a send is confirmed only by a live position matching symbol, direction and EA-owned magic within 30 s (`FindFreshPositionForSend`); `order = 0` logs `[EXECUTION-UNTRACKABLE]`; queue expiry logs `[EXECUTION-CONFIRMED-BY-POSITION]` or `[EXECUTION-UNCONFIRMED]` + `[RISK-UNRECONCILED]`.
+- **Retry:** the transient-retcode retry loop checks for a fresh position first and stops with `[EXECUTION-DEDUP]` rather than resending into a fill it already has.
+- **Stops:** `NormalizeAndValidateStops` can now reject (it previously always returned `true`); it captures the distance lots were sized at and refuses a broker-forced widening above 1.25x. `GetMinimumStopDistance` floors at max(stops level, freeze level, 1.5 spreads, 10 points), so a 0-point broker stops level no longer licenses a 1-point stop.
+- **Send parameters:** filling mode is applied to the pooled per-symbol `CTrade` that actually sends (previously configured the unused instance), with `ORDER_FILLING_RETURN` as the fallback; per-send deviation honors the dynamic-slippage config and excess is logged.
+- **Abstention:** `StatisticalArbitrageStrategy` returns `TRADE_SIGNAL_NONE` with `[STATARB-UNHEDGED]` because only one leg of its pair signal is executable.
+- **Universe validation:** `symConfig.maxSpreadPoints` now reads `symbolMaxSpreadPoints` (1500; builder applies the documented 10x synthetic allowance) instead of the 15000-point send-time backstop that made the init filter a no-op.
+
+## Batch 168 Magic Ownership Authority and Live Exit Wiring (2026-10-08)
+- **One ownership predicate:** `Core/Utils/MagicRange.mqh` (`ConfigureMagicOwnership`/`IsMagicOwned`/`ValidateMagicOwnershipCoverage`) replaces five disagreeing windows. Because orders carry an asset-class magic offset of 7000..9999, most EA positions previously read as foreign, so trailing, breakeven, pyramiding, loss guards and no-SL remediation returned early *without logging*. Startup now asserts the shipped offset fits the window and aborts rather than trading an unmanaged book.
+- **One exit authority:** `ManageOpenPositions()` calls `CPositionLifecycleManager::ManagePositions()` — the manager that actually receives `ConfigureSRE`/`ConfigureLifecycle`/`ConfigureMaxHoldTime` — replacing the never-configured `CPositionManager` path.
+- **Position management from terminal state:** `CTradeManager::ManageAllPositions` scans `PositionsTotal()` through the ownership authority instead of an in-memory ticket cache, so positions that survive a restart or fill asynchronously are still managed.
+- **Continuous breakers:** `CheckDrawdownCircuitBreaker()`/`CheckDailyLossLimit()` are called from `RefreshRuntimeState()`, not only from the pre-trade pipeline, so drawdown and daily-loss halts arm even when no candidate reaches the risk gate.
+- **Emergency flatten is EA-scoped:** `CloseAllPositions` filters by ownership; account-wide flatten requires `emergencyFlattenAllAccountPositions`, whose default flipped to `false`.
+- **Crash recovery:** risk state is applied *after* `CUnifiedRiskManager::Initialize` (previously always clobbered), written on a 30 s cadence via `GetTickCount()` so a stalled-tick crash still persists, and carries `halt_flags` + `trading_day_key` (version:2).
+- **Daily loss is EA-scoped:** realized deals filtered by magic with `DEAL_ENTRY_OUT_BY` included, unrealized summed over EA-owned positions only.
 
 ## Batch 158 Signal-Suppression Audit Sweep — Unaudited Strategy Files (2026-08-28)
 Final sweep of the signal-suppression audit campaign. Remaining unaudited strategy files and one efficiency defect in S/R strategy Fibonacci confluence helper:

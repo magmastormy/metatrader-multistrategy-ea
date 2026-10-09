@@ -206,7 +206,10 @@ private:
 
         MqlRates rates[];
         ArraySetAsSeries(rates, true);
-        int copied = CopyRates(m_symbol, m_timeframe, 0, m_lookbackBars, rates);
+        // Batch 169: pools built from the forming bar are self-referential -
+        // the live high that triggers the sweep also qualifies as one of the
+        // "equal highs" being swept. Copy from shift 1 (closed bars only).
+        int copied = CopyRates(m_symbol, m_timeframe, 1, m_lookbackBars, rates);
         if(copied < 10) return false;
 
         double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
@@ -299,7 +302,10 @@ public:
             return signal;
 
         double atr[1];
-        if(CopyBuffer(m_atrHandle, 0, 0, 1, atr) != 1 || atr[0] <= 0)
+        // Batch 169: shift 1. Shift 0 re-estimates ATR from the bar still in
+        // progress, so the sweep threshold moved with the tick that was
+        // supposed to cross it.
+        if(CopyBuffer(m_atrHandle, 0, 1, 1, atr) != 1 || atr[0] <= 0)
             return signal;
 
         // Get current bar data
