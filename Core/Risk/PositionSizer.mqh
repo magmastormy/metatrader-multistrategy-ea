@@ -1,5 +1,4 @@
-// Risk-Aware Position Sizing System
-// Calculates optimal position sizes based on risk parameters
+// Risk-aware position sizing: turns the configured risk % into a broker-legal lot size
 #property copyright "Copyright 2024, Windsurf AI"
 #property link      "https://www.windsurf.ai"
 #property version   "1.00"
@@ -19,36 +18,36 @@ class CEnhancedErrorHandler;
 class CPositionSizer;
 class CPerformanceAnalytics;
 
-// Batch 170: hard ceiling on the min-lot round-up multiplier. Rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN
-// multiplies the risk the pre-trade gate approved, because sizing happens after that gate.
+// Hard ceiling on the min-lot round-up multiplier: rounding a sub-minimum lot up to SYMBOL_VOLUME_MIN multiplies
+// the risk the pre-trade gate approved, because sizing happens after that gate.
 #ifndef MAX_MIN_LOT_RISK_MULTIPLIER
 #define MAX_MIN_LOT_RISK_MULTIPLIER 3.0
 #endif
 
 struct SPositionSizingParams
 {
-    ENUM_POSITION_SIZING_MODE sizingMode;    // Position sizing method
+    ENUM_POSITION_SIZING_MODE sizingMode;
     double fixedLotSize;
     double riskPercent;                      // Risk % per trade
-    double maxLotSize;                       // Maximum lot size cap
-    double minLotSize;                       // Minimum lot size floor
-    bool useKellySizing;                     // Enable Kelly criterion
-    bool useVolatilityTargeting;             // Enable volatility targeting
-    bool useEquityCurveScaling;              // Enable equity curve scaling
-    bool useCorrelationAdjustment;           // Enable correlation-based size reduction
+    double maxLotSize;
+    double minLotSize;
+    bool useKellySizing;
+    bool useVolatilityTargeting;
+    bool useEquityCurveScaling;
+    bool useCorrelationAdjustment;           // Correlation can only reduce size
         double correlationBlockThreshold;        // Correlation threshold to block trade
         double correlationReduceThreshold;       // Correlation threshold to reduce size
-        double correlationAdjustment;            // Correlation adjustment factor
-        double kellyWinRate;                     // Kelly win rate estimate
-        double kellyPayoffRatio;                 // Kelly payoff ratio estimate
+        double correlationAdjustment;
+        double kellyWinRate;
+        double kellyPayoffRatio;
         double kellyFraction;                    // Kelly fraction (0.25 = quarter Kelly)
         double kellyMaxCap;
         double volatilityTarget;                 // Target annualized volatility
-        double volatilityLookback;               // Volatility lookback period
-        bool useVolatilityAdjustment;            // Enable volatility adjustment
-        int atrPeriod;                           // ATR period for volatility calculation
-        double atrMultiplier;                    // ATR multiplier for volatility
-        double equityCurveLookback;              // Equity curve lookback period
+        double volatilityLookback;
+        bool useVolatilityAdjustment;
+        int atrPeriod;
+        double atrMultiplier;
+        double equityCurveLookback;
         double equityCurveMinMultiplier;
         double equityCurveMaxMultiplier;
         bool allowMinLotRoundUp;                 // Allow rounding up to broker min lot
@@ -87,10 +86,9 @@ private:
     
             double m_currentTotalRisk;
             int m_modifierCount;
-            CPositionSizerModifier* m_modifiers[];  // Dynamic array for modifiers
+            CPositionSizerModifier* m_modifiers[];
             bool m_initialized;
     
-    // Risk metrics
     double m_portfolioRisk;
     double m_dailyRiskUsed;
     int m_openPositions;
@@ -153,18 +151,17 @@ public:
     void UnregisterTradeRisk(double riskPercent);
     void ResetDailyRisk();
     
-    // Configuration updates
     void UpdateRiskPercent(double newRiskPercent);
     void UpdateMaxLotSize(double newMaxLotSize);
     void UpdateMinLotSize(double newMinLotSize);
     void SetAllowMinLotRoundUp(bool allow);
     void SetMinLotRiskMultiplier(double multiplier);
     
-    // Parameter access (L5-006)
+    // Parameter snapshot
     SPositionSizingParams GetParameters() const;
     bool SetParameters(const SPositionSizingParams &params);
     
-    // Contract-spec-aware risk helpers
+    // Contract-spec risk helpers
     double GetRiskDenominator(void);
     double CalculateRiskPerLot(const string symbol, const double stopLossPips);
     
@@ -208,23 +205,21 @@ CPositionSizer::CPositionSizer() :
 
 CPositionSizer::~CPositionSizer()
 {
-    // Delete internally created modifiers (volatility targeting, equity curve, ADX, VPIN)
-    // Note: Modifiers added via AddModifier() by EA are owned by EA and deleted there
-    // The m_modifiers[] array holds non-owning references, so we don't delete via the array
-    
+    // Deletes only the modifiers this sizer created (volatility, equity curve, ADX, VPIN). Modifiers handed to
+    // AddModifier() belong to the EA, and m_modifiers[] holds non-owning references: never delete through the array.
+
     if(m_volatilityTargetingModifier != NULL) { delete m_volatilityTargetingModifier; m_volatilityTargetingModifier = NULL; }
     if(m_equityCurveModifier != NULL) { delete m_equityCurveModifier; m_equityCurveModifier = NULL; }
     if(m_adxModifier != NULL) { delete m_adxModifier; m_adxModifier = NULL; }
     if(m_vpinModifier != NULL) { delete m_vpinModifier; m_vpinModifier = NULL; }
     
-    // Clear the modifier array (non-owning references)
     for(int i = 0; i < m_modifierCount; i++)
     {
         m_modifiers[i] = NULL;
     }
     m_modifierCount = 0;
     
-    // Release ATR handle if we created it
+    // Released only because this sizer created the handle itself
     if(m_atrHandle != INVALID_HANDLE)
     {
         IndicatorRelease(m_atrHandle);
@@ -239,9 +234,8 @@ bool CPositionSizer::Initialize(const SPositionSizingParams &params)
     m_dailyRiskUsed = 0.0;
     m_openPositions = 0;
     
-    // Note: useKellySizing is kept for backward compatibility
-    // Bayesian Kelly modifier is now added via EAOrchestrator
-    
+    // useKellySizing does nothing here: the Bayesian Kelly modifier is registered by EAOrchestrator
+
     if(m_params.useVolatilityTargeting)
     {
         m_volatilityTargetingModifier = new CVolatilityTargetingModifier();
@@ -260,7 +254,7 @@ bool CPositionSizer::Initialize(const SPositionSizingParams &params)
         }
     }
     
-    // ADX modifier is always available
+    // ADX modifier is registered unconditionally
     m_adxModifier = new CADXLotModifier();
     if(m_adxModifier.Initialize())
     {
@@ -340,8 +334,7 @@ double CPositionSizer::CalculatePositionSize(const string symbol, double stopLos
             break;
             
         case POSITION_SIZING_KELLY:
-            // L5-012: Consolidated to Bayesian Kelly modifier (added by EAOrchestrator)
-            // Fall back to fixed risk sizing; Bayesian Kelly modifier will adjust if enabled
+            // KELLY sizes on fixed risk; the Bayesian Kelly modifier (EAOrchestrator) does the adjusting
             baseSize = CalculateFixedRiskSize(symbol, stopLossPips);
             break;
             
@@ -401,7 +394,7 @@ double CPositionSizer::CalculatePositionSizeWithMode(const string symbol, double
         if(lotSize <= 0.0 || remainingDailyRisk <= 0.0 || proposedRisk <= 0.0)
             return lotSize;
     
-        // Calculate maximum allowed lot based on remaining daily risk budget
+        // Lot ceiling from the remaining daily risk budget, scaled by maxBudgetFraction
         double maxLotByBudget = lotSize * (remainingDailyRisk / proposedRisk) * maxBudgetFraction;
     
         double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
@@ -418,7 +411,7 @@ double CPositionSizer::CalculatePositionSizeWithMode(const string symbol, double
         if(symbolMaxVolume > 0.0)
             maxLotByBudget = MathMin(maxLotByBudget, symbolMaxVolume);
     
-        // Ensure we don't increase the lot size, only decrease
+        // A budget cap may only shrink the lot, never grow it
         double cappedLot = MathMin(lotSize, maxLotByBudget);
     
         double stepVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
@@ -453,7 +446,7 @@ double CPositionSizer::CalculateFixedRiskSize(const string symbol, double stopLo
     
     double lotSize = riskAmount / riskPerLot;
     
-    // Apply tier cap if PositionSizer is tier-aware
+    // Tier ceiling recomputed from the tier's own risk %
     double tierRiskPct = m_params.riskPercent;
     double riskDenominator = GetRiskDenominator();
     double tierMaxRisk = riskDenominator * (tierRiskPct / 100.0);
@@ -498,7 +491,7 @@ double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbol, dou
     
     int correlatedCount = CountHighlyCorrelatedPositions(symbol, m_params.correlationBlockThreshold);
     
-    // Use actual correlation values from engine instead of count-based heuristic
+    // Prefer measured correlations over the count-based fallback
     double avgCorrelation = 0.0;
     int validCorrelations = 0;
     
@@ -513,7 +506,7 @@ double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbol, dou
             continue;
         
         double corr = m_correlationEngine.GetCorrelation(symbol, posSymbol);
-        if(corr > 0.0) // Valid correlation
+        if(corr > 0.0) // Only positive correlations enter the average
         {
             avgCorrelation += corr;
             validCorrelations++;
@@ -523,7 +516,7 @@ double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbol, dou
     if(validCorrelations > 0)
     {
         avgCorrelation /= validCorrelations;
-        // Scale by 1 - avgCorrelation (risk parity style)
+        // Risk-parity scale 1 - avgCorrelation, floored at 0.25 so the position is never cancelled outright
         double reduction = MathMax(0.25, 1.0 - avgCorrelation);
         baseSize *= reduction;
         
@@ -532,7 +525,7 @@ double CPositionSizer::CalculateCorrelationAdjustedSize(const string symbol, dou
     }
     else if(correlatedCount > 0)
     {
-        // Fallback to count-based reduction if no valid correlations
+        // Count-based fallback when the engine returned no positive correlation
         double reduction = 1.0 / (1.0 + correlatedCount * 0.5);
         reduction = MathMax(0.25, reduction);
         baseSize *= reduction;
@@ -597,6 +590,7 @@ double CPositionSizer::ApplyModifiers(double baseSize, const string symbol, doub
     return currentSize;
 }
 
+// false = refuse the send: rounding here would change the risk the pre-trade gate approved
 bool CPositionSizer::ValidatePositionSize(const string symbol, double &lotSize, double stopLossPips)
 {
     if(lotSize <= 0.0)
@@ -611,8 +605,7 @@ bool CPositionSizer::ValidatePositionSize(const string symbol, double &lotSize, 
             if(m_params.allowMinLotRoundUp)
             {
                 double riskRatio = minLot / lotSize;
-                // The configured ceiling is itself clamped to MAX_MIN_LOT_RISK_MULTIPLIER (3.0)
-                // in SetMinLotRiskMultiplier, so no separate pre-check is needed here.
+                // Ceiling already clamped to MAX_MIN_LOT_RISK_MULTIPLIER (3.0) in SetMinLotRiskMultiplier
                 if(riskRatio > m_params.minLotRiskMultiplier)
                 {
                     CEnhancedErrorHandler::LogError(ERROR_RECOVERABLE, "PositionSizer",
@@ -638,9 +631,8 @@ bool CPositionSizer::ValidatePositionSize(const string symbol, double &lotSize, 
     
     if(stepLot > 0.0)
     {
-        // Batch 152: the old trailing NormalizeDouble(...,2) re-broke SYMBOL_VOLUME_STEP
-        // of 0.001 (floored 0.999 was rounded back off-step -> invalid-volume rejects).
-        // Floor to whole steps and clean FP dust at 8 digits instead.
+        // Floor to whole SYMBOL_VOLUME_STEP and clean FP dust at 8 digits: NormalizeDouble(...,2) pushed a
+        // 0.001-step lot (0.999) back off-step and the broker rejected it as invalid volume
         long wholeSteps = (long)MathFloor(lotSize / stepLot + 1e-9);
         lotSize = NormalizeDouble(wholeSteps * stepLot, 8);
     }
@@ -660,7 +652,7 @@ double CPositionSizer::NormalizeVolume(const string symbolParam, double volume)
     if(step <= 0.0)
         return volume;
     
-    // Batch 152: floor to whole steps (8-digit cleanup, not 2dp - see NormalizeLot note)
+    // Same step floor as ValidatePositionSize: 8 digits, never 2dp
     long wholeSteps = (long)MathFloor(volume / step + 1e-9);
     double normalized = NormalizeDouble(wholeSteps * step, 8);
     
@@ -678,7 +670,6 @@ double CPositionSizer::NormalizeVolume(const string symbolParam, double volume)
     return normalized;
 }
 
-// Risk metrics
 double CPositionSizer::GetCurrentTotalRisk() const
 {
     return m_currentTotalRisk;
@@ -709,7 +700,6 @@ void CPositionSizer::ResetDailyRisk()
     Print("[PositionSizer] Daily risk reset");
 }
 
-// Configuration updates
 void CPositionSizer::UpdateRiskPercent(double newRiskPercent)
 {
     m_params.riskPercent = MathMax(0.01, MathMin(100.0, newRiskPercent));
@@ -733,9 +723,8 @@ void CPositionSizer::SetAllowMinLotRoundUp(bool allow)
 
 void CPositionSizer::SetMinLotRiskMultiplier(double multiplier)
 {
-    // The ceiling is enforced in code, not config. Rounding a sub-minimum lot up to the broker minimum multiplies
-    // the risk the pre-trade gate approved, so the multiplier IS the per-trade risk cap on a small account
-    // (maxRiskPerTrade 1.0 with a 15.0 multiplier would let one position risk 15% of equity).
+    // Enforced in code, not config: a min-lot round-up multiplies the risk the pre-trade gate approved, so this
+    // multiplier IS the per-trade risk cap on a small account (risk 1.0% x 15.0 would let one position risk 15%)
     double clamped = MathMin(MathMax(1.0, multiplier), MAX_MIN_LOT_RISK_MULTIPLIER);
     if(MathAbs(clamped - multiplier) > 0.000001)
         PrintFormat("[RISK-MINLOT] round-up multiplier %.2fx requested, %.2fx applied (code ceiling - a min-lot round-up multiplies the risk the pre-trade gate approved)",
@@ -744,7 +733,6 @@ void CPositionSizer::SetMinLotRiskMultiplier(double multiplier)
     m_params.minLotRiskMultiplier = clamped;
 }
 
-// Parameter access (L5-006)
 SPositionSizingParams CPositionSizer::GetParameters() const
 {
     return m_params;
@@ -757,15 +745,14 @@ bool CPositionSizer::SetParameters(const SPositionSizingParams &params)
     return true;
 }
 
-// Account risk denominator
-// AUDIT FIX: This implementation must be kept in sync with CPortfolioRiskManager::GetRiskDenominator
-// to ensure consistent risk calculation across all risk components.
+// Account risk denominator: must stay in sync with CPortfolioRiskManager::GetRiskDenominator so every risk
+// component measures against the same value
 double CPositionSizer::GetRiskDenominator(void)
 {
     return CRiskMath::GetRiskDenominator();
 }
 
-// Risk per 1.0 lot for a stop distance
+// Money-risked per 1.0 lot for a stop distance in pips
 double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const double stopLossPips)
 {
     if(symbolParam == "" || stopLossPips <= 0.0) {
@@ -782,14 +769,15 @@ double CPositionSizer::CalculateRiskPerLot(const string symbolParam, const doubl
         return 0.0;
     }
 
-    // Stops are placed at pips*point (CTradeMgrPricing::CalculateStops) and URM risk math uses pips*point too;
-    // the old stopLossPips * point * 10.0 convention made per-lot risk 10x high, so FIXED_RISK traded ~1/10 of configured risk.
+    // pips*point is the convention everywhere (CTradeMgrPricing::CalculateStops places stops that way and URM risk
+    // math reads them the same way); the old pips*point*10.0 pip-vs-point mistake made per-lot risk 10x high, so
+    // FIXED_RISK traded about 1/10 of the configured risk.
     double slDistancePrice = stopLossPips * point;
     double slTicks = slDistancePrice / tickSize;
 
     double riskPerLot = slTicks * tickValue;
 
-    // Convert to account currency if needed
+    // Reprice into the account currency when the symbol pays out in another one
     if(profitCurrency != accountCurrency)
     {
         string directPair = profitCurrency + accountCurrency;
@@ -833,7 +821,7 @@ double CPositionSizer::GetATR(const string symbol, int period, ENUM_TIMEFRAMES t
         }
     }
 
-    // Fallback: create temporary handle
+    // Fallback: this sizer's own handle, rebuilt when symbol or period changes
     if(m_atrSymbol != symbol || m_atrPeriod != period)
     {
         InvalidateATRHandle(symbol);
@@ -869,7 +857,7 @@ void CPositionSizer::UpdateRiskMetrics()
     m_currentTotalRisk = 0.0;
     m_openPositions = 0;
 
-    // Iterate all positions (filter by magic number in production)
+    // Counts every open position on the account: no magic-number filter here, unlike the daily-loss breaker
     for(int i = 0; i < PositionsTotal(); i++)
     {
         ulong ticket = PositionGetTicket(i);
@@ -888,8 +876,7 @@ void CPositionSizer::UpdateRiskMetrics()
         double stopLossPips = 0.0;
         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
         
-        // Batch 152 (H-6): divide by point only - actual stops are placed at
-        // pips*point, and CalculateRiskPerLot now expects the same convention.
+        // Pips back out as price distance / point only: stops sit at pips*point and CalculateRiskPerLot expects that
         if(type == POSITION_TYPE_BUY)
             stopLossPips = (openPrice - sl) / point;
         else
@@ -911,8 +898,8 @@ void CPositionSizer::UpdateRiskMetrics()
             m_openPositions++;
         }
     }
-    // No post-loop rescaling by the risk denominator: riskPct is already a percentage, and dividing again
-    // understated m_currentTotalRisk (~100x on $10k equity), permanently disarming the portfolio-risk cap.
+    // No post-loop division by the risk denominator: riskPct is already a percentage, and dividing again understated
+    // m_currentTotalRisk (~100x on $10k equity), permanently disarming the portfolio-risk cap.
 }
 
 string CPositionSizer::GetDiagnostics() const

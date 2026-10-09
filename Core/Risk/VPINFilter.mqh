@@ -4,7 +4,6 @@
 
 #include "../Utils/Enums.mqh"
 
-// Toxicity Regime Enumeration
 enum ENUM_VPIN_TOXICITY
 {
     VPIN_TOXICITY_LOW      = 0,   // VPIN < 0.3 — safe to trade
@@ -13,7 +12,7 @@ enum ENUM_VPIN_TOXICITY
     VPIN_TOXICITY_EXTREME  = 3    // VPIN > 0.7 — kill new positions
 };
 
-// VPIN Tick Classification Mode (L5-024)
+// How a tick's buy/sell side is attributed
 enum ENUM_VPIN_CLASSIFICATION
 {
     VPIN_CLASSIFY_TICK_RULE    = 0, // Price change tick rule (default)
@@ -24,12 +23,12 @@ enum ENUM_VPIN_CLASSIFICATION
 struct SVPINSnapshot
 {
     double             vpinValue;              // Current VPIN value [0–1]
-    ENUM_VPIN_TOXICITY toxicityRegime;         // Current toxicity regime
+    ENUM_VPIN_TOXICITY toxicityRegime;
     double             positionSizeMultiplier;
-    int                bucketCount;            // Total buckets allocated
-    int                completedBuckets;       // Number of completed buckets
+    int                bucketCount;            // Ring-buffer capacity
+    int                completedBuckets;
     double             buyVolumeRatio;         // Buy volume / total volume in latest bucket
-    datetime           timestamp;              // Snapshot time
+    datetime           timestamp;
 
     SVPINSnapshot() :
         vpinValue(0.0),
@@ -48,54 +47,48 @@ struct SVPINSnapshot
 #define VPIN_WARMUP_BARS          20    // Bars used to auto-calculate bucket volume
 #define VPIN_LOG_THROTTLE_SEC     60    // Minimum seconds between throttled log outputs
 
-// CVPINFilter — VPIN toxicity filter for risk gating
-// Uses volume-synchronized buckets (not time buckets) to compute
-// the Volume-Synchronized Probability of Informed Trading (VPIN).
-// For synthetic CFDs without real LOB data, tick price changes are
-// used as proxy for buy/sell classification via the tick rule.
+// VPIN = Volume-Synchronized Probability of Informed Trading: the rolling average of |buy - sell| / volume
+// across fixed-VOLUME buckets (not time buckets). Synthetic CFDs have no real LOB data, so the tick rule on
+// price changes proxies the buy/sell split. ShouldBlockNewPositions() is the veto but no gate calls it — it is
+// read only by this filter's own status line — so the only VPIN effect on live trading is the lot reduction that
+// CVPINLotModifier applies from GetPositionSizeMultiplier().
 class CVPINFilter
 {
 private:
-    // Configuration
-    string             m_symbol;               // Traded symbol
+    string             m_symbol;
     double             m_bucketVolumeSize;     // Volume per bucket (0 = auto-calculate)
     double             m_bucketSize;
-    int                m_numBuckets;           // Number of buckets for rolling VPIN average
+    int                m_numBuckets;           // Buckets in the rolling VPIN average
     double             m_extremeThreshold;     // VPIN level that triggers EXTREME regime
 
-    // Auto-calculation state
-    bool               m_bucketSizeAuto;       // True if bucket size should be auto-calculated
-    bool               m_bucketSizeResolved;   // True once auto-calculation is complete
+    bool               m_bucketSizeAuto;       // Set when bucketVolumeSize arrived as 0
+    bool               m_bucketSizeResolved;   // Cleared again by Reset() while auto
 
-    // L5-024: Tick classification mode
+    // Mode written by SetClassificationMode
     ENUM_VPIN_CLASSIFICATION m_classificationMode;
 
-    // Tick classification state
     double             m_prevTickPrice;        // Previous tick price for tick rule
     bool               m_prevTickIsBuy;        // Previous tick classification (true=buy, false=sell)
     bool               m_firstTick;            // True until first tick is processed
-    ENUM_VPIN_CLASSIFICATION m_classifyMode;   // L5-024: Classification mode
+    ENUM_VPIN_CLASSIFICATION m_classifyMode;   // Mode read by ClassifyTick (set by the ctor)
 
     // Current bucket accumulation
-    double             m_currentBucketBuyVol;  // Buy volume accumulated in current bucket
-    double             m_currentBucketSellVol; // Sell volume accumulated in current bucket
-    double             m_currentBucketTotalVol;// Total volume accumulated in current bucket
+    double             m_currentBucketBuyVol;
+    double             m_currentBucketSellVol;
+    double             m_currentBucketTotalVol;// Compared against m_bucketVolumeSize to close a bucket
 
     // Completed bucket imbalances (ring buffer)
-    double             m_imbalances[];         // Ring buffer of bucket imbalances
-    int                m_imbalanceCapacity;    // Allocated size of ring buffer
-    int                m_imbalanceWriteIdx;    // Next write position in ring buffer
-    int                m_imbalanceCount;       // Number of imbalances written (up to capacity)
+    double             m_imbalances[];
+    int                m_imbalanceCapacity;
+    int                m_imbalanceWriteIdx;
+    int                m_imbalanceCount;       // Written so far, capped at capacity
 
-    // VPIN computation result
-    double             m_currentVPIN;          // Latest VPIN value
-    int                m_completedBuckets;     // Total completed buckets since start
+    double             m_currentVPIN;
+    int                m_completedBuckets;     // Buckets closed since construction: the warmup counter
 
-    // Log throttling
-    datetime           m_lastLogTime;          // Last time a throttled log was emitted
+    datetime           m_lastLogTime;
 
-// Classify tick as buy or sell using configurable mode
-// L5-024: Support multiple classification modes
+// Mode picks the rule; an unchanged price inherits the previous side
     bool ClassifyTick(double tickPrice, double tickVolume = 0.0, double bid = 0.0, double ask = 0.0)
     {
         if(m_firstTick)
@@ -112,7 +105,6 @@ private:
         switch(m_classifyMode)
         {
             case VPIN_CLASSIFY_BID_ASK:
-                // Use bid/ask spread for classification
                 if(bid > 0.0 && ask > 0.0)
                 {
                     double midPrice = (bid + ask) / 2.0;
@@ -136,7 +128,7 @@ private:
                 break;
                 
             case VPIN_CLASSIFY_VOLUME_WEIGHTED:
-                // Weight classification by tick volume (higher volume ticks have more influence)
+                // Behaves like the tick rule here: tickVolume is not read inside the classification itself
                 if(tickPrice > m_prevTickPrice)
                     isBuy = true;
                 else if(tickPrice < m_prevTickPrice)
@@ -147,7 +139,6 @@ private:
                 
             case VPIN_CLASSIFY_TICK_RULE:
             default:
-                // Standard tick rule: price change determines direction
                 if(tickPrice > m_prevTickPrice)
                     isBuy = true;
                 else if(tickPrice < m_prevTickPrice)
@@ -162,9 +153,7 @@ private:
         return isBuy;
     }
 
-// Auto-calculate bucket volume size from average bar tick volume
-// Uses the first VPIN_WARMUP_BARS to compute average tick volume,
-// then sets bucket size = avgVolume * 0.5
+// Bucket volume = average tick volume of the first VPIN_WARMUP_BARS bars, halved
     bool AutoCalculateBucketSize()
     {
         if(!SymbolSelect(m_symbol, true))
@@ -189,7 +178,7 @@ private:
         double avgVol = (double)totalVol / (double)copied;
         m_bucketVolumeSize = avgVol * 0.5;
 
-        // Floor at a reasonable minimum to avoid degenerate tiny buckets
+        // Floor at 1.0: sub-unit buckets turn VPIN into noise
         if(m_bucketVolumeSize < 1.0)
             m_bucketVolumeSize = 1.0;
 
@@ -199,7 +188,7 @@ private:
         return true;
     }
 
-// Complete current bucket and push imbalance into ring buffer
+// Closes the bucket: imbalance = |buy - sell| / total volume
     void CompleteBucket()
     {
         double totalVol = m_currentBucketBuyVol + m_currentBucketSellVol;
@@ -223,7 +212,6 @@ private:
         RecomputeVPIN();
     }
 
-// Recompute VPIN from ring buffer
     void RecomputeVPIN()
     {
         if(m_imbalanceCount == 0)
@@ -245,7 +233,6 @@ private:
         m_currentVPIN = sum / (double)count;
     }
 
-// Classify VPIN value into toxicity regime
     ENUM_VPIN_TOXICITY ClassifyToxicity(double vpin) const
     {
         if(vpin >= m_extremeThreshold)
@@ -257,7 +244,7 @@ private:
         return VPIN_TOXICITY_LOW;
     }
 
-// Map toxicity regime to position size multiplier
+// Regime to size multiplier: LOW 1.0, MEDIUM 0.5, HIGH 0.25, EXTREME 0.1
     double ToxicityToMultiplier(ENUM_VPIN_TOXICITY regime) const
     {
         switch(regime)
@@ -281,10 +268,6 @@ private:
     }
 
 public:
-// @param symbol           — trading symbol
-// @param bucketVolumeSize — volume per bucket (0 = auto-calculate)
-// @param numBuckets       — number of buckets for VPIN average
-// @param extremeThreshold — VPIN level triggering EXTREME regime
     CVPINFilter(const string symbol = "", double bucketVolumeSize = 0.0,
                         int numBuckets = VPIN_DEFAULT_NUM_BUCKETS,
                         double extremeThreshold = VPIN_DEFAULT_EXTREME,
@@ -308,7 +291,7 @@ public:
             m_completedBuckets(0),
             m_lastLogTime(0)
         {
-            // Clamp parameters to safe ranges
+            // numBuckets clamped to 10..VPIN_MAX_BUCKETS, extremeThreshold to 0.30..0.95
             if(m_numBuckets < 10)
                 m_numBuckets = 10;
             if(m_numBuckets > VPIN_MAX_BUCKETS)
@@ -318,7 +301,6 @@ public:
             if(m_extremeThreshold > 0.95)
                 m_extremeThreshold = 0.95;
 
-            // Allocate ring buffer — store up to VPIN_MAX_BUCKETS imbalances
             m_imbalanceCapacity = VPIN_MAX_BUCKETS;
             ArrayResize(m_imbalances, m_imbalanceCapacity);
             ArrayInitialize(m_imbalances, 0.0);
@@ -329,7 +311,6 @@ public:
                         m_numBuckets, m_extremeThreshold, m_classificationMode);
         }
 
-        // L5-024: Set classification mode
         void SetClassificationMode(ENUM_VPIN_CLASSIFICATION mode)
         {
             m_classificationMode = mode;
@@ -341,14 +322,10 @@ public:
         ArrayFree(m_imbalances);
     }
 
-// OnTick — call every tick to classify and accumulate volume
-// @param tickPrice — current tick price
-// @param tickVolume — current tick volume
-// @param bid — current bid price (for bid/ask classification mode)
-// @param ask — current ask price (for bid/ask classification mode)
+// Feed every tick: classifies the side and accumulates bucket volume
+// bid/ask matter only to the BID_ASK mode
         void OnTick(double tickPrice, double tickVolume, double bid = 0.0, double ask = 0.0)
         {
-            // Auto-calculate bucket size on first ticks if needed
             if(m_bucketSizeAuto && !m_bucketSizeResolved)
             {
                 if(!AutoCalculateBucketSize())
@@ -360,7 +337,7 @@ public:
 
             bool isBuy = ClassifyTick(tickPrice, tickVolume, bid, ask);
 
-            // When tick volume is 0 (synthetic CFDs, some forex), use unit volume per tick
+            // Volume proxy: tick volume is 0 on synthetic CFDs and some forex feeds, so each tick counts as 1 unit
             double effectiveVolume = (tickVolume > 0.0) ? tickVolume : 1.0;
 
             if(isBuy)
@@ -369,21 +346,19 @@ public:
                 m_currentBucketSellVol += effectiveVolume;
             m_currentBucketTotalVol += effectiveVolume;
 
-            // L5-025: Handle bucket overflow - carry excess volume to next bucket
-            // Instead of completing only one bucket, complete as many full buckets as needed
+            // One tick can fill several buckets, so loop and carry the excess into the next one
             while(m_currentBucketTotalVol >= m_bucketVolumeSize && m_bucketVolumeSize > 0.0)
             {
                 double excessVolume = m_currentBucketTotalVol - m_bucketVolumeSize;
                 double excessRatio  = excessVolume / m_currentBucketTotalVol;
 
-                // Batch 152 (H-03): snapshot the side volumes BEFORE CompleteBucket() zeroed them; multiplying
-                // the already-zeroed members made every overflow bucket carry buy=sell=0 and diluted VPIN in bursts.
+                // Snapshot the side volumes BEFORE CompleteBucket() zeroes them: carrying the zeroed members
+                // gave every overflow bucket buy=sell=0 and diluted VPIN in bursts
                 double carryBuyVol  = m_currentBucketBuyVol * excessRatio;
                 double carrySellVol = m_currentBucketSellVol * excessRatio;
 
                 CompleteBucket();
 
-                // Carry overflow to next bucket proportionally
                 if(excessVolume > 0.0)
                 {
                     m_currentBucketBuyVol   = carryBuyVol;
@@ -399,31 +374,27 @@ public:
             }
         }
 
-// Get current VPIN value
-// Returns 0.0 during warmup (insufficient completed buckets)
+// Rolling VPIN in [0..1]; 0.0 until warmup completes
     double GetVPIN() const
     {
         return m_currentVPIN;
     }
 
-// Get current toxicity regime
     ENUM_VPIN_TOXICITY GetToxicityRegime() const
     {
         return ClassifyToxicity(m_currentVPIN);
     }
 
-// Get position size multiplier based on toxicity [0.0–1.0]
-// Returns 1.0 during warmup (safe default)
+// Size multiplier in [0.1..1.0]; 1.0 through warmup, so no shrink before there is data
     double GetPositionSizeMultiplier() const
     {
-        // Warmup guard — not enough data, default to safe (full size)
         if(!IsWarmedUp())
             return 1.0;
 
         return ToxicityToMultiplier(ClassifyToxicity(m_currentVPIN));
     }
 
-// Should block new positions — true if VPIN > extreme threshold
+// THE VETO: true once VPIN reaches m_extremeThreshold, so no new positions may be opened
     bool ShouldBlockNewPositions() const
     {
         if(!IsWarmedUp())
@@ -432,13 +403,12 @@ public:
         return (m_currentVPIN >= m_extremeThreshold);
     }
 
-// Check if filter has completed warmup (enough buckets for VPIN)
+// Warmup needs m_numBuckets completed buckets; below that every read is a neutral default
     bool IsWarmedUp() const
     {
         return (m_completedBuckets >= m_numBuckets);
     }
 
-// Get full VPIN snapshot for diagnostics
     SVPINSnapshot GetSnapshot() const
     {
         SVPINSnapshot snap;
@@ -454,7 +424,6 @@ public:
         return snap;
     }
 
-// Emit throttled diagnostic log
     void LogDiagnostics()
     {
         ENUM_VPIN_TOXICITY regime = ClassifyToxicity(m_currentVPIN);
@@ -480,7 +449,7 @@ public:
         ThrottledLog(msg);
     }
 
-// Reset all state (call on deinit or symbol change)
+// Wipes tick/bucket state: call on deinit or when the symbol changes
     void Reset()
     {
         m_prevTickPrice = 0.0;
@@ -504,10 +473,9 @@ public:
         PrintFormat("[VPIN] Reset | symbol=%s", m_symbol);
     }
 
-// Cleanup external resources
     void Deinit()
     {
-        // CVPINFilter owns dynamic array m_imbalances[]
+        // m_imbalances[] is the only owned dynamic storage
         ArrayFree(m_imbalances);
         m_imbalanceCount = 0;
         m_imbalanceWriteIdx = 0;

@@ -1,5 +1,4 @@
-// Manages total portfolio risk and correlation exposure
-// Rebuilt to fix corruption and standardize risk units (0-100%)
+// Manages total portfolio risk and correlation exposure. All risk units are percentages on a 0-100 scale.
 #property copyright "Copyright 2024, Windsurf AI"
 #property strict
 
@@ -15,9 +14,9 @@
 class CPortfolioRiskManager
 {
 private:
-    double m_maxPortfolioRisk;      // Max total risk % (e.g. 10.0)
+    double m_maxPortfolioRisk;      // Total open-risk cap, % of the equity-aware risk denominator
     double m_maxCorrelation;        // Max correlation coefficient (e.g. 0.7)
-    bool   m_emergencyMode;         // Emergency circuit breaker
+    bool   m_emergencyMode;         // Hard veto on every entry
     double m_currentTotalRisk;      // Cached total risk %
     bool   m_missingStopDetected;   // True when any open position has no protective SL
     int    m_missingStopCount;      // Number of open positions without SL
@@ -25,11 +24,9 @@ private:
     string m_lastPrintedBlockReason;
     datetime m_lastPrintedBlockTime;
 
-    // OWNED: Value member - automatically constructed/destroyed with PortfolioRiskManager
-    // Unified correlation engine (Phase 2.2)
+    // Value member: constructed and destroyed with this manager, never a pointer
     CCorrelationEngine m_correlationEngine;
     
-    // Track per-symbol exposure
     struct SymbolExposure
     {
         string symbol;
@@ -42,47 +39,43 @@ private:
     {
         double   totalRiskPct;           // Total portfolio risk %
         double   perSymbolRisk[];        // Per-symbol risk % (dynamic array)
-        string   perSymbolName[];        // Symbol names corresponding to perSymbolRisk
-        datetime lastFullRefresh;        // Last time full refresh was done
+        string   perSymbolName[];        // Symbol names index-aligned with perSymbolRisk
+        datetime lastFullRefresh;
         int      positionCount;          // Risk-bearing positions at last refresh (SL-protected only)
-        int      rawPositionCount;       // Batch 151: PositionsTotal() snapshot - the staleness probe
-                                          // must compare like with like, positionCount excludes
-                                          // positions without computable risk and would force a
-                                          // full rescan on every call while any SL-less position exists
+        int      rawPositionCount;       // PositionsTotal() snapshot: the staleness probe has to compare like with
+                                          // like, positionCount excludes positions without computable risk and would
+                                          // force a full rescan on every call while any SL-less position exists
         bool     isValid;                // Whether cache is valid
                 int      version;                // Version counter for race condition prevention (L5-006)
     };
 
     SCachedPortfolioRisk m_riskCache;
-    int                  m_cacheRefreshIntervalSec;  // Full refresh interval (default 60)
+    int                  m_cacheRefreshIntervalSec;  // Full-refresh interval in seconds
 
-    // CVaR (Conditional Value at Risk) tracking
+    // CVaR (Conditional Value at Risk)
     double m_tradeReturns[];     // Rolling trade returns (P&L as % of equity)
-    int    m_maxReturnHistory;   // Max history size (default 100)
-    int    m_returnCount;        // Current count
-    double m_cvarConfidence;     // CVaR confidence level (0.95 = 95%)
+    int    m_maxReturnHistory;   // Default 100
+    int    m_returnCount;
+    double m_cvarConfidence;     // Tail confidence (0.95 = 95%)
     double m_cvarMaxRisk;        // Max portfolio risk as CVaR fraction (0.10 = 10%)
 
-    // L5-015: Equity curve returns for CVaR (instead of trade returns)
+    // Equity-curve returns feed CVaR instead of trade returns
     double m_equityCurveReturns[]; // Rolling equity curve returns
-    int    m_maxEquityCurveHistory;  // Max history size for equity curve
+    int    m_maxEquityCurveHistory;  // Window size, 500 samples
     int    m_equityCurveReturnCount;
     double m_lastEquity;
-    datetime m_lastEquitySampleTime; // Batch 151: sampling throttle for UpdateEquityCurve
+    datetime m_lastEquitySampleTime; // UpdateEquityCurve sampling throttle
     bool   m_useEquityCurveForCVaR;
 
-    // L5-016: Configurable asset class correlation thresholds
-    double m_assetClassCorrThreshold; // Correlation threshold for same asset class (default 0.85)
-    double m_crossAssetCorrThreshold; // Correlation threshold for different asset classes (default 0.7)
+    double m_assetClassCorrThreshold; // Same asset class (default 0.85)
+    double m_crossAssetCorrThreshold; // Different asset classes (default 0.7)
 
 public:
     CPortfolioRiskManager();
     ~CPortfolioRiskManager();
     
-    // Initialization
     bool Initialize(double maxRiskPercent = 10.0, double maxCorrelation = 0.7);
     
-    // Core Risk Methods
     double GetPortfolioRisk();
     bool   IsTradeAllowed(string symbol, double lotSize, double stopLossPoints = 0.0);
     bool   CheckCorrelationLimits(string symbol);
@@ -93,7 +86,7 @@ public:
     int    GetUnprotectedPositionCount() const { return m_missingStopCount; }
     string GetLastBlockReason() const { return m_lastBlockReason; }
 
-    // Correlation engine access (Phase 2.2)
+    // Shared correlation engine
     CCorrelationEngine* GetCorrelationEngine() { return &m_correlationEngine; }
 
     // Incremental risk cache — public interface
@@ -107,12 +100,11 @@ public:
     bool   IsCVaRLimitExceeded(double proposedRiskPct) const;
     double GetCurrentCVaR() const;
     
-    // L5-015: Equity curve returns for CVaR
+    // CVaR equity-curve feed
         void   RecordEquityCurveReturn(double equityPercentChange);
         void   UpdateEquityCurve();
         void   SetUseEquityCurveForCVaR(bool use) { m_useEquityCurveForCVaR = use; }
     
-    // L5-016: Asset class correlation thresholds
     void   SetAssetClassCorrThreshold(double threshold) { m_assetClassCorrThreshold = MathMax(0.0, MathMin(1.0, threshold)); }
     void   SetCrossAssetCorrThreshold(double threshold) { m_crossAssetCorrThreshold = MathMax(0.0, MathMin(1.0, threshold)); }
 
@@ -131,13 +123,9 @@ private:
     int    FindSymbolInCache(string symbol);
     void   RefreshRiskCache();
 
-    // Asset-class-aware correlation
     bool   IsSameAssetClass(string symbol1, string symbol2);
     double GetEffectiveCorrelationThreshold(string symbol1, string symbol2);
 
-    // L5-015: Equity curve returns for CVaR
-    
-        // L5-016: Asset class correlation thresholds
     };
 
 CPortfolioRiskManager::CPortfolioRiskManager() :
@@ -173,14 +161,13 @@ CPortfolioRiskManager::CPortfolioRiskManager() :
     ArrayResize(m_tradeReturns, m_maxReturnHistory);
     ArrayInitialize(m_tradeReturns, 0.0);
     
-    // L5-015: Initialize equity curve returns array
     ArrayResize(m_equityCurveReturns, m_maxEquityCurveHistory);
     ArrayInitialize(m_equityCurveReturns, 0.0);
 }
 
 CPortfolioRiskManager::~CPortfolioRiskManager()
 {
-    // No manual cleanup required - all owned resources are value members / dynamic arrays; this class owns NO raw pointers.
+    // Owns no raw pointers: every member is a value member or a dynamic array
 }
 
 bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelation)
@@ -208,7 +195,7 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     ArrayResize(m_riskCache.perSymbolRisk, 0);
     ArrayResize(m_riskCache.perSymbolName, 0);
 
-    // Initialize unified correlation engine (Phase 2.2) with asset class thresholds (L5-016)
+    // Correlation engine shares this manager's asset-class correlation caps
     m_correlationEngine.Initialize(30, 300, 0.0, m_assetClassCorrThreshold, m_crossAssetCorrThreshold);
 
     PrintFormat("[PortfolioRisk] Initialized. Max Risk: %.1f%%, Max Correlation: %.2f | AssetClass=%.2f CrossAsset=%.2f", 
@@ -217,15 +204,15 @@ bool CPortfolioRiskManager::Initialize(double maxRiskPercent, double maxCorrelat
     return true;
 }
 
-// Get Current Portfolio Risk (%)
+// Total open portfolio risk in %, refreshing the cache when it is stale
 double CPortfolioRiskManager::GetPortfolioRisk()
 {
         if(!m_riskCache.isValid ||
            (int)(TimeCurrent() - m_riskCache.lastFullRefresh) > m_cacheRefreshIntervalSec ||
            PositionsTotal() != m_riskCache.rawPositionCount)
     {
-        // L5-006 FIX: double-checked locking with a version counter. MQL5 is single-threaded, so this is safety only;
-        // the version increments at start and end of RefreshRiskCache, so versionBefore != m_riskCache.version means the refresh completed.
+        // Version counter read around the refresh. MQL5 is single-threaded so this is defensive only:
+        // RefreshRiskCache increments the version at start and end, so a changed version means it completed.
         int versionBefore = m_riskCache.version;
         RefreshRiskCache();
     }
@@ -261,10 +248,9 @@ bool CPortfolioRiskManager::IsTradeAllowed(string symbol, double lotSize, double
         return false;
     }
     
-    // Use cached risk (RefreshRiskCache handles staleness)
     double currentRisk = GetPortfolioRisk();
     
-    // If we are already above limit, block everything
+    // At or over the cap already: block everything
     if(currentRisk >= m_maxPortfolioRisk)
     {
         RecordBlockReason(StringFormat("Risk %.2f%% >= Max %.2f%%",
@@ -402,7 +388,7 @@ double CPortfolioRiskManager::GetRiskDenominator() const
     return CRiskMath::GetRiskDenominator();
 }
 
-// Calculate risk for a single position ($)
+// Dollar risk of one position: stop distance in ticks x tick value x volume
 double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
 {
     if(!PositionSelectByTicket(ticket)) return 0.0;
@@ -424,7 +410,7 @@ double CPortfolioRiskManager::GetPositionRisk(ulong ticket)
     return (diff / tickSize) * tickValue * volume;
 }
 
-// Approximate new trade risk
+// Risk % a proposed trade would add, measured against the same denominator
 double CPortfolioRiskManager::CalculatePotentialTradeRisk(string symbol, double lotSize, double stopLossPoints)
 {
     if(lotSize <= 0.0 || symbol == "")
@@ -546,11 +532,9 @@ void CPortfolioRiskManager::RemovePositionFromCache(string symbol, double riskPc
 
 void CPortfolioRiskManager::RefreshRiskCache()
 {
-    // L5-006 FIX: Increment version counter at start of refresh
-    // This signals other threads that a refresh is in progress
+    // Version increment marks a refresh in progress
     m_riskCache.version++;
     
-    // Delegate to the existing full-scan logic
     UpdateCurrentRisk();
 
     ArrayResize(m_riskCache.perSymbolRisk, 0);
@@ -601,30 +585,29 @@ void CPortfolioRiskManager::RefreshRiskCache()
         m_riskCache.version++; // Increment again to mark completion
     }
 
-// Public: notify cache that a position was opened
+// Cache hook on open: adds riskPct to the per-symbol budget and the portfolio total
 void CPortfolioRiskManager::OnPositionOpened(string symbol, double riskPct)
 {
     AddPositionToCache(symbol, riskPct);
     m_currentTotalRisk = m_riskCache.totalRiskPct;
 }
 
-// Public: notify cache that a position was closed
+// Cache hook on close: subtracts riskPct from the per-symbol budget, floored at 0
 void CPortfolioRiskManager::OnPositionClosed(string symbol, double riskPct)
 {
     RemovePositionFromCache(symbol, riskPct);
     m_currentTotalRisk = m_riskCache.totalRiskPct;
 }
 
-// Public: force cache invalidation
+// Drops the cache so the next read rescans every position
 void CPortfolioRiskManager::InvalidateRiskCache()
 {
     m_riskCache.isValid = false;
 }
 
-// Determine if two symbols belong to the same asset class
 bool CPortfolioRiskManager::IsSameAssetClass(string symbol1, string symbol2)
 {
-    // Asset class heuristics based on symbol name patterns
+    // Asset class inferred from symbol-name substrings
     string syntheticKeywords[] = {"Index", "Volatility", "Boom", "Crash", "Jump", "Step"};
     string forexCcyKeywords[]  = {"USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF"};
     string metalsKeywords[]    = {"XAU", "XAG"};
@@ -700,8 +683,7 @@ bool CPortfolioRiskManager::IsSameAssetClass(string symbol1, string symbol2)
            (sym1IsMetal && sym2IsMetal);
 }
 
-// Get effective correlation threshold based on asset class
-// L5-016 FIX: Uses configurable thresholds instead of hardcoded
+// Same asset class uses m_assetClassCorrThreshold, cross-class uses m_crossAssetCorrThreshold
 double CPortfolioRiskManager::GetEffectiveCorrelationThreshold(string symbol1, string symbol2)
 {
     if(IsSameAssetClass(symbol1, symbol2))
@@ -710,13 +692,11 @@ double CPortfolioRiskManager::GetEffectiveCorrelationThreshold(string symbol1, s
     return m_crossAssetCorrThreshold;
 }
 
-// Record equity curve return for CVaR calculation (L5-015)
-// Uses equity curve returns instead of trade returns for better
-// risk estimation as equity curve captures full portfolio dynamics
+// Feeds CVaR from equity-curve returns: equity captures the whole portfolio, per-trade returns do not
 void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
 {
-    // This buffer is m_maxEquityCurveHistory-sized (500); the old m_maxReturnHistory cap (100) silently truncated it.
-    // Circular buffer: overwrite oldest entry when full
+    // Window is m_maxEquityCurveHistory (500); capping it at m_maxReturnHistory (100) silently truncated samples
+    // When full, shift out the oldest and append
     if(m_equityCurveReturnCount < m_maxEquityCurveHistory)
     {
         m_equityCurveReturns[m_equityCurveReturnCount] = equityPercentChange;
@@ -733,7 +713,7 @@ void CPortfolioRiskManager::RecordEquityCurveReturn(double equityPercentChange)
                 equityPercentChange, m_equityCurveReturnCount);
 }
 
-// Update equity curve from current account equity (call each bar)
+// Samples account equity into the CVaR window
 void CPortfolioRiskManager::UpdateEquityCurve()
 {
     // The caller (URM::RefreshRuntimeState) runs per cycle, so sampling is minute-throttled here - the rolling window
@@ -755,13 +735,11 @@ void CPortfolioRiskManager::UpdateEquityCurve()
     m_lastEquity = currentEquity;
 }
 
-// Calculate CVaR (Conditional Value at Risk) at given confidence
-// L5-015 FIX: Uses equity curve returns instead of trade returns
+// CVaR at the given confidence, read from the equity-curve window
 double CPortfolioRiskManager::CalculateCVaR(double confidence) const
 {
-    // Use equity curve returns for CVaR (L5-015)
-    // Pick the copy source once: the old inline test re-checked m_equityCurveReturnCount after 'count' had already
-    // fallen back to trade returns, reading uninitialized slots when mixing sources.
+    // Copy source chosen once: re-testing m_equityCurveReturnCount after 'count' had already fallen back to
+    // trade returns read uninitialized slots whenever the two sources were mixed
     bool useEquityCurve = (m_equityCurveReturnCount >= 2);
     int count = useEquityCurve ? m_equityCurveReturnCount : m_returnCount;
     if(count < 2)
@@ -791,12 +769,11 @@ double CPortfolioRiskManager::CalculateCVaR(double confidence) const
     return cvar; // Negative value = expected loss
 }
 
-// Check if new position would exceed CVaR limit
+// Would the proposed risk push |CVaR| past m_cvarMaxRisk?
 bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
 {
-    // Not enough data to make a reliable CVaR estimate — don't block
-    // Batch 151: guard the data source actually used (equity curve). The old m_returnCount check tested the
-    // never-populated trade-return buffer, so the limit could never arm.
+    // Fail-open below 20 samples: no reliable tail estimate yet. The guard has to watch the source actually used
+    // (equity curve); m_returnCount tracks the never-populated trade buffer, so the limit could never arm.
     if(m_equityCurveReturnCount < 20)
         return false;
 
@@ -805,8 +782,8 @@ bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
 
     if(absCvar + proposedRiskPct > m_cvarMaxRisk)
     {
-        // Every denial is a live veto - always logged. The ALLOW line is throttled to once per minute;
-        // it fired per validated trade once the gate went live and drowned the log.
+        // Denials are always logged because each one is a live veto; the ALLOW line is throttled to 1/min,
+        // unthrottled it drowned the log once the gate went live
         PrintFormat("[CVAR-CHECK] CVaR=%.2f%% + proposed=%.2f%% vs limit=%.2f%% → DENIED",
                     absCvar * 100.0, proposedRiskPct * 100.0, m_cvarMaxRisk * 100.0);
         return true;
@@ -823,7 +800,6 @@ bool CPortfolioRiskManager::IsCVaRLimitExceeded(double proposedRiskPct) const
     return false;
 }
 
-// Get current CVaR value at stored confidence level
 double CPortfolioRiskManager::GetCurrentCVaR() const
 {
     return CalculateCVaR(m_cvarConfidence);

@@ -1,5 +1,4 @@
 // Pluggable lot-size modifiers for CPositionSizer
-// Phase 5: Position Sizer Consolidation
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -11,10 +10,7 @@
 #include "EquityCurveManager.mqh"
 #include "VPINFilter.mqh"
 
-// Abstract modifier interface
-// Strategy-specific sizers become parameter providers rather than
-// independent calculators. Each modifier adjusts the base lot size
-// computed by CPositionSizer.
+// Each modifier adjusts the base lot size computed by CPositionSizer.
 class CPositionSizerModifier
 {
 public:
@@ -23,9 +19,7 @@ public:
     virtual bool IsEnabled() { return true; }
 };
 
-// Wraps the ADX-tiered logic from CADXPositionSizing.
-// Gets ADX value, applies multiplier:
-// 0x no trend, 0.5x weak, 1.0x normal, 1.3x strong, 1.5x very
+// ADX-tiered sizing, carried over from CADXPositionSizing: no trend 0x, weak 0.5x, normal 1.0x, strong 1.3x, very strong 1.5x
 class CADXLotModifier : public CPositionSizerModifier
 {
 private:
@@ -33,22 +27,21 @@ private:
     string m_symbol;
     int    m_adxPeriod;
 
-    // Thresholds (matching CADXPositionSizing defaults)
-    double m_noTrendThreshold;      // Below this = no trend
-    double m_weakThreshold;         // Weak trend threshold
-    double m_normalThreshold;       // Normal trend threshold
-    double m_strongThreshold;       // Strong trend threshold
+    double m_noTrendThreshold;
+    double m_weakThreshold;
+    double m_normalThreshold;
+    double m_strongThreshold;
 
-    double m_weakMultiplier;        // 0.5x for weak trends
-    double m_normalMultiplier;      // 1.0x for normal trends
-    double m_strongMultiplier;      // 1.3x for strong trends
+    double m_weakMultiplier;
+    double m_normalMultiplier;
+    double m_strongMultiplier;
     double m_veryStrongMultiplier;
 
-    // L5-011/L5-008: Minimum multiplier when no trend (prevents 0x blocking trades)
+    // Floor applied to tier multipliers > 0 so a no-trend read does not block the trade
         double m_minMultiplier;
         bool   m_allowNoTrendTrading;   // If false, returns 0 for no trend (blocks trade)
-        bool   m_lazyInitialized;       // Track lazy initialization state
-        bool   m_handleOwned;           // Batch 152 (M-16): true only when handle was created locally (iADX fallback); shared CIndicatorManager handles must never be released
+        bool   m_lazyInitialized;
+        bool   m_handleOwned;           // True only when the handle was created locally (iADX fallback); shared CIndicatorManager handles must never be released
 
         double GetADX()
     {
@@ -75,7 +68,7 @@ public:
         m_normalMultiplier(1.0),
         m_strongMultiplier(1.3),
         m_veryStrongMultiplier(1.5),
-        m_minMultiplier(1.0),        // L5-008: Default 1.0x (no adjustment) instead of blocking
+        m_minMultiplier(1.0),        // 1.0x = no adjustment, rather than blocking
         m_allowNoTrendTrading(true),
         m_lazyInitialized(false),
         m_handleOwned(false)
@@ -94,8 +87,7 @@ public:
     bool Initialize(const string symbol, const ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT,
                         const int adxPeriod = 14)
         {
-            // Release previous handle only if we own it (Batch 152 M-16:
-            // handles borrowed from CIndicatorManager are shared and must survive us)
+            // Release only handles we own: those borrowed from CIndicatorManager are shared and must survive us
             if(m_adxHandle != INVALID_HANDLE && m_handleOwned)
             {
                 IndicatorRelease(m_adxHandle);
@@ -106,7 +98,6 @@ public:
             m_symbol = symbol;
             m_adxPeriod = adxPeriod;
 
-            // Try shared indicator manager first
             CIndicatorManager* indicatorManager = CIndicatorManager::Instance();
             if(indicatorManager != NULL)
             {
@@ -115,7 +106,6 @@ public:
                     return true;   // borrowed handle: m_handleOwned stays false
             }
 
-            // Fallback: create own handle
             m_adxHandle = iADX(symbol, timeframe, adxPeriod);
             if(m_adxHandle == INVALID_HANDLE)
             {
@@ -127,7 +117,6 @@ public:
             return true;
         }
 
-        // L5-011/L5-008: Configuration methods for minimum multiplier and no-trend trading
         void SetMinMultiplier(double multiplier)
         {
             m_minMultiplier = MathMax(0.0, MathMin(1.0, multiplier));
@@ -138,7 +127,7 @@ public:
                     m_allowNoTrendTrading = allow;
                 }
 
-                // L5-008: Explicit blocking control for no-trend conditions
+                // Inverted control: block == !m_allowNoTrendTrading
                 void SetBlockOnNoTrend(bool block)
                 {
                     m_allowNoTrendTrading = !block;
@@ -168,7 +157,6 @@ public:
         }
 
     private:
-        // Lazy initialization helper
         void EnsureADXHandle(const string symbol, const ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT,
                              const int adxPeriod = 14)
         {
@@ -180,10 +168,9 @@ public:
 
         virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
                         {
-                        // Lazy initialization: ensure ADX handle exists for this symbol
                         EnsureADXHandle(symbol);
                 
-                        // If symbol changed and we couldn't reinitialize, pass through
+                        // Symbol changed and reinit failed: pass the lot through unchanged
                         if(symbol != m_symbol)
                             return baseLot;
 
@@ -197,13 +184,13 @@ public:
                         {
                             if(m_allowNoTrendTrading)
                             {
-                                multiplier = 1.0;  // L5-008: Return baseLot unchanged (1.0x) when ADX < threshold
+                                multiplier = 1.0;
                                 PrintFormat("[ADX-MODIFIER] %s | ADX=%.1f < noTrendThreshold=%.1f — no adjustment",
                                             symbol, adx, m_noTrendThreshold);
                             }
                             else
                             {
-                                multiplier = 0.0; // Block trade
+                                multiplier = 0.0;
                                 PrintFormat("[ADX-MODIFIER] %s | ADX=%.1f < noTrendThreshold=%.1f | BLOCKED (0x)",
                                             symbol, adx, m_noTrendThreshold);
                             }
@@ -217,7 +204,6 @@ public:
                         else
                             multiplier = m_veryStrongMultiplier;
 
-                        // Apply minimum multiplier floor
                         if(multiplier > 0.0 && multiplier < m_minMultiplier)
                             multiplier = m_minMultiplier;
 
@@ -232,25 +218,21 @@ public:
     virtual string GetName() override { return "ADX"; }
 };
 
-// Bayesian Kelly Lot Modifier
-// Uses Beta-Binomial conjugate priors to estimate win rate, then applies the Kelly Criterion with a configurable
-// fraction. Quarter Kelly (0.25) is the default: ~95% of growth with 12% DD vs 62% at full Kelly. Self-contained.
-// L5-013: confidence is the prior weight for the Bayesian update - higher confidence = less prior weight.
+// Estimates win rate with Beta-Binomial priors and bets a fraction of Kelly (default quarter Kelly 0.25: ~95% of
+// growth with 12% DD vs 62% at full Kelly). Confidence is the prior weight: higher confidence = less prior influence.
 class CBayesianKellyModifier : public CPositionSizerModifier
 {
 private:
-    // Beta-Binomial conjugate priors
     double m_alpha;           // Beta prior alpha (win count + prior)
     double m_beta;            // Beta prior beta (loss count + prior)
     double m_kellyFraction;   // Fraction of Kelly to use (0.25 = quarter Kelly)
     double m_avgWinPct;       // Average win as % of risk
     double m_avgLossPct;      // Average loss as % of risk
-    int    m_totalTrades;     // Total trades observed
-    int    m_wins;            // Win count
+    int    m_totalTrades;
+    int    m_wins;
 
-    // L5-013: Confidence-weighted prior strength: higher confidence = less prior weight = more conservative
-    double m_priorAlpha;      // Prior alpha (wins)
-    double m_priorBeta;       // Prior beta (losses)
+    double m_priorAlpha;
+    double m_priorBeta;
 
 public:
     CBayesianKellyModifier(double kellyFraction = 0.25,
@@ -267,35 +249,31 @@ public:
         m_priorBeta(priorBeta)
     {}
 
-    // CPositionSizerModifier interface
     virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
     {
-        // Need at least 1 trade observation to adjust
+        // Warmup: one observation is enough to start adjusting
         if(m_totalTrades <= 0)
             return baseLot;
 
-        // L5-013: Use confidence as prior weight (high confidence = weaker prior influence)
         double effectiveAlpha, effectiveBeta;
         double confidenceWeight = MathMax(0.0, MathMin(1.0, confidence));
         
         if(confidenceWeight > 0.0)
         {
-            // Blend observed stats with prior based on confidence
             double priorWeight = 1.0 - confidenceWeight;
             effectiveAlpha = m_priorAlpha * priorWeight + m_alpha * confidenceWeight;
             effectiveBeta = m_priorBeta * priorWeight + m_beta * confidenceWeight;
         }
         else
         {
-            // No confidence provided = use full prior
+            // confidence 0 = full prior
             effectiveAlpha = m_priorAlpha;
             effectiveBeta = m_priorBeta;
         }
 
-        // Bayesian posterior mean win rate with confidence-weighted prior
+        // Posterior mean win rate
         double W = effectiveAlpha / (effectiveAlpha + effectiveBeta);
 
-        // Win/loss ratio R
         double R = (m_avgLossPct > 0.0) ? m_avgWinPct / m_avgLossPct : 1.0;
 
         // Kelly criterion: K = W - (1-W)/R
@@ -314,7 +292,6 @@ public:
         }
         else
         {
-            // Apply fraction of Kelly
             double fractionK = K * m_kellyFraction;
             kellyLot = baseLot * fractionK;
             PrintFormat("[KELLY-ADJUSTMENT] WR=%.2f K=%.2f fraction=%.2f lot_adj=%.2fx | conf=%.2f",
@@ -334,16 +311,15 @@ public:
         if(isWin)
         {
             m_wins++;
-            m_alpha += 1.0;  // Beta-Binomial conjugate update
+            m_alpha += 1.0;
             if(profitPct > 0.0)
             {
-                // Running average of win percentage
                 m_avgWinPct = ((m_avgWinPct * (m_wins - 1)) + profitPct) / m_wins;
             }
         }
         else
         {
-            m_beta += 1.0;   // Beta-Binomial conjugate update
+            m_beta += 1.0;
             if(lossPct > 0.0)
             {
                 int losses = m_totalTrades - m_wins;
@@ -352,7 +328,7 @@ public:
         }
     }
 
-    // Get current effective Kelly fraction (K * m_kellyFraction)
+    // Effective Kelly fraction currently in force (K * m_kellyFraction)
     double GetCurrentKellyFraction() const
     {
         if(m_totalTrades <= 0)
@@ -373,12 +349,10 @@ public:
     }
 };
 
-// Wraps CEquityCurveManager to scale lot size by equity position vs its EMA (below EMA -> reductionFactor).
-// L5-014: Added per-strategy equity curve support
+// Scales the lot by equity vs the curve EMA (below EMA -> reductionFactor). Per-strategy curves, default manager as fallback.
 class CEquityCurveLotModifier : public CPositionSizerModifier
 {
 private:
-    // Map of strategy name to equity curve manager
     struct SStrategyEquityCurve
     {
         string strategyName;
@@ -415,14 +389,13 @@ public:
         m_ownsDefaultManager(false)
     {}
 
-    // Constructor with default equity curve manager (backward compatibility)
+    // Injects an existing manager; ownership is not taken by this ctor
     CEquityCurveLotModifier(CEquityCurveManager* ecm) : 
         m_curveCount(0),
         m_defaultManager(ecm),
         m_ownsDefaultManager(false)
     {}
 
-    // Initialize with equity curve lookback period
     bool Initialize(int lookback = 100)
     {
         if(m_defaultManager == NULL)
@@ -435,7 +408,6 @@ public:
 
     ~CEquityCurveLotModifier()
     {
-        // Clean up owned managers
         for(int i = 0; i < m_curveCount; i++)
         {
             if(m_strategyCurves[i].ownsManager && m_strategyCurves[i].manager != NULL)
@@ -471,7 +443,6 @@ public:
         PrintFormat("[EQUITY-CURVE-MODIFIER] Added strategy equity curve | %s", strategyName);
     }
 
-    // Set default equity curve manager (fallback)
     void SetDefaultManager(CEquityCurveManager* manager, bool own = false)
     {
         if(m_ownsDefaultManager && m_defaultManager != NULL)
@@ -480,7 +451,6 @@ public:
         m_ownsDefaultManager = own;
     }
 
-    // Update equity for a specific strategy
     void UpdateStrategyEquity(const string strategyName, double equityValue)
     {
         CEquityCurveManager* curve = FindStrategyCurve(strategyName);
@@ -489,20 +459,16 @@ public:
             curve.Update(equityValue);
             return;
         }
-        // Fallback to default
         if(m_defaultManager != NULL)
             m_defaultManager.Update(equityValue);
     }
 
     virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
     {
-        // The strategy name should be passed in the symbol parameter or via a different mechanism
-        // For now, we use the default manager if no strategy-specific curve is found
-        // This would need to be integrated with the strategy identification system
+        // AdjustLotSize only receives a symbol, so the strategy curve is inferred, never passed in
         CEquityCurveManager* curve = m_defaultManager;
         
-        // Try to find strategy-specific curve from the symbol name if it contains strategy info
-        // This is a simple heuristic - in production, this should come from the trade request
+        // Heuristic: strategy name matched as a substring of the symbol
         for(int i = 0; i < m_curveCount; i++)
         {
             if(StringFind(symbol, m_strategyCurves[i].strategyName) >= 0)
@@ -517,7 +483,7 @@ public:
 
         double multiplier = curve.GetPositionSizeMultiplier();
         if(MathAbs(multiplier - 1.0) < 0.001)
-            return baseLot;  // No adjustment needed
+            return baseLot;
 
         double adjusted = baseLot * multiplier;
         PrintFormat("[EQUITY-CURVE-MODIFIER] %s | multiplier=%.2f | lot %.2f->%.2f",
@@ -528,13 +494,12 @@ public:
     virtual string GetName() override { return "EquityCurve"; }
 };
 
-// Volatility Targeting Lot Modifier
-// Adjusts position size to target a specific annualized volatility (ATR-based estimation)
+// Targets a fixed annualized volatility, estimated from daily ATR
 class CVolatilityTargetingModifier : public CPositionSizerModifier
 {
 private:
     double m_volatilityTarget;      // Target annualized volatility (e.g., 0.15 = 15%)
-    int    m_volatilityLookback;    // Lookback period for volatility calculation
+    int    m_volatilityLookback;
     int    m_atrHandle;
     string m_atrSymbol;
     int    m_atrPeriod;
@@ -548,9 +513,8 @@ private:
                 IndicatorRelease(m_atrHandle);
                 m_atrHandle = INVALID_HANDLE;
             }
-            // Batch 152 (M-15): anchor to D1 — the annualization below assumes
-            // avgATR/price is a DAILY volatility; using PERIOD_CURRENT made the
-            // resulting lot size depend on the chart timeframe the EA runs on.
+            // Anchor to D1: the annualization below reads avgATR/price as a DAILY volatility, so PERIOD_CURRENT
+            // would make the lot size depend on whatever chart timeframe the EA runs on
             m_atrHandle = iATR(symbol, PERIOD_D1, m_atrPeriod);
             m_atrSymbol = symbol;
             if(m_atrHandle == INVALID_HANDLE)
@@ -562,7 +526,6 @@ private:
         if(CopyBuffer(m_atrHandle, 0, 0, m_volatilityLookback, atr) <= 0)
             return 0.0;
         
-        // ATR is average true range, we need to convert to volatility
         double sumATR = 0.0;
         int count = MathMin(m_volatilityLookback, ArraySize(atr));
         for(int i = 0; i < count; i++)
@@ -574,7 +537,6 @@ private:
         if(price <= 0.0) return 0.0;
         
         double dailyVol = avgATR / price;
-        // Annualized volatility (sqrt of trading days)
         double annualVol = dailyVol * MathSqrt(252.0);
         
         return annualVol;
@@ -623,7 +585,7 @@ public:
         
         double volRatio = m_volatilityTarget / currentVol;
         
-        // Clamp ratio to reasonable bounds (0.25x to 2.0x)
+        // Vol ratio clamped to 0.25x-2.0x
         volRatio = MathMax(0.25, MathMin(2.0, volRatio));
         
         double adjusted = baseLot * volRatio;
@@ -637,9 +599,7 @@ public:
     virtual string GetName() override { return "VolatilityTarget"; }
 };
 
-// Wraps CVPINFilter to scale lot size based on VPIN toxicity
-// L5-024: Supports multiple classification modes
-// L5-025: Handles bucket overflow carry
+// Scales the lot by CVPINFilter toxicity; classification mode and bucket-overflow carry live inside the filter
 class CVPINLotModifier : public CPositionSizerModifier
 {
 private:
@@ -667,10 +627,9 @@ public:
         }
     }
 
-    // Parameterless initialize for PositionSizer compatibility
+    // Parameterless Initialize() for the PositionSizer contract
     bool Initialize()
     {
-        // Store defaults for lazy initialization
         m_defaultSymbol = "";
         m_defaultBucketVolumeSize = 0.0;
         m_defaultNumBuckets = VPIN_DEFAULT_NUM_BUCKETS;
@@ -680,7 +639,6 @@ public:
         return true;
     }
 
-    // Full initialize with symbol
     bool Initialize(const string symbol, double bucketVolumeSize = 0.0,
                     int numBuckets = VPIN_DEFAULT_NUM_BUCKETS,
                     double extremeThreshold = VPIN_DEFAULT_EXTREME,
@@ -700,7 +658,7 @@ public:
         return true;
     }
 
-    // Allow passing an existing filter (caller retains ownership)
+    // Caller keeps ownership of the filter it hands in
     void SetVPINFilter(CVPINFilter* filter)
     {
         if(m_ownsFilter && m_vpinFilter != NULL)
@@ -712,7 +670,6 @@ public:
     }
 
 private:
-    // Lazy initialization helper
     void EnsureFilterCreated(const string symbol)
     {
         if(m_vpinFilter == NULL && (m_lazyInitialized || symbol != ""))
@@ -726,7 +683,6 @@ private:
         }
     }
 
-    // Lazy initialization state
     string m_defaultSymbol;
     double m_defaultBucketVolumeSize;
     int    m_defaultNumBuckets;
@@ -737,7 +693,6 @@ private:
 public:
     virtual double AdjustLotSize(double baseLot, string symbol, double confidence) override
     {
-        // Lazy initialization: create filter for this symbol if not already created
         EnsureFilterCreated(symbol);
         
         if(m_vpinFilter == NULL)
@@ -745,12 +700,11 @@ public:
         
         double multiplier = m_vpinFilter.GetPositionSizeMultiplier();
         
-        // If not warmed up, return base lot unchanged
+        // Not warmed up: lot unchanged
         if(!m_vpinFilter.IsWarmedUp())
             return baseLot;
         
-        // Apply confidence weighting to the VPIN adjustment
-        // High confidence = trust VPIN more, low confidence = less VPIN influence
+        // Confidence blends the multiplier toward 1.0; clamped 0.10-1.00, so VPIN can only shrink the lot
         double effectiveMultiplier = 1.0 + (multiplier - 1.0) * confidence;
         effectiveMultiplier = MathMax(0.1, MathMin(1.0, effectiveMultiplier));
         
