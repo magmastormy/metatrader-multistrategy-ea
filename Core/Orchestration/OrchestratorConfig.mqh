@@ -366,7 +366,6 @@ struct SOrchestratorConfig
     double  equityCurveReductionFactor;
     double  kellyFraction;
 
-    // Strict EA Mode
     bool    strictEAMode;
 
     // Config versioning

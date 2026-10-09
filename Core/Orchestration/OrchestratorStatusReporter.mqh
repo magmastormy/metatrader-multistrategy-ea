@@ -64,7 +64,6 @@ public:
         m_primaryManager     = primaryManager;
     }
 
-// Init
 // SetManagers + validity check, for callers that want a
 // pass/fail result. Returns true when every non-optional
 // collaborator is present (primaryManager is optional, exactly

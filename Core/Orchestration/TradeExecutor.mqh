@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TradeExecutor.mqh                                                |
-//| Executes trades with proper confirmation and attribution         |
-//+------------------------------------------------------------------+
+// TradeExecutor.mqh
+// Executes trades with proper confirmation and attribution
 #property strict
 
 #ifndef CORE_ORCHESTRATION_TRADE_EXECUTOR_MQH

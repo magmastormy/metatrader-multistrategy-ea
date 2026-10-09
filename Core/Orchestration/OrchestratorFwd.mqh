@@ -65,7 +65,6 @@ class CEnsembleAIStrategyAdapter;
 class COnnxAIStrategyAdapter;
 class CStrategyRegistry;
 
-// Python Bridge
 class CPythonBridge;
 struct SPythonBridgeMetrics;
 
@@ -73,11 +72,9 @@ struct SPythonBridgeMetrics;
 class CRiskTierManager;
 class CCompoundingTierManager;
 
-// Neural Network
 class CNeuralNetworkStrategy;
 struct SNeuralNetConfig;
 
-// Consensus
 struct SConsensusDecisionContext;
 
 class CStrategyHealthMonitor;
