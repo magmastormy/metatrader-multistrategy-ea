@@ -140,6 +140,20 @@ public:
         // Destructors handle cleanup automatically when Clear() is called
         // CNeuralNetworkStrategy destructor saves checkpoint
     }
+
+    // Drive online learning (ResolveBarriers + self-labeled observations) for every active network.
+    // Historically this was a commented-out `m_nnRegistry.TickOnlineLearningAll()` call in the
+    // orchestrator (the method did not exist and the loop was never invoked), so the Neural Net
+    // never collected training data: 0 training steps, perpetual cold-start, 100% abstain votes.
+    // The method now exists and is invoked from EAOrchestrator::ProcessAISubsystems.
+    void TickOnlineLearningAll()
+    {
+        for(int i = 0; i < m_entryCount; i++)
+        {
+            if(m_entries[i].active && m_entries[i].neuralNet != NULL)
+                m_entries[i].neuralNet.TickOnlineLearning();
+        }
+    }
     
     int GetActiveCount() const
     {

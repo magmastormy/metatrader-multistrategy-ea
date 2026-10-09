@@ -101,9 +101,11 @@ export function useEAState(): {
   logs: LogEntry[];
   alerts: AlertEntry[];
   isConnected: boolean;
+  connectionStatus: 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'error';
+  reconnect: () => void;
   sendCommand: (command: string, params?: Record<string, unknown>) => void;
 } {
-  const { lastMessage, isConnected: wsConnected, send } = useWebSocket();
+  const { lastMessage, isConnected: wsConnected, status: wsStatus, send, reconnect } = useWebSocket();
   const [state, setState] = useState<EAState | null>(DEMO ? genDemoState(0) : null);
   const [logs, setLogs] = useState<LogEntry[]>(DEMO ? genDemoLogs() : []);
   const [alerts, setAlerts] = useState<AlertEntry[]>([]);
@@ -167,5 +169,5 @@ export function useEAState(): {
     send({ command, ...params });
   }, [send, addAlert]);
 
-  return { state, logs, alerts, isConnected: DEMO ? true : wsConnected, sendCommand };
+  return { state, logs, alerts, isConnected: DEMO ? true : wsConnected, connectionStatus: DEMO ? 'connected' : wsStatus, reconnect, sendCommand };
 }

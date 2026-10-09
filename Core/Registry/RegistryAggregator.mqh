@@ -79,6 +79,11 @@ private:
     // Neural Net Registry access
     CNeuralNetRegistry* GetNeuralNetRegistry() const { return m_neuralNetRegistry; }
     
+    // Neural Net online learning tick (drives ResolveBarriers + self-labeled training across all active nets).
+    // Defined here (not via CNeuralNetRegistry* directly from EAOrchestrator) because EAOrchestrator only holds a
+    // forward declaration of CNeuralNetRegistry and cannot call its member through an incomplete type.
+    void TickNeuralNetOnlineLearning() const;
+    
     // Drawing Manager Registry access
     CDrawingManagerRegistry* GetDrawingRegistry() const { return m_drawingRegistry; }
     
@@ -359,6 +364,15 @@ int CRegistryAggregator::GetTotalRegisteredCount() const
     if(m_scanRegistry != NULL) total += m_scanRegistry.GetPendingNewBarCount();
     if(m_symbolStateTracker != NULL) total += m_symbolStateTracker.Count();
     return total;
+}
+
+//+------------------------------------------------------------------+
+//| Neural Net online learning tick                                  |
+//+------------------------------------------------------------------+
+void CRegistryAggregator::TickNeuralNetOnlineLearning() const
+{
+    if(m_neuralNetRegistry != NULL)
+        m_neuralNetRegistry.TickOnlineLearningAll();
 }
 
 //+------------------------------------------------------------------+

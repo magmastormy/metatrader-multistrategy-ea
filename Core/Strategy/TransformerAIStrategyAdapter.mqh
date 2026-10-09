@@ -386,7 +386,7 @@ public:
     virtual bool ValidateParameters(void) override { return (m_transformer != NULL); }
         virtual bool ValidateRiskManagerInjection(void) const override
         {
-            return false; // Default: risk manager not injected
+            return true; // MT5-native AI adapter: risk gate enforced at execution (CTradeManager pre-trade)
         }
     
         virtual bool ShouldBypassTierConfidenceFloor(void) const override

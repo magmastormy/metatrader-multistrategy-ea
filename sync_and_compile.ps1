@@ -29,7 +29,7 @@ if (-not (Test-Path $MetaEditor)) { throw "MetaEditor not found: $MetaEditor" }
 $EADst = Join-Path $MQL5Dir "Experts\$EAFolder"
 
 # --- Excluded directories (not synced to MT5) ---
-$ExcludedDirs = @("Dashboard", "node_modules", ".venv-ea-dashboard", ".trae", "MQHModelTrainer")
+$ExcludedDirs = @("Dashboard", "node_modules", ".venv-ea-dashboard", ".trae")
 
 # --- Sync functions ---
 function Sync-Directory($Src, $Dst) {
@@ -149,9 +149,17 @@ if (Test-Path $utilSrc) {
 }
 Write-Host "[SYNC] Utilities/: $utilCount files updated"
 
-# --- Skip MQHModelTrainer/ (training sub-project; not needed for EA runtime, keeps sync fast) ---
-Write-Host "[SYNC] Skipping MQHModelTrainer/ (excluded for faster sync)" -ForegroundColor Gray
+# --- Sync MQHModelTrainer/ (training sub-project; required by the root
+#     MQHHyperparameterTuner / MQHModelVisualizer / MQHModelEvaluator scripts whose
+#     #include "MQHModelTrainer/..." directives resolve relative to the EA folder) ---
+Write-Host "[SYNC] Syncing MQHModelTrainer/..." -ForegroundColor Cyan
+$mqtSrc = Join-Path $ProjectRoot "MQHModelTrainer"
+$mqtDst = Join-Path $EADst "MQHModelTrainer"
 $mqtCount = 0
+if (Test-Path $mqtSrc) {
+    $mqtCount = Sync-Recursive $mqtSrc $mqtDst
+}
+Write-Host "[SYNC] MQHModelTrainer/: $mqtCount files updated"
 
 # --- Sync Resources/ (all file types, including .bin, .onnx) ---
 Write-Host "[SYNC] Syncing Resources/..." -ForegroundColor Cyan
@@ -245,13 +253,40 @@ foreach ($srcFile in $projectMq5Files) {
     }
 
     $fileLog = Join-Path $ProjectRoot "compile_$($srcFile.BaseName).log"
-    if (Test-Path $fileLog) { Remove-Item $fileLog -Force }
+    if (Test-Path $fileLog) {
+        try { Remove-Item $fileLog -Force -ErrorAction Stop }
+        catch { try { Clear-Content $fileLog -ErrorAction Stop } catch { } }
+    }
 
-    $compileArgs = "/compile:`"$dstFile`" /log:`"$fileLog`""
+    $compileArgs = @("/compile:$dstFile", "/log:$fileLog")
     Write-Host "[COMPILE] Compiling $fileName..." -ForegroundColor Gray
 
-    $proc = Start-Process -FilePath $MetaEditor -ArgumentList $compileArgs -NoNewWindow -Wait -PassThru
-    Start-Sleep -Milliseconds 300
+    # Clear any lingering headless MetaEditor worker from a previous file. MetaEditor
+    # enforces a single instance, so a leftover worker swallows this build. Kill it
+    # BEFORE launching the next compile (after the previous file's result is captured).
+    Get-Process -Name "metaeditor64" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # Launch MetaEditor headless via the call operator. Start-Process crashes in this
+    # environment with "Item has already been added. Key in dictionary: 'PATH'/'Path'"
+    # (a duplicate environment-key bug), so invoke it directly instead.
+    & $MetaEditor $compileArgs
+
+    # MetaEditor spawns a worker that writes the .ex5 + log AFTER the GUI parent exits.
+    # Poll for the log file to APPEAR, then for the "Result:" line (up to 180s), keeping
+    # this script alive so the orphaned worker is not killed mid-write.
+    $logReady = $false
+    $deadline = (Get-Date).AddSeconds(180)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path $fileLog) {
+            $lc = Get-Content $fileLog -Raw -Encoding Unicode
+            if ($lc -match 'Result:') { $logReady = $true; break }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $logReady) {
+        Write-Host "  [COMPILE] WARNING: log not finalized within 180s for $fileName" -ForegroundColor Yellow
+    }
 
     $fileErrors = 0
     $fileWarnings = 0
@@ -259,7 +294,7 @@ foreach ($srcFile in $projectMq5Files) {
         $logContent = Get-Content $fileLog -Raw
         
         # Parse "Result:" line for accurate error/warning counts
-        $resultLine = ($logContent -split "`n" | Where-Object { $_ -match 'Result:' } | Select-Object -First 1)
+        $resultLine = ($logContent -split "`n" | Where-Object { $_ -match 'Result:' } | Select-Object -Last 1)
         if ($resultLine) {
             # Parse "Result: X errors, Y warnings" format
             if ($resultLine -match '(\d+)\s+errors?') { $fileErrors = [int]$Matches[1] }
@@ -290,12 +325,12 @@ foreach ($srcFile in $projectMq5Files) {
             }
         }
 
-        # Clean up per-file log unless KeepLog
+        # Clean up per-file log unless KeepLog (best-effort; SafeDelete hook may block)
         if (-not $KeepLog) {
-            Remove-Item $fileLog -Force -ErrorAction SilentlyContinue
+            try { Remove-Item $fileLog -Force -ErrorAction Stop } catch { }
         }
     } else {
-        Write-Host "  No log file generated for $fileName (exit code: $($proc.ExitCode))" -ForegroundColor Yellow
+        Write-Host "  No log file generated for $fileName" -ForegroundColor Yellow
     }
 
     $totalErrors += $fileErrors

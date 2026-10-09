@@ -340,6 +340,8 @@ public:
     // [12]   recentAvgConfidence
     // [13..22] featSubset (first 10 normalized features)
     // [23]   momentum (price change ratio)
+    // [24]   rsiZone (RSI(14) zone [-1,1])  -- Theme 2 (18770/19103): learn "unreliable near extremes"
+    // [25]   stochKZone (Stochastic %K zone [-1,1])
     void BuildInput(const double primaryConf,
                     const double &regimeProbs[],
                     const double barVolRatio,
@@ -352,6 +354,8 @@ public:
                     const double recentAvgConfidence,
                     const double &featSubset[],
                     const double momentum,
+                    const double rsiZone,
+                    const double stochKZone,
                     double &out[])
     {
         ArrayResize(out, AI_MLP_INPUT);
@@ -370,6 +374,8 @@ public:
         for(int i = 0; i < 10; i++)
             out[13 + i] = (i < ArraySize(featSubset)) ? featSubset[i] : 0.0;
         out[23] = momentum;
+        out[24] = rsiZone;       // RSI(14) zone [-1,1]
+        out[25] = stochKZone;    // Stochastic %K zone [-1,1]
     }
 
     double Predict(const double &inp[])

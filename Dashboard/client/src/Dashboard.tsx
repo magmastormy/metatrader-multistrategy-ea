@@ -9,6 +9,11 @@ import StatusBadge from './components/shared/StatusBadge';
 import NeuralNetViz from './components/shared/NeuralNetViz';
 import NetworkMesh from './components/shared/NetworkMesh';
 import AnimatedCounter from './components/shared/AnimatedCounter';
+import { ModelTopology } from './components/ai/ModelTopology';
+import { RegimeTransitionDiagram } from './components/ai/RegimeTransitionDiagram';
+import { AttentionHeatmap } from './components/ai/AttentionHeatmap';
+import { SignalFlowDiagram } from './components/ai/SignalFlowDiagram';
+import { AIModelSelector } from './components/ai/AIModelSelector';
 import type { ReactNode } from 'react';
 
 /* ---------- helpers ---------- */
@@ -49,7 +54,7 @@ function Section({ id, title, meta, children }: { id: string; title: string; met
    DASHBOARD
    ===================================================================== */
 export default function Dashboard({ theme }: { theme: string }) {
-  const { state, logs, isConnected, sendCommand } = useEAState();
+  const { state, logs, isConnected, connectionStatus, reconnect, sendCommand } = useEAState();
 
   /* equity history */
   const eqRef = useRef<{ time: string; equity: number; balance: number }[]>([]);
@@ -80,11 +85,41 @@ export default function Dashboard({ theme }: { theme: string }) {
   }, [state]);
 
   const mode = state?.execution_mode ?? '—';
+  const [selectedModel, setSelectedModel] = useState<'Neural Net (MLP)' | 'Transformer' | 'Ensemble' | 'ONNX' | 'Meta-Labeler'>('Neural Net (MLP)');
+
+  // Mock attention weights for demo (in production, comes from WebSocket)
+  const attentionWeights = useMemo(() => {
+    const weights: number[] = [];
+    const numHeads = 4;
+    const seqLen = 20;
+    for (let h = 0; h < numHeads; h++) {
+      for (let q = 0; q < seqLen; q++) {
+        for (let k = 0; k < seqLen; k++) {
+          // Diagonal-heavy attention pattern
+          const dist = Math.abs(q - k);
+          const base = Math.exp(-dist * 0.3);
+          const noise = Math.random() * 0.1;
+          weights.push(Math.min(base + noise, 1.0));
+        }
+      }
+    }
+    return weights;
+  }, []);
+
+  const statusMeta = isConnected
+      ? mode === 'LIVE'
+        ? 'Live trading'
+        : 'Monitoring'
+      : connectionStatus === 'reconnecting'
+        ? 'Reconnecting…'
+        : connectionStatus === 'error'
+          ? 'Connection failed — click to retry'
+          : 'Connecting…';
 
   return (
     <main className="page">
       {/* ================= OVERVIEW ================= */}
-      <Section id="overview" title="Overview" meta={isConnected ? (mode === 'LIVE' ? 'Live trading' : 'Monitoring') : 'Connecting…'}>
+      <Section id="overview" title="Overview" meta={statusMeta}>
         <div className="hero">
           <NetworkMesh className="netmesh" />
           <div className="hero-ey">
@@ -120,6 +155,17 @@ export default function Dashboard({ theme }: { theme: string }) {
             ) : <div className="empty" style={{ height: '100%' }}>Collecting equity data…</div>}
           </div>
           <div className="hero-side">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span
+                className={`status-dot ${isConnected ? 'connected' : connectionStatus === 'reconnecting' ? 'reconnecting' : 'disconnected'}`}
+                onClick={!isConnected ? reconnect : undefined}
+                style={{ cursor: !isConnected ? 'pointer' : 'default' }}
+                title={isConnected ? 'Connected' : connectionStatus === 'reconnecting' ? 'Reconnecting…' : connectionStatus === 'error' ? 'Click to retry' : 'Connecting…'}
+              />
+              <span className="muted" style={{ fontSize: 11 }}>
+                {isConnected ? 'WS Connected' : connectionStatus === 'reconnecting' ? 'Reconnecting…' : connectionStatus === 'error' ? 'Failed' : 'Connecting…'}
+              </span>
+            </div>
             <div>
               <div className="hero-label">Free Margin</div>
               <div className="note tnum">{state ? `$${money(state.account.free_margin)}` : '—'}</div>
@@ -396,6 +442,33 @@ export default function Dashboard({ theme }: { theme: string }) {
                     </ResponsiveContainer>
                   ) : <div className="empty" style={{ height: '100%' }}>Collecting…</div>}
                 </div>
+              </div>
+            </div>
+
+            {/* --- AI Architecture & Diagnostics --- */}
+            <div className="split-6-6">
+              <div className="card">
+                <div className="between" style={{ marginBottom: 8 }}>
+                  <span className="divider-label" style={{ margin: 0 }}>Model Architecture</span>
+                  <StatusBadge status={state.ai.neural_net?.active ? 'online' : 'offline'} label={state.ai.neural_net?.active ? 'Loaded' : 'Off'} />
+                </div>
+                <AIModelSelector selected={selectedModel} onSelect={setSelectedModel} />
+                <ModelTopology modelName={selectedModel} />
+              </div>
+              <div className="card">
+                <div className="divider-label">Signal Pipeline</div>
+                <SignalFlowDiagram ai={state.ai} nn={state.ai.neural_net} regime={state.ai.regime} />
+              </div>
+            </div>
+
+            <div className="split-6-6">
+              <div className="card">
+                <div className="divider-label">Regime Transitions (HMM)</div>
+                <RegimeTransitionDiagram regime={state.ai.regime} />
+              </div>
+              <div className="card">
+                <div className="divider-label">Attention Weights (Transformer)</div>
+                <AttentionHeatmap attentionWeights={attentionWeights} numHeads={4} seqLen={20} />
               </div>
             </div>
 

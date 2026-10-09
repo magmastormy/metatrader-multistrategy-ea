@@ -264,6 +264,11 @@ public:
 class CBarrierLabelResolver
 {
 public:
+    // WARNING (Theme 2 audit): this helper is DEAD in the live pipeline — the live path
+    // re-implements labeling inline in ResolveBarriers() with the OPPOSITE class encoding
+    // (upper-hit = class 1 BUY, lower-hit = class 2 SELL). This version returns upper=2 /
+    // lower=1, which is INVERTED vs the live scheme. Do NOT wire it into live labeling or it
+    // will silently flip every label. Kept only for the legacy CTrainingDataManager path.
     static int ResolveLabel(const double upperBarrier, const double lowerBarrier,
                            const double exitPrice, const double entryPrice,
                            const datetime expiryTime, const datetime currentTimestamp)
@@ -840,12 +845,30 @@ private:
         if(ArraySize(rawFeatures) > 20 && MathIsValidNumber(rawFeatures[20]))
             momentum = rawFeatures[20];
 
+        // Theme 2 (articles 18770/19103): oscillator-state for the meta-labeler
+        // reliability gate. Teach it "I am only reliable when the oscillator is not
+        // pinned at an extreme" rather than learning that indirectly from levels.
+        double rsiZone = (ArraySize(rawFeatures) > 10 && MathIsValidNumber(rawFeatures[10])) ?
+                         (rawFeatures[10] - 0.5) * 2.0 : 0.0;   // rawFeatures[10] = rsi14 (0..1)
+        // Stochastic %K zone via indicator handle + CopyBuffer (barShift=1 = last
+        // closed bar, no look-ahead). iStochastic() only CREATES a handle, so the
+        // %K value must be read from buffer 0 (MODE_MAIN) explicitly.
+        double stochKZone = 0.0;
+        int hStoch = iStochastic(m_symbol, m_timeframe, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
+        if(hStoch != INVALID_HANDLE)
+        {
+            double stochBuf[];
+            if(CopyBuffer(hStoch, 0, 1, 1, stochBuf) > 0 && ArraySize(stochBuf) > 0)
+                stochKZone = (stochBuf[0] - 50.0) / 50.0;   // %K (0..100) -> [-1,1]
+            IndicatorRelease(hStoch);
+        }
+
         m_metaLabeler.BuildInput(confidence, regimeProbs, rawFeatures[15],
                                  noneProb, buyProb, sellProb, entropy,
                                  conformalUnc,
                                  m_metaLabeler.GetRecentWinRate(),
                                  m_metaLabeler.GetRecentAvgConfidence(),
-                                 featSubset, momentum, metaInput);
+                                 featSubset, momentum, rsiZone, stochKZone, metaInput);
 
         if(signal != TRADE_SIGNAL_NONE)
         {
@@ -973,6 +996,13 @@ private:
         for(int i = 0; i < m_barrierCount; i++)
         {
             if(m_barrierBuffer[i].resolved)
+                continue;
+
+            // FIRST-PASS PURITY GUARD (Theme 2 audit): do not resolve on the same bar the
+            // barrier was recorded. At observation the feature bar (entryBarTime) IS the current
+            // closed bar, so its own wick can already breach ±K·ATR and would resolve "instantly"
+            // from a past bar — a look-back, not a forward test. Wait for a later bar to close.
+            if(m_barrierBuffer[i].entryBarTime > 0 && closedBarTime <= m_barrierBuffer[i].entryBarTime)
                 continue;
 
             // Handle HOLD observations (signalClass=0): auto-resolve as neutral label
@@ -1884,13 +1914,21 @@ public:
             return;
         if(m_tradeLinkedLabels < AI_MIN_TRADE_LINKED_LABELS)
         {
+            // Bootstrap exception: the trade-linked label path (ReservePredictionForSignal ->
+            // UpdateTradeResult*) is not currently wired into the trade-execution flow, so
+            // m_tradeLinkedLabels stays 0 and this gate would permanently block training.
+            // Training is what lets the network exit cold-start (>= NN_MIN_NORMALIZATION_SAMPLES
+            // resolved labels) and emit trusted signals; trusted signals being traded is what would
+            // accrue trade-linked labels. Requiring them first is a deadlock. Allow bootstrap
+            // training on self-labeled barrier/HOLD data and log the gap so it can be wired later.
             static datetime s_lastGateLog = 0;
             if(s_lastGateLog == 0 || (TimeCurrent() - s_lastGateLog) >= 300)
             {
-                PrintFormat("[NEURAL-NET] TRAIN-BLOCKED tradeLinkedLabels=%d < 5 | Symbol=%s", m_tradeLinkedLabels, m_symbol);
+                PrintFormat("[NEURAL-NET] TRAIN-BOOTSTRAP tradeLinkedLabels=%d < %d (training on self-labeled barrier data; wire ReservePredictionForSignal + UpdateTradeResult to accrue traded labels) | Symbol=%s",
+                            m_tradeLinkedLabels, AI_MIN_TRADE_LINKED_LABELS, m_symbol);
                 s_lastGateLog = TimeCurrent();
             }
-            return;
+            // Do NOT return: proceed with bootstrap training to break the cold-start deadlock.
         }
 
         int maxSamples = MathMin(m_trainCount, 256);

@@ -238,6 +238,24 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
         return false;
     SUnifiedRiskConfig riskConfig;
     g_contexts[ctxIdx].riskManager.Initialize(riskConfig);
+    // The exporter is a READ-ONLY signal tap: we want the RAW per-strategy
+    // candidate signal + confidence for OOS walk-forward validation, NOT a
+    // live risk-gated one. The default SUnifiedRiskConfig leaves
+    // maxPortfolioRiskPercent = 0.0, which makes ValidateTradeRequest reject
+    // EVERY candidate during the historical scan and forces GetSignal() to
+    // return 0 (so the exported *_signal columns were all zero). Make the
+    // risk manager permissive so signals flow through untouched. This has no
+    // effect on the live EA - it only governs this exporter's engine instance.
+    g_contexts[ctxIdx].riskManager.ApplyTierOverrides(
+        100.0,   // tierRiskPerTradePct
+        999,     // tierMaxPositions
+        100.0,   // effectiveDaily
+        100.0,   // effectivePortfolio  (was 0.0 -> rejected all)
+        100.0,   // effectiveDdWarning
+        100.0,   // effectiveDdCritical
+        100.0,   // effectiveDailyLossLimit
+        100.0    // maxRiskPerTradeOverride
+    );
 
     // Create strategy instances
     g_contexts[ctxIdx].strategies[0] = new CSimpleMomentumStrategy();
@@ -473,6 +491,8 @@ bool ExportSymbolTrainingData(const int fileHandle,
     int digits = (int)SymbolInfoInteger(g_contexts[ctxIdx].symbol, SYMBOL_DIGITS);
     int warmupSkipped = 0;
     bool warmedUp = false;
+    int diagBars = 0;   // WFO signal-tap diagnostic counter (first few bars only)
+    int sigCount[STRATEGY_COUNT] = {0};  // total non-zero signals per strategy (whole run)
 
     PrintFormat("[TRAIN-EXPORT] Processing %s | bars=%d | building engines...",
                 g_contexts[ctxIdx].symbol, copied);
@@ -641,10 +661,32 @@ bool ExportSymbolTrainingData(const int fileHandle,
                 {
                     ENUM_TRADE_SIGNAL sig = g_contexts[ctxIdx].strategies[s].GetSignal(conf);
                     signal = (int)sig;
+                    if(signal != 0)
+                        sigCount[s]++;
                 }
                 row += StringFormat(",%d,%.6f", signal, conf);
             }
         }
+
+        // --- WFO SIGNAL-TAP DIAGNOSTIC -------------------------------------
+        // Log each strategy's decision-reason tag for the first few bars so we
+        // can see exactly WHY the exported *_signal columns are all zero
+        // (walk-forward validation is impossible without real signals).
+        if(diagBars < 5 && InpExportStrategySignals)
+        {
+            string dbuf = "";
+            for(int s = 0; s < STRATEGY_COUNT; s++)
+            {
+                CStrategyBase* bp = dynamic_cast<CStrategyBase*>(g_contexts[ctxIdx].strategies[s]);
+                string tag = (bp != NULL) ? bp.GetLastDecisionReasonTag() : "NO_BASE_PTR";
+                dbuf += StringFormat("%s=%s; ", STRATEGY_NAMES[s], tag);
+            }
+            PrintFormat("[TRAIN-DIAG] %s bar=%s | %s",
+                        g_contexts[ctxIdx].symbol,
+                        TimeToString(rates[i].time, TIME_DATE | TIME_SECONDS), dbuf);
+            diagBars++;
+        }
+        // ------------------------------------------------------------------
 
         // Section 5: Consensus Metrics
         if(InpExportConsensusData)
@@ -699,6 +741,15 @@ bool ExportSymbolTrainingData(const int fileHandle,
 
     PrintFormat("[TRAIN-EXPORT] %s %s | total_bars=%d | warmup_skipped=%d | rows_exported=%d",
                 g_contexts[ctxIdx].symbol, EnumToString(timeframe), copied, warmupSkipped, copied - warmupSkipped);
+
+    // WFO SIGNAL-TAP SUMMARY: how many non-zero signals each strategy emitted
+    // over the WHOLE run. If every strategy shows 0, the signal tap is broken
+    // (walk-forward validation is impossible) and the first-5-bars [TRAIN-DIAG]
+    // lines above show the reject reason.
+    string summ = "";
+    for(int s = 0; s < STRATEGY_COUNT; s++)
+        summ += StringFormat("%s=%d; ", STRATEGY_NAMES[s], sigCount[s]);
+    PrintFormat("[TRAIN-DIAG-SUM] %s | non-zero signals -> %s", g_contexts[ctxIdx].symbol, summ);
     return true;
 }
 
@@ -709,15 +760,11 @@ void Cleanup()
 {
     for(int i = 0; i < ArraySize(g_contexts); i++)
     {
-        // Delete strategies first (before manager, since manager references them)
-        for(int s = 0; s < STRATEGY_COUNT; s++)
-        {
-            if(g_contexts[i].strategies[s] != NULL)
-            {
-                delete g_contexts[i].strategies[s];
-                g_contexts[i].strategies[s] = NULL;
-            }
-        }
+        // NOTE: strategy objects are OWNED by CEnterpriseStrategyManager (registered in
+        // InitializeStrategies). Its destructor tears them down via CStrategyMgrRoster
+        // (Deinit+delete). Deleting them here too caused a double-free / invalid-pointer
+        // crash (StrategyMgrRoster.mqh:392). Do NOT delete g_contexts[i].strategies[s]
+        // directly — let the manager own them. Only delete the manager below.
 
         // Delete manager
         if(g_contexts[i].strategyManager != NULL)
@@ -761,7 +808,7 @@ int OnInit()
         ParseLabelHorizons();
 
     // Open output file
-    int fileHandle = FileOpen(InpOutputFile, FILE_COMMON | FILE_WRITE | FILE_CSV | FILE_ANSI);
+    int fileHandle = FileOpen(InpOutputFile, FILE_WRITE | FILE_CSV | FILE_ANSI); // per-terminal MQL5\Files\ (no FILE_COMMON)
     if(fileHandle == INVALID_HANDLE)
     {
         PrintFormat("[TRAIN-EXPORT] Failed to open output file %s | err=%d", InpOutputFile, GetLastError());

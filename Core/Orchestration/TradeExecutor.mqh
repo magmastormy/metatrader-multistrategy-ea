@@ -14,6 +14,7 @@
 #include "../../Core/Orchestration/CandidateBuilder.mqh"
 #include "../../Core/Utils/Enums.mqh"
 #include "../../Core/Utils/JsonLogger.mqh"
+#include "../../Core/Utils/CorrelationId.mqh"
 #include <Trade\Trade.mqh>
 
 class CTradeExecutor
@@ -112,8 +113,8 @@ public:
             return result;
         }
 
-        // Build comment with metadata
-        string comment = BuildExecutionComment(candidate);
+        // Build comment with metadata (includes correlation ID for lineage)
+        string comment = BuildExecutionComment(candidate, corrId);
         
         // Execute market order
         bool executed = m_tradeManager.OpenPosition(
@@ -363,14 +364,61 @@ public:
         }
     }
     
-    string BuildExecutionComment(const STradeCandidate &candidate)
+    string BuildExecutionComment(const STradeCandidate &candidate, const string corrId = "")
     {
-        string baseComment = StringFormat("EA|%s|%.0f|%.1f|%.1f|%s", 
+        // Format: EA|CLUSTER|RISK|SL|TP|ROLE|CID|STRAT
+        // CID = last 8 chars of correlation ID for brevity
+        // STRAT = strategy code (MOM, TND, MR, etc.)
+        string cidShort = "";
+        if(corrId != "" && StringLen(corrId) >= 8) {
+            cidShort = StringSubstr(corrId, StringLen(corrId) - 8);
+        }
+        
+        string stratCode = "UNK";
+        // Extract primary strategy from contributor summary
+        if(candidate.contributorSummary != "") {
+            // Parse first contributor from CSV
+            int comma = StringFind(candidate.contributorSummary, ",");
+            string firstContributor = (comma >= 0) ? StringSubstr(candidate.contributorSummary, 0, comma) 
+                                                  : candidate.contributorSummary;
+            // Map common names to codes
+            if(StringFind(firstContributor, "Momentum") >= 0) stratCode = "MOM";
+            else if(StringFind(firstContributor, "Trend") >= 0) stratCode = "TND";
+            else if(StringFind(firstContributor, "Support") >= 0 || StringFind(firstContributor, "Resistance") >= 0) stratCode = "SR";
+            else if(StringFind(firstContributor, "Candlestick") >= 0) stratCode = "CSL";
+            else if(StringFind(firstContributor, "MeanRev") >= 0 || StringFind(firstContributor, "Mean Reversion") >= 0) stratCode = "MR";
+            else if(StringFind(firstContributor, "VolBreak") >= 0 || StringFind(firstContributor, "Volatility") >= 0) stratCode = "VB";
+            else if(StringFind(firstContributor, "FVG") >= 0) stratCode = "FVG";
+            else if(StringFind(firstContributor, "Turtle") >= 0) stratCode = "TS";
+            else if(StringFind(firstContributor, "Breaker") >= 0) stratCode = "BB";
+            else if(StringFind(firstContributor, "NYOpen") >= 0) stratCode = "NY";
+            else if(StringFind(firstContributor, "Asian") >= 0) stratCode = "ARB";
+            else if(StringFind(firstContributor, "StatArb") >= 0 || StringFind(firstContributor, "Statistical") >= 0) stratCode = "STAT";
+            else if(StringFind(firstContributor, "Kalman") >= 0) stratCode = "KLM";
+            else if(StringFind(firstContributor, "ChangePoint") >= 0) stratCode = "CPD";
+            else if(StringFind(firstContributor, "FourState") >= 0) stratCode = "4ST";
+            else if(StringFind(firstContributor, "VolTarget") >= 0) stratCode = "VT";
+            else if(StringFind(firstContributor, "Liquidity") >= 0) stratCode = "LS";
+            else if(StringFind(firstContributor, "RangeComp") >= 0) stratCode = "RC";
+            else if(StringFind(firstContributor, "ExitOpt") >= 0) stratCode = "EO";
+            else if(StringFind(firstContributor, "Neural") >= 0 || StringFind(firstContributor, "NN") >= 0) stratCode = "NNET";
+            else if(StringFind(firstContributor, "Transformer") >= 0) stratCode = "TRAN";
+            else if(StringFind(firstContributor, "Ensemble") >= 0) stratCode = "ENS";
+            else if(StringFind(firstContributor, "ONNX") >= 0) stratCode = "ONNX";
+            else if(StringFind(firstContributor, "Python") >= 0) stratCode = "PY";
+            else if(StringFind(firstContributor, "Scalp") >= 0) stratCode = "SCLP";
+            else if(StringFind(firstContributor, "Spike") >= 0) stratCode = "SPK";
+            else if(StringFind(firstContributor, "Grid") >= 0) stratCode = "GRID";
+        }
+        
+        string baseComment = StringFormat("EA|%s|%.0f|%.1f|%.1f|%s|%s|%s", 
                                     candidate.clusterCode,
                                     candidate.riskPercent,
                                     candidate.stopLossPips,
                                     candidate.takeProfitPips,
-                                    candidate.strategyRole);
+                                    candidate.strategyRole,
+                                    cidShort,
+                                    stratCode);
         
         // Include prediction ID in comment for NN training linkage (L11-014)
         if(candidate.predictionId != "" && m_attributionManager != NULL)

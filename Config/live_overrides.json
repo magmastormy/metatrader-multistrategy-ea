@@ -1,0 +1,79 @@
+{
+  "risk": {
+    "maxRiskPerTrade": 1.0,
+    "maxDailyRisk": 4.0,
+    "maxPortfolioRisk": 12.0,
+    "maxDrawdown": 15.0,
+    "dailyLossLimitPercent": 4.0,
+    "allowMinLotRoundUp": true,
+    "minLotRiskMultiplier": 15.0,
+    "enableCompoundingTiers": true,
+    "riskTier": 1
+  },
+  "weights": {
+    "EURUSD": {
+      "Momentum": 1.0,
+      "Trend": 1.2,
+      "SupportResistance": 1.8,
+      "Candlestick": 0.8,
+      "MeanReversion": 1.8,
+      "VolatilityBreakout": 2.0
+    },
+    "XAUUSD": {
+      "Momentum": 0.8,
+      "Trend": 1.5,
+      "SupportResistance": 2.0,
+      "Candlestick": 1.0,
+      "MeanReversion": 1.5,
+      "VolatilityBreakout": 2.2
+    },
+    "Volatility 25 Index": {
+      "Momentum": 1.5,
+      "Trend": 0.8,
+      "MeanReversion": 2.5,
+      "VolatilityBreakout": 1.8
+    },
+    "Volatility 75 Index": {
+      "Momentum": 1.5,
+      "Trend": 0.8,
+      "MeanReversion": 2.5,
+      "VolatilityBreakout": 1.8
+    }
+  },
+  "thresholds": {
+    "consensusMinScore": 0.60,
+    "consensusConflictDeadband": 0.05,
+    "consensusMinReadyWeightRatio": 0.40,
+    "aiConfidenceMin": 0.70,
+    "pipelineMinConfidence": 0.55,
+    "intrabarSingleVoterMinConfidence": 0.95
+  },
+  "symbols": {
+    "enableVolumeCheck": true,
+    "symbolMaxSpreadPoints": 1500,
+    "symbolMinDailyVolumeLots": 1000,
+    "autoAddChartSymbol": true
+  },
+  "ai": {
+    "enableAIMode": false,
+    "enableNeuralNetwork": false,
+    "enableTransformer": false,
+    "enableEnsemble": false,
+    "enableOnnxAI": false,
+    "enablePythonBridgeAI": false,
+    "aiWeightMultiplier": 1.0,
+    "aiDrawdownSizingLimit": 0.20
+  },
+  "engines": {
+    "enableSessionWeights": true,
+    "enableSkewStepAnalyzer": true,
+    "enableFamilyWeightMatrix": true,
+    "enableHurstEngine": true,
+    "enableOUProcess": true,
+    "enableOFIProxy": true,
+    "enableVPINFilter": true,
+    "enableVWAPEngine": true,
+    "enableVolumeProfile": true,
+    "enableCVDEngine": true
+  }
+}

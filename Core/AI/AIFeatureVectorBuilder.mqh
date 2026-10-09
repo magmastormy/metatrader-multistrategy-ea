@@ -20,7 +20,7 @@
 #define TRANSFORMER_SHORT_SEQ_LEN_DEFAULT   10
 #define TRANSFORMER_LR_A_DEFAULT           0.001
 #define TRANSFORMER_LR_B_DEFAULT          0.0015
-#define FEATURE_VECTOR_SIZE               65
+#define FEATURE_VECTOR_SIZE               70
 #define TEMPORAL_BLEND_CURRENT            0.85
 #define TEMPORAL_BLEND_LAG                0.15
 #define DMODE_BASE_FEATURE_RATIO_WARNING   6
@@ -567,6 +567,7 @@ public:
         int hBands = ind.GetBandsHandle(symbol, timeframe, 20, 0, 2.0, PRICE_CLOSE);
         int hMacd = ind.GetMACDHandle(symbol, timeframe, 12, 26, 9, PRICE_CLOSE);
         int hCci = ind.GetCCIHandle(symbol, timeframe, 14, PRICE_CLOSE);
+        int hStoch = ind.GetStochasticHandle(symbol, timeframe, 14, 3, 3, MODE_SMA, STO_LOWHIGH);
 
         double atr14 = GetIndicatorValue(hAtr14, 0, barShift);
         double atr50 = GetIndicatorValue(hAtr50, 0, barShift);
@@ -592,6 +593,8 @@ public:
         double macdLag1 = GetIndicatorValue(hMacd, 0, barShift + 1) -
                           GetIndicatorValue(hMacd, 1, barShift + 1);
         double cci = GetIndicatorValue(hCci, 0, barShift);
+        double stochK = (hStoch != INVALID_HANDLE) ? GetIndicatorValue(hStoch, 0, barShift) : 50.0;  // %K
+        double stochD = (hStoch != INVALID_HANDLE) ? GetIndicatorValue(hStoch, 1, barShift) : 50.0;  // %D (signal)
 
         double logRet = GetLogReturn(symbol, timeframe, barShift);
         double normRet = (atr14 > 1e-9) ? (logRet / (atr14 + 1e-9)) : 0.0;
@@ -723,6 +726,17 @@ public:
         bool currBearish = (close < open && close < (prev2Open + prev2Close) / 2.0);
         features[64] = (prev2Bullish && prev1Small && currBearish) ? 1.0 : 0.0;
 
+        // [65] Stochastic %K zone [-1,1]  (0..100 -> -1..1): overbought > +0.4, oversold < -0.4
+        features[65] = (stochK - 50.0) / 50.0;
+        // [66] Stochastic %D (signal) zone [-1,1]
+        features[66] = (stochD - 50.0) / 50.0;
+        // [67] Stochastic slope (K - D) normalized [-1,1]: oscillator momentum
+        features[67] = MathMax(-1.0, MathMin(1.0, (stochK - stochD) / 50.0));
+        // [68] RSI(14) zone [-1,1]  (0..1 -> -1..1): encodes overbought/oversold REGIME
+        features[68] = (rsi14 - 0.5) * 2.0;
+        // [69] MACD histogram slope (current - lag1), normalized by ATR: momentum of the MACD
+        features[69] = macdHistNorm - ((atr14 > 1e-9) ? (macdLag1 / (atr14 + 1e-9)) : 0.0);
+
         for(int i = 0; i < FEATURE_VECTOR_SIZE; i++)
             features[i] = SanitizeFeature(features[i]);
 
@@ -783,7 +797,7 @@ public:
     static string GetFeatureNamesStatic()
     {
         string names = "";
-        string featureNames[65] = 
+        string featureNames[70] = 
         {
             "logRet", "normRet", "closePosInRange", "logVolume", "atrRatio",
             "closeVsEma8", "closeVsEma21", "closeVsEma50", "ema8VsEma21", "ema21VsEma50",
@@ -797,7 +811,8 @@ public:
             "zScoreAtr14_20", "logRetLag10", "logRetLag15", "closeVsEma100Atr", "closeVsSma200Atr",
             "autocorr1_20", "autocorr5_20", "closeVsEma100Atr50", "zScoreVol50", "atrRatio50_14",
             "ofi128", "timeSinceSpike256",
-            "pinBarBull", "pinBarBear", "engulfing", "doji", "hammer", "shootingStar", "morningStar", "eveningStar"
+            "pinBarBull", "pinBarBear", "engulfing", "doji", "hammer", "shootingStar", "morningStar", "eveningStar",
+            "stochKZone", "stochDZone", "stochSlope", "rsi14Zone", "macdHistSlope"
         };
         for(int i = 0; i < 65; i++)
         {

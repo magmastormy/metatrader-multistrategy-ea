@@ -274,7 +274,7 @@ def main() -> None:
     """Run the dashboard server."""
     import uvicorn
     uvicorn.run(
-        "Dashboard.server.dashboard_server:app",
+        "server.dashboard_server:app",
         host=SERVER_HOST,
         port=SERVER_PORT,
         reload=False,

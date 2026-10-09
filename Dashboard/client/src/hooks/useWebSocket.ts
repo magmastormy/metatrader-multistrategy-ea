@@ -1,29 +1,49 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { WSMessage } from '../types/ea-state';
 
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'error';
+
 interface UseWebSocketReturn {
   lastMessage: WSMessage | null;
   isConnected: boolean;
+  status: ConnectionStatus;
   send: (data: unknown) => void;
+  reconnect: () => void;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
   const [lastMessage, setLastMessage] = useState<WSMessage | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
+  const maxReconnectDelay = 30000;
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 10;
+  const urlRef = useRef<string>('');
+
+  const buildUrl = useCallback(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.hostname}:8765/ws`;
+  }, []);
 
   const connect = useCallback(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}:8765/ws`;
+    const wsUrl = buildUrl();
+    urlRef.current = wsUrl;
 
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    setStatus('connecting');
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setIsConnected(true);
+      setStatus('connected');
+      setIsConnectedState(true);
       reconnectDelayRef.current = 1000;
+      reconnectAttemptsRef.current = 0;
     };
 
     ws.onmessage = (event) => {
@@ -35,26 +55,45 @@ export function useWebSocket(): UseWebSocketReturn {
       }
     };
 
-    ws.onclose = () => {
-      setIsConnected(false);
+    ws.onclose = (event) => {
+      setIsConnectedState(false);
       wsRef.current = null;
-      const delay = reconnectDelayRef.current;
-      reconnectTimeoutRef.current = setTimeout(() => {
-        reconnectDelayRef.current = Math.min(delay * 2, 30000);
-        connect();
-      }, delay);
+
+      if (event.wasClean) {
+        setStatus('disconnected');
+      } else {
+        setStatus('reconnecting');
+        const delay = reconnectDelayRef.current;
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectDelayRef.current = Math.min(delay * 2, maxReconnectDelay);
+          reconnectAttemptsRef.current += 1;
+          if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+            setStatus('error');
+            return;
+          }
+          connect();
+        }, delay);
+      }
     };
 
     ws.onerror = () => {
+      setStatus('error');
       ws.close();
     };
+  }, [buildUrl]);
+
+  const setIsConnectedState = useCallback((connected: boolean) => {
+    setStatus(connected ? 'connected' : 'disconnected');
   }, []);
 
   useEffect(() => {
     connect();
     return () => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (wsRef.current) wsRef.current.close();
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+      }
     };
   }, [connect]);
 
@@ -64,5 +103,15 @@ export function useWebSocket(): UseWebSocketReturn {
     }
   }, []);
 
-  return { lastMessage, isConnected, send };
+  const reconnect = useCallback(() => {
+    reconnectDelayRef.current = 1000;
+    reconnectAttemptsRef.current = 0;
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+    }
+    connect();
+  }, [connect]);
+
+  return { lastMessage, isConnected: status === 'connected', status, send, reconnect };
 }

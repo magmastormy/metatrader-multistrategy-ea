@@ -421,6 +421,29 @@ button { font-family: inherit; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .fade-in { animation: fade-in 0.35s var(--ease) both; }
 
+/* Connection status dot */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  transition: all 0.2s var(--ease);
+}
+.status-dot.connected {
+  background: var(--pos);
+  box-shadow: 0 0 8px var(--pos);
+}
+.status-dot.reconnecting {
+  background: var(--warn);
+  animation: pulse 1s var(--ease) infinite;
+}
+.status-dot.disconnected {
+  background: var(--neg);
+}
+.status-dot:hover:not(.connected) {
+  transform: scale(1.2);
+}
+
 /* ---------------- Responsive topbar ---------------- */
 @media (max-width: 860px) {
   .topnav { display: none; }
