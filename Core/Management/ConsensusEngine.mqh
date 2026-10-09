@@ -1,30 +1,20 @@
-// Consensus decision core extracted from CEnterpriseStrategyManager: the entry funnel,
-// the quorum computation, the evaluation body, the two-tier / probe fast paths and the
-// solo fallback are one load-bearing unit and must not be split.
-// REGISTRY RECONCILIATION - HARD GUARD: SyncEnabledWithRegistry() lives here, but
-// CEnterpriseStrategyManager::SyncEnabledWithRegistry() is retained as a one-line
-// forwarder because its only call site, Core/Orchestration/EAOrchestrator.mqh:768,
-// must stay byte-stable. Do not remove that forwarder.
-// FIELD OWNERSHIP:
-// - m_lastDecisionContext: exactly one writer (EvaluateConsensusInternal) and one
-//   reader path (manager GetLastDecisionContextValue -> CStrategyStateReporter).
+// Consensus decision core: the entry funnel, quorum computation, evaluation body, two-tier / probe
+// fast paths and the solo fallback are one load-bearing unit and must not be split.
+// Registry reconciliation lives here, but the manager's one-line SyncEnabledWithRegistry() forwarder
+// has live external call sites. Do not remove that forwarder.
+// Field ownership:
+// - m_lastDecisionContext: one writer (EvaluateConsensusInternal), read via GetLastDecisionContextValue.
 // - m_lastVPINMultiplier is owned by CPostConsensusValidator, not here.
-// - enabled / liveVotingEnabled / intrabarPolicy are READ through m_src accessors and
-//   are NOT owned here - they are written by manager methods (registration, lifecycle,
-//   governance setters).
-// This module MUTATES the manager, so it holds a NON-const back-pointer and writes
-// through the manager's narrow per-field accessors. It mirrors no injected pointer (the
-// pipeline / registry / diagnostics are re-read from the manager on every call), so it
-// needs no re-sync on Deinit.
-// NOTE: this header is an implementation detail of EnterpriseStrategyManager.mqh and is
-// included from there (after the shared free helpers, before the manager class). It is
-// not intended to be included standalone.
+// - enabled / liveVotingEnabled / intrabarPolicy are READ through m_src accessors, never written here.
+// This module mutates the manager, so m_src is non-const and writes go through its narrow per-field
+// accessors. It mirrors no injected pointer (pipeline / registry / diagnostics are re-read per call),
+// so it needs no re-sync on Deinit.
+// Included only from EnterpriseStrategyManager.mqh, after the shared free helpers and before the
+// manager class; not usable standalone.
 #ifndef CONSENSUS_ENGINE_MQH
 #define CONSENSUS_ENGINE_MQH
 
-#include "../Utils/Enums.mqh"                     // ENUM_TRADE_SIGNAL, ENUM_SIGNAL_EVAL_MODE,
-                                                  // ENUM_STRATEGY_ROLE/CLUSTER/TYPE,
-                                                  // ENUM_INTRABAR_POLICY, SConsensusDecisionContext
+#include "../Utils/Enums.mqh"                     // signal / role / cluster / intrabar enums + SConsensusDecisionContext
 #include "../../Interfaces/IStrategy.mqh"         // IStrategy::GetSignal / GetType / SetEnabled
 #include "../Pipeline/UnifiedSignalPipeline.mqh"  // CUnifiedSignalPipeline::ProcessSignal
 #include "../Engines/RegimeEngine.mqh"             // CRegimeEngine::GetSnapshot (regime vote weighting)
@@ -32,17 +22,14 @@
 #include "../Utils/JsonLogger.mqh"                // CJsonLogger, CCorrelationIdGenerator
 #include "DiagnosticsManager.mqh"                 // CDiagnosticsManager
 
-// Minimum independent voters required for a consensus entry
-// (Batch 169). A policy floor applied at the decision point, so it
-// holds regardless of which quorum profile is selected and is not
-// degraded when few strategies are eligible on a symbol.
+// Minimum independent voters for a consensus entry: a lone voter is 100% consensus.
+// Decision-point floor - no quorum profile can lower it, and few eligible voters cannot degrade it.
 #ifndef MIN_CONSENSUS_VOTERS
 #define MIN_CONSENSUS_VOTERS 2
 #endif
 
 class CEnterpriseStrategyManager;   // forward: held as a mutable pointer
 
-// Consensus decision core over CEnterpriseStrategyManager
 class CConsensusEngine
 {
 private:
@@ -70,13 +57,11 @@ public:
     ENUM_TRADE_SIGNAL TryFallbackSoloSignal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode,
                                             double &outConfidence, int &outConfluence, string &outReason);
 
-    //--- registry reconciliation (HARD GUARD: manager keeps a forwarder)
+    //--- Registry reconciliation; do not remove the manager's forwarder
     void SyncEnabledWithRegistry();
 
-    //--- decision context ownership
     void GetLastDecisionContextValue(SConsensusDecisionContext &out) const { out = m_lastDecisionContext; }
 
-    //--- vote / weighting helpers
     bool   IsStrategyLiveVoter(const int strategyIndex) const;
     double GetRegimeCategoryMultiplier(const string symbol, ENUM_STRATEGY_TYPE strategyType) const;
     double GetStrategyReliabilityMultiplier(const int strategyIndex) const;
@@ -95,7 +80,6 @@ public:
     void   MaybeLogConsensusDiagnostics(const string symbol);
 
 private:
-    //--- evaluation core
     ENUM_TRADE_SIGNAL EvaluateConsensusInternal(const string symbol, double &confidence, int &confluence,
                                                 ENUM_SIGNAL_EVAL_MODE evalMode);
     ENUM_TRADE_SIGNAL EvaluateConsensusTwoTierInternal(const string symbol, double &confidence, int &confluence,
@@ -104,9 +88,6 @@ private:
                                                          ENUM_SIGNAL_EVAL_MODE evalMode);
     ENUM_TRADE_SIGNAL TryFallbackSoloSignalInternal(const string symbol, ENUM_SIGNAL_EVAL_MODE evalMode,
                                                     double &outConfidence, int &outConfluence, string &outReason);
-    //--- NOTE ON SIGNATURE: `StrategyEntry &strategies[]` was never read in the body and is
-    //--- the single dropped parameter; every other parameter is kept so the call shape stays
-    //--- recognisable.
     void CalculateEffectiveQuorumParamsInternal(
         const string symbol,
         const int activeLiveStrategies,
@@ -130,7 +111,6 @@ private:
     ) const;
 };
 
-// Get Consensus Signal (backward compatible)
 ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignal(double &confidence)
 {
     int confluence = 0;
@@ -182,7 +162,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::GetConsensusSignalForSymbolWithConfluenceMod
     }
     else
     {
-        // Fallback if consensus engine not initialized
+        // Fail closed when the pipeline or TF consistency is unavailable
         confluence = 0;
         confidence = 0;
         result = TRADE_SIGNAL_NONE;
@@ -206,15 +186,9 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTier(const string symbol
     return TRADE_SIGNAL_NONE;
 }
 
-// Reconcile enabled flags with the finalized registry
-// Strategies are auto-registered (AutoRegisterStrategies) BEFORE
-// the orchestrator's BuildStrategyRegistry populates the shared
-// CStrategyRegistry with definitions. At that early point
-// IsStrategyActive() returns false (definition not found), so the
-// override at RegisterStrategy() locks every strategy disabled.
-// After BuildStrategyRegistry finalizes the mode, this method
-// re-applies the registry's active state so the live strategy
-// objects actually participate in consensus.
+// Strategies are auto-registered before BuildStrategyRegistry populates CStrategyRegistry, so at that
+// point IsStrategyActive() is false and the override at RegisterStrategy() locks every strategy disabled.
+// This re-applies the registry's active state so the live strategy objects participate in consensus.
 void CConsensusEngine::SyncEnabledWithRegistry()
 {
     if(m_src == NULL)
@@ -246,7 +220,7 @@ void CConsensusEngine::SyncEnabledWithRegistry()
                     m_src.GetManagedSymbol(), synced);
 }
 
-// Unit clamp (member form; shadows the free helper, as before)
+// Member-form unit clamp; shadows the free helper
 double CConsensusEngine::ClampUnitValue(const double value) const
 {
     if(!MathIsValidNumber(value))
@@ -318,9 +292,8 @@ bool CConsensusEngine::IsTrendingRegime()
     if(m_src == NULL)
         return false;
 
-    // Fallback: simple ADX-based check (for forex/metals)
-    // ADX > 25 = trending, otherwise ranging
-    // Batch 116: use cached handle instead of creating/destroying per call
+    // Simple ADX check for forex/metals: ADX > 25 = trending, otherwise ranging.
+    // The handle is cached here because creating and destroying it per call is expensive.
     int adxHandleCached = m_src.GetAdxHandleCached();
     if(adxHandleCached == INVALID_HANDLE)
     {
@@ -361,7 +334,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignal(const string symbol,
         return TryFallbackSoloSignalInternal(symbol, evalMode, outConfidence, outConfluence, outReason);
     }
 
-    // Fallback implementation if consensus engine not available
+    // No pipeline: scan the raw strategy signals directly
     ENUM_TRADE_SIGNAL bestSignal = TRADE_SIGNAL_NONE;
     double bestScore = -1.0;
     string bestStrategy = "";
@@ -369,7 +342,6 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignal(const string symbol,
     int strategyCount = m_src.GetStrategyCount();
     CStrategyRegistry* strategyRegistry = m_src.GetStrategyRegistryConst();
 
-    // Iterate all strategies and get their raw signals (without pipeline filtering)
     for(int i = 0; i < strategyCount; i++)
     {
         IStrategy* entryStrategy = m_src.GetStrategyPtr(i);
@@ -392,10 +364,10 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignal(const string symbol,
         double weight = m_src.GetStrategyWeight(i);
         double participation = GetStrategyParticipationMultiplier(i);
 
-        // Score = confidence * weight * participation * qualityMultiplier
-        double readinessScore = 0.5; // Default neutral
-        double contextScore = 0.5;   // Default neutral
-        double costScore = 0.5;      // Default neutral
+        // Scores are pinned neutral on this path: only confidence * weight * participation decides.
+        double readinessScore = 0.5;
+        double contextScore = 0.5;
+        double costScore = 0.5;
         double qualityMultiplier = (readinessScore * 0.4 + contextScore * 0.4 + costScore * 0.2);
         double score = stratConf * weight * participation * qualityMultiplier;
 
@@ -429,11 +401,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignal(const string symbol,
     return TRADE_SIGNAL_NONE;
 }
 
-// Hard regime gate (file-scope helper, Phase 2 rebuild).
-// Returns 0.0 when a strategy category has NO edge in the current
-// regime (vote is hard-disabled); 1.0 when allowed; 0.25-0.40 to
-// strongly deweight in ambiguous regimes. Regime-neutral strategies
-// (ICT, AI, SR, candlestick, stat-arb) always pass (1.0).
+// Hard regime gate: 0.0 when a strategy category has no edge in the current regime (vote hard-disabled),
+// 1.0 when allowed, 0.25-0.40 to strongly deweight in ambiguous regimes.
 double RegimeStateHardGate(ENUM_REGIME_STATE state, ENUM_STRATEGY_TYPE t)
 {
     bool isTrendLike     = (t == STRATEGY_TREND || t == STRATEGY_MOMENTUM);
@@ -481,10 +450,9 @@ double CConsensusEngine::GetRegimeCategoryMultiplier(const string symbol, ENUM_S
     if(!snap.valid)
         return 0.30;
 
-    // HARD REGIME GATE - does this strategy category have any edge in the current regime?
     double gate = RegimeStateHardGate(snap.state, strategyType);
     if(gate <= 0.0)
-        return 0.0;   // category has no business trading this regime -> disable vote entirely
+        return 0.0;   // vote disabled entirely
 
     // Per-category weight from the live regime composite (Hurst-blended).
     double catMult = 1.0;
@@ -564,7 +532,6 @@ double CConsensusEngine::GetStrategyParticipationMultiplier(const int strategyIn
     double minVal = m_src.GetParticipationFormulaMin();
     double maxVal = m_src.GetParticipationFormulaMax();
 
-    // Use defaults if not configured
     if(base == 0.0 && coeff == 0.0 && minVal == 0.0 && maxVal == 0.0)
     {
         base = 0.40;
@@ -751,7 +718,6 @@ void CConsensusEngine::MaybeLogConsensusDiagnostics(const string symbol)
     {
         diagnostics.MaybeLogDiagnostics(symbol);
     }
-    // Note: The detailed logging with strategy participation analysis is now handled by DiagnosticsCollector
 }
 
 void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
@@ -788,7 +754,6 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
 
     supportFloor = (evalMode == EVAL_MODE_INTRABAR) ? m_src.GetSupportFloorIntrabar() : m_src.GetSupportFloorNewBar();
 
-    // Quality threshold based on pipeline confidence floor and regime
     double pipelineConfFloor = 0.0;
     if(pipeline != NULL)
     {
@@ -796,8 +761,7 @@ void CConsensusEngine::CalculateEffectiveQuorumParamsInternal(
     }
     effectiveQualityThreshold = MathMax(m_src.GetPipelineMinConfidence(), pipelineConfFloor);
 
-    // Adjust quorum thresholds based on directional quality and voter count
-    // Higher directional quality allows slightly lower quorum
+    // Higher directional quality (> 0.7) buys a slightly lower quorum threshold
     double qualityAdjustmentBuy = (buyDirectionalQuality > 0.7) ? -0.05 : 0.0;
     double qualityAdjustmentSell = (sellDirectionalQuality > 0.7) ? -0.05 : 0.0;
 
@@ -828,8 +792,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
     confidence = 0.0;
     confluence = 0;
 
-    // [BUGFIX] Clear the previous decision context so a rejected/abstained evaluation can never
-    // leak a stale context (signal, quality, class) from an earlier cycle into the validator.
+    // Reset the decision context first: a rejected or abstained cycle must not leak a stale
+    // context (signal, quality, class) into the validator.
     SConsensusDecisionContext emptyDecisionContext;
     m_lastDecisionContext = emptyDecisionContext;
 
@@ -874,7 +838,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
         eligibleLiveVoterCount++;
 
-        // Get signal from strategy (direct array access - MQL5 doesn't support local references to array elements)
+        // MQL5 has no local references to array elements, hence the direct pointer fetch
         double stratConf = 0.0;
         IStrategy* entryStrategy = m_src.GetStrategyPtr(i);
         ENUM_TRADE_SIGNAL signal = entryStrategy.GetSignal(stratConf);
@@ -907,11 +871,9 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         if(!passedPipeline)
             continue;
 
-        // Calculate participation multiplier from health monitor
         double participation = GetStrategyParticipationMultiplier(i);
         double reliability = GetStrategyReliabilityMultiplier(i);
 
-        // Weighted score = confidence * weight * participation * reliability * regime
         double weight = m_src.GetStrategyWeight(i);
         double score = stratConf * weight * participation * reliability * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType());
 
@@ -944,9 +906,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         return TRADE_SIGNAL_NONE;
     }
 
-    // Check ready weight ratio (minimum combined weight of voting strategies)
-    // [PROFIT-09] Denominator = weight of strategies that ACTUALLY voted (via contributor index
-    // arrays), not the whole roster. Adding/abstaining strategies no longer makes the gate harder.
+    // Ready weight ratio: the denominator is the weight of strategies that ACTUALLY voted (from the
+    // contributor index arrays), not the whole roster, so abstainers cannot make the gate harder.
     double votedWeight = 0.0;
     for(int k = 0; k < ArraySize(buyContributorIndices); k++)
         votedWeight += m_src.GetStrategyWeight(buyContributorIndices[k]);
@@ -963,7 +924,6 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         return TRADE_SIGNAL_NONE;
     }
 
-    // Calculate effective quorum parameters
     double effectiveQualityThreshold = 0.0;
     double supportFloor = 0.0;
     int effectiveMinVoters = 0;
@@ -1011,7 +971,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         return TRADE_SIGNAL_NONE;
     }
 
-    // Check support floor (minimum winning score relative to total)
+    // Support floor: the winning share of the total score
     double totalScore = winningScore + losingScore;
     double supportRatio = (totalScore > 0) ? winningScore / totalScore : 0.0;
 
@@ -1022,9 +982,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
         return TRADE_SIGNAL_NONE;
     }
 
-    // [PROFIT-XX] Measure quorum ratio against votes CAST, not the full assigned roster.
-    // A clear single-direction winner (e.g. 1/1 or 2/2) scores 1.0 and passes, instead of
-    // being diluted by silent/non-voting strategies in the per-symbol roster (e.g. 2/8 = 0.25).
+    // Quorum ratio is measured against votes CAST, not the full assigned roster: a clear 1/1 or 2/2
+    // winner scores 1.0 instead of being diluted by non-voting strategies (2/8 = 0.25).
     double winningQuorum = (consensusSignal == TRADE_SIGNAL_BUY) ? buyQuorum : sellQuorum;
     int totalVotesCast = buyVotes + sellVotes;
     double quorumRatio = (totalVotesCast > 0) ? (double)winningVotes / totalVotesCast : 0.0;
@@ -1038,7 +997,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 
     if(losingVotes > 0)
     {
-        // [PROFIT-02] Measure conflict against votes CAST, not the whole roster.
+        // Conflict is measured against votes CAST, not the whole roster
         double conflictRatio = (double)losingVotes / (winningVotes + losingVotes);
         if(conflictRatio > m_src.GetConflictDeadband())
         {
@@ -1069,10 +1028,8 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
                 symbol, EnumToString(consensusSignal), decisionClass, confidence, confluence,
                 buyVotes, sellVotes, supportRatio, quorumRatio, winningQuorum);
 
-    // [BUGFIX] m_lastDecisionContext must be populated from the values just computed: it was
-    // never written, so GetLastDecisionContext() returned a default struct (directionalQuality=0.0
-    // zeroed the ValidateSignal quality gate and mislabeled every decision as class=NONE).
-    // directionalQuality stays at the real winning directional quality, not the struct default 0.0.
+    // m_lastDecisionContext must be written from the values just computed: a default struct would
+    // zero the validator's quality gate. directionalQuality stays at the real winning quality.
     double totalDirScore = buyScore + sellScore;
     m_lastDecisionContext.symbol                 = symbol;
     m_lastDecisionContext.signal                 = consensusSignal;
@@ -1080,8 +1037,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
                                                    ? (int)CONSENSUS_DECISION_SPARSE_INTRABAR
                                                    : (int)CONSENSUS_DECISION_FULL_QUORUM;
     m_lastDecisionContext.confidence             = confidence;
-    // Clamp to [0,1]: weighted directional-quality sum can exceed 1.0 for high-weight strategies,
-    // but the quality gate and downstream consumers expect a normalized [0,1] score.
+    // Clamped to [0,1]: the weighted sum can exceed 1.0, but the quality gate expects a normalized score.
     m_lastDecisionContext.directionalQuality     = MathMax(0.0, MathMin(1.0, winningQuality));
     m_lastDecisionContext.buyScore               = buyScore;
     m_lastDecisionContext.sellScore              = sellScore;
@@ -1105,7 +1061,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusInternal(const string symbo
 ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTierInternal(const string symbol, double &confidence, int &confluence,
                                                                      ENUM_SIGNAL_EVAL_MODE evalMode)
 {
-    // Phase 1: probe-only fast path - checks whether there is enough probe support.
+    // Tier 1: probe-only fast path, checks whether there is enough probe support
 
     ulong startTime = GetMicrosecondCount();
 
@@ -1132,7 +1088,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTierInternal(const strin
 
         probeEligibleCount++;
 
-        // Get raw signal without full pipeline filtering for probe
+        // Probe reads the raw signal, no pipeline filtering
         double stratConf = 0.0;
         ENUM_TRADE_SIGNAL signal = m_src.GetStrategyPtr(i).GetSignal(stratConf);
 
@@ -1142,7 +1098,6 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTierInternal(const strin
             probeSellVotes++;
     }
 
-    // Quick probe check - if no probe support, don't proceed to full evaluation
     if(probeBuyVotes == 0 && probeSellVotes == 0)
     {
         PrintFormat("[CONSENSUS-PROBE] %s | No probe support (buy=%d sell=%d)", symbol, probeBuyVotes, probeSellVotes);
@@ -1151,7 +1106,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTierInternal(const strin
         return TRADE_SIGNAL_NONE;
     }
 
-    // Phase 2: Full consensus evaluation
+    // Tier 2: full consensus evaluation
     ENUM_TRADE_SIGNAL result = EvaluateConsensusInternal(symbol, confidence, confluence, evalMode);
 
     ulong elapsed = GetMicrosecondCount() - startTime;
@@ -1163,8 +1118,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusTwoTierInternal(const strin
 ENUM_TRADE_SIGNAL CConsensusEngine::EvaluateConsensusProbeOnlyInternal(const string symbol, double &confidence, int &confluence,
                                                                        ENUM_SIGNAL_EVAL_MODE evalMode)
 {
-    // Fast probe-only evaluation - no pipeline filtering, no full quorum
-    // Used for intrabar probe voting to quickly check signal direction
+    // Probe-only path: no pipeline filtering and no full quorum, used for intrabar direction probing.
 
     ulong startTime = GetMicrosecondCount();
 
@@ -1269,8 +1223,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignalInternal(const string s
                                                                   int &outConfluence,
                                                                   string &outReason)
 {
-    // This is called when all strategies abstain but pipeline is available
-    // Try to find the single best strategy signal with relaxed thresholds
+    // Called when all strategies abstain but the pipeline is available: best solo signal, relaxed thresholds
 
     ulong startTime = GetMicrosecondCount();
 
@@ -1308,7 +1261,6 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignalInternal(const string s
         if(signal == TRADE_SIGNAL_NONE)
             continue;
 
-        // Apply pipeline filtering if available (but with relaxed threshold)
         bool passedPipeline = true;
         double filteredConf = stratConf;
         ENUM_TRADE_SIGNAL filteredSignal = signal;
@@ -1318,8 +1270,7 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignalInternal(const string s
             filteredSignal = pipeline.ProcessSignal(entryStrategy, symbol, m_src.GetStrategyTimeframe(i), filteredConf);
             if(filteredSignal == TRADE_SIGNAL_NONE)
             {
-                // For solo fallback, we allow signals that were filtered
-                // but track that they were filtered
+                // Solo fallback keeps pipeline-filtered signals; the flag only gates the boost below
                 passedPipeline = false;
             }
             else
@@ -1333,14 +1284,12 @@ ENUM_TRADE_SIGNAL CConsensusEngine::TryFallbackSoloSignalInternal(const string s
         double participation = GetStrategyParticipationMultiplier(i);
         double reliability = GetStrategyReliabilityMultiplier(i);
 
-        // Score = confidence * weight * participation * reliability
         double readinessScore = m_src.GetStrategyReadinessScore(i);
         double contextScore = m_src.GetStrategyContextScore(i);
         double costScore = m_src.GetStrategyCostScore(i);
         double qualityMultiplier = (readinessScore * 0.4 + contextScore * 0.4 + costScore * 0.2);
         double score = stratConf * weight * participation * reliability * qualityMultiplier * GetRegimeCategoryMultiplier(symbol, entryStrategy.GetType());
 
-        // Apply minimum threshold (relaxed for solo fallback)
         double minSoloConfidence = (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;
         if(stratConf < minSoloConfidence)
         {

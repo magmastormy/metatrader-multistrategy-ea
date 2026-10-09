@@ -1,14 +1,11 @@
 // Owns the EA's trade-approval hot path: CUnifiedRiskManager::ValidateTradeRequest -> CRiskValidationPipeline::Run
-// DESIGN NOTES (MQL5 constraints)
-// 1. MQL5 has no pointers to structures, so the pipeline cannot hold "&m_config"; it refreshes a local
-//    SUnifiedRiskConfig copy at every public entry point. Nothing inside mutates the config, so one refresh
-//    per entry is exactly equivalent to reading the live struct.
-// 2. Owner value members are handed over as non-owning pointers in Initialize(); those addresses are stable
-//    for the owner's lifetime.
-// 3. Owner-private scalars/dynamic arrays (daily risk usage, per-symbol budgets, per-symbol risk overrides,
-//    trading-day key) are reached through IRiskPipelineHost so the ORIGINAL implementation keeps running -
-//    no logic is duplicated and no state is cloned.
-// 4. Lazy evaluation and short-circuit order of the original method bodies are preserved verbatim.
+// MQL5 constraints this class lives by:
+// 1. No pointers to structs, so the config is a local copy refreshed at every public entry
+//    point; nothing here mutates it, which keeps one refresh per entry equal to live reads.
+// 2. Owner value members arrive as non-owning pointers, stable for the owner's lifetime.
+// 3. Owner-private state (daily risk usage, per-symbol budgets and risk overrides, trading-day
+//    key) is reached through IRiskPipelineHost and never cloned here.
+// 4. The order of the gates below is the veto order: each check short-circuits before the next runs.
 #ifndef CORE_RISK_RISK_VALIDATION_PIPELINE_MQH
 #define CORE_RISK_RISK_VALIDATION_PIPELINE_MQH
 
@@ -28,21 +25,21 @@
 #include "RiskTieredCorrelation.mqh"
 #include "RiskAdaptiveTuner.mqh"
 
-// Blueprint 10.4: All percent fields use 0-100 scale
+// All percent fields in this file use the 0-100 scale (1.0 = 1%), never 0-1 fractions.
 struct SUnifiedRiskConfig
 {
-    double baseRiskPerTradePercent;     // Blueprint 10.4: 0-100 scale (e.g., 1.0 = 1%)
-    double minRiskPerTradePercent;      // Blueprint 10.4: 0-100 scale (e.g., 0.1 = 0.1%)
-    double maxRiskPerTradePercent;      // Blueprint 10.4: 0-100 scale (e.g., 5.0 = 5%)
-    double maxDailyRiskPercent;         // Blueprint 10.4: 0-100 scale
-    double maxPortfolioRiskPercent;     // Blueprint 10.4: 0-100 scale
+    double baseRiskPerTradePercent;
+    double minRiskPerTradePercent;
+    double maxRiskPerTradePercent;
+    double maxDailyRiskPercent;
+    double maxPortfolioRiskPercent;
     double correlationThreshold;        // 0-1 scale (not a risk percent)
     double correlationReduceThreshold;  // 0-1 scale (not a risk percent)
     double correlationBlockThreshold;   // 0-1 scale (not a risk percent)
     int maxPositionsSameBase;
-    double drawdownWarningPercent;      // Blueprint 10.4: 0-100 scale
-    double drawdownCriticalPercent;     // Blueprint 10.4: 0-100 scale
-    double dailyLossLimitPercent;       // Blueprint 10.4: 0-100 scale
+    double drawdownWarningPercent;
+    double drawdownCriticalPercent;
+    double dailyLossLimitPercent;
     double minLotRiskMultiplier;        // Max risk multiplier when rounding up to broker min lot (e.g., 2.0 = 2x)
     int adaptationMinTrades;
     bool enableAdaptiveSizing;
@@ -52,18 +49,18 @@ struct SUnifiedRiskConfig
 
 struct STradeValidationRequest
 {
-    string symbol;                    // Trading symbol
-    ENUM_ORDER_TYPE orderType;        // Order type (BUY/SELL)
+    string symbol;
+    ENUM_ORDER_TYPE orderType;
     double lotSize;                   // Requested lot size
     double stopLossPips;
     double takeProfitPips;
     double confidence;                // Signal confidence (0-1)
-    string strategy;                  // Source strategy name
-    string reasoning;                 // Trade reasoning
-    string strategyRole;              // Strategy governance role tag
-    string strategyCluster;           // Strategy cluster tag
-    string clusterCode;               // Compact cluster code (T/R/S/N)
-    string contributorContext;        // Contributor summary
+    string strategy;
+    string reasoning;
+    string strategyRole;
+    string strategyCluster;
+    string clusterCode;               // T/R/S/N
+    string contributorContext;
     datetime requestTime;
 
     STradeValidationRequest() :
@@ -83,11 +80,9 @@ struct STradeValidationRequest
     {}
 };
 
-// Narrow call-back surface the pipeline needs from its owner (CUnifiedRiskManager). Every entry below is an
-// EXISTING CUnifiedRiskManager method - the pipeline never re-implements owner logic. The single exception is
-// CopyRiskConfig(), added because MQL5 forbids struct pointers.
-// NOTE (MQL5): pure-virtual (= 0) makes any signature drift a LOUD compile error ("cannot instantiate abstract
-// class") instead of a silent behaviour regression.
+// Narrow call-back surface the pipeline needs from its owner (CUnifiedRiskManager): every entry is an
+// owner method, never a re-implementation. CopyRiskConfig() is the exception MQL5 forces (no struct pointers).
+// pure-virtual (= 0) turns signature drift into a compile error instead of a silent behaviour regression.
 class IRiskPipelineHost
 {
 public:
@@ -132,15 +127,14 @@ public:
     virtual void   UpdatePerformanceMetrics(const ulong startTime) = 0;
 };
 
-// The 7-step trade validation pipeline (body of CUnifiedRiskManager::ValidateTradeRequest).
+// The 7-step pre-trade gate behind CUnifiedRiskManager::ValidateTradeRequest; every entry passes it.
 class CRiskValidationPipeline
 {
 private:
     //--- NON-OWNING: owner call-back surface (stable for owner lifetime)
     IRiskPipelineHost*          m_host;
 
-    //--- NON-OWNING: pointers to the owner's value members.
-    //--- The owner constructs/destroys them; the pipeline only reads/uses them.
+    //--- NON-OWNING: the owner's value members; it constructs/destroys them, this class only uses them.
     CRiskCircuitBreaker*        m_circuitBreaker;
     CVirtualPositionBook*       m_virtualPositionBook;
     CPortfolioRiskManager*      m_portfolioRiskManager;
@@ -164,9 +158,7 @@ private:
     int                         m_maxConcurrentPerCluster;
     double                      m_maxClusterRiskPercent;
 
-    //--- Refresh the local config copy from the owner. Nothing inside the
-    //--- moved code paths mutates the config, so one refresh per public
-    //--- entry point is equivalent to reading the owner's live struct.
+    //--- Refresh: safe to cache because nothing in the pipeline mutates the config.
     void SyncConfig()
     {
         if(CheckPointer(m_host) != POINTER_INVALID)
@@ -217,8 +209,7 @@ public:
         // All stored pointers are NON-OWNING (owner value members). Nothing to free.
     }
 
-// Wire the pipeline to its owner's collaborators and state.
-// All pointers are non-owning and stable for the owner lifetime.
+// Wires non-owning collaborators (stable for the owner's lifetime) and mirrors owner scalars.
     void Initialize(IRiskPipelineHost*          host,
                     CRiskCircuitBreaker*        circuitBreaker,
                     CVirtualPositionBook*       virtualPositionBook,
@@ -272,17 +263,16 @@ public:
         m_maxClusterRiskPercent    = maxClusterRiskPercent;
     }
 
-// Run - the trade validation pipeline.
     SValidationResult Run(const STradeValidationRequest &request,
                           const string phaseTag = "runtime",
                           const string corrId = "");
 
-    // Batch 152: validation body, wrapped by Run() for timing + approve/reject counts.
+    // Validation body; Run() wraps it for timing and approve/reject counts.
     SValidationResult RunInternal(const STradeValidationRequest &request,
                           const string phaseTag = "runtime",
                           const string corrId = "");
 
-    //--- The 7 validation steps (moved out of CUnifiedRiskManager).
+    //--- The 7 validation steps, in veto order.
     bool ValidateBasicParameters(const STradeValidationRequest &request, string &message);
     bool ValidateRiskLimits(const STradeValidationRequest &request, string &message, double &riskPercent);
     bool ValidatePortfolioRisk(const STradeValidationRequest &request, const double tradeRiskPercent, string &message, const double ownReservationRiskPercent = 0.0);
@@ -292,9 +282,8 @@ public:
     bool ValidateAccountHealth(const STradeValidationRequest &request, string &message);
 };
 
-// Run - relocated body of CUnifiedRiskManager::ValidateTradeRequest
-    // Run() is a timing/counting wrapper around RunInternal(); metrics previously received
-    // END-time as START (elapsed ~0) and rejected validations were never counted.
+// Entry point of the pre-trade gate, called from CUnifiedRiskManager::ValidateTradeRequest.
+    // Captures the start time before RunInternal() and records both approvals and rejections.
     SValidationResult CRiskValidationPipeline::Run(const STradeValidationRequest &request,
                           const string phaseTag,
                           const string corrId)
@@ -324,13 +313,12 @@ public:
     result.approved = false;
     result.adjustedLotSize = request.lotSize;
     result.severity = ERROR_LEVEL_ERROR;
-    // BUGFIX (consensus-conf): ZeroMemory() clobbers the documented default confidenceMultiplier
-    // (1.0 = "no change") to 0.0; callers doing `confidence *= result.confidenceMultiplier` would zero a signal.
+    // ZeroMemory() leaves confidenceMultiplier at 0.0 and callers multiply confidence by it,
+    // so it must be restored to the 1.0 "no change" default before any early return.
     result.confidenceMultiplier = 1.0;
 
-    // Defensive: unreachable in production (CUnifiedRiskManager wires the
-    // pipeline in its constructor body). Mirrors the not-initialized path so
-    // an unwired pipeline can never dereference a NULL collaborator.
+    // Fail-closed: an unwired pipeline takes the not-initialized path, so a NULL collaborator
+    // is never dereferenced (CUnifiedRiskManager wires it in its constructor body).
     if(!IsWired())
     {
         result.message = "Unified risk manager is not initialized";
@@ -415,11 +403,10 @@ public:
         return result;
     }
 
-    // Reserve virtual position early to account for this trade in portfolio risk
-    // Will be released on any rejection, kept on approval
-    // Batch 151: Reserve() rejects riskPercent <= 0.0, so the old 0.0 placeholder silently disabled every
-    // reservation and left the post-approval budget window unprotected. Reserve with the provisional request risk,
-    // then sync to the validated risk via UpdateVirtualPositionRisk() once lot adjustments are final.
+    // Reserve early so the trade counts toward portfolio risk; released on any rejection, kept on approval.
+    // Reserve() rejects riskPercent <= 0.0, so a 0.0 placeholder would disable every reservation and leave
+    // the post-approval budget window unprotected: reserve with provisional risk, then sync the validated
+    // risk through UpdateVirtualPositionRisk() once lot adjustments are final.
     int preValidationReservations = m_virtualPositionBook.GetReservationCount();
     double provTradeRisk = m_host.CalculateTradeRisk(request.symbol, request.lotSize, request.stopLossPips);
     double provDenom = CRiskMath::GetRiskDenominator();
@@ -468,7 +455,7 @@ public:
         return result;
     }
 
-    // 4. Validate cluster governance (strategy cluster mutex + cap)
+    // Cluster governance: strategy cluster mutex + per-cluster position cap.
     if(!ValidateClusterGovernance(request, tradeRisk, validationMessage))
     {
         result.message = "Cluster governance validation failed: " + validationMessage;
@@ -481,7 +468,6 @@ public:
         return result;
     }
     
-    // 5. Validate correlation limits
     double correlationRisk = 0.0;
     if(!ValidateCorrelationLimits(request, validationMessage, correlationRisk))
     {
@@ -572,8 +558,8 @@ public:
         // allow the trade even if it exceeds the symbol allocation.
         // The portfolio-level check below will still gate the total risk.
         int openPositionCount = PositionsTotal();
-        // Batch 151: count reservations made BEFORE this validation - our own early
-        // reservation must not disable the cold-start bootstrap bypass
+        // Counts reservations made before this validation: our own early reservation
+        // must not disable the cold-start bypass.
         int virtualReservationCount = preValidationReservations;
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
 
@@ -604,20 +590,17 @@ public:
     double projectedPortfolioRisk = openExposureRisk + reservedRisk + MathMax(0.0, result.riskPercent);
     if(projectedPortfolioRisk > m_config.maxPortfolioRiskPercent)
     {
-        // Issue B fix: Bootstrap mode — when there are zero open positions and no virtual
-        // reservations (cold start), allow a one-time bootstrap allocation that distributes
-        // the portfolio cap evenly across requesting symbols. Each symbol's risk must still
-        // be within the per-trade max, and the total is capped at portfolio max.
+        // Bootstrap mode: with zero open positions and no virtual reservations, allow a one-time
+        // allocation that splits the portfolio cap across requesting symbols; each symbol still has
+        // to stay within its per-trade max and the total within the portfolio max.
         int openPositionCount = PositionsTotal();
-        // Batch 151: count reservations made BEFORE this validation - our own early
-        // reservation must not disable the cold-start bootstrap bypass
+        // Counts reservations made before this validation: our own early reservation
+        // must not disable the cold-start bypass.
         int virtualReservationCount = preValidationReservations;
         bool isColdStart = (openPositionCount == 0 && virtualReservationCount == 0);
 
         if(isColdStart && result.riskPercent > 0.0 && result.riskPercent <= m_host.GetEffectiveRiskPerTrade(request.symbol))
                 {
-                    // Cold start: the portfolio cap is distributed - each requesting symbol can take up to
-                    // (portfolioCap / activeSymbolCount) risk, as long as its risk is within per-trade limits.
                     PrintFormat("[RISK-PORTFOLIO] Bootstrap mode: distributing %.2f%% cap across requesting symbols (no open positions)",
                                 m_config.maxPortfolioRiskPercent);
                 }
@@ -638,12 +621,10 @@ public:
                 }
     }
 
-    // I6: Per-Family Position Limit — prevent over-concentration in one synthetic family
-        // Count positions by family using DerivAssetProfiler
+    // Per-family position limit: prevents over-concentration in one synthetic family.
         {
             int familyPositionCount = 0;
             int totalPositions = PositionsTotal();
-            // Get the family of the requested symbol from Deriv profiler
             string reqSymbol = request.symbol;
             ENUM_DERIV_FAMILY reqFamily = m_derivAssetProfiler.DetectFamily(reqSymbol);
         
@@ -652,14 +633,12 @@ public:
                 ulong ticket = PositionGetTicket(i);
                 if(ticket <= 0) continue;
                 string posSymbol = PositionGetString(POSITION_SYMBOL);
-                // Same symbol family = count it
                 ENUM_DERIV_FAMILY posFamily = m_derivAssetProfiler.DetectFamily(posSymbol);
                 if(posFamily == reqFamily && reqFamily != ENUM_DERIV_FAMILY(-1))
                     familyPositionCount++;
             }
 
-            // Family position limits by Deriv family type
-            int maxFamilyPositions = 3; // default
+            int maxFamilyPositions = 3;
             switch(reqFamily)
             {
                 case DERIV_CRASH_BOOM:
@@ -723,12 +702,12 @@ public:
         if(maxCorrelation >= m_config.correlationReduceThreshold)
         {
             double denom = m_config.correlationBlockThreshold - m_config.correlationReduceThreshold;
-            if(denom <= 0.001) denom = 0.001;  // Prevent division by zero
+            if(denom <= 0.001) denom = 0.001;
             double reduceFactor = 1.0 - ((maxCorrelation - m_config.correlationReduceThreshold) / denom);
             reduceFactor = MathMax(0.25, MathMin(1.0, reduceFactor));
             double originalLot = result.adjustedLotSize;
-            // Batch 152: align to the symbol's volume step instead of blind 2dp
-            // rounding (0.001-step symbols got off-step lots -> invalid-volume rejects)
+            // Align to the symbol's volume step: blind 2dp rounding gave 0.001-step symbols
+            // off-step lots, which the broker then rejected as invalid volume.
             double volStep = SymbolInfoDouble(request.symbol, SYMBOL_VOLUME_STEP);
             if(volStep > 0.0)
             {
@@ -787,18 +766,16 @@ public:
         return result;
     }
 
-    // Batch 151: sync the reservation to the final adjusted risk so post-approval
-    // budget checks see the real exposure, not the provisional estimate
+    // Sync the reservation to the final adjusted risk so post-approval budget checks see the
+    // real exposure, not the provisional estimate.
     if(virtualReserved && result.riskPercent > 0.0)
         m_host.UpdateVirtualPositionRisk(virtualOwnerTag, result.riskPercent);
 
-    // All validations passed - APPROVED
     result.approved = true;
     result.message = "Trade request approved";
     result.portfolioRisk = m_host.CalculatePortfolioRiskAfterTrade(tradeRisk);
     result.severity = ERROR_LEVEL_INFO;
-    // Batch 152: approval/rejection counting + validation timing now happen in the
-    // Run() wrapper (metrics previously received END-time as START).
+    // Timing and approval/rejection counting belong to the Run() wrapper, not here.
 
     CJsonLogger::LogRiskEvent("RiskGateApprove", request.symbol, "APPROVED",
         StringFormat("riskPercent=%.2f portfolioRisk=%.2f lot=%.2f", result.riskPercent, result.portfolioRisk, result.adjustedLotSize),
@@ -819,7 +796,6 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
     }
     SyncConfig();
 
-    // Validate symbol
     if(StringLen(request.symbol) == 0)
     {
         message = "Empty symbol";
@@ -832,7 +808,6 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
         return false;
     }
     
-    // Validate lot size
     if(request.lotSize <= 0)
     {
         message = "Invalid lot size: " + DoubleToString(request.lotSize, 3);
@@ -846,7 +821,6 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
         PrintFormat("[RISK-GATE] Lot %.4f exceeds broker max %.4f for %s — caller must cap", request.lotSize, maxLot, request.symbol);
     }
     
-    // Validate stop loss
     if(request.stopLossPips <= 0)
     {
         PrintFormat("[RISK-GATE] Rejected %s %s: Missing stop loss (strategy=%s, SL=%.1f pips)",
@@ -855,7 +829,6 @@ bool CRiskValidationPipeline::ValidateBasicParameters(const STradeValidationRequ
         return false;
     }
     
-    // Validate order type
     if(request.orderType != ORDER_TYPE_BUY && request.orderType != ORDER_TYPE_SELL)
     {
         message = "Invalid order type: " + EnumToString(request.orderType);
@@ -897,9 +870,8 @@ bool CRiskValidationPipeline::ValidateRiskLimits(const STradeValidationRequest &
         return false;
     }
     
-    riskPercent = (tradeRisk / riskDenominator) * 100.0;  // Blueprint 10.4: * 100.0 converts fraction to 0-100 scale
+    riskPercent = (tradeRisk / riskDenominator) * 100.0;  // fraction -> 0-100 % scale
     
-    // Check against maximum risk per trade
     if(riskPercent > m_config.maxRiskPerTradePercent)
     {
         message = StringFormat("Risk %.2f%% exceeds maximum %.2f%%", riskPercent, m_config.maxRiskPerTradePercent);
@@ -938,9 +910,8 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
         return false;
     }
     
-    // L5-009 FIX: Use same calculation as GetRemainingPortfolioRiskPercent() to include virtual reservations
-    // Batch 152: the book already contains THIS trade's own provisional reservation
-    // (booked before validation) - subtract it so the proposed risk is not counted twice.
+    // Must match GetRemainingPortfolioRiskPercent() and include virtual reservations. The book
+    // already holds THIS trade's provisional reservation, so subtract it to avoid double counting.
     double openExposureRisk = m_portfolioRiskManager.GetPortfolioRisk();
     double reservedRisk = m_virtualPositionBook.GetReservedRiskPercent() - MathMax(0.0, ownReservationRiskPercent);
     double currentRisk = openExposureRisk + reservedRisk;
@@ -954,7 +925,7 @@ bool CRiskValidationPipeline::ValidatePortfolioRisk(const STradeValidationReques
     
     if(!m_portfolioRiskManager.IsTradeAllowed(request.symbol, request.lotSize))
     {
-        string portfolioReason = "";  // GetLastBlockReason would need to be added
+        string portfolioReason = "";  // no block-reason accessor on the manager yet, so the generic message stands
         message = (portfolioReason != "") ? portfolioReason : "Trade blocked by portfolio risk manager";
         return false;
     }
@@ -983,7 +954,7 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
     if(requestClusterCode == "N")
         return true;
     
-    // Fix #9: Opposing conflict cooldown cache — skip full scan if recently rejected for same symbol
+    // Cooldown cache: skips the full position scan when this symbol was recently rejected for conflict.
     if(m_clusterMutexEnabled && m_opposingGuard.IsCooldownActive(request.symbol, message))
         return false;
     
@@ -1013,7 +984,7 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
             if(oppositeDirection &&
                (existingClusterCode == "N" || existingClusterCode != requestClusterCode))
             {
-                // Fix #9: Update cooldown cache when a new opposing conflict is detected
+                // Feed the cooldown cache so the next opposing conflict is blocked without a scan.
                             m_opposingGuard.RegisterConflict(request.symbol);
                 
                 message = StringFormat("Opposing same-symbol cluster conflict (request=%s existing=%s ticket=%I64u)",
@@ -1039,7 +1010,7 @@ bool CRiskValidationPipeline::ValidateClusterGovernance(const STradeValidationRe
     int projectedPositions = clusterOpenPositions + 1;
     double projectedRisk = clusterOpenRiskPercent + MathMax(0.0, tradeRiskPercent);
     
-    // Fix #11: Look up per-cluster risk cap first; fall back to global default
+    // Per-cluster risk cap first, global default only as the fallback.
     double effectiveClusterRiskCap = m_clusterBudget.GetClusterRiskCap(requestClusterCode,
                                                                        m_maxClusterRiskPercent);
     
@@ -1091,7 +1062,7 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
     }
     SyncConfig();
 
-    // L5-017: Detect hedging/netting mode
+    // Hedging vs netting mode decides whether the netting scan below can apply.
     ENUM_ACCOUNT_MARGIN_MODE marginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
     bool isHedging = (marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
     
@@ -1106,7 +1077,7 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
         return false;
     }
     
-    // L5-017: In netting mode, check if we have an opposite position that would net out
+    // Netting mode: an opposite position nets the new order out, so re-check the margin asked.
     if(!isHedging)
     {
         int totalPositions = PositionsTotal();
@@ -1121,7 +1092,6 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
             ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
             ENUM_POSITION_TYPE reqType = (request.orderType == ORDER_TYPE_BUY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
             
-            // If opposite position exists, the new position will net out
             if(posType != reqType)
             {
                 double existingVolume = PositionGetDouble(POSITION_VOLUME);
@@ -1138,9 +1108,8 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
                     if(currentPrice <= 0.0) currentPrice = SymbolInfoDouble(request.symbol, SYMBOL_ASK);
                     if(!OrderCalcMargin(request.orderType, request.symbol, netVolume, currentPrice, marginRequired))
                     {
-                        // Batch 152: was fail-open (marginRequired = 0.0 passed the
-                        // affordability check trivially). Match the primary-path
-                        // behavior above and fail closed instead.
+                        // Fail closed: marginRequired = 0.0 would pass the affordability check
+                        // trivially, so an unresolvable margin must reject the trade.
                         PrintFormat("[RISK-VALIDATION] OrderCalcMargin failed for %s: %d", request.symbol, GetLastError());
                         message = StringFormat("Unable to calculate net margin requirement for %s", request.symbol);
                         return false;
@@ -1151,7 +1120,6 @@ bool CRiskValidationPipeline::ValidateMarginRequirements(const STradeValidationR
         }
     }
     
-    // (free-margin headroom + post-trade margin-level thresholds)
     return m_marginHealth.CheckFreeMarginAndLevel(marginRequired, isHedging, message);
 }
 
