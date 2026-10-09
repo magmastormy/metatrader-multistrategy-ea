@@ -11,17 +11,15 @@
 class CLiveAuthorityResolver
 {
 private:
-    // Configuration
     ENUM_EA_MODE m_effectiveEAMode;
     double m_aiStandaloneMinConfidence;
     double m_aiBootstrapRiskMultiplier;
     int m_authorityMinConfluence;
     double m_authorityMinExpectancyR;
     
-    // Strategy manager reference for type checking
+    // Non-owning manager reference; used only for strategy name/type lookups
     CEnterpriseStrategyManager* m_strategyManager;
     
-    // Performance tracking per strategy
     struct SStrategyPerf
     {
         string name;
@@ -81,7 +79,6 @@ public:
         m_authorityMinExpectancyR = minExpectancyR;
     }
     
-    // Main authority resolution
             void Resolve(const string symbol, bool hasAIContributor, bool hasONNXContributor,
                          bool hasIndicatorContributor, int indicatorContributorCount,
                          int confluence, double confidence, double qualityScore,
@@ -91,7 +88,6 @@ public:
                          SAuthorityResult &result,
                          const string corrId = "")
         {
-            // Set correlation ID for structured logging
             if(corrId != "")
                 CJsonLogger::SetCorrelationId(corrId);
             
@@ -113,11 +109,9 @@ public:
                 return;
             }
         
-            // Authority scoring
             double authorityScore = 0.0;
             string reasons = "";
         
-            // AI contributor scoring
             if(hasONNXContributor)
             {
                 authorityScore += 0.30;
@@ -129,28 +123,24 @@ public:
                 reasons += "AI ";
             }
         
-            // Indicator contributor scoring
             if(hasIndicatorContributor)
             {
                 authorityScore += 0.20 * MathMin(1.0, indicatorContributorCount / 2.0);
                 reasons += "INDICATOR ";
             }
         
-            // Confluence bonus
             if(confluence >= m_authorityMinConfluence)
             {
                 authorityScore += 0.15;
                 reasons += "CONFLUENCE ";
             }
         
-            // Quality metrics
             if(qualityScore >= 0.7) authorityScore += 0.10;
             if(convictionScore >= 0.65) authorityScore += 0.08;
             if(readinessScore >= 0.6) authorityScore += 0.07;
             if(contextScore >= 0.55) authorityScore += 0.05;
             if(costScore <= 0.3) authorityScore += 0.05; // Low cost
         
-            // Confidence threshold
             double minConfidence = m_aiStandaloneMinConfidence;
             if(hasIndicatorContributor)
                 minConfidence = 0.55; // Lower threshold with indicator support
@@ -167,7 +157,6 @@ public:
                 return;
             }
         
-            // Determine risk multiplier based on authority score
             double riskMult;
             if(authorityScore >= 0.80)
                 riskMult = 1.0;
@@ -180,10 +169,9 @@ public:
             else
                 riskMult = m_aiBootstrapRiskMultiplier * 0.5;
         
-            // Bootstrap logic for new strategies
+            // Bootstrap: AI-only contributors need a proven record before full risk
             if(hasAIContributor && !hasIndicatorContributor)
             {
-                // Check if AI strategy has proven track record
                 string aiStrategyName = ExtractAIName(contributorSummary, strategyIndices);
                 if(aiStrategyName != "")
                 {
@@ -194,14 +182,14 @@ public:
                            m_strategyPerf[perfIdx].profitFactor >= 1.2 &&
                            m_strategyPerf[perfIdx].consecutiveLosses < 4)
                         {
-                            // Proven AI strategy - allow full risk
+                            // Proven AI strategy: floor riskMult at 0.75
                             riskMult = MathMax(riskMult, 0.75);
                             reasons += "PROVEN_AI ";
                             CJsonLogger::LogInfo("AuthorityDecision", StringFormat("PROVEN_AI strategy=%s riskMult=%.2f", aiStrategyName, riskMult), corrId);
                         }
                         else
                         {
-                            // Unproven or struggling - limit risk
+                            // Unproven or struggling: cap riskMult at the bootstrap multiplier
                             riskMult = MathMin(riskMult, m_aiBootstrapRiskMultiplier);
                             reasons += "BOOTSTRAP_AI ";
                             CJsonLogger::LogInfo("AuthorityDecision", StringFormat("BOOTSTRAP_AI strategy=%s riskMult=%.2f", aiStrategyName, riskMult), corrId);
@@ -229,7 +217,6 @@ public:
             CJsonLogger::ClearCorrelationId();
         }
     
-    // Record trade outcome for authority learning
     void RecordOutcome(const string strategyName, double profitR, bool isWin)
     {
         int idx = FindPerfIndex(strategyName);
@@ -245,7 +232,6 @@ public:
         perf.totalTrades++;
         if(isWin) perf.winningTrades++;
         
-        // Update expectancy (simplified)
         double oldExp = perf.expectancyR;
         perf.expectancyR = (oldExp * (perf.totalTrades - 1) + profitR) / perf.totalTrades;
         
@@ -254,16 +240,14 @@ public:
         else
             perf.consecutiveLosses++;
         
-        // Write back
         m_strategyPerf[idx] = perf;
         
-        // Update profit factor and drawdown
-        // Simplified for brevity
+        // profitFactor and maxDrawdownR are never updated here, so the proven-AI
+        // profitFactor >= 1.2 gate in Resolve() can never be satisfied.
     }
     
     string ExtractAIName(const string contributorSummary, const int &strategyIndices[])
     {
-        // Extract AI strategy name from contributor summary using strategy type enum
         // AI Strategy types: STRATEGY_BRAIN, STRATEGY_AI_ENHANCED, STRATEGY_ONNX
         
         if(m_strategyManager == NULL || ArraySize(strategyIndices) == 0)
@@ -272,18 +256,15 @@ public:
             return "";
         }
         
-        // Check strategy types from the manager using indices
         for(int i = 0; i < ArraySize(strategyIndices); i++)
         {
             int idx = strategyIndices[i];
             if(idx < 0 || idx >= m_strategyManager.GetRegisteredStrategyCount())
                 continue;
             
-            // Get strategy type via GetType() method
             string strategyName = m_strategyManager.GetRegisteredStrategyName(idx);
             if(strategyName == "") continue;
             
-            // Check if this is an AI strategy by checking the type enum
             ENUM_STRATEGY_TYPE stratType = GetStrategyTypeByName(strategyName);
             if(stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED || stratType == STRATEGY_ONNX)
             {
@@ -294,7 +275,6 @@ public:
         return "";
     }
     
-    // Helper: Get strategy type by name using the manager
     ENUM_STRATEGY_TYPE GetStrategyTypeByName(const string strategyName)
     {
         if(m_strategyManager == NULL) return STRATEGY_CUSTOM;
@@ -314,7 +294,6 @@ public:
         return STRATEGY_CUSTOM;
     }
     
-    // Diagnostics
     string GetStatusReport() const
     {
         string report = "[LiveAuthorityResolver] ";

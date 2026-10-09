@@ -1,6 +1,4 @@
-// Advanced Market Structure for Unified ICT Strategy
-// Implements BMS, ISP, Trend Confirmation, Multiplex Structure
-// Copyright 2025, Multi-Strategy EA
+// ICT market structure for the Unified ICT strategy: swings, BMS/ISP, HTF-MTF-LTF multiplex.
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -40,7 +38,6 @@ struct SStructuralPoint
                         strength(0), isValid(false), isBroken(false) {}
 };
 
-// Market Structure State
 struct SMarketStructure
 {
     double currentHigh;
@@ -59,12 +56,11 @@ struct SMarketStructure
     bool trendConfirmed;
     int consecutiveBMS;
 
-    // --- NEW FIELDS (P0-D) ---
-    ENUM_STRUCTURE_BREAK_TYPE lastBreakType;  // BOS or CHoCH
-    bool lastBreakWasCHoCH;                   // Shortcut flag
-    bool lastBreakWasBOS;                     // Shortcut flag
-    int chochCount;                           // Number of CHoCH events (multiple = strong reversal)
-    int bosCount;                             // Number of BOS events in current trend
+    ENUM_STRUCTURE_BREAK_TYPE lastBreakType;
+    bool lastBreakWasCHoCH;                   // mirrors lastBreakType for the break setters below
+    bool lastBreakWasBOS;
+    int chochCount;                           // several CHoCH = strong reversal
+    int bosCount;
     datetime lastChochTime;
     datetime lastBosTime;
     double lastBreakPrice;
@@ -78,7 +74,6 @@ struct SMarketStructure
                         lastChochTime(0), lastBosTime(0), lastBreakPrice(0) {}
 };
 
-// Timeframe Structure
 struct STFStructure
 {
     ENUM_TIMEFRAMES timeframe;
@@ -104,19 +99,16 @@ private:
     
     SMarketStructure    m_structure;
     
-    // Multiplex
     STFStructure        m_htf;
     STFStructure        m_mtf;
     STFStructure        m_ltf;
     
     int                 m_swingStrength;
     
-    // Indicator handles
     int                 m_atrHandle;
     int                 m_htfAtrHandle;
     int                 m_ltfAtrHandle;
     
-    // Internal methods
     void                FindStructuralPoints(int lookback);
     bool                HasMomentum();
     bool                HasVolume();
@@ -132,7 +124,6 @@ public:
     bool                Initialize(const string symbol, ENUM_TIMEFRAMES timeframe, int swingStrength = 3);
     void                Update();
     
-    // ISP Detection
     bool                IdentifyISP(bool &isBullish);
     
     bool                ConfirmTrend(bool isBullish);
@@ -156,28 +147,24 @@ public:
     bool                IsTrendConfirmed() const { return m_structure.trendConfirmed; }
     int                 GetConsecutiveBMS() const { return m_structure.consecutiveBMS; }
 
-    // CHoCH/BOS accessors — P0-D
     ENUM_STRUCTURE_BREAK_TYPE GetLastBreakType() const { return m_structure.lastBreakType; }
     bool WasLastBreakCHoCH() const { return m_structure.lastBreakWasCHoCH; }
     bool WasLastBreakBOS()   const { return m_structure.lastBreakWasBOS; }
     int  GetCHoCHCount()     const { return m_structure.chochCount; }
     int  GetBOSCount()       const { return m_structure.bosCount; }
     
-    // Swing access
     int                 GetSwingHighCount() const { return m_highCount; }
     int                 GetSwingLowCount() const { return m_lowCount; }
     bool                GetLastSwingHigh(SStructuralPoint &swing);
     bool                GetLastSwingLow(SStructuralPoint &swing);
 
-    // Batch 103: Fast structure detection (opt-in, no change to existing methods)
     bool                DetectFastCHOCH();              // 1-bar close beyond structure level
     bool                DetectWickBOS();                 // Wick penetration = immediate BOS
     bool                DetectCISDDisplacement();        // Displacement > 1.5 ATR = CISD confirmation
-    double              GetSwingHighLevel(int lookback = 20);  // Get nearest swing high price
-    double              GetSwingLowLevel(int lookback = 20);   // Get nearest swing low price
+    double              GetSwingHighLevel(int lookback = 20);
+    double              GetSwingLowLevel(int lookback = 20);
 };
 
-// Constructor
 CMarketStructureAnalyzer::CMarketStructureAnalyzer() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -192,7 +179,6 @@ CMarketStructureAnalyzer::CMarketStructureAnalyzer() :
     ArrayResize(m_lows, 0);
 }
 
-// Destructor
 CMarketStructureAnalyzer::~CMarketStructureAnalyzer()
 {
     ArrayFree(m_highs);
@@ -207,7 +193,7 @@ bool CMarketStructureAnalyzer::Initialize(const string symbol, ENUM_TIMEFRAMES t
     
     m_structure = SMarketStructure();
     
-    // Initialize handles via singleton IndicatorManager
+    // CIndicatorManager owns these handles and releases them
     CIndicatorManager* indManager = CIndicatorManager::Instance();
     if(indManager != NULL)
     {
@@ -221,7 +207,7 @@ bool CMarketStructureAnalyzer::Initialize(const string symbol, ENUM_TIMEFRAMES t
 
 void CMarketStructureAnalyzer::Update()
 {
-    // FIX: Check indicator readiness before updating
+    // Warmup guard: fewer than 100 calculated bars means the indicator has no usable history
     if(m_atrHandle != INVALID_HANDLE && BarsCalculated(m_atrHandle) < 100) return;
     if(m_htfAtrHandle != INVALID_HANDLE && BarsCalculated(m_htfAtrHandle) < 100) return;
     
@@ -249,7 +235,7 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
     
     int str = m_swingStrength;
     
-    // Find swing highs
+    // A swing high must be strictly higher than m_swingStrength bars on both sides
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingHigh = true;
@@ -274,7 +260,6 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
         }
     }
     
-    // Find swing lows
     for(int i = str; i < lookback - str; i++)
     {
         bool isSwingLow = true;
@@ -299,7 +284,7 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
         }
     }
     
-    // Update structure with latest swings
+    // m_highs/m_lows fill newest-first (as-series scan), so [0] is the current swing
     if(m_highCount >= 2)
     {
         m_structure.currentHigh = m_highs[0].price;
@@ -313,7 +298,7 @@ void CMarketStructureAnalyzer::FindStructuralPoints(int lookback)
     }
 }
 
-// Identify Initial Structural Point
+// ISP: a >=5-bar range holding inside 0.30 * ATR that price then breaks
 bool CMarketStructureAnalyzer::IdentifyISP(bool &isBullish)
 {
     double atr = GetATR(14);
@@ -405,18 +390,16 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
     if(!HasStructureBreak())
         return BMS_NONE;
     
-    // Batch 156: classify by PeriodSeconds - the raw enum-range compare left
-    // H2..H12 falling through every branch, so those charts returned BMS_NONE forever.
+    // Classify by PeriodSeconds: a raw enum-range compare left H2..H12 out of every
+    // branch, so those charts returned BMS_NONE forever.
     int tfSeconds = PeriodSeconds(m_timeframe);
 
-    // Minor BMS (15m and below)
     if(tfSeconds <= PeriodSeconds(PERIOD_M15))
     {
         m_structure.lastBMSType = BMS_MINOR;
         m_structure.lastBMSTime = TimeCurrent();
         return BMS_MINOR;
     }
-    // Significant BMS (above 15m up to 1H)
     else if(tfSeconds <= PeriodSeconds(PERIOD_H1))
     {
         if(HasMomentum())
@@ -426,7 +409,6 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
             return BMS_SIGNIFICANT;
         }
     }
-    // Major BMS (above 1H, incl. H2-H12 and Daily+)
     else
     {
         if(HasMomentum() && HasVolume())
@@ -440,11 +422,9 @@ ENUM_BMS_TYPE CMarketStructureAnalyzer::DetectBMS()
     return BMS_NONE;
 }
 
-// Has Structure Break — P0-D Rewrite with CHoCH/BOS Classification
 bool CMarketStructureAnalyzer::HasStructureBreak()
 {
-    // Batch 156: evaluate the last CLOSED bar (shift 1) - classifying breaks off
-    // the forming bar flipped structure flags tick-by-tick.
+    // Shift 1 only: classifying breaks off the forming bar flipped the flags tick-by-tick.
     double close = iClose(m_symbol, m_timeframe, 1);
     m_structure.lastBreakType = STRUCT_BREAK_NONE;
     m_structure.lastBreakWasCHoCH = false;
@@ -452,13 +432,9 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
 
     if(m_structure.isBullishStructure)
     {
-        // In a bullish structure:
-        // BOS = close above current high (breaks to the upside — continuation)
-        // CHoCH = close below previous low (breaks to the downside — reversal)
-
+        // Bullish: BOS = close above currentHigh, CHoCH = close below previousLow
         if(close > m_structure.currentHigh)
         {
-            // BOS: bullish trend continues upward
             m_structure.lastBreakType   = STRUCT_BREAK_BOS;
             m_structure.lastBreakWasBOS = true;
             m_structure.lastBMSPrice    = close;
@@ -471,7 +447,6 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
 
         if(close < m_structure.previousLow)
         {
-            // CHoCH: bullish structure is being challenged by a bearish break
             m_structure.lastBreakType     = STRUCT_BREAK_CHOCH;
             m_structure.lastBreakWasCHoCH = true;
             m_structure.lastBMSPrice      = close;
@@ -484,10 +459,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
     }
     else if(m_structure.isBearishStructure)
     {
-        // In a bearish structure:
-        // BOS = close below current low (breaks to the downside — continuation)
-        // CHoCH = close above previous high (breaks to the upside — reversal)
-
+        // Bearish: BOS = close below currentLow, CHoCH = close above previousHigh
         if(close < m_structure.currentLow)
         {
             m_structure.lastBreakType   = STRUCT_BREAK_BOS;
@@ -541,7 +513,7 @@ bool CMarketStructureAnalyzer::HasStructureBreak()
     return false;
 }
 
-// Has BMS (Break of Market Structure) within specified bars
+// A BMS counts as recent when its timestamp is at or after the open of bar maxBarsAgo
 bool CMarketStructureAnalyzer::HasBMS(int maxBarsAgo)
 {
     if(m_structure.lastBMSType == BMS_NONE)
@@ -567,7 +539,6 @@ bool CMarketStructureAnalyzer::HasMomentum()
             return true;
     }
     
-    // Check for consistent direction
     if(rates[0].close > rates[1].close && rates[1].close > rates[2].close)
         return true;
     if(rates[0].close < rates[1].close && rates[1].close < rates[2].close)
@@ -601,7 +572,7 @@ bool CMarketStructureAnalyzer::HasVolume()
 double CMarketStructureAnalyzer::GetATR(int period)
 {
     int handle = m_atrHandle;
-    // If handle is invalid or was requested for non-default period, fallback to manager
+    // m_atrHandle is fixed at period 14; any other period needs a fresh manager handle
     if(period != 14 || handle == INVALID_HANDLE)
     {
         CIndicatorManager* indManager = CIndicatorManager::Instance();
@@ -664,7 +635,6 @@ ENUM_TIMEFRAMES CMarketStructureAnalyzer::GetLowerTF(ENUM_TIMEFRAMES tf)
     }
 }
 
-// Analyze Structure for Timeframe
 void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
 {
     double high[], low[], close[];
@@ -676,7 +646,7 @@ void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
     if(CopyLow(m_symbol, tfStruct.timeframe, 0, 50, low) <= 0) return;
     if(CopyClose(m_symbol, tfStruct.timeframe, 0, 50, close) <= 0) return;
     
-    // Find recent swing points
+    // Swing = beyond both neighbours one and two bars either side; only the first two count
     int swingHigh1 = -1, swingHigh2 = -1;
     int swingLow1 = -1, swingLow2 = -1;
     
@@ -700,7 +670,7 @@ void CMarketStructureAnalyzer::AnalyzeStructure(STFStructure &tfStruct)
         }
     }
     
-    // Determine structure
+    // Bullish needs a higher high AND a higher low; bearish the mirror image
     tfStruct.isBullish = false;
     tfStruct.isBearish = false;
     tfStruct.isConsolidating = true;
@@ -731,7 +701,7 @@ bool CMarketStructureAnalyzer::IsValidMultiplexSetup(ENUM_TRADE_SIGNAL &signal)
 {
     UpdateMultiplexStructure();
     
-    // Best: HTF and LTF aligned
+    // HTF and LTF must agree; the MTF is computed but not consulted here
     if(m_htf.isBullish && m_ltf.isBullish)
     {
         signal = TRADE_SIGNAL_BUY;
@@ -836,21 +806,18 @@ bool CMarketStructureAnalyzer::GetLastSwingLow(SStructuralPoint &swing)
     return true;
 }
 
-// Detect Fast CHOCH — Batch 103: 1-bar close beyond structure
-// Returns true if current bar closes beyond the nearest swing level
+// Fast CHoCH: one closed bar's close beyond the nearest swing level
 bool CMarketStructureAnalyzer::DetectFastCHOCH()
 {
-    // Batch 157: judge the last CLOSED close - the forming-bar close flip-flopped
-    // this bonus tick-by-tick inside FVGScalper/AsianRangeBreak confidence scores.
+    // Closed bar only: the forming-bar close flip-flopped this bonus tick-by-tick
+    // inside FVGScalper and AsianRangeBreak confidence scores.
     double close1 = iClose(m_symbol, m_timeframe, 1);
     if(close1 <= 0) return false;
 
-    // Check if close is above the nearest swing high (bullish CHoCH)
     double swingHigh = GetSwingHighLevel(20);
     if(swingHigh > 0 && close1 > swingHigh)
         return true;
 
-    // Check if close is below the nearest swing low (bearish CHoCH)
     double swingLow = GetSwingLowLevel(20);
     if(swingLow > 0 && close1 < swingLow)
         return true;
@@ -858,22 +825,18 @@ bool CMarketStructureAnalyzer::DetectFastCHOCH()
     return false;
 }
 
-// Detect Wick BOS — Batch 103: wick penetration = immediate BOS
-// Returns true if current bar's wick penetrates a swing level
+// Wick BOS: a closed bar's wick penetrating a swing level counts immediately
 bool CMarketStructureAnalyzer::DetectWickBOS()
 {
-    // Batch 157: closed bars only (no external consumer yet; kept consistent
-    // with the closed-bar convention so future consumers inherit sane behavior).
+    // Closed bars only, matching the shift-1 convention every other read here uses.
     double high1 = iHigh(m_symbol, m_timeframe, 1);
     double low1 = iLow(m_symbol, m_timeframe, 1);
     if(high1 <= 0 || low1 <= 0) return false;
 
-    // Wick above swing high = bullish BOS
     double swingHigh = GetSwingHighLevel(10);
     if(swingHigh > 0 && high1 > swingHigh)
         return true;
 
-    // Wick below swing low = bearish BOS
     double swingLow = GetSwingLowLevel(10);
     if(swingLow > 0 && low1 < swingLow)
         return true;
@@ -881,12 +844,11 @@ bool CMarketStructureAnalyzer::DetectWickBOS()
     return false;
 }
 
-// Detect CISD Displacement — Batch 103: displacement > 1.5 ATR
-// Returns true if the 5-bar displacement exceeds 1.5 ATR
+// CISD displacement: the 5-bar close range must exceed 1.5 ATR
 bool CMarketStructureAnalyzer::DetectCISDDisplacement()
 {
-    // Batch 157: measure across CLOSED bars (shifts 1..6) - including the forming
-    // bar biased displacement low for most of each bar's life.
+    // Measured across closed bars (shifts 1 and 6): including the forming bar biased
+    // displacement low for most of each bar's life.
     double close1 = iClose(m_symbol, m_timeframe, 1);
     double close6 = iClose(m_symbol, m_timeframe, 6);
     if(close1 <= 0 || close6 <= 0) return false;
@@ -898,7 +860,6 @@ bool CMarketStructureAnalyzer::DetectCISDDisplacement()
     return displacement > 1.5 * atr;
 }
 
-// Get Swing High Level — Batch 103: nearest swing high price
 double CMarketStructureAnalyzer::GetSwingHighLevel(int lookback = 20)
 {
     int highestBar = iHighest(m_symbol, m_timeframe, MODE_HIGH, lookback, 1);
@@ -906,7 +867,6 @@ double CMarketStructureAnalyzer::GetSwingHighLevel(int lookback = 20)
     return iHigh(m_symbol, m_timeframe, highestBar);
 }
 
-// Get Swing Low Level — Batch 103: nearest swing low price
 double CMarketStructureAnalyzer::GetSwingLowLevel(int lookback = 20)
 {
     int lowestBar = iLowest(m_symbol, m_timeframe, MODE_LOW, lookback, 1);

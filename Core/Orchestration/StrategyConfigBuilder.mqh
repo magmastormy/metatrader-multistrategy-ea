@@ -1,5 +1,5 @@
-// Extracted from EAOrchestrator - pure config array initialization
-// No runtime behavior, no invariant surface
+// Pure config-array initialization: no runtime behavior, no invariant surface.
+// Every strategy owns exactly one timeframe row and one intrabar row.
 #ifndef STRATEGY_CONFIG_BUILDER_MQH
 #define STRATEGY_CONFIG_BUILDER_MQH
 
@@ -152,10 +152,7 @@ public:
         config.strategyIntrabarConfigs[13].defaultPolicy = config.intrabarEligibilityPythonBridgeAI;
         config.strategyIntrabarConfigs[13].syntheticLeanPrimary = false;
 
-        // Batch 147 (F2): the historical FVG Scalper slot-13 clobber was removed.
-        // Python Bridge AI keeps its own row at slot 13; FVG Scalper owns slot 21
-        // (see the tail of this method). Turtle Soup now reads its own builder row
-        // rather than FVG's OFF.
+        // Python Bridge AI owns row 13; FVG Scalper and Statistical Arbitrage own rows 21 and 22.
 
         config.strategyTimeframeConfigs[14].name = "Turtle Soup";
         config.strategyTimeframeConfigs[14].defaultTF = PERIOD_CURRENT;
@@ -227,12 +224,10 @@ public:
         config.strategyIntrabarConfigs[20].defaultPolicy = INTRABAR_POLICY_OFF;
         config.strategyIntrabarConfigs[20].syntheticLeanPrimary = false;
 
-        // ---- Batch 147 (F2/F5): rows for the two strategies that never owned one.
-        // FVG Scalper owns slot 21 and Statistical Arbitrage owns slot 22
-        // (catalog siPolicyIndex 21 / 22). These are now the rows those strategies
-        // resolve to; both carry INTRABAR_POLICY_OFF.
+        // Rows are indexed by each strategy's catalog policy index; two strategies sharing a row
+        // lets one clobber the other's intrabar policy. Rows 21/22 carry INTRABAR_POLICY_OFF.
 
-        // Strategy 21: FVG Scalper (was clobbering slot 13)
+        // Strategy 21: FVG Scalper
         config.strategyTimeframeConfigs[21].name = "FVG Scalper";
         config.strategyTimeframeConfigs[21].defaultTF = PERIOD_CURRENT;
         config.strategyTimeframeConfigs[21].intrabarEnabled = false;
@@ -243,7 +238,7 @@ public:
         config.strategyIntrabarConfigs[21].defaultPolicy = INTRABAR_POLICY_OFF;
         config.strategyIntrabarConfigs[21].syntheticLeanPrimary = false;
 
-        // Strategy 22: Statistical Arbitrage (had no row at all; legacy read Ensemble AI's)
+        // Strategy 22: Statistical Arbitrage
         config.strategyTimeframeConfigs[22].name = "Statistical Arbitrage";
         config.strategyTimeframeConfigs[22].defaultTF = PERIOD_CURRENT;
         config.strategyTimeframeConfigs[22].intrabarEnabled = false;

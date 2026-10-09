@@ -1,10 +1,6 @@
-// Runtime heartbeat / signal-funnel counters for the orchestrator
-// Phase B-2: extracted from CEAOrchestrator, which previously held
-// 18 loose `ulong m_hbXxx` members. These are WRITE-ONLY telemetry:
-// no control flow anywhere in the EA branches on their values, so
-// relocating them cannot alter trading behaviour.
-// Responsibility: accumulate per-cycle funnel counts and hand them
-// to CDiagnosticsManager on each heartbeat tick.
+// Runtime heartbeat / signal-funnel counters for the orchestrator.
+// Accumulates per-cycle funnel counts and hands them to CDiagnosticsManager on each heartbeat tick.
+// WRITE-ONLY telemetry: no control flow anywhere in the EA branches on these values.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_HEARTBEAT_TELEMETRY_MQH
@@ -12,35 +8,25 @@
 
 #include "../Management/DiagnosticsManager.mqh"
 
-// Counter semantics (mirrors CDiagnosticsManager::UpdateCounters):
-// scan cadence : scansAttempted, intrabarScansExecuted
-// funnel       : signalsGenerated -> AfterPipeline -> AfterQuorum
-// -> Validated -> RiskApproved -> Sent
-// rejections   : noSignal, validatorRejects, riskRejects,
-// entryBlocked, sizingRejects
-// quiet paths  : quietNoNewBar, quietCadenceHold,
-// quietMissingManager
-// outcomes     : tradesOpened, syntheticSpikeEvents
+// Counters mirror CDiagnosticsManager::UpdateCounters' argument set. Funnel order:
+// signalsGenerated -> AfterPipeline -> AfterQuorum -> Validated -> RiskApproved -> Sent.
+// The rest are scan cadence, rejection counts, quiet-cycle reasons and outcomes.
 class CHeartbeatTelemetry
 {
 private:
-    // Scan cadence
     ulong m_scansAttempted;
     ulong m_intrabarScansExecuted;
 
-    // Rejection telemetry
     ulong m_noSignalCount;
     ulong m_validatorRejects;
     ulong m_riskRejects;
     ulong m_entryBlocked;
     ulong m_sizingRejects;
 
-    // Quiet-cycle reasons
     ulong m_quietNoNewBar;
     ulong m_quietCadenceHold;
     ulong m_quietMissingManager;
 
-    // Signal funnel
     ulong m_signalsGenerated;
     ulong m_signalsAfterPipeline;
     ulong m_signalsAfterQuorum;
@@ -48,12 +34,10 @@ private:
     ulong m_signalsRiskApproved;
     ulong m_signalsSent;
 
-    // Outcomes
     ulong m_tradesOpened;
     ulong m_syntheticSpikeEvents;
 
 public:
-// Constructor - all counters start at zero
     CHeartbeatTelemetry()
     {
         Reset();
@@ -61,7 +45,6 @@ public:
 
     ~CHeartbeatTelemetry() {}
 
-// Reset every counter to zero
     void Reset()
     {
         m_scansAttempted        = 0;
@@ -84,7 +67,6 @@ public:
         m_syntheticSpikeEvents  = 0;
     }
 
-// Increment operations (one per counter)
     void IncScansAttempted()        { m_scansAttempted++; }
     void IncIntrabarScansExecuted() { m_intrabarScansExecuted++; }
     void IncNoSignalCount()         { m_noSignalCount++; }
@@ -104,7 +86,6 @@ public:
     void IncTradesOpened()          { m_tradesOpened++; }
     void IncSyntheticSpikeEvents()  { m_syntheticSpikeEvents++; }
 
-// Accessors (read-only)
     ulong GetScansAttempted()        const { return m_scansAttempted; }
     ulong GetIntrabarScansExecuted() const { return m_intrabarScansExecuted; }
     ulong GetNoSignalCount()         const { return m_noSignalCount; }
@@ -124,12 +105,8 @@ public:
     ulong GetTradesOpened()          const { return m_tradesOpened; }
     ulong GetSyntheticSpikeEvents()  const { return m_syntheticSpikeEvents; }
 
-// Emit
-// Pushes the current counter snapshot into the diagnostics
-// manager and triggers a heartbeat emission. Argument order is
-// identical to the previous inline 18-argument call site, so the
-// emitted heartbeat is byte-for-byte unchanged.
-// diag - diagnostics manager; NULL is tolerated (no-op).
+// UpdateCounters takes 18 positional arguments: the order below must match the
+// manager's parameter list exactly. NULL diag is tolerated (no-op).
     void Emit(CDiagnosticsManager* diag) const
     {
         if(diag == NULL)

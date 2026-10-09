@@ -1,8 +1,4 @@
-// Phase F extraction from CEAOrchestrator (behaviour preserving).
-// Pure symbol / strategy-roster classification helpers. Every
-// method below was moved verbatim out of CEAOrchestrator; the
-// orchestrator now keeps one-line forwarders with the original
-// signatures so no caller had to change.
+// Pure symbol / strategy-roster classification helpers.
 // All methods are static - this cluster owns no state.
 #property strict
 
@@ -11,8 +7,8 @@
 
 #include "OrchestratorConfig.mqh"
 
-// Mirrored from EAOrchestrator.mqh. Guarded so the values stay single-sourced
-// when this header is pulled in after the orchestrator has already defined them.
+// Mirrored from EAOrchestrator.mqh and #ifndef-guarded so the indices stay single-sourced
+// whatever the include order.
 #ifndef STRATEGY_NEURAL_NETWORK_AI
 #define STRATEGY_NEURAL_NETWORK_AI 17
 #endif
@@ -29,12 +25,10 @@
 class COrchestratorSymbolClassifier
 {
 public:
-    //--- Synthetic index detection (was CEAOrchestrator::IsSyntheticIndexSymbolName)
     static bool IsSyntheticIndexSymbolName(const string &symbol)
     {
-        // Fast string heuristic is authoritative for all common synthetic families and
-        // avoids any dependency on the shared global profiler, which can be invalid
-        // during multi-instance runtime re-initialization (invalid pointer access).
+        // The string heuristic is authoritative for common synthetic families: it avoids the shared
+        // global profiler, which can be an invalid pointer during multi-instance re-initialization.
         if(StringFind(symbol, "Volatility") >= 0 ||
            StringFind(symbol, "Boom")      >= 0 ||
            StringFind(symbol, "Crash")     >= 0 ||
@@ -50,16 +44,14 @@ public:
         return false;
     }
 
-    //--- Forex detection (was CEAOrchestrator::IsForexSymbol)
     static bool IsForexSymbol(const string &symbol)
     {
-        // Simple check for forex pairs (6-7 chars, no spaces)
+        // Forex pair: 6-7 characters, first 6 all uppercase letters.
         int len = StringLen(symbol);
         if(len >= 6 && len <= 7)
         {
             string base = StringSubstr(symbol, 0, 3);
             string quote = StringSubstr(symbol, 3, 3);
-            // Check if all letters
             for(int i = 0; i < 6; i++)
             {
                 if(i < StringLen(symbol))
@@ -73,7 +65,6 @@ public:
         return false;
     }
 
-    //--- Execution profile name (was CEAOrchestrator::GetInstrumentExecutionProfileName)
     static string GetInstrumentExecutionProfileName(const string &symbol)
     {
         if(IsSyntheticIndexSymbolName(symbol)) return "SYNTHETIC";
@@ -81,14 +72,12 @@ public:
         return "UNKNOWN";
     }
 
-    //--- Roster profile label (was CEAOrchestrator::GetSymbolStrategyProfileLabel)
     static string GetSymbolStrategyProfileLabel(const string &symbol, const bool &strategyFlags[])
     {
         if(IsSyntheticIndexSymbolName(symbol)) return "SYNTHETIC_LEAN";
         return "STANDARD";
     }
 
-    //--- Lean roster gate (was CEAOrchestrator::UseSyntheticLeanRosterProfile)
     static bool UseSyntheticLeanRosterProfile(const SOrchestratorConfig &config,
                                               const string &symbol,
                                               const bool &strategyFlags[])
@@ -96,7 +85,6 @@ public:
         return config.useSymbolClassProfiles && IsSyntheticIndexSymbolName(symbol);
     }
 
-    //--- Effective indicator count (was CEAOrchestrator::CountEffectiveIndicatorStrategiesForSymbol)
     static int CountEffectiveIndicatorStrategiesForSymbol(const bool &symbolFlags[])
     {
         int count = 0;
@@ -113,7 +101,6 @@ public:
         return count;
     }
 
-    //--- Human readable roster (was CEAOrchestrator::BuildEnabledStrategyList)
     static string BuildEnabledStrategyList(const bool &strategyFlags[])
     {
         string list = "";
@@ -128,7 +115,6 @@ public:
         return list;
     }
 
-    //--- Consensus input clamp (was CEAOrchestrator::ClampConsensusInput)
     static double ClampConsensusInput(double value)
     {
         return MathMax(0.0, MathMin(1.0, value));

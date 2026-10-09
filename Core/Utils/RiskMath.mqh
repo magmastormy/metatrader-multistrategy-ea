@@ -1,20 +1,13 @@
-// Centralized risk calculation utilities to ensure consistency
-// across all risk components (UnifiedRiskManager, PositionSizer,
-// PortfolioRiskManager, etc.)
-// Fixes L5-001: Risk Denominator Inconsistency Across Components
+// One authority for risk arithmetic: every risk component (UnifiedRiskManager,
+// PositionSizer, PortfolioRiskManager) must price risk on the same denominator.
 #ifndef CORE_UTILS_RISK_MATH_MQH
 #define CORE_UTILS_RISK_MATH_MQH
 
-// Risk Math Utilities
 class CRiskMath
 {
 public:
-    // Returns the stress-aware risk denominator for risk percentage calculations.
-    // Uses equity-aware logic: when both balance and equity are positive,
-    // returns the minimum (stress state). When one is non-positive,
-    // returns the positive value. Returns 0 if both are <= 0.
-    // This implementation MUST be used by all risk components to ensure
-    // consistent risk percentage calculations.
+    // Stress-aware denominator: min(balance, equity) when both are positive, the
+    // positive one when only it is; 0 when neither is.
     static double GetRiskDenominator()
     {
         double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -38,8 +31,7 @@ public:
         return (denom > 0.0) ? denom : 1.0;
     }
 
-    // Converts absolute risk amount to percentage using the stress-aware denominator.
-    // Returns 0 if denominator is invalid.
+    // Absolute risk amount -> percent on the stress-aware denominator; 0 if invalid.
     static double RiskAmountToPercent(double riskAmount)
     {
         double denom = GetRiskDenominator();
@@ -48,8 +40,7 @@ public:
         return (riskAmount / denom) * 100.0;
     }
 
-    // Converts risk percentage to absolute amount using the stress-aware denominator.
-    // Returns 0 if denominator is invalid.
+    // Risk percent -> absolute amount on the stress-aware denominator; 0 if invalid.
     static double RiskPercentToAmount(double riskPercent)
     {
         double denom = GetRiskDenominator();

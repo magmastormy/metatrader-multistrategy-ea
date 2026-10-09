@@ -1,7 +1,6 @@
 // Request/response dispatch for the Python bridge: prediction
 // endpoints and the correlation endpoints. Stateless - all state
 // lives in CPyBridgeTransport / CPyBridgeHealth, supplied by ref.
-// Extracted verbatim from PythonBridge.mqh (behaviour unchanged).
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -15,11 +14,9 @@
 #include "PyBridgeTransport.mqh"
 #include "PyBridgeHealth.mqh"
 
-// Python Bridge Request Dispatch (static-only, no state)
 class CPyBridgeRequests
 {
 public:
-   // Prediction methods
    static SPythonBridgeResponse Predict(CPyBridgeTransport &transport, CPyBridgeHealth &health,
                                         const double &features[], int features_size,
                                         const string mode,
@@ -39,7 +36,6 @@ public:
                                                   int asset_class, const string asset_class_name,
                                                   int family_id, const string symbol);
 
-   // ENHANCEMENT: Correlation Matrix Methods (Batch 93 - Week 4)
    static bool       GetCorrelationMatrix(CPyBridgeTransport &transport,
                                           double &corrMatrix[], int &size, string &symbols[]);
    static double     GetPairCorrelation(CPyBridgeTransport &transport,
@@ -48,7 +44,6 @@ public:
                                             const string symbol, string &bestPair, double &correlation);
 };
 
-// Send prediction request
 SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, CPyBridgeHealth &health,
                                                  const double &features[], int features_size,
                                                  const string mode,
@@ -59,7 +54,6 @@ SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, 
 {
    SPythonBridgeResponse result;
    
-   // Check if bridge is available
    if(transport.GetMode() == PYTHON_BRIDGE_OFF || !transport.IsInitialized())
    {
       result.success = false;
@@ -67,7 +61,6 @@ SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, 
       return result;
    }
    
-   // Check health first
    if(!health.CheckHealth(transport))
    {
       result.success = false;
@@ -79,7 +72,6 @@ SPythonBridgeResponse CPyBridgeRequests::Predict(CPyBridgeTransport &transport, 
                                                         family_id, symbol,
                                                         asset_class, asset_class_name);
    
-   // Send request
    string response;
    string requestUrl = transport.GetEndpoint() + "/predict";
    if(transport.SendHttpRequest("POST", requestUrl, json, response))
@@ -110,7 +102,6 @@ SPythonBridgeResponse CPyBridgeRequests::PredictMamlPpo(CPyBridgeTransport &tran
    return Predict(transport, health, features, features_size, "maml_ppo", -1, "", -1, "");
 }
 
-// Family-aware prediction
 SPythonBridgeResponse CPyBridgeRequests::PredictFamily(CPyBridgeTransport &transport, CPyBridgeHealth &health,
                                                        const double &features[], int features_size,
                                                        int family_id, const string symbol)
@@ -118,7 +109,6 @@ SPythonBridgeResponse CPyBridgeRequests::PredictFamily(CPyBridgeTransport &trans
    return Predict(transport, health, features, features_size, "ensemble", family_id, symbol, -1, "");
 }
 
-// Multi-asset class prediction (Batch 103)
 SPythonBridgeResponse CPyBridgeRequests::PredictMultiAsset(CPyBridgeTransport &transport, CPyBridgeHealth &health,
                                                            const double &features[], int features_size,
                                                            int asset_class, const string asset_class_name,
@@ -127,8 +117,6 @@ SPythonBridgeResponse CPyBridgeRequests::PredictMultiAsset(CPyBridgeTransport &t
    return Predict(transport, health, features, features_size, "ensemble", family_id, symbol, asset_class, asset_class_name);
 }
 
-// ENHANCEMENT: Get Correlation Matrix (Batch 93 - Week 4)
-// Fetches correlation matrix from Python server
 // Returns flattened matrix (row-major order): matrix[i*size + j]
 bool CPyBridgeRequests::GetCorrelationMatrix(CPyBridgeTransport &transport,
                                              double &corrMatrix[], int &size, string &symbols[])
@@ -136,7 +124,6 @@ bool CPyBridgeRequests::GetCorrelationMatrix(CPyBridgeTransport &transport,
    if(transport.GetMode() == PYTHON_BRIDGE_OFF || !transport.IsInitialized() || !transport.IsConnected())
       return false;
    
-   // Request correlation matrix from Python endpoint
    string response;
    string corrUrl = transport.GetEndpoint() + "/correlation_matrix";
    
@@ -147,12 +134,9 @@ bool CPyBridgeRequests::GetCorrelationMatrix(CPyBridgeTransport &transport,
       return false;
    }
    
-   // Parse JSON response containing correlation matrix
    // Expected format: {"symbols": ["Vol75", "Vol100", ...], "matrix": [[1.0, 0.85, ...], ...]}
-   // For now, parse what we can and return partial results
    if(StringFind(response, "\"matrix\"") != -1)
    {
-      // Matrix endpoint returned data — extract symbol count
       int symPos = StringFind(response, "\"symbols\"");
       if(symPos != -1)
       {
@@ -167,8 +151,8 @@ bool CPyBridgeRequests::GetCorrelationMatrix(CPyBridgeTransport &transport,
                if(StringGetCharacter(arrStr, c) == ',') symCount++;
 
             PrintFormat("[PYTHON-BRIDGE] Correlation matrix received: %d symbols", symCount);
-            // Full matrix parsing would be complex; log success and return true
-            // so callers know the endpoint works
+            // NOTE: success only means the endpoint answered. corrMatrix, size and symbols
+            // are NOT populated by this call - never consume the out-params.
             transport.SetLastError("");
             return true;
          }
@@ -179,8 +163,6 @@ bool CPyBridgeRequests::GetCorrelationMatrix(CPyBridgeTransport &transport,
    return false;
 }
 
-// ENHANCEMENT: Get Pair Correlation (Batch 93 - Week 4)
-// Returns correlation between two symbols
 double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
                                              const string symbol1, const string symbol2)
 {
@@ -189,7 +171,6 @@ double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
       return 0.0;
    }
    
-   // Request specific pair correlation
    string response;
    string corrUrl = transport.GetEndpoint() + "/correlation?symbol1=" + symbol1 + "&symbol2=" + symbol2;
    
@@ -205,7 +186,6 @@ double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
             return corr;
          }
       }
-      // Fallback: check for error
       if(StringFind(response, "\"error\"") != -1)
          PrintFormat("[PYTHON-BRIDGE] Pair correlation error for %s/%s", symbol1, symbol2);
    }
@@ -213,8 +193,6 @@ double CPyBridgeRequests::GetPairCorrelation(CPyBridgeTransport &transport,
    return 0.0;
 }
 
-// ENHANCEMENT: Find Best Correlated Pair (Batch 93 - Week 4)
-// Finds the most highly correlated symbol for a given symbol
 bool CPyBridgeRequests::FindBestCorrelatedPair(CPyBridgeTransport &transport,
                                                const string symbol, string &bestPair, double &correlation)
 {
@@ -225,7 +203,6 @@ bool CPyBridgeRequests::FindBestCorrelatedPair(CPyBridgeTransport &transport,
       return false;
    }
    
-   // Request best pair from Python
    string response;
    string bestPairUrl = transport.GetEndpoint() + "/best_pair?symbol=" + symbol;
    
@@ -236,14 +213,12 @@ bool CPyBridgeRequests::FindBestCorrelatedPair(CPyBridgeTransport &transport,
       double foundCorr = 0.0;
       bool parsed = false;
 
-      // Extract best_pair
       if(StringFind(response, "\"best_pair\":") != -1)
       {
          foundPair = CPyBridgeProtocol::ParseJsonString(response, "best_pair");
          if(StringLen(foundPair) > 0) parsed = true;
       }
 
-      // Extract correlation
       if(StringFind(response, "\"correlation\":") != -1)
          foundCorr = CPyBridgeProtocol::ParseJsonDouble(response, "correlation");
 
@@ -255,7 +230,6 @@ bool CPyBridgeRequests::FindBestCorrelatedPair(CPyBridgeTransport &transport,
          return true;
       }
 
-      // Fallback: check for error
       if(StringFind(response, "\"error\"") != -1)
          PrintFormat("[PYTHON-BRIDGE] Best pair error for %s", symbol);
    }

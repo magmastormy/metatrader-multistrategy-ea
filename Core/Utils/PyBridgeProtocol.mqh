@@ -1,7 +1,6 @@
 // Stateless message framing / (de)serialization helpers for the
 // Python bridge: JSON escaping, JSON scalar extraction, response
 // parsing, request building and version validation.
-// Extracted verbatim from PythonBridge.mqh (behaviour unchanged).
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -12,19 +11,15 @@
 
 #include "PyBridgeTypes.mqh"
 
-// Python Bridge Protocol Helpers (static-only, no state)
 class CPyBridgeProtocol
 {
 public:
-   // JSON escaping
    static string     EscapeJsonString(const string &str);
 
-   // JSON parsing helpers (Phase 6.3 — consolidated from 18+ duplicated patterns)
    static double     ParseJsonDouble(const string &json_str, const string &key);
    static string     ParseJsonString(const string &json_str, const string &key);
    static long       ParseJsonInteger(const string &json_str, const string &key);
 
-   // Response / request framing
    static bool       ValidateJsonResponse(const string &json_str);
    static SPythonBridgeResponse ParsePredictionResponse(const string &json_str);
    static string     BuildPredictRequest(const double &features[], int features_size,
@@ -34,7 +29,6 @@ public:
                                          int asset_class,
                                          const string asset_class_name);
 
-   // Version handling
    static bool       ParseVersionResponse(const string &json_str, SPythonBridgeVersion &version);
    static bool       CheckVersionCompatibility(const SPythonBridgeVersion &version);
 };
@@ -50,7 +44,6 @@ string CPyBridgeProtocol::EscapeJsonString(const string &str)
    return result;
 }
 
-// JSON parsing helpers (Phase 6.3 — consolidated from 18+ patterns)
 double CPyBridgeProtocol::ParseJsonDouble(const string &json_str, const string &key)
 {
    string searchKey = "\"" + key + "\":";
@@ -95,7 +88,7 @@ bool CPyBridgeProtocol::ValidateJsonResponse(const string &json_str)
    if(json_str == "")
       return false;
    
-   // Basic JSON validation - check for balanced braces
+   // Checks only brace/bracket balance outside quoted strings - not full JSON validation.
    int brace_count = 0;
    int bracket_count = 0;
    bool in_string = false;
@@ -133,7 +126,6 @@ SPythonBridgeResponse CPyBridgeProtocol::ParsePredictionResponse(const string &j
       return result;
    }
    
-   // Check for error in response
    if(StringFind(json_str, "\"error\"") != -1)
    {
       result.success = false;
@@ -145,7 +137,6 @@ SPythonBridgeResponse CPyBridgeProtocol::ParsePredictionResponse(const string &j
    
    result.success = true;
 
-   // Extract numeric fields via consolidated helper (Phase 6.3)
    result.buy_prob       = ParseJsonDouble(json_str, "buy_prob");
    result.sell_prob      = ParseJsonDouble(json_str, "sell_prob");
    result.hold_prob      = ParseJsonDouble(json_str, "hold_prob");
@@ -159,11 +150,9 @@ SPythonBridgeResponse CPyBridgeProtocol::ParsePredictionResponse(const string &j
    result.onnx_buy       = ParseJsonDouble(json_str, "onnx_buy");
    result.onnx_sell      = ParseJsonDouble(json_str, "onnx_sell");
 
-   // Extract integer fields
    result.family_id     = (int)ParseJsonInteger(json_str, "family_id");
    result.asset_class   = (int)ParseJsonInteger(json_str, "asset_class");
 
-   // Extract string fields
    result.family_name     = ParseJsonString(json_str, "family_name");
    result.asset_class_name = ParseJsonString(json_str, "asset_class_name");
    result.ts            = ParseJsonString(json_str, "ts");
@@ -180,7 +169,6 @@ string CPyBridgeProtocol::BuildPredictRequest(const double &features[], int feat
                                               int asset_class,
                                               const string asset_class_name)
 {
-   // Build JSON request
    string json = "{\"features\":[";
    for(int i = 0; i < features_size; i++)
    {
@@ -192,7 +180,6 @@ string CPyBridgeProtocol::BuildPredictRequest(const double &features[], int feat
       json += ",\"family_id\":" + IntegerToString(family_id);
    if(symbol != "")
       json += ",\"symbol\":\"" + EscapeJsonString(symbol) + "\"";
-   // Batch 103: Multi-asset class routing
    if(asset_class >= 0)
       json += ",\"asset_class\":" + IntegerToString(asset_class);
    if(asset_class_name != "")
@@ -206,10 +193,8 @@ bool CPyBridgeProtocol::ParseVersionResponse(const string &json_str, SPythonBrid
    if(!ValidateJsonResponse(json_str))
       return false;
 
-   // Extract version string
    version.version = ParseJsonString(json_str, "version");
    
-   // Parse version components
    if(version.version != "")
    {
       string parts[];
@@ -229,11 +214,10 @@ bool CPyBridgeProtocol::CheckVersionCompatibility(const SPythonBridgeVersion &ve
    const int REQUIRED_MAJOR = 1;
    const int REQUIRED_MINOR = 0;
    
-   // Major version must match
+   // Major version must match exactly; minor version must be >= REQUIRED_MINOR.
    if(version.major != REQUIRED_MAJOR)
       return false;
    
-   // Minor version must be >= required
    if(version.minor < REQUIRED_MINOR)
       return false;
    

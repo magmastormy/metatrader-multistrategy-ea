@@ -1,6 +1,5 @@
 // Class declarations, static state storage and lifecycle
 // (GetInstance / Initialize / Shutdown / DestroyInstance).
-// Extracted verbatim from ErrorHandling.mqh.
 #ifndef CORE_ERROR_HANDLING_CORE_MQH
 #define CORE_ERROR_HANDLING_CORE_MQH
 
@@ -77,9 +76,7 @@ public:
     static void DestroyInstance();
 };
 
-// Batch 153: the CErrorHandling instance-wrapper class was removed - it had
-// zero references repo-wide and its non-trivial overloads either dropped the
-// payload or double-routed into CEnhancedErrorHandler.
+// There is no CErrorHandling wrapper class: call CEnhancedErrorHandler directly.
 
 // Static member storage
 CEnhancedErrorHandler* CEnhancedErrorHandler::m_instance = NULL;
@@ -198,7 +195,7 @@ void CEnhancedErrorHandler::DestroyInstance()
 {
     if(m_instance != NULL)
     {
-        // Flush any pending log writes
+            // Reopening and closing the log file pushes pending writes out before deletion.
         if(m_logFile != "" && m_loggingEnabled)
         {
             int handle = FileOpen(m_logFile, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI, '\t');
@@ -208,7 +205,6 @@ void CEnhancedErrorHandler::DestroyInstance()
             }
         }
         
-        // Delete the singleton instance
         delete m_instance;
         m_instance = NULL;
         

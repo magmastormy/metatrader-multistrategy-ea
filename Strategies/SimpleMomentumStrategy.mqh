@@ -1,14 +1,12 @@
-// Basic momentum strategy using EMA crossover
-// Simplified version: 4 indicators (fast/slow MA, ATR, RSI)
+// Momentum strategy: EMA crossover with ATR / RSI / MACD / ADX / volume filters.
 #ifndef SIMPLE_MOMENTUM_STRATEGY_MQH
 #define SIMPLE_MOMENTUM_STRATEGY_MQH
 
 #include "../Core/Strategy/StrategyBase.mqh"
-// Risk Manager for AGENTS.md invariant #1
+// Every entry must pass CUnifiedRiskManager pre-trade gating.
 #include "../Utilities/SafeCopyBuffer.mqh"
 #include "../Core/Risk/UnifiedRiskManager.mqh"
 
-// Momentum strategy for multi-instrument orchestration
 class CSimpleMomentumStrategy : public CStrategyBase
 {
 private:
@@ -17,37 +15,32 @@ private:
     double  m_thresholdPoints;
     int     m_fastHandle;
     int     m_slowHandle;
-    int     m_atrHandle;           // Volatility filter
-    int     m_rsiHandle;          // RSI for momentum trap filter
-    int     m_macdHandle;         // MACD histogram confirmation (v2.0)
-    int     m_adxHandle;          // ADX trend strength filter (v2.0)
-    int     m_volumeHandle;       // Volume surge detection (v2.0)
-    int     m_crossoverBar;       // Bar index of last crossover (for freshness)
+    int     m_atrHandle;           // volatility filter
+    int     m_rsiHandle;          // exhaustion filter
+    int     m_macdHandle;         // histogram confirmation - soft, never a hard gate
+    int     m_adxHandle;          // trend strength gate
+    int     m_volumeHandle;       // volume surge
+    int     m_crossoverBar;       // bar index of the last crossover; feeds freshness/staleness
     double  m_lastDiff;
-    datetime m_lastSignalBar;      // Track last bar where signal was generated
-    int      m_signalsGenerated;   // Counter for signals generated
-    bool     m_enableScalping;     // Allow rapid signals
+    datetime m_lastSignalBar;      // shift-1 time of the last signal
+    int      m_signalsGenerated;
+    bool     m_enableScalping;     // rapid re-signalling; bypasses the one-signal-per-bar guard
     int      m_scalpCooldownSeconds;
-    double   m_minVolatility;      // Minimum volatility threshold
-    double   m_atrThresholdMult;   // Dynamic threshold multiplier
-    datetime m_lastSignalTimestamp;     // Track absolute time of last signal
-    int      m_minConfirmationBars; // Minimum bars for crossover confirmation (hysteresis)
+    double   m_minVolatility;      // absolute ATR floor; re-scaled by symbol digits in Init
+    double   m_atrThresholdMult;   // crossover gap must exceed this fraction of ATR
+    datetime m_lastSignalTimestamp;     // wall-clock anchor for the cooldown
 
-    double   m_rsiOverbought;      // RSI overbought threshold (default: 72)
-    double   m_rsiOversold;        // RSI oversold threshold (default: 28)
-    double   m_adxThreshold;       // ADX trend strength threshold (default: 20)
+    int      m_minConfirmationBars; // hysteresis: bars the crossover must hold
 
-        // Timeframe validation bounds for scalping mode
-    ENUM_TIMEFRAMES m_minScalpTimeframe;  // Minimum allowed timeframe for scalping (default: M1)
-    ENUM_TIMEFRAMES m_maxScalpTimeframe;  // Maximum allowed timeframe for scalping (default: M15)
+    double   m_rsiOverbought;      // overbought rejection level
+    double   m_rsiOversold;        // oversold rejection level
+    double   m_adxThreshold;       // minimum ADX counted as "trending"
 
-// Purpose: Verify crossover persists for minimum bars to filter
-// false signals during volatile periods
-// Parameters:
-// direction: +1 for bullish crossover, -1 for bearish crossover
-// threshold: Minimum gap between fast and slow MAs
-// minBars: Number of bars crossover must persist (hysteresis)
-// Returns: true if crossover is confirmed, false if it's just noise
+    ENUM_TIMEFRAMES m_minScalpTimeframe;  // scalping is only valid inside these bounds
+    ENUM_TIMEFRAMES m_maxScalpTimeframe;  // outside them ValidateTimeframeSuitability warns
+
+// Hysteresis gate: the crossover must hold for minBars closed bars or it is noise.
+// direction +1 = fast above slow, -1 = fast below; threshold is the minimum MA gap.
     bool ValidateCrossoverWithHysteresis(const int direction, const double threshold, const int minBars)
     {
         // Need at least minBars + 1 bars of historical data (including current)
@@ -64,13 +57,8 @@ private:
             return false;
         }
         
-        // direction: +1 = bullish (fast crosses above slow)
-        // direction: -1 = bearish (fast crosses below slow)
-        // Batch 155: non-series copies are OLDEST-first, so the newest closed
-        // bar (the cross bar itself) sits at index maxBars-1 and older bars
-        // walk backwards from there. The old loop scanned indices 0..minBars-1
-        // - bars BEFORE the crossover - where diff <= threshold is expected,
-        // so any persistence requirement >= 2 rejected every valid cross.
+        // Non-series copies land OLDEST-first: the cross bar is maxBars-1, older bars walk
+        // backwards. Indexing up from 0 reads pre-cross bars and rejects every valid cross.
         for(int k = 0; k < minBars; k++)
         {
             int idx = maxBars - 1 - k;
@@ -101,24 +89,18 @@ private:
         return true;
     }
 
-    // ENHANCEMENT: RSI Divergence Detection (Batch 93 - Week 1)
-    // Detects bearish/bullish divergence to filter false breakouts
+    // Price/RSI divergence is an exhaustion warning: it vetoes the entry.
     bool HasRSIDivergence(ENUM_TRADE_SIGNAL signal)
     {
-        // Need at least 5 bars for divergence detection
         double priceBuffer[6], rsiBuffer[6];
         if(CopyClose(m_symbol, m_timeframe, 1, 6, priceBuffer) < 6 ||
            !SafeCopyBuffer(m_rsiHandle, 0, 1, 6, rsiBuffer))
-            return false; // Skip on data error
+            return false; // fail closed: needs 6 closed bars; short history gives no veto
         
-        // Look for divergence over last 3-5 bars
-        // Batch 155: non-series copies land OLDEST-first, so index 0 is the
-        // oldest bar of the window and index 5 is the newest closed bar. The
-        // old code compared them the other way round, testing price falling
-        // into the cross instead of making a fresh extreme.
+        // Non-series copies land OLDEST-first: index 5 is the newest closed bar, so price
+        // must make the fresh extreme at [5] against [5 - lookback], RSI the opposite.
         for(int lookback = 3; lookback <= 5; lookback++)
         {
-            // Bullish Divergence: Price makes lower low, RSI makes higher low
             if(signal == TRADE_SIGNAL_BUY)
             {
                 bool priceLowerLow = (priceBuffer[5] < priceBuffer[5 - lookback]);
@@ -132,7 +114,6 @@ private:
                 }
             }
 
-            // Bearish Divergence: Price makes higher high, RSI makes lower high
             if(signal == TRADE_SIGNAL_SELL)
             {
                 bool priceHigherHigh = (priceBuffer[5] > priceBuffer[5 - lookback]);
@@ -150,14 +131,10 @@ private:
         return false;
     }
 
-    // MACD Histogram Confirmation (v2.0)
-    // Returns true if MACD histogram confirms the signal direction
     bool MACDConfirmed(ENUM_TRADE_SIGNAL signal)
     {
-        // Batch 169: fail closed. These paths returned true ("don't block") when the
-        // indicator handle was invalid or the copy failed, so a data outage counted
-        // as confirmation and produced trades with no evidence behind them. An
-        // unavailable filter is not a passing filter.
+        // Fail closed: an unavailable filter is not a passing filter. Returning true here
+        // let a data outage count as confirmation and trade on no evidence.
         if(m_macdHandle == INVALID_HANDLE)
             return false;
 
@@ -166,23 +143,20 @@ private:
            !SafeCopyBuffer(m_macdHandle, 1, 1, 2, macdSignal))
             return false;
 
-        // Batch 155: non-series copies are oldest-first, so [1] is the newest
-        // closed bar and [0] is the bar before it. The old read had them
-        // swapped, "confirming" BUYs with a falling histogram.
+        // Oldest-first: [1] is the newest closed bar, [0] the bar before it. Swapped, the
+        // check "confirmed" BUYs with a falling histogram.
         double histNow = macdMain[1] - macdSignal[1];
         double histPrev = macdMain[0] - macdSignal[0];
 
         if(signal == TRADE_SIGNAL_BUY)
-            return (histNow > 0 && histNow > histPrev);  // Rising positive histogram
+            return (histNow > 0 && histNow > histPrev);
         else
-            return (histNow < 0 && histNow < histPrev);  // Falling negative histogram
+            return (histNow < 0 && histNow < histPrev);
     }
 
-    // ADX Trend Strength Filter (v2.0)
-    // Returns true if ADX indicates a trending market (ADX > 20)
     bool StrongTrend()
     {
-        // Batch 169: fail closed - no ADX data must not read as "trend confirmed".
+        // Fail closed: missing ADX must never read as "trend confirmed".
         if(m_adxHandle == INVALID_HANDLE)
             return false;
 
@@ -193,14 +167,12 @@ private:
         return adxBuffer[0] > m_adxThreshold;
     }
 
-    // Pullback Entry Detection (v2.0)
-    // Crossover confirmed + price pulled back to EMA21 + rejection candle
+    // Pullback entry: price touched the slow EMA, then a rejection candle closed back off it.
     bool PullbackEntry(ENUM_TRADE_SIGNAL signal)
     {
         if(m_slowHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
             return false;
 
-        // Get EMA21 value
         double ema21[1];
         if(!SafeCopyBuffer(m_slowHandle, 0, 1, 1, ema21))
             return false;
@@ -214,7 +186,7 @@ private:
         double close1 = iClose(m_symbol, m_timeframe, 1);
         double open1 = iOpen(m_symbol, m_timeframe, 1);
 
-        // Price near EMA21 (within 0.2 * ATR)
+        // "Near" means within 0.2 * ATR of the slow EMA, measured from the bar extreme
         bool atEMA21 = false;
         if(signal == TRADE_SIGNAL_BUY)
             atEMA21 = (MathAbs(low1 - ema21[0]) < atr[0] * 0.2);
@@ -224,19 +196,17 @@ private:
         if(!atEMA21)
             return false;
 
-        // Rejection candle: close near high for buy, near low for sell
+        // Rejection candle: buy needs a lower wick twice the upper one; sell mirrors it.
         double bodySize = MathAbs(close1 - open1);
         double totalRange = high1 - low1;
         if(totalRange <= 0) return false;
 
         if(signal == TRADE_SIGNAL_BUY)
-            return (close1 - low1) > 2.0 * (high1 - close1);  // Close near high
+            return (close1 - low1) > 2.0 * (high1 - close1);
         else
-            return (high1 - close1) > 2.0 * (close1 - low1);  // Close near low
+            return (high1 - close1) > 2.0 * (close1 - low1);
     }
 
-    // Momentum Freshness + Volume Surge Confidence (v2.0)
-    // Returns confidence modifier based on crossover freshness and volume
     double GetMomentumFreshnessConfidence(ENUM_TRADE_SIGNAL signal)
     {
         double confidenceMod = 1.0;
@@ -246,19 +216,17 @@ private:
         if(m_crossoverBar > 0 && (currentBar - m_crossoverBar) < 3)
             confidenceMod *= 1.15;
 
-        // EXECUTION REFINEMENT: Reject stale signals (> 3 bars old)
+        // Stale crossover (> 3 bars) halves confidence instead of blocking the signal.
         if(m_crossoverBar > 0 && (currentBar - m_crossoverBar) > 3)
-            confidenceMod *= 0.5;  // Penalize stale signals
+            confidenceMod *= 0.5;
 
-        // Volume surge on crossover bar
         if(m_volumeHandle != INVALID_HANDLE)
         {
             double volBuffer[11];
             if(SafeCopyBuffer(m_volumeHandle, 0, 1, 11, volBuffer))
             {
-                // Batch 155: oldest-first layout - the newest closed bar is
-                // volBuffer[10], not [0] (which was shift-11, a month of bars
-                // back on higher TFs). The old read compared stale volume.
+                // Oldest-first: the newest closed bar is volBuffer[10]; [0] is shift-11,
+                // months of bars back on higher timeframes.
                 double currentVol = volBuffer[10];
                 double avgVol = 0;
                 for(int i = 0; i < 10; i++)
@@ -267,7 +235,7 @@ private:
 
                 if(avgVol > 0 && currentVol > avgVol * 1.5)
                 {
-                    confidenceMod *= 1.10;  // Volume surge = +10%
+                    confidenceMod *= 1.10;
                     PrintFormat("[MOMENTUM-ENHANCED] Volume surge | Vol=%.0f Avg=%.0f Ratio=%.2f",
                                currentVol, avgVol, currentVol / avgVol);
                 }
@@ -298,19 +266,8 @@ private:
         return true;
     }
 
-// Purpose: Compute EMA from raw price data when SafeCopyBuffer
-// fails for MA handles, preventing MOMENTUM_MA_UNAVAILABLE
-// Algorithm:
-// 1. Fetch period*3 bars of close prices via CopyRates
-// 2. Initialize with SMA of first 'period' closes
-// 3. Apply standard EMA formula forward:
-// EMA = price * multiplier + prevEMA * (1 - multiplier)
-// where multiplier = 2 / (period + 1)
-// 4. Return EMA at shift 1 (emaNow) and shift 2 (emaPrev)
-// Parameters:
-// emaNow:  [out] EMA value at bar shift 1 (last closed bar)
-// emaPrev: [out] EMA value at bar shift 2 (bar before last)
-// Returns: true if fallback calculation succeeded, false otherwise
+// EMA recomputed from raw closes when the MA handle copy fails, preventing MOMENTUM_MA_UNAVAILABLE
+// on a handle outage. SMA-seeded, period*3 warmup bars, outputs shift 1 and shift 2 - never shift 0.
     bool CalculateEmaFallback(const int period, double &emaNow, double &emaPrev)
     {
         if(period <= 0)
@@ -326,13 +283,11 @@ private:
         double multiplier = 2.0 / ((double)period + 1.0);
         double invMultiplier = 1.0 - multiplier;
 
-        // Initialize with SMA of first 'period' bars (stable starting point)
         double smaSum = 0.0;
         for(int i = 0; i < period; i++)
             smaSum += rates[i].close;
         double ema = smaSum / (double)period;
 
-        // Calculate EMA forward through bars up to shift 2 (index copied-3)
         // rates[copied-1] = shift 0 (current forming bar)
         // rates[copied-2] = shift 1 (last closed bar) -> emaNow
         // rates[copied-3] = shift 2 -> emaPrev
@@ -340,11 +295,10 @@ private:
         {
             ema = multiplier * rates[i].close + invMultiplier * ema;
         }
-        emaPrev = ema;  // EMA at shift 2
+        emaPrev = ema;
 
-        // One more step to shift 1 (last closed bar)
         ema = multiplier * rates[copied - 2].close + invMultiplier * ema;
-        emaNow = ema;  // EMA at shift 1
+        emaNow = ema;
 
         return true;
     }
@@ -358,14 +312,13 @@ private:
         bool fastOk = SafeCopyBuffer(m_fastHandle, 0, 1, 2, fastBuffer);
         bool slowOk = SafeCopyBuffer(m_slowHandle, 0, 1, 2, slowBuffer);
 
-        // Try fallback EMA calculation when primary method fails
         bool fastFallback = false;
         bool slowFallback = false;
 
         if(fastOk)
         {
-            // Batch 150: static arrays are NOT as-series - [0] is the OLDEST of the
-            // copied window. start=1,count=2 -> [0]=shift 2 (prev), [1]=shift 1 (now).
+            // Static arrays are NOT as-series: [0] is the OLDEST of the copied window, so
+            // start=1,count=2 gives [0]=shift 2 (prev) and [1]=shift 1 (now).
             fastNow = fastBuffer[1];
             fastPrev = fastBuffer[0];
         }
@@ -379,7 +332,7 @@ private:
 
         if(slowOk)
         {
-            slowNow = slowBuffer[1];   // Batch 150: [1]=shift 1 (newer), see fast comment
+            slowNow = slowBuffer[1];   // [1]=shift 1 (newer); see the fast-EMA note above
             slowPrev = slowBuffer[0];
         }
         else
@@ -390,7 +343,7 @@ private:
                            m_slowPeriod, m_symbol, EnumToString(m_timeframe));
         }
 
-        // Only fail if both primary and fallback failed for either fast or slow
+        // Fail only when neither the handle copy nor the fallback produced a value
         if(!fastOk && !fastFallback)
             return false;
         if(!slowOk && !slowFallback)
@@ -399,15 +352,12 @@ private:
         return true;
     }
 
-    // Fetch 3 bars of fast EMA for rate-of-change acceleration detection
     bool FetchFastEMA3(double &emaNow, double &emaPrev, double &emaPrev2)
     {
         double fastBuffer[3];
 
-        // Closed-bar values: shift 1 (current signal), shift 2 (previous), shift 3 (2-bars-ago)
-        // Batch 155: non-series copies are OLDEST-first - [0]=shift 3,
-        // [2]=shift 1. The old mapping handed back reversed history, so the
-        // ROC multiplier rewarded deceleration and punished acceleration.
+        // Closed bars, oldest-first: [0]=shift 3 ... [2]=shift 1. Reversed history made the
+        // ROC multiplier reward deceleration and punish acceleration.
         if(!SafeCopyBuffer(m_fastHandle, 0, 1, 3, fastBuffer)) return false;
 
         emaNow = fastBuffer[2];
@@ -417,7 +367,6 @@ private:
     }
 
 public:
-    // Default constructor for Enterprise Manager
     CSimpleMomentumStrategy() :
         CStrategyBase("Momentum"),
         m_fastPeriod(8),
@@ -438,12 +387,12 @@ public:
                 m_adxHandle(INVALID_HANDLE),
                 m_volumeHandle(INVALID_HANDLE),
                 m_crossoverBar(0),
-                m_minConfirmationBars(1),  // Conservative: require 1 bar of confirmation
+                m_minConfirmationBars(1),  // conservative: 1 closed bar of confirmation
                 m_rsiOverbought(72.0),
                 m_rsiOversold(28.0),
                 m_adxThreshold(20.0),
-                m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
-                m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
+                m_minScalpTimeframe(PERIOD_M1),
+                m_maxScalpTimeframe(PERIOD_M15),
                 m_signalsGenerated(0)
     {
         m_strategyPrefix = "MOMENTUM";
@@ -460,21 +409,21 @@ public:
         m_lastDiff(0.0),
         m_lastSignalBar(0),
         m_lastSignalTimestamp(0),
-        m_enableScalping(false),      // SCALPING MODE: Disabled by default
+        m_enableScalping(false),
         m_scalpCooldownSeconds(20),
-        m_minVolatility(0.0005),     // VOLATILITY FILTER: Minimum ATR value (adjusted by point)
-        m_atrThresholdMult(0.20),     // ADAPTIVE FILTER: Crossover gap must exceed 20% of ATR
+        m_minVolatility(0.0005),     // minimum ATR value; symbol scale applied in Init
+        m_atrThresholdMult(0.20),     // crossover gap must exceed 20% of ATR
         m_rsiHandle(INVALID_HANDLE),
         m_macdHandle(INVALID_HANDLE),
         m_adxHandle(INVALID_HANDLE),
         m_volumeHandle(INVALID_HANDLE),
         m_crossoverBar(0),
-        m_minConfirmationBars(MathMax(1, minConfirmationBars)),  // Hysteresis: min bars for crossover confirmation
+        m_minConfirmationBars(MathMax(1, minConfirmationBars)),
         m_rsiOverbought(72.0),
         m_rsiOversold(28.0),
         m_adxThreshold(20.0),
-        m_minScalpTimeframe(PERIOD_M1),  // Minimum timeframe for scalping mode
-        m_maxScalpTimeframe(PERIOD_M15),   // Maximum timeframe for scalping mode
+        m_minScalpTimeframe(PERIOD_M1),
+        m_maxScalpTimeframe(PERIOD_M15),
                 m_signalsGenerated(0)
     {
         m_strategyPrefix = "MOMENTUM";
@@ -491,13 +440,10 @@ public:
         m_scalpCooldownSeconds = MathMax(5, cooldownSeconds);
     }
 
-// Configure minimum bars for crossover hysteresis validation
-// bars = 1: Conservative - verify crossover holds for 1 bar
-// bars = 2: Stricter - verify crossover holds for 2 bars (default)
-// bars = 3: Very strict - verify crossover holds for 3 bars
+// Hysteresis depth: 1 is lenient, larger values demand a longer-held crossover.
     void SetMinimumConfirmationBars(const int bars)
     {
-        m_minConfirmationBars = MathMax(1, MathMin(bars, 5)); // Clamp to 1-5 range
+        m_minConfirmationBars = MathMax(1, MathMin(bars, 5));
         PrintFormat("[MOMENTUM] Minimum confirmation bars set to %d", m_minConfirmationBars);
     }
 
@@ -514,11 +460,7 @@ public:
         m_adxThreshold = MathMax(10.0, MathMin(40.0, threshold));
     }
 
-// Configure allowed timeframe range for scalping mode
-// minTf: Minimum timeframe (e.g., PERIOD_M1)
-// maxTf: Maximum timeframe (e.g., PERIOD_M15)
-// Note: Scalping mode requires M1-M15 timeframes for appropriate
-// signal timing. Non-scalping mode requires M5 or higher.
+// Scalping must run M1-M15; trend-following needs M5 or higher to avoid false crosses.
     void SetScalpTimeframeBounds(const ENUM_TIMEFRAMES minTf, const ENUM_TIMEFRAMES maxTf)
     {
         m_minScalpTimeframe = minTf;
@@ -530,11 +472,8 @@ public:
     ENUM_TIMEFRAMES GetMinScalpTimeframe() const { return m_minScalpTimeframe; }
     ENUM_TIMEFRAMES GetMaxScalpTimeframe() const { return m_maxScalpTimeframe; }
 
-// Check if current timeframe is appropriate for configured mode
-// Returns: true if timeframe is suitable, false otherwise
     bool ValidateTimeframeSuitability()
     {
-        // Scalping mode: requires M1-M15 timeframes
         if(m_enableScalping)
         {
             if(m_timeframe < m_minScalpTimeframe || m_timeframe > m_maxScalpTimeframe)
@@ -546,7 +485,6 @@ public:
                 return false;
             }
         }
-        // Non-scalping mode: requires M5 or higher for trend following
         else
         {
             if(m_timeframe < PERIOD_M5)
@@ -575,12 +513,9 @@ public:
         if(!CStrategyBase::Init(symbol, timeframe, tradeMgr, posSizer, unifiedRiskMgr))
                     return false;
 
-// TIMEFRAME VALIDATION - Issue 2.1.2 Fix
-// Validate timeframe suitability for configured mode (scalping/
-// trend-following) and log warnings for inappropriate settings
                 ValidateTimeframeSuitability();
 
-                // Adjust min volatility based on symbol digits
+                // The ATR floor is an absolute price value, so it must match the symbol scale
                 if(SymbolInfoInteger(symbol, SYMBOL_DIGITS) <= 3) // JPY pairs or Indices
                     m_minVolatility = 0.05; 
                 else
@@ -610,7 +545,6 @@ public:
         if(!IsEnabled() || !m_is_initialized)
             return RejectSignal("MOMENTUM_DISABLED_OR_UNINIT");
         
-        // Ensure handles are valid
         if(m_fastHandle == INVALID_HANDLE || m_slowHandle == INVALID_HANDLE ||
            m_atrHandle == INVALID_HANDLE)
             return RejectSignal("MOMENTUM_INVALID_HANDLES");
@@ -626,7 +560,7 @@ public:
 
         if(!m_enableScalping)
         {
-            // Conservative mode: Only one signal per bar
+            // One signal per bar outside scalping
             datetime currentBar = iTime(m_symbol, m_timeframe, 1);
             if(currentBar == m_lastSignalBar)
                 return RejectSignal("MOMENTUM_SAME_BAR_GUARD");
@@ -641,15 +575,11 @@ public:
 
         double diffNow = fastNow - slowNow;
         double diffPrev = fastPrev - slowPrev;
-        // ADAPTIVE: Base threshold points vs current volatility
+        // The points threshold is a floor: ATR scaling may raise it but never lower it
         double staticThreshold = m_thresholdPoints * point;
 
-        // --- VOLATILITY FILTER ---
-        // Batch 155: 10-bar window, oldest-first layout -> [9] is the newest
-        // closed bar. The old code read [0] of a 2-bar copy (the OLDER bar)
-        // and compared it against m_minVolatility, an FX-scale absolute
-        // floor: EURUSD M1 was permanently "too quiet" while synthetics with
-        // huge absolute ATRs sailed through every gate untested.
+        // Oldest-first 10-bar window: [9] is the newest closed bar. Reading [0] of a 2-bar
+        // copy against the absolute floor rejected quiet FX and waved loud synthetics through.
         double atrWindow[10];
         if(!SafeCopyBuffer(m_atrHandle, 0, 1, 10, atrWindow))
             return RejectSignal("MOMENTUM_ATR_UNAVAILABLE");
@@ -666,27 +596,20 @@ public:
             return RejectSignal("MOMENTUM_LOW_VOLATILITY");
         }
 
-        // Calculate dynamic threshold using ATR
         double atrThreshold = curATR * m_atrThresholdMult;
         double threshold = MathMax(staticThreshold, atrThreshold);
 
-        // --- EXHAUSTION FILTER (RSI) ---
         double rsiBuffer[1];
         if(!SafeCopyBuffer(m_rsiHandle, 0, 1, 1, rsiBuffer))
             return RejectSignal("MOMENTUM_RSI_UNAVAILABLE");
         double rsi = rsiBuffer[0];
 
-        // Check for crossovers
         ENUM_TRADE_SIGNAL signal = TRADE_SIGNAL_NONE;
         bool crossedUp = (diffNow > threshold && diffPrev <= threshold);
         bool crossedDown = (diffNow < -threshold && diffPrev >= -threshold);
         
-// CROSSOVER VALIDATION WITH HYSTERESIS
-// Issue 2.1.1 Fix: Verify crossover persists for min bars
-// Purpose: Filter false signals during volatile periods
         if(crossedUp)
         {
-            // Validate bullish crossover holds for minimum confirmation bars
             if(m_minConfirmationBars > 1)
             {
                 if(!ValidateCrossoverWithHysteresis(+1, threshold, m_minConfirmationBars - 1))
@@ -696,7 +619,6 @@ public:
         }
         else if(crossedDown)
         {
-            // Validate bearish crossover holds for minimum confirmation bars
             if(m_minConfirmationBars > 1)
             {
                 if(!ValidateCrossoverWithHysteresis(-1, threshold, m_minConfirmationBars - 1))
@@ -704,7 +626,7 @@ public:
             }
             signal = TRADE_SIGNAL_SELL;
         }
-        // SCALPING: Also signal if momentum is strong (not just crossover)
+        // Scalping also enters on sustained momentum, not only on the cross itself
         else if(m_enableScalping)
         {
             if(diffNow > threshold * 1.5)
@@ -713,16 +635,13 @@ public:
                 signal = TRADE_SIGNAL_SELL;
         }
 
-        // --- RATE-OF-CHANGE ACCELERATION DETECTION (Phase 3.4) ---
-        // If crossover detected, check whether momentum is accelerating or decelerating
+        // Rate-of-change: an accelerating crossover earns a confidence boost
         double rocMultiplier = 1.0;
         if(signal != TRADE_SIGNAL_NONE)
         {
             double emaNow, emaPrev, emaPrev2;
             if(FetchFastEMA3(emaNow, emaPrev, emaPrev2))
             {
-                // Calculate current ROC: (ema8_now - ema8_prev) / ema8_prev * 100
-                // Calculate previous ROC: (ema8_prev - ema8_prev2) / ema8_prev2 * 100
                 if(emaPrev != 0.0 && emaPrev2 != 0.0)
                 {
                     double currentROC = (emaNow - emaPrev) / emaPrev * 100.0;
@@ -730,16 +649,16 @@ public:
                     double absCurrentROC = MathAbs(currentROC);
                     double absPreviousROC = MathAbs(previousROC);
 
-                    // If |current ROC| > |previous ROC| * 1.2 → momentum is accelerating
+                    // 1.2x band: without a margin the multiplier flips on a flat or noisy ROC
                     if(absPreviousROC > 0.0 && absCurrentROC > absPreviousROC * 1.2)
                     {
-                        rocMultiplier = 1.3;  // Accelerating → boost confidence
+                        rocMultiplier = 1.3;
                         PrintFormat("[MOMENTUM-ROC] Accelerating | CurrROC=%.4f PrevROC=%.4f | Boost=1.3x",
                                    currentROC, previousROC);
                     }
                     else
                     {
-                        rocMultiplier = 0.7;  // Not accelerating → reduce confidence
+                        rocMultiplier = 0.7;
                         PrintFormat("[MOMENTUM-ROC] Decelerating | CurrROC=%.4f PrevROC=%.4f | Reduce=0.7x",
                                    currentROC, previousROC);
                     }
@@ -750,8 +669,6 @@ public:
         if(signal == TRADE_SIGNAL_NONE)
             return RejectSignal("MOMENTUM_NO_CROSSOVER");
         
-        // ENHANCEMENT: RSI Divergence Filter (Batch 93 - Week 1)
-        // Reject signals with bearish/bullish divergence (exhaustion warning)
         if(HasRSIDivergence(signal))
             return RejectSignal("MOMENTUM_DIVERGENCE_DETECTED");
             
@@ -761,88 +678,74 @@ public:
         if(signal == TRADE_SIGNAL_SELL && rsi < m_rsiOversold)
             return RejectSignal("MOMENTUM_RSI_OVERSOLD");
 
-        // === v2.0 ENHANCEMENTS ===
-
-        // ADX Trend Strength Filter: require trending market for standard entries
+        // Trending market required; without it only a pullback entry or 2x-threshold momentum passes
         if(!StrongTrend())
         {
-            // Weak trend: only allow pullback entries or very strong momentum
             if(!PullbackEntry(signal) && MathAbs(diffNow) < threshold * 2.0)
                 return RejectSignal("MOMENTUM_ADX_WEAK_TREND");
         }
 
-        // MACD Histogram Confirmation
         if(!MACDConfirmed(signal))
         {
-            // MACD doesn't confirm: reduce confidence but don't block
-            // (MACD is a confirmation filter, not a hard gate)
+            // MACD is soft confirmation, not a gate: reduce confidence, never block
             PrintFormat("[MOMENTUM-ENHANCED] MACD not confirmed for %s | Confidence reduced",
                        signal == TRADE_SIGNAL_BUY ? "BUY" : "SELL");
         }
 
-        // Track crossover bar for freshness calculation
+        // Records the cross bar for the freshness modifier below
         if(crossedUp || crossedDown)
             m_crossoverBar = iBars(m_symbol, m_timeframe);
 
         if(signal != TRADE_SIGNAL_NONE)
         {
-            // Simplified confidence calculation
             double momentumConfidence = MathMin(1.0, MathAbs(diffNow) / (threshold * 2.5));
             
-            // ENHANCEMENT: Volatility-Adjusted Confidence (Batch 93 - Week 1)
-            // Reduce confidence during extreme volatility (uncertainty)
-            // Batch 155: ratio is now against the symbol's own recent ATR
-            // average, not the fixed FX-scale floor - the old formula read
-            // ~100x on synthetics and taxed every signal by 40%.
+            // Ratio is against the symbol's own recent ATR average, not an FX-scale floor:
+            // an absolute ratio read ~100x on synthetics and taxed every signal by 40%.
             double atrRatio = (avgATR > 0.0) ? curATR / avgATR : 1.0;
-            if(atrRatio > 2.0) // Extreme volatility expansion
+            if(atrRatio > 2.0)
             {
-                momentumConfidence *= 0.6; // Reduce by 40%
+                momentumConfidence *= 0.6;
                 PrintFormat("[MOMENTUM-VOL] High volatility detected | ATR ratio=%.2f | Confidence reduced to %.1f%%",
                            atrRatio, momentumConfidence * 100);
             }
-            else if(atrRatio > 1.5) // Elevated volatility
+            else if(atrRatio > 1.5)
             {
-                momentumConfidence *= 0.8; // Reduce by 20%
+                momentumConfidence *= 0.8;
                 PrintFormat("[MOMENTUM-VOL] Elevated volatility | ATR ratio=%.2f | Confidence adjusted to %.1f%%",
                            atrRatio, momentumConfidence * 100);
             }
             
-            // ENHANCEMENT: ROC Acceleration Multiplier (Phase 3.4)
-            // Boost confidence if momentum accelerating, reduce if decelerating
             momentumConfidence *= rocMultiplier;
 
-            // v2.0: Momentum freshness + volume surge confidence modifier
             double freshnessMod = GetMomentumFreshnessConfidence(signal);
             momentumConfidence *= freshnessMod;
 
-            // v2.0: MACD confirmation bonus/penalty
             if(MACDConfirmed(signal))
-                momentumConfidence *= 1.10;  // MACD confirmed = +10%
+                momentumConfidence *= 1.10;
             else
-                momentumConfidence *= 0.85;  // MACD unconfirmed = -15%
+                momentumConfidence *= 0.85;
 
             confidence = MathMin(1.0, MathMax(0.0, momentumConfidence));
             
-            // Calculate ATR-based stop loss for risk validation
+            // ATR-based stop distance, handed to the risk manager below
             double atrBuffer[2];
             double atr = 0.0;
             if(SafeCopyBuffer(m_atrHandle, 0, 1, 2, atrBuffer))
-                atr = atrBuffer[1]; // Batch 155: [1] is the newest closed bar under oldest-first layout
+                atr = atrBuffer[1]; // oldest-first layout: [1] is the newest closed bar
             double currentPrice = (signal == TRADE_SIGNAL_BUY) ? SymbolInfoDouble(m_symbol, SYMBOL_ASK) : SymbolInfoDouble(m_symbol, SYMBOL_BID);
             double slDistance = (atr > 0) ? (atr * 2.0) : (currentPrice * 0.01); // 2x ATR or 1% fallback
             double point = SymbolInfoDouble(m_symbol, SYMBOL_POINT);
             double slPips = (point > 0) ? (slDistance / point) : 0;
             
-            // Calculate lot size using position sizer with full normalization pipeline
-            // (CalculateSize clamps to SYMBOL_VOLUME_MAX, applies margin checks, etc.)
+            // CalculateSize clamps to SYMBOL_VOLUME_MAX and applies margin checks
             double calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);
                             if(m_positionSizer != NULL)
                             {
                                 SPositionSizingParams sizerParams = m_positionSizer.GetParameters();
                                 calculatedLot = m_positionSizer.CalculatePositionSizeWithRisk(m_symbol, slPips, sizerParams.riskPercent, confidence);
                                 if(calculatedLot <= 0.0)
-                                    calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // Fallback to broker min
+                                    calculatedLot = SymbolInfoDouble(m_symbol, SYMBOL_VOLUME_MIN);  // broker minimum lot
                             }
 
             STradeValidationRequest request;
@@ -855,7 +758,7 @@ public:
             request.strategy = GetName();
             request.clusterCode = "";
 
-            SetProposedStops(request.stopLossPips, request.takeProfitPips); // FINDING 0
+            SetProposedStops(request.stopLossPips, request.takeProfitPips);
             if(!ValidateWithRiskManager(request, "MOMENTUM", confidence))
                 return TRADE_SIGNAL_NONE;
             
@@ -865,7 +768,7 @@ public:
             RecordSignal();
             SetDecisionReasonTag(signal == TRADE_SIGNAL_BUY ? "MOMENTUM_SIGNAL_BUY" : "MOMENTUM_SIGNAL_SELL");
             
-            // CONSENSUS LOGGING (AGENTS.md requirement)
+            // Consensus logging is an AGENTS.md requirement
             LogConsensusDiag(signal, StringFormat("Cross: %.1f pts | RSI: %.1f | MACD: %s | ADX: %s", diffNow / point, rsi, MACDConfirmed(signal) ? "YES" : "NO", StrongTrend() ? "STRONG" : "WEAK"), confidence);
             
             PrintFormat("[MOMENTUM] %s: %s | Diff: %.1f pts | RSI: %.1f | Conf: %.1f%%",

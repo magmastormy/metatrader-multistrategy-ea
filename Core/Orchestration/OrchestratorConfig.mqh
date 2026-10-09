@@ -7,8 +7,7 @@
 #include "../Utils/Enums.mqh"
 #include "../Management/EnterpriseStrategyManager.mqh"
 
-// L7-009/L7-010: Strategy Timeframe/Intrabar Configuration Structs
-// Centralized config to replace hardcoded switch statements and duplicate resolution functions
+// Centralized per-strategy timeframe/intrabar config: the only place these are resolved.
 struct SStrategyTimeframeConfig
 {
     string              name;
@@ -29,11 +28,9 @@ struct SStrategyIntrabarConfig
     SStrategyIntrabarConfig() : name(""), defaultPolicy(INTRABAR_POLICY_OFF), syntheticLeanPrimary(false) {}
 };
 
-// Maximum number of strategies for static array sizing.
-// Batch 146: 22 -> 23. Slots [21] (FVG Scalper) and [22] (Statistical
-// Arbitrage) were added so those two strategies own a policy row instead of
-// borrowing / clobbering a neighbour's. Legacy mode never indexes 21/22 and
-// both are written INTRABAR_POLICY_OFF, so the legacy table stays identical.
+// Static sizing for strategy config rows: must stay >= the number of strategies, because every
+// strategy owns one policy row (FVG Scalper takes [21], Statistical Arbitrage [22]). Borrowing a
+// neighbour's slot clobbers its policy. Legacy mode never indexes 21/22.
 #define MAX_STRATEGY_CONFIGS 23
 
 // SOrchestratorConfig - All input parameters grouped by domain
@@ -48,7 +45,7 @@ struct SOrchestratorConfig
     double  maxPortfolioRisk;
     double  maxDrawdown;
     double  dailyLossLimitPercent;
-    // Theme 3 (article 23662): basket-level equity stop — peak-equity drawdown guard
+    // Basket-level equity stop: peak-equity drawdown guard
     bool    basketEquityStopEnabled;
     double  basketEquityStopDrawdownPct;
     bool    basketEquityStopCloseOnBreach;
@@ -86,7 +83,6 @@ struct SOrchestratorConfig
     double  syntheticADXNoTrendThreshold;
     bool    useCuratedStrategySet;
     bool    useSymbolClassProfiles;
-    // Batch 114
     bool    enableKalmanMR;
     double  kalmanLambda;
     bool    enableChangepointDetect;
@@ -229,7 +225,6 @@ struct SOrchestratorConfig
     int     nnSampleIntervalSeconds;
     int     nnCheckpointEveryLabeled;
 
-    // L7-009/L7-010: Centralized Strategy Timeframe/Intrabar Configuration Arrays
     SStrategyTimeframeConfig strategyTimeframeConfigs[MAX_STRATEGY_CONFIGS];
     SStrategyIntrabarConfig  strategyIntrabarConfigs[MAX_STRATEGY_CONFIGS];
     int                     strategyConfigCount;
@@ -358,39 +353,37 @@ struct SOrchestratorConfig
     double  modeSwitchDrawdownPct;
     int     modeSwitchWinStreak;
 
-    // Symbol Validation (L7-003)
+    // Symbol Validation
     long    symbolMaxSpreadPoints;
     long    symbolMinDailyVolumeLots;
     bool    symbolEnableVolumeCheck;
 
         int     logLevel;
         int     logVerbosity;  // ENUM_LOG_VERBOSITY
-        bool    logDerivFamilyDetection;  // L7-013
+        bool    logDerivFamilyDetection;
 
-    // Batch 99
     int     equityCurveEmaPeriod;
     double  equityCurveReductionFactor;
     double  kellyFraction;
 
-    // Strict EA Mode (L7-025)
+    // Strict EA Mode
     bool    strictEAMode;
 
-    // Config versioning (L7-005)
+    // Config versioning
     int     configVersion;
 
-    // Symbol Universe (L7-021)
+    // Symbol Universe
     bool    autoAddChartSymbol;
 
-    // Skew Step Analyzer (L7-023)
+    // Skew Step Analyzer
     int     skewStepBufferSize;
     double  skewStepCalmThreshold;
     double  skewStepSmallThreshold;
     double  skewStepLargeThreshold;
 
-    // Session Weight Manager (L7-022)
+    // Session Weight Manager
     int     sessionDSTOffsetHours;
 
-    // Constructor with defaults
     SOrchestratorConfig()
     {
         magicNumber = 123456;
@@ -601,10 +594,8 @@ struct SOrchestratorConfig
         maxHoldHoursSwing = 120;
         maxHoldOnlyIfLoss = true;
 
-        // Batch 168: opt-in. Emergency flatten previously closed every position
-        // on the account - manual trades and other EAs included - on any circuit
-        // breaker trip. EA-scoped is now the default; set true only on a
-        // single-strategy account you fully control.
+        // Opt-in only: true flattens EVERY position on the account, manual trades and other EAs'
+        // included. Default is EA-scoped; set true only on a single-strategy account you control.
         emergencyFlattenAllAccountPositions = false;
         unprotectedRemediationIntervalSec = 15;
         unprotectedMaxRestoreAttempts = 3;
@@ -689,7 +680,6 @@ struct SOrchestratorConfig
         modeSwitchDrawdownPct = 5.0;
         modeSwitchWinStreak = 5;
 
-        // Symbol Validation (L7-003)
         symbolMaxSpreadPoints = 1500;
         symbolMinDailyVolumeLots = 1000;
         symbolEnableVolumeCheck = true;
@@ -701,20 +691,16 @@ struct SOrchestratorConfig
         equityCurveEmaPeriod = 20;
         equityCurveReductionFactor = 0.50;
         kellyFraction = 0.25;
-        configVersion = 109;  // L7-005: Current config version (batch number)
-        // L7-021: Auto-add chart symbol
+        configVersion = 109;  // Current config version (batch number)
         autoAddChartSymbol = true;
-        // L7-023: Skew Step Analyzer parameters
         skewStepBufferSize = 200;
         skewStepCalmThreshold = 0.80;
         skewStepSmallThreshold = 0.2;
         skewStepLargeThreshold = 0.5;
-        // L7-022: Session DST offset
         sessionDSTOffsetHours = 0;
 
-        // L7-009/L7-010: Centralized Strategy Timeframe/Intrabar Configuration
-        // Replaces hardcoded switch statements and duplicate resolution functions
-        // Note: Arrays initialized in InitializeStrategyConfigs() method
+        // strategyTimeframeConfigs/strategyIntrabarConfigs are filled by InitializeStrategyConfigs(),
+        // not by this constructor; only the count is set here.
         strategyConfigCount = 0;
     }
 };

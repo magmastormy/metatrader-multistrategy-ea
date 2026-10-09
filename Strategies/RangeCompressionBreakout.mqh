@@ -1,6 +1,4 @@
-// Enhanced TTM Squeeze + Hurst Regime Breakout Strategy
-// Uses BB inside Keltner + Hurst to determine breakout direction
-// Batch 114: New strategy — does NOT replace existing strategies
+// TTM Squeeze breakout: BB inside Keltner marks compression, Hurst picks the direction.
 #ifndef RANGE_COMPRESSION_BREAKOUT_MQH
 #define RANGE_COMPRESSION_BREAKOUT_MQH
 
@@ -9,7 +7,6 @@
 #include "../Core/Engines/HurstEngine.mqh"
 #include "../Utilities/SafeCopyBuffer.mqh"
 
-// Range Compression Signal Structure
 struct SCompressionSignal
 {
     ENUM_TRADE_SIGNAL direction;
@@ -18,10 +15,10 @@ struct SCompressionSignal
     double takeProfit;
     double confidence;
     string reason;
-    int    squeezeBars;          // How long the squeeze has been active
-    double hurstValue;           // Hurst exponent at breakout
-    bool   isMomentumBreakout;   // H > 0.6 → trend breakout
-    bool   isMeanRevFade;        // H < 0.4 → fade the breakout
+    int    squeezeBars;          // bars the squeeze held before release
+    double hurstValue;           // Hurst exponent sampled at breakout
+    bool   isMomentumBreakout;   // H above m_hurstTrendThreshold: follow the break
+    bool   isMeanRevFade;        // H below m_hurstMRThreshold: fade the break
 
     SCompressionSignal() :
         direction(TRADE_SIGNAL_NONE),
@@ -40,35 +37,30 @@ struct SCompressionSignal
 class CRangeCompressionBreakout : public CStrategyBase
 {
 private:
-    // Configuration
-    int    m_bbPeriod;           // Bollinger Band period (default: 20)
-    double m_bbDeviation;        // BB deviation (default: 2.0)
-    int    m_kcPeriod;           // Keltner Channel period (default: 20)
-    double m_kcATRMultiple;      // KC ATR multiple (default: 1.5)
-    int    m_atrPeriod;          // ATR period (default: 14)
-    int    m_minSqueezeBars;     // Minimum bars in squeeze (default: 6)
-    double m_hurstTrendThreshold;  // H > this = trending (default: 0.55)
-    double m_hurstMRThreshold;     // H < this = mean-reverting (default: 0.45)
-    double m_volumeConfirmRatio;   // Volume must be > ratio * avg (default: 1.5)
-    int    m_volumeLookback;       // Bars for average volume (default: 20)
+    int    m_bbPeriod;           // Bollinger Band period
+    double m_bbDeviation;        // BB standard deviations
+    int    m_kcPeriod;           // Keltner Channel EMA period
+    double m_kcATRMultiple;      // KC band width in ATRs
+    int    m_atrPeriod;
+    int    m_minSqueezeBars;     // a squeeze shorter than this never fires
+    double m_hurstTrendThreshold;  // H above this = trending, follow the break
+    double m_hurstMRThreshold;     // H below this = mean-reverting, fade the break
+    double m_volumeConfirmRatio;   // breakout volume must exceed ratio * average
+    int    m_volumeLookback;       // bars behind the breakout in that average
     
-    // Trend direction filter (Issue #28)
-    int    m_trendMaPeriod;        // MA period for trend filter (default: 50)
-    bool   m_useTrendFilter;       // Enable trend direction filter (default: true)
+    int    m_trendMaPeriod;        // EMA the breakout close is compared against
+    bool   m_useTrendFilter;       // applies to momentum entries only, never to fades
 
-    // Indicator handles
     int m_bbHandle;
     int m_kcHandle;
     int m_atrHandle;
     int m_volumeHandle;
-    int m_maHandle;      // MA for trend filter (Issue #28)
+    int m_maHandle;      // stays INVALID_HANDLE while m_useTrendFilter is off
 
-    // Hurst engine (injected)
-    CHurstEngine* m_hurstEngine;
+    CHurstEngine* m_hurstEngine;   // injected, not owned - never released here
 
     CUnifiedRiskManager* m_riskManager;
 
-    // State
     bool   m_squeezeActive;
     int    m_squeezeBarCount;
     double m_lastBBUpper;
@@ -78,10 +70,9 @@ private:
     datetime m_lastSignalBar;
     datetime m_lastBarTime;
 
-    //--- Check if squeeze is active (BB inside Keltner)
     bool CheckSqueeze(double bbUpper, double bbLower, double kcUpper, double kcLower)
     {
-        // Squeeze: BB is inside Keltner Channel
+        // Squeeze = Bollinger Bands entirely inside the Keltner Channel
         return (bbUpper < kcUpper && bbLower > kcLower);
     }
 
@@ -89,12 +80,11 @@ private:
     {
         long vol[];
         ArraySetAsSeries(vol, true);
-        // Batch 155: copy one extra bar - vol[0] is the FORMING bar whose
-        // partial tick volume biases the surge test false; judge the last
-        // CLOSED bar against the preceding full bars instead.
+        // vol[0] is the FORMING bar and its partial tick volume would skew the surge test,
+        // so judge the last CLOSED bar (vol[1]) against the preceding full bars.
         int copied = CopyTickVolume(m_symbol, m_timeframe, 0, m_volumeLookback + 2, vol);
         if(copied < m_volumeLookback + 2)
-            return false;
+            return false; // short history: no signal rather than a mis-scaled average
 
         double avgVol = 0;
         for(int i = 2; i <= m_volumeLookback + 1; i++)
@@ -160,14 +150,13 @@ public:
         m_atrHandle = iATR(symbol, timeframe, m_atrPeriod);
         m_volumeHandle = iVolumes(symbol, timeframe, VOLUME_TICK);
         
-        // MA for trend filter (Issue #28)
+        // MA for the trend filter; stays INVALID_HANDLE when the filter is disabled
         if(m_useTrendFilter)
         {
             m_maHandle = iMA(symbol, timeframe, m_trendMaPeriod, 0, MODE_EMA, PRICE_CLOSE);
         }
 
-        // Keltner Channel: built manually via ATR (MT5 doesn't have native KC)
-        // We'll compute it from ATR in the signal method
+        // MT5 has no native Keltner Channel, so it is computed from ATR in GetSignal
 
         return (m_bbHandle != INVALID_HANDLE && m_atrHandle != INVALID_HANDLE);
     }
@@ -186,54 +175,46 @@ public:
         m_useTrendFilter = useTrendFilter;
     }
 
-    //--- Generate signal (called each bar)
     SCompressionSignal GetSignal()
     {
         SCompressionSignal signal;
 
-        // Indicator checks
         if(m_bbHandle == INVALID_HANDLE || m_atrHandle == INVALID_HANDLE)
             return signal;
 
-        // Get BB values
-        // Batch 155: read CLOSED bars (start=1). The old start=0 pulled the
-        // forming bar, whose close is ~the open at evaluation time, so the
-        // band-breach test was a timing lottery under once-per-bar polling.
+        // Read CLOSED bars (start=1): the forming bar's close is near its open at evaluation
+        // time, so start=0 made the band-breach test a timing lottery under once-per-bar polling.
         double bbUpper[1], bbMiddle[1], bbLower[1];
         if(CopyBuffer(m_bbHandle, 1, 1, 1, bbUpper) != 1 ||
            CopyBuffer(m_bbHandle, 0, 1, 1, bbMiddle) != 1 ||
            CopyBuffer(m_bbHandle, 2, 1, 1, bbLower) != 1)
             return signal;
 
-        // Get ATR for Keltner Channel
+        // ATR sizes the Keltner Channel, not the stop
         double atr[1];
         if(CopyBuffer(m_atrHandle, 0, 1, 1, atr) != 1 || atr[0] <= 0)
             return signal;
 
-        // Get close price
         double close[1];
         if(CopyClose(m_symbol, m_timeframe, 1, 1, close) != 1)
             return signal;
 
-        // Compute Keltner Channel manually
-        // KC Middle = EMA(20), KC Upper/Lower = EMA ± 1.5 * ATR
+        // KC middle = EMA(m_kcPeriod); bands = middle +/- m_kcATRMultiple * ATR
         double ema[];
         ArraySetAsSeries(ema, true);
         int copied = CopyClose(m_symbol, m_timeframe, 1, m_kcPeriod + 1, ema);
         if(copied < m_kcPeriod + 1)
             return signal;
 
-        // EMA calculation: iterate from oldest to newest
         // ArraySetAsSeries: index 0 = most recent, index copied-1 = oldest
         double alpha = 2.0 / (double)(m_kcPeriod + 1);
-        double emaVal = ema[copied - 1]; // Start with oldest value
+        double emaVal = ema[copied - 1]; // seeded from the oldest close
         for(int i = copied - 2; i >= 0; i--)
             emaVal = alpha * ema[i] + (1.0 - alpha) * emaVal;
 
         double kcUpper = emaVal + m_kcATRMultiple * atr[0];
         double kcLower = emaVal - m_kcATRMultiple * atr[0];
 
-        // Check squeeze state
         bool currentSqueeze = CheckSqueeze(bbUpper[0], bbLower[0], kcUpper, kcLower);
 
         if(currentSqueeze)
@@ -246,44 +227,40 @@ public:
             // Squeeze just released
             if(m_squeezeActive && m_squeezeBarCount >= m_minSqueezeBars)
             {
-                // SQUEEZE BREAKOUT DETECTED
                 m_squeezeActive = false;
 
-                // Get Hurst exponent
+                // No engine or no warmup data leaves H at 0.5, i.e. the neutral path
                 double hurst = 0.5;
                 if(m_hurstEngine != NULL && m_hurstEngine.IsWarmedUp())
                     hurst = m_hurstEngine.GetHurstValue();
 
-                // Determine breakout direction
                 ENUM_TRADE_SIGNAL direction = TRADE_SIGNAL_NONE;
                 bool isMomentum = false;
                 bool isFade = false;
 
                 if(close[0] > bbUpper[0])
                 {
-                    // Upside breakout
                     if(hurst > m_hurstTrendThreshold)
                     {
-                        // Trending regime → follow the breakout
+                        // Trending regime: follow the breakout
                         direction = TRADE_SIGNAL_BUY;
                         isMomentum = true;
                     }
                     else if(hurst < m_hurstMRThreshold)
                     {
-                        // Mean-reverting regime → fade the breakout
+                        // Mean-reverting regime: fade the breakout
                         direction = TRADE_SIGNAL_SELL;
                         isFade = true;
                     }
                     else
                     {
-                        // Random walk → follow with lower confidence
+                        // Between the thresholds: follow, the momentum path
                         direction = TRADE_SIGNAL_BUY;
                         isMomentum = true;
                     }
                 }
                 else if(close[0] < bbLower[0])
                 {
-                    // Downside breakout
                     if(hurst > m_hurstTrendThreshold)
                     {
                         direction = TRADE_SIGNAL_SELL;
@@ -304,21 +281,16 @@ public:
                 if(direction == TRADE_SIGNAL_NONE)
                     return signal;
 
-                // Trend direction filter (Issue #28): Only trade in direction of MA trend
-                // Batch 155: fade entries are COUNTER-TREND BY DESIGN - the
-                // old unconditional filter killed every one of them, because
-                // right after an upside breach price is almost always above
-                // the MA (and vice versa). The filter keeps policing
-                // momentum entries only.
+                // The MA filter gates momentum entries only: a fade is counter-trend by
+                // design, so gating it unconditionally rejected every fade signal.
                 if(m_useTrendFilter && !isFade && m_maHandle != INVALID_HANDLE)
                 {
                     double maVal[1];
-                    // Batch 169: shift 1, matching the closed-bar `close[0]` it is
-                    // compared against (every other read in this function is shift 1).
+                    // shift 1, matching the closed-bar close[0] it is compared against;
+                    // every other read in this function is shift 1.
                     if(CopyBuffer(m_maHandle, 0, 1, 1, maVal) == 1 && maVal[0] > 0)
                     {
-                        // For BUY: price should be above MA (uptrend)
-                        // For SELL: price should be below MA (downtrend)
+                        // BUY requires price above the MA, SELL below it
                         if(direction == TRADE_SIGNAL_BUY && close[0] < maVal[0])
                         {
                             PrintFormat("[COMPRESSION] Trend filter rejected BUY | price=%.5f < MA=%.5f",
@@ -342,7 +314,6 @@ public:
                     return signal;
                 }
 
-                // Same-bar filter
                 datetime currentBarTime = iTime(m_symbol, m_timeframe, 1);
                 if(currentBarTime == m_lastSignalBar)
                 {
@@ -350,7 +321,6 @@ public:
                     return signal;
                 }
 
-                // Build signal
                 signal.direction = direction;
                 signal.entryPrice = close[0];
                 signal.squeezeBars = m_squeezeBarCount;
@@ -358,10 +328,9 @@ public:
                 signal.isMomentumBreakout = isMomentum;
                 signal.isMeanRevFade = isFade;
 
-                // SL/TP based on breakout type
                 if(isMomentum)
                 {
-                    // Momentum: wider SL below KC, target 2x squeeze range
+                    // Momentum: SL at the far KC edge, TP at 2x the squeeze range
                     double squeezeRange = kcUpper - kcLower;
                     if(direction == TRADE_SIGNAL_BUY)
                     {
@@ -407,7 +376,7 @@ public:
             }
             else
             {
-                // Squeeze ended but too short
+                // Squeeze released before m_minSqueezeBars: reset, no signal
                 m_squeezeActive = false;
                 m_squeezeBarCount = 0;
             }
@@ -422,12 +391,8 @@ public:
         return signal;
     }
 
-    //--- Consensus interface (Batch 2026-08-14, FINDING 0):
-    //    Routes the consensus GetSignal(double&) -> ExecuteSignal into this strategy's
-    //    squeeze-breakout logic. Previously this class was only instantiated as an auxiliary
-    //    engine in OrchestratorMathEngineHub and never voted in consensus. Now it votes, and
-    //    its price-based SL/TP are stashed as pips for the execution path (consumed only when
-    //    InpUseStrategyStops is enabled).
+    //--- Consensus vote path: adapts the struct-returning GetSignal to the double& interface.
+    //--- Price-based stops become pips, consumed only when InpUseStrategyStops is enabled.
     virtual ENUM_TRADE_SIGNAL ExecuteSignal(double &confidence)
     {
         SCompressionSignal sig = GetSignal();
@@ -443,14 +408,12 @@ public:
         return sig.direction;
     }
 
-    //--- Standard interface
     ENUM_STRATEGY_TYPE GetStrategyType() const { return STRATEGY_MOMENTUM; }
     string GetStrategyName() const { return "RangeCompressionBreakout"; }
 
-    // --- Cleanup ---
     void Deinit()
     {
-        // CRangeCompressionBreakout owns indicator handles - release them
+        // This class owns its indicator handles, so both the destructor and Deinit release them
         if(m_bbHandle != INVALID_HANDLE)
         {
             IndicatorRelease(m_bbHandle);

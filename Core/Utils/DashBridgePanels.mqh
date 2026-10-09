@@ -1,7 +1,6 @@
 // Dashboard state payload assembly: account panel, positions panel
 // and the composition of every sub-section produced by the
 // protocol / health modules into the final /state document.
-// Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -14,7 +13,6 @@
 #include "DashBridgeProtocol.mqh"
 #include "DashBridgeHealth.mqh"
 
-// Dashboard Bridge Panel Assembly (static-only, no state)
 class CDashBridgePanels
 {
 public:
@@ -22,7 +20,6 @@ public:
    static string     BuildStateJson(const CDashBridgeProtocol &protocolData,
                                     const CDashBridgeHealth &healthData);
 
-   // Individual panels
    static string     BuildAccountJson();
    static string     BuildPositionsJson();
    static string     BuildScalpJson();
@@ -39,7 +36,6 @@ string CDashBridgePanels::BuildAccountJson()
    return json;
 }
 
-// Build positions panel JSON (actual data)
 string CDashBridgePanels::BuildPositionsJson()
 {
    string json = "\"positions\":[";
@@ -86,7 +82,6 @@ string CDashBridgePanels::BuildScalpJson()
    return json;
 }
 
-// Build state JSON payload (ENHANCED VERSION)
 string CDashBridgePanels::BuildStateJson(const CDashBridgeProtocol &protocolData,
                                          const CDashBridgeHealth &healthData)
 {
@@ -94,29 +89,23 @@ string CDashBridgePanels::BuildStateJson(const CDashBridgeProtocol &protocolData
 
    json += "\"timestamp\":\"" + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "\",";
 
-   // Account info
    json += BuildAccountJson() + ",";
 
-   // Positions (actual data)
    json += BuildPositionsJson() + ",";
 
-   // Risk (use enhanced method)
    json += protocolData.BuildRiskJson() + ",";
 
-   // Performance (use enhanced method)
    json += protocolData.BuildPerformanceJson() + ",";
 
    json += CDashBridgeProtocol::BuildConsensusJson() + ",";
 
-   // AI adapters
    json += protocolData.BuildAIJson() + ",";
 
    json += CDashBridgeProtocol::BuildStrategiesJson() + ",";
 
-   // Scalp (placeholder for now)
    json += BuildScalpJson() + ",";
 
-   // Heartbeat (use enhanced method with actual counters)
+   // Heartbeat carries the live counters supplied by SetHeartbeatCounters.
    json += healthData.BuildHeartbeatJson() + ",";
 
    json += "\"execution_mode\":\"LIVE_SEND\",";

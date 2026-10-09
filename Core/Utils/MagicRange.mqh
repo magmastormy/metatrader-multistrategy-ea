@@ -20,7 +20,7 @@
 class CMagicRange
 {
 public:
-    //--- Pure formula. Single source of truth for the ownership ceiling.
+    //--- Single source of truth for the ownership ceiling.
     static long ComputeMax(const long base, const int symbolCount)
     {
         int slots = (symbolCount > 0) ? symbolCount : 0;
@@ -67,9 +67,9 @@ bool IsMagicOwnershipConfigured()
 }
 
 // The scalp/grid/spike engines exit their own positions, so lifecycle exits skip
-// them while risk and daily-loss accounting still count them as EA-owned. Magic
-// cannot separate the two books (scalp sits on offset 7000, which is ASSET_FOREX),
-// so the send comment is the discriminator.
+// them while risk, exposure and daily-loss accounting still count them as
+// EA-owned. Magic cannot separate the two books (the ATR scalp engine sits on
+// offset 7000, which is ASSET_FOREX), so the send comment is the discriminator.
 string g_enginePositionTags[4] = {"ATR-SCALP", "GRID-RECOVERY", "SPIKE-HUNT", "SCALP|"};
 
 bool IsEngineManagedPosition(const string comment)
@@ -82,12 +82,10 @@ bool IsEngineManagedPosition(const string comment)
     return false;
 }
 
-// Startup assertion: the largest magic number the EA is about to
-// ship must fall inside the configured window. maxShippedOffset is
-// the largest CMultiAssetProfiler::GetMagicOffset() seen for the
-// live symbol universe. A broker-side asset reclassification that
-// pushed an offset past the span would otherwise orphan positions
-// again, silently.
+// Startup assertion: the highest shipped magic must fall inside the configured
+// window. maxShippedOffset is the largest CMultiAssetProfiler::GetMagicOffset()
+// for the live symbol universe; a broker-side asset reclassification that pushed
+// an offset past the span would silently orphan positions.
 bool ValidateMagicOwnershipCoverage(const long base, const int maxShippedOffset)
 {
     if(!CMagicRange::IsOwned(base, g_magicBase, g_magicMax))

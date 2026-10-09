@@ -18,7 +18,6 @@ private:
     int m_managerCount;
     CConsensusCache* m_consensusCache;
 
-    // Evaluation budget (per cycle limits)
     int m_evalBudgetPerCycle;
     int m_intrabarBudgetPerCycle;
     
@@ -26,13 +25,12 @@ private:
     string m_pendingSymbols[];
     int m_pendingCount;
     
-    // L12-013: Fair rotation index for signal evaluation budget
+    // Fair rotation index for the signal evaluation budget
     int m_evalStartIndex;
 
     // Last evaluated bar time per manager index (new-bar cadence gate)
     datetime m_lastEvalBar[];
 
-    // Dormancy tracking
     enum
     {
         DORMANT_THRESHOLD = 3,
@@ -81,10 +79,8 @@ public:
         Print("[SignalGenerator] Initialized with ", count, " symbol managers");
     }
     
-    // Batch 153: SetEvalBudget removed - zero callers; the eval budget is
-    // config-driven only (see m_evalBudgetPerCycle initialiser).
+    // Eval budget is config-driven only; there is no runtime setter.
 
-    // Main signal generation entry point
                 bool GenerateSignals(ENUM_SIGNAL_EVAL_MODE evalMode, SSignalResult &results[], const string corrId = "")
                 {
                     ulong startTime = GetMicrosecondCount();
@@ -98,10 +94,7 @@ public:
                         s_lastDormantCompact = now;
                     }
                 
-                    // Batch 151: removed decorative throttles (token bucket never
-                    // decremented, sliding window wrote a single fixed slot,
-                    // concurrency counter peaked at 1 in this single-threaded loop).
-                    // The per-cycle eval budget below is the real limiter.
+                    // Single-threaded loop: the per-cycle eval budget below is the only throttle.
 
                 ArrayResize(results, m_managerCount);
                 int signalsGenerated = 0;
@@ -110,13 +103,10 @@ public:
                 int evalBudget = (evalMode == EVAL_MODE_NEW_BAR) ? m_evalBudgetPerCycle : m_intrabarBudgetPerCycle;
                 int selectedCount = 0;
 
-                // Select symbols to evaluate (rotation + priority)
                 bool selected[];
                 ArrayResize(selected, m_managerCount);
                 ArrayInitialize(selected, false);
 
-                // For new bar: prioritize symbols with pending new bars
-                // For intrabar: prioritize by score
                 SelectSymbolsForEval(evalMode, evalBudget, selected, selectedCount);
 
                 // Process pending symbols first (from previous budget overflow)
@@ -126,11 +116,9 @@ public:
                     int managerIdx = FindManagerIndex(pendingSymbol);
                     if(managerIdx >= 0 && selected[managerIdx])
                     {
-                        // This pending symbol was already selected, skip duplicate
                         continue;
                     }
 
-                    // Try to evaluate this pending symbol
                     if(managerIdx >= 0)
                     {
                         CEnterpriseStrategyManager* manager = m_managers[managerIdx];
@@ -141,10 +129,8 @@ public:
                     }
                 }
 
-                // Clear pending list after processing
                 m_pendingCount = 0;
 
-                // Process newly selected symbols
                 for(int i = 0; i < m_managerCount && evaluationsUsed < evalBudget; i++)
                 {
                     if(!selected[i]) continue;
@@ -152,18 +138,14 @@ public:
                     CEnterpriseStrategyManager* manager = m_managers[i];
                     if(manager == NULL) continue;
 
-                    // Check dormancy
                     if(IsInDormantCooldown(m_symbols[i]))
                         continue;
 
                     EvaluateSymbol(i, manager, evalMode, results, signalsGenerated, evaluationsUsed, corrId);
                 }
         
-                // If we couldn't process all selected symbols due to budget, queue them
-                // Batch 152 (ORCH-07): the processing loops above bound work by
-                // evaluationsUsed, and signalsGenerated <= evaluationsUsed always -
-                // gating requeue on signalsGenerated let starved symbols fall
-                // through without being queued for the next cycle.
+                // Requeue is gated on evaluationsUsed, never on signalsGenerated: signalsGenerated <=
+                // evaluationsUsed always, so gating on it would let starved symbols skip the queue.
                 for(int i = 0; i < m_managerCount; i++)
                 {
                     if(selected[i] && evaluationsUsed >= evalBudget)
@@ -176,11 +158,9 @@ public:
                     }
                 }
         
-                // Performance timing log
                                         ulong elapsed = GetMicrosecondCount() - startTime;
                                         CJsonLogger::LogPerformance("SignalGenerator", "GenerateSignals_us", (double)elapsed, corrId);
         
-                // Log scan budget stats
                 static datetime s_lastBudgetLog = 0;
                 if(TimeCurrent() - s_lastBudgetLog >= 60)
                 {
@@ -197,13 +177,11 @@ public:
         {
             selectedCount = 0;
         
-            // L12-013: Fair rotation - start from m_evalStartIndex and wrap around
+            // Fair rotation: start from m_evalStartIndex and wrap around
             int startIdx = m_evalStartIndex;
         
             if(evalMode == EVAL_MODE_NEW_BAR)
             {
-                // New bar: evaluate all symbols with pending new bars
-                // Use rotation to ensure fair distribution
                 int count = 0;
                 for(int i = 0; i < m_managerCount && count < budget; i++)
                 {
@@ -215,8 +193,6 @@ public:
             }
             else
             {
-                // Intrabar: score and pick top symbols
-                // For fairness, still use rotation as base
                 int count = 0;
                 for(int i = 0; i < m_managerCount && count < budget; i++)
                 {
@@ -227,11 +203,9 @@ public:
                 }
             }
         
-            // Advance rotation index for next cycle
             m_evalStartIndex = (m_evalStartIndex + budget) % m_managerCount;
         }
     
-    // Dormancy tracking
     void RecordDormancyWarning(const string symbol)
     {
         int idx = FindDormantIndex(symbol);
@@ -296,13 +270,11 @@ public:
         return -1;
     }
     
-    // Remove a dormant symbol entry completely
     void RemoveDormantEntry(const string symbol)
     {
         int idx = FindDormantIndex(symbol);
         if(idx < 0) return;
         
-        // Shift remaining elements
         for(int i = idx; i < m_dormantCount - 1; i++)
         {
             m_dormantSymbols[i] = m_dormantSymbols[i + 1];
@@ -310,7 +282,6 @@ public:
             m_dormantCooldownUntil[i] = m_dormantCooldownUntil[i + 1];
         }
         
-        // Resize arrays
         m_dormantCount--;
         if(m_dormantCount > 0)
         {
@@ -328,7 +299,6 @@ public:
         PrintFormat("[DORMANT-REMOVED] %s | entry removed from tracking", symbol);
     }
     
-    // Get funnel metrics from all managers
     void GetAggregateFunnel(ulong &signalsGenerated, ulong &afterPipeline, ulong &afterQuorum)
     {
         signalsGenerated = 0;
@@ -359,17 +329,16 @@ public:
             return -1;
         }
 
-        // Evaluate a single symbol: consensus -> validation -> candidate building
-        // Results are written into results[managerIdx] so the consumer's index-by-manager
-        // pairing stays correct; signalsGenerated only counts non-empty slots.
+        // Results go into results[managerIdx] so the consumer's index-by-manager pairing stays
+        // correct; signalsGenerated only counts non-empty slots.
         void EvaluateSymbol(const int managerIdx, CEnterpriseStrategyManager* manager, ENUM_SIGNAL_EVAL_MODE evalMode, SSignalResult &results[], int &signalsGenerated, int &evaluationsUsed, const string corrId = "")
         {
             string symbol = m_symbols[managerIdx];
             if(managerIdx < 0 || managerIdx >= ArraySize(results)) return;
 
-            // New-bar mode: evaluate a symbol at most once per bar of its chart timeframe.
-            // Without this gate the 1s cadence re-evaluates unchanged bars and the
-            // dormancy tracker blacklists quiet symbols within seconds.
+            // New-bar mode: evaluate a symbol at most once per bar of its chart timeframe. Without
+            // this gate the 1s cadence re-evaluates unchanged bars and dormancy blacklists quiet
+            // symbols within seconds.
             if(evalMode == EVAL_MODE_NEW_BAR)
             {
                 datetime barTime = iTime(symbol, (ENUM_TIMEFRAMES)Period(), 0);
@@ -385,15 +354,12 @@ public:
 
             if(signal == TRADE_SIGNAL_NONE)
             {
-                // No signal - record dormancy if enabled
                 RecordDormancyWarning(symbol);
                 return;
             }
 
-            // Clear dormancy warning on valid signal
             ClearDormancyWarning(symbol);
 
-            // Get decision context for validation
             SConsensusDecisionContext ctx;
             manager.GetLastDecisionContext(ctx);
 
@@ -406,9 +372,6 @@ public:
             results[managerIdx].vetoReason = "";
             signalsGenerated++;
         }
-
-        // Batch 153: GetLastDecisionContextFromManager removed - zero callers;
-        // EvaluateSymbol calls manager.GetLastDecisionContext() directly.
 
     };
 

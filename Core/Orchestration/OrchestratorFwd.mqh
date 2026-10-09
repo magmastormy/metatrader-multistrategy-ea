@@ -1,13 +1,10 @@
-// Orchestrator Forward Declarations - Enterprise Grade
-// Forward declarations for EAOrchestrator dependencies
-// Use this header to break include cycles and reduce compile time
+// Forward declarations for EAOrchestrator dependencies; breaks include cycles and cuts compile time.
 #ifndef ORCHESTRATOR_FWD_MQH
 #define ORCHESTRATOR_FWD_MQH
 
-// Core system enums
 #include "../Utils/Enums.mqh"
 
-// Forward Declarations - Core Management
+// Core Management
 class CEnterpriseStrategyManager;
 class CUnifiedRiskManager;
 class CPositionSizer;
@@ -27,7 +24,7 @@ class CIntelligentSLGuard;
 class CTickSafetyMonitor;
 class CSpikeMonitor;
 
-// Forward Declarations - Engine Registry
+// Engine Registry
 class CRegistryAggregator;
 class CMathematicalEngineRegistry;
 class CInstitutionalEngineRegistry;
@@ -45,20 +42,20 @@ class CChartDrawingManager;
 class CSessionWeightManager;
 class CSymbolScanScheduler;
 
-// Forward Declarations - Engines
+// Engines
 class CTrendEngine;
 class CStructureEngine;
 class CLiquidityEngine;
 class CVolatilityEngine;
 class CRegimeEngine;
 
-// Forward Declarations - Pipeline & Signals
+// Pipeline & Signals
 class CUnifiedSignalPipeline;
 class CTimeframeConsistency;
 struct SignalFilterSettings;
 struct SPipelineEvidenceSnapshot;
 
-// Forward Declarations - Strategies
+// Strategies
 class IStrategy;
 class IAIStrategy;
 class CStrategyBase;
@@ -68,25 +65,23 @@ class CEnsembleAIStrategyAdapter;
 class COnnxAIStrategyAdapter;
 class CStrategyRegistry;
 
-// Forward Declarations - Python Bridge
+// Python Bridge
 class CPythonBridge;
 struct SPythonBridgeMetrics;
 
-// Forward Declarations - Risk & Compounding
+// Risk & Compounding
 class CRiskTierManager;
 class CCompoundingTierManager;
 
-// Forward Declarations - Neural Network
+// Neural Network
 class CNeuralNetworkStrategy;
 struct SNeuralNetConfig;
 
-// Forward Declarations - Consensus
+// Consensus
 struct SConsensusDecisionContext;
 
-// Forward Declarations - Diagnostics & Health
 class CStrategyHealthMonitor;
 
-// External References
 class CPythonBridge;
 extern CPythonBridge* g_pythonBridge;
 extern CEnterpriseStrategyManager* g_enterpriseManagers[];
@@ -96,8 +91,8 @@ extern string g_enterpriseManagerSymbols[];
 class CMultiAssetProfiler;
 extern CMultiAssetProfiler* g_multiAssetProfiler;
 
-// Auto-include definitions so that any file including this header
-// gets both the extern declarations AND the actual definitions
+// GlobalDefs.mqh is auto-included so consumers of this header get the extern declarations
+// AND their definitions.
 #include "GlobalDefs.mqh"
 
 #endif // ORCHESTRATOR_FWD_MQH

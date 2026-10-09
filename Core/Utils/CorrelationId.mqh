@@ -6,7 +6,7 @@
 #include <Arrays/ArrayObj.mqh>
 #include <Arrays/ArrayString.mqh>
 
-// Simple String Map (replacement for CMapStringToString)
+// Minimal string map used in place of CMapStringToString.
 class CStringMap
 {
 private:
@@ -52,7 +52,7 @@ public:
     }
 };
 
-// Helper: Integer to Hex String (MQL5 doesn't have IntegerToHexString)
+// MQL5 has no IntegerToHexString.
 string IntToHex(int value, int digits = 4) {
     string hexChars = "0123456789ABCDEF";
     string result = "";
@@ -71,7 +71,6 @@ private:
     // Context key = symbol + "_" + timestamp_ms (unique per OnTick cycle)
     CStringMap m_idMap;
     
-    // Current correlation ID for this tick cycle
     string m_currentId;
     bool   m_hasCurrentId;
     
@@ -83,7 +82,6 @@ public:
     CCorrelationIdManager() : m_hasCurrentId(false), m_sequence(0), m_lastTimestamp(0) {}
     ~CCorrelationIdManager() {}
 
-    // Generate new correlation ID for a new decision cycle
     string GenerateNewId(string context = "") {
         MqlDateTime dt; TimeCurrent(dt);
         ulong timestamp = (ulong)(TimeCurrent() * 1000 + GetMicrosecondCount() % 1000);
@@ -103,7 +101,6 @@ public:
         
         string id = base + "-" + seq;
         
-        // Store with context key
         string key = context != "" ? context : _Symbol;
         m_idMap.SetValue(key + "_" + IntegerToString(timestamp), id);
         
@@ -113,47 +110,37 @@ public:
         return id;
     }
     
-    // Get current correlation ID (for downstream components)
     string GetCurrentId() const { return m_currentId; }
     bool HasCurrentId() const { return m_hasCurrentId; }
     
-    // Set correlation ID manually (e.g., from external source)
     void SetCurrentId(string id) {
         m_currentId = id;
         m_hasCurrentId = (id != "");
     }
     
-    // Clear current ID (end of cycle)
+    // Call at the end of the decision cycle.
     void ClearCurrentId() {
         m_currentId = "";
         m_hasCurrentId = false;
     }
     
-    // Get ID for specific context (symbol + time)
     string GetIdForContext(string symbol, ulong timestamp) {
         return m_idMap.GetValue(symbol + "_" + IntegerToString(timestamp));
     }
     
-    // Cleanup old entries (call periodically)
+    // No-op: CStringMap cannot be iterated, so aged entries are never removed.
     void Cleanup(ulong maxAgeMs = 3600000) { // 1 hour default
         ulong now = (ulong)TimeCurrent() * 1000;
-        // CStringMap doesn't support easy iteration for cleanup
-        // In practice, we'd recreate the map periodically
         if(m_idMap.Total() > 10000) {
-            // Too many entries - recreate
             CStringMap newMap;
-            // Note: Can't iterate CStringMap easily
-            // This is a limitation - we just let it grow and recreate occasionally
         }
     }
     
     int Total() const { return m_idMap.Total(); }
 };
 
-// Global instance
 extern CCorrelationIdManager g_corrIdManager;
 
-// Helper functions for easy access
 inline string GenerateCorrelationId(string context = "") {
     return g_corrIdManager.GenerateNewId(context);
 }
@@ -204,7 +191,6 @@ public:
     string GetId() const { return g_corrIdManager.GetCurrentId(); }
 };
 
-// Strategy ID to short code mapping
 string StrategyIdToCode(int strategyId) {
     static const string codes[21] = {
         "MOM", "TND", "SR", "CSL", "MR", "VB", "FVG", "TS", "BB", "NY", 

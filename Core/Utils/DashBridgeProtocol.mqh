@@ -1,8 +1,6 @@
-// Injected snapshot state (risk / performance / python bridge /
-// AI adapters) plus the JSON sections serialized from it.
-// Owns every field previously fed by the CDashboardBridge Set*Data
-// injectors.
-// Extracted verbatim from DashboardBridge.mqh (behaviour unchanged)
+// Injected snapshot state (risk / performance / python bridge / AI adapters) and
+// the JSON sections serialized from it. Owns every field fed to the
+// CDashboardBridge Set*Data injectors.
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -13,11 +11,9 @@
 
 #include "DashBridgeTypes.mqh"
 
-// Dashboard Bridge Snapshot Data + Section Serialization
 class CDashBridgeProtocol
 {
 private:
-   // Injected risk data
    double m_riskActiveRiskPerTrade;
    double m_riskDailyRiskUsed;
    double m_riskDailyEntryRisk;
@@ -31,7 +27,6 @@ private:
    int    m_riskGateApproved;
    int    m_riskGateRejected;
 
-   // Injected performance data
    int    m_perfTotalTrades;
    double m_perfWinRate;
    double m_perfProfitFactor;
@@ -42,14 +37,12 @@ private:
    double m_perfAvgWin;
    double m_perfAvgLoss;
 
-   // Injected python bridge data
    bool   m_pyConnected;
    string m_pyVersion;
    int    m_pyRequests;
    int    m_pyOk;
    int    m_pyErrors;
 
-   // Stored AI data
    bool   m_aiNnActive;
    string m_aiNnSignal;
    double m_aiNnConf;
@@ -80,7 +73,7 @@ public:
    // Restore every injected field to its construction-time default
    void              Reset();
 
-   // AI data injection — called from main loop before PushState
+   // Snapshot injectors: call from the main loop before PushState.
    void              SetAIData(bool nnActive, const string &nnSignal, double nnConf,
                                int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
                                int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
@@ -90,7 +83,6 @@ public:
                                int metaFeatures, int metaCooldown, int metaEarlyStop,
                                double metaWinRate, double metaAvgConf, int metaSamplesSince);
 
-   // Risk data injection — called from main loop before PushState
    void              SetRiskData(double activeRiskPerTrade, double dailyRiskUsed,
                                  double dailyEntryRisk, double dailyMtmLoss,
                                  double openExposure, double maxDailyRisk,
@@ -98,16 +90,13 @@ public:
                                  bool conservativeMode, bool emergencyMode,
                                  int gateApproved, int gateRejected);
 
-   // Performance data injection — called from main loop before PushState
    void              SetPerformanceData(int totalTrades, double winRate, double profitFactor,
                                         double sharpeRatio, double maxDrawdown, double recoveryFactor,
                                         double netProfit, double avgWin, double avgLoss);
 
-   // Python bridge data injection — called from main loop before PushState
    void              SetPythonBridgeData(bool connected, const string &version,
                                          int requests, int ok, int errors);
 
-   // Serialization
    string            BuildRiskJson() const;
    string            BuildPerformanceJson() const;
    string            BuildAIJson() const;
@@ -116,16 +105,13 @@ public:
    static string     BuildConsensusJson();
 };
 
-// Constructor
 CDashBridgeProtocol::CDashBridgeProtocol()
 {
    Reset();
 }
 
-// Reset every injected snapshot field to its default
 void CDashBridgeProtocol::Reset()
 {
-   // Risk data defaults
    m_riskActiveRiskPerTrade = 0.0;
    m_riskDailyRiskUsed = 0.0;
    m_riskDailyEntryRisk = 0.0;
@@ -139,7 +125,6 @@ void CDashBridgeProtocol::Reset()
    m_riskGateApproved = 0;
    m_riskGateRejected = 0;
 
-   // Performance data defaults
    m_perfTotalTrades = 0;
    m_perfWinRate = 0.0;
    m_perfProfitFactor = 0.0;
@@ -150,14 +135,12 @@ void CDashBridgeProtocol::Reset()
    m_perfAvgWin = 0.0;
    m_perfAvgLoss = 0.0;
 
-   // Python bridge data defaults
    m_pyConnected = false;
    m_pyVersion = "";
    m_pyRequests = 0;
    m_pyOk = 0;
    m_pyErrors = 0;
 
-   // AI data defaults
    m_aiNnActive = false;
    m_aiNnSignal = "NONE";
    m_aiNnConf = 0.0;
@@ -183,7 +166,6 @@ void CDashBridgeProtocol::Reset()
    m_aiMetaSamplesSince = 0;
 }
 
-// Set AI adapter snapshot data
 void CDashBridgeProtocol::SetAIData(bool nnActive, const string &nnSignal, double nnConf,
                                     int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
                                     int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
@@ -218,7 +200,6 @@ void CDashBridgeProtocol::SetAIData(bool nnActive, const string &nnSignal, doubl
    m_aiMetaSamplesSince = metaSamplesSince;
 }
 
-// Set risk snapshot data
 void CDashBridgeProtocol::SetRiskData(double activeRiskPerTrade, double dailyRiskUsed,
                                       double dailyEntryRisk, double dailyMtmLoss,
                                       double openExposure, double maxDailyRisk,
@@ -240,7 +221,6 @@ void CDashBridgeProtocol::SetRiskData(double activeRiskPerTrade, double dailyRis
    m_riskGateRejected = gateRejected;
 }
 
-// Set performance analytics data
 void CDashBridgeProtocol::SetPerformanceData(int totalTrades, double winRate, double profitFactor,
                                              double sharpeRatio, double maxDrawdown, double recoveryFactor,
                                              double netProfit, double avgWin, double avgLoss)
@@ -301,21 +281,17 @@ string CDashBridgeProtocol::BuildPerformanceJson() const
    return json;
 }
 
-// Build AI adapters JSON
 string CDashBridgeProtocol::BuildAIJson() const
 {
    string json = "\"ai\":{";
 
-   // ONNX adapter (no stored data — always inactive unless wired)
+   // Hardcoded inactive: onnx / ensemble / transformer have no injected snapshot fields.
    json += "\"onnx\":{\"active\":false},";
 
-   // Ensemble (no stored data — always inactive unless wired)
    json += "\"ensemble\":{\"active\":false},";
 
-   // Transformer (no stored data — always inactive unless wired)
    json += "\"transformer\":{\"active\":false},";
 
-   // Neural network — uses stored data from SetAIData
    json += "\"nn\":{";
    json += "\"active\":" + (m_aiNnActive ? "true" : "false") + ",";
    json += "\"signal\":\"" + CDashBridgeJson::EscapeJsonString(m_aiNnSignal) + "\",";
@@ -331,7 +307,6 @@ string CDashBridgeProtocol::BuildAIJson() const
    json += "\"norm_ready\":" + (m_aiNnNormReady ? "true" : "false");
    json += "},";
 
-   // Regime — uses stored data from SetAIData
    json += "\"regime\":{";
    json += "\"current\":\"" + CDashBridgeJson::EscapeJsonString(m_aiRegime) + "\",";
    json += "\"trend\":" + DoubleToString(m_aiRegimeTrend, 4) + ",";
@@ -340,7 +315,6 @@ string CDashBridgeProtocol::BuildAIJson() const
    json += "\"spike\":" + DoubleToString(m_aiRegimeSpike, 4);
    json += "},";
 
-   // Meta-labeler — uses stored data from SetAIData
    json += "\"meta\":{";
    json += "\"features\":" + IntegerToString(m_aiMetaFeatures) + ",";
    json += "\"cooldown\":" + IntegerToString(m_aiMetaCooldown) + ",";

@@ -1,6 +1,4 @@
-// Source, Continuation, and Breaker Block Detection
-// For Unified ICT Strategy
-// Copyright 2025, Multi-Strategy EA
+// ICT order blocks: source, continuation and breaker detection for the Unified ICT strategy.
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -27,7 +25,6 @@ enum ENUM_ORDER_BLOCK_TYPE
 
 struct SAdvancedOrderBlock
 {
-    // --- EXISTING FIELDS (keep all unchanged) ---
     ENUM_ORDER_BLOCK_TYPE type;
     datetime time;
     double top;
@@ -50,13 +47,12 @@ struct SAdvancedOrderBlock
     bool atSupportResistance;
     bool hasImbalance;
 
-    // --- NEW FIELDS (P0-B) ---
-    double ce;              // Consequent Encroachment = midpoint (used as entry/TP target, NOT mitigation)
-    bool isFresh;           // Has price NOT yet returned to this OB (true = never tested)
-    int timesRejected;      // How many times price bounced FROM this OB (more = stronger)
-    datetime firstTestedTime;   // When price first entered the OB zone
-    double mitigationLevel; // The price level that triggers mitigation (below bottom for bull, above top for bear)
-    bool shadowUsedForSL;   // Whether the OB wick/shadow extends the mitigation level
+    double ce;              // Consequent Encroachment = midpoint: entry/TP target, NOT mitigation
+    bool isFresh;           // true until price has returned to this OB
+    int timesRejected;      // bounces from this OB; more = stronger
+    datetime firstTestedTime;   // first entry into the OB zone
+    double mitigationLevel; // below bottom (bullish OB) / above top (bearish OB)
+    bool shadowUsedForSL;   // true when the OB wick extends the mitigation level
 
     SAdvancedOrderBlock() : type(OB_NONE), time(0), top(0), bottom(0), open(0), close(0),
                            midpoint(0), isValidated(false), isMitigated(false), isTested(false),
@@ -76,14 +72,13 @@ private:
     int                 m_obCount;
     int                 m_maxOBs;
     
-    // Internal methods
     bool                IsNearSupportLevel(double price);
     bool                IsNearResistanceLevel(double price);
     int                 FindMostRecentSwingHigh(int lookback = 50);
     int                 FindMostRecentSwingLow(int lookback = 50);
     double              FindOldLow(int startBar, int endBar);
     double              FindOldHigh(int startBar, int endBar);
-    int                 FindImpulseStart(bool bullish, int lookback = 30);  // P1-A helper
+    int                 FindImpulseStart(bool bullish, int lookback = 30);
     double              GetATRValue(int period = 14);
     long                GetAverageVolume(int startBar, int window);
     bool                IsBullishType(const ENUM_ORDER_BLOCK_TYPE type) const;
@@ -100,7 +95,6 @@ public:
     bool                DetectBullishSourceOB(SAdvancedOrderBlock &ob);
     bool                DetectBearishSourceOB(SAdvancedOrderBlock &ob);
     
-    // Continuation OB Detection
     bool                DetectBullishOB(SAdvancedOrderBlock &ob);
     bool                DetectBearishOB(SAdvancedOrderBlock &ob);
     
@@ -113,7 +107,6 @@ public:
     bool                DetectBullishVacuumBlock(SAdvancedOrderBlock &ob);
     bool                DetectBearishVacuumBlock(SAdvancedOrderBlock &ob);
     
-    // Validation
     bool                ValidateOrderBlock(SAdvancedOrderBlock &ob);
     bool                CheckMitigation(SAdvancedOrderBlock &ob);
     
@@ -122,9 +115,8 @@ public:
     int                 FindActiveOBAtPrice(double price, double tolerance);
     int                 FindBestBullishOB();
     int                 FindBestBearishOB();
-    double              GetFreshness(int obIndex);  // Batch 103: OB freshness decay 0.0-1.0
+    double              GetFreshness(int obIndex);  // freshness decay, 0.0-1.0
 
-    // OB type classification helpers (consolidated from strategy files)
     bool                IsBullishOBType(ENUM_ORDER_BLOCK_TYPE type) const
     {
         return (type == OB_BREAKER_BULL || type == OB_PROPULSION_BULL ||
@@ -139,17 +131,15 @@ public:
     }
 };
 
-// Constructor
 CAdvancedOrderBlockDetector::CAdvancedOrderBlockDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
     m_obCount(0),
-    m_maxOBs(100)  // Expanded from 20 for historical memory
+    m_maxOBs(100)  // must be large enough to hold the 500-bar Update() scan
 {
     ArrayResize(m_orderBlocks, 0);
 }
 
-// Destructor
 CAdvancedOrderBlockDetector::~CAdvancedOrderBlockDetector()
 {
     ArrayFree(m_orderBlocks);
@@ -166,9 +156,8 @@ bool CAdvancedOrderBlockDetector::Initialize(const string symbol, ENUM_TIMEFRAME
 
 void CAdvancedOrderBlockDetector::Update()
 {
-    ScanForOrderBlocks(500);  // Expanded from 50 for historical memory
-    
-    // Update mitigation status
+    ScanForOrderBlocks(500);  // deep scan; the results must fit inside m_maxOBs
+
     for(int i = 0; i < m_obCount; i++)
     {
         CheckMitigation(m_orderBlocks[i]);
@@ -180,7 +169,6 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
     m_obCount = 0;
     ArrayResize(m_orderBlocks, 0);
     
-    // Detect Source OBs
     SAdvancedOrderBlock bullSOB;
     if(DetectBullishSourceOB(bullSOB))
     {
@@ -197,7 +185,6 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_obCount++;
     }
     
-    // Detect Continuation OBs
     SAdvancedOrderBlock bullOB;
     if(DetectBullishOB(bullOB))
     {
@@ -214,7 +201,6 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
         m_obCount++;
     }
     
-    // Detect Breaker Blocks
     SAdvancedOrderBlock bullBreaker;
     if(DetectBullishBreakerBlock(bullBreaker))
     {
@@ -282,9 +268,8 @@ void CAdvancedOrderBlockDetector::ScanForOrderBlocks(int lookback)
 
 double CAdvancedOrderBlockDetector::GetATRValue(int period)
 {
-    // Batch 157: shared indicator-manager handle instead of create/release per
-    // call - this churned an iATR handle on every scan and inside each Source-OB
-    // walk. The manager owns the handle lifecycle.
+    // Shared manager handle: creating and releasing an iATR per call churned handles on
+    // every scan and inside each Source-OB walk. The manager owns the lifecycle.
     int atrHandle = CIndicatorManager::Instance().GetATRHandle(m_symbol, m_timeframe, period);
     if(atrHandle == INVALID_HANDLE)
         return 0.0;
@@ -338,10 +323,8 @@ bool CAdvancedOrderBlockDetector::IsBearishType(const ENUM_ORDER_BLOCK_TYPE type
             type == OB_VACUUM_BEAR);
 }
 
-// Find Impulse Start — P1-A Helper
-// Returns the starting bar index of the most recent impulsive move in the given direction.
-// An impulse is 3+ consecutive bars moving in the same direction with bodies >= 50% of range.
-// Returns -1 if no impulse found within lookback.
+// Start bar of the newest impulsive run in the given direction; -1 if none in lookback.
+// Impulse = 2+ same-direction bars each with a body >= 35% of its range.
 int CAdvancedOrderBlockDetector::FindImpulseStart(bool bullish, int lookback)
 {
     int consecutiveCount = 0;

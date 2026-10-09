@@ -1,5 +1,5 @@
-// Trade Journal - Persistent CSV trade logging for crash recovery
-// Records open/close events for orphaned-position reconciliation
+// Trade Journal - persistent CSV open/close log used to reconcile orphaned positions
+// after a crash or an external close.
 #property copyright "Copyright 2024, MiMoCode"
 #property link      ""
 #property version   "1.00"
@@ -10,7 +10,6 @@
 
 #include "MagicRange.mqh"
 
-// Write a single CSV row to the trade journal
 void WriteTradeJournalEntry(const string &action, ulong ticket, const string &symbol,
                             ENUM_ORDER_TYPE type, double volume, double price,
                             double sl, double tp, long magic, const string &reason)
@@ -39,7 +38,6 @@ void WriteTradeJournalEntry(const string &action, ulong ticket, const string &sy
     FileClose(handle);
 }
 
-// Journal an open trade event
 void JournalTradeOpen(ulong ticket, const string &symbol, ENUM_ORDER_TYPE type,
                       double volume, double price, double sl, double tp,
                       long magic, const string &reason)
@@ -49,7 +47,6 @@ void JournalTradeOpen(ulong ticket, const string &symbol, ENUM_ORDER_TYPE type,
                 ticket, EnumToString(type), symbol, volume, price, sl, tp, magic, reason);
 }
 
-// Journal a close trade event
 void JournalTradeClose(ulong ticket, const string &symbol, ENUM_ORDER_TYPE type,
                        double volume, double exitPrice, double sl, double tp,
                        long magic, double profit, const string &reason)
@@ -79,7 +76,6 @@ void ReconcileTradeJournal(uint eaMagicNumber)
         return;
     }
 
-    // Track open events: ticket -> { symbol, type, volume, price, sl, tp, magic, time }
     struct SJournalOpen {
         ulong ticket;
         string symbol;
@@ -95,7 +91,6 @@ void ReconcileTradeJournal(uint eaMagicNumber)
     SJournalOpen openEvents[];
     int openCount = 0;
 
-    // Also track which tickets had CLOSE events
     ulong closedTickets[];
     int closedCount = 0;
 
@@ -148,7 +143,6 @@ void ReconcileTradeJournal(uint eaMagicNumber)
     }
     FileClose(handle);
 
-    // Find orphaned trades: OPEN events without matching CLOSE
     int orphanCount = 0;
     for(int i = 0; i < openCount; i++)
     {
@@ -164,18 +158,14 @@ void ReconcileTradeJournal(uint eaMagicNumber)
 
         if(!foundClose)
         {
-            // Check if this trade belongs to this EA's magic range.
-            // Batch 168: the old `eaMagicNumber .. +999` window excluded every
-            // asset-class-offset position, so the EA never reconciled its own
-            // orphaned open trades and reported them as closed.
+            // Ownership must come from IsMagicOwned: the old base..base+999 window
+            // dropped every asset-class-offset position and reported it as closed.
             long tradeMagic = openEvents[i].magic;
             if(eaMagicNumber > 0 && !IsMagicOwned(tradeMagic))
                 continue;
 
-            // Check if position still exists in MT5
             if(PositionSelectByTicket(openEvents[i].ticket))
             {
-                // Position is live — expected, no action needed
                 PrintFormat("[JOURNAL-RECONCILE] Open position confirmed live: ticket=%I64u | %s %s %.2f @ %.5f | magic=%d | opened=%s",
                             openEvents[i].ticket,
                             EnumToString(openEvents[i].type),
@@ -187,9 +177,8 @@ void ReconcileTradeJournal(uint eaMagicNumber)
             }
             else
             {
-                // Orphaned: logged as open in journal but no matching close and no live position
-                // This means the position was closed externally (manual, SL/TP hit, or broker action)
-                // Journal the close event to mark it as resolved
+                // No live position: closed externally (manual, SL/TP hit, or broker action).
+                // Journal a synthetic CLOSE so the entry is marked resolved.
                 orphanCount++;
                 PrintFormat("[JOURNAL-ORPHAN] ticket=%I64u | %s %s %.2f @ %.5f | opened=%s | closed externally (SL/TP/manual/broker)",
                             openEvents[i].ticket,
@@ -199,7 +188,6 @@ void ReconcileTradeJournal(uint eaMagicNumber)
                             openEvents[i].price,
                             openEvents[i].time);
 
-                // Write synthetic close to keep journal consistent
                 WriteTradeJournalEntry("CLOSE", openEvents[i].ticket, openEvents[i].symbol,
                                        openEvents[i].type, openEvents[i].volume, 0.0,
                                        openEvents[i].sl, openEvents[i].tp,

@@ -1,14 +1,8 @@
-//+------------------------------------------------------------------+
-//| DashboardBridge.mqh                                              |
-//| Purpose: Push EA state to external dashboard server               |
-//| Features: State push, command poll, graceful degradation          |
-//| Thin coordinator — all logic lives in the DashBridge* modules:    |
-//|   DashBridgeTypes     : shared JSON primitives                    |
-//|   DashBridgeTransport : connection lifecycle + HTTP transport     |
-//|   DashBridgeProtocol  : injected snapshot data + JSON sections    |
-//|   DashBridgeHealth    : heartbeat counters                        |
-//|   DashBridgePanels    : /state payload assembly                   |
-//+------------------------------------------------------------------+
+// Thin coordinator: pushes EA state to the external dashboard server and polls
+// it for control commands, degrading gracefully when the server is unreachable.
+// All logic lives in the DashBridge* modules: Types (shared JSON primitives),
+// Transport (connection lifecycle + HTTP), Protocol (injected snapshot data +
+// JSON sections), Health (heartbeat counters), Panels (/state payload assembly).
 #property copyright "Copyright 2025"
 #property link      ""
 #property version   "1.00"
@@ -27,36 +21,28 @@ class CEnterpriseStrategyManager;
 extern CEnterpriseStrategyManager* g_enterpriseManagers[];
 extern string g_enterpriseManagerSymbols[];
 
-//+------------------------------------------------------------------+
-//| Dashboard Bridge Class                                           |
-//+------------------------------------------------------------------+
 class CDashboardBridge
 {
 private:
-   CDashBridgeTransport m_transport;   // Connection lifecycle + HTTP transport
-   CDashBridgeProtocol  m_protocol;    // Injected snapshot data + JSON sections
-   CDashBridgeHealth    m_health;      // Heartbeat counters
+   CDashBridgeTransport m_transport;
+   CDashBridgeProtocol  m_protocol;
+   CDashBridgeHealth    m_health;
 
 public:
-   // Constructor/Destructor
                        CDashboardBridge();
                       ~CDashboardBridge();
 
-   // Initialization
    bool              Initialize(const string &endpoint, bool enabled = true,
                                 bool controlEnabled = false, int pushIntervalSec = 5,
                                 int requestTimeoutMs = 1000, int pushTimeoutMs = 5000);
    void              Shutdown();
 
-    // Operations
     bool              PushState();
     bool              PollCommands();
 
-    // Heartbeat counters
         void              SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
                                                int tradesOpened, int spikeEvents);
 
-    // Getters
     bool              IsEnabled() const { return m_transport.IsEnabled(); }
     bool              IsConnected() const { return m_transport.IsConnected(); }
     bool              IsControlEnabled() const { return m_transport.IsControlEnabled(); }
@@ -65,10 +51,9 @@ public:
     int               GetErrorCount() const { return m_transport.GetErrorCount(); }
     datetime          GetLastPushTime() const { return m_transport.GetLastPushTime(); }
 
-   // Setters
    void              SetEnabled(bool enabled) { m_transport.SetEnabled(enabled); }
 
-    // AI data injection — called from main loop before PushState
+    // Snapshot injectors: call from the main loop before PushState.
     void              SetAIData(bool nnActive, const string &nnSignal, double nnConf,
                                 int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
                                 int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
@@ -78,7 +63,6 @@ public:
                                 int metaFeatures, int metaCooldown, int metaEarlyStop,
                                 double metaWinRate, double metaAvgConf, int metaSamplesSince);
 
-    // Risk data injection — called from main loop before PushState
     void              SetRiskData(double activeRiskPerTrade, double dailyRiskUsed,
                                   double dailyEntryRisk, double dailyMtmLoss,
                                   double openExposure, double maxDailyRisk,
@@ -86,34 +70,24 @@ public:
                                   bool conservativeMode, bool emergencyMode,
                                   int gateApproved, int gateRejected);
 
-    // Performance data injection — called from main loop before PushState
     void              SetPerformanceData(int totalTrades, double winRate, double profitFactor,
                                          double sharpeRatio, double maxDrawdown, double recoveryFactor,
                                          double netProfit, double avgWin, double avgLoss);
 
-    // Python bridge data injection — called from main loop before PushState
     void              SetPythonBridgeData(bool connected, const string &version,
                                           int requests, int ok, int errors);
 };
 
-//+------------------------------------------------------------------+
-//| Constructor — module members carry the original defaults         |
-//+------------------------------------------------------------------+
+// Module members carry the original defaults, so this constructor is empty.
 CDashboardBridge::CDashboardBridge()
 {
 }
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
 CDashboardBridge::~CDashboardBridge()
 {
    Shutdown();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize the Dashboard Bridge                                  |
-//+------------------------------------------------------------------+
 bool CDashboardBridge::Initialize(const string &endpoint, bool enabled,
                                    bool controlEnabled, int pushIntervalSec,
                                    int requestTimeoutMs, int pushTimeoutMs)
@@ -122,9 +96,6 @@ bool CDashboardBridge::Initialize(const string &endpoint, bool enabled,
                                  requestTimeoutMs, pushTimeoutMs);
 }
 
-//+------------------------------------------------------------------+
-//| Shutdown the Dashboard Bridge                                    |
-//+------------------------------------------------------------------+
 void CDashboardBridge::Shutdown()
 {
    bool wasInitialized = m_transport.IsInitialized();
@@ -133,9 +104,6 @@ void CDashboardBridge::Shutdown()
       m_protocol.Reset();
 }
 
-//+------------------------------------------------------------------+
-//| Push current EA state to dashboard server                        |
-//+------------------------------------------------------------------+
 bool CDashboardBridge::PushState()
 {
    if(!m_transport.BeginPush())
@@ -144,26 +112,17 @@ bool CDashboardBridge::PushState()
    return m_transport.FinishPush(stateJson);
 }
 
-//+------------------------------------------------------------------+
-//| Poll for pending control commands                                |
-//+------------------------------------------------------------------+
 bool CDashboardBridge::PollCommands()
 {
    return m_transport.PollCommands();
 }
 
-//+------------------------------------------------------------------+
-//| Set heartbeat counter references                                 |
-//+------------------------------------------------------------------+
 void CDashboardBridge::SetHeartbeatCounters(int scans, int signalsGen, int signalsVal,
                                              int tradesOpened, int spikeEvents)
 {
    m_health.SetHeartbeatCounters(scans, signalsGen, signalsVal, tradesOpened, spikeEvents);
 }
 
-//+------------------------------------------------------------------+
-//| Set AI adapter snapshot data                                     |
-//+------------------------------------------------------------------+
 void CDashboardBridge::SetAIData(bool nnActive, const string &nnSignal, double nnConf,
                                   int nnLabels, int nnSteps, double nnConformalQ, double nnConformalAlpha,
                                   int nnAssetClass, double nnBarrierK, int nnBarrierVertBars,
@@ -180,9 +139,6 @@ void CDashboardBridge::SetAIData(bool nnActive, const string &nnSignal, double n
                         metaEarlyStop, metaWinRate, metaAvgConf, metaSamplesSince);
 }
 
-//+------------------------------------------------------------------+
-//| Set risk snapshot data                                           |
-//+------------------------------------------------------------------+
 void CDashboardBridge::SetRiskData(double activeRiskPerTrade, double dailyRiskUsed,
                                    double dailyEntryRisk, double dailyMtmLoss,
                                    double openExposure, double maxDailyRisk,
@@ -195,9 +151,6 @@ void CDashboardBridge::SetRiskData(double activeRiskPerTrade, double dailyRiskUs
                           conservativeMode, emergencyMode, gateApproved, gateRejected);
 }
 
-//+------------------------------------------------------------------+
-//| Set performance analytics data                                   |
-//+------------------------------------------------------------------+
 void CDashboardBridge::SetPerformanceData(int totalTrades, double winRate, double profitFactor,
                                            double sharpeRatio, double maxDrawdown, double recoveryFactor,
                                            double netProfit, double avgWin, double avgLoss)
@@ -206,9 +159,6 @@ void CDashboardBridge::SetPerformanceData(int totalTrades, double winRate, doubl
                                  recoveryFactor, netProfit, avgWin, avgLoss);
 }
 
-//+------------------------------------------------------------------+
-//| Set python bridge data                                           |
-//+------------------------------------------------------------------+
 void CDashboardBridge::SetPythonBridgeData(bool connected, const string &version,
                                            int requests, int ok, int errors)
 {

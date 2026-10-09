@@ -1,7 +1,6 @@
-// DiagnosticsLogger.mqh - Off-Journal Diagnostic Logging
-// Routes verbose/normal diagnostics to file instead of MT5 Journal
-// Blueprint Section 3.6: Logging Throttle
-// L9-007: Routes through CJsonLogger for unified correlation IDs
+// Off-journal diagnostics: level-gated output goes to a dedicated log file so
+// the MT5 Journal is not saturated by heartbeats. Routes through CJsonLogger
+// for unified correlation IDs.
 #property copyright "Copyright 2025, Multi-Strategy EA"
 #property version   "1.00"
 #property strict
@@ -11,9 +10,6 @@
 
 #include "JsonLogger.mqh"
 
-// Writes level-gated diagnostic output to a dedicated log file
-// so the MT5 Journal is not saturated by heartbeat/diagnostics.
-// Routes through CJsonLogger for unified correlation IDs.
 class CDiagnosticsLogger
 {
 private:
@@ -27,18 +23,16 @@ private:
 
    int      m_fileHandle;
    string   m_filePath;
-   string   m_component;         // Component name for structured logging
+   string   m_component;
    bool     m_enabled;
    int      m_logLevel;          // 0=Silent, 1=Critical, 2=Normal, 3=Verbose
    datetime m_lastFlush;
-   int      m_flushIntervalSec;  // default 5
+   int      m_flushIntervalSec;
 
-   // Log rotation tracking
    long     m_fileSizeBytes;
    int      m_lineCount;
    datetime m_fileCreationTime;
 
-   // Helper methods for rotation
    string GetBaseFileName() const;
    string GetRotatedFileName(int rotationIndex) const;
    void RotateIfNeeded();
@@ -52,15 +46,12 @@ public:
    bool InitializeEx(string eaName, string component, int logLevel, int flushIntervalSec = 5);
    void Deinit();
 
-   // Level-gated logging - routes through CJsonLogger for correlation IDs
    void LogCritical(string message);
    void LogNormal(string message);
    void LogVerbose(string message);
 
-   // Write to file (not journal) - also routes through CJsonLogger
    void WriteToFile(string message);
 
-   // Flush buffer to disk
    void Flush();
 
    void SetFlushInterval(int flushIntervalSec) { m_flushIntervalSec = MathMax(1, flushIntervalSec); }
@@ -71,7 +62,6 @@ public:
    string GetComponent() const { return m_component; }
 };
 
-// Constructor
 CDiagnosticsLogger::CDiagnosticsLogger() :
    m_fileHandle(INVALID_HANDLE),
    m_filePath(""),
@@ -85,7 +75,6 @@ CDiagnosticsLogger::CDiagnosticsLogger() :
    m_fileCreationTime(0)
 {}
 
-// Destructor
 CDiagnosticsLogger::~CDiagnosticsLogger()
 {
    Deinit();
@@ -135,13 +124,11 @@ void CDiagnosticsLogger::Deinit()
    m_enabled = false;
 }
 
-// Log Critical (level >= 1)
 void CDiagnosticsLogger::LogCritical(string message)
 {
    if(m_logLevel < 1)
       return;
    
-   // Route through CJsonLogger for structured JSON with correlation ID
    if(CJsonLogger::IsEnabled() && m_component != "")
    {
       CJsonLogger::LogError(m_component, message, "CRITICAL", CJsonLogger::GetCorrelationId(), "");
@@ -150,13 +137,11 @@ void CDiagnosticsLogger::LogCritical(string message)
    WriteToFile("[CRITICAL] " + message);
 }
 
-// Log Normal (level >= 2)
 void CDiagnosticsLogger::LogNormal(string message)
 {
    if(m_logLevel < 2)
       return;
    
-   // Route through CJsonLogger for structured JSON with correlation ID
    if(CJsonLogger::IsEnabled() && m_component != "")
    {
       CJsonLogger::LogInfo(m_component, message, "NORMAL", CJsonLogger::GetCorrelationId(), "");
@@ -165,13 +150,11 @@ void CDiagnosticsLogger::LogNormal(string message)
    WriteToFile("[NORMAL] " + message);
 }
 
-// Log Verbose (level >= 3)
 void CDiagnosticsLogger::LogVerbose(string message)
 {
    if(m_logLevel < 3)
       return;
    
-   // Route through CJsonLogger for structured JSON with correlation ID
    if(CJsonLogger::IsEnabled() && m_component != "")
    {
       CJsonLogger::LogDebug(m_component, message, "VERBOSE", CJsonLogger::GetCorrelationId(), "");
@@ -180,8 +163,6 @@ void CDiagnosticsLogger::LogVerbose(string message)
    WriteToFile("[VERBOSE] " + message);
 }
 
-// Write to file (not journal)
-// Falls back to Print if file handle is invalid
 void CDiagnosticsLogger::WriteToFile(string message)
 {
    string timestamp = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
@@ -189,7 +170,7 @@ void CDiagnosticsLogger::WriteToFile(string message)
 
    if(m_fileHandle != INVALID_HANDLE)
    {
-      // Check rotation before writing
+      // RotateIfNeeded can close and reopen m_fileHandle; re-check it before writing.
       RotateIfNeeded();
       
       if(m_fileHandle != INVALID_HANDLE)
@@ -208,7 +189,6 @@ void CDiagnosticsLogger::WriteToFile(string message)
    }
 }
 
-// Flush buffer to disk (throttled to every m_flushIntervalSec)
 void CDiagnosticsLogger::Flush()
 {
    datetime now = TimeCurrent();
@@ -220,7 +200,6 @@ void CDiagnosticsLogger::Flush()
    }
 }
 
-// Get base file name without rotation suffix
 string CDiagnosticsLogger::GetBaseFileName() const
 {
    if(m_filePath == "") return "";
@@ -238,7 +217,6 @@ string CDiagnosticsLogger::GetRotatedFileName(int rotationIndex) const
    return base + "_" + dateStr + "_" + IntegerToString(rotationIndex) + ".log";
 }
 
-// Rotate log file if needed
 void CDiagnosticsLogger::RotateIfNeeded()
 {
    if(!m_enabled || m_fileHandle == INVALID_HANDLE)
@@ -258,7 +236,6 @@ void CDiagnosticsLogger::RotateIfNeeded()
    
    if(needRotate)
    {
-      // Find next rotation index
       int rotationIdx = 1;
       while(rotationIdx <= MAX_RETAINED_FILES)
       {
@@ -270,15 +247,12 @@ void CDiagnosticsLogger::RotateIfNeeded()
          rotationIdx++;
       }
       
-      // Close current file
       FileClose(m_fileHandle);
       
-      // Rename current to rotated
       string currentName = m_filePath;
       string rotatedName = GetRotatedFileName(rotationIdx);
       FileMove(currentName, FILE_COMMON, rotatedName, FILE_COMMON);
       
-      // Reopen with fresh file
       m_fileHandle = FileOpen(m_filePath,
                               FILE_WRITE | FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
       if(m_fileHandle != INVALID_HANDLE)
@@ -299,7 +273,6 @@ void CDiagnosticsLogger::RotateIfNeeded()
    }
 }
 
-// Clean up old rotated files
 void CDiagnosticsLogger::CleanupOldFiles()
 {
    for(int i = MAX_RETAINED_FILES + 1; i <= MAX_RETAINED_FILES + 10; i++)
@@ -315,7 +288,6 @@ void CDiagnosticsLogger::CleanupOldFiles()
 
 #endif // DIAGNOSTICS_LOGGER_MQH
 
-// ErrorAggregator.mqh - Periodic Error Aggregate Logging
 // Aggregates errors by type and logs summary periodically
 #ifndef ERROR_AGGREGATOR_MQH
 #define ERROR_AGGREGATOR_MQH
@@ -361,7 +333,6 @@ public:
             if(m_errorCount >= ArraySize(m_errors))
             {
                 ArrayResize(m_errors, ArraySize(m_errors) + 20);
-                // ArrayInitialize not supported for struct arrays in MQL5 - elements are default-initialized on resize
             }
             idx = m_errorCount;
             m_errors[idx].errorCode = errorCode;
@@ -375,7 +346,6 @@ public:
         if(StringLen(context) > 0)
             m_errors[idx].lastContext = context;
         
-        // Check if we should log aggregate
         CheckAndLogAggregate();
     }
     
@@ -415,10 +385,9 @@ public:
                 }
             }
         
-            // Route through CJsonLogger for structured JSON output (L9-011)
+            // Dual sink: JSON through CJsonLogger plus the diagnostics-file critical log.
             CJsonLogger::LogError("ERROR-AGGREGATOR", summary, "ERROR_AGGREGATE", CJsonLogger::GetCorrelationId(), "");
         
-            // Also log to DiagnosticsLogger for backwards compatibility
             m_logger.LogCritical(summary);
         }
     

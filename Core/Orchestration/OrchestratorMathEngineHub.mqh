@@ -1,21 +1,8 @@
-// Phase F extraction from CEAOrchestrator (behaviour preserving).
-// Owns the three per-symbol engine fleets that used to be sixteen
-// loose dynamic-array members on CEAOrchestrator:
-// Batch 100 : Hurst, Ornstein-Uhlenbeck, OFI proxy, VPIN
-// Batch 114 : Kalman MR, Changepoint, Four-State regime,
-// Volatility targeting, Exit optimizer,
-// Liquidity sweep, Range compression
-// Batch 107 : VWAP, Volume Profile, CVD (forex only)
-// plus the parallel symbol/bridge-log bookkeeping arrays and the
-// m_mathEngineCount cursor.
-// Every body below was moved verbatim; collaborators the original
-// code reached for through members (m_config, the registries, the
-// enterprise-manager arrays, m_gridRecovery, m_signalDiagnostics)
-// are now explicit parameters. CEAOrchestrator holds one hub by
-// value and keeps thin forwarders with the original signatures.
-// Ownership: the hub OWNS every engine pointer it allocates and
-// releases them in ReleaseAll() with the original Deinit()+delete
-// ordering. The registries hold non-owning references.
+// Per-symbol math/institutional engine fleets plus the m_mathEngineCount cursor.
+// Collaborators the engines need (config, registries, enterprise managers, grid
+// recovery, signal diagnostics) are explicit parameters, not members.
+// Ownership: the hub OWNS every engine pointer it allocates and releases them in
+// ReleaseAll() with Deinit()+delete ordering. Registries hold non-owning references.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_MATH_ENGINE_HUB_MQH
@@ -31,7 +18,6 @@
 class COrchestratorMathEngineHub
 {
 private:
-    // Batch 100: Advanced Mathematical Engines
     CHurstEngine*               m_hurstEngines[];
     COrnsteinUhlenbeckEngine*   m_ouEngines[];
     COrderFlowImbalanceEngine*  m_ofiEngines[];
@@ -40,7 +26,6 @@ private:
     bool                        m_gridHurstBridgeLogged[];
     int                         m_mathEngineCount;
 
-    // Batch 114: Research-Driven Statistical Algorithm Upgrades
     CKalmanMeanReversion*       m_kalmanEngines[];
     CChangepointDetector*       m_cpdEngines[];
     CFourStateRegimeDetector*   m_fourStateEngines[];
@@ -49,15 +34,13 @@ private:
     CLiquiditySweepStrategy*    m_liquiditySweepStrategies[];
     CRangeCompressionBreakout*  m_rangeCompStrategies[];
 
-    // Batch 107: Institutional TA Engines (Forex only)
+    // Institutional TA engines: forex only.
     CVWAPEngine*                m_vwapEngines[];
     CVolumeProfileEngine*       m_vpEngines[];
     CCVDEngine*                 m_cvdEngines[];
 
 public:
     COrchestratorMathEngineHub() : m_mathEngineCount(0) {}
-
-    // ================= Cursor / lookup accessors =================
 
     int GetMathEngineCount() { return m_mathEngineCount; }
     int GetSymbolCount()     { return ArraySize(m_mathEngineSymbols); }
@@ -68,8 +51,6 @@ public:
         return m_mathEngineSymbols[idx];
     }
 
-    // Mirrors the inline lookup loop that used to live in
-    // InitializeEnterpriseManagers() when wiring engines to strategies.
     int FindSymbolIndex(const string symbol)
     {
         for(int k = 0; k < ArraySize(m_mathEngineSymbols); k++)
@@ -103,10 +84,6 @@ public:
         return m_vpinFilters[idx];
     }
 
-    // ================= Pre-allocation =================
-
-    // Was the ArrayResize + NULL-init block at the head of
-    // CEAOrchestrator::InitializeEnterpriseManagers().
     void Reserve(int maxEngineCount)
     {
         ArrayResize(m_mathEngineSymbols, maxEngineCount);
@@ -126,7 +103,6 @@ public:
         ArrayResize(m_vpEngines, maxEngineCount);
         ArrayResize(m_cvdEngines, maxEngineCount);
 
-        // Initialize all arrays to NULL/empty
         for(int i = 0; i < maxEngineCount; i++)
         {
             m_mathEngineSymbols[i] = "";
@@ -149,17 +125,9 @@ public:
         m_mathEngineCount = 0;
     }
 
-    // ================= Per-symbol construction =================
-
-    // Was the "Batch 100: Initialize per-symbol mathematical engines using
-    // pre-allocated arrays" block inside
-    // CEAOrchestrator::InitializeEnterpriseManagerForSymbol().
-// True when this broker publishes no traded volume for the
-// symbol, so anything volume-derived is running on tick counts.
-// MqlRates.real_volume is zero on every symbol without exchange
-// volume (spot FX, CFD and synthetic indices), which is the
-// only in-terminal way to know before an engine consumes the
-// difference.
+// True when this broker publishes no traded volume, so volume-derived engines run on tick counts.
+// CopyRates into MqlRates.real_volume is the only in-terminal traded-volume read: it is zero for
+// spot FX, CFDs and synthetic indices.
     static bool HasOnlyTickVolume(const string symbol)
     {
         MqlRates rates[];
@@ -190,7 +158,6 @@ public:
             PrintFormat("[MATH-ENGINE] Hurst engine initialized for %s | lookback=%d", symbol, config.hurstLookback);
         }
 
-        // OU Process Engine
         m_ouEngines[idx] = NULL;
         if(config.enableOUProcess)
         {
@@ -199,15 +166,9 @@ public:
             PrintFormat("[MATH-ENGINE] OU process engine initialized for %s | lookback=%d", symbol, config.ouLookback);
         }
 
-        // OFI Proxy Engine
-        //
-        // Batch 170: every engine below is volume-derived. MQL5 exposes two very
-        // different things called "volume": traded volume (real, only on exchange
-        // symbols) and tick volume (how many times the price moved in a bar).
-        // iVolume/CopyTickVolume return the latter, and SYNTHETIC INDEX SYMBOLS
-        // have no traded volume at all, so OFI/VPIN were computing order-flow
-        // toxicity from a price-update count. VWAP, Volume Profile and CVD were
-        // already excluded for synthetics (Batch 107); OFI and VPIN were not.
+        // OFI/VPIN are volume-derived: traded volume exists only on exchange symbols, while tick
+        // volume (what iVolume/CopyTickVolume return) just counts price moves per bar. Synthetic
+        // indices have no traded volume, so order-flow toxicity would come from a price-update count.
         const bool volumeEnginesAllowed =
             !COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol);
 
@@ -243,7 +204,6 @@ public:
             PrintFormat("[VOLUME-PROXY] %s | no traded volume from this broker - volume-derived engines are running on TICK volume as a proxy", symbol);
         }
 
-        // Batch 107: VWAP Engine (forex only)
         m_vwapEngines[idx] = NULL;
         if(config.enableVWAPEngine && !COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol))
         {
@@ -253,7 +213,6 @@ public:
             PrintFormat("[INSTITUTIONAL-ENGINE] VWAP engine initialized for %s", symbol);
         }
 
-        // Batch 107: Volume Profile Engine (forex only)
         m_vpEngines[idx] = NULL;
         if(config.enableVolumeProfile && !COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol))
         {
@@ -263,7 +222,6 @@ public:
             PrintFormat("[INSTITUTIONAL-ENGINE] Volume Profile engine initialized for %s", symbol);
         }
 
-        // Batch 107: CVD Engine (forex only)
         m_cvdEngines[idx] = NULL;
         if(config.enableCVDEngine && !COrchestratorSymbolClassifier::IsSyntheticIndexSymbolName(symbol))
         {
@@ -273,8 +231,6 @@ public:
             PrintFormat("[INSTITUTIONAL-ENGINE] CVD engine initialized for %s", symbol);
         }
 
-        // Batch 114: Research-Driven Statistical Algorithm Engines
-        // Kalman/FLS Dynamic Mean-Reversion
         m_kalmanEngines[idx] = NULL;
         if(config.enableKalmanMR)
         {
@@ -283,7 +239,6 @@ public:
             PrintFormat("[ENGINE] Kalman MR engine initialized for %s | lambda=%.0f", symbol, config.kalmanLambda);
         }
 
-        // Bayesian Online Changepoint Detection
         m_cpdEngines[idx] = NULL;
         if(config.enableChangepointDetect)
         {
@@ -292,7 +247,6 @@ public:
             PrintFormat("[ENGINE] CPD engine initialized for %s | hazard=%.2f", symbol, config.cpdHazardThreshold);
         }
 
-        // Four-State Regime Detector
         m_fourStateEngines[idx] = NULL;
         if(config.enableFourStateRegime)
         {
@@ -323,7 +277,6 @@ public:
             PrintFormat("[ENGINE] Exit Optimizer initialized for %s", symbol);
         }
 
-        // Liquidity Sweep Strategy
         m_liquiditySweepStrategies[idx] = NULL;
         if(config.enableLiquiditySweep)
         {
@@ -333,7 +286,6 @@ public:
             PrintFormat("[ENGINE] Liquidity Sweep strategy initialized for %s", symbol);
         }
 
-        // Range Compression Breakout Strategy
         m_rangeCompStrategies[idx] = NULL;
         if(config.enableRangeCompression)
         {
@@ -346,9 +298,6 @@ public:
         m_mathEngineCount++;
     }
 
-    // ================= Bulk construction =================
-
-    // Was CEAOrchestrator::InitializeMathematicalEngines()
     void InitializeMathematicalEngines(const SOrchestratorConfig &config,
                                        CMathematicalEngineRegistry *mathReg,
                                        const string &managerSymbols[],
@@ -379,7 +328,6 @@ public:
 
             m_mathEngineSymbols[i] = sym;
 
-            // Batch 100: Hurst Engine
             if(config.enableHurstEngine)
             {
                 m_hurstEngines[i] = new CHurstEngine(sym, PERIOD_CURRENT, config.hurstLookback);
@@ -390,7 +338,6 @@ public:
                 }
             }
 
-            // Batch 100: Ornstein-Uhlenbeck Process
             if(config.enableOUProcess)
             {
                 m_ouEngines[i] = new COrnsteinUhlenbeckEngine(sym, PERIOD_CURRENT, config.ouLookback);
@@ -401,7 +348,6 @@ public:
                 }
             }
 
-            // Batch 100: Order Flow Imbalance Proxy
             if(config.enableOFIProxy)
             {
                 m_ofiEngines[i] = new COrderFlowImbalanceEngine();
@@ -412,7 +358,6 @@ public:
                 }
             }
 
-            // Batch 100: VPIN Filter
             if(config.enableVPINFilter)
             {
                 m_vpinFilters[i] = new CVPINFilter(sym);
@@ -424,7 +369,6 @@ public:
                 }
             }
 
-            // Batch 114: Kalman Mean Reversion
             if(config.enableKalmanMR)
             {
                 m_kalmanEngines[i] = new CKalmanMeanReversion(sym);
@@ -435,7 +379,6 @@ public:
                 }
             }
 
-            // Batch 114: Changepoint Detector
             if(config.enableChangepointDetect)
             {
                 m_cpdEngines[i] = new CChangepointDetector(sym, PERIOD_CURRENT, 200, config.cpdHazardThreshold);
@@ -455,7 +398,6 @@ public:
                 }
             }
 
-            // Batch 114: Four State Regime Detector
             if(config.enableFourStateRegime)
             {
                 m_fourStateEngines[i] = new CFourStateRegimeDetector();
@@ -475,7 +417,6 @@ public:
                 }
             }
 
-            // Batch 114: Volatility Targeting
             if(config.enableVolTargeting)
             {
                 m_volTargetEngines[i] = new CVolatilityTargeting();
@@ -496,7 +437,6 @@ public:
                 }
             }
 
-            // Batch 114: Exit Optimizer
             if(config.enableExitOptimizer)
             {
                 m_exitOptimizers[i] = new CExitOptimizer();
@@ -516,7 +456,6 @@ public:
                 }
             }
 
-            // Batch 114: Liquidity Sweep Strategy
             if(config.enableLiquiditySweep)
             {
                 m_liquiditySweepStrategies[i] = new CLiquiditySweepStrategy();
@@ -536,7 +475,6 @@ public:
                 }
             }
 
-            // Batch 114: Range Compression Breakout
             if(config.enableRangeCompression)
             {
                 m_rangeCompStrategies[i] = new CRangeCompressionBreakout();
@@ -559,7 +497,6 @@ public:
             m_gridHurstBridgeLogged[i] = false;
         }
 
-        // Initialize pipeline engines with SignalDiagnostics for all symbols
         if(mathReg != NULL && signalDiagnostics != NULL)
         {
             mathReg.InitializePipelineEngines(managerSymbols, managerCount);
@@ -568,7 +505,6 @@ public:
         PrintFormat("[INIT] Mathematical engines initialized for %d symbols", count);
     }
 
-    // Was CEAOrchestrator::InitializeInstitutionalEngines()
     void InitializeInstitutionalEngines(const SOrchestratorConfig &config,
                                         CInstitutionalEngineRegistry *instReg,
                                         const string &managerSymbols[],
@@ -577,7 +513,6 @@ public:
         int count = managerCount;
         if(count <= 0) return;
 
-        // Resize institutional engine arrays
         ArrayResize(m_vwapEngines, count);
         ArrayResize(m_vpEngines, count);
         ArrayResize(m_cvdEngines, count);
@@ -587,13 +522,11 @@ public:
             string sym = managerSymbols[i];
             if(sym == "") continue;
 
-            // Only initialize for Forex symbols
             if(!COrchestratorSymbolClassifier::IsForexSymbol(sym))
             {
                 continue;
             }
 
-            // Batch 107: VWAP Engine
             if(config.enableVWAPEngine)
             {
                 m_vwapEngines[i] = new CVWAPEngine();
@@ -614,7 +547,6 @@ public:
                 }
             }
 
-            // Batch 107: Volume Profile Engine
             if(config.enableVolumeProfile)
             {
                 m_vpEngines[i] = new CVolumeProfileEngine();
@@ -635,7 +567,6 @@ public:
                 }
             }
 
-            // Batch 107: CVD Engine
             if(config.enableCVDEngine)
             {
                 m_cvdEngines[i] = new CCVDEngine();
@@ -660,10 +591,6 @@ public:
         PrintFormat("[INIT] Institutional TA engines initialized for %d forex symbols", count);
     }
 
-    // ================= Registry publication =================
-
-    // Was the "Register mathematical engines with registry" block in
-    // CEAOrchestrator::InitializeComponents().
     void RegisterMathEngines(CMathematicalEngineRegistry *mathReg)
     {
         if(mathReg != NULL)
@@ -673,8 +600,6 @@ public:
         m_rangeCompStrategies, m_mathEngineSymbols, ArraySize(m_mathEngineSymbols));
     }
 
-    // Was the "Register institutional engines with registry" block in
-    // CEAOrchestrator::InitializeComponents().
     void RegisterInstitutionalEngines(CInstitutionalEngineRegistry *instReg,
                                       const string &managerSymbols[],
                                       int managerCount)
@@ -684,13 +609,9 @@ public:
         managerSymbols, managerCount);
     }
 
-    // ================= Runtime updates =================
-
-    // Was the two "Batch 100 / Batch 114 engine update" loops in
-    // CEAOrchestrator::OnTimer(). Loop order and throttling are unchanged.
+    // Timer-driven bar-level engine update. Loop order and throttling must stay unchanged.
     void UpdateTimerEngines(const SOrchestratorConfig &config, CGridRecoveryEngine *gridRecovery)
     {
-        // Batch 100: Update bar-level mathematical engines (Hurst, OU) on timer
         for(int i = 0; i < ArraySize(m_mathEngineSymbols); i++)
         {
             if(m_hurstEngines[i] != NULL)
@@ -698,7 +619,6 @@ public:
             if(m_ouEngines[i] != NULL)
             m_ouEngines[i].Update();
 
-            // Batch 29a: Bridge Hurst output to GridRecoveryEngine
             if(config.gridRecoveryEnabled && m_hurstEngines[i] != NULL && m_hurstEngines[i].IsWarmedUp())
             {
                 double hurstVal = m_hurstEngines[i].GetSnapshot().hurstValue;
@@ -712,14 +632,12 @@ public:
             }
         }
 
-        // Batch 114: Update Research-Driven Statistical Algorithm Engines
         for(int i = 0; i < ArraySize(m_mathEngineSymbols); i++)
         {
             if(m_kalmanEngines[i] != NULL)
             m_kalmanEngines[i].Update();
             if(m_cpdEngines[i] != NULL && m_cpdEngines[i].IsInitialized())
             {
-                // Feed CPD with close price
                 double cpdClose[];
                 ArraySetAsSeries(cpdClose, true);
                 if(CopyClose(m_mathEngineSymbols[i], (ENUM_TIMEFRAMES)Period(), 0, 1, cpdClose) == 1)
@@ -732,9 +650,7 @@ public:
         }
     }
 
-    // Was the VPIN/OFI feed block at the head of
-    // CEAOrchestrator::FeedMicrostructureEngines(). The 200 ms throttle keeps
-    // its function-level static, so cadence is unchanged.
+    // VPIN/OFI tick feed, throttled to one pass per 200 ms by the function-level static.
     void FeedMicrostructure(int managerCount)
     {
         static uint s_lastVpinOfiFeed = 0;
@@ -758,9 +674,8 @@ public:
         }
     }
 
-    // Was CEAOrchestrator::ApplyHurstWeightModifiersToRegime(). The enterprise
-    // manager lookup that used FindEnterpriseManagerIndex() is inlined against
-    // the caller-supplied manager symbol array so the index semantics match.
+    // Enterprise manager indices must be resolved against the caller-supplied managerSymbols
+    // array: managers[] is indexed by that array, not by the hub's own symbol list.
     void ApplyHurstWeightModifiersToRegime(const SOrchestratorConfig &config,
                                            CEnterpriseStrategyManager *&managers[],
                                            const string &managerSymbols[])
@@ -781,7 +696,6 @@ public:
             if(hurstSnap.regime == HURST_RANDOM_WALK)
             continue;  // Don't modify weights if Hurst is in dead zone
 
-            // Find the enterprise manager for this symbol
             int mgrIdx = -1;
             for(int m = 0; m < ArraySize(managerSymbols); m++)
             {
@@ -805,7 +719,6 @@ public:
                 );
             }
 
-            // Batch 114: Apply Four-State Regime Detector weight multipliers
             if(config.enableFourStateRegime && i < ArraySize(m_fourStateEngines) && m_fourStateEngines[i] != NULL)
             {
                 CFourStateRegimeDetector* fourState = m_fourStateEngines[i];
@@ -827,13 +740,9 @@ public:
         }
     }
 
-    // ================= Teardown =================
-
-    // Was the three engine-cleanup blocks at the head of
-    // CEAOrchestrator::Shutdown(). Deinit()+delete ordering is unchanged.
+    // Every engine is released Deinit()-then-delete; that ordering must not change.
     void ReleaseAll()
     {
-        // Cleanup mathematical engines
         int mathEngineCount = ArraySize(m_mathEngineSymbols);
         for(int i = 0; i < mathEngineCount; i++)
         {
@@ -849,7 +758,6 @@ public:
         ArrayResize(m_mathEngineSymbols, 0);
         ArrayResize(m_gridHurstBridgeLogged, 0);
 
-        // Cleanup Batch 114 engines
         int batch114Count = ArraySize(m_kalmanEngines);
         for(int i = 0; i < batch114Count; i++)
         {
@@ -869,7 +777,6 @@ public:
         ArrayResize(m_liquiditySweepStrategies, 0);
         ArrayResize(m_rangeCompStrategies, 0);
 
-        // Cleanup institutional engines
         int instCount = ArraySize(m_vwapEngines);
         for(int i = 0; i < instCount; i++)
         {

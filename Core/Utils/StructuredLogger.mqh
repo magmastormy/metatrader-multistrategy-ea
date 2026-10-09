@@ -1,5 +1,4 @@
-// JSONL structured logging for production debugging
-// Zero overhead when disabled, queryable when enabled
+// JSONL structured logging: no-op when disabled, queryable when enabled.
 #property strict
 #ifndef CORE_UTILS_STRUCTURED_LOGGER_MQH
 #define CORE_UTILS_STRUCTURED_LOGGER_MQH
@@ -9,7 +8,6 @@
 // Forward declaration for global instance (defined in MultiStrategyAutonomousEA.mq5)
 class CStructuredLogger;
 
-// String object for buffer
 class CStringObj : public CObject
 {
 private:
@@ -35,11 +33,9 @@ private:
     int    m_flushIntervalMs;
     int    m_maxBuffer;
     
-    // Context enrichment
     long   m_accountLogin;
     string m_eaVersion;
     
-    // Helpers (defined inline in private section below)
 
 public:
     CStructuredLogger() : m_enabled(false), m_fileHandle(INVALID_HANDLE), m_sequence(0), 
@@ -55,9 +51,9 @@ public:
         if(CheckPointer(m_buffer) == POINTER_DYNAMIC) delete m_buffer;
     }
     
-    // Initialize - call once from OnInit
+    // Call once from OnInit.
     void Init(string prefix = "EA") {
-        if(m_enabled) return; // Already initialized
+        if(m_enabled) return;
         
         m_accountLogin = AccountInfoInteger(ACCOUNT_LOGIN);
         
@@ -74,7 +70,6 @@ public:
         
         if(m_enabled) {
             Print("[STRUCTLOG] Initialized: ", m_logPath);
-            // Write session start marker
             WriteRaw("{\"evt\":\"SESSION_START\",\"acct\":" + IntegerToString(m_accountLogin) + 
                      ",\"ea_ver\":\"" + m_eaVersion + "\",\"ts\":" + IntegerToString(TimeCurrent() * 1000) + "}");
         } else {
@@ -82,7 +77,7 @@ public:
         }
     }
     
-    // Shutdown - call from OnDeinit
+    // Call from OnDeinit.
     void Shutdown() {
         if(!m_enabled) return;
         FlushBuffer();
@@ -96,7 +91,6 @@ public:
         Print("[STRUCTLOG] Shutdown complete");
     }
     
-    // Core logging function - all context auto-captured
     void Log(string eventType, string message = "", string symbol = "", 
              double value1 = 0, double value2 = 0, long value3 = 0, string corrId = "")
     {
@@ -111,10 +105,9 @@ public:
             FlushBuffer();
     }
     
-    // Force flush - call on critical events
+    // Call on critical events to force the buffer out.
     void Flush() { FlushBuffer(); }
     
-    // Convenience wrappers for common events
     void LogSignal(string symbol, int strategyId, int direction, double confidence, double weight, string corrId = "") {
         long packed = ((long)strategyId << 32) | ((long)(direction + 1) & 0xFFFFFFFF);
         Log("SIGNAL", "", symbol, confidence, weight, packed, corrId);
@@ -149,7 +142,6 @@ public:
         Log("INFO", message, context, 0, 0, 0, corrId);
     }
     
-    // Symbol health events
     void LogSpreadSpike(string symbol, double current, double average, string corrId = "") {
         Log("SPREAD_SPIKE", "", symbol, current, average, 0, corrId);
     }
@@ -162,12 +154,10 @@ public:
         Log("SIGNAL_SKIPPED", reason, symbol, 0, 0, 0, corrId);
     }
     
-    // Config reload events
     void LogConfigReload(string section, string changes, string corrId = "") {
         Log("CONFIG_RELOAD", changes, section, 0, 0, 0, corrId);
     }
     
-    // AI events (when enabled)
     void LogAIVote(string symbol, string model, double confidence, int vote, string corrId = "") {
         Log("AI_VOTE", model, symbol, confidence, 0, vote, corrId);
     }
@@ -176,12 +166,10 @@ public:
         Log("AI_MODEL_LOAD", success ? "SUCCESS" : "FAILED", model, 0, 0, success ? 1 : 0, corrId);
     }
     
-    // Engine lifecycle
     void LogEngineInit(string engine, bool success, string corrId = "") {
         Log("ENGINE_INIT", success ? "OK" : "FAILED", engine, 0, 0, success ? 1 : 0, corrId);
     }
     
-    // Position lifecycle
     void LogPositionOpen(string symbol, long ticket, double volume, double price, string corrId = "") {
         Log("POSITION_OPEN", "", symbol, volume, price, ticket, corrId);
     }
@@ -194,12 +182,11 @@ public:
         Log("POSITION_MODIFY", "", symbol, sl, tp, ticket, corrId);
     }
     
-    // Utility
     bool IsEnabled() const { return m_enabled; }
     string GetLogPath() const { return m_logPath; }
     long GetSequence() const { return m_sequence; }
     
-    // Write raw JSON (for session markers)
+    // Direct write + flush, bypassing the buffer; used by the session markers.
     void WriteRaw(string json) {
         if(!m_enabled || m_fileHandle == INVALID_HANDLE) return;
         FileWriteString(m_fileHandle, json + "\n");
@@ -248,7 +235,6 @@ private:
     }
 };
 
-// Global instance declaration (definition in MultiStrategyAutonomousEA.mq5)
 extern CStructuredLogger g_structLog;
 
 #endif // CORE_UTILS_STRUCTURED_LOGGER_MQH

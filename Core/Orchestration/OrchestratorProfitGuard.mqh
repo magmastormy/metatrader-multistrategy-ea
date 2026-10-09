@@ -1,16 +1,4 @@
-// Phase F extraction from CEAOrchestrator (behaviour preserving).
-// Owns the daily profit-target / trailing-profit-floor / trading
-// halt state machine that used to live as six loose members on
-// CEAOrchestrator:
-// m_lastProfitTargetDay, m_dailyProfitTargetReached,
-// m_dailyProfitPeakPct, m_trailingProfitFloor,
-// m_dailyTradingHalt, m_dailyTradingHaltStartTime
-// The orchestrator now holds one COrchestratorProfitGuard by value
-// and forwards UpdateDailyProfitTarget() / CalculateDailyPnLPercent
-// to it. The single external reader of the halt flag
-// (GenerateAndProcessSignals) uses IsTradingHalted().
-// Constructor initialisers reproduce the original CEAOrchestrator
-// constructor list exactly.
+// Owns the daily profit-target / trailing-profit-floor / trading-halt state machine.
 #property strict
 
 #ifndef CORE_ORCHESTRATION_ORCHESTRATOR_PROFIT_GUARD_MQH
@@ -21,7 +9,6 @@
 class COrchestratorProfitGuard
 {
 private:
-    // Portfolio profit target tracking (moved verbatim from CEAOrchestrator)
     datetime m_lastProfitTargetDay;
     bool     m_dailyProfitTargetReached;
     double   m_dailyProfitPeakPct;
@@ -43,7 +30,6 @@ public:
     //--- Single external reader of the halt flag (GenerateAndProcessSignals)
     bool IsTradingHalted() const { return m_dailyTradingHalt; }
 
-    //--- was CEAOrchestrator::CalculateDailyPnLPercent
     static double CalculateDailyPnLPercent()
     {
         double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -52,7 +38,6 @@ public:
         return (equity - balance) / balance * 100.0;
     }
 
-    //--- was CEAOrchestrator::UpdateDailyProfitTarget
     void UpdateDailyProfitTarget(const SOrchestratorConfig &config)
     {
         datetime today = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
@@ -85,7 +70,6 @@ public:
                 if(dailyPnL < m_trailingProfitFloor)
                 {
                     double hardFloor = config.dailyProfitTargetPercent * config.profitTargetHardFloorRatio;
-                    // Would trigger selective close
                     m_dailyTradingHalt = true;
                     m_dailyTradingHaltStartTime = TimeCurrent();
                 }
