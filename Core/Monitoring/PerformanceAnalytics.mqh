@@ -130,7 +130,6 @@ private:
     void LogPerformanceUpdate(const string message);
 };
 
-// Constructor
 CPerformanceAnalytics::CPerformanceAnalytics(void) :
     m_lastUpdate(0),
     m_lastReportTime(0),
@@ -140,7 +139,6 @@ CPerformanceAnalytics::CPerformanceAnalytics(void) :
     // Sub-module members initialise their own state (arrays, counters)
 }
 
-// Destructor
 CPerformanceAnalytics::~CPerformanceAnalytics(void)
 {
     if(m_initialized)

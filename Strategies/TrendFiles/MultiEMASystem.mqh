@@ -58,7 +58,6 @@ private:
     double              m_plusDI[1];
     double              m_minusDI[1];
     
-    // State
     STrendState         m_currentTrend;
     ENUM_EMA_ALIGNMENT  m_alignment;
     int                 m_consistentBars;
@@ -113,7 +112,6 @@ public:
     double              GetEMASlope(int emaPeriod, int barsBack = 3);
 };
 
-// Constructor
 CMultiEMASystem::CMultiEMASystem() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -136,7 +134,6 @@ CMultiEMASystem::CMultiEMASystem() :
     ArrayInitialize(m_minusDI, 0);
 }
 
-// Destructor
 CMultiEMASystem::~CMultiEMASystem()
 {
     Deinit();

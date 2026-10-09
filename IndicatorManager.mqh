@@ -781,7 +781,6 @@ int CIndicatorManager::GetHandle(ENUM_INDICATOR_TYPE type, string symbol, ENUM_T
    return INVALID_HANDLE;
 }
 
-// Destructor
 CIndicatorManager::~CIndicatorManager()
 {
    ReleaseAll();

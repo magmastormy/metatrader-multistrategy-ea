@@ -82,7 +82,6 @@ public:
     bool                IsInImbalance(double price);
 };
 
-// Constructor
 CImbalanceDetector::CImbalanceDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -92,7 +91,6 @@ CImbalanceDetector::CImbalanceDetector() :
     ArrayResize(m_imbalances, 0);
 }
 
-// Destructor
 CImbalanceDetector::~CImbalanceDetector()
 {
     ArrayFree(m_imbalances);

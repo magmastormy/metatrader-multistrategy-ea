@@ -88,7 +88,6 @@ public:
     double              GetATRTrailStop(bool isBuy, double highestOrLowest);
 };
 
-// Constructor
 CTrendTrailingStop::CTrendTrailingStop() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -101,7 +100,6 @@ CTrendTrailingStop::CTrendTrailingStop() :
 {
 }
 
-// Destructor
 CTrendTrailingStop::~CTrendTrailingStop()
 {
     Deinit();

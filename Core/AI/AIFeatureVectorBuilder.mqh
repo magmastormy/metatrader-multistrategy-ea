@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| AIFeatureVectorBuilder.mqh                                       |
-//| Canonical 65-feature AI input builder for NN / ONNX / sequence    |
-//+------------------------------------------------------------------+
+// AIFeatureVectorBuilder.mqh
+// Canonical 65-feature AI input builder for NN / ONNX / sequence
 #property strict
 
 #ifndef CORE_AI_FEATURE_VECTOR_BUILDER_MQH

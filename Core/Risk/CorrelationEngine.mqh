@@ -86,7 +86,6 @@ public:
     string   GetConfig() const;
 };
 
-// Constructor
 CCorrelationEngine::CCorrelationEngine() :
     m_lookback(30),
     m_refreshIntervalSec(300),
@@ -427,7 +426,6 @@ void CCorrelationEngine::Reset()
     m_lastRefreshTime = 0;
 }
 
-// Destructor
 CCorrelationEngine::~CCorrelationEngine()
 {
     // Cleanup - array memory is automatically managed

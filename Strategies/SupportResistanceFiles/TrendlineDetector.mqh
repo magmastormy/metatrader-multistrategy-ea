@@ -129,7 +129,6 @@ public:
     bool                IsTrendlineBroken(STrendline &trendline);
 };
 
-// Constructor
 CTrendlineDetector::CTrendlineDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -145,7 +144,6 @@ CTrendlineDetector::CTrendlineDetector() :
     ArrayResize(m_trendlines, 0);
 }
 
-// Destructor
 CTrendlineDetector::~CTrendlineDetector()
 {
     ArrayFree(m_swingHighs);

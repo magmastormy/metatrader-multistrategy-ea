@@ -137,7 +137,6 @@ private:
                               double confidence);
 };
 
-// Constructor
 CTimeframeConsistency::CTimeframeConsistency() :
     m_signalCount(0),
     m_resolutionMode(CONFLICT_RES_WEIGHTED),
@@ -154,7 +153,6 @@ CTimeframeConsistency::CTimeframeConsistency() :
     ArrayResize(m_signals, 0);
 }
 
-// Destructor
 CTimeframeConsistency::~CTimeframeConsistency()
 {
     ArrayFree(m_signals);
@@ -373,7 +371,6 @@ ENUM_TRADE_SIGNAL CTimeframeConsistency::PreventHedging(ENUM_TRADE_SIGNAL signal
     return signal1; // Return first signal if not conflicting
 }
 
-// Reset
 void CTimeframeConsistency::Reset()
 {
     m_signalCount = 0;

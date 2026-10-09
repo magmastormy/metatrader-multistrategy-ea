@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| OnnxAIStrategyAdapter.mqh                                        |
-//| Symbol-scoped ONNX AI strategy adapter                           |
-//+------------------------------------------------------------------+
+// OnnxAIStrategyAdapter.mqh
+// Symbol-scoped ONNX AI strategy adapter
 #property strict
 
 #ifndef CORE_STRATEGY_ONNX_AI_STRATEGY_ADAPTER_MQH

@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| AIConfig.mqh                                                     |
-//| Centralized AI hyperparameters and constants                      |
-//| All magic numbers from AI modules live here for per-symbol tuning |
-//+------------------------------------------------------------------+
+// AIConfig.mqh
+// Centralized AI hyperparameters and constants
+// All magic numbers from AI modules live here for per-symbol tuning
 #ifndef AI_CONFIG_MQH
 #define AI_CONFIG_MQH
 

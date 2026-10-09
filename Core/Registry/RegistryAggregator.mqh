@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| Registry Aggregator - Enterprise Grade                           |
-//| Aggregates multiple typed registries into a unified access point |
-//+------------------------------------------------------------------+
+// Registry Aggregator - Enterprise Grade
+// Aggregates multiple typed registries into a unified access point
 #ifndef REGISTRY_AGGREGATOR_MQH
 #define REGISTRY_AGGREGATOR_MQH
 
@@ -119,17 +117,11 @@ private:
     CRegistryAggregator(const CRegistryAggregator&);
 };
 
-//+------------------------------------------------------------------+
-//| Destructor                                                       |
-//+------------------------------------------------------------------+
 CRegistryAggregator::~CRegistryAggregator()
 {
     Deinitialize();
 }
 
-//+------------------------------------------------------------------+
-//| Initialize                                                       |
-//+------------------------------------------------------------------+
 bool CRegistryAggregator::Initialize()
 {
     bool ok = true;
@@ -198,9 +190,6 @@ bool CRegistryAggregator::Initialize()
     return ok;
 }
 
-//+------------------------------------------------------------------+
-//| Deinitialize                                                     |
-//+------------------------------------------------------------------+
 void CRegistryAggregator::Deinitialize()
 {
     // Clear all registries
@@ -252,9 +241,7 @@ void CRegistryAggregator::Deinitialize()
         Print("[RegistryAggregator] All registries deinitialized");
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get Trend Engine                                    |
-//+------------------------------------------------------------------+
+// Convenience: Get Trend Engine
 CTrendEngine* CRegistryAggregator::GetTrendEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -262,9 +249,7 @@ CTrendEngine* CRegistryAggregator::GetTrendEngine(const string symbol) const
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get Structure Engine                                |
-//+------------------------------------------------------------------+
+// Convenience: Get Structure Engine
 CStructureEngine* CRegistryAggregator::GetStructureEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -272,9 +257,7 @@ CStructureEngine* CRegistryAggregator::GetStructureEngine(const string symbol) c
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get Liquidity Engine                                |
-//+------------------------------------------------------------------+
+// Convenience: Get Liquidity Engine
 CLiquidityEngine* CRegistryAggregator::GetLiquidityEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -282,9 +265,7 @@ CLiquidityEngine* CRegistryAggregator::GetLiquidityEngine(const string symbol) c
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get Volatility Engine                               |
-//+------------------------------------------------------------------+
+// Convenience: Get Volatility Engine
 CVolatilityEngine* CRegistryAggregator::GetVolatilityEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -292,9 +273,7 @@ CVolatilityEngine* CRegistryAggregator::GetVolatilityEngine(const string symbol)
         return NULL;
     }
 
-    //+------------------------------------------------------------------+
-    //| Convenience: Get Regime Engine                                   |
-    //+------------------------------------------------------------------+
+    // Convenience: Get Regime Engine
 CRegimeEngine* CRegistryAggregator::GetRegimeEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -302,9 +281,7 @@ CRegimeEngine* CRegistryAggregator::GetRegimeEngine(const string symbol) const
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get OFI Engine                                      |
-//+------------------------------------------------------------------+
+// Convenience: Get OFI Engine
 COrderFlowImbalanceEngine* CRegistryAggregator::GetOFIEngine(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -312,9 +289,7 @@ COrderFlowImbalanceEngine* CRegistryAggregator::GetOFIEngine(const string symbol
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get VPIN Filter                                     |
-//+------------------------------------------------------------------+
+// Convenience: Get VPIN Filter
 CVPINFilter* CRegistryAggregator::GetVPINFilter(const string symbol) const
 {
     if(m_mathRegistry != NULL)
@@ -322,9 +297,7 @@ CVPINFilter* CRegistryAggregator::GetVPINFilter(const string symbol) const
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get Drawing Manager                                 |
-//+------------------------------------------------------------------+
+// Convenience: Get Drawing Manager
 CChartDrawingManager* CRegistryAggregator::GetDrawingManager(const string symbol) const
 {
     if(m_drawingRegistry != NULL)
@@ -332,9 +305,7 @@ CChartDrawingManager* CRegistryAggregator::GetDrawingManager(const string symbol
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Convenience: Get Scan Scheduler                                  |
-//+------------------------------------------------------------------+
+// Convenience: Get Scan Scheduler
 // Note: CScanSchedulerRegistry doesn't have a GetScheduler method.
 // It tracks scan state per symbol. Return NULL for now.
 CSymbolScanScheduler* CRegistryAggregator::GetScanScheduler(const string symbol) const
@@ -344,9 +315,6 @@ CSymbolScanScheduler* CRegistryAggregator::GetScanScheduler(const string symbol)
     return NULL;
 }
 
-//+------------------------------------------------------------------+
-//| Get Total Registered Count                                       |
-//+------------------------------------------------------------------+
 int CRegistryAggregator::GetTotalRegisteredCount() const
 {
     int total = 0;
@@ -359,18 +327,13 @@ int CRegistryAggregator::GetTotalRegisteredCount() const
     return total;
 }
 
-//+------------------------------------------------------------------+
-//| Neural Net online learning tick                                  |
-//+------------------------------------------------------------------+
 void CRegistryAggregator::TickNeuralNetOnlineLearning() const
 {
     if(m_neuralNetRegistry != NULL)
         m_neuralNetRegistry.TickOnlineLearningAll();
 }
 
-//+------------------------------------------------------------------+
-//| Clear All Registries                                             |
-//+------------------------------------------------------------------+
+// Clear All Registries
 void CRegistryAggregator::ClearAll()
 {
     if(m_mathRegistry != NULL) m_mathRegistry.Clear();

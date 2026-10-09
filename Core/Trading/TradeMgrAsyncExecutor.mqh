@@ -488,4 +488,3 @@ public:
 };
 
 #endif // CORE_TRADING_TRADE_MGR_ASYNC_EXECUTOR_MQH
-//+------------------------------------------------------------------+

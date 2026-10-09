@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| RiskDashboardPanel.mqh                                           |
-//| On-chart risk monitoring panel - no external dashboard needed    |
-//+------------------------------------------------------------------+
+// RiskDashboardPanel.mqh
+// On-chart risk monitoring panel - no external dashboard needed
 #property strict
 #ifndef CORE_VISUALIZATION_RISK_DASHBOARD_PANEL_MQH
 #define CORE_VISUALIZATION_RISK_DASHBOARD_PANEL_MQH
@@ -9,9 +7,6 @@
 #include "../Utils/Enums.mqh"
 #include "../Utils/LogMacros.mqh"
 
-//+------------------------------------------------------------------+
-//| CRiskDashboardPanel                                              |
-//+------------------------------------------------------------------+
 class CRiskDashboardPanel
 {
 private:

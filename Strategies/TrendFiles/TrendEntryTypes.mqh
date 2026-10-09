@@ -83,7 +83,6 @@ public:
     void                SetMinADXForContinuation(double adx) { m_minADXForContinuation = adx; }
 };
 
-// Constructor
 CTrendEntryTypes::CTrendEntryTypes() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -96,7 +95,6 @@ CTrendEntryTypes::CTrendEntryTypes() :
 {
 }
 
-// Destructor
 CTrendEntryTypes::~CTrendEntryTypes()
 {
     Deinit();

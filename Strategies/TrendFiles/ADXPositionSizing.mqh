@@ -96,7 +96,6 @@ CADXPositionSizing::CADXPositionSizing() :
 {
 }
 
-// Destructor
 CADXPositionSizing::~CADXPositionSizing()
 {
     Deinit();

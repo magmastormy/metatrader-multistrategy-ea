@@ -1049,7 +1049,6 @@ SOrchestratorConfig BuildOrchestratorConfig()
         config.enableLiquiditySweep = g_completeFlags.liquiditySweep;
         config.enableRangeCompression = g_completeFlags.rangeCompression;
 
-        // AI
         config.enableAIMode = g_completeFlags.aiModeEnabled;
         config.enableNeuralNetwork = g_completeFlags.neuralNetwork;
         config.enableTransformer = g_completeFlags.transformer;

@@ -41,4 +41,3 @@ public:
 };
 
 #endif // CORE_TRADING_TRADE_RETCODE_CLASSIFIER_MQH
-//+------------------------------------------------------------------+

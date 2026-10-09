@@ -1,8 +1,6 @@
-//+------------------------------------------------------------------+
-//| TrainingDataExporter.mq5                                          |
-//| Enterprise training data exporter for ONNX/ML consensus models    |
-//| Exports OHLCV + AI features + regime + strategy signals + labels  |
-//+------------------------------------------------------------------+
+// TrainingDataExporter.mq5
+// Enterprise training data exporter for ONNX/ML consensus models
+// Exports OHLCV + AI features + regime + strategy signals + labels
 #property strict
 #property version "2.00"
 
@@ -34,9 +32,7 @@
 //--- Resolve extern variables via shared definitions header
 #include "Core\Orchestration\GlobalDefs.mqh"
 
-//+------------------------------------------------------------------+
-//| Input Parameters                                                  |
-//+------------------------------------------------------------------+
+// Input Parameters
 input group "Export Configuration"
 input string          InpExportSymbols        = "EURUSD.0,GBPUSD.0,USDJPY.0,XAUUSD.0,BTCUSD.0,AUDUSD.0";
 input ENUM_TIMEFRAMES InpExportTimeframe      = PERIOD_H1;
@@ -62,15 +58,11 @@ input int             InpVPINNumBuckets       = 50;
 input double          InpVPINExtremeThreshold = 0.7;
 input int             InpOFISlowWindow        = 100;
 
-//+------------------------------------------------------------------+
-//| Constants                                                         |
-//+------------------------------------------------------------------+
+// Constants
 #define STRATEGY_COUNT 6
 #define MAX_LABEL_HORIZONS 5
 
-//+------------------------------------------------------------------+
-//| Strategy name constants (must match registration order)           |
-//+------------------------------------------------------------------+
+// Strategy name constants (must match registration order)
 const string STRATEGY_NAMES[STRATEGY_COUNT] =
 {
     "Momentum",
@@ -81,9 +73,7 @@ const string STRATEGY_NAMES[STRATEGY_COUNT] =
     "VolBreak"
 };
 
-//+------------------------------------------------------------------+
-//| Per-symbol context holding all engines and strategies             |
-//+------------------------------------------------------------------+
+// Per-symbol context holding all engines and strategies
 struct SSymbolExportContext
 {
     string              symbol;
@@ -122,16 +112,12 @@ struct SSymbolExportContext
     }
 };
 
-//+------------------------------------------------------------------+
-//| Global state                                                      |
-//+------------------------------------------------------------------+
+// Global state
 SSymbolExportContext g_contexts[];
 int                 g_labelHorizons[];
 int                 g_labelHorizonCount = 0;
 
-//+------------------------------------------------------------------+
-//| Utility: trim whitespace from string                              |
-//+------------------------------------------------------------------+
+// Utility: trim whitespace from string
 string TrimString(string value)
 {
     StringTrimLeft(value);
@@ -139,9 +125,7 @@ string TrimString(string value)
     return value;
 }
 
-//+------------------------------------------------------------------+
-//| Parse comma-separated label horizons from input                   |
-//+------------------------------------------------------------------+
+// Parse comma-separated label horizons from input
 void ParseLabelHorizons()
 {
     string parts[];
@@ -164,9 +148,7 @@ void ParseLabelHorizons()
                 g_labelHorizonCount, InpLabelHorizons);
 }
 
-//+------------------------------------------------------------------+
-//| Initialize engines for a symbol (by context index)                |
-//+------------------------------------------------------------------+
+// Initialize engines for a symbol (by context index)
 bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
 {
     g_contexts[ctxIdx].regimeEngine = new CRegimeEngine();
@@ -209,9 +191,7 @@ bool InitializeEngines(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Initialize strategies and consensus manager for a symbol          |
-//+------------------------------------------------------------------+
+// Initialize strategies and consensus manager for a symbol
 bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
 {
     // Create owned dependencies (used for feature export; no live trading)
@@ -334,9 +314,7 @@ bool InitializeStrategies(const int ctxIdx, const ENUM_TIMEFRAMES timeframe)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Build CSV header based on enabled export flags                    |
-//+------------------------------------------------------------------+
+// Build CSV header based on enabled export flags
 string BuildCSVHeader()
 {
     string header = "symbol,timestamp,open,high,low,close,tick_volume,spread";
@@ -389,10 +367,8 @@ string BuildCSVHeader()
     return header;
 }
 
-//+------------------------------------------------------------------+
-//| Compute triple-barrier label for a bar                            |
-//| Returns: 1 = up barrier hit first, -1 = down first, 0 = timeout  |
-//+------------------------------------------------------------------+
+// Compute triple-barrier label for a bar
+// Returns: 1 = up barrier hit first, -1 = down first, 0 = timeout
 int ComputeTripleBarrierLabel(const MqlRates &rates[],
                               const int barIndex,
                               const int totalBars,
@@ -416,9 +392,7 @@ int ComputeTripleBarrierLabel(const MqlRates &rates[],
     return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Get ATR value at a specific bar index from rates array            |
-//+------------------------------------------------------------------+
+// Get ATR value at a specific bar index from rates array
 double GetATRAtBar(const string symbol, const ENUM_TIMEFRAMES timeframe, const int barShift)
 {
     int atrHandle = CIndicatorManager::Instance().GetATRHandle(symbol, timeframe, 14);
@@ -433,9 +407,7 @@ double GetATRAtBar(const string symbol, const ENUM_TIMEFRAMES timeframe, const i
     return atrBuffer[0];
 }
 
-//+------------------------------------------------------------------+
-//| Check if all engines are warmed up (by context index)             |
-//+------------------------------------------------------------------+
+// Check if all engines are warmed up (by context index)
 bool AllEnginesWarmedUp(const int ctxIdx)
 {
     if(InpExportRegimeData)
@@ -452,9 +424,7 @@ bool AllEnginesWarmedUp(const int ctxIdx)
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Export training data for a single symbol (by context index)       |
-//+------------------------------------------------------------------+
+// Export training data for a single symbol (by context index)
 bool ExportSymbolTrainingData(const int fileHandle,
                               const int ctxIdx,
                               const ENUM_TIMEFRAMES timeframe,
@@ -669,7 +639,6 @@ bool ExportSymbolTrainingData(const int fileHandle,
                         TimeToString(rates[i].time, TIME_DATE | TIME_SECONDS), dbuf);
             diagBars++;
         }
-        // ------------------------------------------------------------------
 
         // Section 5: Consensus Metrics
         if(InpExportConsensusData)
@@ -736,9 +705,7 @@ bool ExportSymbolTrainingData(const int fileHandle,
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Cleanup all allocated objects                                     |
-//+------------------------------------------------------------------+
+// Cleanup all allocated objects
 void Cleanup()
 {
     for(int i = 0; i < ArraySize(g_contexts); i++)
@@ -772,9 +739,7 @@ void Cleanup()
     CIndicatorManager::DestroyInstance();
 }
 
-//+------------------------------------------------------------------+
-//| Expert initialization                                             |
-//+------------------------------------------------------------------+
+// Expert initialization
 int OnInit()
 {
     datetime toDate = (InpToDate > 0) ? InpToDate : TimeCurrent();
@@ -858,17 +823,13 @@ int OnInit()
     return INIT_SUCCEEDED;
 }
 
-//+------------------------------------------------------------------+
-//| Expert deinitialization                                           |
-//+------------------------------------------------------------------+
+// Expert deinitialization
 void OnDeinit(const int reason)
 {
     Cleanup();
 }
 
-//+------------------------------------------------------------------+
-//| Tick handler (unused — one-shot exporter)                         |
-//+------------------------------------------------------------------+
+// Tick handler (unused — one-shot exporter)
 void OnTick()
 {
 }

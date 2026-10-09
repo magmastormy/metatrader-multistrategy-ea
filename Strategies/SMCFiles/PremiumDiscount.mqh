@@ -99,7 +99,6 @@ public:
     double              Get786Level() { return GetFibLevel(0.786); }
 };
 
-// Constructor
 CSMCPremiumDiscount::CSMCPremiumDiscount() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -114,7 +113,6 @@ CSMCPremiumDiscount::CSMCPremiumDiscount() :
 {
 }
 
-// Destructor
 CSMCPremiumDiscount::~CSMCPremiumDiscount()
 {
 }

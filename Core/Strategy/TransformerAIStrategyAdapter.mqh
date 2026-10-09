@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| TransformerAIStrategyAdapter.mqh                                 |
-//| IStrategy adapter for runtime transformer voting                 |
-//+------------------------------------------------------------------+
+// TransformerAIStrategyAdapter.mqh
+// IStrategy adapter for runtime transformer voting
 #property strict
 
 #ifndef CORE_STRATEGY_TRANSFORMER_AI_STRATEGY_ADAPTER_MQH
@@ -466,9 +464,7 @@ public:
         return (m_transformer != NULL) ? "LOADED" : "NOT_INITIALIZED";
     }
 
-    //+------------------------------------------------------------------+
-    //| Capability Interface Methods                                     |
-    //+------------------------------------------------------------------+
+    // Capability Interface Methods
     // IUncertaintyEstimation
     virtual void GetConfidenceInterval(double &lower, double &upper) const override
     {

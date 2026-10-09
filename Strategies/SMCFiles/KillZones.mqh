@@ -99,7 +99,6 @@ public:
     double          GetSessionVolatilityMultiplier();
 };
 
-// Constructor
 CICTKillZones::CICTKillZones() :
     m_brokerGMTOffset(2),
     m_estOffset(-5),
@@ -115,7 +114,6 @@ CICTKillZones::CICTKillZones() :
     InitializeSessions();
 }
 
-// Destructor
 CICTKillZones::~CICTKillZones()
 {
 }

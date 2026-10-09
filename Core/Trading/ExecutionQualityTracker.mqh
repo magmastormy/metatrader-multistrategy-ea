@@ -241,4 +241,3 @@ public:
 };
 
 #endif // CORE_TRADING_EXECUTION_QUALITY_TRACKER_MQH
-//+------------------------------------------------------------------+

@@ -65,7 +65,6 @@ public:
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
 
-// Constructor
 CSRBounceStrategy::CSRBounceStrategy() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -80,7 +79,6 @@ CSRBounceStrategy::CSRBounceStrategy() :
 {
 }
 
-// Destructor
 CSRBounceStrategy::~CSRBounceStrategy()
 {
     // Handles managed by CIndicatorManager — no IndicatorRelease needed
@@ -332,7 +330,6 @@ public:
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
 
-// Constructor
 CSRBreakoutStrategy::CSRBreakoutStrategy() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -342,7 +339,6 @@ CSRBreakoutStrategy::CSRBreakoutStrategy() :
 {
 }
 
-// Destructor
 CSRBreakoutStrategy::~CSRBreakoutStrategy()
 {
     // ATR handle managed by CIndicatorManager — no IndicatorRelease needed
@@ -604,7 +600,6 @@ public:
     void                SetMinConfidence(double conf) { m_minConfidence = conf; }
 };
 
-// Constructor
 CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -615,7 +610,6 @@ CTrendlineBounceStrategy::CTrendlineBounceStrategy() :
 {
 }
 
-// Destructor
 CTrendlineBounceStrategy::~CTrendlineBounceStrategy()
 {
     // ATR handle managed by CIndicatorManager — no IndicatorRelease needed

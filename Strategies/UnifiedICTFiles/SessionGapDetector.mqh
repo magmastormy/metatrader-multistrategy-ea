@@ -80,7 +80,6 @@ public:
     int             GetHistoryCount() const { return m_historyCount; }
 };
 
-// Constructor
 CSessionGapDetector::CSessionGapDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_D1),
@@ -90,7 +89,6 @@ CSessionGapDetector::CSessionGapDetector() :
     ArrayResize(m_history, 0);
 }
 
-// Destructor
 CSessionGapDetector::~CSessionGapDetector()
 {
     ArrayFree(m_history);

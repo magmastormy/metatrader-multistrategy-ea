@@ -121,7 +121,6 @@ CStrategySupportResistance::CStrategySupportResistance(const string name, int ma
     m_minConfidence = 0.45; // Reduced from 0.50 to allow more M1/M5 level participation
 }
 
-// Destructor
 CStrategySupportResistance::~CStrategySupportResistance()
 {
     Cleanup();

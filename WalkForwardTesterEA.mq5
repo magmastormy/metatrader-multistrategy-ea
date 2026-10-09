@@ -1,12 +1,10 @@
-//+------------------------------------------------------------------+
-//| WalkForwardTesterEA.mq5                                          |
-//| Phase 1 in-terminal walk-forward validator (MULTI-SYMBOL).       |
-//| Validates reference strategies against the LIVE broker's real   |
-//| history (true spread, true session gaps) for every symbol in    |
-//| InpSymbols, printing one [WFO-REPORT] block per symbol.          |
-//| Embeds 3 strategies: ADX trend, RSI mean-reversion, VolBreak.    |
-//| Mirrors Tools/walkforward/*.py methodology.                      |
-//+------------------------------------------------------------------+
+// WalkForwardTesterEA.mq5
+// Phase 1 in-terminal walk-forward validator (MULTI-SYMBOL).
+// Validates reference strategies against the LIVE broker's real
+// history (true spread, true session gaps) for every symbol in
+// InpSymbols, printing one [WFO-REPORT] block per symbol.
+// Embeds 3 strategies: ADX trend, RSI mean-reversion, VolBreak.
+// Mirrors Tools/walkforward/*.py methodology.
 #property strict
 #include "Core/Validation/WalkForwardValidator.mqh"
 
@@ -22,9 +20,7 @@ input double InpTpAtr    = 2.0;       // TP distance (x ATR) -> 1.33 R:R
 input double InpCostBps  = 1.5;       // FALLBACK round-trip cost in bps (used if live spread unavailable)
 input string InpReportCsv = "WFO_Scoreboard.csv"; // persistent cross-symbol scoreboard (MQL5/Files/)
 
-//+------------------------------------------------------------------+
-//| Manual Wilder RSI                                                 |
-//+------------------------------------------------------------------+
+// Manual Wilder RSI
 void WF_RSI(const double &close[], int n, int period, double &rsi[])
 {
    ArrayResize(rsi, n);
@@ -47,9 +43,7 @@ void WF_RSI(const double &close[], int n, int period, double &rsi[])
    for(int i=0;i<period;i++) rsi[i]=rsi[period];
 }
 
-//+------------------------------------------------------------------+
-//| Manual Wilder ADX (+DI/-DI)                                       |
-//+------------------------------------------------------------------+
+// Manual Wilder ADX (+DI/-DI)
 void WF_ADX(const double &high[], const double &low[], const double &close[], int n, int period,
             double &adx[], double &pdi[], double &mdi[])
 {
@@ -83,9 +77,7 @@ void WF_ADX(const double &high[], const double &low[], const double &close[], in
    for(int i=0;i<period;i++){adx[i]=adx[period];pdi[i]=pdi[period];mdi[i]=mdi[period];}
 }
 
-//+------------------------------------------------------------------+
-//| Build the 3 reference strategy signal/confidence series          |
-//+------------------------------------------------------------------+
+// Build the 3 reference strategy signal/confidence series
 void BuildSignals(const double &open[], const double &high[], const double &low[], const double &close[],
                   int n, int &sigADX[], double &confADX[],
                   int &sigRSI[], double &confRSI[],
@@ -118,9 +110,7 @@ void BuildSignals(const double &open[], const double &high[], const double &low[
    }
 }
 
-//+------------------------------------------------------------------+
-//| Run + print one strategy (also appends a scoreboard CSV row)      |
-//+------------------------------------------------------------------+
+// Run + print one strategy (also appends a scoreboard CSV row)
 void Validate(const string sym, const string name, const double &open[], const double &high[], const double &low[],
               const double &close[], const double &atr[], const int &sig[], const double &conf[],
               int n, double cost_rt, double cost_bps)
@@ -139,9 +129,7 @@ void Validate(const string sym, const string name, const double &open[], const d
    }
 }
 
-//+------------------------------------------------------------------+
-//| Manual whitespace trim (MQL5 build here lacks StringTrim*)        |
-//+------------------------------------------------------------------+
+// Manual whitespace trim (MQL5 build here lacks StringTrim*)
 string TrimStr(string s)
 {
    while(StringLen(s) > 0 && StringGetCharacter(s, 0) == ' ') s = StringSubstr(s, 1);
@@ -149,9 +137,7 @@ string TrimStr(string s)
    return s;
 }
 
-//+------------------------------------------------------------------+
-//| Parse comma-separated symbol list                                 |
-//+------------------------------------------------------------------+
+// Parse comma-separated symbol list
 void ParseSymbols(string txt, string &out[])
 {
    string parts[];
@@ -163,9 +149,7 @@ void ParseSymbols(string txt, string &out[])
    }
 }
 
-//+------------------------------------------------------------------+
-//| OnInit - loop over all symbols                                    |
-//+------------------------------------------------------------------+
+// OnInit - loop over all symbols
 int OnInit()
 {
    string syms[];
@@ -228,9 +212,6 @@ int OnInit()
    return INIT_SUCCEEDED;
 }
 
-//+------------------------------------------------------------------+
-//| OnDeinit / OnTick                                                 |
-//+------------------------------------------------------------------+
+// OnDeinit / OnTick
 void OnDeinit(const int reason) {}
 void OnTick() {}
-//+------------------------------------------------------------------+

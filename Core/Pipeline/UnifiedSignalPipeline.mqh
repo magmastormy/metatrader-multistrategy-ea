@@ -169,7 +169,6 @@ public:
                 bool IsBudgetExhausted() const { return m_budgetExhausted; }
     };
 
-// Constructor
 CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
     m_mathRegistry(NULL),
     m_tfConsistency(NULL),
@@ -204,7 +203,6 @@ CUnifiedSignalPipeline::CUnifiedSignalPipeline() :
         m_filterOrderMap[i] = -1;
 }
 
-// Destructor
 CUnifiedSignalPipeline::~CUnifiedSignalPipeline()
 {
     // Engines are owned by the registry, not by this pipeline

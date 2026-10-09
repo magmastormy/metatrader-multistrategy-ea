@@ -21,7 +21,6 @@ private:
     double                  m_pyramidingSizeMultiplier;
     int                     m_pyramidingMaxLayers;
 
-    // State
     struct SPyramidState
     {
         ulong       baseTicket;

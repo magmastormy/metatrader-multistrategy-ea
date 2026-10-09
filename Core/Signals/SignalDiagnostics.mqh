@@ -189,7 +189,6 @@ private:
     string TimeframeToString(int tf);
 };
 
-// Constructor
 CSignalDiagnostics::CSignalDiagnostics() :
     m_maxRecords(1000),
     m_currentIndex(0),
@@ -208,7 +207,6 @@ CSignalDiagnostics::CSignalDiagnostics() :
 {
 }
 
-// Destructor
 CSignalDiagnostics::~CSignalDiagnostics()
 {
     Shutdown();

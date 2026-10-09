@@ -103,7 +103,6 @@ public:
     bool                DetectBreakout(double price, int &brokenLevelIndex);
 };
 
-// Constructor
 CSupportResistanceDetector::CSupportResistanceDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -116,7 +115,6 @@ CSupportResistanceDetector::CSupportResistanceDetector() :
     ArrayResize(m_levels, 0);
 }
 
-// Destructor
 CSupportResistanceDetector::~CSupportResistanceDetector()
 {
     // ATR handle managed by CIndicatorManager — no IndicatorRelease needed

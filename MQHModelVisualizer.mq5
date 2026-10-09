@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| MQHModelVisualizer.mq5                                           |
-//| Visualization script for training results                         |
-//+------------------------------------------------------------------+
+// MQHModelVisualizer.mq5
+// Visualization script for training results
 #property copyright "MQH Model Training System"
 #property link      "https://github.com/metatrader-multistrategy-ea"
 #property version   "1.00"
@@ -36,9 +34,7 @@ input bool saveChartImage = true;
 #include "MQHModelTrainer/Models/FeedForwardNN.mqh"
 #include "MQHModelTrainer/Models/TrainingSession.mqh"
 
-//+------------------------------------------------------------------+
-//| Script program start function                                    |
-//+------------------------------------------------------------------+
+// Script program start function
 void OnStart()
 {
     Print("=== MQH Model Visualizer ===");

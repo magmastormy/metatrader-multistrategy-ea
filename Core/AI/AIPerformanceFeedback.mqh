@@ -211,7 +211,6 @@ public:
     }
 };
 
-// Constructor
 CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_maxRecords(1000),
     m_currentIndex(0),
@@ -238,7 +237,6 @@ CAIPerformanceFeedback::CAIPerformanceFeedback(void) :
     m_currentMetrics = SAIModelMetrics();
 }
 
-// Destructor
 CAIPerformanceFeedback::~CAIPerformanceFeedback(void)
 {
     if(m_initialized)

@@ -137,7 +137,6 @@ public:
         m_lastOnnxInitAttempt = 0;
     }
 
-// Reset
 // Full state reset used by the manual re-enable path
 // (CEAOrchestrator::ReenableONNXAI).
     void Reset()

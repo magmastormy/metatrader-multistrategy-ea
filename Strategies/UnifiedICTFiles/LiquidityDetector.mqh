@@ -135,7 +135,6 @@ public:
     int                 DetectExternalSwingLiquidity(SExternalLiquidityPool &pools[], int maxPools = 10, int lookback = 100);
 };
 
-// Constructor
 CLiquidityDetector::CLiquidityDetector() :
     m_symbol(""),
     m_timeframe(PERIOD_CURRENT),
@@ -146,7 +145,6 @@ CLiquidityDetector::CLiquidityDetector() :
     ArrayResize(m_liquidityPools, 0);
 }
 
-// Destructor
 CLiquidityDetector::~CLiquidityDetector()
 {
     ArrayFree(m_liquidityPools);

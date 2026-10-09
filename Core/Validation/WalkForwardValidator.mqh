@@ -257,4 +257,3 @@ void WF_Run(const double &open[], const double &high[], const double &low[], con
 }
 
 #endif // WALKFORWARD_VALIDATOR_MQH
-//+------------------------------------------------------------------+

@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| NeuralNetRegistry.mqh                                            |
-//| Consolidates Neural Network strategies and AI adapters           |
-//+------------------------------------------------------------------+
+// NeuralNetRegistry.mqh
+// Consolidates Neural Network strategies and AI adapters
 #property strict
 
 #ifndef CORE_REGISTRY_NEURAL_NET_REGISTRY_MQH

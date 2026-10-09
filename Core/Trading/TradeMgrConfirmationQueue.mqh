@@ -211,4 +211,3 @@ public:
 };
 
 #endif // CORE_TRADING_TRADE_MGR_CONFIRMATION_QUEUE_MQH
-//+------------------------------------------------------------------+

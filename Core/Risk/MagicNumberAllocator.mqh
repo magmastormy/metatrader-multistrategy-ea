@@ -222,7 +222,6 @@ public:
     // strategyType: Type of strategy for strategy-specific offset
     // cluster: Strategy cluster for clustering
     // symbolIndex: Index of symbol in trading universe (0-based)
-    // ---------------------------------------------------------------------
     int Allocate(const string symbol, 
                  const string family,
                  ENUM_STRATEGY_TYPE strategyType,

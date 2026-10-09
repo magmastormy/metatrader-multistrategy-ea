@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| MetaLabeler.mqh                                                  |
-//| Secondary profitability filter for AI-originated trade signals   |
-//+------------------------------------------------------------------+
+// MetaLabeler.mqh
+// Secondary profitability filter for AI-originated trade signals
 #property strict
 
 #ifndef META_LABELER_MQH

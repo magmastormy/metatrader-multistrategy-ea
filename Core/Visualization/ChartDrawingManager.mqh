@@ -186,7 +186,6 @@ public:
     bool IsObjectLimitReached();
 };
 
-// Constructor
 CChartDrawingManager::CChartDrawingManager() :
     m_chartID(0),
     m_symbol(""),
@@ -250,7 +249,6 @@ bool CChartDrawingManager::DrawHorizontalLevel(double price, color levelColor, c
     return true;
 }
 
-// Destructor
 CChartDrawingManager::~CChartDrawingManager()
 {
     if(m_config.cleanupOldObjects)

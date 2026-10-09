@@ -39,4 +39,3 @@ public:
 };
 
 #endif // CORE_TRADING_TRADE_SPREAD_COST_MODEL_MQH
-//+------------------------------------------------------------------+

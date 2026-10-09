@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| NeuralNetworkStrategy.mqh                                        |
-//| Online MLP with adaptive normalization and triple-barrier labels |
-//+------------------------------------------------------------------+
+// NeuralNetworkStrategy.mqh
+// Online MLP with adaptive normalization and triple-barrier labels
 #property strict
 
 #ifndef NEURAL_NETWORK_STRATEGY_MQH

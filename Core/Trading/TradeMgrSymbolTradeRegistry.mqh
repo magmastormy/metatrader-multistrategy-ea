@@ -258,4 +258,3 @@ public:
 };
 
 #endif // CORE_TRADING_TRADE_MGR_SYMBOL_TRADE_REGISTRY_MQH
-//+------------------------------------------------------------------+

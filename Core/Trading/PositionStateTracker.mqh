@@ -215,4 +215,3 @@ public:
 };
 
 #endif // CORE_TRADING_POSITION_STATE_TRACKER_MQH
-//+------------------------------------------------------------------+

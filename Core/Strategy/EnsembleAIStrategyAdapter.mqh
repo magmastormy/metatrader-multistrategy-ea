@@ -1,7 +1,5 @@
-//+------------------------------------------------------------------+
-//| EnsembleAIStrategyAdapter.mqh                                    |
-//| IStrategy adapter for runtime ensemble AI voting                 |
-//+------------------------------------------------------------------+
+// EnsembleAIStrategyAdapter.mqh
+// IStrategy adapter for runtime ensemble AI voting
 #property strict
 
 #ifndef CORE_STRATEGY_ENSEMBLE_AI_STRATEGY_ADAPTER_MQH
