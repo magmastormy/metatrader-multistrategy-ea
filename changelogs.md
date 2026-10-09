@@ -20,7 +20,7 @@ Whole-line comments had grown to 19,496 across 340 MQL files - roughly one comme
 
 #### Verification
 - **Executable content proven unchanged:** for every file in the diff, the sequence of non-comment lines was compared against `HEAD` and must match exactly - 335 MQL files compared, and the only 11 with any executable-line difference are the excluded WIP files, which differ for the operator's own reasons.
-- Whole-line comments 19,496 → 12,384 (-36%).
+- Whole-line comments 19,496 → 12,760 repo-wide (-35%). The commit message for `f768c0d` quotes 12,384, which was the after-count over the 325 scanned files only, not the full tree - measured here for accuracy.
 - All 8 root programs recompiled **0 errors / 0 warnings** after the pass.
 
 #### Risk Flag
