@@ -2,26 +2,15 @@
 // scoring: trade outcome accounting, the 20-trade rolling ring buffer, rolling win
 // rate / Sharpe, derived metrics, the disable / re-enable governance predicates and
 // the AI accuracy -> health blend.
-// Like the Slice 2 collaborator CConsensusWeightingConfig this
-// module MUTATES the manager, so it holds a NON-const back-pointer.
-// Every read and every write goes through the manager's narrow
-// per-field accessor surface, so the resulting state transitions
-// are byte-for-byte identical to the original inline bodies.
-// DELIBERATELY NOT MOVED:
-// Multiplier. They are health/participation READS, but they are
-// called from inside the DO-NOT-PIECEMEAL C9 consensus core
-// (EvaluateConsensusInternal, EvaluateConsensusProbeOnly-
-// Internal, TryFallbackSoloSignalInternal) on the hottest
-// per-strategy loop. Same rationale C4 used for the atomic
-// consensus setters: do not add indirection the C9 bodies must
-// traverse.
-// - CStrategyHealthMonitor itself. This module only orchestrates
-// the manager-side mirror and the delegation to that monitor,
-// exactly as the original code did.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// This module MUTATES the manager: non-const back-pointer, every read and write through
+// the manager's narrow per-field accessors.
+// Deliberately NOT moved:
+// - The health / participation reads the consensus core calls on its hottest
+//   per-strategy loop (EvaluateConsensusInternal, EvaluateConsensusProbeOnlyInternal,
+//   TryFallbackSoloSignalInternal) - no extra indirection added there.
+// - CStrategyHealthMonitor itself: this module only mirrors manager state and delegates.
+// NOTE: implementation detail of EnterpriseStrategyManager.mqh, included from there
+// (after the shared free helpers, before the manager class). Not for standalone include.
 #ifndef STRATEGY_PERFORMANCE_HEALTH_MQH
 #define STRATEGY_PERFORMANCE_HEALTH_MQH
 
@@ -74,7 +63,6 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
         m_src.SetStrategyConsecutiveWins(idx, m_src.GetStrategyConsecutiveWins(idx) + 1);
         m_src.SetStrategyConsecutiveLosses(idx, 0);
 
-        // Maintain rolling average profit per winning trade
         int wins = m_src.GetStrategyWinningTrades(idx);
         if(wins > 0)
         {
@@ -88,8 +76,7 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
         m_src.SetStrategyConsecutiveLosses(idx, m_src.GetStrategyConsecutiveLosses(idx) + 1);
         m_src.SetStrategyConsecutiveWins(idx, 0);
 
-        // Maintain rolling average loss magnitude per losing trade.
-        // NOTE: totalTrades was already incremented above - preserved verbatim.
+        // Losses = totalTrades - wins; totalTrades was already incremented above
         int losses = m_src.GetStrategyTotalTrades(idx) - m_src.GetStrategyWinningTrades(idx);
         if(losses > 0)
         {
@@ -106,12 +93,11 @@ void CStrategyPerformanceHealth::UpdatePerformance(const string strategyName, do
 
     UpdateRecentPerformance(idx, netProfit);
 
-    // Regime-specific performance attribution is owned by the health monitor; no per-trade
-    // regime update is performed here.
+    // Regime attribution belongs to the health monitor; nothing per-trade happens here
 
     CalculateStrategyMetrics(idx);
 
-    // Health score update (original ESM logic blended with AISO metrics)
+    // Health score: 0.55 prior blended by sample trust = outcomes/20, clamped to 0.35..1.0
     int totalOutcomes = m_src.GetStrategySuccessCount(idx) + m_src.GetStrategyFailCount(idx);
     if(totalOutcomes > 0)
     {
@@ -157,7 +143,6 @@ void CStrategyPerformanceHealth::UpdateRecentPerformance(const int index, const 
         m_src.SetStrategyRecentTradeCount(index, m_src.GetStrategyRecentTradeCount(index) + 1);
 }
 
-// Rolling-window win rate
 double CStrategyPerformanceHealth::CalculateRecentWinRate(const int index)
 {
     if(m_src == NULL)
@@ -183,7 +168,7 @@ double CStrategyPerformanceHealth::CalculateRecentWinRate(const int index)
     return (double)wins / recentTradeCount;
 }
 
-// Rolling-window Sharpe ratio
+// Rolling-window Sharpe ratio; 0.0 (fail-closed) without a manager/index or below 5 trades
 double CStrategyPerformanceHealth::CalculateSharpeRatio(const int index)
 {
     if(m_src == NULL)
@@ -243,7 +228,7 @@ void CStrategyPerformanceHealth::CalculateStrategyMetrics(const int index)
     m_src.SetStrategyRecentWinRate(index, CalculateRecentWinRate(index));
 }
 
-// Governance predicate: should this strategy be disabled?
+// Auto-disable predicate; without usable data it returns false (never disables blind)
 bool CStrategyPerformanceHealth::ShouldDisableStrategy(const int index)
 {
     if(m_src == NULL)
@@ -257,7 +242,8 @@ bool CStrategyPerformanceHealth::ShouldDisableStrategy(const int index)
 
     if(index < 0 || index >= m_src.GetStrategyCount()) return false;
 
-    // Only check if we have enough trades
+    // Sample requirement: >=10 closed trades, then the 20-trade rolling win rate and
+    // the consecutive-loss limit decide the disable
     if(m_src.GetStrategyTotalTrades(index) < 10) return false;
 
     if(m_src.GetStrategyRecentWinRate(index) < m_src.GetMinWinRateThreshold()) return true;
@@ -292,14 +278,12 @@ void CStrategyPerformanceHealth::UpdateRegimePerformance(const int index, int re
     CStrategyHealthMonitor* healthMonitor = m_src.GetHealthMonitor();
     if(healthMonitor != NULL)
     {
-        // Still record the trade result for health tracking
         healthMonitor.RecordTradeResult(index, result);
     }
 
     if(index < 0 || index >= m_src.GetStrategyCount()) return;
 
-    // Regime-specific performance is tracked by the health monitor; this hook intentionally
-    // performs no per-trade regime update.
+    // Regime attribution is the health monitor's; this hook does no per-trade regime work
 }
 
 void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strategyName, const SAIModelMetrics &metrics)
@@ -311,16 +295,13 @@ void CStrategyPerformanceHealth::UpdateAIPerformanceMetrics(const string strateg
     if(idx < 0 || idx >= m_src.GetStrategyCount())
         return;
 
-    // Only apply to AI strategies.
-    // NOTE (verbatim): the original body dereferences the strategy pointer
-    // without a NULL check. Preserved as-is - no behaviour change.
+    // AI strategies only; the entry pointer is dereferenced unchecked here, as it always was
     ENUM_STRATEGY_TYPE stratType = m_src.GetStrategyPtr(idx).GetType();
     bool isAI = (stratType == STRATEGY_BRAIN || stratType == STRATEGY_AI_ENHANCED);
     if(!isAI)
         return;
 
-    // Store AI metrics in the strategy entry for use in weight adaptation
-    // Reuse recentWinRate for AI accuracy, avgProfit for AI profitability
+    // Field reuse: recentWinRate carries AI accuracy, avgProfit carries AI profitability
     m_src.SetStrategyRecentWinRate(idx, metrics.recentAccuracy);
     m_src.SetStrategyAvgProfit(idx, metrics.profitability);
 

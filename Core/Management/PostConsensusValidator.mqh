@@ -1,38 +1,32 @@
-// Validation applied AFTER a consensus decision has been produced:
-// hard spread cutoff, exogenous (ATR/spread) filters, adaptive
-// quality gate, OFI directional confirmation and VPIN toxicity.
-// Extracted verbatim from CEnterpriseStrategyManager. This module
-// OWNS the validator configuration block (it had no readers outside
-// the validator methods) and reads everything else through the
-// manager's minimal const accessor surface, so every veto decision
-// and every emitted log line is byte-for-byte identical to the
-// original implementation.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Validation applied AFTER a consensus decision has been produced: hard spread
+// cutoff, exogenous (ATR / spread) filters, adaptive quality gate, OFI directional
+// confirmation, VPIN toxicity.
+// Checks that VETO a trade: no_signal, hard_spread_cutoff (spread in points vs
+// m_hardSpreadCutoffPoints), ATR-ratio crisis (ATR14/ATR50), spread too wide vs
+// ATR, insufficient_quality, OFI contradiction. Checks that only scale risk DOWN:
+// ATR ratio > 1.5 halves atrRiskScale, VPIN sets a sizing multiplier. The validator
+// can reduce risk but can never raise it.
+// NOTE: this header is an implementation detail of EnterpriseStrategyManager.mqh and
+// is included from there (after the shared free helpers, before the manager class).
+// It is not intended to be included standalone.
 #ifndef POST_CONSENSUS_VALIDATOR_MQH
 #define POST_CONSENSUS_VALIDATOR_MQH
 
 #include "../Utils/Enums.mqh"                     // ENUM_TRADE_SIGNAL, SConsensusDecisionContext
-#include "../Utils/JsonLogger.mqh"                // CJsonLogger
+#include "../Utils/JsonLogger.mqh"
 #include "../Pipeline/UnifiedSignalPipeline.mqh"  // CUnifiedSignalPipeline::ApplySpreadFilter
-#include "../Risk/VPINFilter.mqh"                 // CVPINFilter
-#include "../Engines/OrderFlowImbalanceEngine.mqh" // COrderFlowImbalanceEngine
+#include "../Risk/VPINFilter.mqh"
+#include "../Engines/OrderFlowImbalanceEngine.mqh"
 #include "../Processing/MultiAssetProfiler.mqh"   // CMultiAssetProfiler, IsSyntheticAssetClass
 #include "../../IndicatorManager.mqh"             // CIndicatorManager (ATR handles)
 #include "StrategyStateReporter.mqh"              // ConsensusDecisionClassToString (static)
 
 class CEnterpriseStrategyManager;   // forward: held only as a const pointer
 
-// Hoisted out of CEnterpriseStrategyManager (was the nested type
-// CEnterpriseStrategyManager::SValidationResult). Two reasons:
-// 1. a class declared BEFORE the manager cannot name a type
-// nested inside it, so the extraction is impossible otherwise;
-// 2. the old nested name shadowed the UNRELATED global
-// SValidationResult in Core/Utils/Enums.mqh (approved/message
-// vs passed/vetoReason) - a genuine footgun now removed.
-// Fields and defaults are copied verbatim; no behaviour change.
+// Must stay a global struct: CPostConsensusValidator is declared before the manager,
+// and MQL5 cannot name a type nested inside a class that is not yet declared.
+// Also keeps clear of the unrelated SValidationResult in Core/Utils/Enums.mqh
+// (approved/message), whose name this one used to shadow.
 struct SPostConsensusValidation
 {
     bool   passed;
@@ -57,8 +51,7 @@ class CPostConsensusValidator
 private:
     const CEnterpriseStrategyManager* m_src;
 
-    //--- Validator configuration (moved here from the manager: these
-    //--- fields had no reader outside the validator methods).
+    //--- Validator configuration (owned here; no reader outside the validator methods)
     double m_validatorIntrabarMinQuality;
     double m_validatorNewBarMinQuality;
     double m_hardSpreadCutoffPoints;
@@ -67,16 +60,14 @@ private:
     bool   m_enableVPINFilter;
     double m_baseSpreadATRRatio;
     double m_syntheticSpreadATRRatio;
-    double m_lastVPINMultiplier;   // Last VPIN multiplier for position sizing
+    double m_lastVPINMultiplier;   // position-size multiplier, consumed by sizing
 
 public:
     CPostConsensusValidator() : m_src(NULL),
                                 m_validatorIntrabarMinQuality(0.72),
                                 m_validatorNewBarMinQuality(0.75),
-                                // [BUGFIX] Align hard spread cutoff with the configured max entry spread
-                                // (InpMaxEntrySpreadPoints=15000) for synthetic indices. The old 1000-pt
-                                // default rejected every synthetic symbol, whose normal spreads run
-                                // 1,727-11,140 pts. The gate still fires on genuine spread shocks above 15000.
+                                // [BUGFIX] Cutoff tracks the configured max entry spread (InpMaxEntrySpreadPoints=15000):
+                                // synthetic indices spread 1,727-11,140 pts, so the old 1000-pt default vetoed every one.
                                 m_hardSpreadCutoffPoints(15000.0),
                                 m_spikeHunterEnabled(false),
                                 m_enableOFIProxy(false),
@@ -137,7 +128,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
     if(!CheckHardSpreadCutoff(symbol, signal, confidence, confluence, scanCycleId, result, corrId))
         return result;
 
-    // 2. Exogenous filters (spread, ATR ratio)
     bool exogenousPass = true;
     string exogenousReason = "";
     double atrValue = 0, atrLongValue = 0;
@@ -151,7 +141,7 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         return result;
     }
 
-    // 3. Quality gate - Adaptive based on consensus decision class
+    // Quality gate: the threshold adapts to the consensus decision class
     double qualityThreshold = GetAdaptiveQualityThreshold(ctx, evalMode);
 
     if(ctx.directionalQuality < qualityThreshold)
@@ -171,7 +161,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         return result;
     }
 
-    // 4. OFI directional confirmation
     if(m_enableOFIProxy && !CheckOFIConfirmation(symbol, signal, confidence, scanCycleId))
     {
         result.passed = false;
@@ -179,7 +168,6 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         return result;
     }
 
-    // 5. VPIN toxicity filter
     if(m_enableVPINFilter && !CheckVPINFilter(symbol, signal, confidence, scanCycleId))
     {
         result.passed = false;
@@ -187,15 +175,12 @@ SPostConsensusValidation CPostConsensusValidator::ValidateSignal(const string sy
         return result;
     }
 
-    // 6. Spike hunter cooldown
     if(m_spikeHunterEnabled)
     {
-        // Note: spike monitor would need to be accessible - for now skip
+        // No-op: the spike monitor is not reachable from the validator.
     }
 
-    // 7. Full-margin circuit breaker - handled at higher level
-
-    // 8. Safe mode kill zone - handled at higher level
+    // Full-margin circuit breaker and safe-mode kill zone are enforced at higher levels.
 
     result.passed = true;
     result.vetoReason = "";
@@ -256,13 +241,12 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
     exogenousPass = true;
     exogenousReason = "";
 
-    // Always use direct ATR calculation
     atrValue = GetATRDirect(symbol, 14, atrReady);
     atrLongValue = GetATRDirect(symbol, 50, atrLongReady);
 
     if(!atrReady || !atrLongReady || atrLongValue <= 1e-9)
     {
-        // ATR not ready - allow but with caution
+        // Missing ATR never vetoes: the signal passes unmeasured
         result.atrReady = false;
         return true;
     }
@@ -271,9 +255,9 @@ bool CPostConsensusValidator::CheckExogenousFilters(const string symbol,
     result.atrValue = atrValue;
     result.atrLongValue = atrLongValue;
     result.atrRatio = atrValue / atrLongValue;
-    result.atrRatio = MathMin(result.atrRatio, 10.0); // Cap
+    result.atrRatio = MathMin(result.atrRatio, 10.0);
 
-    // ATR Crisis gate
+    // Crisis gate: ATR14/ATR50 above the symbol ceiling vetoes
     double atrCrisisThreshold = GetATRCrisisThreshold(symbol);
     if(result.atrRatio > atrCrisisThreshold)
     {
@@ -334,29 +318,23 @@ bool CPostConsensusValidator::CheckOFIConfirmation(const string symbol,
 {
     COrderFlowImbalanceEngine* ofiEngine = (m_src != NULL) ? m_src.GetOFIEngineConst() : NULL;
 
-    // Explicit OFI state handling:
-    // 0. OFI engine not wired -> allow
+    // Unwired / not warmed up / neutral OFI all pass through. Only a directional OFI
+    // that contradicts consensus with |ofi_z| >= 1.0 vetoes; milder divergence is
+    // logged but allowed (openness refinement).
     if(ofiEngine == NULL) return true;
 
-    // 1. OFI not available -> allow
     if(!ofiEngine.IsWarmedUp())
     {
         return true;
     }
 
-    // 2. OFI ready - get signal
     ENUM_TRADE_SIGNAL ofiSignal = ofiEngine.GetSignal();
 
-    // 3. OFI neutral (NONE) -> allow
     if(ofiSignal == TRADE_SIGNAL_NONE)
     {
         return true;
     }
 
-    // 4. OFI directional but strongly contradicts consensus -> veto.
-    //    Mild contradictions (|ofi_z| < 1.0) no longer hard-kill the trade
-    //    (openness refinement): only a statistically-significant OFI
-    //    divergence vetoes the signal.
     if(ofiSignal != signal)
     {
         double ofiValue = ofiEngine.GetOFI();
@@ -368,12 +346,10 @@ bool CPostConsensusValidator::CheckOFIConfirmation(const string symbol,
                         scanCycleId, symbol, EnumToString(signal), EnumToString(ofiSignal), ofiValue, confidence);
             return false;
         }
-        // Mild OFI contradiction: allow the trade, just record it.
         PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=ofi_mild_contradiction_allowed | signal=%s conf=%.2f | ofi=%s ofi_z=%.2f",
                     symbol, EnumToString(signal), confidence, EnumToString(ofiSignal), ofiValue);
     }
 
-    // OFI agrees with consensus, is neutral, or only mildly contradicts
     return true;
 }
 
@@ -388,19 +364,16 @@ bool CPostConsensusValidator::CheckVPINFilter(const string symbol,
     double vpinValue = vpinFilter.GetVPIN();
     double mult = vpinFilter.GetPositionSizeMultiplier();
 
-    // FIX: Instead of hard block on EXTREME VPIN, use multiplier to reduce size
-    // VPIN > 0.95 = EXTREME toxicity - reduce to minimum size but don't block entirely
-    if(vpinValue > 0.95) // EXTREME threshold
+    // VPIN never vetoes: EXTREME (>0.95) sizes down to a multiplier floored at 10%,
+    // HIGH (>0.85) applies the filter's multiplier as-is.
+    if(vpinValue > 0.95)
     {
         PrintFormat("[POST-CONSENSUS-FILTER] %s | filter=vpin_extreme | signal=%s conf=%.2f | VPIN=%.3f | mult=%.3f (reduced size)",
                     symbol, EnumToString(signal), confidence, vpinValue, mult);
-        // Allow trade through with reduced size multiplier
-        // Store the multiplier for position sizing to pick up
-        m_lastVPINMultiplier = MathMax(mult, 0.1); // Floor at 10% minimum
+        m_lastVPINMultiplier = MathMax(mult, 0.1);
         return true;
     }
 
-    // HIGH toxicity: apply multiplier but don't block
     if(vpinValue > 0.85)
     {
         m_lastVPINMultiplier = mult;
@@ -441,14 +414,13 @@ double CPostConsensusValidator::GetATRCrisisThreshold(const string symbol)
 {
     if(IsSyntheticSymbolForValidation(symbol))
     {
-        return 2.5; // Default
+        return 2.5;
     }
-    return 2.0; // Default for forex
+    return 2.0; // ATR14/ATR50 crisis ceiling: 2.5 synthetic, 2.0 forex
 }
 
 bool CPostConsensusValidator::IsSyntheticSymbolForValidation(const string symbol)
 {
-    // Use multi-asset profiler for proper asset classification
     CMultiAssetProfiler* profiler = (m_src != NULL) ? m_src.GetMultiAssetProfilerConst() : NULL;
     if(profiler != NULL)
     {
@@ -456,7 +428,7 @@ bool CPostConsensusValidator::IsSyntheticSymbolForValidation(const string symbol
         return IsSyntheticAssetClass(profile.assetClass);
     }
 
-    // Fallback to string matching if profiler not available
+    // No profiler: synthetic classification falls back to symbol name patterns
     return (StringFind(symbol, "Volatility") >= 0 || StringFind(symbol, "Crash") >= 0 ||
             StringFind(symbol, "Boom") >= 0 || StringFind(symbol, "Jump") >= 0 ||
             StringFind(symbol, "Step") >= 0 || StringFind(symbol, "DEX") >= 0 ||
@@ -467,35 +439,29 @@ bool CPostConsensusValidator::IsSyntheticSymbolForValidation(const string symbol
 double CPostConsensusValidator::GetAdaptiveQualityThreshold(const SConsensusDecisionContext& ctx,
                                                             ENUM_SIGNAL_EVAL_MODE evalMode)
 {
-    // Base thresholds from validator config
     double baseThreshold = (evalMode == EVAL_MODE_INTRABAR)
         ? m_validatorIntrabarMinQuality
         : m_validatorNewBarMinQuality;
 
-    // Adapt based on consensus decision class
+    // The effective floor adapts to the consensus decision class; anything
+    // unrecognised keeps the configured validator thresholds.
     ENUM_CONSENSUS_DECISION_CLASS decisionClass = (ENUM_CONSENSUS_DECISION_CLASS)ctx.decisionClass;
 
     switch(decisionClass)
     {
         case CONSENSUS_DECISION_FULL_QUORUM:
-            // Full quorum: use consensus threshold (lower, around 0.40-0.55)
-            // but don't go below 0.40
             return MathMax(0.40, ctx.directionalQuality * 0.9);
 
         case CONSENSUS_DECISION_SPARSE_INTRABAR:
-            // Sparse intrabar: use sparse threshold (lower, around 0.50-0.60)
             return MathMax(0.45, ctx.directionalQuality * 0.85);
 
         case CONSENSUS_DECISION_MARGINAL_ADMIT:
-            // Marginal admit: use marginal threshold (around 0.65)
             return 0.65;
 
         case CONSENSUS_DECISION_SOLO_FALLBACK:
-            // Solo fallback: use solo threshold (0.65-0.70)
             return (evalMode == EVAL_MODE_INTRABAR) ? 0.70 : 0.65;
 
         default:
-            // Default: use validator config thresholds
             return baseThreshold;
     }
 }
@@ -524,8 +490,7 @@ void CPostConsensusValidator::SetValidatorConfig(double intrabarMinQuality,
 {
     m_validatorIntrabarMinQuality = MathMax(0.0, MathMin(1.0, intrabarMinQuality));
     m_validatorNewBarMinQuality = MathMax(0.0, MathMin(1.0, newBarMinQuality));
-    // [BUGFIX] Never let a stale/small configured literal drop the cutoff below a sane floor;
-    // larger user settings (e.g. 15000) are respected as-is.
+    // [BUGFIX] Floor of 1000 pts keeps a stale/small config from disarming the cutoff; larger settings pass through.
     m_hardSpreadCutoffPoints = MathMax(hardSpreadCutoff, 1000.0);
     m_spikeHunterEnabled = spikeHunterEnabled;
     m_enableOFIProxy = enableOFI;

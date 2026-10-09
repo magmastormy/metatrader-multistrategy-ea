@@ -1,14 +1,8 @@
-// Encapsulates heartbeat/diagnostics logging extracted from
-// MultiStrategyAutonomousEA.mq5 OnTick heartbeat block
-// DECOMPOSED: cohesive responsibilities now live in DiagMgr* modules
-// DiagMgrCounters.mqh        — consensus counter bank + snapshots
-// DiagMgrAggregator.mqh      — manager fan-in + dominant cause
-// DiagMgrAIVote.mqh          — AI vote activity tracking [L11-004]
-// DiagMgrHeartbeat.mqh       — heartbeat emitters + window math
-// DiagMgrConsensusReport.mqh — consensus report log lines
-// This class remains the coordinator and preserves its public API
-// one-to-one via thin forwarders. No log string or field semantics
-// were altered, so regression logs stay directly comparable.
+// Heartbeat/diagnostics logging: the OnTick heartbeat block that used to sit inline in
+// MultiStrategyAutonomousEA.mq5. This class is the coordinator; the emitting work lives
+// in the DiagMgr* modules listed in the includes below.
+// Emitted log strings and counter semantics are fixed on purpose - regression logs from
+// different builds have to stay directly comparable.
 #ifndef DIAGNOSTICS_MANAGER_MQH
 #define DIAGNOSTICS_MANAGER_MQH
 
@@ -31,9 +25,8 @@
 #include "../Engines/SkewStepAnalyzer.mqh"
 #include "../Engines/FamilyStrategyWeightMatrix.mqh"
 
-//--- Decomposed DiagMgr* modules (by-value members / static helpers).
-//--- Appended after the original include list so include-resolution
-//--- order is byte-identical to the pre-decomposition file.
+//--- DiagMgr* modules (by-value members / static helpers): keep these last and in this
+//--- order - include-resolution order is what the earlier headers see.
 #include "DiagMgrCounters.mqh"          // CDiagMgrCounters, SConsensusDiagnosticsSnapshot
 #include "DiagMgrAggregator.mqh"        // CDiagMgrAggregator
 #include "DiagMgrAIVote.mqh"            // CDiagMgrAIVoteTracker, ENUM_AI_VOTE_TYPE
@@ -42,11 +35,8 @@
 
 class CNeuralNetworkStrategy;
 
-// DiagnosticsManager — replaces the inline heartbeat block in
-// MultiStrategyAutonomousEA.mq5.
-// Counter values are passed in via UpdateCounters() each heartbeat
-// cycle. MQL5 does not support pointers to primitives (ulong*), so
-// the main EA pushes snapshot values before calling EmitHeartbeat().
+// Counter values are pushed in via UpdateCounters() each heartbeat cycle: MQL5 has no
+// pointer to a primitive (no ulong*), so the main EA supplies the snapshot itself.
 class CDiagnosticsManager
 {
 private:
@@ -99,7 +89,7 @@ private:
     ulong m_prevSignalsRiskApproved;
     ulong m_prevSignalsSent;
 
-    // Consensus diagnostics counter bank (extracted → DiagMgrCounters.mqh)
+    // Consensus counter bank; every counter accessor below forwards to it
     CDiagMgrCounters m_counters;
 
         bool  m_aiEnabled;
@@ -109,22 +99,20 @@ private:
         bool  m_ensembleEnabled;
         bool  m_onnxEnabled;
 
-        // Risk tier for conditional diagnostics
+        // Gates the full-margin / safe-mode diagnostic blocks
     ENUM_RISK_TIER m_riskTier;
 
     // Trading paused state (updated each tick by main EA)
     bool  m_tradingPaused;
 
-    // Enterprise managers for consensus diagnostics
         CEnterpriseStrategyManager* m_managers[];
         int                         m_managerCount;
         string                      m_symbols[];
         int                         m_symbolCount;
 
-        // AI vote heartbeat tracking [L11-004] (extracted → DiagMgrAIVote.mqh)
+        // AI vote heartbeat tracking [L11-004]
         CDiagMgrAIVoteTracker m_aiVoteTracker;
 
-// Collect aggregated consensus diagnostics from all managers
     void GetAggregatedConsensusDiagnostics(ulong &rawNone,
                                            ulong &filteredOut,
                                            ulong &quorumFailed,
@@ -151,7 +139,6 @@ private:
                                                               uictNone, uictNeutralBias, uictOtherFilters, reasonTotal);
     }
 
-// Collect aggregated role/cluster diagnostics from all managers
     void GetAggregatedRoleClusterDiagnostics(ulong &primarySignals,
                                              ulong &featureSignals,
                                              ulong &voteSuppressed,
@@ -166,7 +153,6 @@ private:
                                                                 structureClusterSignals, noneClusterSignals);
     }
 
-// Determine which consensus cause is dominant
     string GetDominantConsensusCause(const ulong rawNone,
                                      const ulong filteredOut,
                                      const ulong quorumFailed,
@@ -230,7 +216,7 @@ public:
 
     ~CDiagnosticsManager() {}
 
-// Initialize — must be called before EmitHeartbeat()
+// Must run before EmitHeartbeat(); the heartbeat interval is floored at 30s to cap log volume
         bool Initialize(CUnifiedRiskManager* rm, CRiskTierManager* rtm,
                         CCompoundingTierManager* compoundingTierManager, int heartbeatInterval,
                         ENUM_LOG_VERBOSITY verbosity = VERBOSITY_NORMAL)
@@ -246,8 +232,7 @@ public:
             return true;
         }
 
-// Push current counter values from main EA globals
-// Call this before EmitHeartbeat() each heartbeat cycle
+// Pushes the EA's counter snapshot; call before every EmitHeartbeat()
 void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                         ulong validatorReject, ulong riskReject,
                         ulong tradesOpened, ulong spikeEvents,
@@ -313,24 +298,20 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                     m_aiVoteTracker.ConfigureSymbols(m_symbolCount);
                 }
 
-// Update AI vote activity timestamp [L11-004]
-// Call this when an AI adapter logs an [AI-VOTE] heartbeat
+// [L11-004] Stamp AI-vote activity when an AI adapter logs an [AI-VOTE] heartbeat
                 void UpdateAIVoteActivity(const string symbol, const string aiType)
                 {
                     m_aiVoteTracker.UpdateActivity(m_symbols, m_symbolCount, symbol, aiType);
                 }
 
-// Windowed-value getters — use the correctly-maintained m_prev*
-// snapshots instead of stale EA globals
+// Windowed getters: read the m_prev* snapshots, not stale EA globals
     ulong GetWindowScans() const
     {
-        // Batch 118: underflow guard for unsigned subtraction
         return (m_hbScansAttempted >= m_prevScansAttempted) ? (m_hbScansAttempted - m_prevScansAttempted) : 0;
     }
 
     ulong GetWindowNoSignal() const
     {
-        // Batch 118: underflow guard for unsigned subtraction
         return (m_hbNoSignalCount >= m_prevNoSignalCount) ? (m_hbNoSignalCount - m_prevNoSignalCount) : 0;
     }
 
@@ -347,7 +328,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         bool ShouldLogVerbose() const { return m_verbosity >= VERBOSITY_VERBOSE; }
         bool ShouldLogDebug() const { return m_verbosity >= VERBOSITY_DEBUG; }
 
-// Main entry point — replaces the inline heartbeat block
+// Heartbeat driver: emits at most once per m_heartbeatIntervalSec
         void EmitHeartbeat()
     {
         if(!m_initialized)
@@ -372,15 +353,13 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         if(m_scalpEngine != NULL && m_scalpEngine.IsInitialized())
             m_scalpEngine.PrintDiagnostics();
 
-        //--- Compounding tier / session weight / skew step / family weight
-        //--- heartbeat diagnostics (L5-013 / L9-001 / L9-002 / L9-003 / L9-004)
+        //--- L5-013 / L9-001..L9-004: compounding tier, session weight, skew step, family weight
         if(ShouldLogNormal())
         {
             CDiagMgrHeartbeat::EmitModuleHeartbeats(m_compoundingTierManager, m_sessionWeightManager,
                                                     m_skewStepAnalyzer, m_familyWeightMatrix, corrId);
 
-            //--- AI vote heartbeat monitoring [L11-004]
-            //--- Check if AI adapters are logging [AI-VOTE] heartbeats
+            //--- [L11-004] Warn when an enabled AI adapter stops logging [AI-VOTE]
             if(m_aiEnabled && m_aiVoteTracker.IsTrackingEnabled() && m_symbolCount > 0)
             {
                 m_aiVoteTracker.EmitMissingVoteWarnings(m_symbols, m_symbolCount,
@@ -395,15 +374,10 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         if(m_riskTier == RISK_TIER_CONSERVATIVE && m_safeMode != NULL && m_safeMode.IsInitialized())
             m_safeMode.PrintDiagnostics();
 
-        //--- Per-symbol family detection diagnostics
-        //--- PRESERVED BEHAVIOUR (pre-existing nesting, do NOT "fix" here):
-        //--- the original implementation left this guard open for the whole
-        //--- remainder of the heartbeat body. Position counts, conversion
-        //--- rates, the no-signal alert, the risk-budget snapshot, indicator
-        //--- cleanup, the previous-window snapshot update and the heartbeat
-        //--- timestamp therefore only run when a Deriv profiler is attached
-        //--- and at least one symbol is configured. Reproduced verbatim so
-        //--- heartbeat output stays comparable with prior regression logs.
+        //--- PRE-EXISTING NESTING, do NOT "fix" it: this guard wraps the rest of the
+        //--- heartbeat, so position counts, conversion rates, the no-signal alert, the
+        //--- risk budget, indicator cleanup, the window snapshots and the heartbeat
+        //--- timestamp only run with a Deriv profiler attached and >=1 symbol configured.
         if(m_derivProfiler != NULL && m_symbolCount > 0)
         {
             CDiagMgrHeartbeat::EmitSymbolProfileDiagnostics(m_derivProfiler, m_multiAssetProfiler,
@@ -415,8 +389,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                 CDiagMgrHeartbeat::EmitPositionCounts(corrId);
             }
 
-            // NOTE: Consensus diagnostics are now handled by EmitConsensusDiagnostics()
-            // which is called from the main EA's heartbeat cycle.
+            // Consensus report lines come from EmitConsensusDiagnostics(), driven by the main EA
 
             //--- Windowed conversion rates (guard against underflow on reinit)
             ulong windowScans         = CDiagMgrHeartbeat::WindowDelta(m_hbScansAttempted, m_prevScansAttempted);
@@ -458,7 +431,6 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
 
             CDiagMgrHeartbeat::ReleaseUnusedIndicators();
 
-            //--- Update previous-window snapshots
             m_prevScansAttempted       = m_hbScansAttempted;
             m_prevNoSignalCount        = m_hbNoSignalCount;
             m_prevSignalsGenerated     = m_hbSignalsGenerated;
@@ -487,21 +459,16 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
             if(nnHealth == NULL)
                 continue;
 
-            // The actual NN health logging is kept minimal here.
-            // Detailed NN health is handled by the main EA's existing NN health path
-            // which has access to the full strategy objects.
+            // Deliberately minimal: full NN health lives in the main EA, which holds the strategies
             LOG_IF1(LOG_LEVEL_DEBUG, "[NN-HEALTH] idx=%d | active", nnIdx);
         }
 
         m_lastNNHealthLogTime = hbNow;
     }
 
-// Update trading paused state (called from main EA each tick)
     void UpdateTradingPaused(bool paused) { m_tradingPaused = paused; }
 
-// Emit consensus diagnostics — replaces inline block in main EA
-// Parameters: quiet-reason counters and windowed scan/no-signal
-// values passed from the main EA's globals.
+// Consensus report lines; the EA passes the quiet-reason and windowed counter values
     void EmitConsensusDiagnostics(ulong quietNoNewBar,
                                   ulong quietCadenceHold,
                                   ulong quietMissingManager,
@@ -603,7 +570,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
                                                       entryBlocked,
                                                       sizingRejects);
 
-        // Enhanced no-signal alert with dominant consensus cause
+        // No-signal alert: >=20 window scans and >=80% no-signal rate, throttled by m_lastNoSignalAlertTime
         string dominantConsensusCause = GetDominantConsensusCause(diagRawNone,
                                                                   diagFilteredOut,
                                                                   diagQuorumFailed,
@@ -628,7 +595,7 @@ void UpdateCounters(ulong scans, ulong intrabar, ulong noSignal,
         }
     }
 
-// Consensus Diagnostics — forwarded to CDiagMgrCounters
+//--- Everything below forwards to m_counters (CDiagMgrCounters)
     void SetLogIntervalSeconds(const int seconds) { m_counters.SetLogIntervalSeconds(seconds); }
 
     ulong GetRawNone() const { return m_counters.GetRawNone(); }

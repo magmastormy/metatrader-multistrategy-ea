@@ -1,37 +1,24 @@
-// Owns the registered-strategy roster (entry array, live entry count and the hard
-// capacity gate of 25) plus EVERY narrow per-field accessor the slice modules call
-// through the manager's one-line forwarders, the 35-field append block and the
-// roster teardown loops.
-// *** BEHAVIOUR CONTRACT ***
-// Every body below is a byte-for-byte relocation of the manager's
-// original inline body, including the bounds checks, the fallback
-// return values and the deliberate "does NOT push to the IStrategy
-// object" semantics of SetStrategyEnabledFlag. The ONLY signature
-// adjustments are:
-// - GetStrategyTimeframe() takes the manager's base timeframe as
-// an explicit `fallback` argument (the roster does not own it);
-// - AppendRegisteredStrategyEntry() takes the health monitor as
-// an explicit argument so the original ordering
-// (fill entry -> RegisterStrategy(weight) -> ++count) is
-// preserved exactly.
-// Neither is observable: both manager forwarders supply the value
-// the original body read from its own member.
-// This module deliberately has NO back-pointer to the manager: it
-// is a leaf value object, held BY VALUE, and never observes manager
-// state.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Owns the registered-strategy roster (entry array, live entry count, the hard capacity
+// of 25), the narrow per-field accessors the manager forwarders call, the 35-field append
+// block and the teardown loops.
+// BEHAVIOUR CONTRACT: every body here is the manager's original inline body, bounds
+// checks and fallback return values included. Only two signature additions exist:
+// GetStrategyTimeframe() takes the manager's base timeframe as `fallback`, and
+// health-monitor work takes the monitor as an argument (the roster does not own it).
+// Neither is observable - the manager's forwarders pass what the original read.
+// Leaf value object: held BY VALUE, no back-pointer, never reads manager state.
+// Index rule: m_strategies[] only ever grows by append, so a roster index stays valid
+// until ClearRoster()/Deinit resets it - never cache an index across those.
+// NOTE: implementation detail of EnterpriseStrategyManager.mqh, included from there
+// (after the shared free helpers, before the manager class). Not for standalone include.
 #ifndef STRATEGY_MGR_ROSTER_MQH
 #define STRATEGY_MGR_ROSTER_MQH
 
 #include "EntStrategyTypes.mqh"        // struct StrategyEntry (held BY VALUE in the array)
 #include "StrategyHealthMonitor.mqh"   // CStrategyHealthMonitor::RegisterStrategy
 
-//--- Fixed capacity of StrategyEntry::recentTrades[]. Kept as a literal 20 in
-//--- every bound check below so the relocated bodies stay byte-identical to
-//--- the originals.
+//--- Fixed capacity of StrategyEntry::recentTrades[]. The bound checks in this file use
+//--- the literal 20, so editing the macro alone does not widen anything here.
 #define STRATEGY_ROSTER_RECENT_TRADE_SLOTS 20
 
 // Registered strategy roster (pure storage + narrow accessors)
@@ -40,7 +27,7 @@ class CStrategyMgrRoster
 private:
     StrategyEntry m_strategies[];
     int           m_strategyCount;
-    int           m_maxStrategies;   // Max strategy limit
+    int           m_maxStrategies;
 
 public:
     CStrategyMgrRoster();
@@ -50,7 +37,6 @@ public:
 
     int  FindStrategyIndexByName(const string name) const;
 
-    //=== read half (each accessor exposes exactly one field, verbatim) =======
     bool   IsStrategyEnabled(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].enabled : false; }
     IStrategy* GetStrategyPtr(const int index) const
@@ -106,7 +92,7 @@ public:
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].temporarilyDisabled : false; }
     datetime GetStrategyDisabledUntil(const int index) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].disabledUntil : 0; }
-    //--- `fallback` is the manager's m_baseTimeframe (see BEHAVIOUR CONTRACT)
+    //--- `fallback` is the manager's m_baseTimeframe, which the roster does not own
     ENUM_TIMEFRAMES GetStrategyTimeframe(const int index, const ENUM_TIMEFRAMES fallback) const
              { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].timeframe : fallback; }
     int    GetStrategyIntrabarPolicyRaw(const int index) const
@@ -122,10 +108,8 @@ public:
     double GetStrategyCostScore(const int index) const
            { return (index >= 0 && index < m_strategyCount) ? m_strategies[index].costScore : 0.0; }
 
-    //=== write half (dumb field writers, all bounds-checked) =================
-    //--- Mirrors exactly what UpdateStrategyWeights() used to do inline: write
-    //--- the entry weight and push it to the strategy object, WITHOUT touching
-    //--- the health monitor.
+    //--- Writes the entry weight and pushes it to the strategy object, but deliberately
+    //--- does NOT touch the health monitor.
     void ApplyRawStrategyWeight(const int index, const double weight);
 
     void SetStrategyTotalTrades(const int index, const int value)
@@ -162,13 +146,11 @@ public:
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].temporarilyDisabled = value; }
     void SetStrategyDisabledUntil(const int index, const datetime value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].disabledUntil = value; }
-    //--- Writes ONLY the entry flag. It deliberately does NOT push the value to
-    //--- the IStrategy object: CheckStrategyDisabling/ReEnabling never did, and
+    //--- Writes ONLY the entry flag: no push to the IStrategy object.
     //--- EnableStrategy/DisableStrategy push it themselves via GetStrategyPtr().
     void SetStrategyEnabledFlag(const int index, const bool value)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].enabled = value; }
-    //--- slot bound is the fixed recentTrades[20] capacity; unreachable in
-    //--- practice because m_rollingWindowSize is fixed at 20 (no setter).
+    //--- slot bound is the fixed recentTrades[20] capacity (m_rollingWindowSize has no setter)
     void SetStrategyRecentTrade(const int index, const int slot, const double value)
          { if(index >= 0 && index < m_strategyCount && slot >= 0 && slot < 20)
                m_strategies[index].recentTrades[slot] = value; }
@@ -191,8 +173,8 @@ public:
     void SetStrategyIntrabarEligible(const int index, const bool eligible)
          { if(index >= 0 && index < m_strategyCount) m_strategies[index].intrabarEligible = eligible; }
 
-    //--- 35-field StrategyEntry append. Mirrors the original RegisterStrategy
-    //--- append block byte-for-byte (no registry/logic changes).
+    //--- 35-field StrategyEntry append. Order matters: fill the entry -> health
+    //--- monitor RegisterStrategy(weight) -> ++m_strategyCount.
     void AppendRegisteredStrategyEntry(IStrategy* strategy, const string name, bool enabled,
                                        double weight, ENUM_STRATEGY_TIER tier,
                                        ENUM_TIMEFRAMES resolvedTf,
@@ -202,18 +184,16 @@ public:
                                        bool liveVotingEnabled,
                                        CStrategyHealthMonitor* healthMonitor);
 
-    //--- By-name weight mutator. Kept here (not in C4) because its body writes
-    //--- the roster array directly AND pushes to the health monitor, which the
-    //--- logic-free ApplyRawStrategyWeight() deliberately does not do. The
-    //--- health monitor is passed in because the roster does not own it.
+    //--- By-name weight mutator: writes the roster array AND pushes to the health
+    //--- monitor, which ApplyRawStrategyWeight() deliberately does not. The monitor is
+    //--- passed in because the roster does not own it.
     bool UpdateStrategyWeightByName(const string name, const double weight,
                                     CStrategyHealthMonitor* healthMonitor);
 
-    //--- By-name confidence-threshold mutator (writes through the IStrategy
-    //--- object held in the roster entry; no roster field is modified).
+    //--- Writes through the IStrategy object held by the entry; no roster field changes.
     bool SetStrategyConfidenceThresholdByName(const string name, const double threshold);
 
-    //--- Deinit()/destructor teardown loop (identical in both call sites).
+    //--- Teardown loop shared by Deinit() and the destructor.
     void DeleteAllStrategies();
     //--- Deinit()-only roster reset (the destructor deliberately did NOT do it).
     void ClearRoster();
@@ -307,8 +287,7 @@ void CStrategyMgrRoster::AppendRegisteredStrategyEntry(IStrategy* strategy, cons
     m_strategyCount++;
 }
 
-// The health monitor is supplied by the caller because the roster
-// does not own it; everything else is byte-identical.
+// The health monitor is passed in by the caller because the roster does not own it.
 bool CStrategyMgrRoster::UpdateStrategyWeightByName(const string name, const double weight,
                                                     CStrategyHealthMonitor* healthMonitor)
 {
@@ -353,7 +332,6 @@ void CStrategyMgrRoster::DeleteAllStrategies()
     }
 }
 
-// Reset the roster (Deinit only)
 void CStrategyMgrRoster::ClearRoster()
 {
     m_strategyCount = 0;

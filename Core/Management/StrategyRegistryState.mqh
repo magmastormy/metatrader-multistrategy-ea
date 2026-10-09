@@ -1,36 +1,22 @@
-// Registry bookkeeping and per-strategy enable-state: the registration sequence (registry
-// gate, capacity gate, strategy Init / AI init / risk-injection validation, entry append,
-// health-monitor enrolment, registration log), the name lookups and the live-voter query.
-// This module MUTATES the manager, so it holds a NON-const back-
-// pointer and writes through the manager's narrow per-field
-// accessors. It mirrors no injected manager pointer (the registry /
-// trade manager / position sizer / risk manager are re-read from
-// the manager on every call), so - like Slice 2/3 - it needs no
-// re-sync on Deinit or on the manager's injection setters.
-// HARD GUARD - DELIBERATELY NOT MOVED:
-// - SyncEnabledWithRegistry(). It reconciles the enable flags
-// against the shared CStrategyRegistry and therefore belongs to
-// the C9 consensus-core reconciliation step. Its body must stay
-// verbatim in the manager and its only call site is
-// Core/Orchestration/EAOrchestrator.mqh:768. Slice 3 already
-// recorded the same guard for C7.
-// - EvaluateConsensusInternal and the rest of the C9 core, which
-// call IsStrategyLiveVoter(). The manager therefore keeps a
-// private same-signature forwarder so those bodies are byte-
-// stable.
-// Both are name lookups, but what they write is WEIGHT and
-// CONFIDENCE THRESHOLD - C4 weighting/config territory, which
-// Slice 2 deliberately left in the manager. Only the registry
-// metadata setters (role / cluster / live-voting) move here.
-// - The 35-field StrategyEntry initialiser block. It stays in the
-// manager behind the narrow, logic-free mutator
-// AppendRegisteredStrategyEntry(), exactly like C4's
-// ApplyRawStrategyWeight(): relocating it would otherwise need
-// a write accessor for every field of the struct.
-// NOTE: this header is an implementation detail of
-// EnterpriseStrategyManager.mqh and is included from there (after
-// the shared free helpers, before the manager class). It is not
-// intended to be included standalone.
+// Registry bookkeeping and per-strategy enable state: the registration sequence
+// (registry gate, capacity gate, strategy Init / AI init / risk-injection validation,
+// entry append, health-monitor enrolment, registration log), the name -> index lookups
+// and the live-voter query.
+// This module MUTATES the manager, so the back-pointer is non-const and every write
+// goes through the manager's narrow per-field accessors. It mirrors no injected pointer
+// (registry / trade manager / position sizer / risk manager are re-read from the manager
+// on every call), so it needs no re-sync on Deinit or after the injection setters.
+// Deliberately NOT moved - they stay in EnterpriseStrategyManager.mqh:
+// - SyncEnabledWithRegistry(): reconciles the enable flags against the shared
+//   CStrategyRegistry (consensus-core reconciliation step); its only call site is
+//   Core/Orchestration/EAOrchestrator.mqh:768.
+// - The weight / confidence-threshold setters, and the 35-field StrategyEntry
+//   initialiser block behind the logic-free AppendRegisteredStrategyEntry(): relocating
+//   either would need a write accessor for every struct field.
+// - The consensus core calls IsStrategyLiveVoter() by name, so the manager keeps a
+//   private same-signature forwarder for it.
+// NOTE: implementation detail of EnterpriseStrategyManager.mqh, included from there
+// (after the shared free helpers, before the manager class). Not for standalone include.
 #ifndef STRATEGY_REGISTRY_STATE_MQH
 #define STRATEGY_REGISTRY_STATE_MQH
 
@@ -68,7 +54,6 @@ public:
 
     bool IsStrategyLiveVoter(const int strategyIndex) const;
 
-    //--- registry-entry metadata bookkeeping
     bool SetStrategyRoleByName(const string name, ENUM_STRATEGY_ROLE role);
     bool SetStrategyClusterByName(const string name, ENUM_STRATEGY_CLUSTER cluster);
     bool SetStrategyLiveVotingEligibilityByName(const string name, const bool enabled);
@@ -93,16 +78,15 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
     if(strategy == NULL || !m_src.IsManagerInitialized())
         return false;
 
-    // L1-010: Check with StrategyRegistry if this strategy should be active in current mode
-        // The 'enabled' parameter is advisory; registry is the single source of truth
+    // L1-010: the registry decides whether this strategy is active in the current
+    // mode; the caller's 'enabled' argument is only advisory.
         CStrategyRegistry* strategyRegistry = m_src.GetStrategyRegistryConst();
         if(strategyRegistry != NULL)
         {
-            // Check if strategy is registered and mode-permissive
             if(!strategyRegistry.IsStrategyActive(name))
             {
                 PrintFormat("[ENTERPRISE] Strategy %s disabled by registry (mode filter or not registered)", name);
-                enabled = false;  // Override: registry says this strategy is not active
+                enabled = false;
             }
         }
 
@@ -114,7 +98,7 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
         return false;
     }
 
-    // Initialize strategy with VALID pointers (ARCHITECTURAL FIX: inject unified risk manager)
+    // Init must receive the unified risk manager, never a legacy one
     ENUM_TIMEFRAMES resolvedTf = (tf == PERIOD_CURRENT ? m_src.GetBaseTimeframe() : tf);
     bool initSuccess = strategy.Init(m_src.GetManagedSymbol(), resolvedTf,
                                      m_src.GetTradeManagerConst(), m_src.GetPositionSizerConst(),
@@ -127,15 +111,14 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
             return false;
         }
 
-    // L6-010: Initialize AI model after factory creation
-    // This ensures AI adapters have proper symbol/timeframe/risk context
+    // L6-010: AI init after factory creation so adapters see symbol/timeframe/risk context
     if(!strategy.InitializeAI(m_src.GetManagedSymbol(), resolvedTf, m_src.GetUnifiedRiskManagerConst()))
     {
         Print("[EnterpriseStrategyManager] WARNING: Strategy ", name, " AI initialization failed. Continuing with base initialization.");
-        // Don't fail registration - AI initialization failure is non-fatal for some adapters
+        // Non-fatal: some adapters degrade to non-AI behaviour
     }
 
-    // L6-001 CRITICAL FIX: Validate risk manager injection after initialization
+    // L6-001: a strategy that did not take the risk manager injection would bypass risk gating
         if(!strategy.ValidateRiskManagerInjection())
         {
             Print("[EnterpriseStrategyManager] CRITICAL: Strategy ", name, " failed risk manager injection validation. Strategy will bypass risk validation - rejecting registration.");
@@ -143,14 +126,11 @@ bool CStrategyRegistryState::RegisterStrategy(IStrategy* strategy, const string 
             return false;
         }
 
-        // CRITICAL FIX: Synchronize enabled state with strategy object
     strategy.SetEnabled(enabled);
     strategy.SetWeight(weight);
 
-    // Append the fully-initialised StrategyEntry, enrol it with the health
-    // monitor and bump the strategy count. The manager owns this step behind a
-    // narrow, logic-free mutator (see AppendRegisteredStrategyEntry) so the
-    // 35-field initialiser block stays byte-for-byte identical.
+    // Entry append, health-monitor enrolment and count bump stay in the manager
+    // behind AppendRegisteredStrategyEntry (see header note).
     m_src.AppendRegisteredStrategyEntry(strategy, name, enabled, weight, tier, resolvedTf,
                                         intrabarPolicy, role, cluster, liveVotingEnabled);
 
@@ -251,7 +231,6 @@ bool CStrategyRegistryState::SetStrategyLiveVotingEligibilityByName(const string
     return true;
 }
 
-// Registry metadata: role + cluster + live-voting in one shot
 bool CStrategyRegistryState::SetStrategyGovernanceByName(const string name,
                                                          ENUM_STRATEGY_ROLE role,
                                                          ENUM_STRATEGY_CLUSTER cluster,
